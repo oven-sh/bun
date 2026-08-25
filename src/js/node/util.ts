@@ -620,12 +620,12 @@ function convertProcessSignalToExitCode(signalCode) {
 
 let lazyAbortedRegistry: FinalizationRegistry<{
   ref: WeakRef<AbortSignal>;
-  listener: (...args: any[]) => void;
+  unregisterToken: (...args: any[]) => void;
 }>;
-function onAbortedCallback(promise: Promise<void>) {
-  lazyAbortedRegistry.unregister(promise);
+function onAbortedCallback(resolveFn: Function) {
+  lazyAbortedRegistry.unregister(resolveFn);
 
-  $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
+  resolveFn();
 }
 
 function aborted(signal: AbortSignal, resource: object) {
@@ -641,20 +641,20 @@ function aborted(signal: AbortSignal, resource: object) {
     return Promise.$resolve();
   }
 
-  const promise = $newPromise();
-  const listener = onAbortedCallback.bind(undefined, promise);
+  const { promise, resolve } = $newPromiseCapability(Promise);
+  const unregisterToken = onAbortedCallback.bind(undefined, resolve);
   signal.addEventListener(
     "abort",
     // Do not leak the current scope into the listener.
     // Instead, create a new function.
-    listener,
+    unregisterToken,
     resistStopPropagation({ __proto__: null, once: true }),
   );
 
   if (!lazyAbortedRegistry) {
-    lazyAbortedRegistry = new FinalizationRegistry(({ ref, listener }) => {
+    lazyAbortedRegistry = new FinalizationRegistry(({ ref, unregisterToken }) => {
       const signal = ref.deref();
-      if (signal) signal.removeEventListener("abort", listener);
+      if (signal) signal.removeEventListener("abort", unregisterToken);
     });
   }
 
@@ -665,9 +665,9 @@ function aborted(signal: AbortSignal, resource: object) {
     resource,
     {
       ref: new WeakRef(signal),
-      listener,
+      unregisterToken,
     },
-    promise,
+    unregisterToken,
   );
 
   return promise;

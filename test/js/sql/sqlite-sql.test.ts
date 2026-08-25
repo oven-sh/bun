@@ -947,6 +947,16 @@ describe("Query Execution", () => {
     );
     expect(multi.command).toBe("INSERT");
     expect(multi.affectedRows).toBe(4);
+
+    // the write verb can sit flush against the CTE's closing paren
+    const glued = await sql`WITH c AS (SELECT 1)DELETE FROM gadgets2 WHERE id = 102`;
+    expect(glued.command).toBe("DELETE");
+    expect(glued.affectedRows).toBeNull();
+
+    // REPLACE as a function in the outer SELECT is not the REPLACE command
+    const outerReplaceFn = await sql`WITH c AS (SELECT 'aaa' AS n) SELECT REPLACE (n, 'a', 'b') AS r FROM c`;
+    expect(outerReplaceFn).toEqual([{ r: "bbb" }]);
+    expect(outerReplaceFn.affectedRows).toBe(0);
   });
 
   test("SELECT with various clauses", async () => {

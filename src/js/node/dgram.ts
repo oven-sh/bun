@@ -1160,19 +1160,17 @@ Socket.prototype[SymbolAsyncDispose] = async function () {
   if (!this[kStateSymbol].handle) {
     return;
   }
-  const promise = $newPromise();
-  this.close(FunctionPrototypeBind.$call(onAsyncDisposeClosed, undefined, promise));
+  const { promise, resolve, reject } = $newPromiseCapability(Promise);
+  this.close(err => {
+    if (err) {
+      reject(err);
+    } else {
+      resolve();
+    }
+  });
 
   return promise;
 };
-
-function onAsyncDisposeClosed(promise, err) {
-  if (err) {
-    $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, err);
-  } else {
-    $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
-  }
-}
 
 function socketCloseNT(self) {
   self.emit("close");

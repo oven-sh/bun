@@ -986,25 +986,35 @@ impl Diff {
     /// (`map_dep_to_pkg`), while the package.json reparse keeps the textual
     /// npm range when the workspace has no version a star range satisfies.
     /// The workspace still matches the star range, so an unchanged literal is
-    /// the same manifest edge. `reparse_links_workspace` is the precondition:
-    /// `link_workspace_packages` is on and the name is still a workspace in
-    /// the reparsed lockfile.
+    /// the same manifest edge. The workspace lookup keys on the npm target
+    /// name, like `parse_dependency` and the resolver, so an `npm:` alias of
+    /// a workspace matches too.
     fn deps_match(
         to_dep: &Dependency,
         from_dep: &Dependency,
         to_buf: &[u8],
         from_buf: &[u8],
-        reparse_links_workspace: bool,
+        link_workspace_packages: bool,
+        to_workspace_paths: &lockfile::NameHashMap,
     ) -> bool {
         if Dependency::eql(to_dep, from_dep, to_buf, from_buf) {
             return true;
         }
-        reparse_links_workspace
-            && from_dep.version.tag == dependency::version::Tag::Workspace
-            && to_dep.version.tag == dependency::version::Tag::Npm
-            && to_dep.version.npm().version.is_star()
+        if !link_workspace_packages
+            || from_dep.version.tag != dependency::version::Tag::Workspace
+            || to_dep.version.tag != dependency::version::Tag::Npm
+        {
+            return false;
+        }
+        let to_npm = to_dep.version.npm();
+        to_npm.version.is_star()
             && from_dep.name_hash == to_dep.name_hash
             && from_dep.name.len() == to_dep.name.len()
+            && to_workspace_paths
+                .get(&semver::string::Builder::string_hash(
+                    to_npm.name.slice(to_buf),
+                ))
+                .is_some()
             && strings::eql_long(
                 from_dep.version.literal.slice(from_buf),
                 to_dep.version.literal.slice(to_buf),
@@ -1454,11 +1464,8 @@ impl Diff {
                 from_dep,
                 to_lockfile.buffers.string_bytes.as_slice(),
                 from_lockfile.buffers.string_bytes.as_slice(),
-                pm.options.link_workspace_packages
-                    && to_lockfile
-                        .workspace_paths
-                        .get(&from_dep.name_hash)
-                        .is_some(),
+                pm.options.link_workspace_packages,
+                &to_lockfile.workspace_paths,
             ) {
                 if let Some(updates) = update_requests {
                     if updates.is_empty()

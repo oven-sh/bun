@@ -577,21 +577,23 @@ test.concurrent("workspaces: prunes workspace folders, keeps workspace links, ru
 
 // #40393: a "*" range resolves to a workspace even when the workspace has no version,
 // or a prerelease version, so the package.json reparse must agree with bun.lock instead of refusing.
-for (const [label, pkg1] of [
-  ["versionless", { name: "package1" }],
-  ["prerelease", { name: "package1", version: "1.0.0-alpha" }],
+for (const [label, deps, pkg1, checked] of [
+  ["versionless", { package1: "*" }, { name: "package1" }, 2],
+  ["prerelease", { package1: "*" }, { name: "package1", version: "1.0.0-alpha" }, 2],
+  // the alias adds a third installed link, node_modules/aliased
+  ["aliased versionless", { aliased: "npm:package1@*" }, { name: "package1" }, 3],
 ] as const) {
   test.concurrent(`workspaces: star dep on a ${label} workspace package is in sync`, async () => {
     const { packageDir: dir, packageJson } = await registry.createTestDir();
     await Promise.all([
       write(packageJson, JSON.stringify({ name: "root", workspaces: ["app1", "package1"] })),
-      write(join(dir, "app1", "package.json"), JSON.stringify({ name: "app1", dependencies: { package1: "*" } })),
+      write(join(dir, "app1", "package.json"), JSON.stringify({ name: "app1", dependencies: deps })),
       write(join(dir, "package1", "package.json"), JSON.stringify(pkg1)),
     ]);
     await runBunInstall(installEnv(dir), dir);
 
     const { stdout, stderr, exitCode } = await prune(dir);
-    expect(out(stdout)).toBe(`${BANNER}\n\n${NOTHING(2, 1)}`);
+    expect(out(stdout)).toBe(`${BANNER}\n\n${NOTHING(checked, 1)}`);
     expect(stderr).not.toContain(OUT_OF_SYNC);
     expect(exitCode).toBe(0);
   });

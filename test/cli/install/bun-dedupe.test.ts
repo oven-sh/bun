@@ -756,18 +756,16 @@ test.concurrent("workspace package edge is re-pointed when run from the workspac
 
 // #40393: a "*" range resolves to a workspace even when the workspace has no version,
 // or a prerelease version, so the package.json reparse must agree with bun.lock instead of refusing.
-for (const [label, pkg1] of [
-  ["versionless", { name: "package1" }],
-  ["prerelease", { name: "package1", version: "1.0.0-alpha" }],
+for (const [label, deps, pkg1] of [
+  ["versionless", { package1: "*" }, { name: "package1" }],
+  ["prerelease", { package1: "*" }, { name: "package1", version: "1.0.0-alpha" }],
+  ["aliased versionless", { aliased: "npm:package1@*" }, { name: "package1" }],
 ] as const) {
   test.concurrent(`star dep on a ${label} workspace package is in sync`, async () => {
     const { packageDir, packageJson } = await registry.createTestDir();
     await Promise.all([
       write(packageJson, JSON.stringify({ name: "root", workspaces: ["app1", "package1"] })),
-      write(
-        join(packageDir, "app1", "package.json"),
-        JSON.stringify({ name: "app1", dependencies: { package1: "*" } }),
-      ),
+      write(join(packageDir, "app1", "package.json"), JSON.stringify({ name: "app1", dependencies: deps })),
       write(join(packageDir, "package1", "package.json"), JSON.stringify(pkg1)),
     ]);
     await runBunInstall(installEnv(packageDir), packageDir);

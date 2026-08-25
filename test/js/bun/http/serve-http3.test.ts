@@ -52,9 +52,14 @@ const server = serve({
       headers: { "content-type": "text/plain", etag: '"v1"' },
     }),
     "/file-route": Bun.file(process.env.BIG_FILE),
+    "/static-hop": new Response("hop", { headers: { connection: "keep-alive", "keep-alive": "timeout=5", te: "gzip", "x-kept": "1" } }),
+    "/file-hop": new Response(Bun.file(process.env.BIG_FILE), { headers: { connection: "close", upgrade: "x", "x-kept": "1" } }),
   },
   async fetch(req) {
     const url = new URL(req.url);
+    if (url.pathname === "/hop-headers") {
+      return new Response("hi", { headers: { "transfer-encoding": "chunked", connection: "close", "keep-alive": "timeout=5", upgrade: "websocket", "proxy-connection": "x", te: "gzip", "x-kept": "1" } });
+    }
     if (url.pathname === "/hello") {
       return new Response("hello over h3", {
         headers: { "x-proto": "h3", "content-type": "text/plain" },
@@ -438,6 +443,20 @@ describe("Bun.serve HTTP/3", () => {
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("HTTP/3 requires");
     expect(exitCode).not.toBe(0);
+  });
+
+  test("connection-specific response headers are dropped on fetch, static and file routes", async () => {
+    await withServer(async port => {
+      for (const path of ["/hop-headers", "/static-hop", "/file-hop"]) {
+        const res = await fetchH3(port, path);
+        expect(res.status).toBe(200);
+        expect(res.headers.get("x-kept")).toBe("1");
+        for (const h of ["connection", "keep-alive", "upgrade", "proxy-connection", "transfer-encoding", "te"]) {
+          expect([path, h, res.headers.get(h)]).toEqual([path, h, null]);
+        }
+        await res.arrayBuffer();
+      }
+    });
   });
 
   test("static route (Response value) is mirrored onto H3", async () => {

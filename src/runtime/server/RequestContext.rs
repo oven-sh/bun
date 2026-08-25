@@ -3888,13 +3888,6 @@ where
         ctx_log!("writeHeaders");
         headers.fast_remove(jsc::HTTPHeaderName::ContentLength);
         headers.fast_remove(jsc::HTTPHeaderName::TransferEncoding);
-        if MUX {
-            // RFC 9113 §8.2.2 / RFC 9114 §4.2: connection-specific fields are malformed.
-            headers.fast_remove(jsc::HTTPHeaderName::Connection);
-            headers.fast_remove(jsc::HTTPHeaderName::KeepAlive);
-            headers.fast_remove(jsc::HTTPHeaderName::ProxyConnection);
-            headers.fast_remove(jsc::HTTPHeaderName::Upgrade);
-        }
         if let Some(resp) = self.resp.get() {
             headers.to_uws_response(uws::ResponseKind::of(resp), resp.as_ptr());
         }

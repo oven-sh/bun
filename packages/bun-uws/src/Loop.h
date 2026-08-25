@@ -49,7 +49,9 @@ private:
     static void preCb(us_loop_t *loop) {
         LoopData *loopData = (LoopData *) us_loop_ext(loop);
 
-        tickApps(loopData);
+        for (auto &p : loopData->preHandlers) {
+            p.second((Loop *) loop);
+        }
 
         /* Drain any leftover corks. Two slots max. */
         for (int i = 0; i < 2; i++) {
@@ -67,12 +69,10 @@ private:
     static void postCb(us_loop_t *loop) {
         LoopData *loopData = (LoopData *) us_loop_ext(loop);
 
-        tickApps(loopData);
+        for (auto &p : loopData->postHandlers) {
+            p.second((Loop *) loop);
+        }
     }
-
-    /* Calls TemplatedApp<SSL>::tick() on every registered app; defined in
-     * App.h where the type is complete. */
-    static inline void tickApps(LoopData *loopData);
 
     Loop() = delete;
     ~Loop() = default;
@@ -151,7 +151,31 @@ public:
         return (LoopData *) us_loop_ext(loop);
     }
 
-    LoopData *data() { return (LoopData *) us_loop_ext((us_loop_t *) this); }
+    void addPostHandler(void *key, MoveOnlyFunction<void(Loop *)> &&handler) {
+        LoopData *loopData = (LoopData *) us_loop_ext((us_loop_t *) this);
+
+        loopData->postHandlers.emplace(key, std::move(handler));
+    }
+
+    /* Bug: what if you remove a handler while iterating them? */
+    void removePostHandler(void *key) {
+        LoopData *loopData = (LoopData *) us_loop_ext((us_loop_t *) this);
+
+        loopData->postHandlers.erase(key);
+    }
+
+    void addPreHandler(void *key, MoveOnlyFunction<void(Loop *)> &&handler) {
+        LoopData *loopData = (LoopData *) us_loop_ext((us_loop_t *) this);
+
+        loopData->preHandlers.emplace(key, std::move(handler));
+    }
+
+    /* Bug: what if you remove a handler while iterating them? */
+    void removePreHandler(void *key) {
+        LoopData *loopData = (LoopData *) us_loop_ext((us_loop_t *) this);
+
+        loopData->preHandlers.erase(key);
+    }
 
     /* Defer this callback on Loop's thread of execution */
     void defer(MoveOnlyFunction<void()> &&cb) {

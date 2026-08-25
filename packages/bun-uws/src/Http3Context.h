@@ -35,7 +35,7 @@ struct Http3Context {
             rd->reset();
 
             Http3Request req(s);
-            { std::string_view e = req.getHeader("expect"); if (e.size() == 12 && std::equal(e.begin(), e.end(), "100-continue", [](char a, char b) { return (a | 0x20) == b; })) res->writeContinue(); }
+            if (req.getHeader("expect") == "100-continue") res->writeContinue();
             cd->router.getUserData() = {res, &req};
             if (!cd->router.route(req.getMethod(), req.getUrl())) {
                 res->writeStatus("404 Not Found")->end();

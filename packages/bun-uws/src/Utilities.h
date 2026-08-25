@@ -18,11 +18,31 @@
 #ifndef UWS_UTILITIES_H
 #define UWS_UTILITIES_H
 
+#include <string_view>
+
 /* Various common utilities */
 
 #include <cstdint>
 
 namespace uWS {
+
+/* RFC 9113 §8.2.2 / RFC 9114 §4.2: connection-specific fields are not
+ * allowed in HTTP/2 or HTTP/3 responses. */
+static inline bool asciiIEquals(std::string_view a, const char *lower) {
+    for (size_t i = 0; i < a.size(); i++) if ((a[i] | 0x20) != lower[i]) return false;
+    return true;
+}
+static inline bool isConnectionSpecificResponseField(std::string_view name, std::string_view value) {
+    switch (name.size()) {
+    case 2: return asciiIEquals(name, "te") && !(value.size() == 8 && asciiIEquals(value, "trailers"));
+    case 7: return asciiIEquals(name, "upgrade");
+    case 10: return asciiIEquals(name, "connection") || asciiIEquals(name, "keep-alive");
+    case 16: return asciiIEquals(name, "proxy-connection");
+    case 17: return asciiIEquals(name, "transfer-encoding");
+    }
+    return false;
+}
+
 namespace utils {
 
 inline int u32toaHex(uint32_t value, char *dst) {

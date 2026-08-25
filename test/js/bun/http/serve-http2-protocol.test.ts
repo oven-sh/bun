@@ -1026,16 +1026,6 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     raw.close();
   });
 
-  test("expect: 100-continue is matched case-insensitively", async () => {
-    const raw = await RawH2.connect(fx.port, secure);
-    raw.headers(1, [...baseHeaders("/echo", "POST"), ["expect", "100-Continue"]], F.END_HEADERS);
-    const interim = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
-    expect(decodeStatus(interim.payload)).toBe(100);
-    raw.write(frame(T.DATA, F.END_STREAM, 1, Buffer.from("ok")));
-    await raw.body(1);
-    raw.close();
-  });
-
   test("host without :authority is accepted and becomes the URL host; a request with an empty regular header value is fine", async () => {
     const raw = await RawH2.connect(fx.port, secure);
     raw.headers(1, [
@@ -1051,20 +1041,17 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     raw.close();
   });
 
-  test("plain CONNECT (only :method and :authority) reaches the handler, not a protocol error", async () => {
+  test("plain CONNECT (only :method and :authority) is well-formed: answered 404 by the router, not reset", async () => {
     const raw = await RawH2.connect(fx.port, secure);
-    raw.headers(
-      1,
-      [
-        [":method", "CONNECT"],
-        [":authority", "example.com:443"],
-      ],
-      F.END_HEADERS,
-    );
-    const f = await raw.waitFor(f => f.streamId === 1 && (f.type === T.HEADERS || f.type === T.RST_STREAM));
-    expect(f.type).toBe(T.HEADERS);
+    raw.headers(1, [
+      [":method", "CONNECT"],
+      [":authority", "example.com:443"],
+    ]);
+    const h = await raw.waitFor(f => (f.type === T.HEADERS || f.type === T.RST_STREAM) && f.streamId === 1);
+    expect(h.type).toBe(T.HEADERS);
+    // No :path, so nothing routes it; HTTP/1 CONNECT gets the same 404 today.
+    expect(decodeStatus(h.payload)).toBe(404);
     raw.close();
-    expect(fx.proc.exitCode).toBeNull();
   });
 
   test("client reset / disconnect while the handler is reading the body rejects the read", async () => {
@@ -1529,8 +1516,9 @@ describe("Bun.serve http2 protocol (serial)", () => {
       .slice(0, idx)
       .filter(f => f.type === T.DATA && f.streamId !== 49)
       .reduce((a, f) => a + f.payload.length, 0);
-    // 24 × 5 MB = 120 MB total; the small stream must not wait for more than a few passes of that.
-    expect(bigBefore).toBeLessThan(8 * 1024 * 1024);
+    // One 16 KB slice per large stream per pass: 24 × 16 KB = 384 KB before the
+    // small one's turn. Without the per-pass slice it would be 24 × 256 KB.
+    expect(bigBefore).toBeLessThan(512 * 1024);
     raw.close();
   }, 30000);
 

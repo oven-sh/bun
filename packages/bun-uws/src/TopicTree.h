@@ -147,7 +147,6 @@ public:
 
     TopicTree(std::function<bool(Subscriber *, T &, IteratorFlags)> cb) : cb(cb) {
 
-
     }
 
     /* Returns nullptr if not found */

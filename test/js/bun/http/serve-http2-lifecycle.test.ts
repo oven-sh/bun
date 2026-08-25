@@ -11,6 +11,7 @@ import {
   connectH2,
   decodeStatus,
   frame,
+  hpackLiteral,
   request,
   startFixture,
 } from "./serve-http2-helpers";
@@ -150,21 +151,61 @@ describe("Bun.serve http2 lifecycle", () => {
     session.close();
   }, 40000);
 
-  test("PINGs do not keep a connection alive whose streams are all stalled at a zero window", async () => {
-    await using fx = await startFixture({ tls: false, idleTimeout: 2 });
-    const raw = await RawH2.connect(fx.port, false, { settings: Buffer.from([0, 4, 0, 0, 0, 0]) }); // INITIAL_WINDOW_SIZE = 0
-    await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0);
-    for (let i = 0, id = 1; i < 8; i++, id += 2) raw.headers(id, baseHeaders("/big"));
-    await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 15);
-    const pinger = setInterval(() => !raw.closed && raw.write(frame(T.PING, 0, 0, Buffer.from("keepaliv"))), 500);
-    try {
-      await raw.waitForClose();
-    } finally {
-      clearInterval(pinger);
-    }
-    expect(raw.frames.some(f => f.type === T.GOAWAY)).toBe(true);
-    raw.close();
-  }, 30000);
+  // usockets ticks timeouts every 4 s and idleTimeout rounds to ticks, so 8 s
+  // (two ticks) with keepalive traffic every 2 s is the smallest setting that
+  // separates "refreshed the timer" from "did not".
+  for (const [name, keepalive] of [
+    ["PING", (raw: RawH2) => raw.write(frame(T.PING, 0, 0, Buffer.from("keepaliv")))],
+    // An open POST sending empty non-final DATA frames.
+    ["empty DATA", (raw: RawH2) => raw.write(frame(T.DATA, 0, 101))],
+  ] as const) {
+    test(`${name} frames do not keep a connection alive whose streams are all stalled at a zero window`, async () => {
+      await using fx = await startFixture({ tls: false, idleTimeout: 8 });
+      const stalled = await RawH2.connect(fx.port, false, { settings: Buffer.from([0, 4, 0, 0, 0, 0]) }); // INITIAL_WINDOW_SIZE = 0
+      await stalled.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0);
+      for (let i = 0, id = 1; i < 8; i++, id += 2) stalled.headers(id, baseHeaders("/big"));
+      stalled.write(frame(T.HEADERS, F.END_HEADERS, 101, hpackLiteral(baseHeaders("/echo", "POST"))));
+      await stalled.waitFor(f => f.type === T.HEADERS && f.streamId === 15);
+      // Control: a connection making real progress every 2 s on the same server outlives it.
+      const live = await RawH2.connect(fx.port, false);
+      let liveId = 1;
+      const t0 = Date.now();
+      const tick = setInterval(() => {
+        if (!stalled.closed) keepalive(stalled);
+        if (!live.closed) {
+          live.headers(liveId, baseHeaders("/hello"));
+          liveId += 2;
+        }
+      }, 2000);
+      try {
+        await stalled.waitForClose();
+        expect(Date.now() - t0).toBeLessThan(20000);
+        expect(stalled.frames.some(f => f.type === T.GOAWAY)).toBe(true);
+        expect(live.closed).toBe(false);
+      } finally {
+        clearInterval(tick);
+        stalled.close();
+        live.close();
+      }
+    }, 40000);
+  }
+
+  test("server.timeout(req, n) on h2 is per connection: the most permissive open request wins", async () => {
+    await using fx = await startFixture({
+      tls: false,
+      idleTimeout: 8,
+      extra: `routes: { "/t": async (req, server) => { const u = new URL(req.url); server.timeout(req, Number(u.searchParams.get("s"))); await Bun.sleep(Number(u.searchParams.get("ms"))); return new Response("t" + u.searchParams.get("s")); } },`,
+    });
+    const session = await connectH2(fx.port, false);
+    // One stream asks for 1 s, another for 30 s; both sleep 6 s. With per-request
+    // semantics the first would be cut at the next tick; per-connection, 30 wins.
+    const [a, b] = await Promise.all([
+      request(session, { ":path": "/t?s=1&ms=6000" }),
+      request(session, { ":path": "/t?s=30&ms=6000" }),
+    ]);
+    expect([a.body.toString(), b.body.toString()]).toEqual(["t1", "t30"]);
+    session.close();
+  }, 40000);
 
   test("--max-http-header-size applies to h2 like HTTP/1.1", async () => {
     await using fx = await startFixture({ tls: false, execArgv: ["--max-http-header-size=4096"] });

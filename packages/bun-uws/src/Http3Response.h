@@ -4,6 +4,7 @@
 #include "quic.h"
 #include "Http3ResponseData.h"
 #include "HttpResponseData.h"
+#include "Utilities.h"
 
 #include <charconv>
 #include <optional>
@@ -31,6 +32,7 @@ struct Http3Response {
     }
 
     Http3Response *writeHeader(std::string_view key, std::string_view value) {
+        if (isConnectionSpecificResponseField(key, value)) return this;
         writeStatus("200 OK");
         appendHeader(getHttpResponseData(), key, value);
         return this;

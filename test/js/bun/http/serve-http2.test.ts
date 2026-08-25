@@ -438,6 +438,77 @@ for (const secure of [true, false]) {
   });
 }
 
+describe("Bun.serve http2 with SNI (serverName + tls[])", () => {
+  // A named handshake goes through the per-name SSL_CTX that addServerName()
+  // built, so ALPN has to be enabled on that context too.
+  const sniFixture = (http1: boolean) => `
+    import { tls } from "harness";
+    const server = Bun.serve({
+      port: 0,
+      http2: true,
+      http1: ${http1},
+      tls: [{ ...tls, serverName: "default.test" }, { ...tls, serverName: "named.test" }],
+      fetch: () => new Response("sni"),
+    });
+    console.log(JSON.stringify({ port: server.port }));
+    setInterval(() => {}, 1 << 30);
+  `;
+  async function start(http1: boolean) {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "-e", sniFixture(http1)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const reader = proc.stdout.getReader();
+    let line = "";
+    while (!line.includes("\n")) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error("fixture exited");
+      line += Buffer.from(value).toString();
+    }
+    reader.releaseLock();
+    return { proc, port: JSON.parse(line).port as number };
+  }
+  const alpnFor = (port: number, servername: string | undefined, protos: string[]) =>
+    new Promise<string | false | null>((resolve, reject) => {
+      const s = tls.connect(
+        { port, host: "127.0.0.1", servername, ALPNProtocols: protos, rejectUnauthorized: false },
+        () => {
+          const p = s.alpnProtocol;
+          s.destroy();
+          resolve(p);
+        },
+      );
+      s.on("error", reject);
+    });
+
+  test("h2 is negotiated for the default name, a matched serverName, and an unmatched one", async () => {
+    const { proc, port } = await start(true);
+    try {
+      expect(await alpnFor(port, undefined, ["h2", "http/1.1"])).toBe("h2");
+      expect(await alpnFor(port, "named.test", ["h2", "http/1.1"])).toBe("h2");
+      expect(await alpnFor(port, "default.test", ["h2", "http/1.1"])).toBe("h2");
+      expect(await alpnFor(port, "unknown.test", ["h2", "http/1.1"])).toBe("h2");
+      expect(await alpnFor(port, "named.test", ["http/1.1"])).toBe("http/1.1");
+    } finally {
+      proc.kill();
+      await proc.exited;
+    }
+  });
+
+  test("http1: false refuses an http/1.1-only client through a named context too", async () => {
+    const { proc, port } = await start(false);
+    try {
+      expect(await alpnFor(port, "named.test", ["h2"])).toBe("h2");
+      await expect(alpnFor(port, "named.test", ["http/1.1"])).rejects.toThrow();
+    } finally {
+      proc.kill();
+      await proc.exited;
+    }
+  });
+});
+
 describe("Bun.serve http2 with http1: false", () => {
   test("TLS: h2 works, http/1.1-only ALPN is refused, no-ALPN client gets 505", async () => {
     await using fx = await startFixture({ tls: true, http1: false });

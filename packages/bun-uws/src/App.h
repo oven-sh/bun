@@ -276,7 +276,6 @@ public:
     }
 
     ~TemplatedApp() {
-        Loop::get()->data()->removeApp(this);
         /* Let's just put everything here */
         if (httpContext) {
             if (Http2Context *h2 = httpContext->getSocketContextData()->http2Context) {
@@ -305,6 +304,10 @@ public:
 
         /* Delete TopicTree */
         if (topicTree) {
+            /* And unregister loop callbacks */
+            /* We must unregister any loop post handler here */
+            Loop::get()->removePostHandler(topicTree);
+            Loop::get()->removePreHandler(topicTree);
             delete topicTree;
         }
     }
@@ -339,14 +342,8 @@ private:
             if (!sslCtx) { httpContext = nullptr; return; }
         }
         httpContext = HttpContext<SSL>::create(Loop::get(), options.request_cert, options.reject_unauthorized);
-        if (httpContext) Loop::get()->data()->addApp(this);
     }
 public:
-
-    /* Per-iteration housekeeping, run by the loop's pre/post callbacks. */
-    void tick() {
-        if (topicTree) topicTree->drain();
-    }
 
     static TemplatedApp<SSL>* create(SocketContextOptions options = {}) {
         auto *app = new TemplatedApp<SSL>(options);
@@ -409,6 +406,8 @@ public:
         ctx->attach(httpContext->getSocketContextData(), allowHttp1);
         if constexpr (SSL) {
             us_ssl_ctx_enable_http2_alpn(sslCtx, allowHttp1);
+            /* Bun attaches before addServerName(), which enables ALPN itself;
+             * this covers embedders that add names first. */
             for (auto &p : pendingServerNames) {
                 us_ssl_ctx_enable_http2_alpn(p.ctx, allowHttp1);
             }
@@ -510,7 +509,17 @@ public:
                 return false;
             });
 
-            /* drained from tick() before and after every loop iteration */
+            /* And hook it up with the loop */
+            /* We empty for both pre and post just to make sure */
+            Loop::get()->addPostHandler(topicTree, [topicTree = topicTree](Loop */*loop*/) {
+                /* Commit pub/sub batches every loop iteration */
+                topicTree->drain();
+            });
+
+            Loop::get()->addPreHandler(topicTree, [topicTree = topicTree](Loop */*loop*/) {
+                /* Commit pub/sub batches every loop iteration */
+                topicTree->drain();
+            });
         }
 
         /* Every route has its own websocket context with its own behavior and user data type */
@@ -800,14 +809,5 @@ public:
 typedef TemplatedApp<false> App;
 typedef TemplatedApp<true> SSLApp;
 
-inline void Loop::tickApps(LoopData *loopData) {
-    /* A tick may run a nested loop iteration; don't re-enter, and iterate by
-     * index since an app may be created or destroyed from inside tick(). */
-    if (loopData->ticking) return;
-    loopData->ticking = true;
-    for (size_t i = 0; i < loopData->apps.size(); i++) loopData->apps[i]->tick();
-    for (size_t i = 0; i < loopData->sslApps.size(); i++) loopData->sslApps[i]->tick();
-    loopData->ticking = false;
-}
 
 }

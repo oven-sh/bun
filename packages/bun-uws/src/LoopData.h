@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <ctime>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -34,7 +35,6 @@
 namespace uWS {
 
 struct Loop;
-template <bool SSL> struct TemplatedApp;
 
 struct alignas(16) LoopData {
     friend struct Loop;
@@ -43,21 +43,8 @@ private:
     int currentDeferQueue = 0;
     std::vector<MoveOnlyFunction<void()>> deferQueues[2];
 
-public:
-    /* Apps on this loop; each gets tick() before and after every loop
-     * iteration (pub/sub drain, HTTP/2 sweep). See Loop::tickApps in App.h. */
-    std::vector<TemplatedApp<false> *> apps;
-    std::vector<TemplatedApp<true> *> sslApps;
-    bool ticking = false;
-    template <bool SSL> std::vector<TemplatedApp<SSL> *> &appsFor() {
-        if constexpr (SSL) return sslApps; else return apps;
-    }
-    template <bool SSL> void addApp(TemplatedApp<SSL> *app) { appsFor<SSL>().push_back(app); }
-    template <bool SSL> void removeApp(TemplatedApp<SSL> *app) {
-        auto &v = appsFor<SSL>();
-        for (size_t i = 0; i < v.size(); i++) if (v[i] == app) { v[i] = v.back(); v.pop_back(); break; }
-    }
-private:
+    /* Map from void ptr to handler */
+    std::map<void *, MoveOnlyFunction<void(Loop *)>> postHandlers, preHandlers;
 
     /* Cork data: two independent slots so a nested cork (e.g. a resumed async
      * request writing while the outer request is still corked) doesn't force

@@ -402,7 +402,7 @@ const server = Bun.serve({
 });
 ```
 
-Use `server.timeout(req, 0)` to keep a long-lived streaming response (like Server-Sent Events) alive without raising the global `idleTimeout` for every request:
+Use `server.timeout(req, 0)` to keep a long-lived streaming response (like Server-Sent Events) alive without raising the global `idleTimeout` for every request. Over HTTP/2 the timeout belongs to the connection, so the most permissive value among its open requests applies:
 
 ```ts
 Bun.serve({

@@ -1398,14 +1398,15 @@ impl S3DownloadStreamWrapper {
         if task.is_null() {
             return;
         }
-        // SAFETY (all three): see `task`.
+        // SAFETY: see `task`; `park` touches the stream's source, not the task.
+        let task = unsafe { &mut *task };
         match ProducerHold::after_delivery(bytes) {
-            AfterDelivery::Resume => unsafe { (*task).resume_receive() },
-            AfterDelivery::Pause => unsafe { (*task).signal_store.pause_receive() },
+            AfterDelivery::Resume => task.resume_receive(),
+            AfterDelivery::Pause => task.signal_store.pause_receive(),
             AfterDelivery::Park => {
-                unsafe { (*task).signal_store.pause_receive() };
+                task.signal_store.pause_receive();
                 if self.stream.park() {
-                    unsafe { (*task).poll_ref.unref(bun_io::js_vm_ctx()) };
+                    task.poll_ref.unref(bun_io::js_vm_ctx());
                 }
             }
         }

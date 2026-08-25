@@ -656,9 +656,13 @@ impl PostgresSQLQuery {
                         &signature,
                     ) {
                         if has_connection_entry {
-                            let _ = connection
+                            // A re-entrant run may have filled the reserved slot.
+                            if let Some(Some(stmt)) = connection
                                 .statements
-                                .with_mut(|m| m.remove(&signature.name[..]));
+                                .with_mut(|m| m.remove(&signature.name[..]))
+                            {
+                                stmt.deref();
+                            }
                         }
                         drop(signature);
                         release_query_ref();
@@ -688,9 +692,13 @@ impl PostgresSQLQuery {
                         writer,
                     ) {
                         if has_connection_entry {
-                            let _ = connection
+                            // A re-entrant run may have filled the reserved slot.
+                            if let Some(Some(stmt)) = connection
                                 .statements
-                                .with_mut(|m| m.remove(&signature.name[..]));
+                                .with_mut(|m| m.remove(&signature.name[..]))
+                            {
+                                stmt.deref();
+                            }
                         }
                         drop(signature);
                         release_query_ref();
@@ -698,9 +706,13 @@ impl PostgresSQLQuery {
                     }
                     if let Err(err) = writer.write(&protocol::SYNC) {
                         if has_connection_entry {
-                            let _ = connection
+                            // A re-entrant run may have filled the reserved slot.
+                            if let Some(Some(stmt)) = connection
                                 .statements
-                                .with_mut(|m| m.remove(&signature.name[..]));
+                                .with_mut(|m| m.remove(&signature.name[..]))
+                            {
+                                stmt.deref();
+                            }
                         }
                         drop(signature);
                         release_query_ref();

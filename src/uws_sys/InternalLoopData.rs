@@ -63,6 +63,10 @@ pub struct InternalLoopData {
     // Higher tier (`bun_runtime`) casts this back when reading.
     pub jsc_vm: *const c_void,
     pub tick_depth: c_int,
+    /// `uv_handle_t *` list of closing handles held back from a nested tick
+    /// (libuv.c `check_cb`).
+    #[cfg(windows)]
+    pub held_endgames: *mut c_void,
 }
 
 impl InternalLoopData {

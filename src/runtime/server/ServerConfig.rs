@@ -969,9 +969,7 @@ impl ServerConfig {
                         _ => {}
                     }
 
-                    // CLI `--define` and bunfig `[define]` apply to the
-                    // bundled graphs too; `[serve.static].define` wins on a
-                    // conflicting key.
+                    // `[serve.static].define` wins over the top-level define on a conflicting key.
                     let define = match (o.define.as_ref(), o.serve_define.as_ref()) {
                         (None, None) => None,
                         (Some(define), None) => Some(define.clone()),

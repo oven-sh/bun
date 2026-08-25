@@ -466,8 +466,7 @@ impl Route {
         config.define.put(b"import.meta.env.SSR", b"false")?;
         config.define.put(b"import.meta.env.STATIC", b"false")?;
 
-        // CLI `--define` and bunfig `[define]` apply first, then
-        // `[serve.static].define` so it wins on a conflicting key.
+        // `serve_define` is applied last so it wins on a conflicting key.
         for define in [&cli.args.define, &cli.args.serve_define]
             .into_iter()
             .flatten()

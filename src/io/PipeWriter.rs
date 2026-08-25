@@ -2053,8 +2053,8 @@ impl<Parent: WindowsStreamingWriterParent> BaseWindowsPipeWriter
     fn start_with_current_pipe(&mut self) -> sys::Result<()> {
         debug_assert!(self.source.is_some());
         self.is_done = false;
-        // A restart finds chunks queued behind a write the replaced source will not report.
-        if self.outgoing.is_not_empty() {
+        // Chunks queued behind a write the replaced source will not report; a `SyncFile` has none.
+        if self.outgoing.is_not_empty() && !matches!(self.source, Some(Source::SyncFile(_))) {
             self.process_send();
         }
         sys::Result::Ok(())

@@ -1360,8 +1360,10 @@ void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const
     for (size_t i = 0; i < headers.size(); i++) {
         rawHeaders->putDirectIndex(globalObject, i * 2,
             JSC::jsString(vm, WTF::String(headers[i].name.span())));
+        RETURN_IF_EXCEPTION(scope, );
         rawHeaders->putDirectIndex(globalObject, i * 2 + 1,
             JSC::jsString(vm, WTF::String(headers[i].value.span())));
+        RETURN_IF_EXCEPTION(scope, );
     }
     obj->putDirect(vm, builtinNames.rawHeadersPublicName(), rawHeaders);
 

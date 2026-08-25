@@ -754,6 +754,19 @@ test.concurrent("workspace package edge is re-pointed when run from the workspac
   await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
 });
 
+// #40393: a "*" range on a versionless workspace package resolves to the workspace,
+// so the package.json reparse must agree with bun.lock instead of refusing.
+test.concurrent("star dep on a versionless workspace package is in sync", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  await Promise.all([
+    write(packageJson, JSON.stringify({ name: "root", workspaces: ["app1", "package1"] })),
+    write(join(packageDir, "app1", "package.json"), JSON.stringify({ name: "app1", dependencies: { package1: "*" } })),
+    write(join(packageDir, "package1", "package.json"), JSON.stringify({ name: "package1" })),
+  ]);
+  await runBunInstall(installEnv(packageDir), packageDir);
+  await expectAlreadyDeduplicated(packageDir, 3);
+});
+
 test.concurrent("corrupt bun.lock fails without rewriting it", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
   await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0" } }));

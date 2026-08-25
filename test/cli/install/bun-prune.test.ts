@@ -575,6 +575,23 @@ test.concurrent("workspaces: prunes workspace folders, keeps workspace links, ru
   expect(existsSync(join(nm, "a-dep"))).toBeFalse();
 });
 
+// #40393: a "*" range on a versionless workspace package resolves to the workspace,
+// so the package.json reparse must agree with bun.lock instead of refusing.
+test.concurrent("workspaces: star dep on a versionless workspace package is in sync", async () => {
+  const { packageDir: dir, packageJson } = await registry.createTestDir();
+  await Promise.all([
+    write(packageJson, JSON.stringify({ name: "root", workspaces: ["app1", "package1"] })),
+    write(join(dir, "app1", "package.json"), JSON.stringify({ name: "app1", dependencies: { package1: "*" } })),
+    write(join(dir, "package1", "package.json"), JSON.stringify({ name: "package1" })),
+  ]);
+  await runBunInstall(installEnv(dir), dir);
+
+  const { stdout, stderr, exitCode } = await prune(dir);
+  expect(out(stdout)).toBe(`${BANNER}\n\n${NOTHING(2, 1)}`);
+  expect(stderr).not.toContain(OUT_OF_SYNC);
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("keeps dependencies bundled inside a package", async () => {
   const dir = await setup({ name: "foo", dependencies: { "bundled-transitive": "1.0.0" } });
   const bundled = join(dir, "node_modules", "bundled-transitive", "node_modules", "no-deps", "package.json");

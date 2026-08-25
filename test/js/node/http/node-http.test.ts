@@ -2156,12 +2156,13 @@ describe("HTTP Server Security Tests - Advanced", () => {
     });
     await once(server.listen(0), "listening");
     const raw = (path: string) =>
-      new Promise<Buffer>(resolve => {
+      new Promise<Buffer>((resolve, reject) => {
         const chunks: Buffer[] = [];
         const client = connect(server.address().port, "127.0.0.1", () =>
           client.write(`GET ${path} HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n`),
         );
         client.on("data", c => chunks.push(c));
+        client.on("error", reject);
         client.on("close", () => resolve(Buffer.concat(chunks)));
       });
     const lines = (await raw("/")).toString("latin1").split("\r\n");

@@ -69,8 +69,7 @@ it("new Request(invalid url) throws", () => {
 
 it("Response#blob().type is empty when Content-Type is not a valid MIME type", async () => {
   // File API: a type with any character outside U+0020..U+007E is the empty string.
-  const { createServer } = require("node:net");
-  await using server = createServer(socket => {
+  await using server = net.createServer(socket => {
     socket.on("data", () => {
       socket.end(
         Buffer.from(

@@ -155,8 +155,9 @@ impl ProducerHold {
             return false;
         }
         if let Some(source) = self.source.get() {
-            // SAFETY: live through our ref.
-            unsafe { (*source.as_ptr()).unroot_wrapper() };
+            // SAFETY: live through our ref. The caller may hold the `&ByteStream` of this very
+            // source (the chunk it just delivered), which is why this is not a method call.
+            unsafe { Source::unroot_wrapper(source.as_ptr()) };
         }
         true
     }
@@ -169,7 +170,7 @@ impl ProducerHold {
         }
         if let Some(source) = self.source.get() {
             // SAFETY: as in `park`.
-            unsafe { (*source.as_ptr()).root_wrapper() };
+            unsafe { Source::root_wrapper(source.as_ptr()) };
         }
         true
     }

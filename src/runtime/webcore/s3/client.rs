@@ -476,9 +476,10 @@ pub(crate) fn writable_stream(
     // MultiPartUpload.
     fn wrapper_callback_thunk(result: S3UploadResult, ctx: *mut c_void) -> JsResult<()> {
         let sink = ctx.cast::<NetworkSink>();
-        // SAFETY: ctx was set to `response_stream: *mut NetworkSink` below; the upload's hold
-        // on the box ends with this callback.
+        // SAFETY: ctx was set to `response_stream: *mut NetworkSink` below; the box is live
+        // while the upload holds it.
         let r = wrapper_callback(result, unsafe { &mut *sink });
+        // SAFETY: the upload's hold on the box ends here; `sink` is not used afterwards.
         unsafe { NetworkSink::release_writer_holder(sink) };
         r
     }

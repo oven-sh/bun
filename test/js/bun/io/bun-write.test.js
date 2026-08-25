@@ -1128,9 +1128,11 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
         expect.objectContaining({ code: "ERR_BODY_ALREADY_USED" }),
       );
       expect(await smallReader.read().then(r => r.value.byteLength)).toBe(5);
-      // A destination that cannot be opened leaves the body usable.
+      // A destination that cannot be opened (the directory itself) leaves the body usable.
       const retry = await fetch(server.url);
-      await expect(Bun.write(String(dir), retry)).rejects.toThrow();
+      await expect(Bun.write(String(dir), retry)).rejects.toThrow(
+        expect.objectContaining({ code: "EISDIR", syscall: "open" }),
+      );
       expect(retry.bodyUsed).toBe(false);
       expect((await retry.arrayBuffer()).byteLength).toBe(CHUNK * COUNT);
       await expect(

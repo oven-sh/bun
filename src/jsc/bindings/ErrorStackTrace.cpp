@@ -483,24 +483,23 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
     auto jstype = object->type();
     if (jstype == JSC::ProxyObjectType) return {};
 
-    // First try the "name" property.
+    // First try the "name" property. This names a frame for error output, so a
+    // custom getter that throws, or a rope that fails to resolve, is not an
+    // error to report here: clear it and fall through to the next strategy.
     {
-        WTF::String name;
         auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
-        if (object->getOwnNonIndexPropertySlot(vm, object->structure(), vm.propertyNames->name, slot)) {
-            if (!slot.isAccessor()) {
-                JSValue functionNameValue = slot.getValue(lexicalGlobalObject, vm.propertyNames->name);
-                if (!topExceptionScope.exception() && functionNameValue && functionNameValue.isString()) {
-                    name = functionNameValue.toWTFString(lexicalGlobalObject);
-                    if (!topExceptionScope.exception() && !name.isEmpty()) {
-                        return name;
-                    }
-                }
+        if (object->getOwnNonIndexPropertySlot(vm, object->structure(), vm.propertyNames->name, slot) && !slot.isAccessor()) {
+            JSValue functionNameValue = slot.getValue(lexicalGlobalObject, vm.propertyNames->name);
+            if (topExceptionScope.exception()) [[unlikely]]
+                (void)topExceptionScope.tryClearException();
+            else if (functionNameValue && functionNameValue.isString()) {
+                WTF::String name = functionNameValue.toWTFString(lexicalGlobalObject);
+                if (topExceptionScope.exception()) [[unlikely]]
+                    (void)topExceptionScope.tryClearException();
+                else if (!name.isEmpty())
+                    return name;
             }
-        }
-        if (topExceptionScope.exception()) [[unlikely]] {
-            (void)topExceptionScope.tryClearException();
         }
     }
 

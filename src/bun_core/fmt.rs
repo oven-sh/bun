@@ -1758,6 +1758,13 @@ impl RedactedKeywords {
             b"_auth" | b"_authToken" | b"token" | b"_password" | b"password" | b"email"
         )
     }
+
+    /// Prefix match, as loose as the ini parser's option matching (`_auth` also covers `_authToken`).
+    pub(crate) fn has_prefix(s: &[u8]) -> bool {
+        [b"_auth".as_slice(), b"token", b"_password", b"email"]
+            .iter()
+            .any(|k| s.starts_with(k))
+    }
 }
 
 impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
@@ -1803,8 +1810,9 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                         bstr::BStr::new(&text[..i]),
                     )?;
                 } else {
-                    should_redact_value =
-                        self.opts.redact_sensitive_information && RedactedKeywords::has(&text[..i]);
+                    should_redact_value = self.opts.redact_sensitive_information
+                        && (RedactedKeywords::has(&text[..i])
+                            || RedactedKeywords::has_prefix(&text[..i]));
                     'write: {
                         if let Some(prev) = prev_keyword {
                             match prev {
@@ -2075,6 +2083,17 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                     )?;
                                     text = &text[i..];
                                     continue 'outer;
+                                }
+
+                                // A quoted ini key (`"//host/:_authToken"=v`) never reaches the
+                                // identifier path; arm redaction here, after the value redactors.
+                                let mut rest: &[u8] = inner;
+                                while let Some(colon) = strings::index_of_char(rest, b':') {
+                                    rest = &rest[colon as usize + 1..];
+                                    if RedactedKeywords::has_prefix(rest) {
+                                        should_redact_value = true;
+                                        break;
+                                    }
                                 }
                             }
 

@@ -226,10 +226,15 @@ extern "C" fn Bun__getDefaultLoader(
     loader
 }
 
-/// The `ns` of an `ns:path` key when `ns` has onLoad callbacks, as in `moduleLoaderResolve`.
+/// The `ns` of an `ns:path` key when `ns` has onLoad callbacks. A Windows drive path is never one.
 fn registered_on_load_namespace<'a>(global: &JSGlobalObject, key: &'a [u8]) -> Option<&'a [u8]> {
     let colon = bun_core::strings::index_of_char_usize(key, b':')?;
-    let is_windows_drive = colon == 1 && key[0].is_ascii_alphabetic();
+    let is_windows_drive = cfg!(windows)
+        && colon == 1
+        && bun_paths::resolve_path::is_drive_letter(key[0])
+        && key
+            .get(2)
+            .is_some_and(|&c| bun_paths::resolve_path::is_sep_any(c));
     if colon == 0 || is_windows_drive {
         return None;
     }

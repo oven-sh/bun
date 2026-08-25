@@ -959,24 +959,31 @@ it.concurrent.skipIf(isWindows)("onLoad runs in the file namespace for a path th
 });
 
 // The key of a module in the namespace "/virtual" is "/virtual:foo.txt", which
-// also reads as an absolute path. The registered namespace wins.
-it.concurrent("onLoad runs in a registered namespace whose key looks like an absolute path", async () => {
+// also reads as an absolute path, and the key "a:boop" of the namespace "a"
+// reads like a Windows drive. The registered namespace wins in both cases.
+it.concurrent("onLoad runs in a registered namespace whose key looks like a path", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
         Bun.plugin({
-          name: "slash-namespace",
+          name: "path-like-namespaces",
           setup(build) {
             build.onResolve({ filter: /^virt\\.mod$/ }, () => ({ path: "foo.txt", namespace: "/virtual" }));
             build.onLoad({ filter: /.*/, namespace: "/virtual" }, args => ({
               contents: "export default " + JSON.stringify("virtual:" + args.path) + ";",
               loader: "js",
             }));
+            build.onResolve({ filter: /^one\\.mod$/ }, () => ({ path: "boop", namespace: "a" }));
+            build.onLoad({ filter: /.*/, namespace: "a" }, args => ({
+              exports: { value: "a:" + args.path },
+              loader: "object",
+            }));
           },
         });
         console.log((await import("virt.mod")).default);
+        console.log(require("one.mod").value);
       `,
     ],
     env: bunEnv,
@@ -984,7 +991,7 @@ it.concurrent("onLoad runs in a registered namespace whose key looks like an abs
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout.trim() || stderr).toBe("virtual:foo.txt");
+  expect(stdout.trim() || stderr).toBe("virtual:foo.txt\na:boop");
   expect(exitCode).toBe(0);
 });
 

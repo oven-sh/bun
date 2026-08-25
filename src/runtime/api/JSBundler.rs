@@ -598,8 +598,17 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(depth) = config.get_optional_int::<u32>(global_this, "bytecodeDepth")? {
-                this.bytecode_depth = depth;
+            if let Some(value) = config.get(global_this, "bytecodeDepth")? {
+                if value.is_number() && value.as_number().is_nan() {
+                    return Err(global_this.throw_invalid_property_type_value(
+                        b"bytecodeDepth",
+                        b"integer",
+                        value,
+                    ));
+                }
+                if let Some(depth) = config.get_optional_int::<u32>(global_this, "bytecodeDepth")? {
+                    this.bytecode_depth = depth;
+                }
             }
 
             if let Some(react_fast_refresh) =

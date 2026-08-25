@@ -48,7 +48,7 @@ Without `--compile`, ESM bytecode would still require parsing the source to anal
 
 ### Limiting bytecode depth
 
-By default, Bun compiles every function in the bundle to bytecode, including functions nested inside other functions. Use `--bytecode-depth` to compile only the top `N` levels of nesting. Functions past that limit are compiled from source when they are first called.
+By default, Bun compiles every function in the bundle to bytecode, including functions nested inside other functions. Use `--bytecode-depth` (a non-negative integer) to compile only the top `N` levels of nesting. Functions past that limit are compiled from source when they are first called.
 
 ```bash terminal icon="terminal"
 # Only the top-level code of each module, no nested functions

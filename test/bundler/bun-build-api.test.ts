@@ -121,7 +121,7 @@ describe("Bun.build", () => {
       "package.json": `{}`,
       "index.ts": nestedSource,
     });
-    for (const bytecodeDepth of [-1, 1.5, "abc", Infinity]) {
+    for (const bytecodeDepth of [-1, 1.5, "abc", Infinity, NaN]) {
       expect(() =>
         Bun.build({
           entrypoints: [join(dir, "index.ts")],
@@ -150,8 +150,9 @@ describe("Bun.build", () => {
         stderr: "pipe",
         stdout: "pipe",
       });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
+      expect(stdout).toContain("index.js.jsc");
       expect(exitCode).toBe(0);
       expect(await bunRun(join(outdir, "index.js"))).toSpawn("world");
       return Bun.file(join(outdir, "index.js.jsc")).size;
@@ -170,8 +171,9 @@ describe("Bun.build", () => {
       stderr: "pipe",
       stdout: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain('Invalid value for --bytecode-depth: "nope"');
+    expect(stdout).toBe("");
     expect(exitCode).toBe(1);
   });
 

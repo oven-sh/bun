@@ -3358,8 +3358,8 @@ declare module "bun" {
      * limit are compiled from source when first called. Lower values make the
      * bytecode smaller at the cost of some startup work.
      *
-     * Only used when `bytecode: true`.
-     * @default Infinity (all nested functions)
+     * Must be a non-negative integer. Only used when `bytecode: true`.
+     * @default undefined (all nested functions)
      */
     bytecodeDepth?: number;
 

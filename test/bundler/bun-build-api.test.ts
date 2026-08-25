@@ -1992,3 +1992,63 @@ test.skipIf(isWindows)(
   },
   30_000,
 );
+
+// https://github.com/oven-sh/bun/issues/40472
+// `production: true` must behave like the CLI's `--production`: inline
+// process.env.NODE_ENV as "production" and enable minification. Each test
+// spawns a subprocess because `bun test` sets NODE_ENV=test, which would win
+// over the production default in-process.
+describe("Bun.build production option", () => {
+  const files = {
+    "index.js": `console.log(process.env.NODE_ENV);\nfunction longFunctionName() {\n  return 1 + 2;\n}\nlongFunctionName();\n`,
+    "index.html": `<!doctype html><html><head><script type="module" src="./index.js"></script></head><body>hi</body></html>`,
+  };
+
+  async function buildAndReadOutput(dir: string, configJson: string, entry: string) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const result = await Bun.build({ entrypoints: [${JSON.stringify(entry)}], outdir: "./dist", ...${configJson} });
+         if (!result.success) throw new AggregateError(result.logs);
+         const js = result.outputs.find(o => o.path.endsWith(".js"));
+         console.write(await js.text());`,
+      ],
+      env: bunEnv,
+      cwd: dir,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return stdout;
+  }
+
+  test.concurrent("production: true inlines NODE_ENV and minifies", async () => {
+    using dir = tempDir("build-production", files);
+    const output = await buildAndReadOutput(String(dir), `{ production: true }`, "./index.js");
+    expect(output).toContain('console.log("production")');
+    expect(output).not.toContain("longFunctionName");
+  });
+
+  test.concurrent("production: true works with an HTML entrypoint", async () => {
+    using dir = tempDir("build-production-html", files);
+    const output = await buildAndReadOutput(String(dir), `{ production: true }`, "./index.html");
+    expect(output).toContain('console.log("production")');
+    expect(output).not.toContain("longFunctionName");
+  });
+
+  test.concurrent("an explicit minify overrides the production default", async () => {
+    using dir = tempDir("build-production-minify", files);
+    const output = await buildAndReadOutput(String(dir), `{ production: true, minify: false }`, "./index.js");
+    expect(output).toContain('console.log("production")');
+    expect(output).toContain("longFunctionName");
+  });
+
+  test.concurrent("production: false keeps the development defaults", async () => {
+    using dir = tempDir("build-no-production", files);
+    const output = await buildAndReadOutput(String(dir), `{ production: false }`, "./index.js");
+    expect(output).toContain('console.log("development")');
+    expect(output).toContain("longFunctionName");
+  });
+});

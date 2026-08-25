@@ -1378,7 +1378,7 @@ impl<'a> BundleOptions<'a> {
         self.rewrite_jest_for_tests
     }
 
-    pub(crate) fn set_production(&mut self, value: bool) {
+    pub fn set_production(&mut self, value: bool) {
         if self.force_node_env == ForceNodeEnv::Unspecified {
             self.production = value;
             self.jsx.development = !value;

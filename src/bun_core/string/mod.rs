@@ -41,6 +41,7 @@ pub mod identifier;
 
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicUsize, Ordering};
+use std::borrow::Cow;
 pub use wtf::{WTFStringImpl, WTFStringImplExt, WTFStringImplStruct};
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -693,6 +694,18 @@ impl String {
             Tag::EncodedSlice => self.encoded().to_utf8(),
             Tag::StaticEncodedSlice => Utf8Bytes::Borrowed(self.static_bytes()),
             _ => Utf8Bytes::EMPTY,
+        }
+    }
+    /// Isomorphic encode (one byte per code unit): borrows 8-bit storage,
+    /// truncates each UTF-16 unit to its low byte. Not for UTF-8-tagged strings.
+    pub fn to_latin1(&self) -> Cow<'_, [u8]> {
+        match self.tag {
+            Tag::WTFStringImpl if self.as_wtf().is_8bit() => {
+                Cow::Borrowed(self.as_wtf().latin1_slice())
+            }
+            Tag::WTFStringImpl => Cow::Owned(narrow_utf16_to_latin1(self.as_wtf().utf16_slice())),
+            Tag::EncodedSlice | Tag::StaticEncodedSlice => self.encoded().to_latin1(),
+            _ => Cow::Borrowed(&[]),
         }
     }
     /// Consuming [`to_utf8`] for storing the result: moves `self`'s ref into
@@ -1436,11 +1449,26 @@ impl<'a> EncodedSlice<'a> {
         }
         Utf8Bytes::Borrowed(bytes)
     }
+    /// Isomorphic encode (one byte per code unit): borrows 8-bit storage,
+    /// truncates each UTF-16 unit to its low byte. Not for UTF-8-tagged slices.
+    pub fn to_latin1(self) -> Cow<'a, [u8]> {
+        if self.is_16bit() {
+            return Cow::Owned(narrow_utf16_to_latin1(self.utf16_slice()));
+        }
+        debug_assert!(!self.is_utf8() || strings::is_all_ascii(self.slice()));
+        Cow::Borrowed(self.slice())
+    }
 
     /// Allocate a fresh UTF-8 `Vec<u8>` regardless of the source encoding.
     pub fn to_owned_slice(self) -> Vec<u8> {
         self.to_utf8().into_vec()
     }
+}
+
+fn narrow_utf16_to_latin1(units: &[u16]) -> Vec<u8> {
+    let mut bytes = vec![0u8; units.len()];
+    strings::copy_u16_into_u8(&mut bytes, units);
+    bytes
 }
 
 /// UTF-8 bytes derived from a string: borrowed when the source is already

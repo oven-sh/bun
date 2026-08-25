@@ -940,11 +940,14 @@ impl NodeHTTPResponse {
         };
 
         let status_message_view;
-        let status_message_slice;
+        let status_message_latin1;
+        let mut status_message_fits_latin1 = true;
         let status_message_bytes: &[u8] = if !status_message_value.is_undefined() {
             status_message_view = status_message_value.to_js_string_view(global_object)?;
-            status_message_slice = status_message_view.to_utf8();
-            status_message_slice.slice()
+            status_message_fits_latin1 = !status_message_view.is_utf16()
+                || status_message_view.utf16().iter().all(|&c| c <= 0xFF);
+            status_message_latin1 = status_message_view.to_latin1();
+            &status_message_latin1
         } else {
             &[]
         };
@@ -957,17 +960,17 @@ impl NodeHTTPResponse {
             );
         }
 
-        // Validate status message does not contain invalid characters (defense-in-depth
-        // against HTTP response splitting). Matches Node.js checkInvalidHeaderChar:
-        // rejects any char not in [\t\x20-\x7e\x80-\xff].
-        for &c in status_message_bytes {
-            if c != b'\t' && (c < 0x20 || c == 0x7f) {
-                return err_throw(
-                    global_object,
-                    ErrorCode::ERR_INVALID_CHAR,
-                    "Invalid character in statusMessage",
-                );
-            }
+        // Matches Node.js checkInvalidHeaderChar: rejects any char not in [\t\x20-\x7e\x80-\xff].
+        if !status_message_fits_latin1
+            || status_message_bytes
+                .iter()
+                .any(|&c| c != b'\t' && (c < 0x20 || c == 0x7f))
+        {
+            return err_throw(
+                global_object,
+                ErrorCode::ERR_INVALID_CHAR,
+                "Invalid character in statusMessage",
+            );
         }
 
         'do_it: {

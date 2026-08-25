@@ -1885,7 +1885,7 @@ impl JSFrameworkRouter {
                         // key/value borrow from `path`/pattern, both live here (RawSlice invariant)
                         params_obj.put(
                             global,
-                            param.key.slice(),
+                            bun_core::String::borrow_utf8(param.key.slice()),
                             bun_string_jsc::create_utf8_for_js(global, param.value.slice())?,
                         );
                     }

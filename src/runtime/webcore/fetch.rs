@@ -1226,16 +1226,16 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // an opaque ZST FFI handle (S008) — safe `*mut → &mut` deref.
             let headers_ref = bun_opaque::opaque_deref_mut(headers_);
             if let Some(hostname_) = headers_ref.fast_get(HTTPHeaderName::Host) {
-                hostname = Some(hostname_.to_owned_slice().into_boxed_slice());
+                hostname = Some(hostname_.to_latin1().into_owned().into_boxed_slice());
             }
             if url.is_s3() {
                 if let Some(range_) = headers_ref.fast_get(HTTPHeaderName::Range) {
-                    range = Some(range_.to_owned_slice_z());
+                    range = Some(bun_core::ZBox::from_bytes(&*range_.to_latin1()));
                 }
             }
 
             if let Some(upgrade_) = headers_ref.fast_get(HTTPHeaderName::Upgrade) {
-                if http::upgrade_header_is_not_h2(upgrade_.to_utf8().slice()) {
+                if http::upgrade_header_is_not_h2(&upgrade_.to_latin1()) {
                     upgraded_connection = true;
                 }
             }

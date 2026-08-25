@@ -2137,6 +2137,41 @@ describe("HTTP Server Security Tests - Advanced", () => {
     });
   });
 
+  test("statusMessage and header values are written as Latin-1, like Node", async () => {
+    await using server = http.createServer((req, res) => {
+      if (req.url === "/wide") {
+        let code;
+        try {
+          res.writeHead(200, "O\u0100K");
+        } catch (e: any) {
+          code = e.code;
+        }
+        res.statusMessage = "OK";
+        res.end(String(code));
+        return;
+      }
+      res.setHeader("x-h", "café");
+      res.writeHead(200, "OKé");
+      res.end();
+    });
+    await once(server.listen(0), "listening");
+    const raw = (path: string) =>
+      new Promise<Buffer>(resolve => {
+        const chunks: Buffer[] = [];
+        const client = connect(server.address().port, "127.0.0.1", () =>
+          client.write(`GET ${path} HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n`),
+        );
+        client.on("data", c => chunks.push(c));
+        client.on("close", () => resolve(Buffer.concat(chunks)));
+      });
+    const lines = (await raw("/")).toString("latin1").split("\r\n");
+    expect(lines[0]).toBe("HTTP/1.1 200 OKé");
+    expect(lines).toContain("x-h: café");
+    const wide = (await raw("/wide")).toString("latin1");
+    expect(wide.split("\r\n")[0]).toBe("HTTP/1.1 200 OK");
+    expect(wide).toEndWith("ERR_INVALID_CHAR");
+  });
+
   test("Server should not crash in clientError is emitted when calling destroy", async () => {
     // A Host-less request is NOT a client error in Node: parserOnIncoming answers
     // it with 400 itself. An invalid method is what reaches 'clientError'.

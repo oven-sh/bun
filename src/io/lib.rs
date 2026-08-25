@@ -478,7 +478,9 @@ pub mod write;
 // Byte-level `Write` trait + helpers. Downstream
 // crates name these as `bun_io::Write` / `bun_io::FmtAdapter` /
 // `bun_io::Result`.
-pub use write::{AsFmt, DiscardingWriter, FixedBufferStream, FmtAdapter, IntLe, Result, Write};
+pub use write::{
+    AsFmt, DiscardingWriter, FixedBufferStream, FmtAdapter, IntLe, IoWriterAdapter, Result, Write,
+};
 
 pub use max_buf as MaxBuf;
 pub use pipes::{Chunk, FileType, ReadState};

@@ -164,6 +164,53 @@ pub trait Taskable {
     unsafe fn release_unrun(this: *mut Self);
 }
 
+/// A [`Taskable`] whose queued [`Task::ptr`] is always an owned `Box<Self>`
+/// ([`Task::from_boxed`] / `VmHandle::post_boxed`): the dispatch arm for
+/// `TAG` reclaims the box to run it, and [`release_unrun`](Self::release_unrun)
+/// receives it when it will never run. Implemented through [`boxed_task!`],
+/// which is where the tag ↔ type pairing is asserted.
+///
+/// # Safety
+/// `TAG`'s arm in `bun_runtime::dispatch::run_task` must reclaim exactly a
+/// `Box<Self>`; a mismatched tag makes the dispatcher reinterpret the box.
+pub unsafe trait BoxedTask: Sized {
+    /// See [`Taskable::TAG`].
+    const TAG: TaskTag;
+    /// See [`Taskable::release_unrun`].
+    fn release_unrun(self: Box<Self>);
+}
+
+impl<T: BoxedTask> Taskable for T {
+    const TAG: TaskTag = T::TAG;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — `this` was queued under `T::TAG`, which for a
+        // `BoxedTask` is only ever the box `Task::from_boxed` leaked.
+        BoxedTask::release_unrun(unsafe { bun_core::heap::take(this) });
+    }
+}
+
+/// Pair a boxed task type with its dispatch tag:
+///
+/// ```ignore
+/// bun_event_loop::boxed_task! {
+///     impl[const RI: bool] for MyTask<RI> => task_tag::MyTask;
+///     fn release_unrun(self) { drop(self) }
+/// }
+/// ```
+///
+/// The tag named here and the `run_task` arm that `heap::take`s this type are
+/// the two halves of one contract; keep them next to each other in review.
+#[macro_export]
+macro_rules! boxed_task {
+    (impl$([$($gen:tt)*])? for $ty:ty => $tag:expr; fn release_unrun($this:ident) $body:block) => {
+        // SAFETY: the invoker names the `run_task` arm that reclaims `Box<$ty>`.
+        unsafe impl$(<$($gen)*>)? $crate::BoxedTask for $ty {
+            const TAG: $crate::TaskTag = $tag;
+            fn release_unrun($this: ::std::boxed::Box<Self>) $body
+        }
+    };
+}
+
 impl TaskTag {
     /// The tag's identifier, for diagnostics.
     pub fn name(self) -> &'static str {

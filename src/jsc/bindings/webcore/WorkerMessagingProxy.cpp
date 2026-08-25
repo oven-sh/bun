@@ -49,7 +49,8 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(WorkerMessagingProxy);
 extern "C" {
 
 // Allocates the thread object holding one ref for the caller, takes the keep-alive on the parent
-// event loop, and spawns the thread. Null (with errorMessage set) if nothing was started.
+// event loop, and spawns the thread. Null (with errorMessage set) if nothing was started. The
+// string arrays are copied before it returns.
 void* WebWorker__create(
     WorkerMessagingProxy*,
     void* parentVM,
@@ -62,12 +63,12 @@ void* WebWorker__create(
     bool unrefByDefault,
     bool evalMode,
     bool isNodeWorker,
-    StringImpl** argvPtr,
+    const BunString* argvPtr,
     size_t argvLen,
     bool defaultExecArgv,
-    StringImpl** execArgvPtr,
+    const BunString* execArgvPtr,
     size_t execArgvLen,
-    BunString* preloadModulesPtr,
+    const BunString* preloadModulesPtr,
     size_t preloadModulesLen);
 // Raise a TerminationException in the worker VM at its next safepoint and wake its loop. Any thread.
 void WebWorker__requestTermination(void*);
@@ -133,12 +134,10 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
         preloadModules.append(Bun::toString(str));
     }
 
-    static_assert(sizeof(WTF::String) == sizeof(WTF::StringImpl*));
-    std::span<WTF::StringImpl*> execArgv = m_options.execArgv
-                                               .transform([](Vector<String>& vec) -> std::span<WTF::StringImpl*> {
-                                                   return { reinterpret_cast<WTF::StringImpl**>(vec.begin()), vec.size() };
-                                               })
-                                               .value_or(std::span<WTF::StringImpl*> {});
+    Vector<BunString> argv = m_options.argv.map([](const String& str) { return Bun::toString(str); });
+    Vector<BunString> execArgv;
+    if (m_options.execArgv)
+        execArgv = m_options.execArgv->map([](const String& str) { return Bun::toString(str); });
 
     // The thread holds a ref on the proxy until releaseWorkerThread().
     ref();
@@ -157,10 +156,10 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
         m_options.unref,
         m_options.evalMode,
         m_options.kind == WorkerOptions::Kind::Node,
-        reinterpret_cast<WTF::StringImpl**>(m_options.argv.begin()),
-        m_options.argv.size(),
+        argv.begin(),
+        argv.size(),
         !m_options.execArgv.has_value(),
-        execArgv.data(),
+        execArgv.begin(),
         execArgv.size(),
         preloadModules.begin(),
         preloadModules.size());

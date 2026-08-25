@@ -41,8 +41,7 @@ pub use crate::http_server_agent::HTTPServerAgent;
 /// The fields are private so every outside access flows through the named
 /// accessors below, keeping the owning module's interpretation the only one.
 ///
-/// Both fields are `Copy`, so `Cell<T>` gives interior mutability with zero
-/// `unsafe`.
+/// Both fields are `Copy`, so `Cell<T>` is all the interior mutability needed.
 pub struct ErasedAgentSlot {
     agent: Cell<*mut c_void>,
     sequence: Cell<i32>,
@@ -259,44 +258,18 @@ impl Debugger {
             // delay (Windows lacks a working `tickWithTimeout`). TODO: remove
             // this when tickWithTimeout actually works properly on Windows.
             use bun_sys::windows::libuv as uv;
-            use bun_sys::windows::libuv::UvHandle as _;
             if wait == Wait::Shortly {
-                let uv_loop = this.uv_loop();
-                // SAFETY: `uv_loop` is a live initialized `uv_loop_t`.
-                unsafe { uv::uv_update_time(uv_loop) };
-                let timer: *mut uv::Timer =
-                    bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed()));
-                // SAFETY: `timer` freshly allocated; `uv_loop` valid.
-                unsafe { (*timer).init(uv_loop) };
-
-                extern "C" fn on_debugger_timer(handle: *mut uv::Timer) {
-                    // SAFETY: `vm` is the per-thread singleton; called on the
-                    // JS thread (libuv timer callback). Unwinding across
-                    // `extern "C"` is UB so we early-return if no debugger.
+                fn on_debugger_timer() {
+                    // JS thread (libuv timer callback).
                     if let Some(d) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
                         d.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
                     }
-                    // SAFETY: `handle` is a live `uv_timer_t` (`uv_handle_t`
-                    // at offset 0); `deinit_timer` matches `uv_close_cb`.
-                    unsafe {
-                        uv::uv_close(handle.cast(), Some(deinit_timer));
-                    }
                 }
-                extern "C" fn deinit_timer(handle: *mut uv::uv_handle_t) {
-                    // SAFETY: `handle` is the `Box<Timer>` allocated above
-                    // (cast through `uv_handle_t` at offset 0); this is the
-                    // sole owner reclaiming it after `uv_close` completes.
-                    drop(unsafe { bun_core::heap::take(handle.cast::<uv::Timer>()) });
-                }
-                // SAFETY: `timer` initialized above.
-                unsafe {
-                    (*timer).start(
-                        WAIT_FOR_CONNECTION_DELAY_MS as u64,
-                        0,
-                        Some(on_debugger_timer),
-                    );
-                    (*timer).ref_();
-                }
+                uv::Timer::one_shot(
+                    this.uv_loop(),
+                    WAIT_FOR_CONNECTION_DELAY_MS as u64,
+                    on_debugger_timer,
+                );
             }
         }
 
@@ -377,9 +350,8 @@ impl Debugger {
         if HAS_CREATED_DEBUGGER.swap(true, Ordering::Relaxed) {
             return Ok(());
         }
-        // `#[unsafe(no_mangle)]` already prevents the linker from stripping
-        // the exported `Bun__*Agent*` symbols, so no explicit keep-alive
-        // references are needed.
+        // The exported (`no_mangle`) `Bun__*Agent*` symbols cannot be stripped
+        // by the linker, so no explicit keep-alive references are needed.
 
         // `this` is the live per-thread VM; same allocation as
         // `VirtualMachine::get()` — route through the safe thread-local
@@ -456,17 +428,7 @@ impl Debugger {
         vm.is_main_thread = false;
         vm.event_loop_mut().ensure_waker();
 
-        extern "C" fn start_trampoline(ctx: *mut c_void) {
-            // SAFETY: `ctx` is `&mut slot` below; `hold_api_lock` calls this
-            // synchronously on the same frame.
-            let init = unsafe { (*ctx.cast::<Option<DebuggerThreadInit>>()).take() };
-            Debugger::start(init.expect("init"));
-        }
-        let mut slot = Some(init);
-        #[allow(deprecated)]
-        vm.global()
-            .vm()
-            .hold_api_lock((&raw mut slot).cast(), start_trampoline);
+        vm.run_with_api_lock(move || Debugger::start(init));
     }
 
     /// Runs inside `holdAPILock` on the debugger thread. Publishes the
@@ -580,9 +542,7 @@ pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: boo
         opts.debugger = true;
     }
 
-    let global = this.global;
-    // SAFETY: `global` is set during `VirtualMachine::init` and outlives the VM.
-    if Debugger::create(VirtualMachine::get_mut_ptr(), unsafe { &*global }).is_err() {
+    if Debugger::create(VirtualMachine::get_mut_ptr(), this.global()).is_err() {
         this.as_mut().debugger = None;
         return false;
     }
@@ -873,9 +833,8 @@ impl TestReporterHandle {
 }
 
 // HOST_EXPORT(Bun__TestReporterAgentEnable, c)
-pub fn test_reporter_agent_enable(agent: *mut TestReporterHandle) {
-    // SAFETY: `VirtualMachine::get()` returns the per-thread singleton; called
-    // on the JS thread.
+pub fn test_reporter_agent_enable(agent: &mut TestReporterHandle) {
+    // JS thread.
     if let Some(dbg) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
         bun_core::scoped_log!(TestReporterAgent, "enable");
         dbg.test_reporter_agent.handle = agent;
@@ -887,13 +846,10 @@ pub fn test_reporter_agent_enable(agent: *mut TestReporterHandle) {
         // the test runner (`bun_test.DescribeScope`), which lives in `bun_runtime::test_runner`
         // — a forward-dep cycle. Dispatched through [`RuntimeHooks`].
         if let Some(hooks) = runtime_hooks() {
-            // SAFETY: `handle` is the live C++ agent just stored above.
-            dbg.test_reporter_agent.next_test_id = unsafe {
-                (hooks.retroactively_report_discovered_tests)(
-                    dbg.test_reporter_agent.handle,
-                    dbg.test_reporter_agent.next_test_id,
-                )
-            };
+            dbg.test_reporter_agent.next_test_id = (hooks.retroactively_report_discovered_tests)(
+                agent,
+                dbg.test_reporter_agent.next_test_id,
+            );
         }
     }
 }

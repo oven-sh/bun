@@ -948,16 +948,18 @@ describe.concurrent("--outfile extension implies the output format", () => {
     expect(output).toContain("module.exports");
   });
 
+  const conditionalExportsPkg = {
+    "entry.ts": `import { which } from "mypkg";\nconsole.log(which);\n`,
+    "node_modules/mypkg/package.json": JSON.stringify({
+      name: "mypkg",
+      exports: { node: "./node.js", default: "./browser.js" },
+    }),
+    "node_modules/mypkg/node.js": `export const which = "node-branch";\n`,
+    "node_modules/mypkg/browser.js": `export const which = "browser-branch";\n`,
+  };
+
   test(".cjs outfile defaults the target to node like --format=cjs", async () => {
-    using dir = tempDir("outfile-cjs-target", {
-      "entry.ts": `import { which } from "mypkg";\nconsole.log(which);\n`,
-      "node_modules/mypkg/package.json": JSON.stringify({
-        name: "mypkg",
-        exports: { node: "./node.js", default: "./browser.js" },
-      }),
-      "node_modules/mypkg/node.js": `export const which = "node-branch";\n`,
-      "node_modules/mypkg/browser.js": `export const which = "browser-branch";\n`,
-    });
+    using dir = tempDir("outfile-cjs-target", conditionalExportsPkg);
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "entry.ts", "--outfile", "out.cjs"],
       env: bunEnv,
@@ -969,6 +971,23 @@ describe.concurrent("--outfile extension implies the output format", () => {
     expect(stderr).not.toContain("error");
     expect(exitCode).toBe(0);
     const output = await Bun.file(path.join(String(dir), "out.cjs")).text();
+    expect(output).toContain("node-branch");
+    expect(output).not.toContain("browser-branch");
+  });
+
+  test("explicit --format=cjs defaults the target to node", async () => {
+    using dir = tempDir("format-cjs-target", conditionalExportsPkg);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "entry.ts", "--format=cjs", "--outfile", "out.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+    const output = await Bun.file(path.join(String(dir), "out.js")).text();
     expect(output).toContain("node-branch");
     expect(output).not.toContain("browser-branch");
   });

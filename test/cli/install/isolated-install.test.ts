@@ -2187,7 +2187,7 @@ test.concurrent("transitive peer deps are resolved when resolution is fully sync
 // task, resolves the package with no new task (tarball already extracted), and
 // defers its peer `no-deps@^2.0.0`. Without the fix nothing wakes the wait
 // loop again and `bun install` hangs in "Resolving dependencies" forever.
-test("transitive peer resolves when its tarball is cached from another registry", async () => {
+test.concurrent("transitive peer resolves when its tarball is cached from another registry", async () => {
   using serverA = serveFixtures();
   using serverB = serveFixtures();
 
@@ -2201,7 +2201,10 @@ test("transitive peer resolves when its tarball is cached from another registry"
       dependencies: { "no-deps": "1.0.0", "uses-strict-peer": "1.0.0" },
     }),
   });
-  const cacheDir = join(String(root), "cache").replaceAll("\\", "\\\\");
+  // The two projects share one cache, and only with each other: `env` pins
+  // it to `<root>/.bun-cache`, the directory the bunfigs name.
+  const env = installEnv(String(root));
+  const cacheDir = join(String(root), ".bun-cache").replaceAll("\\", "\\\\");
   const bunfig = (port: number) =>
     `[install]\ncache = "${cacheDir}"\nregistry = "http://localhost:${port}/"\nlinker = "isolated"\n`;
   await write(join(String(root), "warmup", "bunfig.toml"), bunfig(serverA.port));
@@ -2209,10 +2212,10 @@ test("transitive peer resolves when its tarball is cached from another registry"
 
   // Caches strict-peer-dep's manifest (registry A's URL hash) and extracts its
   // tarball (shared across registries).
-  await runBunInstall(bunEnv, join(String(root), "warmup"), { allowWarnings: true });
+  await runBunInstall(env, join(String(root), "warmup"), { allowWarnings: true });
 
   // Hangs forever without the fix.
-  await runBunInstall(bunEnv, join(String(root), "cold"), { allowWarnings: true });
+  await runBunInstall(env, join(String(root), "cold"), { allowWarnings: true });
 
   const bunDir = join(String(root), "cold", "node_modules", ".bun");
   const entries = await readdirSorted(bunDir);

@@ -898,9 +898,6 @@ impl ClientSession {
     }
 
     fn handle_writable(&mut self) {
-        if let Err(err) = self.flush() {
-            return self.fail_all(err);
-        }
         if let Err(err) = self.pump_send_bodies() {
             return self.fail_all(err);
         }

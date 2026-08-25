@@ -2033,7 +2033,7 @@ fn spawn_maybe_sync(
 
     subprocess.update_has_pending_activity();
 
-    let signal_code = SubprocessT::get_signal_code(subprocess, global_this);
+    let signal_code = SubprocessT::get_signal_code(subprocess, global_this)?;
     let exit_code = SubprocessT::get_exit_code(subprocess, global_this);
     // Propagated after `finalize`, which must run even when building the output throws.
     let output = subprocess

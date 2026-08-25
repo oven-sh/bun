@@ -379,37 +379,72 @@ impl String {
         let _ = buf.write_fmt(args);
         Self::clone_utf8(buf.as_bytes())
     }
-    /// Returns `(String, ptr)` where `ptr` is `len` writable bytes — or
-    /// `(dead, null)` if WTF allocation failed (check `tag == .Dead` before
-    /// using the buffer).
-    pub fn create_uninitialized_latin1(len: usize) -> (Self, &'static mut [u8]) {
+    /// One WTF 8-bit allocation of `len` characters, written by `fill` before
+    /// the string is observable. `Err` if WTF could not allocate it (which
+    /// includes `len` over the maximum string length).
+    #[inline]
+    pub fn create_latin1_with(
+        len: usize,
+        fill: impl FnOnce(&mut [u8]),
+    ) -> Result<Self, crate::AllocError> {
+        Self::try_create_latin1_with(len, |buf| {
+            fill(buf);
+            Ok(())
+        })
+    }
+    /// UTF-16 form of [`Self::create_latin1_with`].
+    #[inline]
+    pub fn create_utf16_with(
+        len: usize,
+        fill: impl FnOnce(&mut [u16]),
+    ) -> Result<Self, crate::AllocError> {
+        Self::try_create_utf16_with(len, |buf| {
+            fill(buf);
+            Ok(())
+        })
+    }
+    /// [`Self::create_latin1_with`] with a fallible `fill`; its error drops
+    /// the allocation.
+    pub fn try_create_latin1_with<E: From<crate::AllocError>>(
+        len: usize,
+        fill: impl FnOnce(&mut [u8]) -> Result<(), E>,
+    ) -> Result<Self, E> {
+        if len == 0 {
+            fill(&mut [])?;
+            return Ok(Self::EMPTY);
+        }
         let s = BunString__fromLatin1Unitialized(len);
         if s.tag != Tag::WTFStringImpl {
-            return (s, &mut []);
+            return Err(crate::AllocError.into());
         }
         debug_assert_eq!(s.as_wtf().ref_count(), 1);
-        // SAFETY: WTF tag verified above; impl has a writable latin1 buffer of
-        // `len`. `ptr` points at `len` writable bytes owned by the new WTF
-        // impl; the `'static` lifetime is actually tied to `s` — caller must
-        // not outlive it.
+        // SAFETY: a fresh, uniquely owned 8-bit impl of exactly `len` characters.
         let buf = unsafe {
-            let ptr = (*s.value.wtf_string_impl).m_ptr.latin1.cast_mut();
-            core::slice::from_raw_parts_mut(ptr, len)
+            core::slice::from_raw_parts_mut((*s.value.wtf_string_impl).m_ptr.latin1.cast_mut(), len)
         };
-        (s, buf)
+        fill(buf)?;
+        Ok(s)
     }
-    pub fn create_uninitialized_utf16(len: usize) -> (Self, &'static mut [u16]) {
+    /// UTF-16 form of [`Self::try_create_latin1_with`].
+    pub fn try_create_utf16_with<E: From<crate::AllocError>>(
+        len: usize,
+        fill: impl FnOnce(&mut [u16]) -> Result<(), E>,
+    ) -> Result<Self, E> {
+        if len == 0 {
+            fill(&mut [])?;
+            return Ok(Self::EMPTY);
+        }
         let s = BunString__fromUTF16Unitialized(len);
         if s.tag != Tag::WTFStringImpl {
-            return (s, &mut []);
+            return Err(crate::AllocError.into());
         }
         debug_assert_eq!(s.as_wtf().ref_count(), 1);
-        // SAFETY: see `create_uninitialized_latin1`.
+        // SAFETY: a fresh, uniquely owned 16-bit impl of exactly `len` characters.
         let buf = unsafe {
-            let ptr = (*s.value.wtf_string_impl).m_ptr.utf16.cast_mut();
-            core::slice::from_raw_parts_mut(ptr, len)
+            core::slice::from_raw_parts_mut((*s.value.wtf_string_impl).m_ptr.utf16.cast_mut(), len)
         };
-        (s, buf)
+        fill(buf)?;
+        Ok(s)
     }
 
     /// Takes ownership of a globally-allocated (mimalloc-backed) Latin-1

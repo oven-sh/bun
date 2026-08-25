@@ -1194,10 +1194,22 @@ impl Subprocess<'_> {
                     };
                     this_value.ensure_still_alive();
 
+                    let signal_code = match self.get_signal_code(global_this) {
+                        Ok(v) => v,
+                        Err(err) => {
+                            let err = global_this.take_exception(err);
+                            let _ = global_this.bun_vm().as_mut().uncaught_exception(
+                                global_this,
+                                err,
+                                false,
+                            );
+                            JSValue::UNDEFINED
+                        }
+                    };
                     let args = [
                         this_value,
                         self.get_exit_code(global_this),
-                        self.get_signal_code(global_this),
+                        signal_code,
                         waitpid_value,
                     ];
 
@@ -1435,21 +1447,20 @@ impl Subprocess<'_> {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_signal_code(&self, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_signal_code(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         if let Some(signal) = self.process().signal_code() {
             // `process.signal_code()` returns the tier-0 `bun_core::SignalCode`
             // (bare `#[repr(u8)]` discriminant); name/exit-code helpers live on
             // `bun_sys::SignalCode`.
             let sys_sig = bun_sys::SignalCode(signal as u8);
             if let Some(name) = sys_sig.name() {
-                use bun_jsc::EncodedSliceJsc as _;
-                return bun_core::EncodedSlice::latin1(name.as_bytes()).to_js(global);
+                return bun_jsc::StringJsc::to_js(&bun_core::String::static_(name), global);
             } else {
-                return JSValue::js_number(signal as u32 as f64);
+                return Ok(JSValue::js_number(signal as u32 as f64));
             }
         }
 
-        JSValue::NULL
+        Ok(JSValue::NULL)
     }
 
     pub(crate) fn handle_ipc_message(

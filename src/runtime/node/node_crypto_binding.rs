@@ -465,20 +465,16 @@ pub mod random {
                 }
             }
 
-            let (str, bytes) = BunString::create_uninitialized_latin1(36);
-
             let uuid = if disable_entropy_cache {
                 UUID::init()
             } else {
                 global.bun_vm().as_mut().rare_data().next_uuid()
             };
 
-            uuid.print(
-                (&mut bytes[..36])
-                    .try_into()
-                    .expect("infallible: size matches"),
-            );
-            str.into_js(global)
+            bun_core::handle_oom(BunString::create_latin1_with(36, |buf| {
+                uuid.print(buf.try_into().unwrap())
+            }))
+            .into_js(global)
         }
 
         #[bun_jsc::host_fn]
@@ -519,13 +515,10 @@ pub mod random {
             }
             let uuid = UUID7::init(now_ms, entropy, bun_jsc::uuid::TimestampSource::Clock);
 
-            let (str, bytes) = BunString::create_uninitialized_latin1(36);
-            uuid.print(
-                (&mut bytes[..36])
-                    .try_into()
-                    .expect("infallible: size matches"),
-            );
-            str.into_js(global)
+            bun_core::handle_oom(BunString::create_latin1_with(36, |buf| {
+                uuid.print(buf.try_into().unwrap())
+            }))
+            .into_js(global)
         }
 
         fn assert_offset(

@@ -15,17 +15,15 @@ use core::ffi::{c_int, c_void};
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::node::StringOrBuffer;
-use bun_core::EncodedSlice;
 use bun_core::SignalCode;
 use bun_io::Loop as AsyncLoop;
 use bun_io::pipe_reader::BufferedReaderParent;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
 use bun_io::{BufferedReader, ReadState, StreamingWriter, WriteStatus};
-use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
-    MarkedArrayBuffer, SysErrorJsc,
+    MarkedArrayBuffer, StringJsc as _, SysErrorJsc,
 };
 use bun_sys::{self as sys, Fd, FdExt};
 
@@ -1859,9 +1857,13 @@ impl Terminal {
 
         let global_this = self.global();
         let signal_value: JSValue = if let Some(s) = signal {
-            // SignalCode derives Debug → "SIGTERM" etc.
-            let name = format!("{:?}", s);
-            EncodedSlice::latin1(name.as_bytes()).to_js(global_this)
+            match bun_core::String::static_(s.name()).to_js(global_this) {
+                Ok(name) => name,
+                Err(err) => {
+                    crate::dispatch::fold(Err(err));
+                    return;
+                }
+            }
         } else {
             JSValue::NULL
         };

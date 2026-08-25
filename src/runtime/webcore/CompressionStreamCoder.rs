@@ -21,7 +21,7 @@ use core::ptr::{self, NonNull};
 
 use bun_core::EncodedSlice;
 use bun_jsc::EncodedSliceJsc as _;
-use bun_jsc::{ErrorCode, JSGlobalObject, JSUint8Array, JSValue, Strong};
+use bun_jsc::{ErrorCode, JSGlobalObject, JSUint8Array, JSValue, JsResult, Strong};
 
 use bun_brotli::c as brotli;
 use bun_zlib as zlib;
@@ -832,8 +832,8 @@ pub extern "C" fn CompressionStreamCoder__transform(
     result
 }
 
-fn codec_error_to_js(global: &JSGlobalObject, e: &CodecError) -> JSValue {
-    match *e {
+fn codec_error_to_js(global: &JSGlobalObject, e: &CodecError) -> JsResult<JSValue> {
+    Ok(match *e {
         CodecError::TrailingJunk => global
             .err(
                 ErrorCode::ERR_TRAILING_JUNK_AFTER_STREAM_END,
@@ -845,18 +845,20 @@ fn codec_error_to_js(global: &JSGlobalObject, e: &CodecError) -> JSValue {
         CodecError::Brotli(detail) => {
             let code = format!("ERR_{detail}");
             let err = global.create_type_error_instance(format_args!("brotli decode failed"));
-            let code_js = EncodedSlice::latin1(code.as_bytes()).to_js(global);
-            err.put(global, b"code", code_js);
             let cause = global.create_error_instance(format_args!("{detail}"));
+            let code_js = EncodedSlice::latin1(code.as_bytes()).to_js(global)?;
+            err.put(global, b"code", code_js);
             cause.put(global, b"code", code_js);
             err.put(global, b"cause", cause);
             err
         }
-    }
+    })
 }
 
 fn throw_codec_error(global: &JSGlobalObject, e: CodecError) {
-    let _ = global.throw_value(codec_error_to_js(global, &e));
+    if let Ok(err) = codec_error_to_js(global, &e) {
+        let _ = global.throw_value(err);
+    }
 }
 
 /// [`CompressionStreamCoder__transform`], but the output is written to the
@@ -989,7 +991,7 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
         let global = cx.global();
         let (out, out_len, err) = match &this.error {
             None => (this.out.as_ptr(), this.out.len(), JSValue::ZERO),
-            Some(e) => (core::ptr::null(), 0, codec_error_to_js(global, e)),
+            Some(e) => (core::ptr::null(), 0, codec_error_to_js(global, e)?),
         };
         // SAFETY: FFI into `JSCompressionStreamShared.cpp`; see above.
         unsafe {

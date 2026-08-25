@@ -199,15 +199,15 @@ impl SecureContext {
         result.put(
             global,
             b"key",
-            EncodedSlice::latin1(key_slice).to_js(global),
+            EncodedSlice::latin1(key_slice).to_js(global)?,
         );
         result.put(
             global,
             b"cert",
-            EncodedSlice::latin1(cert_slice).to_js(global),
+            EncodedSlice::latin1(cert_slice).to_js(global)?,
         );
         if let Some(ca_slice) = ca_slice {
-            result.put(global, b"ca", EncodedSlice::latin1(ca_slice).to_js(global));
+            result.put(global, b"ca", EncodedSlice::latin1(ca_slice).to_js(global)?);
         }
         Ok(result)
     }
@@ -244,13 +244,13 @@ impl SecureContext {
             {
                 let code = boringssl::ERR_get_error();
                 if code != 0 {
-                    return Err(global.throw_value(err_to_js(global, code)));
+                    return Err(global.throw_value(err_to_js(global, code)?));
                 }
                 if err == uws::create_bun_socket_error_t::none {
                     return Err(global.throw(format_args!("Failed to create SSL context")));
                 }
             }
-            return Err(global.throw_value(create_bun_socket_error_to_js(err, global)));
+            return Err(global.throw_value(create_bun_socket_error_to_js(err, global)?));
         };
         let sc = Box::new(SecureContext {
             ctx,
@@ -346,13 +346,13 @@ impl SecureContext {
                 // preconditions; reads the thread-local error queue).
                 let code = boringssl::ERR_get_error();
                 if code != 0 {
-                    return Err(global.throw_value(err_to_js(global, code)));
+                    return Err(global.throw_value(err_to_js(global, code)?));
                 }
                 if err == uws::create_bun_socket_error_t::none {
                     return Err(global.throw(format_args!("Failed to create SSL context")));
                 }
             }
-            return Err(global.throw_value(create_bun_socket_error_to_js(err, global)));
+            return Err(global.throw_value(create_bun_socket_error_to_js(err, global)?));
         };
         Ok(Box::new(SecureContext {
             ctx,

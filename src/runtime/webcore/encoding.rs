@@ -266,13 +266,10 @@ pub(crate) fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding)
                 return create_external_globally_allocated_latin1(input);
             }
 
-            let (str, chars) = BunString::create_uninitialized_latin1(input.len());
-            // `input` dropped at end of scope (was: defer allocator.free(input))
-            if str.is_dead() {
-                return str;
-            }
-            strings::copy_latin1_into_ascii(chars, &input);
-            str
+            BunString::create_latin1_with(input.len(), |buf| {
+                strings::copy_latin1_into_ascii(buf, &input)
+            })
+            .unwrap_or(BunString::DEAD)
         }
         Encoding::Latin1 => create_external_globally_allocated_latin1(input),
         Encoding::Buffer | Encoding::Utf8 => {
@@ -308,23 +305,11 @@ pub(crate) fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding)
             create_external_globally_allocated_utf16(as_u16)
         }
 
-        Encoding::Hex => {
-            // input dropped at end of scope
-            let (str, chars) = BunString::create_uninitialized_latin1(input.len() * 2);
-
-            if str.is_dead() {
-                return str;
-            }
-
-            let wrote = strings::encode_bytes_to_hex(chars, &input);
-
-            // Return an empty string in this case, just like node.
-            if wrote < chars.len() {
-                return BunString::EMPTY;
-            }
-
-            str
-        }
+        Encoding::Hex => BunString::create_latin1_with(input.len() * 2, |buf| {
+            let wrote = strings::encode_bytes_to_hex(buf, &input);
+            debug_assert_eq!(wrote, buf.len());
+        })
+        .unwrap_or(BunString::DEAD),
 
         // The output is strictly larger than the input, so the owned
         // allocation cannot be reused; drop it at end of scope.
@@ -350,21 +335,13 @@ fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
     }
 
     match encoding_from_u8(ENCODING) {
-        Encoding::Ascii => {
-            let (str, chars) = BunString::create_uninitialized_latin1(input.len());
-            if str.is_dead() {
-                return str;
-            }
-            strings::copy_latin1_into_ascii(chars, input);
-            str
-        }
+        Encoding::Ascii => BunString::create_latin1_with(input.len(), |buf| {
+            strings::copy_latin1_into_ascii(buf, input)
+        })
+        .unwrap_or(BunString::DEAD),
         Encoding::Latin1 => {
-            let (str, chars) = BunString::create_uninitialized_latin1(input.len());
-            if str.is_dead() {
-                return str;
-            }
-            chars.copy_from_slice(input);
-            str
+            BunString::create_latin1_with(input.len(), |buf| buf.copy_from_slice(input))
+                .unwrap_or(BunString::DEAD)
         }
         Encoding::Buffer | Encoding::Utf8 => {
             let converted = match strings::to_utf16_alloc(input, false, false) {
@@ -385,30 +362,18 @@ fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
                 return BunString::EMPTY;
             }
 
-            let chars_len = input.len() / 2;
-            let (str, chars) = BunString::create_uninitialized_utf16(chars_len);
-            if str.is_dead() {
-                return str;
-            }
-            // chars is a freshly-allocated [u16] buffer; reinterpret as bytes.
-            let output_bytes: &mut [u8] = bytemuck::cast_slice_mut(chars);
-            let out_len = output_bytes.len();
-            output_bytes[out_len - 1] = 0;
-
-            output_bytes.copy_from_slice(&input[..out_len]);
-            str
+            BunString::create_utf16_with(input.len() / 2, |buf| {
+                let buf: &mut [u8] = bytemuck::cast_slice_mut(buf);
+                buf.copy_from_slice(&input[..buf.len()]);
+            })
+            .unwrap_or(BunString::DEAD)
         }
 
-        Encoding::Hex => {
-            let (str, chars) = BunString::create_uninitialized_latin1(input.len() * 2);
-            if str.is_dead() {
-                return str;
-            }
-
-            let wrote = strings::encode_bytes_to_hex(chars, input);
-            debug_assert!(wrote == chars.len());
-            str
-        }
+        Encoding::Hex => BunString::create_latin1_with(input.len() * 2, |buf| {
+            let wrote = strings::encode_bytes_to_hex(buf, input);
+            debug_assert_eq!(wrote, buf.len());
+        })
+        .unwrap_or(BunString::DEAD),
 
         Encoding::Base64url => encode_base64_to_bun_string(input, true),
 
@@ -434,17 +399,15 @@ fn encode_base64_to_bun_string(input: &[u8], url_safe: bool) -> BunString {
     };
 
     if to_len < EXTERNAL_MIN_LEN {
-        let (str, chars) = BunString::create_uninitialized_latin1(to_len);
-        if str.is_dead() {
-            return str;
-        }
-        let wrote = if url_safe {
-            bun_base64::encode_url_safe(chars, input)
-        } else {
-            bun_base64::encode(chars, input)
-        };
-        debug_assert_eq!(wrote, to_len);
-        return str;
+        return BunString::create_latin1_with(to_len, |buf| {
+            let wrote = if url_safe {
+                bun_base64::encode_url_safe(buf, input)
+            } else {
+                bun_base64::encode(buf, input)
+            };
+            debug_assert_eq!(wrote, to_len);
+        })
+        .unwrap_or(BunString::DEAD);
     }
 
     let mut to: Vec<u8> = Vec::new();

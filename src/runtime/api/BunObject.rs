@@ -70,7 +70,6 @@ pub(crate) fn get_public_path_with_asset_prefix<W: core::fmt::Write>(
     }
 }
 
-use bun_jsc::HostReturn as _;
 use core::ffi::c_void;
 use std::io::Write as _;
 
@@ -792,11 +791,11 @@ fn register_macro(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     Ok(JSValue::UNDEFINED)
 }
 
-fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
     EncodedSlice::from_bytes(bun_resolver::fs::FileSystem::get().top_level_dir).to_js(global_this)
 }
 
-fn get_origin(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_origin(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
     EncodedSlice::from_bytes(VirtualMachine::get().origin.origin).to_js(global_this)
 }
 
@@ -804,16 +803,14 @@ fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     JSValue::from(Output::enable_ansi_colors_stdout() || Output::enable_ansi_colors_stderr())
 }
 
-// callconv(jsc.conv) — `SYSV_ABI` on win-x64 (BunObject.cpp:1103). Returns
-// plain `JSValue` so the generated thunk is a bare deref+call (no
-// `ExceptionValidationScope`).
+// callconv(jsc.conv) — `SYSV_ABI` on win-x64 (BunObject.cpp:1103).
 // HOST_EXPORT(BunObject_getter_main, jsc)
-pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
+pub fn get_main(global_this: &JSGlobalObject) -> JsResult<JSValue> {
     // SAFETY: bun_vm() returns the live singleton VirtualMachine for a Bun-owned global.
     let vm = global_this.bun_vm().as_mut();
     // If JS has set it to a custom value, use that one
     if let Some(overridden_main) = vm.overridden_main.get() {
-        return overridden_main;
+        return Ok(overridden_main);
     }
 
     // Attempt to use the resolved filesystem path
@@ -872,10 +869,7 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
             }
         }
 
-        return vm
-            .main_resolved_path
-            .to_js(global_this)
-            .or_pending_exception();
+        return vm.main_resolved_path.to_js(global_this);
     }
 
     EncodedSlice::from_bytes(vm.main()).to_js(global_this)

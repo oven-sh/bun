@@ -419,82 +419,31 @@ impl Entry {
                     // RuntimeTranspilerStore.rs / jsc_hooks.rs. Only if the
                     // bytes contain non-ASCII UTF-8 do we fall back to
                     // `clone_utf8` (transcode → UTF-16) and deref the scratch.
-                    let len = self.metadata.output_byte_length as usize;
-                    let (scratch, bytes) = BunString::create_uninitialized_latin1(len);
-                    // `(dead, &mut [])` on WTF allocation failure; `len > 0`
-                    // (handled above), so an empty slice means OOM.
-                    if bytes.is_empty() {
-                        return Err(crate::CrateError::Alloc(bun_alloc::AllocError));
-                    }
-                    let read_bytes = file.pread_all(bytes, self.metadata.output_byte_offset)?;
-                    if read_bytes as u64 != self.metadata.output_byte_length {
-                        return Err(crate::CrateError::MissingData);
-                    }
-
-                    if self.metadata.output_hash != 0 && hash(bytes) != self.metadata.output_hash {
-                        return Err(crate::CrateError::InvalidHash);
-                    }
-
-                    if bun_core::strings::is_all_ascii(bytes) {
+                    let scratch = BunString::try_create_latin1_with(
+                        self.metadata.output_byte_length as usize,
+                        |buf| self.metadata.read_output(file, buf),
+                    )?;
+                    if bun_core::strings::is_all_ascii(scratch.latin1()) {
                         // Fast path: ASCII ⊂ Latin-1, so `scratch` is already
                         // the correct `BunString`.
                         scratch
                     } else {
                         // Rare path: real multi-byte UTF-8. Transcode into a
                         // fresh WTF string; the Latin-1 scratch drops.
-                        BunString::clone_utf8(bytes)
+                        BunString::clone_utf8(scratch.latin1())
                     }
                 }
-                Encoding::LATIN1 => {
-                    let len = self.metadata.output_byte_length as usize;
-                    let (latin1, bytes) = BunString::create_uninitialized_latin1(len);
-                    // `create_uninitialized_latin1` returns `(dead, &mut [])` on
-                    // WTF allocation failure; `len > 0` here (handled above), so
-                    // an empty slice means OOM.
-                    if bytes.is_empty() {
-                        return Err(crate::CrateError::Alloc(bun_alloc::AllocError));
-                    }
-                    let read_bytes = file.pread_all(bytes, self.metadata.output_byte_offset)?;
-
-                    if self.metadata.output_hash != 0 {
-                        if hash(latin1.latin1()) != self.metadata.output_hash {
-                            return Err(crate::CrateError::InvalidHash);
-                        }
-                    }
-
-                    if read_bytes as u64 != self.metadata.output_byte_length {
-                        return Err(crate::CrateError::MissingData);
-                    }
-
-                    latin1
-                }
-                Encoding::UTF16 => {
-                    let char_len = (self.metadata.output_byte_length / 2) as usize;
-                    let (string, chars) = BunString::create_uninitialized_utf16(char_len);
-                    // See LATIN1 branch above — empty slice for nonzero `char_len`
-                    // signals WTF allocation failure.
-                    if chars.is_empty() {
-                        return Err(crate::CrateError::Alloc(bun_alloc::AllocError));
-                    }
-                    // `chars` is `&mut [u16; char_len]` backed by contiguous
-                    // WTFString storage; reinterpret as bytes for pread via the
-                    // safe POD cast (`u16` → `u8` always satisfies size/align).
-                    let chars_bytes: &mut [u8] = bytemuck::cast_slice_mut(chars);
-                    let read_bytes =
-                        file.pread_all(chars_bytes, self.metadata.output_byte_offset)?;
-                    if read_bytes as u64 != self.metadata.output_byte_length {
-                        return Err(crate::CrateError::MissingData);
-                    }
-
-                    if self.metadata.output_hash != 0 {
-                        let utf16_bytes: &[u8] = bytemuck::cast_slice(string.utf16());
-                        if hash(utf16_bytes) != self.metadata.output_hash {
-                            return Err(crate::CrateError::InvalidHash);
-                        }
-                    }
-
-                    string
-                }
+                Encoding::LATIN1 => BunString::try_create_latin1_with(
+                    self.metadata.output_byte_length as usize,
+                    |buf| self.metadata.read_output(file, buf),
+                )?,
+                Encoding::UTF16 => BunString::try_create_utf16_with(
+                    (self.metadata.output_byte_length / 2) as usize,
+                    |buf| {
+                        self.metadata
+                            .read_output(file, bytemuck::cast_slice_mut(buf))
+                    },
+                )?,
 
                 _ => unreachable!("Unexpected output encoding"),
             }
@@ -542,6 +491,18 @@ pub struct RuntimeTranspilerCache {
 
 pub(crate) fn hash(bytes: &[u8]) -> u64 {
     Wyhash::hash(SEED, bytes)
+}
+
+impl Metadata {
+    fn read_output(&self, file: &sys::File, buf: &mut [u8]) -> crate::CrateResult<()> {
+        if file.pread_all(buf, self.output_byte_offset)? as u64 != self.output_byte_length {
+            return Err(crate::CrateError::MissingData);
+        }
+        if self.output_hash != 0 && hash(buf) != self.output_hash {
+            return Err(crate::CrateError::InvalidHash);
+        }
+        Ok(())
+    }
 }
 
 /// Allocate `len` bytes and fill them via `pread_all` at `offset`, returning

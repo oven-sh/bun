@@ -180,22 +180,17 @@ impl SocketAddress {
         };
 
         const PREFIX: &str = "http://";
-        let url_str: BunString = if input.is_8bit() {
+        let url_str = if input.is_8bit() {
             let from_chars = input.latin1();
-            let (str, to_chars) =
-                BunString::create_uninitialized_latin1(from_chars.len() + PREFIX.len());
-            to_chars[..PREFIX.len()].copy_from_slice(PREFIX.as_bytes());
-            to_chars[PREFIX.len()..].copy_from_slice(from_chars);
-            str
+            BunString::create_latin1_with(PREFIX.len() + from_chars.len(), |buf| {
+                bun_core::concat_into(buf, &[PREFIX.as_bytes(), from_chars]);
+            })
         } else {
             let from_chars = input.utf16();
-            let (str, to_chars) =
-                BunString::create_uninitialized_utf16(from_chars.len() + PREFIX.len());
-            // bun.strings.literal(u16, "http://")
-            to_chars[..PREFIX.len()].copy_from_slice(bun_core::w!("http://"));
-            to_chars[PREFIX.len()..].copy_from_slice(from_chars);
-            str
-        };
+            BunString::create_utf16_with(PREFIX.len() + from_chars.len(), |buf| {
+                bun_core::concat_into(buf, &[bun_core::w!("http://"), from_chars]);
+            })
+        }?;
 
         let Some(url) = bun_jsc::url::Parsed::from_string(&url_str) else {
             return Ok(JSValue::UNDEFINED);

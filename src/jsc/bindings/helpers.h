@@ -193,6 +193,10 @@ static const WTF::String toStringCopy(EncodedSlice str)
         return convertUTF8ToString(std::span { untag(str.ptr), str.len });
     }
 
+    if (str.len > Bun__stringSyntheticAllocationLimit || str.len > WTF::String::MaxLength) [[unlikely]] {
+        return {};
+    }
+
     if (isTaggedUTF16Ptr(str.ptr)) {
         std::span<char16_t> out;
         auto impl = WTF::StringImpl::tryCreateUninitialized(str.len, out);

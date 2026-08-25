@@ -3729,9 +3729,15 @@ __attribute__((__always_inline__)) VirtualMachine* JSC__JSGlobalObject__bunVM(JS
     return reinterpret_cast<VirtualMachine*>(WebCore::clientData(arg0->vm())->bunVM);
 }
 
-JSC::EncodedJSValue EncodedSlice__toValueGC(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1)
+[[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue EncodedSlice__toValueGC(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1)
 {
-    return JSC::JSValue::encode(JSC::jsString(arg1->vm(), Zig::toStringCopy(*arg0)));
+    auto& vm = arg1->vm();
+    auto str = Zig::toStringCopy(*arg0);
+    if (str.isNull() && arg0->len > 0) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        return Bun::ERR::STRING_TOO_LONG(scope, arg1);
+    }
+    return JSC::JSValue::encode(JSC::jsString(vm, WTF::move(str)));
 }
 
 JSC::EncodedJSValue EncodedSlice__external(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1, void* arg2, void (*ArgFn3)(void* arg0, void* arg1, size_t arg2))

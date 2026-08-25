@@ -1987,7 +1987,7 @@ impl BuildArtifact {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_mime_type(this: &Self, global_object: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_mime_type(this: &Self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         BlobExt::get_type(&this.blob, global_object)
     }
 

@@ -191,7 +191,13 @@ extern "C" fn select_alpn_callback(
             } else {
                 // SAFETY: BoringSSL hands back a NUL-terminated name.
                 let name = unsafe { core::ffi::CStr::from_ptr(servername_ptr) };
-                EncodedSlice::latin1(name.to_bytes()).to_js(&global)
+                match EncodedSlice::latin1(name.to_bytes()).to_js(&global) {
+                    Ok(name) => name,
+                    Err(err) => {
+                        crate::dispatch::fold(Err(err));
+                        return boringssl_sys::SSL_TLSEXT_ERR_ALERT_FATAL;
+                    }
+                }
             };
             let result =
                 match callback.call(&global, this_value, &[this_value, servername_js, buffer]) {
@@ -3557,11 +3563,13 @@ impl<const SSL: bool> NewSocket<SSL> {
                         return Err(global.throw_value(
                             crate::socket::uws_jsc::create_bun_socket_error_to_js(
                                 create_err, global,
-                            ),
+                            )?,
                         ));
                     }
-                    return Err(global
-                        .throw_value(boringssl_err_to_js(global, boringssl_sys::ERR_get_error())));
+                    return Err(global.throw_value(boringssl_err_to_js(
+                        global,
+                        boringssl_sys::ERR_get_error(),
+                    )?));
                 }
             };
         } else {
@@ -3646,7 +3654,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 // ref and the handlers `Rc`. Sole owner of the fresh allocation.
                 tls.get().deref();
                 if err != 0 {
-                    return Err(global.throw_value(boringssl_err_to_js(global, err)));
+                    return Err(global.throw_value(boringssl_err_to_js(global, err)?));
                 }
                 return Err(global.throw(format_args!(
                     "Failed to upgrade socket from TCP -> TLS. Is the TLS config correct?",

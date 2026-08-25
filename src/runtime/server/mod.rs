@@ -3504,8 +3504,10 @@ mod ffi {
 fn throw_ssl_error_if_necessary(global: &JSGlobalObject) -> bool {
     let err_code = bun_boringssl_sys::ERR_get_error();
     if err_code != 0 {
-        let _ = global.throw_value(crate::crypto::create_crypto_error(global, err_code));
         bun_boringssl_sys::ERR_clear_error();
+        if let Ok(err) = crate::crypto::create_crypto_error(global, err_code) {
+            let _ = global.throw_value(err);
+        }
         return true;
     }
     false

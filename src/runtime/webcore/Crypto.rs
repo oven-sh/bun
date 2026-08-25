@@ -84,17 +84,13 @@ impl Crypto {
         global: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (str, bytes) = BunString::create_uninitialized_latin1(36);
-
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
         let uuid = global.bun_vm().as_mut().rare_data().next_uuid();
 
-        uuid.print(
-            (&mut bytes[0..36])
-                .try_into()
-                .expect("infallible: size matches"),
-        );
-        str.into_js(global)
+        bun_core::handle_oom(BunString::create_latin1_with(36, |buf| {
+            uuid.print(buf.try_into().unwrap())
+        }))
+        .into_js(global)
     }
 
     // DOMJIT fast path.
@@ -221,13 +217,10 @@ fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     );
 
     if encoding == Encoding::Hex {
-        let (str, bytes) = BunString::create_uninitialized_latin1(36);
-        uuid.print(
-            (&mut bytes[0..36])
-                .try_into()
-                .expect("infallible: size matches"),
-        );
-        return str.into_js(global);
+        return bun_core::handle_oom(BunString::create_latin1_with(36, |buf| {
+            uuid.print(buf.try_into().unwrap())
+        }))
+        .into_js(global);
     }
 
     encoding.encode_with_max_size(global, 32, &uuid.bytes)
@@ -348,13 +341,10 @@ fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     let uuid = UUID5::init(&namespace, name.slice());
 
     if encoding == Encoding::Hex {
-        let (str, bytes) = BunString::create_uninitialized_latin1(36);
-        uuid.print(
-            (&mut bytes[0..36])
-                .try_into()
-                .expect("infallible: size matches"),
-        );
-        return str.into_js(global);
+        return bun_core::handle_oom(BunString::create_latin1_with(36, |buf| {
+            uuid.print(buf.try_into().unwrap())
+        }))
+        .into_js(global);
     }
 
     encoding.encode_with_max_size(global, 32, &uuid.bytes)

@@ -362,8 +362,8 @@ impl CryptoHasher {
         let Some(len) = evp.hash(boring_engine(global), input.slice(), &mut output_digest_buf)
         else {
             let err = boring_ssl::ERR_get_error();
-            let instance = create_crypto_error(global, err);
             boring_ssl::ERR_clear_error();
+            let instance = create_crypto_error(global, err)?;
             return Err(global.throw_value(instance));
         };
         encoding.encode_with_max_size(
@@ -407,8 +407,8 @@ impl CryptoHasher {
 
         let Some(len) = evp.hash(boring_engine(global), input.slice(), output_digest_slice) else {
             let err = boring_ssl::ERR_get_error();
-            let instance = create_crypto_error(global, err);
             boring_ssl::ERR_clear_error();
+            let instance = create_crypto_error(global, err)?;
             return Err(global.throw_value(instance));
         };
 
@@ -523,8 +523,8 @@ impl CryptoHasher {
                         None => {
                             let err = boring_ssl::ERR_get_error();
                             if err != 0 {
-                                let instance = create_crypto_error(global, err);
                                 boring_ssl::ERR_clear_error();
+                                let instance = create_crypto_error(global, err)?;
                                 return Err(global.throw_value(instance));
                             } else {
                                 return Err(global
@@ -610,8 +610,8 @@ impl CryptoHasher {
                 inner.with_mut(|e| e.update(buffer.slice()));
                 let err = boring_ssl::ERR_get_error();
                 if err != 0 {
-                    let instance = create_crypto_error(global, err);
                     boring_ssl::ERR_clear_error();
+                    let instance = create_crypto_error(global, err)?;
                     return Err(global.throw_value(instance));
                 }
             }
@@ -625,8 +625,8 @@ impl CryptoHasher {
                 inner.with_mut(|opt| opt.as_mut().unwrap().update(buffer.slice()));
                 let err = boring_ssl::ERR_get_error();
                 if err != 0 {
-                    let instance = create_crypto_error(global, err);
                     boring_ssl::ERR_clear_error();
+                    let instance = create_crypto_error(global, err)?;
                     return Err(global.throw_value(instance));
                 }
             }
@@ -661,8 +661,8 @@ impl CryptoHasher {
                     Ok(h) => h,
                     Err(_) => {
                         let code = boring_ssl::ERR_get_error();
-                        let err = create_crypto_error(global, code);
                         boring_ssl::ERR_clear_error();
+                        let err = create_crypto_error(global, code)?;
                         return Err(global.throw_value(err));
                     }
                 })));

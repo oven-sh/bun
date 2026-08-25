@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use bun_jsc::{
     self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult,
-    ProtectedJSValue, SystemError, bun_string_jsc,
+    ProtectedJSValue, StringJsc as _, SystemError, bun_string_jsc,
 };
 // Note: `bun_jsc::VirtualMachine` is a *module* re-export
 // (`pub use self::virtual_machine as VirtualMachine;`). The struct lives at
@@ -27,8 +27,7 @@ use crate::webcore::streams::{
     self, SourceHandle, Start, StartTag, StreamError, StreamResult, Writable, WritablePending,
 };
 use crate::webcore::{self, ByteStream, DrainResult, ReadableStream, Response, SinkHandle};
-use bun_core::{EncodedSlice, String as BunString, Utf8Bytes};
-use bun_jsc::EncodedSliceJsc as _;
+use bun_core::{String as BunString, Utf8Bytes};
 use bun_jsc::call_frame::ArgumentsSlice;
 
 // lol-html rewritable units, lifetime-erased to `'static` so a `*mut RawX`
@@ -371,7 +370,7 @@ impl HTMLRewriter {
         let selector_source = utf8_or_throw(global, selector_name)?;
         let selector = match selector_source.parse::<lol_html::Selector>() {
             Ok(s) => s,
-            Err(e) => return Err(global.throw_value(create_lolhtml_error(global, &e))),
+            Err(e) => return Err(global.throw_value(create_lolhtml_error(global, &e)?)),
         };
 
         let handler = Box::new(ElementHandler::init(global, listener)?);
@@ -1698,9 +1697,11 @@ impl RewriterPipe {
 
         if self.sync_only_noun.get().is_some() {
             // `init()` is still on the stack; make `transform()` throw.
-            return self.set_handler_error(
-                captured.unwrap_or_else(|| create_lolhtml_error(&self.global, e)),
-            );
+            return self.set_handler_error(match captured {
+                Some(err) => err,
+                None => create_lolhtml_error(&self.global, e)
+                    .unwrap_or_else(|err| self.global.take_error(err)),
+            });
         }
 
         let value_error = match captured {
@@ -2436,11 +2437,14 @@ pub struct ContentOptions {
 
 // ────────────────────────── error helpers ────────────────────────────────
 
-fn create_lolhtml_error(global: &JSGlobalObject, message: &dyn core::fmt::Display) -> JSValue {
+fn create_lolhtml_error(
+    global: &JSGlobalObject,
+    message: &dyn core::fmt::Display,
+) -> JsResult<JSValue> {
     // If there was already a pending exception, we want to use that instead.
     if let Some(err) = global.try_take_exception() {
         // it's a synchronous error
-        return err;
+        return Ok(err);
     }
     // The handler's own exception / rejection, if any, is recorded on the
     // active `RewriterPipe` (`record_handler_error`) and `on_rewriting_error`
@@ -2450,9 +2454,9 @@ fn create_lolhtml_error(global: &JSGlobalObject, message: &dyn core::fmt::Displa
     value.put(
         global,
         b"name",
-        EncodedSlice::latin1(b"HTMLRewriterError").to_js(global),
+        BunString::static_("HTMLRewriterError").to_js(global)?,
     );
-    value
+    Ok(value)
 }
 
 /// lol-html error `Display` text → owned `bun.String`.
@@ -2464,7 +2468,10 @@ fn lol_err_string(e: impl core::fmt::Display) -> BunString {
 /// an `HTMLRewriterError` carrying the `Utf8Error` `Display` text — the same
 /// text lol-html's C API `to_str!` used to stash in its last-error slot.
 fn utf8_or_throw<'a>(global: &JSGlobalObject, bytes: &'a [u8]) -> JsResult<&'a str> {
-    core::str::from_utf8(bytes).map_err(|e| global.throw_value(create_lolhtml_error(global, &e)))
+    core::str::from_utf8(bytes).map_err(|e| match create_lolhtml_error(global, &e) {
+        Ok(err) => global.throw_value(err),
+        Err(err) => err,
+    })
 }
 
 /// Decode a raw-`JSValue` setter argument to owned UTF-8. `to_utf8` runs
@@ -2728,7 +2735,7 @@ impl Comment {
             return Ok(());
         };
         if let Err(e) = comment.set_text(&text) {
-            return Err(global.throw_value(create_lolhtml_error(global, &e)));
+            return Err(global.throw_value(create_lolhtml_error(global, &e)?));
         }
         Ok(())
     }
@@ -3012,7 +3019,7 @@ impl Element {
         // `None` iff the element is void (`!can_have_content`) — the exact
         // condition lol-html's C API mapped to the "No end tag." error.
         let Some(handlers) = el.end_tag_handlers() else {
-            let err = create_lolhtml_error(global_object, &"No end tag.");
+            let err = create_lolhtml_error(global_object, &"No end tag.")?;
             return Err(global_object.throw_value(err));
         };
 
@@ -3087,7 +3094,7 @@ impl Element {
         let name = utf8_or_throw(global_object, name)?;
         let value = utf8_or_throw(global_object, value)?;
         if let Err(e) = el.set_attribute(name, value) {
-            let err = create_lolhtml_error(global_object, &e);
+            let err = create_lolhtml_error(global_object, &e)?;
             return Err(global_object.throw_value(err));
         }
         Ok(call_frame.this())
@@ -3228,7 +3235,7 @@ impl Element {
             return Ok(());
         };
         if let Err(e) = el.set_tag_name(&name) {
-            return Err(global.throw_value(create_lolhtml_error(global, &e)));
+            return Err(global.throw_value(create_lolhtml_error(global, &e)?));
         }
         Ok(())
     }

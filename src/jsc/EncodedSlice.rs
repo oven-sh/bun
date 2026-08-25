@@ -31,8 +31,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         code: u8,
     ) -> JSValue;
-    safe fn EncodedSlice__toValueGC(this: &EncodedSlice, global: &JSGlobalObject) -> JSValue;
-    // EncodedSlice__toExternalValue: use the generated `cpp::` re-export (canonical signature).
+    // EncodedSlice__toValueGC / EncodedSlice__toExternalValue: use the generated `cpp::` wrappers.
     // safe: `EncodedSlice`/`JSGlobalObject` are `#[repr(C)]`/opaque-ZST handles (`&`
     // is ABI-identical to non-null `*const`); `ctx` is an opaque round-trip
     // pointer C++ stores into the external string's finalizer slot and forwards
@@ -60,9 +59,9 @@ pub trait EncodedSliceJsc: Sized {
     fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue;
     fn to_dom_exception_instance(&self, global: &JSGlobalObject, code: DOMExceptionCode)
     -> JSValue;
-    /// Copies into a GC-managed `JSString` (or hands over an external value
-    /// if globally allocated).
-    fn to_js(&self, global: &JSGlobalObject) -> JSValue;
+    /// Copies into a GC-managed `JSString`; throws `ERR_STRING_TOO_LONG` if
+    /// the copy would exceed the engine's string length limit.
+    fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
     /// Transfers ownership of a globally-allocated buffer to JSC's
     /// external-string finalizer.
     fn to_external_value(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
@@ -101,9 +100,10 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
     ) -> JSValue {
         EncodedSlice__toDOMExceptionInstance(self, global, code as u8)
     }
-    fn to_js(&self, global: &JSGlobalObject) -> JSValue {
+    fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         debug_assert!(!self.is_globally_allocated());
-        EncodedSlice__toValueGC(self, global)
+        // SAFETY: `self` is a live `&EncodedSlice` for the duration of the call.
+        unsafe { cpp::EncodedSlice__toValueGC(self, global) }
     }
     fn to_external_value(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         if self.len > bun_core::String::max_length() {

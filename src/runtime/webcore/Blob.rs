@@ -246,7 +246,7 @@ pub trait BlobExt {
     ) -> JSValue;
     fn get_slice(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
     fn get_mime_type_or_content_type(&self) -> Option<MimeType>;
-    fn get_type(&self, global_this: &JSGlobalObject) -> JSValue;
+    fn get_type(&self, global_this: &JSGlobalObject) -> JsResult<JSValue>;
     fn get_name_string(&self) -> Option<&BunString>;
     fn get_name(&self, _: JSValue, global_this: &JSGlobalObject) -> JsResult<JSValue>;
     fn set_name(
@@ -2021,7 +2021,7 @@ impl BlobExt for Blob {
         self.store().map(|s| s.mime_type.clone())
     }
 
-    fn get_type(&self, global_this: &JSGlobalObject) -> JSValue {
+    fn get_type(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let ct = self.content_type_slice();
         if !ct.is_empty() {
             return EncodedSlice::latin1(ct).to_js(global_this);
@@ -2029,7 +2029,7 @@ impl BlobExt for Blob {
         if let Some(store) = self.store.get() {
             return EncodedSlice::latin1(&store.mime_type.value).to_js(global_this);
         }
-        JSValue::js_empty_string(global_this)
+        Ok(JSValue::js_empty_string(global_this))
     }
 
     fn get_name_string(&self) -> Option<&BunString> {

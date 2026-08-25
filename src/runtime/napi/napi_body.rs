@@ -738,12 +738,14 @@ extern "C" fn napi_create_string_latin1(
         return env.ok();
     }
 
-    let (string, bytes) = bun_core::String::create_uninitialized_latin1(slice.len());
-    bytes.copy_from_slice(slice);
-
+    let Ok(string) =
+        bun_core::String::create_latin1_with(slice.len(), |buf| buf.copy_from_slice(slice))
+    else {
+        return env.generic_failure();
+    };
     let js = match string.into_js(env.to_js()) {
         Ok(v) => v,
-        Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
+        Err(_) => return env.pending_exception(),
     };
     result.set(env, js);
     env.ok()
@@ -784,7 +786,7 @@ extern "C" fn napi_create_string_utf8(
     let global_object = env.to_js();
     let string = match bun_string_jsc::create_utf8_for_js(global_object, slice) {
         Ok(v) => v,
-        Err(_) => return env.generic_failure(),
+        Err(_) => return env.pending_exception(),
     };
     result.set(env, string);
     env.ok()
@@ -835,12 +837,14 @@ extern "C" fn napi_create_string_utf16(
         return env.ok();
     }
 
-    let (string, chars) = bun_core::String::create_uninitialized_utf16(slice.len());
-    chars.copy_from_slice(slice);
-
+    let Ok(string) =
+        bun_core::String::create_utf16_with(slice.len(), |buf| buf.copy_from_slice(slice))
+    else {
+        return env.generic_failure();
+    };
     let js = match string.into_js(env.to_js()) {
         Ok(v) => v,
-        Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
+        Err(_) => return env.pending_exception(),
     };
     result.set(env, js);
     env.ok()

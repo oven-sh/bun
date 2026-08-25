@@ -2,7 +2,7 @@
 
 use bun_boringssl_sys as boring;
 use bun_core::EncodedSlice;
-use bun_jsc::{EncodedSliceJsc as _, JSGlobalObject, JSValue};
+use bun_jsc::{EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult, StringJsc as _};
 
 /// Node's `ERR_LIB_*` → macro-prefix map from `crypto_util.cc`
 /// (`OSSL_ERROR_CODES_MAP`). Libraries Node does not map get an empty prefix
@@ -41,18 +41,19 @@ fn lib_short_name(lib: u32) -> &'static str {
     }
 }
 
-/// SAFETY: `ptr` is a NUL-terminated static string returned by BoringSSL's
-/// error-string tables (or null).
-fn static_cstr<'a>(ptr: *const core::ffi::c_char) -> Option<&'a [u8]> {
+/// SAFETY: `ptr` is null or a NUL-terminated string returned by BoringSSL's
+/// `ERR_*_error_string` functions. Those are static table entries except
+/// `ERR_reason_error_string` for `ERR_LIB_SYS`, which returns `strerror()`.
+fn err_cstr<'a>(ptr: *const core::ffi::c_char) -> Option<&'a [u8]> {
     if ptr.is_null() {
         return None;
     }
-    // SAFETY: see above - the pointer is a 'static NUL-terminated table entry.
+    // SAFETY: see above.
     let bytes = unsafe { core::ffi::CStr::from_ptr(ptr) }.to_bytes();
     if bytes.is_empty() { None } else { Some(bytes) }
 }
 
-pub(crate) fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
+pub(crate) fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JsResult<JSValue> {
     // The message is the raw ERR_error_string output
     // ("error:0b000074:X.509 certificate routines:OPENSSL_internal:..."),
     // exactly what Node built against BoringSSL produces - no prefix.
@@ -70,12 +71,12 @@ pub(crate) fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
 
     let error_message: &[u8] = bun_core::slice_to_nul(&outbuf[..]);
     if error_message.is_empty() {
-        return global
+        return Ok(global
             .err(
                 bun_jsc::ErrorCode::BORINGSSL,
                 format_args!("An unknown BoringSSL error occurred: {}", err_code),
             )
-            .to_js();
+            .to_js());
     }
 
     // A plain Error carrying Node's library/function/reason/code decomposition
@@ -83,25 +84,25 @@ pub(crate) fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
     // ERR_OSSL_<LIB>_<REASON> (or ERR_SSL_<REASON> for the SSL library).
     let err = EncodedSlice::utf8(error_message).to_error_instance(global);
 
-    if let Some(library) = static_cstr(boring::ERR_lib_error_string(err_code)) {
+    if let Some(library) = err_cstr(boring::ERR_lib_error_string(err_code)) {
         err.put(
             global,
             b"library",
-            EncodedSlice::latin1(library).to_js(global),
+            bun_core::String::static_(library).to_js(global)?,
         );
     }
-    if let Some(function) = static_cstr(boring::ERR_func_error_string(err_code)) {
+    if let Some(function) = err_cstr(boring::ERR_func_error_string(err_code)) {
         err.put(
             global,
             b"function",
-            EncodedSlice::latin1(function).to_js(global),
+            bun_core::String::static_(function).to_js(global)?,
         );
     }
-    if let Some(reason) = static_cstr(boring::ERR_reason_error_string(err_code)) {
+    if let Some(reason) = err_cstr(boring::ERR_reason_error_string(err_code)) {
         err.put(
             global,
             b"reason",
-            EncodedSlice::latin1(reason).to_js(global),
+            EncodedSlice::latin1(reason).to_js(global)?,
         );
 
         let lib = lib_short_name((err_code >> 24) & 0xff);
@@ -112,8 +113,8 @@ pub(crate) fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
         code.extend_from_slice(prefix.as_bytes());
         code.extend_from_slice(lib.as_bytes());
         code.extend_from_slice(reason);
-        err.put(global, b"code", EncodedSlice::latin1(&code).to_js(global));
+        err.put(global, b"code", EncodedSlice::latin1(&code).to_js(global)?);
     }
 
-    err
+    Ok(err)
 }

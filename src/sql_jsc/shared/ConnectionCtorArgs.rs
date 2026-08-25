@@ -63,13 +63,12 @@ pub(crate) struct ConnectionCtorArgs<M> {
 }
 
 impl<M: SslModeArg> ConnectionCtorArgs<M> {
-    /// Parses `arguments[0..=6]`. Returns `Ok(None)` when a JS exception is
-    /// already pending and the caller should `return Ok(JSValue::ZERO)`.
+    /// Parses `arguments[0..=6]`.
     pub(crate) fn parse(
         global_object: &JSGlobalObject,
         vm: &mut VirtualMachine,
         arguments: &[JSValue],
-    ) -> JsResult<Option<Self>> {
+    ) -> JsResult<Self> {
         let hostname_str = arguments[0].to_bun_string(global_object)?;
         let port = arguments[1].coerce::<i32>(global_object)?;
         let username_str = arguments[2].to_bun_string(global_object)?;
@@ -89,18 +88,11 @@ impl<M: SslModeArg> ConnectionCtorArgs<M> {
             tls_config = if tls_object.is_boolean() && tls_object.to_boolean() {
                 SSLConfig::default()
             } else if tls_object.is_object() {
-                match SSLConfig::from_js(&mut *vm, global_object, tls_object) {
-                    Ok(opt) => opt.unwrap_or_default(),
-                    Err(_) => return Ok(None),
-                }
+                SSLConfig::from_js(&mut *vm, global_object, tls_object)?.unwrap_or_default()
             } else {
                 return Err(global_object
                     .throw_invalid_arguments(format_args!("tls must be a boolean or an object")));
             };
-
-            if global_object.has_exception() {
-                return Ok(None);
-            }
 
             // We always request the cert so we can verify it and manually
             // abort if the hostname doesn't match. Built here (not at STARTTLS
@@ -122,7 +114,7 @@ impl<M: SslModeArg> ConnectionCtorArgs<M> {
             }
         }
 
-        Ok(Some(Self {
+        Ok(Self {
             hostname_str,
             port,
             username_str,
@@ -131,6 +123,6 @@ impl<M: SslModeArg> ConnectionCtorArgs<M> {
             ssl_mode,
             tls_config,
             secure,
-        }))
+        })
     }
 }

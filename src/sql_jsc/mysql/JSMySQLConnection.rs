@@ -454,10 +454,7 @@ impl JSMySQLConnection {
         // no other live borrow in this scope.
         let vm = global_object.bun_vm().as_mut();
         let arguments = callframe.arguments();
-        let Some(args) = ConnectionCtorArgs::<SSLMode>::parse(global_object, &mut *vm, arguments)?
-        else {
-            return Ok(JSValue::ZERO);
-        };
+        let args = ConnectionCtorArgs::<SSLMode>::parse(global_object, &mut *vm, arguments)?;
         // Frees `secure` / drops `tls_config` on every early return until `into_inner` below.
         let tls_guard = connection_ctor_args::guard_tls(args.secure, args.tls_config);
 

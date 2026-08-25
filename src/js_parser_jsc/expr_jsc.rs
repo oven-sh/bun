@@ -244,14 +244,13 @@ fn utf8_bytes_to_js(bytes: &[u8], global: &JSGlobalObject) -> Result<JSValue, To
         return Ok(JSValue::js_empty_string(global));
     }
     if let Some(utf16) = strings::wtf8_to_utf16_alloc(bytes) {
-        let (out, chars) = BunString::create_uninitialized_utf16(utf16.len());
-        chars.copy_from_slice(&utf16);
-        out.into_js(global).map_err(js_err)
+        BunString::create_utf16_with(utf16.len(), |buf| buf.copy_from_slice(&utf16))
     } else {
-        let (out, chars) = BunString::create_uninitialized_latin1(bytes.len());
-        chars.copy_from_slice(bytes);
-        out.into_js(global).map_err(js_err)
+        BunString::create_latin1_with(bytes.len(), |buf| buf.copy_from_slice(bytes))
     }
+    .map_err(|_| ToJSError::OutOfMemory)?
+    .into_js(global)
+    .map_err(js_err)
 }
 
 /// `E.String` → JS string conversion.
@@ -288,9 +287,10 @@ macro_rules! impl_string_to_js {
                 utf8_bytes_to_js(s.slice8(), global)
             } else {
                 let utf16 = s.slice16();
-                let (out, chars) = BunString::create_uninitialized_utf16(utf16.len());
-                chars.copy_from_slice(utf16);
-                out.into_js(global).map_err(js_err)
+                BunString::create_utf16_with(utf16.len(), |buf| buf.copy_from_slice(utf16))
+                    .map_err(|_| ToJSError::OutOfMemory)?
+                    .into_js(global)
+                    .map_err(js_err)
             }
         }
     };

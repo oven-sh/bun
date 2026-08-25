@@ -145,8 +145,10 @@ extern "C" JSC::EncodedJSValue BunString__toErrorInstance(const BunString* str, 
 {
     WTF::String message = errorMessage(str);
     if (message.isNull() && !str->isEmpty()) [[unlikely]] {
-        // Allocation failed or the message exceeds the maximum string length.
-        return {};
+        // Allocation failed or the message exceeds the maximum string length:
+        // hand back that error in place of the requested one.
+        return JSValue::encode(createError(globalObject, Bun::ErrorCode::ERR_STRING_TOO_LONG,
+            makeString("Cannot create a string longer than "_s, WTF::String::MaxLength, " characters"_s)));
     }
     JSC::JSObject* result = nullptr;
     switch (kind) {

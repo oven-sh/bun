@@ -2,7 +2,7 @@
 //! Exports here are referenced via aliases on the original structs so call
 //! sites do not change.
 
-use bun_jsc::{JSGlobalObject, JSValue};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_uws::{
     AnyWebSocket, RawWebSocket, create_bun_socket_error_t, us_socket_stream_buffer_t, us_socket_t,
 };
@@ -40,8 +40,8 @@ impl StreamBufferExt for bun_uws_sys::us_socket::StreamBuffer {
 pub(crate) fn create_bun_socket_error_to_js(
     this: create_bun_socket_error_t,
     global_object: &JSGlobalObject,
-) -> JSValue {
-    match this {
+) -> JsResult<JSValue> {
+    Ok(match this {
         // us_ssl_ctx_from_options only sets *err for the CA/cipher cases;
         // bad cert/key/DH return NULL with .none and the detail is on the
         // BoringSSL error queue. Surfacing it here keeps every
@@ -49,7 +49,7 @@ pub(crate) fn create_bun_socket_error_to_js(
         create_bun_socket_error_t::none => crate::crypto::boringssl_jsc::err_to_js(
             global_object,
             bun_boringssl_sys::ERR_get_error(),
-        ),
+        )?,
         create_bun_socket_error_t::load_ca_file => global_object
             .err(
                 bun_jsc::ErrorCode::BORINGSSL,
@@ -83,7 +83,7 @@ pub(crate) fn create_bun_socket_error_to_js(
                 format_args!("Failed to set ECDH curve"),
             )
             .to_js(),
-    }
+    })
 }
 
 // LAYERING: body sunk to `bun_jsc::system_error` so `bun_sql_jsc` (which this

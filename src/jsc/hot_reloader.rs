@@ -181,8 +181,6 @@ impl HotReloaderCtx for VirtualMachine {
 }
 
 /// The concrete `HotReloadTask` instance the JS event loop dispatches.
-/// The dyn trait below is the type-erased view used by
-/// `HotReloaderCtx::reload`.
 pub type HotReloadTask = Task<VirtualMachine, EventLoop, false>;
 /// `bun run --watch` reload routed through the event loop (only when
 /// `--watch-kill-signal` listeners exist; see `Task::enqueue`).

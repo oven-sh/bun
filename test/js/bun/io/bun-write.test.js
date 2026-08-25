@@ -1,7 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
-import http from "node:http";
-import { once } from "node:events";
 import {
   bunEnv,
   bunExe,
@@ -13,6 +11,8 @@ import {
   tempDir,
   withoutAggressiveGC,
 } from "harness";
+import { once } from "node:events";
+import http from "node:http";
 import path, { join } from "path";
 
 let i = 0;

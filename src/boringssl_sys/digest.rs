@@ -83,7 +83,9 @@ impl DigestCtx {
     /// `EVP_DigestUpdate`.
     pub fn update(&mut self, data: &[u8]) -> bool {
         // SAFETY: a digest is installed (type invariant); `data` is readable for its length.
-        unsafe { EVP_DigestUpdate(&raw mut self.0, data.as_ptr().cast::<c_void>(), data.len()) == 1 }
+        unsafe {
+            EVP_DigestUpdate(&raw mut self.0, data.as_ptr().cast::<c_void>(), data.len()) == 1
+        }
     }
 
     /// `EVP_DigestFinal_ex` into `out`, which must hold at least [`size`](Self::size)
@@ -125,17 +127,18 @@ impl Drop for DigestCtx {
 pub struct HmacCtx(HMAC_CTX);
 
 impl HmacCtx {
-    fn zeroed() -> Self {
+    fn blank() -> Self {
         let mut ctx = MaybeUninit::<HMAC_CTX>::uninit();
-        // SAFETY: `HMAC_CTX_init` writes the whole struct.
+        // SAFETY: `ctx` is writable; `HMAC_CTX_init` only stores into it.
         unsafe { HMAC_CTX_init(ctx.as_mut_ptr()) };
-        // SAFETY: initialised above.
+        // SAFETY: `HMAC_CTX_init` set `md` and each inner context's pointer
+        // fields; the remaining `md_data` unions have no validity invariant.
         HmacCtx(unsafe { ctx.assume_init() })
     }
 
     /// `HMAC_CTX_init` + `HMAC_Init_ex(key, md)`; `None` if BoringSSL rejects it.
     pub fn new(key: &[u8], md: &'static EVP_MD) -> Option<Self> {
-        let mut this = Self::zeroed();
+        let mut this = Self::blank();
         // SAFETY: `this.0` is initialised; `key` is readable for its length; `md` is static.
         let rc = unsafe {
             HMAC_Init_ex(
@@ -163,7 +166,7 @@ impl HmacCtx {
 
     /// `HMAC_CTX_copy` into a fresh context; `None` on failure.
     pub fn copy(&self) -> Option<Self> {
-        let mut out = Self::zeroed();
+        let mut out = Self::blank();
         // SAFETY: both contexts are initialised.
         let rc = unsafe { HMAC_CTX_copy(&raw mut out.0, &raw const self.0) };
         (rc == 1).then_some(out)

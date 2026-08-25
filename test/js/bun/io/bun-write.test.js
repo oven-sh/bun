@@ -1,5 +1,7 @@
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
+import http from "node:http";
+import { once } from "node:events";
 import {
   bunEnv,
   bunExe,
@@ -929,25 +931,24 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     const CHUNK = 64 * 1024;
     const COUNT = 64; // 4 MiB
     // Serves COUNT chunks; with `gate`, the second half only once it opens.
+    // node:http rather than Bun.serve: no server-side Response objects to muddy a Response count.
     async function origin(gate) {
       const payload = Buffer.alloc(CHUNK, "a");
-      return Bun.serve({
-        port: 0,
-        fetch(req) {
-          if (req.url.endsWith("/small")) return new Response(payload.subarray(0, 1000));
-          let i = 0;
-          return new Response(
-            new ReadableStream({
-              async pull(ctrl) {
-                if (gate && i === COUNT / 2) await gate;
-                if (i++ < COUNT) ctrl.enqueue(payload);
-                else ctrl.close();
-              },
-            }),
-            { headers: { "content-length": String(CHUNK * COUNT) } },
-          );
-        },
+      const server = http.createServer(async (req, res) => {
+        if (req.url.endsWith("/small")) return res.end(payload.subarray(0, 1000));
+        res.writeHead(200, { "content-length": String(CHUNK * COUNT) });
+        for (let i = 0; i < COUNT; i++) {
+          if (gate && i === COUNT / 2) await gate;
+          if (!res.write(payload)) await once(res, "drain");
+        }
+        res.end();
       });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      return {
+        url: new URL(`http://127.0.0.1:${server.address().port}/`),
+        [Symbol.asyncDispose]: () => new Promise(resolve => server.closeAllConnections() || server.close(resolve)),
+      };
     }
 
     it("resolves with the byte count and replaces a longer existing file", async () => {
@@ -963,22 +964,31 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       const dest = join(String(dir), "deep", "er", "out.bin");
       const { promise: gate, resolve: openGate } = Promise.withResolvers();
       await using server = await origin(gate);
-      let collected = false;
-      const registry = new FinalizationRegistry(() => (collected = true));
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      const onDisk = new Promise(resolve => {
+        const watcher = fs.watch(path.dirname(dest), () => {
+          if (fs.existsSync(dest) && fs.statSync(dest).size > 0) {
+            watcher.close();
+            resolve();
+          }
+        });
+      });
       // Its own frame: after it returns only Bun.write refers to the body.
+      let response;
       async function start() {
         const res = await fetch(server.url);
-        registry.register(res, null);
+        response = new WeakRef(res);
         return Bun.write(dest, res);
       }
       const written = start();
       // The first half is on disk before the second half is sent. Before, nothing was written
       // until the whole body had been collected in memory.
-      while (!(fs.existsSync(dest) && fs.statSync(dest).size > 0)) await Bun.sleep(5);
-      while (!collected) {
+      await onDisk;
+      // One full collection per event-loop turn (an fs round trip) until the Response is gone.
+      do {
+        await fs.promises.stat(dest);
         Bun.gc(true);
-        await Bun.sleep(5);
-      }
+      } while (response.deref());
       openGate();
       // Before #40278 was fixed this never settled once the Response had been collected.
       expect(await written).toBe(CHUNK * COUNT);
@@ -1015,9 +1025,8 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     it.skipIf(process.platform !== "linux")("rejects with the write error, for each kind of body", async () => {
       await using server = await origin();
       const streamed = await fetch(server.url);
-      // A body that has fully arrived behind an untouched `.body` stream is written as a blob.
-      const arrived = await fetch(server.url + "small");
-      while (!Bun.inspect(arrived).includes("Blob")) await Bun.sleep(5);
+      // A body that is all here behind an untouched `.body` stream is written as a blob.
+      const arrived = new Response(await (await fetch(server.url + "small")).blob());
       expect(arrived.body).toBeInstanceOf(ReadableStream);
       const js = new Response(
         new ReadableStream({

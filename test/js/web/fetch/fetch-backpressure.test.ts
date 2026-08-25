@@ -6,6 +6,7 @@ import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tls } from "harnes
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { statSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createSecureServer } from "node:http2";
 import { createServer as createHttpsServer } from "node:https";
@@ -447,19 +448,17 @@ describe.concurrent("fetch() receive backpressure — streaming consumer shapes"
     ["end (FIN)", (s: import("bun").Socket) => s.end()],
   ] as const) {
     test(`peer ${name} while receive is paused rejects the body`, async () => {
-      const { promise, resolve } = Promise.withResolvers<import("bun").Socket>();
-      // Declares far more than it will send (more than loopback buffers absorb on any host, as
-      // in the 1 GiB tests below) and sends until the client stops taking it: an untouched body
-      // is taken up to the high-water mark, then the transport pauses with more expected, and
-      // nothing re-arms it until the body is pulled.
+      // Declares far more than it will send and writes until the kernel stops taking it, which,
+      // with an untouched body, is once the client holds the high-water mark and has paused.
       const declared = 1 << 30;
       const payload = Buffer.alloc(CHUNK, 65);
+      const blocked = Promise.withResolvers<import("bun").Socket>();
       let sent = 0;
       const push = (s: import("bun").Socket) => {
         while (sent < declared) {
           const n = s.write(payload);
           sent += Math.max(n, 0);
-          if (n < payload.length) return;
+          if (n < payload.length) return void (sent > 4 * CHUNK && blocked.resolve(s));
         }
       };
       using listener = Bun.listen({
@@ -469,26 +468,13 @@ describe.concurrent("fetch() receive backpressure — streaming consumer shapes"
           open(s) {
             s.write(`HTTP/1.1 200 OK\r\nContent-Length: ${declared}\r\n\r\n`);
             push(s);
-            resolve(s);
           },
           drain: push,
           data() {},
         },
       });
       const res = await fetch(`http://127.0.0.1:${listener.port}/`);
-      const peer = await promise;
-      // The client has paused once the origin's writes stop getting through. The deadline only
-      // bounds a client that never pauses.
-      let last = -1;
-      let stable = 0;
-      for (const until = performance.now() + (isASAN || isDebug ? 15_000 : 3000); stable < 3; ) {
-        if (performance.now() > until) break;
-        await Bun.sleep(20);
-        stable = sent === last ? stable + 1 : 0;
-        last = sent;
-      }
-      expect({ stable, partial: sent < declared }).toEqual({ stable: 3, partial: true });
-      kill(peer);
+      kill(await blocked.promise);
       const reader = res.body!.getReader();
       let total = 0;
       const err = await (async () => {
@@ -530,16 +516,26 @@ async function serveUntilBlocked() {
   let sent = 0;
   let closed = 0;
   const payload = Buffer.alloc(CHUNK, 65);
+  // The kernel stopped taking writes with more than the client's high-water mark outstanding:
+  // from here only a reader can make room.
+  const blocked = Promise.withResolvers<void>();
+  const firstClosed = Promise.withResolvers<void>();
   const srv = createServer((_req, res) => {
     res.on("error", () => {});
-    res.on("close", () => closed++);
+    res.on("close", () => {
+      closed++;
+      firstClosed.resolve();
+    });
     res.flushHeaders();
     let i = 0;
     const push = () => {
       while (i < BIG && !res.destroyed) {
         i++;
         sent += CHUNK;
-        if (!res.write(payload)) return void res.once("drain", push);
+        if (!res.write(payload)) {
+          if (i > 8) blocked.resolve();
+          return void res.once("drain", push);
+        }
       }
       if (!res.destroyed) res.end();
     };
@@ -564,6 +560,8 @@ async function serveUntilBlocked() {
     async untilClosed() {
       while (closed === 0) await Bun.sleep(5);
     },
+    blocked: blocked.promise,
+    closed: firstClosed.promise,
     [Symbol.asyncDispose]: () => {
       srv.closeAllConnections();
       return new Promise(r => srv.close(() => r(undefined)));
@@ -701,10 +699,7 @@ describe("fetch() receive backpressure — body stream nothing is reading", () =
 // rule above applies to it as well: its body is received up to the mark, so a short one
 // completes and its connection goes back to the pool while the Response is still around, and a
 // long one leaves the transport paused until the Response is collected, at which point its fetch
-// is aborted like an abandoned stream's. Before, the transport paused behind the first packet of
-// every such body, which pinned its connection until the Response was collected, and the
-// collection then read the rest of the body off the connection however long it was: a 1 GiB (or
-// endless) response that was only looked at for its status was downloaded in full.
+// is aborted like an abandoned stream's.
 
 type Framing = "content-length" | "chunked" | "close-delimited";
 
@@ -731,6 +726,9 @@ async function rawOrigin(framing: Framing, length: number, holdTail = false) {
   let holding = holdTail;
   const held: (() => void)[] = [];
   const sockets = new Set<import("node:net").Socket>();
+  const closeWaiters: [number, () => void][] = [];
+  let requested = 0;
+  const requestWaiters: [number, () => void][] = [];
 
   function respond(socket: import("node:net").Socket) {
     socket.write(head);
@@ -754,6 +752,7 @@ async function rawOrigin(framing: Framing, length: number, holdTail = false) {
     socket.on("close", () => {
       closed++;
       sockets.delete(socket);
+      for (const [n, resolve] of closeWaiters) if (closed >= n) resolve();
     });
     // A pooled connection carries one request after another.
     let pending = "";
@@ -761,6 +760,8 @@ async function rawOrigin(framing: Framing, length: number, holdTail = false) {
       pending += data.toString("latin1");
       for (let end; (end = pending.indexOf("\r\n\r\n")) !== -1; ) {
         pending = pending.slice(end + 4);
+        requested++;
+        for (const [n, resolve] of requestWaiters) if (requested >= n) resolve();
         respond(socket);
       }
     });
@@ -772,6 +773,10 @@ async function rawOrigin(framing: Framing, length: number, holdTail = false) {
     url: `http://127.0.0.1:${port}/`,
     connections: () => connections,
     closed: () => closed,
+    closedAtLeast: (n: number) =>
+      closed >= n ? Promise.resolve() : new Promise<void>(resolve => closeWaiters.push([n, resolve])),
+    requests: (n: number) =>
+      requested >= n ? Promise.resolve() : new Promise<void>(resolve => requestWaiters.push([n, resolve])),
     finishHeld() {
       holding = false;
       for (const end of held.splice(0)) end();
@@ -783,18 +788,35 @@ async function rawOrigin(framing: Framing, length: number, holdTail = false) {
   };
 }
 
+// One full collection per event-loop turn (an fs round trip, not a timer) until `event` settles.
+// A single collection right after the last `await fetch()` can miss the newest Response: a heap
+// snapshot then shows it with no incoming edge and no root entry, i.e. found only by the
+// conservative scan of the frames that just delivered it. The next turn's collection takes it.
+async function collectUntil<T>(event: Promise<T>): Promise<T> {
+  let settled = false;
+  const result = event.finally(() => (settled = true));
+  while (!settled) {
+    await stat(import.meta.path);
+    Bun.gc(true);
+  }
+  return result;
+}
+
 // Sequential on purpose, as above: these watch connections and closes on their own origin.
 describe("fetch() receive backpressure — a Response whose body nothing touches", () => {
-  const N = 20;
-  // Bounds the failing case only; fixed, the waits below are over in a moment.
-  const deadline = () => performance.now() + (isASAN || isDebug ? 15_000 : 3000);
+  const N = 4;
 
-  test("a long body, Response still held: the transport pauses, and the body stays where it is", async () => {
+  test("a long body, Response held untouched: the process is not held and the body stays where it is", async () => {
     await using server = await serveUntilBlocked();
-    const res = await fetch(server.url);
-    expect(await server.settled()).toBeLessThan(BODY);
-    expect(res.status).toBe(200);
-  }, 60_000);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `globalThis.keep = await fetch(${JSON.stringify(server.url)});`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect({ exitCode: await proc.exited, stderr: await proc.stderr.text() }).toEqual({ exitCode: 0, stderr: "" });
+    expect(server.sent()).toBeLessThan(BODY);
+  });
 
   for (const framing of ["content-length", "chunked", "close-delimited"] as Framing[]) {
     test(`a long ${framing} body, Response collected: its fetch is aborted`, async () => {
@@ -804,16 +826,8 @@ describe("fetch() receive backpressure — a Response whose body nothing touches
         expect((await fetch(origin.url)).status).toBe(200);
       }
       for (let i = 0; i < N; i++) await abandonOne();
-
-      for (const until = deadline(); origin.closed() < N && performance.now() < until; ) {
-        Bun.gc(true);
-        await Bun.sleep(10);
-      }
-      // A few responses can survive a collection through stale stack slots (conservative
-      // scanning); the rest have to go. Before, no connection closed at all: each of them
-      // received its whole body and was pooled.
-      expect(N - origin.closed()).toBeLessThan(N / 4);
-    }, 30_000);
+      await collectUntil(origin.closedAtLeast(N));
+    });
   }
 
   // Not close-delimited: such a body ends with its connection, so there is nothing to reuse.
@@ -828,21 +842,13 @@ describe("fetch() receive backpressure — a Response whose body nothing touches
       expect(origin.connections()).toBe(N);
 
       origin.finishHeld();
-      // A Response shows a body that has fully arrived as a Blob. Nothing else tells without
-      // touching the body, which would itself make the transport take it.
-      const received = () => responses.filter(res => Bun.inspect(res).includes("Blob")).length;
-      for (const until = deadline(); received() < N && performance.now() < until; ) await Bun.sleep(10);
-      // Before, none of these arrived: each transport was paused behind its first packet.
-      expect(received()).toBe(N);
-
-      // N requests at once need N connections: exactly the ones the received bodies gave back,
-      // which were pooled before their bodies were even handed over.
-      const lengths = await Promise.all(
-        Array.from({ length: N }, () => fetch(origin.url).then(res => res.arrayBuffer())),
-      ).then(bodies => bodies.map(body => body.byteLength));
-      expect(lengths).toEqual(Array(N).fill(2 * CHUNK));
-      expect({ opened: origin.connections() - N, closed: origin.closed() }).toEqual({ opened: 0, closed: 0 });
-    }, 30_000);
+      // The held bodies complete on their own and give their connections back. One request after
+      // another from here needs at most one more connection (the first can leave before the tails
+      // were taken); before, every one of them did, since each held body pinned its connection.
+      for (let i = 0; i < N; i++) expect((await (await fetch(origin.url)).arrayBuffer()).byteLength).toBe(2 * CHUNK);
+      expect(origin.connections() - N).toBeLessThanOrEqual(1);
+      expect({ closed: origin.closed(), held: responses.length }).toEqual({ closed: 0, held: N });
+    });
   }
 
   // The boundary of the abort above: a consumer that waits for the whole body (`.text()` through
@@ -856,32 +862,24 @@ describe("fetch() receive backpressure — a Response whose body nothing touches
     test(`a Response collected while ${name} waits for its body: the body still arrives`, async () => {
       using dir = tempDir("fetch-collected-while-consumed", {});
       await using origin = await rawOrigin("content-length", 2 * CHUNK, true);
-      let collected = false;
-      const registry = new FinalizationRegistry(() => (collected = true));
+      let response!: WeakRef<Response>;
       // Its own frame: once it returns, the consumer's promise is all that is held.
       async function start() {
         const res = await fetch(origin.url);
-        registry.register(res, null);
+        response = new WeakRef(res);
         return consume(res, String(dir));
       }
       const received = start();
-      for (const until = deadline(); !collected && performance.now() < until; ) {
+      await origin.requests(1);
+      // One full collection per event-loop turn (an fs round trip) until the Response is gone.
+      do {
+        await stat(import.meta.path);
         Bun.gc(true);
-        await Bun.sleep(10);
-      }
+      } while (!response || response.deref());
       origin.finishHeld();
-
       // Before, the collection let go of the body instead, and Bun.write() never settled.
-      const outcome = await Promise.race([
-        received,
-        Bun.sleep(isASAN || isDebug ? 15_000 : 3000).then(() => "never arrived"),
-      ]);
-      expect({ collected, outcome, closed: origin.closed() }).toEqual({
-        collected: true,
-        outcome: 2 * CHUNK,
-        closed: 0,
-      });
-    }, 30_000);
+      expect({ received: await received, closed: origin.closed() }).toEqual({ received: 2 * CHUNK, closed: 0 });
+    });
   }
 });
 
@@ -896,16 +894,15 @@ describe("S3 receive backpressure", () => {
     return Object.assign(server, { s3 });
   }
 
-  test("a stalled reader pauses the download, then drains it", async () => {
+  test("a reader that stalls and comes back drains the body; cancel() closes the connection", async () => {
     await using bucket = await fakeBucket();
     const reader = bucket.s3.file("big").stream().getReader();
-    const first = await reader.read();
-    expect(await bucket.settled()).toBeLessThan(BODY);
-    let got = first.value!.byteLength;
+    let got = (await reader.read()).value!.byteLength;
+    await bucket.blocked;
     while (got < 64 * CHUNK) got += (await reader.read()).value!.byteLength;
     await reader.cancel();
-    await bucket.untilClosed();
-  }, 60_000);
+    await bucket.closed;
+  });
 
   test("Bun.write(file, s3file) streams to disk with the byte count", async () => {
     using dir = tempDir("s3-to-file", {});
@@ -916,6 +913,8 @@ describe("S3 receive backpressure", () => {
     expect(statSync(dest).size).toBe(TOTAL);
   });
 
+  // A paused, unread stream releases the loop: the process exits with most of the body unsent.
+  // Without the pause it would either read all of BODY first or never exit.
   test("an unread S3 stream does not hold the process", async () => {
     await using bucket = await fakeBucket();
     await using proc = Bun.spawn({
@@ -930,18 +929,9 @@ describe("S3 receive backpressure", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const deadline = performance.now() + 10_000;
-    let outcome: { exitCode: number } | { stillAlive: true } | undefined;
-    const exited = proc.exited.then(exitCode => ({ exitCode }));
-    while (outcome === undefined) {
-      outcome = await Promise.race([exited, Bun.sleep(20).then(() => undefined)]);
-      if (outcome === undefined && (bucket.sent() >= BODY || performance.now() >= deadline)) {
-        outcome = { stillAlive: true };
-        proc.kill();
-      }
-    }
-    expect({ outcome, stderr: await proc.stderr.text() }).toEqual({ outcome: { exitCode: 0 }, stderr: "" });
-  }, 30_000);
+    expect({ exitCode: await proc.exited, stderr: await proc.stderr.text() }).toEqual({ exitCode: 0, stderr: "" });
+    expect(bucket.sent()).toBeLessThan(BODY);
+  });
 
   test("a collected S3 stream aborts the download", async () => {
     await using bucket = await fakeBucket();
@@ -951,10 +941,10 @@ describe("S3 receive backpressure", () => {
       await r.read();
       r.releaseLock();
     })();
-    expect(await bucket.settled()).toBeLessThan(BODY);
-    const closed = bucket.untilClosed().then(() => true);
-    while (!(await Promise.race([closed, Bun.sleep(10).then(() => false)]))) Bun.gc(true);
-  }, 30_000);
+    await bucket.blocked;
+    await collectUntil(bucket.closed);
+    expect(bucket.sent()).toBeLessThan(BODY);
+  });
 
   // An error body is collected whole for the error message; the mark must not pause it.
   test("a non-2xx response larger than the mark rejects instead of stalling", async () => {
@@ -972,13 +962,12 @@ describe("S3 receive backpressure", () => {
 
   // The other direction: a fetch body uploaded to S3. The multipart sink's queue back-pressures
   // the fetch, and both `Bun.write(s3file, res)` and `s3file.writer()` resolve with the bytes sent.
-  test("fetch → Bun.write(s3file, res) is paced by the part uploads and resolves with the byte count", async () => {
+  async function fakeUploadBucket(holdParts?: Promise<void>) {
     let uploaded = 0;
     let parts = 0;
-    let releaseParts!: () => void;
-    const partsGate = new Promise<void>(r => (releaseParts = r));
-    await using origin = await serve("h1");
-    await using bucket = Bun.serve({
+    let completed = 0;
+    const firstPart = Promise.withResolvers<void>();
+    const server = Bun.serve({
       port: 0,
       async fetch(req) {
         const url = new URL(req.url);
@@ -986,37 +975,62 @@ describe("S3 receive backpressure", () => {
           return new Response("<InitiateMultipartUploadResult><UploadId>u</UploadId></InitiateMultipartUploadResult>");
         if (req.method === "PUT") {
           const body = await req.arrayBuffer();
-          await partsGate;
+          firstPart.resolve();
+          await holdParts;
           uploaded += body.byteLength;
           return new Response("", { headers: { etag: `"e${++parts}"` } });
         }
         if (req.method === "POST" && url.searchParams.has("uploadId")) {
           await req.text();
+          completed++;
           return new Response(
             "<CompleteMultipartUploadResult><Bucket>b</Bucket><Key>k</Key><ETag>e</ETag></CompleteMultipartUploadResult>",
           );
         }
+        if (req.method === "DELETE") return new Response(null, { status: 204 });
         return new Response("", { status: 400 });
       },
     });
-    const s3 = new S3Client({ accessKeyId: "t", secretAccessKey: "t", endpoint: bucket.url.href, bucket: "b" });
-    // partSize 5 MiB × queueSize 1: with the parts held, the sink fills and the origin has to stop.
-    const written = Bun.write(s3.file("up", { partSize: 5 * 1024 * 1024, queueSize: 1 }), await fetch(origin.url));
-    let last = -1;
-    for (let stable = 0; stable < 5; ) {
-      await Bun.sleep(20);
-      stable = origin.sent() === last ? stable + 1 : 0;
-      last = origin.sent();
-    }
-    expect(origin.sent()).toBeLessThan(TOTAL);
-    releaseParts();
-    expect({ written: await written, uploaded }).toEqual({ written: TOTAL, uploaded: TOTAL });
+    const s3 = new S3Client({ accessKeyId: "t", secretAccessKey: "t", endpoint: server.url.href, bucket: "b" });
+    return Object.assign(server, {
+      s3,
+      firstPart: firstPart.promise,
+      uploaded: () => uploaded,
+      completed: () => completed,
+    });
+  }
 
-    const writer = s3.file("up2").writer();
+  test("fetch → Bun.write(s3file, res) is paced by the part uploads, and an aborted source commits nothing", async () => {
+    const hold = Promise.withResolvers<void>();
+    await using origin = await serveUntilBlocked();
+    await using bucket = await fakeUploadBucket(hold.promise);
+    const abort = new AbortController();
+    // partSize 5 MiB × queueSize 1: with the first part held, the sink fills and the origin has
+    // to stop long before its 1 GiB is out.
+    const written = Bun.write(
+      bucket.s3.file("up", { partSize: 5 * 1024 * 1024, queueSize: 1 }),
+      await fetch(origin.url, { signal: abort.signal }),
+    );
+    await bucket.firstPart;
+    await origin.blocked;
+    expect(origin.sent()).toBeLessThan(BODY);
+    // Aborting the source fails the upload: nothing is committed.
+    abort.abort();
+    hold.resolve();
+    await expect(written).rejects.toThrow(expect.objectContaining({ name: "AbortError" }));
+    expect(bucket.completed()).toBe(0);
+  });
+
+  test("Bun.write(s3file, res) and s3file.writer() resolve with the byte count", async () => {
+    await using origin = await serve("h1");
+    await using bucket = await fakeUploadBucket();
+    expect(await Bun.write(bucket.s3.file("up"), await fetch(origin.url))).toBe(TOTAL);
+    expect(bucket.uploaded()).toBe(TOTAL);
+    const writer = bucket.s3.file("up2").writer();
     writer.write(Buffer.alloc(1000, 1));
     writer.write("héllo");
     expect(await writer.end()).toBe(1006);
-  }, 30_000);
+  });
 });
 
 describe.concurrent("fetch() receive backpressure — a body nothing waits for does not hold the process", () => {

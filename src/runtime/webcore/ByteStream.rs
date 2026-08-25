@@ -797,6 +797,15 @@ impl ByteStream {
         }
         self.done.set(true);
         self.pending_value.with_mut(|pv| pv.deinit());
+        // A native sink wired to this stream must fail, not later see an EOF and commit what it
+        // has (an S3 upload would complete with a truncated object).
+        let sink = self.sink.replace(SinkHandle::None);
+        if sink.is_some() {
+            self.sink_paused.set(false);
+            sink.end(Some(streams::StreamError::AbortReason(
+                jsc::CommonAbortReason::UserAbort,
+            )));
+        }
 
         if !view.is_empty() {
             self.pending_buffer.set(Self::empty_pending_buffer());

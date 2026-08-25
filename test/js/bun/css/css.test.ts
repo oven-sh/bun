@@ -5974,6 +5974,46 @@ describe("css tests", () => {
       { chrome: 60 << 16 },
     );
 
+    // The group key comes from the downleveled selector: a top-level :dir()
+    // prints as :lang(), one inside ::slotted() or :nth-child(of) prints as is.
+    prefix_test(
+      "::slotted(:dir(ltr)), :dir(ltr) { color: red }",
+      `
+      ::slotted(:dir(ltr)) {
+        color: red;
+      }
+
+      :not(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        color: red;
+      }
+      `,
+      { chrome: 100 << 16 },
+    );
+
+    prefix_test(
+      ":nth-child(2 of :dir(ltr)), :dir(ltr) { color: red }",
+      `
+      :nth-child(2 of :dir(ltr)) {
+        color: red;
+      }
+
+      :not(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        color: red;
+      }
+      `,
+      { chrome: 115 << 16 },
+    );
+
+    prefix_test(
+      ":dir(ltr)::before, :dir(ltr)::after { color: red }",
+      `
+      :not(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)):before, :not(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)):after {
+        color: red;
+      }
+      `,
+      { chrome: 100 << 16 },
+    );
+
     // The `s` flag has no support data. An implied HTML case-insensitive
     // attribute prints without a flag and needs nothing more.
     prefix_test(

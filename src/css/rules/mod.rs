@@ -664,7 +664,8 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
 
     /// Incompatible selectors that share a reason and a prefix. Each group becomes one rule.
     struct IncompatibleSelectors {
-        reason: selector::Incompatibility,
+        /// `None` when the downleveled selector prints compatibly, as `:dir()` does as `:lang()`.
+        reason: Option<selector::Incompatibility>,
         vendor_prefix: css::VendorPrefix,
         selectors: SmallList<Selector, 1>,
     }
@@ -697,24 +698,24 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
             let mut incompatible = SmallList::<IncompatibleSelectors, 1>::default();
             let mut i: u32 = 0;
             while i < sty.selectors.v.len() {
-                let Some(reason) =
-                    selector::incompatibility(sty.selectors.v.at(i), context.targets)
-                else {
+                if selector::incompatibility(sty.selectors.v.at(i), context.targets).is_none() {
                     i += 1;
                     continue;
-                };
+                }
                 let mut sel = sty.selectors.v.ordered_remove(i);
                 let vendor_prefix = selector::update_prefix(
                     context.arena,
                     core::slice::from_mut(&mut sel),
                     context.targets,
                 );
+                // Downleveling can rewrite the selector, so key the group on what will print.
+                let reason = selector::incompatibility(&sel, context.targets);
                 let group = match reason {
-                    selector::Incompatibility::Features(_) => incompatible
+                    Some(selector::Incompatibility::Unknown) => None,
+                    _ => incompatible
                         .slice_mut()
                         .iter_mut()
                         .find(|g| g.reason == reason && g.vendor_prefix == vendor_prefix),
-                    _ => None,
                 };
                 match group {
                     Some(group) => group.selectors.append(sel),

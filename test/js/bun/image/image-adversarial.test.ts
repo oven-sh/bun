@@ -349,8 +349,9 @@ describe("hostile header dimensions", () => {
       buf[off] = val;
       const dv = new DataView(buf.buffer, buf.byteOffset);
       dv.setUint32(29, crc32(buf.subarray(12, 29)));
-      // metadata() is header-only and IHDR is structurally readable; full
-      // decode is what must reject.
+      // The probe validates colour type and bit depth against the same
+      // table libspng enforces, so metadata() and full decode both reject.
+      expect(await survives(new Bun.Image(buf).metadata())).toBe("rejected");
       expect(await survives(new Bun.Image(buf).bytes())).toBe("rejected");
     }
   });
@@ -400,12 +401,26 @@ describe("malformed PNG structure", () => {
   test("IHDR CRC mismatch is tolerated (spng default ignores CRC)", async () => {
     const buf = Buffer.from(tinyPng);
     buf[29] ^= 0xff;
-    expect(await new Bun.Image(buf).metadata()).toEqual({ width: 2, height: 2, format: "png" });
+    expect(await new Bun.Image(buf).metadata()).toEqual({
+      width: 2,
+      height: 2,
+      format: "png",
+      space: "srgb",
+      channels: 4,
+      hasAlpha: true,
+    });
   });
 
   test("missing IEND is tolerated (spec recovery: stream ending after a complete IDAT is valid)", async () => {
     const buf = tinyPng.subarray(0, tinyPng.length - 12);
-    expect(await new Bun.Image(buf).metadata()).toEqual({ width: 2, height: 2, format: "png" });
+    expect(await new Bun.Image(buf).metadata()).toEqual({
+      width: 2,
+      height: 2,
+      format: "png",
+      space: "srgb",
+      channels: 4,
+      hasAlpha: true,
+    });
   });
 
   test("IDAT with zlib bomb (header says small, IDAT inflates huge)", async () => {
@@ -698,7 +713,7 @@ describe("hostile option objects", () => {
   test("data: URL input (base64)", async () => {
     const url = "data:image/png;base64," + Buffer.from(tinyPng).toString("base64");
     const meta = await new Bun.Image(url).metadata();
-    expect(meta).toEqual({ width: 2, height: 2, format: "png" });
+    expect(meta).toEqual({ width: 2, height: 2, format: "png", space: "srgb", channels: 4, hasAlpha: true });
   });
 
   test("data: URL with bad base64 throws", () => {

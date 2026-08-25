@@ -1,0 +1,14 @@
+{
+  "name": "agentic-bun",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Thin Bun CLI that fans a goal out to several Claude Code agents running on local Ollama models",
+  "type": "module",
+  "bin": {
+    "agentic-bun": "./src/cli.ts"
+  },
+  "scripts": {
+    "start": "bun run src/cli.ts",
+    "test": "bun test test/"
+  }
+}

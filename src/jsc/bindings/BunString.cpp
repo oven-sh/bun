@@ -217,7 +217,8 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void BunString__makeThreadShareable(BunString
         impl->deref();
     } else if (!impl->isStatic()) {
         impl->hash();
-        impl->setNeverAtomize();
+        if (impl->canBecomeAtom())
+            impl->setNeverAtomize();
     }
 }
 

@@ -1280,12 +1280,8 @@ bool EqualNoCase(const WTF::StringView a, const WTF::StringView b)
     return a.startsWithIgnoringASCIICase(b);
 }
 
-// OpenSSL's DH_check() returns at once, with no flags set, when (p, q, g) is one
-// of its built-in named groups (DH_get_nid() != NID_undef). BoringSSL's DH_check()
-// has no such shortcut: it runs 64 Miller-Rabin rounds on p and again on
-// (p - 1) / 2, which takes seconds for the larger groups (26 s for modp18).
-// These are the named groups BoringSSL ships: the RFC 3526 MODP primes with
-// generator 2.
+// OpenSSL's DH_check() skips its primality tests for the built-in named groups
+// (DH_get_nid() != NID_undef). BoringSSL's does not, so check() does it here.
 bool IsWellKnownGroup(const DH* dh)
 {
     const BIGNUM* p = nullptr;

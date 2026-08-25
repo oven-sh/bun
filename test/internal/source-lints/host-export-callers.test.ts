@@ -1,15 +1,15 @@
 import { expect, test } from "bun:test";
 import path from "path";
 
-// Every `// HOST_EXPORT(Symbol[, abi])` marker in the Rust sources must have a
-// caller outside Rust.
+// Every `// HOST_EXPORT(Symbol[, abi])` marker in the Rust sources whose thunk
+// is `extern "C"` must have a caller on the C++ side.
 //
 // `src/codegen/generate-host-exports.ts` turns each marker into a
-// `#[unsafe(no_mangle)] extern "C"` thunk in `generated_host_exports.rs`. That
-// thunk is a linker root: rustc's `dead_code` lint and the cross-crate hawk
-// analysis both treat it as reachable, so an export whose C++ caller was
-// deleted keeps its Rust implementation alive forever without a single
-// warning. `Bun__WebSocketClient__writeBlob`, `Bun__WebSocketClientTLS__writeBlob`,
+// `#[unsafe(no_mangle)]` thunk in `generated_host_exports.rs`. That thunk is a
+// linker root: rustc's `dead_code` lint and the cross-crate hawk analysis both
+// treat it as reachable, so an export whose C++ caller was deleted keeps its
+// Rust implementation alive forever without a single warning.
+// `Bun__WebSocketClient__writeBlob`, `Bun__WebSocketClientTLS__writeBlob`,
 // `Bun__WebSocketClientTLS__initWithTunnel` and `Bun__internal_drainTimers` sat
 // in that state: thunk emitted, impl compiled, nothing on the other side of the
 // boundary naming them.
@@ -20,11 +20,15 @@ import path from "path";
 // `headers.h`); the linker is the strict judge of liveness, this lint only
 // catches the export nobody names at all.
 //
-// Exempt: symbols the bindgen generators synthesize. `bindgen_*` names are
-// built by `src/codegen/bindgen-lib-internal.ts` from `.bind.ts` inputs and
-// `js2native_*` names by `src/codegen/generate-js2native.ts`; their callers
-// live in generated C++ (`GeneratedBindings.cpp`, `GeneratedJS2Native.h`) that
-// is not part of the tracked tree.
+// Exempt:
+// - `rust`-abi markers. Their thunk is `extern "Rust"` and its consumers are
+//   `extern "Rust" {}` blocks in other Rust crates (cycle-breaking hooks), so a
+//   C++ search cannot see them.
+// - Symbols the bindgen generators synthesize. `bindgen_*` names are built by
+//   `src/codegen/bindgen-lib-internal.ts` from `.bind.ts` inputs and
+//   `js2native_*` names by `src/codegen/generate-js2native.ts`; their callers
+//   live in generated C++ (`GeneratedBindings.cpp`, `GeneratedJS2Native.h`)
+//   that is not part of the tracked tree.
 //
 // Both scans go through `git grep` so they see tracked files only (a
 // `git stash` round-trip can leave stray files in the working directory) and
@@ -34,8 +38,9 @@ const root = path.resolve(import.meta.dir, "..", "..", "..");
 
 // Same grammar as `markerRe` in src/codegen/generate-host-exports.ts: the
 // marker is the whole line. Prose such as "from the `// HOST_EXPORT(Sym, c)`
-// markers" in a doc comment does not match.
-const MARKER = /^\s*\/\/\s*HOST_EXPORT\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:,\s*(?:jsc|c|rust))?\s*\)\s*$/;
+// markers" in a doc comment does not match. Group 1 is the symbol, group 2
+// the abi (`jsc` when absent).
+const MARKER = /^\s*\/\/\s*HOST_EXPORT\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:,\s*(jsc|c|rust))?\s*\)\s*$/;
 
 const GENERATED_PREFIXES = ["bindgen_", "js2native_"];
 
@@ -54,7 +59,22 @@ const CALLER_PATHSPECS = [
 
 function gitGrep(args: string[]): string[] {
   const r = Bun.spawnSync({
-    cmd: ["git", "-C", root, "grep", ...args],
+    // The `-c` overrides pin the output format: a user's `grep.lineNumber`,
+    // `grep.column`, or `color.grep` setting would otherwise prefix every
+    // match and defeat the parsing below.
+    cmd: [
+      "git",
+      "-C",
+      root,
+      "-c",
+      "grep.lineNumber=false",
+      "-c",
+      "grep.column=false",
+      "-c",
+      "color.grep=never",
+      "grep",
+      ...args,
+    ],
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -65,6 +85,7 @@ function gitGrep(args: string[]): string[] {
 
 // symbol -> "file:line" of its marker
 const exports = new Map<string, string>();
+const rustAbi = new Set<string>();
 const duplicates: string[] = [];
 const markerLines = gitGrep(["-n", "-E", "^[[:space:]]*//[[:space:]]*HOST_EXPORT\\(", "--", ":(glob)src/**/*.rs"]);
 for (const hit of markerLines) {
@@ -76,9 +97,12 @@ for (const hit of markerLines) {
   if (!m) continue;
   if (exports.has(m[1])) duplicates.push(`${where}: HOST_EXPORT(${m[1]}) also at ${exports.get(m[1])}`);
   else exports.set(m[1], where);
+  if (m[2] === "rust") rustAbi.add(m[1]);
 }
 
-const checked = [...exports.keys()].filter(symbol => !GENERATED_PREFIXES.some(prefix => symbol.startsWith(prefix)));
+const checked = [...exports.keys()].filter(
+  symbol => !rustAbi.has(symbol) && !GENERATED_PREFIXES.some(prefix => symbol.startsWith(prefix)),
+);
 
 // One `git grep` for every symbol at once: `-w` gives whole-word matches (so
 // `X__setTimeout` inside `X__setTimeoutInternal` does not count), `-o -h`

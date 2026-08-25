@@ -321,6 +321,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             writeVerb = null;
             hasReturning = false;
             command = SQLCommand.none;
+            canReturnRows = false;
           }
           token = char + token;
         }

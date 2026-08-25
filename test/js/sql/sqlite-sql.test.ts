@@ -987,6 +987,11 @@ describe("Query Execution", () => {
     const quotedIdent = await sql.unsafe("UPDATE weird SET [a;b] = 2 WHERE [a;b] = 1 RETURNING [a;b] AS v");
     expect(quotedIdent).toEqual([{ v: 2 }]);
     expect(quotedIdent.affectedRows).toBe(1);
+
+    // a write-first batch runs through db.run even when a later statement reads
+    const writeFirst = await sql.unsafe("INSERT INTO weird VALUES (3); SELECT * FROM weird");
+    expect(writeFirst.command).toBe("INSERT");
+    expect(writeFirst.affectedRows).toBe(1);
   });
 
   test("SELECT with various clauses", async () => {

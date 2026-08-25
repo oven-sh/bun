@@ -5934,6 +5934,46 @@ describe("css tests", () => {
       { firefox: 60 << 16 },
     );
 
+    // :host() and ::slotted() take one compound selector, so their argument
+    // counts too.
+    prefix_test(
+      ":host(:hover), :host(:focus-visible) { color: red }",
+      `
+      :host(:hover) {
+        color: red;
+      }
+
+      :host(:focus-visible) {
+        color: red;
+      }
+      `,
+      { chrome: 50 << 16 },
+    );
+
+    prefix_test(
+      ":host(:hover), ::slotted(.a) { color: red }",
+      `
+      :host(:hover), ::slotted(.a) {
+        color: red;
+      }
+      `,
+      { chrome: 50 << 16 },
+    );
+
+    prefix_test(
+      ":host(:focus-visible), .x { color: red }",
+      `
+      .x {
+        color: red;
+      }
+
+      :host(:focus-visible) {
+        color: red;
+      }
+      `,
+      { chrome: 60 << 16 },
+    );
+
     // The `s` flag has no support data. An implied HTML case-insensitive
     // attribute prints without a flag and needs nothing more.
     prefix_test(

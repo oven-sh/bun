@@ -476,7 +476,25 @@ fn visit_incompatible(
                     }
                     continue;
                 }
-                Component::Host(_) | Component::Slotted(_) => F::Shadowdomv1,
+                // :host() and ::slotted() take one compound selector, not a forgiving list.
+                Component::Host(selector) => {
+                    if !require(F::Shadowdomv1, targets, sink)
+                        || !selector.as_ref().is_none_or(|selector| {
+                            visit_incompatible(core::slice::from_ref(selector), targets, sink)
+                        })
+                    {
+                        return false;
+                    }
+                    continue;
+                }
+                Component::Slotted(selector) => {
+                    if !require(F::Shadowdomv1, targets, sink)
+                        || !visit_incompatible(core::slice::from_ref(selector), targets, sink)
+                    {
+                        return false;
+                    }
+                    continue;
+                }
 
                 Component::Part(_) => F::PartPseudo,
 
@@ -587,7 +605,18 @@ fn visit_incompatible(
                             }
                         }
                         PseudoElement::Cue => break 'brk F::Cue,
-                        PseudoElement::CueFunction { .. } => break 'brk F::CueFunction,
+                        PseudoElement::CueFunction { selector } => {
+                            if !require(F::CueFunction, targets, sink)
+                                || !visit_incompatible(
+                                    core::slice::from_ref(selector.as_ref()),
+                                    targets,
+                                    sink,
+                                )
+                            {
+                                return false;
+                            }
+                            continue 'components;
+                        }
                         PseudoElement::Custom { .. } => {}
                         _ => {}
                     }

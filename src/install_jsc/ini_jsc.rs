@@ -29,7 +29,7 @@ impl IniTestingAPIs {
         use bun_ast::{Log, Source};
         use bun_core::String as BunString;
         use bun_dotenv as dotenv;
-        use bun_ini::{RegistryAuth, load_npmrc};
+        use bun_ini::load_npmrc;
         use bun_install::npm::Registry;
 
         let arg = frame.argument(0);
@@ -80,8 +80,7 @@ impl IniTestingAPIs {
         };
 
         let mut install = Box::new(BunInstall::default());
-        let mut configs: Vec<RegistryAuth> = Vec::new();
-        if load_npmrc(&mut install, env, &mut log, &source, &mut configs).is_err() {
+        if load_npmrc(&mut install, env, &mut log, &source).is_err() {
             return log.to_js(global, format_args!("error"));
         }
 

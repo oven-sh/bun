@@ -5,6 +5,7 @@
 //! stragglers, so that borrow cannot dangle.
 
 use core::cell::UnsafeCell;
+use core::ptr::NonNull;
 
 use crate::WaitGroup;
 use crate::thread_pool::{Batch, Node, Task};
@@ -28,16 +29,17 @@ struct Slot<'c, C, T> {
 /// See the module doc.
 pub struct JobBatch<'c, C: Sync, T: BatchJob<C>> {
     slots: Box<[Slot<'c, C, T>]>,
-    /// Boxed so the slots can point at it while `self` moves.
-    group: Box<WaitGroup>,
+    /// Heap-allocated (a leaked box, freed in `Drop`) so the slots can point
+    /// at it while `self` moves.
+    group: NonNull<WaitGroup>,
     scheduled: bool,
     waited: bool,
 }
 
 impl<'c, C: Sync, T: BatchJob<C>> JobBatch<'c, C, T> {
     pub fn new(ctx: &'c C, jobs: impl ExactSizeIterator<Item = T>) -> Self {
-        let group = Box::new(WaitGroup::init_with_count(jobs.len()));
-        let group_ptr: *const WaitGroup = &raw const *group;
+        let group = NonNull::from(Box::leak(Box::new(WaitGroup::init_with_count(jobs.len()))));
+        let group_ptr: *const WaitGroup = group.as_ptr();
         Self {
             slots: jobs
                 .map(|job| Slot {
@@ -78,7 +80,8 @@ impl<'c, C: Sync, T: BatchJob<C>> JobBatch<'c, C, T> {
     /// Block until every job has run (immediately, if never scheduled).
     pub fn wait(&mut self) {
         if self.scheduled && !self.waited {
-            self.group.wait();
+            // SAFETY: leaked in `new`, freed only in `Drop`.
+            unsafe { self.group.as_ref() }.wait();
         }
         self.waited = true;
     }
@@ -97,6 +100,8 @@ impl<C: Sync, T: BatchJob<C>> Drop for JobBatch<'_, C, T> {
     fn drop(&mut self) {
         // A scheduled job points into `slots`; wait it out rather than free it.
         self.wait();
+        // SAFETY: from `Box::leak` in `new`; every job has finished with it.
+        drop(unsafe { Box::from_raw(self.group.as_ptr()) });
     }
 }
 

@@ -479,10 +479,33 @@ pub struct Worker<'a> {
 }
 
 pub struct WorkerData<'a> {
-    /// The log `transpiler`/`other_transpiler` (and their resolvers) write to.
-    pub(crate) log: Box<bun_ast::Log>,
     pub(crate) transpiler: Box<Transpiler<'a>>,
     pub(crate) other_transpiler: Option<Box<Transpiler<'a>>>,
+    /// The log `transpiler`/`other_transpiler` (and their resolvers) write to
+    /// through the pointer they hold; heap-allocated apart from the worker
+    /// so moving the worker never invalidates that pointer.
+    /// Declared (so dropped) after the transpilers that point at it.
+    log: OwnedLog,
+}
+
+/// A leaked `Box<Log>`, freed on drop.
+struct OwnedLog(core::ptr::NonNull<bun_ast::Log>);
+
+impl OwnedLog {
+    fn new() -> Self {
+        OwnedLog(core::ptr::NonNull::from(Box::leak(Box::new(bun_ast::Log::init()))))
+    }
+    fn as_ptr(&self) -> *mut bun_ast::Log {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for OwnedLog {
+    fn drop(&mut self) {
+        // SAFETY: from `Box::leak` in `new`; the worker's transpilers, which
+        // hold the pointer, are declared before it and so already dropped.
+        drop(unsafe { Box::from_raw(self.0.as_ptr()) });
+    }
 }
 
 /// The parts of a [`Worker`] that must be torn down on the thread that
@@ -522,8 +545,8 @@ impl<'a> Worker<'a> {
         let mut ast_memory_store = ManuallyDrop::new(bun_ast::ASTMemoryAllocator::new(heap));
         ast_memory_store.reset();
 
-        let mut log = Box::new(bun_ast::Log::init());
-        let log_ptr: *mut bun_ast::Log = &raw mut *log;
+        let log = OwnedLog::new();
+        let log_ptr: *mut bun_ast::Log = log.as_ptr();
         let mut transpiler = Box::new(Transpiler::for_worker(seed, heap, log_ptr));
         // Wire self-referential `linker`/`macro_context` now that `transpiler`
         // is at its final (heap) address.
@@ -599,7 +622,7 @@ impl<'a> Worker<'a> {
         }
         let browser = BrowserSlot::Other {
             slot: &mut data.other_transpiler,
-            log: &mut data.log,
+            log: data.log.as_ptr(),
             client,
             heap,
         };
@@ -639,7 +662,7 @@ pub(crate) enum BrowserSlot<'w, 'a> {
     /// created on first use in this worker's arena (`heap`).
     Other {
         slot: &'w mut Option<Box<Transpiler<'a>>>,
-        log: &'w mut Box<bun_ast::Log>,
+        log: *mut bun_ast::Log,
         client: Option<&'w Transpiler<'a>>,
         heap: &'a ThreadLocalArena,
     },
@@ -659,7 +682,7 @@ impl<'w, 'a> BrowserSlot<'w, 'a> {
                 let other: &mut Transpiler<'a> = slot.get_or_insert_with(|| {
                     let client: &Transpiler<'a> =
                         client.expect("BundleV2 has a client transpiler for browser files");
-                    let log_ptr: *mut bun_ast::Log = &raw mut **log;
+                    let log_ptr: *mut bun_ast::Log = log;
                     let mut boxed = Box::new(Transpiler::for_worker(client, heap, log_ptr));
                     boxed.wire_after_move();
                     boxed

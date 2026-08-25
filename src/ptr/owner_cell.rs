@@ -24,12 +24,16 @@ pub trait RefFamily {
 pub struct OwnerCell<O: 'static, F: RefFamily> {
     /// `'static` is storage only: the borrow is of `*owner`, and the value is
     /// only ever lent out at a lifetime a closure cannot outlive.
-    dependent: ManuallyDrop<F::Of<'static>>,
+    ///
+    /// Heap-allocated (a leaked box, freed in `into_owner`/`Drop`) so that
+    /// moving the cell never moves the dependent: pointers into it that it
+    /// handed out (to other threads, to C++) stay valid.
+    dependent: NonNull<F::Of<'static>>,
     /// From `Box::leak`; reclaimed in `into_owner`/`Drop` after the dependent
     /// is gone. Held raw (not as a `Box`) so moving the cell never reasserts
     /// unique ownership over memory the dependent borrows.
     owner: NonNull<O>,
-    _owns: PhantomData<Box<O>>,
+    _owns: PhantomData<(Box<O>, Box<F::Of<'static>>)>,
 }
 
 impl<O: 'static, F: RefFamily> OwnerCell<O, F> {
@@ -46,7 +50,7 @@ impl<O: 'static, F: RefFamily> OwnerCell<O, F> {
         let owner_ref: &'static O = unsafe { owner.as_ref() };
         match init(owner_ref) {
             Ok(dependent) => Ok(Self {
-                dependent: ManuallyDrop::new(dependent),
+                dependent: NonNull::from(Box::leak(Box::new(dependent))),
                 owner,
                 _owns: PhantomData,
             }),
@@ -74,30 +78,35 @@ impl<O: 'static, F: RefFamily> OwnerCell<O, F> {
 
     #[inline]
     pub fn with<R>(&self, f: impl for<'a, 'b> FnOnce(&'b F::Of<'a>) -> R) -> R {
-        f(&self.dependent)
+        // SAFETY: leaked in `try_new`, freed only in `into_owner`/`Drop`.
+        f(unsafe { self.dependent.as_ref() })
     }
 
     #[inline]
     pub fn with_mut<R>(&mut self, f: impl for<'a, 'b> FnOnce(&'b mut F::Of<'a>) -> R) -> R {
-        f(&mut self.dependent)
+        // SAFETY: as `with`; `&mut self` makes the borrow exclusive.
+        f(unsafe { self.dependent.as_mut() })
     }
 
     /// Drop the dependent and take the owner back.
     pub fn into_owner(self) -> Box<O> {
-        let mut this = ManuallyDrop::new(self);
-        // SAFETY: dropped exactly once: `this` is `ManuallyDrop`, so `Drop`
-        // does not run again.
-        unsafe { ManuallyDrop::drop(&mut this.dependent) };
-        // SAFETY: from `Box::leak` in `try_new`; nothing borrows it any more.
-        unsafe { Box::from_raw(this.owner.as_ptr()) }
+        let this = ManuallyDrop::new(self);
+        // SAFETY: both from `Box::leak` in `try_new`; the dependent goes
+        // first, and `this` is `ManuallyDrop`, so `Drop` does not run again.
+        unsafe {
+            drop(Box::from_raw(this.dependent.as_ptr()));
+            Box::from_raw(this.owner.as_ptr())
+        }
     }
 }
 
 impl<O: 'static, F: RefFamily> Drop for OwnerCell<O, F> {
     fn drop(&mut self) {
-        // SAFETY: dropped exactly once, before the owner.
-        unsafe { ManuallyDrop::drop(&mut self.dependent) };
-        // SAFETY: from `Box::leak` in `try_new`; nothing borrows it any more.
-        drop(unsafe { Box::from_raw(self.owner.as_ptr()) });
+        // SAFETY: both from `Box::leak` in `try_new`; the dependent (which
+        // borrows the owner) goes first.
+        unsafe {
+            drop(Box::from_raw(self.dependent.as_ptr()));
+            drop(Box::from_raw(self.owner.as_ptr()));
+        }
     }
 }

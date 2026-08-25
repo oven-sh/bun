@@ -257,15 +257,23 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
         }
         return null;
       }
-      case "RETURNING":
+      case "RETURNING": {
+        // RETURNING cannot appear inside parens, so no depth gate
         hasReturning = true;
-      // fallthrough
+        lastToken = token;
+        canReturnRows = true;
+        token = "";
+        return null;
+      }
       case "SELECT":
       case "PRAGMA":
       case "WITH":
       case "EXPLAIN": {
         lastToken = token;
-        canReturnRows = true;
+        // a subquery's SELECT must not route the outer write through the row-returning path
+        if (parenDepth === 0) {
+          canReturnRows = true;
+        }
         token = "";
         return null;
       }

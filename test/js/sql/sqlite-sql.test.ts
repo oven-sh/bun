@@ -1017,6 +1017,15 @@ describe("Query Execution", () => {
     const parenLeft = await sql.unsafe("DELETE FROM weird WHERE [a;b] = 9 RETURNING([a;b]) AS v");
     expect(parenLeft).toEqual([{ v: 9 }]);
     expect(parenLeft.affectedRows).toBe(1);
+
+    // a spaced subquery does not route the write through the row-returning path
+    const spacedSubquery = await sql.unsafe("UPDATE weird SET [a;b] = ( SELECT 21 ) WHERE [a;b] = 7");
+    expect(spacedSubquery.command).toBe("UPDATE");
+    expect(spacedSubquery.affectedRows).toBe(1);
+
+    const spacedIn = await sql.unsafe("DELETE FROM weird WHERE [a;b] IN ( SELECT 21 )");
+    expect(spacedIn.command).toBe("DELETE");
+    expect(spacedIn.affectedRows).toBe(1);
   });
 
   test("SELECT with various clauses", async () => {

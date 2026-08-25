@@ -397,10 +397,18 @@ describe("bundler", () => {
       // make sure the minification trick "enum[enum.K=V]=K" is used, but `enum`
       assert(a.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.A=0]=["']A["']/), "should be using enum minification trick (1)");
       assert(a.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.B=1]=["']B["']/), "should be using enum minification trick (2)");
-      assert(a.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.C=[a-zA-Z$]]=["']C["']/), "should be using enum minification trick (3)");
+      // C's value is statically unknown, so the reverse mapping gets a runtime string check
+      assert(
+        a.match(/typeof\([a-zA-Z$]\.C=[a-zA-Z$]\)!=="string"&&\([a-zA-Z$]\[[a-zA-Z$]\.C]=["']C["']\)/),
+        "should be using enum minification trick (3)",
+      );
       assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.X=0]=["']X["']/), "should be using enum minification trick (4)");
       assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.Y=1]=["']Y["']/), "should be using enum minification trick (5)");
-      assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.Z=[a-zA-Z$]]=["']Z["']/), "should be using enum minification trick (6)");
+      // Z's value is statically unknown, so the reverse mapping gets a runtime string check
+      assert(
+        b.match(/typeof\([a-zA-Z$]\.Z=[a-zA-Z$]\)!=="string"&&\([a-zA-Z$]\[[a-zA-Z$]\.Z]=["']Z["']\)/),
+        "should be using enum minification trick (6)",
+      );
     },
     runtimeFiles: {
       "/test.js": /* js */ `
@@ -437,7 +445,11 @@ describe("bundler", () => {
       // make sure the minification trick "enum[enum.K=V]=K" is used, but `enum`
       assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.X=0]=["']X["']/), "should be using enum minification trick (4)");
       assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.Y=1]=["']Y["']/), "should be using enum minification trick (5)");
-      assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.Z=[a-zA-Z$]]=["']Z["']/), "should be using enum minification trick (6)");
+      // Z's value is statically unknown, so the reverse mapping gets a runtime string check
+      assert(
+        b.match(/typeof\([a-zA-Z$]\.Z=[a-zA-Z$]\)!=="string"&&\([a-zA-Z$]\[[a-zA-Z$]\.Z]=["']Z["']\)/),
+        "should be using enum minification trick (6)",
+      );
     },
     runtimeFiles: {
       "/test.js": /* js */ `

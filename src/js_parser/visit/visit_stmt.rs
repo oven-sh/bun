@@ -2195,6 +2195,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let name: &'a [u8] = value.name.slice();
 
             let mut has_string_value = false;
+            let mut value_may_be_string = false;
             if let Some(enum_value) = value.value {
                 next_numeric_value = None;
 
@@ -2229,8 +2230,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .insert(value.ref_, js_ast::ts::Data::EnumString(str_));
                     }
                     _ => {
-                        if visited.known_primitive() == js_ast::expr::PrimitiveType::String {
-                            has_string_value = true;
+                        match visited.known_primitive() {
+                            js_ast::expr::PrimitiveType::String => has_string_value = true,
+                            js_ast::expr::PrimitiveType::Unknown
+                            | js_ast::expr::PrimitiveType::Mixed => value_may_be_string = true,
+                            _ => {}
                         }
 
                         if !p.expr_can_be_removed_if_unused(&visited) {
@@ -2295,6 +2299,70 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // String-valued enums do not form a two-way map
             if has_string_value {
                 value_exprs.push(assign_target);
+            } else if value_may_be_string {
+                // The value's type is not statically known (e.g. a member of an
+                // enum defined in another module). String members must not get
+                // a reverse mapping, so guard it at runtime:
+                // "typeof (Enum.Name = value) !== 'string' && (Enum[Enum.Name] = 'Name')"
+                let typeof_value = p.new_expr(
+                    E::Unary {
+                        op: js_ast::OpCode::UnTypeof,
+                        value: assign_target,
+                        flags: E::UnaryFlags::empty(),
+                    },
+                    value.loc,
+                );
+                let string_literal = p.new_expr(E::EString::from_static(b"string"), value.loc);
+                let is_not_string = p.new_expr(
+                    E::Binary {
+                        op: js_ast::OpCode::BinStrictNe,
+                        left: typeof_value,
+                        right: string_literal,
+                    },
+                    value.loc,
+                );
+                let read_back = if is_assign_target {
+                    p.new_expr(
+                        E::Dot {
+                            target: Expr::init_identifier(data.arg, value.loc),
+                            name: name.into(),
+                            name_loc: value.loc,
+                            ..Default::default()
+                        },
+                        value.loc,
+                    )
+                } else {
+                    let name_string = p.new_expr(value.name_as_e_string(p.arena), value.loc);
+                    p.new_expr(
+                        E::Index {
+                            target: Expr::init_identifier(data.arg, value.loc),
+                            index: name_string,
+                            optional_chain: None,
+                        },
+                        value.loc,
+                    )
+                };
+                p.record_usage(data.arg);
+                let reverse_mapping = Expr::assign(
+                    p.new_expr(
+                        E::Index {
+                            target: Expr::init_identifier(data.arg, value.loc),
+                            index: read_back,
+                            optional_chain: None,
+                        },
+                        value.loc,
+                    ),
+                    name_as_e_string.unwrap(),
+                );
+                p.record_usage(data.arg);
+                value_exprs.push(p.new_expr(
+                    E::Binary {
+                        op: js_ast::OpCode::BinLogicalAnd,
+                        left: is_not_string,
+                        right: reverse_mapping,
+                    },
+                    value.loc,
+                ));
             } else {
                 // "Enum[assignTarget] = 'Name'"
                 value_exprs.push(Expr::assign(

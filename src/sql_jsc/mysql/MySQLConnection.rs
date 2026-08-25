@@ -7,6 +7,7 @@ use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::auth_method::AuthMethod;
 use bun_sql::mysql::capabilities::MariaDBCapabilities;
 use bun_sql::mysql::connection_state::ConnectionState;
+use bun_sql::mysql::mysql_request;
 use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::any_mysql_error::{self as any_mysql_error, Error as AnyMySQLError};
 use bun_sql::mysql::protocol::auth as Auth;
@@ -621,6 +622,9 @@ impl MySQLConnection {
                 ConnectionState::Authenticating | ConnectionState::AuthenticationAwaitingPk => {
                     self.handle_auth(reader, header_length)?
                 }
+                ConnectionState::SessionSetup => {
+                    self.handle_session_setup(reader, header_length)?
+                }
                 ConnectionState::Connected => self.handle_command(reader, header_length)?,
                 _ => {
                     debug!("Unexpected packet in state {}", self.status as u8);
@@ -794,12 +798,8 @@ impl MySQLConnection {
                 };
                 ok.decode_internal(reader)?;
 
-                self.set_status(ConnectionState::Connected);
-
                 self.status_flags = ok.status_flags;
-                self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
-                self.queue.mark_as_ready_for_query();
-                self.advance();
+                self.send_session_setup()?;
             }
 
             x if x == PacketType::ERROR.0 => {
@@ -948,6 +948,60 @@ impl MySQLConnection {
             }
         }
         Ok(())
+    }
+
+    /// The Date codec (`MySQLValue.rs`) is UTC on both ends, but the server
+    /// converts TIMESTAMP columns through `@@session.time_zone` (#40435).
+    fn send_session_setup(&mut self) -> Result<(), AnyMySQLError> {
+        self.set_status(ConnectionState::SessionSetup);
+        mysql_request::execute_query(b"SET time_zone = '+00:00'", self.writer())?;
+        self.flush_data();
+        Ok(())
+    }
+
+    fn handle_session_setup<C: ReaderContext>(
+        &mut self,
+        reader: NewReader<C>,
+        header_length: u32, // u24 on the wire
+    ) -> Result<(), AnyMySQLError> {
+        let first_byte = reader.int::<u8>()?;
+        reader.skip(-1isize);
+
+        match first_byte {
+            x if x == PacketType::OK.0 => {
+                let mut ok = OKPacket {
+                    header: 0,
+                    affected_rows: 0,
+                    last_insert_id: 0,
+                    status_flags: StatusFlags::default(),
+                    packet_size: header_length,
+                };
+                ok.decode_internal(reader)?;
+
+                self.set_status(ConnectionState::Connected);
+
+                self.status_flags = ok.status_flags;
+                self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
+                self.queue.mark_as_ready_for_query();
+                self.advance();
+                Ok(())
+            }
+            x if x == PacketType::ERROR.0 => {
+                let mut err = ErrorPacket::default();
+                err.decode_internal(reader)?;
+
+                self.js_connection_ref().on_error_packet(None, &err);
+                Err(AnyMySQLError::ConnectionFailed)
+            }
+            _ => {
+                bun_core::scoped_log!(
+                    MySQLConnection,
+                    "Unexpected session-setup packet: 0x{:02x}",
+                    first_byte
+                );
+                Err(AnyMySQLError::UnexpectedPacket)
+            }
+        }
     }
 
     pub(crate) fn handle_command<C: ReaderContext>(

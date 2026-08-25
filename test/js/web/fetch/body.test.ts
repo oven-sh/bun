@@ -1415,11 +1415,11 @@ describe.concurrent("a fetch() Response that cannot have a body", () => {
     expect(await response.text()).toBe("");
   });
 
-  test("content that arrives after a 205 resolved is drained, so the process can exit", async () => {
+  test("content still arriving after a 205 resolved does not hold the process", async () => {
     // The server sends 3 of the 5 declared bytes with the head and the other 2
     // only once fetch() has resolved. Nothing but the fetch refs the event loop,
-    // so the process only exits if the fetch takes those 2 bytes off the socket
-    // instead of keeping them for a body reader that cannot exist.
+    // so the process only exits if the fetch stops waiting for a body no reader
+    // can exist for: it closes the connection instead (the server sees the reset).
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1430,6 +1430,7 @@ describe.concurrent("a fetch() Response that cannot have a body", () => {
           const server = net.createServer(socket => {
             upstream = socket;
             socket.unref();
+            socket.on("error", () => {});
             socket.once("data", () => {
               socket.write("HTTP/1.1 205 Reset Content\\r\\nContent-Length: 5\\r\\n\\r\\nhel");
             });

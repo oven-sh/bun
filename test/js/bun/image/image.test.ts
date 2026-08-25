@@ -432,24 +432,25 @@ describe("Bun.Image", () => {
       expect({ w: afterResize.w, h: afterResize.h }).toEqual({ w: 2, h: 2 });
     });
 
-    test("validates all fields synchronously", () => {
-      const valid = { left: 0, top: 0, width: 1, height: 1 };
-      const cases: Array<[unknown, RegExp]> = [
-        [{}, /left/],
-        [{ ...valid, left: undefined }, /left/],
-        [{ ...valid, top: "0" }, /top/],
-        [{ ...valid, left: -1 }, /left/],
-        [{ ...valid, top: 0.5 }, /top/],
-        [{ ...valid, width: 0 }, /width/],
-        [{ ...valid, height: 0 }, /height/],
-        [{ ...valid, width: Number.NaN }, /width/],
-        [{ ...valid, height: Number.POSITIVE_INFINITY }, /height/],
-        [{ ...valid, left: 100_000_001 }, /left/],
-      ];
-      for (const [options, message] of cases) {
+    const validRegion = { left: 0, top: 0, width: 1, height: 1 };
+    describe.each([
+      ["missing left", {}, /left/],
+      ["undefined left", { ...validRegion, left: undefined }, /left/],
+      ["non-number top", { ...validRegion, top: "0" }, /top/],
+      ["negative left", { ...validRegion, left: -1 }, /left/],
+      ["fractional top", { ...validRegion, top: 0.5 }, /top/],
+      ["zero width", { ...validRegion, width: 0 }, /width/],
+      ["zero height", { ...validRegion, height: 0 }, /height/],
+      ["NaN width", { ...validRegion, width: Number.NaN }, /width/],
+      ["infinite height", { ...validRegion, height: Number.POSITIVE_INFINITY }, /height/],
+      ["left above the maximum", { ...validRegion, left: 100_000_001 }, /left/],
+    ] as const)("validates extract options synchronously: %s", (_, options, message) => {
+      test("throws for the invalid region", () => {
         expect(() => (new Bun.Image(coordinatesPng) as any).extract(options)).toThrow(message);
-      }
+      });
+    });
 
+    test("propagates extract option getter errors synchronously", () => {
       const sentinel = new Error("getter failed");
       expect(() =>
         new Bun.Image(coordinatesPng).extract({

@@ -536,6 +536,32 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!", setCwd: true },
   });
+  itBundled("compile/EmbeddedFileNamesPerThread", {
+    compile: true,
+    assetNaming: "[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import { isMainThread, Worker } from "node:worker_threads";
+        import "./asset.file";
+        function probe() {
+          const f = [...Bun.embeddedFiles][0];
+          const p = {};
+          p[f.name] = 1;
+          return p[f.name.split("").join("")];
+        }
+        console.log(probe());
+        if (isMainThread) {
+          const w = new Worker(new URL(import.meta.url));
+          await new Promise(resolve => w.on("exit", resolve));
+          Bun.gc(true);
+          console.log(probe());
+        }
+      `,
+      "/asset.file": "abcd",
+    },
+    outfile: "dist/out",
+    run: { stdout: "1\n1\n1", setCwd: true },
+  });
   itBundled("compile/Bun.isStandaloneExecutable", {
     compile: true,
     assetNaming: "[name].[ext]",

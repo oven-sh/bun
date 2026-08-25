@@ -3548,20 +3548,14 @@ impl BlobExt for Blob {
 
                 // SAFETY: bun_vm() is live for the duration of a host call.
                 if global_this.bun_vm().standalone_module_graph.is_some() {
-                    // `vm.standalone_module_graph` is a
-                    // type-erased `&dyn` so `bun_jsc` doesn't depend on
-                    // `bun_standalone_graph`. The concrete `Graph` is the sole
-                    // implementor and lives in a process-lifetime `OnceLock`;
-                    // `find()` mutates the lazy `wtf_string` cache, so reach it
-                    // via the `UnsafeCell` singleton accessor (same path as
-                    // `jsc_hooks::resolve_embedded_source` / `node_fs`).
-                    let graph = bun_standalone_graph::Graph::get()
+                    // `vm.standalone_module_graph` is a type-erased `&dyn` so
+                    // `bun_jsc` doesn't depend on `bun_standalone_graph`; the
+                    // concrete `Graph` is the sole implementor.
+                    let graph = bun_standalone_graph::Graph::get_ref()
                         .expect("vm.standalone_module_graph set ⇔ Graph singleton populated");
-                    // SAFETY: `graph` is the `UnsafeCell::get()` pointer to the
-                    // process-lifetime singleton; this runs on the JS thread.
-                    if let Some(file) = unsafe { &mut *graph }.find(path_or_fd.path().slice()) {
+                    if let Some(file) = graph.find_ref(path_or_fd.path().slice()) {
                         use crate::api::standalone_graph_jsc::FileJsc as _;
-                        return file.file_blob(global_this).dupe();
+                        return file.file_blob(global_this);
                     }
                 }
 

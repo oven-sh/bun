@@ -1889,15 +1889,10 @@ fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JS
     // process singleton — `Graph::get()` returns the same instance the trait
     // object was built from (`vm.standalone_module_graph.is_some()` ⇔
     // `Graph::get().is_some()`).
-    // SAFETY: `Graph::get()` yields the process-lifetime singleton verified
-    // populated by the `is_some()` check above; this getter runs only on the
-    // JS thread, so the `&mut` borrow is exclusive for the call.
-    let graph: &mut StandaloneModuleGraph = unsafe {
-        &mut *StandaloneModuleGraph::get()
-            .expect("vm.standalone_module_graph set ⇔ Graph singleton populated")
-    };
+    let graph: &StandaloneModuleGraph = StandaloneModuleGraph::get_ref()
+        .expect("vm.standalone_module_graph set ⇔ Graph singleton populated");
 
-    let unsorted_files = graph.files.values_mut();
+    let unsorted_files = graph.files.values();
     let mut sort_indices: Vec<u32> = Vec::with_capacity(unsorted_files.len());
     for (index, file) in unsorted_files.iter().enumerate() {
         // Some % of people using `bun build --compile` want to obscure the source code
@@ -1922,14 +1917,10 @@ fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JS
     });
     for (i, index) in sort_indices.iter().enumerate() {
         use crate::api::standalone_graph_jsc::FileJsc as _;
-        let file: &mut GraphFile = &mut unsorted_files[*index as usize];
+        let file: &GraphFile = &unsorted_files[*index as usize];
         // `file_blob` keeps the embedded path (minus the `/$bunfs/root/` prefix)
         // as the blob name, preserving any subdirectory from the asset template.
-        let input_blob: &mut Blob = file.file_blob(global_this);
-        // We call .dupe() on this to ensure that we don't return a blob that might get freed later.
-        let blob = Blob::new(input_blob.dupe_with_content_type(true));
-        // SAFETY: `Blob::new` returned a fresh heap allocation.
-        unsafe { (*blob).name.set(input_blob.name.get().clone()) };
+        let blob = Blob::new(file.file_blob(global_this));
         // SAFETY: `blob` is heap-allocated and lives until JS owns it via to_js.
         array.put_index(global_this, i as u32, unsafe { (*blob).to_js(global_this) })?;
     }

@@ -507,16 +507,18 @@ impl String {
             core::ptr::null_mut()
         }
     }
+    /// Replace a WTF-backed impl with an isolated copy, for handing the value
+    /// to one other thread; not for sharing one impl between VMs.
     pub fn to_thread_safe(&mut self) {
         if self.tag == Tag::WTFStringImpl {
             BunString__toThreadSafe(self)
         }
         debug_assert!(self.is_thread_safe());
     }
-    /// True iff this `String` may be sent to / shared with another thread
-    /// without racing the WTF `StringImpl`'s non-atomic refcount: every tag
-    /// except `WTFStringImpl` is inert (raw slice / static / dead), and a
-    /// WTF-backed string is safe iff its impl reports `isThreadSafe()`.
+    /// True iff this `String` may be handed to another thread as-is: every
+    /// tag except `WTFStringImpl` is inert (raw slice / static / dead), and a
+    /// WTF-backed string qualifies iff its impl owns its buffer and is in no
+    /// atom table (`isThreadSafe()`).
     ///
     /// Call sites that move a `String` across a thread boundary must ensure
     /// this holds (typically by calling [`to_thread_safe`] first); see the
@@ -918,6 +920,10 @@ impl String {
             if out.utf8.is_none() {
                 // 8-bit all-ASCII: a thread-safe `string` keeps backing the bytes.
                 if out.string.is_thread_safe() {
+                    let wtf = out.string.as_wtf();
+                    wtf.ensure_hash();
+                    // The JS thread still holds this impl; a later property-key use there must copy, not atomize in place.
+                    wtf.set_never_atomize();
                     return out;
                 }
                 out.utf8 = Some(out.slice().to_vec());

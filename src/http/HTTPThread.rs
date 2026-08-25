@@ -409,16 +409,9 @@ impl HttpThread {
             // funnels through here before touching `https_context.{group,secure}`.
             self.ensure_https_context_init();
         }
-        // Note: borrowck — `slice()` borrows `client`; capture into a
-        // `bun_ptr::RawSlice` (encapsulated outlives-holder invariant) so the
-        // borrow of `client` ends before we hand `&mut client` to
-        // `connect_socket`. Backing storage is `client.unix_socket_path`, which
-        // `connect_socket` does not touch.
-        let unix_path = bun_ptr::RawSlice::new(client.unix_socket_path.slice());
+        let unix_path = client.unix_socket_path;
         if !unix_path.is_empty() {
-            return self
-                .context::<IS_SSL>()
-                .connect_socket(client, unix_path.slice());
+            return self.context::<IS_SSL>().connect_socket(client, unix_path);
         }
 
         if IS_SSL {

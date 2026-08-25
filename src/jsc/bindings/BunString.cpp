@@ -296,7 +296,7 @@ static constexpr unsigned int kMinCrossThreadShareableLength = 256;
 // the receivers race the lazy m_hashAndFlags update (debug: ASSERT(!hasHash())
 // in setHash; e.g. two workers switch()ing on the same BroadcastChannel
 // message). Static strings are immortal, pre-hashed and safe to share as-is.
-static Ref<WTF::StringImpl> isolatedCopyForSharing(WTF::StringImpl& impl)
+WTF::String isolatedCopyForSharing(WTF::StringImpl& impl)
 {
     Ref<WTF::StringImpl> copy = impl.isolatedCopy();
     if (!copy->isStatic()) {
@@ -793,23 +793,23 @@ extern "C" BunString BunString__createExternalGloballyAllocatedUTF16(
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
 
+// True iff the impl owns its buffer outright and is in no thread's atom
+// table, so another thread may hold a ref (after ensureHash + setNeverAtomize).
 extern "C" [[ZIG_EXPORT(nothrow)]] bool WTFStringImpl__isThreadSafe(
     const WTF::StringImpl* wtf)
 {
-    if (wtf->isSymbol())
-        return false;
-
-    if (wtf->isAtom()) {
-        // AtomString destructor would destruct on the wrong string table.
-        return false;
-    }
-
-    return true;
+    return !wtf->isAtom() && !wtf->isSymbol() && wtf->bufferOwnership() != WTF::StringImpl::BufferSubstring && !wtf->isExternal();
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__ensureHash(WTF::StringImpl* str)
 {
     str->hash();
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] void WTFStringImpl__setNeverAtomize(WTF::StringImpl* str)
+{
+    if (!str->isStatic())
+        str->setNeverAtomize();
 }
 
 extern "C" JSC::EncodedJSValue JSC__JSValue__upsertBunStringArray(

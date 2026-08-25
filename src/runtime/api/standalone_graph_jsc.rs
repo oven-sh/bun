@@ -8,102 +8,84 @@ use bun_core::{self as bstring, strings};
 use bun_http::MimeType;
 use bun_jsc::JSGlobalObject;
 
-// `StandaloneModuleGraph` here is the inner *module* (so
-// `StandaloneModuleGraph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX` resolves);
-// `File` is re-exported at the crate root.
 use crate::webcore::Blob;
 use crate::webcore::blob::SizeType;
 use crate::webcore::blob::store::{Bytes, Data, Store, StoreRef};
-use bun_standalone_graph::{File, StandaloneModuleGraph};
+use bun_standalone_graph::File;
 
 /// Extension trait wiring JSC-dependent methods onto `standalone_graph::File`.
 pub(crate) trait FileJsc {
-    fn file_blob(&mut self, global: &JSGlobalObject) -> &mut Blob;
+    /// A fresh `Blob` over the shared immortal store, owned by `global`'s VM.
+    fn file_blob(&self, global: &JSGlobalObject) -> Blob;
+}
+
+/// The process-wide part of an embedded file's `Blob`: store + content type.
+/// `global_this` is null and `name` is `DEAD`; `file_blob` stamps those per VM.
+fn shared_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleGraph::Blob> {
+    *file.cached_blob.get_or_init(|| {
+        // `contents` is a `'static` slice into the embedded executable
+        // section — borrow it directly (no copy) and hand it to a `Bytes`
+        // store with the default allocator. The leaked extra `ref_()` below
+        // pins the refcount ≥ 1 forever, so `Store::deref` never runs and
+        // the (otherwise UB) free of a static slice is unreachable.
+        let contents = file.contents.as_bytes();
+        // SAFETY: `contents` is `'static` and never freed (see above);
+        // the const-cast is sound because Blob consumers only read via
+        // `shared_view()`.
+        let bytes = unsafe {
+            Bytes::from_raw_parts(
+                contents.as_ptr().cast_mut(),
+                contents.len() as SizeType,
+                contents.len() as SizeType,
+                bun_alloc::basic::C_ALLOCATOR,
+            )
+        };
+        let mut store = Store {
+            data: Data::Bytes(bytes),
+            mime_type: MimeType::NONE,
+            ref_count: bun_ptr::ThreadSafeRefCount::init(),
+            is_all_ascii: None,
+        };
+        let blob = Blob::default();
+        if let Some(mime) = MimeType::by_extension_no_default(strings::trim_leading_char(
+            bun_paths::extension(file.name),
+            b'.',
+        )) {
+            blob.content_type
+                .set(crate::webcore::blob::BlobContentType::from_mime(&mime));
+            blob.content_type_was_set.set(true);
+            store.mime_type = mime;
+        }
+        if let Data::Bytes(bytes) = &mut store.data {
+            // `Bytes::Drop` and `jsdom_file_construct` both require
+            // `stored_name` to be heap-owned (or empty); a borrowed
+            // `'static` slice would be invalid-freed there.
+            bytes.stored_name = file.name.to_vec().into_boxed_slice();
+        }
+        let store = StoreRef::from(Store::new(store));
+        // make it never free
+        store.ref_();
+        blob.size.set(store.size());
+        blob.store.set(Some(store));
+        // `cached_blob` is typed against the lower crate's opaque `Blob`
+        // (it cannot name `webcore::Blob` without a dep cycle).
+        NonNull::new(Blob::new(blob))
+            .expect("Blob::new returned null")
+            .cast()
+    })
 }
 
 impl FileJsc for File {
-    fn file_blob(&mut self, global: &JSGlobalObject) -> &mut Blob {
-        if self.cached_blob.is_none() {
-            // `contents` is a `'static` slice into the embedded executable
-            // section — borrow it directly (no copy) and hand it to a `Bytes`
-            // store with the default allocator. The leaked extra `ref_()` below
-            // pins the refcount ≥ 1 forever, so `Store::deref` never runs and
-            // the (otherwise UB) free of a static slice is unreachable.
-            let contents = self.contents.as_bytes();
-            // SAFETY: `contents` is `'static` and never freed (see above);
-            // the const-cast is sound because Blob consumers only read via
-            // `shared_view()`.
-            let bytes = unsafe {
-                Bytes::from_raw_parts(
-                    contents.as_ptr().cast_mut(),
-                    contents.len() as SizeType,
-                    contents.len() as SizeType,
-                    bun_alloc::basic::C_ALLOCATOR,
-                )
-            };
-            // Cannot use `..Default::default()` — `Store: Drop`
-            // forbids partial moves out of the temporary default.
-            let store = StoreRef::from(Store::new(Store {
-                data: Data::Bytes(bytes),
-                mime_type: MimeType::NONE,
-                ref_count: bun_ptr::ThreadSafeRefCount::init(),
-                is_all_ascii: None,
-            }));
-            // make it never free
-            store.ref_();
-
-            // Hold the raw pointer so we can keep mutating the store after
-            // `init_with_store` consumes the `StoreRef`. The store outlives
-            // this fn (leaked above).
-            let store_ptr = store.as_ptr();
-
-            let b = Blob::init_with_store(store, global);
-
-            if let Some(mime) = MimeType::by_extension_no_default(strings::trim_leading_char(
-                bun_paths::extension(self.name),
-                b'.',
-            )) {
-                // SAFETY: `store_ptr` is the sole live mutable view; held ref
-                // guarantees liveness for the process lifetime.
-                let store = unsafe { &mut *store_ptr };
-                b.content_type
-                    .set(crate::webcore::blob::BlobContentType::from_mime(&mime));
-                b.content_type_was_set.set(true);
-                store.mime_type = mime;
-            }
-
-            // The real name goes here:
-            // SAFETY: see above; `data` is `Bytes` by construction.
-            if let Data::Bytes(bytes) = unsafe { &mut (*store_ptr).data } {
-                // `Bytes::Drop` and `jsdom_file_construct` both require
-                // `stored_name` to be heap-owned (or empty); a borrowed
-                // `'static` slice would be invalid-freed there.
-                bytes.stored_name = self.name.to_vec().into_boxed_slice();
-            }
-
-            // The pretty name goes here:
-            let prefix = StandaloneModuleGraph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
-            if self.name.starts_with(prefix) {
-                b.name
-                    .set(bstring::String::clone_utf8(&self.name[prefix.len()..]));
-            } else if !self.name.is_empty() {
-                b.name.set(bstring::String::clone_utf8(self.name));
-            }
-
-            // Heap-promote and stash the raw pointer. The standalone graph (and thus this Blob) lives for the process.
-            // `cached_blob` is typed against the lower crate's opaque `Blob`
-            // newtype (it cannot name `webcore::Blob` without a dep cycle), so
-            // erase via `.cast()` here and back below.
-            self.cached_blob = Some(
-                NonNull::new(Blob::new(b))
-                    .expect("Blob::new returned null")
-                    .cast(),
-            );
+    fn file_blob(&self, global: &JSGlobalObject) -> Blob {
+        // SAFETY: `shared_blob` returns the pointer from `Blob::new`, never
+        // freed for the process lifetime; only read here.
+        let blob =
+            unsafe { shared_blob(self).cast::<Blob>().as_ref() }.dupe_with_content_type(true);
+        blob.global_this.set(global);
+        let name = self.display_name();
+        if !name.is_empty() {
+            blob.name.set(bstring::String::clone_utf8(name));
         }
-
-        // SAFETY: populated above; pointer originates from `Blob::new` and is
-        // never freed for the graph's lifetime (store is intentionally leaked
-        // via `.ref_()`). Cast restores the real `webcore::Blob` type.
-        unsafe { self.cached_blob.unwrap().cast::<Blob>().as_mut() }
+        blob
     }
 }

@@ -79,15 +79,12 @@ pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("
 pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("/$bunfs/", "root/");
 
 // A process-lifetime `OnceLock` (PORTING.md §Concurrency: never `static mut`).
-// `get()` returns a raw `*mut`; callers
-// mutate `wtf_string` / `cached_blob` / `sourcemap` lazily. A future reshape
-// could push interior mutability down to those per-`File` fields (`UnsafeCell<…>`)
-// so read-only paths (`find`, `entry_point`, `stat`) can take `&self`.
+// `get()` returns a raw `*mut`; the only post-init mutation is
+// `File::sourcemap` (`LazySourceMap::load`, serialized by `INIT_LOCK`).
 struct Instance(core::cell::UnsafeCell<StandaloneModuleGraph>);
 // SAFETY: the graph is populated once at startup before any worker threads;
-// post-init mutation is limited to per-`File` lazy fields. NOTE: `INIT_LOCK`
-// only guards `LazySourceMap::load`; `File::to_wtf_string` and `cached_blob`
-// mutate without any lock and rely on idempotence + JSC's own synchronization.
+// after that `File::sourcemap` is mutated only under `INIT_LOCK` and
+// `File::cached_blob` is a `OnceLock`. Everything else is read-only.
 // (`Send` is auto-derived: `UnsafeCell<T: Send>` is `Send`.)
 unsafe impl Sync for Instance {}
 
@@ -103,7 +100,7 @@ impl StandaloneModuleGraph {
         INSTANCE.get().map(|cell| cell.0.get())
     }
 
-    /// Read-only lookups. Use `get()` when mutating per-`File` lazy caches.
+    /// Read-only lookups. Use `get()` only for `LazySourceMap::load`.
     pub fn get_ref() -> Option<&'static StandaloneModuleGraph> {
         // SAFETY: `Instance` is `Sync`; the `&self` methods touch only the immutable tables.
         INSTANCE.get().map(|cell| unsafe { &*cell.0.get() })
@@ -155,9 +152,8 @@ pub fn is_bun_standalone_file_path(str_: &[u8]) -> bool {
 }
 
 impl StandaloneModuleGraph {
-    // Callers mutate `wtf_string` / `cached_blob`, so these accessors take
-    // `&mut self`. Switching to `UnsafeCell` per-`File`
-    // fields would let read-only paths take `&self`; see the `Instance` note above.
+    // `&mut` only for `File::sourcemap` (`LazySourceMap::load`); every other
+    // per-`File` access goes through `get_ref()` / `find_ref()`.
     pub fn entry_point(&mut self) -> &mut File {
         &mut self.files.values_mut()[self.entry_point_id as usize]
     }
@@ -285,15 +281,12 @@ fn normalize_file_key<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
 }
 
 // SAFETY: the graph is the process-global INSTANCE singleton (set once at
-// startup, never freed). The raw-pointer / `Cell` fields it carries are
-// `bun_runtime`-owned caches (`cached_blob`, `wtf_string`, source-map state)
-// that are only ever touched from the JS main thread under the API lock; the
-// resolver-facing read path below touches none of them. The graph pointer is
-// shared across worker threads through the resolver, which is why the
-// `Send + Sync` supertrait on `bun_resolver::StandaloneModuleGraph` must be
-// satisfied.
+// startup, never freed) shared by the main VM, Workers and resolver threads.
+// The raw pointers in `File` point into the immortal section; `cached_blob`
+// is a `OnceLock` holding VM-independent state only (no `global_this`, no
+// WTF string); `sourcemap` is mutated only under `INIT_LOCK`.
 unsafe impl Send for StandaloneModuleGraph {}
-// SAFETY: see `Send` impl — post-init mutation is confined to per-`File` lazy caches on the JS thread.
+// SAFETY: see `Send` impl.
 unsafe impl Sync for StandaloneModuleGraph {}
 
 /// Resolver-facing trait object impl. The resolver and VM hold the graph as
@@ -481,9 +474,10 @@ pub struct File {
     pub loader: Loader,
     pub contents: &'static ZStr,
     pub sourcemap: LazySourceMap,
-    pub cached_blob: Option<NonNull<Blob>>,
+    /// VM-independent `webcore::Blob` template (store + content type); see
+    /// `standalone_graph_jsc::file_blob`.
+    pub cached_blob: std::sync::OnceLock<NonNull<Blob>>,
     pub encoding: Encoding,
-    pub wtf_string: BunString,
     // BACKREF into the embedded section; JSC mutates the bytecode buffer in place.
     pub bytecode: *mut [u8],
     pub module_info: *mut [u8],
@@ -522,37 +516,38 @@ impl File {
         strings::cmp_strings_asc((), lhs.name, rhs.name)
     }
 
-    pub fn to_wtf_string(&mut self) -> BunString {
+    /// `name` without the `/$bunfs/root/` prefix, as shown to JS (`Blob.name`,
+    /// `Bun.embeddedFiles`).
+    pub fn display_name(&self) -> &[u8] {
+        self.name
+            .strip_prefix(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes())
+            .unwrap_or(self.name)
+    }
+
+    /// A fresh impl per call so each VM owns its own; Latin-1/UTF-16 are
+    /// zero-copy externals over the immortal section.
+    pub fn to_wtf_string(&self) -> BunString {
         if self.contents.is_empty() {
             return BunString::EMPTY;
         }
-        if self.wtf_string.is_empty() {
-            match self.encoding {
-                Encoding::Binary => {
-                    self.wtf_string = BunString::clone_utf8(self.contents.as_bytes());
-                }
-                Encoding::Latin1 => {
-                    self.wtf_string =
-                        BunString::create_static_external(self.contents.as_bytes(), true);
-                }
-                Encoding::Utf16 => {
-                    let bytes = self.contents.as_bytes();
-                    debug_assert!(bytes.as_ptr().addr().is_multiple_of(align_of::<u16>()));
-                    #[expect(
-                        clippy::cast_ptr_alignment,
-                        reason = "`to_bytes` writes UTF-16 at an even offset and the section base is page-aligned (the 128-byte bytecode alignment relies on the same property)"
-                    )]
-                    // SAFETY: even byte count at a 2-byte-aligned offset of a
-                    // section that is never freed.
-                    let units = unsafe {
-                        core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2)
-                    };
-                    self.wtf_string = BunString::create_static_external_utf16(units);
-                }
+        match self.encoding {
+            Encoding::Binary => BunString::clone_utf8(self.contents.as_bytes()),
+            Encoding::Latin1 => BunString::create_static_external(self.contents.as_bytes(), true),
+            Encoding::Utf16 => {
+                let bytes = self.contents.as_bytes();
+                debug_assert!(bytes.as_ptr().addr().is_multiple_of(align_of::<u16>()));
+                #[expect(
+                    clippy::cast_ptr_alignment,
+                    reason = "`to_bytes` writes UTF-16 at an even offset and the section base is page-aligned (the 128-byte bytecode alignment relies on the same property)"
+                )]
+                // SAFETY: even byte count at a 2-byte-aligned offset of a
+                // section that is never freed.
+                let units = unsafe {
+                    core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2)
+                };
+                BunString::create_static_external_utf16(units)
             }
         }
-        // The cached `wtf_string` keeps the impl alive for the process; hand the caller its own ref.
-        self.wtf_string.clone()
     }
 }
 
@@ -868,9 +863,8 @@ impl StandaloneModuleGraph {
                     }),
                     module_format: module.module_format,
                     side: module.side,
-                    cached_blob: None,
+                    cached_blob: std::sync::OnceLock::new(),
                     encoding: module.encoding,
-                    wtf_string: BunString::EMPTY,
                 },
             );
         }

@@ -1390,11 +1390,10 @@ unsafe fn process_exit(global: *mut JSGlobalObject, code: u8) {
 /// `vm.standalone_module_graph` here and cast it to `&mut Graph` — that
 /// shared-ref provenance has no write permission, so the resulting `&mut` is
 /// instant UB under Stacked Borrows regardless of `INIT_LOCK`. `Graph::get()`
-/// hands out the `*mut` directly from the backing `UnsafeCell`, which is the
-/// same path every other mutating caller (`node_fs`, `Blob`) uses.
+/// hands out the `*mut` directly from the backing `UnsafeCell`.
 ///
-/// Called on the JS thread; `Graph::find` / `LazySourceMap::load` only mutate
-/// the per-`File` lazy caches (sourcemap decode is serialized by `INIT_LOCK`).
+/// `LazySourceMap::load` is the graph's only post-init mutation and is
+/// serialized by `INIT_LOCK`.
 fn load_standalone_sourcemap(
     path: &[u8],
 ) -> Option<std::sync::Arc<bun_sourcemap::ParsedSourceMap>> {
@@ -1479,7 +1478,7 @@ mod vm_loader_ctx {
             is_blob_url(spec) => crate::webcore::object_url_registry::is_blob_url(spec),
             resolve_blob(spec) => {
                 crate::webcore::object_url_registry::ObjectURLRegistry::singleton()
-                    .resolve_and_dupe(spec)
+                    .resolve_and_dupe(spec, &*(*this).global)
                     .map(|b| bun_core::heap::into_raw(Box::new(b)).cast::<()>())
             },
             blob_loader(b) => blob(b).get_loader(&*this),
@@ -3749,20 +3748,13 @@ fn __bun_fetch_builtin_module(
     }
 
     // ── Standalone-module-graph probe ───────────────────────────────────
-    // The VM field is the resolver's
-    // read-only `&dyn StandaloneModuleGraph`; for `File::to_wtf_string`
-    // (mutates the lazy `wtf_string` cache) we need write provenance, so
-    // reach the concrete `Graph` via its `UnsafeCell` singleton accessor —
-    // same path as `load_standalone_sourcemap` / `node_fs`.
+    // The VM field is the resolver's type-erased `&dyn StandaloneModuleGraph`;
+    // the concrete `Graph` is the sole implementor.
     if jsc_vm.standalone_module_graph.is_some() {
-        let graph = bun_standalone_graph::Graph::get()
+        let graph = bun_standalone_graph::Graph::get_ref()
             .expect("vm.standalone_module_graph set ⇔ Graph singleton populated");
-        // Spec uses `graph.files.getPtr(spec)` (no virtual-root prefix
-        // check). SAFETY: `graph` is the `UnsafeCell::get()` pointer to the
-        // process-lifetime singleton; this hook runs on the JS thread and
-        // the only mutation below (`to_wtf_string`) is the per-`File`
-        // idempotent `wtf_string` cache.
-        if let Some(file) = unsafe { (*graph).files.get_mut(spec) } {
+        // `files.get` (no virtual-root prefix check), not `find_ref`.
+        if let Some(file) = graph.files.get(spec) {
             use bun_standalone_graph::StandaloneModuleGraph::ModuleFormat;
 
             if matches!(file.loader, Loader::Sqlite | Loader::SqliteEmbedded) {
@@ -3996,7 +3988,8 @@ unsafe fn get_loader_and_virtual_source<'a>(
     // `blob:` ObjectURL → in-memory virtual source.
     if crate::webcore::object_url_registry::is_blob_url(specifier) {
         match crate::webcore::object_url_registry::ObjectURLRegistry::singleton()
-            .resolve_and_dupe(&specifier[b"blob:".len()..])
+            // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+            .resolve_and_dupe(&specifier[b"blob:".len()..], unsafe { &*jsc_vm }.global())
         {
             Some(blob) => {
                 *blob_to_deinit = Some(blob);

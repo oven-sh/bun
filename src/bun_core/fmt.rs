@@ -1761,9 +1761,15 @@ impl RedactedKeywords {
 
     /// Prefix match, as loose as the ini parser's option matching (`_auth` also covers `_authToken`).
     pub(crate) fn has_prefix(s: &[u8]) -> bool {
-        [b"_auth".as_slice(), b"token", b"_password", b"email"]
-            .iter()
-            .any(|k| s.starts_with(k))
+        [
+            b"_auth".as_slice(),
+            b"token",
+            b"_password",
+            b"password",
+            b"email",
+        ]
+        .iter()
+        .any(|k| s.starts_with(k))
     }
 }
 

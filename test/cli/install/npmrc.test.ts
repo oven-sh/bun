@@ -1126,6 +1126,23 @@ describe(".npmrc diagnostics", () => {
     expect(stderr).toBe("No packages! Deleted empty lockfile\n");
   });
 
+  it("a known option with a non-string value is ignored without a warning", async () => {
+    using dir = tempDir("npmrc-non-string-value", {
+      ".npmrc": "registry=http://127.0.0.1:1/\n//127.0.0.1:1/:_authToken=true\n",
+      "package.json": JSON.stringify({ name: "probe", version: "0.0.0" }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("not a known .npmrc option");
+    expect(exitCode).toBe(0);
+  });
+
   it("an empty _auth naming a bunfig.toml scope is an error", async () => {
     const stderr = await stderrOf(`//example.com/api/:_auth=\n`, {
       install: { scopes: { myorg: { url: "https://example.com/api/" } } },

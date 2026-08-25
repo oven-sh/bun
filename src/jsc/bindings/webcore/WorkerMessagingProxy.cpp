@@ -541,8 +541,8 @@ void WorkerMessagingProxy::workerGlobalScopeDestroyedInternal(int32_t exitCode, 
     if (m_options.kind == WorkerOptions::Kind::Node && stoppedByParent)
         exitCode = 1;
 
-    // Closing while 'close' dispatches so handlers observe threadId == -1 / !isOnline() but a
-    // postMessage() from inside them is still accepted and dropped (browser/Node behaviour).
+    // Closing while 'close' dispatches so handlers observe threadId == -1 / isClosingOrClosed()
+    // but a postMessage() from inside them is still accepted and dropped (browser/Node behaviour).
     {
         Locker lock { m_pendingTasksLock };
         m_state.store(State::Closing);

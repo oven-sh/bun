@@ -470,17 +470,22 @@ describe("Bun.serve http2 with SNI (serverName + tls[])", () => {
     reader.releaseLock();
     return { proc, port: JSON.parse(line).port as number };
   }
+  // Resolves the negotiated ALPN protocol, or "refused" if the server aborts
+  // the handshake (no_application_protocol). Never destroys from inside the
+  // handshake callback.
   const alpnFor = (port: number, servername: string | undefined, protos: string[]) =>
-    new Promise<string | false | null>((resolve, reject) => {
-      const s = tls.connect(
-        { port, host: "127.0.0.1", servername, ALPNProtocols: protos, rejectUnauthorized: false },
-        () => {
-          const p = s.alpnProtocol;
-          s.destroy();
-          resolve(p);
-        },
-      );
-      s.on("error", reject);
+    new Promise<string | false | null>(resolve => {
+      let settled = false;
+      const done = (v: string | false | null) => {
+        if (settled) return;
+        settled = true;
+        resolve(v);
+        setImmediate(() => s.destroy());
+      };
+      const s = tls.connect({ port, host: "127.0.0.1", servername, ALPNProtocols: protos, rejectUnauthorized: false });
+      s.once("secureConnect", () => done(s.alpnProtocol));
+      s.once("error", () => done("refused"));
+      s.once("close", () => done("refused"));
     });
 
   test("h2 is negotiated for the default name, a matched serverName, and an unmatched one", async () => {
@@ -501,7 +506,7 @@ describe("Bun.serve http2 with SNI (serverName + tls[])", () => {
     const { proc, port } = await start(false);
     try {
       expect(await alpnFor(port, "named.test", ["h2"])).toBe("h2");
-      await expect(alpnFor(port, "named.test", ["http/1.1"])).rejects.toThrow();
+      expect(await alpnFor(port, "named.test", ["http/1.1"])).toBe("refused");
     } finally {
       proc.kill();
       await proc.exited;

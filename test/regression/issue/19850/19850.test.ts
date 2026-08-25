@@ -25,17 +25,17 @@ err-in-hook-and-multiple-tests.ts:
 2 | 
 3 | beforeEach(() => {
 4 |   throw new Error("beforeEach");
-                                  ^
+                ^
 error: beforeEach
-      at <anonymous> (/err-in-hook-and-multiple-tests.ts:4:31)
+      at <anonymous> (/err-in-hook-and-multiple-tests.ts:4:13)
 (fail) test 0
 1 | import { beforeEach, test } from "bun:test";
 2 | 
 3 | beforeEach(() => {
 4 |   throw new Error("beforeEach");
-                                  ^
+                ^
 error: beforeEach
-      at <anonymous> (/err-in-hook-and-multiple-tests.ts:4:31)
+      at <anonymous> (/err-in-hook-and-multiple-tests.ts:4:13)
 (fail) test 1
 
  0 pass

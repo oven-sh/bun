@@ -115,16 +115,16 @@ source is a bare `&[u8]`/`EncodedSlice` view.
 `Utf8Bytes<'a>` is `Borrowed(&'a [u8]) | Owned(Vec<u8>) | Shared(String)`
 (`Shared` holds an 8-bit all-ASCII WTF-backed `String` and reads its buffer);
 it derefs to `[u8]`; `is_owned()` ⇔ the bytes were transcoded/copied.
-`Utf8WithString` (`String::into_utf8_with_string[_thread_shareable]()`) keeps the
+`Utf8WithString` (`String::into_utf8_with_string[_thread_isolated]()`) keeps the
 UTF-8 bytes _and_ the source `String` so the value can go back to JS without
 re-encoding; `Utf8WithString::js_only(string)` wraps an output-only string.
-`PathLike<'a>` / `StringOrBuffer<'a>` arms: `String`/`ThreadShareableString`
+`PathLike<'a>` / `StringOrBuffer<'a>` arms: `String`/`ThreadIsolatedString`
 (`Utf8WithString` from a JS string), `Utf8(Utf8Bytes<'a>)` (transcoded JS
 string, or Rust-side bytes: `PathLike::borrowed(bytes)` lends `&'a [u8]` to a
 synchronous call, `PathLike::owned(vec)` when the value must own them),
-`Buffer`. Anything
-parsed from JS, stored, or sent to another thread (`make_thread_shareable`,
-`ThreadShareable<T>`, the fs `args::*<'static>` async path) is `'static`.
+`Buffer`. Anything parsed from JS, stored, or sent to another thread
+(`make_thread_isolated` / `ThreadIsolated<T>` for the fs `args::*<'static>`
+async path, `PathLike::make_thread_shareable` for a `Blob` store) is `'static`.
 
 `EncodedSlice<'a>` is the `{ptr, len}` + encoding-bits (Latin-1/UTF-8/UTF-16)
 borrowed view handed to C++. Constructors name the encoding of the bytes:
@@ -384,22 +384,24 @@ non-transferring path UAFs at GC.
 
 ### Cross-thread string hazards
 
-`StringImpl` refcounts are atomic, but atom tables are per thread: using a
-string as a property key (`Identifier::fromString`) atomizes its impl _in
-place_ into the current thread's table, and the last `deref()` of an atom
-removes it from the current thread's table (`RELEASE_ASSERT(wasRemoved)` if it
-is not there). So an atomizable impl must never be reachable from two VMs —
-not via a process-global registry handing out `String::clone()`s, not via one
-`SerializedScriptValue` deserialized by several receivers. Hand another thread
-its own bytes (`Box<[u8]>` / `clone_utf8` on arrival), or share a
-`String::make_thread_shareable()`d / `Bun::isolatedCopyForSharing` /
-`toCrossThreadShareable` string (pre-hashed and marked never-atomize, so a
-receiver's atom table copies it instead; see `src/jsc/bindings/BunString.cpp`)
-or a static string — make it shareable once, then hand it out with plain
-`clone()`. `String::thread_isolated_copy()` is a plain isolated copy for
-handing a value to _one_ other owner.
-`ObjectURLRegistry`, `StandaloneModuleGraph::File` and the structured-clone
-object fast paths are the worked examples.
+`StringImpl` refcounts are atomic; two things are per-thread: using a string as
+a property key (`Identifier::fromString`) atomizes a non-atom impl _in place_
+into the current thread's atom table, and the last `deref()` of an atom removes
+it from the _current_ thread's table (`RELEASE_ASSERT(wasRemoved)`). The lazily
+computed hash/flags word is also unsynchronized. Rules:
+
+- Handing a value to one other thread (work pool, HTTP thread):
+  `String::thread_isolated_copy()`, `ThreadIsolated<T>`, or own bytes
+  (`Box<[u8]>`, `clone_utf8` on arrival).
+- Letting several VMs reach one impl (process-global registry, one
+  `SerializedScriptValue` with many receivers): `String::make_thread_shareable()`
+  (C++ `Bun::makeThreadShareable` / `isolatedCopyForSharing` /
+  `toCrossThreadShareable`) once — pre-hashed, never atomized in place, so each
+  receiver's atom table takes its own copy — then hand out plain `clone()`s.
+  Static strings already qualify.
+
+Worked examples: `ObjectURLRegistry`, `StandaloneModuleGraph::File`, the
+structured-clone object fast paths.
 
 ## Common Patterns
 

@@ -212,13 +212,10 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void BunString__makeThreadShareable(BunString
     if (str->tag != BunStringTag::WTFStringImpl)
         return;
     auto* impl = str->impl.wtf;
-    if (impl->isAtom() || impl->isSymbol() || impl->isSubString()) {
-        str->impl.wtf = isolatedCopyForSharing(*impl).releaseImpl().leakRef();
+    Ref<WTF::StringImpl> shared = makeThreadShareable(*impl);
+    if (shared.ptr() != impl) {
+        str->impl.wtf = &shared.leakRef();
         impl->deref();
-    } else if (!impl->isStatic()) {
-        impl->hash();
-        if (impl->canBecomeAtom())
-            impl->setNeverAtomize();
     }
 }
 
@@ -303,7 +300,7 @@ static constexpr unsigned int kMinCrossThreadShareableLength = 256;
 // the receivers race the lazy m_hashAndFlags update (debug: ASSERT(!hasHash())
 // in setHash; e.g. two workers switch()ing on the same BroadcastChannel
 // message). Static strings are immortal, pre-hashed and safe to share as-is.
-WTF::String isolatedCopyForSharing(WTF::StringImpl& impl)
+Ref<WTF::StringImpl> isolatedCopyForSharing(const WTF::StringImpl& impl)
 {
     Ref<WTF::StringImpl> copy = impl.isolatedCopy();
     if (!copy->isStatic()) {
@@ -313,29 +310,27 @@ WTF::String isolatedCopyForSharing(WTF::StringImpl& impl)
     return copy;
 }
 
+Ref<WTF::StringImpl> makeThreadShareable(WTF::StringImpl& impl)
+{
+    if (impl.isAtom() || impl.isSymbol() || impl.isSubString())
+        return isolatedCopyForSharing(impl);
+    if (!impl.isStatic()) {
+        impl.hash();
+        // Already set means other threads may hold this impl; don't write the flags word.
+        if (impl.canBecomeAtom())
+            impl.setNeverAtomize();
+    }
+    return impl;
+}
+
 WTF::String toCrossThreadShareable(const WTF::String& string)
 {
     auto* impl = string.impl();
     if (!impl)
         return string;
-
-    if (string.length() < kMinCrossThreadShareableLength)
+    if (impl->length() < kMinCrossThreadShareableLength)
         return isolatedCopyForSharing(*impl);
-
-    // 1) Never share AtomStringImpl/symbols - they have special thread-unsafe behavior
-    if (impl->isAtom() || impl->isSymbol())
-        return isolatedCopyForSharing(*impl);
-
-    // 2) Don't share slices
-    if (impl->isSubString())
-        return isolatedCopyForSharing(*impl);
-
-    // 3) Ensure we won't lazily touch hash/flags on the consumer thread
-    // Force hash computation on this thread before sharing
-    const_cast<StringImpl*>(impl)->hash();
-    const_cast<StringImpl*>(impl)->setNeverAtomize();
-
-    return string;
+    return makeThreadShareable(*impl);
 }
 
 }

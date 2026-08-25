@@ -463,9 +463,7 @@ impl FetchTasklet {
             self.url_proxy_buffer = Box::default();
         }
 
-        if let Some(_hostname) = self.hostname.take() {
-            // dropped by Box
-        }
+        self.hostname = None;
         self.unix_socket_path = Box::default();
 
         if let Some(certificate) = self.result.certificate_info.take() {

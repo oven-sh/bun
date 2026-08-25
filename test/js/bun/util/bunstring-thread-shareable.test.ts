@@ -1,27 +1,27 @@
-import { BunString_threadIsolatedCopyRefCountDelta } from "bun:internal-for-testing";
+import {
+  BunString_makeThreadShareableRefCountDelta,
+  BunString_threadIsolatedCopyRefCountDelta,
+} from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-// BunString__threadIsolatedCopy must not leak a ref on the original
-// StringImpl: it returns a +1 isolated copy and leaves the source's
-// refcount untouched.
+// A positive delta means the original StringImpl's ref was leaked; negative, over-released.
 test("BunString__threadIsolatedCopy does not leak a ref on the original StringImpl", () => {
-  expect(typeof BunString_threadIsolatedCopyRefCountDelta).toBe("function");
-
-  // A correct implementation leaves the original StringImpl's refcount
-  // unchanged once both BunStrings are released. A positive delta means the
-  // original ref was leaked.
   for (let i = 0; i < 8; i++) {
     expect(BunString_threadIsolatedCopyRefCountDelta()).toBe(0);
   }
 });
 
-// Exercise the real callers (Bun.file / async fs.write) whose Zig-side
-// Utf8WithString::make_thread_shareable wrappers were updated alongside the
-// C++ fix. With ASAN this would crash on a double-deref if the two sides ever
-// disagree on who owns the old StringImpl.
-test("make_thread_shareable callers (Bun.file / fs.write) keep refcounts balanced", async () => {
-  using dir = tempDir("bunstring-thread-isolated-copy", {
+test("BunString__makeThreadShareable on an atom releases exactly the ref it replaces", () => {
+  for (let i = 0; i < 8; i++) {
+    expect(BunString_makeThreadShareableRefCountDelta()).toBe(0);
+  }
+});
+
+// Bun.file(path) and async fs.write(fd, string) hand a JS string to another thread through
+// Utf8WithString::make_thread_shareable / make_thread_isolated; under ASAN a ref imbalance there is a double-deref.
+test("Bun.file / async fs.write string hand-off keeps refcounts balanced", async () => {
+  using dir = tempDir("bunstring-thread-shareable", {
     "target.txt": "",
   });
   const src = `
@@ -40,7 +40,7 @@ test("make_thread_shareable callers (Bun.file / fs.write) keep refcounts balance
     }
 
     // Async fs.write(fd, string) routes the data string through
-    // StringOrBuffer::make_thread_shareable.
+    // StringOrBuffer::make_thread_isolated.
     const fd = fs.openSync(targetPath, "w");
     const payload = Buffer.alloc(48, "p").toString();
     let total = 0;

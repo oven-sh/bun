@@ -139,15 +139,11 @@ pub struct Blob {
     pub name: bun_ptr::JsCell<bun_core::String>,
 }
 
-// SAFETY: a `Blob` reaches another thread only as an `ObjectURLRegistry`
-// entry or standalone-graph template (null `global_this`, `name` made
-// `String::make_thread_shareable()`d so dupes clone it into any VM; each dupe
-// is stamped with the resolving thread's global) or via the work-pool
-// read/write tasks that hand it back to the owning JS thread. `store` (`StoreRef`) and
-// `content_type` are atomically refcounted; a shared `Store`'s `is_all_ascii`
-// is atomic, a `Bytes` store is not otherwise written after construction, and
-// a `File` store's stat fields (`seekable`, `max_size`, `mode`,
-// `last_modified`) are lazily cached by whichever dupe stats it.
+// SAFETY: `global_this` is dereferenced only on its owning JS thread; blobs
+// that cross threads (object-URL registry entries, the standalone-graph
+// template) carry a null global and a `make_thread_shareable()`d `name`;
+// `store` (`RefPtr<Store>`) / `content_type` are atomically refcounted and
+// `Store::is_all_ascii` is atomic.
 unsafe impl Send for Blob {}
 // SAFETY: concurrent `&Blob` access only occurs under `ObjectURLRegistry`'s
 // mutex, on the standalone-graph template (never written after its `OnceLock`
@@ -724,14 +720,6 @@ pub mod store {
                 cap,
                 allocator,
                 stored_name: Box::default(),
-            }
-        }
-
-        #[inline]
-        pub fn init_empty_with_name(name: Box<[u8]>) -> Bytes {
-            Bytes {
-                stored_name: name,
-                ..Default::default()
             }
         }
 

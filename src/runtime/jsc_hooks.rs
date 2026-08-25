@@ -3748,21 +3748,18 @@ fn __bun_fetch_builtin_module(
     }
 
     // ── Standalone-module-graph probe ───────────────────────────────────
-    // The VM field is the resolver's type-erased `&dyn StandaloneModuleGraph`;
-    // the concrete `Graph` is the sole implementor.
-    if jsc_vm.standalone_module_graph.is_some() {
-        let graph = bun_standalone_graph::Graph::get_ref()
-            .expect("vm.standalone_module_graph set ⇔ Graph singleton populated");
-        // `files.get` (no virtual-root prefix check), not `find_ref`.
-        if let Some(file) = graph.files.get(spec) {
-            use bun_standalone_graph::StandaloneModuleGraph::ModuleFormat;
+    // `files.get` (no virtual-root prefix check), not `find_ref`.
+    if let Some(file) =
+        bun_standalone_graph::Graph::get_ref().and_then(|graph| graph.files.get(spec))
+    {
+        use bun_standalone_graph::StandaloneModuleGraph::ModuleFormat;
 
-            if matches!(file.loader, Loader::Sqlite | Loader::SqliteEmbedded) {
-                // Distinct from
-                // [`SQLITE_MODULE_SOURCE`]: the standalone-binary path reads
-                // the embedded blob via `readFileSync(import.meta.path)`
-                // (resolved through the `/$bunfs/` virtual root).
-                const SQLITE_MODULE_SOURCE_STANDALONE: &[u8] = b"\
+        if matches!(file.loader, Loader::Sqlite | Loader::SqliteEmbedded) {
+            // Distinct from
+            // [`SQLITE_MODULE_SOURCE`]: the standalone-binary path reads
+            // the embedded blob via `readFileSync(import.meta.path)`
+            // (resolved through the `/$bunfs/` virtual root).
+            const SQLITE_MODULE_SOURCE_STANDALONE: &[u8] = b"\
 /* Generated code */
 import {Database} from 'bun:sqlite';
 import {readFileSync} from 'node:fs';
@@ -3771,48 +3768,47 @@ export const db = new Database(readFileSync(import.meta.path));
 export const __esModule = true;
 export default db;
 ";
-                return Some(ResolvedSource {
-                    source_code: bun_core::String::static_(SQLITE_MODULE_SOURCE_STANDALONE),
-                    source_url: specifier.clone(),
-                    ..ResolvedSource::default()
-                });
-            }
-
-            if file.is_text_module() {
-                // The bytes are already a string body (`encode_text_module`):
-                // the default export is a JSString over the section, no copy.
-                // Only a `Dead` string throws; `to_wtf_string` never yields one.
-                let value = file
-                    .to_wtf_string()
-                    .into_js(global)
-                    .expect("embedded text module string is never dead");
-                return Some(ResolvedSource {
-                    jsvalue_for_export: value,
-                    tag: bun_jsc::resolved_source::Tag::ExportDefaultObject,
-                    ..ResolvedSource::default()
-                });
-            }
-
-            // SAFETY: `file.module_info`/`file.bytecode` are live subranges of
-            // the embedded section (set in `Graph::from_bytes`);
-            // `create_from_cached_record` copies out of it before returning.
-            let (module_info, bytecode) = unsafe { (&*file.module_info, &*file.bytecode) };
             return Some(ResolvedSource {
-                source_code: file.to_wtf_string(),
+                source_code: bun_core::String::static_(SQLITE_MODULE_SOURCE_STANDALONE),
                 source_url: specifier.clone(),
-                bytecode_origin_path: bun_core::String::from_bytes(file.bytecode_origin_path),
-                bytecode_cache: Bytecode::persistent(bytecode),
-                source_code_hash: file.source_hash,
-                module_info: if !module_info.is_empty() {
-                    bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized
-                        ::create_from_cached_record(module_info)
-                } else {
-                    None
-                },
-                is_commonjs_module: file.module_format == ModuleFormat::Cjs,
                 ..ResolvedSource::default()
             });
         }
+
+        if file.is_text_module() {
+            // The bytes are already a string body (`encode_text_module`):
+            // the default export is a JSString over the section, no copy.
+            // Only a `Dead` string throws; `to_wtf_string` never yields one.
+            let value = file
+                .to_wtf_string()
+                .into_js(global)
+                .expect("embedded text module string is never dead");
+            return Some(ResolvedSource {
+                jsvalue_for_export: value,
+                tag: bun_jsc::resolved_source::Tag::ExportDefaultObject,
+                ..ResolvedSource::default()
+            });
+        }
+
+        // SAFETY: `file.module_info`/`file.bytecode` are live subranges of
+        // the embedded section (set in `Graph::from_bytes`);
+        // `create_from_cached_record` copies out of it before returning.
+        let (module_info, bytecode) = unsafe { (&*file.module_info, &*file.bytecode) };
+        return Some(ResolvedSource {
+            source_code: file.to_wtf_string(),
+            source_url: specifier.clone(),
+            bytecode_origin_path: bun_core::String::from_bytes(file.bytecode_origin_path),
+            bytecode_cache: Bytecode::persistent(bytecode),
+            source_code_hash: file.source_hash,
+            module_info: if !module_info.is_empty() {
+                bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized
+                    ::create_from_cached_record(module_info)
+            } else {
+                None
+            },
+            is_commonjs_module: file.module_format == ModuleFormat::Cjs,
+            ..ResolvedSource::default()
+        });
     }
 
     None

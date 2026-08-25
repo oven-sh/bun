@@ -61,7 +61,7 @@ impl PBKDF2 {
     // `password`/`salt` are `StringOrBuffer` whose `Drop` releases the
     // slice/WTF ref, so no explicit cleanup hook is needed —
     // dropping `PBKDF2` is sufficient for the sync path. The async path holds
-    // `ThreadShareable<PBKDF2>`, whose `Drop` additionally unprotects JS-rooted
+    // `ThreadIsolated<PBKDF2>`, whose `Drop` additionally unprotects JS-rooted
     // buffers via the `Unprotect` impl below.
 
     /// The second element is the validated callback on the `Async` flavor and
@@ -267,8 +267,8 @@ impl bun_jsc::Unprotect for PBKDF2 {
 /// `crypto.pbkdf2` off the JS thread.
 pub(crate) struct Pbkdf2Job {
     /// `from_js(.., Flavor::Async)` protected the input buffers; the
-    /// [`bun_jsc::ThreadShareable`] releases that with the job.
-    pub pbkdf2: bun_jsc::ThreadShareable<PBKDF2>,
+    /// [`bun_jsc::ThreadIsolated`] releases that with the job.
+    pub pbkdf2: bun_jsc::ThreadIsolated<PBKDF2>,
     pub output: Vec<u8>,
     pub err: bool,
 }
@@ -343,7 +343,7 @@ pub(crate) fn create_job(global_this: &JSGlobalObject, data: PBKDF2, callback: J
         &cx,
         Pbkdf2Job {
             // `from_js(.., Flavor::Async)` already protected — adopt, don't re-protect.
-            pbkdf2: bun_jsc::ThreadShareable::adopt(data),
+            pbkdf2: bun_jsc::ThreadIsolated::adopt(data),
             output: Vec::new(),
             err: false,
         },

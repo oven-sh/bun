@@ -920,23 +920,13 @@ impl String {
         Utf8WithString { utf8, string: self }
     }
 
-    /// Like [`into_utf8_with_string`] but guarantees the resulting buffer is
-    /// safe to send to another thread.
+    /// [`into_utf8_with_string`] then [`Utf8WithString::make_thread_isolated`].
     ///
     /// [`into_utf8_with_string`]: Self::into_utf8_with_string
-    pub fn into_utf8_with_string_thread_shareable(self) -> Utf8WithString {
+    #[inline]
+    pub fn into_utf8_with_string_thread_isolated(self) -> Utf8WithString {
         let mut out = self.into_utf8_with_string();
-        if out.string.tag == Tag::WTFStringImpl {
-            if out.utf8.is_none() {
-                // 8-bit all-ASCII: a thread-shareable `string` keeps backing the bytes.
-                if out.string.is_thread_isolated() {
-                    return out;
-                }
-                out.utf8 = Some(out.slice().to_vec());
-            }
-            // Transcoded or copied; drop the WTF backing to release memory.
-            out.string = String::EMPTY;
-        }
+        out.make_thread_isolated();
         out
     }
 
@@ -1570,9 +1560,32 @@ impl Utf8WithString {
         (self.utf8, self.string)
     }
 
-    /// If `string` is WTF-backed, replace it with a thread-isolated copy.
+    /// For handing the value to one work-pool job that is dropped back on
+    /// the JS thread: keep a WTF-backed `string` only when it backs the bytes
+    /// and is not an atom/symbol, otherwise own the bytes and drop it.
+    pub fn make_thread_isolated(&mut self) {
+        if self.string.tag != Tag::WTFStringImpl {
+            return;
+        }
+        if self.utf8.is_none() {
+            let wtf = self.string.as_wtf();
+            // The job only reads the bytes and the deref happens on the JS thread, so a plain/substring impl may stay.
+            if !wtf.is_atom() && !wtf.is_symbol() {
+                return;
+            }
+            self.utf8 = Some(self.slice().to_vec());
+        }
+        self.string = String::EMPTY;
+    }
+
+    /// For a holder that any thread may read or drop (a `Blob` store): as
+    /// [`make_thread_isolated`], and a kept `string` is made shareable so JS
+    /// can no longer atomize it in place.
+    ///
+    /// [`make_thread_isolated`]: Self::make_thread_isolated
     pub fn make_thread_shareable(&mut self) {
-        self.string = self.string.thread_isolated_copy();
+        self.make_thread_isolated();
+        self.string.make_thread_shareable();
     }
 }
 

@@ -14,9 +14,9 @@ use crate::webcore::blob::SizeType;
 use crate::webcore::blob::store::{Bytes, Data, IsAllAscii, Store};
 use bun_standalone_graph::File;
 
-/// The process-wide part of an embedded file's `Blob`: store, content type
-/// and a shared `name`. `global_this` is null; `file_blob` stamps it per VM.
-fn shared_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleGraph::Blob> {
+/// The process-wide template of an embedded file's `Blob`: store, content
+/// type and a shared `name`. `global_this` is null; `file_blob` stamps it per VM.
+fn template_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleGraph::Blob> {
     *file.cached_blob.get_or_init(|| {
         // `contents` is a `'static` slice into the embedded executable
         // section — borrow it directly (no copy) and hand it to a `Bytes`
@@ -27,7 +27,7 @@ fn shared_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleGra
         // SAFETY: `contents` is `'static` and never freed (see above);
         // the const-cast is sound because Blob consumers only read via
         // `shared_view()`.
-        let bytes = unsafe {
+        let mut bytes = unsafe {
             Bytes::from_raw_parts(
                 contents.as_ptr().cast_mut(),
                 contents.len() as SizeType,
@@ -35,6 +35,7 @@ fn shared_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleGra
                 bun_alloc::basic::C_ALLOCATOR,
             )
         };
+        bytes.stored_name = file.name.to_vec().into_boxed_slice();
         let mut store = Store {
             data: Data::Bytes(bytes),
             mime_type: MimeType::NONE,
@@ -50,9 +51,6 @@ fn shared_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleGra
                 .set(crate::webcore::blob::BlobContentType::from_mime(&mime));
             blob.content_type_was_set.set(true);
             store.mime_type = mime;
-        }
-        if let Data::Bytes(bytes) = &mut store.data {
-            bytes.stored_name = file.name.to_vec().into_boxed_slice();
         }
         let store = RefPtr::new(store);
         // make it never free
@@ -73,11 +71,11 @@ fn shared_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleGra
     })
 }
 
-/// A fresh `Blob` over the shared immortal store, owned by `global`'s VM.
+/// A fresh dupe of the template, owned by `global`'s VM.
 pub(crate) fn file_blob(file: &File, global: &JSGlobalObject) -> Blob {
-    // SAFETY: `shared_blob` returns the pointer from `Blob::new`, never
+    // SAFETY: `template_blob` returns the pointer from `Blob::new`, never
     // freed for the process lifetime; only read here.
-    let blob = unsafe { shared_blob(file).cast::<Blob>().as_ref() }.dupe_with_content_type(true);
+    let blob = unsafe { template_blob(file).cast::<Blob>().as_ref() }.dupe_with_content_type(true);
     blob.global_this.set(global);
     blob
 }

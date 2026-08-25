@@ -3561,16 +3561,10 @@ impl BlobExt for Blob {
                     *path_or_fd = PathOrFileDescriptor::Path(PathLike::borrowed(b"\\\\.\\NUL"));
                 }
 
-                // SAFETY: bun_vm() is live for the duration of a host call.
-                if global_this.bun_vm().standalone_module_graph.is_some() {
-                    // `vm.standalone_module_graph` is a type-erased `&dyn` so
-                    // `bun_jsc` doesn't depend on `bun_standalone_graph`; the
-                    // concrete `Graph` is the sole implementor.
-                    let graph = bun_standalone_graph::Graph::get_ref()
-                        .expect("vm.standalone_module_graph set ⇔ Graph singleton populated");
-                    if let Some(file) = graph.find_ref(path_or_fd.path().slice()) {
-                        return crate::api::standalone_graph_jsc::file_blob(file, global_this);
-                    }
+                if let Some(file) = bun_standalone_graph::Graph::get_ref()
+                    .and_then(|graph| graph.find_ref(path_or_fd.path().slice()))
+                {
+                    return crate::api::standalone_graph_jsc::file_blob(file, global_this);
                 }
 
                 path_or_fd.make_thread_shareable();
@@ -5523,7 +5517,6 @@ pub(crate) fn jsdom_file_construct(
     callframe: &CallFrame,
 ) -> JsResult<*mut Blob> {
     jsc::mark_binding();
-    let blob: Blob;
     let args = callframe.arguments();
 
     if args.len() < 2 {
@@ -5531,26 +5524,10 @@ pub(crate) fn jsdom_file_construct(
             "new File(bits, name) expects at least 2 arguments"
         )));
     }
-    {
-        use bun_jsc::StringJsc as _;
-        let name_value_str = BunString::from_js(args[1], global_this)?;
-
-        blob = Blob::get::<false, true>(global_this, args[0])?;
-        if blob.store.get().is_some() {
-            // The store may be shared with the source blob (`dupe()`); never rename it.
-            blob.name.set(name_value_str);
-        } else if !name_value_str.is_empty() {
-            // not store but we have a name so we need a store
-            blob.store.set(Some(RefPtr::new(Store {
-                data: store::Data::Bytes(store::Bytes::init_empty_with_name(
-                    name_value_str.to_owned_slice().into_boxed_slice(),
-                )),
-                ref_count: bun_ptr::ThreadSafeRefCount::init(),
-                mime_type: bun_http_types::MimeType::NONE,
-                is_all_ascii: store::IsAllAscii::default(),
-            })));
-        }
-    }
+    let name = BunString::from_js(args[1], global_this)?;
+    let blob = Blob::get::<false, true>(global_this, args[0])?;
+    // The store may be shared with the source blob (`dupe()`); never rename it.
+    blob.name.set(name);
 
     let mut set_last_modified = false;
 

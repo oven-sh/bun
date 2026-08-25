@@ -664,6 +664,12 @@ export const BunString_threadIsolatedCopyRefCountDelta: () => number = $newCppFu
   0,
 );
 
+export const BunString_makeThreadShareableRefCountDelta: () => number = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_BunString_makeThreadShareableRefCountDelta",
+  0,
+);
+
 export const lowercaseHeaderNameSIMD: (name: string) => string = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_lowercaseHeaderNameSIMD",

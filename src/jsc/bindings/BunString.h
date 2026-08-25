@@ -56,9 +56,12 @@ public:
     }
 };
 
-WTF::String toCrossThreadShareable(const WTF::String& string);
-// Always copies; the copy is pre-hashed and never atomized in place, so any
-// number of threads may hold it and use it as a property key.
-WTF::String isolatedCopyForSharing(WTF::StringImpl&);
+// Pre-hashed and never atomized in place, so any number of threads may hold
+// the result and use it as a property key. `isolatedCopyForSharing` always
+// copies; `makeThreadShareable` copies only an atom/symbol/substring;
+// `toCrossThreadShareable` also copies short strings so they stay atomizable.
+Ref<WTF::StringImpl> isolatedCopyForSharing(const WTF::StringImpl&);
+Ref<WTF::StringImpl> makeThreadShareable(WTF::StringImpl&);
+WTF::String toCrossThreadShareable(const WTF::String&);
 
 }

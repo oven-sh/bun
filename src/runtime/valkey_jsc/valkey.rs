@@ -310,9 +310,9 @@ impl DeferredFailure {
 
     fn enqueue(self: Box<Self>) {
         debug!("enqueueing deferred failure");
-        VirtualMachine::get()
-            .event_loop_mut()
-            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(move || (*self).run()));
+        VirtualMachine::get().event_loop_mut().enqueue_task(
+            bun_jsc::ManagedTask::ManagedTask::new(move || (*self).run()),
+        );
     }
 }
 

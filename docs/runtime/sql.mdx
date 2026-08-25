@@ -1414,7 +1414,7 @@ console.log(result.affectedRows); // rows updated, on every adapter
 - `command`: the SQL command that produced the result, such as `"SELECT"` or `"UPDATE"`. `null` on MySQL, whose protocol does not report it.
 - `lastInsertRowid`: the row id of the last inserted row on MySQL and SQLite. `null` on PostgreSQL; use `RETURNING` there.
 
-On SQLite, a multi-statement string reports the first statement's command, and `affectedRows` reports the batch's total changes when that first statement is a write (otherwise `0`, with the total in `count`). On PostgreSQL and MySQL, a query that produces several result sets (for example `.simple()` with several statements) resolves to a plain array of result arrays, and the metadata is on each inner array.
+On SQLite, a multi-statement string reports the first statement's command, and `affectedRows` reports the batch's total changes when that first statement is a write (otherwise `0`). On PostgreSQL and MySQL, a query that produces several result sets (for example `.simple()` with several statements) resolves to a plain array of result arrays, and the metadata is on each inner array.
 
 ### Working with MySQL Result Sets
 

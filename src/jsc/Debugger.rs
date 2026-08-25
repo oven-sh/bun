@@ -640,7 +640,7 @@ pub fn wait_for_node_inspector_connection() {
     // Runtime.runIfWaitingForDebugger, even if a frontend already resolved a
     // previous wait — see test-inspector-wait-for-connection.js.
     let this = VirtualMachine::get();
-    {
+    let ctx_id = {
         let Some(dbg) = this.debugger_mut() else {
             return;
         };
@@ -650,10 +650,7 @@ pub fn wait_for_node_inspector_connection() {
             dbg.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
         }
         dbg.must_block_until_connected = true;
-    }
-    let ctx_id = match this.debugger.as_deref() {
-        Some(d) => d.script_execution_context_id,
-        None => 0,
+        dbg.script_execution_context_id
     };
     WAITING_FOR_DEBUGGER_CONTEXT.store(ctx_id, Ordering::Relaxed);
     BunDebugger__notifyWaitingForDebugger(ctx_id);

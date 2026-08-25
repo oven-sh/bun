@@ -463,8 +463,6 @@ declare module "bun" {
        * write without `RETURNING` reports the number of affected rows here
        * instead. On MySQL it is always the number of rows returned, so it is
        * `0` for a plain `INSERT`, `UPDATE`, or `DELETE`. On SQLite, a
-       * statement that neither returns rows nor writes (for example
-       * `CREATE TABLE`) can report the previous write's count here, and a
        * write whose `affectedRows` is `null` reports `0` here.
        */
       count: number | null;

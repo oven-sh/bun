@@ -400,7 +400,7 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         sqlResult.command = parsedInfo.writeCommand ?? commandToString(command, parsedInfo.lastToken);
         sqlResult.count = changes.changes;
         sqlResult.lastInsertRowid = changes.lastInsertRowid;
-        // non-writes keep 0: sqlite3_changes() still reports the previous write after e.g. CREATE TABLE
+        // a batch whose first statement is a non-write reports 0 even when a later statement wrote
         sqlResult.affectedRows = parsedInfo.writeCommand ? changes.changes : 0;
 
         query.resolve(sqlResult);

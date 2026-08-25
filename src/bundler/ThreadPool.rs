@@ -493,7 +493,9 @@ struct OwnedLog(core::ptr::NonNull<bun_ast::Log>);
 
 impl OwnedLog {
     fn new() -> Self {
-        OwnedLog(core::ptr::NonNull::from(Box::leak(Box::new(bun_ast::Log::init()))))
+        OwnedLog(core::ptr::NonNull::from(Box::leak(Box::new(
+            bun_ast::Log::init(),
+        ))))
     }
     fn as_ptr(&self) -> *mut bun_ast::Log {
         self.0.as_ptr()

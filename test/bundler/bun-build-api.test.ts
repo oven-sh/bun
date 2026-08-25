@@ -2059,6 +2059,30 @@ describe("Bun.build production option", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The esbuild-compat plugin shim derives its minify flags from the raw
+  // config, so it must apply the same production defaults as the native
+  // parser.
+  test.concurrent("production: true is reflected in plugin initialOptions", async () => {
+    using dir = tempDir("build-production-plugin", files);
+    const captured: any[] = [];
+    const capture = (build: any) => {
+      const { minify, minifyIdentifiers, minifyWhitespace, minifySyntax } = build.initialOptions;
+      captured.push({ minify, minifyIdentifiers, minifyWhitespace, minifySyntax });
+    };
+    for (const extra of [{ production: true }, { production: true, minify: false }] as const) {
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "index.js")],
+        ...extra,
+        plugins: [{ name: "capture", setup: capture }],
+      });
+      expect(result.success).toBe(true);
+    }
+    expect(captured).toEqual([
+      { minify: true, minifyIdentifiers: true, minifyWhitespace: true, minifySyntax: true },
+      { minify: false, minifyIdentifiers: false, minifyWhitespace: false, minifySyntax: false },
+    ]);
+  });
+
   // Like the CLI, production wins over a tsconfig that re-enables the JSX
   // dev transform. `env: "inline"` makes configure_defines merge the
   // tsconfig jsx settings into the build options.

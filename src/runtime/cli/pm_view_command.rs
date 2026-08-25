@@ -96,27 +96,16 @@ pub(crate) fn view(
     );
     let url = URL::parse(url_slice);
 
+    let authorization = scope.authorization();
     let mut headers = http::HeaderBuilder::default();
     headers.count(b"Accept", b"application/json");
-    if !scope.token.is_empty() {
-        headers.count(b"Authorization", b"");
-        headers.content.cap += b"Bearer ".len() + scope.token.len();
-    } else if !scope.auth.is_empty() {
-        headers.count(b"Authorization", b"");
-        headers.content.cap += b"Basic ".len() + scope.auth.len();
+    if let Some(authorization) = &authorization {
+        headers.count(b"Authorization", authorization);
     }
     headers.allocate()?;
     headers.append(b"Accept", b"application/json");
-    if !scope.token.is_empty() {
-        headers.append_fmt(
-            b"Authorization",
-            format_args!("Bearer {}", BStr::new(&*scope.token)),
-        );
-    } else if !scope.auth.is_empty() {
-        headers.append_fmt(
-            b"Authorization",
-            format_args!("Basic {}", BStr::new(&*scope.auth)),
-        );
+    if let Some(authorization) = &authorization {
+        headers.append(b"Authorization", authorization);
     }
 
     let mut response_buf = MutableString::init(2048)?;

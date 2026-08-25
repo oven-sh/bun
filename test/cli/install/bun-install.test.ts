@@ -749,6 +749,100 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  // A yarn-style credential inside the registry URL is stripped from the path before
+  // the request goes out, whether or not `.npmrc` also supplies one. Otherwise the
+  // secret ships in the request path, where proxies and logs can see it.
+  describe("credentials embedded in the registry URL", () => {
+    // Returns the Authorization header and the request path the registry saw.
+    async function probeEmbedded(registryPath: string, authLines: (host: string) => string) {
+      const seen: Array<{ path: string; auth: string | null }> = [];
+      await using registry = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          seen.push({ path: new URL(req.url).pathname, auth: req.headers.get("authorization") });
+          return new Response("not found", { status: 404 });
+        },
+      });
+      const host = `127.0.0.1:${registry.port}`;
+      using dir = tempDir("npmrc-embedded-auth", {
+        ".npmrc": `@myorg:registry=http://${host}${registryPath}\n${authLines(host)}\n`,
+        "package.json": JSON.stringify({ name: "probe", version: "0.0.0", dependencies: { "@myorg/pkg": "1.0.0" } }),
+        "home/.gitkeep": "",
+      });
+      const home = join(String(dir), "home");
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--no-cache"],
+        cwd: String(dir),
+        env: { ...env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ requests: seen.length, exitCode, stderr }).toEqual({
+        requests: 1,
+        exitCode: 1,
+        stderr: expect.any(String),
+      });
+      return seen[0]!;
+    }
+
+    it("strips an embedded _authToken from the path and uses it when .npmrc has none", async () => {
+      const seen = await probeEmbedded("/api/:_authToken=EMBEDDED", () => "");
+      expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer EMBEDDED" });
+    });
+
+    // A bare `:` belongs to the path. Only `name=value` segments naming a credential
+    // are stripped, so a registry mounted under `/a:b/c/` keeps its path.
+    it("leaves a plain colon in the registry path alone", async () => {
+      const seen = await probeEmbedded("/a:b/c/", host => `//${host}/a:b/c/:_authToken=TOK`);
+      expect(seen).toEqual({ path: "/a:b/c/@myorg%2fpkg", auth: "Bearer TOK" });
+    });
+
+    it("leaves a plain colon in the registry path alone when no credential is configured", async () => {
+      const seen = await probeEmbedded("/a:b/c/", () => "");
+      expect(seen).toEqual({ path: "/a:b/c/@myorg%2fpkg", auth: null });
+    });
+
+    // The scan anchors on the `:<name>=` marker, not on any `:`, so a colon inside the
+    // value neither ends it nor splits it.
+    it("strips an embedded _authToken whose value contains a colon", async () => {
+      const seen = await probeEmbedded("/api/:_authToken=aa:bb", () => "");
+      expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer aa:bb" });
+    });
+
+    // An embedded `_password` is used verbatim, unlike an `.npmrc` one, which is base64.
+    it("strips an embedded username and _password whose value contains a colon", async () => {
+      const seen = await probeEmbedded("/api/:username=u/:_password=p:q", () => "");
+      expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: `Basic ${Buffer.from("u:p:q").toString("base64")}` });
+    });
+
+    // `_authToken` ends what is read, not what is stripped: a segment to its left is
+    // still a secret, and leaving it behind puts it in the request path.
+    it("strips a _password written to the left of the _authToken it loses to", async () => {
+      const seen = await probeEmbedded("/api/:_password=cA==:_authToken=T", () => "");
+      expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer T" });
+    });
+
+    it("strips a username written to the left of the _authToken it loses to", async () => {
+      const seen = await probeEmbedded("/api/:username=u:_authToken=T", () => "");
+      expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer T" });
+    });
+
+    // The rightmost terminal marker is the one that is read; a second one to its left
+    // is stripped but never recorded, so it cannot outrank the first.
+    it("reads the rightmost terminal marker, not the leftmost", async () => {
+      const seen = await probeEmbedded("/api/:_authToken=T:_auth=WDpZ", () => "");
+      expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Basic WDpZ" });
+    });
+
+    it("reads the leftmost of two duplicate non-terminal markers", async () => {
+      const seen = await probeEmbedded("/api/:username=a:username=b:_password=p", () => "");
+      expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: `Basic ${Buffer.from("a:p").toString("base64")}` });
+    });
+  });
+
   // The Rust port adds a same-origin guard in `NetworkTask::for_tarball` so a
   // malicious registry can't point `dist.tarball` at a third-party host and
   // harvest the scope's `Authorization` header. The guard must compare

@@ -1087,12 +1087,10 @@ mod draft {
 
     enum RegistryCredential {
         Token(Box<[u8]>),
+        /// `_auth`, verbatim: npm sends it as `Basic <value>` without decoding it.
+        Auth(Box<[u8]>),
         Username(Box<[u8]>),
         Password(Box<[u8]>),
-        UsernamePassword {
-            username: Box<[u8]>,
-            password: Box<[u8]>,
-        },
         Email(Box<[u8]>),
     }
 
@@ -1113,34 +1111,28 @@ mod draft {
                 ConfigOpt::_AuthToken => RegistryCredential::Token(value),
                 ConfigOpt::Username => RegistryCredential::Username(value),
                 ConfigOpt::Email => RegistryCredential::Email(value),
+                // npm's `Buffer.from(value, "base64")` never fails: invalid bytes are
+                // skipped and as much as possible is decoded.
                 ConfigOpt::_Password => {
-                    if value.is_empty() {
-                        RegistryCredential::Password(Box::default())
-                    } else {
-                        let mut decoded = vec![0u8; bun_base64::decode_len(&value)];
-                        let result = bun_base64::decode(&mut decoded[..], &value);
-                        if !result.is_successful() {
-                            log.add_error_fmt_opts(
-                                format_args!(
-                                    "{} is not valid base64",
-                                    <&'static str>::from(optname)
-                                ),
-                                bun_ast::AddErrorOptions {
-                                    source: Some(source),
-                                    loc,
-                                    redact_sensitive_information: true,
-                                    ..Default::default()
-                                },
-                            );
-                            return None;
-                        }
-                        decoded.truncate(result.count);
-                        RegistryCredential::Password(decoded.into_boxed_slice())
-                    }
+                    let mut decoded = vec![0u8; bun_base64::decode_lenient_len(value.len())];
+                    let count = bun_base64::decode_lenient(&mut decoded[..], &value, false);
+                    decoded.truncate(count);
+                    RegistryCredential::Password(decoded.into_boxed_slice())
                 }
                 ConfigOpt::_Auth => {
-                    let (username, password) = parse_auth(&value, loc, log, source)?;
-                    RegistryCredential::UsernamePassword { username, password }
+                    if value.is_empty() {
+                        log.add_error_opts(
+                            b"empty _auth value: this line supplies no credentials",
+                            bun_ast::AddErrorOptions {
+                                source: Some(source),
+                                loc,
+                                redact_sensitive_information: true,
+                                ..Default::default()
+                            },
+                        );
+                        return None;
+                    }
+                    RegistryCredential::Auth(value)
                 }
                 ConfigOpt::Certfile | ConfigOpt::Keyfile => return None,
             };
@@ -1161,12 +1153,9 @@ mod draft {
         pub(crate) fn apply_to(&self, registry: &mut NpmRegistry) {
             match &self.credential {
                 RegistryCredential::Token(token) => registry.token.clone_from(token),
+                RegistryCredential::Auth(auth) => registry.auth.clone_from(auth),
                 RegistryCredential::Username(username) => registry.username.clone_from(username),
                 RegistryCredential::Password(password) => registry.password.clone_from(password),
-                RegistryCredential::UsernamePassword { username, password } => {
-                    registry.username.clone_from(username);
-                    registry.password.clone_from(password);
-                }
                 RegistryCredential::Email(email) => registry.email.clone_from(email),
             }
         }
@@ -1695,69 +1684,5 @@ mod draft {
             matchers: matchers.into_boxed_slice(),
             behavior,
         })
-    }
-
-    fn parse_auth(
-        value: &[u8],
-        loc: Loc,
-        log: &mut Log,
-        source: &Source,
-    ) -> Option<(Box<[u8]>, Box<[u8]>)> {
-        if value.is_empty() {
-            log.add_error_opts(
-                b"invalid _auth value, expected base64 encoded \"<username>:<password>\", received an empty string",
-                bun_ast::AddErrorOptions {
-                    source: Some(source),
-                    loc,
-                    redact_sensitive_information: true,
-                    ..Default::default()
-                },
-            );
-            return None;
-        }
-        let mut decoded = vec![0u8; bun_base64::decode_len(value)];
-        let result = bun_base64::decode(&mut decoded[..], value);
-        if !result.is_successful() {
-            log.add_error_opts(
-                b"invalid _auth value, expected valid base64",
-                bun_ast::AddErrorOptions {
-                    source: Some(source),
-                    loc,
-                    redact_sensitive_information: true,
-                    ..Default::default()
-                },
-            );
-            return None;
-        }
-        let username_password = &decoded[..result.count];
-        let Some(colon_idx) = bun_core::strings::index_of_char_usize(username_password, b':')
-        else {
-            log.add_error_opts(
-                b"invalid _auth value, expected base64 encoded \"<username>:<password>\"",
-                bun_ast::AddErrorOptions {
-                    source: Some(source),
-                    loc,
-                    redact_sensitive_information: true,
-                    ..Default::default()
-                },
-            );
-            return None;
-        };
-        if colon_idx + 1 >= username_password.len() {
-            log.add_error_opts(
-                b"invalid _auth value, expected base64 encoded \"<username>:<password>\"",
-                bun_ast::AddErrorOptions {
-                    source: Some(source),
-                    loc,
-                    redact_sensitive_information: true,
-                    ..Default::default()
-                },
-            );
-            return None;
-        }
-        Some((
-            username_password[..colon_idx].into(),
-            username_password[colon_idx + 1..].into(),
-        ))
     }
 } // mod draft

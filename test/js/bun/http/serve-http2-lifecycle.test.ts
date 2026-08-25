@@ -199,6 +199,24 @@ describe("Bun.serve http2 lifecycle", () => {
     session.close();
   }, 40000);
 
+  test("server.timeout(req, n) on h2: once the more permissive request ends, the remaining one's budget applies", async () => {
+    await using fx = await startFixture({ tls: false }); // idleTimeout 30
+    const session = await connectH2(fx.port, false);
+    const closed = new Promise<void>(r => session.once("close", () => r()));
+    // A keeps the 30 s default and answers after 1.5 s; B, opened while A is in
+    // flight, asks for 1 s and would answer after 60 s. While both are open the
+    // 30 s wins. Once A has retired, B's 1 s is the connection's budget: the
+    // server idles it out at the next 4 s tick, not 30 s later.
+    const a = request(session, { ":path": "/slow?ms=1500" });
+    const pending = request(session, { ":path": "/t?s=1&ms=60000" }).catch(e => e);
+    expect((await a).body.toString()).toBe("slow");
+    const t0 = Date.now();
+    await closed;
+    expect(Date.now() - t0).toBeLessThan(15000);
+    const result = await pending;
+    expect(result instanceof Error ? NaN : result.status).toBeNaN();
+  }, 30000);
+
   test("--max-http-header-size applies to h2 like HTTP/1.1", async () => {
     await using fx = await startFixture({ tls: false, execArgv: ["--max-http-header-size=4096"] });
     const big = Buffer.alloc(8192, "c").toString();

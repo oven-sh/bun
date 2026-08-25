@@ -34,7 +34,9 @@ test("destroying a TLS socket over a tunneled net.Socket sends a bare FIN", asyn
   const clientEnded = Promise.withResolvers<void>();
   const clientClosed = Promise.withResolvers<void>();
   const proxy = net.createServer(client => {
-    client.on("error", () => {});
+    // A client error (an RST regression in the destroy path) must fail the
+    // awaited 'end', not hang the test to its timeout.
+    client.on("error", clientEnded.reject);
     client.on("data", chunk => {
       if (countTeardownBytes) teardownBytes += chunk.length;
     });

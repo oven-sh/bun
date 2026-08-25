@@ -87,7 +87,15 @@ requires a real encoder, not a cast.
 not `Copy`. Borrow with `&String` (or `StringView<'_>` when a by-value borrow
 is needed). In an `extern "C"` signature a by-value `String` means ownership
 crosses the boundary (C++ `Bun::toStringRef` return / `transferToWTFString()`
-consumer); `&String` ⇔ `const BunString*`.
+consumer); `&String` ⇔ `const BunString*`. Any `String`/`StringView`/
+`EncodedSlice` — whichever constructor made it — is safe to hand to C++ and
+safe for C++ to keep: `BunString::toWTFString()` / `transferToWTFString()`
+(and `Zig::toStringCopy` for a raw `EncodedSlice`) share a WTF impl, atomize a
+`static_`, and copy borrowed bytes, so the result may be retained;
+`BunString::view()` / `Zig::toStringView(slice)` borrow the bytes in place for
+call-scoped use (lookup, parse, regex match) and must not outlive the call;
+`Bun::toIdentifier(vm, str)` / `Zig::toIdentifier(vm, slice)` make a property
+key straight from the bytes.
 
 ```rust
 use bun_core::{EncodedSlice, String, Utf8Bytes};   // the only import path for all three

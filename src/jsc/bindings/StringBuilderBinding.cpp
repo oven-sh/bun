@@ -42,7 +42,7 @@ extern "C" void StringBuilder__appendUsize(WTF::StringBuilder* builder, size_t n
 
 extern "C" void StringBuilder__appendString(WTF::StringBuilder* builder, const BunString* str)
 {
-    str->appendToBuilder(*builder);
+    builder->append(str->view().view);
 }
 
 extern "C" void StringBuilder__appendLChar(WTF::StringBuilder* builder, Latin1Character c)
@@ -53,12 +53,6 @@ extern "C" void StringBuilder__appendLChar(WTF::StringBuilder* builder, Latin1Ch
 extern "C" void StringBuilder__appendUChar(WTF::StringBuilder* builder, UChar c)
 {
     builder->append(c);
-}
-
-extern "C" void StringBuilder__appendQuotedJsonString(WTF::StringBuilder* builder, const BunString* str)
-{
-    auto string = str->toWTFString(BunString::ZeroCopy);
-    builder->appendQuotedJSONString(string);
 }
 
 extern "C" JSC::EncodedJSValue StringBuilder__toString(WTF::StringBuilder* builder, JSC::JSGlobalObject* globalObject)

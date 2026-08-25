@@ -727,8 +727,8 @@ pub mod bv2_impl {
                 #[link_name = "JSBundlerPlugin__anyMatches"]
                 safe fn JSBundlerPlugin__anyMatches(
                     this: &Plugin,
-                    namespace: &mut BunString,
-                    path: &mut BunString,
+                    namespace: &BunString,
+                    path: &BunString,
                     is_on_load: bool,
                 ) -> bool;
                 // `context` is an opaque cookie C++ round-trips back to a Rust
@@ -818,16 +818,15 @@ pub mod bv2_impl {
                     path: &crate::bun_fs::Path,
                     is_on_load: bool,
                 ) -> bool {
-                    let mut namespace_string = if path.is_file() {
+                    let namespace_string = if path.is_file() {
                         BunString::EMPTY
                     } else {
-                        BunString::clone_utf8(path.namespace)
+                        BunString::borrow_utf8(path.namespace)
                     };
-                    let mut path_string = BunString::clone_utf8(path.text);
                     JSBundlerPlugin__anyMatches(
                         self,
-                        &mut namespace_string,
-                        &mut path_string,
+                        &namespace_string,
+                        &BunString::borrow_utf8(path.text),
                         is_on_load,
                     )
                 }

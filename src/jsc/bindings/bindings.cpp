@@ -2625,7 +2625,8 @@ JSC::EncodedJSValue WebCore__FetchHeaders__createValue(JSC::JSGlobalObject* arg0
 void WebCore__FetchHeaders__get_(WebCore::FetchHeaders* headers, const EncodedSlice* arg1, EncodedSlice* arg2, JSC::JSGlobalObject* global)
 {
     auto throwScope = DECLARE_THROW_SCOPE(global->vm());
-    auto result = headers->get(Zig::toString(*arg1));
+    auto name = Zig::toStringView(*arg1);
+    auto result = headers->get(name.view);
     if (result.hasException())
         WebCore::propagateException(*global, throwScope, result.releaseException());
     else
@@ -2715,20 +2716,16 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__unwrapBoxedPrimitive(JSGlobalObject
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue EncodedSlice__toJSONObject(const EncodedSlice* strPtr, JSC::JSGlobalObject* globalObject)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
-    auto str = Zig::toString(*strPtr);
+    auto str = Zig::toStringView(*strPtr);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
-    if (str.isNull()) {
-        // isNull() will be true for empty strings and for strings which are too long.
-        // So we need to check the length is plausibly due to a long string.
-        if (strPtr->len > Bun__stringSyntheticAllocationLimit || strPtr->len > WTF::String::MaxLength) {
-            scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_STRING_TOO_LONG, "Cannot parse a JSON string longer than 2147483647 characters"_s));
-            return {};
-        }
+    if (str.view.isNull()) {
+        scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_STRING_TOO_LONG, "Cannot parse a JSON string longer than 2147483647 characters"_s));
+        return {};
     }
 
     // JSONParseWithException does not propagate exceptions as expected. See #5859
-    JSValue result = JSONParse(globalObject, str);
+    JSValue result = JSONParse(globalObject, str.view);
     RETURN_IF_EXCEPTION(scope, {});
     if (!result) {
         scope.throwException(globalObject, createSyntaxError(globalObject, "Failed to parse JSON"_s));
@@ -3143,7 +3140,7 @@ void JSC__JSValue___then(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1
 
 void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject* global, const EncodedSlice* arg1)
 {
-    const JSC::Identifier identifier = Zig::toIdentifier(*arg1, global);
+    const JSC::Identifier identifier = Zig::toIdentifier(global->vm(), *arg1);
     auto* moduleLoader = global->moduleLoader();
     // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread
     // under cellLock(); take the same lock so the removal can't race it.
@@ -3374,7 +3371,7 @@ extern "C" JSC::JSPromise* JSModuleLoader__import(JSC::JSGlobalObject* globalObj
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, moduleNameStr->toWTFString()), JSC::Identifier(), nullptr, nullptr);
+    auto* promise = JSC::importModule(globalObject, Bun::toIdentifier(vm, *moduleNameStr), JSC::Identifier(), nullptr, nullptr);
 
     EXCEPTION_ASSERT(!!scope.exception() == !promise);
     return promise;
@@ -3415,7 +3412,7 @@ JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* globalObj
 }
 
 JSC::EncodedJSValue JSC__JSValue__fromEntries(JSC::JSGlobalObject* globalObject, EncodedSlice* keys,
-    EncodedSlice* values, size_t initialCapacity, bool clone)
+    EncodedSlice* values, size_t initialCapacity)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3426,17 +3423,8 @@ JSC::EncodedJSValue JSC__JSValue__fromEntries(JSC::JSGlobalObject* globalObject,
     JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(static_cast<unsigned int>(initialCapacity), JSFinalObject::maxInlineCapacity));
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (!clone) {
-        for (size_t i = 0; i < initialCapacity; ++i) {
-            object->putDirect(
-                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, Zig::toString(keys[i]))),
-                Zig::toJSStringGC(values[i], globalObject), 0);
-        }
-    } else {
-        for (size_t i = 0; i < initialCapacity; ++i) {
-            object->putDirect(vm, JSC::PropertyName(Zig::toIdentifier(keys[i], globalObject)),
-                Zig::toJSStringGC(values[i], globalObject), 0);
-        }
+    for (size_t i = 0; i < initialCapacity; ++i) {
+        object->putDirect(vm, Zig::toIdentifier(vm, keys[i]), Zig::toJSStringGC(values[i], globalObject), 0);
     }
 
     return JSC::JSValue::encode(object);
@@ -3756,9 +3744,7 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* globalObject,
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto name = makeAtomString(arg1->toWTFString());
-
-    auto* promise = JSC::loadAndEvaluateModule(globalObject, name, nullptr, nullptr);
+    auto* promise = JSC::loadAndEvaluateModule(globalObject, Bun::toIdentifier(vm, *arg1).string(), nullptr, nullptr);
     EXCEPTION_ASSERT(!!promise == !scope.exception());
     return promise;
 }
@@ -4167,13 +4153,13 @@ bool JSC__JSValue__isException(JSC::EncodedJSValue JSValue0, JSC::VM* arg1)
 void JSC__JSValue__put(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, const EncodedSlice* arg2, JSC::EncodedJSValue JSValue3)
 {
     JSC::JSObject* object = JSC::JSValue::decode(JSValue0).asCell()->getObject();
-    object->putDirect(arg1->vm(), Zig::toIdentifier(*arg2, arg1), JSC::JSValue::decode(JSValue3));
+    object->putDirect(arg1->vm(), Zig::toIdentifier(arg1->vm(), *arg2), JSC::JSValue::decode(JSValue3));
 }
 
 void JSC__JSValue__putNonEnumerable(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, const EncodedSlice* arg2, JSC::EncodedJSValue JSValue3)
 {
     JSC::JSObject* object = JSC::JSValue::decode(JSValue0).asCell()->getObject();
-    object->putDirect(arg1->vm(), Zig::toIdentifier(*arg2, arg1), JSC::JSValue::decode(JSValue3), JSC::PropertyAttribute::DontEnum | 0);
+    object->putDirect(arg1->vm(), Zig::toIdentifier(arg1->vm(), *arg2), JSC::JSValue::decode(JSValue3), JSC::PropertyAttribute::DontEnum | 0);
 }
 
 void JSC__JSValue__putToPropertyKey(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue arg2, JSC::EncodedJSValue arg3)
@@ -4195,11 +4181,8 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__putMayBeIndex(JSC::Enco
     auto& vm = JSC::getVM(globalObject);
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
-    WTF::String keyStr = key->tag == BunStringTag::Empty ? WTF::emptyString() : key->toWTFString();
-    JSC::Identifier identifier = JSC::Identifier::fromString(vm, keyStr);
-
     JSC::JSObject* object = JSC::JSValue::decode(target).asCell()->getObject();
-    object->putDirectMayBeIndex(globalObject, JSC::PropertyName(identifier), JSC::JSValue::decode(value));
+    object->putDirectMayBeIndex(globalObject, Bun::toIdentifier(vm, *key), JSC::JSValue::decode(value));
     RETURN_IF_EXCEPTION(scope, );
 }
 
@@ -4213,7 +4196,7 @@ extern "C" bool JSC__JSValue__deleteProperty(JSC::EncodedJSValue target, JSC::JS
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSObject* object = targetValue.getObject();
-    bool result = object->deleteProperty(globalObject, Zig::toIdentifier(*key, globalObject));
+    bool result = object->deleteProperty(globalObject, Zig::toIdentifier(vm, *key));
     RETURN_IF_EXCEPTION(scope, false);
     return result;
 }
@@ -4498,7 +4481,7 @@ JSC::EncodedJSValue JSC__JSValue__createObject2(JSC::JSGlobalObject* globalObjec
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSObject* object = JSC::constructEmptyObject(globalObject);
-    auto key1 = Zig::toIdentifier(*arg1, globalObject);
+    auto key1 = Zig::toIdentifier(vm, *arg1);
     JSC::PropertyDescriptor descriptor1;
     JSC::PropertyDescriptor descriptor2;
 
@@ -4507,7 +4490,7 @@ JSC::EncodedJSValue JSC__JSValue__createObject2(JSC::JSGlobalObject* globalObjec
     descriptor1.setWritable(1);
     descriptor1.setValue(JSC::JSValue::decode(JSValue3));
 
-    auto key2 = Zig::toIdentifier(*arg2, globalObject);
+    auto key2 = Zig::toIdentifier(vm, *arg2);
 
     descriptor2.setEnumerable(1);
     descriptor2.setConfigurable(1);
@@ -4541,12 +4524,9 @@ JSC::EncodedJSValue JSC__JSValue__createObject2(JSC::JSGlobalObject* globalObjec
         return JSValue::encode(JSValue::decode(JSC::JSValue::ValueDeleted));
     }
 
-    // Since Identifier might not ref the string, we need to ensure it doesn't get deref'd until this function returns
-    const auto propertyString = String(StringImpl::createWithoutCopying({ arg1, arg2 }));
-    const auto identifier = JSC::Identifier::fromString(vm, propertyString);
-    const auto property = JSC::PropertyName(identifier);
+    const auto identifier = JSC::Identifier::fromString(vm, std::span<const Latin1Character> { arg1, arg2 });
 
-    return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigationUnsafe(vm, globalObject, object, property));
+    return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigationUnsafe(vm, globalObject, object, identifier));
 }
 
 // Returns empty for exception, returns deleted if not found.
@@ -4567,9 +4547,7 @@ JSC::EncodedJSValue JSC__JSValue__getPropertyValue(JSC::EncodedJSValue encodedVa
         return JSValue::encode(JSValue::decode(JSC::JSValue::ValueDeleted));
     }
 
-    // Since Identifier might not ref the string, we need to ensure it doesn't get deref'd until this function returns
-    const auto propertyString = String(StringImpl::createWithoutCopying({ propertyName, propertyNameLength }));
-    const auto identifier = JSC::Identifier::fromString(vm, propertyString);
+    const auto identifier = JSC::Identifier::fromString(vm, std::span<const Latin1Character> { propertyName, propertyNameLength });
     const auto property = JSC::PropertyName(identifier);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -4593,8 +4571,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__getOwn(JSC::EncodedJSValue JSValue0
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = JSC::JSValue::decode(JSValue0);
-    WTF::String propertyNameString = propertyName->tag == BunStringTag::Empty ? WTF::emptyString() : propertyName->toWTFString(BunString::ZeroCopy);
-    auto identifier = JSC::Identifier::fromString(vm, propertyNameString);
+    auto identifier = Bun::toIdentifier(vm, *propertyName);
     auto property = JSC::PropertyName(identifier);
     PropertySlot slot(value, PropertySlot::InternalMethodType::GetOwnProperty);
     bool hasSlot = value.getOwnPropertySlot(globalObject, property, slot);
@@ -4761,8 +4738,7 @@ BunString JSC__JSValue__getSymbolDescription(JSC::EncodedJSValue symbolValue_, J
 JSC::EncodedJSValue JSC__JSValue__symbolFor(JSC::JSGlobalObject* globalObject, const BunString* key)
 {
     auto& vm = JSC::getVM(globalObject);
-    WTF::String string = key->toWTFString(BunString::ZeroCopy);
-    return JSC::JSValue::encode(JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey(string)));
+    return JSC::JSValue::encode(JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey(key->toWTFString())));
 }
 
 int32_t JSC__JSValue__toInt32(JSC::EncodedJSValue JSValue0)
@@ -4905,7 +4881,7 @@ BunString JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobal
     }
 
     // `className()` is a static C string.
-    return { BunStringTag::StaticEncodedSlice, { .encoded = { reinterpret_cast<const unsigned char*>(ptr), view.length() } } };
+    return { BunStringTag::StaticEncodedSlice, { .encoded = Zig::latin1Slice(view.span8()) } };
 }
 
 bool JSC__JSValue__getClassInfoName(JSValue value, const uint8_t** outPtr, size_t* outLen)
@@ -6373,16 +6349,12 @@ extern "C" void DOMFormData__toQueryString(
 CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__createFromURLQuery(JSC::JSGlobalObject* arg0, const EncodedSlice* arg1)
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(arg0);
-    // don't need to copy the string because it internally does.
-    auto str = toString(*arg1);
-    // toString() in helpers.h returns an empty string when the input exceeds
-    // String::MaxLength or Bun's synthetic allocation limit. This is the only
-    // condition under which toString() returns empty for non-empty input.
-    if (str.isEmpty() && arg1->len > 0) {
+    auto str = Zig::toStringView(*arg1);
+    if (str.view.isNull()) {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         return Bun::ERR::STRING_TOO_LONG(scope, globalObject);
     }
-    auto formData = DOMFormData::create(globalObject->scriptExecutionContext(), WTF::move(str));
+    auto formData = DOMFormData::create(globalObject->scriptExecutionContext(), str.view);
     return JSValue::encode(toJSNewlyCreated(arg0, globalObject, WTF::move(formData)));
 }
 

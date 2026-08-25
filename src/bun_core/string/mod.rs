@@ -206,11 +206,12 @@ impl String {
         debug_assert!(s.as_ref().is_ascii());
         Self::wrap(Tag::StaticEncodedSlice, EncodedSlice::latin1(s.as_ref()))
     }
-    /// `clone_utf8(other)`, unless `other` is byte-equal to `self`, in which
-    /// case another ref to `self`.
+    /// `clone_utf8(other)`, unless `other` is byte-equal to `self` and `self`
+    /// owns or statically references its bytes, in which case another ref to
+    /// `self` (a borrowed `EncodedSlice` is always copied).
     #[inline]
     pub fn create_if_different(&self, other: &[u8]) -> Self {
-        if self.eql_utf8(other) {
+        if self.tag != Tag::EncodedSlice && self.eql_utf8(other) {
             return self.clone();
         }
         Self::clone_utf8(other)
@@ -348,17 +349,17 @@ impl String {
             .min(WTF_STRING_MAX_LENGTH)
     }
 
-    /// Wraps `bytes` in a `WTF::ExternalStringImpl` that will **never** be
-    /// freed. Only use for dynamically-allocated data with process lifetime.
-    pub fn create_static_external(bytes: &[u8], is_latin1: bool) -> Self {
+    /// Wraps `bytes` in a `WTF::ExternalStringImpl` (zero-copy, not atomized)
+    /// that is never freed.
+    pub fn create_static_external(bytes: &'static [u8], is_latin1: bool) -> Self {
         debug_assert!(!bytes.is_empty());
         // SAFETY: bytes describes a valid slice; C++ side stores ptr/len
         // without copying and never frees it.
         unsafe { BunString__createStaticExternal(bytes.as_ptr(), bytes.len(), is_latin1) }
     }
     /// UTF-16 form of [`Self::create_static_external`]: `units` must be
-    /// 2-byte aligned and live for the rest of the process.
-    pub fn create_static_external_utf16(units: &[u16]) -> Self {
+    /// 2-byte aligned.
+    pub fn create_static_external_utf16(units: &'static [u16]) -> Self {
         debug_assert!(!units.is_empty());
         // SAFETY: the C++ side takes the length in code units and stores
         // ptr/len without copying or freeing.

@@ -59,23 +59,21 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool BunString__fromJS(JSC::JSGlobalObject* g
     return bunString->tag != BunStringTag::Dead;
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__createAtom(const char* bytes, size_t length)
-{
-    ASSERT(simdutf::validate_ascii(bytes, length));
-    auto atom = tryMakeAtomString(String(StringImpl::createWithoutCopying({ bytes, length })));
-    return { BunStringTag::WTFStringImpl, { .wtf = atom.releaseImpl().leakRef() } };
-}
-
 extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__tryCreateAtom(const char* bytes, size_t length)
 {
-    if (simdutf::validate_ascii(bytes, length)) {
-        auto atom = tryMakeAtomString(String(StringImpl::createWithoutCopying({ bytes, length })));
-        if (atom.isNull())
-            return { BunStringTag::Dead, {} };
-        return { BunStringTag::WTFStringImpl, { .wtf = atom.releaseImpl().leakRef() } };
-    }
+    if (length > WTF::String::MaxLength || !simdutf::validate_ascii(bytes, length))
+        return { BunStringTag::Dead, {} };
+    if (!length)
+        return Zig::BunStringEmpty;
+    Ref<WTF::StringImpl> atom = AtomStringImpl::add(std::span { reinterpret_cast<const Latin1Character*>(bytes), length }).releaseNonNull();
+    return { BunStringTag::WTFStringImpl, { .wtf = &atom.leakRef() } };
+}
 
-    return { BunStringTag::Dead, {} };
+extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__createAtom(const char* bytes, size_t length)
+{
+    BunString atom = BunString__tryCreateAtom(bytes, length);
+    ASSERT(atom.tag != BunStringTag::Dead);
+    return atom;
 }
 
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUTF8ForJS(JSC::JSGlobalObject* globalObject, const char* ptr, size_t length)
@@ -114,15 +112,7 @@ JSC::JSValue BunString::transferToJS(JSC::JSGlobalObject* globalObject)
         return JSValue::decode(Bun::ERR::STRING_TOO_LONG(scope, globalObject));
     }
 
-    if (this->tag == BunStringTag::WTFStringImpl) [[likely]] {
-        ASSERT(this->impl.wtf->refCount() > 0 && !this->impl.wtf->isEmpty());
-        auto str = WTF::String(adoptRef(*this->impl.wtf));
-        *this = { .tag = BunStringTag::Dead };
-        return jsString(vm, WTF::move(str));
-    }
-
-    // EncodedSlice / StaticEncodedSlice: copies (the bytes are borrowed).
-    WTF::String str = this->toWTFString();
+    WTF::String str = this->transferToWTFString();
     *this = { .tag = BunStringTag::Dead };
     return jsString(vm, WTF::move(str));
 }
@@ -132,21 +122,14 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__transfer
     return JSValue::encode(bunString->transferToJS(globalObject));
 }
 
-// `message` for an Error built from a BunString: a WTF-backed string shares
-// its impl, a static one is atomized, a borrowed EncodedSlice is copied.
-static WTF::String errorMessage(const BunString* str)
-{
-    if (str->tag == BunStringTag::EncodedSlice)
-        return Zig::toStringCopy(str->impl.encoded);
-    return str->toWTFString(BunString::ZeroCopy);
-}
-
 extern "C" JSC::EncodedJSValue BunString__toErrorInstance(const BunString* str, JSC::JSGlobalObject* globalObject, BunErrorKind kind)
 {
-    WTF::String message = errorMessage(str);
+    WTF::String message = str->toWTFString();
     if (message.isNull() && !str->isEmpty()) [[unlikely]] {
-        // Allocation failed or the message exceeds the maximum string length.
-        return {};
+        // Allocation failed or the message exceeds the maximum string length:
+        // hand back that error in place of the requested one.
+        return JSValue::encode(createError(globalObject, Bun::ErrorCode::ERR_STRING_TOO_LONG,
+            makeString("Cannot create a string longer than "_s, WTF::String::MaxLength, " characters"_s)));
     }
     JSC::JSObject* result = nullptr;
     switch (kind) {
@@ -197,6 +180,21 @@ JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
         return Zig::toJSStringGC(bunString.impl.encoded, globalObject);
     }
 
+    UNREACHABLE();
+}
+
+JSC::Identifier toIdentifier(JSC::VM& vm, const BunString& bunString)
+{
+    switch (bunString.tag) {
+    case BunStringTag::WTFStringImpl:
+        return JSC::Identifier::fromString(vm, WTF::String(bunString.impl.wtf));
+    case BunStringTag::StaticEncodedSlice:
+    case BunStringTag::EncodedSlice:
+        return Zig::toIdentifier(vm, bunString.impl.encoded);
+    case BunStringTag::Dead:
+    case BunStringTag::Empty:
+        return vm.propertyNames->emptyIdentifier;
+    }
     UNREACHABLE();
 }
 
@@ -463,7 +461,8 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__toJSON(
     const BunString* bunString)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    JSC::JSValue result = JSC::JSONParse(globalObject, bunString->toWTFString());
+    auto json = bunString->view();
+    JSC::JSValue result = JSC::JSONParse(globalObject, json.view);
 
     if (!result && !scope.exception()) {
         scope.throwException(globalObject, createSyntaxError(globalObject, "Failed to parse JSON"_s));
@@ -521,9 +520,7 @@ extern "C" JSC::EncodedJSValue BunString__toJSDOMURL(JSC::JSGlobalObject* lexica
     auto& vm = globalObject.vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    auto str = bunString->toWTFString(BunString::ZeroCopy);
-
-    auto object = WebCore::DOMURL::create(str, String());
+    auto object = WebCore::DOMURL::create(bunString->toWTFString(), String());
     auto jsValue = WebCore::toJSNewlyCreated<WebCore::IDLInterface<WebCore::DOMURL>>(*lexicalGlobalObject, globalObject, throwScope, WTF::move(object));
     RETURN_IF_EXCEPTION(throwScope, {});
     auto* jsDOMURL = uncheckedDowncast<WebCore::JSDOMURL>(jsValue.asCell());
@@ -681,90 +678,46 @@ extern "C" BunString URL__pathname(WTF::URL* url)
 
 WTF::String BunString::toWTFString() const
 {
-    if (this->tag == BunStringTag::EncodedSlice) {
-        if (Zig::isTaggedExternalPtr(this->impl.encoded.ptr)) {
-            return Zig::toString(this->impl.encoded);
-        } else {
-            return Zig::toStringCopy(this->impl.encoded);
-        }
-    } else if (this->tag == BunStringTag::StaticEncodedSlice) {
-        return Zig::toStringCopy(this->impl.encoded);
-    } else if (this->tag == BunStringTag::WTFStringImpl) {
+    switch (this->tag) {
+    case BunStringTag::WTFStringImpl:
+        ASSERT(this->impl.wtf->hasAtLeastOneRef());
         return WTF::String(this->impl.wtf);
-    }
-
-    return WTF::String();
-}
-
-void BunString::appendToBuilder(WTF::StringBuilder& builder) const
-{
-    if (this->tag == BunStringTag::WTFStringImpl) {
-        builder.append(this->impl.wtf);
-        return;
-    }
-
-    if (this->tag == BunStringTag::EncodedSlice || this->tag == BunStringTag::StaticEncodedSlice) {
-        Zig::appendToBuilder(this->impl.encoded, builder);
-        return;
-    }
-
-    // append nothing for BunStringTag::Dead and BunStringTag::Empty
-}
-
-WTF::String BunString::toWTFString(ZeroCopyTag) const
-{
-    if (this->tag == BunStringTag::EncodedSlice) {
-        if (Zig::isTaggedUTF8Ptr(this->impl.encoded.ptr)) {
-            return Zig::toStringCopy(this->impl.encoded);
-        } else {
-            return Zig::toString(this->impl.encoded);
-        }
-    } else if (this->tag == BunStringTag::StaticEncodedSlice) {
+    case BunStringTag::StaticEncodedSlice:
         return Zig::toStringStatic(this->impl.encoded);
-    } else if (this->tag == BunStringTag::WTFStringImpl) {
-        ASSERT(this->impl.wtf->refCount() > 0 && !this->impl.wtf->isEmpty());
-        return WTF::String(this->impl.wtf);
+    case BunStringTag::EncodedSlice:
+        if (Zig::isTaggedExternalPtr(this->impl.encoded.ptr))
+            return Zig::adoptExternal(this->impl.encoded);
+        return Zig::toStringCopy(this->impl.encoded);
+    case BunStringTag::Dead:
+    case BunStringTag::Empty:
+        return WTF::String();
     }
-
-    return WTF::String();
+    UNREACHABLE();
 }
 
-WTF::String BunString::toWTFString(NonNullTag) const
+WTF::StringViewWithUnderlyingString BunString::view() const
 {
-    WTF::String res = toWTFString(ZeroCopy);
-    if (res.isNull()) {
-        // TODO(dylan-conway): also use emptyString in toWTFString(ZeroCopy) and toWTFString. This will
-        // require reviewing each call site for isNull() checks and most likely changing them to isEmpty()
-        return WTF::emptyString();
+    switch (this->tag) {
+    case BunStringTag::WTFStringImpl:
+        ASSERT(this->impl.wtf->hasAtLeastOneRef());
+        return { WTF::StringView(*this->impl.wtf), WTF::String() };
+    case BunStringTag::StaticEncodedSlice:
+    case BunStringTag::EncodedSlice:
+        return Zig::toStringView(this->impl.encoded);
+    case BunStringTag::Dead:
+    case BunStringTag::Empty:
+        return { WTF::emptyStringView(), WTF::String() };
     }
-    return res;
+    UNREACHABLE();
 }
 
 WTF::String BunString::transferToWTFString()
 {
-    if (this->tag == BunStringTag::EncodedSlice) {
-        if (Zig::isTaggedUTF8Ptr(this->impl.encoded.ptr)) {
-            auto str = Zig::toStringCopy(this->impl.encoded);
-            *this = Zig::BunStringEmpty;
-            return str;
-        } else {
-            auto str = Zig::toString(this->impl.encoded);
-            *this = Zig::BunStringEmpty;
-            return str;
-        }
-    } else if (this->tag == BunStringTag::StaticEncodedSlice) {
-        auto str = Zig::toStringStatic(this->impl.encoded);
-        *this = Zig::BunStringEmpty;
-        return str;
-    } else if (this->tag == BunStringTag::WTFStringImpl) {
-        ASSERT(this->impl.wtf->refCount() > 0 && !this->impl.wtf->isEmpty());
-
-        auto str = WTF::String(adoptRef(*this->impl.wtf));
-        *this = Zig::BunStringEmpty;
-        return str;
-    }
-
-    return WTF::String();
+    auto str = this->tag == BunStringTag::WTFStringImpl
+        ? WTF::String(adoptRef(*this->impl.wtf))
+        : this->toWTFString();
+    *this = Zig::BunStringEmpty;
+    return str;
 }
 
 extern "C" BunString BunString__createExternalGloballyAllocatedLatin1(
@@ -827,8 +780,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__upsertBunStringArray(
     }
     JSC::JSValue newValue = JSC::JSValue::decode(encodedValue);
     auto& vm = global->vm();
-    WTF::String str = key->tag == BunStringTag::Empty ? WTF::emptyString() : key->toWTFString();
-    Identifier id = Identifier::fromString(vm, str);
+    Identifier id = Bun::toIdentifier(vm, *key);
     auto existingValue = target->getIfPropertyExists(global, id);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -862,9 +814,7 @@ extern "C" void JSC__JSValue__putBunString(
     JSC::JSObject* target = JSC::JSValue::decode(encodedTarget).getObject();
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
     auto& vm = global->vm();
-    WTF::String str = key->tag == BunStringTag::Empty ? WTF::emptyString() : key->toWTFString();
-    Identifier id = Identifier::fromString(vm, str);
-    target->putDirect(vm, id, value, 0);
+    target->putDirect(vm, Bun::toIdentifier(vm, *key), value, 0);
 }
 
 bool BunString::isEmpty() const

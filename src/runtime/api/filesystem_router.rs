@@ -658,7 +658,6 @@ impl FileSystemRouter {
             global_this,
             name_strings_slice,
             paths_strings,
-            true,
         ))
     }
 

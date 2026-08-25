@@ -1704,7 +1704,7 @@ static JSValue ERR_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
 
 extern "C" JSC::EncodedJSValue Bun__createErrorWithCode(JSC::JSGlobalObject* globalObject, ErrorCode code, const BunString* message)
 {
-    return JSValue::encode(createError(globalObject, code, message->toWTFString(BunString::ZeroCopy)));
+    return JSValue::encode(createError(globalObject, code, message->toWTFString()));
 }
 
 void throwBoringSSLError(JSGlobalObject* globalObject, JSC::ThrowScope& scope, int errorCode)

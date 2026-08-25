@@ -1196,7 +1196,7 @@ impl AsyncModule {
             let mut resolved_source = unsafe {
                 (*jsc_vm).ref_counted_resolved_source(
                     printer.ctx.get_written(),
-                    &BunString::from_bytes(specifier),
+                    &BunString::borrow_utf8(specifier),
                     path.text,
                     None,
                 )
@@ -1209,7 +1209,7 @@ impl AsyncModule {
 
         Ok(ResolvedSource {
             source_code: BunString::clone_latin1(printer.ctx.get_written()),
-            source_url: BunString::from_bytes(path.text),
+            source_url: BunString::clone_utf8(path.text),
             is_commonjs_module,
             ..Default::default()
         })

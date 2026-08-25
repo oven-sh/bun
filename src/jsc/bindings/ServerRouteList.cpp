@@ -118,8 +118,8 @@ private:
         std::span<IdentifierRange> pathIdentifierRanges = m_pathIdentifierRanges.mutableSpan();
 
         for (size_t i = 0; i < paths.size(); i++) {
-            EncodedSlice rawPath = paths[i];
-            WTF::String path = Zig::toString(rawPath);
+            auto rawPath = Zig::toStringView(paths[i]);
+            StringView path = rawPath.view;
             uint32_t originalIdentifierIndex = m_pathIdentifiers.size();
             size_t startOfIdentifier = 0;
             size_t identifierCount = 0;
@@ -127,8 +127,7 @@ private:
                 switch (path[j]) {
                 case '/': {
                     if (startOfIdentifier && startOfIdentifier < j) {
-                        WTF::String&& identifier = path.substring(startOfIdentifier, j - startOfIdentifier);
-                        m_pathIdentifiers.append(JSC::Identifier::fromString(vm, identifier));
+                        m_pathIdentifiers.append(Zig::toIdentifier(vm, path.substring(startOfIdentifier, j - startOfIdentifier)));
                         identifierCount++;
                     }
                     startOfIdentifier = 0;
@@ -144,8 +143,7 @@ private:
                 }
             }
             if (startOfIdentifier && startOfIdentifier < path.length()) {
-                WTF::String&& identifier = path.substring(startOfIdentifier, path.length() - startOfIdentifier);
-                m_pathIdentifiers.append(JSC::Identifier::fromString(vm, identifier));
+                m_pathIdentifiers.append(Zig::toIdentifier(vm, path.substring(startOfIdentifier, path.length() - startOfIdentifier)));
                 identifierCount++;
             }
 

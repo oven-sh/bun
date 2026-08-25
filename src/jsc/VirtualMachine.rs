@@ -4614,7 +4614,7 @@ impl VirtualMachine {
                 if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
                     specifier.clone()
                 } else {
-                    bun_core::String::from_bytes(hardcoded.path.as_bytes())
+                    bun_core::String::static_(hardcoded.path.as_bytes())
                 },
             ));
         }

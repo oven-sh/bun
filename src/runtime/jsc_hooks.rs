@@ -3334,9 +3334,10 @@ fn transpile_source_code_inner(
                 {
                     use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
                     return Ok(ResolvedSource {
-                        source_code: bun_core::String::static_(include_bytes!(
-                            "../js/wasi-runner.js"
-                        )),
+                        source_code: bun_core::String::create_static_external(
+                            include_bytes!("../js/wasi-runner.js"),
+                            true,
+                        ),
                         source_url: input_specifier.create_if_different(path.text),
                         tag: ResolvedSourceTag::Esm,
                         ..Default::default()
@@ -3365,7 +3366,10 @@ fn transpile_source_code_inner(
             };
             use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
             Ok(ResolvedSource {
-                source_code: bun_core::String::clone_utf8(sqlite_module_source_code_string),
+                source_code: bun_core::String::create_static_external(
+                    sqlite_module_source_code_string,
+                    true,
+                ),
                 source_url: input_specifier.create_if_different(path.text),
                 tag: ResolvedSourceTag::Esm,
                 ..Default::default()
@@ -3685,8 +3689,10 @@ fn get_hardcoded_module(
         HardcodedModule::BunWrap => {
             // `Runtime.Runtime.sourceCode()` — the bundler's CJS-interop
             // shim, embedded as a static string in `bun_ast::runtime`.
+            let source_code = bun_ast::runtime::Runtime::source_code();
+            debug_assert!(source_code.is_ascii());
             return Some(ResolvedSource {
-                source_code: bun_core::String::from_bytes(bun_ast::runtime::Runtime::source_code()),
+                source_code: bun_core::String::create_static_external(source_code, true),
                 source_url: specifier.clone(),
                 ..ResolvedSource::default()
             });
@@ -3780,7 +3786,10 @@ export const __esModule = true;
 export default db;
 ";
                 return Some(ResolvedSource {
-                    source_code: bun_core::String::static_(SQLITE_MODULE_SOURCE_STANDALONE),
+                    source_code: bun_core::String::create_static_external(
+                        SQLITE_MODULE_SOURCE_STANDALONE,
+                        true,
+                    ),
                     source_url: specifier.clone(),
                     ..ResolvedSource::default()
                 });

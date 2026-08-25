@@ -687,26 +687,19 @@ impl JSValue {
     pub fn big_int_sum(global: &JSGlobalObject, a: JSValue, b: JSValue) -> JSValue {
         JSC__JSValue__bigIntSum(global, a, b)
     }
-    /// `JSValue.fromEntries` — build a plain object from
-    /// parallel `keys`/`values` `EncodedSlice` arrays. When `clone` is true the
-    /// C++ side copies the string bytes (caller may free `keys`/`values`).
+    /// `JSValue.fromEntries` — build a plain object from parallel
+    /// `keys`/`values` `EncodedSlice` arrays. The C++ side copies the string
+    /// bytes (caller may free `keys`/`values`).
     pub fn from_entries(
         global: &JSGlobalObject,
         keys: &mut [bun_core::EncodedSlice],
         values: &mut [bun_core::EncodedSlice],
-        clone: bool,
     ) -> JSValue {
         debug_assert_eq!(keys.len(), values.len());
         // SAFETY: `global` is live; `keys`/`values` are valid for `keys.len()`
-        // elements; the C++ binding only reads (and optionally clones) them.
+        // elements; the C++ binding only reads them.
         unsafe {
-            JSC__JSValue__fromEntries(
-                global,
-                keys.as_mut_ptr(),
-                values.as_mut_ptr(),
-                keys.len(),
-                clone,
-            )
+            JSC__JSValue__fromEntries(global, keys.as_mut_ptr(), values.as_mut_ptr(), keys.len())
         }
     }
 }
@@ -1978,7 +1971,6 @@ unsafe extern "C" {
         keys: *mut bun_core::EncodedSlice,
         values: *mut bun_core::EncodedSlice,
         strings_count: usize,
-        clone: bool,
     ) -> JSValue;
     safe fn JSC__JSValue__toBoolean(this: JSValue) -> bool;
     safe fn JSC__JSValue__toInt32(this: JSValue) -> i32;

@@ -377,7 +377,7 @@ void BunPlugin::Base::append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSObject* fu
     }
 }
 
-JSC::JSObject* BunPlugin::Group::find(JSC::JSGlobalObject* globalObject, String& path)
+JSC::JSObject* BunPlugin::Group::find(JSC::JSGlobalObject* globalObject, StringView path)
 {
     size_t count = filters.size();
     for (size_t i = 0; i < count; i++) {
@@ -723,29 +723,29 @@ DEFINE_VISIT_CHILDREN(JSModuleMock);
 
 EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path)
 {
-    Group* groupPtr = this->group(namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : String());
+    Group* groupPtr = this->group(namespaceString ? namespaceString->view().view : emptyStringView());
     if (groupPtr == nullptr) {
         return JSValue::encode(jsUndefined());
     }
     Group& group = *groupPtr;
 
-    auto pathString = path->toWTFString(BunString::ZeroCopy);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* function = group.find(globalObject, pathString);
+    auto pathString = path->view();
+    auto* function = group.find(globalObject, pathString.view);
+    RETURN_IF_EXCEPTION(scope, {});
     if (!function) {
         return JSValue::encode(JSC::jsUndefined());
     }
 
     JSC::MarkedArgumentBuffer arguments;
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    scope.assertNoExceptionExceptTermination();
 
     JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
     const auto& builtinNames = WebCore::builtinNames(vm);
-    paramsObject->putDirect(
-        vm, builtinNames.pathPublicName(),
-        jsString(vm, pathString));
+    auto* pathJS = pathString.underlyingString.isNull() ? Bun::toJS(globalObject, *path) : jsString(vm, pathString.underlyingString);
+    RETURN_IF_EXCEPTION(scope, {});
+    paramsObject->putDirect(vm, builtinNames.pathPublicName(), pathJS);
     arguments.append(paramsObject);
 
     auto result = AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
@@ -793,7 +793,7 @@ std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path
 
 EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path, const BunString* importer)
 {
-    Group* groupPtr = this->group(namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : String());
+    Group* groupPtr = this->group(namespaceString ? namespaceString->view().view : emptyStringView());
     if (groupPtr == nullptr) {
         return JSValue::encode(jsUndefined());
     }
@@ -807,7 +807,7 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, cons
     auto& callbacks = group.callbacks;
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    WTF::String pathString = path->toWTFString(BunString::ZeroCopy);
+    auto pathString = path->view();
 
     JSC::MarkedArgumentBuffer matchedCallbacks;
     matchedCallbacks.ensureCapacity(filters.size());
@@ -816,7 +816,9 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, cons
         return {};
     }
     for (size_t i = 0; i < filters.size(); i++) {
-        if (!filters[i].get()->match(globalObject, pathString, 0)) {
+        bool matched = !!filters[i].get()->match(globalObject, pathString.view, 0);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!matched) {
             continue;
         }
         auto* function = callbacks[i].get();
@@ -919,7 +921,7 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
         return fallback();
     }
     auto& virtualModules = *globalObject->onLoadPlugins.virtualModules;
-    WTF::String specifierString = specifier->toWTFString(BunString::ZeroCopy);
+    auto specifierString = specifier->toWTFString();
 
     if (auto virtualModuleFn = virtualModules.get(specifierString)) {
         auto& vm = JSC::getVM(globalObject);

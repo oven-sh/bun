@@ -140,8 +140,7 @@ extern "C" JSC::EncodedJSValue BakeGetOnModuleNamespace(
   size_t keyLength
 ) {
   auto& vm = JSC::getVM(global);
-  const auto propertyString = String(StringImpl::createWithoutCopying({ key, keyLength }));
-  const auto identifier = JSC::Identifier::fromString(vm, propertyString);
+  const auto identifier = JSC::Identifier::fromString(vm, std::span<const Latin1Character> { key, keyLength });
   const auto property = JSC::PropertyName(identifier);
   return JSC::JSValue::encode(moduleNamespace->get(global, property));
 }

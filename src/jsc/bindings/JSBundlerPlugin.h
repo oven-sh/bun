@@ -42,7 +42,7 @@ public:
         {
         }
 
-        bool match(JSC::VM& vm, const String& path);
+        bool match(JSC::VM& vm, StringView path);
     };
 
     class NamespaceList {
@@ -52,7 +52,7 @@ public:
         Vector<Vector<FilterRegExp>> groups = {};
         BunPluginTarget target { BunPluginTargetBun };
 
-        Vector<FilterRegExp>* group(const String& namespaceStr, unsigned& index)
+        Vector<FilterRegExp>* group(StringView namespaceStr, unsigned& index)
         {
             if (namespaceStr.isEmpty()) {
                 index = std::numeric_limits<unsigned>::max();
@@ -99,7 +99,7 @@ public:
         int call(JSC::VM& vm, BundlerPlugin* plugin, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, OnBeforeParseArguments* onBeforeParseArgs, OnBeforeParseResult* onBeforeParseResult);
         void append(JSC::VM& vm, JSC::RegExp* filter, String& namespaceString, JSBundlerPluginNativeOnBeforeParseCallback callback, const char* name, NapiExternal* external);
 
-        Vector<FilterRegExp>* group(const String& namespaceStr, unsigned& index)
+        Vector<FilterRegExp>* group(StringView namespaceStr, unsigned& index)
         {
             if (namespaceStr.isEmpty()) {
                 index = std::numeric_limits<unsigned>::max();
@@ -119,7 +119,7 @@ public:
     };
 
 public:
-    bool anyMatchesCrossThread(JSC::VM&, BunString* namespaceStr, BunString* path, bool isOnLoad);
+    bool anyMatchesCrossThread(JSC::VM&, const BunString* namespaceStr, const BunString* path, bool isOnLoad);
 
     // The onResolve / onLoad requests this plugin chain currently holds (handed over by the bundle thread,
     // not yet answered). A request has exactly one answer, produced on this (the JS) thread: by the plugin

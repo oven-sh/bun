@@ -214,7 +214,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalOb
         return JSValue::encode(jsUndefined());
 
     EncodedSlice name = toEncodedSlice(propertyName.publicName());
-    EncodedSlice value = { nullptr, 0 };
+    EncodedSlice value = Zig::EncodedSliceEmpty;
 
     if (name.len == 0) [[unlikely]]
         return JSValue::encode(jsUndefined());
@@ -296,7 +296,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
     auto* clientData = WebCore::clientData(vm);
 
     EncodedSlice name = toEncodedSlice(propertyName.publicName());
-    EncodedSlice value = { nullptr, 0 };
+    EncodedSlice value = Zig::EncodedSliceEmpty;
 
     auto hasExistingValue = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().dataPrivateName());
     RETURN_IF_EXCEPTION(scope, {});
@@ -390,7 +390,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeTLSRejectUnauthorizedGetter, (JSGlobalObject * gl
     }
 
     EncodedSlice name = toEncodedSlice(propertyName.publicName());
-    EncodedSlice value = { nullptr, 0 };
+    EncodedSlice value = Zig::EncodedSliceEmpty;
 
     if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
         return JSValue::encode(jsUndefined());
@@ -438,7 +438,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsBunConfigVerboseFetchGetter, (JSGlobalObject * global
     }
 
     EncodedSlice name = toEncodedSlice(propertyName.publicName());
-    EncodedSlice value = { nullptr, 0 };
+    EncodedSlice value = Zig::EncodedSliceEmpty;
 
     if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
         return JSValue::encode(jsUndefined());
@@ -1077,7 +1077,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         // This causes strange issues when the environment variable name is an integer.
         if (chars[0] >= '0' && chars[0] <= '9') [[unlikely]] {
             if (auto index = parseIndex(identifier)) {
-                EncodedSlice valueString = { nullptr, 0 };
+                EncodedSlice valueString = Zig::EncodedSliceEmpty;
                 EncodedSlice nameStr = toEncodedSlice(name);
                 if (Bun__getEnvValue(globalObject, &nameStr, &valueString)) {
                     JSValue value = jsString(vm, Zig::toStringCopy(valueString));

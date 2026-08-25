@@ -33,6 +33,12 @@ typedef union BunStringImpl {
 namespace WTF {
 class StringImpl;
 class String;
+class StringView;
+struct StringViewWithUnderlyingString;
+}
+namespace JSC {
+class Identifier;
+class VM;
 }
 
 typedef union BunStringImpl {
@@ -68,38 +74,30 @@ typedef struct BunString {
     BunStringTag tag;
     BunStringImpl impl;
 
-    enum ZeroCopyTag { ZeroCopy };
-    enum NonNullTag { NonNull };
-
     // If it's not a WTFStringImpl, this does nothing
     inline void ref();
 
     // If it's not a WTFStringImpl, this does nothing
     inline void deref();
 
-    // Zero copy is kind of a lie.
-    // We clone it if it's non-ASCII UTF-8.
-    // We don't clone it if it was marked as static
-    // if it was an EncodedSlice, it still allocates a WTF::StringImpl.
-    // It's only truly zero-copy if it was already a WTFStringImpl (which it is if it came from JS and we didn't use EncodedSlice)
-    WTF::String toWTFString(ZeroCopyTag) const;
+    // May be retained: shares a WTFStringImpl, atomizes a StaticEncodedSlice,
+    // adopts a GLOBAL-tagged EncodedSlice, and copies any other EncodedSlice.
+    // Null for Dead/Empty.
+    WTF::String toWTFString() const;
 
-    // If the string is empty, this will ensure m_impl is non-null by
-    // using shared static emptyString.
-    WTF::String toWTFString(NonNullTag) const;
+    // Borrows the characters in place; must not outlive `*this`. Allocates
+    // only for a non-ASCII UTF-8 EncodedSlice (`underlyingString` owns it).
+    WTF::StringViewWithUnderlyingString view() const;
 
+    // toWTFString() that moves the WTFStringImpl ref out instead of sharing
+    // it. Leaves *this Empty.
     WTF::String transferToWTFString();
 
     // Consumes this BunString and returns a JS string value. Leaves *this Dead
     // so a Rust-side OwnedString::Drop deref becomes a no-op.
     JSC::JSValue transferToJS(JSC::JSGlobalObject* globalObject);
 
-    // This one usually will clone the raw bytes.
-    WTF::String toWTFString() const;
-
     bool isEmpty() const;
-
-    void appendToBuilder(WTF::StringBuilder& builder) const;
 
 } BunString;
 
@@ -335,6 +333,9 @@ extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, const BunSt
 
 namespace Bun {
 JSC::JSString* toJS(JSC::JSGlobalObject*, BunString);
+// Property key straight from the characters (atom-table lookup; allocates only
+// when the atom is new).
+JSC::Identifier toIdentifier(JSC::VM&, const BunString&);
 BunString toString(WTF::String& wtfString);
 BunString toString(const WTF::String& wtfString);
 BunString toString(WTF::StringImpl* wtfString);

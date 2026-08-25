@@ -41,8 +41,7 @@ typedef struct ExternColumnIdentifier {
     Identifier propertyName(VM& vm) const
     {
         ASSERT(isNamedColumn());
-        // NonNull: a column named "" is the empty BunString, and Identifier::fromString cannot take a null String.
-        return Identifier::fromString(vm, name.toWTFString(BunString::NonNull));
+        return Bun::toIdentifier(vm, name);
     }
 } ExternColumnIdentifier;
 

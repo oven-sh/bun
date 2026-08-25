@@ -13,7 +13,7 @@ extern "C" RegularExpression* Yarr__RegularExpression__init(const BunString* pat
     // NOLINTBEGIN
     Options::AllowUnfinalizedAccessScope scope {};
     // NOLINTEND
-    return new RegularExpression(pattern->toWTFString(BunString::ZeroCopy), OptionSet<Flags>(static_cast<Flags>(flags)));
+    return new RegularExpression(pattern->view().view, OptionSet<Flags>(static_cast<Flags>(flags)));
 }
 extern "C" void Yarr__RegularExpression__deinit(RegularExpression* re)
 {
@@ -29,5 +29,5 @@ extern "C" int Yarr__RegularExpression__matchedLength(RegularExpression* re)
 }
 extern "C" int Yarr__RegularExpression__matches(RegularExpression* re, const BunString* string)
 {
-    return re->match(string->toWTFString(BunString::ZeroCopy), 0, 0);
+    return re->match(string->view().view, 0, 0);
 }

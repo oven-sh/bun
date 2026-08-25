@@ -382,9 +382,10 @@ int32_t bun_coregraphics_encode(const uint8_t* rgba, uint32_t width, uint32_t he
     } r {};
     r.s = s;
 
-    // Tag the pixels with their colour space: the source ICC profile when
-    // present (ImageIO embeds it in the output), else sRGB — device RGB made
-    // ImageIO write unspecified CICP (2/2) in HEIC/AVIF output (#40493).
+    // Tag the pixels with the ICC profile so ImageIO embeds it in the output
+    // `colr` box (#40493); the Rust caller substitutes sRGB when the source
+    // has no profile. Named sRGB, then device RGB, only as fallbacks for a
+    // rejected profile.
     if (icc && icc_len) {
         r.iccData = s->CFDataCreateWithBytesNoCopy(nullptr, icc, static_cast<long>(icc_len), *s->kCFAllocatorNull);
         if (r.iccData) {

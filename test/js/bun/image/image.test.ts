@@ -884,10 +884,14 @@ describe("Bun.Image", () => {
       },
     );
 
-    // macOS only: WIC exposes no CICP control, so the "tag sane defaults
-    // without a profile" half of the fix is ImageIO-specific.
+    // macOS only: ImageIO never maps a colour space to CICP codes (nclx is
+    // always 2/2, "unspecified"), so the only way the output can carry
+    // colour meaning is an ICC `colr` box — the encode path substitutes a
+    // default sRGB profile when the source has none. Device RGB (the bug)
+    // produced neither: no ICC, nclx 2/2. WIC support for colour contexts
+    // is best-effort, so Windows is not pinned here.
     test.skipIf(!isMacOS).each(["heic", "avif"] as const)(
-      "no source profile → .%s() tags a defined colour space, not unspecified CICP",
+      "no source profile → .%s() output still carries an sRGB colour tag",
       async fmt => {
         let out: Uint8Array;
         try {
@@ -897,20 +901,18 @@ describe("Bun.Image", () => {
           return;
         }
         const colrs = extractIsobmffColr(out);
-        expect(colrs.length).toBeGreaterThan(0);
-        const nclx = colrs.find(c => c.type === "nclx");
-        if (nclx) {
-          const dv = new DataView(nclx.payload.buffer, nclx.payload.byteOffset, nclx.payload.byteLength);
-          // 2 = "unspecified" in both CICP fields — the bug. sRGB-tagged
-          // pixels must come out with defined primaries/transfer (1/13).
-          expect({ primaries: dv.getUint16(0), transfer: dv.getUint16(2) }).toEqual({
-            primaries: 1,
-            transfer: 13,
-          });
-          expect(dv.getUint16(4)).not.toBe(2); // matrix coefficients
+        const prof = colrs.find(c => c.type === "prof" || c.type === "rICC");
+        if (prof) {
+          const p = prof.payload;
+          expect(String.fromCharCode(p[16], p[17], p[18], p[19])).toBe("RGB ");
+          expect(String.fromCharCode(p[36], p[37], p[38], p[39])).toBe("acsp");
         } else {
-          // No nclx — then an ICC `colr` must define the colour space.
-          expect(colrs.some(c => c.type === "prof" || c.type === "rICC")).toBe(true);
+          // No ICC — then the nclx CICP fields must be defined (not 2).
+          const nclx = colrs.find(c => c.type === "nclx");
+          expect(nclx).toBeDefined();
+          const dv = new DataView(nclx!.payload.buffer, nclx!.payload.byteOffset, nclx!.payload.byteLength);
+          expect(dv.getUint16(0)).not.toBe(2);
+          expect(dv.getUint16(2)).not.toBe(2);
         }
       },
     );

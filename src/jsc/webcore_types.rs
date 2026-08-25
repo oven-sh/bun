@@ -1046,10 +1046,12 @@ pub mod store {
     // threads, make that `Rc` an `Arc`.
     unsafe impl Send for Store {}
     // SAFETY: `Store::ref_count` is atomic, and cross-thread `&Store` reads
-    // of `Data` are confined to immutable-after-init fields plus the
-    // `AtomicU64` `File::last_modified`; every `&mut` mint goes through
-    // `unsafe fn data_mut`, whose precondition is exclusivity, discharged in
-    // writing at each call site.
+    // of `Data` touch only immutable-after-init fields, the `AtomicU64`
+    // `File::last_modified`, and (for fd-backed `WriteFile`) the idempotent
+    // `seekable`/`mode` (see `resolve_file_stat`'s doc); every `&mut` mint
+    // goes through `unsafe fn data_mut` or its documented sibling
+    // `unsafe fn`s, whose precondition is exclusivity, discharged in writing
+    // at each call site.
     unsafe impl Sync for Store {}
 }
 pub use store::Store;

@@ -42,7 +42,8 @@ pub(super) fn wtf_impl(s: &WTFStringImpl) -> &WTFStringImplStruct {
 
 /// Mutable view of a [`Blob`]'s backing `Store` through its
 /// `JsCell<Option<RefPtr<Store>>>` field. Centralises the per-site raw
-/// `(*blob.store.get()…as_ptr()).mime_type = …` deref under the same
+/// `(*blob.store.get()…as_ptr()).mime_type = …` deref.
+///
 /// # Safety
 /// For the lifetime of the returned `&mut Store`, no other reference
 /// (`&Store`, `&mut Store`, `&Data`, `&mut Data`) to the same pointee may be

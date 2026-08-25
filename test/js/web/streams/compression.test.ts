@@ -585,7 +585,7 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
   // client's untouched receive buffer (a few MB on Linux). A fetch() client
   // would not do: it reads ahead up to its high-water mark in fast bursts, and
   // TCP receive autotuning grows the receive window with every read, up to
-  // tcp_rmem[2] (32 MB since Linux 6.16), enough to hold this whole body.
+  // tcp_rmem[2] (32 MB since Linux 6.16), enough to hold this whole 12.8 MB body.
   test("CompressionStream -> native HTTP sink applies backpressure to a stalled client", async () => {
     let pulls = 0;
     // Incompressible data so the gzipped output is ~as large as the input.
@@ -597,8 +597,8 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
       return data;
     };
     // Backpressure parks after ~tens of pulls (a few MB of socket buffers /
-    // 64KB); 200 is enough headroom to distinguish "parked" from "ran away"
-    // without pushing ~32MB through gzip+HTTP under debug+ASAN.
+    // 64KB); 200 pulls (12.8 MB through gzip+HTTP) is enough headroom to
+    // distinguish "parked" from "ran away" and still quick under debug+ASAN.
     const TOTAL = 200;
     const { promise: firstPull, resolve: onFirstPull } = Promise.withResolvers<void>();
     await using server = Bun.serve({

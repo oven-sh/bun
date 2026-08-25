@@ -47,7 +47,7 @@ struct H2App {
         http2Context->scheduleDrain = cb;
         http2Context->scheduleDrainUser = user;
     }
-    void drain() { http2Context->sweep(); }
+    bool drain() { return http2Context->drain(); }
 
     void clearRoutes() { http2Context->clearRoutes(); }
     /* GOAWAY + close every connection. */

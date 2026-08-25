@@ -47,6 +47,7 @@ using Http2Request = Http3Request;
 
 namespace http2 {
 
+
 enum FrameType : uint8_t {
     DATA = 0, HEADERS = 1, PRIORITY = 2, RST_STREAM = 3, SETTINGS = 4,
     PUSH_PROMISE = 5, PING = 6, GOAWAY = 7, WINDOW_UPDATE = 8, CONTINUATION = 9,
@@ -404,16 +405,17 @@ struct Http2Connection {
     bool inSweepList = false;
 
     std::vector<Http2Response *> streams;
+    std::vector<Http2Response *> drainedAgain;
     /* Streams we sent RST_STREAM on; frames for them may still be in flight
      * and are ignored (§5.1 closed). Anything else on a closed id is an error. */
-    uint32_t resetByUs[32] = {};
+    uint32_t resetByUs[http2::LOCAL_MAX_CONCURRENT_STREAMS] = {};
     unsigned resetByUsNext = 0;
     bool headerBlockSelfDependent = false;
-    uint32_t resetByPeer[32] = {};
+    uint32_t resetByPeer[http2::LOCAL_MAX_CONCURRENT_STREAMS] = {};
     unsigned resetByPeerNext = 0;
-    void noteResetByUs(uint32_t id) { resetByUs[resetByUsNext++ % 32] = id; }
+    void noteResetByUs(uint32_t id) { resetByUs[resetByUsNext++ % http2::LOCAL_MAX_CONCURRENT_STREAMS] = id; }
     bool wasResetByUs(uint32_t id) const { for (uint32_t r : resetByUs) if (r == id) return true; return false; }
-    void noteResetByPeer(uint32_t id) { resetByPeer[resetByPeerNext++ % 32] = id; }
+    void noteResetByPeer(uint32_t id) { resetByPeer[resetByPeerNext++ % http2::LOCAL_MAX_CONCURRENT_STREAMS] = id; }
     bool wasResetByPeer(uint32_t id) const { for (uint32_t r : resetByPeer) if (r == id) return true; return false; }
     std::vector<Http2Response *> writable;
     std::vector<Http2Response *> draining;
@@ -535,7 +537,6 @@ struct Http2Connection {
             int chunk = (int) std::min<size_t>(out.length(), 1u << 30);
             int written = us_socket_write(s, out.data(), chunk);
             if (written <= 0) break;
-            queuedControl -= std::min<size_t>(queuedControl, (size_t) written);
             /* Keep the allocation while streams are active (it refills every
              * event); give it back once the connection goes quiet or it grew
              * past what a drain pass needs. */
@@ -543,6 +544,9 @@ struct Http2Connection {
             else out.consume((size_t) written);
             wrote = true;
         }
+        /* Control frames sit behind whatever was queued first; they're gone
+         * for sure only once everything is. */
+        if (out.length() == 0) queuedControl = 0;
         if (wrote && !closed) touch();
     }
 
@@ -788,12 +792,28 @@ struct Http2Context {
     void (*scheduleDrain)(void *user, Http2Context *ctx) = nullptr;
     void *scheduleDrainUser = nullptr;
 
+    bool drainScheduled = false;
+
     void scheduleSweep(Http2Connection *conn) {
         if (conn->inSweepList || conn->closed) return;
         conn->inSweepList = true;
-        bool first = sweepList.empty();
         sweepList.push_back(conn);
-        if (first && scheduleDrain) scheduleDrain(scheduleDrainUser, this);
+        if (!drainScheduled && scheduleDrain) {
+            drainScheduled = true;
+            scheduleDrain(scheduleDrainUser, this);
+        }
+    }
+
+    /* The embedder's deferred callback: returns whether more work is queued
+     * (so a repeating task can stay registered). */
+    bool drain() {
+        /* Stay "scheduled" across sweep() so re-queues from inside it don't
+         * call the hook re-entrantly; whatever is queued afterwards keeps the
+         * embedder's task alive via the return value. */
+        drainScheduled = true;
+        sweep();
+        drainScheduled = !sweepList.empty();
+        return drainScheduled;
     }
 
     /* Pump connections whose streams are parked on the high-water mark and
@@ -1092,7 +1112,7 @@ inline void Http2Connection::drainWritable() {
      * Each stream gets at most one slice per pass and the ones that didn't
      * finish re-queue at the back, so a large download can't starve small
      * responses queued behind it. */
-    std::vector<Http2Response *> nested;
+    std::vector<Http2Response *> nested, nestedAgain;
     std::vector<Http2Response *> &snapshot = drainDepth++ ? nested : draining;
     snapshot.clear();
     snapshot.swap(writable);
@@ -1109,7 +1129,16 @@ inline void Http2Connection::drainWritable() {
         if (!stream->drain()) markWantsWrite(stream);
         else streamMaybeClosed(stream);
     }
-    for (; i < snapshot.size(); i++) markWantsWrite(snapshot[i]);
+    /* Rotate: whatever re-queued itself during this pass (had its slice and
+     * wants more) goes behind the streams that didn't get a turn at all. */
+    if (i < snapshot.size()) {
+        std::vector<Http2Response *> &again = drainDepth > 1 ? nestedAgain : drainedAgain;
+        again.clear();
+        again.swap(writable);
+        for (; i < snapshot.size(); i++) markWantsWrite(snapshot[i]);
+        for (Http2Response *stream : again) { stream->wantsWrite = false; if (!stream->dead) markWantsWrite(stream); }
+        again.clear();
+    }
     snapshot.clear();
     drainSlice = prevSlice;
     drainDepth--;
@@ -1899,7 +1928,10 @@ inline Http2Response *Http2Response::cork(MoveOnlyFunction<void()> &&fn) {
 
 inline void Http2Response::setTimeout(uint8_t seconds) {
     if (dead) return;
-    timeoutS = seconds == 255 ? 254 : seconds;
+    uint8_t v = seconds == 255 ? 254 : seconds;
+    /* While paused the timeout is suspended; the new value applies on resume. */
+    if (paused) { pausedTimeoutS = v; return; }
+    timeoutS = v;
     conn->recomputeIdleTimeout();
 }
 

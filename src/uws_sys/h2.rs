@@ -377,7 +377,8 @@ impl App {
         // SAFETY: live handle; cb/user are stored and invoked on this thread.
         unsafe { c::uws_h2_app_on_schedule_drain(self, cb, user) }
     }
-    pub fn drain(&mut self) {
+    /// Returns true if more streams are still queued (keep the task).
+    pub fn drain(&mut self) -> bool {
         c::uws_h2_app_drain(self)
     }
     pub fn clear_routes(&mut self) {
@@ -519,7 +520,7 @@ mod c {
             cb: unsafe extern "C" fn(user: *mut c_void, ctx: *mut c_void),
             user: *mut c_void,
         );
-        pub(super) safe fn uws_h2_app_drain(app: &mut App);
+        pub(super) safe fn uws_h2_app_drain(app: &mut App) -> bool;
         pub(super) safe fn uws_h2_app_close(app: &mut App);
         pub(super) safe fn uws_h2_app_clear_routes(app: &mut App);
         pub(super) safe fn uws_h2_res_write_continue(res: &mut Response);

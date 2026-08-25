@@ -2786,8 +2786,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         extern "C" fn schedule_h2_drain(app: *mut c_void, _ctx: *mut c_void) {
             extern "C" fn drain(app: *mut c_void) -> bool {
                 // S012: `h2::App` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(app.cast::<uws_sys::h2::App>()).drain();
-                false // one-shot; re-posted when more streams park
+                // Stay registered while streams are still queued.
+                bun_opaque::opaque_deref_mut(app.cast::<uws_sys::h2::App>()).drain()
             }
             jsc::VirtualMachine::get()
                 .event_loop_ref()

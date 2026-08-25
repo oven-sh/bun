@@ -35,13 +35,12 @@ impl<'a> DeferredBatchTask<'a> {
     /// Bundle thread. The caller has counted the hop as a pending item (`BundleV2::drain_deferred_tasks`).
     pub(crate) fn schedule(bv2: &mut BundleV2<'a>) {
         debug_assert!(bv2.shared.plugins.is_some());
-        bv2.drain_defer_task.hop = Some(Hop {
+        bv2.drain_defer_task.get_mut(0).hop = Some(Hop {
             completion: bv2.completion,
             plugins: bv2.shared.plugins.expect("plugins"),
             inbox: Arc::clone(&bv2.shared.inbox),
         });
-        let task =
-            ConcurrentTask::create(Task::init(std::ptr::from_mut(&mut bv2.drain_defer_task)));
+        let task = ConcurrentTask::create(Task::init(bv2.drain_defer_task.ptr(0).as_ptr()));
         BundleV2::enqueue_on_js_loop_for_plugins(bv2.completion, &bv2.event_loop, task);
     }
 

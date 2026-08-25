@@ -537,6 +537,8 @@ fn build_with_vm(
     // `bake_types::Framework` view.
     let bundler_framework = framework.as_bundler_view();
 
+    // The bundle's heap; declared here so it outlives `bundled_outputs_list`.
+    let heap = bun_bundler::bundle_v2::BundleHeap::new();
     let bundled_outputs_list: Vec<OutputFile> = {
         let mut config = bun_bundler::bundle_v2::BundleConfig::new(
             bun_event_loop::AnyEventLoop::js(vm.event_loop().cast()),
@@ -547,10 +549,6 @@ fn build_with_vm(
             ssr_transpiler: ssr_transpiler.as_deref_mut().map(bun_ptr::LentMut::new),
         });
         config.plugins = options.bundler_options.plugin.map(bun_ptr::BackRef::from);
-        // The transpilers are `'static`, so the heap the graph is parsed into
-        // must be too; the process exits once the build is written.
-        let heap: &'static bun_bundler::bundle_v2::BundleHeap =
-            Box::leak(Box::new(bun_bundler::bundle_v2::BundleHeap::new()));
 
         // Propagate via `?`. Do NOT
         // catch-and-exit here: the bake path expects this call to succeed for
@@ -560,7 +558,7 @@ fn build_with_vm(
             &entry_points,
             &mut server_transpiler,
             config,
-            heap,
+            &heap,
         )?
     };
     if bundled_outputs_list.is_empty() {

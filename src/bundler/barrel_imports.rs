@@ -508,7 +508,6 @@ pub(crate) fn schedule_barrel_deferred_imports(
         if ni.alias_is_star {
             *value = RequestedExports::All;
         } else if let Some(alias_ptr) = ni.alias {
-            // SAFETY: arena-backed `*const [u8]` valid for the AST lifetime.
             let alias: &[u8] = alias_ptr.slice();
             match value {
                 RequestedExports::All => {}

@@ -18,9 +18,6 @@ use bun_sys::Fd;
 use bun_ast::Index;
 use bun_ast::{self as ast, E, Expr, G, Part};
 use bun_js_parser as js_parser;
-// `BundledAst<'arena>` — the bundler graph stores `'static`-erased
-// ASTs (arena outlives the link step). Use the crate-level alias so the
-// `Success`/helper signatures don't carry an explicit `'static` everywhere.
 use crate::JSAst;
 /// `js_parser.Parser.Options` — the real parser-entry options struct.
 pub use bun_js_parser::parser::ParserOptions;

@@ -3127,26 +3127,25 @@ pub mod bv2_impl {
             OwnedBundle::try_new(heap, |heap| Self::init_any(transpiler, config, heap))
         }
 
-        /// [`init`](Self::init) at the heap's lifetime `'h`, for
-        /// `init_with_owned_heap`, whose lent transpilers are `'static`.
-        fn init_any<'h>(
-            transpiler: &mut Transpiler<'static>,
-            config: BundleConfig<'static>,
+        /// [`init`](Self::init) at the heap's lifetime `'h` for callers whose
+        /// lent transpilers (including bake's, in `config`) outlive the heap.
+        fn init_any<'h, 't: 'h>(
+            transpiler: &mut Transpiler<'t>,
+            config: BundleConfig<'t>,
             heap: &'h BundleHeap,
         ) -> Result<Box<BundleV2<'h>>, Error> {
             // SAFETY: as `lend_shorter`, for the transpilers lent in `config`.
-            let config =
-                unsafe { core::mem::transmute::<BundleConfig<'static>, BundleConfig<'h>>(config) };
+            let config = unsafe { core::mem::transmute::<BundleConfig<'t>, BundleConfig<'h>>(config) };
             BundleV2::init(Self::lend_shorter(transpiler), config, heap)
         }
 
-        /// A `'static` transpiler lent to a bundle whose heap lives for `'h`.
-        fn lend_shorter<'r, 'h>(transpiler: &'r mut Transpiler<'static>) -> &'r mut Transpiler<'h> {
+        /// A longer-lived transpiler lent to a bundle whose heap lives for `'h`.
+        fn lend_shorter<'r, 'h, 't: 'h>(transpiler: &'r mut Transpiler<'t>) -> &'r mut Transpiler<'h> {
             // SAFETY: `Transpiler<'x>` is covariant in `'x` but lent mutably,
-            // so the borrow checker cannot shorten `'static` to `'h` itself;
-            // that is sound as long as nothing that lives only for `'h` is
-            // stored into it, and the bundle stores only owned values into a
-            // lent transpiler's options.
+            // so the borrow checker cannot shorten `'t` to `'h` itself; that
+            // is sound as long as nothing that lives only for `'h` is stored
+            // into it, and the bundle stores only owned values into a lent
+            // transpiler's options.
             unsafe { &mut *core::ptr::from_mut(transpiler).cast::<Transpiler<'h>>() }
         }
 
@@ -3457,9 +3456,8 @@ pub mod bv2_impl {
             self.linker.graph.ast = self.graph.ast.clone()?;
 
             for module_scope in self.linker.graph.ast.items_module_scope_mut() {
-                // `children` are arena-allocated `StoreRef<Scope>`s; we re-point
-                // their `parent` BACKREF at the cloned module scope. `StoreRef`'s
-                // safe `DerefMut` replaces the open-coded `unsafe { child.as_mut() }`.
+                // `children` are arena-allocated `StoreRef<Scope>`s; re-point
+                // their `parent` back-reference at the cloned module scope.
                 let parent_ptr = bun_ast::StoreRef::from_bump(&mut *module_scope);
                 for child in module_scope.children.slice_mut() {
                     child.parent = Some(parent_ptr);
@@ -4228,13 +4226,15 @@ pub mod bv2_impl {
             Ok(this)
         }
 
-        pub fn generate_from_bake_production_cli(
+        /// `bun build --app`: bundle every route into `heap`; the transpilers
+        /// are lent for the call.
+        pub fn generate_from_bake_production_cli<'t: 'a>(
             entry_points: &bake_types::production::EntryPointMap,
-            server_transpiler: &mut Transpiler<'a>,
-            config: BundleConfig<'a>,
+            server_transpiler: &mut Transpiler<'t>,
+            config: BundleConfig<'t>,
             heap: &'a BundleHeap,
         ) -> Result<Vec<options::OutputFile>, Error> {
-            let mut this = BundleV2::init(server_transpiler, config, heap)?;
+            let mut this = Self::init_any(server_transpiler, config, heap)?;
 
             // Wrap so every exit path hits the cleanup below; `chunks` must drop
             // inside the closure, before `deinit_without_freeing_arena()`.
@@ -7033,7 +7033,6 @@ pub mod bv2_impl {
                     }
                 }
                 parse_task::ResultValue::Success(result) => {
-                    // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
                     result
                         .log
                         .clone_to_with_recycled(this.transpiler.log_mut(), true);
@@ -7259,10 +7258,6 @@ pub mod bv2_impl {
 
                             let mut ssr_source =
                                 this.graph.input_files.items_source()[result_source_index].clone();
-                            // `path_with_pretty_initialized` takes/returns
-                            // `Fs::Path` (`bun_resolver::fs::Path`); bridge through
-                            // `fs_path_from_logger`/`fs_path_to_logger` until the
-                            // three `Path` mirrors unify.
                             ssr_source.path.pretty = ssr_source.path.text;
                             ssr_source.path = this
                                 .path_with_pretty_initialized(
@@ -7336,7 +7331,6 @@ pub mod bv2_impl {
                                 .expect("oom");
                             err.log = log;
                         } else if !err.log.msgs.is_empty() {
-                            // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
                             err.log
                                 .clone_to_with_recycled(this.transpiler.log_mut(), true);
                         } else {
@@ -7345,7 +7339,6 @@ pub mod bv2_impl {
                                 crate::parse_task::Step::Parse => "parse",
                                 crate::parse_task::Step::Resolve => "resolve",
                             };
-                            // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
                             this.transpiler.log_mut().add_error_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,

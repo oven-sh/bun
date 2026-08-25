@@ -104,7 +104,6 @@ pub(crate) fn post_process_js_chunk(
         ModuleInfo::create(loader.is_type_script())
     });
 
-    // SAFETY: worker.arena is set in Worker::init() before any task runs.
     let worker_arena: &Arena = worker.arena();
 
     // An ESM entry point already ends in an `export { }` clause
@@ -169,11 +168,8 @@ pub(crate) fn post_process_js_chunk(
             });
         }
 
-        // `MultiArrayList::get` returns `ManuallyDrop<BundledAst>` —
-        // the storage retains ownership of every Drop field (`named_imports`,
-        // `parts`, `top_level_symbols_to_parts`, …), so the gathered struct
-        // must NOT run Drop. `to_ast` consumes by value, so unwrap, convert,
-        // and re-wrap the result (which carries the same heap pointers).
+        // `MultiArrayList::get` gathers the row into a `ManuallyDrop<BundledAst>`
+        // (the columns keep ownership); `printer_view` borrows from it.
         let entry_ast = c.graph.ast.get(chunk.entry_point.source_index() as usize);
         let ast_view = entry_ast.printer_view();
         let source = LinkerContext::get_source(pg, chunk.entry_point.source_index());
@@ -1026,7 +1022,6 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                                     G::Property {
                                         key: Some(Expr::init(
                                             E::String {
-                                                // SAFETY: alias is an arena `*const [u8]`; never null.
                                                 data: export_item.alias.slice().into(),
                                                 is_utf16: false,
                                                 ..Default::default()

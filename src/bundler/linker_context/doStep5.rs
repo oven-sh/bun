@@ -255,8 +255,8 @@ fn step5_for_file(c: &Step5Shared<'_, '_>, row: &mut Step5Row<'_, '_>) {
 
         // PERF: hoist this file's two `top_level_symbols_to_parts`
         // sub-maps rather than going through
-        // `c.topLevelSymbolsToParts(id, ref)` per symbol-use — perf showed
-        // `find_hash` falling through to the linear scan branch here (≈87% of
+        // `top_level_symbols_to_parts(id, ref)` per symbol-use — perf showed
+        // the hash lookup falling through to the linear scan branch here (≈87% of
         // step5 self-time on three.js), so hoist the per-file lookups out of
         // the J×K inner loop.
         let tlsp_overlay: &bun_ast::ast_result::TopLevelSymbolToParts =
@@ -537,7 +537,7 @@ fn create_exports_for_file(
             + (!properties.is_empty()) as usize
             + force_include_exports_for_entry_point as usize;
         // The trailing `all_export_stmts_len` slots of `stmts_slab`
-        // (after the per-export `eat1`s above) are filled below in the order
+        // (after the per-export slots taken above) are filled below in the order
         // {var exports={}, __export(...), module.exports=__toCommonJS(...)}.
         let all_export_stmts_base = stmts_head;
         macro_rules! emit_export_stmt {

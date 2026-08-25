@@ -9,8 +9,6 @@ use bun_core::{MutableString, string_joiner::StringJoiner, strings};
 use bun_sourcemap::{
     self as SourceMap, DebugIDFormatter, LineOffsetTable, SourceMapPieces, SourceMapState,
 };
-// Note: alias the *module* (not the `ThreadPool` struct) so
-// `ThreadPoolLib::Task` / `ThreadPoolLib::Batch` resolve as nested items.
 use crate::bake_types as bake;
 use bun_ast::{ImportKind, ImportRecord};
 
@@ -1910,8 +1908,6 @@ impl<'a> LinkerContext<'a> {
 
                         let source = &all_sources[r#ref.source_index() as usize];
 
-                        // SAFETY: `Symbol.original_name` is a `*const [u8]` arena
-                        // pointer; valid for the link step.
                         let original_name: &[u8] = symbol.original_name.slice();
                         // The hash itself is short-lived; use a scratch bump.
                         let scratch = ::bun_alloc::Arena::new();
@@ -2895,7 +2891,6 @@ impl<'a> LinkerContext<'a> {
             && flags.contains(AstFlags::HAS_LAZY_EXPORT)
             // ESM exports
             && !flags.contains(AstFlags::USES_EXPORT_KEYWORD)
-            // SAFETY: `alias` is an arena `*const [u8]` valid for the link pass.
             && named_import.alias.map(|a| a.slice() != b"default").unwrap_or(true)
             // CommonJS exports
             && !flags.contains(AstFlags::USES_EXPORTS_REF)
@@ -3106,13 +3101,10 @@ impl<'a> LinkerContext<'a> {
                     // Warn about importing from a file that is known to not have any exports
                     if status == ImportTrackerStatus::CjsWithoutExports {
                         let source = Self::get_source(pg, tracker.source_index.get());
-                        // SAFETY: `alias` is an arena `*const [u8]` valid for the link pass.
                         let alias = named_import
                             .alias
                             .expect("infallible: alias present")
                             .slice();
-                        // Split-borrow with `named_import` (`&self.graph`) —
-                        // `log_disjoint` returns the disjoint `Transpiler.log` backref.
                         self.log.add_range_warning_fmt(
                             Some(source),
                             source.range_of_identifier(named_import.alias_loc),

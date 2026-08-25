@@ -91,7 +91,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 .extend_from_slice(stmts.inside_wrapper_suffix.as_slice());
 
             // Capture pointer/len now, re-slice after pushes (borrowck).
-            // SAFETY: `inner` aliases the first `main_stmts_len` elements of `all_stmts`;
+            // `inner` aliases the first `main_stmts_len` elements of `all_stmts`;
             // subsequent pushes only append past this range and capacity was reserved above
             // so no reallocation occurs.
             let inner = bun_ast::StoreSlice::new_mut(

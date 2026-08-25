@@ -238,7 +238,6 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                     };
 
                     if cfg!(debug_assertions) {
-                        // SAFETY: `original_name` is an arena slice valid for the link pass.
                         let name = symbols.get_const(ref_to_use).unwrap().original_name.slice();
                         debug!(
                             "Cross-chunk import: {} {:?}",
@@ -290,7 +289,6 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                         }
 
                         if cfg!(debug_assertions) {
-                            // SAFETY: arena slice valid for the link pass.
                             let name = symbols.get_const(target_ref).unwrap().original_name.slice();
                             debug!("Cross-chunk export: {}", bstr::BStr::new(name),);
                         }
@@ -459,7 +457,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas<'c>(
                         .exports
                         .get_or_put(import_ref);
                 } else {
-                    // SAFETY: arena slice valid for the link pass.
                     let name = symbol.original_name.slice();
                     debug!(
                         "{} imports from itself (chunk {})",

@@ -1040,9 +1040,24 @@ impl ExportRenamer {
     }
 
     pub fn next_minified_name(&mut self) -> Result<Vec<u8>, crate::Error> {
-        let name = js_ast::NameMinifier::default_number_to_minified_name(self.count)?;
-        self.count += 1;
-        Ok(name)
+        loop {
+            let name = js_ast::NameMinifier::default_number_to_minified_name(self.count)?;
+            self.count += 1;
+            if !self.used.contains_key(name.as_slice()) {
+                return Ok(name);
+            }
+        }
+    }
+
+    /// Mark `name` as taken so neither `next_renamed_name` nor
+    /// `next_minified_name` hands it out. Used for an entry point chunk's own
+    /// export names, which share the chunk's `export {}` namespace with the
+    /// cross-chunk exports.
+    pub fn reserve_name(&mut self, name: &[u8]) {
+        let entry = self.used.get_or_put(name).expect("unreachable");
+        if !entry.found_existing {
+            *entry.value_ptr = 1;
+        }
     }
 }
 

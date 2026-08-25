@@ -283,8 +283,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
         }
       }
       default: {
-        // skip quoted spans: strings and quoted identifiers. A quote is also a
-        // token boundary: UPDATE"t"SET is three tokens.
+        // a quoted span is skipped and its opener is a token boundary: UPDATE"t"SET is three tokens
         if (char === '"' || char === "'" || char === "`") {
           if (quoted === char) {
             quoted = false;

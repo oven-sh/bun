@@ -668,6 +668,63 @@ pub mod registry {
         }
     }
 
+    /// No `.`/`..` segment (plain or `%2e`-spelled), no backslash (plain or `%5c`),
+    /// and no `%2f` that splits a segment into pieces containing a dot segment. A
+    /// plain `%2f` inside a name, the `@scope%2fpkg` form manifests are requested
+    /// with, is fine.
+    pub(crate) fn path_is_canonical(path: &[u8]) -> bool {
+        if strings::contains_char(path, b'\\') || contains_percent_encoded(path, b'5', b'c') {
+            return false;
+        }
+        strings::split(path, b"/").all(|segment| !is_unsafe_segment(segment))
+    }
+
+    /// `%Xy` anywhere in `bytes`, the hex digit `y` matched case-insensitively.
+    fn contains_percent_encoded(bytes: &[u8], x: u8, y_lower: u8) -> bool {
+        let mut rest = bytes;
+        while let Some(i) = strings::index_of_char_usize(rest, b'%') {
+            rest = &rest[i + 1..];
+            if rest.len() >= 2 && rest[0] == x && rest[1].eq_ignore_ascii_case(&y_lower) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// A dot segment, or a segment that an encoded `/` (`%2f`) splits into pieces
+    /// one of which is a dot segment.
+    fn is_unsafe_segment(segment: &[u8]) -> bool {
+        if !contains_percent_encoded(segment, b'2', b'f') {
+            return is_dot_segment(segment);
+        }
+        let mut start = 0;
+        let mut i = 0;
+        while i + 2 < segment.len() {
+            if segment[i] == b'%'
+                && segment[i + 1] == b'2'
+                && segment[i + 2].eq_ignore_ascii_case(&b'f')
+            {
+                if is_dot_segment(&segment[start..i]) {
+                    return true;
+                }
+                i += 3;
+                start = i;
+            } else {
+                i += 1;
+            }
+        }
+        is_dot_segment(&segment[start..])
+    }
+
+    /// WHATWG single-dot and double-dot path segments, including the percent-encoded
+    /// spellings a server would normalize.
+    fn is_dot_segment(segment: &[u8]) -> bool {
+        const DOT_SEGMENTS: [&[u8]; 6] = [b".", b"..", b"%2e", b"%2e.", b".%2e", b"%2e%2e"];
+        DOT_SEGMENTS
+            .iter()
+            .any(|dot| segment.eq_ignore_ascii_case(dot))
+    }
+
     pub(crate) enum PackageVersionResponse {
         Cached(PackageManifest),
         Fresh(PackageManifest),

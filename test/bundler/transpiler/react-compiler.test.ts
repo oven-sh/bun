@@ -272,14 +272,7 @@ describe("bundler", () => {
       "entry.jsx": `export function Hello() { return <div>hi</div>; }`,
     });
     await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "build",
-        "--react-compiler",
-        "--react-compiler-output-mode=bogus",
-        "--target=bun",
-        "./entry.jsx",
-      ],
+      cmd: [bunExe(), "build", "--react-compiler", "--react-compiler-output-mode=bogus", "--target=bun", "./entry.jsx"],
       env: bunEnv,
       cwd: String(dir),
       stderr: "pipe",

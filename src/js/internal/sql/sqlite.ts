@@ -126,6 +126,8 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
   let canReturnRows = false;
   let hasReturning = false;
   let writeVerb: string | null = null;
+  // parentheses seen so far in the reverse scan; a statement-level write verb sits at depth 0
+  let parenDepth = 0;
   let quoted: false | "'" | '"' = false;
   // we need to reverse search so we find the closest command to the parameter
   for (let i = text_len - 1; i >= 0; i--) {
@@ -142,7 +144,9 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             if (command === SQLCommand.none) {
               command = SQLCommand.insert;
             }
-            writeVerb = token;
+            if (parenDepth === 0) {
+              writeVerb = token;
+            }
             lastToken = token;
             token = "";
             if (partial) {
@@ -154,7 +158,9 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             if (command === SQLCommand.none) {
               command = SQLCommand.update;
             }
-            writeVerb = token;
+            if (parenDepth === 0) {
+              writeVerb = token;
+            }
             lastToken = token;
             token = "";
             if (partial) {
@@ -164,7 +170,9 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
           }
           case "DELETE":
           case "REPLACE": {
-            writeVerb = token;
+            if (parenDepth === 0) {
+              writeVerb = token;
+            }
             lastToken = token;
             token = "";
             continue;
@@ -232,6 +240,11 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
           continue;
         }
         if (!quoted) {
+          if (char === ")") {
+            parenDepth++;
+          } else if (char === "(" && parenDepth > 0) {
+            parenDepth--;
+          }
           token = char + token;
         }
       }

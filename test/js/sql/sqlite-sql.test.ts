@@ -935,6 +935,11 @@ describe("Query Execution", () => {
     const commentedReturning = await sql`INSERT INTO gadgets2 VALUES (3) /* no RETURNING here */`;
     expect(commentedReturning.command).toBe("INSERT");
     expect(commentedReturning.affectedRows).toBe(1);
+
+    // REPLACE as a function call inside a CTE body is not the REPLACE command
+    const replaceFn = await sql`WITH names AS (SELECT REPLACE ('aaa', 'a', 'b') AS n) SELECT * FROM names`;
+    expect(replaceFn).toEqual([{ n: "bbb" }]);
+    expect(replaceFn.affectedRows).toBe(0);
   });
 
   test("SELECT with various clauses", async () => {

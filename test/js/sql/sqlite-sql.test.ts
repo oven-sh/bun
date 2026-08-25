@@ -997,6 +997,11 @@ describe("Query Execution", () => {
     const noSpaces = await sql.unsafe('UPDATE"weird"SET [a;b] = 4 WHERE [a;b] = 2');
     expect(noSpaces.command).toBe("UPDATE");
     expect(noSpaces.affectedRows).toBe(1);
+
+    // a keyword flush against a quoted span keeps its meaning
+    const afterQuote = await sql.unsafe("DELETE FROM weird WHERE [a;b] = 4 AND 'x' = 'x'RETURNING [a;b] AS v");
+    expect(afterQuote).toEqual([{ v: 4 }]);
+    expect(afterQuote.affectedRows).toBe(1);
   });
 
   test("SELECT with various clauses", async () => {

@@ -181,6 +181,101 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
   // parentheses seen so far in the reverse scan; a statement-level write verb sits at depth 0
   let parenDepth = 0;
   let quoted: false | "'" | '"' | "`" | "]" = false;
+
+  /** Classifies and clears the pending token at a boundary (i = the boundary char's index). */
+  function classifyToken(i: number): SQLParsedInfo | null {
+    switch (token) {
+      case "INSERT": {
+        if (command === SQLCommand.none) {
+          command = SQLCommand.insert;
+        }
+        if (parenDepth === 0) {
+          writeVerb = token;
+        }
+        lastToken = token;
+        token = "";
+        if (partial) {
+          return { command: SQLCommand.insert, lastToken, canReturnRows, hasReturning, writeCommand: null };
+        }
+        return null;
+      }
+      case "UPDATE": {
+        if (command === SQLCommand.none) {
+          command = SQLCommand.update;
+        }
+        if (parenDepth === 0) {
+          writeVerb = token;
+        }
+        lastToken = token;
+        token = "";
+        if (partial) {
+          return { command: SQLCommand.update, lastToken, canReturnRows, hasReturning, writeCommand: null };
+        }
+        return null;
+      }
+      case "DELETE":
+      case "REPLACE": {
+        // REPLACE is also a function and a legal bare identifier; the statement form is REPLACE INTO
+        if (parenDepth === 0 && (token !== "REPLACE" || nextTokenIs(text, i + 1 + token.length, "INTO"))) {
+          writeVerb = token;
+        }
+        lastToken = token;
+        token = "";
+        return null;
+      }
+      case "WHERE": {
+        if (command === SQLCommand.none) {
+          command = SQLCommand.where;
+        }
+        lastToken = token;
+        token = "";
+        if (partial) {
+          return { command: SQLCommand.where, lastToken, canReturnRows, hasReturning, writeCommand: null };
+        }
+        return null;
+      }
+      case "SET": {
+        if (command === SQLCommand.none) {
+          command = SQLCommand.updateSet;
+        }
+        lastToken = token;
+        token = "";
+        if (partial) {
+          return { command: SQLCommand.updateSet, lastToken, canReturnRows, hasReturning, writeCommand: null };
+        }
+        return null;
+      }
+      case "IN": {
+        if (command === SQLCommand.none) {
+          command = SQLCommand.in;
+        }
+        lastToken = token;
+        token = "";
+        if (partial) {
+          return { command: SQLCommand.in, lastToken, canReturnRows, hasReturning, writeCommand: null };
+        }
+        return null;
+      }
+      case "RETURNING":
+        hasReturning = true;
+      // fallthrough
+      case "SELECT":
+      case "PRAGMA":
+      case "WITH":
+      case "EXPLAIN": {
+        lastToken = token;
+        canReturnRows = true;
+        token = "";
+        return null;
+      }
+      default: {
+        lastToken = token;
+        token = "";
+        return null;
+      }
+    }
+  }
+
   // we need to reverse search so we find the closest command to the parameter
   for (let i = text_len - 1; i >= 0; i--) {
     const char = text[i];
@@ -191,96 +286,11 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
       case "\r":
       case "\f":
       case "\v": {
-        switch (token) {
-          case "INSERT": {
-            if (command === SQLCommand.none) {
-              command = SQLCommand.insert;
-            }
-            if (parenDepth === 0) {
-              writeVerb = token;
-            }
-            lastToken = token;
-            token = "";
-            if (partial) {
-              return { command: SQLCommand.insert, lastToken, canReturnRows, hasReturning, writeCommand: null };
-            }
-            continue;
-          }
-          case "UPDATE": {
-            if (command === SQLCommand.none) {
-              command = SQLCommand.update;
-            }
-            if (parenDepth === 0) {
-              writeVerb = token;
-            }
-            lastToken = token;
-            token = "";
-            if (partial) {
-              return { command: SQLCommand.update, lastToken, canReturnRows, hasReturning, writeCommand: null };
-            }
-            continue;
-          }
-          case "DELETE":
-          case "REPLACE": {
-            // REPLACE is also a function and a legal bare identifier; the statement form is REPLACE INTO
-            if (parenDepth === 0 && (token !== "REPLACE" || nextTokenIs(text, i + 1 + token.length, "INTO"))) {
-              writeVerb = token;
-            }
-            lastToken = token;
-            token = "";
-            continue;
-          }
-          case "WHERE": {
-            if (command === SQLCommand.none) {
-              command = SQLCommand.where;
-            }
-            lastToken = token;
-            token = "";
-            if (partial) {
-              return { command: SQLCommand.where, lastToken, canReturnRows, hasReturning, writeCommand: null };
-            }
-            continue;
-          }
-          case "SET": {
-            if (command === SQLCommand.none) {
-              command = SQLCommand.updateSet;
-            }
-            lastToken = token;
-            token = "";
-            if (partial) {
-              return { command: SQLCommand.updateSet, lastToken, canReturnRows, hasReturning, writeCommand: null };
-            }
-            continue;
-          }
-          case "IN": {
-            if (command === SQLCommand.none) {
-              command = SQLCommand.in;
-            }
-            lastToken = token;
-            token = "";
-            if (partial) {
-              return { command: SQLCommand.in, lastToken, canReturnRows, hasReturning, writeCommand: null };
-            }
-            continue;
-          }
-          case "RETURNING":
-            hasReturning = true;
-          // fallthrough
-          case "SELECT":
-          case "PRAGMA":
-          case "WITH":
-          case "EXPLAIN": {
-            lastToken = token;
-            canReturnRows = true;
-            token = "";
-            continue;
-          }
-          default: {
-            lastToken = token;
-            token = "";
-            continue;
-          }
+        const early = classifyToken(i);
+        if (early) {
+          return early;
         }
+        continue;
       }
       default: {
         // a quoted span is skipped and its opener is a token boundary: UPDATE"t"SET is three tokens
@@ -289,8 +299,10 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             quoted = false;
           } else if (!quoted) {
             if (token) {
-              lastToken = token;
-              token = "";
+              const early = classifyToken(i);
+              if (early) {
+                return early;
+              }
             }
             quoted = char;
           }
@@ -306,8 +318,10 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
           if (char === "]") {
             // the reverse scan sees "]" first: it opens a bracket-quoted identifier, "[" closes it
             if (token) {
-              lastToken = token;
-              token = "";
+              const early = classifyToken(i);
+              if (early) {
+                return early;
+              }
             }
             quoted = "]";
             continue;

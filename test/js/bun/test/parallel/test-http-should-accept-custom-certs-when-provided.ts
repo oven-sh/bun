@@ -1,14 +1,18 @@
-import { generateTlsCertificateChain } from "harness";
 import { createTest } from "node-harness";
+import nodefs from "node:fs";
 import https from "node:https";
+import { sep } from "node:path";
 const { expect } = createTest(import.meta.path);
 
-const tls = generateTlsCertificateChain({ passphrase: "123123123" });
 await using server = https.createServer(
   {
-    key: tls.key,
-    cert: tls.cert,
-    passphrase: tls.passphrase,
+    key: nodefs.readFileSync(
+      `${import.meta.dir}/../../../node/http/fixtures/openssl_localhost.key`.replaceAll("/", sep),
+    ),
+    cert: nodefs.readFileSync(
+      `${import.meta.dir}/../../../node/http/fixtures/openssl_localhost.crt`.replaceAll("/", sep),
+    ),
+    passphrase: "123123123",
   },
   (req, res) => {
     res.write("Hello from https server");
@@ -17,10 +21,13 @@ await using server = https.createServer(
 );
 server.listen(0, "localhost");
 const address = server.address();
+let url_address = address.address;
 const res = await fetch(`https://localhost:${address.port}`, {
   tls: {
     rejectUnauthorized: true,
-    ca: tls.ca,
+    ca: nodefs.readFileSync(
+      `${import.meta.dir}/../../../node/http/fixtures/openssl_localhost_ca.pem`.replaceAll("/", sep),
+    ),
   },
 });
 const t = await res.text();

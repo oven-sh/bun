@@ -54,8 +54,8 @@ pub use bun_uws_sys::WebSocketUpgradeContext;
 pub enum ResponseKind {
     Tcp = 0,
     Ssl = 1,
-    H3 = 2,
-    H2 = 3,
+    H2 = 2,
+    H3 = 3,
 }
 
 impl ResponseKind {
@@ -64,8 +64,8 @@ impl ResponseKind {
         match resp {
             AnyResponse::TCP(_) => ResponseKind::Tcp,
             AnyResponse::SSL(_) => ResponseKind::Ssl,
-            AnyResponse::H3(_) => ResponseKind::H3,
             AnyResponse::H2(_) => ResponseKind::H2,
+            AnyResponse::H3(_) => ResponseKind::H3,
         }
     }
 }

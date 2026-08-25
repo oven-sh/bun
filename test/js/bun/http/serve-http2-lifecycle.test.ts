@@ -127,14 +127,10 @@ describe("Bun.serve http2 lifecycle", () => {
 
   test("a paused (slowly read) request body does not idle out the connection", async () => {
     // usockets ticks timeouts in 4 s steps, so this needs real seconds.
-    await using fx = await startFixture({
-      tls: false,
-      idleTimeout: 2,
-      extra: `routes: { "/slow-read": async req => { let n = 0; for await (const c of req.body) { n += c.length; await Bun.sleep(700); } return new Response(String(n)); } },`,
-    });
+    await using fx = await startFixture({ tls: false, idleTimeout: 2 });
     const session = await connectH2(fx.port, false);
     const res = await new Promise<H2Result>((resolve, reject) => {
-      const r = session.request({ ":path": "/slow-read", ":method": "POST" }, { endStream: false });
+      const r = session.request({ ":path": "/slow-read?ms=700", ":method": "POST" }, { endStream: false });
       const chunks: Buffer[] = [];
       let headers: http2.IncomingHttpHeaders = {};
       r.on("response", h => (headers = h));
@@ -193,11 +189,7 @@ describe("Bun.serve http2 lifecycle", () => {
   }
 
   test("server.timeout(req, n) on h2 is per connection: the most permissive open request wins", async () => {
-    await using fx = await startFixture({
-      tls: false,
-      idleTimeout: 4,
-      extra: `routes: { "/t": async (req, server) => { const u = new URL(req.url); server.timeout(req, Number(u.searchParams.get("s"))); await Bun.sleep(Number(u.searchParams.get("ms"))); return new Response("t" + u.searchParams.get("s")); } },`,
-    });
+    await using fx = await startFixture({ tls: false, idleTimeout: 4 });
     const session = await connectH2(fx.port, false);
     // 30 s is set first, then 1 s; both sleep 6 s. Max-wins keeps the
     // connection; last-wins, min-wins or a no-op would all close it at the 4 s tick.
@@ -245,6 +237,24 @@ describe("Bun.serve http2 lifecycle", () => {
       }, 20000);
     }
   }
+
+  test("server.timeout(req, n) on h2: once the more permissive request ends, the remaining one's budget applies", async () => {
+    await using fx = await startFixture({ tls: false }); // idleTimeout 30
+    const session = await connectH2(fx.port, false);
+    const closed = new Promise<void>(r => session.once("close", () => r()));
+    // A keeps the 30 s default and answers after 1.5 s; B, opened while A is in
+    // flight, asks for 1 s and would answer after 60 s. While both are open the
+    // 30 s wins. Once A has retired, B's 1 s is the connection's budget: the
+    // server idles it out at the next 4 s tick, not 30 s later.
+    const a = request(session, { ":path": "/slow?ms=1500" });
+    const pending = request(session, { ":path": "/t?s=1&ms=60000" }).catch(e => e);
+    expect((await a).body.toString()).toBe("slow");
+    const t0 = Date.now();
+    await closed;
+    expect(Date.now() - t0).toBeLessThan(15000);
+    const result = await pending;
+    expect(result instanceof Error ? NaN : result.status).toBeNaN();
+  }, 30000);
 
   test("--max-http-header-size applies to h2 like HTTP/1.1", async () => {
     await using fx = await startFixture({ tls: false, execArgv: ["--max-http-header-size=4096"] });

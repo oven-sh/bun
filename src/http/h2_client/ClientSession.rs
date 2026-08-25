@@ -886,11 +886,7 @@ impl ClientSession {
         self.maybe_release();
     }
 
-    /// Frame request bodies and write them until the socket pushes back (a
-    /// short write; onWritable resumes) or nothing more can be framed. A
-    /// single drain→flush is not enough: when the flush fully succeeds no
-    /// writable event follows, so a body larger than the buffer high-water
-    /// mark with window to spare would stall.
+    /// Drain and flush until backpressure or nothing is left: a full flush raises no onWritable.
     fn pump_send_bodies(&mut self) -> Result<(), Error> {
         loop {
             let more = encode::drain_send_bodies(self);
@@ -902,9 +898,6 @@ impl ClientSession {
     }
 
     fn handle_writable(&mut self) {
-        if let Err(err) = self.flush() {
-            return self.fail_all(err);
-        }
         if let Err(err) = self.pump_send_bodies() {
             return self.fail_all(err);
         }

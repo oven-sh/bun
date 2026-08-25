@@ -363,8 +363,7 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
     }
 }
 
-/// Returns `true` when it stopped at `WRITE_BUFFER_HIGH_WATER` with body
-/// bytes still sendable, i.e. the caller should flush and call again.
+/// True if it stopped at `WRITE_BUFFER_HIGH_WATER` with body bytes still sendable.
 pub(crate) fn drain_send_bodies(session: &mut ClientSession) -> bool {
     // Round-robin: each pass gives every uploader at most one
     // remote_max_frame_size slice before the next stream gets a turn, so

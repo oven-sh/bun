@@ -75,7 +75,7 @@ public:
 
     /* Write an unsigned 64-bit integer */
     void writeUnsigned64(uint64_t value) {
-        char buf[20];
+        char buf[utils::U64_MAX_DIGITS];
         int length = utils::u64toa(value, buf);
 
         /* For now we do this copy */

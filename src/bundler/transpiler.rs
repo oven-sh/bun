@@ -858,8 +858,17 @@ pub enum AlreadyBundled {
     None,
     SourceCode,
     SourceCodeCjs,
-    Bytecode(Box<[u8]>),
-    BytecodeCjs(Box<[u8]>),
+    Bytecode(BytecodeFiles),
+    BytecodeCjs(BytecodeFiles),
+}
+
+/// The files behind a `// @bun @bytecode` module. JSC keeps both for the
+/// module's lifetime and decodes the bytecode lazily, so they are mapped.
+pub struct BytecodeFiles {
+    /// The `<module>.jsc` sidecar, never empty.
+    pub bytecode: bun_sys::MappedFile,
+    /// The module text; `None` when it could not be mapped.
+    pub source: Option<bun_sys::MappedFile>,
 }
 
 impl AlreadyBundled {
@@ -869,10 +878,12 @@ impl AlreadyBundled {
             AlreadyBundled::SourceCodeCjs | AlreadyBundled::BytecodeCjs(_)
         )
     }
-    pub fn into_bytecode(self) -> Box<[u8]> {
+    pub fn into_bytecode(self) -> Option<BytecodeFiles> {
         match self {
-            AlreadyBundled::Bytecode(bytes) | AlreadyBundled::BytecodeCjs(bytes) => bytes,
-            _ => Box::default(),
+            AlreadyBundled::Bytecode(files) | AlreadyBundled::BytecodeCjs(files) => Some(files),
+            AlreadyBundled::None | AlreadyBundled::SourceCode | AlreadyBundled::SourceCodeCjs => {
+                None
+            }
         }
     }
 }
@@ -1730,11 +1741,6 @@ impl<'a> Transpiler<'a> {
                             js_ast::AlreadyBundled::BunCjs => AlreadyBundled::SourceCodeCjs,
                             js_ast::AlreadyBundled::BytecodeCjs
                             | js_ast::AlreadyBundled::Bytecode => 'brk: {
-                                // When the parser
-                                // saw `// @bun @bytecode`, attempt to load the
-                                // sidecar `<path>.jsc` cached bytecode. Only
-                                // fall back to re-parsing source on read
-                                // failure / empty file.
                                 let is_cjs =
                                     matches!(already_bundled, js_ast::AlreadyBundled::BytecodeCjs);
                                 let default_value = if is_cjs {
@@ -1745,39 +1751,27 @@ impl<'a> Transpiler<'a> {
                                 if this_parse.virtual_source.is_none()
                                     && this_parse.allow_bytecode_cache
                                 {
-                                    // No shared const for the bytecode extension
-                                    // in `bun_core` yet, so inline the literal.
                                     const BYTECODE_EXT: &[u8] = b".jsc";
-                                    let mut path_buf2 = bun_paths::PathBuffer::uninit();
+                                    let mut sidecar_path = bun_paths::PathBuffer::uninit();
                                     let n = path.text.len();
                                     let total = n + BYTECODE_EXT.len();
-                                    // `ZStr::from_buf` needs `buf[total] == 0`
-                                    // in-bounds; fall back to re-parsing the
-                                    // source instead of panicking on an
-                                    // over-long path.
-                                    if total >= path_buf2.len() {
+                                    if total > sidecar_path.len() {
                                         break 'brk default_value;
                                     }
-                                    path_buf2[..n].copy_from_slice(path.text);
-                                    path_buf2[n..][..BYTECODE_EXT.len()]
-                                        .copy_from_slice(BYTECODE_EXT);
-                                    path_buf2[total] = 0;
-                                    let zpath = bun_core::ZStr::from_buf(&path_buf2[..], total);
-                                    // `bun.sys.File.toSourceAt(...)` is
-                                    // `read_from` + wrap-in-`bun_ast::Source`.
-                                    // We only need `.contents`, so call
-                                    // `read_from` directly.
+                                    sidecar_path[..n].copy_from_slice(path.text);
+                                    sidecar_path[n..total].copy_from_slice(BYTECODE_EXT);
                                     let dir = dirname_fd.unwrap_valid().unwrap_or_else(FD::cwd);
-                                    match bun_sys::File::read_from(dir, zpath) {
-                                        Ok(contents) if !contents.is_empty() => {
+                                    match bun_sys::MappedFile::open(dir, &sidecar_path[..total]) {
+                                        Ok(bytecode) if !bytecode.is_empty() => {
+                                            let files = BytecodeFiles {
+                                                bytecode,
+                                                source: bun_sys::MappedFile::map(dir, path.text)
+                                                    .ok(),
+                                            };
                                             break 'brk if is_cjs {
-                                                AlreadyBundled::BytecodeCjs(
-                                                    contents.into_boxed_slice(),
-                                                )
+                                                AlreadyBundled::BytecodeCjs(files)
                                             } else {
-                                                AlreadyBundled::Bytecode(
-                                                    contents.into_boxed_slice(),
-                                                )
+                                                AlreadyBundled::Bytecode(files)
                                             };
                                         }
                                         _ => {}

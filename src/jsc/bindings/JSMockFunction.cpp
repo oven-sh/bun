@@ -462,8 +462,7 @@ public:
     }
 };
 
-// The cell uses cellHeapCellType, which never runs destructors. Spy state must
-// be GC references, not C++ handles such as JSC::Weak or JSC::Identifier.
+// cellHeapCellType never runs destructors, so spy state must be GC references.
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSMockFunction);
 
 template<typename Visitor>

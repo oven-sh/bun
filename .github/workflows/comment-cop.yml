@@ -9,7 +9,9 @@ on:
     types: [opened, synchronize, reopened, labeled]
 
 permissions:
-  contents: read
+  # resolveReviewThread is gated on the contents permission, not pull-requests.
+  # Under contents: read it fails with "Resource not accessible by integration".
+  contents: write
   pull-requests: write
 
 jobs:
@@ -146,14 +148,16 @@ jobs:
                 mutation($id: ID!) {
                   resolveReviewThread(input: { threadId: $id }) { thread { id } }
                 }`;
+              let resolved = 0;
               for (const id of toResolve) {
                 try {
                   await github.graphql(mut, { id });
+                  resolved++;
                 } catch (e) {
                   core.warning(`resolveReviewThread failed for ${id}: ${e.message}`);
                 }
               }
-              core.info(`Resolved ${toResolve.length} stale comment-cop thread(s).`);
+              core.info(`Resolved ${resolved} of ${toResolve.length} stale comment-cop thread(s).`);
             }
 
             // Post new line comments for groups not already flagged.

@@ -606,9 +606,16 @@ pub mod js_bundler {
                         value,
                     ));
                 }
-                if let Some(depth) = config.get_optional_int::<u32>(global_this, "bytecodeDepth")? {
-                    this.bytecode_depth = depth;
-                }
+                this.bytecode_depth = global_this.validate_integer_range::<u32>(
+                    value,
+                    u32::MAX,
+                    bun_jsc::IntegerRange {
+                        min: 0,
+                        max: i128::from(u32::MAX),
+                        field_name: b"bytecodeDepth",
+                        always_allow_zero: false,
+                    },
+                )?;
             }
 
             if let Some(react_fast_refresh) =

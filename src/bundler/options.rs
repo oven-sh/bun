@@ -1285,6 +1285,8 @@ pub struct BundleOptions<'a> {
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
     pub bytecode: bool,
+    /// How many levels of nested functions get bytecode (`u32::MAX` = all; 0 = only each module's top level).
+    pub bytecode_depth: u32,
     /// `--compile --bytecode` for another platform: the executable's internal-module sources (and their bytecode) are that
     /// platform's, not this one's, so don't embed bytecode generated from ours.
     pub compile_target_is_host: bool,
@@ -1478,6 +1480,7 @@ impl<'a> BundleOptions<'a> {
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
             bytecode: self.bytecode,
+            bytecode_depth: self.bytecode_depth,
             compile_target_is_host: self.compile_target_is_host,
             code_coverage: self.code_coverage,
             debugger: self.debugger,
@@ -1723,6 +1726,7 @@ impl<'a> BundleOptions<'a> {
             ignore_dce_annotations: false,
             emit_dce_annotations: false,
             bytecode: false,
+            bytecode_depth: u32::MAX,
             compile_target_is_host: true,
             code_coverage: false,
             debugger: false,

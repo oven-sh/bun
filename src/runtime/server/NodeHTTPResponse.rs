@@ -974,7 +974,7 @@ impl NodeHTTPResponse {
         }
 
         'do_it: {
-            if status_message_bytes.is_empty() {
+            if status_message_value.is_undefined() {
                 if let Some(status_message) =
                     HTTPStatusText::get(u16::try_from(status_code).expect("int cast"))
                 {
@@ -990,10 +990,10 @@ impl NodeHTTPResponse {
                 }
             }
 
-            let message: &[u8] = if !status_message_bytes.is_empty() {
-                status_message_bytes
-            } else {
+            let message: &[u8] = if status_message_value.is_undefined() {
                 b"HM"
+            } else {
+                status_message_bytes
             };
 
             // 256-byte stack buffer + plain memcpy. The previous Vec + write! +

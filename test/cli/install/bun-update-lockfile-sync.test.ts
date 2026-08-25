@@ -53,12 +53,16 @@ async function tryRun(dir: string, rel: string, ...args: string[]) {
 }
 
 // A run that succeeds prints nothing to stderr but `Saved lockfile`, and that only when it rewrote bun.lock. A case
-// whose point is that nothing may be written checks that `stderr` is empty.
+// whose point is that nothing may be written checks that `stderr` is empty. The whole result is checked at once, so
+// a failure shows stdout and stderr next to the exit code.
 async function runIn(dir: string, rel: string, ...args: string[]) {
-  const { stdout, stderr, exitCode } = await tryRun(dir, rel, ...args);
-  expect(stderr).toMatch(/^(?:Saved lockfile)?$/);
-  expect(exitCode).toBe(0);
-  return { stdout, stderr };
+  const result = await tryRun(dir, rel, ...args);
+  expect(result).toEqual({
+    stdout: expect.any(String),
+    stderr: expect.stringMatching(/^(?:Saved lockfile)?$/),
+    exitCode: 0,
+  });
+  return result;
 }
 
 const run = (dir: string, ...args: string[]) => runIn(dir, "", ...args);
@@ -66,11 +70,13 @@ const run = (dir: string, ...args: string[]) => runIn(dir, "", ...args);
 // An install rewrites bun.lock unless `--frozen-lockfile` forbids it, and says so. `stderr` pins a different
 // expectation: "" for a second install that must leave bun.lock alone, or the warning a run is known to print.
 async function install(dir: string, opts: { frozen?: boolean; stderr?: string | RegExp } = {}) {
-  const { stderr, exitCode } = await tryRun(dir, "", "install", ...(opts.frozen ? ["--frozen-lockfile"] : []));
-  const expected = opts.stderr ?? (opts.frozen ? "" : SAVED);
-  if (typeof expected === "string") expect(stderr).toBe(expected);
-  else expect(stderr).toMatch(expected);
-  expect(exitCode).toBe(0);
+  const result = await tryRun(dir, "", "install", ...(opts.frozen ? ["--frozen-lockfile"] : []));
+  const stderr = opts.stderr ?? (opts.frozen ? "" : SAVED);
+  expect(result).toEqual({
+    stdout: expect.any(String),
+    stderr: typeof stderr === "string" ? stderr : expect.stringMatching(stderr),
+    exitCode: 0,
+  });
 }
 
 function json(contents: Json | string) {
@@ -312,7 +318,6 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     await writePkg(dir, inBothGroups("~1.0.0"));
     const { stdout, stderr, exitCode } = await tryRun(dir, "", "update");
     expect(stderr).toMatch(duplicateWarning(SAVED));
-    expect(exitCode).toBe(0);
     expect(stdout).toMatchInlineSnapshot(`
       "bun update <version> (<revision>)
 
@@ -320,6 +325,7 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
 
       1 package installed"
     `);
+    expect(exitCode).toBe(0);
     const manifest = await pkg(dir);
     expect([manifest.dependencies["no-deps"], manifest.devDependencies["no-deps"]].sort()).toStrictEqual([
       "~1.0.0",

@@ -479,9 +479,8 @@ impl Image {
                 global.throw_invalid_arguments(format_args!("resize(width, height?, options?)"))
             );
         }
-        // 0 height = preserve aspect ratio (resolved at execute time once the
-        // source dimensions are known). undefined/null keep that Sharp-compat
-        // meaning; any other non-number throws instead of being silently 0.
+        // 0 height = preserve aspect ratio (resolved at execute time). Sharp
+        // compat: undefined/null mean that too; other non-numbers throw.
         let h = if args.len() > 1 && !args[1].is_undefined_or_null() {
             if !args[1].is_number() {
                 return Err(global.throw_invalid_argument_type("resize", "height", "number"));

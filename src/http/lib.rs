@@ -55,7 +55,7 @@ pub use decompressor::Decompressor;
 pub use header_builder::HeaderBuilder;
 pub use headers::{Headers, HeadersExt};
 pub(crate) use http_cert_error::HTTPCertError;
-pub use http_context::{HTTPContext, HTTPSocket};
+pub use http_context::{HTTPContext, HTTPSocket, PeerVerification};
 pub use http_request_body::HTTPRequestBody;
 pub use http_thread::HttpThread as HTTPThread;
 pub use http_thread::shutdown_for_exit;
@@ -189,6 +189,9 @@ pub struct Flags {
     pub(crate) disable_keepalive: bool,
     pub(crate) disable_decompression: bool,
     pub(crate) did_have_handshaking_error: bool,
+    /// `PooledSocket::verification` of the socket this request took from the
+    /// pool, so a weaker request re-pooling it doesn't downgrade the record.
+    pub(crate) reused_socket_verification: PeerVerification,
     pub force_last_modified: bool,
     pub(crate) redirected: bool,
     pub(crate) proxy_tunneling: bool,
@@ -210,6 +213,7 @@ impl Default for Flags {
             disable_keepalive: false,
             disable_decompression: false,
             did_have_handshaking_error: false,
+            reused_socket_verification: PeerVerification::None,
             force_last_modified: false,
             redirected: false,
             proxy_tunneling: false,
@@ -283,11 +287,9 @@ pub static OVERRIDDEN_DEFAULT_USER_AGENT: std::sync::OnceLock<&'static [u8]> =
 /// body-phase reads; response-header reads do not re-arm it, so it is an
 /// absolute deadline for the header block to complete (undici `headersTimeout`
 /// semantics). 0 disables the timer (matching `disable_timeout = true`).
-/// Overridable via `BUN_CONFIG_HTTP_IDLE_TIMEOUT`. Default is 5 minutes — the
-/// previous hard-coded value — so unchanged environments see identical
-/// behaviour except that the handshake phase is now also covered. Values
-/// above 240s are served by uSockets' minute-granularity long timer (see
-/// [`SocketTimeout::set_timeout`]), so they round up to the next whole minute.
+/// Overridable via `BUN_CONFIG_HTTP_IDLE_TIMEOUT`. Default is 5 minutes.
+/// `HTTPThread::on_start` stores it padded for the timer-wheel sweep (see
+/// [`normalize_idle_timeout_seconds`]).
 pub(crate) static IDLE_TIMEOUT_SECONDS: AtomicU32 = AtomicU32::new(300);
 
 /// Safe accessor for [`IDLE_TIMEOUT_SECONDS`].
@@ -296,17 +298,29 @@ pub(crate) fn idle_timeout_seconds() -> c_uint {
     IDLE_TIMEOUT_SECONDS.load(Ordering::Relaxed)
 }
 
-/// Normalise an idle timeout (seconds) for uSockets' timers: the long-timeout
-/// counter wraps `% 240` minutes, so clamp to 239 min, and values above 240s
-/// are served by the minute-granularity long timer, so round them up to a
-/// whole minute so the floor-to-minute path never fires *earlier* than asked.
+/// Normalise an idle timeout (seconds) for uSockets' timer wheels. The sweep
+/// phase is unrelated to when a socket arms its timer, so a timer armed for N
+/// ticks can fire up to one period (4s short wheel, 60s long wheel) before
+/// the requested duration (#39952). Pad by one period so it never fires
+/// early, and clamp so the padded value stays at the long wheel's 239 min
+/// maximum. 0 = disabled.
 #[inline]
 pub fn normalize_idle_timeout_seconds(raw: u64) -> c_uint {
-    let raw = raw.min(239 * 60);
-    (if raw > 240 {
-        raw.div_ceil(60) * 60
+    if raw == 0 {
+        return 0;
+    }
+    /// `LIBUS_TIMEOUT_GRANULARITY` (packages/bun-usockets/src/libusockets.h).
+    const SHORT_WHEEL_PERIOD_SECONDS: u64 = 4;
+    const LONG_WHEEL_PERIOD_SECONDS: u64 = 60;
+    /// `SocketTimeout::set_timeout` routes values above this to the long wheel.
+    const SHORT_WHEEL_MAX_SECONDS: u64 = 240;
+    /// The long counter wraps `% 240` minutes; one minute of pad stays below.
+    const MAX_RAW_SECONDS: u64 = 238 * LONG_WHEEL_PERIOD_SECONDS;
+    let raw = raw.min(MAX_RAW_SECONDS);
+    (if raw + SHORT_WHEEL_PERIOD_SECONDS > SHORT_WHEEL_MAX_SECONDS {
+        (raw.div_ceil(LONG_WHEEL_PERIOD_SECONDS) + 1) * LONG_WHEEL_PERIOD_SECONDS
     } else {
-        raw
+        raw + SHORT_WHEEL_PERIOD_SECONDS
     }) as c_uint
 }
 
@@ -634,7 +648,7 @@ pub(crate) fn hash_header_name(name: &[u8]) -> u64 {
 // `bun_uws::NewSocketHandler` methods (`ext`/`timeout`/`raw_write`/`flush`/
 // `shutdown`/`connect_group`/…) land.
 
-use bun_core::ZigStringSlice;
+use bun_core::Utf8Bytes;
 use bun_url::URL;
 use core::ptr::NonNull;
 
@@ -856,7 +870,7 @@ pub struct HTTPClient<'a> {
     pub(crate) signals: Signals,
     pub(crate) async_http_id: u32,
     pub(crate) hostname: Option<&'a [u8]>,
-    pub(crate) unix_socket_path: ZigStringSlice,
+    pub(crate) unix_socket_path: Utf8Bytes<'static>,
     /// `fetch({ compress })` — when set, the body is compressed lazily at
     /// write time (h1: `send_initial_request_payload`; h2/h3: at attach) so
     /// the output can borrow `LibdeflateState::shared_buffer`. Persists across
@@ -923,7 +937,6 @@ impl Drop for HTTPClient<'_> {
             // Release the strong ref taken in set_custom_ssl_ctx.
             ctx.deref();
         }
-        self.unix_socket_path = ZigStringSlice::EMPTY;
     }
 }
 
@@ -987,7 +1000,7 @@ use bun_boringssl as boringssl;
 use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::StringBuilder;
 use bun_core::{FeatureFlags, Global, Output};
-use bun_core::{OwnedString, String as BunString, Tag as BunStringTag, strings};
+use bun_core::{String as BunString, Tag as BunStringTag, strings};
 use bun_http_types::ETag::StringPointer;
 use bun_uws as uws;
 // the std Wyhash algorithm, not Wyhash11.
@@ -1673,6 +1686,38 @@ impl<'a> HTTPClient<'a> {
 // ───────────────────────────── impl HTTPClient ─────────────────────────────
 
 impl<'a> HTTPClient<'a> {
+    /// How this request authenticates the target's TLS peer on a fresh handshake.
+    pub(crate) fn target_verification(&self) -> PeerVerification {
+        if !self.flags.reject_unauthorized {
+            PeerVerification::None
+        } else if self.signals.get(signals::Field::CertErrors) {
+            PeerVerification::Callback
+        } else {
+            PeerVerification::Native
+        }
+    }
+
+    /// How this request authenticates the peer of its outer socket on a fresh
+    /// handshake (an HTTPS proxy's own certificate always takes the native path).
+    pub(crate) fn socket_verification(&self) -> PeerVerification {
+        if self.http_proxy.is_some() {
+            if self.flags.reject_unauthorized {
+                PeerVerification::Native
+            } else {
+                PeerVerification::None
+            }
+        } else {
+            self.target_verification()
+        }
+    }
+
+    /// `PooledSocket::verification` to record when releasing the outer socket.
+    fn pooled_socket_verification(&self) -> PeerVerification {
+        self.flags
+            .reused_socket_verification
+            .max(self.socket_verification())
+    }
+
     pub(crate) fn check_server_identity<const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,
@@ -2217,11 +2262,6 @@ impl<'a> HTTPClient<'a> {
             if self.unix_socket_path.slice().len() > 0 {
                 return false;
             }
-            // A peer accepted by a per-request JS `checkServerIdentity` callback must
-            // not enter or leave the shared pool (same exclusion as `can_offer_h2`).
-            if self.signals.get(signals::Field::CertErrors) {
-                return false;
-            }
             // check state
             if self.state.flags.allow_keepalive && !self.flags.disable_keepalive {
                 return true;
@@ -2644,7 +2684,7 @@ impl<'a> HTTPClient<'a> {
             Self::ssl_ctx_mut(ctx).release_socket(
                 socket,
                 self.flags.did_have_handshaking_error && !self.flags.reject_unauthorized,
-                self.flags.reject_unauthorized,
+                self.pooled_socket_verification(),
                 self.connected_url.hostname,
                 self.connected_url.get_port_auto(),
                 self.tls_props.as_ref(),
@@ -4206,7 +4246,7 @@ impl<'a> HTTPClient<'a> {
                 Self::ssl_ctx_mut(ctx).release_socket(
                     socket,
                     self.flags.did_have_handshaking_error && !self.flags.reject_unauthorized,
-                    self.flags.reject_unauthorized,
+                    self.pooled_socket_verification(),
                     self.connected_url.hostname,
                     self.connected_url.get_port_auto(),
                     self.tls_props.as_ref(),
@@ -4392,7 +4432,7 @@ impl<'a> HTTPClient<'a> {
         Self::ssl_ctx_mut(ctx).release_socket(
             socket,
             self.flags.did_have_handshaking_error && !self.flags.reject_unauthorized,
-            self.flags.reject_unauthorized,
+            self.pooled_socket_verification(),
             self.url.hostname,
             self.url.get_port_auto(),
             self.tls_props.as_ref(),
@@ -5075,7 +5115,7 @@ impl<'a> HTTPClient<'a> {
                         debug_assert!(string_builder.cap == string_builder.len);
 
                         let input = BunString::borrow_utf8(string_builder.allocated_slice());
-                        let normalized_url = OwnedString::new(bun_url::href_from_string(&input));
+                        let normalized_url = bun_url::href_from_string(&input);
                         if normalized_url.tag() == BunStringTag::Dead {
                             // URL__getHref failed, dont pass dead tagged string to toOwnedSlice.
                             return Err(crate::Error::RedirectURLInvalid);
@@ -5131,7 +5171,7 @@ impl<'a> HTTPClient<'a> {
                         debug_assert!(string_builder.cap == string_builder.len);
 
                         let input = BunString::borrow_utf8(string_builder.allocated_slice());
-                        let normalized_url = OwnedString::new(bun_url::href_from_string(&input));
+                        let normalized_url = bun_url::href_from_string(&input);
                         if normalized_url.tag() == BunStringTag::Dead {
                             return Err(crate::Error::RedirectURLInvalid);
                         }
@@ -5155,7 +5195,7 @@ impl<'a> HTTPClient<'a> {
 
                         let base = BunString::borrow_utf8(original_url.href);
                         let rel = BunString::borrow_utf8(location);
-                        let new_url_ = OwnedString::new(bun_url::join(&base, &rel));
+                        let new_url_ = bun_url::join(&base, &rel);
 
                         if new_url_.is_empty() {
                             return Err(crate::Error::InvalidRedirectURL);

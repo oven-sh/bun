@@ -160,6 +160,12 @@ enum {
      * unconnected socket it also makes the next send fail for a datagram
      * bound to a different, live peer. */
     LIBUS_UDP_LINUX_RECVERR = 128,
+    /* A socket adopted by us_socket_from_fd, or accepted by a listener created with this option,
+     * is registered as if us_socket_pause had been called on it, so no extra poll change is needed
+     * per connection (node:net's pauseOnConnect; cluster adopts every connection this way). Not
+     * for connects, and ignored for TLS sockets: the handshake needs the reads, the owner pauses
+     * those sockets itself. */
+    LIBUS_SOCKET_OPEN_PAUSED = 256,
 };
 
 /* Library types publicly available */
@@ -195,9 +201,6 @@ int us_udp_packet_buffer_payload_length(struct us_udp_packet_buffer_t *buf, int 
 /* Returns 1 if the received datagram was truncated (larger than recv buffer),
  * 0 otherwise. Backed by MSG_TRUNC in msg_hdr.msg_flags on POSIX. */
 int us_udp_packet_buffer_truncated(struct us_udp_packet_buffer_t *buf, int index);
-
-/* Copies out local (received destination) ip (4 or 16 bytes) of received packet */
-int us_udp_packet_buffer_local_ip(struct us_udp_packet_buffer_t *buf, int index, char *ip);
 
 /* Get the bound port in host byte order */
 int us_udp_socket_bound_port(struct us_udp_socket_t *s);
@@ -473,7 +476,6 @@ int us_connecting_socket_get_error(struct us_connecting_socket_t *c) nonnull_fn_
  * returns the same getaddrinfo code, not an errno (the two namespaces overlap). */
 int us_connecting_socket_get_dns_error(struct us_connecting_socket_t *c) nonnull_fn_decl;
 void *us_connecting_socket_get_native_handle(struct us_connecting_socket_t *c) nonnull_fn_decl;
-struct us_loop_t *us_connecting_socket_get_loop(struct us_connecting_socket_t *c) nonnull_fn_decl;
 struct us_socket_group_t *us_connecting_socket_group(struct us_connecting_socket_t *c) nonnull_fn_decl;
 unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) nonnull_fn_decl;
 
@@ -600,9 +602,6 @@ void us_wakeup_loop(us_loop_r loop) nonnull_fn_decl;
 /* Hook up timers in existing loop */
 void us_loop_integrate(us_loop_r loop) nonnull_fn_decl;
 
-/* Returns the loop iteration number */
-long long us_loop_iteration_number(us_loop_r loop) nonnull_fn_decl;
-
 /* Public interfaces for polls */
 
 /* A fallthrough poll does not keep the loop running, it falls through */
@@ -625,9 +624,6 @@ void us_poll_stop(us_poll_r p, struct us_loop_t *loop) nonnull_fn_decl;
 
 /* Return what events we are polling for */
 int us_poll_events(us_poll_r p) nonnull_fn_decl;
-
-/* Returns the user data extension of this poll */
-void *us_poll_ext(us_poll_r p) nonnull_fn_decl;
 
 /* Get associated socket descriptor from a poll */
 LIBUS_SOCKET_DESCRIPTOR us_poll_fd(us_poll_r p) nonnull_fn_decl;
@@ -682,7 +678,6 @@ void us_socket_shutdown(us_socket_r s) nonnull_fn_decl;
 void us_socket_shutdown_read(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_shut_down(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_closed(us_socket_r s) nonnull_fn_decl;
-int us_socket_is_tls(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_ssl_handshake_finished(us_socket_r s) nonnull_fn_decl;
 int us_socket_ssl_handshake_callback_has_fired(us_socket_r s) nonnull_fn_decl;
 /* TLS ciphertext bytes already sealed for this socket and reported as

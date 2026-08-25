@@ -54,7 +54,7 @@ const previewOptions = {
   showHidden: false,
 };
 
-const { REPL_MODE_SLOPPY, REPL_MODE_STRICT } = require("internal/repl/mode");
+const { REPL_MODE_STRICT } = require("internal/repl/mode");
 
 // If the error is unexpected end of input, let the user recover by adding more.
 // https://github.com/nodejs/node/blob/main/lib/internal/repl/utils.js
@@ -768,8 +768,6 @@ function setReplBuiltinLibs(value) {
 }
 
 __node_module__.exports = {
-  REPL_MODE_SLOPPY,
-  REPL_MODE_STRICT,
   isRecoverableError,
   kStandaloneREPL: Symbol("kStandaloneREPL"),
   setupPreview,

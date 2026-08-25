@@ -117,15 +117,14 @@ impl CallFrame {
         // JSC stores and works with value as signed, but it is always 1 or more.
         // SAFETY: `registers` is the JSC register-file base derived from `&self`;
         // OFFSET_ARGUMENT_COUNT_INCLUDING_THIS is a valid in-bounds Register slot.
-        unsafe {
-            u32::try_from(
-                (*registers.add(OFFSET_ARGUMENT_COUNT_INCLUDING_THIS))
-                    .encoded_value
-                    .as_bits
-                    .payload,
-            )
-            .unwrap()
-        }
+        let payload: i32 = unsafe {
+            (*registers.add(OFFSET_ARGUMENT_COUNT_INCLUDING_THIS))
+                .encoded_value
+                .as_bits
+                .payload
+        };
+        debug_assert!(payload >= 1);
+        payload as u32
     }
 
     /// Do not use this function. Migration path:
@@ -243,6 +242,8 @@ pub struct ArgumentsSlice<'a> {
     pub all: &'a [JSValue],
     pub(crate) protected: IntegerBitSet<32>,
     pub will_be_async: bool,
+    /// An errno a converter met under `will_be_async`; the binding rejects its promise with it.
+    pub deferred_error: Option<Box<bun_sys::SystemError>>,
 }
 
 impl<'a> ArgumentsSlice<'a> {
@@ -287,6 +288,7 @@ impl<'a> ArgumentsSlice<'a> {
             all: slice,
             protected: IntegerBitSet::<32>::init_empty(),
             will_be_async: false,
+            deferred_error: None,
         }
     }
 

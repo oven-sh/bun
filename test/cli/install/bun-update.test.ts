@@ -2820,18 +2820,34 @@ describe("bun update <name> semantics", () => {
       await expectProjectUntouched(project, projectBefore);
     });
 
-    it.concurrent.each([
-      [["-r"], "--recursive"],
-      [["--filter", "*"], "--filter"],
-    ])("bun update <name> %p -g is an error that writes nothing", async (flags, flag) => {
+    it.concurrent("bun update <name> --filter -g is an error that writes nothing", async () => {
       const { project, globalDir, runGlobal, projectBefore } = await globalRepo();
       const globalBefore = await snapshotFiles(globalDir);
-      const { stderr, exitCode } = await runGlobal("update", "no-deps", ...flags);
-      expect(stderr).toContain(`error: ${flag} cannot be used with --global`);
+      const { stderr, exitCode } = await runGlobal("update", "no-deps", "--filter", "*");
+      expect(stderr).toContain("error: --filter cannot be used with --global");
       await expectUnchanged(globalDir, globalBefore);
       expect(await installedVersion(globalDir, "no-deps")).toBe("1.0.0");
       await expectProjectUntouched(project, projectBefore);
       expect(exitCode).toBe(1);
+    });
+
+    // The global dir has no workspaces, so --recursive is a no-op there.
+    // Pre-1.4 accepted `bun update -g -r`; it must not error (#39823).
+    it.concurrent.each([
+      [[], { "no-deps": "^1.1.0", "a-dep": "^1.0.10" }, "1.1.0", "1.0.10"],
+      [["no-deps"], { "no-deps": "^1.1.0", "a-dep": "^1.0.1" }, "1.1.0", "1.0.1"],
+      [["--latest"], { "no-deps": "^2.0.0", "a-dep": "^1.0.10" }, "2.0.0", "1.0.10"],
+    ])("bun update -g --recursive %p behaves like bun update -g", async (args, expected, noDeps, aDep) => {
+      const { project, globalDir, runGlobal, projectBefore } = await globalRepo();
+      const { stderr, exitCode } = await runGlobal("update", "--recursive", ...args);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      await expectGlobalInSync(globalDir, expected);
+      expect(await lockedVersions(globalDir, "no-deps")).toStrictEqual([noDeps]);
+      expect(await lockedVersions(globalDir, "a-dep")).toStrictEqual([aDep]);
+      expect(await installedVersion(globalDir, "no-deps")).toBe(noDeps);
+      expect(await installedVersion(globalDir, "a-dep")).toBe(aDep);
+      await expectProjectUntouched(project, projectBefore);
     });
   });
 });

@@ -9,26 +9,16 @@ pub use crate::server::DebugHTTPServer;
 pub use crate::server::HTMLBundle;
 pub use crate::server::HTTPSServer;
 pub use crate::server::HTTPServer;
-pub use crate::server::NodeHTTPResponse;
 pub use crate::server::SavedRequest;
-pub use crate::server::ServerConfig;
-pub use crate::server::ServerWebSocket;
 
 pub use crate::socket;
-pub use crate::socket::Handlers as SocketHandlers;
 pub use crate::socket::Listener;
 pub use crate::socket::NewSocket;
 pub use crate::socket::SocketAddress;
 pub use crate::socket::TCPSocket;
 pub use crate::socket::TLSSocket;
-pub use crate::socket::udp_socket::UDPSocket;
-
-pub use crate::ffi::FFI;
-pub use crate::ffi::ffi_object as FFIObject;
 
 pub use crate::crypto;
-pub use crate::napi;
-pub use crate::node;
 
 // ─── BuildMessage / ResolveMessage ───────────────────────────────────────────
 // Canonical defs live in `bun_jsc` (with `#[bun_jsc::JsClass]` derives wiring
@@ -132,26 +122,12 @@ pub mod bun_x509;
 pub mod bun {
     pub use super::bun_process as process;
     pub use super::bun_secure_context as secure_context;
-    pub use super::bun_spawn as spawn;
     pub use super::bun_ssl_context_cache as ssl_context_cache;
     pub use super::bun_subprocess as subprocess;
-    pub use super::bun_x509 as x509;
-    pub use process::{
-        Dup2, Exited, ExtraPipe, PidFdType, PidT, Poller, PosixSpawnOptions, PosixSpawnResult,
-        PosixStdio, Process, ProcessExit, ProcessExitHandler, ProcessExitKind, Rusage,
-        SpawnOptions, SpawnProcessResult, Status, StdioKind, WaiterThread,
-    };
-    pub use spawn::posix_spawn;
+    pub use process::Rusage;
 
     pub mod terminal {
         pub use crate::api::bun_terminal_body::Terminal;
-        // `Terminal.PtyResult`, `Winsize`, `OpenPtyFn`, `CreatePtyError` —
-        // pure FFI handles with no JSC. Canonical defs live in
-        // `api/bun/Terminal.rs`; re-exported here so callers can name them via
-        // `api::Terminal::*` (`Terminal.PtyResult` etc.).
-        pub use crate::api::bun_terminal_body::{
-            CreatePtyError, OpenPtyFn, OpenPtyTermios, PtyResult, Winsize,
-        };
     }
     pub use terminal::Terminal;
 
@@ -160,47 +136,20 @@ pub mod bun {
         // js2native thunk (`$rust(h2_frame_parser.rs, …)` in generated_js2native.rs).
         pub(crate) use crate::api::h2_frame_parser_body::h2_frame_parser_constructor;
     }
-    pub use h2_frame_parser::H2FrameParser;
 }
 
-pub use crate::image as Image;
-pub use crate::shell as Shell;
-pub use crate::timer as Timer;
-
-pub use crate::api::archive as Archive;
 pub use crate::api::bun::h2_frame_parser::H2FrameParser;
-pub use crate::api::bun::secure_context as SecureContext;
 pub use crate::api::bun::ssl_context_cache as SSLContextCache;
-pub use crate::api::bun::subprocess as Subprocess;
-pub use crate::api::bun::terminal as Terminal;
-/// `globalThis.Bun`
-pub use crate::api::bun_object as Bun;
 pub use crate::api::filesystem_router::FileSystemRouter;
 pub use crate::api::filesystem_router::MatchedRoute;
-pub use crate::api::glob as Glob;
 pub use crate::api::hash_object as HashObject;
-pub use crate::api::html_rewriter as HTMLRewriter;
 pub use crate::api::js_bundler::BuildArtifact;
 pub use crate::api::js_bundler::JSBundler;
-pub use crate::api::js_bundler::OutputKind;
-pub use crate::api::js_transpiler as JSTranspiler;
 pub use crate::api::json5_object as JSON5Object;
-pub use crate::api::markdown_object as MarkdownObject;
-pub use crate::api::native_promise_context as NativePromiseContext;
 pub use crate::api::toml_object as TOMLObject;
 pub use crate::api::unsafe_object as UnsafeObject;
 pub use crate::api::xml_object as XMLObject;
 pub use crate::api::yaml_object as YAMLObject;
-// `dns_jsc/mod.rs` IS the public surface (Resolver, Order, RecordType, internal::*);
-// the full `dns.rs` body is mounted privately as `dns_body` inside it.
-pub use crate::dns_jsc as dns;
-pub use crate::node::net::block_list as BlockList;
-pub use crate::node::zlib::native_brotli as NativeBrotli;
-pub use crate::node::zlib::native_zlib as NativeZlib;
-pub use crate::node::zlib::native_zstd as NativeZstd;
-pub use crate::valkey_jsc::js_valkey::JSValkeyClient as Valkey;
-pub use bun_sql_jsc::mysql as MySQL;
-pub use bun_sql_jsc::postgres as Postgres;
 
 // ─── shared scaffold for Bun.{TOML,JSONC,JSON5,YAML}.parse ───────────────────
 //
@@ -316,10 +265,8 @@ fn with_text_format_source_encoded<R>(
     // Hold whichever input storage applies; all expose the bytes.
     // Conditional-init + drop-flag — only the taken branch's holder is live.
     let _blob_hold: BlobOrStringOrBuffer;
-    // `SliceWithUnderlyingString` has no `Drop`; `StringOrBuffer`'s releases
-    // the string's ref.
     let _str_hold: StringOrBuffer;
-    let _latin1_hold: bun_core::OwnedString;
+    let _latin1_hold: bun_core::String;
     let mut encoding = SourceEncoding::Utf8Text;
     let bytes: &[u8] = 'bytes: {
         if blob_or_buffer_input == BlobOrBufferInput::Bytes && !input_value.is_string() {
@@ -329,9 +276,9 @@ fn with_text_format_source_encoded<R>(
                 break 'bytes _blob_hold.slice();
             }
         }
-        let mut s = input_value.to_bun_string(global)?;
+        let s = input_value.to_bun_string(global)?;
         if string_input == StringInput::AsIs {
-            _latin1_hold = bun_core::OwnedString::new(s);
+            _latin1_hold = s;
             if _latin1_hold.is_8bit() {
                 encoding = SourceEncoding::Latin1Text;
                 break 'bytes _latin1_hold.latin1();
@@ -339,9 +286,7 @@ fn with_text_format_source_encoded<R>(
             encoding = SourceEncoding::Utf16Text;
             break 'bytes bytemuck::cast_slice(_latin1_hold.utf16());
         }
-        // `to_slice` moves the +1 ref into the returned slice's
-        // `.underlying`, so the temporary `BunString` drop is a no-op.
-        _str_hold = StringOrBuffer::String(s.to_slice());
+        _str_hold = StringOrBuffer::String(s.into_utf8_with_string());
         _str_hold.slice()
     };
 

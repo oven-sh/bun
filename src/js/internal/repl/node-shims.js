@@ -5,7 +5,6 @@ const {
   ArrayPrototypeIncludes,
   ArrayPrototypeJoin,
   ArrayPrototypeMap,
-  ArrayPrototypePush,
   ArrayPrototypeSlice,
   RegExpPrototypeExec,
   RegExpPrototypeSymbolReplace,
@@ -117,15 +116,6 @@ const BuiltinModule = {
       if (!ArrayPrototypeIncludes(names, bare)) ArrayPrototypePush(names, bare);
     }
     return names;
-  },
-  exists(id) {
-    return Module.isBuiltin(id);
-  },
-  canBeRequiredByUsers(id) {
-    return Module.isBuiltin(id);
-  },
-  canBeRequiredWithoutScheme(id) {
-    return Module.isBuiltin(id) && Module.isBuiltin("node:" + id);
   },
 };
 
@@ -305,38 +295,9 @@ function stopSigintWatchdog() {
 // ---- internalBinding('util') ----------------------------------------------
 
 const ALL_PROPERTIES = 0;
-const ONLY_ENUMERABLE = 2;
-const SKIP_STRINGS = 8;
 const SKIP_SYMBOLS = 16;
 
-function getOwnNonIndexProperties(obj, filter = ALL_PROPERTIES) {
-  const indexRegex = /^(0|[1-9][0-9]*)$/;
-  const keys = [];
-  if (!(filter & SKIP_STRINGS)) {
-    const names = Object.getOwnPropertyNames(obj);
-    for (let i = 0; i < names.length; i++) {
-      const key = names[i];
-      if (RegExpPrototypeExec(indexRegex, key) !== null) continue;
-      if (filter & ONLY_ENUMERABLE) {
-        const desc = Object.getOwnPropertyDescriptor(obj, key);
-        if (!desc?.enumerable) continue;
-      }
-      ArrayPrototypePush(keys, key);
-    }
-  }
-  if (!(filter & SKIP_SYMBOLS)) {
-    const syms = Object.getOwnPropertySymbols(obj);
-    for (let i = 0; i < syms.length; i++) {
-      const sym = syms[i];
-      if (filter & ONLY_ENUMERABLE) {
-        const desc = Object.getOwnPropertyDescriptor(obj, sym);
-        if (!desc?.enumerable) continue;
-      }
-      ArrayPrototypePush(keys, sym);
-    }
-  }
-  return keys;
-}
+const getOwnNonIndexProperties = $newCppFunction("UtilInspect.cpp", "jsFunctionGetOwnNonIndexProperties", 2);
 
 // ---- process.addUncaughtExceptionCaptureCallback polyfill ----------------
 
@@ -377,8 +338,6 @@ export default {
   // internalBinding('util')
   constants: {
     ALL_PROPERTIES,
-    ONLY_ENUMERABLE,
-    SKIP_STRINGS,
     SKIP_SYMBOLS,
   },
   getOwnNonIndexProperties,

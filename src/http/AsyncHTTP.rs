@@ -3,7 +3,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_ast::{Loc, Log};
 use bun_core::FeatureFlags;
-use bun_core::{MutableString, ZigStringSlice};
+use bun_core::{MutableString, Utf8Bytes};
 use bun_threading::IntrusiveWorkTask as _;
 use bun_threading::thread_pool::{self, Batch, Task};
 use bun_url::{PercentEncoding, URL};
@@ -191,7 +191,7 @@ fn make_client<'a>(
         signals,
         async_http_id,
         hostname,
-        unix_socket_path: ZigStringSlice::EMPTY,
+        unix_socket_path: Utf8Bytes::EMPTY,
         compress: None,
         compressed_request_body: Vec::new(),
         compressed_body_len: 0,
@@ -245,7 +245,7 @@ pub struct Options<'a> {
     pub proxy_headers: Option<Headers>,
     pub hostname: Option<&'a [u8]>,
     pub signals: Option<Signals>,
-    pub unix_socket_path: Option<ZigStringSlice>,
+    pub unix_socket_path: Option<Utf8Bytes<'static>>,
     pub disable_timeout: Option<bool>,
     /// Per-request idle timeout override in seconds; see
     /// `HTTPClient::idle_timeout_seconds`.
@@ -280,6 +280,13 @@ impl<'a> AsyncHTTP<'a> {
         &MAX_SIMULTANEOUS_REQUESTS
     }
 
+    /// The method the request was made with. A redirect only ever rewrites the
+    /// HTTP thread's copy (`client.method`), and only to GET.
+    #[inline]
+    pub fn method(&self) -> Method {
+        self.method
+    }
+
     /// A store into the shared signal `Store`, not into `self`.
     pub fn enable_response_body_streaming(&self) {
         self.signals.store(
@@ -308,9 +315,7 @@ impl<'a> AsyncHTTP<'a> {
 
     pub fn clear_data(&mut self) {
         self.response = None;
-        // Note: `ZigStringSlice` Drop releases WTF/owned variants;
-        // assigning EMPTY runs Drop on the old value.
-        self.client.unix_socket_path = ZigStringSlice::EMPTY;
+        self.client.unix_socket_path = Utf8Bytes::EMPTY;
     }
 }
 

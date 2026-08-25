@@ -511,18 +511,19 @@ impl MachoFile {
         Ok(())
     }
 
-    pub fn build_and_sign(&self, writer: &mut impl std::io::Write) -> crate::Result<()> {
+    // Returns the byte count written; callers writing over an existing file must truncate to it.
+    pub fn build_and_sign(&self, writer: &mut impl std::io::Write) -> crate::Result<usize> {
         if self.header.cputype == macho::CPU_TYPE_ARM64
             && feature_flag::BUN_NO_CODESIGN_MACHO_BINARY.get() != Some(true)
         {
             let mut data: Vec<u8> = Vec::new();
             self.build(&mut data)?;
             let mut signer = MachoSigner::init(&data)?;
-            signer.sign(writer)?;
+            signer.sign(writer)
         } else {
             self.build(writer)?;
+            Ok(self.data.len())
         }
-        Ok(())
     }
 }
 
@@ -674,7 +675,7 @@ impl MachoSigner {
         super_blob_header_size + blob_index_size + code_dir_length
     }
 
-    fn sign(&mut self, writer: &mut impl std::io::Write) -> crate::Result<()> {
+    fn sign(&mut self, writer: &mut impl std::io::Write) -> crate::Result<usize> {
         const PAGE_SIZE: usize = MachoSigner::SIGNATURE_PAGE_SIZE;
         const HASH_SIZE: usize = MachoSigner::SIGNATURE_HASH_SIZE;
 
@@ -774,17 +775,12 @@ impl MachoSigner {
 
         if end - off > 0 {
             let remaining_len = end - off;
-            let mut last_page = [0u8; PAGE_SIZE];
-            // SAFETY: range [off..end] is within the original len.
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    self.data.as_ptr().add(off),
-                    last_page.as_mut_ptr(),
-                    remaining_len,
-                );
-            }
+            // The last partial page is hashed unpadded, as codesign does.
             let mut digest = [0u8; HASH_SIZE];
-            sha256_hash(&last_page, &mut digest);
+            // SAFETY: range [off..end] is within the original len (sig_off).
+            let page =
+                unsafe { core::slice::from_raw_parts(self.data.as_ptr().add(off), remaining_len) };
+            sha256_hash(page, &mut digest);
             self.data.extend_from_slice(&digest);
         }
 
@@ -805,7 +801,7 @@ impl MachoSigner {
 
         // Write final binary
         writer.write_all(&self.data)?;
-        Ok(())
+        Ok(self.data.len())
     }
 }
 

@@ -314,8 +314,10 @@ void writableStreamStartErroring(JSGlobalObject* globalObject, JSWritableStream*
     // The in-flight write may be a native codec chunk still being drained into the readable,
     // which nothing on this side would ever finish; give it up so the erroring can complete.
     // An in-flight close (a flush) is left to finish: a close in progress wins over the abort.
-    if (controller->m_algorithms.kind == SinkKind::Transform && stream->m_inFlightWriteRequest)
+    if (controller->m_algorithms.kind == SinkKind::Transform && stream->m_inFlightWriteRequest) {
         nativeCodecAbandon(globalObject, uncheckedDowncast<JSTransformStream>(controller->m_algorithms.algorithmContext.get()));
+        RETURN_IF_EXCEPTION(scope, );
+    }
     if (!writableStreamHasOperationMarkedInFlight(stream) && controller->m_started)
         RELEASE_AND_RETURN(scope, writableStreamFinishErroring(globalObject, stream));
 }

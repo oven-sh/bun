@@ -11,7 +11,7 @@ use core::ffi::c_void;
 
 use bun_core::Environment;
 use bun_core::Output;
-use bun_core::ZigString;
+use bun_core::EncodedSlice;
 
 use crate::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 
@@ -136,21 +136,25 @@ pub use {JsHostFn as JSHostFn, JsHostFnZig as JSHostFnZig};
 /// Map a `JsResult<JSValue>` to the raw `JSValue` a host fn must return
 /// (`.zero` when an exception is pending).
 pub fn to_js_host_fn_result(global_this: &JSGlobalObject, result: JsResult<JSValue>) -> JSValue {
-    if Environment::ALLOW_ASSERT && Environment::IS_CANARY {
-        let value = match result {
-            Ok(v) => v,
-            Err(JsError::Thrown) => JSValue::ZERO,
-            Err(JsError::OutOfMemory) => global_this.throw_out_of_memory_value(),
-            Err(JsError::Terminated) => terminated_beneath_script(global_this),
-        };
-        debug_exception_assertion(global_this, value, "_unknown_");
-        return value;
-    }
-    match result {
+    let value = match result {
         Ok(v) => v,
-        Err(JsError::Thrown) => JSValue::ZERO,
-        Err(JsError::OutOfMemory) => global_this.throw_out_of_memory_value(),
-        Err(JsError::Terminated) => terminated_beneath_script(global_this),
+        Err(e) => host_call_error_value(global_this, e),
+    };
+    if Environment::ALLOW_ASSERT && Environment::IS_CANARY {
+        debug_exception_assertion(global_this, value, "_unknown_");
+    }
+    value
+}
+
+/// The `Err` arm of every host-fn trampoline, kept out of line: leaves the matching exception
+/// pending and returns what the trampoline hands back to JSC.
+#[cold]
+#[inline(never)]
+pub fn host_call_error_value(global_this: &JSGlobalObject, err: JsError) -> JSValue {
+    match err {
+        JsError::Thrown => JSValue::ZERO,
+        JsError::OutOfMemory => global_this.throw_out_of_memory_value(),
+        JsError::Terminated => terminated_beneath_script(global_this),
     }
 }
 
@@ -196,13 +200,8 @@ fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func:
 
 pub(crate) fn to_js_host_setter_value(global_this: &JSGlobalObject, value: JsResult<()>) -> bool {
     match value {
-        Err(JsError::Thrown) => false,
-        Err(JsError::OutOfMemory) => {
-            let _ = global_this.throw_out_of_memory_value();
-            false
-        }
-        Err(JsError::Terminated) => !terminated_beneath_script(global_this).is_empty(),
         Ok(()) => true,
+        Err(e) => !host_call_error_value(global_this, e).is_empty(),
     }
 }
 
@@ -667,15 +666,10 @@ pub fn host_construct_result<R: IntoHostConstructReturn>(
     let mut scope = jsc::ExceptionValidationScope::init_guard(&mut scope_storage, global);
     let ptr = match f().into_host_construct_return() {
         Ok(p) => p,
-        Err(JsError::OutOfMemory) => {
-            let _ = global.throw_out_of_memory_value();
+        Err(e) => {
+            let _ = host_call_error_value(global, e);
             core::ptr::null_mut()
         }
-        Err(JsError::Terminated) => {
-            let _ = terminated_beneath_script(global);
-            core::ptr::null_mut()
-        }
-        Err(JsError::Thrown) => core::ptr::null_mut(),
     };
     scope.assert_exception_presence_matches(ptr.is_null());
     ptr
@@ -698,9 +692,7 @@ pub fn to_js_host_call(
 
     let normal = match f() {
         Ok(v) => v,
-        Err(JsError::Thrown) => JSValue::ZERO,
-        Err(JsError::OutOfMemory) => global_this.throw_out_of_memory_value(),
-        Err(JsError::Terminated) => terminated_beneath_script(global_this),
+        Err(e) => host_call_error_value(global_this, e),
     };
     scope.assert_exception_presence_matches(normal.is_empty());
     normal
@@ -759,8 +751,8 @@ mod private {
     use super::*;
 
     // safe fn: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&`
-    // is ABI-identical to non-null `*mut`); `Option<&ZigString>` is ABI-identical
-    // to a nullable `*const ZigString` via the guaranteed null-pointer
+    // is ABI-identical to non-null `*mut`); `Option<&EncodedSlice>` is ABI-identical
+    // to a nullable `*const EncodedSlice` via the guaranteed null-pointer
     // optimization (C++ reads `nullptr` as "no name"). `data` /
     // `input_function_ptr` are opaque round-trip pointers C++ only stores into
     // the JSFunction's private slot (never dereferenced as Rust data) — same
@@ -768,7 +760,7 @@ mod private {
     unsafe extern "C" {
         pub(super) safe fn Bun__CreateFFIFunctionWithDataValue(
             global: &JSGlobalObject,
-            symbol_name: Option<&ZigString>,
+            symbol_name: Option<&EncodedSlice>,
             arg_count: u32,
             // `JsHostFn` is already `unsafe extern "C" fn(...)`, i.e. the
             // fn-pointer type.
@@ -778,7 +770,7 @@ mod private {
 
         pub(super) safe fn Bun__CreateFFIFunctionValue(
             global_object: &JSGlobalObject,
-            symbol_name: Option<&ZigString>,
+            symbol_name: Option<&EncodedSlice>,
             arg_count: u32,
             function: JsHostFn,
             add_ptr_field: bool,
@@ -796,7 +788,7 @@ mod private {
 #[track_caller]
 pub fn new_runtime_function(
     global_object: &JSGlobalObject,
-    symbol_name: Option<&ZigString>,
+    symbol_name: Option<&EncodedSlice>,
     arg_count: u32,
     function_pointer: JsHostFn,
     add_ptr_property: bool,
@@ -829,7 +821,7 @@ pub fn set_function_data(function: JSValue, value: Option<*mut c_void>) {
 #[track_caller]
 pub fn new_function_with_data(
     global_object: &JSGlobalObject,
-    symbol_name: Option<&ZigString>,
+    symbol_name: Option<&EncodedSlice>,
     arg_count: u32,
     function: JsHostFn,
     data: *mut c_void,

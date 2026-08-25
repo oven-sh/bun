@@ -324,8 +324,6 @@ pub enum Error {
     UnexpectedPendingResolution,
     #[error("AsyncModule")]
     AsyncModule,
-    #[error("NotSupported")]
-    NotSupported,
     #[error("BlobNotFound")]
     BlobNotFound,
     #[error("JSErrorObject")]
@@ -459,8 +457,6 @@ pub enum Error {
     Sourcemap(#[from] bun_sourcemap::Error),
     #[error(transparent)]
     StandaloneGraph(#[from] bun_standalone_graph::Error),
-    #[error(transparent)]
-    TerminalInit(crate::api::bun_terminal_body::InitError),
     #[error("JSError")]
     Js(bun_jsc::JsError),
 }
@@ -734,7 +730,6 @@ impl Error {
             Self::MissingTranspileExtra => "MissingTranspileExtra",
             Self::UnexpectedPendingResolution => "UnexpectedPendingResolution",
             Self::AsyncModule => "AsyncModule",
-            Self::NotSupported => "NotSupported",
             Self::BlobNotFound => "BlobNotFound",
             Self::JSErrorObject => "JSErrorObject",
             Self::PluginError => "PluginError",
@@ -801,7 +796,6 @@ impl Error {
             Self::JsPrinter(e) => e.name(),
             Self::Sourcemap(e) => e.name(),
             Self::StandaloneGraph(e) => e.name(),
-            Self::TerminalInit(e) => <&'static str>::from(e),
             Self::Js(bun_jsc::JsError::OutOfMemory) => "OutOfMemory",
             Self::Js(_) => "JSError",
         }

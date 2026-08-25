@@ -393,12 +393,7 @@ const JSC::ClassInfo JSStringDecoder::s_info = { "StringDecoder"_s, &Base::s_inf
 
 JSC::GCClient::IsoSubspace* JSStringDecoder::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSStringDecoder, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForStringDecoder.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForStringDecoder = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForStringDecoder.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForStringDecoder = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSStringDecoder, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForStringDecoder, m_subspaceForStringDecoder));
 }
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSStringDecoderPrototype, JSStringDecoderPrototype::Base);
@@ -543,8 +538,8 @@ static const HashTableValue JSStringDecoderPrototypeTableValues[]
 void JSStringDecoderPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalThis)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSStringDecoder::info(), JSStringDecoderPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSStringDecoder::info(), JSStringDecoderPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSStringDecoderPrototype::s_info = { "StringDecoder"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSStringDecoderPrototype) };
@@ -571,12 +566,14 @@ JSC::EncodedJSValue JSStringDecoderConstructor::construct(JSC::JSGlobalObject* l
     auto jsEncoding = callFrame->argument(0);
     if (!jsEncoding.isUndefinedOrNull()) {
         std::optional<BufferEncodingType> opt = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, jsEncoding);
+        RETURN_IF_EXCEPTION(throwScope, {});
         if (opt.has_value()) {
             encoding = opt.value();
         } else {
             auto* encodingString = jsEncoding.toString(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(throwScope, {});
             const auto& view = encodingString->view(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
             return Bun::ERR::UNKNOWN_ENCODING(throwScope, lexicalGlobalObject, view);
         }
     }

@@ -139,7 +139,7 @@ pub struct Blob {
     pub global_this: Cell<*const JSGlobalObject>,
     pub last_modified: Cell<f64>,
     /// Only used by `<input type="file">` / `File` (issue #10178).
-    pub name: bun_core::OwnedStringCell,
+    pub name: bun_ptr::JsCell<bun_core::String>,
 }
 
 // SAFETY: `Blob` holds a raw `global_this` pointer which defaults to
@@ -165,7 +165,7 @@ impl Default for Blob {
             ref_count: bun_ptr::RawRefCount::init(0),
             global_this: Cell::new(core::ptr::null()),
             last_modified: Cell::new(0.0),
-            name: bun_core::OwnedStringCell::new(bun_core::String::dead()),
+            name: bun_ptr::JsCell::new(bun_core::String::DEAD),
         }
     }
 }
@@ -450,7 +450,7 @@ impl Blob {
     /// heap-allocated, also frees the heap box.
     pub fn deinit(&mut self) {
         self.detach();
-        self.name.set(bun_core::String::dead());
+        self.name.set(bun_core::String::DEAD);
 
         self.content_type.set(BlobContentType::default());
 
@@ -538,17 +538,6 @@ pub mod store {
         pub mime_type: MimeType,
         pub ref_count: bun_ptr::ThreadSafeRefCount<Store>,
         pub is_all_ascii: Option<bool>,
-    }
-
-    impl Default for Store {
-        fn default() -> Self {
-            Self {
-                data: Data::Bytes(Bytes::default()),
-                mime_type: bun_http_types::MimeType::NONE,
-                ref_count: bun_ptr::ThreadSafeRefCount::init(),
-                is_all_ascii: None,
-            }
-        }
     }
 
     /// Backing data for a `Store`.
@@ -780,7 +769,7 @@ pub mod store {
     /// A blob store referencing a file on disk.
     #[derive(Clone)]
     pub struct File {
-        pub pathlike: PathOrFileDescriptor,
+        pub pathlike: PathOrFileDescriptor<'static>,
         pub mime_type: MimeType,
         pub is_atty: Option<bool>,
         pub mode: bun_sys::Mode,
@@ -806,7 +795,7 @@ pub mod store {
 
     impl File {
         #[inline]
-        pub fn init(pathlike: PathOrFileDescriptor, mime_type: Option<MimeType>) -> File {
+        pub fn init(pathlike: PathOrFileDescriptor<'static>, mime_type: Option<MimeType>) -> File {
             File {
                 pathlike,
                 mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
@@ -823,7 +812,7 @@ pub mod store {
     /// I/O methods (`unlink`/`stat`/`listObjects`/`getCredentialsWithOptions`)
     /// live in `bun_runtime` because they reach the HTTP client / event loop.
     pub struct S3 {
-        pub pathlike: PathLike,
+        pub pathlike: PathLike<'static>,
         pub(crate) mime_type: MimeType,
         pub(crate) credentials: Option<Rc<bun_s3_signing::S3Credentials>>,
         pub options: bun_s3_signing::MultiPartUploadOptions,
@@ -864,7 +853,7 @@ pub mod store {
         }
 
         pub fn init(
-            pathlike: PathLike,
+            pathlike: PathLike<'static>,
             mime_type: Option<MimeType>,
             credentials: bun_s3_signing::S3Credentials,
         ) -> S3 {
@@ -999,9 +988,7 @@ pub mod store {
     impl Drop for Store {
         /// `Box` handles the allocation. Every `Data` variant self-frees on
         /// field drop: `Bytes::drop` frees its buffer + `stored_name`; the
-        /// `File.pathlike` / `S3` payloads (including an owned
-        /// `PathLike::String`, which owns its buffer via `CowSlice`) release in
-        /// `PathLike::drop`.
+        /// `File.pathlike` / `S3` payloads release in `PathLike::drop`.
         fn drop(&mut self) {}
     }
 

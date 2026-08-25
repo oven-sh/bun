@@ -1151,11 +1151,12 @@ describe("Bun.Image", () => {
     // holds more than half the box, that midpoint falls inside its run, the
     // colour lands in both halves and the smaller half's mean is a blend
     // (75% white / 25% black used to give white + [128,128,128]). The cut
-    // has to move to the run boundary so a source with ≤ `colors` distinct
-    // colours comes out with exactly those colours.
-    describe("png({palette:true}) keeps every colour of an image with ≤ colors distinct colours", () => {
+    // has to move to the nearer end of that run instead, so a colour is
+    // never split across two palette entries.
+    describe("png({palette:true}) never splits one colour across two palette entries", () => {
       const white: [number, number, number, number] = [255, 255, 255, 255];
       const black: [number, number, number, number] = [0, 0, 0, 255];
+      const grey = (v: number): [number, number, number, number] => [v, v, v, 255];
 
       test.each([false, true])("white:black 3:1, colors:2, dither %p", async dither => {
         const src = makePng(40, 40, (_x, y) => (y < 30 ? white : black));
@@ -1196,6 +1197,64 @@ describe("Bun.Image", () => {
           [100, 100, 100, 0],
           [100, 100, 100, 255],
         ]);
+      });
+
+      // Three greys in 40 rows. The middle run straddles the midpoint, so
+      // the cut moves to whichever end of it is nearer.
+      const threeGreys = (dark: number, mid: number) =>
+        makePng(40, 40, (_x, y) => (y < dark ? black : y < dark + mid ? grey(128) : white));
+
+      test("three greys 30%/30%/40%, colors:3 is exact", async () => {
+        const out = await new Bun.Image(threeGreys(12, 12)).png({ palette: true, colors: 3 }).bytes();
+        expect(pngPalette(out)).toEqual([black, grey(128), white]);
+      });
+
+      test("three greys, colors:2: the middle grey joins the side nearer the midpoint", async () => {
+        // 30%/30%/40%: the midpoint (800) is nearer the end of the middle run
+        // (960) than its start (480), so black and grey share one entry.
+        const nearerEnd = await new Bun.Image(threeGreys(12, 12)).png({ palette: true, colors: 2 }).bytes();
+        expect(pngPalette(nearerEnd)).toEqual([grey(64), white]);
+        // 40%/30%/30%: mirrored, so grey and white share one entry.
+        const nearerStart = await new Bun.Image(threeGreys(16, 12)).png({ palette: true, colors: 2 }).bytes();
+        expect(pngPalette(nearerStart)).toEqual([black, grey(192)]);
+        // 37.5%/25%/37.5%: a tie goes to the start of the run.
+        const tie = await new Bun.Image(threeGreys(15, 10)).png({ palette: true, colors: 2 }).bytes();
+        expect(pngPalette(tie)).toEqual([black, grey(204)]);
+      });
+
+      test.each([4, 16])("over budget: 75%% white + a 201-step grey ramp, colors:%d", async colors => {
+        // More colours than slots, with one dominant colour. White must get
+        // exactly one entry and every other slot must go to the ramp.
+        const src = makePng(64, 64, (x, y) => (y < 48 ? white : grey(((y - 48) * 64 + x) % 201)));
+        const out = await new Bun.Image(src).png({ palette: true, colors }).bytes();
+        const palette = pngPalette(out);
+        expect(palette).toHaveLength(colors);
+        expect(new Set(palette.map(e => e.join())).size).toBe(colors);
+        expect(palette.filter(e => e[0] === 255)).toEqual([white]);
+        // A blend of white with the ramp would land in (200, 255).
+        expect(palette.filter(e => e[0] > 200 && e[0] < 255)).toEqual([]);
+      });
+
+      test("256 distinct colours with a dominant one come out exact at the default colors", async () => {
+        // The shape of a re-encoded 256-colour GIF or PNG8: one background
+        // colour on 94% of the pixels and 255 single-pixel colours.
+        const table: [number, number, number, number][] = Array.from({ length: 256 }, (_, i) =>
+          i === 0 ? grey(128) : [i, (i * 7 + 3) & 255, (i * 13 + 5) & 255, 255],
+        );
+        const colourAt = (x: number, y: number) => table[y * 64 + x < 255 ? y * 64 + x + 1 : 0];
+        const src = makePng(64, 64, colourAt);
+        const out = await new Bun.Image(src).png({ palette: true }).bytes();
+        expect(pngPalette(out)).toEqual(
+          table.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2] || a[3] - b[3]),
+        );
+        const back = decodePngRaw(await new Bun.Image(out).png().bytes());
+        let changed = 0;
+        for (let y = 0; y < 64; y++) {
+          for (let x = 0; x < 64; x++) {
+            if (rgbaAt(back.data, 64, x, y).join() !== colourAt(x, y).join()) changed++;
+          }
+        }
+        expect(changed).toBe(0);
       });
     });
 

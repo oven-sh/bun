@@ -87,19 +87,20 @@ describe("fake node cli", () => {
     expect(fakeNodeRun(temp, ["-e", "console.log('pass')"]).stdout).toBe("pass");
   });
 
-  // #40482: positionals after the eval source must all reach process.argv
-  test("node -e keeps positionals in process.argv", () => {
+  // #40482: like node, `-e`/`-p` take no script positional, so everything
+  // after the code is process.argv. The first of them used to be dropped.
+  const argvExpr = "JSON.stringify(process.argv.slice(1))";
+  const logArgv = `console.log(${argvExpr})`;
+  test.each([
+    { args: ["-e", logArgv, "foo", "bar"], argv: ["foo", "bar"] },
+    { args: ["-e", logArgv, "foo"], argv: ["foo"] },
+    { args: ["-e", logArgv, "foo", "--flag", "bar"], argv: ["foo", "--flag", "bar"] },
+    { args: ["-e", logArgv], argv: [] },
+    { args: ["-p", argvExpr, "foo", "bar"], argv: ["foo", "bar"] },
+    { args: ["-pe", argvExpr, "foo", "bar"], argv: ["foo", "bar"] },
+  ])("node $args keeps every positional in process.argv", ({ args, argv }) => {
     using temp = tempDir("fake-node", {});
-    expect(fakeNodeRun(temp, ["-e", "console.log(JSON.stringify(process.argv.slice(1)))", "foo", "bar"]).stdout).toBe(
-      JSON.stringify(["foo", "bar"]),
-    );
-  });
-
-  test("node -p keeps positionals in process.argv", () => {
-    using temp = tempDir("fake-node", {});
-    expect(fakeNodeRun(temp, ["-p", "JSON.stringify(process.argv.slice(1))", "foo", "bar"]).stdout).toBe(
-      JSON.stringify(["foo", "bar"]),
-    );
+    expect(JSON.parse(fakeNodeRun(temp, args).stdout)).toEqual(argv);
   });
 
   test("process args work", () => {

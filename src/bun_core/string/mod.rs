@@ -703,7 +703,12 @@ impl String {
             Tag::WTFStringImpl if self.as_wtf().is_8bit() => {
                 Cow::Borrowed(self.as_wtf().latin1_slice())
             }
-            Tag::WTFStringImpl => Cow::Owned(narrow_utf16_to_latin1(self.as_wtf().utf16_slice())),
+            Tag::WTFStringImpl => self
+                .as_wtf()
+                .utf16_slice()
+                .iter()
+                .map(|&c| c as u8)
+                .collect(),
             Tag::EncodedSlice | Tag::StaticEncodedSlice => self.encoded().to_latin1(),
             _ => Cow::Borrowed(&[]),
         }
@@ -1453,7 +1458,7 @@ impl<'a> EncodedSlice<'a> {
     /// truncates each UTF-16 unit (or decoded UTF-8 code point) to its low byte.
     pub fn to_latin1(self) -> Cow<'a, [u8]> {
         if self.is_16bit() {
-            return Cow::Owned(narrow_utf16_to_latin1(self.utf16_slice()));
+            return self.utf16_slice().iter().map(|&c| c as u8).collect();
         }
         if self.is_utf8() && !strings::is_all_ascii(self.slice()) {
             return Cow::Owned(
@@ -1469,12 +1474,6 @@ impl<'a> EncodedSlice<'a> {
     pub fn to_owned_slice(self) -> Vec<u8> {
         self.to_utf8().into_vec()
     }
-}
-
-fn narrow_utf16_to_latin1(units: &[u16]) -> Vec<u8> {
-    let mut bytes = vec![0u8; units.len()];
-    strings::copy_u16_into_u8(&mut bytes, units);
-    bytes
 }
 
 /// UTF-8 bytes derived from a string: borrowed when the source is already

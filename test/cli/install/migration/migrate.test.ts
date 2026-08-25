@@ -883,7 +883,11 @@ describe("package-lock.json migration fixes", () => {
     const chunks: Buffer[] = [header(`${rootDir}/`, 0, "5")];
     for (const [path, contents] of Object.entries(files)) {
       const body = Buffer.from(contents, "utf8");
-      chunks.push(header(`${rootDir}/${path}`, body.length, "0"), body, Buffer.alloc((512 - (body.length % 512)) % 512));
+      chunks.push(
+        header(`${rootDir}/${path}`, body.length, "0"),
+        body,
+        Buffer.alloc((512 - (body.length % 512)) % 512),
+      );
     }
     chunks.push(Buffer.alloc(1024));
     return Bun.gzipSync(Buffer.concat(chunks));

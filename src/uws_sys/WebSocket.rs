@@ -322,8 +322,8 @@ pub trait WebSocketHandler: Sized + 'static {
 }
 
 /// A [`WebSocketHandler`] that is an intrusively ref-counted heap object.
-/// [`AnyWebSocket::upgrade_ref`] / [`uws::response::Response::upgrade_ref`]
-/// move one ref into the socket's user-data slot; every callback runs under a
+/// [`Response::upgrade_ref`](crate::response::Response::upgrade_ref) moves one
+/// ref into the socket's user-data slot; every callback runs under a
 /// fresh ref guard (so `ws.close()` from inside a handler — which dispatches
 /// `on_close` synchronously — cannot free the object under the running
 /// handler); the socket's own ref is released after `on_close` returns.

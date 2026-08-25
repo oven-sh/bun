@@ -1869,9 +1869,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // A refused thread rejects like a connect failure does (`FetchTasklet::on_reject`).
     if let Err(err) = http::http_thread::init(&http::http_thread::InitOpts::default()) {
         let err = jsc::SystemError {
-            code: BunString::static_(err.code()).into(),
-            message: BunString::create_format(format_args!("{err}")).into(),
-            path: BunString::clone_utf8(url.href).into(),
+            code: BunString::static_(err.code()),
+            message: BunString::create_format(format_args!("{err}")),
+            path: BunString::clone_utf8(url.href),
             ..Default::default()
         }
         .to_type_error_instance(global_this);

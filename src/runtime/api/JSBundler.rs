@@ -1392,8 +1392,8 @@ pub mod js_bundler {
                 Plugin::destroy(plugin);
             }
             let err = jsc::SystemError {
-                code: BunString::static_(err.code()).into(),
-                message: BunString::create_format(format_args!("{err}")).into(),
+                code: BunString::static_(err.code()),
+                message: BunString::create_format(format_args!("{err}")),
                 ..Default::default()
             }
             .to_error_instance(global_this);

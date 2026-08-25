@@ -148,6 +148,9 @@ pub mod api {
         pub password: Box<[u8]>,
         /// token
         pub token: Box<[u8]>,
+        /// `.npmrc`'s `_auth`, verbatim. npm never decodes it, so neither may we.
+        /// Not read from `bunfig.toml`; it only carries the value to `Scope::from_api`.
+        pub auth: Box<[u8]>,
         /// email
         pub email: Box<[u8]>,
     }
@@ -173,7 +176,10 @@ pub mod api {
         }
 
         pub fn has_credentials(&self) -> bool {
-            !self.token.is_empty() || !self.username.is_empty() || !self.password.is_empty()
+            !self.token.is_empty()
+                || !self.auth.is_empty()
+                || !self.username.is_empty()
+                || !self.password.is_empty()
         }
     }
 

@@ -498,7 +498,7 @@ ${Object.keys(opts)
       dotEnv: { SECRET_AUTH: "" },
     },
     (stdout: string, stderr: string) => {
-      expect(stderr).toContain("received an empty string");
+      expect(stderr).toContain("empty _auth value");
     },
   );
 
@@ -551,14 +551,15 @@ registry=https://somehost.com/org1/npm/registry/
   });
 
   describe("credentials keyed to a bracketed IPv6 host", () => {
-    // The `//` is stripped off the key before it is parsed as a URL, leaving
-    // `[::1]:4873/`. A leading `[` used to parse to an empty host, so these keys
-    // never matched the registry they were written for.
+    // Config keys are matched literally against the keys walked up from the registry
+    // URL, so the bracketed authority only has to survive the registry side's parse.
     test.each([
       ["loopback with a port", "http://[::1]:4873/", "//[::1]:4873/"],
       ["loopback without a port", "http://[::1]/", "//[::1]/"],
       ["full address with a path", "http://[2001:db8::1]:4873/npm/registry/", "//[2001:db8::1]:4873/npm/registry/"],
       ["key without the trailing slash", "http://[::1]:4873/", "//[::1]:4873"],
+      // The address ends in the scheme's default port digits; they are not a port.
+      ["address whose last group spells the default port", "http://[::80]/", "//[::80]/"],
     ])("_authToken is applied: %s", (_, registryUrl, key) => {
       const result = loadNpmrc(`registry=${registryUrl}\n${key}:_authToken=v6-token\n`);
       expect(result).toEqual({
@@ -567,6 +568,7 @@ registry=https://somehost.com/org1/npm/registry/
         default_registry_username: "",
         default_registry_password: "",
         default_registry_email: "",
+        default_registry_auth: "",
       });
     });
 
@@ -580,15 +582,17 @@ registry=https://somehost.com/org1/npm/registry/
         default_registry_username: "v6-user",
         default_registry_password: "v6-password",
         default_registry_email: "",
+        default_registry_auth: "",
       });
 
       const auth = Buffer.from("v6-user:v6-password").toString("base64");
       expect(loadNpmrc(`registry=http://[::1]:4873/\n//[::1]:4873/:_auth=${auth}\n`)).toEqual({
         default_registry_url: "http://[::1]:4873/",
         default_registry_token: "",
-        default_registry_username: "v6-user",
-        default_registry_password: "v6-password",
+        default_registry_username: "",
+        default_registry_password: "",
         default_registry_email: "",
+        default_registry_auth: auth,
       });
     });
 
@@ -603,26 +607,85 @@ registry=https://somehost.com/org1/npm/registry/
     });
   });
 
-  it("does not print an undecodable _password value", async () => {
-    const secret = "s!ecret!pass";
-    using dir = tempDir("npmrc-password-decode", {
-      ".npmrc": `//registry.npmjs.org/:_password=${secret}\n`,
-      "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
+  describe("bun pm whoami derives the username from _auth", () => {
+    async function whoamiWith(files: Record<string, string>) {
+      using dir = tempDir("npmrc-whoami-auth", {
+        "home/.gitkeep": "",
+        "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
+        ...files,
+      });
+      const homeDir = join(String(dir), "home");
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "pm", "whoami"],
+        cwd: String(dir),
+        env: { ...env, HOME: homeDir, USERPROFILE: homeDir, XDG_CONFIG_HOME: homeDir },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    function whoami(authValue: string) {
+      return whoamiWith({
+        ".npmrc": `registry=https://somehost.com/\n//somehost.com/:_auth=${authValue}\n`,
+      });
+    }
+
+    test("a decodable _auth prints its username", async () => {
+      const { stdout, exitCode } = await whoami(Buffer.from("alice:s3cret").toString("base64"));
+      expect(stdout).toBe("alice\n");
+      expect(exitCode).toBe(0);
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: String(dir),
-      env: { ...env, NO_COLOR: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
+    test("a non-decodable _auth carries no identity", async () => {
+      const { stdout, stderr, exitCode } = await whoami("!!not-base64!!");
+      expect(stdout).toBe("");
+      expect(stderr).toContain("missing authentication");
+      expect(exitCode).toBe(1);
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toContain("_password is not valid base64");
-    expect(stderr).toContain("_password=" + Buffer.alloc(secret.length, "*").toString());
-    expect(stderr).not.toContain(secret);
-    expect(exitCode).toBe(0);
+    test("an _auth with a blank username carries no identity", async () => {
+      const { stdout, stderr, exitCode } = await whoami(Buffer.from(":s3cret").toString("base64"));
+      expect(stdout).toBe("");
+      expect(stderr).toContain("missing authentication");
+      expect(exitCode).toBe(1);
+    });
+
+    test("an _auth with a blank password carries no identity", async () => {
+      const { stdout, stderr, exitCode } = await whoami(Buffer.from("tok:").toString("base64"));
+      expect(stdout).toBe("");
+      expect(stderr).toContain("missing authentication");
+      expect(exitCode).toBe(1);
+    });
+
+    // The wire sends `Basic <_auth>` here (auth beats the username + password the
+    // registry URL's userinfo stored), so whoami must not report that username: it
+    // would be an identity from a credential never sent.
+    test.each([
+      ["opaque", "!!not-base64!!"],
+      ["blank-password", Buffer.from("tok:").toString("base64")],
+    ])("the registry URL's username/password do not leak an identity past _auth (%s)", async (_name, authValue) => {
+      const { stdout, stderr, exitCode } = await whoamiWith({
+        ".npmrc": `registry=https://url-user:url-pass@somehost.com/\n//somehost.com/:_auth=${authValue}\n`,
+      });
+      expect(stdout).toBe("");
+      expect(stderr).toContain("missing authentication");
+      expect(exitCode).toBe(1);
+    });
+
+    // Credentials declared in bunfig.toml beat every .npmrc line for that registry,
+    // so whoami reports the bunfig identity and the _auth line is never consulted.
+    test("bunfig.toml username/password are the identity when bunfig declares the registry", async () => {
+      const { stdout, exitCode } = await whoamiWith({
+        "bunfig.toml": `[install.registry]\nurl = "https://somehost.com/"\nusername = "bunfig-user"\npassword = "bunfig-pass"\n`,
+        ".npmrc": `//somehost.com/:_auth=!!not-base64!!\n`,
+      });
+      expect(stdout).toBe("bunfig-user\n");
+      expect(exitCode).toBe(0);
+    });
   });
 });
 

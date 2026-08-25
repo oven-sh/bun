@@ -54,6 +54,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     if registry.token.is_empty() {
         return Err(WhoamiError::NeedAuth);
     }
+    let authorization = registry.authorization().expect("token is set");
 
     let auth_type: &[u8] = match &manager.options.publish_config.auth_type {
         Some(auth_type) => auth_type.as_str().as_bytes(),
@@ -68,15 +69,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     {
         headers.count("accept", "*/*");
         headers.count("accept-encoding", "gzip,deflate");
-
-        write!(
-            &mut print_buf,
-            "Bearer {}",
-            bstr::BStr::new(&registry.token)
-        )
-        .expect("infallible: in-memory write");
-        headers.count("authorization", &print_buf);
-        print_buf.clear();
+        headers.count("authorization", &authorization);
 
         // no otp needed, just use auth-type from options
         headers.count("npm-auth-type", auth_type);
@@ -104,15 +97,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     {
         headers.append("accept", "*/*");
         headers.append("accept-encoding", "gzip/deflate");
-
-        write!(
-            &mut print_buf,
-            "Bearer {}",
-            bstr::BStr::new(&registry.token)
-        )
-        .expect("infallible: in-memory write");
-        headers.append("authorization", &print_buf);
-        print_buf.clear();
+        headers.append("authorization", &authorization);
 
         headers.append("npm-auth-type", auth_type);
         headers.append("npm-command", "whoami");
@@ -302,13 +287,11 @@ pub mod registry {
     pub struct Scope {
         pub name: Box<[u8]>,
         // https://github.com/npm/npm-registry-fetch/blob/main/lib/auth.js#L96
-        // base64("${username}:${password}")
+        // Sent verbatim as `Basic <auth>`. Usually base64("${username}:${password}"),
+        // but npm forwards whatever `_auth` holds — do not assume it decodes.
         pub auth: Box<[u8]>,
-        // URL may contain these special suffixes in the pathname:
-        //  :_authToken
-        //  :username
-        //  :_password
-        //  :_auth
+        // Registry href; yarn-style `:_authToken`/`:username`/`:_password`/`:_auth`
+        // pathname suffixes are always stripped by `parse_embedded_auth`.
         pub url: OwnedURL,
         pub url_hash: u64,
         pub token: Box<[u8]>,
@@ -317,9 +300,125 @@ pub mod registry {
         pub user: Box<[u8]>,
     }
 
+    /// yarn-style credentials embedded in a registry URL's pathname, e.g.
+    /// `https://host/api/:_authToken=TOKEN`.
+    #[derive(Default)]
+    struct EmbeddedAuth<'a> {
+        token: Option<&'a [u8]>,
+        auth: Option<&'a [u8]>,
+        username: Option<&'a [u8]>,
+        password: Option<&'a [u8]>,
+        /// The scan hit a credential that ends it; nothing after it is read.
+        terminal: bool,
+    }
+
+    #[derive(Clone, Copy)]
+    enum EmbeddedOpt {
+        Token,
+        Auth,
+        Username,
+        Password,
+    }
+
+    impl<'a> EmbeddedAuth<'a> {
+        fn slot(&mut self, opt: EmbeddedOpt) -> &mut Option<&'a [u8]> {
+            match opt {
+                EmbeddedOpt::Token => &mut self.token,
+                EmbeddedOpt::Auth => &mut self.auth,
+                EmbeddedOpt::Username => &mut self.username,
+                EmbeddedOpt::Password => &mut self.password,
+            }
+        }
+    }
+
+    const EMBEDDED_MARKERS: [(&[u8], EmbeddedOpt); 4] = [
+        (b":_authToken=", EmbeddedOpt::Token),
+        (b":_auth=", EmbeddedOpt::Auth),
+        (b":username=", EmbeddedOpt::Username),
+        (b":_password=", EmbeddedOpt::Password),
+    ];
+
+    /// The rightmost `:<name>=` credential marker in `pathname`, as `(colon, marker)`.
+    /// Anchoring on the marker rather than on any `:` keeps a colon inside the value from
+    /// ending the scan, and leaves a colon that merely belongs to the path alone.
+    fn last_embedded_marker(pathname: &[u8]) -> Option<(usize, &'static [u8], EmbeddedOpt)> {
+        EMBEDDED_MARKERS
+            .iter()
+            .filter_map(|&(marker, opt)| {
+                bun_core::last_index_of(pathname, marker).map(|i| (i, marker, opt))
+            })
+            .max_by_key(|&(i, _, _)| i)
+    }
+
+    /// Strip trailing yarn-style credential segments out of `url.pathname`. Runs before
+    /// the registry's own credentials are consulted: the pathname must be sanitized
+    /// whether or not the credential is adopted, or the secret ships in the request path.
+    ///
+    /// <https://github.com/yarnpkg/yarn/blob/6db39cf0ff684ce4e7de29669046afb8103fce3d/src/registries/npm-registry.js#L364>
+    fn parse_embedded_auth<'a>(url: &mut URL<'a>) -> EmbeddedAuth<'a> {
+        let mut out = EmbeddedAuth::default();
+        let mut pathname: &'a [u8] = url.pathname;
+        let mut needs_to_check_slash = true;
+
+        // Right to left: the credentials are appended after the path.
+        while let Some((colon, marker, opt)) = last_embedded_marker(pathname) {
+            let value = &pathname[colon + marker.len()..];
+            // An empty marker supplies no credential; it must not end the scan or shadow
+            // a credential from `.npmrc`.
+            if !out.terminal && !value.is_empty() {
+                *out.slot(opt) = Some(value);
+                out.terminal = matches!(opt, EmbeddedOpt::Token | EmbeddedOpt::Auth);
+            }
+
+            pathname = &pathname[..colon];
+            needs_to_check_slash = false;
+            if pathname.len() > 1 && pathname[pathname.len() - 1] == b'/' {
+                pathname = &pathname[..pathname.len() - 1];
+            }
+        }
+
+        // In this case, there is only one.
+        if needs_to_check_slash {
+            if let Some(last_slash) = strings::last_index_of_char(pathname, b'/') {
+                let remain = &pathname[last_slash + 1..];
+                if let Some(eql_i) = strings::index_of_char_usize(remain, b'=') {
+                    let segment = &remain[..eql_i];
+                    let value = &remain[eql_i + 1..];
+                    let opt = EMBEDDED_MARKERS
+                        .iter()
+                        .find(|(marker, _)| &marker[1..marker.len() - 1] == segment)
+                        .map(|&(_, opt)| opt);
+                    if let Some(opt) = opt {
+                        pathname = &pathname[..last_slash + 1];
+                        if !value.is_empty() {
+                            *out.slot(opt) = Some(value);
+                            out.terminal = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        url.pathname = pathname;
+        url.path = pathname;
+        out
+    }
+
     impl Scope {
         pub fn hash(str: &[u8]) -> u64 {
             bun_semver::semver_string::Builder::string_hash(str)
+        }
+
+        /// The `Authorization` value for this registry, or `None` when it has no
+        /// credentials. Raw bytes: a credential need not be UTF-8.
+        pub fn authorization(&self) -> Option<Vec<u8>> {
+            if !self.token.is_empty() {
+                Some([b"Bearer ".as_slice(), &self.token].concat())
+            } else if !self.auth.is_empty() {
+                Some([b"Basic ".as_slice(), &self.auth].concat())
+            } else {
+                None
+            }
         }
 
         /// Stores the WHATWG serialization (the base `bun_url::join` resolves against) so same-origin checks, concatenated tarball URLs and `url_hash` agree with the requests; credentials must already be split off.
@@ -362,124 +461,64 @@ pub mod registry {
             // of parsing. The final href is moved into `Scope.url: OwnedURL`
             // (owned `Box<[u8]>`).
             let registry_url: Box<[u8]> = core::mem::take(&mut registry.url);
+            let registry_auth: Box<[u8]> = core::mem::take(&mut registry.auth);
             let mut url = URL::parse(&registry_url);
             let mut auth: &[u8] = b"";
             let mut user: &mut [u8] = &mut [];
-            let mut needs_normalize = false;
 
             // Backing storage for `user`/`auth` when synthesized from
             // username:password.
             let mut output_buf_owned: Box<[u8]> = Box::default();
 
+            let original_pathname_len = url.pathname.len();
+            let embedded = parse_embedded_auth(&mut url);
+            let needs_normalize = url.pathname.len() != original_pathname_len;
+
             if registry.token.is_empty() {
                 'outer: {
-                    if registry.password.is_empty() {
-                        let mut pathname: &[u8] = url.pathname;
-                        let mut needs_to_check_slash = true;
-                        while let Some(colon) = strings::last_index_of_char(pathname, b':') {
-                            let mut segment = &pathname[colon + 1..];
-                            pathname = &pathname[..colon];
-                            needs_to_check_slash = false;
-                            needs_normalize = true;
-                            if pathname.len() > 1 && pathname[pathname.len() - 1] == b'/' {
-                                pathname = &pathname[..pathname.len() - 1];
-                            }
-
-                            let Some(eql_i) = strings::index_of_char(segment, b'=') else {
-                                continue;
-                            };
-                            let value = &segment[eql_i as usize + 1..];
-                            segment = &segment[..eql_i as usize];
-
-                            // https://github.com/yarnpkg/yarn/blob/6db39cf0ff684ce4e7de29669046afb8103fce3d/src/registries/npm-registry.js#L364
-                            // Bearer Token
-                            if segment == b"_authToken" {
-                                registry.token = value.into();
-                                url.pathname = pathname;
-                                url.path = pathname;
-                                break 'outer;
-                            }
-
-                            if segment == b"_auth" {
-                                auth = value;
-                                url.pathname = pathname;
-                                url.path = pathname;
-                                break 'outer;
-                            }
-
-                            if segment == b"username" {
-                                registry.username = value.into();
-                                continue;
-                            }
-
-                            if segment == b"_password" {
-                                registry.password = value.into();
-                                continue;
-                            }
+                    if registry.password.is_empty() && registry_auth.is_empty() {
+                        if let Some(token) = embedded.token {
+                            registry.token = token.into();
                         }
+                        if let Some(embedded_auth) = embedded.auth {
+                            auth = embedded_auth;
+                        }
+                        if let Some(username) = embedded.username {
+                            registry.username = username.into();
+                        }
+                        if let Some(password) = embedded.password {
+                            registry.password = password.into();
+                        }
+                        if embedded.terminal {
+                            break 'outer;
+                        }
+                    }
 
-                        // In this case, there is only one.
-                        if needs_to_check_slash {
-                            if let Some(last_slash) = strings::last_index_of_char(pathname, b'/') {
-                                let remain = &pathname[last_slash + 1..];
-                                if let Some(eql_i) = strings::index_of_char(remain, b'=') {
-                                    let segment = &remain[..eql_i as usize];
-                                    let value = &remain[eql_i as usize + 1..];
-
-                                    // https://github.com/yarnpkg/yarn/blob/6db39cf0ff684ce4e7de29669046afb8103fce3d/src/registries/npm-registry.js#L364
-                                    // Bearer Token
-                                    if segment == b"_authToken" {
-                                        registry.token = value.into();
-                                        pathname = &pathname[..last_slash + 1];
-                                        needs_normalize = true;
-                                        url.pathname = pathname;
-                                        url.path = pathname;
-                                        break 'outer;
-                                    }
-
-                                    if segment == b"_auth" {
-                                        auth = value;
-                                        pathname = &pathname[..last_slash + 1];
-                                        needs_normalize = true;
-                                        url.pathname = pathname;
-                                        url.path = pathname;
-                                        break 'outer;
-                                    }
-
-                                    if segment == b"username" {
-                                        registry.username = value.into();
-                                        pathname = &pathname[..last_slash + 1];
-                                        needs_normalize = true;
-                                        url.pathname = pathname;
-                                        url.path = pathname;
-                                        break 'outer;
-                                    }
-
-                                    if segment == b"_password" {
-                                        registry.password = value.into();
-                                        pathname = &pathname[..last_slash + 1];
-                                        needs_normalize = true;
-                                        url.pathname = pathname;
-                                        url.path = pathname;
-                                        break 'outer;
-                                    }
+                    // npm forwards `_auth` verbatim; the decode only derives `user` for `bun pm whoami`.
+                    if !registry_auth.is_empty() {
+                        auth = &registry_auth;
+                        let decode_len = bun_base64::decode_len(&registry_auth);
+                        let mut decoded = vec![0u8; decode_len].into_boxed_slice();
+                        let result = bun_base64::decode(&mut decoded[..], &registry_auth);
+                        if result.is_successful() {
+                            let count = result.count;
+                            // A blank username or password is a real pattern: no identity then.
+                            if let Some(colon_idx) =
+                                strings::index_of_char_usize(&decoded[..count], b':')
+                            {
+                                if colon_idx > 0 && colon_idx + 1 < count {
+                                    output_buf_owned = decoded;
+                                    user = &mut output_buf_owned[..count];
                                 }
                             }
                         }
-
-                        // The pathname write-back is applied at every `break 'outer`
-                        // above and once more here at fallthrough.
-                        url.pathname = pathname;
-                        url.path = pathname;
+                        break 'outer;
                     }
 
                     registry.username = env.get_auto(&registry.username).into();
                     registry.password = env.get_auto(&registry.password).into();
 
-                    if !registry.username.is_empty()
-                        && !registry.password.is_empty()
-                        && auth.is_empty()
-                    {
+                    if !registry.username.is_empty() && !registry.password.is_empty() {
                         let combo_len = registry.username.len() + registry.password.len() + 1;
                         let total =
                             combo_len + bun_core::base64::standard_encoder_calc_size(combo_len);
@@ -508,9 +547,6 @@ pub mod registry {
             let final_href: Box<[u8]> = if needs_normalize {
                 url.href_without_auth()
             } else {
-                // reshaped for borrowck — `url` (borrowing
-                // `registry_url`) is dead on this branch (every path that
-                // mutated `url.pathname` also set `needs_normalize = true`).
                 registry_url
             };
 

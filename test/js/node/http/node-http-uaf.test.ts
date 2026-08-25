@@ -37,12 +37,15 @@ const fixtureTimeout = slow ? 60_000 : 20_000;
 // flight, each aborted 1 to 6 ms in. The pre-fix release (bun 1.2.6, commit
 // 8ebd5d53d) crashes on the first round every time, and the load pattern
 // crashed it around request 300 in 10/10 runs at both 500 and 1000 requests.
-// The load part costs about 5 ms per request under ASAN, so slow builds run
-// fewer of them.
+// Release ran 10000 before. Every request is a new connection, and on darwin
+// the listen(0) of the two GC tests below failed right after that burst
+// (builds 105020, 105316 and 105364), which fits an exhausted ephemeral port
+// range. 1000 is the largest calibrated count and a tenth of the churn. The
+// load part costs about 5 ms per request under ASAN, so slow builds run fewer.
 test.concurrent(
   "a response written after the client aborted does not touch the freed socket (#18485)",
   async () => {
-    const requests = slow ? 500 : 10000;
+    const requests = slow ? 500 : 1000;
     const { result, stderr, exitCode } = await runFixture("node-http-uaf-fixture.ts", {
       ROUNDS: "10",
       REQUESTS: String(requests),
@@ -50,17 +53,31 @@ test.concurrent(
     expect({ result, stderr, exitCode }).toEqual({
       result: {
         rounds: Array.from({ length: 10 }, () => "wrote after close"),
-        tally: { requests, responded: expect.any(Number), aborted: expect.any(Number) },
+        tally: {
+          requests,
+          handled: expect.any(Number),
+          responded: expect.any(Number),
+          aborted: expect.any(Number),
+          // Only AbortError counts as aborted. A reset or a refused connection
+          // would show up here by name.
+          failed: {},
+        },
       },
       stderr: "",
       exitCode: 0,
     });
     // Under ASAN every request is aborted before the server answers; release
-    // answers about a third of them. Both must add up, and the load did abort.
-    const { tally } = result as { tally: { responded: number; aborted: number } };
-    expect({ settled: tally.responded + tally.aborted, aborted: tally.aborted > 0 }).toEqual({
+    // answers about a fifth of them and about a tenth are aborted before they
+    // reach the server at all. The rest must have reached it and settled.
+    const { tally } = result as { tally: { handled: number; responded: number; aborted: number } };
+    expect({
+      settled: tally.responded + tally.aborted,
+      aborted: tally.aborted > 0,
+      handled: tally.handled > 0,
+    }).toEqual({
       settled: requests,
       aborted: true,
+      handled: true,
     });
   },
   fixtureTimeout,

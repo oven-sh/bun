@@ -71,7 +71,11 @@ const app = http.createServer((req, res) => {
 await once(app.listen(0, "127.0.0.1"), "listening");
 const url = `http://127.0.0.1:${(app.address() as net.AddressInfo).port}/error`;
 
-const tally = { requests: 0, responded: 0, aborted: 0 };
+// `aborted` counts requests the AbortController cut short. Anything else that
+// fails lands in `failed` under its error name, so a reset or a refused
+// connection cannot pass as an abort.
+const tally = { requests: 0, handled: 0, responded: 0, aborted: 0, failed: {} as Record<string, number> };
+app.on("request", () => tally.handled++);
 let free = CONCURRENCY;
 let slotFreed = Promise.withResolvers<void>();
 const inFlight = new Set<Promise<void>>();
@@ -88,8 +92,10 @@ async function request() {
     });
     await response.text();
     tally.responded++;
-  } catch {
-    tally.aborted++;
+  } catch (e) {
+    const { name, code } = e as NodeJS.ErrnoException;
+    if (name === "AbortError") tally.aborted++;
+    else tally.failed[code ?? name] = (tally.failed[code ?? name] ?? 0) + 1;
   }
   free++;
   slotFreed.resolve();
@@ -103,7 +109,10 @@ for (let i = 0; i < REQUESTS; i++) {
   const p = request().finally(() => inFlight.delete(p));
   inFlight.add(p);
 }
-app.close();
+// Let the last CONCURRENCY requests settle before the listener goes away, or
+// close() resets the ones still in the accept queue and they never reach the
+// handler.
 await Promise.all(inFlight);
+app.close();
 
 console.log(JSON.stringify({ rounds, tally }));

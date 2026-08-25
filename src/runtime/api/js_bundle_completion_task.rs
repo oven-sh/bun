@@ -1081,10 +1081,8 @@ impl CompletionStruct for JSBundleCompletionTask {
             transpiler.options.emit_dce_annotations = false;
         }
 
-        // Like the CLI's `--production`: `load_defines` then inlines
-        // `process.env.NODE_ENV` as "production" (unless the process env or an
-        // explicit `define` sets NODE_ENV), and the "development" condition
-        // below is skipped.
+        // `configure_defines` turns this into the inlined
+        // NODE_ENV="production"; an explicit NODE_ENV still wins there.
         if config.production {
             transpiler.options.set_production(true);
         }

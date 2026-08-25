@@ -1,4 +1,4 @@
-use core::cell::{Cell, UnsafeCell};
+use core::cell::Cell;
 use core::mem;
 
 use bun_collections::VecExt;
@@ -8,7 +8,7 @@ use bun_io as aio;
 use bun_io::FileType;
 use bun_io::{BufferedReader, Chunk, ReadState};
 use bun_jsc::JsCell;
-use bun_ptr::{AsCtxPtr, RefPtr};
+use bun_ptr::{RefPtr, ThisPtr};
 use bun_sys::{self as sys, Fd, FdExt};
 
 use crate::webcore::SinkHandle;
@@ -16,43 +16,38 @@ use crate::webcore::blob;
 use crate::webcore::jsc::{self as jsc, EventLoopHandle, JSValue};
 use crate::webcore::jsc::{EnsureStillAlive, strong::Optional as Strong};
 use crate::webcore::node_types::PathOrFileDescriptor;
-use crate::webcore::readable_stream;
+use crate::webcore::readable_stream::{self, SourceRef};
 use crate::webcore::streams;
 
 bun_core::declare_scope!(FileReader, visible);
 
 // R-2 (host-fn re-entrancy): every JS-exposed / vtable-reachable method takes
-// `&self`; per-field interior mutability via `Cell` (Copy) / `JsCell` (non-
-// Copy). The `SourceContext` trait and `BufferedReaderParent` shims still
-// hand in `&mut Self` / `*mut Self` until those layers are migrated — `&mut T`
-// auto-derefs to `&T` so the impls below compile against either. `Cell<T>` and
-// `JsCell<T>` are both `#[repr(transparent)]`, so the embedded layout (offset
-// 0 of `NewSource<FileReader>`) is unchanged.
+// `&self` (or the enclosing source's `ThisPtr`); per-field interior mutability
+// via `Cell` (Copy) / `JsCell` (non-Copy). `Cell<T>` and `JsCell<T>` are both
+// `#[repr(transparent)]`, so the embedded layout (offset 0 of
+// `NewSource<FileReader>`) is unchanged.
 pub struct FileReader {
-    /// Wrapped in `UnsafeCell` so that the back-ref `*mut FileReader` (vtable
-    /// `parent`) and the reader's own `&mut self` both derive from a
-    /// SharedReadWrite root — see `BufferedReaderParent` aliasing contract
-    /// (PipeReader.rs). The vtable callbacks fire while a `&mut BufferedReader`
-    /// is live on the caller's stack and re-enter `self.reader` (close/buffer/
-    /// is_done); without `UnsafeCell` materializing `&mut FileReader` there is
-    /// Stacked-Borrows UB. Matches sibling `IOReader` (shell) port.
-    pub(crate) reader: UnsafeCell<IOReader>,
+    /// The `BufferedReader` re-enters this `FileReader` (through the enclosing
+    /// `Source`, its registered parent) from inside its own methods, so every
+    /// access is a short closure-scoped borrow.
+    pub(crate) reader: JsCell<IOReader>,
     pub(crate) done: Cell<bool>,
     pub(crate) pending: JsCell<streams::Pending>,
     pub(crate) pending_value: JsCell<Strong>, // Strong.Optional
-    // TODO(refactor): `&'static mut [u8]` forge — borrows a JS typed-array buffer
-    // that GC can move/collect, and `&'static mut` asserts uniqueness the GC
-    // does not honour. `bun_ptr::Interned` is read-only by construction so
-    // does NOT cover this; tracked under the sibling `static-widen-mut`
-    // pattern (field should become `*mut [u8]` / `RawSliceMut<u8>`).
-    pub(crate) pending_view: JsCell<&'static mut [u8]>,
     pub(crate) fd: Cell<Fd>,
     /// Read-only after construction (set via struct literal in `from_blob_*`).
     pub(crate) start_offset: Option<usize>,
     /// Length of the slice window at `start_offset`; the reader is limited to it when it is started and ends the stream there. Read-only after init.
     pub(crate) max_size: Option<usize>,
     pub(crate) started: Cell<bool>,
-    pub(crate) waiting_for_on_reader_done: Cell<bool>,
+    /// The reference held across an in-flight read (from `start()` until
+    /// `on_reader_done` / `on_reader_error`): it keeps the source — and, through
+    /// [`readable_stream::NewSource::retain`], the JS wrapper — alive so an
+    /// event-loop callback with no JS on the stack never lands on a freed source.
+    pub(crate) read_ref: Cell<Option<SourceRef<FileReader>>>,
+    /// References the embedded reader holds on the source while one of its
+    /// entry points runs (`BufferedReaderParent::ref_` / `deref`, LIFO).
+    pub(crate) reader_refs: JsCell<Vec<SourceRef<FileReader>>>,
     pub(crate) event_loop: Cell<EventLoopHandle>,
     pub(crate) lazy: JsCell<Lazy>,
     pub(crate) buffered: JsCell<Vec<u8>>,
@@ -69,16 +64,16 @@ pub struct FileReader {
 impl Default for FileReader {
     fn default() -> Self {
         Self {
-            reader: UnsafeCell::new(IOReader::init::<FileReader>()),
+            reader: JsCell::new(IOReader::init::<Source>()),
             done: Cell::new(false),
             pending: JsCell::new(streams::Pending::default()),
             pending_value: JsCell::new(Strong::empty()),
-            pending_view: JsCell::new(&mut []),
             fd: Cell::new(Fd::INVALID),
             start_offset: None,
             max_size: None,
             started: Cell::new(false),
-            waiting_for_on_reader_done: Cell::new(false),
+            read_ref: Cell::new(None),
+            reader_refs: JsCell::new(Vec::new()),
             // Sentinel only; never dispatched (callers must overwrite before use).
             event_loop: Cell::new(EventLoopHandle::init(core::ptr::null_mut())),
             lazy: JsCell::new(Lazy::None),
@@ -251,59 +246,44 @@ impl Lazy {
 
 // BufferedReader vtable parent: wires the
 // `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` callbacks.
-//
-// R-2: every mutated field on `FileReader` is `Cell`/`JsCell`/`UnsafeCell`-
-// backed, so materializing `&FileReader` via `(&*this)` does not assert Unique
-// over any byte the caller may have borrowed (SharedReadWrite root); the
-// inherent impls re-derive any reader access through `reader()`
-// (`UnsafeCell::get`).
+// The registered parent is the enclosing `Source` (root pointer), so every
+// handler receives its `ThisPtr` and reaches the `FileReader` at `.context`.
 bun_io::impl_buffered_reader_parent! {
-    FileReader for FileReader;
+    FileReader for Source;
+    borrow = this;
+    reader = context.reader;
     has_on_read_chunk = true;
-    on_read_chunk   = |this, chunk, state| (&*this).on_read_chunk(chunk, state);
-    on_reader_done  = |this| (&*this).on_reader_done();
-    on_reader_error = |this, err| (&*this).on_reader_error(err);
+    on_read_chunk   = |this, chunk, state| FileReader::on_read_chunk(this, chunk, state);
+    on_reader_done  = |this| FileReader::on_reader_done(this);
+    on_reader_error = |this, err| FileReader::on_reader_error(this, err);
     loop_ = |this| {
-        let ev = (&*this).event_loop.get();
+        let ev = this.context.event_loop.get();
         // The event loop is a libuv
         // `uv_loop_t*` on Windows. `.cast()` reconciles the impl-declared
         // `bun_uws_sys::Loop` nominal with `bun_io::Loop` (= `uv::Loop`).
         #[cfg(windows)] { ev.uv_loop().cast() }
         #[cfg(not(windows))] { ev.r#loop() }
     };
-    event_loop = |this| (&*this).event_loop.get().as_event_loop_ctx();
+    event_loop = |this| this.context.event_loop.get().as_event_loop_ctx();
     // A read delivers to `on_read_chunk` consumers (JS, or a native sink such
     // as HTMLRewriter) that can drop this stream's last GC root and allocate
     // before the read loop's frames unwind, so the reader pins its parent —
-    // and, through `increment_count`, the JS wrapper — for the duration.
-    ref_  = |this| (*(&*this).parent()).increment_count();
-    deref = |this| { let _ = Source::decrement_count((&*this).parent()); };
+    // and, through `retain`, the JS wrapper — for the duration.
+    ref_  = |this| { let retained = this.retain(); this.context.reader_refs.with_mut(|refs| refs.push(retained)); };
+    deref = |this| { let released = this.context.reader_refs.with_mut(|refs| refs.pop()); drop(released); };
 }
 
 impl FileReader {
-    /// SharedReadWrite accessor for the embedded `BufferedReader`. See the
-    /// `UnsafeCell` note on the field declaration — this is the single point
-    /// through which all `self.reader` access flows so vtable-callback
-    /// re-entrancy and outer `&mut FileReader` borrows both root at the cell.
-    /// SAFETY: single-threaded (JS event loop); the cell is the sole
-    /// SharedReadWrite root — see the unsafe block below.
+    /// This reader as the enclosing source's dispatch handle.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) fn reader(&self) -> &mut IOReader {
-        // SAFETY: `FileReader` is single-threaded (JS event loop) and every
-        // `self.reader` access flows through this accessor, so the `UnsafeCell`
-        // is the sole SharedReadWrite root — no `&mut IOReader` is held live
-        // across a vtable-callback re-entry point (see field doc comment).
-        unsafe { &mut *self.reader.get() }
+    pub(crate) fn this_ptr(&self) -> ThisPtr<Source> {
+        self.parent().this_ptr()
     }
 
-    // In-place init — `self` is the `context` field of an already-allocated
-    // `Source`; `event_loop` is set to its real value right after the reset.
-    // R-2: kept `&mut self` — init-time constructor that runs before any
-    // host-fn could re-enter; `*self =` requires unique access.
-
     pub(crate) fn on_start(&self) -> streams::Start {
-        self.reader().set_parent(self.as_ctx_ptr().cast());
+        let source = self.this_ptr();
+        self.reader
+            .with_mut(|r| r.set_parent(source.as_ptr().cast()));
         let was_lazy = !matches!(self.lazy.get(), Lazy::None);
         let mut pollable = false;
         #[cfg(unix)]
@@ -337,18 +317,18 @@ impl FileReader {
                             #[cfg(unix)]
                             {
                                 use bun_io::pipe_reader::PosixFlags;
-                                self.reader()
-                                    .flags
-                                    .set(PosixFlags::NONBLOCKING, opened.nonblocking);
-                                self.reader().flags.set(PosixFlags::POLLABLE, pollable);
+                                self.reader.with_mut(|r| {
+                                    r.flags.set(PosixFlags::NONBLOCKING, opened.nonblocking);
+                                    r.flags.set(PosixFlags::POLLABLE, pollable);
+                                });
                             }
                             #[cfg(windows)]
                             {
                                 use bun_io::pipe_reader::WindowsFlags;
-                                self.reader()
-                                    .flags
-                                    .set(WindowsFlags::NONBLOCKING, opened.nonblocking);
-                                self.reader().flags.set(WindowsFlags::POLLABLE, pollable);
+                                self.reader.with_mut(|r| {
+                                    r.flags.set(WindowsFlags::NONBLOCKING, opened.nonblocking);
+                                    r.flags.set(WindowsFlags::POLLABLE, pollable);
+                                });
                             }
                         }
                     }
@@ -357,16 +337,14 @@ impl FileReader {
         }
 
         {
-            let reader_fd = self.reader().get_fd();
+            let reader_fd = self.reader.get().get_fd();
             if reader_fd != Fd::INVALID && self.fd.get() == Fd::INVALID {
                 self.fd.set(reader_fd);
             }
         }
 
-        // `bun_vm()` returns a raw `*mut VirtualMachine` (never null for a Bun
-        // global); deref to call `event_loop()`.
         {
-            let global = self.parent_global();
+            let global = self.parent().global_this();
             // `bun_vm()` is the live thread-local VM; `event_loop()` is its
             // per-thread `jsc::EventLoop`.
             self.event_loop.set(EventLoopHandle::init(
@@ -375,10 +353,10 @@ impl FileReader {
         }
 
         if was_lazy {
-            // The across-read ref roots the JS wrapper (`increment_count`
-            // upgrades `this_jsvalue` to Strong) so an event-loop callback
-            // firing with no JS on the stack never lands on a freed box. For a
-            // POSIX non-pollable regular file every read is synchronous
+            // The across-read ref roots the JS wrapper (`retain` upgrades
+            // `this_jsvalue` to Strong) so an event-loop callback firing with
+            // no JS on the stack never lands on a freed source. For a POSIX
+            // non-pollable regular file every read is synchronous
             // (`read_file` → `sys::pread`), so there is no such callback —
             // holding the Strong there would root an abandoned reader forever
             // and leak its fd. Windows file reads are async via libuv even for
@@ -388,23 +366,15 @@ impl FileReader {
             #[cfg(windows)]
             let need_io_ref = true;
             if need_io_ref {
-                // SAFETY: see `parent()`.
-                unsafe { (*self.parent()).increment_count() };
-                self.waiting_for_on_reader_done.set(true);
+                self.read_ref.set(Some(source.retain()));
             }
-            self.reader().set_limit(self.max_size);
-            let start_result = if let Some(offset) = self.start_offset {
-                self.reader()
-                    .start_file_offset(self.fd.get(), pollable, offset)
-            } else {
-                self.reader().start(self.fd.get(), pollable)
-            };
+            self.reader.with_mut(|r| r.set_limit(self.max_size));
+            let start_result =
+                IOReader::start_from(source, self.fd.get(), pollable, self.start_offset);
             if let Err(e) = start_result {
                 if need_io_ref {
-                    self.waiting_for_on_reader_done.set(false);
-                    let parent = self.parent();
-                    // SAFETY: see `parent()`; JS finalizer still holds a ref so this cannot free it.
-                    let _ = unsafe { Source::decrement_count(parent) };
+                    // The JS wrapper still holds its reference, so this cannot free the source.
+                    drop(self.read_ref.take());
                 }
                 return streams::Start::Err(e);
             }
@@ -413,13 +383,11 @@ impl FileReader {
             {
                 use bun_io::pipe_reader::PosixFlags;
                 if !self.started.get()
-                    && !self.waiting_for_on_reader_done.get()
-                    && self.reader().flags.contains(PosixFlags::POLLABLE)
-                    && !self.reader().is_done()
+                    && !self.has_read_ref()
+                    && self.reader.get().flags.contains(PosixFlags::POLLABLE)
+                    && !self.reader.get().is_done()
                 {
-                    self.waiting_for_on_reader_done.set(true);
-                    // SAFETY: see `parent()`.
-                    unsafe { (*self.parent()).increment_count() };
+                    self.read_ref.set(Some(source.retain()));
                 }
             }
             #[cfg(windows)]
@@ -428,13 +396,11 @@ impl FileReader {
                 // ref across the pending uv_read_start so the source is not
                 // finalized while IOCP has a read queued on it.
                 if !self.started.get()
-                    && !self.waiting_for_on_reader_done.get()
-                    && self.reader().source.is_some()
-                    && !self.reader().is_done()
+                    && !self.has_read_ref()
+                    && self.reader.get().source.is_some()
+                    && !self.reader.get().is_done()
                 {
-                    self.waiting_for_on_reader_done.set(true);
-                    // SAFETY: see `parent()`.
-                    unsafe { (*self.parent()).increment_count() };
+                    self.read_ref.set(Some(source.retain()));
                 }
             }
         }
@@ -443,10 +409,10 @@ impl FileReader {
         {
             use bun_io::pipe_reader::PosixFlags;
             if file_type == FileType::Socket {
-                self.reader().flags.insert(PosixFlags::SOCKET);
+                self.reader.with_mut(|r| r.flags.insert(PosixFlags::SOCKET));
             }
 
-            let r = self.reader();
+            let r = self.reader.get();
             if let Some(poll) = r.handle.get_poll() {
                 // `bun_io::FilePoll` is an opaque vtable wrapper; flag
                 // mutation goes through `set_flag(FilePollFlag)`.
@@ -466,7 +432,7 @@ impl FileReader {
 
         self.started.set(true);
 
-        if self.reader().is_done() {
+        if self.reader.get().is_done() {
             self.consume_reader_buffer();
             if !self.buffered.get().is_empty() {
                 return streams::Start::OwnedAndDone(Vec::<u8>::move_from_list(
@@ -477,13 +443,12 @@ impl FileReader {
             #[cfg(unix)]
             {
                 use bun_io::pipe_reader::PosixFlags;
-                if !was_lazy && self.reader().flags.contains(PosixFlags::POLLABLE) {
+                if !was_lazy && self.reader.get().flags.contains(PosixFlags::POLLABLE) {
                     // A from_pipe() reader may arrive with IS_PAUSED set (lazy
                     // subprocess stdio); clear it so read() does not no-op.
-                    self.reader().unpause();
-                    // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
-                    // the raw re-entrancy-safe entry (its dispatch runs user JS).
-                    unsafe { IOReader::read(self.reader.get()) };
+                    IOReader::unpause_from(source);
+                    // `read_from` is the re-entrancy-safe entry (its dispatch runs user JS).
+                    IOReader::read_from(source);
                 }
             }
         }
@@ -491,17 +456,12 @@ impl FileReader {
         streams::Start::Ready
     }
 
-    /// Safe accessor for the parent `NewSource.global_this` back-reference.
-    ///
-    /// One unsafe (`from_field_ptr` raw-place projection of a `Copy` field —
-    /// no `&Source` is materialized so no aliasing with `&self`); callers
-    /// then `Deref` the returned `BackRef` with no unsafe.
     #[inline]
-    fn parent_global(&self) -> bun_ptr::BackRef<jsc::JSGlobalObject> {
-        // SAFETY: see `parent()` — `self` is the `context` field of a live
-        // heap-allocated `Source`. Reading the `Copy` `global_this` via
-        // `(*ptr).field` is a raw-place read, not a `&Source` borrow.
-        unsafe { (*self.parent()).global_this }.expect("NewSource.global_this set before use")
+    fn has_read_ref(&self) -> bool {
+        let r = self.read_ref.take();
+        let held = r.is_some();
+        self.read_ref.set(r);
+        held
     }
 
     /// Lazily start the reader for a native-sink hookup. Bun's file-backed
@@ -513,9 +473,7 @@ impl FileReader {
         if self.started.get() {
             return None;
         }
-        // SAFETY: see `parent()` — `self` is the `context` field of a live
-        // heap-allocated `Source`; single-threaded JS, no aliasing `&mut`.
-        unsafe { (*self.parent()).global_this = Some(bun_ptr::BackRef::new(global)) };
+        self.parent().set_global_this(global);
         match self.on_start() {
             streams::Start::Ready | streams::Start::Empty | streams::Start::ChunkSize(_) => None,
             other => Some(other),
@@ -530,16 +488,17 @@ impl FileReader {
     }
 
     /// Sink's drain ack: unpause, push any buffered bytes, then resume reading.
-    pub(crate) fn pull_into_sink(&self) {
-        if !self.sink_paused.replace(false) {
+    pub(crate) fn pull_into_sink(this: ThisPtr<Source>) {
+        let self_ = &this.context;
+        if !self_.sink_paused.replace(false) {
             return;
         }
-        let sink = *self.sink.get();
+        let sink = *self_.sink.get();
         if sink.is_none() {
             return;
         }
-        let reader_done = self.reader().is_done();
-        let buffered = self.drain();
+        let reader_done = self_.reader.get().is_done();
+        let buffered = self_.drain();
         if !buffered.is_empty() {
             let chunk = if reader_done {
                 streams::Result::OwnedAndDone(buffered)
@@ -548,33 +507,32 @@ impl FileReader {
             };
             match sink.write(&chunk) {
                 streams::Writable::Backpressure(_) => {
-                    self.sink_paused.set(true);
-                    self.reader().pause();
+                    self_.sink_paused.set(true);
+                    self_.reader.with_mut(|r| r.pause());
                     return;
                 }
                 streams::Writable::Err(e) => {
-                    self.sink.set(SinkHandle::None);
+                    self_.sink.set(SinkHandle::None);
                     sink.end(Some(streams::StreamError::Error(e)));
                     return;
                 }
                 streams::Writable::Done => {
-                    self.sink.set(SinkHandle::None);
+                    self_.sink.set(SinkHandle::None);
                     sink.end(None);
                     return;
                 }
                 _ => {}
             }
         }
-        if reader_done || self.done.get() {
-            self.sink.set(SinkHandle::None);
+        if reader_done || self_.done.get() {
+            self_.sink.set(SinkHandle::None);
             sink.end(None);
             return;
         }
-        if !self.reader().has_pending_read() {
-            self.reader().unpause();
-            // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
-            // the raw re-entrancy-safe entry (its dispatch runs user JS).
-            unsafe { IOReader::read(self.reader.get()) };
+        if !self_.reader.get().has_pending_read() {
+            IOReader::unpause_from(this);
+            // `read_from` is the re-entrancy-safe entry (its dispatch runs user JS).
+            IOReader::read_from(this);
         }
     }
 
@@ -584,37 +542,35 @@ impl FileReader {
             return;
         }
         self.done.set(true);
-        self.reader().update_ref(false);
-        if !self.reader().is_done() {
-            self.reader().close();
+        self.reader.with_mut(|r| r.update_ref(false));
+        if !self.reader.get().is_done() {
+            // Its done callback re-enters `on_reader_done`.
+            IOReader::close_from(self.this_ptr());
         }
     }
 
     // NOTE: not `impl Drop` — FileReader is embedded as `Source.context` and this is
-    // invoked from the Source's JS finalizer path via `SourceContext::deinit_fn`.
-    // Not `pub`: reached only via the `SourceContext` trait impl below.
-    //
-    // Only side-effect teardown lives here. Owned fields (buffered: Vec, reader:
-    // BufferedReader, pending_value: Strong, lazy: Arc) drop when the caller
-    // (`NewSource::decrement_count`) reclaims the `Box<Source>` *after* this
-    // returns. Freeing the parent here would
-    // deallocate the storage backing `&self` while the borrow is still live
-    // — a dangling-reference UAF — so ownership release stays with the caller.
+    // invoked from the Source's `Drop` via `SourceContext::deinit_fn`, before the
+    // owned fields (buffered, reader, pending_value, lazy) drop.
     fn deinit(&self) {
-        self.reader().update_ref(false);
+        self.reader.with_mut(|r| r.update_ref(false));
     }
 
-    fn finalize_detach(&self) -> bool {
-        debug_assert!(!(self.done.get() && self.waiting_for_on_reader_done.get()));
-        if self.done.get() || !self.waiting_for_on_reader_done.get() {
-            return false;
+    /// The JS wrapper is being finalized: if a read is still in flight, give up
+    /// its reference (the wrapper it was rooting is gone) and mark the reader done.
+    fn finalize_detach(&self) {
+        let read_ref = self.read_ref.take();
+        debug_assert!(!(self.done.get() && read_ref.is_some()));
+        if self.done.get() || read_ref.is_none() {
+            self.read_ref.set(read_ref);
+            return;
         }
-        self.waiting_for_on_reader_done.set(false);
         self.done.set(true);
-        true
+        drop(read_ref);
     }
 
-    pub(crate) fn on_read_chunk(&self, chunk: Chunk<'_>, state: ReadState) -> bool {
+    pub(crate) fn on_read_chunk(this: ThisPtr<Source>, chunk: Chunk<'_>, state: ReadState) -> bool {
+        let self_ = &this.context;
         bun_core::scoped_log!(
             FileReader,
             "onReadChunk() = {} ({})",
@@ -622,35 +578,35 @@ impl FileReader {
             read_state_tag(state)
         );
 
-        if self.done.get() {
-            self.reader().close();
+        if self_.done.get() {
+            IOReader::close_from(this);
             return false;
         }
         let has_more = state != ReadState::Eof;
 
-        let sink = *self.sink.get();
+        let sink = *self_.sink.get();
         if sink.is_some() {
-            self.write_chunk_to_sink(sink, &chunk, has_more)
-        } else if self.pending.get().state == streams::PendingState::Pending {
+            self_.write_chunk_to_sink(sink, &chunk, has_more)
+        } else if self_.pending.get().state == streams::PendingState::Pending {
             // Pipes may return 0-byte reads short of EOF; keep reading.
             if chunk.is_empty() && state == ReadState::Drained {
                 true
             } else {
-                self.resolve_pending_read(chunk, has_more)
+                Self::resolve_pending_read(this, chunk, has_more)
             }
         } else {
-            if self.buffered.get().is_empty() && chunk.is_owned() {
-                self.buffered.set(chunk.take());
+            if self_.buffered.get().is_empty() && chunk.is_owned() {
+                self_.buffered.set(chunk.take());
             } else {
-                self.buffered.with_mut(|b| b.extend_from_slice(&chunk));
+                self_.buffered.with_mut(|b| b.extend_from_slice(&chunk));
             }
             // No JS read is waiting; stop at the highwater mark and let onPull restart. `started` gates it: a non-lazy `Bun.spawn` pipe is already reading before any consumer attaches, and throttling then deadlocks a child alternating stdout/stderr writes.
-            let keep_going = !self.started.get()
-                || (self.flowing.get() && self.buffered.get().len() < self.highwater_mark);
+            let keep_going = !self_.started.get()
+                || (self_.flowing.get() && self_.buffered.get().len() < self_.highwater_mark);
             // A completion-driven reader keeps issuing reads unless stopped; `on_pull` restarts it.
             #[cfg(windows)]
             if !keep_going {
-                self.reader().pause();
+                self_.reader.with_mut(|r| r.pause());
             }
             keep_going
         }
@@ -668,7 +624,7 @@ impl FileReader {
                 streams::Writable::Backpressure(_) => {
                     // Returning `false` ends a synchronous read loop; an event-driven reader (Windows, pollable fds) has to be paused or its next completion piles into the sink. `pull_into_sink` unpauses.
                     self.sink_paused.set(true);
-                    self.reader().pause();
+                    self.reader.with_mut(|r| r.pause());
                     return false;
                 }
                 streams::Writable::Err(e) => {
@@ -692,36 +648,37 @@ impl FileReader {
     }
 
     /// Settles the parked JS read with `chunk` (invariant: a parked read means `buffered` was already drained into it).
-    fn resolve_pending_read(&self, chunk: Chunk<'_>, has_more: bool) -> bool {
-        let was_done = self.reader().is_done();
-        let global = self.parent_global();
-        let mut pending_array_buffer = self
+    fn resolve_pending_read(this: ThisPtr<Source>, chunk: Chunk<'_>, has_more: bool) -> bool {
+        let self_ = &this.context;
+        let was_done = self_.reader.get().is_done();
+        let global = this.global_this();
+        let mut pending_array_buffer = self_
             .pending_value
             .get()
             .get()
-            .and_then(|view| view.as_array_buffer(&global))
+            .and_then(|view| view.as_array_buffer(global))
             .unwrap_or_default();
         let pending_buf = pending_array_buffer.slice_mut();
         let ret = if chunk.is_empty() {
-            let buffered = self.buffered.replace(Vec::new());
+            let buffered = self_.buffered.replace(Vec::new());
             let result = if buffered.is_empty() {
                 streams::Result::Done
             } else if pending_buf.len() >= buffered.len() {
                 pending_buf[..buffered.len()].copy_from_slice(&buffered);
                 streams::Result::IntoArrayAndDone(streams::IntoArray {
-                    value: self.pending_value.get().get().unwrap_or_default(),
+                    value: self_.pending_value.get().get().unwrap_or_default(),
                     len: buffered.len() as u64,
                 })
             } else {
                 streams::Result::OwnedAndDone(buffered)
             };
-            self.pending.with_mut(|p| p.result = result);
+            self_.pending.with_mut(|p| p.result = result);
             false
         } else {
             let result = if pending_buf.len() >= chunk.len() {
                 pending_buf[..chunk.len()].copy_from_slice(&chunk);
                 let into = streams::IntoArray {
-                    value: self.pending_value.get().get().unwrap_or_default(),
+                    value: self_.pending_value.get().get().unwrap_or_default(),
                     len: chunk.len() as u64,
                 };
                 if was_done {
@@ -740,25 +697,20 @@ impl FileReader {
                 // Copied into a fresh Uint8Array by `run()` below, before this returns.
                 streams::Result::Temporary(bun_ptr::RawSlice::new(&chunk))
             };
-            self.pending.with_mut(|p| p.result = result);
+            self_.pending.with_mut(|p| p.result = result);
             !was_done
         };
-        self.pending_value
+        self_
+            .pending_value
             .with_mut(|p| p.clear_without_deallocation());
-        self.pending_view.set(&mut []);
-        // Pin across `run()`: a re-entrant cancel() reaches on_reader_done, which drops the across-read ref and lets a GC free this box while the io caller still holds `&mut` into it.
-        let parent = self.parent();
-        // SAFETY: see `parent()`.
-        unsafe { (*parent).increment_count() };
-        self.pending.with_mut(|p| p.run());
+        // Pin across `run()`: a re-entrant cancel() reaches on_reader_done, which drops the across-read ref and lets a GC free this source while the io caller is still inside it.
+        let _pin = this.retain();
+        self_.pending.with_mut(|p| p.run());
         // Re-entrant cancel or a nested pull that read to EOF closed the reader; tell the io caller to stop so it does not re-read the captured fd.
-        let ret = ret && !self.done.get() && !self.reader().is_done();
-        // SAFETY: see `parent()`; the pin keeps the count >= 1, so this never frees. `self` is not accessed after.
-        let _ = unsafe { Source::decrement_count(parent) };
-        ret
+        ret && !self_.done.get() && !self_.reader.get().is_done()
     }
 
-    pub(crate) fn on_pull(&self, buffer: &'static mut [u8], array: JSValue) -> streams::Result {
+    pub(crate) fn on_pull(&self, buffer: &mut [u8], array: JSValue) -> streams::Result {
         // `buffer` borrows a JS typed array kept alive by `array`.
         array.ensure_still_alive();
         let _keep = EnsureStillAlive(array);
@@ -769,7 +721,6 @@ impl FileReader {
 
             self.pending_value
                 .with_mut(|p| p.clear_without_deallocation());
-            self.pending_view.set(&mut []);
 
             if buffer.len() >= drained.len() as usize {
                 let drained_len = drained.len();
@@ -779,7 +730,7 @@ impl FileReader {
                 // `drained` here — freeing `self.buffered` would be a no-op.
                 drop(drained);
 
-                if self.reader().is_done() {
+                if self.reader.get().is_done() {
                     return streams::Result::IntoArrayAndDone(streams::IntoArray {
                         value: array,
                         len: drained_len as u64,
@@ -792,22 +743,22 @@ impl FileReader {
                 }
             }
 
-            if self.reader().is_done() {
+            if self.reader.get().is_done() {
                 return streams::Result::OwnedAndDone(drained);
             } else {
                 return streams::Result::Owned(drained);
             }
         }
 
-        if self.reader().is_done() {
+        if self.reader.get().is_done() {
             return streams::Result::Done;
         }
 
-        if !self.reader().has_pending_read() && self.flowing.get() {
-            // SAFETY: the reader cell is live for `self`'s lifetime; `read_into` is the raw re-entrancy-safe entry (EOF/error dispatch runs user JS).
-            let (amount_read, state) = unsafe { IOReader::read_into(self.reader.get(), buffer) };
+        if !self.reader.get().has_pending_read() && self.flowing.get() {
+            // `read_into_from` is the re-entrancy-safe entry (EOF/error dispatch runs user JS).
+            let (amount_read, state) = IOReader::read_into_from(self.this_ptr(), buffer);
             bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), amount_read);
-            let done = state == ReadState::Eof || self.reader().is_done();
+            let done = state == ReadState::Eof || self.reader.get().is_done();
             if amount_read > 0 {
                 let into = streams::IntoArray {
                     value: array,
@@ -834,139 +785,120 @@ impl FileReader {
         }
 
         let buffer_len = buffer.len();
-        let global = self.parent_global();
-        self.pending_value.with_mut(|p| p.set(&global, array));
-        self.pending_view.set(buffer);
+        let global = self.parent().global_this();
+        self.pending_value.with_mut(|p| p.set(global, array));
         #[cfg(windows)]
         if self.flowing.get() {
-            self.reader().unpause();
+            IOReader::unpause_from(self.this_ptr());
         }
 
         bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
 
-        streams::Result::Pending(self.pending.as_ptr())
+        streams::Result::Pending(bun_ptr::BackRef::new(&self.pending))
     }
 
     pub(crate) fn drain(&self) -> Vec<u8> {
         if !self.buffered.get().is_empty() {
             let out = Vec::<u8>::move_from_list(self.buffered.replace(Vec::new()));
-            debug_assert!(self.reader().buffer().as_ptr() != out.as_ptr());
+            debug_assert!(self.reader.with_mut(|r| r.buffer().as_ptr()) != out.as_ptr());
             return out;
         }
 
-        if self.reader().has_pending_read() {
+        if self.reader.get().has_pending_read() {
             return Vec::<u8>::default();
         }
 
-        Vec::<u8>::move_from_list(mem::take(self.reader().buffer()))
+        Vec::<u8>::move_from_list(self.reader.with_mut(|r| mem::take(r.buffer())))
     }
 
     pub(crate) fn set_ref_or_unref(&self, enable: bool) {
         if self.done.get() {
             return;
         }
-        self.reader().update_ref(enable);
+        self.reader.with_mut(|r| r.update_ref(enable));
     }
 
     fn consume_reader_buffer(&self) {
         if self.buffered.get().capacity() == 0 {
-            self.buffered.set(mem::take(self.reader().buffer()));
+            self.buffered
+                .set(self.reader.with_mut(|r| mem::take(r.buffer())));
         }
     }
 
-    pub(crate) fn on_reader_done(&self) {
+    pub(crate) fn on_reader_done(this: ThisPtr<Source>) {
+        let self_ = &this.context;
         bun_core::scoped_log!(FileReader, "onReaderDone()");
         // Pin across `p.run()` and `on_close()`: both can run user JS, and the
-        // `self.buffered` / `waiting_for_on_reader_done` reads below must not
-        // land on a freed box. Same bracket as on_read_chunk / on_reader_error.
-        let parent = self.parent();
-        // SAFETY: see `parent()`.
-        unsafe { (*parent).increment_count() };
-        let sink = *self.sink.get();
+        // `buffered` / `read_ref` accesses below must not land on a freed
+        // source. Same bracket as on_read_chunk / on_reader_error.
+        let _pin = this.retain();
+        let sink = *self_.sink.get();
         if sink.is_some() {
-            self.consume_reader_buffer();
-            if !self.sink_paused.get() {
-                self.sink.set(SinkHandle::None);
-                let buffered = self.buffered.replace(Vec::new());
+            self_.consume_reader_buffer();
+            if !self_.sink_paused.get() {
+                self_.sink.set(SinkHandle::None);
+                let buffered = self_.buffered.replace(Vec::new());
                 if !buffered.is_empty() {
                     let _ = sink.write(&streams::Result::OwnedAndDone(buffered));
                 }
                 sink.end(None);
             }
         } else {
-            self.consume_reader_buffer();
-            if self.pending.get().state == streams::PendingState::Pending {
-                if !self.buffered.get().is_empty() {
-                    let buffered = self.buffered.replace(Vec::new());
-                    self.pending.with_mut(|p| {
+            self_.consume_reader_buffer();
+            if self_.pending.get().state == streams::PendingState::Pending {
+                if !self_.buffered.get().is_empty() {
+                    let buffered = self_.buffered.replace(Vec::new());
+                    self_.pending.with_mut(|p| {
                         p.result =
                             streams::Result::OwnedAndDone(Vec::<u8>::move_from_list(buffered))
                     });
                 } else {
-                    self.pending.with_mut(|p| p.result = streams::Result::Done);
+                    self_.pending.with_mut(|p| p.result = streams::Result::Done);
                 }
-                self.buffered.set(Vec::new());
-                self.pending.with_mut(|p| p.run());
+                self_.buffered.set(Vec::new());
+                self_.pending.with_mut(|p| p.run());
             }
             // Don't handle buffered data here - it will be returned on the next onPull
             // This ensures proper ordering of chunks
         }
 
         // Only close the stream if there's no buffered data left to deliver
-        if self.buffered.get().is_empty() {
-            // SAFETY: see `parent()`; the pin keeps the count > 0.
-            unsafe { (*parent).on_close() };
+        if self_.buffered.get().is_empty() {
+            this.on_close();
         }
-        if self.waiting_for_on_reader_done.get() {
-            self.waiting_for_on_reader_done.set(false);
-            // SAFETY: see `parent()`; the pin above keeps the count > 0.
-            let _ = unsafe { Source::decrement_count(parent) };
-        }
-        // SAFETY: see `parent()`; releases the pin. Tail position — `self` (a
-        // field of `*parent`) is not accessed after this call, which may free
-        // the allocation when the refcount hits zero.
-        let _ = unsafe { Source::decrement_count(parent) };
+        drop(self_.read_ref.take());
     }
 
-    pub(crate) fn on_reader_error(&self, err: sys::Error) {
-        self.consume_reader_buffer();
-        if self.buffered.get().capacity() > 0 && self.buffered.get().is_empty() {
-            self.buffered.set(Vec::new());
+    pub(crate) fn on_reader_error(this: ThisPtr<Source>, err: sys::Error) {
+        let self_ = &this.context;
+        self_.consume_reader_buffer();
+        if self_.buffered.get().capacity() > 0 && self_.buffered.get().is_empty() {
+            self_.buffered.set(Vec::new());
         }
 
-        let sink = *self.sink.get();
+        let sink = *self_.sink.get();
         if sink.is_some() {
-            self.sink.set(SinkHandle::None);
-            self.sink_paused.set(false);
+            self_.sink.set(SinkHandle::None);
+            self_.sink_paused.set(false);
             sink.end(Some(streams::StreamError::Error(err)));
-            let parent = self.parent();
-            if self.waiting_for_on_reader_done.get() && !self.done.get() {
-                self.waiting_for_on_reader_done.set(false);
-                // SAFETY: see `parent()`.
-                let _ = unsafe { Source::decrement_count(parent) };
+            if !self_.done.get() {
+                drop(self_.read_ref.take());
             }
             return;
         }
 
-        self.pending.with_mut(|p| {
+        self_.pending.with_mut(|p| {
             p.result = streams::Result::Err(streams::StreamError::Error(err));
         });
         // Pin across `p.run()`: it runs user JS, and anything there that
         // reaches on_reader_done would drop the across-read ref and let a GC
-        // free this box before the `waiting_for_on_reader_done` read below.
-        let parent = self.parent();
-        // SAFETY: see `parent()`.
-        unsafe { (*parent).increment_count() };
-        self.pending.with_mut(|p| p.run());
+        // free this source before the `read_ref` access below.
+        let _pin = this.retain();
+        self_.pending.with_mut(|p| p.run());
 
-        if self.waiting_for_on_reader_done.get() && !self.done.get() {
-            self.waiting_for_on_reader_done.set(false);
-            // SAFETY: see `parent()`; the pin above keeps the count > 0.
-            let _ = unsafe { Source::decrement_count(parent) };
+        if !self_.done.get() {
+            drop(self_.read_ref.take());
         }
-        // SAFETY: see `parent()`; the pin keeps the count >= 1, so this never
-        // frees. Tail call, `self` is not accessed after.
-        let _ = unsafe { Source::decrement_count(parent) };
     }
 
     pub(crate) fn set_raw_mode(&self, _flag: bool) -> sys::Result<()> {
@@ -979,7 +911,7 @@ impl FileReader {
         }
         #[cfg(windows)]
         {
-            self.reader().set_raw_mode(_flag)
+            self.reader.with_mut(|r| r.set_raw_mode(_flag))
         }
     }
 
@@ -998,73 +930,59 @@ impl FileReader {
         self.flowing.set(flag);
 
         if flag {
-            self.reader().unpause();
-            if !self.reader().is_done() && !self.reader().has_pending_read() {
+            IOReader::unpause_from(self.this_ptr());
+            if !self.reader.get().is_done() && !self.reader.get().has_pending_read() {
                 // Kick off a new read if needed
-                // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
-                // the raw re-entrancy-safe entry (its dispatch runs user JS).
-                unsafe { IOReader::read(self.reader.get()) };
+                IOReader::read_from(self.this_ptr());
             }
         } else {
-            self.reader().pause();
+            self.reader.with_mut(|r| r.pause());
         }
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
         // ReadableStreamSource covers @sizeOf(FileReader)
-        self.reader().memory_cost() + self.buffered.get().capacity()
+        self.reader.get().memory_cost() + self.buffered.get().capacity()
     }
 }
 
 pub type Source = readable_stream::NewSource<FileReader>;
 
-// SAFETY: `FileReader` is always the `context` field of a heap-allocated
-// `Source`. `parent` is the `raw` arm because the ref-count pin
-// (`increment_count`/`decrement_count`) and `global_this` are plain `Source`
-// fields; callers deref in a tight `unsafe { (*ptr).method() }` scope and never
-// hold `&mut Source` across other `self.*` accesses.
-bun_core::impl_field_parent! { FileReader => Source.context; pub fn raw parent; pub fn shared parent_const; }
+// Every `FileReader` is the `context` field of a heap-allocated `Source`.
+bun_core::impl_field_parent! { FileReader => Source.context; pub fn shared parent; pub fn shared parent_const; }
 
 impl readable_stream::SourceContext for FileReader {
     const NAME: &'static str = "File";
     const SUPPORTS_REF: bool = true;
     crate::source_context_codegen!(js_FileInternalReadableStreamSource);
-    // R-2: trait sigs are still `&mut self` (shared with ByteBlobLoader/
-    // ByteStream — separate migration); the inherent impls take `&self`, so
-    // these forward via auto-deref. The `&mut` here is what the codegen shim
-    // currently emits; once `NewSource` is celled the trait flips to `&self`
-    // and these become straight `Self::*(self, ..)` calls.
-    fn on_start(&mut self) -> streams::Start {
+    fn on_start(&self) -> streams::Start {
         Self::on_start(self)
     }
-    fn on_pull(&mut self, buf: &mut [u8], arr: JSValue) -> streams::Result {
-        // SAFETY: lifetime laundering — `buf` borrows a JS typed array kept alive
-        // by `arr` (see the lifetime note at the top of the file).
-        let buf = unsafe { &mut *std::ptr::from_mut::<[u8]>(buf) };
+    fn on_pull(&self, buf: &mut [u8], arr: JSValue) -> streams::Result {
         Self::on_pull(self, buf, arr)
     }
-    fn on_cancel(&mut self) {
+    fn on_cancel(&self) {
         Self::on_cancel(self);
     }
-    fn deinit_fn(&mut self) {
+    fn deinit_fn(&self) {
         Self::deinit(self)
     }
-    fn finalize_detach(&mut self) -> bool {
+    fn finalize_detach(&self) {
         Self::finalize_detach(self)
     }
-    fn set_ref_unref(&mut self, e: bool) {
+    fn set_ref_unref(&self, e: bool) {
         Self::set_ref_or_unref(self, e)
     }
-    fn drain_internal_buffer(&mut self) -> Vec<u8> {
+    fn drain_internal_buffer(&self) -> Vec<u8> {
         Self::drain(self)
     }
     fn memory_cost_fn(&self) -> usize {
         Self::memory_cost(self)
     }
-    fn set_raw_mode(&mut self, flag: bool) -> Option<sys::Result<()>> {
+    fn set_raw_mode(&self, flag: bool) -> Option<sys::Result<()>> {
         Some(Self::set_raw_mode(self, flag))
     }
-    fn set_flowing(&mut self, flag: bool) {
+    fn set_flowing(&self, flag: bool) {
         Self::set_flowing(self, flag)
     }
     // toBufferedValue: null

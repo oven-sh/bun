@@ -1138,6 +1138,16 @@ pub mod store {
             // live; `as_ptr` carries the allocation's provenance.
             unsafe { &mut (*this.as_ptr()).data }
         }
+
+        /// Overwrite `mime_type` through the shared handle (same discipline
+        /// as [`data_mut`](Self::data_mut)).
+        #[inline]
+        pub fn set_mime_type(this: &RefPtr<Store>, mime_type: MimeType) {
+            // SAFETY: single-threaded JS event-loop discipline — no `&`/`&mut`
+            // to `mime_type` is held across this write; `as_ptr` carries the
+            // allocation's provenance.
+            unsafe { (*this.as_ptr()).mime_type = mime_type };
+        }
     }
 
     // SAFETY: `Store`'s refcount is atomic and its payload is either

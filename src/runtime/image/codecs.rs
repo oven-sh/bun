@@ -514,6 +514,13 @@ macro_rules! encoded_wrap_free {
 }
 
 impl Encoded {
+    /// The encoded bytes (owned by `self` until drop).
+    #[inline]
+    pub(crate) fn as_slice(&self) -> &[u8] {
+        // SAFETY: `bytes` is the live codec allocation `self` owns and frees on drop.
+        unsafe { self.bytes.as_ref() }
+    }
+
     #[allow(dead_code)]
     pub(crate) fn from_owned(bytes: Vec<u8>) -> Encoded {
         let mut bytes = core::mem::ManuallyDrop::new(bytes);

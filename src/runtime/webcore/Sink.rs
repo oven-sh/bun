@@ -218,26 +218,22 @@ impl<T: JsSinkAbi> JSSink<T> {
     }
 
     /// Pump `stream` into the sink through a new `JSReadable*SinkController`,
-    /// kept as the sink's `source()`. It is installed before the pump starts
-    /// because the pump drains whatever the stream already holds (user code
-    /// included) before returning, and a sink failing in there detaches its
-    /// `source()`.
+    /// handed to `set_source` (the sink keeps it as its `source()`). It is
+    /// installed before the pump starts because the pump drains whatever the
+    /// stream already holds (user code included) before returning, and a sink
+    /// failing in there detaches its `source()`. `ptr` becomes the
+    /// controller's `m_sinkPtr`.
     pub fn assign_to_stream(
         global: &crate::webcore::jsc::JSGlobalObject,
         stream: crate::webcore::jsc::JSValue,
-        mut ptr: NonNull<T>,
+        ptr: NonNull<T>,
+        set_source: impl FnOnce(SourceHandle),
     ) -> crate::webcore::jsc::JSValue
     where
         T: JsSinkType,
     {
-        // SAFETY: `ptr` is a live sink owned by the caller for this synchronous
-        // call; the pointer is only stashed in C++ `m_sinkPtr`.
-        let ptr = unsafe { ptr.as_mut() };
-        let controller =
-            T::create_controller_extern(global, std::ptr::from_mut::<T>(ptr).cast::<c_void>());
-        if let Some(src) = ptr.source() {
-            *src = streams::SourceHandle::JSController(controller);
-        }
+        let controller = T::create_controller_extern(global, ptr.as_ptr().cast::<c_void>());
+        set_source(streams::SourceHandle::JSController(controller));
         let result = streams::controller_abi::assign_to_stream(global, stream, controller);
         // Setup threw (e.g. a direct stream's `pull` getter): nothing will ever
         // end()/close() the controller, and its destructor would otherwise run
@@ -275,6 +271,14 @@ impl<T: JsSinkAbi> JSSink<T> {
     }
 }
 
+/// See [`JsSinkType::FINALIZE`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum FinalizeReceiver {
+    ThisPtr,
+    Mut,
+    Box,
+}
+
 /// Trait collecting every method `JSSink` may call on the wrapped `SinkType`.
 /// Most of these are optional, modeled with default method bodies and
 /// associated `const` gates.
@@ -294,13 +298,29 @@ pub trait JsSinkType: Sized + JsSinkAbi {
     /// `Start::from_js_with_tag` branch in `JSSink::js_start`.
     const START_TAG: Option<streams::StartTag> = None;
 
+    /// How `${abi}__finalize` / `${abi}__controllerFinalize` hand `m_sinkPtr`
+    /// over: which of [`finalize`](Self::finalize) /
+    /// [`finalize_mut`](Self::finalize_mut) / [`finalize_boxed`](Self::finalize_boxed)
+    /// the codegen'd thunk calls.
+    const FINALIZE: FinalizeReceiver = FinalizeReceiver::ThisPtr;
+
     fn memory_cost(&self) -> usize;
     /// `${abi}__finalize`: the JS wrapper cell holding `this` as `m_sinkPtr`
     /// is giving up its claim on the sink, and never uses it again. `ThisPtr`,
-    /// not `&mut self`: for `ArrayBufferSink`, `FileSink` and
-    /// `FetchRequestBodySink` that releases the allocation, and freeing under
-    /// a live reference argument is UB.
+    /// not `&mut self`: for `FileSink` and `FetchRequestBodySink` that
+    /// releases the allocation, and freeing under a live reference argument
+    /// is UB.
     fn finalize(this: bun_ptr::ThisPtr<Self>);
+    /// [`FinalizeReceiver::Mut`]: the sink outlives the call (someone else
+    /// frees it), so the wrapper's pointer is a plain exclusive borrow.
+    fn finalize_mut(&mut self) {
+        unreachable!("JsSinkType::finalize_mut on {}", Self::NAME);
+    }
+    /// [`FinalizeReceiver::Box`]: the JS wrapper was the sink's sole owner
+    /// (`construct` leaked a `Box` into `m_sinkPtr`) and hands it back.
+    fn finalize_boxed(self: Box<Self>) {
+        unreachable!("JsSinkType::finalize_boxed on {}", Self::NAME);
+    }
     /// `${abi}__controllerFinalize`: a `JSReadable*Controller` died still
     /// attached to the sink (heap teardown; a live controller detaches first).
     /// A sink whose controller path holds a different claim than its wrapper
@@ -389,19 +409,20 @@ pub trait JsSinkType: Sized + JsSinkAbi {
 // no lut entry and no C++ caller.
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Resolves a host call's `this` to the wrapper's sink (the codegen'd
+/// `${name}__getThis`, which owns the `m_sinkPtr` deref).
+pub type GetThis<'a, T> = fn(
+    &crate::webcore::jsc::JSGlobalObject,
+    &crate::webcore::jsc::CallFrame,
+) -> crate::webcore::jsc::JsResult<&'a mut JSSink<T>>;
+
 impl<T: JsSinkType> JSSink<T> {
-    /// `JSSink.getThis` — recover `&mut JSSink<T>` from `callframe.this()` or
-    /// throw the appropriate detached/cast-failed error.
-    ///
-    /// Returns an unbounded `&'a mut`: the sink lives in its own heap
-    /// allocation behind the JS wrapper cell (allocated by `construct`, freed
-    /// by codegen `finalize`), so its lifetime is independent of `global`/`frame`. Host
-    /// fns are single-threaded and synchronous — only one `&mut JSSink<T>` per
-    /// `this` is live for the body of each host call.
-    fn get_this<'a>(
+    /// `JSSink.getThis` — the `m_sinkPtr` of `callframe.this()`, or the
+    /// appropriate detached/cast-failed error.
+    pub fn this_ptr_from_frame(
         global: &crate::webcore::jsc::JSGlobalObject,
         frame: &crate::webcore::jsc::CallFrame,
-    ) -> crate::webcore::jsc::JsResult<&'a mut JSSink<T>> {
+    ) -> crate::webcore::jsc::JsResult<NonNull<JSSink<T>>> {
         let raw = T::from_js_extern(frame.this());
         match raw {
             from_js_result::DETACHED => Err(global.throw(format_args!(
@@ -410,9 +431,7 @@ impl<T: JsSinkType> JSSink<T> {
             ))),
             from_js_result::CAST_FAILED => Err(bun_jsc::ErrorCode::INVALID_THIS
                 .throw(global, format_args!("Expected {}", T::NAME))),
-            // SAFETY: codegen returns a non-null `*mut JSSink<T>` for live
-            // wrappers; see fn doc for the `'a` justification.
-            ptr => Ok(unsafe { &mut *(ptr as *mut JSSink<T>) }),
+            ptr => Ok(NonNull::new(ptr as *mut JSSink<T>).expect("non-sentinel m_sinkPtr")),
         }
     }
 
@@ -431,14 +450,17 @@ impl<T: JsSinkType> JSSink<T> {
     }
 
     /// `${abi_name}__write` host-fn body.
-    pub(crate) fn js_write(
+    pub(crate) fn js_write<'a>(
         global: &crate::webcore::jsc::JSGlobalObject,
         frame: &crate::webcore::jsc::CallFrame,
-    ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
+        get_this: GetThis<'a, T>,
+    ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue>
+    where
+        T: 'a,
+    {
         use crate::webcore::jsc::JSValue;
         bun_core::mark_binding!();
-        // SAFETY: get_this returns a live ThisSink* on Ok.
-        let this = Self::get_this(global, frame)?;
+        let this = get_this(global, frame)?;
 
         if let Some(err) = this.sink.get_pending_error() {
             return Err(global.throw_value(err));
@@ -505,15 +527,19 @@ impl<T: JsSinkType> JSSink<T> {
     }
 
     /// `${abi_name}__flush` host-fn body.
-    pub(crate) fn js_flush(
+    pub(crate) fn js_flush<'a>(
         global: &crate::webcore::jsc::JSGlobalObject,
         frame: &crate::webcore::jsc::CallFrame,
-    ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
+        get_this: GetThis<'a, T>,
+    ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue>
+    where
+        T: 'a,
+    {
         use crate::webcore::jsc::JSValue;
         use bun_sys_jsc::ErrorJsc;
         bun_core::mark_binding!();
 
-        let this = Self::get_this(global, frame)?;
+        let this = get_this(global, frame)?;
 
         if let Some(err) = this.sink.get_pending_error() {
             return Err(global.throw_value(err));
@@ -536,10 +562,14 @@ impl<T: JsSinkType> JSSink<T> {
     }
 
     /// `${abi_name}__start` host-fn body.
-    pub(crate) fn js_start(
+    pub(crate) fn js_start<'a>(
         global: &crate::webcore::jsc::JSGlobalObject,
         frame: &crate::webcore::jsc::CallFrame,
-    ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
+        get_this: GetThis<'a, T>,
+    ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue>
+    where
+        T: 'a,
+    {
         use crate::webcore::jsc::JSValue;
         use bun_sys_jsc::ErrorJsc;
         bun_core::mark_binding!();
@@ -557,7 +587,7 @@ impl<T: JsSinkType> JSSink<T> {
             streams::Start::Empty
         };
 
-        let this = Self::get_this(global, frame)?;
+        let this = get_this(global, frame)?;
 
         if let Some(err) = this.sink.get_pending_error() {
             return Err(global.throw_value(err));
@@ -570,15 +600,18 @@ impl<T: JsSinkType> JSSink<T> {
     }
 
     /// `${abi_name}__end` host-fn body.
-    pub(crate) fn js_end(
+    pub(crate) fn js_end<'a>(
         global: &crate::webcore::jsc::JSGlobalObject,
         frame: &crate::webcore::jsc::CallFrame,
-    ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
+        get_this: GetThis<'a, T>,
+    ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue>
+    where
+        T: 'a,
+    {
         use bun_sys_jsc::ErrorJsc;
         bun_core::mark_binding!();
 
-        // SAFETY: get_this returns a live ThisSink* on Ok.
-        let this = Self::get_this(global, frame)?;
+        let this = get_this(global, frame)?;
 
         if let Some(err) = this.sink.get_pending_error() {
             return Err(global.throw_value(err));
@@ -744,104 +777,32 @@ impl<T: JsSinkType> JSSink<T> {
 // routes through `SinkHandle::write`.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Map a C++ `WebCore::SinkID` + erased `m_sinkPtr` to a [`SinkHandle`].
-///
-/// `ptr` is the `m_sinkPtr` stored on the JS wrapper (a `*mut JSSink<T>` for
-/// the `T` selected by `id`); `JSSink<T>` is `#[repr(transparent)]` over `T`,
-/// so the cast to `*mut T` is an address-preserving no-op.
-///
-/// # Safety
-/// `ptr` must be a live, properly-aligned pointer to the concrete sink type
-/// that `id` names (the same pointer the generated `${name}__*` thunks
-/// receive), valid for the lifetime of the returned handle.
-pub(crate) unsafe fn sink_handle_from_id(
-    id: u8,
-    ptr: NonNull<c_void>,
-) -> crate::webcore::SinkHandle {
-    use crate::webcore::SinkHandle;
-    // Mirrors `enum SinkID` in src/jsc/bindings/Sink.h.
-    const ARRAY_BUFFER_SINK: u8 = 0;
-    const FILE_SINK: u8 = 2;
-    const HTML_REWRITER_SINK: u8 = 3;
-    const HTTP_RESPONSE_SINK: u8 = 4;
-    const HTTPS_RESPONSE_SINK: u8 = 5;
-    const NETWORK_SINK: u8 = 6;
-    const FETCH_REQUEST_BODY_SINK: u8 = 7;
-
-    let raw = ptr.as_ptr();
-    match id {
-        // SAFETY: caller contract — `raw` is a live `*mut ArrayBufferSink`.
-        ARRAY_BUFFER_SINK => SinkHandle::ArrayBuffer(unsafe {
-            bun_ptr::BackRef::from_raw_mut(raw.cast::<ArrayBufferSink>())
-        }),
-        // SAFETY: caller contract — `raw` is a live `*mut FileSink`.
-        FILE_SINK => SinkHandle::FileSink(unsafe {
-            bun_ptr::BackRef::from_raw(raw.cast::<crate::webcore::file_sink::FileSink>())
-        }),
-        // SAFETY: caller contract — `raw` is a live `*mut RewriterPipe`.
-        HTML_REWRITER_SINK => SinkHandle::HTMLRewriter(unsafe {
-            bun_ptr::BackRef::from_raw(raw.cast::<crate::api::html_rewriter::RewriterPipe>())
-        }),
-        // SAFETY: caller contract — `raw` is a live `*mut HTTPResponseSink`.
-        HTTP_RESPONSE_SINK => SinkHandle::HttpResponse(unsafe {
-            bun_ptr::BackRef::from_raw_mut(raw.cast::<streams::HTTPResponseSink>())
-        }),
-        // SAFETY: caller contract — `raw` is a live `*mut HTTPSResponseSink`.
-        HTTPS_RESPONSE_SINK => SinkHandle::HttpsResponse(unsafe {
-            bun_ptr::BackRef::from_raw_mut(raw.cast::<streams::HTTPSResponseSink>())
-        }),
-        // SAFETY: caller contract — `raw` is a live `*mut NetworkSink`.
-        NETWORK_SINK => SinkHandle::S3Upload(unsafe {
-            bun_ptr::BackRef::from_raw_mut(raw.cast::<streams::NetworkSink>())
-        }),
-        // SAFETY: caller contract — `raw` is a live `*mut FetchRequestBodySink`.
-        FETCH_REQUEST_BODY_SINK => SinkHandle::FetchRequestBody(unsafe {
-            bun_ptr::BackRef::from_raw_mut(
-                raw.cast::<crate::webcore::fetch::FetchRequestBodySink>(),
-            )
-        }),
-        // 1 (TextSink) and any unknown id → no native sink.
-        _ => SinkHandle::None,
-    }
-}
-
 /// Route a borrowed byte chunk from a native transform (`JSTransformStream`
 /// with `m_nativeSinkPtr` attached) into the concrete sink via
-/// [`SinkHandle::write`].
+/// [`SinkHandle::write`]. The codegen'd `Bun__NativeTransformSink__writeBytes`
+/// (generated_jssink.rs) maps `SinkID` + `m_sinkPtr` to `handle`.
 ///
 /// Return shape matches [`streams::result::Writable::to_js`] so
 /// `nativeSinkWriteIsBackpressure` reads a negative number / pending promise
 /// exactly as the previous `js_write_bytes` path produced. No
 /// [`JsSinkType::get_pending_error`] guard: every sink uses the trait-default
 /// `None`, so omitting it is behavior-preserving.
-#[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn Bun__NativeTransformSink__writeBytes(
-    sink_id: u8,
-    sink_ptr: *mut c_void,
+pub use crate::generated_jssink::sink_handle_from_id;
+
+pub(crate) fn native_transform_sink_write(
+    handle: crate::webcore::SinkHandle,
     global: &JSGlobalObject,
-    ptr: *const u8,
-    len: usize,
+    bytes: &[u8],
 ) -> JSValue {
     bun_core::mark_binding!();
-    let Some(sink_ptr) = NonNull::new(sink_ptr) else {
-        return JSValue::js_number(0.0);
-    };
-    if len == 0 || ptr.is_null() {
+    if bytes.is_empty() {
         return JSValue::js_number(0.0);
     }
-    // SAFETY: C++ caller passes a live `m_sinkPtr` of the type `sink_id`
-    // names, valid for the duration of this synchronous call.
-    let handle = unsafe { sink_handle_from_id(sink_id, sink_ptr) };
     if handle.is_none() {
         return JSValue::UNDEFINED;
     }
-    // SAFETY: caller guarantees `[ptr, ptr+len)` is a live readable byte
-    // buffer for the duration of this call (a GC-kept `JSArrayBufferView` or
-    // a caller-owned scratch buffer).
-    let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
     handle
-        .write(&streams::Result::Temporary(bun_ptr::RawSlice::new(slice)))
+        .write(&streams::Result::Temporary(bun_ptr::RawSlice::new(bytes)))
         .to_js(global)
 }
 
@@ -884,38 +845,36 @@ pub(crate) fn destructor_ptr_subprocess(ptr: *const c_void) -> usize {
     ((ptr as usize as u64 & ADDR_MASK) | (SUBPROCESS_TAG << ADDR_BITS)) as usize
 }
 
-#[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: *mut c_void) {
-    let _ = sink_ptr; // autofix
-    let ptr = DestructorPtr::from(Some(ptr_value));
+/// What a [`DestructorPtr`] names; decoded for the codegen'd
+/// `Bun__onSinkDestroyed` (generated_jssink.rs), which owns the deref.
+pub(crate) enum Destructor {
+    None,
+    Detached,
+    /// The masked address of the `Subprocess` whose stdin sink is going away.
+    Subprocess(*mut Subprocess<'static>),
+    Unknown,
+}
 
-    if ptr.is_null() {
-        return;
+impl Destructor {
+    pub(crate) fn decode(ptr: DestructorPtr) -> Destructor {
+        if ptr.is_null() {
+            return Destructor::None;
+        }
+        // `is::<Detached>()` covers the typed member and the Subprocess arm is
+        // matched by `is_valid()` below.
+        if ptr.is::<Detached>() {
+            return Destructor::Detached;
+        }
+        if ptr.is_valid() {
+            // `Subprocess<'_>` cannot implement `UnionMember` (lifetime param), so
+            // it isn't part of `DestructorPtr`'s type list (see
+            // `destructor_ptr_subprocess`, which encodes it). The decoded
+            // pointer must be masked to the low 49 address bits:
+            // `DestructorPtr::ptr()` is `TaggedPtr::to()` and *preserves* the tag
+            // bits (round-trip encoding), so casting that would hand
+            // `on_stdin_destroyed` a pointer with `0x07fe…` in the high word.
+            return Destructor::Subprocess(ptr.as_uintptr() as usize as *mut Subprocess<'static>);
+        }
+        Destructor::Unknown
     }
-
-    // `is::<Detached>()` covers the typed member and the Subprocess arm is
-    // matched by `is_valid()` below.
-    if ptr.is::<Detached>() {
-        return;
-    }
-    if ptr.is_valid() {
-        // `Subprocess<'_>` cannot implement `UnionMember` (lifetime param), so
-        // it isn't part of `DestructorPtr`'s type list — cast the raw pointer
-        // directly (see `destructor_ptr_subprocess`, which encodes it).
-        //
-        // The decoded pointer must be
-        // masked to the low 49 address bits. `DestructorPtr::ptr()` is
-        // `TaggedPtr::to()` and *preserves* the tag bits (round-trip encoding),
-        // so casting that would hand `on_stdin_destroyed` a pointer with
-        // `0x07fe…` in the high word and ASAN SEGVs on the first field load.
-        // Use the masked address.
-        //
-        // SAFETY: caller (C++) guarantees a valid non-Detached tag points at a live
-        // Subprocess.
-        let subprocess: &mut Subprocess<'_> =
-            unsafe { &mut *(ptr.as_uintptr() as usize as *mut Subprocess<'_>) };
-        subprocess.on_stdin_destroyed();
-        return;
-    }
-    bun_core::debug_warn!("Unknown sink type");
 }

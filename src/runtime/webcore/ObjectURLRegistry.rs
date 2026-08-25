@@ -33,6 +33,8 @@ pub struct Entry {
     blob: Blob,
 }
 
+// `Entry` is auto-`Send`: its sole field is `Blob`, which already asserts
+// `Send + Sync` (see `webcore_types::Blob`).
 const _: fn() = || {
     fn assert_send<T: Send>() {}
     assert_send::<Entry>();
@@ -130,8 +132,7 @@ fn bun_create_object_url(
             .throw_invalid_arguments(format_args!("createObjectURL expects a Blob object")));
     };
     let registry = ObjectURLRegistry::singleton();
-    // SAFETY: `bun_vm_ptr()` returns the live VM pointer for `global_object`.
-    let uuid = registry.register(unsafe { &mut *global_object.bun_vm_ptr() }, blob);
+    let uuid = registry.register(global_object.bun_vm().as_mut(), blob);
     bun_core::String::create_format(format_args!("blob:{}", uuid)).into_js(global_object)
 }
 

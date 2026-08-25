@@ -166,7 +166,7 @@ pub struct RequestContext<
     /// chunked / H3 bodies consumed as a stream are capped against this.
     pub(crate) request_body_streamed_len: Cell<usize>,
 
-    pub sink: Cell<Option<NonNull<ResponseStreamJSSink<SSL_ENABLED>>>>,
+    pub sink: JsCell<Option<bun_ptr::OwnedThis<ResponseStreamJSSink<SSL_ENABLED>>>>,
     pub(crate) byte_stream: Cell<Option<NonNull<ByteStream>>>,
     /// This keeps the Response body's ReadableStream alive.
     pub(crate) response_body_readable_stream_ref: JsCell<readable_stream::Strong>,
@@ -582,19 +582,18 @@ where
         self.request_body
             .get()
             .as_ref()
-            .map(|h| unsafe { &mut (*h.as_ptr()).value })
+            .map(|h| unsafe { h.value.get_mut() })
     }
 
     /// Exclusive borrow of the heap [`ResponseStreamJSSink`] this context owns.
     ///
     /// Returns an unbounded `&'r mut` because the sink is a separate heap
-    /// allocation (`heap::alloc` in [`do_render_stream`]), **not** a sub-field
+    /// allocation (`OwnedThis::new` in [`do_render_stream`]), **not** a sub-field
     /// of `*self` (same pattern as [`request_body_mut`]).
     ///
     /// # Safety (encapsulated)
-    /// While `Some`, `sink` points to the JSSink allocated by
-    /// `do_render_stream`; this `RequestContext` is its sole owner until
-    /// [`destroy_sink`] consumes it. Single-threaded — no other `&mut` alias.
+    /// While `Some`, `sink` owns the JSSink `do_render_stream` created until
+    /// it is taken out and dropped. Single-threaded — no other `&mut` alias.
     #[inline]
     #[allow(
         clippy::mut_from_ref,
@@ -603,7 +602,10 @@ where
     fn sink_mut(&self) -> Option<&mut ResponseStreamJSSink<SSL_ENABLED>> {
         // SAFETY: see fn doc — heap JSSink owned by this ctx, sole live
         // mutable view, single-threaded.
-        self.sink.get().map(|p| unsafe { &mut *p.as_ptr() })
+        self.sink
+            .get()
+            .as_ref()
+            .map(|p| unsafe { &mut *p.this_ptr().as_ptr() })
     }
 
     ///
@@ -863,7 +865,7 @@ where
         }
         // check if the body is Locked (streaming)
         if let Some(body) = self.request_body.get() {
-            if matches!(&**body, Body::Value::Locked(_)) {
+            if matches!(body.value.get(), Body::Value::Locked(_)) {
                 return false;
             }
         }
@@ -892,15 +894,17 @@ where
         // whose reactions consume the sink (`handleResolveStream` / `handleRejectStream`),
         // so a client abort in that state reaches deinit with the sink still owned here.
         // This is the owner's last exit: release it exactly like the settle paths do.
-        if let Some(wrapper_ptr) = self.sink.take() {
-            // SAFETY: deinit runs once, after `detach_response()` removed the uWS callbacks;
-            // the context is the sink's sole owner (see the `sink` field's doc comment).
-            let wrapper = unsafe { &mut *wrapper_ptr.as_ptr() };
+        if let Some(wrapper) = self.sink_mut() {
+            // deinit runs once, after `detach_response()` removed the uWS callbacks.
+            let owned_sink = self
+                .sink
+                .take()
+                .expect("infallible: sink_mut returned Some");
             wrapper.sink.finalize();
             if let Some(sink_global) = wrapper.sink.global_this {
                 ResponseStreamJSSink::<SSL_ENABLED>::detach(&mut wrapper.sink.source, &sink_global);
             }
-            Self::destroy_sink(wrapper_ptr);
+            drop(owned_sink);
         }
 
         self.request_body_buf.set(Vec::new());
@@ -1373,7 +1377,7 @@ where
                 request_body_buf: JsCell::new(Vec::new()),
                 request_body_content_len: Cell::new(0),
                 request_body_streamed_len: Cell::new(0),
-                sink: Cell::new(None),
+                sink: JsCell::new(None),
                 byte_stream: Cell::new(None),
                 response_body_readable_stream_ref: JsCell::new(readable_stream::Strong::default()),
                 pathname: JsCell::new(BunString::EMPTY),
@@ -1448,17 +1452,13 @@ where
         }
 
         // if have sink, call onAborted on sink
-        if let Some(sink_ptr) = this.sink.get() {
+        if let Some(wrapper) = this.sink_mut() {
             // The sink abort runs the stream's JS onClose through its signal.
             any_js_calls.set(true);
-            // SAFETY: `sink_ptr` is the live JSSink allocated by do_render_stream
-            // (repr(transparent) over the sink). `abort` takes the raw pointer
-            // because the teardown it can re-enter frees the sink.
-            unsafe {
-                ResponseStream::<SSL_ENABLED>::abort(
-                    sink_ptr.as_ptr().cast::<ResponseStream<SSL_ENABLED>>(),
-                );
-            }
+            // The borrow ends before the source close, whose re-entrant
+            // teardown frees the sink.
+            let mut source = wrapper.sink.abort();
+            source.close(None);
             // End request streaming here, not in deinit: a `Used` body
             // (textStream) can only be rejected through
             // request_body_readable_stream_ref, and finalize_without_deinit
@@ -1984,14 +1984,10 @@ where
         Self::handle_first_stream_write(unsafe { &*ctx.cast::<Self>() });
     }
 
-    /// Tear down a heap `ResponseStreamJSSink` allocated by `do_render_stream`.
-    /// JSSink<T> is `repr(transparent)` so the inner-ptr free matches the
-    /// outer allocation.
-    fn destroy_sink(ptr: NonNull<ResponseStreamJSSink<SSL_ENABLED>>) {
-        // `ptr` was `heap::alloc`'d in do_render_stream and is being consumed
-        // exactly once here. `JSSink<T>` is repr(transparent), so the inner
-        // `HTTPServerWritable` shares the allocation Layout.
-        ResponseStream::<SSL_ENABLED>::destroy(ptr.as_ptr().cast::<ResponseStream<SSL_ENABLED>>());
+    /// Drop the heap `ResponseStreamJSSink` allocated by `do_render_stream`
+    /// (its `Drop` settles what is parked on it).
+    fn destroy_sink(&self) {
+        drop(self.sink.take());
     }
 
     /// `on_abort` ran from inside the user code `do_render_stream` invoked
@@ -2009,16 +2005,22 @@ where
         let mut readable_ref = self
             .response_body_readable_stream_ref
             .replace(readable_stream::Strong::default());
-        if let Some(wrapper_ptr) = self.sink.take() {
-            // SAFETY: this context is the sink's sole owner until `destroy_sink`
-            // below (see the `sink` field); `on_abort` leaves it allocated.
-            let wrapper = unsafe { &mut *wrapper_ptr.as_ptr() };
-            ResponseStreamJSSink::<SSL_ENABLED>::detach(&mut wrapper.sink.source, global_this);
+        // `on_abort` leaves the sink allocated.
+        if let Some(wrapper) = self.sink_mut() {
+            // Taken out now so the re-entrant `cancel` below sees no sink; dropped last.
+            let owned_sink = self
+                .sink
+                .take()
+                .expect("infallible: sink_mut returned Some");
+            ResponseStreamJSSink::<SSL_ENABLED>::detach(
+                &mut wrapper.sink.source,
+                global_this,
+            );
             crate::dispatch::fold(stream.cancel(global_this));
             wrapper.sink.mark_done();
             wrapper.sink.on_first_write = None;
             wrapper.sink.finalize();
-            Self::destroy_sink(wrapper_ptr);
+            drop(owned_sink);
         }
         readable_ref.deinit();
     }
@@ -2044,19 +2046,17 @@ where
 
         stream.value.ensure_still_alive();
 
-        let response_stream_box = Box::new(ResponseStreamJSSink::<SSL_ENABLED> {
-            sink: ResponseStream::<SSL_ENABLED> {
-                res: Some(resp),
-                buffer: Vec::<u8>::default(),
-                on_first_write: Some(Self::handle_first_stream_write_thunk),
-                ctx: Some(this.as_ctx_ptr().cast::<c_void>()),
-                global_this: Some(bun_ptr::BackRef::new(global_this)),
-                ..Default::default()
-            },
-        });
-        let response_stream_ptr = bun_core::heap::into_raw_nn(response_stream_box);
-        this.sink.set(Some(response_stream_ptr));
-        // SAFETY: just allocated; sole live mutable view (this.sink only stores the ptr).
+        let mut sink = ResponseStream::<SSL_ENABLED>::default();
+        sink.res = Some(resp);
+        sink.on_first_write = Some(Self::handle_first_stream_write_thunk);
+        sink.ctx = Some(this.as_ctx_ptr().cast::<c_void>());
+        sink.global_this = Some(bun_ptr::BackRef::new(global_this));
+        let response_stream_owned =
+            bun_ptr::OwnedThis::new(ResponseStreamJSSink::<SSL_ENABLED> { sink });
+        let response_stream_ptr: NonNull<ResponseStreamJSSink<SSL_ENABLED>> =
+            response_stream_owned.this_ptr().into();
+        this.sink.set(Some(response_stream_owned));
+        // SAFETY: just allocated; sole live mutable view (this.sink only owns the allocation).
         let response_stream = unsafe { &mut *response_stream_ptr.as_ptr() };
 
         // we need to render metadata before assignToStream because the stream can call res.end
@@ -2071,11 +2071,13 @@ where
         );
 
         // We are already corked!
-        let assignment_result: JSValue = ResponseStreamJSSink::<SSL_ENABLED>::assign_to_stream(
-            global_this,
-            stream.value,
-            NonNull::from(&mut response_stream.sink),
-        );
+        let assignment_result: JSValue =
+            ResponseStreamJSSink::<SSL_ENABLED>::assign_to_stream(
+                global_this,
+                stream.value,
+                NonNull::from(&mut response_stream.sink),
+                |s| response_stream.sink.source = s,
+            );
 
         assignment_result.ensure_still_alive();
 
@@ -2101,8 +2103,7 @@ where
                 &mut response_stream.sink.source,
                 global_this,
             );
-            this.sink.set(None);
-            Self::destroy_sink(response_stream_ptr);
+            this.destroy_sink();
             return this.handle_reject(err_value);
         }
 
@@ -2112,8 +2113,7 @@ where
                 &mut response_stream.sink.source,
                 global_this,
             );
-            this.sink.set(None);
-            Self::destroy_sink(response_stream_ptr);
+            this.destroy_sink();
             stream.done();
             this.response_body_readable_stream_ref
                 .with_mut(|s| s.deinit());
@@ -2169,12 +2169,14 @@ where
                         }
 
                         // TODO: should this timeout?
-                        let body_value = this.response_mut().unwrap().get_body_value();
-                        *body_value = Body::Value::Locked(Body::PendingValue {
-                            readable: readable_stream::Strong::init(*stream, global_this),
-                            global: std::ptr::from_ref(global_this),
-                            ..Default::default()
-                        });
+                        this.response_mut()
+                            .unwrap()
+                            .body_value()
+                            .set(Body::Value::Locked(Body::PendingValue {
+                                readable: readable_stream::Strong::init(*stream, global_this),
+                                global: std::ptr::from_ref(global_this),
+                                ..Default::default()
+                            }));
                         let cell = this.create_promise_cell(global_this);
                         effective_result.then_with_value(
                             global_this,
@@ -2222,8 +2224,7 @@ where
                     &mut response_stream.sink.source,
                     global_this,
                 );
-                this.sink.set(None);
-                Self::destroy_sink(response_stream_ptr);
+                this.destroy_sink();
                 return this.handle_reject(effective_result);
             }
         }
@@ -2248,8 +2249,7 @@ where
                     );
                     response_stream.sink.mark_done();
                     response_stream.sink.finalize();
-                    this.sink.set(None);
-                    Self::destroy_sink(response_stream_ptr);
+                    this.destroy_sink();
                     readable_ref.deinit();
                     this.render_missing();
                     return;
@@ -2264,8 +2264,7 @@ where
         crate::dispatch::fold(stream.cancel(global_this));
         response_stream.sink.mark_done();
         response_stream.sink.finalize();
-        this.sink.set(None);
-        Self::destroy_sink(response_stream_ptr);
+        this.destroy_sink();
         readable_ref.deinit();
         this.render_missing();
     }
@@ -2484,14 +2483,13 @@ where
         // GET strips the handler's Content-Length / Transfer-Encoding and frames
         // from the body, so HEAD must too (RFC 9110 §9.3.2). Only a bodiless
         // Response leaves those headers as what GET would have sent (#15355).
-        let body_decides_framing = {
-            let body_value = response.get_body_value();
+        let body_decides_framing = response.body_value().with_mut(|body_value| {
             body_value.to_blob_if_possible();
             !matches!(
                 body_value,
                 Body::Value::Used | Body::Value::Null | Body::Value::Empty | Body::Value::Error(_)
             )
-        };
+        });
         // `fast_get`/`fast_has` take `&mut self` (FFI shim), so use the `_mut`
         // accessor — `get_fetch_headers()` and `get_init_headers()` alias the
         // same `init.headers` field.
@@ -2530,73 +2528,84 @@ where
         }
         // the body decides the framing (or there is neither a body nor a
         // handler-supplied Content-Length / Transfer-Encoding header)
-        let body_value = response.get_body_value();
-        match body_value {
-            Body::Value::InternalBlob(_) | Body::Value::WTFStringImpl(_) => {
-                let mut blob = body_value.use_as_any_blob_allow_non_utf8_string();
-                let size = blob.size();
+        enum HeadFraming {
+            Length(crate::webcore::blob::SizeType),
+            S3Stat,
+            Chunked,
+            Zero,
+        }
+        // Decide inside a short borrow; `render_metadata()` re-fetches the
+        // Response from `response_weakref`, so no borrow of its body may be
+        // live across it. Nothing is written to the socket in between, so the
+        // wire output is unchanged.
+        let framing = response
+            .body_value()
+            .with_mut(|body_value| match body_value {
+                Body::Value::InternalBlob(_) | Body::Value::WTFStringImpl(_) => {
+                    let mut blob = body_value.use_as_any_blob_allow_non_utf8_string();
+                    let size = blob.size();
+                    blob.detach();
+                    HeadFraming::Length(size)
+                }
+                Body::Value::Blob(blob) => {
+                    if shim::blob_is_s3(blob) {
+                        return HeadFraming::S3Stat;
+                    }
+                    blob.resolve_size();
+                    HeadFraming::Length(blob.size.get())
+                }
+                Body::Value::Locked(_) => HeadFraming::Chunked,
+                Body::Value::Used
+                | Body::Value::Null
+                | Body::Value::Empty
+                | Body::Value::Error(_) => HeadFraming::Zero,
+            });
+        match framing {
+            HeadFraming::Length(size) => {
                 this.render_metadata();
-
                 if size == crate::webcore::blob::MAX_SIZE {
                     resp.write_header_int(b"content-length", 0);
                 } else {
                     resp.write_header_int(b"content-length", size as u64);
                 }
                 this.end_without_body(this.should_close_connection());
-                blob.detach();
             }
+            HeadFraming::S3Stat => {
+                // we need to read the size asynchronously
+                // in this case should always be a redirect so should not hit this path, but in case we change it in the future lets handle it
+                // Ref for the S3 stat; adopted and released by
+                // `on_s3_size_resolved_thunk`.
+                this.ref_();
+                let Body::Value::Blob(blob) = response.body_value().get() else {
+                    unreachable!()
+                };
+                let crate::webcore::blob::store::Data::S3(s3) =
+                    &blob.store.get().as_ref().unwrap().data
+                else {
+                    unreachable!()
+                };
+                let credentials = s3.get_credentials();
+                let path = s3.path();
+                // `Transpiler::env_mut` is the safe accessor for the
+                // process-singleton dotenv loader (set during init).
+                let proxy_url = global_this
+                    .bun_vm()
+                    .as_mut()
+                    .transpiler
+                    .env_mut()
+                    .get_http_proxy(true, None, None)
+                    .map(|proxy| proxy.href);
 
-            Body::Value::Blob(blob) => {
-                if shim::blob_is_s3(blob) {
-                    // we need to read the size asynchronously
-                    // in this case should always be a redirect so should not hit this path, but in case we change it in the future lets handle it
-                    // Ref for the S3 stat; adopted and released by
-                    // `on_s3_size_resolved_thunk`.
-                    this.ref_();
-
-                    let crate::webcore::blob::store::Data::S3(s3) =
-                        &blob.store.get().as_ref().unwrap().data
-                    else {
-                        unreachable!()
-                    };
-                    let credentials = s3.get_credentials();
-                    let path = s3.path();
-                    // `Transpiler::env_mut` is the safe accessor for the
-                    // process-singleton dotenv loader (set during init).
-                    let proxy_url = global_this
-                        .bun_vm()
-                        .as_mut()
-                        .transpiler
-                        .env_mut()
-                        .get_http_proxy(true, None, None)
-                        .map(|proxy| proxy.href);
-
-                    let _ = S3::client::stat(
-                        credentials,
-                        path,
-                        Self::on_s3_size_resolved_thunk,
-                        this.as_ctx_ptr().cast::<c_void>(),
-                        proxy_url,
-                        s3.request_payer,
-                    ); // TODO: properly propagate exception upwards
-                    return;
-                }
-                // Size the blob *before* `render_metadata()`: it re-fetches the
-                // Response from `response_weakref`, so no borrow of the Response
-                // (here, `blob`) may still be live across it. Nothing is written
-                // to the socket in between, so the wire output is unchanged.
-                blob.resolve_size();
-                let blob_size = blob.size.get();
-                this.render_metadata();
-
-                if blob_size == crate::webcore::blob::MAX_SIZE {
-                    resp.write_header_int(b"content-length", 0);
-                } else {
-                    resp.write_header_int(b"content-length", blob_size as u64);
-                }
-                this.end_without_body(this.should_close_connection());
+                let _ = S3::client::stat(
+                    credentials,
+                    path,
+                    Self::on_s3_size_resolved_thunk,
+                    this.as_ctx_ptr().cast::<c_void>(),
+                    proxy_url,
+                    s3.request_payer,
+                ); // TODO: properly propagate exception upwards
             }
-            Body::Value::Locked(_) => {
+            HeadFraming::Chunked => {
                 this.render_metadata();
                 if !MUX {
                     // SAFETY: FFI handle
@@ -2614,10 +2623,10 @@ where
                         stream.cancel_with_reason(global_this, JSValue::UNDEFINED),
                     );
                 }
-                *response.get_body_value() = Body::Value::Used;
+                response.body_value().set(Body::Value::Used);
                 this.end_without_body(this.should_close_connection());
             }
-            Body::Value::Used | Body::Value::Null | Body::Value::Empty | Body::Value::Error(_) => {
+            HeadFraming::Zero => {
                 this.render_metadata();
                 // SAFETY: FFI handle
                 resp.write_header_int(b"content-length", 0);
@@ -2822,7 +2831,8 @@ where
         let mut wrote_anything = false;
         let mut ended_response = false;
         if let Some(wrapper) = self.sink_mut() {
-            let wrapper_ptr = self
+            // Taken out now so re-entrant JS below sees no sink; dropped last.
+            let owned_sink = self
                 .sink
                 .take()
                 .expect("infallible: sink_mut returned Some");
@@ -2843,8 +2853,11 @@ where
                 .sink
                 .global_this
                 .expect("sink.global_this set in do_render_stream");
-            ResponseStreamJSSink::<SSL_ENABLED>::detach(&mut wrapper.sink.source, &sink_global);
-            Self::destroy_sink(wrapper_ptr);
+            ResponseStreamJSSink::<SSL_ENABLED>::detach(
+                &mut wrapper.sink.source,
+                &sink_global,
+            );
+            drop(owned_sink);
         }
 
         debug_assert!(self.server.get().is_some());
@@ -2859,7 +2872,7 @@ where
                 stream.done();
             }
 
-            *resp.get_body_value() = Body::Value::Used;
+            resp.body_value().set(Body::Value::Used);
         }
 
         if self.is_aborted_or_ended() {
@@ -2925,7 +2938,8 @@ where
 
         let mut ended_response = false;
         if let Some(wrapper) = self.sink_mut() {
-            let wrapper_ptr = self
+            // Taken out now so re-entrant JS below sees no sink; dropped last.
+            let owned_sink = self
                 .sink
                 .take()
                 .expect("infallible: sink_mut returned Some");
@@ -2951,8 +2965,11 @@ where
                 .sink
                 .global_this
                 .expect("sink.global_this set in do_render_stream");
-            ResponseStreamJSSink::<SSL_ENABLED>::detach(&mut wrapper.sink.source, &sink_global);
-            Self::destroy_sink(wrapper_ptr);
+            ResponseStreamJSSink::<SSL_ENABLED>::detach(
+                &mut wrapper.sink.source,
+                &sink_global,
+            );
+            drop(owned_sink);
         }
 
         if let Some(resp) = self.response_mut() {
@@ -2964,10 +2981,11 @@ where
                 stream.done();
             }
 
-            let body_value = resp.get_body_value();
-            if matches!(body_value, Body::Value::Locked(_)) {
-                *body_value = Body::Value::Used;
-            }
+            resp.body_value().with_mut(|body_value| {
+                if matches!(body_value, Body::Value::Locked(_)) {
+                    *body_value = Body::Value::Used;
+                }
+            });
         }
 
         // aborted so call finalizeForAbort
@@ -3460,10 +3478,7 @@ where
         let (value, owned_readable) = {
             let response: &mut Response = self.response_mut().unwrap();
             let owned_readable = response.get_body_readable_stream();
-            (
-                std::ptr::from_mut(response.get_body_value()),
-                owned_readable,
-            )
+            (response.body_value().as_ptr(), owned_readable)
         };
         self.do_render_with_body(value, owned_readable);
     }
@@ -3960,13 +3975,14 @@ where
     unsafe fn protect_for_body_and_render(&self, response_value: JSValue, response: *mut Response) {
         // SAFETY: caller contract: `response` is live. This is the only borrow
         // of its body, and it ends before `render` reborrows the cell.
-        let body_value = unsafe { (*response).get_body_value() };
-        body_value.to_blob_if_possible();
-        let sent_after_return = match body_value {
-            Body::Value::Blob(blob) => shim::blob_needs_to_read_file(blob),
-            Body::Value::Locked(_) => true,
-            _ => false,
-        };
+        let sent_after_return = unsafe { &*response }.body_value().with_mut(|body_value| {
+            body_value.to_blob_if_possible();
+            match body_value {
+                Body::Value::Blob(blob) => shim::blob_needs_to_read_file(blob),
+                Body::Value::Locked(_) => true,
+                _ => false,
+            }
+        });
         if sent_after_return {
             response_value.protect();
             self.flags.set_response_protected(true);
@@ -4235,8 +4251,7 @@ where
     #[inline]
     fn live_resp(&self) -> Option<uws::AnyResponse> {
         if let Some(sink) = self.sink.get() {
-            // SAFETY: `sink` is owned by this context and freed in `handle_resolve_stream`/`deinit`.
-            if unsafe { (*sink.as_ptr()).sink.ended_response } {
+            if sink.sink.ended_response {
                 return None;
             }
         }

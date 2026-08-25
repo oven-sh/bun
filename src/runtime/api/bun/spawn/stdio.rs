@@ -504,9 +504,13 @@ impl Stdio {
             // `value` is on the stack. `dupe()` only bumps the store refcount.
             return out_stdio.extract_blob(global, webcore::blob::Any::Blob(blob.dupe()), i);
         } else if let Some(req) = value.as_class_ref::<webcore::Request>() {
-            return Self::extract_body_value(out_stdio, global, i, req.get_body_value(), is_sync);
+            return req
+                .body_value()
+                .with_mut(|body| Self::extract_body_value(out_stdio, global, i, body, is_sync));
         } else if let Some(res) = value.as_class_ref::<webcore::Response>() {
-            return Self::extract_body_value(out_stdio, global, i, res.get_body_value(), is_sync);
+            return res
+                .body_value()
+                .with_mut(|body| Self::extract_body_value(out_stdio, global, i, body, is_sync));
         }
 
         if let Some(stream_) = webcore::ReadableStream::from_js(value, global)? {

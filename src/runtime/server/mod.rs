@@ -795,10 +795,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // Allocate the pooled body slot (ref_count = 1).
         let body_hive = crate::webcore::body::hive_alloc(crate::webcore::body::Value::Null);
-        // Raw payload pointer for the deferred Locked write below.
-        // SAFETY: slot stays live — both `ctx.request_body` and `Request.body` hold a +1.
-        let body_value: *mut crate::webcore::body::Value =
-            unsafe { core::ptr::addr_of_mut!((*body_hive.as_ptr()).value) };
+        // Raw payload pointer for the deferred Locked write below; the slot
+        // stays live — both `ctx.request_body` and `Request.body` hold a +1.
+        let body_value: *mut crate::webcore::body::Value = body_hive.value.as_ptr();
         // Bump once so the ctx and JS Request each
         // own a +1 on the same slot (streamed bytes buffered into the ctx
         // surface on `request.body`/`request.json()`).

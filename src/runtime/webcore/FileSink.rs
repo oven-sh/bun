@@ -1316,7 +1316,7 @@ impl FileSink {
                     p.consumed += accepted;
                     p.result = streams::Writable::Owned(p.consumed);
                 });
-                streams::Writable::Pending(self.pending.as_ptr())
+                streams::Writable::Pending(bun_ptr::BackRef::new(&self.pending))
             }
         }
     }
@@ -1532,7 +1532,9 @@ impl FileSink {
         // before GC, so its destructor only reaches `controller_finalize` at
         // heap teardown, where it stands in for the pump's reaction.
         let promise_result =
-            JSSink::assign_to_stream(global_this, stream.value, NonNull::from(this));
+            JSSink::assign_to_stream(global_this, stream.value, NonNull::from(this), |s| {
+                this.source.set(s)
+            });
 
         if let Some(err) = promise_result.to_error() {
             this.readable_stream.set(readable_stream::Strong::default());

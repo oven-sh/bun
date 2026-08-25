@@ -477,9 +477,11 @@ pub(crate) fn run_task(
             // `flush_task_ref` until this call (which may free it).
             FileSink::run_flush_task(unsafe { bun_ptr::ThisPtr::new(cast_ptr!(FileSink)) });
         }
-        // `cast_ptr!` yields the heap-allocated task; sole owner.
         task_tag::StreamPending => {
-            StreamPending::run_from_js_thread(cast_ptr!(StreamPending));
+            // SAFETY: `Pending::run_on_next_tick` boxed it; the arm consumes the box.
+            StreamPending::run_from_js_thread(unsafe {
+                bun_core::heap::take(cast_ptr!(StreamPending))
+            });
         }
 
         _ => {

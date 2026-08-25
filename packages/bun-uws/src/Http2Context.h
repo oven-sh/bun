@@ -1651,14 +1651,7 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
     }
     if (!malformed && endStream && contentLength > 0) malformed = true;
     if (selfDependent) malformed = true;
-    /* §8.3.1: :path is origin-form, or "*" for OPTIONS only. */
-    if (!malformed && !isConnect && !(path.size() && path[0] == '/') && !(path == "*" && method == "OPTIONS")) malformed = true;
-    /* §8.3.1: a request needs an authority, and Host may not contradict :authority. */
-    if (!malformed) {
-        if (authority.empty() && host.empty()) malformed = true;
-        else if (!authority.empty() && !host.empty() && authority != host) malformed = true;
-        else if (authority.find('@') != std::string_view::npos) malformed = true;
-    }
+    if (!malformed && !validPseudoHeaderTarget(method, path, authority, host)) malformed = true;
     if (malformed) {
         return streamError(streamId, nullptr, http2::ERR_PROTOCOL_ERROR);
     }

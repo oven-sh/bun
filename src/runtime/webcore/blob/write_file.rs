@@ -569,7 +569,7 @@ mod windows_impl {
     use bun_io::{self as aio, IntrusiveUvFs as _, KeepAlive};
     // `bun_jsc::EventLoop`/`ManagedTask` are *modules* (namespace
     // re-exports); the structs live one level deeper.
-    use bun_jsc::{ConcurrentTask, ManagedTask::ManagedTask, event_loop::EventLoop};
+    use bun_jsc::{ConcurrentTask, event_loop::EventLoop};
     use bun_sys::ReturnCodeExt as _;
     use bun_sys::windows::libuv as uv;
 
@@ -948,18 +948,6 @@ mod windows_impl {
             }
         }
 
-        /// `ManagedTask`-shaped trampoline for [`on_mkdirp_complete`]: takes
-        /// `*mut Self` and returns the event-loop `jsc::JsResult<()>` (always `Ok`: the inner body
-        /// reports a delivery exception itself).
-        fn on_mkdirp_complete_task(this: *mut WriteFileWindows) -> bun_event_loop::JsResult<()> {
-            // SAFETY: `this` is the live Box-allocated `WriteFileWindows` whose
-            // pointer was stashed in `on_mkdirp_complete_concurrent` below;
-            // the JS thread is the sole accessor at this point. `*this` may be
-            // freed inside; not accessed afterward.
-            unsafe { Self::on_mkdirp_complete(this) };
-            Ok(())
-        }
-
         fn on_mkdirp_complete_concurrent(
             ctx: *mut (),
             err_: bun_sys::Result<()>,
@@ -974,9 +962,14 @@ mod windows_impl {
                 bun_sys::Result::Err(e) => Some(e),
                 bun_sys::Result::Ok(()) => None,
             };
-            ticket.post(ConcurrentTask::create(
-                ManagedTask::new::<WriteFileWindows>(this, Self::on_mkdirp_complete_task),
-            ));
+            let this: *mut WriteFileWindows = this;
+            ticket.post(ConcurrentTask::ConcurrentTask::from_callback(move || {
+                // SAFETY: `this` is the live Box-allocated `WriteFileWindows`; the
+                // JS thread is the sole accessor at this point. `*this` may be
+                // freed inside; not accessed afterward.
+                unsafe { Self::on_mkdirp_complete(this) };
+                Ok(())
+            }));
         }
 
         extern "C" fn on_write_complete(req: *mut uv::fs_t) {

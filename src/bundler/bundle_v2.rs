@@ -4376,10 +4376,13 @@ pub mod bv2_impl {
             // mutate `graph` / allocate from `graph.heap` off-thread.
             match self.any_loop_mut() {
                 bun_event_loop::AnyEventLoop::Js { .. } => {
-                    let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
-                        std::ptr::from_mut(load),
-                        on_load_from_js_loop_raw,
-                    );
+                    let load = std::ptr::from_mut(load);
+                    let ct =
+                        bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(move || {
+                            // SAFETY: `load` lives until it is answered on this hop.
+                            on_load_from_js_loop(unsafe { &mut *load });
+                            Ok(())
+                        });
                     let poster = self
                         .js_poster
                         .as_ref()
@@ -4410,10 +4413,13 @@ pub mod bv2_impl {
             // See `on_load_async` — must dispatch on the bundler's own loop.
             match self.any_loop_mut() {
                 bun_event_loop::AnyEventLoop::Js { .. } => {
-                    let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
-                        std::ptr::from_mut(resolve),
-                        on_resolve_from_js_loop_raw,
-                    );
+                    let resolve = std::ptr::from_mut(resolve);
+                    let ct =
+                        bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(move || {
+                            // SAFETY: `resolve` lives until it is answered on this hop.
+                            on_resolve_from_js_loop(unsafe { &mut *resolve });
+                            Ok(())
+                        });
                     let poster = self
                         .js_poster
                         .as_ref()
@@ -4457,14 +4463,6 @@ pub mod bv2_impl {
         // SAFETY: `bv2` is a live backref set in `Load::init`.
         let bv2 = unsafe { &mut *load.bv2 };
         BundleV2::on_load(load, bv2);
-    }
-
-    fn on_load_from_js_loop_raw(
-        load: *mut jsc_api::JSBundler::Load,
-    ) -> bun_event_loop::JsResult<()> {
-        // SAFETY: `load` is a valid pointer set up by `from_callback`.
-        on_load_from_js_loop(unsafe { &mut *load });
-        Ok(())
     }
 
     impl<'a> BundleV2<'a> {
@@ -4658,14 +4656,6 @@ pub mod bv2_impl {
         // SAFETY: `bv2` is a live backref set in `Resolve::init`.
         let bv2 = unsafe { &mut *resolve.bv2 };
         BundleV2::on_resolve(resolve, bv2);
-    }
-
-    fn on_resolve_from_js_loop_raw(
-        resolve: *mut jsc_api::JSBundler::Resolve,
-    ) -> bun_event_loop::JsResult<()> {
-        // SAFETY: `resolve` is a valid pointer set up by `from_callback`.
-        on_resolve_from_js_loop(unsafe { &mut *resolve });
-        Ok(())
     }
 
     impl<'a> BundleV2<'a> {

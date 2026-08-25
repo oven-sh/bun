@@ -141,10 +141,8 @@ struct HandledPromiseContext {
 }
 
 impl HandledPromiseContext {
-    fn callback(context: *mut Self) -> bun_event_loop::JsResult<()> {
-        // SAFETY: `context` was produced by `heap::alloc` below; we are the
-        // sole owner and reconstitute the Box to drop it at end of scope.
-        let context = unsafe { bun_core::heap::take(context) };
+    fn callback(self) -> bun_event_loop::JsResult<()> {
+        let context = self;
         let global: &JSGlobalObject = &context.global_this;
         // JSGlobalObject::bun_vm contract.
         let _ = global
@@ -161,14 +159,14 @@ impl HandledPromiseContext {
 pub fn handle_handled_promise(global: &JSGlobalObject, promise: &JSPromise) {
     crate::mark_binding!();
     let promise_js = promise.to_js();
-    let context = bun_core::heap::into_raw(Box::new(HandledPromiseContext {
+    let context = HandledPromiseContext {
         global_this: global.into(),
         promise: Strong::create(promise_js, global),
-    }));
+    };
     global
         .bun_vm()
         .event_loop_mut()
-        .enqueue_task(ManagedTask::new(context, HandledPromiseContext::callback));
+        .enqueue_task(ManagedTask::new(move || context.callback()));
 }
 
 // HOST_EXPORT(Bun__onDidAppendPlugin, c)

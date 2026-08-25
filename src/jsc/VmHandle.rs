@@ -358,7 +358,7 @@ impl VmHandle {
         if let Posted::Refused(ct) = self.post(kind, ct) {
             // SAFETY: refused ⇒ we own both boxes.
             unsafe {
-                drop(bun_core::heap::take(ct.as_ptr()));
+                ConcurrentTaskItem::release_refused(ct);
                 Bun__deleteEventLoopTask(task);
             }
         }

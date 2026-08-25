@@ -348,7 +348,7 @@ mod windows {
             {
                 // VM torn down (uninstall joins us right after): drop the notification.
                 // SAFETY: refused ⇒ we own the task box.
-                unsafe { drop(bun_core::heap::take(task.as_ptr())) };
+                unsafe { ConcurrentTask::release_refused(task) };
                 break;
             }
             // SAFETY: `shutdown` is valid for the thread's lifetime.

@@ -324,7 +324,7 @@ impl Queue {
         if let crate::vm_handle::Posted::Refused(task) = ctx.handle.post(ctx.kind, task) {
             // That VM has closed: nobody is waiting on these modules any more.
             // SAFETY: refused ⇒ we own the task box.
-            unsafe { drop(bun_core::heap::take(task.as_ptr())) };
+            unsafe { ConcurrentTaskItem::release_refused(task) };
         }
     }
 

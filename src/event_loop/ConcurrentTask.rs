@@ -199,7 +199,7 @@ impl Task {
 impl Taskable for crate::ManagedTask::ManagedTask {
     const TAG: TaskTag = task_tag::ManagedTask;
     unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — a queued ManagedTask is the heap box `new*` made.
+        // SAFETY: fn contract — a queued ManagedTask is the heap box `new` made.
         unsafe { crate::ManagedTask::ManagedTask::release(this) }
     }
 }
@@ -287,14 +287,12 @@ impl ConcurrentTask {
         Self::create(Task::init(task))
     }
 
-    // callback returns `JsResult<()>` to match `ManagedTask::new`'s stored ABI;
-    // callers that have a `fn(*mut T)` should wrap it as `|p| { f(p); Ok(()) }` at the call site.
-    pub fn from_callback<T>(
-        ptr: *mut T,
-        callback: fn(*mut T) -> crate::JsResult<()>,
+    /// Heap task that runs `f` once on the JS thread (see [`ManagedTask`]).
+    pub fn from_callback<F: FnOnce() -> crate::JsResult<()> + 'static>(
+        f: F,
     ) -> core::ptr::NonNull<ConcurrentTask> {
         bun_core::mark_binding!();
-        Self::create(ManagedTask::ManagedTask::new(ptr, callback))
+        Self::create(ManagedTask::ManagedTask::new(f))
     }
 
     pub fn from<T: Taskable>(
@@ -336,8 +334,8 @@ impl ConcurrentTask {
     pub unsafe fn release_refused(task: core::ptr::NonNull<ConcurrentTask>) {
         // SAFETY: fn contract.
         let inner = unsafe { Self::into_task(task) };
-        // A callback task (`from_callback`, `ManagedTask::new*`) owns a heap
-        // `ManagedTask` behind `task.ptr` as well.
+        // A callback task (`from_callback`, `ManagedTask::new`) owns its
+        // closure behind `task.ptr` as well.
         if inner.tag == crate::task_tag::ManagedTask {
             // SAFETY: as above; refused ⇒ ours.
             unsafe { crate::ManagedTask::ManagedTask::release(inner.ptr.cast()) };

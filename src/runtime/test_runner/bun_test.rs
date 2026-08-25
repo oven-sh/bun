@@ -888,18 +888,12 @@ impl BunTest {
             debug_assert!(false); // shouldn't be calling runNextTick after moving on to the next file
             return; // but just in case
         };
-        let done_callback_test = bun_core::heap::into_raw(Box::new(RunTestsTask {
+        let task = RunTestsTask {
             weak: Weak::clone(weak),
             global_this: GlobalRef::from(global_this),
             phase,
-        }));
-        fn call_erased(this: *mut RunTestsTask) -> bun_event_loop::JsResult<()> {
-            // `this` was `heap::into_raw`'d above (always non-null) and is
-            // invoked exactly once by `ManagedTask`.
-            RunTestsTask::call(NonNull::new(this).unwrap())
-        }
-        // `new_owned`: if the task never runs (VM teardown), the queue drainer frees `done_callback_test`.
-        let task = jsc::ManagedTask::ManagedTask::new_owned::<RunTestsTask>(done_callback_test, call_erased);
+        };
+        let task = jsc::ManagedTask::ManagedTask::new(move || task.call());
         // SAFETY: single field write through `UnsafeCell`; no other `&mut` live.
         strong.get().wants_wakeup = true;
         // we need to wake up the event loop so autoTick() doesn't wait for 16-100ms because we just enqueued a task
@@ -1525,16 +1519,8 @@ pub struct RunTestsTask {
     pub(crate) phase: RefDataValue,
 }
 impl RunTestsTask {
-    /// `ManagedTask` callback ABI: `fn(*mut T) -> JsResult<()>`. The pointer
-    /// was `heap::alloc`'d in `run_next_tick`; reconstitute and drop here.
-    ///
-    /// `this` must be the pointer produced by `heap::into_raw` in
-    /// `run_next_tick`; ownership is consumed (the box is dropped on return).
-    pub fn call(this: NonNull<RunTestsTask>) -> JsResult<()> {
-        // SAFETY: `this` was produced by `heap::into_raw` in `run_next_tick` and
-        // is invoked exactly once by `ManagedTask`; ownership is reclaimed here.
-        let this = unsafe { bun_core::heap::take(this.as_ptr()) };
-        // Box drops at end of scope; the Weak drops with it.
+    pub fn call(self) -> JsResult<()> {
+        let this = self;
         let Some(strong) = this.weak.upgrade() else { return Ok(()) };
         if let Err(e) = BunTest::run(&strong, &this.global_this) {
             // A termination is the tick's to fold, not a test failure.

@@ -1254,9 +1254,7 @@ pub mod package_manifest {
             tmpdir: Fd,
             cache_dir: Fd,
         ) {
-            use bun_threading::thread_pool::{
-                Batch as PoolBatch, Node as PoolNode, Task as PoolTask,
-            };
+            use bun_threading::thread_pool::Task as PoolTask;
 
             struct SaveTask {
                 manifest: PackageManifest,
@@ -1269,28 +1267,12 @@ pub mod package_manifest {
                 task: PoolTask,
             }
 
-            bun_threading::intrusive_work_task!(SaveTask, task);
+            bun_threading::owned_task!(SaveTask, task);
 
             impl SaveTask {
-                fn new(init: SaveTask) -> Box<SaveTask> {
-                    Box::new(init)
-                }
-
-                // Safe-fn: only ever invoked by `ThreadPool` via the `callback`
-                // fn-pointer with the `*mut PoolTask` we registered below
-                // (`heap::into_raw(SaveTask { task: .. })`). The thread-pool
-                // contract — not the Rust caller — guarantees `task` is live
-                // and points at `SaveTask.task`, so the precondition is
-                // discharged locally (matches `HardLinkWindowsInstallTask::
-                // run_from_thread_pool` in PackageInstall.rs). Safe `fn`
-                // coerces to the `unsafe fn(*mut Task)` field type.
-                fn run(task: *mut PoolTask) {
-                    use bun_threading::IntrusiveWorkTask as _;
+                fn run_owned(self: Box<Self>) {
                     let _tracer = bun_core::perf::trace("PackageManifest.Serializer.save");
-
-                    // SAFETY: thread-pool callback contract — `task` points to
-                    // `SaveTask.task`; allocated via `heap::into_raw` in `save_async`.
-                    let save_task = unsafe { bun_core::heap::take(SaveTask::from_task_ptr(task)) };
+                    let save_task = self;
 
                     if let Err(err) = Serializer::save(
                         &save_task.manifest,
@@ -1310,20 +1292,15 @@ pub mod package_manifest {
                 }
             }
 
-            let task = bun_core::heap::into_raw(SaveTask::new(SaveTask {
-                manifest: this.clone(),
-                scope: scope.clone(),
-                tmpdir,
-                cache_dir,
-                task: PoolTask {
-                    node: PoolNode::default(),
-                    callback: SaveTask::run,
-                },
-            }));
-
-            // SAFETY: task is a valid Box-allocated SaveTask
-            let batch = PoolBatch::from(unsafe { core::ptr::addr_of_mut!((*task).task) });
-            PackageManager::get().thread_pool.schedule(batch);
+            PackageManager::get()
+                .thread_pool
+                .schedule_owned(Box::new(SaveTask {
+                    manifest: this.clone(),
+                    scope: scope.clone(),
+                    tmpdir,
+                    cache_dir,
+                    task: PoolTask::default(),
+                }));
         }
 
         fn manifest_file_name<'b>(

@@ -310,17 +310,9 @@ impl DeferredFailure {
 
     fn enqueue(self: Box<Self>) {
         debug!("enqueueing deferred failure");
-        // The Box is leaked into a raw pointer here and reconstituted inside the trampoline.
-        fn run_raw(ptr: *mut DeferredFailure) -> bun_event_loop::JsResult<()> {
-            // SAFETY: `ptr` was produced by `heap::alloc` below; we are the sole owner.
-            let this = unsafe { bun_core::heap::take(ptr) };
-            DeferredFailure::run(*this)
-        }
-        let managed_task =
-            bun_jsc::ManagedTask::ManagedTask::new(bun_core::heap::into_raw(self), run_raw);
         VirtualMachine::get()
             .event_loop_mut()
-            .enqueue_task(managed_task);
+            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(move || (*self).run()));
     }
 }
 

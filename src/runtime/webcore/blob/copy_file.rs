@@ -1917,16 +1917,15 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>, ticket:
         bun_sys::Result::Err(e) => Some(e),
         bun_sys::Result::Ok(()) => None,
     };
-    // callback signature to match `ManagedTask::new`'s `fn(*mut T) -> jsc::JsResult<()>`.
-    fn call_erased(this: *mut CopyFileWindows<'_>) -> bun_event_loop::JsResult<()> {
-        // SAFETY: `this` is the heap-allocated `CopyFileWindows` passed to
-        // `ManagedTask::new` below; `on_mkdirp_complete` may free it via `throw`, so we
-        // do not touch `this` afterward.
-        unsafe { (*this).on_mkdirp_complete() };
-        Ok(())
-    }
-    ticket.post(jsc::ConcurrentTask::create(
-        jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, call_erased),
+    let this: *mut CopyFileWindows<'static> = core::ptr::from_mut(this).cast();
+    ticket.post(jsc::event_loop::ConcurrentTaskItem::from_callback(
+        move || {
+            // SAFETY: `this` is the heap-allocated `CopyFileWindows`;
+            // `on_mkdirp_complete` may free it via `throw`, so it is not touched
+            // afterward.
+            unsafe { (*this).on_mkdirp_complete() };
+            Ok(())
+        },
     ));
 }
 

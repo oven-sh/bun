@@ -1323,11 +1323,11 @@ impl RewriterPipe {
             cell.protect();
         }
         self.ref_();
+        let pipe = core::ptr::from_ref(self).cast_mut();
         vm.as_mut()
-            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(
-                core::ptr::from_ref(self).cast_mut(),
-                Self::run_background_pull,
-            ));
+            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(move || {
+                Self::run_background_pull(pipe)
+            }));
     }
 
     fn run_background_pull(pipe: *mut RewriterPipe) -> bun_event_loop::JsResult<()> {

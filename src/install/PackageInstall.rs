@@ -10,7 +10,6 @@ use bun_semver::String as SemverString;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
 use bun_sys::{self as sys, Dir, EntryKind, Fd, FdExt, walker_skippable};
-use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode};
 use bun_threading::work_pool::Task as WorkPoolTask;
 #[cfg(windows)]
 use bun_threading::{ThreadPool, WaitGroup};
@@ -449,29 +448,17 @@ impl<TaskType> NewTaskQueue<TaskType> {
         self.wait_group.finish();
     }
 
-    /// # Safety
-    /// `task` must point to a live, Box-allocated `TaskType` whose ownership is
-    /// being handed to the thread pool; the worker reclaims it in its callback.
-    pub(crate) unsafe fn push(&self, task: *mut TaskType)
+    pub(crate) fn push(&self, task: Box<TaskType>)
     where
-        TaskType: HasWorkPoolTask,
+        TaskType: bun_threading::OwnedTask,
     {
         self.wait_group.add_one();
-        // SAFETY: caller contract — `task` is a valid Box-allocated task; `.task()`
-        // is the intrusive node field.
-        self.thread_pool.schedule(Batch::from(unsafe {
-            std::ptr::from_mut::<WorkPoolTask>((*task).task())
-        }));
+        self.thread_pool.schedule_owned(task);
     }
 
     pub(crate) fn wait(&self) {
         self.wait_group.wait();
     }
-}
-
-#[cfg(windows)]
-pub(crate) trait HasWorkPoolTask {
-    fn task(&mut self) -> &mut WorkPoolTask;
 }
 
 // ───────────────────────────── HardLinkWindowsInstallTask ─────────────────────────────
@@ -490,11 +477,7 @@ struct HardLinkWindowsInstallTask {
 }
 
 #[cfg(windows)]
-impl HasWorkPoolTask for HardLinkWindowsInstallTask {
-    fn task(&mut self) -> &mut WorkPoolTask {
-        &mut self.task
-    }
-}
+bun_threading::owned_task!(HardLinkWindowsInstallTask, task);
 
 #[cfg(windows)]
 type HardLinkQueue = NewTaskQueue<HardLinkWindowsInstallTask>;
@@ -546,7 +529,7 @@ impl HardLinkWindowsInstallTask {
         }
     }
 
-    fn init(src: &[OSPathChar], dest: &[OSPathChar], basename: &[OSPathChar]) -> *mut Self {
+    fn init(src: &[OSPathChar], dest: &[OSPathChar], basename: &[OSPathChar]) -> Box<Self> {
         let allocation_size = src.len() + 1 + dest.len() + 1;
 
         let mut combined = vec![0u16; allocation_size].into_boxed_slice();
@@ -556,41 +539,30 @@ impl HardLinkWindowsInstallTask {
         remaining[..dest.len()].copy_from_slice(dest);
         remaining[dest.len()] = 0;
 
-        bun_core::heap::into_raw(Box::new(Self {
+        Box::new(Self {
             bytes: combined,
             src_len: src.len(),
             basename: basename.len() as u16, // @truncate
-            task: WorkPoolTask {
-                callback: Self::run_from_thread_pool,
-                node: ThreadPoolNode::default(),
-            },
+            task: WorkPoolTask::default(),
             err: None,
-        }))
+        })
     }
 
-    fn run_from_thread_pool(task: *mut WorkPoolTask) {
-        // SAFETY: task points to the `task` field of a HardLinkWindowsInstallTask.
-        let self_: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, task) };
+    fn run_owned(self: Box<Self>) {
         // SAFETY: HARDLINK_QUEUE initialized by init_queue() before scheduling.
         let queue = unsafe { (*HARDLINK_QUEUE.get()).assume_init_ref() };
+        // Declared before `this` so the task is freed before `wait()` can return.
         scopeguard::defer! { queue.complete_one(); }
+        let mut this = self;
 
-        // SAFETY: self_ is valid until we reclaim the Box below.
-        if let Some(err) = unsafe { (*self_).run() } {
-            unsafe { (*self_).err = Some(err) };
-            // SAFETY: self_ was heap-allocated in init(); reclaim ownership now.
-            let boxed = unsafe { bun_core::heap::take(self_) };
-            // First-write-wins: keep only the first error. Any later failing task
-            // simply drops its Box here (leaking it would also leak the inner
-            // `Box<[u16]>` per failed file).
+        if let Some(err) = this.run() {
+            this.err = Some(err);
+            // First-write-wins: keep only the first error.
             let mut slot = queue.errored_task.lock();
             if slot.is_none() {
-                *slot = Some(boxed);
+                *slot = Some(this);
             }
-            return;
         }
-        // SAFETY: self_ was heap-allocated in init().
-        unsafe { drop(bun_core::heap::take(self_)) };
     }
 
     fn run(&mut self) -> Option<crate::Error> {
@@ -667,14 +639,12 @@ struct UninstallTask {
     absolute_path: Box<[u8]>,
     task: WorkPoolTask,
 }
+bun_threading::owned_task!(UninstallTask, task);
 
 impl UninstallTask {
-    fn run(task: *mut WorkPoolTask) {
-        // SAFETY: task points to the `task` field of an UninstallTask.
-        let uninstall_task: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, task) };
-
-        // declared *before* the Box is reclaimed so it drops *after* the
-        // Box — Rust drops locals in reverse declaration order. The task must be freed
+    fn run_owned(self: Box<Self>) {
+        // declared *before* the Box binding so it drops *after* the Box —
+        // Rust drops locals in reverse declaration order. The task must be freed
         // before the main thread can observe pending_tasks==0.
         scopeguard::defer! {
             let pm = crate::package_manager::get();
@@ -688,8 +658,7 @@ impl UninstallTask {
             }
         }
 
-        // SAFETY: heap-allocated in uninstall_before_install; reclaim ownership here.
-        let uninstall_task = unsafe { bun_core::heap::take(uninstall_task) };
+        let uninstall_task = self;
         let mut debug_timer = Output::DebugTimer::start();
 
         let dirname =
@@ -1653,15 +1622,11 @@ impl<'a> PackageInstall<'a> {
                     head2[src_len] = 0;
                     let src = bun_core::WStr::from_buf(head2, src_len);
 
-                    // SAFETY: `init` returns a fresh Box-allocated task; ownership
-                    // transfers to the thread pool, reclaimed in `run_from_thread_pool`.
-                    unsafe {
-                        queue.push(HardLinkWindowsInstallTask::init(
-                            src.as_slice(),
-                            dest.as_slice(),
-                            entry.basename.as_slice(),
-                        ));
-                    }
+                    queue.push(HardLinkWindowsInstallTask::init(
+                        src.as_slice(),
+                        dest.as_slice(),
+                        entry.basename.as_slice(),
+                    ));
                 }
             }
 
@@ -1967,13 +1932,10 @@ impl<'a> PackageInstall<'a> {
                     bun_fs::FileSystem::instance().top_level_dir(),
                     &[&self.node_modules.path, temp_path.as_bytes()],
                 );
-                let task = bun_core::heap::into_raw(Box::new(UninstallTask {
+                let task = Box::new(UninstallTask {
                     absolute_path: absolute_path.to_vec().into_boxed_slice(),
-                    task: WorkPoolTask {
-                        callback: UninstallTask::run,
-                        node: ThreadPoolNode::default(),
-                    },
-                }));
+                    task: WorkPoolTask::default(),
+                });
                 let pm = crate::package_manager::get();
                 // SAFETY: `uninstall_before_install` runs on the install main thread.
                 // Raw-pointer field projection avoids forming `&mut PackageManager`
@@ -1984,12 +1946,7 @@ impl<'a> PackageInstall<'a> {
                     *core::ptr::addr_of_mut!((*pm).total_tasks) += 1;
                     (*pm).pending_tasks.fetch_add(1, Ordering::Relaxed);
                 }
-                // SAFETY: task is a valid heap allocation; .task is the intrusive node.
-                PackageManager::get()
-                    .thread_pool
-                    .schedule(Batch::from(unsafe {
-                        core::ptr::addr_of_mut!((*task).task)
-                    }));
+                PackageManager::get().thread_pool.schedule_owned(task);
             }
         }
     }

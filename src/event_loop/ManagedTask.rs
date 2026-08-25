@@ -1,83 +1,54 @@
-//! This is a slow, dynamically-allocated one-off task
-//! Use it when you can't add to jsc.Task directly and managing the lifetime of the Task struct is overly complex
-
-use core::ffi::c_void;
-use core::ptr::NonNull;
+//! A one-off queued closure. Use it when adding a dedicated `Task` tag is not
+//! worth it; the closure and everything it captured are dropped, not run, if
+//! the VM stops first.
 
 use crate::{JsResult, Task};
 
+/// Type-erased head of a [`ManagedTaskOf<F>`]; `Task::ptr` points here.
+#[repr(C)]
 pub struct ManagedTask {
-    // Opaque userdata pointer round-tripped through `new`/`run`; raw by design.
-    pub ctx: Option<NonNull<c_void>>,
-    pub(crate) callback: fn(*mut c_void) -> JsResult<()>,
-    pub cleanup: Option<fn(*mut c_void)>,
+    run: unsafe fn(*mut ManagedTask) -> JsResult<()>,
+    release: unsafe fn(*mut ManagedTask),
+}
+
+#[repr(C)]
+struct ManagedTaskOf<F> {
+    header: ManagedTask,
+    f: F,
 }
 
 impl ManagedTask {
-    pub(crate) fn task(this: *mut ManagedTask) -> Task {
-        // Per §Dispatch (tag+ptr), name the tag explicitly.
-        Task::new(crate::task_tag::ManagedTask, this.cast())
+    /// Queueable task that runs `f` once on the JS thread.
+    pub fn new<F: FnOnce() -> JsResult<()> + 'static>(f: F) -> Task {
+        let task = bun_core::heap::into_raw(Box::new(ManagedTaskOf {
+            header: ManagedTask {
+                // SAFETY: only reached through this header, so `p` is this
+                // `ManagedTaskOf<F>`; consumes the box.
+                run: |p| (unsafe { bun_core::heap::take(p.cast::<ManagedTaskOf<F>>()) }.f)(),
+                // SAFETY: as above.
+                release: |p| drop(unsafe { bun_core::heap::take(p.cast::<ManagedTaskOf<F>>()) }),
+            },
+            f,
+        }));
+        Task::new(crate::task_tag::ManagedTask, task.cast())
     }
 
     /// # Safety
-    /// `this` must be the live `*mut ManagedTask` embedded in a `Task` returned
-    /// by `new()`/`new_owned()`; ownership transfers — `this` is freed (via
-    /// `heap::take`) before return on both Ok and Err paths.
+    /// `this` is the `Task::ptr` of a task built by [`new`](Self::new); it is
+    /// consumed.
     pub unsafe fn run(this: *mut ManagedTask) -> JsResult<()> {
-        // SAFETY: `this` was produced by `heap::into_raw` in `new`/`new_owned`
-        // (caller contract). Reconstituting the Box here frees it at scope
-        // exit on both the Ok and Err paths.
-        let this = unsafe { bun_core::heap::take(this) };
-        let callback = this.callback;
-        let ctx = this.ctx;
-        callback(ctx.unwrap().as_ptr())
+        // SAFETY: fn contract.
+        unsafe { ((*this).run)(this) }
     }
 
-    /// Free without running: the owned context (if `new_owned`) is dropped.
+    /// Drop the closure without running it.
     ///
     /// # Safety
-    /// As [`run`](Self::run); the task is not queued anywhere.
+    /// As [`run`](Self::run).
     pub unsafe fn release(this: *mut ManagedTask) {
         // SAFETY: fn contract.
-        let this = unsafe { bun_core::heap::take(this) };
-        if let (Some(cleanup), Some(ctx)) = (this.cleanup, this.ctx) {
-            cleanup(ctx.as_ptr());
-        }
-    }
-
-    // A per-(Type, Callback) trampoline is folded away by storing
-    // the type-erased fn pointer directly — `fn(*mut T)` and `fn(*mut c_void)` share ABI.
-    pub fn new<T>(ctx: *mut T, callback: fn(*mut T) -> JsResult<()>) -> Task {
-        let managed = bun_core::heap::into_raw(Box::new(ManagedTask {
-            // SAFETY: `fn(*mut T) -> R` and `fn(*mut c_void) -> R` have identical
-            // ABI for all `T: Sized`; `run` passes back the exact pointer stored
-            // in `ctx` below, so the callee observes its original `*mut T`.
-            callback: unsafe {
-                bun_ptr::cast_fn_ptr::<fn(*mut T) -> JsResult<()>, fn(*mut c_void) -> JsResult<()>>(
-                    callback,
-                )
-            },
-            ctx: NonNull::new(ctx.cast::<c_void>()),
-            cleanup: None,
-        }));
-        ManagedTask::task(managed)
-    }
-
-    pub fn new_owned<T>(ctx: *mut T, callback: fn(*mut T) -> JsResult<()>) -> Task {
-        fn drop_ctx<T>(p: *mut c_void) {
-            // SAFETY: `p` is the `heap::into_raw(Box<T>)` stored in `ctx` by `new_owned`.
-            unsafe { bun_core::heap::destroy(p.cast::<T>()) };
-        }
-        let managed = bun_core::heap::into_raw(Box::new(ManagedTask {
-            // SAFETY: same fn-pointer ABI cast as `new`.
-            callback: unsafe {
-                bun_ptr::cast_fn_ptr::<fn(*mut T) -> JsResult<()>, fn(*mut c_void) -> JsResult<()>>(
-                    callback,
-                )
-            },
-            ctx: NonNull::new(ctx.cast::<c_void>()),
-            cleanup: Some(drop_ctx::<T>),
-        }));
-        ManagedTask::task(managed)
+        unsafe { ((*this).release)(this) }
     }
 }
+
+const _: () = assert!(core::mem::offset_of!(ManagedTaskOf<[usize; 3]>, header) == 0);

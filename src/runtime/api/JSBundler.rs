@@ -1529,10 +1529,8 @@ pub mod js_bundler {
                     .expect("BundleV2.linker.loop must be set before plugins run");
                 match &mut *any_loop.as_ptr() {
                     bun_event_loop::AnyEventLoop::Js { .. } => {
-                        let ct = ConcurrentTask::from_callback(
-                            std::ptr::from_mut::<Load>(self),
-                            on_notify_defer_js,
-                        );
+                        let load = std::ptr::from_mut::<Load>(self);
+                        let ct = ConcurrentTask::from_callback(move || on_notify_defer_js(load));
                         let poster = (*ctx.as_mut_ptr())
                             .js_poster
                             .as_ref()

@@ -2929,7 +2929,7 @@ impl ThreadSafeFunction {
                     // dispatch will happen; the queued calls are released by the
                     // teardown path. Free the task and fall back to Idle.
                     // SAFETY: refused ⇒ we own the task box.
-                    unsafe { drop(bun_core::heap::take(ct.as_ptr())) };
+                    unsafe { ConcurrentTask::release_refused(ct) };
                     self.dispatch_state
                         .store(DispatchState::Idle as u8, Ordering::SeqCst);
                 }
@@ -5293,7 +5293,7 @@ impl NapiFinalizerTask {
             {
                 // SAFETY: refused ⇒ we own both boxes.
                 unsafe {
-                    drop(bun_core::heap::take(ct.as_ptr()));
+                    ConcurrentTask::release_refused(ct);
                     let task = bun_core::heap::take(this);
                     let _ = core::mem::ManuallyDrop::new(task.finalizer.env);
                 }

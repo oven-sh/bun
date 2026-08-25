@@ -701,46 +701,14 @@ impl ErrorDeferred {
     }
 
     pub(crate) fn reject_later(self: Box<Self>, global_this: &JSGlobalObject) {
-        struct Context {
-            deferred: Box<ErrorDeferred>,
-            // LIFETIMES.tsv row 1403: JSC_BORROW — the global outlives the
-            // enqueued task (VM-owned), so a `BackRef` captures the invariant.
-            global_this: bun_ptr::BackRef<JSGlobalObject>,
-        }
-        impl Context {
-            // `bun_event_loop::ManagedTask::new` expects
-            // `fn(*mut T) -> bun_event_loop::JsResult<()>` (tier-0 `bun_core::JsError`).
-            fn callback(this: *mut Context) -> bun_event_loop::JsResult<()> {
-                // SAFETY: `this` is the heap-allocated pointer passed to ManagedTask::new
-                // below; ManagedTask::run calls us exactly once with that pointer.
-                let this = unsafe { bun_core::heap::take(this) };
-                let global = this.global_this.get();
-                this.deferred.reject(global)
-            }
-        }
-
-        let vm = global_this.bun_vm();
-        // Worker terminate's `stop_dns_for_vm_teardown` fires EDESTRUCTION with
-        // `is_shutting_down` already set; the task queue is about to be
-        // drained-without-run and ManagedTask has no cleanup here, so enqueuing
-        // would leak the `Context` and its `JSPromiseStrong` box. Drop now while
-        // JSC is still live so the Strong handle releases cleanly.
-        if vm.is_shutting_down() {
-            return;
-        }
-
-        let context = bun_core::heap::into_raw(Box::new(Context {
-            deferred: self,
-            global_this: bun_ptr::BackRef::new(global_this),
-        }));
-        // TODO(@heimskr): new custom Task type
-        // SAFETY: `bun_vm()` returns a non-null VM pointer (VM-owned for the lifetime of
-        // the JSGlobalObject).
-        vm.as_mut()
-            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(
-                context,
-                Context::callback,
-            ));
+        // The global outlives the queued task (VM-owned).
+        let global = bun_ptr::BackRef::new(global_this);
+        global_this
+            .bun_vm()
+            .as_mut()
+            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(move || {
+                (*self).reject(global.get())
+            }));
     }
 }
 

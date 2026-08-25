@@ -1236,7 +1236,7 @@ pub mod waiter_thread_posix {
                                     // task and drop the ref its delivery would have released.
                                     // SAFETY: refused ⇒ we own both boxes; `process` is strong-ref'd.
                                     unsafe {
-                                        drop(bun_core::heap::take(ct.as_ptr()));
+                                        ConcurrentTask::release_refused(ct);
                                         drop(bun_core::heap::take(rt));
                                         T::release_ref_from_waiter_thread(process);
                                     }

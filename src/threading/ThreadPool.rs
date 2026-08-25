@@ -653,6 +653,19 @@ impl ThreadPool {
         self.schedule_impl(&batch, false);
     }
 
+    /// Schedule a heap-allocated task by value. The pool takes ownership of
+    /// the `Box`; [`OwnedTask::run`](crate::work_pool::OwnedTask::run)
+    /// receives it back on a worker thread.
+    pub fn schedule_owned<T: crate::work_pool::OwnedTask>(&self, mut task: Box<T>) {
+        task.task_mut().callback = T::__callback;
+        // Derive the intrusive `*mut Task` *after* into_raw so provenance
+        // covers the full allocation.
+        let raw = Box::into_raw(task);
+        // SAFETY: `raw` is a live heap allocation now owned by the pool;
+        // `IntrusiveField::field_of` projects to the embedded `Task`.
+        self.schedule(Batch::from(unsafe { T::field_of(raw) }));
+    }
+
     /// This function should only be called from threads that are part of the thread pool.
     pub fn schedule_inside_thread_pool(&self, batch: Batch) {
         self.schedule_impl(&batch, true);

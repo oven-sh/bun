@@ -1922,8 +1922,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // context, `&mut` scoped to this call.
             unsafe {
                 (*self.vm_mut()).enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
-                    app,
-                    |app| {
+                    move || {
                         // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                         bun_opaque::opaque_deref_mut(app).close();
                         Ok(())
@@ -1932,11 +1931,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
         }
 
+        let this = std::ptr::from_mut::<Self>(self);
         // SAFETY: as above — `&mut` scoped to this call.
         unsafe {
             (*self.vm_mut()).enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
-                std::ptr::from_mut::<Self>(self),
-                |this| {
+                move || {
                     // SAFETY: `this` is the unique owning server pointer enqueued
                     // above; the task runs once on the JS thread.
                     Self::deinit(this);

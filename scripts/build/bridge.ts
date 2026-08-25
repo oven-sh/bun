@@ -88,7 +88,8 @@ function declareNative(engine: Engine, t: NativeTask): Task {
     inputs: [...t.inputs, ...(t.implicitInputs ?? [])],
     after: t.after,
     command: t.commands.map(c => ({ argv: c.argv, cwd: c.cwd, env: c.env })),
-    rspfile: t.rspfile !== undefined ? { path: t.rspfile, content: t.inputs.map(p => engine.rel(p)).join("\n") } : undefined,
+    rspfile:
+      t.rspfile !== undefined ? { path: t.rspfile, content: t.inputs.map(p => engine.rel(p)).join("\n") } : undefined,
     depfile: t.depfile,
     restat: t.restat,
     alwaysRun: t.alwaysRun,
@@ -112,7 +113,11 @@ class EdgeExpander {
   }
 
   /** depfile and rspfile are paths we open ourselves: no shell escaping, like ninja's GetUnescaped*. */
-  binding(e: GraphEdge, rule: Rule, name: "command" | "description" | "depfile" | "rspfile" | "rspfile_content"): string {
+  binding(
+    e: GraphEdge,
+    rule: Rule,
+    name: "command" | "description" | "depfile" | "rspfile" | "rspfile_content",
+  ): string {
     const raw = rule[name];
     if (raw === undefined) return "";
     return this.expand(e, rule, raw, name !== "depfile" && name !== "rspfile");

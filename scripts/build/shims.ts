@@ -15,7 +15,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { Config } from "./config.ts";
 import { DARWIN_STACK_SIZE } from "./flags.ts";
-import type { Ninja } from "./ninja.ts";
+import type { NativeCommand, Ninja } from "./ninja.ts";
 import { quote } from "./shell.ts";
 
 export interface ShimLinkOpts {
@@ -69,9 +69,34 @@ export function machoEntitlementsPlist(cfg: Config): string {
 }
 
 /**
+ * The fixups to run on a freshly linked executable, as argv commands for the
+ * link task (`compile.ts`). `out` is the executable as the linker names it
+ * (buildDir-relative). Empty when no fixup is needed.
+ */
+export function postlinkCommands(cfg: Config, out: string): NativeCommand[] {
+  const commands: NativeCommand[] = [];
+  if (needsElfDebugCompressPostlink(cfg)) {
+    const llvmObjcopy = resolve(dirname(cfg.cc), "llvm-objcopy");
+    commands.push({
+      argv: [existsSync(llvmObjcopy) ? llvmObjcopy : "llvm-objcopy", "--compress-debug-sections=zlib", out],
+    });
+  }
+  if (needsMachoPostlink(cfg)) {
+    // x64 has no LC_CODE_SIGNATURE to re-sign (see the -adhoc_codesign flag
+    // entry) — only the stack size is patched. macho-postlink errors if asked
+    // to embed entitlements into an unsigned binary, which is the safety net
+    // that keeps arm64 from ever silently shipping unsigned.
+    const argv = [machoPostlinkToolPath(cfg), out, `--stack-size=${DARWIN_STACK_SIZE}`];
+    if (cfg.arm64) argv.push(`--entitlements=${machoEntitlementsPlist(cfg)}`);
+    commands.push({ argv });
+  }
+  return commands;
+}
+
+/**
  * Command suffix to append to a rule that produces a Mach-O executable at
- * `$out` (the link rule and the strip rule). Empty string when the fixup
- * isn't needed so callers can append unconditionally.
+ * `$out` (the strip rule). Empty string when the fixup isn't needed so
+ * callers can append unconditionally. The link task uses `postlinkCommands`.
  */
 export function machoPostlinkCommand(cfg: Config): string {
   if (!needsMachoPostlink(cfg)) return "";
@@ -106,17 +131,6 @@ export function machoPostlinkImplicitInputs(cfg: Config): string[] {
  */
 export function needsElfDebugCompressPostlink(cfg: Config): boolean {
   return (cfg.linux || cfg.freebsd) && cfg.rustLld !== undefined && cfg.ld === cfg.rustLld;
-}
-
-/**
- * Command suffix for the link rule: `... -o $out && llvm-objcopy
- * --compress-debug-sections=zlib $out`. Empty when not needed so callers
- * can append unconditionally (mutually exclusive with machoPostlinkCommand).
- */
-export function elfDebugCompressPostlinkCommand(cfg: Config): string {
-  if (!needsElfDebugCompressPostlink(cfg)) return "";
-  const llvmObjcopy = resolve(dirname(cfg.cc), "llvm-objcopy");
-  return ` && ${quote(existsSync(llvmObjcopy) ? llvmObjcopy : "llvm-objcopy", false)} --compress-debug-sections=zlib $out`;
 }
 
 /**

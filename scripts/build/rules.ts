@@ -20,7 +20,7 @@
  */
 
 import { registerCodegenRules } from "./codegen.ts";
-import { registerCompileRules, registerDirStamps } from "./compile.ts";
+import { registerCompilePools } from "./compile.ts";
 import type { Config } from "./config.ts";
 import type { Ninja } from "./ninja.ts";
 import { registerRustRules } from "./rust.ts";
@@ -35,12 +35,8 @@ import { registerDepRules } from "./source.ts";
  * rules in build.ninja are ignored by ninja.
  */
 export function registerAllRules(n: Ninja, cfg: Config): void {
-  // mkdir_stamp rule + obj/pch dir stamps. Must be first — codegen
-  // registers its own dir stamp using this rule.
-  registerDirStamps(n, cfg);
-
-  // cxx, cc, pch, link, ar
-  registerCompileRules(n, cfg);
+  // The `compile` pool that caps cc/cxx/pch/nasm tasks.
+  registerCompilePools(n);
 
   // dep_fetch, dep_fetch_prebuilt, dep_configure, dep_build, dep_cargo
   // WebKit prebuilt uses dep_fetch_prebuilt; local uses dep_configure/dep_build.

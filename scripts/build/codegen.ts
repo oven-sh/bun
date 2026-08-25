@@ -160,6 +160,13 @@ export function registerCodegenRules(n: Ninja, cfg: Config): void {
 
   // Codegen dir stamp — all outputs go into cfg.codegenDir, but the dir must
   // exist first. Scripts generally mkdir themselves, but some (esbuild) don't.
+  // mkdir + touch stamp. Both sides must tolerate "already exists" — posix
+  // has -p, cmd doesn't, so suppress the error (2>nul) and touch
+  // unconditionally (&).
+  n.rule("mkdir_stamp", {
+    command: hostWin ? `cmd /c "mkdir $dir 2>nul & type nul > $out"` : `mkdir -p $dir && touch $out`,
+    description: "mkdir $dir",
+  });
   n.build({
     outputs: [codegenDirStamp(cfg)],
     rule: "mkdir_stamp",
@@ -249,8 +256,7 @@ export interface CodegenOutputs {
 /**
  * Emit all codegen steps. Returns grouped outputs for downstream wiring.
  *
- * Call after registerCodegenRules() and after registerDirStamps() (we use
- * the `mkdir_stamp` rule for the codegen dir).
+ * Call after registerCodegenRules().
  */
 export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOutputs {
   n.comment("─── Codegen ───");

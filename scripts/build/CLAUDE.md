@@ -1,6 +1,11 @@
 # TypeScript Build System
 
-This directory generates `build.ninja`. The scripts **describe** the build; ninja **performs** it.
+This directory describes the build as tasks and runs them. Two runners execute the same declarations:
+
+- `--runner=ts` (or `BUN_BUILD_RUNNER=ts`): `engine.ts`, in process. Tasks are argv + inputs + outputs; the engine decides what is stale (mtimes, recorded header deps, command hash), runs stale tasks in parallel within pools, and keeps its state in `.build_log` / `.build_deps`. No ninja binary involved.
+- `--runner=ninja` (the default, for now): the same declarations serialized to `build.ninja`, run by ninja.
+
+Tasks are declared in two forms. `Ninja.task()` is the native one: a `NativeTask` with `commands: [{ argv, cwd?, env? }]`, `inputs`, `outputs`, `after`, `depfile`, `restat`, `pool`. No rule templates, no `$vars`, no shell quoting anywhere in the emitter. The compile/link/archive constructors in `compile.ts` and the dep codegen tool in `source.ts` use it. The older `rule()` + `build()` form still exists for the emitters not yet ported (deps fetch, codegen scripts, cargo, shims, strip, upload); `bridge.ts` expands those the way ninja would and hands them to the engine as shell commands. Porting an emitter means replacing its `n.rule()`/`n.build()` pair with one `n.task()` call whose argv is what the rule's shell string used to spell out. When the last one is ported, the shell path in the engine, `bridge.ts`'s expander, `stream.ts`, `shell.ts`'s `quote()`, the regen rule and `build.ninja` itself all go.
 
 ## Goals
 
@@ -9,7 +14,7 @@ This directory generates `build.ninja`. The scripts **describe** the build; ninj
 - **Configure always runs.** Every `bun run build` reconfigures before spawning ninja — no separate first-time configure step, no cached options that persist across runs. Config is `profile + overrides` evaluated fresh each time. Fast enough to not matter (~200ms — we haven't tried to make it faster yet).
 - `writeIfChanged()` — preserves mtimes on unchanged content, so the always-configure cost is near-zero for ninja: if `build.ninja` didn't change, ninja doesn't restat the graph
 - `restat = 1` on fetch/codegen/dep rules — prunes downstream rebuilds when outputs don't actually change
-- Self-rebuilding `build.ninja` — the `regen` generator rule re-runs configure when running ninja directly and a build script changed
+- Self-rebuilding `build.ninja` — the `regen` generator rule re-runs configure when running ninja directly and a build script changed. The engine never needs it: `bun run build` always configures first.
 
 **Explicit over implicit.** Every decision traceable to a line of code you can grep for. No hidden defaults, no order-dependent global state, no "it works because something else happened to set this."
 
@@ -84,13 +89,19 @@ Edge dependency types:
 ## Iterating on the build system
 
 ```sh
-bun scripts/build.ts --configure-only       # regenerate build.ninja, don't run ninja
+bun scripts/build.ts --configure-only       # regenerate build.ninja, don't run anything
 bunx tsc --noEmit -p scripts/build/tsconfig.json   # typecheck
-grep "yourtarget\|yourrule" build/debug/build.ninja  # inspect generated output
-ninja -C build/debug -t query <target>      # why does <target> rebuild?
-ninja -C build/debug -t deps <target>       # what headers does foo.o depend on?
-ninja -C build/debug <target>               # build a specific target (e.g. tinycc, bun-rust)
+bun scripts/build.ts --runner=ts -n --explain      # engine: what would run, and why (runs nothing)
+bun scripts/build.ts --runner=ts --target=bun-rust # engine: one target
+grep "yourtarget\|yourrule" build/debug/build.ninja  # inspect the ninja export
+ninja -C build/debug -t query <target>      # ninja: why does <target> rebuild?
+ninja -C build/debug -t deps <target>       # ninja: what headers does foo.o depend on?
+ninja -C build/debug <target>               # ninja: build a specific target (e.g. tinycc, bun-rust)
 ```
+
+The two runners keep separate state (`.build_log`/`.build_deps` vs `.ninja_log`/`.ninja_deps`), so switching runners in one build dir rebuilds once.
+
+Engine tests: `bun bd test test/internal/build-engine.test.ts` (synthetic tasks in a temp dir: what reruns, ordering, pools, failures, depfiles).
 
 The generated `build.ninja` is the ground truth. If an edge isn't doing what you expect, read it there first.
 
@@ -170,8 +181,10 @@ Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp
 
 ### Phase 3 — Execute
 
-- **CI:** collapsible log groups, spawn ninja with `spawnWithAnnotations` (parses compiler errors into Buildkite annotations), upload/download artifacts.
-- **Local:** spawn ninja with FD 3 dup'd to stderr — `stream.ts`-wrapped commands write to FD 3, bypassing ninja's per-job output buffering so dep/cargo build progress streams live. If positionals given, exec the built binary with them.
+- **`--runner=ts`:** `bridge.ts` declares every recorded task on an `Engine`; `engine.run(targets)` plans and runs. Local: a status line on a TTY, one line per task otherwise, failures only in quiet mode (`bun bd test …`). CI: one line per task. Console tasks (cargo, link, smoke test) inherit the terminal; everything else is captured and printed when it finishes.
+- **`--runner=ninja`, CI:** collapsible log groups, spawn ninja with `spawnWithAnnotations` (parses compiler errors into Buildkite annotations), upload/download artifacts.
+- **`--runner=ninja`, local:** spawn ninja with FD 3 dup'd to stderr — `stream.ts`-wrapped commands write to FD 3, bypassing ninja's per-job output buffering so dep/cargo build progress streams live. The engine passes the same fd, so stream.ts keeps working until it is deleted.
+- If positionals given, exec the built binary with them.
 
 ## Module inventory
 
@@ -183,7 +196,11 @@ Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp
 | `profiles.ts`                  | Named `PartialConfig` presets + `getProfile()`                                                                          |
 | `tools.ts`                     | Tool discovery: `findTool()`, `resolveLlvmToolchain()`, version parsing                                                 |
 | `flags.ts`                     | Flat flag tables, `computeFlags()`, `computeDepFlags()`, `computeCpuTargetFlags()`                                      |
-| `ninja.ts`                     | `Ninja` class — the build-file writer                                                                                   |
+| `ninja.ts`                     | `Ninja` class — records tasks (`task()`) and rule edges (`rule()`/`build()`), writes `build.ninja`                      |
+| `engine.ts`                    | `Engine` — in-process runner: staleness, scheduling, pools, process output (`--runner=ts`)                              |
+| `bridge.ts`                    | Declares a `Ninja`'s recorded tasks and edges on an `Engine`; expands rule edges the way ninja would                    |
+| `build-log.ts`                 | Engine state on disk: `.build_log` (command hash, start time, duration) and `.build_deps` (header deps)                 |
+| `depfile.ts`                   | Parsers: Makefile depfiles, clang-cl `/showIncludes`, ninja `$var` expansion                                            |
 | `rules.ts`                     | `registerAllRules()` — calls each module's `registerXxxRules()`                                                         |
 | `compile.ts`                   | `cc`/`cxx`/`pch`/`link`/`ar` + `registerCompileRules()`                                                                 |
 | `unified.ts`                   | WebKit-style unified-source bundling, `generateUnifiedSources()`                                                        |
@@ -222,14 +239,18 @@ Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp
 
 ## registerXxxRules vs emitXxx
 
-**Rules** are ninja `rule` blocks — reusable command templates. **Build edges** are `build` statements — input→output instances.
+**Rules** are ninja `rule` blocks — reusable command templates. **Build edges** are `build` statements — input→output instances. Only the not-yet-ported emitters use them; a native `task()` carries its own argv and needs no rule.
 
 Ninja requires all rules defined before any build references them. Hence:
 
-1. `registerXxxRules(n, cfg)` — each module registers its rules. Called once via `registerAllRules()`.
-2. `emitXxx(n, cfg, ...)` — each module emits build edges.
+1. `registerXxxRules(n, cfg)` — each module registers its rules. Called once via `registerAllRules()`. (`compile.ts` only registers its pool now.)
+2. `emitXxx(n, cfg, ...)` — each module emits build edges or tasks.
 
 Why not auto-register in emit functions? Some rules are shared (`dep_configure` used by both `source.ts` and `webkit.ts` local mode). Explicit registration keeps "which rule lives where" clear.
+
+## Engine semantics (what replaced ninja)
+
+A task reruns when any of these hold, checked in this order: a task it depends on ran and `changed`; an output is missing; it is not in `.build_log`; its command hash (argv + cwd + env + response file) differs; a header recorded in `.build_deps` is missing or the output is newer than that record; an input or recorded header is newer than the task's last start time (read from the file system clock through `.build_lock`, so it compares with output mtimes); or `alwaysRun`. `restat: true` tasks count as `changed` only when an output mtime moved, which is what lets writeIfChanged codegen and a no-op cargo build stop a relink. Dependencies come from `after` and from inputs another task produces; `after` on an alias name waits for everything behind it. Pools are priority semaphores: the task with the longest recorded duration goes first, so the slow translation units and cargo start early.
 
 ## Gotchas
 

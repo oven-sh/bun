@@ -665,25 +665,6 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
     pool: "dep",
   });
 
-  // DirectBuild host tool: compile+link in one clang invocation with NO
-  // cfg target/arch flags — the tool runs on the build host. cc()/link()
-  // would add --target which breaks cross-compiles. cfg.hostCc (not cfg.cc):
-  // when cross-compiling for windows, cc is clang-cl and defaults to a
-  // *-windows-msvc triple — host tools must stay plain clang.
-  n.rule("dep_host_cc", {
-    command: `${q(cfg.hostCc)} $flags -o $out $in`,
-    description: "host-cc $out",
-  });
-
-  // DirectBuild codegen: runs a host tool built by this graph to produce a
-  // header. cwd is the dep source dir so the tool sees its inputs; output
-  // path is absolute. restat: no-op if the header content is unchanged.
-  n.rule("dep_codegen", {
-    command: `${stream} --cwd=$cwd $tool $args`,
-    description: "codegen $name",
-    restat: true,
-  });
-
   // DirectBuild header substitution: literal string replacement on a
   // template file (cmake's configure_file(@ONLY) without the cmake).
   // restat is what makes this cheap — if the output text is unchanged
@@ -1634,32 +1615,34 @@ function emitDirect(
     // target triple, just the tool defines and -w. Compile+link in one go
     // so host-arch objects never land in obj/ (which would dirty ccache
     // for the target build).
+    // cfg.hostCc (not cfg.cc): when cross-compiling for windows, cc is
+    // clang-cl and defaults to a *-windows-msvc triple — host tools must
+    // stay plain clang.
     const toolDefs = Object.entries(cg.toolDefines ?? {}).map(([k, v]) => defineFlag(k, v));
-    n.build({
+    n.task({
+      kind: "host_cc",
+      label: n.rel(toolOut),
+      commands: [{ argv: [cfg.hostCc, "-w", ...toolDefs, "-o", n.rel(toolOut), toolSrc] }],
       outputs: [toolOut],
-      rule: "dep_host_cc",
       inputs: [toolSrc],
-      orderOnlyInputs: orderOnly,
-      vars: { flags: ["-w", ...toolDefs].join(" ") },
+      after: orderOnly,
     });
     const toolExe = toolOut;
 
     // Run tool. "$out" in args expands to the generated header's absolute
     // path; other args resolve against srcDir. Tool runs with srcDir as
-    // cwd so relative input paths it opens internally Just Work.
+    // cwd so relative input paths it opens internally Just Work. restat:
+    // no-op if the header content is unchanged.
     generatedHeader = resolve(buildDir, cg.output);
     const argv = cg.args.map(a => (a === "$out" ? generatedHeader! : resolve(srcDir, a)));
 
-    n.build({
+    n.task({
+      kind: "dep_codegen",
+      label: name,
+      commands: [{ argv: [toolExe, ...argv], cwd: srcDir }],
       outputs: [generatedHeader],
-      rule: "dep_codegen",
       inputs: [toolExe],
-      vars: {
-        name,
-        cwd: srcDir,
-        tool: q(toolExe),
-        args: quoteArgs(argv, hostWin),
-      },
+      restat: true,
     });
   }
 
@@ -1760,11 +1743,11 @@ function emitForbidUndefined(
 }
 
 /**
- * Format a -D flag. String values become shell-escaped C string literals
- * (-DNAME=\"val\" → compiler sees "val"); numbers/true pass through bare.
+ * Format a -D flag. String values become C string literals (-DNAME="val");
+ * numbers/true pass through bare. Flags are argv entries: no shell escaping.
  */
 function defineFlag(name: string, value: string | number | true): string {
   if (value === true) return `-D${name}`;
   if (typeof value === "number") return `-D${name}=${value}`;
-  return `-D${name}=\\"${value}\\"`;
+  return `-D${name}="${value}"`;
 }

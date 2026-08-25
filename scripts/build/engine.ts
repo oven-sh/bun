@@ -547,7 +547,13 @@ export class Engine {
   private spawnCommand(
     task: Task,
     cmd: Command,
-  ): Promise<{ code: number; signal: NodeJS.Signals | null; spawnError: Error | undefined; output: string; stdout: string }> {
+  ): Promise<{
+    code: number;
+    signal: NodeJS.Signals | null;
+    spawnError: Error | undefined;
+    output: string;
+    stdout: string;
+  }> {
     const inherit = task.spec.console === true && this.opts.display !== "quiet";
     const stdio: (number | "pipe" | "inherit" | "ignore")[] = inherit
       ? ["inherit", "inherit", "inherit"]

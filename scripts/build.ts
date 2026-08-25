@@ -315,7 +315,10 @@ async function runExecutor(
     const task = engine.lookup(name);
     if (task === undefined) {
       throw new BuildError(`unknown target '${name}'`, {
-        hint: `Known targets: ${engine.aliasNames.filter(a => !a.includes("/")).sort().join(", ")}`,
+        hint: `Known targets: ${engine.aliasNames
+          .filter(a => !a.includes("/"))
+          .sort()
+          .join(", ")}`,
       });
     }
     return task;
@@ -345,7 +348,9 @@ function runNinjaLocal(result: ConfigureResult, args: CliArgs, quiet: boolean): 
   // index STREAM_FD dups it there for the whole ninja process tree.
   //
   // In quiet mode, capture to buffers instead — dumped only on failure.
-  const stdio: (number | "inherit" | "pipe")[] = quiet ? ["inherit", "pipe", "pipe"] : ["inherit", "inherit", "inherit"];
+  const stdio: (number | "inherit" | "pipe")[] = quiet
+    ? ["inherit", "pipe", "pipe"]
+    : ["inherit", "inherit", "inherit"];
   if (!quiet && interactive) {
     stdio[STREAM_FD] = 2;
   }

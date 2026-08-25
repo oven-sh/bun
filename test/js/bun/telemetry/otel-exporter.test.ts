@@ -785,14 +785,14 @@ describe.concurrent("OTLP/HTTP exporter", () => {
       { BUN_OTEL: "1", OTEL_SERVICE_NAME: "a", OTEL_EXPORTER_OTLP_ENDPOINT: c.url },
     );
     expect(exitCode).toBe(0);
-    const bySvc = c.received.map(r => [
-      r.body.resourceSpans[0].resource.attributes.find((a: any) => a.key === "service.name").value.stringValue,
-      r.body.resourceSpans[0].scopeSpans.flatMap((s: any) => s.spans.map((x: any) => x.name)),
-    ]);
-    expect(bySvc).toEqual([
-      ["a", ["early"]],
-      ["b", ["late"]],
-    ]);
+    // (the two requests race to the collector; pair them by service)
+    const bySvc = Object.fromEntries(
+      c.received.map(r => [
+        r.body.resourceSpans[0].resource.attributes.find((a: any) => a.key === "service.name").value.stringValue,
+        r.body.resourceSpans[0].scopeSpans.flatMap((s: any) => s.spans.map((x: any) => x.name)),
+      ]),
+    );
+    expect(bySvc).toEqual({ a: ["early"], b: ["late"] });
   });
 
   test("OTEL_SDK_DISABLED=true makes Bun.otel.start() a no-op", async () => {

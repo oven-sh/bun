@@ -385,9 +385,11 @@ impl<'a> Parser<'a> {
             // [otel] — native OpenTelemetry (Bun.otel). OTEL_* environment variables override.
             if let Some(expr) = json.get(b"otel") {
                 self.expect(&expr, ExprTag::EObject)?;
-                let mut cfg = bun_telemetry_cold::config::Bunfig::default();
                 // The table's presence turns tracing on unless it says `enabled = false`.
-                cfg.enabled = Some(true);
+                let mut cfg = bun_telemetry_cold::config::Bunfig {
+                    enabled: Some(true),
+                    ..Default::default()
+                };
                 if let Some(e) = expr.get(b"enabled") {
                     self.expect(&e, ExprTag::EBoolean)?;
                     cfg.enabled = e.as_bool();

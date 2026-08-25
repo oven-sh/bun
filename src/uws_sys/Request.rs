@@ -151,6 +151,26 @@ impl<'a> TelemetryHeaders<'a> {
     }
 }
 
+/// `uws_*_for_each_header_value` callback: joins values into `*user`
+/// (an `Option<Vec<u8>>`) with `", "`.
+pub(crate) unsafe extern "C" fn push_joined_header_value(
+    value: *const u8,
+    len: usize,
+    user: *mut core::ffi::c_void,
+) {
+    // SAFETY: `user` is the `&mut Option<Vec<u8>>` the caller passed alongside this callback.
+    let out = unsafe { &mut *user.cast::<Option<Vec<u8>>>() };
+    // SAFETY: value/len is a request-owned slice valid for the call.
+    let v = unsafe { bun_core::ffi::slice(value, len) };
+    match out {
+        Some(buf) => {
+            buf.extend_from_slice(b", ");
+            buf.extend_from_slice(v);
+        }
+        None => *out = Some(v.to_vec()),
+    }
+}
+
 impl Request {
     pub fn set_yield(&mut self, yield_: bool) {
         c::uws_req_set_yield(self, yield_)
@@ -189,27 +209,14 @@ impl Request {
     /// Every value of `name` (lower-case) joined with `", "`, for headers that
     /// may repeat; `None` when absent.
     pub fn header_joined(&self, name: &[u8]) -> Option<Vec<u8>> {
-        unsafe extern "C" fn push(value: *const u8, len: usize, user: *mut core::ffi::c_void) {
-            // SAFETY: `user` is the `&mut Option<Vec<u8>>` passed below.
-            let out = unsafe { &mut *user.cast::<Option<Vec<u8>>>() };
-            // SAFETY: value/len is a request-owned slice valid for the call.
-            let v = unsafe { bun_core::ffi::slice(value, len) };
-            match out {
-                Some(buf) => {
-                    buf.extend_from_slice(b", ");
-                    buf.extend_from_slice(v);
-                }
-                None => *out = Some(v.to_vec()),
-            }
-        }
         let mut out: Option<Vec<u8>> = None;
-        // SAFETY: name is a valid slice; `push` only runs during the call with `out` alive.
+        // SAFETY: name is a valid slice; the callback only runs during the call with `out` alive.
         unsafe {
             c::uws_req_for_each_header_value(
                 self,
                 name.as_ptr(),
                 name.len(),
-                push,
+                push_joined_header_value,
                 (&raw mut out).cast(),
             )
         };

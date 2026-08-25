@@ -65,27 +65,14 @@ impl Request {
     }
     /// Every value of `name` (lower-case) joined with `", "`; `None` when absent.
     pub fn header_joined(&mut self, name: &[u8]) -> Option<Vec<u8>> {
-        unsafe extern "C" fn push(value: *const u8, len: usize, user: *mut core::ffi::c_void) {
-            // SAFETY: `user` is the `&mut Option<Vec<u8>>` passed below.
-            let out = unsafe { &mut *user.cast::<Option<Vec<u8>>>() };
-            // SAFETY: value/len is a request-owned slice valid for the call.
-            let v = unsafe { bun_core::ffi::slice(value, len) };
-            match out {
-                Some(buf) => {
-                    buf.extend_from_slice(b", ");
-                    buf.extend_from_slice(v);
-                }
-                None => *out = Some(v.to_vec()),
-            }
-        }
         let mut out: Option<Vec<u8>> = None;
-        // SAFETY: self is a live FFI handle; `push` only runs during the call with `out` alive.
+        // SAFETY: self is a live FFI handle; the callback only runs during the call with `out` alive.
         unsafe {
             c::uws_h3_req_for_each_header_value(
                 self,
                 name.as_ptr(),
                 name.len(),
-                push,
+                crate::request::push_joined_header_value,
                 (&raw mut out).cast(),
             )
         };

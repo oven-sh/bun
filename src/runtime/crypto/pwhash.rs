@@ -14,15 +14,13 @@
 use crate::Error;
 
 /// PHC / modular-crypt strings are 7-bit ASCII by spec; the third-party
-/// `argon2`/`bcrypt` crates take `&str`, so view-cast after the cheap
-/// `is_ascii` check (no full UTF-8 walk).
+/// `argon2`/`bcrypt` crates take `&str`.
 #[inline]
 fn phc_ascii_str(s: &[u8]) -> Result<&str, Error> {
     if !s.is_ascii() {
         return Err(crate::Error::InvalidEncoding);
     }
-    // SAFETY: every byte < 0x80 ⇒ valid UTF-8.
-    Ok(unsafe { core::str::from_utf8_unchecked(s) })
+    bun_core::strings::str_utf8(s).ok_or(crate::Error::InvalidEncoding)
 }
 
 /// Output string encoding.

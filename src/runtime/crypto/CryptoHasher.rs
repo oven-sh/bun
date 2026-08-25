@@ -1,6 +1,5 @@
 use core::any::Any;
 use core::cell::Cell;
-use core::ffi::c_char;
 
 use bun_boringssl_sys as boring_ssl;
 use bun_jsc::bun_string_jsc;
@@ -25,19 +24,10 @@ type Digest = evp::Digest;
 
 const EVP_MAX_MD_SIZE_USIZE: usize = boring_ssl::EVP_MAX_MD_SIZE as usize;
 
-/// Local helper: dereference the raw `*mut VirtualMachine` to reach
-/// `RareData::boring_engine()` and cast the bun_jsc-local opaque `ENGINE`
-/// to the real `bun_boringssl_sys::ENGINE` (both name the same C struct).
+/// The VM's BoringSSL `ENGINE` (see `RareData::boring_engine`).
 #[inline]
-fn boring_engine(global: &JSGlobalObject) -> *mut boring_ssl::ENGINE {
-    // SAFETY: `bun_vm()` returns the raw `*mut VirtualMachine` for a Bun-owned
-    // global (never null, single-threaded JS heap), so deref-to-&mut is sound here.
-    global
-        .bun_vm()
-        .as_mut()
-        .rare_data()
-        .boring_engine()
-        .cast::<boring_ssl::ENGINE>()
+fn boring_engine(global: &JSGlobalObject) -> Option<&boring_ssl::ENGINE> {
+    global.bun_vm().as_mut().rare_data().boring_engine()
 }
 
 /// The synchronous hashers only accept in-memory input, not a `Bun.file()`.
@@ -71,88 +61,72 @@ pub enum CryptoHasher {
     Zig(JsCell<CryptoHasherZig>),
 }
 
+// ── Extern: For using only CryptoHasherZig in c++ ──────────────────────────
+
+// HOST_EXPORT(Bun__CryptoHasherExtern__getByName, c)
+pub fn extern_get_by_name(
+    global: &JSGlobalObject,
+    name: &[u8],
+) -> Option<Box<crate::crypto::CryptoHasher>> {
+    if let Some(inner) = CryptoHasherZig::init(name) {
+        return Some(CryptoHasher::new(CryptoHasher::Zig(JsCell::new(inner))));
+    }
+
+    let algorithm = evp::lookup_ignore_case(name)?;
+
+    match algorithm {
+        evp::Algorithm::Ripemd160
+        | evp::Algorithm::Blake2b256
+        | evp::Algorithm::Blake2b512
+        | evp::Algorithm::Sha512_224 => {
+            if let Some(md) = algorithm.md() {
+                return Some(CryptoHasher::new(CryptoHasher::Evp(Box::new(JsCell::new(
+                    EVP::init(algorithm, md, boring_engine(global)),
+                )))));
+            }
+        }
+        _ => {
+            return None;
+        }
+    }
+
+    None
+}
+
+// HOST_EXPORT(Bun__CryptoHasherExtern__getFromOther, c)
+pub fn extern_get_from_other(
+    global: &JSGlobalObject,
+    other_handle: &crate::crypto::CryptoHasher,
+) -> Option<Box<crate::crypto::CryptoHasher>> {
+    match other_handle {
+        CryptoHasher::Zig(other) => {
+            let hasher = CryptoHasher::new(CryptoHasher::Zig(JsCell::new(other.get().copy())));
+            Some(hasher)
+        }
+        CryptoHasher::Evp(other) => {
+            let evp = match other.get().copy(boring_engine(global)) {
+                Ok(e) => e,
+                Err(_) => return None,
+            };
+            Some(CryptoHasher::new(CryptoHasher::Evp(Box::new(JsCell::new(
+                evp,
+            )))))
+        }
+        _ => None,
+    }
+}
+
+/// Takes back the handle [`extern_get_by_name`] / [`extern_get_from_other`] gave C++.
+// HOST_EXPORT(Bun__CryptoHasherExtern__destroy, c)
+pub fn extern_destroy(handle: Option<Box<crate::crypto::CryptoHasher>>) {
+    drop(handle);
+}
+
 impl CryptoHasher {
     // `pub const new = bun.TrivialNew(@This());`
     #[inline]
     pub(crate) fn new(init: CryptoHasher) -> Box<CryptoHasher> {
         Box::new(init)
-    }
-
-    // ── Extern: For using only CryptoHasherZig in c++ ──────────────────────
-
-    #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Bun__CryptoHasherExtern__getByName(
-        global: &JSGlobalObject,
-        name_bytes: *const c_char,
-        name_len: usize,
-    ) -> Option<Box<CryptoHasher>> {
-        // SAFETY: caller passes a valid (ptr,len) byte slice
-        let name = unsafe { bun_core::ffi::slice(name_bytes.cast::<u8>(), name_len) };
-
-        if let Some(inner) = CryptoHasherZig::init(name) {
-            return Some(CryptoHasher::new(CryptoHasher::Zig(JsCell::new(inner))));
-        }
-
-        let algorithm = evp::lookup_ignore_case(name)?;
-
-        match algorithm {
-            evp::Algorithm::Ripemd160
-            | evp::Algorithm::Blake2b256
-            | evp::Algorithm::Blake2b512
-            | evp::Algorithm::Sha512_224 => {
-                if let Some(md) = algorithm.md() {
-                    // `Algorithm::md()` lives in `bun_sha_hmac` and
-                    // returns that crate's opaque `EVP_MD`; cast to the boringssl-sys
-                    // opaque (same underlying C `struct env_md_st`).
-                    return Some(CryptoHasher::new(CryptoHasher::Evp(Box::new(JsCell::new(
-                        EVP::init(
-                            algorithm,
-                            md.cast::<boring_ssl::EVP_MD>(),
-                            boring_engine(global),
-                        ),
-                    )))));
-                }
-            }
-            _ => {
-                return None;
-            }
-        }
-
-        None
-    }
-
-    #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Bun__CryptoHasherExtern__getFromOther(
-        global: &JSGlobalObject,
-        other_handle: &CryptoHasher,
-    ) -> Option<Box<CryptoHasher>> {
-        match other_handle {
-            CryptoHasher::Zig(other) => {
-                let hasher = CryptoHasher::new(CryptoHasher::Zig(JsCell::new(other.get().copy())));
-                Some(hasher)
-            }
-            CryptoHasher::Evp(other) => {
-                let evp = match other.get().copy(boring_engine(global)) {
-                    Ok(e) => e,
-                    Err(_) => return None,
-                };
-                Some(CryptoHasher::new(CryptoHasher::Evp(Box::new(JsCell::new(
-                    evp,
-                )))))
-            }
-            _ => None,
-        }
-    }
-
-    /// # Safety
-    /// `handle` must be a `Box<CryptoHasher>` raw pointer previously returned by
-    /// `Bun__CryptoHasherExtern__getByName` / `getFromOther`, with ownership
-    /// being returned to Rust (not yet destroyed).
-    #[unsafe(no_mangle)]
-    pub(crate) unsafe extern "C" fn Bun__CryptoHasherExtern__destroy(handle: *mut CryptoHasher) {
-        // SAFETY: caller transfers ownership of a valid `Box<CryptoHasher>` raw
-        // pointer previously returned to C++ (see `# Safety` above).
-        drop(unsafe { Box::from_raw(handle) });
     }
 
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__update")]
@@ -377,8 +351,9 @@ impl CryptoHasher {
         global: &JSGlobalObject,
         evp: &mut EVP,
         input: &BlobOrStringOrBuffer,
-        output: Option<ArrayBuffer>,
+        mut output: Option<ArrayBuffer>,
     ) -> JsResult<JSValue> {
+        let output_value = output.as_ref().map(|b| b.value);
         let mut output_digest_buf: Digest = [0u8; EVP_MAX_MD_SIZE_USIZE];
         let mut output_digest_slice: &mut [u8] = &mut output_digest_buf;
         // `defer input.deinit()` — handled by Drop on `input`.
@@ -389,7 +364,7 @@ impl CryptoHasher {
             )));
         }
 
-        if let Some(output_buf) = &output {
+        if let Some(output_buf) = &mut output {
             let size = evp.size() as usize;
             let bytes_len = output_buf.byte_slice().len();
             if bytes_len < size {
@@ -398,11 +373,7 @@ impl CryptoHasher {
                     size
                 )));
             }
-            // SAFETY: `output_buf.ptr` is the JSC-owned writable backing store
-            // (`bytes_len >= size` checked above; not detached since len > 0);
-            // borrowed for this frame only. Build the `&mut` directly from the
-            // raw `*mut u8` field — never via `&[u8].as_ptr()` (Stacked-Borrows UB).
-            output_digest_slice = unsafe { core::slice::from_raw_parts_mut(output_buf.ptr, size) };
+            output_digest_slice = &mut output_buf.byte_slice_mut()[..size];
         }
 
         let Some(len) = evp.hash(boring_engine(global), input.slice(), output_digest_slice) else {
@@ -412,8 +383,8 @@ impl CryptoHasher {
             return Err(global.throw_value(instance));
         };
 
-        if let Some(output_buf) = output {
-            Ok(output_buf.value)
+        if let Some(value) = output_value {
+            Ok(value)
         } else {
             // Clone to GC-managed memory
             ArrayBuffer::create_buffer(global, &output_digest_slice[0..len as usize])
@@ -704,12 +675,13 @@ impl CryptoHasher {
     fn digest_to_bytes(
         &self,
         global: &JSGlobalObject,
-        output: Option<ArrayBuffer>,
+        mut output: Option<ArrayBuffer>,
     ) -> JsResult<JSValue> {
+        let output_value = output.as_ref().map(|b| b.value);
         let mut output_digest_buf: evp::Digest = [0u8; EVP_MAX_MD_SIZE_USIZE];
         let buf_len = output_digest_buf.len();
         let output_digest_slice: &mut [u8];
-        if let Some(output_buf) = &output {
+        if let Some(output_buf) = &mut output {
             let bytes_len = output_buf.byte_slice().len();
             if bytes_len < buf_len {
                 return Err(global.throw_invalid_arguments(format_args!(
@@ -717,21 +689,15 @@ impl CryptoHasher {
                     boring_ssl::EVP_MAX_MD_SIZE
                 )));
             }
-            // Reshaped for borrowck.
-            // SAFETY: `bytes_len >= EVP_MAX_MD_SIZE` checked above; `output_buf.ptr`
-            // is the JSC-owned writable backing store, outliving this frame. Build
-            // the `&mut` directly from the raw `*mut u8` field — never via
-            // `&[u8].as_ptr()` (Stacked-Borrows UB).
-            output_digest_slice =
-                unsafe { core::slice::from_raw_parts_mut(output_buf.ptr, bytes_len) };
+            output_digest_slice = output_buf.byte_slice_mut();
         } else {
             output_digest_slice = &mut output_digest_buf;
         }
 
         let result = self.final_(global, output_digest_slice)?;
 
-        if let Some(output_buf) = output {
-            Ok(output_buf.value)
+        if let Some(value) = output_value {
+            Ok(value)
         } else {
             // Clone to GC-managed memory
             ArrayBuffer::create_buffer(global, result)
@@ -983,13 +949,8 @@ impl CryptoHasherZig {
 
         h.update(input.slice());
 
-        if let Some(output_buf) = output {
-            // SAFETY: length checked above; `output_buf.ptr` is the JSC-owned
-            // writable backing store, outliving this frame. Build the `&mut`
-            // directly from the raw `*mut u8` field — never via `&[u8].as_ptr()`
-            // (Stacked-Borrows UB).
-            let out =
-                unsafe { core::slice::from_raw_parts_mut(output_buf.ptr, digest_length_comptime) };
+        if let Some(mut output_buf) = output {
+            let out = &mut output_buf.byte_slice_mut()[..digest_length_comptime];
             h.final_(out);
             Ok(output_buf.value)
         } else {
@@ -1093,9 +1054,9 @@ pub trait StaticHasher: 'static {
     fn new_digest() -> Self::Digest;
     fn update(&mut self, bytes: &[u8]);
     fn final_(&mut self, out: &mut Self::Digest);
-    /// # Safety
-    /// `engine` must be null (default engine) or a live `ENGINE*`.
-    unsafe fn hash(input: &[u8], out: &mut Self::Digest, engine: *mut boring_ssl::ENGINE);
+    fn hash(input: &[u8], out: &mut Self::Digest, engine: Option<&boring_ssl::ENGINE>);
+    /// `&mut bytes[..DIGEST]` as a `Self::Digest`; `None` if `bytes` is shorter.
+    fn digest_in(bytes: &mut [u8]) -> Option<&mut Self::Digest>;
     /// Per-monomorphization codegen module (`bun_jsc::generated::JS${NAME}`);
     /// each `impl_static_hasher!` arm binds to the typed wrapper exported by
     /// `js_class_module!` for its concrete name.
@@ -1129,11 +1090,12 @@ macro_rules! impl_static_hasher {
                 <$ty>::r#final(self, out)
             }
             #[inline]
-            unsafe fn hash(input: &[u8], out: &mut Self::Digest, engine: *mut boring_ssl::ENGINE) {
-                // `bun_sha_hmac::sha::ffi::ENGINE` re-exports `bun_boringssl_sys::ENGINE`,
-                // so the VM-owned engine pointer threads through without a cast.
-                // SAFETY: caller upholds `engine` validity (forwarded).
-                unsafe { <$ty>::hash(input, out, engine) }
+            fn hash(input: &[u8], out: &mut Self::Digest, engine: Option<&boring_ssl::ENGINE>) {
+                <$ty>::hash(input, out, engine)
+            }
+            #[inline]
+            fn digest_in(bytes: &mut [u8]) -> Option<&mut Self::Digest> {
+                bytes.get_mut(..$len)?.try_into().ok()
             }
             #[inline]
             fn get_constructor(global: &JSGlobalObject) -> JSValue {
@@ -1278,9 +1240,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             )));
         }
 
-        // SAFETY: `boring_engine` returns the VM-owned engine (live for the
-        // process) or null.
-        unsafe { H::hash(input.slice(), &mut output_digest_buf, boring_engine(global)) };
+        H::hash(input.slice(), &mut output_digest_buf, boring_engine(global));
 
         encoding.encode_with_max_size(global, EVP_MAX_MD_SIZE_USIZE, output_digest_buf.as_ref())
     }
@@ -1288,33 +1248,27 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
     fn hash_to_bytes(
         global: &JSGlobalObject,
         input: &BlobOrStringOrBuffer,
-        output: Option<ArrayBuffer>,
+        mut output: Option<ArrayBuffer>,
     ) -> JsResult<JSValue> {
+        let output_value = output.as_ref().map(|b| b.value);
         let mut output_digest_buf: H::Digest = H::new_digest();
         let output_digest_slice: &mut H::Digest;
-        if let Some(output_buf) = &output {
-            let bytes_len = output_buf.byte_slice().len();
-            if bytes_len < H::DIGEST {
+        if let Some(output_buf) = &mut output {
+            let Some(digest) = H::digest_in(output_buf.byte_slice_mut()) else {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "TypedArray must be at least {} bytes",
                     H::DIGEST
                 )));
-            }
-            // SAFETY: `bytes_len >= H::DIGEST` checked above; `H::Digest = [u8; H::DIGEST]`;
-            // `output_buf.ptr` is the JSC-owned writable backing store. Build the
-            // `&mut` directly from the raw `*mut u8` field — never via
-            // `&[u8].as_ptr()` (Stacked-Borrows UB).
-            output_digest_slice = unsafe { &mut *output_buf.ptr.cast::<H::Digest>() };
+            };
+            output_digest_slice = digest;
         } else {
             output_digest_slice = &mut output_digest_buf;
         }
 
-        // SAFETY: `boring_engine` returns the VM-owned engine (live for the
-        // process) or null.
-        unsafe { H::hash(input.slice(), output_digest_slice, boring_engine(global)) };
+        H::hash(input.slice(), output_digest_slice, boring_engine(global));
 
-        if let Some(output_buf) = output {
-            Ok(output_buf.value)
+        if let Some(value) = output_value {
+            Ok(value)
         } else {
             ArrayBuffer::create_uint8_array(global, output_digest_slice.as_ref())
         }
@@ -1449,23 +1403,19 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
     fn digest_to_bytes(
         &self,
         global: &JSGlobalObject,
-        output: Option<ArrayBuffer>,
+        mut output: Option<ArrayBuffer>,
     ) -> JsResult<JSValue> {
+        let output_value = output.as_ref().map(|b| b.value);
         let mut output_digest_buf: H::Digest = H::new_digest();
         let output_digest_slice: &mut H::Digest;
-        if let Some(output_buf) = &output {
-            let bytes_len = output_buf.byte_slice().len();
-            if bytes_len < H::DIGEST {
+        if let Some(output_buf) = &mut output {
+            let Some(digest) = H::digest_in(output_buf.byte_slice_mut()) else {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "TypedArray must be at least {} bytes",
                     H::DIGEST
                 )));
-            }
-            // SAFETY: `bytes_len >= H::DIGEST`; `H::Digest = [u8; H::DIGEST]`;
-            // `output_buf.ptr` is the JSC-owned writable backing store. Build the
-            // `&mut` directly from the raw `*mut u8` field — never via
-            // `&[u8].as_ptr()` (Stacked-Borrows UB).
-            output_digest_slice = unsafe { &mut *output_buf.ptr.cast::<H::Digest>() };
+            };
+            output_digest_slice = digest;
         } else {
             output_digest_slice = &mut output_digest_buf;
         }
@@ -1473,8 +1423,8 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         self.hashing.with_mut(|h| h.final_(output_digest_slice));
         self.digested.set(true);
 
-        if let Some(output_buf) = output {
-            Ok(output_buf.value)
+        if let Some(value) = output_value {
+            Ok(value)
         } else {
             ArrayBuffer::create_uint8_array(global, output_digest_buf.as_ref())
         }

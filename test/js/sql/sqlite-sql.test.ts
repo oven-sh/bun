@@ -963,6 +963,16 @@ describe("Query Execution", () => {
     const upsert = await sql`INSERT INTO gadgets VALUES (7, 2) ON CONFLICT (id) DO UPDATE SET price = 2`;
     expect(upsert.command).toBe("INSERT");
     expect(upsert.affectedRows).toBe(1);
+
+    // REPLACE as a bare identifier (a non-reserved keyword) is not the REPLACE command
+    const replaceAlias = await sql`WITH c AS (SELECT 1 AS x) SELECT x AS replace FROM c`;
+    expect(replaceAlias).toEqual([{ replace: 1 }]);
+    expect(replaceAlias.affectedRows).toBe(0);
+
+    // a later statement's RETURNING does not leak across a statement boundary
+    const firstOfBatch = await sql.unsafe("WITH c AS (SELECT 1 AS x) SELECT x FROM c; DELETE FROM gadgets RETURNING id");
+    expect(firstOfBatch.command).toBe("WITH");
+    expect(firstOfBatch.affectedRows).toBe(0);
   });
 
   test("SELECT with various clauses", async () => {

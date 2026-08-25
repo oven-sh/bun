@@ -56,8 +56,11 @@ function commandToString(command: SQLCommand, lastToken?: string): string {
   }
 }
 
-function nextTokenIsOpenParen(text: string, index: number): boolean {
-  for (let i = index; i < text.length; i++) {
+/** True when the next whitespace-delimited token at or after index is exactly `word`. */
+function nextTokenIs(text: string, index: number, word: string): boolean {
+  let i = index;
+  const len = text.length;
+  while (i < len) {
     switch (text[i]) {
       case " ":
       case "\n":
@@ -65,12 +68,34 @@ function nextTokenIsOpenParen(text: string, index: number): boolean {
       case "\r":
       case "\f":
       case "\v":
+        i++;
         continue;
-      default:
-        return text[i] === "(";
+    }
+    break;
+  }
+  const end = i + word.length;
+  if (end > len) {
+    return false;
+  }
+  for (let j = 0; j < word.length; j++) {
+    if (text[i + j] !== word[j]) {
+      return false;
     }
   }
-  return false;
+  if (end === len) {
+    return true;
+  }
+  switch (text[end]) {
+    case " ":
+    case "\n":
+    case "\t":
+    case "\r":
+    case "\f":
+    case "\v":
+      return true;
+    default:
+      return false;
+  }
 }
 
 function isWriteCommand(commandString: string): boolean {
@@ -193,8 +218,8 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
           }
           case "DELETE":
           case "REPLACE": {
-            // REPLACE is also a scalar function; a call is followed by "("
-            if (parenDepth === 0 && !(token === "REPLACE" && nextTokenIsOpenParen(text, i + 1 + token.length))) {
+            // REPLACE is also a function and a legal bare identifier; the statement form is REPLACE INTO
+            if (parenDepth === 0 && (token !== "REPLACE" || nextTokenIs(text, i + 1 + token.length, "INTO"))) {
               writeVerb = token;
             }
             lastToken = token;
@@ -266,12 +291,20 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
         if (!quoted) {
           if (char === ")") {
             // a write verb can sit flush against the CTE's closing paren: "(SELECT 1)DELETE"
-            if (parenDepth === 0 && isWriteCommand(token)) {
+            if (
+              parenDepth === 0 &&
+              isWriteCommand(token) &&
+              (token !== "REPLACE" || nextTokenIs(text, i + 1 + token.length, "INTO"))
+            ) {
               writeVerb = token;
             }
             parenDepth++;
           } else if (char === "(" && parenDepth > 0) {
             parenDepth--;
+          } else if (char === ";" && parenDepth === 0) {
+            // the reverse scan crosses statement boundaries; later statements' state must not leak into the first
+            writeVerb = null;
+            hasReturning = false;
           }
           token = char + token;
         }

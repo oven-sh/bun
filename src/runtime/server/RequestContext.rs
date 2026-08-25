@@ -1535,9 +1535,7 @@ where
         drop(self.cookies.replace(None));
 
         if let Some(request) = self.request_mut() {
-            // `req` is still set only while the dispatch is on the stack (a handler
-            // that responded synchronously). JS may still hold the `Request`, so
-            // keep what its lazy `url`/`headers` getters read from the uWS request.
+            // `req` is live only while the dispatch is still on the stack.
             if !HTTP3 {
                 if let Some(req) = self.req.get() {
                     // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.

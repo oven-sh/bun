@@ -86,9 +86,7 @@ pub struct Request {
     pub(crate) url: JsCell<BunString>,
 
     headers: JsCell<Option<HeadersRef>>,
-    /// Copy of the uWS request head, taken by the server when that request goes
-    /// out of scope before JS read `url` or `headers`. The lazy getters fall back
-    /// to it once `request_context` no longer has a live uWS request.
+    /// Source for the lazy `url`/`headers` getters once the uWS request is gone.
     head: JsCell<Option<RequestHeadSnapshot>>,
     // AbortSignal is an opaque C++ handle with intrusive WebCore refcounting —
     // `Arc` of an opaque ZST is meaningless (its payload address is not the
@@ -242,8 +240,7 @@ impl Request {
         self.headers.set(headers);
     }
 
-    /// Where the lazy `url`/`headers` getters read the request head from, for a
-    /// `Request` that `Bun.serve` created. `None` for a `Request` built by JS.
+    /// `None` for a `Request` built by JS.
     fn request_head(&self) -> Option<RequestHead<'_>> {
         if let Some(req) = self.request_context.get_request() {
             // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
@@ -252,11 +249,8 @@ impl Request {
         self.head.get().as_ref().map(RequestHead::Snapshot)
     }
 
-    /// The server calls this when a handler responded synchronously and the uWS
-    /// request `request_context` points at is about to go out of scope. Copies
-    /// what the lazy `url`/`headers` getters still need from it, unless JS
-    /// already read both. (An async handler gets both built eagerly instead, in
-    /// `RequestContext::to_async`.)
+    /// Copies what the lazy `url`/`headers` getters still need from `req` before
+    /// the server dispatch that owns it returns. A no-op once JS read both.
     pub(crate) fn snapshot_request_head(&self, req: &uws::Request) {
         if self.head.get().is_some() || (!self.url.get().is_empty() && self.headers.get().is_some())
         {

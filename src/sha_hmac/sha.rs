@@ -1,5 +1,4 @@
 use core::ffi::{c_int, c_void};
-use core::ptr;
 
 use bun_boringssl as boringssl;
 use bun_boringssl_sys as boringssl_sys;
@@ -15,10 +14,9 @@ use bun_boringssl_sys as boringssl_sys;
 // ──────────────────────────────────────────────────────────────────────────
 pub mod ffi {
     pub use bun_boringssl_sys::{
-        ENGINE, EVP_Digest, EVP_DigestFinal, EVP_DigestInit, EVP_DigestUpdate, EVP_MD, EVP_MD_CTX,
-        EVP_MD_CTX_cleanup, EVP_MD_CTX_init, EVP_blake2b256, EVP_blake2b512, EVP_md4, EVP_md5,
-        EVP_ripemd160, EVP_sha1, EVP_sha3_224, EVP_sha3_256, EVP_sha3_384, EVP_sha3_512,
-        EVP_sha224, EVP_sha256, EVP_sha384, EVP_sha512, EVP_sha512_224, EVP_sha512_256, HMAC,
+        ENGINE, EVP_MD, EVP_blake2b256, EVP_blake2b512, EVP_md4, EVP_md5, EVP_ripemd160, EVP_sha1,
+        EVP_sha3_224, EVP_sha3_256, EVP_sha3_384, EVP_sha3_512, EVP_sha224, EVP_sha256, EVP_sha384,
+        EVP_sha512, EVP_sha512_224, EVP_sha512_256, HMAC,
     };
 
     /// `#define EVP_MAX_MD_SIZE 64` — SHA-512 is the longest digest. Re-typed
@@ -104,9 +102,8 @@ macro_rules! new_hasher {
 /// the BoringSSL `EVP_*` md-getter is passed as an ident.
 macro_rules! new_evp {
     ($name:ident, $digest_size:expr, $md_fn:ident) => {
-        #[repr(C)]
         pub struct $name {
-            ctx: ffi::EVP_MD_CTX,
+            ctx: boringssl_sys::DigestCtx,
         }
 
         impl $name {
@@ -114,69 +111,24 @@ macro_rules! new_evp {
 
             pub fn init() -> Self {
                 boringssl::load();
-
-                // EVP md getters are infallible `safe fn` returning static singletons.
-                let md = ffi::$md_fn();
-                // SAFETY: EVP_MD_CTX_init zero-initialises; reading zeroed POD is fine.
-                let mut this: Self = unsafe { bun_core::ffi::zeroed_unchecked() };
-
-                // ctx is zeroed POD; EVP_MD_CTX_init writes it in place.
-                ffi::EVP_MD_CTX_init(&mut this.ctx);
-
-                // SAFETY: ctx initialised by EVP_MD_CTX_init above; md is non-null.
-                let rc: c_int = unsafe { ffi::EVP_DigestInit(&mut this.ctx, md) };
-                debug_assert!(rc == 1);
-
-                this
+                Self {
+                    ctx: boringssl_sys::DigestCtx::new(ffi::$md_fn(), None),
+                }
             }
 
-            /// # Safety
-            /// `engine` must be null (default engine) or a live `ENGINE*`.
-            pub unsafe fn hash(
-                bytes: &[u8],
-                out: &mut [u8; $digest_size],
-                engine: *mut ffi::ENGINE,
-            ) {
-                let md = ffi::$md_fn();
-
-                // SAFETY: `out` is DIGEST bytes; `size` out-param is nullable.
-                let rc: c_int = unsafe {
-                    ffi::EVP_Digest(
-                        bytes.as_ptr().cast::<c_void>(),
-                        bytes.len(),
-                        out.as_mut_ptr(),
-                        ptr::null_mut(),
-                        md,
-                        engine,
-                    )
-                };
-                debug_assert!(rc == 1);
+            pub fn hash(bytes: &[u8], out: &mut [u8; $digest_size], engine: Option<&ffi::ENGINE>) {
+                let rc = boringssl_sys::digest(ffi::$md_fn(), bytes, out, engine);
+                debug_assert!(rc.is_some());
             }
 
             pub fn update(&mut self, data: &[u8]) {
-                // SAFETY: ctx initialised in `init()`; EVP_DigestUpdate reads `len` bytes.
-                let rc: c_int = unsafe {
-                    ffi::EVP_DigestUpdate(&mut self.ctx, data.as_ptr().cast::<c_void>(), data.len())
-                };
-                debug_assert!(rc == 1);
+                let rc = self.ctx.update(data);
+                debug_assert!(rc);
             }
 
             pub fn r#final(&mut self, out: &mut [u8; $digest_size]) {
-                // SAFETY: `out` is DIGEST bytes; `out_size` is nullable.
-                let rc: c_int = unsafe {
-                    ffi::EVP_DigestFinal(&mut self.ctx, out.as_mut_ptr(), ptr::null_mut())
-                };
-                debug_assert!(rc == 1);
-            }
-        }
-
-        impl Drop for $name {
-            fn drop(&mut self) {
-                // SAFETY: ctx was EVP_MD_CTX_init'd; cleanup is idempotent on a
-                // zeroed/initialised ctx.
-                unsafe {
-                    let _ = ffi::EVP_MD_CTX_cleanup(&mut self.ctx);
-                }
+                let rc = self.ctx.final_(out);
+                debug_assert!(rc.is_some());
             }
         }
     };
@@ -230,7 +182,7 @@ pub mod evp {
     }
 
     impl Algorithm {
-        pub fn md(self) -> Option<*const ffi::EVP_MD> {
+        pub fn md(self) -> Option<&'static ffi::EVP_MD> {
             // BoringSSL EVP_* md getters are `safe fn` returning a static const
             // singleton (never NULL for the ones listed here).
             match self {

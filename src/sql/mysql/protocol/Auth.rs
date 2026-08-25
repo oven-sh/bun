@@ -37,12 +37,10 @@ pub(crate) mod mysql_native_password {
         // (matches bun_install::integrity / bun_exe_format::macho precedent).
         // The engine only accelerates hardware SHA; null is functionally
         // identical.
-        // SAFETY: engine is null (default).
-        unsafe { SHA1::hash(password, &mut stage1, core::ptr::null_mut()) };
+        SHA1::hash(password, &mut stage1, None);
 
         // Stage 2: SHA1(SHA1(password))
-        // SAFETY: engine is null (default).
-        unsafe { SHA1::hash(&stage1, &mut stage2, core::ptr::null_mut()) };
+        SHA1::hash(&stage1, &mut stage2, None);
 
         // Stage 3: SHA1(nonce + SHA1(SHA1(password)))
         let mut sha1 = SHA1::init();
@@ -74,12 +72,10 @@ pub mod caching_sha2_password {
 
         // SHA256(password)
         // Null ENGINE — see note in mysql_native_password::scramble.
-        // SAFETY: engine is null (default).
-        unsafe { SHA256::hash(password, &mut digest1, core::ptr::null_mut()) };
+        SHA256::hash(password, &mut digest1, None);
 
         // SHA256(SHA256(password))
-        // SAFETY: engine is null (default).
-        unsafe { SHA256::hash(&digest1, &mut digest2, core::ptr::null_mut()) };
+        SHA256::hash(&digest1, &mut digest2, None);
 
         // SHA256(SHA256(SHA256(password)) + nonce): the double hash comes FIRST.
         // mysql_native_password concatenates the other way around; the server's
@@ -87,8 +83,7 @@ pub mod caching_sha2_password {
         let mut combined = vec![0u8; digest2.len() + nonce.len()];
         combined[0..digest2.len()].copy_from_slice(&digest2);
         combined[digest2.len()..].copy_from_slice(nonce);
-        // SAFETY: engine is null (default).
-        unsafe { SHA256::hash(&combined, &mut digest3, core::ptr::null_mut()) };
+        SHA256::hash(&combined, &mut digest3, None);
         // `defer bun.default_allocator.free(combined)` → Vec drops at scope exit
 
         // XOR(SHA256(password), digest3)

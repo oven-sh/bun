@@ -549,10 +549,14 @@ it.concurrent.skipIf(!isWindows)("bunx --bun in-process launch can fork children
   expect(installErr).not.toContain("error:");
   expect(installExit).toBe(0);
 
+  // An inherited npm_execpath (the test runner sets one) would win over the
+  // bunx-set default, so strip it.
+  const bunxEnv = { ...bunEnv, BUN_OPTIONS: "--smol" };
+  delete bunxEnv.npm_execpath;
   await using proc = spawn({
     cmd: [join(exeDir, "bunx.exe"), "--bun", "--no-install", "showexec"],
     cwd: String(dir),
-    env: { ...bunEnv, BUN_OPTIONS: "--smol" },
+    env: bunxEnv,
     stdout: "pipe",
     stderr: "pipe",
   });

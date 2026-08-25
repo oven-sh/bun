@@ -15,10 +15,10 @@ use bun_core::strings;
 use bun_core::{self, FeatureFlags, declare_scope, scoped_log};
 use bun_sys::Fd;
 
+use crate::JSAst;
 use bun_ast::Index;
 use bun_ast::{self as ast, E, Expr, G, Part};
 use bun_js_parser as js_parser;
-use crate::JSAst;
 /// `js_parser.Parser.Options` — the real parser-entry options struct.
 pub use bun_js_parser::parser::ParserOptions;
 

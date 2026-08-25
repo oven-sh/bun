@@ -1,16 +1,16 @@
 use crate::mal_prelude::*;
 
 use crate::Error as BunError;
+use crate::bake_types as bake;
 use bun_alloc::{AllocError, Arena as Bump};
 use bun_ast::{Data, Loc, Log, Range, Source};
+use bun_ast::{ImportKind, ImportRecord};
 use bun_collections::{ArrayHashMap, AutoBitSet, HashMap, MultiArrayList, VecExt, index_sort};
 use bun_core::{self as bun, FeatureFlags, Output};
 use bun_core::{MutableString, string_joiner::StringJoiner, strings};
 use bun_sourcemap::{
     self as SourceMap, DebugIDFormatter, LineOffsetTable, SourceMapPieces, SourceMapState,
 };
-use crate::bake_types as bake;
-use bun_ast::{ImportKind, ImportRecord};
 
 use crate::BundledAst as JSAst;
 use bun_ast::{

@@ -951,4 +951,17 @@ describe("truncation", () => {
     expect(got.length).toBe(1000);
     expect(got.every((b: number) => b === 0x42)).toBe(true);
   });
+
+  it("writer.start({ path }) truncates an existing longer file", async () => {
+    const dir = tmpdirSync();
+    const target = join(dir, "start-target.txt");
+    fs.writeFileSync(target, Buffer.alloc(1024, "X").toString());
+
+    const writer = Bun.file(join(dir, "initial.txt")).writer();
+    writer.start({ path: target });
+    writer.write("short");
+    await writer.end();
+
+    expect(await Bun.file(target).text()).toBe("short");
+  });
 });

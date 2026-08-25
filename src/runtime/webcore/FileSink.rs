@@ -200,8 +200,9 @@ pub struct Options {
     pub(crate) input_path: PathOrFileDescriptor,
     pub close: bool,
     pub(crate) mode: bun_sys::Mode,
-    /// `Bun.write(path, stream)` and `Bun.file(path).writer()`: replace the
-    /// file's contents.
+    /// Set for every path destination (`Bun.write(path, stream)`,
+    /// `Bun.file(path).writer()`, `writer.start({ path })`): replace the
+    /// file's contents. Fd inputs never reach the open, so it is moot there.
     pub(crate) truncate: bool,
     /// `Bun.write(path, stream)`: create missing parent directories.
     pub(crate) mkdirp: bool,

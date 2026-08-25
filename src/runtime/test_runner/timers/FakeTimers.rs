@@ -370,6 +370,12 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
                     "'now' must be a number or Date"
                 )));
             }
+            // NaN is `JSGlobalObject::overridenDateNow`'s "no override" sentinel.
+            if !js_now.is_finite() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "'now' must be a finite number or a valid Date"
+                )));
+            }
         }
     }
 
@@ -411,7 +417,7 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     let arg = frame.arguments_as_array::<1>()[0];
     if !arg.is_number() {
         return Err(global.throw_invalid_arguments(format_args!(
-            "advanceTimersToNextTimer() expects a number of milliseconds"
+            "advanceTimersByTime() expects a number of milliseconds"
         )));
     }
     let Some(current) = CURRENT_TIME.get_timespec_now() else {
@@ -421,9 +427,9 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     };
     let arg_number = arg.as_number();
     let max_advance = u32::MAX;
-    if arg_number < 0.0 || arg_number > max_advance as f64 {
+    if arg_number.is_nan() || arg_number < 0.0 || arg_number > max_advance as f64 {
         return Err(global.throw_invalid_arguments(format_args!(
-            "advanceTimersToNextTimer() ms is out of range. It must be >= 0 and <= {}. Received {:.0}",
+            "advanceTimersByTime() ms is out of range. It must be >= 0 and <= {}. Received {:.0}",
             max_advance, arg_number
         )));
     }

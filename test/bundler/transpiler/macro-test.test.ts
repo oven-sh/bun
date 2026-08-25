@@ -467,12 +467,16 @@ describe("the macro host", () => {
   });
 
   // The worker is parked, natively, on a macro whose promise never settles. terminate() has to reach
-  // that wait (require: the worker thread itself; import: a transpiler-pool job on its behalf). The
-  // sleep after "parking" gives the worker time to actually reach the native wait; nothing observable
-  // marks that moment, and terminating earlier still passes but exercises the ordinary path instead.
-  test.concurrent.each(["require", "import"])("terminate() interrupts a Worker waiting on a macro (%s)", async how => {
-    const load =
-      how === "require" ? `try { require("./uses.ts") } catch {}` : `await import("./uses.ts").catch(() => {})`;
+  // that wait (require: the worker thread itself; import: a transpiler-pool job on its behalf; build: a
+  // bundler pool thread on its behalf). The sleep after "parking" gives the worker time to actually reach
+  // the native wait; nothing observable marks that moment, and terminating earlier still passes but
+  // exercises the ordinary path instead.
+  test.concurrent.each(["require", "import", "build"])("terminate() interrupts a Worker waiting on a macro (%s)", async how => {
+    const load = {
+      require: `try { require("./uses.ts") } catch {}`,
+      import: `await import("./uses.ts").catch(() => {})`,
+      build: `await Bun.build({ entrypoints: [new URL("./uses.ts", import.meta.url).pathname] }).catch(() => {})`,
+    }[how];
     const { lines, stderr, exitCode } = await run(
       {
         "never.ts": `export function never() { return new Promise(() => {}); }`,

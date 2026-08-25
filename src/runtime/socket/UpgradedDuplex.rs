@@ -65,6 +65,11 @@ pub(crate) struct UpgradedDuplex {
     /// Replayed by [`Self::drain_pending`] after the staged bytes, preserving
     /// the original data-then-EOF order.
     pub pending_end: Cell<bool>,
+    /// The transport delivered EOF (its 'end' event fired). Teardown-phase
+    /// bytes (close_notify, the trailing end()) are dropped after this: node
+    /// writes nothing into a transport that already ended, and a transport
+    /// that forwards to an auto-ended net.Socket throws writeAfterFIN (EPIPE).
+    pub transport_eof: Cell<bool>,
 }
 
 bun_event_loop::impl_timer_owner!(UpgradedDuplex; from_timer_ptr => event_loop_timer);
@@ -231,6 +236,9 @@ impl UpgradedDuplex {
         // probe so write-after-end still errors like node.
         let teardown = data.is_none() || self.wrapper_ref().is_some_and(|w| w.is_shutdown());
         if teardown {
+            if self.transport_eof.get() {
+                return;
+            }
             match duplex.get(&global, "writableEnded") {
                 Ok(Some(ended)) if ended.to_boolean() => return,
                 Ok(_) => {}
@@ -397,6 +405,7 @@ impl UpgradedDuplex {
             current_timeout: Cell::new(0),
             pending_data: JsCell::new(Vec::new()),
             pending_end: Cell::new(false),
+            transport_eof: Cell::new(false),
         }
     }
 
@@ -677,6 +686,7 @@ impl UpgradedDuplex {
         self.ssl_error.set(CertError::default());
         self.pending_data.set(Vec::new());
         self.pending_end.set(false);
+        self.transport_eof.set(false);
     }
 }
 
@@ -735,6 +745,7 @@ fn on_end(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: see host-fn note above.
         let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
 
+        this.transport_eof.set(true);
         if this.wrapper_ref().is_some() {
             (this.handlers.on_end)(this.handlers.ctx);
         } else {

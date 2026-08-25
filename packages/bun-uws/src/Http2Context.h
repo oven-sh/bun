@@ -601,7 +601,9 @@ struct Http2Connection {
     inline void onData(const char *data, size_t length);
     inline bool handleFrame(uint8_t type, uint8_t flags, uint32_t streamId, const unsigned char *payload, uint32_t length);
     inline bool handleHeaderBlock(uint32_t streamId, uint8_t flags, const unsigned char *block, size_t length);
-    inline bool handleData(Http2Response *stream, uint8_t flags, const unsigned char *payload, uint32_t length);
+    /* `flowLength` is the whole frame payload (padding counts against the
+     * window); body/bodyLength is the data with padding already stripped. */
+    inline bool handleData(Http2Response *stream, bool fin, uint32_t flowLength, const unsigned char *body, uint32_t bodyLength);
     inline bool handleSettings(uint8_t flags, const unsigned char *payload, uint32_t length);
     inline bool connectionError(http2::ErrorCode code);
     /* false: the connection was closed (re-entrancy, or the peer ran out of
@@ -1378,7 +1380,13 @@ inline bool Http2Connection::handleFrame(uint8_t type, uint8_t flags, uint32_t s
             writeWindowUpdate(0, connUnackedReceive);
             connUnackedReceive = 0;
         }
-        if ((flags & http2::PADDED) && (length < 1 || 1u + payload[0] > length)) return connectionError(http2::ERR_PROTOCOL_ERROR);
+        const unsigned char *body = payload;
+        uint32_t bodyLength = length;
+        if (flags & http2::PADDED) {
+            if (length < 1 || 1u + payload[0] > length) return connectionError(http2::ERR_PROTOCOL_ERROR);
+            body = payload + 1;
+            bodyLength = length - 1 - payload[0];
+        }
         Http2Response *stream = findStream(streamId);
         if (!stream || stream->remoteClosed) {
             if (streamId > lastStreamId || (streamId & 1) == 0) return connectionError(http2::ERR_PROTOCOL_ERROR);
@@ -1390,7 +1398,7 @@ inline bool Http2Connection::handleFrame(uint8_t type, uint8_t flags, uint32_t s
             if (wasResetByUs(streamId)) return true;
             return connectionError(http2::ERR_STREAM_CLOSED);
         }
-        return handleData(stream, flags, payload, length);
+        return handleData(stream, (flags & http2::END_STREAM) != 0, length, body, bodyLength);
     }
 
     case http2::HEADERS: {
@@ -1507,17 +1515,7 @@ inline bool Http2Connection::handleFrame(uint8_t type, uint8_t flags, uint32_t s
     }
 }
 
-inline bool Http2Connection::handleData(Http2Response *stream, uint8_t flags, const unsigned char *payload, uint32_t length) {
-    uint32_t pad = 0;
-    const unsigned char *body = payload;
-    uint32_t bodyLength = length;
-    if (flags & http2::PADDED) {
-        /* Validated by the caller before the closed-stream shortcut. */
-        pad = payload[0];
-        body = payload + 1;
-        bodyLength = length - 1 - pad;
-    }
-    bool fin = (flags & http2::END_STREAM) != 0;
+inline bool Http2Connection::handleData(Http2Response *stream, bool fin, uint32_t length, const unsigned char *body, uint32_t bodyLength) {
     /* A frame with no body bytes (empty, or all padding) moves nothing. */
     if (bodyLength > 0 || fin) progressed = true;
     /* §6.9.1: the peer may not send beyond what we advertised for this stream. */

@@ -703,12 +703,12 @@ impl String {
             Tag::WTFStringImpl if self.as_wtf().is_8bit() => {
                 Cow::Borrowed(self.as_wtf().latin1_slice())
             }
-            Tag::WTFStringImpl => self
-                .as_wtf()
-                .utf16_slice()
-                .iter()
-                .map(|&c| c as u8)
-                .collect(),
+            Tag::WTFStringImpl => {
+                let utf16 = self.as_wtf().utf16_slice();
+                let mut out = vec![0u8; utf16.len()];
+                strings::copy_u16_into_u8(&mut out, utf16);
+                Cow::Owned(out)
+            }
             Tag::EncodedSlice | Tag::StaticEncodedSlice => self.encoded().to_latin1(),
             _ => Cow::Borrowed(&[]),
         }

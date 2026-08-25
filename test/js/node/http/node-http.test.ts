@@ -2155,6 +2155,12 @@ describe("HTTP Server Security Tests - Advanced", () => {
         res.end();
         return;
       }
+      if (req.url === "/empty-implicit") {
+        res.writeHead = function (...args) { return http.ServerResponse.prototype.writeHead.apply(this, args); };
+        res.statusMessage = "";
+        res.end();
+        return;
+      }
       res.setHeader("x-h", "café");
       res.writeHead(200, "OKé");
       res.end();
@@ -2175,6 +2181,7 @@ describe("HTTP Server Security Tests - Advanced", () => {
     expect(lines).toContain("x-h: café");
     // An explicit empty reason phrase is written as-is (only an omitted one defaults).
     expect((await raw("/empty")).toString("latin1").split("\r\n")[0]).toBe("HTTP/1.1 200 ");
+    expect((await raw("/empty-implicit")).toString("latin1").split("\r\n")[0]).toBe("HTTP/1.1 200 OK");
     const wide = (await raw("/wide")).toString("latin1");
     expect(wide.split("\r\n")[0]).toBe("HTTP/1.1 200 OK");
     expect(wide).toEndWith("ERR_INVALID_CHAR");

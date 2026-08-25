@@ -870,7 +870,7 @@ impl StandaloneModuleGraph {
                     side: module.side,
                     cached_blob: None,
                     encoding: module.encoding,
-                    wtf_string: BunString::empty(),
+                    wtf_string: BunString::EMPTY,
                 },
             );
         }

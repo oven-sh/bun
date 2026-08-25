@@ -11,7 +11,7 @@ use core::ffi::c_void;
 
 use bun_core::Environment;
 use bun_core::Output;
-use bun_core::ZigString;
+use bun_core::EncodedSlice;
 
 use crate::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 
@@ -751,8 +751,8 @@ mod private {
     use super::*;
 
     // safe fn: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&`
-    // is ABI-identical to non-null `*mut`); `Option<&ZigString>` is ABI-identical
-    // to a nullable `*const ZigString` via the guaranteed null-pointer
+    // is ABI-identical to non-null `*mut`); `Option<&EncodedSlice>` is ABI-identical
+    // to a nullable `*const EncodedSlice` via the guaranteed null-pointer
     // optimization (C++ reads `nullptr` as "no name"). `data` /
     // `input_function_ptr` are opaque round-trip pointers C++ only stores into
     // the JSFunction's private slot (never dereferenced as Rust data) — same
@@ -760,7 +760,7 @@ mod private {
     unsafe extern "C" {
         pub(super) safe fn Bun__CreateFFIFunctionWithDataValue(
             global: &JSGlobalObject,
-            symbol_name: Option<&ZigString>,
+            symbol_name: Option<&EncodedSlice>,
             arg_count: u32,
             // `JsHostFn` is already `unsafe extern "C" fn(...)`, i.e. the
             // fn-pointer type.
@@ -770,7 +770,7 @@ mod private {
 
         pub(super) safe fn Bun__CreateFFIFunctionValue(
             global_object: &JSGlobalObject,
-            symbol_name: Option<&ZigString>,
+            symbol_name: Option<&EncodedSlice>,
             arg_count: u32,
             function: JsHostFn,
             add_ptr_field: bool,
@@ -788,7 +788,7 @@ mod private {
 #[track_caller]
 pub fn new_runtime_function(
     global_object: &JSGlobalObject,
-    symbol_name: Option<&ZigString>,
+    symbol_name: Option<&EncodedSlice>,
     arg_count: u32,
     function_pointer: JsHostFn,
     add_ptr_property: bool,
@@ -821,7 +821,7 @@ pub fn set_function_data(function: JSValue, value: Option<*mut c_void>) {
 #[track_caller]
 pub fn new_function_with_data(
     global_object: &JSGlobalObject,
-    symbol_name: Option<&ZigString>,
+    symbol_name: Option<&EncodedSlice>,
     arg_count: u32,
     function: JsHostFn,
     data: *mut c_void,

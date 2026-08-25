@@ -92,6 +92,10 @@ function nextTokenIs(text: string, index: number, word: string): boolean {
     case "\r":
     case "\f":
     case "\v":
+    // a quoted identifier can follow with no space: INTO"t", INTO`t`, INTO[t]
+    case '"':
+    case "`":
+    case "[":
       return true;
     default:
       return false;
@@ -305,6 +309,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             // the reverse scan crosses statement boundaries; later statements' state must not leak into the first
             writeVerb = null;
             hasReturning = false;
+            command = SQLCommand.none;
           }
           token = char + token;
         }

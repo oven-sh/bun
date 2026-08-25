@@ -35,5 +35,11 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
 
     const deleted = await sql`DELETE FROM ${table} WHERE id > 1`;
     expect(deleted.affectedRows).toBe(2);
+
+    // a write inside a CTE under a top-level SELECT is tagged SELECT by the server
+    const cteDelete = await sql`WITH gone AS (DELETE FROM ${table} RETURNING id) SELECT * FROM gone`;
+    expect(cteDelete).toHaveLength(1);
+    expect(cteDelete.command).toBe("SELECT");
+    expect(cteDelete.affectedRows).toBe(0);
   });
 });

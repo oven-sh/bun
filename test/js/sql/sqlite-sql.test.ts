@@ -975,6 +975,11 @@ describe("Query Execution", () => {
     );
     expect(firstOfBatch.command).toBe("WITH");
     expect(firstOfBatch.affectedRows).toBe(0);
+
+    // a later statement's command does not leak across a statement boundary
+    const readFirst = await sql.unsafe("SELECT 1 AS x; INSERT INTO gadgets2 VALUES (9)");
+    expect(readFirst.command).toBe("SELECT");
+    expect(readFirst.affectedRows).toBe(0);
   });
 
   test("SELECT with various clauses", async () => {

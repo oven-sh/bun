@@ -969,10 +969,33 @@ impl ServerConfig {
                         _ => {}
                     }
 
-                    if let Some(define) = &o.serve_define {
+                    // CLI `--define` and bunfig `[define]` apply to the
+                    // bundled graphs too; `[serve.static].define` wins on a
+                    // conflicting key.
+                    let define = match (o.define.as_ref(), o.serve_define.as_ref()) {
+                        (None, None) => None,
+                        (Some(define), None) => Some(define.clone()),
+                        (None, Some(serve_define)) => Some(serve_define.clone()),
+                        (Some(define), Some(serve_define)) => {
+                            let mut merged = define.clone();
+                            for (k, v) in
+                                serve_define.keys.iter().zip(serve_define.values.iter())
+                            {
+                                if let Some(i) = merged.keys.iter().position(|key| **key == **k)
+                                {
+                                    merged.values[i] = v.clone();
+                                } else {
+                                    merged.keys.push(k.clone());
+                                    merged.values.push(v.clone());
+                                }
+                            }
+                            Some(merged)
+                        }
+                    };
+                    if let Some(define) = define {
                         user_options.bundler_options.client.define = define.clone();
                         user_options.bundler_options.server.define = define.clone();
-                        user_options.bundler_options.ssr.define = define.clone();
+                        user_options.bundler_options.ssr.define = define;
                     }
 
                     args.bake = Some(user_options);

@@ -1178,19 +1178,32 @@ impl Display for URLFormatter<'_> {
 // HostFormatter
 // ───────────────────────────────────────────────────────────────────────────
 
+/// Writes `host`, then `:port` unless `host` already carries one or `port` is the scheme default.
 pub struct HostFormatter<'a> {
+    /// `example.com`, `example.com:8080`, `[::1]` or `[::1]:8080`.
     pub host: &'a [u8],
     pub port: Option<u16>,
     pub is_https: bool,
 }
 
+impl HostFormatter<'_> {
+    fn host_has_port(&self) -> bool {
+        // The colons inside an IPv6 literal's brackets are not a port separator.
+        let after_brackets = match self.host.first() {
+            Some(b'[') => crate::strings::index_of_char_usize(self.host, b']')
+                .map_or(self.host, |end| &self.host[end + 1..]),
+            _ => self.host,
+        };
+        crate::strings::contains_char(after_brackets, b':')
+    }
+}
+
 impl Display for HostFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        if crate::strings::index_of_char_usize(self.host, b':').is_some() {
-            return write_bytes(f, self.host);
-        }
-
         write_bytes(f, self.host)?;
+        if self.host_has_port() {
+            return Ok(());
+        }
 
         let is_port_optional = self.port.is_none()
             || (self.is_https && self.port == Some(443))
@@ -1409,6 +1422,20 @@ impl Display for GithubActionPropertyFormatter<'_> {
 
 pub fn github_action_property(self_: &[u8]) -> GithubActionPropertyFormatter<'_> {
     GithubActionPropertyFormatter { text: self_ }
+}
+
+pub struct GithubActionFormatter<'a> {
+    text: &'a [u8],
+}
+
+impl Display for GithubActionFormatter<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        github_action_writer(f, self.text)
+    }
+}
+
+pub fn github_action(utf8: &[u8]) -> GithubActionFormatter<'_> {
+    GithubActionFormatter { text: utf8 }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2881,8 +2908,7 @@ pub fn u64_hex_fixed<const LOWER: bool, const N: usize>(v: u64) -> [u8; N] {
 }
 
 /// Format a 6-byte MAC address as `xx:xx:xx:xx:xx:xx` (lowercase hex,
-/// colon-separated). Returns a fixed 17-byte ASCII buffer; borrow as `&[u8]`
-/// for `ZigString::init`.
+/// colon-separated) into a fixed 17-byte ASCII buffer.
 #[inline]
 pub fn mac_address_lower(mac: [u8; 6]) -> [u8; 17] {
     let mut out = [b':'; 17];

@@ -5,14 +5,15 @@ use core::ptr::NonNull;
 
 use bun_ptr::ParentRef;
 
-use bun_core::{String as BunString, ZigStringSlice};
+use bun_core::Utf8Bytes;
 use bun_event_loop::Taskable;
 use bun_io::KeepAlive;
 use bun_jsc::ConcurrentTask::{ConcurrentTask, Task};
+use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc as _,
-    StrongOptional, WorkPoolTask,
+    self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional,
+    WorkPoolTask,
 };
 use bun_threading::work_pool::WorkPool;
 use bun_zlib;
@@ -101,7 +102,9 @@ impl CountedKeepAlive {
 pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_as_array::<2>();
 
-    let data: ZigStringSlice = 'blk: {
+    let data_view;
+    let data_buffer;
+    let data: Utf8Bytes = 'blk: {
         let data: JSValue = arguments[0];
 
         if callframe.arguments_count() < 1 {
@@ -112,27 +115,24 @@ pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
             ));
         }
         if data.is_string_literal() {
-            // `is_string_literal()` guarantees `as_string()` is non-null and points to a
-            // live JSString cell on the JSC heap. `JSString` is an `opaque_ffi!`
-            // ZST handle; `opaque_ref` is the centralised deref proof.
-            break 'blk bun_jsc::JSString::opaque_ref(data.as_string()).to_slice(global_this);
+            data_view = data.as_string().view(global_this)?;
+            break 'blk data_view.to_utf8();
         }
         let Some(buffer) = data.as_array_buffer(global_this) else {
-            let ty_str = data.js_type_string(global_this).to_slice(global_this);
-            // ty_str drops at end of scope
+            let ty_str = data.js_type_string(global_this);
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_TYPE,
                     format_args!(
                         "The \"data\" property must be an instance of Buffer, TypedArray, DataView, or ArrayBuffer. Received {}",
-                        bstr::BStr::new(ty_str.slice()),
+                        ty_str,
                     ),
                 )
                 .throw());
         };
-        break 'blk ZigStringSlice::from_utf8_never_free(buffer.byte_slice());
+        data_buffer = buffer;
+        break 'blk Utf8Bytes::Borrowed(data_buffer.byte_slice());
     };
-    // `data` drops at end of scope
 
     let value: u32 = 'blk: {
         let value: JSValue = arguments[1];
@@ -855,8 +855,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             // C string (static literal or zlib/zstd-owned buffer valid for this call).
             unsafe { bun_core::ffi::cstr(err_.msg) }.to_bytes()
         };
-        let mut msg_str = BunString::create_format(format_args!("{}", bstr::BStr::new(msg_bytes)));
-        let msg_value = match msg_str.transfer_to_js(global_this) {
+        let msg_value = match bun_string_jsc::create_utf8_for_js(global_this, msg_bytes) {
             Ok(v) => v,
             Err(_) => return,
         };
@@ -868,9 +867,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             // C string (static literal or zlib/zstd-owned buffer valid for this call).
             unsafe { bun_core::ffi::cstr(err_.code) }.to_bytes()
         };
-        let mut code_str =
-            BunString::create_format(format_args!("{}", bstr::BStr::new(code_bytes)));
-        let code_value = match code_str.transfer_to_js(global_this) {
+        let code_value = match bun_string_jsc::create_utf8_for_js(global_this, code_bytes) {
             Ok(v) => v,
             Err(_) => return,
         };

@@ -4,15 +4,15 @@ use std::ffi::CString;
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
-use crate::webcore::blob::{Store as BlobStore, StoreRef};
-use bun_core::zig_string::Slice as ZigStringSlice;
-use bun_core::{self, Output, ZBox, strings};
+use crate::webcore::blob::Store;
+use bun_core::{self, EncodedSlice, Output, Utf8Bytes, ZBox, strings};
 use bun_glob as glob;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue, JsResult,
 };
-use bun_jsc::{StringJsc as _, SysErrorJsc as _};
+use bun_jsc::{EncodedSliceJsc as _, StringJsc as _, SysErrorJsc as _};
 use bun_libarchive as libarchive;
+use bun_ptr::RefPtr;
 use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
 
 /// libarchive `AE_IFREG` (== `S_IFREG`). The Rust `bun_libarchive::lib` port
@@ -34,20 +34,19 @@ pub(crate) struct GzipOptions {
 }
 
 // Hand-written JS class glue (not the `#[bun_jsc::JsClass]` derive): Archive
-// needs a custom `finalize` and no constructor, which the proc-macro does not
-// expose.
+// has no constructor, which the proc-macro does not expose.
 #[repr(C)]
 pub struct Archive {
     /// The underlying data for the archive - uses Blob.Store for thread-safe ref counting
-    store: StoreRef,
+    store: RefPtr<Store>,
     /// Compression settings for this archive
     compress: Compression,
 }
 
 impl Archive {
-    /// Borrow the backing `StoreRef`.
+    /// Borrow the backing `RefPtr<Store>`.
     #[inline]
-    pub(crate) fn store_ref(&self) -> &StoreRef {
+    pub(crate) fn store_ref(&self) -> &RefPtr<Store> {
         &self.store
     }
 }
@@ -64,12 +63,6 @@ impl Archive {
     #[inline]
     pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         self::write(global, callframe)
-    }
-
-    pub fn finalize(self: Box<Self>) {
-        jsc::mark_binding();
-        drop(self);
-        // store.deref() happens via Arc<BlobStore>::drop
     }
 
     /// Pretty-print for console.log
@@ -183,7 +176,6 @@ impl Archive {
         // For Blob/Archive, ref the existing store (zero-copy)
         if let Some(blob) = blob_from_js(data_arg) {
             if let Some(store) = blob.store.get().as_ref() {
-                // StoreRef::clone == store.ref()
                 return Ok(Box::new(Archive {
                     store: store.clone(),
                     compress,
@@ -235,8 +227,7 @@ fn parse_compression_options(
             )));
         }
 
-        let compress_str = compress_val.to_slice(global)?;
-        // Drop handles compress_str.deinit()
+        let compress_str = compress_val.to_utf8(global)?;
 
         if compress_str.slice() != b"gzip" {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -269,7 +260,7 @@ fn parse_compression_options(
 }
 
 fn create_archive(data: Vec<u8>, compress: Compression) -> Box<Archive> {
-    let store = BlobStore::init(data);
+    let store = Store::init(data);
     Box::new(Archive { store, compress })
 }
 
@@ -324,7 +315,7 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
     let now_secs: isize = isize::try_from(bun_core::time::milli_timestamp() / 1000).unwrap_or(0);
 
     // Iterate over object properties and write directly to archive
-    let mut iter = jsc::JSPropertyIterator::init(
+    let iter = jsc::JSPropertyIterator::init(
         global,
         js_obj,
         jsc::PropertyIteratorOptions {
@@ -332,10 +323,8 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
             include_value: true,
         },
     )?;
-    // defer iter.deinit() — handled by Drop
 
-    while let Some(key) = iter.next()? {
-        let value = iter.value;
+    while let Some((key, value)) = iter.next()? {
         if value == JSValue::ZERO {
             continue;
         }
@@ -343,11 +332,10 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
         // Get the key as a null-terminated string
         let key_slice = key.to_utf8();
         let key_str = ZBox::from_vec_with_nul(key_slice.slice().to_vec());
-        // defer free(key_str)/key_slice.deinit() — handled by Drop
 
         // Get data - use view for Blob/ArrayBuffer, convert for strings
-        let data_slice = get_entry_data(global, value)?;
-        // defer data_slice.deinit() — handled by Drop
+        let mut array_buffer = None;
+        let data_slice = get_entry_data(global, value, &mut array_buffer)?;
 
         // Write entry to archive
         let data = data_slice.slice();
@@ -398,21 +386,24 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
     }
 }
 
-/// Returns data as a ZigString.Slice (handles ownership automatically via deinit)
-fn get_entry_data(global: &JSGlobalObject, value: JSValue) -> JsResult<ZigStringSlice> {
+fn get_entry_data<'a>(
+    global: &JSGlobalObject,
+    value: JSValue,
+    array_buffer: &'a mut Option<bun_jsc::ArrayBuffer>,
+) -> JsResult<Utf8Bytes<'a>> {
     // For Blob, use sharedView (no copy needed). The backing store outlives
     // the returned slice for the duration of the caller's tarball build.
     if let Some(blob) = blob_from_js(value) {
-        return Ok(ZigStringSlice::from_utf8_never_free(blob.shared_view()));
+        return Ok(Utf8Bytes::Borrowed(blob.shared_view()));
     }
 
     // For ArrayBuffer/TypedArray, use view (no copy needed)
-    if let Some(array_buffer) = value.as_array_buffer(global) {
-        return Ok(ZigStringSlice::from_utf8_never_free(array_buffer.slice()));
+    if let Some(buffer) = value.as_array_buffer(global) {
+        return Ok(Utf8Bytes::Borrowed(array_buffer.insert(buffer).slice()));
     }
 
     // For strings, convert (allocates)
-    value.to_slice(global)
+    value.to_utf8(global)
 }
 
 /// Static method: Archive.write(path, data, options?)
@@ -436,7 +427,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
         )));
     }
 
-    let path_slice = path_arg.to_slice(global)?;
+    let path_slice = path_arg.to_utf8(global)?;
 
     // Parse options for compression override
     let options_compress = parse_compression_options(global, options_arg)?;
@@ -514,7 +505,7 @@ impl Archive {
             )));
         }
 
-        let path_slice = path_arg.to_slice(global)?;
+        let path_slice = path_arg.to_utf8(global)?;
 
         // Parse options
         let mut glob_patterns: Option<Vec<Box<[u8]>>> = None;
@@ -547,7 +538,7 @@ fn parse_pattern_arg(
 ) -> JsResult<Option<Vec<Box<[u8]>>>> {
     // Single string
     if arg.is_string() {
-        let str_slice = arg.to_slice(global)?;
+        let str_slice = arg.to_utf8(global)?;
         // Empty string = no filter
         if str_slice.slice().is_empty() {
             return Ok(None);
@@ -580,7 +571,7 @@ fn parse_pattern_arg(
                     bstr::BStr::new(name),
                 )));
             }
-            let str_slice = item.to_slice(global)?;
+            let str_slice = item.to_utf8(global)?;
             // Skip empty strings in array
             if str_slice.slice().is_empty() {
                 i += 1;
@@ -721,7 +712,7 @@ pub enum ExtractResult {
 }
 
 pub struct ExtractContext {
-    store: StoreRef,
+    store: RefPtr<Store>,
     path: Box<[u8]>,
     glob_patterns: Option<Vec<Box<[u8]>>>,
     result: ExtractResult,
@@ -783,7 +774,7 @@ pub(crate) type ExtractTask = AsyncTask<ExtractContext>;
 
 fn start_extract_task(
     global: &JSGlobalObject,
-    store: &StoreRef,
+    store: &RefPtr<Store>,
     path: &[u8],
     glob_patterns: Option<Vec<Box<[u8]>>>,
 ) -> JsResult<JSValue> {
@@ -817,7 +808,7 @@ enum BlobResult {
 }
 
 pub struct BlobContext {
-    store: StoreRef,
+    store: RefPtr<Store>,
     compress: Compression,
     output_type: BlobOutputType,
     result: BlobResult,
@@ -883,7 +874,7 @@ pub(crate) type BlobTask = AsyncTask<BlobContext>;
 
 fn start_blob_task(
     global: &JSGlobalObject,
-    store: &StoreRef,
+    store: &RefPtr<Store>,
     compress: Compression,
     output_type: BlobOutputType,
 ) -> JsResult<JSValue> {
@@ -909,7 +900,7 @@ enum WriteResult {
 
 enum WriteData {
     Owned(Vec<u8>),
-    Store(StoreRef),
+    Store(RefPtr<Store>),
 }
 
 pub struct WriteContext {
@@ -1018,7 +1009,7 @@ enum FilesResult {
 // freeEntries deleted — Vec<FileEntry> drops each entry; FileEntry fields drop their boxes.
 
 pub struct FilesContext {
-    store: StoreRef,
+    store: RefPtr<Store>,
     glob_patterns: Option<Vec<Box<[u8]>>>,
     result: FilesResult,
 }
@@ -1154,8 +1145,7 @@ impl TaskContext for FilesContext {
                 Ok(PromiseResult::Resolve(map))
             }
             FilesResult::LibarchiveErr(err_msg) => Ok(PromiseResult::Reject(
-                global
-                    .create_error_instance(format_args!("{}", bstr::BStr::new(err_msg.to_bytes()))),
+                EncodedSlice::utf8(err_msg.to_bytes()).to_error_instance(global),
             )),
             FilesResult::Err(e) => Ok(PromiseResult::Reject(
                 global.create_error_instance(format_args!("{}", <&'static str>::from(&*e))),
@@ -1168,7 +1158,7 @@ pub(crate) type FilesTask = AsyncTask<FilesContext>;
 
 fn start_files_task(
     global: &JSGlobalObject,
-    store: &StoreRef,
+    store: &RefPtr<Store>,
     glob_patterns: Option<Vec<Box<[u8]>>>,
 ) -> JsResult<JSValue> {
     let store = store.clone();

@@ -225,7 +225,6 @@ extern "C" EncodedJSValue Bun__NodeHTTP__buildRawHeadersArray(JSC::JSGlobalObjec
                 array->initializeIndex(initializationScope, i, JSValue::decode(argValues[i]));
             }
         } else {
-            RETURN_IF_EXCEPTION(scope, {});
             array = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), arrayValues);
             RETURN_IF_EXCEPTION(scope, {});
         }
@@ -308,7 +307,6 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     // capacity keeps the capture heap-allocation-free for the common case.
     WTF::Vector<uint8_t, 1024> flatHeaders;
     assignHeadersFromUWebSocketsForCall(request, methodString, args, flatHeaders, globalObject, vm);
-    RETURN_IF_EXCEPTION(scope, {});
 
     bool hasBody = false;
     WebCore::JSNodeHTTPResponse* nodeHTTPResponseObject = uncheckedDowncast<WebCore::JSNodeHTTPResponse>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, upgrade_ctx, nodeHttpResponsePtr)));

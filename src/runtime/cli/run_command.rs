@@ -393,6 +393,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // in the meantime we don't need to free it.
         let envp = env.map.create_null_delimited_env_map()?;
 
+        #[cfg(windows)]
+        bun_spawn::ctrl_c::install();
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
             argv0: Some(shell_bin.as_ptr().cast::<::core::ffi::c_char>()),
@@ -462,6 +464,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
                         Global::raise_ignoring_panic_handler(sig);
                     }
+                }
+
+                // cmd.exe exits 0 after abandoning a line whose command was Ctrl+C'd.
+                #[cfg(windows)]
+                if exit_code.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT
+                    || (bun_spawn::ctrl_c::take_received() && exit_code.raw == 0)
+                {
+                    bun_spawn::ctrl_c::exit_like_child();
                 }
 
                 if exit_code.code != 0 {
@@ -938,7 +948,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // dispatch hooks (`jsc_hooks::install_jsc_hooks`) are installed by
         // `main.rs` before `Cli::start`, so `VirtualMachine::init` already sees
         // a populated `RuntimeHooks` table.
-        bun_jsc::initialize(ctx.runtime_options.eval.eval_and_print);
+        bun_jsc::initialize(bun_jsc::InitializeOptions {
+            eval_mode: ctx.runtime_options.eval.eval_and_print,
+            one_shot: bun_jsc::is_one_shot_eval_invocation(),
+            ..Default::default()
+        });
         bun_ast::initialize_store();
 
         let vm_ptr = VirtualMachine::init(VmInitOptions {
@@ -1055,7 +1069,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             if !tz.is_empty() {
                 let _ = vm
                     .global()
-                    .set_time_zone(&bun_jsc::zig_string::ZigString::init(tz));
+                    .set_time_zone(&bun_core::EncodedSlice::from_bytes(tz));
             }
         }
 
@@ -1106,7 +1120,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     ) -> crate::Result<()> {
         use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
 
-        bun_jsc::initialize(false);
+        // argv belongs to the compiled program, so a `-e` or `-p` in it is not ours.
+        bun_jsc::initialize(bun_jsc::InitializeOptions::default());
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
         bun_ast::initialize_store();
 
@@ -1541,6 +1556,10 @@ impl Run<'_> {
 
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
         let _ = vm.global().handle_rejected_promises();
+        // The loop stopped on an uncaught error: Node's fatal-exception exit, not a drain.
+        if vm.unhandled_error_counter > 0 {
+            vm.exit_handler.requested = true;
+        }
         vm.on_exit();
 
         if ANY_UNHANDLED.load(Ordering::Relaxed) {
@@ -1610,6 +1629,7 @@ fn dump_build_error(vm: &mut VirtualMachine) {
 )]
 fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
     vm.exit_handler.exit_code = 1;
+    vm.exit_handler.requested = true;
     vm.on_exit();
     if ANY_UNHANDLED.load(Ordering::Relaxed) {
         bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
@@ -2058,6 +2078,10 @@ impl RunCommand {
         // in the meantime we don't need to free it.
         let envp = env.map.create_null_delimited_env_map()?;
 
+        // POSIX forwards signals inside `sync::spawn`; on Windows the child shares
+        // our console and gets Ctrl+C itself, we just have to outlive it.
+        #[cfg(windows)]
+        bun_spawn::ctrl_c::install();
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
             argv0: Some(executable_z.as_ptr().cast::<c_char>()),
@@ -2183,6 +2207,11 @@ impl RunCommand {
                             }
 
                             Global::raise_ignoring_panic_handler(sc);
+                        }
+
+                        #[cfg(windows)]
+                        if exit_code.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT {
+                            bun_spawn::ctrl_c::exit_like_child();
                         }
 
                         let code = exit_code.code;

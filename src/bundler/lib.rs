@@ -237,7 +237,6 @@ pub(crate) use bun_ast::{Index, IndexInt};
 pub mod options {
     pub use super::OutputFile;
     pub use super::options_impl::*;
-    pub use super::output_file::BakeExtra;
     pub use super::output_file::IndexOptional;
     /// `OutputFile.init` argument struct.
     pub(crate) use super::output_file::Options as OutputFileInit;
@@ -268,6 +267,13 @@ pub mod options {
         Bytecode,
         #[strum(serialize = "module_info")]
         ModuleInfo,
+        /// Ahead-of-time bytecode for an internal module (node:fs etc.) a --compile executable uses; `dest_path` is the
+        /// InternalModuleRegistry id in decimal.
+        #[strum(serialize = "builtin-bytecode")]
+        BuiltinBytecode,
+        /// The one shared string table every chunk's bytecode references by ordinal (`EncoderStringTable::serialize`).
+        #[strum(serialize = "bytecode-string-table")]
+        BytecodeStringTable,
         #[strum(serialize = "metafile-json")]
         MetafileJson,
         #[strum(serialize = "metafile-markdown")]
@@ -281,6 +287,8 @@ pub mod options {
                 OutputKind::Sourcemap
                     | OutputKind::Bytecode
                     | OutputKind::ModuleInfo
+                    | OutputKind::BuiltinBytecode
+                    | OutputKind::BytecodeStringTable
                     | OutputKind::MetafileJson
                     | OutputKind::MetafileMarkdown
             )

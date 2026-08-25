@@ -28,9 +28,6 @@
 #include "webcore/streams/BunStreamConsumers.h"
 #include "WebCoreJSBuiltins.h"
 #include <JavaScriptCore/JSObject.h>
-#include "DOMJITIDLConvert.h"
-#include "DOMJITIDLType.h"
-#include "DOMJITIDLTypeFilter.h"
 #include "Exception.h"
 #include "JSDOMException.h"
 #include "JSDOMConvert.h"
@@ -262,13 +259,13 @@ JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObje
     size_t maxLength = std::numeric_limits<size_t>::max();
     auto arg1 = callFrame->argument(1);
     if (!arg1.isUndefined() && arg1.isNumber()) {
-        double number = arg1.toNumber(globalObject);
+        double number = arg1.asNumber();
         if (std::isnan(number) || number < 0) {
             throwRangeError(globalObject, throwScope, "Maximum length must be >= 0"_s);
             return {};
         }
         if (!std::isinf(number)) {
-            maxLength = arg1.toUInt32(globalObject);
+            maxLength = JSC::toUInt32(number);
         }
     }
 
@@ -683,8 +680,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (callFrame->argumentCount() < 2) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        throwTypeError(globalObject, throwScope, "Expected 2 values to compare"_s);
+        throwTypeError(globalObject, scope, "Expected 2 values to compare"_s);
         return {};
     }
 
@@ -818,6 +814,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
         if (useArrayBuffer) {
             JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
             auto bytes = builder.jsonBytes();
+            RETURN_IF_EXCEPTION(throwScope, {});
             auto released = bytes.releaseBuffer();
             auto span = released.leakSpan();
             auto buffer = ArrayBuffer::createFromBytes(std::span<const uint8_t> { span.data(), span.size() }, createSharedTask<void(void*)>([](void* p) {
@@ -827,12 +824,15 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
         }
 
         JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
-        return JSC::JSValue::encode(jsString(vm, builder.json()));
+        auto json = builder.json();
+        RETURN_IF_EXCEPTION(throwScope, {});
+        return JSC::JSValue::encode(jsString(vm, json));
     }
 
     JSC::HeapSnapshotBuilder builder(heapProfiler);
     builder.buildSnapshot();
     auto json = builder.json();
+    RETURN_IF_EXCEPTION(throwScope, {});
     // Returning an object was a bad idea but it's a breaking change
     // so we'll just keep it for now.
     JSC::JSValue jsonValue = JSONParseWithException(globalObject, json);

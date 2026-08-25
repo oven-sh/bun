@@ -52,6 +52,10 @@ pub fn read_origin_timer(vm: &VirtualMachine) -> u64 {
 
 // HOST_EXPORT(Bun__readOriginTimerStart, c)
 pub fn read_origin_timer_start(vm: &VirtualMachine) -> f64 {
+    // Fake timers reset performance.now() to 0, so the origin moves with them.
+    if let Some(overridden) = vm.overridden_time_origin {
+        return overridden;
+    }
     // timespce to milliseconds
     ((vm.origin_timestamp as f64) + crate::virtual_machine::ORIGIN_RELATIVE_EPOCH as f64)
         / 1_000_000.0
@@ -64,12 +68,6 @@ pub fn exit_during_uncaught_exception(this: &mut VirtualMachine) {
 
 // `Bun__Process__send` lives in `bun_runtime::ipc_host` (its body — via
 // `do_send` — names the `bun_runtime::Listener` type; LAYERING).
-
-// HOST_EXPORT(Bun__isBunMain, c)
-pub fn is_bun_main(global: &JSGlobalObject, str: &BunString) -> bool {
-    // JSGlobalObject::bun_vm contract.
-    str.eql_utf8(global.bun_vm().as_mut().main())
-}
 
 // HOST_EXPORT(Bun__reportUnhandledError, c)
 pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) {
@@ -102,7 +100,9 @@ pub fn vm_queue_task_after_yield(this: &VirtualMachine, task: *mut crate::cpp_ta
         .enqueue_task_after_yield(Task::init(task));
 }
 
-/// Off-thread counterpart of [`vm_queue_task`]: see [`crate::VmHandle::post_cpp_task`].
+/// Off-thread counterpart of [`vm_queue_task`] (`postTaskConcurrently`: the
+/// debugger and signal threads, work no script initiated), so it lands on the
+/// regular loop: see [`crate::VmHandle::post_cpp_task`].
 // HOST_EXPORT(Bun__VmHandle__queueTaskConcurrently, c)
 #[allow(clippy::not_unsafe_ptr_arg_deref)] // the C ABI boundary is the unsafe part
 pub fn vm_handle_queue_task_concurrently(
@@ -112,7 +112,7 @@ pub fn vm_handle_queue_task_concurrently(
     crate::mark_binding!();
     // SAFETY: C++ passes the reference its ScriptExecutionContext holds, and
     // hands over a live heap EventLoopTask.
-    unsafe { crate::VmHandle::borrow_ref(r).post_cpp_task(task) };
+    unsafe { crate::VmHandle::borrow_ref(r).post_cpp_task(crate::LoopKind::Regular, task) };
 }
 
 // HOST_EXPORT(Bun__handleRejectedPromise, c)

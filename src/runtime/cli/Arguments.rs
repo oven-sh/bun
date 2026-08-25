@@ -74,21 +74,6 @@ macro_rules! maybe_debug_params {
     };
 }
 
-// `bun_crash_handler::VERBOSE_ERROR_TRACE` gates extra crash diagnostics.
-// Expose the flag in crash-trace builds (debug/test/asan).
-const VERBOSE_ERROR_TRACE_PARAMS: &[ParamType] = &[parse_param!(
-    "--verbose-error-trace             Dump error return traces"
-)];
-macro_rules! maybe_verbose_error_trace {
-    () => {
-        if bun_core::env::SHOW_CRASH_TRACE {
-            VERBOSE_ERROR_TRACE_PARAMS
-        } else {
-            &[] as &[ParamType]
-        }
-    };
-}
-
 const BASE_PARAMS_: &[ParamType] = concat_params!(
     maybe_debug_params!(),
     &[
@@ -104,7 +89,6 @@ const BASE_PARAMS_: &[ParamType] = concat_params!(
         ),
         parse_param!("-h, --help                        Display this menu and exit"),
     ],
-    maybe_verbose_error_trace!(),
     &[parse_param!("<POS>...")],
 );
 
@@ -444,6 +428,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!("--bytecode                       Use a bytecode cache"),
         parse_param!(
+            "--bytecode-depth <NUMBER>        How many levels of nested functions to compile to bytecode ahead of time. Defaults to all"
+        ),
+        parse_param!(
             "--watch                          Automatically restart the process on file change"
         ),
         parse_param!(
@@ -763,7 +750,7 @@ pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
 // their private helpers moved to `bun_bunfig::arguments` so `bun_install` can
 // call them without a tier-6 dependency. Re-export here so existing
 // `crate::cli::arguments::load_config*` callers are unaffected.
-pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_cmd_args};
+pub use bun_bunfig::arguments::{load_config_path, load_config_with_cmd_args};
 
 /// node aliases `-pe` to `--print --eval` as a whole token (node_options.cc):
 /// it can't be a short in either runtime, being ambiguous with `-p` carrying
@@ -817,11 +804,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         if args.flag(b"--revision") {
             cli::print_revision_and_exit();
         }
-    }
-
-    // See `maybe_verbose_error_trace!` above.
-    if bun_core::env::SHOW_CRASH_TRACE && args.flag(b"--verbose-error-trace") {
-        bun_crash_handler::VERBOSE_ERROR_TRACE.store(true, core::sync::atomic::Ordering::Relaxed);
     }
 
     // ── --cwd ────────────────────────────────────────────────────────────────
@@ -1880,7 +1862,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     if let Some(name_pattern) = args.option(b"--test-name-pattern") {
         ctx.test_options.test_filter_pattern = Some(name_pattern.into());
         let regex = match RegularExpression::init(
-            bun_core::String::from_bytes(name_pattern),
+            &bun_core::String::from_bytes(name_pattern),
             RegexFlags::None,
         ) {
             Ok(r) => r,
@@ -2038,6 +2020,18 @@ fn parse_build_command_options(
 ) {
     ctx.bundler_options.transform_only = args.flag(b"--no-bundle");
     ctx.bundler_options.bytecode = args.flag(b"--bytecode");
+    if let Some(depth) = args.option(b"--bytecode-depth") {
+        ctx.bundler_options.bytecode_depth = match strings::parse_int::<u32>(depth, 10) {
+            Ok(v) => v,
+            Err(_) => {
+                Output::err_generic(
+                    "Invalid value for --bytecode-depth: \"{}\". Must be a non-negative integer\n",
+                    format_args!("{}", BStr::new(depth)),
+                );
+                Global::exit(1);
+            }
+        };
+    }
 
     let production = args.flag(b"--production");
 

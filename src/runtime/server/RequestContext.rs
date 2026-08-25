@@ -164,7 +164,7 @@ pub struct RequestContext<
     pub(crate) response_body_readable_stream_ref: JsCell<readable_stream::Strong>,
 
     /// Used in errors
-    pub(crate) pathname: Cell<BunString>,
+    pub(crate) pathname: JsCell<bun_core::String>,
 
     /// Used either for temporary blob data or fallback
     /// When the response body is a temporary value
@@ -650,15 +650,25 @@ where
         server.vm().as_mut().event_loop_mut().drain_microtasks()
     }
 
+    /// Runs `on_abort` itself (may free `self`) if a nested event loop run already closed the socket.
     pub(crate) fn set_abort_handler(&self) {
         if self.flags.has_abort_handler() {
             return;
         }
-        if let Some(resp) = self.resp.get() {
-            self.flags.set_has_abort_handler(true);
-            // SAFETY: FFI handle valid while resp is Some
-            resp.on_aborted(|this, resp| Self::on_abort(this, resp), self.as_ctx_ptr());
+        let Some(resp) = self.resp.get() else {
+            return;
+        };
+        self.flags.set_has_abort_handler(true);
+        if resp.is_closed() {
+            // `req` is still set only while the dispatch is on the stack: snapshot as `to_async` would have.
+            if let (Some(req), Some(request)) = (self.req.get(), self.request_mut()) {
+                self.to_async_without_abort_handler(req, request);
+            }
+            Self::on_abort(self.as_ctx_ptr(), resp);
+            return;
         }
+        // SAFETY: FFI handle valid while resp is Some
+        resp.on_aborted(|this, resp| Self::on_abort(this, resp), self.as_ctx_ptr());
     }
 
     pub(crate) fn set_cookies(&self, cookie_map: Option<*mut CookieMap>) {
@@ -785,7 +795,7 @@ where
     pub(crate) fn should_render_missing(&self) -> bool {
         // If we did not respond yet, we should render missing
         // To allow this all the conditions above should be true:
-        // 1 - still has a response (not detached)
+        // 1 - still has a response (not detached, socket still open)
         // 2 - not aborted
         // 3 - not marked completed
         // 4 - not marked pending
@@ -831,7 +841,7 @@ where
                 "no sendfile context"
             },
         );
-        self.resp.get().is_some()
+        self.resp.get().is_some_and(|resp| !resp.is_closed())
             && !self.flags.aborted()
             && !self.flags.has_marked_complete()
             && !self.flags.has_marked_pending()
@@ -892,7 +902,7 @@ where
 
         self.request_body_buf.set(Vec::new());
         self.response_buf_owned.set(Vec::new());
-        self.response_weakref.with_mut(|w| w.deref());
+        self.response_weakref.set(response::WeakRef::EMPTY);
 
         self.request_body_take_unref();
 
@@ -1360,7 +1370,7 @@ where
                 sink: Cell::new(None),
                 byte_stream: Cell::new(None),
                 response_body_readable_stream_ref: JsCell::new(readable_stream::Strong::default()),
-                pathname: Cell::new(BunString::empty()),
+                pathname: JsCell::new(BunString::EMPTY),
                 response_buf_owned: JsCell::new(Vec::new()),
                 additional_on_abort: JsCell::new(None),
                 promise_cell: Cell::new(JSValue::ZERO),
@@ -1416,7 +1426,7 @@ where
 
         if let Some(request) = this.request_mut() {
             request.request_context = AnyRequestContext::NULL;
-            this.request_weakref.with_mut(|w| w.deref());
+            this.request_weakref.set(request::WeakRef::EMPTY);
         }
         // if signal is not aborted, abort the signal
         if let Some(signal) = this.signal.take() {
@@ -1514,7 +1524,7 @@ where
             }
             self.response_jsvalue.set(JSValue::ZERO);
         }
-        self.response_weakref.with_mut(|w| w.deref());
+        self.response_weakref.set(response::WeakRef::EMPTY);
 
         self.detach_request_body_producer();
         self.request_body_readable_stream_ref
@@ -1525,7 +1535,7 @@ where
 
         if let Some(request) = self.request_mut() {
             request.request_context = AnyRequestContext::NULL;
-            self.request_weakref.with_mut(|w| w.deref());
+            self.request_weakref.set(request::WeakRef::EMPTY);
         }
 
         // if signal is not aborted, abort the signal
@@ -1558,11 +1568,7 @@ where
         self.response_body_readable_stream_ref
             .with_mut(|s| s.deinit());
 
-        let pathname = self.pathname.get();
-        if !pathname.is_empty() {
-            pathname.deref();
-            self.pathname.set(BunString::empty());
-        }
+        self.pathname.set(BunString::EMPTY);
     }
 
     fn on_file_stream_complete(ctx: *mut c_void, _resp: uws::AnyResponse) {
@@ -1771,8 +1777,7 @@ where
                     }
                 };
                 let mut sys: jsc::SystemError = err.to_system_error().into();
-                sys.message =
-                    BunString::static_("Cannot stream a directory as a response body").into();
+                sys.message = BunString::static_("Cannot stream a directory as a response body");
                 return self.run_error_handler(sys.to_error_instance(global_this));
             }
             (bun_io::FileType::File, false)
@@ -1912,7 +1917,7 @@ where
         }
 
         let server = self.server();
-        FileResponseStream::start(&file_response_stream::StartOptions {
+        FileResponseStream::start(file_response_stream::StartOptions {
             fd,
             auto_close,
             resp,
@@ -1926,10 +1931,12 @@ where
                 None
             },
             idle_timeout: server.config().idle_timeout,
-            ctx: self.as_ctx_ptr().cast::<c_void>(),
-            on_complete: Self::on_file_stream_complete,
-            on_abort: Some(Self::on_file_stream_abort),
-            on_error: Self::on_file_stream_error,
+            owner: file_response_stream::StreamOwner::Ctx {
+                ctx: self.as_ctx_ptr().cast::<c_void>(),
+                on_complete: Self::on_file_stream_complete,
+                on_abort: Some(Self::on_file_stream_abort),
+                on_error: Self::on_file_stream_error,
+            },
         });
     }
 
@@ -2028,6 +2035,8 @@ where
         debug_assert!(this.server.get().is_some());
         let global_this = this.server().global_this();
 
+        // Armed here, not in `to_async()`: `stop(true)` inside `pull()` must reach `on_abort`; see `end_already_responded_stream`.
+        this.set_abort_handler();
         if this.is_aborted_or_ended() {
             crate::dispatch::fold(stream.cancel(global_this));
             this.response_body_readable_stream_ref
@@ -2060,11 +2069,6 @@ where
             this.render_metadata();
         }
 
-        // Before `pull()` runs, not in `to_async()`: a `server.stop(true)` inside
-        // `pull()` has to reach `on_abort`, and once the stream has completed the
-        // response, uWS `markDone()` must have dropped these for good (the flag
-        // makes the later `to_async()` a no-op); see `end_already_responded_stream`.
-        this.set_abort_handler();
         resp.on_writable(
             |this, off, resp| Self::on_writable_response_stream(this, off, resp),
             this.as_ctx_ptr(),
@@ -2297,7 +2301,7 @@ where
         }
 
         if request_object.ensure_url().is_err() {
-            request_object.url.set(BunString::empty());
+            request_object.url.set(BunString::EMPTY);
         }
 
         // we have to clone the request headers here since they will soon belong to a different request
@@ -2510,7 +2514,7 @@ where
                         // doWriteHeaders() calls fastRemove(.TransferEncoding) and derefs the
                         // FetchHeaders, freeing that StringImpl before we write it. Clone so
                         // the bytes outlive renderMetadata().
-                        let transfer_encoding_str = transfer_encoding.to_slice_clone();
+                        let transfer_encoding_str = transfer_encoding.to_utf8().into_owned();
                         this.render_metadata();
                         resp.write_header(b"transfer-encoding", transfer_encoding_str.slice());
                         this.end_without_body(this.should_close_connection());
@@ -2520,7 +2524,7 @@ where
                 if let Some(content_length) = headers.fast_get(jsc::HTTPHeaderName::ContentLength) {
                     // Parse before renderMetadata(): doWriteHeaders() will fastRemove(.ContentLength)
                     // and deref the FetchHeaders, freeing the borrowed StringImpl.
-                    let content_length_str = content_length.to_slice();
+                    let content_length_str = content_length.to_utf8();
                     let len: usize = HTTP::parse_content_length(content_length_str.slice());
                     drop(content_length_str);
 
@@ -2630,6 +2634,17 @@ where
         }
     }
 
+    /// Drops the callback's result as for any aborted request; `set_abort_handler` delivers the missed close.
+    #[cold]
+    fn on_connection_closed_during_dispatch(&self, this: &ThisServer, result: JSValue) {
+        ctx_log!("connection closed during dispatch");
+        if let Some(promise) = result.as_any_promise() {
+            // Subscribing to it would have made a later rejection handled.
+            promise.set_handled(this.global_this().vm());
+        }
+        self.set_abort_handler();
+    }
+
     // Each HTTP request or TCP socket connection is effectively a "task".
     //
     // However, unlike the regular task queue, we don't drain the microtask
@@ -2656,6 +2671,10 @@ where
         request_value.ensure_still_alive();
         response_value.ensure_still_alive();
         if ctx.drain_microtasks().is_err() || ctx.is_aborted_or_ended() {
+            return;
+        }
+        if ctx.resp.get().is_some_and(|resp| resp.is_closed()) {
+            ctx.on_connection_closed_during_dispatch(this, response_value);
             return;
         }
         // if you return a Response object or a Promise<Response>
@@ -3126,12 +3145,10 @@ where
                         let err = jsc::SystemError {
                             code: BunString::static_(<&'static str>::from(
                                 jsc::ErrorCode::ERR_STREAM_CANNOT_PIPE,
-                            ))
-                            .into(),
+                            )),
                             message: BunString::static_(
                                 "Stream already used, please create a new one",
-                            )
-                            .into(),
+                            ),
                             ..Default::default()
                         };
                         stream.value.unprotect();
@@ -3152,8 +3169,7 @@ where
                         readable_stream::Source::Blob(_)
                         | readable_stream::Source::File(_)
                         // These are the common scenario:
-                        | readable_stream::Source::JavaScript
-                        | readable_stream::Source::Direct => {
+                        | readable_stream::Source::JavaScript => {
                             if let Some(resp) = this.resp.get() {
                                 let mut pair = StreamPair { stream, this };
                                 resp.run_corked_with_type(Self::do_render_stream, &raw mut pair);
@@ -3433,7 +3449,7 @@ where
                     let s = response
                         .get_init_headers_mut()?
                         .fast_get(jsc::HTTPHeaderName::ContentLength)?
-                        .to_slice();
+                        .to_utf8();
                     bun_core::parse_int::<u64>(s.slice(), 10).ok()
                 })
                 .flatten();
@@ -3604,6 +3620,10 @@ where
                 // error() may have ended the request or called server.upgrade(req),
                 // either of which already released this context's ref.
                 if self.is_aborted_or_ended() || self.did_upgrade_web_socket() {
+                    return;
+                }
+                if self.resp.get().is_some_and(|resp| resp.is_closed()) {
+                    self.on_connection_closed_during_dispatch(server, result);
                     return;
                 }
                 if !result.is_empty_or_undefined_or_null() {
@@ -3924,14 +3944,16 @@ where
     /// [`as_response`]), carrying the allocation's provenance — `WeakPtr` keeps
     /// it past any reborrow.
     unsafe fn set_response(&self, response: *mut Response) {
-        self.response_weakref.with_mut(|weak| {
-            if weak.get().map(std::ptr::from_mut::<Response>) == Some(response) {
-                return;
-            }
-            weak.deref();
-            // SAFETY: caller contract — `response` is live and root-provenanced.
-            *weak = unsafe { response::WeakRef::init_ref(response) };
-        });
+        if self
+            .response_weakref
+            .with_mut(|weak| weak.get().map(std::ptr::from_mut::<Response>))
+            == Some(response)
+        {
+            return;
+        }
+        // SAFETY: caller contract — `response` is live and root-provenanced.
+        self.response_weakref
+            .set(unsafe { response::WeakRef::init_ref(response) });
     }
 
     /// # Safety
@@ -4749,9 +4771,9 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
             if let Some(content) = headers_.fast_get(jsc::HTTPHeaderName::ContentType) {
                 needs_content_type = false;
 
-                let content_slice = content.to_slice();
+                let content_slice = content.to_utf8();
                 // Dupe only when the latin1/utf16 slice was heap-converted.
-                let dupe = matches!(content_slice, bun_core::ZigStringSlice::Owned(_));
+                let dupe = content_slice.is_owned();
                 let mt = MimeType::init(
                     content_slice.slice(),
                     dupe,

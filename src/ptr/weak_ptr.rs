@@ -73,13 +73,10 @@ pub trait HasWeakPtrData {
 /// `heap::into_raw`), which is why [`init_ref`](Self::init_ref) takes `*mut T`
 /// rather than `&mut T`. Deriving it from a `&mut T` reborrow instead makes the
 /// next write through any *other* pointer to the object a foreign write that
-/// invalidates the handle, so every later `get`/`deref` is UB. This mirrors
+/// invalidates the handle, so every later `get` or drop is UB. This mirrors
 /// [`ThisPtr::new`](crate::ThisPtr::new) and
 /// [`ParentRef::from_raw_mut`](crate::ParentRef::from_raw_mut).
 pub struct WeakPtr<T: HasWeakPtrData> {
-    // Intentionally a raw pointer, not `std::sync::Weak<T>`: this file *is*
-    // the definition of the intrusive weak pointer, with liveness tracked by
-    // the embedded `WeakPtrData` and manual ref/deref.
     raw_ptr: Option<NonNull<T>>,
 }
 
@@ -104,14 +101,6 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
         Self {
             // SAFETY: caller contract — `this` is non-null.
             raw_ptr: Some(unsafe { NonNull::new_unchecked(this) }),
-        }
-    }
-
-    pub fn deref(&mut self) {
-        if let Some(value) = self.raw_ptr {
-            // SAFETY: `raw_ptr` was set by `init_ref` and not yet released;
-            // the allocation outlives all `WeakPtr`s by construction.
-            unsafe { self.deref_internal(value) };
         }
     }
 
@@ -151,6 +140,16 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
             // so we hold the only pointer to a `Box`-allocated `T`. `weak_data`
             // is dead here, so freeing through `value` disturbs no live borrow.
             drop(unsafe { bun_core::heap::take(value.as_ptr()) });
+        }
+    }
+}
+
+impl<T: HasWeakPtrData> Drop for WeakPtr<T> {
+    fn drop(&mut self) {
+        if let Some(value) = self.raw_ptr {
+            // SAFETY: `raw_ptr` was set by `init_ref` and not yet released;
+            // the allocation outlives all `WeakPtr`s by construction.
+            unsafe { self.deref_internal(value) };
         }
     }
 }
@@ -263,20 +262,20 @@ mod tests {
         // is the last ref, so `deref_internal` frees the allocation.
         assert!(weak.get().is_none());
         assert_eq!(drops(), before + 1);
-        // The handle is now empty: a second `get`/`deref` must be a no-op.
+        // The handle is now empty: a second `get` or the drop must be a no-op.
         assert!(weak.get().is_none());
-        weak.deref();
+        drop(weak);
     }
 
-    /// `deref` before finalize leaves the allocation to the owner.
+    /// Dropping before finalize leaves the allocation to the owner.
     #[test]
-    fn weak_ptr_deref_before_finalize_leaves_owner_in_charge() {
+    fn weak_ptr_drop_before_finalize_leaves_owner_in_charge() {
         let _serial = serial();
         let before = drops();
         let raw = new_owner(6);
         // SAFETY: `raw` is a freshly leaked Box; live and not finalized.
-        let mut weak = unsafe { WeakPtr::init_ref(raw) };
-        weak.deref();
+        let weak = unsafe { WeakPtr::init_ref(raw) };
+        drop(weak);
         assert_eq!(drops(), before);
         // SAFETY: no weak refs remain; the owner frees its own allocation.
         drop(unsafe { bun_core::heap::take(raw) });
@@ -302,7 +301,7 @@ mod tests {
             assert_eq!(weak.get().map(|o| o.payload), Some(i));
         }
 
-        weak.deref();
+        drop(weak);
         // SAFETY: no weak refs remain.
         drop(unsafe { bun_core::heap::take(raw) });
         assert_eq!(drops(), before + 1);
@@ -327,9 +326,9 @@ mod tests {
 
         // SAFETY: `raw` is live.
         assert!(!unsafe { (*Owner::weak_ptr_data(raw)).on_finalize() });
-        a.deref();
+        drop(a);
         assert_eq!(drops(), before);
-        b.deref();
+        drop(b);
         assert_eq!(drops(), before + 1);
     }
 }

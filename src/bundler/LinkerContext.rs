@@ -61,12 +61,9 @@ pub(crate) use crate::linker_context::scan_imports_and_exports::scan_imports_and
 
 pub(crate) use crate::linker_context::compute_chunks::compute_chunks;
 pub use crate::linker_context::metafile_builder as MetafileBuilder;
-pub use crate::linker_context::output_file_list_builder as OutputFileListBuilder;
-pub use crate::linker_context::static_route_visitor as StaticRouteVisitor;
 // do_step5 / create_exports_for_file are inherent methods on LinkerContext (see
 // `linker_context/doStep5.rs`), not free functions — no item re-export.
 pub(crate) use crate::linker_context::compute_cross_chunk_dependencies::compute_cross_chunk_dependencies;
-pub use crate::linker_context::do_step5;
 pub(crate) use crate::linker_context::generate_chunks_in_parallel::generate_chunks_in_parallel;
 pub(crate) use crate::linker_context::post_process_css_chunk::post_process_css_chunk;
 pub(crate) use crate::linker_context::post_process_html_chunk::post_process_html_chunk;
@@ -1252,6 +1249,8 @@ impl From<BunError> for LinkError {
 
 pub struct LinkerOptions {
     pub(crate) generate_bytecode_cache: bool,
+    pub(crate) generate_internal_module_bytecode: bool,
+    pub(crate) bytecode_depth: u32,
     pub(crate) output_format: Format,
     pub(crate) ignore_dce_annotations: bool,
     pub(crate) emit_dce_annotations: bool,
@@ -1291,6 +1290,8 @@ impl Default for LinkerOptions {
     fn default() -> Self {
         Self {
             generate_bytecode_cache: false,
+            generate_internal_module_bytecode: false,
+            bytecode_depth: u32::MAX,
             output_format: Format::Esm,
             ignore_dce_annotations: false,
             emit_dce_annotations: true,

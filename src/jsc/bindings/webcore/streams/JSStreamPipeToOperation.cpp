@@ -155,6 +155,7 @@ static void pipeToLoopStep(JSGlobalObject* globalObject, JSStreamPipeToOperation
     auto* runtime = JSStreamsRuntime::from(globalObject);
     if (*desiredSize <= 0) {
         registerPipeReaction(globalObject, writer->readyPromise(globalObject), runtime->onPipeWriterReadyFulfilled(), nullptr, op);
+        RETURN_IF_EXCEPTION(scope, );
         return;
     }
     auto* readRequest = JSReadRequest::create(vm, runtime->readRequestStructure(defaultGlobalObject(globalObject)), ReadRequestKind::PipeTo, op);
@@ -454,17 +455,52 @@ WEB_STREAMS_DEFINE_PIPE_REACTION_TRAMPOLINE(onPipeWritesFinishedForShutdown, onW
 #undef WEB_STREAMS_DEFINE_PIPE_REACTION_TRAMPOLINE
 #undef WEB_STREAMS_DEFINE_PIPE_REACTION_TRAMPOLINE_WITH_VALUE
 
-// [reaction-convention] the deferred sink write, queued as a plain job (no result
-// capability, so any throw must settle the published promise itself). argument(0) = the
-// chunk; context = InternalFieldTuple{op, the promise published as m_currentWrite}, which
-// adopts the real write's settlement. After the head write, chunks the source already has
-// queued are written in place while the destination reports capacity: no read request, no
-// extra microtask per chunk. The dequeue and the write both run user JS, so every guard is
-// re-established around each of them.
-JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onPipeChunkDeferredWrite, (JSGlobalObject * globalObject, CallFrame* callFrame))
+// The deferred sink write's body (onPipeChunkDeferredWrite below). After the head write, chunks
+// the source already has queued are written in place while the destination reports capacity: no
+// read request, no extra microtask per chunk. The dequeue and the write both run user JS, so
+// every guard is re-established around each of them.
+static void pipeChunkDeferredWrite(JSGlobalObject* globalObject, JSStreamPipeToOperation* op, JSPromise* trackingPromise, JSValue chunk)
 {
     auto& vm = getVM(globalObject);
-    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (op->m_finalized)
+        RELEASE_AND_RETURN(scope, resolvePromise(globalObject, trackingPromise, jsUndefined()));
+    auto* writePromise = writableStreamDefaultWriterWrite(globalObject, op->m_writer.get(), chunk);
+    RETURN_IF_EXCEPTION(scope, );
+    writePromise->performPromiseThenWithContext(vm, globalObject, jsUndefined(), jsUndefined(), trackingPromise, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, );
+
+    while (!op->m_finalized && !op->m_shuttingDown) {
+        auto* writer = op->m_writer.get();
+        auto desiredSize = writableStreamDefaultWriterGetDesiredSize(writer);
+        if (!desiredSize || *desiredSize <= 0)
+            return;
+        auto* reader = op->m_reader.get();
+        if (!reader)
+            return;
+        JSValue next = readableStreamDefaultReaderTryReadFromQueue(globalObject, reader);
+        RETURN_IF_EXCEPTION(scope, );
+        if (!next)
+            return;
+        // The dequeue can run the source's pull(): re-check before touching the writer.
+        // A dequeued chunk must still be written if a shutdown merely began (the
+        // shutdown waits on m_currentWrite); only a finalized op or a replaced writer
+        // makes the write invalid.
+        if (op->m_finalized || op->m_writer.get() != writer)
+            return;
+        auto* nextWrite = writableStreamDefaultWriterWrite(globalObject, writer, next);
+        RETURN_IF_EXCEPTION(scope, );
+        publishPipeWrite(globalObject, op, nextWrite);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+}
+
+// [reaction-convention] the deferred sink write, queued as a plain job (enterStreams).
+// argument(0) = the chunk; context = InternalFieldTuple{op, the promise published as
+// m_currentWrite}, which adopts the real write's settlement. The shutdown paths wait on that
+// published promise, so a throw here must never leave it pending: it is rejected with the error.
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onPipeChunkDeferredWrite, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
     auto* context = dynamicDowncast<InternalFieldTuple>(callFrame->argument(1));
     if (!context) [[unlikely]]
         return JSValue::encode(jsUndefined());
@@ -472,54 +508,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onPipeChunkDeferredWrite, (JSGlobal
     if (!op) [[unlikely]]
         return JSValue::encode(jsUndefined());
     auto* trackingPromise = uncheckedDowncast<JSPromise>(context->getInternalField(1));
-    do {
-        if (op->m_finalized) {
-            resolvePromise(globalObject, trackingPromise, jsUndefined());
-            break;
-        }
-        auto* writePromise = writableStreamDefaultWriterWrite(globalObject, op->m_writer.get(), callFrame->argument(0));
-        if (catchScope.exception()) [[unlikely]]
-            break;
-        writePromise->performPromiseThenWithContext(vm, globalObject, jsUndefined(), jsUndefined(), trackingPromise, jsUndefined());
-        if (catchScope.exception()) [[unlikely]]
-            break;
-
-        while (!op->m_finalized && !op->m_shuttingDown) {
-            auto* writer = op->m_writer.get();
-            auto desiredSize = writableStreamDefaultWriterGetDesiredSize(writer);
-            if (!desiredSize || *desiredSize <= 0)
-                break;
-            auto* reader = op->m_reader.get();
-            if (!reader)
-                break;
-            JSValue next = readableStreamDefaultReaderTryReadFromQueue(globalObject, reader);
-            if (catchScope.exception()) [[unlikely]]
-                break;
-            if (!next)
-                break;
-            // The dequeue can run the source's pull(): re-check before touching the writer.
-            // A dequeued chunk must still be written if a shutdown merely began (the
-            // shutdown waits on m_currentWrite); only a finalized op or a replaced writer
-            // makes the write invalid.
-            if (op->m_finalized || op->m_writer.get() != writer)
-                break;
-            auto* nextWrite = writableStreamDefaultWriterWrite(globalObject, writer, next);
-            if (catchScope.exception()) [[unlikely]]
-                break;
-            publishPipeWrite(globalObject, op, nextWrite);
-            if (catchScope.exception()) [[unlikely]]
-                break;
-        }
-    } while (false);
-    if (catchScope.exception()) [[unlikely]] {
-        JSValue error = takeAbruptCompletion(globalObject, catchScope);
-        if (error.isEmpty())
-            return JSValue::encode(jsUndefined());
-        // The shutdown paths wait on the published m_currentWrite: never leave it pending.
+    return enterStreams(globalObject, [&] { pipeChunkDeferredWrite(globalObject, op, trackingPromise, callFrame->argument(0)); }, [&](JSValue error) {
         if (trackingPromise->status() == JSPromise::Status::Pending)
-            rejectPromise(globalObject, trackingPromise, error);
-    }
-    return JSValue::encode(jsUndefined());
+            rejectPromise(globalObject, trackingPromise, error); });
 }
 
 // [reaction-convention] shutdown-action settlement. The context is the op cell; the
@@ -597,6 +588,7 @@ void startPipeToOperation(JSGlobalObject* globalObject, JSStreamPipeToOperation*
         auto* boundAlgorithm = JSBoundFunction::create(vm, globalObject, runtime->boundPipeAbortAlgorithm(), jsUndefined(), ArgList(boundArguments), 1, nullptr, sourceCode);
         RETURN_IF_EXCEPTION(scope, );
         op->m_abortAlgorithmId = WebCore::AbortSignal::addAbortAlgorithmToSignal(signal, WebCore::JSAbortAlgorithm::create(vm, boundAlgorithm));
+        RETURN_IF_EXCEPTION(scope, );
     }
 
     const auto* reader = op->m_reader.get();

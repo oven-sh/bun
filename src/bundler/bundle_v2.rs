@@ -212,9 +212,6 @@ pub struct BundleV2<'a> {
 
     /// Allocations not tracked by a threadlocal heap.
     pub(crate) free_list: Vec<Box<[u8]>>,
-    /// Parse tasks not yet handed to the pool: created by import resolution
-    /// and scheduled by `process_resolve_queue`, or waiting for an onLoad
-    /// plugin (`Load::parse_task`).
     /// Finished parse tasks: their `stage` owns the source bytes the graph's
     /// `Source`s borrow.
     #[allow(clippy::vec_box)] // they come back from the pool boxed
@@ -4636,7 +4633,6 @@ pub mod bv2_impl {
     struct OnLoad {
         source_index: Index,
         path: Box<[u8]>,
-        #[allow(dead_code)]
         namespace: Box<[u8]>,
         bake_graph: bake::Graph,
         deferred_in: Option<u32>,

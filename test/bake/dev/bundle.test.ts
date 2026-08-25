@@ -475,6 +475,22 @@ devTest("import.meta.main", {
     await c.expectMessage(false);
   },
 });
+devTest("client files are parsed against the client defines (import.meta.env.SSR)", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      console.log("SSR=" + import.meta.env.SSR + " DEV=" + import.meta.env.DEV);
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("SSR=false DEV=true");
+  },
+});
 devTest("commonjs forms", {
   timeoutMultiplier: 2,
   files: {

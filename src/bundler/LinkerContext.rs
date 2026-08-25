@@ -3393,8 +3393,6 @@ impl<'a> LinkerContext<'a> {
 
             // Re-use memory for the cycle detector
             self.cycle_detector.clear();
-            // Re-use memory for the cycle detector
-            self.cycle_detector.clear();
 
             let mut re_exports: bun_alloc::AstVec<Dependency> = bun_alloc::AstAlloc::vec();
             let result = self.match_import_with_export(

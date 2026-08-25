@@ -1922,8 +1922,11 @@ pub mod parse_worker {
         // transpiler, when the file turns out to be client-side, supplies the
         // options and macro context for the parse itself.
         let (primary_define, client_define) = (this.define, this.client_define);
-        let crate::thread_pool::TargetTranspilers { primary, browser } =
-            this.transpilers_for_target(task.known_target);
+        let crate::thread_pool::TargetTranspilers {
+            primary,
+            browser,
+            primary_is_client,
+        } = this.transpilers_for_target(task.known_target);
         let Transpiler {
             options: primary_options,
             resolver,
@@ -1931,7 +1934,11 @@ pub mod parse_worker {
             ..
         } = primary;
         let (mut topts, mut macro_context) = (primary_options, primary_macro_context);
-        let mut parse_config: &'a crate::thread_pool::ParseConfig = primary_define;
+        let mut parse_config: &'a crate::thread_pool::ParseConfig = if primary_is_client {
+            client_define.expect("client transpiler exists for browser files")
+        } else {
+            primary_define
+        };
         let file_path = &mut task.path;
         let loader = task
             .loader

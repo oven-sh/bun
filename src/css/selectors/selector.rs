@@ -274,8 +274,7 @@ pub(crate) fn get_prefix(selectors: &[Selector]) -> VendorPrefix {
     prefix
 }
 
-/// Grouping bits past the compat features, for components whose compat bucket is
-/// wider than what the printer writes for them.
+/// Grouping bits past the compat features, for components that print unlike their compat bucket.
 const BIT_NESTING_LEADING: usize = Feature::COUNT;
 const BIT_NESTING_INNER: usize = Feature::COUNT + 1;
 const BIT_SCOPE: usize = Feature::COUNT + 2;
@@ -303,8 +302,7 @@ pub(crate) enum Incompatibility {
 /// What one selector component needs from the targets.
 enum Requirement {
     Feature(Feature),
-    /// `&` with nesting compiled away. Checked as `:is()`, but keyed apart from it: the
-    /// printer inlines a lone parent selector, with `:is()` only for an inner `&`.
+    /// `&` compiled away. Checked as `:is()`; keyed apart since a lone parent inlines without it.
     Nesting {
         leading: bool,
     },
@@ -634,8 +632,7 @@ fn require_as(
     targets.is_compatible(feature) || sink(requirement)
 }
 
-/// Whether the printer writes the selector's first `&` in the leading form (the parent
-/// selector itself when there is one parent). `&div` swaps to `div&` and takes the inner form.
+/// Whether the selector's first `&` prints in the leading form (`&div` swaps to `div&`: inner).
 fn has_leading_nesting(selector: &parser::Selector) -> bool {
     let mut compounds = CompoundSelectorIter {
         sel: selector,
@@ -647,8 +644,7 @@ fn has_leading_nesting(selector: &parser::Selector) -> bool {
     matches!(compound.first(), Some(Component::Nesting)) && !is_type_selector(compound.get(1))
 }
 
-/// What an attribute selector with a value needs: the `i` flag needs `CaseInsensitive`, the `s`
-/// flag has no support data, and no flag (or the one HTML implies) leaves it to the operator.
+/// The `i` flag needs `CaseInsensitive`, `s` has no support data, otherwise the operator decides.
 fn attribute_requirement(
     case_sensitivity: parser::attrs::ParsedCaseSensitivity,
     operator: parser::attrs::AttrSelectorOperator,

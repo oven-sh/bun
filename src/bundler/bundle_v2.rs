@@ -3135,12 +3135,15 @@ pub mod bv2_impl {
             heap: &'h BundleHeap,
         ) -> Result<Box<BundleV2<'h>>, Error> {
             // SAFETY: as `lend_shorter`, for the transpilers lent in `config`.
-            let config = unsafe { core::mem::transmute::<BundleConfig<'t>, BundleConfig<'h>>(config) };
+            let config =
+                unsafe { core::mem::transmute::<BundleConfig<'t>, BundleConfig<'h>>(config) };
             BundleV2::init(Self::lend_shorter(transpiler), config, heap)
         }
 
         /// A longer-lived transpiler lent to a bundle whose heap lives for `'h`.
-        fn lend_shorter<'r, 'h, 't: 'h>(transpiler: &'r mut Transpiler<'t>) -> &'r mut Transpiler<'h> {
+        fn lend_shorter<'r, 'h, 't: 'h>(
+            transpiler: &'r mut Transpiler<'t>,
+        ) -> &'r mut Transpiler<'h> {
             // SAFETY: `Transpiler<'x>` is covariant in `'x` but lent mutably,
             // so the borrow checker cannot shorten `'t` to `'h` itself; that
             // is sound as long as nothing that lives only for `'h` is stored

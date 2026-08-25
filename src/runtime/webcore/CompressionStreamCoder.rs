@@ -816,11 +816,12 @@ pub extern "C" fn CompressionStreamCoder__transform(
     let result = match unsafe { (*this).step(slice, finish, &mut out) } {
         Ok(has_more) => {
             *more = has_more;
-            if out.is_empty() {
+            let chunk = if out.is_empty() {
                 JSUint8Array::create_empty(global)
             } else {
                 JSUint8Array::from_bytes_copy(global, &out)
-            }
+            };
+            bun_jsc::to_js_host_fn_result(global, chunk)
         }
         Err(e) => {
             *more = false;

@@ -3415,7 +3415,10 @@ fn resolve(
             // Micro-optimization #1: avoid creating a new string when passing no arguments or only empty strings.
             // Micro-optimization #2: path.resolve(".") and path.resolve("./") === process.cwd()
             if paths.is_empty() || (paths.len() == 1 && (paths[0] == b"." || paths[0] == b"./")) {
-                return Ok(Process__getCachedCwd(global_object));
+                // Throws when `getcwd` fails (for example, a deleted cwd).
+                return crate::jsc::call_zero_is_throw(global_object, || {
+                    Process__getCachedCwd(global_object)
+                });
             }
         }
     }

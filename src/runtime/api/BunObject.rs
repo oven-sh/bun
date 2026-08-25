@@ -273,6 +273,7 @@ pub mod bun_object {
         BunObject_callback_jest => Jest::call,
         BunObject_callback_listen => super::static_adapters::listener_listen,
         BunObject_callback_mmap => super::mmap_file,
+        BunObject_callback_open => super::open,
         BunObject_callback_openInEditor => super::open_in_editor,
         BunObject_callback_registerMacro => super::register_macro,
         BunObject_callback_resolve => super::resolve,
@@ -1004,6 +1005,93 @@ fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
         ) {
             return Err(global_this.throw(format_args!("Opening editor failed {}", err.name(),)));
         }
+
+        Ok(JSValue::UNDEFINED)
+    })
+}
+
+/// `Bun.open(target, options?)` — open a URL, file, or folder with the
+/// platform's default handler.
+///
+/// See `src/runtime/api/open.rs` for the per-OS argv construction; this
+/// function decodes the JS arguments, builds the argv, and hands it to
+/// `Bun.spawn` with the fire-and-forget stdio + detached posture.
+#[bun_jsc::host_fn]
+fn open(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let vm = global_this.bun_vm();
+    let mut arguments = ArgumentsSlice::init(vm, callframe.arguments());
+
+    // Required positional arg: the URL / path / folder to open.
+    let target_value = arguments
+        .next_eat()
+        .ok_or_else(|| global_this.throw_invalid_arguments("Expected a `target`"))?;
+    if !target_value.is_string() {
+        return Err(global_this.throw_invalid_arguments("Expected a `target` string"));
+    }
+    let target = target_value.to_utf8(global_this)?;
+    let target_str = std::str::from_utf8(target.slice())
+        .map_err(|_| global_this.throw_invalid_arguments("`target` is not valid UTF-8"))?;
+
+    // Optional second arg: the options object. All fields are optional; the
+    // default `OpenOptions` matches the npm `open` package's defaults.
+    let mut options = crate::api::open::OpenOptions::default();
+    options.hide_errors = true; // suppress Windows "no association" dialogs
+    if let Some(opts_value) = arguments.next_eat() {
+        if !opts_value.is_undefined_or_null() {
+            // Coerce each option individually so a bad type on one field
+            // doesn't abandon the rest of the parse.
+            if let Some(app) = opts_value.get_truthy(global_this, "app")? {
+                options.app = Some(app.to_utf8(global_this)?);
+            }
+            if let Some(wait) = opts_value.get_truthy(global_this, "wait")? {
+                options.wait = wait.to_boolean();
+            }
+            if let Some(bg) = opts_value.get_truthy(global_this, "background")? {
+                options.background = bg.to_boolean();
+            }
+            if let Some(ni) = opts_value.get_truthy(global_this, "newInstance")? {
+                options.new_instance = ni.to_boolean();
+            }
+            if let Some(edit) = opts_value.get_truthy(global_this, "edit")? {
+                options.edit = edit.to_boolean();
+            }
+            if let Some(he) = opts_value.get_truthy(global_this, "hideErrors")? {
+                options.hide_errors = he.to_boolean();
+            }
+        }
+    }
+
+    // Build the per-OS argv. Errors here are caller-input failures (NUL
+    // bytes, empty target, unsupported OS) and become thrown JS errors
+    // without ever reaching `Bun.spawn`.
+    let argv = match crate::api::open::argv_for(target_str, &options) {
+        Ok(argv) => argv,
+        Err(err) => {
+            return Err(global_this.throw_error(
+                crate::Error::from(err),
+                "",
+            ));
+        }
+    };
+
+    // Construct the JS options object that `Bun.spawn` accepts. We need:
+    //   - stdio: [ignore, ignore, ignore] (don't pop a console window)
+    //   - detached: true (fire and forget; the JS caller doesn't await)
+    //   - argv: the prepared Vec<Vec<u8>>
+    //   - env: inherit (the platform opener resolves its own user env)
+    //   - cwd: inherit (use the current working directory for relative
+    //     paths; matches the `open` package's behavior)
+    //
+    // TODO: route through `js_bun_spawn_bindings::spawn` once we confirm the
+    //   JSObject construction matches what the binding expects. Scaffold
+    //   returns `UnsupportedOs` so the registration compiles end-to-end
+    //   before the spawn glue lands.
+    let _ = argv;
+    Err(global_this.throw_error(
+        crate::Error::from(crate::api::open::OpenError::UnsupportedOs("Bun.open host_fn (scaffold)")),
+        "",
+    ))
+}
 
         Ok(JSValue::UNDEFINED)
     })

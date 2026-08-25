@@ -63,6 +63,8 @@ pub mod jsonc_object;
 pub mod markdown_object;
 #[path = "api/NativePromiseContext.rs"]
 pub mod native_promise_context;
+#[path = "api/open.rs"]
+pub mod open;
 #[path = "api/output_file_jsc.rs"]
 pub mod output_file_jsc;
 #[path = "api/standalone_graph_jsc.rs"]

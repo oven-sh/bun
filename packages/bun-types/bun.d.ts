@@ -5496,6 +5496,96 @@ declare module "bun" {
   }
 
   /**
+   * Open a file, URL, or folder with the platform's default handler.
+   *
+   * @category Utilities
+   *
+   * @param target The URL, file path, or folder to open
+   * @param options Behavior overrides (app, wait, background, newInstance, edit, hideErrors)
+   * @returns A {@link BunOpenResult} describing the launch
+   *
+   * @example
+   * ```ts
+   * // Open a URL in the default browser
+   * await Bun.open("https://example.com");
+   *
+   * // Open a file in its default app
+   * await Bun.open(import.meta.path);
+   *
+   * // Open a URL in a specific app (macOS / Windows)
+   * await Bun.open("https://example.com", { app: "Safari" });
+   * ```
+   */
+  function open(target: string, options?: BunOpenOptions): Promise<BunOpenResult>;
+
+  interface BunOpenOptions {
+    /**
+     * Application to open with. On macOS this maps to `/usr/bin/open -a`.
+     * On Windows the named binary is used as `lpFile` with `lpVerb = "open"`.
+     * On Linux the named binary is executed directly; `xdg-open` is only
+     * used when `app` is omitted.
+     */
+    app?: string;
+
+    /**
+     * Wait for the launched app to exit before the returned `exited` promise
+     * resolves. macOS: `open -W`. Windows: blocks on the process handle.
+     * Linux: best-effort; the returned promise resolves immediately after
+     * the child PID is reported.
+     */
+    wait?: boolean;
+
+    /**
+     * macOS only. Maps to `open -g` — launch the app without bringing it
+     * to the foreground. Ignored on other platforms.
+     */
+    background?: boolean;
+
+    /**
+     * macOS only. Maps to `open -n` — force a new instance even if the
+     * named app is already running. Ignored on other platforms.
+     */
+    newInstance?: boolean;
+
+    /**
+     * macOS: `open -e`. Windows: `lpVerb = "edit"`. Linux: ignored.
+     */
+    edit?: boolean;
+
+    /**
+     * Windows only. Pass `SEE_MASK_FLAG_NO_UI` so the shell does not pop
+     * "no application is associated with this file" dialogs. Defaults to
+     * `true` because scripted use of `Bun.open` should never block on a
+     * dialog box.
+     */
+    hideErrors?: boolean;
+  }
+
+  interface BunOpenResult {
+    /**
+     * `true` when the platform opener accepted the launch. `false` on
+     * Windows when the shell reused an already-running singleton process
+     * and the OS did not hand back a fresh PID; the caller should treat
+     * this as "open succeeded, but the launched process is an existing
+     * one" rather than as an error.
+     */
+    ok: boolean;
+
+    /**
+     * PID of the launched process. `0` on Windows when `ok` is still
+     * `true` (see above).
+     */
+    pid: number;
+
+    /**
+     * Resolves when the launched process exits. Rejects with a JS error
+     * (matching the npm `open` package's contract) when the platform
+     * opener exits with a non-zero status.
+     */
+    exited: Promise<{ exitCode: number | null; signal: number | null; exitedAt: number }>;
+  }
+
+  /**
    * This class only exists in types
    */
   abstract class CryptoHashInterface<T> {

@@ -727,4 +727,14 @@ describe("useFakeTimers with options", () => {
     expect(() => vi.useFakeTimers(123 as any)).toThrow("useFakeTimers() expects an options object");
     expect(vi.isFakeTimers()).toBe(false);
   });
+
+  // NaN is the "no override" sentinel of the Date.now() override. A NaN clock
+  // left Date.now() real while performance.timeOrigin read NaN.
+  test.each([NaN, Infinity, -Infinity, new Date(NaN)])("useFakeTimers({ now: %p }) throws", now => {
+    const realTimeOrigin = performance.timeOrigin;
+    expect(() => vi.useFakeTimers({ now })).toThrow("'now' must be a finite number or a valid Date");
+    expect(vi.isFakeTimers()).toBe(false);
+    expect(performance.timeOrigin).toBe(realTimeOrigin);
+    expect(performance.toJSON().timeOrigin).toBe(realTimeOrigin);
+  });
 });

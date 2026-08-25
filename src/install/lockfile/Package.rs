@@ -1874,9 +1874,7 @@ impl Package<u64> {
                     .append::<String>(if relative.is_empty() { b"." } else { relative });
             }
             dependency::version::Tag::Npm => {
-                // Mirrors the resolver's workspace match
-                // (`PackageManagerEnqueue`): a versionless workspace still
-                // satisfies a wildcard range.
+                // A versionless workspace satisfies a wildcard range, the same rule as `PackageManagerEnqueue`.
                 let satisfies = match workspace_version {
                     Some(workspace_version) => {
                         dependency_version

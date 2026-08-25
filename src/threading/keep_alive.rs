@@ -52,3 +52,23 @@ impl<T> Drop for KeepAlive<T> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A kept borrow survives later keeps (the vec reallocating) and the
+    /// keeper moving.
+    #[test]
+    fn kept_values_stay_put() {
+        let keep = KeepAlive::new();
+        let first: *const String = keep.keep(Box::new(String::from("a")));
+        for i in 0..64 {
+            keep.keep(Box::new(i.to_string()));
+        }
+        let moved = (keep, 1u8);
+        // SAFETY: `first` is what `keep` handed out; `moved.0` still owns it.
+        assert_eq!(unsafe { &*first }, "a");
+        drop(moved);
+    }
+}

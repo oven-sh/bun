@@ -79,3 +79,28 @@ impl<T> Drop for StableVec<T> {
         self.clear();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The pointer handed out for an element stays usable while the owner
+    /// keeps writing to the element by index and the collection itself
+    /// moves and grows.
+    #[test]
+    fn foreign_pointer_survives_owner_access_and_moves() {
+        let mut v = StableVec::new();
+        let i = v.push(Box::new(1u32));
+        let foreign = v.ptr(i);
+        for n in 0..64u32 {
+            v.push(Box::new(n));
+        }
+        let mut moved = (v, ());
+        *moved.0.get_mut(i) += 1;
+        // SAFETY: what the foreign holder does with the address it was handed.
+        unsafe { *foreign.as_ptr() += 1 };
+        assert_eq!(*moved.0.get(i), 3);
+        // SAFETY: as above.
+        assert_eq!(unsafe { *foreign.as_ptr() }, 3);
+    }
+}

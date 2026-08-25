@@ -662,8 +662,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         return Ok(());
     }
 
-    /// Selectors moved out of the rule because some target does not support
-    /// them. Each group becomes one rule below.
+    /// Incompatible selectors that share a reason and a prefix. Each group becomes one rule.
     struct IncompatibleSelectors {
         reason: selector::Incompatibility,
         vendor_prefix: css::VendorPrefix,
@@ -694,11 +693,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         } else {
             // Otherwise, partition the selectors and keep the compatible ones in this rule.
             // We will generate additional rules for incompatible selectors later.
-            //
-            // Selectors that fail on the same features are dropped by the same
-            // browsers. When they also print with the same vendor prefixes, the
-            // rule they share behaves like one rule per selector in every
-            // target, so group them instead of duplicating the declarations.
+            // Same reason and prefix means the same browsers drop them, so they share one rule.
             let mut incompatible = SmallList::<IncompatibleSelectors, 1>::default();
             let mut i: u32 = 0;
             while i < sty.selectors.v.len() {
@@ -815,8 +810,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         SmallList::init_capacity(incompatible.len());
     while incompatible.len() > 0 {
         let group = incompatible.ordered_remove(0);
-        // The selectors were downleveled and their prefix computed when the
-        // group was formed, so this is what `update_prefix` would produce.
+        // The prefix was computed per selector when the group was formed.
         let clone = style::StyleRule::<R> {
             selectors: SelectorList { v: group.selectors },
             vendor_prefix: group.vendor_prefix,

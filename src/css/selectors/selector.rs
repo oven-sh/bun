@@ -79,8 +79,7 @@ pub(crate) fn is_equivalent(selectors: &[Selector], other: &[Selector]) -> bool 
     true
 }
 
-/// Returns the vendor prefixes a rule with these selectors is printed with.
-/// When the targets need it, this also downlevels the selectors in place.
+/// Downlevels the selectors for the targets and returns the vendor prefixes to print the rule with.
 pub(crate) fn update_prefix<'bump>(
     bump: &'bump Bump,
     selectors: &mut [Selector],
@@ -289,21 +288,13 @@ impl FeatureSet {
 /// Why a selector is incompatible with the targets. See [`incompatibility`].
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Incompatibility {
-    /// The features the selector needs that some target does not support.
+    /// Unsupported features. Equal sets fail in the same browsers and can share one rule.
     Features(FeatureSet),
-    /// The selector has a component with no support data: an unknown or
-    /// vendor-prefixed pseudo-class or pseudo-element, `:nth-col()`, ...
+    /// A component with no support data (unknown or prefixed pseudo, `:nth-col()`): never shared.
     Unknown,
 }
 
-/// Returns why the targets do not all support `selector`, or `None` when
-/// they do.
-///
-/// A browser drops a whole rule when one selector in its list is invalid, so
-/// the minifier moves the selectors some target cannot parse into rules of
-/// their own. Two selectors with equal `Features` are invalid in exactly the
-/// same target browsers, so they can share one rule. An `Unknown` selector
-/// never shares one: nothing says which browsers accept it.
+/// Returns why the targets do not all support `selector`, or `None` when they do.
 pub(crate) fn incompatibility(
     selector: &parser::Selector,
     targets: &Targets,
@@ -330,10 +321,7 @@ pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -
     visit_incompatible(selectors, targets, &mut |_| false)
 }
 
-/// Reports each requirement of `selectors` that the targets do not meet to
-/// `sink`: `Some(feature)` for an unsupported compat feature, `None` for a
-/// component with no support data. `sink` returns `false` to stop the walk.
-/// Returns `false` when the walk was stopped.
+/// Feeds each unmet requirement to `sink` (`None`: no support data) until `sink` returns `false`.
 fn visit_incompatible(
     selectors: &[parser::Selector],
     targets: &Targets,
@@ -428,8 +416,7 @@ fn visit_incompatible(
 
                 // These support forgiving selector lists, so no need to check nested selectors.
                 Component::Is(sels) => {
-                    // ... except if we are going to unwrap them: the printer then
-                    // writes the inner selector in place of the `:is()`.
+                    // ... except if we unwrap them: the printer writes the inner selector instead.
                     if should_unwrap_is(sels) {
                         if !visit_incompatible(sels, targets, sink) {
                             return false;
@@ -591,8 +578,7 @@ fn visit_incompatible(
     true
 }
 
-/// Reports `feature` to `sink` when the targets do not support it. Returns
-/// `false` when `sink` stopped the walk.
+/// Reports `feature` to `sink` when the targets lack it; `false` means `sink` stopped the walk.
 fn require(
     feature: Feature,
     targets: &Targets,

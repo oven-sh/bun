@@ -418,8 +418,7 @@ impl<R> StyleRule<R> {
         // Mirrors the selector-compatibility branch in `minify_style_arm`
         // (rules/mod.rs): an incompatible selector list is either collapsed
         // into a single `:is()` selector (nothing cloned) or partitioned
-        // into cloned rules, at most one per selector (fan-out <= selector
-        // count).
+        // into cloned rules, at most one per selector (fan-out <= count).
         // Only the partition case multiplies on its own — but the `:is()`
         // wrap keeps one `&` reference per original selector, so when
         // nesting is compiled away the printed output still fans out per

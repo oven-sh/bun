@@ -61,7 +61,9 @@ impl Notify {
     pub fn js(poster: bun_event_loop::JsPoster, dev_server: Option<DevServerHandle>) -> Self {
         Notify::Js {
             poster,
-            dev_server: bun_threading::Guarded::new(dev_server.map(bun_threading::ThreadBound::new)),
+            dev_server: bun_threading::Guarded::new(
+                dev_server.map(bun_threading::ThreadBound::new),
+            ),
             posted: AtomicBool::new(false),
         }
     }

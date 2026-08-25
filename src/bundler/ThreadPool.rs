@@ -165,7 +165,6 @@ impl BundleHeap {
     pub fn keep_file_map(&self, files: crate::bundle_v2::FileMap) -> &crate::bundle_v2::FileMap {
         self.file_maps.keep(Box::new(files))
     }
-
 }
 
 impl core::ops::Deref for BundleHeap {
@@ -372,9 +371,7 @@ impl<'a> ThreadPool<'a> {
     /// store pushed for the guard's lifetime.
     #[inline]
     pub(crate) fn get_worker(&self) -> WorkerGuard<'_, 'a> {
-        let mut worker = self
-            .workers
-            .get_or_init(|_| Worker::new(&self.seed));
+        let mut worker = self.workers.get_or_init(|_| Worker::new(&self.seed));
         worker.ast_memory_store.push();
         WorkerGuard {
             worker,

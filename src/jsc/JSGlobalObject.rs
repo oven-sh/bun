@@ -745,11 +745,7 @@ impl JSGlobalObject {
     fn error_instance(&self, kind: ErrorKind, args: Arguments<'_>) -> JSValue {
         match args.as_str() {
             Some(_) => error_instance(BunString::create_format(args).as_view(), self, kind),
-            None => error_instance(
-                StringView::borrow_utf8(&self.error_message(args)),
-                self,
-                kind,
-            ),
+            None => error_instance(StringView::utf8(&self.error_message(args)), self, kind),
         }
     }
 

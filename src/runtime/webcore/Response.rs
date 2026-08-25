@@ -588,7 +588,7 @@ impl Response {
                 if !content_type.is_empty() {
                     init.headers.as_mut().unwrap().put(
                         HTTPHeaderName::ContentType,
-                        bun_core::StringView::borrow_latin1(content_type),
+                        bun_core::StringView::latin1(content_type),
                         global_this,
                     )?;
                 }
@@ -952,7 +952,7 @@ impl Response {
         let json_mime = bun_http_types::MimeType::JSON;
         headers_ref.put_default(
             HTTPHeaderName::ContentType,
-            bun_core::StringView::borrow_latin1(json_mime.value.as_ref()),
+            bun_core::StringView::latin1(json_mime.value.as_ref()),
             global_this,
         )?;
         // Disarm the body-reset guard: all fallible ops have succeeded.
@@ -1133,7 +1133,7 @@ impl Response {
                     let headers = response.get_or_create_headers(global_this)?;
                     headers.put(
                         HTTPHeaderName::Location,
-                        bun_core::StringView::borrow_latin1(&result.url),
+                        bun_core::StringView::latin1(&result.url),
                         global_this,
                     )?;
                     return Ok(bun_core::heap::into_raw(Box::new(response)));
@@ -1181,7 +1181,7 @@ impl Response {
                 if !content_type.is_empty() && !headers.fast_has(HTTPHeaderName::ContentType) {
                     headers.put(
                         HTTPHeaderName::ContentType,
-                        bun_core::StringView::borrow_latin1(content_type),
+                        bun_core::StringView::latin1(content_type),
                         global_this,
                     )?;
                 }

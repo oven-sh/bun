@@ -8,16 +8,12 @@ bun_opaque::opaque_ffi! {
 
 unsafe extern "C" {
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to non-null `*const`); `Option<&StringView>` is ABI-identical
-    // to a nullable `*const BunString` via the guaranteed null-pointer optimization.
+    // ABI-identical to non-null `*const`); `&StringView` is `const BunString*`.
     // The returned `*mut JSInternalPromise` is nullable; callers check before deref.
     safe fn JSC__JSModuleLoader__loadAndEvaluateModule(
         arg0: &JSGlobalObject,
-        arg1: Option<&StringView<'_>>,
+        arg1: &StringView<'_>,
     ) -> *mut JSInternalPromise;
-
-    // safe: same handle/reference contract as `loadAndEvaluateModule` above;
-    // `arg1` is always non-null at every Rust call site.
     safe fn JSModuleLoader__import(
         arg0: &JSGlobalObject,
         arg1: &StringView<'_>,
@@ -30,13 +26,13 @@ impl JSModuleLoader {
     /// a mutable cell pointer don't launder provenance through `&T -> *mut T`.
     pub fn load_and_evaluate_module_ptr(
         global_object: *mut JSGlobalObject,
-        module_name: Option<StringView<'_>>,
+        module_name: StringView<'_>,
     ) -> Option<core::ptr::NonNull<JSInternalPromise>> {
         // `JSGlobalObject` is an opaque ZST handle; `opaque_ref` is the
         // centralised zero-byte deref proof (panics on null).
         core::ptr::NonNull::new(JSC__JSModuleLoader__loadAndEvaluateModule(
             JSGlobalObject::opaque_ref(global_object),
-            module_name.as_ref(),
+            &module_name,
         ))
     }
 

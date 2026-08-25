@@ -26,7 +26,7 @@ pub(crate) fn myers_diff(
     // branch will be hit since dead strings have a length of 0. This should be
     // moot since BunStrings with non-zero reference counds should never be
     // dead.
-    if actual.length() == 0 && expected.length() == 0 {
+    if actual.len() == 0 && expected.len() == 0 {
         return emit::<u8, u8>(global, &Vec::new(), output);
     }
 
@@ -60,13 +60,13 @@ pub(crate) fn myers_diff(
     let actual_wide: Vec<u16>;
     let expected_wide: Vec<u16>;
     let a: &[u16] = if actual_is_16 {
-        actual.utf16()
+        actual.utf16_slice()
     } else {
         actual_wide = widen(actual);
         &actual_wide
     };
     let e: &[u16] = if expected_is_16 {
-        expected.utf16()
+        expected.utf16_slice()
     } else {
         expected_wide = widen(expected);
         &expected_wide
@@ -239,16 +239,8 @@ where
         Output::Lines { colors, .. } => {
             let (out, skipped) = render_lines::<C, T>(diff_list, colors);
             let result = JSValue::create_empty_object(global, 2);
-            result.put(
-                global,
-                BunString::static_("message"),
-                C::to_bun_string(&out).into_js(global)?,
-            );
-            result.put(
-                global,
-                BunString::static_("skipped"),
-                JSValue::from(skipped),
-            );
+            result.put(global, "message", C::to_bun_string(&out).into_js(global)?);
+            result.put(global, "skipped", JSValue::from(skipped));
             Ok(result)
         }
     }

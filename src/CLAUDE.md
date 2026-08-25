@@ -36,7 +36,7 @@ or don't match the cross-platform behavior the runtime needs.
 | `std::path::Path::join`                 | `bun_paths::resolve_path::join` / `join_string_buf`                                  |
 | `std::path::Path::parent`/`file_name`   | `bun_paths::dirname` / `bun_paths::basename`                                         |
 | `std::env::var`                         | `bun_core::env_var::*::get()` (typed + cached)                                       |
-| `String::from_utf8` for JS-visible strs | `bun_core::String::clone_utf8` / `StringView::borrow_utf8`                           |
+| `String::from_utf8` for JS-visible strs | `bun_core::String::clone_utf8` / `StringView::utf8`                                  |
 | `&str` operations on byte slices        | `bun_core::strings::*` (SIMD-backed `&[u8]` ops)                                     |
 | `eprintln!` for debug logging           | `bun_core::declare_scope!` + `scoped_log!`                                           |
 | `std::process::Command`                 | `bun_core::util::spawn_sync_inherit` (CLI helpers) or `bun_spawn_sys` (full control) |
@@ -86,8 +86,9 @@ requires a real encoder, not a cast.
 `String` owns (a WTF ref, incl. adopted buffers; `'static` bytes via `static_`;
 or `Empty`/`Dead`) and `String::clone()` never allocates. `StringView<'a>` is
 the 24-byte `Copy` borrow (of a `String`, caller bytes, or a C++
-`Bun::toString` result) and carries the read API; `view.to_owned()` is the one
-explicit allocation back to a `String`. Read-only parameters take
+`Bun::borrowStringView` result) and carries the read API (`len()`,
+`latin1_slice()`/`utf16_slice()`/`byte_slice()`, `to_utf8()`, `eql*`);
+`view.to_owned()` is the one explicit allocation back to a `String`. Read-only parameters take
 `StringView<'_>` in Rust and `&StringView<'_>` (`const BunString*`) in FFI;
 owners pass `s.as_view()`; `&mut String` is `BunString*`, a by-value `String`
 transfers ownership. The `extern "C"` signature is the only lifetime erasure.
@@ -103,12 +104,13 @@ use bun_core::{EncodedSlice, String, StringView, Utf8Bytes};   // the only impor
 
 let s = String::clone_utf8(utf8_bytes);        // copies into a WTFStringImpl
 let s = String::static_("literal");            // 'static ASCII slice, never freed
-let v = StringView::borrow_utf8(utf8_bytes);   // borrows `utf8_bytes` for 'a
+let v = StringView::static_("literal");        // same, when only a view is needed (e.g. a `get_own` key)
+let v = StringView::utf8(utf8_bytes);          // borrows `utf8_bytes` for 'a
 let v = StringView::from_bytes(bytes);         // borrow arbitrary bytes; tags UTF-8 if non-ASCII
-let v = StringView::borrow_latin1(ascii_or_latin1); // borrow, no scan; `borrow_utf16(units)` for UTF-16
+let v = StringView::latin1(ascii_or_latin1);   // borrow, no scan; `utf16(units)` for UTF-16
 let v = s.as_view();                           // borrow an owned `String` for a `StringView<'_>` parameter
 let s = v.to_owned();                          // copies borrowed bytes / refs WTF: the one explicit allocation
-bun_string_jsc::views_to_js_array(global, &views)  // `to_js_array` for a `&[StringView]`
+bun_string_jsc::to_js_array(global, &views)    // `&[StringView]`; `String::as_views(&strings)` for a `&[String]`
 s.eq_ascii(b"lit") / s.starts_with_ascii(b"lit")  // encoding-aware ASCII compare without transcoding
 
 let utf8: Utf8Bytes<'_>      = s.to_utf8();             // borrows `s` (ASCII/UTF-8) or transcodes; for locals
@@ -119,12 +121,8 @@ let utf8: Utf8Bytes<'static> = x.to_utf8().into_owned(); // from a bare `&[u8]`/
 let owned: Vec<u8>           = s.to_owned_slice();
 ```
 
-Rule: a `Utf8Bytes<'static>` field/element must come from an owning producer
-(`into_utf8()`, `value.to_utf8(global)?`, `x.to_utf8().into_owned()`,
-`Utf8Bytes::Owned(..)`) — never from `to_utf8()` on a `&String`/`StringView`
-reached through a `&'static` accessor. Prefer `s.clone().into_utf8()` /
-`view.to_owned().into_utf8()` (no copy for ASCII WTF strings); use
-`.into_owned()` only when the source is a bare `&[u8]`/`EncodedSlice` view.
+A stored `Utf8Bytes<'static>` must come from one of the owning producers
+above, never from `to_utf8()` on a borrow reached through a `&'static` accessor.
 
 `Utf8Bytes<'a>` is `Borrowed(&'a [u8]) | Owned(Vec<u8>) | Shared(String)`
 (`Shared` holds an 8-bit all-ASCII WTF-backed `String` and reads its buffer);
@@ -170,9 +168,10 @@ is unwanted (`EncodedSlice::latin1(bytes).to_js(global)`).
 
 JSValue → string: `value.to_bun_string(global)?` (owned `String`),
 `value.to_utf8(global)?` (owned UTF-8 `Utf8Bytes<'static>`), or
-`value.to_js_string_view(global)?` (borrowed `JSStringView` guard; derefs to
-`StringView` (pass `*guard`) and keeps the `JSString` cell alive while it is
-in scope; its `to_utf8()` is tied to the guard).
+`value.to_js_string_view(global)?` (a `JSStringView` guard that keeps the
+`JSString` cell alive while in scope; its readers (`to_utf8()`, `len()`,
+`latin1_slice()`, …) reborrow from the guard, and `guard.view()` is the
+`StringView<'_>` to pass on).
 
 To/from JS values, use the `bun_jsc::StringJsc` / `StringViewJsc` extension
 traits (`to_js`, `to_js_by_parse_json`, `to_*error_instance` on both;

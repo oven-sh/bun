@@ -624,10 +624,10 @@ fn temporal_name(t: TemporalType) -> &'static str {
 }
 
 fn is_bare_key(name: StringView<'_>) -> bool {
-    if name.length() == 0 {
+    if name.len() == 0 {
         return false;
     }
-    for i in 0..name.length() {
+    for i in 0..name.len() {
         let c = name.char_at(i);
         let ok = c < 0x80 && {
             let b = c as u8;
@@ -644,7 +644,7 @@ fn is_bare_key(name: StringView<'_>) -> bool {
 /// same USVString conversion `TOML.parse` applies to its string input.
 fn append_basic_quoted_to(builder: &mut wtf::StringBuilder, str: StringView<'_>) {
     builder.append_lchar(b'"');
-    let len = str.length();
+    let len = str.len();
     let mut i = 0;
     while i < len {
         let c = str.char_at(i);

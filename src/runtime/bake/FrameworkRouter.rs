@@ -1231,12 +1231,11 @@ impl MatchedParams {
         // Create a JavaScript object with params
         let obj = JSValue::create_empty_object(global, params_array.len());
         for param in params_array {
-            let key_str = bun_core::String::clone_utf8(param.key.slice());
             let value_str = bun_core::String::clone_utf8(param.value.slice());
 
             obj.put_bun_string_one_or_array(
                 global,
-                key_str.as_view(),
+                bun_core::StringView::utf8(param.key.slice()),
                 value_str.into_js(global).expect("unreachable"),
             )
             .expect("unreachable");

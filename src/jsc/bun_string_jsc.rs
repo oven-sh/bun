@@ -178,26 +178,9 @@ pub fn to_jsdomurl(this: StringView<'_>, global_object: &JSGlobalObject) -> JsRe
     })
 }
 
-/// calls toJS on all elements of `array`.
+/// JS array with `toJS` of each element; `String::as_views(&owned)` for a `&[String]`.
 #[track_caller]
-pub fn to_js_array(global_object: &JSGlobalObject, array: &[String]) -> JsResult<JSValue> {
-    // SAFETY: FFI call into JSC; `array` ptr/len from a live slice (`String`
-    // has `StringView`'s layout), global_object borrowed for call duration.
-    crate::from_js_host_call(global_object, || unsafe {
-        BunString__createArray(
-            global_object,
-            array.as_ptr().cast::<StringView<'_>>(),
-            array.len(),
-        )
-    })
-}
-
-/// [`to_js_array`] over borrowed views.
-#[track_caller]
-pub fn views_to_js_array(
-    global_object: &JSGlobalObject,
-    array: &[StringView<'_>],
-) -> JsResult<JSValue> {
+pub fn to_js_array(global_object: &JSGlobalObject, array: &[StringView<'_>]) -> JsResult<JSValue> {
     // SAFETY: FFI call into JSC; `array` ptr/len from a live slice, global_object borrowed for call duration.
     crate::from_js_host_call(global_object, || unsafe {
         BunString__createArray(global_object, array.as_ptr(), array.len())

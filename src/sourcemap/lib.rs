@@ -434,9 +434,9 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                 debug_assert!(source.tag() == bun_core::Tag::EncodedSlice);
 
                 let maybe_found_url = if source.is_8bit() {
-                    find_source_mapping_url_u8(source.latin1())
+                    find_source_mapping_url_u8(source.latin1_slice())
                 } else {
-                    find_source_mapping_url_u16(source.utf16())
+                    find_source_mapping_url_u16(source.utf16_slice())
                 };
 
                 let Some(found_url) = maybe_found_url else {

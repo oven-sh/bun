@@ -643,8 +643,8 @@ impl AsyncModule {
             bun_io::AllocatorType::Js,
         ));
         let result = this.resume_loading_module(&mut log);
-        let spec = bun_core::StringView::borrow_utf8(this.specifier());
-        let referrer = bun_core::StringView::borrow_utf8(this.referrer());
+        let spec = StringView::utf8(this.specifier());
+        let referrer = StringView::utf8(this.referrer());
         Self::fulfill(
             global_this,
             this.promise.get().unwrap(),
@@ -1196,7 +1196,7 @@ impl AsyncModule {
             let mut resolved_source = unsafe {
                 (*jsc_vm).ref_counted_resolved_source(
                     printer.ctx.get_written(),
-                    bun_core::StringView::borrow_utf8(specifier),
+                    StringView::utf8(specifier),
                     path.text,
                     None,
                 )

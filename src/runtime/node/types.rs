@@ -1609,7 +1609,7 @@ impl FileSystemFlags {
         if val.is_string_literal() {
             let str = val.to_js_string_view(ctx)?;
             // The longest valid flag string is 3 bytes ("as+" etc).
-            if str.length() >= 1 && str.length() <= 3 {
+            if str.len() >= 1 && str.len() <= 3 {
                 let key_slice = str.to_utf8();
                 if let Some(flags) = FILE_SYSTEM_FLAGS_MAP.get(key_slice.slice()).copied() {
                     return Ok(Some(FileSystemFlags(flags)));

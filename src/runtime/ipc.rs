@@ -517,7 +517,7 @@ mod json {
             }
             parsed
         } else {
-            bun_core::StringView::borrow_utf8(json_data).to_js_by_parse_json(global_this)
+            bun_core::StringView::utf8(json_data).to_js_by_parse_json(global_this)
         };
         let deserialized = match parsed {
             Ok(v) => v,

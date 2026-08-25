@@ -580,7 +580,7 @@ pub(crate) fn basename(
     };
     let suffix_slice = suffix_str
         .as_ref()
-        .filter(|s| !s.is_empty() && s.length() <= path_str.length())
+        .filter(|s| !s.is_empty() && s.len() <= path_str.len())
         .map(|s| s.to_utf8());
     basename_js_t::<u8>(
         global_object,
@@ -1265,17 +1265,17 @@ fn format(global_object: &JSGlobalObject, is_windows: bool, args: &[JSValue]) ->
 fn is_absolute_posix_string(path: bun_core::StringView<'_>) -> bool {
     let path_trunc = path.trunc(1);
     if path_trunc.is_utf16() {
-        is_absolute_posix_t::<u16>(path_trunc.utf16())
+        is_absolute_posix_t::<u16>(path_trunc.utf16_slice())
     } else {
-        is_absolute_posix_t::<u8>(path_trunc.latin1())
+        is_absolute_posix_t::<u8>(path_trunc.latin1_slice())
     }
 }
 
 fn is_absolute_windows_string(path: bun_core::StringView<'_>) -> bool {
     if path.is_utf16() {
-        is_absolute_windows_t::<u16>(path.utf16())
+        is_absolute_windows_t::<u16>(path.utf16_slice())
     } else {
-        is_absolute_windows_t::<u8>(path.latin1())
+        is_absolute_windows_t::<u8>(path.latin1_slice())
     }
 }
 
@@ -1297,9 +1297,9 @@ fn is_absolute(
         return Ok(JSValue::FALSE);
     }
     if is_windows {
-        return Ok(JSValue::from(is_absolute_windows_string(*path_str)));
+        return Ok(JSValue::from(is_absolute_windows_string(path_str.view())));
     }
-    Ok(JSValue::from(is_absolute_posix_string(*path_str)))
+    Ok(JSValue::from(is_absolute_posix_string(path_str.view())))
 }
 
 /// Based on Node v21.6.1 path.posix.join:

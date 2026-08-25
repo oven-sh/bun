@@ -85,9 +85,6 @@ impl ZigException {
 /// `frames` through the pointers in `zig_exception.stack`.
 pub struct Holder {
     pub(crate) source_line_numbers: [i32; Self::SOURCE_LINES_COUNT],
-    /// C++ writes borrowed views of the provider's source here (kept alive by
-    /// `stack.referenced_source_provider`); `remap_zig_exception` writes owned
-    /// copies. Read through `ZigStackTrace::source_line_iterator` only.
     source_lines: [String; Self::SOURCE_LINES_COUNT],
     frames: [ZigStackFrame; Self::FRAME_COUNT],
     pub(crate) zig_exception: Option<ZigException>,
@@ -135,7 +132,6 @@ impl Holder {
                 frames_ptr: self.frames.as_mut_ptr(),
                 frames_len: 0,
                 frames_cap: Self::FRAME_COUNT as u8,
-                referenced_source_provider: None,
             },
             errno: 0,
             syscall: String::EMPTY,

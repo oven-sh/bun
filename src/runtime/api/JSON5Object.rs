@@ -126,7 +126,7 @@ impl Space {
         }
         if space.is_string() {
             let str = space.to_bun_string(global)?;
-            if str.length() == 0 {
+            if str.len() == 0 {
                 return Ok(Space::Minified);
             }
             return Ok(Space::Str(str));
@@ -340,13 +340,13 @@ impl Stringifier {
 
     fn append_key(&mut self, name: StringView<'_>) {
         let is_identifier = 'is_identifier: {
-            if name.length() == 0 {
+            if name.len() == 0 {
                 break 'is_identifier false;
             }
             if !lexer::is_identifier_start(i32::from(name.char_at(0))) {
                 break 'is_identifier false;
             }
-            for i in 1..name.length() {
+            for i in 1..name.len() {
                 if !lexer::is_identifier_continue(i32::from(name.char_at(i))) {
                     break 'is_identifier false;
                 }
@@ -363,7 +363,7 @@ impl Stringifier {
 
     fn append_quoted_string(&mut self, str: StringView<'_>) {
         self.builder.append_lchar(b'\'');
-        for i in 0..str.length() {
+        for i in 0..str.len() {
             let c = str.char_at(i);
             match c {
                 0x00 => self.builder.append_latin1(b"\\0"),

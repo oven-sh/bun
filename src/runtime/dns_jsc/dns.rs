@@ -5534,8 +5534,7 @@ impl Resolver {
                 values.put_index(
                     global_this,
                     i,
-                    bun_core::StringView::borrow_utf8(&buf[0..size + 1 + port_len])
-                        .to_js(global_this)?,
+                    bun_core::StringView::utf8(&buf[0..size + 1 + port_len]).to_js(global_this)?,
                 )?;
             } else {
                 use std::io::Write;

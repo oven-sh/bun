@@ -493,8 +493,23 @@ impl Error {
 }
 
 impl fmt::Display for Error {
+    /// Same shape as [`SystemError`]'s `Display`, read straight from `self`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.to_shell_system_error(), f)
+        let (code, message) = self
+            .get_error_code_tag_name()
+            .map_or(("", ""), |(code, errno)| {
+                (code, coreutils_error_map::COREUTILS_ERROR_MAP[errno])
+            });
+        let syscall = <&'static str>::from(self.syscall);
+        if self.path.is_empty() {
+            write!(f, "{code}: {message} ({syscall}())")
+        } else {
+            write!(
+                f,
+                "{code}: {}: {message} ({syscall}())",
+                bstr::BStr::new(&self.path)
+            )
+        }
     }
 }
 

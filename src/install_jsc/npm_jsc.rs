@@ -154,5 +154,5 @@ fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         }
     }
 
-    StringView::borrow_utf8(&buf).to_js_by_parse_json(global)
+    StringView::utf8(&buf).to_js_by_parse_json(global)
 }

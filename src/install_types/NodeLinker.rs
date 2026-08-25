@@ -129,7 +129,7 @@ impl RegularExpression {
     fn matches(&self, input: StringView<'_>) -> bool {
         let compiled = self.compiled.get_or_init(|| {
             // SAFETY: link-time extern; Yarr compiles the pattern and does not retain it.
-            unsafe { __bun_regex_compile(bun_core::StringView::borrow_utf8(&self.source)) }
+            unsafe { __bun_regex_compile(StringView::utf8(&self.source)) }
                 .map(CompiledRegularExpression)
         });
         match compiled {
@@ -252,9 +252,7 @@ impl PnpmMatcher {
             return false;
         }
 
-        // Package names are ASCII, so
-        // `borrow_utf8` is a zero-copy borrow for the regex match.
-        let name_str = bun_core::StringView::borrow_utf8(name);
+        let name_str = StringView::utf8(name);
 
         match self.behavior {
             Behavior::AllMatchersInclude => {

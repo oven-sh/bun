@@ -111,6 +111,6 @@ pub mod bun_install_js_bindings {
         json_stringify(&lockfile_, &mut w).expect("Vec<u8> JSON writer is infallible");
         let stringified = w.into_bytes();
 
-        StringView::borrow_utf8(&stringified).to_js_by_parse_json(global)
+        StringView::utf8(&stringified).to_js_by_parse_json(global)
     }
 }

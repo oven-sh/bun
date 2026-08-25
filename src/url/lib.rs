@@ -159,7 +159,7 @@ pub mod whatwg {
             URL__fromString(&str).map(Self)
         }
         pub fn from_utf8(input: &[u8]) -> Option<Self> {
-            Self::from_string(StringView::borrow_utf8(input))
+            Self::from_string(StringView::utf8(input))
         }
         /// # Safety
         /// `url` is a heap `WTF::URL` nothing else frees.

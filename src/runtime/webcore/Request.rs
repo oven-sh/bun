@@ -285,7 +285,7 @@ impl Request {
                 if !content_type_.is_empty() {
                     self.headers_mut().as_mut().unwrap().put(
                         HTTPHeaderName::ContentType,
-                        bun_core::StringView::borrow_latin1(content_type_),
+                        bun_core::StringView::latin1(content_type_),
                         global_this,
                     )?;
                 }
@@ -767,7 +767,7 @@ impl Request {
 
     pub(crate) fn size_of_url(&self) -> usize {
         let url = self.url.get();
-        if url.length() > 0 {
+        if url.len() > 0 {
             return url.byte_slice().len();
         }
 
@@ -899,7 +899,7 @@ impl Request {
                         let href = bun_url::href_from_string(bun_core::StringView::from_bytes(url));
                         if !href.is_empty() {
                             if core::ptr::eq(href.byte_slice().as_ptr(), url.as_ptr()) {
-                                self.url.set(BunString::clone_latin1(&url[..href.length()]));
+                                self.url.set(BunString::clone_latin1(&url[..href.len()]));
                             } else {
                                 self.url.set(href);
                             }
@@ -1413,7 +1413,7 @@ impl Request {
                     match req.headers_mut().as_mut().unwrap().put(
                         HTTPHeaderName::ContentType,
                         // SAFETY: ct_ptr borrows req.body which is not mutated here.
-                        bun_core::StringView::borrow_latin1(unsafe { &*ct_ptr }),
+                        bun_core::StringView::latin1(unsafe { &*ct_ptr }),
                         global_this,
                     ) {
                         Ok(()) => {}

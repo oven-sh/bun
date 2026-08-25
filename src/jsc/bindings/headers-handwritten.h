@@ -5,6 +5,7 @@
 #include "JavaScriptCore/ArgList.h"
 #include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
+#include <wtf/text/Latin1Character.h>
 #include <set>
 
 #ifndef HEADERS_HANDWRITTEN
@@ -245,7 +246,6 @@ typedef struct ZigStackTrace {
     ZigStackFrame* frames_ptr;
     uint8_t frames_len;
     uint8_t frames_cap;
-    JSC::SourceProvider* referenced_source_provider;
 } ZigStackTrace;
 
 typedef struct ZigException {
@@ -332,7 +332,7 @@ extern "C" bool BunString__fromJS(JSC::JSGlobalObject*, JSC::EncodedJSValue, Bun
 extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, const BunString*);
 
 namespace Bun {
-JSC::JSString* toJS(JSC::JSGlobalObject*, BunString);
+JSC::JSString* toJS(JSC::JSGlobalObject*, const BunString&);
 // Property key straight from the characters (atom-table lookup; allocates only
 // when the atom is new).
 JSC::Identifier toIdentifier(JSC::VM&, const BunString&);
@@ -348,6 +348,8 @@ BunString toStringRef(WTF::StringImpl* wtfString);
 // This creates a detached string view, which cannot be ref/unref.
 // Be very careful using this, and ensure the memory owner does not get destroyed.
 BunString borrowStringView(WTF::StringView view);
+// A `'static` ASCII literal (`String::static_` on the Rust side): never copied or freed.
+BunString staticString(std::span<const Latin1Character> literal);
 }
 
 typedef struct {

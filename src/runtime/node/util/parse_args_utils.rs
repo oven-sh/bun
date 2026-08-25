@@ -81,7 +81,7 @@ pub(crate) enum TokenSubtype {
 
 #[inline]
 pub(crate) fn classify_token(arg: StringView<'_>, options: &[OptionDefinition]) -> TokenSubtype {
-    let len = arg.length();
+    let len = arg.len();
 
     if len == 2 {
         if arg.starts_with_ascii(b"-") {
@@ -120,7 +120,7 @@ pub(crate) fn classify_token(arg: StringView<'_>, options: &[OptionDefinition]) 
 /// the option argument, like `--port --verbose` when `port` of type:string.
 /// In strict mode we throw errors if value is option-like.
 pub(crate) fn is_option_like_value(value: StringView<'_>) -> bool {
-    value.length() > 1 && value.starts_with_ascii(b"-")
+    value.len() > 1 && value.starts_with_ascii(b"-")
 }
 
 /// Find the long option associated with a short option. Looks for a configured
@@ -141,7 +141,7 @@ pub(crate) fn find_option_by_short_name(
         if short_name.eql(option.short_name.as_view()) {
             return Some(i);
         }
-        if option.long_name.length() == 1 && short_name.eql(option.long_name) {
+        if option.long_name.len() == 1 && short_name.eql(option.long_name) {
             long_option_index = Some(i);
         }
     }

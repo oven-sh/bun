@@ -1365,11 +1365,9 @@ impl JSValue {
             JSC__JSValue__hasOwnPropertyValue(self, global, key)
         })
     }
-    /// `Function.prototype.bind` (via `Bun__JSValue__bind`,
-    /// bindings.cpp:6305). Creates a bound-function
-    /// object whose `name`/`length` are fixed up to the supplied values; `args`
-    /// are prepended to the eventual call's argument list. C++ is annotated
-    /// `[[ZIG_EXPORT(zero_is_throw)]]`, so `0` ↔ pending exception.
+    /// `Function.prototype.bind`: a bound-function object whose
+    /// `name`/`length` are fixed up to the supplied values; `args` are
+    /// prepended to the eventual call's argument list.
     #[track_caller]
     pub fn bind(
         self,
@@ -1379,19 +1377,18 @@ impl JSValue {
         length: f64,
         args: &[JSValue],
     ) -> JsResult<JSValue> {
-        // SAFETY: `global`/`name` outlive the FFI call; `args` is a contiguous
-        // slice of `JSValue` (`repr(transparent)` over `EncodedJSValue`).
-        host_fn::from_js_host_call(global, || unsafe {
-            Bun__JSValue__bind(
+        // SAFETY: `args` is a contiguous slice of `JSValue` that C++ only reads.
+        unsafe {
+            crate::cpp::Bun__JSValue__bind(
                 self,
                 global,
                 bind_this,
                 &name,
                 length,
-                args.as_ptr(),
+                args.as_ptr().cast_mut(),
                 args.len(),
             )
-        })
+        }
     }
     pub fn get_object(self) -> Option<*mut JSObject> {
         if !self.is_object() {
@@ -1481,9 +1478,7 @@ impl JSValue {
         key: bun_core::StringView<'_>,
         value: JSValue,
     ) -> JsResult<()> {
-        host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__putMayBeIndex(self, global, &key, value)
-        })
+        crate::cpp::JSC__JSValue__putMayBeIndex(self, global, &key, value)
     }
     pub fn put_to_property_key(
         target: JSValue,
@@ -1820,7 +1815,7 @@ impl FromAny for &str {
 }
 impl FromAny for Box<[bun_core::String]> {
     fn into_js_value(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::to_js_array(global, &self)
+        bun_string_jsc::to_js_array(global, bun_core::String::as_views(&self))
     }
 }
 impl<T: FromAny> FromAny for Option<T> {
@@ -1852,12 +1847,6 @@ impl PutKey for bun_core::StringView<'_> {
     }
 }
 impl PutKey for &bun_core::String {
-    #[inline]
-    fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
-        self.as_view().put(target, global, value)
-    }
-}
-impl PutKey for bun_core::String {
     #[inline]
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
         self.as_view().put(target, global, value)
@@ -2030,15 +2019,6 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         key: JSValue,
     ) -> bool;
-    fn Bun__JSValue__bind(
-        function: JSValue,
-        global: *const JSGlobalObject,
-        bind_this: JSValue,
-        name: &bun_core::StringView<'_>,
-        length: f64,
-        args: *const JSValue,
-        args_len: usize,
-    ) -> JSValue;
     safe fn JSC__JSValue__put(
         this: JSValue,
         global: &JSGlobalObject,
@@ -2062,12 +2042,6 @@ unsafe extern "C" {
         key: &bun_core::StringView<'_>,
         value: JSValue,
     );
-    safe fn JSC__JSValue__putMayBeIndex(
-        this: JSValue,
-        global: &JSGlobalObject,
-        key: &bun_core::StringView<'_>,
-        value: JSValue,
-    );
     safe fn JSC__JSValue__putIndex(this: JSValue, global: &JSGlobalObject, i: u32, value: JSValue);
     safe fn JSC__JSValue__upsertBunStringArray(
         this: JSValue,
@@ -2083,10 +2057,10 @@ unsafe extern "C" {
         value: JSValue,
     );
     safe fn JSC__JSValue__toStringOrNull(this: JSValue, global: &JSGlobalObject) -> *mut JSString;
-    safe fn JSC__JSValue__toJSStringView<'a>(
+    safe fn JSC__JSValue__toJSStringView(
         this: JSValue,
-        global: &'a JSGlobalObject,
-        view: &mut bun_core::StringView<'a>,
+        global: &JSGlobalObject,
+        view: &mut bun_core::StringView<'static>,
     ) -> *mut JSString;
     safe fn JSC__JSValue__asString(this: JSValue) -> *mut JSString;
     safe fn JSC__jsTypeStringForValue(global: &JSGlobalObject, value: JSValue) -> *mut JSString;
@@ -2316,9 +2290,7 @@ impl JSValue {
     /// `JSValue.getName` — function/class display name.
     pub fn get_name(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
         let mut ret = bun_core::String::default();
-        host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__getName(self, global, &mut ret)
-        })?;
+        crate::cpp::JSC__JSValue__getName(self, global, &mut ret)?;
         Ok(ret)
     }
     /// `JSValue.getClassName`.
@@ -2356,7 +2328,7 @@ impl JSValue {
         global: &JSGlobalObject,
         property_name: impl AsRef<[u8]>,
     ) -> JsResult<Option<JSValue>> {
-        let name = bun_core::StringView::borrow_utf8(property_name.as_ref());
+        let name = bun_core::StringView::utf8(property_name.as_ref());
         match self.get_own(global, name)? {
             Some(prop) if !prop.is_undefined() => Ok(Some(prop)),
             _ => Ok(None),
@@ -2691,11 +2663,6 @@ unsafe extern "C" {
     safe fn JSC__JSValue__toObject(this: JSValue, global: &JSGlobalObject) -> *mut JSObject;
     safe fn JSC__JSValue__unwrapBoxedPrimitive(global: &JSGlobalObject, this: JSValue) -> JSValue;
     safe fn JSC__JSValue__getPrototype(this: JSValue, global: &JSGlobalObject) -> JSValue;
-    safe fn JSC__JSValue__getName(
-        this: JSValue,
-        global: &JSGlobalObject,
-        out: &mut bun_core::String,
-    );
     safe fn JSC__JSValue__getClassName(this: JSValue, global: &JSGlobalObject) -> bun_core::String;
     safe fn JSC__JSValue__getSymbolDescription<'a>(
         this: JSValue,

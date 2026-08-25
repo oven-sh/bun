@@ -543,7 +543,7 @@ fn get_description(
 
     if description.is_function() {
         let func_name = description.get_name(global)?;
-        if func_name.length() > 0 {
+        if func_name.len() > 0 {
             return Ok(func_name.to_owned_slice());
         }
     }

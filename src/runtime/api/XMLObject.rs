@@ -224,7 +224,7 @@ impl Space {
         }
         if space.is_string() {
             let str = space.to_bun_string(global)?;
-            if str.length() == 0 {
+            if str.len() == 0 {
                 return Ok(Space::Minified);
             }
             return Ok(Space::Str(str));
@@ -445,7 +445,7 @@ impl Stringifier {
                     .into());
             }
             let text = comment.to_bun_string(global)?;
-            let len = text.length();
+            let len = text.len();
             let mut i = 0;
             let mut prev_dash = false;
             while i < len {
@@ -483,7 +483,7 @@ impl Stringifier {
             }
             let target = target.to_bun_string(global)?;
             self.check_name(global, target.as_view(), "processing instruction target")?;
-            if target.length() == 3 {
+            if target.len() == 3 {
                 let lower = |i| target.char_at(i) | 0x20;
                 if lower(0) == u16::from(b'x')
                     && lower(1) == u16::from(b'm')
@@ -499,7 +499,7 @@ impl Stringifier {
                 Some(data) if data.is_null() => {}
                 Some(data) if data.is_string() => {
                     let data = data.to_bun_string(global)?;
-                    let len = data.length();
+                    let len = data.len();
                     if len > 0 {
                         let mut i = 0;
                         let mut prev_q = false;
@@ -551,7 +551,7 @@ impl Stringifier {
         global: &JSGlobalObject,
         document: JSValue,
     ) -> StringifyResult<()> {
-        let mut root: Option<(bun_core::StringView<'_>, JSValue)> = None;
+        let mut root: Option<(StringView<'_>, JSValue)> = None;
         let iter =
             jsc::JSPropertyIterator::init(global, document.to_object(global)?, iter_options())?;
         while let Some((key, prop_value)) = iter.next()? {
@@ -679,7 +679,7 @@ impl Stringifier {
         match self.scalar(global, value, "element content")? {
             Scalar::Skip => {}
             Scalar::Empty => self.append_empty_element(name),
-            Scalar::Text(text) if text.length() == 0 => self.append_empty_element(name),
+            Scalar::Text(text) if text.len() == 0 => self.append_empty_element(name),
             Scalar::Text(text) => {
                 self.builder.append_lchar(b'<');
                 self.builder.append_string(name);
@@ -720,7 +720,7 @@ impl Stringifier {
                 }
             } else if key.eq_ascii(b"#text") {
                 match self.scalar(global, child, "#text")? {
-                    Scalar::Text(text) if text.length() > 0 => has_text = true,
+                    Scalar::Text(text) if text.len() > 0 => has_text = true,
                     _ => {}
                 }
             } else if key.starts_with_ascii(b"#") {
@@ -817,7 +817,7 @@ impl Stringifier {
         name: StringView<'_>,
         what: &'static str,
     ) -> StringifyResult<()> {
-        let len = name.length();
+        let len = name.len();
         let mut valid = len > 0;
         let mut i = 0;
         while valid && i < len {
@@ -889,7 +889,7 @@ impl Stringifier {
         text: StringView<'_>,
         attribute: bool,
     ) -> StringifyResult<()> {
-        let len = text.length();
+        let len = text.len();
         let mut i = 0;
         while i < len {
             let (cp, width) = code_point_at(text, i);
@@ -945,7 +945,7 @@ impl Stringifier {
 /// check).
 fn code_point_at(s: StringView<'_>, i: usize) -> (u32, usize) {
     let c = s.char_at(i);
-    if strings::u16_is_lead(c) && i + 1 < s.length() {
+    if strings::u16_is_lead(c) && i + 1 < s.len() {
         let next = s.char_at(i + 1);
         if strings::u16_is_trail(next) {
             return (strings::u16_get_supplementary(c, next), 2);

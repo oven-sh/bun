@@ -3158,7 +3158,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
     fn append_string_to_str_pool(&mut self, bunstr: StringView<'_>) -> Result<(), LexerError> {
         let start = self.strpool.len();
         if bunstr.is_utf16() {
-            let utf16 = bunstr.utf16();
+            let utf16 = bunstr.utf16_slice();
             // The transcoding helpers in bun_core take
             // `&mut Vec<u8>` (global allocator), so go through a scratch Vec
             // and copy. PERF: re-unify once a bumpalo-aware transcoder
@@ -3196,8 +3196,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         Ok(())
     }
 
-    fn handle_js_string_ref(&mut self, bunstr: bun_core::StringView<'_>) -> Result<(), LexerError> {
-        if bunstr.length() == 0 {
+    fn handle_js_string_ref(&mut self, bunstr: StringView<'_>) -> Result<(), LexerError> {
+        if bunstr.len() == 0 {
             // Empty JS string ref: emit a zero-length DoubleQuotedText token directly.
             // The parser converts this to a quoted_empty atom, preserving the empty arg.
             // This works regardless of the lexer's current quote state (Normal/Single/Double)
@@ -3956,7 +3956,7 @@ pub fn escape_bun_str<const ADD_QUOTES: bool>(
     outbuf: &mut Vec<u8>,
 ) -> Result<bool, bun_alloc::AllocError> {
     if bunstr.is_utf16() {
-        let res = escape_utf16::<ADD_QUOTES>(bunstr.utf16(), outbuf)?;
+        let res = escape_utf16::<ADD_QUOTES>(bunstr.utf16_slice(), outbuf)?;
         return Ok(!res.is_invalid);
     }
     if bunstr.is_utf8() {
@@ -4059,7 +4059,7 @@ pub(crate) fn escape_utf16<const ADD_QUOTES: bool>(
 
 pub fn needs_escape_bunstr(bunstr: StringView<'_>) -> bool {
     if bunstr.is_utf16() {
-        return needs_escape_utf16(bunstr.utf16());
+        return needs_escape_utf16(bunstr.utf16_slice());
     }
     // Otherwise is utf-8, ascii, or latin-1
     needs_escape_utf8_ascii_latin1(bunstr.byte_slice())

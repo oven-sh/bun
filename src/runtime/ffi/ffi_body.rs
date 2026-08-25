@@ -1379,7 +1379,7 @@ impl FFI {
             strs.push(bun_core::String::clone_utf8(&arraylist));
         }
 
-        bun_string_jsc::to_js_array(global, &strs)
+        bun_string_jsc::to_js_array(global, bun_core::String::as_views(&strs))
     }
 }
 

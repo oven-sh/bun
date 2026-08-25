@@ -138,19 +138,19 @@ fn split(
     global: &JSGlobalObject,
     str: StringView<'_>,
 ) -> JsResult<JSValue> {
-    let mut lines: Vec<bun_core::StringView<'_>> = Vec::new();
+    let mut lines: Vec<StringView<'_>> = Vec::new();
 
     // Split into two arms over the buffer's element type (u8 for
     // utf8/latin1, u16 for utf16).
     match encoding {
         EncodingNonAscii::Utf16 => {
-            let buffer: &[u16] = str.utf16();
+            let buffer: &[u16] = str.utf16_slice();
             let mut it = SplitNewlineIterator {
                 buffer,
                 index: Some(0),
             };
             while let Some(line) = it.next() {
-                lines.push(bun_core::StringView::borrow_utf16(line));
+                lines.push(StringView::utf16(line));
             }
         }
         EncodingNonAscii::Utf8 | EncodingNonAscii::Latin1 => {
@@ -161,15 +161,15 @@ fn split(
             };
             while let Some(line) = it.next() {
                 lines.push(if encoding == EncodingNonAscii::Utf8 {
-                    bun_core::StringView::borrow_utf8(line)
+                    StringView::utf8(line)
                 } else {
-                    bun_core::StringView::borrow_latin1(line)
+                    StringView::latin1(line)
                 });
             }
         }
     }
 
-    bun_string_jsc::views_to_js_array(global, &lines)
+    bun_string_jsc::to_js_array(global, &lines)
 }
 
 struct SplitNewlineIterator<'a, T> {
@@ -210,7 +210,7 @@ pub(crate) fn normalize_encoding(global: &JSGlobalObject, frame: &CallFrame) -> 
     let input = frame.argument(0);
     let str = BunString::from_js(input, global)?;
     debug_assert!(str.tag() != bstr::Tag::Dead);
-    if str.length() == 0 {
+    if str.len() == 0 {
         return Ok(Encoding::Utf8.to_js(global));
     }
     if let Some(enc) = Encoding::from_bun_string(str.as_view()) {

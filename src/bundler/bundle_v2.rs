@@ -819,14 +819,14 @@ pub mod bv2_impl {
                     is_on_load: bool,
                 ) -> bool {
                     let namespace_string = if path.is_file() {
-                        bun_core::StringView::EMPTY
+                        StringView::EMPTY
                     } else {
-                        bun_core::StringView::borrow_utf8(path.namespace)
+                        StringView::utf8(path.namespace)
                     };
                     JSBundlerPlugin__anyMatches(
                         self,
                         &namespace_string,
-                        &bun_core::StringView::borrow_utf8(path.text),
+                        &StringView::utf8(path.text),
                         is_on_load,
                     )
                 }

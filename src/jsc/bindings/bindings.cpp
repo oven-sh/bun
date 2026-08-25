@@ -4570,7 +4570,7 @@ JSC::EncodedJSValue JSC__JSValue__getPropertyValue(JSC::EncodedJSValue encodedVa
     return JSValue::encode(result);
 }
 
-extern "C" JSC::EncodedJSValue JSC__JSValue__getOwn(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, BunString* propertyName)
+extern "C" JSC::EncodedJSValue JSC__JSValue__getOwn(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, const BunString* propertyName)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
 
@@ -4886,7 +4886,7 @@ BunString JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobal
     }
 
     // `className()` is a static C string.
-    return { BunStringTag::StaticEncodedSlice, { .encoded = Zig::latin1Slice(view.span8()) } };
+    return Bun::staticString(view.span8());
 }
 
 bool JSC__JSValue__getClassInfoName(JSValue value, const uint8_t** outPtr, size_t* outLen)
@@ -6605,11 +6605,6 @@ CPP_DECL size_t Bun__JSValue__getArrayBufferViewByteOffset(JSC::EncodedJSValue e
     if (auto* view = dynamicDowncast<JSArrayBufferView>(value.asCell()))
         return view->byteOffset();
     return 0;
-}
-
-CPP_DECL [[ZIG_EXPORT(nothrow)]] void JSC__SourceProvider__deref(JSC::SourceProvider* provider)
-{
-    provider->deref();
 }
 
 CPP_DECL bool Bun__CallFrame__isFromBunMain(JSC::CallFrame* callFrame, JSC::VM* vm)

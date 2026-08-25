@@ -457,7 +457,7 @@ pub(crate) fn braces(
         // the JSON shape (`[{"<tag>": <payload>|{}} , …]`) by hand so the
         // debug-only `Bun.braces(str, {tokenize:true})` round-trips.
         let str = Braces::tokens_to_json(&lexer_output.tokens[..]);
-        return bun_core::StringView::from_bytes(&str).to_js(global);
+        return StringView::from_bytes(&str).to_js(global);
     }
     if opts.parse {
         let mut parser = Braces::Parser::init(&lexer_output.tokens[..], &arena);
@@ -469,11 +469,11 @@ pub(crate) fn braces(
         };
         // NOTE: see `tokenize` arm — manual JSON encoder for the AST.
         let str = Braces::ast_to_json(&ast_node);
-        return bun_core::StringView::from_bytes(&str).to_js(global);
+        return StringView::from_bytes(&str).to_js(global);
     }
 
     if expansion_count == 0 {
-        return bun_string_jsc::views_to_js_array(global, &[brace_str]);
+        return bun_string_jsc::to_js_array(global, &[brace_str]);
     }
 
     // Hard cap before preallocation: `calculate_expanded_amount` saturates to
@@ -509,12 +509,12 @@ pub(crate) fn braces(
         }
     }
 
-    let out_strings: Vec<bun_core::StringView<'_>> = expanded_strings[..expansion_count]
+    let out_strings: Vec<StringView<'_>> = expanded_strings[..expansion_count]
         .iter()
-        .map(|s| bun_core::StringView::from_bytes(s))
+        .map(|s| StringView::from_bytes(s))
         .collect();
 
-    bun_string_jsc::views_to_js_array(global, &out_strings)
+    bun_string_jsc::to_js_array(global, &out_strings)
 }
 
 #[bun_jsc::host_fn]
@@ -1211,7 +1211,7 @@ pub fn bun_resolve_sync(
         return JSValue::ZERO;
     };
 
-    if specifier_str.length() == 0 {
+    if specifier_str.is_empty() {
         let _ = global
             .err(
                 jsc::ErrCode::INVALID_ARG_VALUE,
@@ -1250,22 +1250,23 @@ pub fn bun_resolve_sync_with_paths(
     source: JSValue,
     is_esm: bool,
     is_user_require_resolve: bool,
-    paths_ptr: *const StringView<'static>,
+    paths_ptr: *const StringView<'_>,
     paths_len: usize,
 ) -> JSValue {
-    let paths: &[StringView<'static>] = if paths_len == 0 {
+    let paths: &'static [StringView<'static>] = if paths_len == 0 {
         &[]
     } else {
         // SAFETY: C++ caller guarantees `paths_ptr` points to `paths_len`
-        // initialized `BunString`s that outlive this call; `paths_len > 0` here.
-        unsafe { core::slice::from_raw_parts(paths_ptr, paths_len) }
+        // initialized `BunString`s that outlive this synchronous call; the
+        // `'static` is only for the resolver slot, cleared by the guard below.
+        unsafe { core::slice::from_raw_parts(paths_ptr.cast(), paths_len) }
     };
 
     let Ok(specifier_str) = specifier.to_bun_string(global) else {
         return JSValue::ZERO;
     };
 
-    if specifier_str.length() == 0 {
+    if specifier_str.is_empty() {
         let _ = global
             .err(
                 jsc::ErrCode::INVALID_ARG_VALUE,
@@ -1282,9 +1283,7 @@ pub fn bun_resolve_sync_with_paths(
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let bun_vm = global.bun_vm().as_mut();
     debug_assert!(bun_vm.transpiler.resolver.custom_dir_paths.is_none());
-    // SAFETY: `paths` borrows C++-owned BunStrings valid for the duration of
-    // this synchronous resolve call; lifetime is erased for the resolver slot.
-    bun_vm.transpiler.resolver.custom_dir_paths = Some(unsafe { bun_ptr::detach_lifetime(paths) });
+    bun_vm.transpiler.resolver.custom_dir_paths = Some(paths);
     scopeguard::defer! {
         // SAFETY: same VM pointer; called before returning to C++.
         global.bun_vm().as_mut().transpiler.resolver.custom_dir_paths = None;
@@ -2067,12 +2066,12 @@ pub(crate) mod environment_variables {
     extern "C" fn Bun__getEnvValueBunString<'a>(
         global_object: &'a JSGlobalObject,
         name: &StringView<'_>,
-    ) -> bun_core::StringView<'a> {
+    ) -> StringView<'a> {
         let vm = global_object.bun_vm();
         let name_slice = name.to_utf8();
         match vm.env_loader().get(name_slice.slice()) {
-            Some(val) => bun_core::StringView::borrow_utf8(val),
-            None => bun_core::StringView::DEAD,
+            Some(val) => StringView::utf8(val),
+            None => StringView::DEAD,
         }
     }
 

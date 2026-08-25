@@ -2585,7 +2585,7 @@ impl DevServer {
             let mut params: framework_router::MatchedParams = Default::default();
             let url_bunstr = match &req {
                 // SAFETY: r is a uws Request ptr valid for the duration of the handler callback
-                SavedRequestUnion::Stack(r) => bun_core::StringView::borrow_utf8((**r).url()),
+                SavedRequestUnion::Stack(r) => StringView::utf8((**r).url()),
                 SavedRequestUnion::Saved(data) => {
                     // SAFETY: data.request is a live *mut webcore::Request (held strong by ctx)
                     unsafe { (*data.request).url.get() }.as_view()
@@ -5334,10 +5334,8 @@ impl DevServer {
             debug_assert!(agent.is_enabled());
             let failures_encoded = &buf[failures_start_buf_pos..];
             // base64 output is pure ASCII so a UTF-8 borrow is safe.
-            agent.notify_bundle_failed(
-                self.inspector_server_id,
-                bun_core::StringView::borrow_utf8(failures_encoded),
-            );
+            agent
+                .notify_bundle_failed(self.inspector_server_id, StringView::utf8(failures_encoded));
         }
         Ok(())
     }

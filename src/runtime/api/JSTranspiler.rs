@@ -1573,7 +1573,7 @@ fn named_exports_to_js(
         .into_iter()
         .map(bun_core::StringView::from_bytes)
         .collect();
-    bun_string_jsc::views_to_js_array(global, &names)
+    bun_string_jsc::to_js_array(global, &names)
 }
 
 fn named_imports_to_js(

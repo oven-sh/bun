@@ -27,7 +27,7 @@ use crate::webcore::streams::{
     self, SourceHandle, Start, StartTag, StreamError, StreamResult, Writable, WritablePending,
 };
 use crate::webcore::{self, ByteStream, DrainResult, ReadableStream, Response, SinkHandle};
-use bun_core::{EncodedSlice, String as BunString, Utf8Bytes};
+use bun_core::{EncodedSlice, String as BunString, StringView, Utf8Bytes};
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::call_frame::ArgumentsSlice;
 
@@ -2911,8 +2911,8 @@ impl AttributeIterator {
             bun_string_jsc::to_js_array(
                 global_object,
                 &[
-                    BunString::clone_utf8(name.as_bytes()),
-                    BunString::clone_utf8(value.as_bytes()),
+                    StringView::utf8(name.as_bytes()),
+                    StringView::utf8(value.as_bytes()),
                 ],
             )?,
         )

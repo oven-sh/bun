@@ -114,5 +114,5 @@ extern "C" fn node_module_paths_js_value(
         SEP_STR,
     )));
 
-    crate::bun_string_jsc::to_js_array(global, &list).or_pending_exception()
+    crate::bun_string_jsc::to_js_array(global, BunString::as_views(&list)).or_pending_exception()
 }

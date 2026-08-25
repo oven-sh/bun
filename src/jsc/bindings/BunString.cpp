@@ -59,7 +59,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool BunString__fromJS(JSC::JSGlobalObject* g
     return bunString->tag != BunStringTag::Dead;
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__tryCreateAtom(const char* bytes, size_t length)
+extern "C" BunString BunString__tryCreateAtom(const char* bytes, size_t length)
 {
     if (length > WTF::String::MaxLength || !simdutf::validate_ascii(bytes, length))
         return { BunStringTag::Dead, {} };
@@ -69,7 +69,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__tryCreateAtom(const char
     return { BunStringTag::WTFStringImpl, { .wtf = &atom.leakRef() } };
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__createAtom(const char* bytes, size_t length)
+extern "C" BunString BunString__createAtom(const char* bytes, size_t length)
 {
     BunString atom = BunString__tryCreateAtom(bytes, length);
     ASSERT(atom.tag != BunStringTag::Dead);
@@ -120,9 +120,12 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__transfer
 
 extern "C" JSC::EncodedJSValue BunString__toErrorInstance(const BunString* str, JSC::JSGlobalObject* globalObject, BunErrorKind kind)
 {
-    WTF::String message = str->toWTFString();
-    if (message.isNull() && !str->isEmpty()) [[unlikely]] {
-        return JSValue::encode(Bun::createStringTooLongError(globalObject));
+    WTF::String message = emptyString();
+    if (!(str->tag != BunStringTag::Dead && str->isEmpty())) {
+        message = str->toWTFString();
+        if (message.isNull()) [[unlikely]] {
+            return JSValue::encode(Bun::createStringTooLongError(globalObject));
+        }
     }
     JSC::JSObject* result = nullptr;
     switch (kind) {
@@ -145,7 +148,7 @@ extern "C" JSC::EncodedJSValue BunString__toErrorInstance(const BunString* str, 
 
 namespace Bun {
 
-JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
+JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, const BunString& bunString)
 {
     auto& vm = JSC::getVM(globalObject);
     if (bunString.tag != BunStringTag::Dead && bunString.isEmpty())
@@ -175,7 +178,7 @@ JSC::Identifier toIdentifier(JSC::VM& vm, const BunString& bunString)
     UNREACHABLE();
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] void BunString__toThreadSafe(BunString* str)
+extern "C" void BunString__toThreadSafe(BunString* str)
 {
     if (str->tag == BunStringTag::WTFStringImpl) {
         auto* existing = str->impl.wtf;
@@ -259,6 +262,14 @@ BunString borrowStringView(StringView view)
     };
 }
 
+BunString staticString(std::span<const Latin1Character> literal)
+{
+    return {
+        BunStringTag::StaticEncodedSlice,
+        { .encoded = Zig::latin1Slice(literal) }
+    };
+}
+
 // We don't want to ban atomiziation for tiny strings that are potentially going
 // to appear as properties/identifiers in JS. So we should only do this for long
 // strings that are unlikely to ever be atomized.
@@ -314,13 +325,10 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__toJS(JSC
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* result = Bun::toJS(globalObject, *bunString);
     RETURN_IF_EXCEPTION(scope, {});
-    if (!result) [[unlikely]] {
-        return {};
-    }
     return JSValue::encode(result);
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16Unitialized(size_t length)
+extern "C" BunString BunString__fromUTF16Unitialized(size_t length)
 {
     ASSERT(length > 0);
     std::span<char16_t> ptr;
@@ -331,7 +339,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16Unitialized(siz
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromLatin1Unitialized(size_t length)
+extern "C" BunString BunString__fromLatin1Unitialized(size_t length)
 {
     ASSERT(length > 0);
     std::span<Latin1Character> ptr;
@@ -364,7 +372,7 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
     return Bun::toString(impl.leakRef());
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromLatin1(const char* bytes, size_t length)
+extern "C" BunString BunString__fromLatin1(const char* bytes, size_t length)
 {
     ASSERT(length > 0);
     std::span<Latin1Character> ptr;
@@ -377,7 +385,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromLatin1(const char* b
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16ToLatin1(const char16_t* bytes, size_t length)
+extern "C" BunString BunString__fromUTF16ToLatin1(const char16_t* bytes, size_t length)
 {
     ASSERT(length > 0);
     ASSERT_WITH_MESSAGE(simdutf::validate_utf16le(bytes, length), "This function only accepts ascii UTF16 strings");
@@ -393,7 +401,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16ToLatin1(const 
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16(const char16_t* bytes, size_t length)
+extern "C" BunString BunString__fromUTF16(const char16_t* bytes, size_t length)
 {
     ASSERT(length > 0);
     std::span<char16_t> ptr;
@@ -405,7 +413,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16(const char16_t
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromBytes(const char* bytes, size_t length)
+extern "C" BunString BunString__fromBytes(const char* bytes, size_t length)
 {
     ASSERT(length > 0);
     if (simdutf::validate_ascii(bytes, length)) {

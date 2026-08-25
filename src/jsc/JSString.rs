@@ -10,10 +10,10 @@ bun_opaque::opaque_ffi! {
 }
 
 unsafe extern "C" {
-    pub(crate) safe fn JSC__JSString__view<'a>(
-        this: &'a JSString,
+    pub(crate) safe fn JSC__JSString__view(
+        this: &JSString,
         global: &JSGlobalObject,
-    ) -> StringView<'a>;
+    ) -> StringView<'static>;
     fn JSC__JSString__iterator(this: &JSString, global_object: &JSGlobalObject, iter: *mut c_void);
     safe fn JSC__JSString__length(this: &JSString) -> usize;
     safe fn JSC__JSString__is8Bit(this: &JSString) -> bool;
@@ -43,8 +43,12 @@ impl JSString {
         unsafe { JSC__JSString__iterator(self, global_object, core::ptr::from_mut(iter).cast()) }
     }
 
-    pub fn length(&self) -> usize {
+    pub fn len(&self) -> usize {
         JSC__JSString__length(self)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     pub fn is_8bit(&self) -> bool {
@@ -56,26 +60,96 @@ impl JSString {
 /// is viewed in place, not flattened). Keeps the cell observable to the GC's
 /// conservative stack scan until dropped (the Rust counterpart of
 /// `GCOwnedDataScope`), so a string `toString()` just created cannot be
-/// collected while its characters are in use.
+/// collected while its characters are in use. Every reader reborrows from
+/// the guard, so nothing it hands out can outlive it.
 pub struct JSStringView<'a> {
     pub(crate) cell: &'a JSString,
-    pub(crate) view: StringView<'a>,
+    pub(crate) view: StringView<'static>,
 }
 
 impl JSStringView<'_> {
+    #[inline]
+    pub fn view(&self) -> StringView<'_> {
+        self.view
+    }
     /// UTF-8 bytes; borrows when 8-bit ASCII, allocates otherwise. Never refs.
     #[inline]
     pub fn to_utf8(&self) -> Utf8Bytes<'_> {
         self.view.to_utf8()
     }
-}
-
-impl<'a> core::ops::Deref for JSStringView<'a> {
-    type Target = StringView<'a>;
-
     #[inline]
-    fn deref(&self) -> &StringView<'a> {
-        &self.view
+    pub fn len(&self) -> usize {
+        self.view.len()
+    }
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.view.is_empty()
+    }
+    #[inline]
+    pub fn is_utf16(&self) -> bool {
+        self.view.is_utf16()
+    }
+    #[inline]
+    pub fn is_8bit(&self) -> bool {
+        self.view.is_8bit()
+    }
+    #[inline]
+    pub fn latin1_slice(&self) -> &[u8] {
+        self.view.latin1_slice()
+    }
+    #[inline]
+    pub fn utf16_slice(&self) -> &[u16] {
+        self.view.utf16_slice()
+    }
+    #[inline]
+    pub fn byte_slice(&self) -> &[u8] {
+        self.view.byte_slice()
+    }
+    #[inline]
+    pub fn as_utf8(&self) -> Option<&[u8]> {
+        self.view.as_utf8()
+    }
+    #[inline]
+    pub fn to_encoded_slice(&self) -> bun_core::EncodedSlice<'_> {
+        self.view.to_encoded_slice()
+    }
+    #[inline]
+    pub fn to_owned(&self) -> bun_core::String {
+        self.view.to_owned()
+    }
+    #[inline]
+    pub fn to_owned_slice(&self) -> Vec<u8> {
+        self.view.to_owned_slice()
+    }
+    #[inline]
+    pub fn eql(&self, other: StringView<'_>) -> bool {
+        self.view.eql(other)
+    }
+    #[inline]
+    pub fn eql_utf8(&self, other: &[u8]) -> bool {
+        self.view.eql_utf8(other)
+    }
+    #[inline]
+    pub fn eq_ascii(&self, ascii: &[u8]) -> bool {
+        self.view.eq_ascii(ascii)
+    }
+    #[inline]
+    pub fn starts_with_ascii(&self, ascii: &[u8]) -> bool {
+        self.view.starts_with_ascii(ascii)
+    }
+    #[inline]
+    pub fn char_at(&self, index: usize) -> u16 {
+        self.view.char_at(index)
+    }
+    #[inline]
+    pub fn in_map_case_insensitive<M: bun_core::comptime_string_map::ComptimeStringMap>(
+        &self,
+        map: &M,
+    ) -> Option<M::Value>
+    where
+        M::Value: Copy,
+    {
+        self.view.in_map_case_insensitive(map)
     }
 }
 

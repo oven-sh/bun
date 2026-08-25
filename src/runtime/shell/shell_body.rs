@@ -581,7 +581,7 @@ impl<'a> ShellSrcBuilder<'a> {
         &mut self,
         bunstr: BunString,
     ) -> Result<bool, bun_alloc::AllocError> {
-        let invalid = (bunstr.is_utf16() && !simdutf::validate::utf16le(bunstr.utf16()))
+        let invalid = (bunstr.is_utf16() && !simdutf::validate::utf16le(bunstr.utf16_slice()))
             || (bunstr.is_utf8() && !simdutf::validate::utf8(bunstr.byte_slice()));
         if invalid {
             return Ok(false);
@@ -599,7 +599,7 @@ impl<'a> ShellSrcBuilder<'a> {
             }
         }
         if bunstr.is_utf16() {
-            self.append_utf16_impl(bunstr.utf16())?;
+            self.append_utf16_impl(bunstr.utf16_slice())?;
             return Ok(true);
         }
         if bunstr.is_utf8() || strings::is_all_ascii(bunstr.byte_slice()) {
@@ -808,7 +808,7 @@ pub mod testing_apis {
         }
 
         let str = format!("{}", test::tokens_json_fmt(&test_tokens[..]));
-        bun_core::StringView::borrow_utf8(str.as_bytes()).to_js(global)
+        bun_core::StringView::utf8(str.as_bytes()).to_js(global)
     }
 
     /// Testing API: parse the shell template-string arguments and return the

@@ -371,9 +371,9 @@ impl All {
                     // dispatch on `is_utf16()` and treat the 8-bit case via
                     // `latin1()` (digit chars are in the ASCII range either way).
                     if string.is_utf16() {
-                        parse_slice!(string.utf16());
+                        parse_slice!(string.utf16_slice());
                     } else {
-                        parse_slice!(string.latin1());
+                        parse_slice!(string.latin1_slice());
                     }
                     accumulator
                 };

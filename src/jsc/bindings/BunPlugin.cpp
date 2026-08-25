@@ -837,6 +837,15 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, cons
         JSC::throwOutOfMemoryError(globalObject, scope);
         return {};
     }
+    if (matchedCallbacks.isEmpty()) {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    const auto& builtinNames = WebCore::builtinNames(vm);
+    auto* pathJS = Bun::toJS(globalObject, *path);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* importerJS = Bun::toJS(globalObject, *importer);
+    RETURN_IF_EXCEPTION(scope, {});
 
     for (size_t i = 0; i < matchedCallbacks.size(); i++) {
         auto* function = matchedCallbacks.at(i).getObject();
@@ -844,14 +853,9 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, cons
         JSC::MarkedArgumentBuffer arguments;
 
         JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
-        const auto& builtinNames = WebCore::builtinNames(vm);
-        auto* pathJS = Bun::toJS(globalObject, *path);
-        RETURN_IF_EXCEPTION(scope, {});
         paramsObject->putDirect(
             vm, builtinNames.pathPublicName(),
             pathJS);
-        auto* importerJS = Bun::toJS(globalObject, *importer);
-        RETURN_IF_EXCEPTION(scope, {});
         paramsObject->putDirect(
             vm, builtinNames.importerPublicName(),
             importerJS);
@@ -917,7 +921,7 @@ Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObj
     return Zig::JSModuleMock::createStructure(vm, globalObject, prototype);
 }
 
-JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specifier, bool& wasModuleMock)
+JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, const BunString* specifier, bool& wasModuleMock)
 {
     auto fallback = [&]() -> JSC::JSValue {
         return JSValue::decode(Bun__runVirtualModule(globalObject, specifier));

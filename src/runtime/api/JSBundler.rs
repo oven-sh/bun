@@ -1111,7 +1111,7 @@ pub mod js_bundler {
 
                 while let Some((prop, value)) = loader_iter.next()? {
                     let prop_slice = prop.to_utf8();
-                    if !prop_slice.slice().starts_with(b".") || prop.length() < 2 {
+                    if !prop_slice.slice().starts_with(b".") || prop.len() < 2 {
                         return Err(global_this.throw_invalid_arguments(format_args!(
                             "loader property names must be file extensions, such as '.txt'"
                         )));

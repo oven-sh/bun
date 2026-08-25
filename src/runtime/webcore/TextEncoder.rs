@@ -232,7 +232,7 @@ extern "C" fn TextEncoder__encodeRopeString(
     rope_str: &JSString,
 ) -> JSValue {
     debug_assert!(rope_str.is_8bit());
-    let length = rope_str.length();
+    let length = rope_str.len();
     let array = match create_uninitialized_uint8_array(global_this, length) {
         Ok(v) => v,
         Err(_) => return JSValue::ZERO,

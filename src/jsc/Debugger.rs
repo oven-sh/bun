@@ -487,13 +487,13 @@ impl Debugger {
         } = init;
 
         if !from_env.is_empty() {
-            let url = bun_core::StringView::borrow_utf8(from_env);
+            let url = StringView::utf8(from_env);
             let _scope = this.enter_event_loop_scope();
             Bun__startJSDebuggerThread(global, ctx_id, &url, 1, is_connect, false);
         }
 
         if let Some(path_or_port) = path_or_port {
-            let url = bun_core::StringView::borrow_utf8(path_or_port);
+            let url = StringView::utf8(path_or_port);
             let _scope = this.enter_event_loop_scope();
             Bun__startJSDebuggerThread(global, ctx_id, &url, 0, is_connect, is_node_inspector);
         }

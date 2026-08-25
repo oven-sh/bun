@@ -340,7 +340,9 @@ fn handle_file(
         global,
         match file {
             jsc::generated::SSLConfigFile::None => return Ok(None),
-            jsc::generated::SSLConfigFile::String(val) => SingleFile::String(val.as_ref()),
+            jsc::generated::SSLConfigFile::String(val) => {
+                SingleFile::String(val.as_ref().as_view())
+            }
             jsc::generated::SSLConfigFile::Buffer(val) => {
                 // SAFETY: GenVal::get() yields a non-null pointer valid for the
                 // lifetime of `generated`; we narrow it to `&mut` for the call.
@@ -382,7 +384,7 @@ fn handle_file_array(
             global,
             match elem {
                 jsc::generated::SSLConfigSingleFile::String(val) => {
-                    SingleFile::String(val.as_ref())
+                    SingleFile::String(val.as_ref().as_view())
                 }
                 jsc::generated::SSLConfigSingleFile::Buffer(val) => {
                     // SAFETY: see `handle_file` above — non-null GenVal pointers
@@ -402,7 +404,7 @@ fn handle_file_array(
 }
 
 enum SingleFile<'a> {
-    String(&'a bun_core::String),
+    String(bun_core::StringView<'a>),
     Buffer(&'a mut jsc::JSCArrayBuffer),
     File(&'a mut crate::webcore::Blob),
 }

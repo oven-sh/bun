@@ -28,7 +28,7 @@ use bun_jsc::js_promise::{UnwrapMode, Unwrapped};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, AnyPromise, JSGlobalObject, JSModuleLoader, JSPromise, JSValue, JsResult,
-    StringJsc as _,
+    StringJsc as _, StringViewJsc as _,
 };
 use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{self, platform};
@@ -332,13 +332,11 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         }
     };
 
-    let config_entry_point_string =
-        BunString::clone_utf8(config_entry_point.path_const().unwrap().text);
+    let config_entry_point_string = StringView::utf8(config_entry_point.path_const().unwrap().text);
 
-    let Some(config_promise) = JSModuleLoader::load_and_evaluate_module_ptr(
-        vm.global,
-        Some(config_entry_point_string.as_view()),
-    ) else {
+    let Some(config_promise) =
+        JSModuleLoader::load_and_evaluate_module_ptr(vm.global, config_entry_point_string)
+    else {
         debug_assert!(global.has_exception());
         return Err(crate::Error::JSError);
     };
@@ -1164,7 +1162,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     let render_promise = unsafe {
         &mut *BakeRenderRoutesForProdStatic(
             global,
-            &bun_core::StringView::from_bytes(&root_dir_path),
+            &StringView::from_bytes(&root_dir_path),
             pt.all_server_files.as_ref().unwrap().get(),
             server_render_funcs,
             server_param_funcs,

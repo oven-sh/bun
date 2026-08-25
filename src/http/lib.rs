@@ -5114,7 +5114,7 @@ impl<'a> HTTPClient<'a> {
 
                         debug_assert!(string_builder.cap == string_builder.len);
 
-                        let input = StringView::borrow_utf8(string_builder.allocated_slice());
+                        let input = StringView::utf8(string_builder.allocated_slice());
                         let normalized_url = bun_url::href_from_string(input);
                         if normalized_url.tag() == BunStringTag::Dead {
                             // URL__getHref failed, dont pass dead tagged string to toOwnedSlice.
@@ -5170,7 +5170,7 @@ impl<'a> HTTPClient<'a> {
 
                         debug_assert!(string_builder.cap == string_builder.len);
 
-                        let input = StringView::borrow_utf8(string_builder.allocated_slice());
+                        let input = StringView::utf8(string_builder.allocated_slice());
                         let normalized_url = bun_url::href_from_string(input);
                         if normalized_url.tag() == BunStringTag::Dead {
                             return Err(crate::Error::RedirectURLInvalid);
@@ -5193,8 +5193,8 @@ impl<'a> HTTPClient<'a> {
                     } else {
                         let original_url = self.url.clone();
 
-                        let base = StringView::borrow_utf8(original_url.href);
-                        let rel = StringView::borrow_utf8(location);
+                        let base = StringView::utf8(original_url.href);
+                        let rel = StringView::utf8(location);
                         let new_url_ = bun_url::join(base, rel);
 
                         if new_url_.is_empty() {

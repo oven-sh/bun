@@ -458,7 +458,7 @@ fn parse_option_definitions<'a>(
                 format_args!("options.{}.short", option.long_name),
             )?;
             let short_option_str = short_option.to_bun_string(global)?;
-            if short_option_str.length() != 1 {
+            if short_option_str.len() != 1 {
                 let err = global.to_type_error(
                     bun_jsc::ErrorCode::INVALID_ARG_VALUE,
                     format_args!(
@@ -629,7 +629,7 @@ fn tokenize_args(
             TokenSubtype::ShortOptionGroup => {
                 // Expand -fXzy to -f -X -z -y
                 let original_arg_idx = index;
-                let arg_len = arg.length();
+                let arg_len = arg.len();
                 for idx_in_optgroup in 1..arg_len {
                     let short_option = arg.substring_with_len(idx_in_optgroup, idx_in_optgroup + 1);
                     let option_idx = find_option_by_short_name(short_option, options);

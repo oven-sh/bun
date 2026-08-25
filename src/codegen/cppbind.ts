@@ -462,7 +462,6 @@ const rustSharedTypes: Record<string, string> = {
   "JSC::JSPromise": "crate::JSPromise",
   "JSC::JSMap": "crate::JSMap",
   "JSC::CustomGetterSetter": "crate::CustomGetterSetter",
-  "JSC::SourceProvider": "crate::SourceProvider",
   "JSC::CallFrame": "crate::CallFrame",
   "JSC::JSObject": "crate::JSObject",
   "JSC::JSString": "crate::JSString",
@@ -605,7 +604,6 @@ const rustOpaqueHandles = new Set([
   "JSC::Exception",
   "JSC::CallFrame",
   "JSC::CustomGetterSetter",
-  "JSC::SourceProvider",
   "WebCore::DOMURL",
 ]);
 

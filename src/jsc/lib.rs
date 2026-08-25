@@ -78,8 +78,6 @@ pub mod regular_expression;
 pub mod script_execution_status;
 #[path = "sizes.rs"]
 pub mod sizes;
-#[path = "SourceProvider.rs"]
-pub mod source_provider;
 #[path = "URLSearchParams.rs"]
 pub mod url_search_params;
 #[path = "WTF.rs"]
@@ -388,7 +386,6 @@ pub use self::js_uint8_array::JSUint8Array;
 pub use self::marked_argument_buffer::MarkedArgumentBuffer;
 pub use self::regular_expression::RegularExpression;
 pub use self::script_execution_status::ScriptExecutionStatus;
-pub use self::source_provider::SourceProvider;
 pub use self::url_search_params::URLSearchParams;
 pub use self::zig_stack_frame_code::ZigStackFrameCode;
 pub use self::zig_stack_frame_position::ZigStackFramePosition;
@@ -965,11 +962,6 @@ pub use self::js_promise::Strong as JSPromiseStrong;
 /// `PromiseStatus` for downstream callers (web_worker.rs / fetch.rs reference
 /// it via `jsc::PromiseStatus::{Pending,Fulfilled,Rejected}`).
 pub use self::js_promise::Status as PromiseStatus;
-
-/// `bun_ptr::RefPtr` — intrusive refcounted smart pointer. Re-exported here so
-/// `crate::RefPtr<SourceProvider>` (ZigStackTrace.rs) resolves without every
-/// submodule taking a direct `bun_ptr` dep.
-pub use bun_ptr::RefPtr;
 
 /// `bun.String` — refcounted WTF-backed string. Re-exported at the crate root
 /// so submodules can write `crate::String`.

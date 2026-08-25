@@ -84,7 +84,7 @@ impl Space {
 
         if space.is_string() {
             let str = space.to_bun_string(global)?;
-            if str.length() == 0 {
+            if str.len() == 0 {
                 return Ok(Space::Minified);
             }
             return Ok(Space::Str(str));
@@ -145,7 +145,7 @@ pub(crate) enum AnchorAliasName {
 pub(crate) enum ValueOrigin<'a> {
     Root,
     ArrayItem,
-    PropValue(bun_core::StringView<'a>),
+    PropValue(StringView<'a>),
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
@@ -581,7 +581,7 @@ impl Stringifier {
                 let clamped = space_str.trunc(10);
 
                 self.builder
-                    .ensure_unused_capacity(indent_count * clamped.length());
+                    .ensure_unused_capacity(indent_count * clamped.len());
                 for _ in 0..indent_count {
                     self.builder.append_string(clamped);
                 }
@@ -592,7 +592,7 @@ impl Stringifier {
     fn append_double_quoted_string(&mut self, str: StringView<'_>) {
         self.builder.append_lchar(b'"');
 
-        for i in 0..str.length() {
+        for i in 0..str.len() {
             let c = str.char_at(i);
 
             match c {
@@ -671,7 +671,7 @@ fn can_use_prop_name_as_anchor(str: StringView<'_>) -> bool {
         return false;
     }
 
-    for i in 0..str.length() {
+    for i in 0..str.len() {
         match str.char_at(i) {
             0x30..=0x39 /* '0'..='9' */
             | 0x41..=0x5a /* 'A'..='Z' */
@@ -691,7 +691,7 @@ fn matches_generated_anchor_name(str: StringView<'_>) -> bool {
     const PREFIXES: [&[u8]; 3] = [b"value", b"item", b"root"];
 
     'next_prefix: for prefix in PREFIXES {
-        if str.length() <= prefix.len() {
+        if str.len() <= prefix.len() {
             continue;
         }
 
@@ -701,7 +701,7 @@ fn matches_generated_anchor_name(str: StringView<'_>) -> bool {
             }
         }
 
-        for i in prefix.len()..str.length() {
+        for i in prefix.len()..str.len() {
             if !matches!(str.char_at(i), 0x30..=0x39 /* '0'..='9' */) {
                 continue 'next_prefix;
             }
@@ -718,7 +718,7 @@ fn string_needs_quotes(str: StringView<'_>) -> bool {
         return true;
     }
 
-    match str.char_at(str.length() - 1) {
+    match str.char_at(str.len() - 1) {
         // whitespace characters
         0x20 /* ' ' */
         | 0x09 /* '\t' */
@@ -774,7 +774,7 @@ fn string_needs_quotes(str: StringView<'_>) -> bool {
     }
 
     let mut i: usize = 0;
-    while i < str.length() {
+    while i < str.len() {
         match str.char_at(i) {
             // flow indicators need to be quoted always
             0x7b /* '{' */
@@ -784,7 +784,7 @@ fn string_needs_quotes(str: StringView<'_>) -> bool {
             | 0x2c /* ',' */ => return true,
 
             0x3a /* ':' */ => {
-                if i + 1 < str.length() {
+                if i + 1 < str.len() {
                     match str.char_at(i + 1) {
                         0x20 /* ' ' */
                         | 0x09 /* '\t' */
@@ -801,11 +801,11 @@ fn string_needs_quotes(str: StringView<'_>) -> bool {
             | 0x27 /* '\'' */ => return true,
 
             0x2d /* '-' */ => {
-                if i + 2 < str.length()
+                if i + 2 < str.len()
                     && str.char_at(i + 1) == 0x2d /* '-' */
                     && str.char_at(i + 2) == 0x2d /* '-' */
                 {
-                    if i + 3 >= str.length() {
+                    if i + 3 >= str.len() {
                         return true;
                     }
                     match str.char_at(i + 3) {
@@ -828,11 +828,11 @@ fn string_needs_quotes(str: StringView<'_>) -> bool {
                 i += 1;
             }
             0x2e /* '.' */ => {
-                if i + 2 < str.length()
+                if i + 2 < str.len()
                     && str.char_at(i + 1) == 0x2e /* '.' */
                     && str.char_at(i + 2) == 0x2e /* '.' */
                 {
-                    if i + 3 >= str.length() {
+                    if i + 3 >= str.len() {
                         return true;
                     }
                     match str.char_at(i + 3) {
@@ -898,7 +898,7 @@ fn string_needs_quotes(str: StringView<'_>) -> bool {
 ///   (e.g. `"1+5"`, `"1e"`, `"."`) so this mirror should err on the side of
 ///   *quoting* whenever a token *might* parse as a number.
 fn string_is_number(str: StringView<'_>) -> bool {
-    let len = str.length();
+    let len = str.len();
     if len == 0 {
         return false;
     }
@@ -1008,7 +1008,7 @@ fn string_is_number(str: StringView<'_>) -> bool {
 /// +/- infinity. Over-matches `+.infX` etc., which is harmless for the quoting
 /// decision.
 fn is_inf_suffix(str: StringView<'_>, i: usize) -> bool {
-    if i + 4 > str.length() {
+    if i + 4 > str.len() {
         return false;
     }
     let a = str.char_at(i + 1);

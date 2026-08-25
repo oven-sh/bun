@@ -1011,7 +1011,7 @@ impl ServePlugins {
             .iter()
             .map(|raw_plugin| bun_core::StringView::from_bytes(raw_plugin))
             .collect();
-        let plugin_js_array = bun_string_jsc::views_to_js_array(global, &bunstring_array)?;
+        let plugin_js_array = bun_string_jsc::to_js_array(global, &bunstring_array)?;
         let bunfig_folder_bunstr = bun_string_jsc::create_utf8_for_js(global, bunfig_folder)?;
 
         self.state = ServePluginsState::Pending {

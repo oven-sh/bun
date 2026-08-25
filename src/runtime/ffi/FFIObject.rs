@@ -823,7 +823,7 @@ mod fields {
         let mut iter = callframe.arguments().iter();
         let name = eat_string(global, &mut iter)?;
         let object = eat_required(global, &mut iter)?;
-        FfiImpl::open(global, *name.view(global)?, object)
+        FfiImpl::open(global, name.view(global)?.view(), object)
     }
 
     // callback → FFI::callback(global, JSValue, JSValue) -> JsResult<JSValue>

@@ -3813,6 +3813,7 @@ export default db;
             return Some(ResolvedSource {
                 source_code: file.to_wtf_string(),
                 source_url: specifier.to_owned(),
+                // Copied once per load: the path is `'static` but may be non-ASCII, so not `static_`.
                 bytecode_origin_path: bun_core::String::clone_utf8(file.bytecode_origin_path),
                 bytecode_cache: Bytecode::persistent(bytecode),
                 source_code_hash: file.source_hash,

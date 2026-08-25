@@ -254,8 +254,8 @@ unsafe extern "C" fn Bun__runVirtualModule(
     };
 
     match global.run_on_load_plugins(
-        &bun_core::String::init(namespace),
-        &bun_core::String::init(after_namespace),
+        &bun_core::String::from_bytes(namespace),
+        &bun_core::String::from_bytes(after_namespace),
         crate::BunPluginTarget::Bun,
     ) {
         Ok(Some(v)) => v,

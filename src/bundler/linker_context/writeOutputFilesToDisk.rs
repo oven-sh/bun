@@ -57,9 +57,14 @@ pub(crate) fn generate_chunk_bytecode(
     format: options::Format,
     code: &[u8],
     source_provider_url: &BunString,
+    external_strings: Option<core::ptr::NonNull<crate::bundle_v2::dispatch::EncoderStringTable>>,
 ) -> Option<Box<[u8]>> {
-    let bytecode =
-        crate::bundle_v2::dispatch::generate_cached_bytecode(format, code, source_provider_url)?;
+    let bytecode = crate::bundle_v2::dispatch::generate_cached_bytecode(
+        format,
+        code,
+        source_provider_url,
+        external_strings,
+    )?;
     debug!(
         "Bytecode cache generated {}: {}",
         bstr::BStr::new(source_provider_url.to_utf8().slice()),
@@ -440,6 +445,7 @@ pub(crate) fn write_output_files_to_disk(
                         c.options.output_format,
                         &code_result.buffer,
                         &source_provider_url,
+                        None,
                     ) {
                         let source_provider_url_str = source_provider_url.to_utf8();
                         let frp: &[u8] = &chunk.final_rel_path;

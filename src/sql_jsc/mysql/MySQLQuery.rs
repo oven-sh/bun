@@ -276,8 +276,7 @@ impl MySQLQuery {
         columns_value: JSValue,
         binding_value: JSValue,
     ) -> crate::Result<()> {
-        let mut query_str: Option<bun_core::zig_string::Slice> = None;
-        // `defer if (query_str) |str| str.deinit()` — deleted: `Utf8Slice` impls `Drop`.
+        let mut query_str: Option<bun_core::Utf8Bytes<'_>> = None;
 
         if self.statement.is_null() {
             let query = self.query.to_utf8();
@@ -487,7 +486,7 @@ impl MySQLQuery {
             // SAFETY: `s` is a live boxed `MySQLStatement` we held one intrusive ref on.
             unsafe { MySQLStatement::deref(s) };
         }
-        self.query = BunString::empty();
+        self.query = BunString::EMPTY;
     }
 
     #[inline]

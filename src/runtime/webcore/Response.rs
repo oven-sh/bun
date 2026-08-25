@@ -365,9 +365,8 @@ impl Response {
         <Self as BodyMixin>::check_body_stream_ref(self, global_object)
     }
 
-    /// Move to the heap and create the JS wrapper, which owns the initial
+    /// Hand a heap `Response` to a new JS wrapper, which owns the initial
     /// reference (released in [`Response::finalize`]).
-    /// Hand a heap `Response` to a new JS wrapper, which holds that reference.
     #[inline]
     pub fn into_js(self: Box<Self>, global_object: &JSGlobalObject) -> JSValue {
         Self::create_js(RefPtr::from_box(self), global_object)

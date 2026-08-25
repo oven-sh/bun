@@ -1470,10 +1470,7 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     return uwsReq->getHasTransferEncoding();
   }
 
-  /* Writes the layout `RequestHeadSnapshot` (src/runtime/webcore/request_head.rs)
-   * documents: a uint32_t index, then one memcpy of the wire bytes every
-   * name and value is a view into. Returns the size needed; writes nothing
-   * when that exceeds `capacity`. */
+  /* The writer for `RequestHeadSnapshot` (src/runtime/webcore/request_head.rs). */
   size_t uws_req_copy_head(uws_req_t *res, char *dest, size_t capacity)
   {
     uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;

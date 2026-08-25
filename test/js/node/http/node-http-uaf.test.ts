@@ -146,25 +146,32 @@ test.concurrent.skipIf(!slow)(
   60_000,
 );
 
-// An 8 MiB write does not fit the socket buffer, so the response is left with
-// a registered uWS writable handler while its onwritable slot holds a
-// non-callable (#32661 set undefined, #32735 the rest). The drain must skip
-// the slot: the whole body still arrives, and the child exits clean. A drain
-// that calls the slot throws an uncaught TypeError, which ends the child with
-// the error on stderr. One child runs the four values in turn and prints a
-// line per value, so a crash still names the value it happened on.
+// The handler writes 8 MiB at a time until the socket pushes back (one write
+// on Linux and macOS, two on Windows, whose loopback takes a whole 8 MiB send
+// at once). The response is then left with a registered uWS writable handler
+// while its onwritable slot holds a non-callable (#32661 set undefined, #32735
+// the rest). The drain must skip the slot: the whole body still arrives, and
+// the child exits clean. A drain that calls the slot throws an uncaught
+// TypeError, which ends the child with the error on stderr. One child runs the
+// four values in turn and prints a line per value, so a crash still names the
+// value it happened on.
 test.concurrent("drain skips an onwritable slot set to undefined, null, 0 or false", async () => {
   const src = /* js */ `
     import http from "node:http";
     import { once } from "node:events";
 
+    const chunk = Buffer.alloc(8 * 1024 * 1024, "a");
     for (const slot of [undefined, null, 0, false]) {
+      let written = 0;
       let hadBackpressure;
       const server = http.createServer(async (req, res) => {
         res.writeHead(200, { "Content-Type": "application/octet-stream" });
-        res.write(Buffer.alloc(8 * 1024 * 1024, "a"));
         const sym = Object.getOwnPropertySymbols(res).find(s => s.description === "handle");
         const handle = res[sym];
+        while (handle.bufferedAmount === 0 && written < 32 * chunk.length) {
+          res.write(chunk);
+          written += chunk.length;
+        }
         hadBackpressure = handle.bufferedAmount > 0;
         handle.onwritable = slot;
         while (handle.bufferedAmount > 0) await new Promise(r => setImmediate(r));
@@ -174,7 +181,7 @@ test.concurrent("drain skips an onwritable slot set to undefined, null, 0 or fal
 
       const response = await fetch("http://127.0.0.1:" + server.address().port + "/", { headers: { connection: "close" } });
       const body = await response.bytes();
-      console.log(JSON.stringify({ slot: String(slot), status: response.status, bodyLength: body.length, hadBackpressure }));
+      console.log(JSON.stringify({ slot: String(slot), status: response.status, hadBackpressure, written, received: body.length }));
       server.close();
     }
   `;
@@ -198,12 +205,15 @@ test.concurrent("drain skips an onwritable slot set to undefined, null, 0 or fal
     lines: ["undefined", "null", "0", "false"].map(slot => ({
       slot,
       status: 200,
-      bodyLength: 8 * 1024 * 1024,
       hadBackpressure: true,
+      written: expect.any(Number),
+      received: expect.any(Number),
     })),
     stderr: "",
     exitCode: 0,
   });
+  // Every byte the handler wrote, before and after the pushback, arrived.
+  expect(lines.map(line => line.received)).toEqual(lines.map(line => line.written));
 });
 
 test.concurrent("'connection' and 'clientError' callbacks survive GC", async () => {

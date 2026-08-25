@@ -145,7 +145,8 @@ async function setupProductionInstall(files: Files) {
 }
 
 // Copies an installed project so a test can edit its node_modules without running its own `bun install`.
-// Only the lockfile, the config and every package.json are copied: `bun pm licenses` reads nothing else.
+// Only the lockfile, the config and every package.json are copied. `bun pm licenses` reads nothing else from
+// an installed package (read_package_info in src/runtime/cli/pm_licenses_command.rs).
 function clone(src: string) {
   const dir = String(tempDir("licenses-clone", {}));
   for (const name of ["package.json", "bunfig.toml", "bun.lock"]) copyFileSync(join(src, name), join(dir, name));
@@ -798,7 +799,7 @@ describe("bun pm licenses", () => {
     expect(normalizeBunSnapshot(lsLong)).toBe(normalizeBunSnapshot(stdout));
     expect(stdout).not.toContain(nm(hoistedDir));
 
-    // --long changes nothing in the JSON output.
+    // --long adds no field to the JSON output: the listing is the one `--json` alone produces.
     expect(longJson).toStrictEqual(fullJsonWithPaths(hoistedDir));
   });
 
@@ -1041,13 +1042,12 @@ describe("bun pm licenses", () => {
 
   // The expected values are the ones the hoisted tests above assert for `hoistedDir`.
   test.concurrent("isolated linker matches hoisted: marker, --dev and --long", async () => {
-    const dir = isolatedDir;
     const [[stdout, stderr, exitCode], long, dev, devJson, longJson] = await Promise.all([
-      licenses(dir),
-      licensesText(dir, "--long"),
-      licensesText(dir, "--dev"),
-      licensesJson(dir, "--dev"),
-      licensesJson(dir, "--long"),
+      licenses(isolatedDir),
+      licensesText(isolatedDir, "--long"),
+      licensesText(isolatedDir, "--dev"),
+      licensesJson(isolatedDir, "--dev"),
+      licensesJson(isolatedDir, "--long"),
     ]);
     expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
       "bun pm licenses <version> (<revision>)
@@ -1133,14 +1133,13 @@ describe("bun pm licenses", () => {
   });
 
   test.concurrent("paths: isolated installs report the store directory", async () => {
-    const dir = isolatedDir;
-    const parsed = await licensesJsonRaw(dir);
+    const parsed = await licensesJsonRaw(isolatedDir);
     expect(Object.fromEntries(entriesOf(parsed).map(entry => [entry.name, entry.paths]))).toStrictEqual({
-      "path-parse": [store(dir, "path-parse@1.0.6", "path-parse")],
-      "resolve": [store(dir, "resolve@1.9.0", "resolve")],
-      "a-dep": [store(dir, "a-dep@1.0.1", "a-dep")],
-      "no-deps": [store(dir, "no-deps@1.0.0", "no-deps"), store(dir, "no-deps@1.0.1", "no-deps")],
-      "one-dep": [store(dir, "one-dep@1.0.0", "one-dep")],
+      "path-parse": [store(isolatedDir, "path-parse@1.0.6", "path-parse")],
+      "resolve": [store(isolatedDir, "resolve@1.9.0", "resolve")],
+      "a-dep": [store(isolatedDir, "a-dep@1.0.1", "a-dep")],
+      "no-deps": [store(isolatedDir, "no-deps@1.0.0", "no-deps"), store(isolatedDir, "no-deps@1.0.1", "no-deps")],
+      "one-dep": [store(isolatedDir, "one-dep@1.0.0", "one-dep")],
     });
     expect(stripPaths(parsed)).toStrictEqual(fullJson);
   });

@@ -325,9 +325,6 @@ pub struct NewSocket<const SSL: bool> {
     /// expects at index 0). The encrypted half holds a ref on the raw half
     /// here so a single `onClose` can retire both — no `Handlers.clone()`,
     /// no second context.
-    // LIFETIMES.tsv says `Option<Rc<Self>>`, but `*Self` is stored in
-    // a uws ext slot (FFI) and is intrusively refcounted — PORTING.md mandates
-    // RefPtr, never Rc, when *T crosses FFI.
     pub(crate) twin: JsCell<Option<RefPtr<Self>>>,
     /// Owned copy of the handshake verify error, so `getAuthorizationError()`
     /// keeps its verdict after detach (the live error borrows the `SSL`, and
@@ -411,7 +408,7 @@ impl<const SSL: bool> Drop for ConnectErrorTeardown<SSL> {
     fn drop(&mut self) {
         let this = self.socket;
         // `deref` before `mark_inactive`, as the hand-rolled guard did. It
-        // cannot free the socket here: `handle_connect_error`'s `_keepalive`
+        // cannot free the socket here: `handle_connect_error`'s `_guard`
         // is declared before this guard, so it outlives it.
         if self.needs_deref {
             this.get().deref();
@@ -439,6 +436,13 @@ impl<const SSL: bool> Drop for ScopeExit<SSL> {
 }
 
 impl<const SSL: bool> NewSocket<SSL> {
+    /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
+    #[inline]
+    fn ref_guard(&self) -> RefPtr<Self> {
+        // SAFETY: `self` is the live heap allocation.
+        unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
+    }
+
     // ─── R-2 interior-mutability helpers ─────────────────────────────────────
 
     /// Read-modify-write the packed `Cell<Flags>` through `&self`.
@@ -930,7 +934,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // Hold the socket alive for the rest of the dispatch: `internal_flush`
         // and the drain callback can both re-enter JS and close it.
-        let _keepalive = RefPtr::from_this(this);
+        let _guard = RefPtr::from_this(this);
         // NOTE (Windows): the drain dispatch deliberately does not depend on
         // whether the flush hit a fatal send error. Skipping it on fatal
         // (tried in f0325bddf2) made Windows servers reset FIN-terminated
@@ -1115,7 +1119,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Ensure the socket is still alive for any defer's we have. Declared
         // before clear_and_free/unrefOnNextTick so the ref is balanced even if
         // those calls unwind.
-        let _keepalive = RefPtr::from_this(this);
+        let _guard = RefPtr::from_this(this);
         this.buffered_data_for_node_net
             .with_mut(|b| b.clear_and_free());
 
@@ -1428,7 +1432,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             this.ref_count.get()
         );
         // Ensure the socket remains alive: the callbacks below re-enter JS.
-        let _keepalive = RefPtr::from_this(this);
+        let _guard = RefPtr::from_this(this);
 
         // update the internal socket instance to the one that was just connected
         // This socket must be replaced because the previous one is a connecting socket not a uSockets socket
@@ -1691,7 +1695,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         );
         // Ensure the socket remains alive until this is finished
-        let _keepalive = RefPtr::from_this(this);
+        let _guard = RefPtr::from_this(this);
 
         let callback = handlers.on_end();
         if callback.is_empty() {
@@ -1742,7 +1746,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Keep the socket alive across the callbacks below (which re-enter JS)
         // and across `reject_unauthorized_connection`, whose close may
         // otherwise drop the last reference.
-        let _keepalive = RefPtr::from_this(this);
+        let _guard = RefPtr::from_this(this);
         let handlers = this.get_handlers();
         log!(
             "onHandshake {} ({})",
@@ -2608,8 +2612,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let args = callframe.arguments_undef::<2>();
         // `write_or_end_buffered` reaches `internal_flush`, which re-enters JS.
-        // SAFETY: the JS wrapper holds a ref for the whole host-fn call.
-        let _keepalive = unsafe { RefPtr::init_ref(this.as_ctx_ptr()) };
+        let _guard = this.ref_guard();
         let result = match this.write_or_end_buffered::<true>(global, args.ptr[0], args.ptr[1]) {
             WriteResult::Fail => JSValue::ZERO,
             WriteResult::Success { wrote, total } => {
@@ -3223,8 +3226,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         // `write_or_end` reaches `internal_flush`, which re-enters JS.
-        // SAFETY: the JS wrapper holds a ref for the whole host-fn call.
-        let _keepalive = unsafe { RefPtr::init_ref(this.as_ctx_ptr()) };
+        let _guard = this.ref_guard();
         let result = match this.write_or_end::<true>(global, args.mut_(), false) {
             WriteResult::Fail => JSValue::ZERO,
             WriteResult::Success { wrote, total } => {
@@ -3671,7 +3673,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // including the `?` early-returns below.
         // SAFETY: `this` owns the outstanding ref this guard consumes; the JS
         // wrapper's own +1 keeps the allocation alive across the whole call.
-        let _this_deref = unsafe { RefPtr::from_raw(this.as_ctx_ptr()) };
+        let _guard = unsafe { RefPtr::from_raw(this.as_ctx_ptr()) };
         this.detach_native_callback();
         this.socket.set(SocketHandler::<SSL>::DETACHED);
 

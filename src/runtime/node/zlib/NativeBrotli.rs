@@ -69,8 +69,6 @@ mod _impl {
     use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
     use crate::node::util::validators;
 
-    // Intrusive refcount; `deinit` runs when it reaches zero.
-
     // `.classes.ts`-backed: the C++ JSCell wrapper (JSNativeBrotli) is generated;
     // this struct is the `m_ctx` payload. Codegen provides toJS/fromJS/fromJSDirect.
     // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
@@ -341,7 +339,6 @@ mod _impl {
                 bun_zlib::NodeMode::BROTLI_ENCODE | bun_zlib::NodeMode::BROTLI_DECODE => s.close(),
                 _ => {}
             });
-            // Freeing self is handled by RefPtr / heap::take.
         }
     }
 

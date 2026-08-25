@@ -156,7 +156,6 @@ impl BlobOrStringOrBuffer {
                     ))));
                 }
 
-                // `Blob::dupe()` clones the RefPtr<Store> (bumps refcount) and bit-copies fields.
                 return Ok(Some(Self::Blob(Box::new(blob.dupe()))));
             }
         };

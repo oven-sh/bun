@@ -769,7 +769,7 @@ impl HttpThread {
                                 // The resume may tear the session down and
                                 // release the socket's ref; hold one across
                                 // the second call.
-                                let _keep_alive = RefPtr::from_this(session);
+                                let _guard = RefPtr::from_this(session);
                                 h2::ClientSession::resume_receive_by_http_id(session, id);
                                 h2::ClientSession::drain_response_body_by_http_id(session, id);
                             }
@@ -782,7 +782,7 @@ impl HttpThread {
                             }
                             if let Some(session) = tagged.session() {
                                 // See the Tls arm.
-                                let _keep_alive = RefPtr::from_this(session);
+                                let _guard = RefPtr::from_this(session);
                                 h2::ClientSession::resume_receive_by_http_id(session, id);
                                 h2::ClientSession::drain_response_body_by_http_id(session, id);
                             }
@@ -1011,7 +1011,7 @@ impl HttpThread {
                 drop(core::mem::take(&mut client.compressed_request_body));
                 drop(core::mem::take(&mut client.proxy_authorization));
                 client.close_proxy_tunnel(false);
-                client.custom_ssl_ctx = None;
+                drop(core::mem::take(&mut client.custom_ssl_ctx));
                 drop(core::mem::take(&mut client.state));
                 if let Some(f) = release.release_at_shutdown {
                     f(release.ctx);

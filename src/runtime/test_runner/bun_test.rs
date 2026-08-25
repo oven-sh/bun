@@ -8,6 +8,7 @@ use bun_core::{Output, Timespec};
 use bun_jsc::{self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong, JsClass as _};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::js_promise::Status as PromiseStatus;
+use bun_ptr::RefPtr;
 use super::jest::{Jest, FileId, FileColumns as _};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
 use crate::cli::test_command::CommandLineReporter;
@@ -485,7 +486,7 @@ impl BunTestRoot {
             // `BunTest::run_test_callback`; it is live because the promise
             // never settled (the settle path removes the entry before
             // releasing). Single-threaded.
-            drop(unsafe { RefDataPtr::from_raw(ptr.cast_mut()) });
+            drop(unsafe { RefPtr::from_raw(ptr.cast_mut()) });
         }
     }
 
@@ -720,11 +721,11 @@ impl BunTest {
         }
     }
 
-    pub fn ref_(this_strong: &BunTestPtr, phase: RefDataValue) -> RefDataPtr {
+    pub fn ref_(this_strong: &BunTestPtr, phase: RefDataValue) -> RefPtr<RefData> {
         let _g = group_begin!();
         bun_core::scoped_log!(bun_test_group, "ref: {}", phase);
 
-        bun_ptr::RefPtr::new(RefData {
+        RefPtr::new(RefData {
             buntest_weak: Rc::downgrade(this_strong),
             phase,
             ref_count: bun_ptr::RefCount::init(),
@@ -746,7 +747,7 @@ impl BunTest {
         let raw_ref: *mut RefData = this_ptr.as_promise_ptr::<RefData>();
         // SAFETY: `raw_ref` was produced by `RefPtr::into_raw` in `run_test_callback`
         // and round-tripped via `as_promise_ptr`; we adopt the +1 it carried.
-        let refdata: RefDataPtr = unsafe { bun_ptr::RefPtr::from_raw(raw_ref) };
+        let refdata = unsafe { RefPtr::from_raw(raw_ref) };
         // Remove the pending_then_refs entry first so it never holds a freed `RefData`.
         if let Some(runner) = Jest::runner() {
             let mut pending = runner.bun_test_root.pending_then_refs.borrow_mut();
@@ -1179,7 +1180,7 @@ impl BunTest {
         // counted handle. The single +1 from `ref()` is owned by
         // `dcb_data.ref`; `dcb_ref` just remembers the address so the
         // pending-promise branch can `dupe()` it and the tail can branch on
-        // "wait for done callback". Holding a second `RefDataPtr` here would
+        // "wait for done callback". Holding a second `RefPtr<RefData>` here would
         // over-count and the done-callback path would never observe
         // `has_one_ref()`.
         let mut dcb_ref: Option<NonNull<RefData>> = None;
@@ -1212,17 +1213,17 @@ impl BunTest {
                 match bun_jsc::JSPromise::opaque_mut(promise).status() {
                     PromiseStatus::Pending => {
                         // not immediately resolved; register 'then' to handle the result when it becomes available
-                        let this_ref: RefDataPtr = if let Some(dcb_ref_value) = dcb_ref {
+                        let this_ref: RefPtr<RefData> = if let Some(dcb_ref_value) = dcb_ref {
                             // SAFETY: `dcb_ref_value` aliases the live RefData
                             // owned by `dcb_data.r#ref` (set just above; GC
                             // roots `done_callback` for this frame). Bump the
                             // refcount 1→2.
-                            unsafe { bun_ptr::RefPtr::init_ref(dcb_ref_value.as_ptr()) }
+                            unsafe { RefPtr::init_ref(dcb_ref_value.as_ptr()) }
                         } else {
                             Self::ref_(this_strong, cfg_data)
                         };
                         // Track the `+1` handed to `Promise.then()` in case the promise never settles.
-                        let raw_ref: *mut RefData = bun_ptr::RefPtr::into_raw(this_ref);
+                        let raw_ref: *mut RefData = RefPtr::into_raw(this_ref);
                         this_strong
                             .bun_test_root
                             .get()
@@ -1494,8 +1495,6 @@ pub struct RefData {
     pub(crate) phase: RefDataValue,
     pub(crate) ref_count: bun_ptr::RefCount<RefData>,
 }
-// `*RefData` crosses FFI (`as_promise_ptr`), so this MUST be `bun_ptr::RefPtr`, never `Rc`.
-pub type RefDataPtr = bun_ptr::RefPtr<RefData>;
 impl RefData {
     /// `RefCounted` destructor — last ref dropped.
     ///

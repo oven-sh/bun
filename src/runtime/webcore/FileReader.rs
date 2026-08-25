@@ -95,9 +95,6 @@ pub type IOReader = BufferedReader;
 
 pub enum Lazy {
     None,
-    /// Intrusively-refcounted `*Blob.Store`. Uses `RefPtr<Store>` (not `Arc`) so the
-    /// raw pointer carries mutable provenance from `heap::alloc` for the
-    /// direct field writes in `open_file_blob`.
     Blob(RefPtr<blob::Store>),
 }
 

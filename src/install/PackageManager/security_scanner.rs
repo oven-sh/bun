@@ -977,7 +977,7 @@ impl<'a> subprocess::StaticPipeWriterProcess for SecurityScanSubprocess<'a> {
         // SAFETY: `this` is the `parent` backref passed to `StaticPipeWriter::create`;
         // the subprocess outlives its writer (it owns the writer ref in `json_writer`).
         // `finish_spawn` holds no Rust borrow on `self.json_writer` across `start()`
-        // (it clones the `Rc` first), so this `&mut` is unique for the call.
+        // (it clones the `RefPtr` first), so this `&mut` is unique for the call.
         unsafe { (*this).on_close_io(kind) };
     }
 }
@@ -1175,16 +1175,17 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         let pipe_ptr: *mut uv::Pipe =
             bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()));
-        // errdefer pipe.closeAndDestroy() — guard owns the raw Box ptr; libuv's
-        // close callback frees the heap allocation, so do NOT re-box on the
-        // cleanup path (would double-free). Disarmed only after finish_spawn
-        // succeeds: it must stay armed
-        // across `ipc_reader.start()` inside finish_spawn (the pre-writer error
-        // window) so a registered-but-unowned uv handle is never leaked.
+        // errdefer pipe.closeAndDestroy() until `StaticPipeWriter` takes the
+        // pipe (inside `finish_spawn`); from then on the writer's `Drop` closes
+        // it. libuv's close callback frees the allocation, so do NOT re-box on
+        // the cleanup path.
+        let pipe_taken = core::cell::Cell::new(false);
         let mut pipe = scopeguard::guard(pipe_ptr, |p| {
-            // SAFETY: p is the live Box-allocated uv_pipe_t; close_and_destroy
-            // schedules uv_close + frees the allocation.
-            unsafe { uv::Pipe::close_and_destroy(p) };
+            if !pipe_taken.get() {
+                // SAFETY: p is the live Box-allocated uv_pipe_t; close_and_destroy
+                // schedules uv_close + frees the allocation.
+                unsafe { uv::Pipe::close_and_destroy(p) };
+            }
         });
         // `self.loop_()` already projects to the libuv `uv_loop_t*` on
         // Windows (see the `.uv_loop` projection in `loop_()`); pass through.
@@ -1237,25 +1238,19 @@ impl<'a> SecurityScanSubprocess<'a> {
             .flags
             .insert(bun_io::pipe_reader::WindowsFlags::NONBLOCKING);
 
-        // Hand the pipe to StaticPipeWriter lazily: the closure captures only the
-        // raw `*mut uv::Pipe` (Copy, no Drop) and reconstitutes the Box at the
-        // exact `StaticPipeWriter::create` call site inside `finish_spawn`. If
-        // `finish_spawn` errors before that point (`ipc_reader.start()`), the
-        // closure drops as a no-op and the still-armed cleanup guard performs
-        // `close_and_destroy`. After the writer takes the pipe, post-create
-        // errors detach it from the writer (`finish_spawn`'s guard) before the
-        // writer's refs drop, so the guard's `close_and_destroy` remains the
-        // sole cleanup.
-        self.finish_spawn(&mut spawned, ipc_output_fds[0], move || {
+        // Hand the pipe to StaticPipeWriter lazily: the closure reconstitutes
+        // the Box at the exact `StaticPipeWriter::create` call site inside
+        // `finish_spawn`. If `finish_spawn` errors before that point
+        // (`ipc_reader.start()`), the closure drops as a no-op and the
+        // still-armed cleanup guard performs `close_and_destroy`.
+        self.finish_spawn(&mut spawned, ipc_output_fds[0], || {
+            pipe_taken.set(true);
             // SAFETY: `pipe_ptr` is the same allocation produced by
             // heap::alloc above and has not been freed; ownership transfers
             // here exactly once.
             StdioResult::Buffer(unsafe { bun_core::heap::take(pipe_ptr) })
         })?;
 
-        // Success: pipe ownership now lives in StaticPipeWriter; disarm the
-        // close_and_destroy errdefer.
-        scopeguard::ScopeGuard::into_inner(pipe);
         // fd slots are already None.
         scopeguard::ScopeGuard::into_inner(fds);
         Ok(())

@@ -2594,11 +2594,6 @@ impl bun_ptr::AnyRefCounted for NodeHTTPResponse {
         // SAFETY: caller contract — `this` is live.
         unsafe { (*this).ref_count.get() == 1 }
     }
-    #[inline]
-    unsafe fn rc_assert_no_refs(this: *const Self) {
-        // SAFETY: caller contract — `this` is live.
-        debug_assert_eq!(unsafe { (*this).ref_count.get() }, 0);
-    }
 }
 
 /// # Safety

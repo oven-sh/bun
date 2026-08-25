@@ -450,7 +450,7 @@ pub(crate) fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) {
     // before reentering, so there is NO live `&mut HTTPClient` anywhere up the
     // stack — re-deriving via the centralised `client_from_ctx` accessor here
     // is the sole live borrow, dropped immediately after copying out the
-    // tunnel's `data` `NonNull`. The pointee is alive: this client holds a
+    // tunnel pointer. The pointee is alive: this client holds a
     // strong ref to the tunnel for the duration of tunneling.
     let Some(proxy_nn) = client_from_ctx(ctx).proxy_tunnel_ptr() else {
         return;

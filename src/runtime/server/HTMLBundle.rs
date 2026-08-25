@@ -217,7 +217,7 @@ impl Route {
     }
 
     fn on_any_request(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse, is_head: bool) {
-        let _keep_alive = RefPtr::from_this(this);
+        let _guard = RefPtr::from_this(this);
         let route: &Route = &this;
 
         let Some(server) = route.server.get() else {
@@ -738,7 +738,7 @@ impl Route {
     /// uws onAborted for a response waiting in `pending_responses`.
     fn on_pending_response_aborted(this: ThisPtr<Self>, resp: AnyResponse) {
         // Technically, this could be the final ref count, but we don't want to risk it
-        let _keep_alive = RefPtr::from_this(this);
+        let _guard = RefPtr::from_this(this);
 
         // R-2: scope the `&mut Vec` to the find+remove only — dropping the
         // removed entry releases a route ref and must not overlap a live

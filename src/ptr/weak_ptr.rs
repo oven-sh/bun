@@ -73,13 +73,10 @@ pub trait HasWeakPtrData {
 /// `heap::into_raw`), which is why [`init_ref`](Self::init_ref) takes `*mut T`
 /// rather than `&mut T`. Deriving it from a `&mut T` reborrow instead makes the
 /// next write through any *other* pointer to the object a foreign write that
-/// invalidates the handle, so every later `get`/`deref` is UB. This mirrors
+/// invalidates the handle, so every later `get` or drop is UB. This mirrors
 /// [`ThisPtr::new`](crate::ThisPtr::new) and
 /// [`ParentRef::from_raw_mut`](crate::ParentRef::from_raw_mut).
 pub struct WeakPtr<T: HasWeakPtrData> {
-    // Intentionally a raw pointer, not `std::sync::Weak<T>`: this file *is*
-    // the definition of the intrusive weak pointer, with liveness tracked by
-    // the embedded `WeakPtrData` and manual ref/deref.
     raw_ptr: Option<NonNull<T>>,
 }
 
@@ -265,14 +262,14 @@ mod tests {
         // is the last ref, so `deref_internal` frees the allocation.
         assert!(weak.get().is_none());
         assert_eq!(drops(), before + 1);
-        // The handle is now empty: a second `get`/`deref` must be a no-op.
+        // The handle is now empty: a second `get` or the drop must be a no-op.
         assert!(weak.get().is_none());
         drop(weak);
     }
 
-    /// `deref` before finalize leaves the allocation to the owner.
+    /// Dropping before finalize leaves the allocation to the owner.
     #[test]
-    fn weak_ptr_deref_before_finalize_leaves_owner_in_charge() {
+    fn weak_ptr_drop_before_finalize_leaves_owner_in_charge() {
         let _serial = serial();
         let before = drops();
         let raw = new_owner(6);

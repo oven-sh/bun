@@ -92,11 +92,10 @@ bun_event_loop::impl_timer_owner!(JSMySQLConnection;
 bun_jsc::impl_js_class_via_generated!(JSMySQLConnection => crate::jsc::codegen::js_mysql_connection);
 
 impl JSMySQLConnection {
-    /// Hold a ref across a re-entrant call. No Rust reference is held across
-    /// the potential free on drop; `&self` is borrowed only for the bump.
+    /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
     #[inline]
     fn ref_guard(&self) -> RefPtr<Self> {
-        // SAFETY: `self` is the live m_ctx payload.
+        // SAFETY: `self` is the live heap allocation.
         unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
     }
 
@@ -354,7 +353,7 @@ impl JSMySQLConnection {
         bun_core::scoped_log!(MySQLConnection, "drainInternal");
         // Raw-pointer RAII guard so no reference is live across the potential
         // free.
-        let _ref = self.ref_guard();
+        let _guard = self.ref_guard();
         let _loop_guard = self.event_loop().entered();
         self.ensure_js_value_is_alive();
         if let Err(my_sql_connection::FlushQueueError::AuthenticationFailed) =
@@ -672,11 +671,11 @@ impl JSMySQLConnection {
     fn fail_with_js_value(&self, value: JSValue) {
         // Runs on every exit path. Re-enter through a raw pointer so no
         // reference is live across the potential free in `deref()`. LIFO drop
-        // order: the `defer!` body runs first, then `_ref` releases the count.
+        // order: the `defer!` body runs first, then `_guard` releases the count.
         let p = ParentRef::new(self);
-        let _ref = self.ref_guard();
+        let _guard = self.ref_guard();
         scopeguard::defer! {
-            // `_ref` has not yet dropped, so `*p` is still live; `ParentRef`
+            // `_guard` has not yet dropped, so `*p` is still live; `ParentRef`
             // yields a fresh `&Self` per access (R-2: every callee is `&self`).
             let queries = p.get_queries_array();
             p.connection_mut().clean_queue_and_close(Some(value), queries);
@@ -928,7 +927,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     ) {
         // Takes over the socket ref taken in on_open.
         // SAFETY: `this` is live and that ref is outstanding.
-        let _ref = unsafe { RefPtr::from_raw(this.as_ctx_ptr()) };
+        let _guard = unsafe { RefPtr::from_raw(this.as_ctx_ptr()) };
         // A close before the handshake finished means the server (or an
         // intermediary like a container port proxy) accepted the TCP
         // connection but went away before completing startup — e.g. the
@@ -961,13 +960,13 @@ impl<const SSL: bool> SocketHandler<SSL> {
 
     pub fn on_data(this: &JSMySQLConnection, _: NewSocketHandler<SSL>, data: &[u8]) {
         // Both guards re-enter via raw pointer so no reference is live across
-        // the potential free. Guard drop order is LIFO, so `_ref` (deref) runs
+        // the potential free. Guard drop order is LIFO, so `_guard` (deref) runs
         // last.
         let p = ParentRef::new(this);
-        let _ref = this.ref_guard();
+        let _guard = this.ref_guard();
 
         scopeguard::defer! {
-            // `_ref` has not yet dropped, so `*p` is still live; `ParentRef`
+            // `_guard` has not yet dropped, so `*p` is still live; `ParentRef`
             // yields a fresh `&JSMySQLConnection` per access (R-2: every
             // callee is `&self`).
             if p.connection.get().status == my_sql_connection::Status::Connected {

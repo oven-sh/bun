@@ -362,7 +362,6 @@ impl ReadFile {
         off: SizeType,
         max_len: SizeType,
     ) -> Result<ReadFile, Error> {
-        // store.ref() — `RefPtr<Store>` carries the +1; held in `self.store`.
         let file_store = store.data.as_file().clone();
         let read_file = ReadFile {
             file_store,
@@ -1124,7 +1123,6 @@ impl<'a> ReadFileUV<'a> {
         // exception the JS side left pending is reported here (a termination just stands down).
         crate::dispatch::fold(completion.complete(result));
 
-        // store.deref runs via RefPtr<Store>'s Drop when the Box drops.
         this_box.req.deinit();
         drop(this_box);
         // Release the event loop reference now that we're done

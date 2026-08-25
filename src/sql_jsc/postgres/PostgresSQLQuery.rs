@@ -8,7 +8,7 @@ use crate::jsc::{
 use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_core::String as BunString;
 use bun_jsc::JsCell;
-use bun_ptr::AsCtxPtr;
+use bun_ptr::{AsCtxPtr, RefPtr};
 
 use super::PostgresSQLConnection;
 use super::PostgresSQLStatement;
@@ -127,15 +127,11 @@ impl PostgresSQLQuery {
         self.flags.set(v);
     }
 
-    /// RAII `ref()`/`deref()` bracket around `self`. One audited
-    /// `RefPtr::init_ref` here replaces N per-site
-    /// `unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }` — `&self` is the live
-    /// `heap::alloc` payload (held by the connection's request FIFO), so the
-    /// [`RefPtr::init_ref`] precondition (live, non-null) is always satisfied.
+    /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
     #[inline]
-    pub(crate) fn ref_guard(&self) -> bun_ptr::RefPtr<Self> {
-        // SAFETY: `&self` ⇒ the allocation is live and non-null.
-        unsafe { bun_ptr::RefPtr::init_ref(self.as_ctx_ptr()) }
+    pub(crate) fn ref_guard(&self) -> RefPtr<Self> {
+        // SAFETY: `self` is the live heap allocation.
+        unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
     }
 
     /// Dereference the intrusive `statement` pointer as `&mut`. Mirrors
@@ -201,7 +197,7 @@ impl PostgresSQLQuery {
         // is sufficient and `noalias` is suppressed. `RefPtr` brackets the
         // JS-re-entrant `run_callback` so a re-entrant `deref()` cannot free
         // `*self` mid-body.
-        let _deref = self.ref_guard();
+        let _guard = self.ref_guard();
         self.status.set(Status::Fail);
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
@@ -235,7 +231,7 @@ impl PostgresSQLQuery {
 
     pub(crate) fn on_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
         // R-2: see `on_write_fail` — `&self` + Cell/JsCell, RefPtr brackets re-entry.
-        let _deref = self.ref_guard();
+        let _guard = self.ref_guard();
         self.status.set(Status::Fail);
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
@@ -292,7 +288,7 @@ impl PostgresSQLQuery {
         is_last: bool,
     ) {
         // R-2: see `on_write_fail` — `&self` + Cell/JsCell, RefPtr brackets re-entry.
-        let _deref = self.ref_guard();
+        let _guard = self.ref_guard();
         self.status.set(if is_last {
             Status::Success
         } else {

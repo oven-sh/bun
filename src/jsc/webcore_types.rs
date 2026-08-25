@@ -273,10 +273,7 @@ impl Blob {
         (!p.is_null()).then(|| JSGlobalObject::opaque_ref(p))
     }
 
-    /// Accepts both `Box<Store>` (from `Store::new` / `Store::init*`) and
-    /// `RefPtr<Store>`.
-    pub fn init_with_store<S: Into<RefPtr<Store>>>(store: S, global_this: &JSGlobalObject) -> Blob {
-        let store: RefPtr<Store> = store.into();
+    pub fn init_with_store(store: RefPtr<Store>, global_this: &JSGlobalObject) -> Blob {
         let size = store.size();
         let content_type = if let store::Data::File(ref f) = store.data {
             BlobContentType::from_mime(&f.mime_type)
@@ -871,21 +868,15 @@ pub mod store {
     // ────────────────────────────────────────────────────────────────────
 
     impl Store {
-        /// `bun.TrivialNew(@This())`.
-        #[inline]
-        pub fn new(init: Store) -> Box<Store> {
-            Box::new(init)
-        }
-
         /// Takes ownership of
         /// `bytes`. Returns a +1-ref heap `Store`.
         pub fn init(bytes: Vec<u8>) -> RefPtr<Store> {
-            RefPtr::from(Store::new(Store {
+            RefPtr::new(Store {
                 data: Data::Bytes(Bytes::init(bytes)),
                 mime_type: bun_http_types::MimeType::NONE,
                 ref_count: bun_ptr::ThreadSafeRefCount::init(),
                 is_all_ascii: None,
-            }))
+            })
         }
 
         pub fn get_path(&self) -> Option<&[u8]> {
@@ -976,9 +967,7 @@ pub mod store {
             // `heap::alloc`) as the opaque pointer.
             unsafe { Store::deref(this) };
         }
-    }
 
-    impl Store {
         /// Mutable access to `data` through a shared handle. The caller must
         /// ensure no other `&mut` to the same `Store` is live (single-threaded
         /// JS event-loop discipline).

@@ -751,7 +751,7 @@ impl<'a> AsyncHTTP<'a> {
                     drop(core::mem::take(&mut client.proxy_authorization));
                     client.close_proxy_tunnel(false);
                     debug_assert!(client.h2.is_none());
-                    client.custom_ssl_ctx = None;
+                    drop(core::mem::take(&mut client.custom_ssl_ctx));
                     // `state` was `Default` at `ptr::read` time and was
                     // populated by the clone (`on_start` → `client.start`); it
                     // owns the decompressor / compressed_body buffers.

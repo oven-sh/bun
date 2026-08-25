@@ -7,6 +7,7 @@ use core::ptr::NonNull;
 use bun_core::{self as bstring, strings};
 use bun_http::MimeType;
 use bun_jsc::JSGlobalObject;
+use bun_ptr::RefPtr;
 
 // `StandaloneModuleGraph` here is the inner *module* (so
 // `StandaloneModuleGraph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX` resolves);
@@ -14,7 +15,6 @@ use bun_jsc::JSGlobalObject;
 use crate::webcore::Blob;
 use crate::webcore::blob::SizeType;
 use crate::webcore::blob::store::{Bytes, Data, Store};
-use bun_ptr::RefPtr;
 use bun_standalone_graph::{File, StandaloneModuleGraph};
 
 /// Extension trait wiring JSC-dependent methods onto `standalone_graph::File`.
@@ -42,14 +42,14 @@ impl FileJsc for File {
                     bun_alloc::basic::C_ALLOCATOR,
                 )
             };
-            let store = RefPtr::from(Store::new(Store {
+            let store = RefPtr::new(Store {
                 data: Data::Bytes(bytes),
                 mime_type: MimeType::NONE,
                 ref_count: bun_ptr::ThreadSafeRefCount::init(),
                 is_all_ascii: None,
-            }));
+            });
             // make it never free
-            store.ref_();
+            let _ = store.clone().into_raw();
 
             // Hold the raw pointer so we can keep mutating the store after
             // `init_with_store` consumes the `RefPtr<Store>`. The store outlives

@@ -1155,11 +1155,14 @@ impl Writable {
                 // deref via drop-on-reassign
                 *self = Writable::Ignore;
             }
-            Writable::Buffer(buffer) => {
+            Writable::Buffer(_) => {
+                let Writable::Buffer(buffer) = core::mem::replace(self, Writable::Ignore) else {
+                    unreachable!()
+                };
                 // SAFETY: single-threaded; temporary `&mut` for the call only.
-                unsafe { buffer_mut(buffer) }.update_ref(false);
-                // Intentionally does NOT reassign `*self` — the variant tag is
-                // left as `Writable::Buffer`; its ref drops with the Subprocess.
+                unsafe { buffer_mut(&buffer) }.update_ref(false);
+                // `buffer` drops here with the variant already `Ignore`, so a
+                // re-entrant `on_close_io` from the writer's drop is a no-op.
             }
             Writable::Memfd(fd) => {
                 fd.close();

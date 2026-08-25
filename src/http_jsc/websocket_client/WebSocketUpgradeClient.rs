@@ -398,46 +398,40 @@ where
 
         // Unix domain socket path (ws+unix:// / wss+unix://)
         if let Some(usp) = &unix_socket_path_slice {
-            match Socket::<SSL>::connect_unix_group(
+            let socket = Socket::<SSL>::connect_unix_group(
                 group,
                 kind,
                 secure_ptr,
                 usp.slice(),
                 client.as_ptr(),
                 false,
-            ) {
-                Ok(socket) => {
-                    this.tcp.set(socket);
-                    if this.state.get() == State::Failed {
-                        socket.take_ext_owner::<Self>();
-                        return None;
-                    }
-                    bun_analytics::features::web_socket
-                        .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-
-                    if SSL {
-                        // SNI uses the URL host (defaulted to "localhost" in
-                        // C++ when absent), mirroring the TCP path below. A
-                        // user-supplied Host header does NOT affect SNI; use
-                        // `tls: { checkServerIdentity }` or put the hostname
-                        // in the URL (wss+unix://name/path) to verify against
-                        // a specific certificate name.
-                        if !host_slice.slice().is_empty() {
-                            this.hostname.set(ZBox::from_bytes(host_slice.slice()));
-                        }
-                    }
-
-                    socket.set_timeout(handshake_timeout_seconds());
-                    this.state.set(State::Reading);
-                    return Some(Self::connected(client, websocket));
-                }
-                // Never installed as userdata on the Err path.
-                Err(_) => {}
+            )
+            .ok()?;
+            this.tcp.set(socket);
+            if this.state.get() == State::Failed {
+                socket.take_ext_owner::<Self>();
+                return None;
             }
-            return None;
+            bun_analytics::features::web_socket.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+
+            if SSL {
+                // SNI uses the URL host (defaulted to "localhost" in
+                // C++ when absent), mirroring the TCP path below. A
+                // user-supplied Host header does NOT affect SNI; use
+                // `tls: { checkServerIdentity }` or put the hostname
+                // in the URL (wss+unix://name/path) to verify against
+                // a specific certificate name.
+                if !host_slice.slice().is_empty() {
+                    this.hostname.set(ZBox::from_bytes(host_slice.slice()));
+                }
+            }
+
+            socket.set_timeout(handshake_timeout_seconds());
+            this.state.set(State::Reading);
+            return Some(Self::connected(client, websocket));
         }
 
-        match Socket::<SSL>::connect_group(
+        let sock = Socket::<SSL>::connect_group(
             group,
             kind,
             secure_ptr,
@@ -445,33 +439,28 @@ where
             c_int::from(connect_port),
             client.as_ptr(),
             false,
-        ) {
-            Ok(sock) => {
-                this.tcp.set(sock);
-                // I don't think this case gets reached.
-                if this.state.get() == State::Failed {
-                    sock.take_ext_owner::<Self>();
-                    return None;
-                }
-                bun_analytics::features::web_socket
-                    .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-
-                if SSL {
-                    // SNI for the outer TLS socket must use the host we actually
-                    // dialed. For HTTPS proxy connections, that's the proxy host,
-                    // not the wss:// target.
-                    if !display_host_.is_empty() {
-                        this.hostname.set(ZBox::from_bytes(display_host_));
-                    }
-                }
-
-                sock.set_timeout(handshake_timeout_seconds());
-                this.state.set(State::Reading);
-                Some(Self::connected(client, websocket))
-            }
-            // Never installed as userdata on the Err path.
-            Err(_) => None,
+        )
+        .ok()?;
+        this.tcp.set(sock);
+        // I don't think this case gets reached.
+        if this.state.get() == State::Failed {
+            sock.take_ext_owner::<Self>();
+            return None;
         }
+        bun_analytics::features::web_socket.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+
+        if SSL {
+            // SNI for the outer TLS socket must use the host we actually
+            // dialed. For HTTPS proxy connections, that's the proxy host,
+            // not the wss:// target.
+            if !display_host_.is_empty() {
+                this.hostname.set(ZBox::from_bytes(display_host_));
+            }
+        }
+
+        sock.set_timeout(handshake_timeout_seconds());
+        this.state.set(State::Reading);
+        Some(Self::connected(client, websocket))
     }
 
     /// The socket now holds `client` as its userdata; record that ref and take

@@ -278,11 +278,8 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
     let credentials = if aws_options.changed_credentials {
         std::mem::take(&mut aws_options.credentials)
     } else {
-        // The `Store::S3` field is `Rc<S3Credentials>` (separate rc
-        // layer), so we can't share the existing intrusive allocation —
-        // deep-clone the value instead and let `init_s3` `Rc::new` it.
-        // PERF: profile if hot once Store.rs migrates
-        // `Rc<S3Credentials>` → `RefPtr`.
+        // `Store::S3` holds an `Rc<S3Credentials>`, so the intrusive
+        // allocation can't be shared — deep-clone the value.
         default_credentials.clone()
     };
     let store = blob::Store::init_s3(path, None, credentials).expect("oom");
@@ -314,15 +311,15 @@ pub(crate) fn construct_s3_file_with_s3_credentials(
 /// Unlike the write path, a non-string or invalid `type` is ignored here.
 fn finish_s3_blob(
     global: &JSGlobalObject,
-    mut store: Box<blob::Store>,
+    store: RefPtr<Store>,
     aws_options: &s3::S3CredentialsWithOptions,
     options: Option<JSValue>,
 ) -> JsResult<Blob> {
-    // store cleanup on early return is handled by Drop
-    store.data.as_s3_mut().options = aws_options.options;
-    store.data.as_s3_mut().acl = aws_options.acl;
-    store.data.as_s3_mut().storage_class = aws_options.storage_class;
-    store.data.as_s3_mut().request_payer = aws_options.request_payer;
+    let s3 = Store::data_mut(&store).as_s3_mut();
+    s3.options = aws_options.options;
+    s3.acl = aws_options.acl;
+    s3.storage_class = aws_options.storage_class;
+    s3.request_payer = aws_options.request_payer;
 
     let blob = Blob::init_with_store(store, global);
     if let Some(opts) = options {

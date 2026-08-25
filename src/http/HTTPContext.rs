@@ -215,24 +215,20 @@ pub struct PooledSocket<const SSL: bool> {
     pub(crate) h2_session: Option<RefPtr<h2::ClientSession>>,
 }
 
-/// Upgrade an `Option<RefPtr<h2::ClientSession>>` held by a pool / found-slot
-/// entry to `Option<&'a mut h2::ClientSession>`, for the field writes and
-/// idle-frame handling that cannot release the session. Anything that can
-/// (`adopt`, the socket events) goes through a [`h2::SessionPtr`] instead.
+/// `&mut` access to a pooled / found-slot HTTP/2 session, for the field
+/// writes and idle-frame handling that cannot release the session. Anything
+/// that can (`adopt`, the socket events) goes through a [`h2::SessionPtr`]
+/// instead.
 ///
-/// INVARIANT: while the holder stores `Some`, it owns one strong intrusive ref
-/// on the session (taken in `release_socket`, released in
-/// `add_memory_back_to_pool` or handed to the socket ext by `existing_socket` /
-/// `connect`); the session is a distinct heap allocation that outlives the
-/// holder. HTTP-thread-only, so no concurrent `&mut`. Centralises the SAFETY
-/// argument shared by `PooledSocket::h2_session_mut` and
-/// `ExistingSocket::h2_session_mut`.
+/// INVARIANT: the holder owns one ref on the session, a distinct heap
+/// allocation; HTTP-thread-only, so no concurrent `&mut`. Each call re-derives
+/// a fresh `&mut`, so callers may interleave raw `as_ptr()` reads (e.g.
+/// `register_h2`) without a spanning Unique tag.
 #[inline]
-fn h2_session_as_mut<'a>(
-    s: &Option<RefPtr<h2::ClientSession>>,
-) -> Option<&'a mut h2::ClientSession> {
+#[allow(clippy::mut_from_ref)]
+fn h2_session_mut(s: &RefPtr<h2::ClientSession>) -> &mut h2::ClientSession {
     // SAFETY: see INVARIANT above.
-    s.as_ref().map(|s| unsafe { &mut *s.as_ptr() })
+    unsafe { &mut *s.as_ptr() }
 }
 
 /// Upgrade a `*mut PooledSocket<SSL>` returned by `HiveArray::at` to `&mut`.
@@ -251,16 +247,6 @@ fn pooled_socket_mut<'a, const SSL: bool>(p: *mut PooledSocket<SSL>) -> &'a mut 
 }
 
 impl<const SSL: bool> PooledSocket<SSL> {
-    /// Mutable access to the parked HTTP/2 session.
-    ///
-    /// INVARIANT: the pool owns one strong ref on the session while parked
-    /// (taken in `release_socket`, released in `add_memory_back_to_pool` /
-    /// `existing_socket`); the pointee outlives `self`.
-    #[inline]
-    fn h2_session_mut(&mut self) -> Option<&mut h2::ClientSession> {
-        h2_session_as_mut(&self.h2_session)
-    }
-
     /// Drop the strong refs the pool holds while a socket is parked
     /// (proxy_tunnel / h2_session / ssl_config) and clear the heap-owned
     /// `target_hostname`. Called from `Drop` and `add_memory_back_to_pool`
@@ -287,20 +273,6 @@ struct ExistingSocket<const SSL: bool> {
     /// Present if the socket negotiated "h2"; ownership transferred.
     h2_session: Option<RefPtr<h2::ClientSession>>,
     verification: PeerVerification,
-}
-
-impl<const SSL: bool> ExistingSocket<SSL> {
-    /// Mutable access to the transferred HTTP/2 session.
-    ///
-    /// INVARIANT: `h2_session` carries one strong ref moved out of the pool by
-    /// `existing_socket`; the pointee is a distinct heap allocation that
-    /// outlives `self`. HTTP-thread-only. Each call re-derives a fresh `&mut`
-    /// from the raw `NonNull`, so callers may interleave calls with raw
-    /// `as_ptr()` reads (e.g. `register_h2`) without a spanning Unique tag.
-    #[inline]
-    fn h2_session_mut(&mut self) -> Option<&mut h2::ClientSession> {
-        h2_session_as_mut(&self.h2_session)
-    }
 }
 
 impl<const SSL: bool> HTTPContext<SSL> {
@@ -981,25 +953,17 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     ),
                 );
                 client.allow_retry = true;
-                if found.h2_session.is_some() {
-                    if SSL {
-                        // Note: `session.socket = sock` — direct field
-                        // write; ClientSession.socket is `HTTPSocket<true>`.
-                        // The `&mut` ends with the statement: `register_h2`
-                        // forms a fresh `&*session`, which under Stacked
-                        // Borrows would invalidate a spanning Unique.
-                        found.h2_session_mut().unwrap().socket = sock.assume_ssl();
-                        // The pool's ref (carried by `found`) becomes the
-                        // socket ext's; `adopt` goes through that handle and
-                        // may release it again if the session turns out to be
-                        // unusable, so nothing touches `session` afterwards.
-                        let session = found.h2_session.take().unwrap().into_this_ptr();
-                        Self::tag_as_h2(sock, session.as_ptr());
-                        self.register_h2(session.as_ptr());
-                        h2::ClientSession::adopt(session, client);
-                    } else {
-                        unreachable!();
-                    }
+                if let Some(session) = found.h2_session.take() {
+                    debug_assert!(SSL);
+                    h2_session_mut(&session).socket = sock.assume_ssl();
+                    // The pool's ref becomes the socket ext's; `adopt` goes
+                    // through that handle and may release it again if the
+                    // session turns out to be unusable, so nothing touches
+                    // `session` afterwards.
+                    let session = session.into_this_ptr();
+                    Self::tag_as_h2(sock, session.as_ptr());
+                    self.register_h2(session.as_ptr());
+                    h2::ClientSession::adopt(session, client);
                     return Ok(None);
                 }
                 if let Some(tunnel) = found.tunnel {
@@ -1274,7 +1238,7 @@ impl<const SSL: bool> Handler<SSL> {
                 return;
             }
 
-            if let Some(session) = pooled.h2_session_mut() {
+            if let Some(session) = pooled.h2_session.as_ref().map(h2_session_mut) {
                 session.on_idle_data(buf);
                 if !session.can_pool() {
                     HTTPContext::<SSL>::terminate_socket(socket);

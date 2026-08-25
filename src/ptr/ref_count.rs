@@ -1,5 +1,5 @@
-//! Intrusive reference counting (single-threaded and thread-safe) + `RefPtr<T>`
-//! debug-tracking wrapper.
+//! Intrusive reference counting (single-threaded and thread-safe) and
+//! `RefPtr<T>`, the owning handle to one such ref.
 //!
 //! Each ref-count mixin is a pair of (embedded struct + trait the host
 //! type implements). See `RefCounted` / `ThreadSafeRefCounted`.
@@ -99,9 +99,6 @@ pub trait AnyRefCounted: Sized {
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn rc_has_one_ref(this: *const Self) -> bool;
-    /// # Safety
-    /// `this` must point to a live `Self`.
-    unsafe fn rc_assert_no_refs(this: *const Self);
     /// Debug-asserts the refcount has not already been destroyed.
     ///
     /// # Safety
@@ -174,9 +171,6 @@ pub fn finalize_js_box_noop<T: AnyRefCounted>(boxed: Box<T>) {
 ///     }
 /// }
 /// ```
-///
-/// When `RefCount` is implemented, it can be used with `RefPtr<T>` to track
-/// where a reference leak may be happening.
 pub struct RefCount<T: RefCounted> {
     raw_count: Cell<u32>,
     thread: ThreadLock,
@@ -287,10 +281,6 @@ impl<T: RefCounted> AnyRefCounted for T {
     unsafe fn rc_has_one_ref(this: *const Self) -> bool {
         // SAFETY: caller contract — `this` points to a live T
         unsafe { (*T::get_ref_count(this.cast_mut())).has_one_ref() }
-    }
-    unsafe fn rc_assert_no_refs(this: *const Self) {
-        // SAFETY: caller contract — `this` points to a live T
-        unsafe { (*T::get_ref_count(this.cast_mut())).assert_no_refs() }
     }
     unsafe fn rc_assert_valid(this: *const Self) {
         // SAFETY: caller contract — `this` points to a live T
@@ -445,10 +435,8 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
 /// `ref_count: Cell<u32>` field (no [`RefCount<Self>`] wrapper, no debug
 /// canary, no thread-lock).
 ///
-/// This is the migration target for the ~30 types that previously hand-rolled
-/// `ref_()`/`deref()` pairs around a `Cell<u32>`. Implementors supply only
-/// [`ref_count`] and [`destroy`]; the trait provides `ref_()`/`deref()` with
-/// the canonical inc/dec/destroy-at-zero logic.
+/// Implementors supply only [`ref_count`] and [`destroy`]; the trait provides
+/// `ref_()`/`deref()` with the canonical inc/dec/destroy-at-zero logic.
 ///
 /// Use `#[derive(CellRefCounted)]` to derive this trait together with the
 /// [`AnyRefCounted`] bridge (so [`RefPtr`] accepts the type)
@@ -610,23 +598,15 @@ unsafe impl<T: AnyRefCounted + Send + Sync> Send for RefPtr<T> {}
 // SAFETY: see above.
 unsafe impl<T: AnyRefCounted + Send + Sync> Sync for RefPtr<T> {}
 
-/// Adopt the initial ref of a freshly constructed `T` (its embedded count
-/// starts at 1).
-impl<T: AnyRefCounted> From<Box<T>> for RefPtr<T> {
+impl<T: AnyRefCounted> RefPtr<T> {
+    /// Allocate `value` on the heap and own its initial ref (its embedded count
+    /// starts at 1).
     #[inline]
-    fn from(value: Box<T>) -> Self {
-        let ptr = bun_core::heap::into_raw_nn(value);
+    pub fn new(value: T) -> Self {
+        let ptr = bun_core::heap::into_raw_nn(Box::new(value));
         // SAFETY: freshly boxed, so live.
         debug_assert!(unsafe { T::rc_has_one_ref(ptr.as_ptr()) });
         Self(ptr)
-    }
-}
-
-impl<T: AnyRefCounted> RefPtr<T> {
-    /// Allocate `value` on the heap and own its initial ref.
-    #[inline]
-    pub fn new(value: T) -> Self {
-        Self::from(Box::new(value))
     }
 
     /// Take a new ref on `*raw_ptr`.
@@ -741,13 +721,13 @@ const MAGIC_VALID: u32 = 0x2f84_e51d;
 /// poisoned when the destructor runs, so a ref/deref through a dangling
 /// pointer asserts instead of silently corrupting the count.
 #[cfg(debug_assertions)]
-pub struct DebugData {
+struct DebugData {
     magic: u32,
 }
 
 #[cfg(debug_assertions)]
 impl DebugData {
-    pub(crate) const fn empty() -> Self {
+    const fn empty() -> Self {
         Self { magic: MAGIC_VALID }
     }
 
@@ -902,7 +882,7 @@ mod tests {
         let t = Thing::new(3);
         {
             // SAFETY: `t` is live; the guard's ref keeps it alive for the scope.
-            let _g = unsafe { RefPtr::init_ref(t) };
+            let _guard = unsafe { RefPtr::init_ref(t) };
             // SAFETY: two refs outstanding.
             assert_eq!(unsafe { (*RefCounted::get_ref_count(t)).get() }, 2);
         }

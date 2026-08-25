@@ -4833,7 +4833,7 @@ pub(crate) fn parse_http_date(value: &[u8]) -> Option<u64> {
 fn __bun_stdio_blob_store_new(fd: bun_sys::Fd, is_atty: bool, mode: bun_sys::Mode) -> *mut () {
     use bun_jsc::node_path::PathOrFileDescriptor;
     use bun_jsc::webcore_types::store::{Data, File, Store};
-    let store: Box<Store> = Store::new(Store {
+    bun_core::heap::into_raw(Box::new(Store {
         data: Data::File(File {
             pathlike: PathOrFileDescriptor::Fd(fd),
             is_atty: Some(is_atty),
@@ -4843,8 +4843,8 @@ fn __bun_stdio_blob_store_new(fd: bun_sys::Fd, is_atty: bool, mode: bun_sys::Mod
         mime_type: bun_http_types::MimeType::NONE,
         ref_count: bun_ptr::ThreadSafeRefCount::init_exact_refs(2),
         is_all_ascii: None,
-    });
-    bun_core::heap::into_raw(store).cast()
+    }))
+    .cast()
 }
 
 /// Releases both refs from [`__bun_stdio_blob_store_new`]'s `+2` (one owner ref + one

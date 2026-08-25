@@ -293,7 +293,7 @@ impl StatWatcherScheduler {
         // ref'd when the work-pool task was scheduled
         // SAFETY: `this` is live; one ref (taken in `timer_callback`) is owned
         // by this callback and adopted here.
-        let _guard = unsafe { RefPtr::from_raw(this) };
+        let guard = unsafe { RefPtr::from_raw(this) };
         // BACKREF — `this` is alive (ref'd when the timer was scheduled);
         // `ParentRef` Deref gives safe `&Self` for the queue/interval reads.
         let this_ref = ParentRef::from(NonNull::new(this).expect("work_pool_callback: scheduler"));
@@ -362,7 +362,7 @@ impl StatWatcherScheduler {
         // Publish the queue writes above before declaring the work-pool hop
         // finished; `shutdown_for_exit` Acquire-loads this and then drains.
         this_ref.work_pool_in_flight.store(false, Ordering::Release);
-        drop(_guard);
+        drop(guard);
         drop(ticket);
     }
 

@@ -1130,6 +1130,13 @@ impl H2FrameParser {
         Keepalive(self)
     }
 
+    /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
+    #[inline]
+    pub(crate) fn ref_guard(&self) -> RefPtr<Self> {
+        // SAFETY: `self` is the live heap allocation.
+        unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
+    }
+
     pub(crate) fn ref_(&self) {
         // SAFETY: `self` is live; `RefCount::ref_` only reads/writes the
         // embedded `ref_count` Cell (interior-mutable), so `&self`→`*mut`
@@ -1799,8 +1806,7 @@ impl Stream {
         // we need a stable pointer to know what signal points to what stream_id + parser
         let mut signal_ref = Box::new(SignalRef {
             signal: bun_ptr::BackRef::from(refed),
-            // SAFETY: `parser` is the live m_ctx allocation.
-            parser: unsafe { RefPtr::init_ref(parser.as_ctx_ptr()) },
+            parser: parser.ref_guard(),
             stream_id: self.id,
         });
         // `signal_ref` is heap-allocated and outlives the listener registration
@@ -7440,11 +7446,7 @@ impl H2FrameParser {
         &self,
         socket: *mut crate::socket::NewSocket<SSL>,
     ) -> BunSocket {
-        // SAFETY: `self` is a live heap allocation (HiveArray slot or boxed); `init_ref`
-        // increments the intrusive refcount (Cell-backed) and wraps the pointer. The
-        // `*mut` spelling is signature-only — `RefPtr` only ever derefs as shared
-        // (`on_native_*` callbacks take `&self`).
-        let h2 = unsafe { RefPtr::init_ref(self.as_ctx_ptr()) };
+        let h2 = self.ref_guard();
         // BACKREF: `socket` is the live `m_ctx` borrowed from the JS wrapper rooted by the
         // caller's `socket_js`; it strictly outlives the returned `BunSocket` via the
         // attach/detach refcount protocol (see `BunSocket` docs). `NonNull::new` panics on

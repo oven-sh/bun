@@ -163,12 +163,8 @@ fn boring_engine() -> *mut bun_sha_hmac::sha::ffi::ENGINE {
 // S3Credentials
 // ──────────────────────────────────────────────────────────────────────────
 
-// `bun.ptr.RefCount(...)` mixin → RefPtr handles ref/deref; when count hits
-// zero the boxed allocation is dropped, which drops the Box<[u8]> fields, so no
-// explicit Drop body is needed here.
 #[derive(bun_ptr::RefCounted)]
 pub struct S3Credentials {
-    // Intrusive refcount; managed by bun_ptr::RefPtr<S3Credentials>.
     ref_count: RefCount<S3Credentials>,
     pub access_key_id: Box<[u8]>,
     pub secret_access_key: Box<[u8]>,

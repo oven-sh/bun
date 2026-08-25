@@ -44,13 +44,13 @@ pub trait StoreExt {
         pathlike: PathLike<'static>,
         mime_type: Option<MimeType>,
         credentials: S3Credentials,
-    ) -> Result<Box<Store>, crate::Error>
+    ) -> Result<RefPtr<Store>, crate::Error>
     where
         Self: Sized;
     fn init_file(
         pathlike: PathOrFileDescriptor<'static>,
         mime_type: Option<MimeType>,
-    ) -> Result<Box<Store>, crate::Error>
+    ) -> Result<RefPtr<Store>, crate::Error>
     where
         Self: Sized;
     #[cfg(unix)]
@@ -67,18 +67,16 @@ pub trait S3Ext {
         global_object: &JSGlobalObject,
     ) -> JsResult<S3CredentialsWithOptions>;
     /// `store` is the heap `Store` that owns `self` (`self == &store.data.S3`).
-    /// Neither impl mutates `self`, so a shared receiver lets callers hold the
-    /// natural `&Store` alongside `&S3` without Stacked-Borrows gymnastics.
     fn unlink(
         &self,
-        store: &Store,
+        store: &RefPtr<Store>,
         global_this: &JSGlobalObject,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue>;
-    /// See `unlink` — `self` is read-only; `store` is the owning `Store`.
+    /// See `unlink`.
     fn list_objects(
         &self,
-        store: &Store,
+        store: &RefPtr<Store>,
         global_this: &JSGlobalObject,
         list_options: JSValue,
         extra_options: Option<JSValue>,
@@ -125,7 +123,7 @@ impl StoreExt for Store {
         pathlike: PathLike<'static>,
         mime_type: Option<MimeType>,
         credentials: S3Credentials,
-    ) -> Result<Box<Store>, crate::Error> {
+    ) -> Result<RefPtr<Store>, crate::Error> {
         let mut path = pathlike;
         // this actually protects/refs the pathlike
         path.to_thread_safe();
@@ -134,7 +132,7 @@ impl StoreExt for Store {
         // Store so we don't need to clone the owned PathLike.
         let mime_type = mime_type.or_else(|| mime_from_path_ext(path.slice()));
 
-        Ok(Store::new(Store {
+        Ok(RefPtr::new(Store {
             data: Data::S3(S3::init(path, mime_type, credentials)),
             mime_type: bun_http_types::MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
@@ -145,7 +143,7 @@ impl StoreExt for Store {
     fn init_file(
         pathlike: PathOrFileDescriptor<'static>,
         mime_type: Option<MimeType>,
-    ) -> Result<Box<Store>, crate::Error> {
+    ) -> Result<RefPtr<Store>, crate::Error> {
         // Compute the extension-derived fallback before moving `pathlike` into
         // the Store so we don't need to clone the owned PathOrFileDescriptor.
         let mime_type = mime_type.or_else(|| match &pathlike {
@@ -153,7 +151,7 @@ impl StoreExt for Store {
             PathOrFileDescriptor::Fd(_) => None,
         });
 
-        Ok(Store::new(Store {
+        Ok(RefPtr::new(Store {
             data: Data::File(File::init(pathlike, mime_type)),
             mime_type: bun_http_types::MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
@@ -165,12 +163,12 @@ impl StoreExt for Store {
     /// mapping; when the refcount drops to zero, `Bytes::drop` calls `munmap`.
     #[cfg(unix)]
     fn init_mmap(slice: &'static mut [u8]) -> RefPtr<Store> {
-        RefPtr::from(Store::new(Store {
+        RefPtr::new(Store {
             data: Data::Bytes(Bytes::init_mmap(slice)),
             mime_type: bun_http_types::MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             is_all_ascii: None,
-        }))
+        })
     }
 
     fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error> {
@@ -274,7 +272,7 @@ impl S3Ext for S3 {
 
     fn unlink(
         &self,
-        store: &Store,
+        store: &RefPtr<Store>,
         global_this: &JSGlobalObject,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue> {
@@ -316,10 +314,6 @@ impl S3Ext for S3 {
             }
         }
 
-        // Wrapper.deinit body deleted — store.deref() handled by RefPtr<Store>::drop,
-        // promise.deinit() handled by JSPromiseStrong::drop, bun.destroy(wrap) handled by
-        // heap::take + drop in resolve().
-
         let promise = bun_jsc::JSPromiseStrong::init(global_this);
         let value = promise.value();
         // `Transpiler::env_mut` is the safe accessor for the process-singleton
@@ -340,8 +334,7 @@ impl S3Ext for S3 {
             Wrapper::resolve,
             bun_core::heap::into_raw(Wrapper::new(Wrapper {
                 promise,
-                // SAFETY: `store` is a live heap `Store`.
-                store: unsafe { RefPtr::init_ref(core::ptr::from_ref(store).cast_mut()) },
+                store: store.clone(),
                 global: bun_ptr::BackRef::new(global_this),
             }))
             .cast::<c_void>(),
@@ -354,7 +347,7 @@ impl S3Ext for S3 {
 
     fn list_objects(
         &self,
-        store: &Store,
+        store: &RefPtr<Store>,
         global_this: &JSGlobalObject,
         list_options: JSValue,
         extra_options: Option<JSValue>,
@@ -407,10 +400,6 @@ impl S3Ext for S3 {
             }
         }
 
-        // Wrapper.deinit/destroy bodies deleted — store.deref() via RefPtr<Store>::drop,
-        // promise.deinit() via JSPromiseStrong::drop, resolvedlistOptions.deinit() via
-        // S3ListObjectsOptions::drop, bun.destroy(self) via heap::take + drop.
-
         let promise = bun_jsc::JSPromiseStrong::init(global_this);
         let value = promise.value();
         // `Transpiler::env_mut` is the safe accessor for the process-singleton
@@ -433,8 +422,7 @@ impl S3Ext for S3 {
         // `Drop` after the async callback.
         let wrapper = bun_core::heap::into_raw(Box::new(Wrapper {
             promise,
-            // SAFETY: `store` is a live heap `Store`.
-            store: unsafe { RefPtr::init_ref(core::ptr::from_ref(store).cast_mut()) },
+            store: store.clone(),
             resolved_list_options: options,
             global: bun_ptr::BackRef::new(global_this),
         }));

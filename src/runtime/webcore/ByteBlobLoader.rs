@@ -1,11 +1,11 @@
 use bun_collections::VecExt;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_ptr::RefPtr;
 
 use crate::webcore::blob::store::StoreExt as _;
 use crate::webcore::blob::{self, Blob, BlobExt as _, Store};
 use crate::webcore::readable_stream;
 use crate::webcore::streams;
-use bun_ptr::RefPtr;
 
 pub struct ByteBlobLoader {
     pub offset: blob::SizeType,

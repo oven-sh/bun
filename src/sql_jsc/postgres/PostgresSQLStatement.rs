@@ -120,7 +120,5 @@ impl Drop for PostgresSQLStatement {
         // `fields` (Vec<FieldDescription>): each element's Drop runs, then the buffer frees.
         // `parameters` (Box<[int4]>): freed by Drop.
         // `cached_structure`, `error_response`, `signature`: Drop.
-        // `bun.default_allocator.destroy(this)`: handled by `bun_ptr::RefPtr` dealloc,
-        // not here — Drop must not free `self`'s storage.
     }
 }

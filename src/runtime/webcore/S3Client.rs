@@ -539,7 +539,6 @@ impl S3Client {
         let object_keys = args[0];
         let options = opt_js(args[1]);
 
-        // `defer blob.detach()` — handled by Drop of `Option<RefPtr<Store>>` field.
         let blob = S3File::construct_s3_file_with_s3_credentials_and_options(
             global,
             PathLike::default(),
@@ -647,7 +646,6 @@ impl S3Client {
                 .get_s3_credentials(),
         );
 
-        // `defer blob.detach()` — handled by Drop of `Option<RefPtr<Store>>` field.
         let blob = S3File::construct_s3_file_with_s3_credentials(
             global,
             PathLike::default(),

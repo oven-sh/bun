@@ -1432,7 +1432,7 @@ impl c_ares::AddrInfoHandler for GetAddrInfoRequest {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) struct CAresReverse {
-    pub resolver: Option<RefPtr<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
+    pub resolver: Option<RefPtr<Resolver>>,
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
     pub poll_ref: KeepAlive,
@@ -1557,7 +1557,7 @@ impl Drop for CAresReverse {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) struct CAresLookup<T: CAresRecordType> {
-    pub resolver: Option<RefPtr<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
+    pub resolver: Option<RefPtr<Resolver>>,
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
     pub poll_ref: KeepAlive,
@@ -1690,7 +1690,7 @@ impl<T: CAresRecordType> Drop for CAresLookup<T> {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) struct DNSLookup {
-    pub resolver: Option<RefPtr<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
+    pub resolver: Option<RefPtr<Resolver>>,
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
     pub allocated: bool,
@@ -3845,6 +3845,13 @@ impl RecordType {
 }
 
 impl Resolver {
+    /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
+    #[inline]
+    fn ref_guard(&self) -> RefPtr<Self> {
+        // SAFETY: `self` is the live heap allocation.
+        unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
+    }
+
     pub(crate) fn vm(&self) -> &VirtualMachine {
         self.vm.get()
     }
@@ -4198,8 +4205,7 @@ impl Resolver {
         result: Option<OwnedReply<T>>,
     ) {
         // cache_name = format!("pending_{}_cache_cares", T::TYPE_NAME)
-        // SAFETY: `self` is the live heap allocation; the guard keeps count > 0 across re-entrant callbacks.
-        let _guard = unsafe { RefPtr::init_ref(self.as_ctx_ptr()) };
+        let _guard = self.ref_guard();
 
         let key = {
             let cache = self.pending_cache_for::<T>(T::CACHE_FIELD);
@@ -4267,8 +4273,7 @@ impl Resolver {
     ) {
         let key = self.get_key_host(index, PendingCacheField::PendingHostCacheCares);
 
-        // SAFETY: `self` is the live heap allocation; the guard keeps count > 0 across re-entrant callbacks.
-        let _guard = unsafe { RefPtr::init_ref(self.as_ctx_ptr()) };
+        let _guard = self.ref_guard();
 
         let Some(addr) = result else {
             // SAFETY: `key.lookup` is the heap-allocated request stored in the
@@ -4337,8 +4342,7 @@ impl Resolver {
         bun_output::scoped_log!(DNSResolver, "drainPendingHostNative");
         let key = self.get_key_host(index, PendingCacheField::PendingHostCacheNative);
 
-        // SAFETY: `self` is the live heap allocation; the guard keeps count > 0 across re-entrant callbacks.
-        let _guard = unsafe { RefPtr::init_ref(self.as_ctx_ptr()) };
+        let _guard = self.ref_guard();
 
         let mut array: Outcome = match super::options_jsc::result_any_to_js(result, global_object)
             .transpose()
@@ -4409,8 +4413,7 @@ impl Resolver {
     ) {
         let key = self.get_key_addr(index);
 
-        // SAFETY: `self` is the live heap allocation; the guard keeps count > 0 across re-entrant callbacks.
-        let _guard = unsafe { RefPtr::init_ref(self.as_ctx_ptr()) };
+        let _guard = self.ref_guard();
 
         let Some(addr) = result else {
             // SAFETY: `key.lookup` is the heap-allocated request stored in the
@@ -4478,8 +4481,7 @@ impl Resolver {
     ) {
         let key = self.get_key_nameinfo(index);
 
-        // SAFETY: `self` is the live heap allocation; the guard keeps count > 0 across re-entrant callbacks.
-        let _guard = unsafe { RefPtr::init_ref(self.as_ctx_ptr()) };
+        let _guard = self.ref_guard();
 
         let Some(mut name_info) = result else {
             // SAFETY: `key.lookup` is the heap-allocated request stored in the
@@ -4699,8 +4701,7 @@ impl Resolver {
             return;
         };
 
-        // SAFETY: `self` is the heap allocation from `init`; the guard keeps count > 0 across re-entrant callbacks.
-        let _guard = unsafe { RefPtr::init_ref(self.as_ctx_ptr()) };
+        let _guard = self.ref_guard();
 
         // SAFETY: `channel` is the live c-ares channel owned by `self`; no `&mut`
         // to `*self` is held across this re-entrant call (all fields are

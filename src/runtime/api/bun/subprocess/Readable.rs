@@ -49,14 +49,6 @@ impl Readable {
         unsafe { &mut *pipe.as_ptr() }
     }
 
-    /// Clear the `PipeReader`'s `process` backref and release the ref the
-    /// `Readable::Pipe` variant held.
-    #[inline]
-    fn pipe_detach(pipe: RefPtr<PipeReader>) {
-        Self::pipe_reader_mut(&pipe).process = None;
-        drop(pipe);
-    }
-
     pub(crate) fn memory_cost(&self) -> usize {
         match self {
             Readable::Pipe(pipe) => mem::size_of::<PipeReader>() + pipe.memory_cost(),
@@ -213,7 +205,7 @@ impl Readable {
                         unsafe { PipeReader::deref(pipe.as_ptr()) };
                     }
                 }
-                Self::pipe_detach(pipe);
+                Self::pipe_reader_mut(&pipe).process = None;
             }
             Readable::Buffer(_) => {
                 // Dropping the CowString (via the overwrite) frees the buffer;
@@ -235,7 +227,7 @@ impl Readable {
                     unreachable!()
                 };
                 let result = Self::pipe_reader_mut(&pipe).to_js(global);
-                Self::pipe_detach(pipe);
+                Self::pipe_reader_mut(&pipe).process = None;
                 result
             }
             Readable::Buffer(_) => {
@@ -275,7 +267,7 @@ impl Readable {
                     unreachable!()
                 };
                 let result = Self::pipe_reader_mut(&pipe).to_buffer(global);
-                Self::pipe_detach(pipe);
+                Self::pipe_reader_mut(&pipe).process = None;
                 result
             }
             Readable::Buffer(_) => {

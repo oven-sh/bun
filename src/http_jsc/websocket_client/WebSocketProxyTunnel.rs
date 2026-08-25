@@ -333,7 +333,7 @@ impl WebSocketProxyTunnel {
         // If we have a connected WebSocket client, notify it of the close
         if let Some(ws) = connected_websocket {
             let ws = ws.this_ptr();
-            let _ws_guard = RefPtr::from_this(ws);
+            let _guard = RefPtr::from_this(ws);
             ws.fail(ErrorCode::Ended);
             return;
         }

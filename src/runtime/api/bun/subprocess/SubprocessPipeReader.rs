@@ -44,7 +44,6 @@ pub struct PipeReader {
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     pub(crate) event_loop_handle: bun_jsc::EventLoopHandle,
-    /// Intrusive refcount field for `bun_ptr::RefPtr<PipeReader>`.
     pub(crate) ref_count: RefCount<PipeReader>,
     pub(crate) state: State,
     pub(crate) stdio_result: StdioResult,
@@ -174,7 +173,7 @@ impl PipeReader {
             // SAFETY: `self` is live; RefPtr bumps the intrusive refcount and
             // derefs on Drop. The deref may free `*self`, but no borrow of `self`
             // outlives the guard's drop on return.
-            let _keepalive = unsafe { RefPtr::init_ref(std::ptr::from_mut::<PipeReader>(self)) };
+            let _guard = unsafe { RefPtr::init_ref(std::ptr::from_mut::<PipeReader>(self)) };
             if let bun_sys::Result::Err(err) = self.reader.start_with_current_pipe() {
                 // Route through the same teardown as a read-callback error
                 // (matches POSIX's register_poll failure path): state=Err,
@@ -203,14 +202,14 @@ impl PipeReader {
             // SAFETY: `self` is live; RefPtr bumps the intrusive refcount and
             // derefs on Drop. The deref may free `*self`, but no borrow of `self`
             // outlives the guard's drop on return.
-            let _keepalive = unsafe { RefPtr::init_ref(std::ptr::from_mut::<PipeReader>(self)) };
+            let _guard = unsafe { RefPtr::init_ref(std::ptr::from_mut::<PipeReader>(self)) };
 
             let _ = self.reader.start(self.stdio_result.unwrap(), true);
 
             #[cfg(unix)]
             {
                 if matches!(self.state, State::Err(_)) {
-                    // onReaderError already ran; `_keepalive`'s Drop on return
+                    // onReaderError already ran; `_guard`'s Drop on return
                     // will drop the last ref and deinit() closes the handle.
                     return;
                 }

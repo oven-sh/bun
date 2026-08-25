@@ -2901,9 +2901,7 @@ mod stdio_stores {
             Ok(stat) => stat.st_mode as bun_sys::Mode,
             Err(_) => 0,
         };
-        // NOTE: with `RefPtr<Store>` (intrusive RAII) the slot is +1 and
-        // the Blob takes its own +1 via `clone()`.
-        let store = Store::new(Store {
+        RefPtr::new(Store {
             data: Data::File(FileStore {
                 pathlike: PathOrFileDescriptor::Fd(fd),
                 is_atty: Some(is_atty),
@@ -2913,8 +2911,7 @@ mod stdio_stores {
             mime_type: bun_http_types::MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             is_all_ascii: None,
-        });
-        RefPtr::from(store)
+        })
     }
 
     fn make_blob(

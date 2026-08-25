@@ -454,11 +454,10 @@ impl JSValkeyClient {
         // SAFETY: caller contract.
         unsafe { bun_ptr::RefCount::deref(this) };
     }
-    /// RAII scoped ref: bumps on construction, derefs on `Drop`. Keeps `*self`
-    /// alive across re-entrant connect/close/fail paths.
+    /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
     #[inline]
     pub(crate) fn ref_guard(&self) -> RefPtr<Self> {
-        // SAFETY: `self` is live; the guard's own ref keeps it alive past Drop.
+        // SAFETY: `self` is the live heap allocation.
         unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
     }
     #[inline]

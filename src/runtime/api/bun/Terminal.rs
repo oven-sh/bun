@@ -11,7 +11,6 @@
 
 use core::cell::Cell;
 use core::ffi::{c_int, c_void};
-use core::ptr::NonNull;
 #[cfg(windows)]
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -90,9 +89,6 @@ pub mod js {
 /// 2. Reader (released in onReaderDone/onReaderError)
 /// 3. Writer (released in onWriterClose)
 ///
-// Intrusive refcount, not `Rc`/`Arc`: `*mut Terminal` crosses FFI as the
-// `.classes.ts` m_ctx payload and is recovered by raw pointer in finalize/host fns.
-//
 // `no_construct, no_finalize`: this class uses `constructNeedsThis: true` (3-arg
 // constructor) and intrusive refcounting (finalize → deref, not heap::take),
 // neither of which the macro's default hooks support. The C-ABI shims live in
@@ -299,8 +295,9 @@ impl Options {
 
 /// Result from creating a Terminal
 pub(crate) struct CreateResult {
-    /// The new terminal; its initial ref belongs to the JS wrapper (`js_value`).
-    pub terminal: NonNull<Terminal>,
+    /// The new terminal; its initial ref belongs to the JS wrapper (`js_value`),
+    /// which holds itself strong until the terminal closes.
+    pub terminal: bun_ptr::BackRef<Terminal, bun_ptr::Mut>,
     pub js_value: JSValue,
 }
 
@@ -408,8 +405,7 @@ impl Terminal {
         // Create PTY
         let pty_result = create_pty(options.cols, options.rows)?;
 
-        // Heap-allocate the Terminal; the intrusive ref_count
-        // field starts at 1 (JS side's ref). Wrapped as RefPtr on success.
+        // The intrusive ref_count starts at 1: the JS wrapper's ref.
         let terminal: *mut Terminal = bun_core::heap::into_raw(Box::new(Terminal {
             ref_count: bun_ptr::RefCount::init(),
             master_fd: Cell::new(pty_result.master),
@@ -440,13 +436,13 @@ impl Terminal {
             #[cfg(unix)]
             tty_state: Cell::new(bun_core::tty::State::new()),
         }));
+        let parent_ptr = terminal;
         // SAFETY: just allocated, non-null, exclusively owned here. R-2: `&`
         // (not `&mut`) — every method below takes `&self`; field writes go
         // through `Cell`/`JsCell`.
         let terminal = unsafe { &*terminal };
 
         // Set reader parent
-        let parent_ptr = terminal.as_ctx_ptr();
         terminal
             .reader
             .with_mut(|r| r.set_parent(parent_ptr.cast::<c_void>()));
@@ -541,8 +537,8 @@ impl Terminal {
         }
 
         Ok(CreateResult {
-            // SAFETY: `heap::into_raw` is never null.
-            terminal: unsafe { NonNull::new_unchecked(parent_ptr) },
+            // SAFETY: `parent_ptr` is the live `heap::into_raw` pointer above.
+            terminal: unsafe { bun_ptr::BackRef::from_raw_mut(parent_ptr) },
             js_value: this_value,
         })
     }

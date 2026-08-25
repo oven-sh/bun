@@ -53,24 +53,6 @@ fn signal_code_from_js(val: JSValue, global: &JSGlobalObject) -> JsResult<Signal
     bun_sys_jsc::signal_code_jsc::from_js(val, global)
 }
 
-/// `Terminal.CreateResult` with the pointer as the `BackRef<Terminal>` that
-/// `Subprocess.terminal` and `existing_terminal` use.
-struct TerminalCreateResult {
-    /// Kept alive by its JS wrapper (`js_value`), which holds itself strong
-    /// until the terminal closes.
-    pub terminal: bun_ptr::BackRef<Terminal, bun_ptr::Mut>,
-    pub js_value: JSValue,
-}
-
-impl TerminalCreateResult {
-    /// Shared borrow of the held `Terminal` (BackRef invariant: +1-ref'd
-    /// RefPtr, live while this struct is held).
-    #[inline]
-    fn term(&self) -> &Terminal {
-        self.terminal.get()
-    }
-}
-
 #[inline]
 fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> Option<IPC::SendQueueOwner> {
     core::ptr::NonNull::new(ptr.cast::<SubprocessT<'static>>()).map(IPC::SendQueueOwner::Subprocess)
@@ -392,14 +374,14 @@ fn spawn_maybe_sync(
     #[cfg(windows)]
     let mut windows_verbatim_arguments: bool = false;
     let mut abort_signal: Option<*mut WebCore::AbortSignal> = None;
-    let mut terminal_info: Option<TerminalCreateResult> = None;
+    let mut terminal_info: Option<terminal_body::CreateResult> = None;
     let mut existing_terminal: Option<bun_ptr::BackRef<Terminal, bun_ptr::Mut>> = None; // Existing terminal passed by user
     let mut terminal_js_value: JSValue = JSValue::ZERO;
     let mut defer_guard = scopeguard::guard(
         (&mut abort_signal, &mut terminal_info),
         |(abort_signal, terminal_info): (
             &mut Option<*mut WebCore::AbortSignal>,
-            &mut Option<TerminalCreateResult>,
+            &mut Option<terminal_body::CreateResult>,
         )| {
             if let Some(signal) = abort_signal.take() {
                 // signal was ref()'d when stored; unref releases that ref.
@@ -415,7 +397,7 @@ fn spawn_maybe_sync(
             if let Some(info) = terminal_info.take() {
                 // `abandon_from_spawn` is the spawn-side error-path teardown
                 // (downgrade JSRef, mark finalized, close_internal).
-                info.term().abandon_from_spawn();
+                info.terminal.abandon_from_spawn();
             }
         },
     );
@@ -842,17 +824,7 @@ fn spawn_maybe_sync(
                         let term_options =
                             TerminalOptions::parse_from_js(global_this, terminal_val)?;
                         match Terminal::create_from_spawn(global_this, &term_options) {
-                            Ok(created) => {
-                                **terminal_info = Some(TerminalCreateResult {
-                                    // Non-owning: the terminal is kept alive by its JS
-                                    // wrapper (`js_value`, held strong until closed).
-                                    // SAFETY: live heap pointer from `heap::into_raw`.
-                                    terminal: unsafe {
-                                        bun_ptr::BackRef::from_raw_mut(created.terminal.as_ptr())
-                                    },
-                                    js_value: created.js_value,
-                                });
-                            }
+                            Ok(created) => **terminal_info = Some(created),
                             Err(err) => {
                                 return Err(match err {
                                     TerminalInitError::OpenPtyFailed => {
@@ -882,7 +854,7 @@ fn spawn_maybe_sync(
                             existing_terminal
                                 .map(|t| t.get_slave_fd())
                                 .unwrap_or_else(|| {
-                                    terminal_info.as_ref().unwrap().term().get_slave_fd()
+                                    terminal_info.as_ref().unwrap().terminal.get_slave_fd()
                                 });
                         stdio[0] = Stdio::Fd(slave_fd);
                         stdio[1] = Stdio::Fd(slave_fd);
@@ -1169,13 +1141,13 @@ fn spawn_maybe_sync(
         // For existing terminals, the session is already set up - child just uses the fd as stdio.
         #[cfg(unix)]
         pty_slave_fd: match terminal_info.as_ref() {
-            Some(ti) => ti.term().get_slave_fd().native(),
+            Some(ti) => ti.terminal.get_slave_fd().native(),
             None => -1,
         },
         #[cfg(windows)]
         pseudoconsole: existing_terminal
             .as_deref()
-            .or_else(|| terminal_info.as_ref().map(TerminalCreateResult::term))
+            .or_else(|| terminal_info.as_ref().map(|info| info.terminal.get()))
             .and_then(Terminal::get_pseudoconsole),
 
         #[cfg(windows)]
@@ -1500,16 +1472,16 @@ fn spawn_maybe_sync(
     if let Some(info) = terminal_info.take() {
         terminal_js_value = info.js_value;
         #[cfg(unix)]
-        info.term().mark_inline_spawned();
+        info.terminal.mark_inline_spawned();
         #[cfg(windows)]
         {
             // ConPTY has no slave fd; this just marks inline_spawned.
-            info.term().close_slave_fd();
+            info.terminal.close_slave_fd();
             // Release the ConDrv \Reference handle now that the child holds a
             // copy: conhost then exits on its own once the child disconnects
             // and the reader observes EOF without us having to tear ConPTY
             // down from on_process_exit.
-            info.term().release_pseudoconsole_reference();
+            info.terminal.release_pseudoconsole_reference();
         }
         subprocess.update_flags(|f| f.insert(Subprocess::Flags::OWNS_TERMINAL));
     }

@@ -1406,7 +1406,7 @@ impl BlobExt for Blob {
             // When no JS overrides were supplied, hand the store's *base*
             // credentials to the upload (`upload_stream` consumes an
             // `RefPtr` by value, so the else-arm heap-dupes from the
-            // store's `Arc` instead of from the `aws_options` clone).
+            // store's `Rc` instead of from the `aws_options` clone).
             return crate::webcore::__s3_client::upload_stream(
                 if extra_options.is_some() {
                     aws_options.credentials.dupe()
@@ -2439,12 +2439,12 @@ impl BlobExt for Blob {
                 if let Ok(result) =
                     crate::allocators::linux_mem_fd_allocator::LinuxMemFdAllocator::create(bytes_)
                 {
-                    let store = RefPtr::from(Store::new(Store {
+                    let store = RefPtr::new(Store {
                         data: store::Data::Bytes(result),
                         mime_type: bun_http_types::MimeType::NONE,
                         ref_count: bun_ptr::ThreadSafeRefCount::init(),
                         is_all_ascii: None,
-                    }));
+                    });
                     let blob = Blob::init_with_store(store, global_this);
                     if was_string && blob.content_type_slice().is_empty() {
                         blob.content_type
@@ -2465,10 +2465,6 @@ impl BlobExt for Blob {
     fn create(bytes_: &[u8], global_this: &JSGlobalObject, was_string: bool) -> Blob {
         Self::try_create(bytes_, global_this, was_string).expect("oom")
     }
-
-    // non-generic `init_with_store(RefPtr<Store>, ...)` / `init_empty` removed —
-    // duplicates of the generic `init_with_store<S: Into<RefPtr<Store>>>` / `init_empty` below
-    // (E0592). All `RefPtr<Store>` callers resolve to the generic via the reflexive `Into` impl.
 
     // Transferring doesn't change the reference count
     // It is a move
@@ -5575,14 +5571,14 @@ pub(crate) fn jsdom_file_construct(
             }
         } else if !name_value_str.is_empty() {
             // not store but we have a name so we need a store
-            blob.store.set(Some(RefPtr::from(Store::new(Store {
+            blob.store.set(Some(RefPtr::new(Store {
                 data: store::Data::Bytes(store::Bytes::init_empty_with_name(
                     name_value_str.to_owned_slice().into_boxed_slice(),
                 )),
                 ref_count: bun_ptr::ThreadSafeRefCount::init(),
                 mime_type: bun_http_types::MimeType::NONE,
                 is_all_ascii: None,
-            }))));
+            })));
         }
     }
 

@@ -1,12 +1,13 @@
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsClass as _, JsResult};
 use bun_core::String as BunString;
+use bun_ptr::RefPtr;
 
-use crate::test_runner::bun_test::{group_begin, BunTest, RefDataPtr};
+use crate::test_runner::bun_test::{group_begin, BunTest, RefData};
 
 #[bun_jsc::JsClass(no_construct, no_constructor)] // codegen wires to_js / from_js
 pub struct DoneCallback {
     /// Some = not called yet. None = done already called, no-op.
-    pub(crate) r#ref: Option<RefDataPtr>,
+    pub(crate) r#ref: Option<RefPtr<RefData>>,
     pub(crate) called: bool, // = false
 }
 

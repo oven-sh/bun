@@ -356,14 +356,6 @@ pub fn derive_cell_ref_counted(input: TokenStream) -> TokenStream {
                 // SAFETY: caller contract — `this` is live. Raw field projection.
                 unsafe { &*::core::ptr::addr_of!((*this).#field) }.get() == 1
             }
-            #[inline]
-            unsafe fn rc_assert_no_refs(this: *const Self) {
-                debug_assert_eq!(
-                    // SAFETY: caller contract — `this` is live. Raw field projection.
-                    unsafe { &*::core::ptr::addr_of!((*this).#field) }.get(),
-                    0,
-                );
-            }
         }
         // Inherent forwarders so callers don't need the trait in scope.
         impl #impl_g #name #ty_g #where_g {
@@ -451,14 +443,6 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
                 unsafe {
                     (*<Self as ::bun_ptr::ThreadSafeRefCounted>::get_ref_count(this.cast_mut()))
                         .has_one_ref()
-                }
-            }
-            #[inline]
-            unsafe fn rc_assert_no_refs(this: *const Self) {
-                // SAFETY: caller contract — `this` points to a live Self.
-                unsafe {
-                    (*<Self as ::bun_ptr::ThreadSafeRefCounted>::get_ref_count(this.cast_mut()))
-                        .assert_no_refs()
                 }
             }
             #[inline]

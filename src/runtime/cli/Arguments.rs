@@ -837,7 +837,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     let runs_workspace_scripts =
         !ctx.filters.is_empty() || ctx.workspaces || ctx.parallel || ctx.sequential;
     let cwd: &[u8] = if cmd.starts_without_cwd() && !runs_workspace_scripts {
-        bun_core::cwd::init_or_exe_dir()
+        bun_core::cwd::get()
     } else {
         bun_core::cwd::init()?
     };

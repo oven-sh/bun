@@ -754,7 +754,7 @@ describe.concurrent("bun-install", () => {
   // secret ships in the request path, where proxies and logs can see it.
   describe("credentials embedded in the registry URL", () => {
     // Returns the Authorization header and the request path the registry saw.
-    async function probeEmbedded(registryPath: string, authLines: (host: string) => string) {
+    async function probeEmbedded(registryPath: string, authLines: (host: string) => string, userinfo = "") {
       const seen: Array<{ path: string; auth: string | null }> = [];
       await using registry = Bun.serve({
         port: 0,
@@ -766,7 +766,7 @@ describe.concurrent("bun-install", () => {
       });
       const host = `127.0.0.1:${registry.port}`;
       using dir = tempDir("npmrc-embedded-auth", {
-        ".npmrc": `@myorg:registry=http://${host}${registryPath}\n${authLines(host)}\n`,
+        ".npmrc": `@myorg:registry=http://${userinfo}${host}${registryPath}\n${authLines(host)}\n`,
         "package.json": JSON.stringify({ name: "probe", version: "0.0.0", dependencies: { "@myorg/pkg": "1.0.0" } }),
         "home/.gitkeep": "",
       });
@@ -791,6 +791,13 @@ describe.concurrent("bun-install", () => {
     it("strips an embedded _authToken from the path and uses it when .npmrc has none", async () => {
       const seen = await probeEmbedded("/api/:_authToken=EMBEDDED", () => "");
       expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer EMBEDDED" });
+    });
+
+    // main only stripped the marker while looking for a credential to adopt; with
+    // userinfo already in the URL it skipped the scan and the token shipped in the path.
+    it("strips an embedded _authToken from the path when the URL also carries userinfo", async () => {
+      const seen = await probeEmbedded("/api/:_authToken=EMBEDDED", () => "", "u:p@");
+      expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: `Basic ${btoa("u:p")}` });
     });
 
     // A bare `:` belongs to the path. Only `name=value` segments naming a credential

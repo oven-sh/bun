@@ -15,8 +15,9 @@
  * Lifetime rule: an Http2Response* handed to a route handler stays valid
  * until its onAborted fires. Streams retire (both directions closed or reset)
  * into a per-connection pendingFree list and are only deleted from
- * loop-driven frames — socket event epilogues and the loop pre/post hooks —
- * never from inside an API call, so a caller's own pointer can't die under it. */
+ * loop-driven frames — socket event epilogues and the embedder's deferred
+ * drain pass (scheduleDrain -> drain()) — never from inside an API call, so a
+ * caller's own pointer can't die under it. */
 
 #include "libusockets.h"
 #include "bun-usockets/src/internal/internal.h"

@@ -982,15 +982,6 @@ extern "C" fn napi_get_prototype(
     env.ok()
 }
 
-// TODO: bind JSC::ownKeys
-// pub extern "C" fn napi_get_property_names(env: napi_env, object: napi_value, result: *mut napi_value) -> napi_status {
-//     log("napi_get_property_names");
-//     if !object.is_object() {
-//         return .object_expected;
-//     }
-//     result.* =
-// }
-
 unsafe extern "C" {
     pub(super) fn napi_set_element(
         env: napi_env,

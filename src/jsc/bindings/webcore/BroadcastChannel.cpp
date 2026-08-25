@@ -40,7 +40,6 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(BroadcastChannel);
 BroadcastChannel::BroadcastChannel(ScriptExecutionContext& context, const String& name)
     : ActiveDOMObject(&context)
     , m_name(name.isolatedCopy())
-    , m_contextId(context.identifier())
 {
     EventTarget::initializeWeakPtrFactory();
     BunBroadcastChannelRegistry::singleton().subscribe(m_name, context, *this);

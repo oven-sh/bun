@@ -106,7 +106,6 @@ private:
     };
 
     const String m_name;
-    const ScriptExecutionContextIdentifier m_contextId;
 
     std::atomic<uint64_t> m_state { 0 };
 

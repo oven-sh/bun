@@ -72,13 +72,6 @@ export const tart = {
    */
 
   /**
-   * @returns {Promise<TartVm[]>}
-   */
-  async listVms() {
-    return this.spawn(["list"], { json: true });
-  },
-
-  /**
    * @param {string} name
    * @returns {Promise<TartVm | undefined>}
    */

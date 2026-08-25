@@ -43,16 +43,13 @@
 // single JSC::SourceProvider. Passing start/end positions to each function's
 // JSC::SourceCode. JSC does this, but WebCore does not seem to as of writing.
 import assert from "assert";
-import { readdirSync, rmSync } from "fs";
+import { readdirSync } from "fs";
 import path from "path";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeDTS } from "./generate-js2native";
 import { cap, checkAscii, low, writeIfNotChanged } from "./helpers";
 import { applyGlobalReplacements, define } from "./replacements";
-
-const PARALLEL = false;
-const KEEP_TMP = true;
 
 if (import.meta.main) {
   throw new Error("This script is not meant to be run directly");
@@ -388,13 +385,8 @@ export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuilt
     .filter(x => x.endsWith(".ts") && !x.endsWith(".d.ts"))
     .sort();
 
-  // Bun seems to crash if this is parallelized, :(
-  if (PARALLEL) {
-    await Promise.all(filesToProcess.map(processFunctionFile));
-  } else {
-    for (const x of filesToProcess) {
-      await processFunctionFile(x);
-    }
+  for (const x of filesToProcess) {
+    await processFunctionFile(x);
   }
 
   let combinedSourceCode = "";
@@ -856,10 +848,6 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     (acc, { functions }) => acc + functions.reduce((acc, fn) => acc + fn.source.length, 0),
     0,
   );
-
-  if (!KEEP_TMP) {
-    await rmSync(TMP_DIR, { recursive: true });
-  }
 
   globalThis.internalFunctionJSSize = totalJSSize;
   globalThis.internalFunctionCount = files.reduce((acc, { functions }) => acc + functions.length, 0);

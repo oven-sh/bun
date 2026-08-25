@@ -152,14 +152,6 @@ export const docker = {
   },
 
   /**
-   * @returns {Promise<DockerContainer[]>}
-   */
-  async listContainers() {
-    const containers = await this.spawn($`container ls --all`, { json: true });
-    return containers || [];
-  },
-
-  /**
    * @typedef {Object} DockerRunOptions
    * @property {string[]} [command]
    * @property {DockerPlatform} [platform]

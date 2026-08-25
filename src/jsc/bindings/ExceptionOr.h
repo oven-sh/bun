@@ -51,9 +51,6 @@ public:
 
 private:
     Expected<ReturnType, Exception> m_value;
-#if ASSERT_ENABLED
-    bool m_wasReleased { false };
-#endif
 };
 
 template<typename T> class ExceptionOr<T&> {

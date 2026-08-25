@@ -3816,7 +3816,7 @@ impl VirtualMachine {
         }
 
         if self.hot_reload_deferred {
-            self.reload(None);
+            self.reload();
         }
         self.add_main_to_watcher_if_needed();
     }
@@ -3878,7 +3878,7 @@ impl VirtualMachine {
     }
 
     /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.
-    pub(crate) fn reload(&mut self, _: Option<&mut crate::hot_reloader::HotReloadTask>) {
+    pub(crate) fn reload(&mut self) {
         if self.hot_reload == HotReload::Watch {
             // Watch reload replaces the process: never defer on a pending
             // entry promise (node restarts regardless of child state), and

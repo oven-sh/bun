@@ -1,5 +1,3 @@
-const isLocal = location.host === "localhost" || location.host === "127.0.0.1";
-
 let wait =
   typeof document !== "undefined"
     ? () =>
@@ -23,13 +21,10 @@ let wait =
           window.addEventListener("focus", onTimeout);
 
           if (document.hasFocus()) {
-            timer = setTimeout(
-              () => {
-                timer = null;
-                onTimeout();
-              },
-              isLocal ? 2_500 : 2_500,
-            );
+            timer = setTimeout(() => {
+              timer = null;
+              onTimeout();
+            }, 2_500);
 
             window.addEventListener("blur", onBlur);
           }

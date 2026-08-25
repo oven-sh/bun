@@ -53,6 +53,20 @@ function commandToString(command: SQLCommand, lastToken?: string): string {
   }
 }
 
+function affectedRowsForCommand(commandString: string, count: number | bigint): number | bigint {
+  switch (commandString) {
+    case "INSERT":
+    case "UPDATE":
+    case "DELETE":
+    case "REPLACE":
+      return count;
+    default:
+      // Keep non-write statements at 0 instead of sqlite3_changes(), which
+      // still reports the previous write after e.g. CREATE TABLE.
+      return 0;
+  }
+}
+
 /**
  * Parse the SQL query and return the command and the last token
  * @param query - The SQL query to parse
@@ -260,8 +274,11 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
 
         const sqlResult = $isArray(result) ? new SQLResultArray(result) : new SQLResultArray([result]);
 
+        const count = $isArray(result) ? result.length : 1;
         sqlResult.command = commandToString(command, parsedInfo.lastToken);
-        sqlResult.count = $isArray(result) ? result.length : 1;
+        sqlResult.count = count;
+        // A write with RETURNING emits one row per affected row.
+        sqlResult.affectedRows = affectedRowsForCommand(sqlResult.command, count);
 
         query.resolve(sqlResult);
       } else {
@@ -269,9 +286,11 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         const changes = db.run.$call(db, sql, values);
         const sqlResult = new SQLResultArray();
 
-        sqlResult.command = commandToString(command, parsedInfo.lastToken);
+        const commandString = commandToString(command, parsedInfo.lastToken);
+        sqlResult.command = commandString;
         sqlResult.count = changes.changes;
         sqlResult.lastInsertRowid = changes.lastInsertRowid;
+        sqlResult.affectedRows = affectedRowsForCommand(commandString, changes.changes);
 
         query.resolve(sqlResult);
       }

@@ -872,6 +872,31 @@ describe("Query Execution", () => {
     expect(result.command).toBe("DELETE");
   });
 
+  test("affectedRows reports rows changed by writes", async () => {
+    const result = await sql`CREATE TABLE gadgets (id INTEGER PRIMARY KEY, price REAL)`;
+    expect(result.affectedRows).toBe(0);
+
+    const inserted = await sql`INSERT INTO gadgets VALUES (1, 10.0), (2, 20.0), (3, 30.0)`;
+    expect(inserted.affectedRows).toBe(3);
+
+    const updated = await sql`UPDATE gadgets SET price = price * 1.1 WHERE price < 25`;
+    expect(updated.affectedRows).toBe(2);
+
+    const returning = await sql`UPDATE gadgets SET price = 0 WHERE id IN (1, 2) RETURNING id`;
+    expect(returning).toHaveLength(2);
+    expect(returning.affectedRows).toBe(2);
+
+    const selected = await sql`SELECT * FROM gadgets`;
+    expect(selected.affectedRows).toBe(0);
+
+    const deleted = await sql`DELETE FROM gadgets WHERE id > 1`;
+    expect(deleted.affectedRows).toBe(2);
+
+    // CREATE does not inherit the previous write's sqlite3_changes()
+    const create = await sql`CREATE TABLE gadgets2 (id INTEGER)`;
+    expect(create.affectedRows).toBe(0);
+  });
+
   test("SELECT with various clauses", async () => {
     await sql`CREATE TABLE scores (id INTEGER, player TEXT, score INTEGER, team TEXT)`;
     await sql`INSERT INTO scores VALUES

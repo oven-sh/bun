@@ -449,10 +449,41 @@ declare module "bun" {
     }
 
     /**
-     * A pending SQL query. Extends `Promise`, so it can be awaited, and adds
-     * methods to control how it runs.
+     * Metadata properties present on the array a query resolves to. They are
+     * non-enumerable, so `console.log` does not print them.
      */
-    interface Query<T> extends Promise<T> {
+    interface ResultMetadata {
+      /**
+       * The number of rows in the result set. On PostgreSQL and SQLite, a
+       * write without `RETURNING` reports the number of affected rows here
+       * instead. On MySQL it is always the number of rows returned, so it is
+       * `0` for a plain `INSERT`, `UPDATE`, or `DELETE`.
+       */
+      count: number | null;
+      /**
+       * The SQL command that produced this result, such as `"SELECT"` or
+       * `"UPDATE"`. `null` on MySQL, whose protocol does not report it.
+       */
+      command: string | null;
+      /**
+       * The number of rows an `INSERT`, `UPDATE`, or `DELETE` changed. `0`
+       * for statements that do not write. This is the portable way to read
+       * the affected-row count on every adapter.
+       */
+      affectedRows: number | bigint | null;
+      /**
+       * The row id of the last inserted row on MySQL and SQLite. `null` on
+       * PostgreSQL; use `RETURNING` there.
+       */
+      lastInsertRowid: number | bigint | null;
+    }
+
+    /**
+     * A pending SQL query. Extends `Promise`, so it can be awaited, and adds
+     * methods to control how it runs. The resolved array also carries
+     * {@link ResultMetadata}.
+     */
+    interface Query<T> extends Promise<T & ResultMetadata> {
       /**
        * True while the query is executing
        */

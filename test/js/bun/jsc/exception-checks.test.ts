@@ -7,10 +7,25 @@ import { bunEnv, bunExe } from "harness";
 // process at that point, so the assertion is that the snippet completes and
 // prints its marker. On a release build the validator is compiled out and the
 // test only checks the behavior.
+// A string built at run time is a rope; reading it resolves the rope under a
+// ThrowScope, which is what makes the snippets below observable to the
+// validator.
 const snippets: Record<string, { code: string; stdout: string }> = {
   "Bun.deepEquals with one argument": {
     code: `try { Bun.deepEquals(1); } catch (e) { console.log(e.constructor.name + ": " + e.message); }`,
     stdout: "TypeError: Expected 2 values to compare",
+  },
+  "process.umask with a rope string": {
+    code: `const a = "0"; const b = "22"; const old = process.umask(a + b); process.umask(old); console.log(typeof old);`,
+    stdout: "number",
+  },
+  "process.exitCode assigned a rope string": {
+    code: `const a = "1"; const b = "0"; process.exitCode = a + b; console.log(process.exitCode); process.exitCode = 0;`,
+    stdout: "10",
+  },
+  "process.kill with an unknown rope signal name": {
+    code: `const a = "SIG"; const b = "BOGUS"; try { process.kill(process.pid, a + b); } catch (e) { console.log(e.code); }`,
+    stdout: "ERR_UNKNOWN_SIGNAL",
   },
 };
 

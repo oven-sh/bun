@@ -60,7 +60,8 @@ const rsFiles: string[] = [];
 
 type Decl = { name: string; file: string; line: number; arity: number; hasGlobal: boolean; ret: string };
 const decls = new Map<string, Decl>();
-const declRe = /^\s*(?:pub(?:\([^)]*\))?\s+)?(?:unsafe\s+|safe\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^;{]*?)\)\s*(?:->\s*([^;{]+?))?\s*;/gm;
+const declRe =
+  /^\s*(?:pub(?:\([^)]*\))?\s+)?(?:unsafe\s+|safe\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^;{]*?)\)\s*(?:->\s*([^;{]+?))?\s*;/gm;
 const sources = new Map<string, string>();
 for (const f of rsFiles) {
   const text = readFileSync(f, "utf8");
@@ -86,12 +87,20 @@ for (const f of rsFiles) {
       const [, name, params, ret] = d;
       const arity = params.trim() ? params.split(",").filter(p => p.trim()).length : 0;
       const line = text.slice(0, m.index + d.index).split("\n").length;
-      decls.set(name, { name, file: f, line, arity, hasGlobal: /JSGlobalObject/.test(params), ret: (ret ?? "()").trim() });
+      decls.set(name, {
+        name,
+        file: f,
+        line,
+        arity,
+        hasGlobal: /JSGlobalObject/.test(params),
+        ret: (ret ?? "()").trim(),
+      });
     }
   }
 }
 
-const wrappers = /call_zero_is_throw|call_check_slow|from_js_host_call|call_false_is_throw|call_null_is_throw|top_scope!|validation_scope!|host_fn_result|return_if_exception|assert_exception_presence_matches/;
+const wrappers =
+  /call_zero_is_throw|call_check_slow|from_js_host_call|call_false_is_throw|call_null_is_throw|top_scope!|validation_scope!|host_fn_result|return_if_exception|assert_exception_presence_matches/;
 
 let reported = 0;
 for (const d of [...decls.values()].sort((a, b) => a.name.localeCompare(b.name))) {
@@ -108,10 +117,18 @@ for (const d of [...decls.values()].sort((a, b) => a.name.localeCompare(b.name))
       // Skip the declaration itself and re-exports.
       const lineStart = text.lastIndexOf("\n", m.index) + 1;
       const lineText = text.slice(lineStart, text.indexOf("\n", m.index));
-      if (/\bfn\s+\w+\s*\($/.test(text.slice(lineStart, m.index + m[0].length)) || /^\s*(pub\s+)?(unsafe\s+|safe\s+)?fn\b/.test(lineText)) continue;
+      if (
+        /\bfn\s+\w+\s*\($/.test(text.slice(lineStart, m.index + m[0].length)) ||
+        /^\s*(pub\s+)?(unsafe\s+|safe\s+)?fn\b/.test(lineText)
+      )
+        continue;
       if (/^\s*\/\//.test(lineText)) continue;
       const after = text.slice(m.index, m.index + 400);
-      if (wrappers.test(before.slice(-400)) || /return_if_exception|assert_exception_presence_matches|\.exception\(\)/.test(after)) continue;
+      if (
+        wrappers.test(before.slice(-400)) ||
+        /return_if_exception|assert_exception_presence_matches|\.exception\(\)/.test(after)
+      )
+        continue;
       const line = text.slice(0, m.index).split("\n").length;
       unwrapped.push(`${relative(repo, f)}:${line}: ${lineText.trim().slice(0, 140)}`);
     }

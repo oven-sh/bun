@@ -26,12 +26,10 @@ impl Default for ObjectURLRegistry {
     }
 }
 
-/// Holds no VM-affine state: `blob.global_this` is null and `blob.name` is
-/// `DEAD`; the name lives in `name` as bytes and each resolving VM gets its
-/// own impl.
+/// Holds no VM-affine state: `blob.global_this` is null and `blob.name` is an
+/// isolated copy that is never handed out; each resolving VM gets its own copy.
 pub struct Entry {
     blob: Blob,
-    name: Box<[u8]>,
 }
 
 const _: fn() = || {
@@ -43,13 +41,8 @@ impl Entry {
     pub(crate) fn init(blob: &Blob) -> Box<Entry> {
         let blob = blob.dupe_with_content_type(true);
         blob.global_this.set(core::ptr::null());
-        let name = blob
-            .name
-            .replace(bun_core::String::DEAD)
-            .into_utf8()
-            .into_vec()
-            .into_boxed_slice();
-        Box::new(Entry { blob, name })
+        blob.name.with_mut(|name| name.to_thread_safe());
+        Box::new(Entry { blob })
     }
 }
 
@@ -84,9 +77,7 @@ impl ObjectURLRegistry {
         let entry = map.get(&uuid.bytes)?;
         let blob = entry.blob.dupe_with_content_type(true);
         blob.global_this.set(global_object);
-        if !entry.name.is_empty() {
-            blob.name.set(bun_core::String::clone_utf8(&entry.name));
-        }
+        blob.name.with_mut(|name| name.to_thread_safe());
         Some(blob)
     }
 

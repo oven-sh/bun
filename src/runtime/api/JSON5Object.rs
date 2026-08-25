@@ -1,6 +1,6 @@
 use bun_collections::HashMap;
 use bun_core::StackCheck;
-use bun_core::String as BunString;
+use bun_core::StringView;
 use bun_js_parser::lexer;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, wtf};
 use bun_parsers::json5;
@@ -193,7 +193,7 @@ impl Stringifier {
 
         if unwrapped.is_string() {
             let str = unwrapped.to_bun_string(global)?;
-            self.append_quoted_string(&str);
+            self.append_quoted_string(str.as_view());
             return Ok(());
         }
 
@@ -304,7 +304,7 @@ impl Stringifier {
                         self.builder.append_lchar(b',');
                     }
                     first = false;
-                    self.append_key(&prop_name);
+                    self.append_key(prop_name);
                     self.builder.append_lchar(b':');
                     self.stringify_value(global, value)?;
                 }
@@ -321,7 +321,7 @@ impl Stringifier {
                     }
                     first = false;
                     self.newline();
-                    self.append_key(&prop_name);
+                    self.append_key(prop_name);
                     self.builder.append_latin1(b": ");
                     self.stringify_value(global, value)?;
                 }
@@ -338,7 +338,7 @@ impl Stringifier {
         Ok(())
     }
 
-    fn append_key(&mut self, name: &BunString) {
+    fn append_key(&mut self, name: StringView<'_>) {
         let is_identifier = 'is_identifier: {
             if name.length() == 0 {
                 break 'is_identifier false;
@@ -361,7 +361,7 @@ impl Stringifier {
         }
     }
 
-    fn append_quoted_string(&mut self, str: &BunString) {
+    fn append_quoted_string(&mut self, str: StringView<'_>) {
         self.builder.append_lchar(b'\'');
         for i in 0..str.length() {
             let c = str.char_at(i);
@@ -404,7 +404,7 @@ impl Stringifier {
                 self.builder.append_lchar(b'\n');
                 let clamped = space_str.trunc(10);
                 for _ in 0..self.indent {
-                    self.builder.append_string(&clamped);
+                    self.builder.append_string(clamped);
                 }
             }
         }

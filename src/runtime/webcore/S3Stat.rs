@@ -24,7 +24,7 @@ impl S3Stat {
         global: &JSGlobalObject,
     ) -> JsResult<Box<Self>> {
         let last_modified =
-            bun_string_jsc::parse_date(&BunString::from_bytes(last_modified), global)?;
+            bun_string_jsc::parse_date(bun_core::StringView::from_bytes(last_modified), global)?;
 
         Ok(Box::new(S3Stat {
             size,

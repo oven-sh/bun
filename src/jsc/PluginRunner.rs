@@ -57,19 +57,19 @@ impl PluginResolver for PluginRunner {
 
         let namespace_slice = Self::extract_namespace(specifier);
         let namespace = if !namespace_slice.is_empty() && namespace_slice != b"file" {
-            BunString::from_bytes(namespace_slice)
+            bun_core::StringView::from_bytes(namespace_slice)
         } else {
-            BunString::EMPTY
+            bun_core::StringView::EMPTY
         };
         let Some(on_resolve_plugin) = global
             .run_on_resolve_plugins(
-                &namespace,
-                &BunString::from_bytes(specifier).substring(if namespace.length() > 0 {
+                namespace,
+                bun_core::StringView::from_bytes(specifier).substring(if namespace.length() > 0 {
                     namespace.length() + 1
                 } else {
                     0
                 }),
-                &BunString::from_bytes(importer),
+                bun_core::StringView::from_bytes(importer),
                 target,
             )
             .map_err(js_err)?

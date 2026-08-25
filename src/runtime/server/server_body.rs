@@ -1007,11 +1007,11 @@ impl ServePlugins {
         let plugin = JSBundler::Plugin::create(global, bun_jsc::BunPluginTarget::Browser);
         // SAFETY: `Plugin::create` returns a freshly-boxed `*mut Plugin` (single owner).
         let plugin: Box<JSBundler::Plugin> = unsafe { bun_core::heap::take(plugin) };
-        let mut bunstring_array: Vec<BunString> = Vec::with_capacity(plugin_list.len());
-        for raw_plugin in &plugin_list {
-            bunstring_array.push(BunString::from_bytes(raw_plugin));
-        }
-        let plugin_js_array = bun_string_jsc::to_js_array(global, &bunstring_array)?;
+        let bunstring_array: Vec<bun_core::StringView<'_>> = plugin_list
+            .iter()
+            .map(|raw_plugin| bun_core::StringView::from_bytes(raw_plugin))
+            .collect();
+        let plugin_js_array = bun_string_jsc::views_to_js_array(global, &bunstring_array)?;
         let bunfig_folder_bunstr = bun_string_jsc::create_utf8_for_js(global, bunfig_folder)?;
 
         self.state = ServePluginsState::Pending {
@@ -2576,7 +2576,7 @@ where
         let url = self
             .get_url_as_string()
             .map_err(|_| global.throw_out_of_memory())?;
-        bun_string_jsc::to_jsdomurl(&url, global)
+        bun_string_jsc::to_jsdomurl(url.as_view(), global)
     }
 
     #[bun_jsc::host_fn(getter)]

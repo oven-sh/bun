@@ -561,7 +561,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // `ZigURL::from_string` returns `OwnedURL` (owns href buffer); we
     // immediately move that buffer into `url_proxy_buffer` and re-parse `url` to
     // borrow it.
-    let owned_url = match ZigURL::from_string(&url_str) {
+    let owned_url = match ZigURL::from_string(url_str.as_view()) {
         Ok(u) => u,
         Err(_) => {
             let err = ctx.to_type_error(
@@ -1387,7 +1387,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             };
 
-            url_string = bun_url::file_url_from_string(&BunString::borrow_utf8(temp_file_path));
+            url_string =
+                bun_url::file_url_from_string(bun_core::StringView::borrow_utf8(temp_file_path));
 
             // `find_or_create_file_from_path` is typed against the
             // `crate::webcore::node_types` stub (until it's swapped to a

@@ -3,14 +3,14 @@
 //! Referenced from `PathInlines.h`.
 
 use crate::JSGlobalObject;
-use bun_core::String as BunString;
+use bun_core::{String as BunString, StringView};
 use bun_paths::resolve_path;
 
 /// The C++ caller `transferToWTFString()`s the result.
 #[unsafe(no_mangle)]
 extern "C" fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
     global_object: &JSGlobalObject,
-    input: &BunString,
+    input: &StringView<'_>,
 ) -> BunString {
     let str = input.to_utf8();
 

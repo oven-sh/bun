@@ -219,7 +219,7 @@ impl StaticRoute {
                 let text_mime = bun_http_types::MimeType::TEXT;
                 response.get_or_create_headers(global_this)?.put_default(
                     HTTPHeaderName::ContentType,
-                    &bun_core::String::ascii(text_mime.value.as_ref()),
+                    bun_core::StringView::borrow_latin1(text_mime.value.as_ref()),
                     global_this,
                 )?;
             }

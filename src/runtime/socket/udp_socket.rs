@@ -254,7 +254,7 @@ extern "C" fn on_data(
                 BunString::create_format(format_args!("{}%{}", bstr::BStr::new(span), id))
             }
         } else {
-            BunString::from_bytes(span)
+            BunString::clone_utf8(span)
         };
 
         let loop_ = VirtualMachine::get().event_loop_mut();

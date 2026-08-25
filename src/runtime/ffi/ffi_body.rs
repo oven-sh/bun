@@ -1002,7 +1002,7 @@ impl FFI {
         let mut compile_c = CompileC::default();
 
         let symbols_object: JSValue = object
-            .get_own(global_this, &bun_core::String::borrow_utf8(b"symbols"))?
+            .get_own(global_this, bun_core::StringView::static_("symbols"))?
             .unwrap_or(JSValue::UNDEFINED);
         if symbols_object.is_empty() || !symbols_object.is_object() {
             return Err(global_this.throw_invalid_argument_type_value(
@@ -1030,7 +1030,7 @@ impl FFI {
         }
 
         if let Some(library_value) =
-            object.get_own(global_this, &bun_core::String::borrow_utf8(b"library"))?
+            object.get_own(global_this, bun_core::StringView::static_("library"))?
         {
             compile_c.libraries = StringArray::from_js(global_this, library_value, "library")?;
         }
@@ -1107,7 +1107,7 @@ impl FFI {
         }
 
         if let Some(source_value) =
-            object.get_own(global_this, &bun_core::String::borrow_utf8(b"source"))?
+            object.get_own(global_this, bun_core::StringView::static_("source"))?
         {
             if source_value.is_array() {
                 compile_c.source = Source::Files(Vec::new());
@@ -1392,7 +1392,7 @@ fn invalid_options_arg(global: &JSGlobalObject) -> JSValue {
 impl FFI {
     pub(crate) fn open(
         global: &JSGlobalObject,
-        name_str: &bun_core::String,
+        name_str: bun_core::StringView<'_>,
         object_value: JSValue,
     ) -> JsResult<JSValue> {
         jsc::mark_binding();
@@ -1696,7 +1696,7 @@ pub(super) fn generate_symbol_for_function(
 
     let mut abi_types: Vec<ABIType> = Vec::new();
 
-    if let Some(args) = value.get_own(global, &bun_core::String::borrow_utf8(b"args"))? {
+    if let Some(args) = value.get_own(global, bun_core::StringView::static_("args"))? {
         if args.is_empty_or_undefined_or_null() || !args.js_type().is_array() {
             return Ok(Some(global.create_error_instance(format_args!(
                 "Expected an object with \"args\" as an array"

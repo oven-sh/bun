@@ -494,19 +494,7 @@ impl Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // We want to reuse the code from SystemError for formatting.
-        // But, we do not want to call String.createUTF8 on the path/dest strings
-        // because we're intending to pass them to writer.print()
-        // which will convert them back into UTF*.
-        let mut that = self.without_path().to_shell_system_error();
-        debug_assert!(that.path.tag() != bun_core::Tag::WTFStringImpl);
-        debug_assert!(that.dest.tag() != bun_core::Tag::WTFStringImpl);
-        that.path = BunString::borrow_utf8(&self.path);
-        that.dest = BunString::borrow_utf8(&self.dest);
-        debug_assert!(that.path.tag() != bun_core::Tag::WTFStringImpl);
-        debug_assert!(that.dest.tag() != bun_core::Tag::WTFStringImpl);
-
-        fmt::Display::fmt(&that, f)
+        fmt::Display::fmt(&self.to_shell_system_error(), f)
     }
 }
 

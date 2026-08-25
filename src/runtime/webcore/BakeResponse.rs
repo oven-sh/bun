@@ -195,7 +195,7 @@ fn construct_render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
             status_code: 200,
             headers: {
                 let mut headers = HeadersRef::create_empty();
-                headers.put(HTTPHeaderName::Location, &path_str, global_this)?;
+                headers.put(HTTPHeaderName::Location, path_str.as_view(), global_this)?;
                 Some(headers)
             },
             ..Default::default()

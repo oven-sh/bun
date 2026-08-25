@@ -769,7 +769,7 @@ unsafe extern "C" {
     // preconditions remain → `safe fn`.
     safe fn JSFunction__createFromZig(
         global: &JSGlobalObject,
-        fn_name: &bun_core::String,
+        fn_name: &bun_core::StringView<'_>,
         implementation: JSHostFn,
         arg_count: u32,
         implementation_visibility: ImplementationVisibility,
@@ -811,7 +811,7 @@ impl JSFunction {
         opts: CreateJSFunctionOptions,
     ) -> JSValue {
         let implementation: JSHostFn = implementation.into_js_host_fn();
-        let fn_name = bun_core::String::from_bytes(name.as_bytes());
+        let fn_name = bun_core::StringView::from_bytes(name.as_bytes());
         JSFunction__createFromZig(
             global,
             &fn_name,

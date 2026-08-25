@@ -337,7 +337,7 @@ impl Lookup {
             ));
         }
 
-        Some(bun_core::String::borrow_utf8(name))
+        Some(bun_core::String::clone_utf8(name))
     }
 
     /// Only valid if `lookup.source_map.is_external()`

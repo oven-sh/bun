@@ -70,18 +70,18 @@ impl JSStringView<'_> {
     }
 }
 
-impl core::ops::Deref for JSStringView<'_> {
-    type Target = bun_core::String;
+impl<'a> core::ops::Deref for JSStringView<'a> {
+    type Target = StringView<'a>;
 
     #[inline]
-    fn deref(&self) -> &bun_core::String {
+    fn deref(&self) -> &StringView<'a> {
         &self.view
     }
 }
 
 impl core::fmt::Display for JSStringView<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Display::fmt(&*self.view, f)
+        core::fmt::Display::fmt(&self.view, f)
     }
 }
 

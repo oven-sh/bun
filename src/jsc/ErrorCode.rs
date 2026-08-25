@@ -79,7 +79,7 @@ impl ErrorCode {
         // handles (see `GlobalObjectRef` doc); `opaque_ref` is the safe
         // ZST-handle deref proof (panics on null).
         let global = JSGlobalObject::opaque_ref(global.as_global_ptr().cast::<JSGlobalObject>());
-        Bun__createErrorWithCode(global, self, &message)
+        Bun__createErrorWithCode(global, self, &message.as_view())
     }
 
     /// `Error.throw(this, globalThis, fmt, args)` — `.fmt` then
@@ -111,7 +111,7 @@ unsafe extern "C" {
     safe fn Bun__createErrorWithCode(
         global: &JSGlobalObject,
         code: ErrorCode,
-        message: &bun_core::String,
+        message: &bun_core::StringView<'_>,
     ) -> JSValue;
 }
 

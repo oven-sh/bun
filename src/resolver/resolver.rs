@@ -574,7 +574,7 @@ pub struct Resolver<'a> {
     /// is overwritten while the resolution happens.
     ///
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
-    pub custom_dir_paths: Option<&'a [bun_core::String]>,
+    pub custom_dir_paths: Option<&'a [bun_core::StringView<'a>]>,
 }
 
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous

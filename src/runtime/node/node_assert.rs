@@ -1,5 +1,5 @@
-use bun_core::String as BunString;
 use bun_core::strings::EncodingNonAscii;
+use bun_core::{String as BunString, StringView};
 use bun_jsc::js_object::PojoFields;
 use bun_jsc::{FromAny, JSGlobalObject, JSObject, JSValue, JsError, JsResult, StringJsc};
 
@@ -17,8 +17,8 @@ use super::assert::myers_diff::{Diff, DiffKind, Line};
 /// - `actual` and `expected` are alive.
 pub(crate) fn myers_diff(
     global: &JSGlobalObject,
-    actual: &BunString,
-    expected: &BunString,
+    actual: StringView<'_>,
+    expected: StringView<'_>,
     output: &Output<'_>,
 ) -> JsResult<JSValue> {
     // Short circuit on empty strings. Note that, in release builds where
@@ -56,7 +56,7 @@ pub(crate) fn myers_diff(
     }
 
     let widen =
-        |s: &BunString| -> Vec<u16> { s.byte_slice().iter().map(|&b| u16::from(b)).collect() };
+        |s: StringView<'_>| -> Vec<u16> { s.byte_slice().iter().map(|&b| u16::from(b)).collect() };
     let actual_wide: Vec<u16>;
     let expected_wide: Vec<u16>;
     let a: &[u16] = if actual_is_16 {

@@ -288,7 +288,7 @@ impl Expect {
 
     pub(crate) fn throw_pretty_matcher_error(
         global_this: &JSGlobalObject,
-        custom_label: &bun_core::String,
+        custom_label: bun_core::StringView<'_>,
         matcher_name: impl fmt::Display,
         matcher_params: impl fmt::Display,
         flags: Flags,
@@ -427,7 +427,7 @@ impl Expect {
         #[allow(clippy::disallowed_methods)] // template is a runtime parameter
         let matcher_params = Output::pretty_fmt_rt(matcher_params_fmt, Output::enable_ansi_colors_stderr());
         Self::process_promise(
-            &self.custom_label,
+            self.custom_label.as_view(),
             self.flags.get(),
             global_this,
             value,
@@ -444,7 +444,7 @@ impl Expect {
     #[allow(clippy::too_many_arguments)]
     fn throw_promise_matcher_error(
         global_this: &JSGlobalObject,
-        custom_label: &bun_core::String,
+        custom_label: bun_core::StringView<'_>,
         matcher_name: impl fmt::Display,
         matcher_params: impl fmt::Display,
         flags: Flags,
@@ -475,7 +475,7 @@ impl Expect {
     /// If no flags, returns the original value
     /// If either flag is set, waits for the result, and returns either it as a JSValue, or null if the expectation failed (in which case if silent is false, also throws a js exception)
     pub(crate) fn process_promise(
-        custom_label: &bun_core::String,
+        custom_label: bun_core::StringView<'_>,
         flags: Flags,
         global_this: &JSGlobalObject,
         value: JSValue,
@@ -609,7 +609,7 @@ impl Expect {
         // (note that matcher_name/matcher_args are not used because silent=true)
         // SAFETY: value is a valid in/out-ptr provided by C++ caller
         let v = unsafe { *value };
-        match Self::process_promise(&bun_core::String::EMPTY, flags, global_this, v, "", "", true) {
+        match Self::process_promise(bun_core::StringView::EMPTY, flags, global_this, v, "", "", true) {
             Ok(new) => {
                 // SAFETY: value is a valid in/out-ptr provided by C++ caller
                 unsafe { *value = new };
@@ -1410,9 +1410,9 @@ impl Expect {
                     )
                 };
 
-                expect_proto.put_may_be_index(global_this, &matcher_name, wrapper_fn)?;
-                expect_constructor.put_may_be_index(global_this, &matcher_name, wrapper_fn)?;
-                expect_static_proto.put_may_be_index(global_this, &matcher_name, wrapper_fn)?;
+                expect_proto.put_may_be_index(global_this, matcher_name, wrapper_fn)?;
+                expect_constructor.put_may_be_index(global_this, matcher_name, wrapper_fn)?;
+                expect_static_proto.put_may_be_index(global_this, matcher_name, wrapper_fn)?;
             }
         }
 
@@ -1425,7 +1425,7 @@ impl Expect {
     #[cold]
     fn throw_invalid_matcher_error(
         global_this: &JSGlobalObject,
-        matcher_name: &bun_core::String,
+        matcher_name: bun_core::StringView<'_>,
         result: JSValue,
     ) -> JsError {
         let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
@@ -1453,7 +1453,7 @@ impl Expect {
     /// If silent=false, throws an exception in JS if the matcher result didn't result in a pass (or if the matcher result is invalid).
     pub(crate) fn execute_custom_matcher(
         global_this: &JSGlobalObject,
-        matcher_name: &bun_core::String,
+        matcher_name: bun_core::StringView<'_>,
         matcher_fn: JSValue,
         args: &[JSValue],
         flags: Flags,
@@ -1543,7 +1543,7 @@ impl Expect {
         };
         Err(Self::throw_pretty_matcher_error(
             global_this,
-            &bun_core::String::EMPTY,
+            bun_core::StringView::EMPTY,
             matcher_name,
             matcher_params,
             Flags::default(),
@@ -1599,7 +1599,7 @@ impl Expect {
             )));
         };
         value = Self::process_promise(
-            &expect.custom_label,
+            expect.custom_label.as_view(),
             expect.flags.get(),
             global_this,
             value,
@@ -1621,7 +1621,7 @@ impl Expect {
             matcher_args.push(*arg);
         }
 
-        let _ = Self::execute_custom_matcher(global_this, &matcher_name, matcher_fn, &matcher_args, expect.flags.get(), false)?;
+        let _ = Self::execute_custom_matcher(global_this, matcher_name.as_view(), matcher_fn, &matcher_args, expect.flags.get(), false)?;
 
         Ok(this_value)
     }
@@ -2612,7 +2612,7 @@ impl ExpectCustomAsymmetricMatcher {
             matcher_args.push(captured_args.get_index(global_this, i as u32)?);
         }
 
-        Expect::execute_custom_matcher(global_this, &matcher_name, matcher_fn, &matcher_args, this.flags, true)
+        Expect::execute_custom_matcher(global_this, matcher_name.as_view(), matcher_fn, &matcher_args, this.flags, true)
     }
 
     /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue
@@ -3204,7 +3204,7 @@ fn get_custom_matcher_fn(this_value: JSValue, global_this: &JSGlobalObject) -> O
 unsafe extern "C" {
     fn Bun__JSWrappingFunction__create(
         global_this: *const JSGlobalObject,
-        symbol_name: &bun_core::String,
+        symbol_name: &bun_core::StringView<'_>,
         // C++: `Bun::NativeFunctionPtr` — a bare `EncodedJSValue (*)(JSGlobalObject*, CallFrame*)`.
         // Rust's `JSHostFn` is already the pointer type, so no extra `*const`.
         function_pointer: bun_jsc::JSHostFn,

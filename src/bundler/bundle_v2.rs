@@ -709,7 +709,7 @@ pub mod bv2_impl {
             use crate::options_impl::TargetExt;
             use crate::parse_task::ParseTask;
             use bun_ast::ImportKind;
-            use bun_core::String as BunString;
+            use bun_core::{String as BunString, StringView};
             use bun_resolver::fs::PathResolverExt as _;
 
             // `Plugin = opaque {}` — backed by C++ `BunPlugin`. The bundler calls
@@ -727,8 +727,8 @@ pub mod bv2_impl {
                 #[link_name = "JSBundlerPlugin__anyMatches"]
                 safe fn JSBundlerPlugin__anyMatches(
                     this: &Plugin,
-                    namespace: &BunString,
-                    path: &BunString,
+                    namespace: &StringView<'_>,
+                    path: &StringView<'_>,
                     is_on_load: bool,
                 ) -> bool;
                 // `context` is an opaque cookie C++ round-trips back to a Rust
@@ -767,8 +767,8 @@ pub mod bv2_impl {
                 safe fn JSBundlerPlugin__callOnBeforeParsePlugins(
                     this: &Plugin,
                     ctx: *mut core::ffi::c_void,
-                    namespace: &BunString,
-                    path: &BunString,
+                    namespace: &StringView<'_>,
+                    path: &StringView<'_>,
                     args: *mut core::ffi::c_void,
                     result: *mut core::ffi::c_void,
                     should_continue_running: *mut i32,
@@ -793,8 +793,8 @@ pub mod bv2_impl {
                 pub(crate) fn call_on_before_parse_plugins(
                     &self,
                     ctx: *mut core::ffi::c_void,
-                    namespace: &BunString,
-                    path: &BunString,
+                    namespace: StringView<'_>,
+                    path: StringView<'_>,
                     args: *mut crate::parse_task::parse_worker::OnBeforeParseArguments,
                     result: *mut crate::parse_task::parse_worker::OnBeforeParseResult,
                     should_continue_running: &core::cell::Cell<i32>,
@@ -805,8 +805,8 @@ pub mod bv2_impl {
                     JSBundlerPlugin__callOnBeforeParsePlugins(
                         self,
                         ctx,
-                        namespace,
-                        path,
+                        &namespace,
+                        &path,
                         args.cast(),
                         result.cast(),
                         should_continue_running.as_ptr(),
@@ -819,14 +819,14 @@ pub mod bv2_impl {
                     is_on_load: bool,
                 ) -> bool {
                     let namespace_string = if path.is_file() {
-                        BunString::EMPTY
+                        bun_core::StringView::EMPTY
                     } else {
-                        BunString::borrow_utf8(path.namespace)
+                        bun_core::StringView::borrow_utf8(path.namespace)
                     };
                     JSBundlerPlugin__anyMatches(
                         self,
                         &namespace_string,
-                        &BunString::borrow_utf8(path.text),
+                        &bun_core::StringView::borrow_utf8(path.text),
                         is_on_load,
                     )
                 }
@@ -1410,7 +1410,7 @@ pub mod bv2_impl {
             safe fn __bun_jsc_generate_cached_bytecode(
                 format: crate::options_impl::Format,
                 source: &[u8],
-                source_provider_url: &bun_core::String,
+                source_provider_url: bun_core::StringView<'_>,
                 external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
             ) -> Option<Box<[u8]>>;
 
@@ -1462,7 +1462,7 @@ pub mod bv2_impl {
         pub(crate) fn generate_cached_bytecode(
             format: crate::options_impl::Format,
             source: &[u8],
-            source_provider_url: &bun_core::String,
+            source_provider_url: bun_core::StringView<'_>,
             external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
         ) -> Option<Box<[u8]>> {
             __bun_jsc_generate_cached_bytecode(

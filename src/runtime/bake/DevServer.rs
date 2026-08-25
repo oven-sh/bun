@@ -18,7 +18,7 @@ use bun_alloc::{AllocError, Arena};
 use bun_ast::Log;
 use bun_bundler::options_impl::TargetExt as _;
 use bun_collections::{ArrayHashMap, DynamicBitSet, HashMap, HiveArrayFallback, StringHashMap};
-use bun_core::{self as str, String as BunString, ZStr, strings};
+use bun_core::{self as str, String as BunString, StringView, ZStr, strings};
 use bun_core::{Environment, Output};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -2588,7 +2588,7 @@ impl DevServer {
                 SavedRequestUnion::Stack(r) => bun_core::StringView::borrow_utf8((**r).url()),
                 SavedRequestUnion::Saved(data) => {
                     // SAFETY: data.request is a live *mut webcore::Request (held strong by ctx)
-                    bun_core::StringView::new(unsafe { (*data.request).url.get() })
+                    unsafe { (*data.request).url.get() }.as_view()
                 }
             };
             let url = url_bunstr.to_utf8();
@@ -5336,7 +5336,7 @@ impl DevServer {
             // base64 output is pure ASCII so a UTF-8 borrow is safe.
             agent.notify_bundle_failed(
                 self.inspector_server_id,
-                BunString::borrow_utf8(failures_encoded),
+                bun_core::StringView::borrow_utf8(failures_encoded),
             );
         }
         Ok(())
@@ -6495,7 +6495,7 @@ bun_jsc::jsc_host_abi! {
     pub unsafe fn Bake__bundleNewRouteJSFunctionImpl(
         global: &JSGlobalObject,
         request_ptr: *mut c_void,
-        url: &BunString,
+        url: StringView<'_>,
     ) -> JSValue {
         jsc::to_js_host_call(global, || bundle_new_route_js_function_impl(global, request_ptr, url))
     }
@@ -6504,7 +6504,7 @@ bun_jsc::jsc_host_abi! {
 fn bundle_new_route_js_function_impl(
     global: &JSGlobalObject,
     request_ptr: *mut c_void,
-    url_bunstr: &BunString,
+    url_bunstr: StringView<'_>,
 ) -> JsResult<JSValue> {
     let url = url_bunstr.to_utf8();
 

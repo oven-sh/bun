@@ -49,7 +49,7 @@ unsafe extern "C" {
 
 /// The bytes are copied into the message.
 fn error_instance(slice: &EncodedSlice<'_>, global: &JSGlobalObject, kind: ErrorKind) -> JSValue {
-    bun_string_jsc::error_instance(&StringView::from_encoded(*slice), global, kind)
+    bun_string_jsc::error_instance(StringView::from_encoded(*slice), global, kind)
 }
 
 /// JSC conversions for `bun_core::EncodedSlice`.

@@ -551,8 +551,8 @@ impl TranspilerJob {
             &global_this,
             promise,
             result,
-            &specifier,
-            &referrer,
+            specifier.as_view(),
+            referrer.as_view(),
             &mut log,
         )
     }

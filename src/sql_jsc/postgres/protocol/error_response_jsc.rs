@@ -1,6 +1,6 @@
 use crate::jsc::{JSGlobalObject, JSValue};
-use bun_core::String;
 use bun_core::StringBuilder;
+use bun_core::StringView;
 use bun_sql::postgres::protocol::error_response::ErrorResponse;
 use bun_sql::postgres::protocol::field_message::FieldMessage;
 
@@ -15,43 +15,43 @@ pub(crate) fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSV
     }
     let _ = b.allocate();
 
-    let mut severity: &String = &String::DEAD;
-    let mut code: &String = &String::DEAD;
-    let mut message: &String = &String::DEAD;
-    let mut detail: &String = &String::DEAD;
-    let mut hint: &String = &String::DEAD;
-    let mut position: &String = &String::DEAD;
-    let mut internal_position: &String = &String::DEAD;
-    let mut internal: &String = &String::DEAD;
-    let mut where_: &String = &String::DEAD;
-    let mut schema: &String = &String::DEAD;
-    let mut table: &String = &String::DEAD;
-    let mut column: &String = &String::DEAD;
-    let mut datatype: &String = &String::DEAD;
-    let mut constraint: &String = &String::DEAD;
-    let mut file: &String = &String::DEAD;
-    let mut line: &String = &String::DEAD;
-    let mut routine: &String = &String::DEAD;
+    let mut severity = StringView::DEAD;
+    let mut code = StringView::DEAD;
+    let mut message = StringView::DEAD;
+    let mut detail = StringView::DEAD;
+    let mut hint = StringView::DEAD;
+    let mut position = StringView::DEAD;
+    let mut internal_position = StringView::DEAD;
+    let mut internal = StringView::DEAD;
+    let mut where_ = StringView::DEAD;
+    let mut schema = StringView::DEAD;
+    let mut table = StringView::DEAD;
+    let mut column = StringView::DEAD;
+    let mut datatype = StringView::DEAD;
+    let mut constraint = StringView::DEAD;
+    let mut file = StringView::DEAD;
+    let mut line = StringView::DEAD;
+    let mut routine = StringView::DEAD;
 
     for msg in this.messages.iter() {
         match msg {
-            FieldMessage::Severity(str) => severity = str,
-            FieldMessage::Code(str) => code = str,
-            FieldMessage::Message(str) => message = str,
-            FieldMessage::Detail(str) => detail = str,
-            FieldMessage::Hint(str) => hint = str,
-            FieldMessage::Position(str) => position = str,
-            FieldMessage::InternalPosition(str) => internal_position = str,
-            FieldMessage::Internal(str) => internal = str,
-            FieldMessage::Where(str) => where_ = str,
-            FieldMessage::Schema(str) => schema = str,
-            FieldMessage::Table(str) => table = str,
-            FieldMessage::Column(str) => column = str,
-            FieldMessage::Datatype(str) => datatype = str,
-            FieldMessage::Constraint(str) => constraint = str,
-            FieldMessage::File(str) => file = str,
-            FieldMessage::Line(str) => line = str,
-            FieldMessage::Routine(str) => routine = str,
+            FieldMessage::Severity(str) => severity = str.as_view(),
+            FieldMessage::Code(str) => code = str.as_view(),
+            FieldMessage::Message(str) => message = str.as_view(),
+            FieldMessage::Detail(str) => detail = str.as_view(),
+            FieldMessage::Hint(str) => hint = str.as_view(),
+            FieldMessage::Position(str) => position = str.as_view(),
+            FieldMessage::InternalPosition(str) => internal_position = str.as_view(),
+            FieldMessage::Internal(str) => internal = str.as_view(),
+            FieldMessage::Where(str) => where_ = str.as_view(),
+            FieldMessage::Schema(str) => schema = str.as_view(),
+            FieldMessage::Table(str) => table = str.as_view(),
+            FieldMessage::Column(str) => column = str.as_view(),
+            FieldMessage::Datatype(str) => datatype = str.as_view(),
+            FieldMessage::Constraint(str) => constraint = str.as_view(),
+            FieldMessage::File(str) => file = str.as_view(),
+            FieldMessage::Line(str) => line = str.as_view(),
+            FieldMessage::Routine(str) => routine = str.as_view(),
         }
     }
 
@@ -86,7 +86,7 @@ pub(crate) fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSV
     }
     let _ = needs_newline;
 
-    fn maybe_slice(s: &String) -> Option<&[u8]> {
+    fn maybe_slice<'a>(s: StringView<'a>) -> Option<&'a [u8]> {
         if s.is_empty() {
             None
         } else {

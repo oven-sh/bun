@@ -404,7 +404,7 @@ pub(crate) fn write_output_files_to_disk(
                     if let Some(bytecode) = crate::bundle_v2::dispatch::generate_cached_bytecode(
                         c.options.output_format,
                         &code_result.buffer,
-                        &source_provider_url,
+                        source_provider_url.as_view(),
                         None,
                     ) {
                         let source_provider_url_str = source_provider_url.to_utf8();

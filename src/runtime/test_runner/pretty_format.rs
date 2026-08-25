@@ -704,7 +704,7 @@ impl<'w, W: bun_io::Write> WrappedWriter<'w, W> {
     }
 
     #[inline]
-    pub(crate) fn write_string(&mut self, str: &bun_core::String) {
+    pub(crate) fn write_string(&mut self, str: bun_core::StringView<'_>) {
         self.print(format_args!("{}", str));
     }
 
@@ -2157,14 +2157,14 @@ impl<'a> Formatter<'a> {
 
                                                 writer.write_all(b">");
                                                 if children_string.length() < 128 {
-                                                    writer.write_string(&children_string);
+                                                    writer.write_string(*children_string);
                                                 } else {
                                                     self.indent += 1;
                                                     writer.write_all(b"\n");
                                                     self.write_indent(writer.ctx)
                                                         .expect("unreachable");
                                                     self.indent = self.indent.saturating_sub(1);
-                                                    writer.write_string(&children_string);
+                                                    writer.write_string(*children_string);
                                                     writer.write_all(b"\n");
                                                     self.write_indent(writer.ctx)
                                                         .expect("unreachable");

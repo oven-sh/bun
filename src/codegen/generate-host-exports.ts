@@ -153,6 +153,9 @@ function ptrify(ty: string): { cTy: string; deref: (n: string) => string; extraL
   // when the C++ caller guarantees non-null (it does), so the thunk param can
   // be the safe reference type directly and the body needs no `unsafe` deref.
   if (/^&/.test(ty)) return { cTy: ty, deref: n => n };
+  // `StringView<'_>` by value — C++ passes `const BunString*`; the thunk takes
+  // the layout-identical `&StringView` and copies the 24 bytes out.
+  if (/^(?:(?:::)?bun_core::)?StringView\s*<[^>]*>$/.test(ty)) return { cTy: `&${ty}`, deref: n => `*${n}` };
   // `ThisPtr<T>` — C++ hands us the intrusively-refcounted `T*` it holds a
   // ref on; wrap it once here so the impl never sees a raw pointer.
   const thisPtr = /^(?:(?:::)?bun_ptr::)?ThisPtr\s*<\s*(.+)\s*>$/.exec(ty);
@@ -551,6 +554,7 @@ const importCandidates: Array<[string, string]> = [
   ["core::ffi", "c_char"],
   ["core::ffi", "c_int"],
   ["core::ffi", "c_void"],
+  ["bun_core", "StringView"],
   ["bun_jsc", "host_fn"],
   ["bun_jsc", "CallFrame"],
   ["bun_jsc", "JSGlobalObject"],

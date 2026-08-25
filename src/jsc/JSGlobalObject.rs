@@ -697,13 +697,13 @@ impl JSGlobalObject {
 
     pub(crate) fn run_on_load_plugins(
         &self,
-        namespace_: &BunString,
-        path: &BunString,
+        namespace_: StringView<'_>,
+        path: StringView<'_>,
         target: BunPluginTarget,
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
         let result = crate::from_js_host_call(self, || {
-            Bun__runOnLoadPlugins(self, namespace_, path, target)
+            Bun__runOnLoadPlugins(self, &namespace_, &path, target)
         })?;
         if result.is_undefined_or_null() {
             return Ok(None);
@@ -713,14 +713,14 @@ impl JSGlobalObject {
 
     pub(crate) fn run_on_resolve_plugins(
         &self,
-        namespace_: &BunString,
-        path: &BunString,
-        source: &BunString,
+        namespace_: StringView<'_>,
+        path: StringView<'_>,
+        source: StringView<'_>,
         target: BunPluginTarget,
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
         let result = crate::from_js_host_call(self, || {
-            Bun__runOnResolvePlugins(self, namespace_, path, source, target)
+            Bun__runOnResolvePlugins(self, &namespace_, &path, &source, target)
         })?;
         if result.is_undefined_or_null() {
             return Ok(None);
@@ -744,9 +744,9 @@ impl JSGlobalObject {
     /// anything else is formatted/copied once.
     fn error_instance(&self, kind: ErrorKind, args: Arguments<'_>) -> JSValue {
         match args.as_str() {
-            Some(_) => error_instance(&BunString::create_format(args), self, kind),
+            Some(_) => error_instance(BunString::create_format(args).as_view(), self, kind),
             None => error_instance(
-                &StringView::borrow_utf8(&self.error_message(args)),
+                StringView::borrow_utf8(&self.error_message(args)),
                 self,
                 kind,
             ),
@@ -915,7 +915,12 @@ impl JSGlobalObject {
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `errors.as_ptr()`/`len()` describe
         // a valid stack-rooted slice; `message` borrow outlives the call.
         crate::from_js_host_call(self, || unsafe {
-            JSC__JSGlobalObject__createAggregateError(self, errors.as_ptr(), errors.len(), &message)
+            JSC__JSGlobalObject__createAggregateError(
+                self,
+                errors.as_ptr(),
+                errors.len(),
+                &message.as_view(),
+            )
         })
     }
 
@@ -930,7 +935,7 @@ impl JSGlobalObject {
             JSC__JSGlobalObject__createAggregateErrorWithArray(
                 self,
                 error_array,
-                &message,
+                &message.as_view(),
                 JSValue::UNDEFINED,
             )
         })
@@ -1412,15 +1417,15 @@ use bun_core::fmt::VecWriter as WriteVec;
 extern "C" fn Zig__GlobalObject__resolve(
     res: &mut ErrorableString,
     global: &JSGlobalObject,
-    specifier: &BunString,
-    source: &BunString,
+    specifier: &StringView<'_>,
+    source: &StringView<'_>,
     query: &mut BunString,
 ) {
     crate::mark_binding();
     match VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
         global,
-        specifier,
-        source,
+        *specifier,
+        *source,
         Some(query),
         crate::virtual_machine::ResolveMode::Esm,
     ) {
@@ -1482,15 +1487,15 @@ unsafe extern "C" {
     // `*const BunString` borrow.
     safe fn Bun__runOnLoadPlugins(
         global: &JSGlobalObject,
-        namespace_: &BunString,
-        path: &BunString,
+        namespace_: &StringView<'_>,
+        path: &StringView<'_>,
         target: BunPluginTarget,
     ) -> JSValue;
     safe fn Bun__runOnResolvePlugins(
         global: &JSGlobalObject,
-        namespace_: &BunString,
-        path: &BunString,
-        source: &BunString,
+        namespace_: &StringView<'_>,
+        path: &StringView<'_>,
+        source: &StringView<'_>,
         target: BunPluginTarget,
     ) -> JSValue;
 
@@ -1522,12 +1527,12 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         errors: *const JSValue,
         len: usize,
-        message: &BunString,
+        message: &StringView<'_>,
     ) -> JSValue;
     safe fn JSC__JSGlobalObject__createAggregateErrorWithArray(
         global: &JSGlobalObject,
         error_array: JSValue,
-        message: &BunString,
+        message: &StringView<'_>,
         options: JSValue,
     ) -> JSValue;
     safe fn JSC__JSGlobalObject__generateHeapSnapshot(this: &JSGlobalObject) -> JSValue;

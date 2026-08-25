@@ -5,7 +5,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_ast::ExportsKind;
 use bun_ast::Source;
-use bun_core::{FeatureFlags, env_var};
+use bun_core::{FeatureFlags, StringView, env_var};
 use bun_core::{String as BunString, ZStr};
 use bun_js_parser::ParserOptions;
 use bun_paths::resolve_path::{self as path_handler, platform};
@@ -240,7 +240,7 @@ impl Entry {
         features_hash: u64,
         sourcemap: &[u8],
         esm_record: &[u8],
-        output_code: &BunString,
+        output_code: StringView<'_>,
         exports_kind: ExportsKind,
     ) -> crate::CrateResult<()> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.save");
@@ -772,7 +772,7 @@ impl RuntimeTranspilerCache {
         features_hash: u64,
         sourcemap: &[u8],
         esm_record: &[u8],
-        source_code: &BunString,
+        source_code: StringView<'_>,
         exports_kind: ExportsKind,
     ) -> crate::CrateResult<()> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.toFile");
@@ -960,14 +960,14 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             // Borrowed Latin-1 view: `to_file` only reads `byte_slice()` + the encoding
             // tag (unmarked 8-bit EncodedSlice -> Encoding::LATIN1, same as clone_latin1),
             // and `output_code_bytes` outlives the synchronous `to_file` call.
-            let output_code = BunString::ascii(output_code_bytes);
+            let output_code = bun_core::StringView::borrow_latin1(output_code_bytes);
             let result = RuntimeTranspilerCache::to_file(
                 this.input_byte_length.unwrap(),
                 this.input_hash.unwrap(),
                 this.features_hash.unwrap(),
                 sourcemap,
                 esm_record,
-                &output_code,
+                output_code,
                 this.exports_kind,
             );
             if let Err(err) = result {

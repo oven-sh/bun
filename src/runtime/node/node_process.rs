@@ -162,7 +162,7 @@ static Bun__version_sha: CStrPtr = CStrPtr(
 
 mod _impl {
     use bun_core::env_var;
-    use bun_core::{EncodedSlice, String as BunString, strings};
+    use bun_core::{EncodedSlice, String as BunString, StringView, strings};
     use bun_jsc::bun_string_jsc;
     use bun_jsc::{
         EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker,
@@ -204,7 +204,7 @@ mod _impl {
 
     // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
     #[unsafe(export_name = "Bun__Process__setTitle")]
-    extern "C" fn set_title(_global_object: *const JSGlobalObject, newvalue: &BunString) {
+    extern "C" fn set_title(_global_object: *const JSGlobalObject, newvalue: &StringView<'_>) {
         // `to_owned_slice` is infallible (Vec<u8>).
         let new_title: Box<[u8]> = newvalue.to_owned_slice().into_boxed_slice();
 
@@ -363,7 +363,7 @@ mod _impl {
         } else {
             let exe_path = bun_core::self_exe_path().ok();
             args_list.push(match exe_path {
-                Some(str_) => BunString::borrow_utf8(str_.as_bytes()),
+                Some(str_) => BunString::clone_utf8(str_.as_bytes()),
                 None => BunString::static_("bun"),
             });
         }
@@ -386,7 +386,7 @@ mod _impl {
             if worker.is_some_and(|w| w.eval_mode()) {
                 args_list.push(BunString::static_("[worker eval]"));
             } else {
-                args_list.push(BunString::borrow_utf8(vm.main()));
+                args_list.push(BunString::clone_utf8(vm.main()));
             }
         }
 
@@ -399,9 +399,8 @@ mod _impl {
             );
         } else {
             for arg in &vm.argv {
-                let str_ = BunString::borrow_utf8(arg);
                 // https://github.com/yargs/yargs/blob/adb0d11e02c613af3d9427b3028cc192703a3869/lib/utils/process-argv.ts#L1
-                args_list.push(str_);
+                args_list.push(BunString::clone_utf8(arg));
             }
         }
 
@@ -531,7 +530,7 @@ mod _impl {
     // TODO: switch this to a WTF::String-backed type when one is added
     #[cfg(windows)]
     #[unsafe(export_name = "Bun__Process__editWindowsEnvVar")]
-    extern "C" fn bun_process_edit_windows_env_var(k: &BunString, v: &BunString) {
+    extern "C" fn bun_process_edit_windows_env_var(k: &StringView<'_>, v: &StringView<'_>) {
         const _: () = assert!(cfg!(windows));
         if k.tag() == bun_core::Tag::Empty {
             return;

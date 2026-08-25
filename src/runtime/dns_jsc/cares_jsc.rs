@@ -8,7 +8,8 @@ use ::bstr::BStr;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::{self as bstr, strings};
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, SystemError, bun_string_jsc,
+    CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, StringViewJsc as _, SystemError,
+    bun_string_jsc,
 };
 
 use crate::dns_jsc::options_jsc::{address_to_js, result_to_js};
@@ -32,7 +33,10 @@ pub(crate) fn hostent_to_js_response(
         }
         // SAFETY: h_name is non-null NUL-terminated C string from c-ares.
         let name = unsafe { bun_core::ffi::cstr(this.h_name) }.to_bytes();
-        return bun_string_jsc::to_js_array(global_this, &[bstr::String::borrow_utf8(name)]);
+        return bun_string_jsc::views_to_js_array(
+            global_this,
+            &[bstr::StringView::borrow_utf8(name)],
+        );
     }
 
     if this.h_aliases.is_null() {
@@ -299,9 +303,9 @@ fn caa_reply_to_js(
         JSValue::js_number(this.critical as f64),
     );
 
-    let property = bstr::String::borrow_utf8(this.property_bytes());
+    let property = bstr::StringView::borrow_utf8(this.property_bytes());
     let value = this.value_bytes();
-    obj.put_may_be_index(global_this, &property, utf8_to_js(global_this, value)?)?;
+    obj.put_may_be_index(global_this, property, utf8_to_js(global_this, value)?)?;
 
     Ok(obj)
 }
@@ -532,7 +536,7 @@ fn any_reply_append(
     transformed.put(
         global_this,
         b"type",
-        bstr::String::ascii(upper).to_js(global_this)?,
+        bstr::StringView::borrow_latin1(upper).to_js(global_this)?,
     );
     array.put_index(global_this, *i, transformed)?;
     *i += 1;

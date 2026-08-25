@@ -81,7 +81,7 @@ use bun_jsc::{
 };
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use crate::cli::open::Editor;
-use bun_core::{EncodedSlice, String as BunString, strings};
+use bun_core::{EncodedSlice, String as BunString, StringView, strings};
 use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
 #[cfg(not(windows))]
@@ -102,7 +102,7 @@ use bun_collections::index_sort;
 use bun_core::Utf8Bytes;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::call_frame::ArgumentsSlice;
-use bun_jsc::{StringJsc as _, bun_string_jsc};
+use bun_jsc::{StringJsc as _, StringViewJsc as _, bun_string_jsc};
 
 /// Bindgen-generated option-structs for this module (`BunObject.bind.ts`).
 pub mod r#gen {
@@ -404,8 +404,8 @@ fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult
 
     let mut outbuf: Vec<u8> = Vec::new();
 
-    if bun_shell_parser::needs_escape_bunstr(&bunstr) {
-        let result = bun_shell_parser::escape_bun_str::<true>(&bunstr, &mut outbuf)?;
+    if bun_shell_parser::needs_escape_bunstr(bunstr.as_view()) {
+        let result = bun_shell_parser::escape_bun_str::<true>(bunstr.as_view(), &mut outbuf)?;
         if !result {
             return Err(global_this.throw(format_args!(
                 "String has invalid utf-16: {}",
@@ -420,7 +420,7 @@ fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult
 
 pub(crate) fn braces(
     global: &JSGlobalObject,
-    brace_str: &BunString,
+    brace_str: StringView<'_>,
     opts: r#gen::BracesOptions,
 ) -> JsResult<JSValue> {
     let brace_slice = brace_str.to_utf8();
@@ -457,8 +457,7 @@ pub(crate) fn braces(
         // the JSON shape (`[{"<tag>": <payload>|{}} , …]`) by hand so the
         // debug-only `Bun.braces(str, {tokenize:true})` round-trips.
         let str = Braces::tokens_to_json(&lexer_output.tokens[..]);
-        let bun_str = BunString::from_bytes(&str);
-        return bun_str.to_js(global);
+        return bun_core::StringView::from_bytes(&str).to_js(global);
     }
     if opts.parse {
         let mut parser = Braces::Parser::init(&lexer_output.tokens[..], &arena);
@@ -470,12 +469,11 @@ pub(crate) fn braces(
         };
         // NOTE: see `tokenize` arm — manual JSON encoder for the AST.
         let str = Braces::ast_to_json(&ast_node);
-        let bun_str = BunString::from_bytes(&str);
-        return bun_str.to_js(global);
+        return bun_core::StringView::from_bytes(&str).to_js(global);
     }
 
     if expansion_count == 0 {
-        return bun_string_jsc::to_js_array(global, core::slice::from_ref(brace_str));
+        return bun_string_jsc::views_to_js_array(global, &[brace_str]);
     }
 
     // Hard cap before preallocation: `calculate_expanded_amount` saturates to
@@ -511,12 +509,12 @@ pub(crate) fn braces(
         }
     }
 
-    let mut out_strings: Vec<BunString> = Vec::with_capacity(expansion_count);
-    for i in 0..expansion_count {
-        out_strings.push(BunString::from_bytes(&expanded_strings[i][..]));
-    }
+    let out_strings: Vec<bun_core::StringView<'_>> = expanded_strings[..expansion_count]
+        .iter()
+        .map(|s| bun_core::StringView::from_bytes(s))
+        .collect();
 
-    bun_string_jsc::to_js_array(global, &out_strings[..])
+    bun_string_jsc::views_to_js_array(global, &out_strings)
 }
 
 #[bun_jsc::host_fn]
@@ -1109,7 +1107,12 @@ fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<J
 
     let specifier_str = specifier.to_bun_string(global_this)?;
     let from_str = from.to_bun_string(global_this)?;
-    do_resolve_with_args::<false>(global_this, &specifier_str, &from_str, mode)
+    do_resolve_with_args::<false>(
+        global_this,
+        specifier_str.as_view(),
+        from_str.as_view(),
+        mode,
+    )
 }
 
 enum Resolved {
@@ -1120,8 +1123,8 @@ enum Resolved {
 
 fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     ctx: &JSGlobalObject,
-    specifier: &BunString,
-    from: &BunString,
+    specifier: StringView<'_>,
+    from: StringView<'_>,
     mode: ResolveMode,
 ) -> JsResult<JSValue> {
     match resolve_with_args::<IS_FILE_PATH>(ctx, specifier, from, mode)? {
@@ -1132,8 +1135,8 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
 
 fn resolve_with_args<const IS_FILE_PATH: bool>(
     ctx: &JSGlobalObject,
-    specifier: &BunString,
-    from: &BunString,
+    specifier: StringView<'_>,
+    from: StringView<'_>,
     mode: ResolveMode,
 ) -> JsResult<Resolved> {
     let mut query_string = BunString::EMPTY;
@@ -1141,7 +1144,7 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
     let decoded_specifier;
     let specifier_for_resolve = if specifier.starts_with_ascii(b"file://") {
         decoded_specifier = bun_url::path_from_file_url(specifier);
-        &decoded_specifier
+        decoded_specifier.as_view()
     } else {
         specifier
     };
@@ -1225,8 +1228,8 @@ pub fn bun_resolve_sync(
     jsc::to_js_host_call(global, || {
         do_resolve_with_args::<true>(
             global,
-            &specifier_str,
-            &source_str,
+            specifier_str.as_view(),
+            source_str.as_view(),
             ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
         )
     })
@@ -1247,10 +1250,10 @@ pub fn bun_resolve_sync_with_paths(
     source: JSValue,
     is_esm: bool,
     is_user_require_resolve: bool,
-    paths_ptr: *const BunString,
+    paths_ptr: *const StringView<'static>,
     paths_len: usize,
 ) -> JSValue {
-    let paths: &[BunString] = if paths_len == 0 {
+    let paths: &[StringView<'static>] = if paths_len == 0 {
         &[]
     } else {
         // SAFETY: C++ caller guarantees `paths_ptr` points to `paths_len`
@@ -1290,8 +1293,8 @@ pub fn bun_resolve_sync_with_paths(
     jsc::to_js_host_call(global, || {
         do_resolve_with_args::<true>(
             global,
-            &specifier_str,
-            &source_str,
+            specifier_str.as_view(),
+            source_str.as_view(),
             ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
         )
     })
@@ -1302,8 +1305,8 @@ bun_output::declare_scope!(importMetaResolve, visible);
 // HOST_EXPORT(Bun__resolveSyncWithStrings, c)
 pub fn bun_resolve_sync_with_strings(
     global: &JSGlobalObject,
-    specifier: &BunString,
-    source: &BunString,
+    specifier: StringView<'_>,
+    source: StringView<'_>,
     is_esm: bool,
 ) -> JSValue {
     bun_output::scoped_log!(
@@ -1330,7 +1333,7 @@ pub fn bun_resolve_sync_with_strings(
 pub fn bun_resolve_sync_with_source_if_exists(
     global: &JSGlobalObject,
     specifier: JSValue,
-    source: &BunString,
+    source: StringView<'_>,
     is_esm: bool,
 ) -> JSValue {
     let Ok(specifier_str) = specifier.to_bun_string(global) else {
@@ -1339,7 +1342,7 @@ pub fn bun_resolve_sync_with_source_if_exists(
     jsc::to_js_host_call(global, || {
         resolve_with_args::<true>(
             global,
-            &specifier_str,
+            specifier_str.as_view(),
             source,
             ResolveMode::from_ffi_bools(is_esm, false),
         )
@@ -2063,7 +2066,7 @@ pub(crate) mod environment_variables {
     #[unsafe(no_mangle)]
     extern "C" fn Bun__getEnvValueBunString<'a>(
         global_object: &'a JSGlobalObject,
-        name: &BunString,
+        name: &StringView<'_>,
     ) -> bun_core::StringView<'a> {
         let vm = global_object.bun_vm();
         let name_slice = name.to_utf8();
@@ -2086,8 +2089,8 @@ pub(crate) mod environment_variables {
     #[unsafe(no_mangle)]
     extern "C" fn Bun__setEnvValue(
         global_object: &JSGlobalObject,
-        name: &BunString,
-        value: &BunString,
+        name: &StringView<'_>,
+        value: &StringView<'_>,
     ) {
         let vm = global_object.bun_vm().as_mut();
         let name_slice = name.to_utf8();

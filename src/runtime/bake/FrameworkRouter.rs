@@ -1236,7 +1236,7 @@ impl MatchedParams {
 
             obj.put_bun_string_one_or_array(
                 global,
-                &key_str,
+                key_str.as_view(),
                 value_str.into_js(global).expect("unreachable"),
             )
             .expect("unreachable");

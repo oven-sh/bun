@@ -4,7 +4,7 @@ use crate::{
 };
 use bun_ast::Loader;
 use bun_bundler::options::DEFAULT_LOADERS;
-use bun_core::{String as BunString, strings};
+use bun_core::{String as BunString, StringView, strings};
 use bun_options_types::LoaderExt as _;
 use bun_options_types::schema::api;
 
@@ -36,20 +36,20 @@ impl ApiLoader {
 #[unsafe(no_mangle)]
 extern "C" fn NodeModuleModule__findPath(
     global: &JSGlobalObject,
-    request_bun_str: &BunString,
+    request_bun_str: &StringView<'_>,
     paths_maybe: *mut JSArray,
 ) -> JSValue {
     // `JSArray` is an `opaque_ffi!` ZST handle; `opaque_ref` is the centralised
     // non-null-ZST deref proof. Nullable per the C++ caller contract.
     let paths_maybe: Option<&JSArray> =
         (!paths_maybe.is_null()).then(|| JSArray::opaque_ref(paths_maybe));
-    jsc::host_fn::to_js_host_call(global, || find_path(global, request_bun_str, paths_maybe))
+    jsc::host_fn::to_js_host_call(global, || find_path(global, *request_bun_str, paths_maybe))
 }
 
 // https://github.com/nodejs/node/blob/40ef9d541ed79470977f90eb445c291b95ab75a0/lib/internal/modules/cjs/loader.js#L666
 fn find_path(
     global: &JSGlobalObject,
-    request_bun_str: &BunString,
+    request_bun_str: StringView<'_>,
     paths_maybe: Option<&JSArray>,
 ) -> JsResult<JSValue> {
     let request_slice = request_bun_str.to_utf8();
@@ -67,7 +67,7 @@ fn find_path(
             while let Some(path) = iter.next()? {
                 let cur_path = BunString::from_js(path, global)?;
 
-                if let Some(found) = find_path_inner(request_bun_str, &cur_path, global)? {
+                if let Some(found) = find_path_inner(request_bun_str, cur_path.as_view(), global)? {
                     break 'found Some(found);
                 }
             }
@@ -75,7 +75,7 @@ fn find_path(
             break 'found None;
         }
     } else {
-        find_path_inner(request_bun_str, &BunString::EMPTY, global)?
+        find_path_inner(request_bun_str, StringView::EMPTY, global)?
     };
 
     if let Some(str) = found {
@@ -86,8 +86,8 @@ fn find_path(
 }
 
 fn find_path_inner(
-    request: &BunString,
-    cur_path: &BunString,
+    request: StringView<'_>,
+    cur_path: StringView<'_>,
     global: &JSGlobalObject,
 ) -> JsResult<Option<BunString>> {
     Ok(VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
@@ -235,7 +235,7 @@ pub fn find_longest_registered_extension<'a>(
 #[unsafe(no_mangle)]
 extern "C" fn NodeModuleModule__onRequireExtensionModify(
     global: &JSGlobalObject,
-    str: &BunString,
+    str: &StringView<'_>,
     loader: ApiLoader,
     value: JSValue,
 ) {
@@ -248,7 +248,7 @@ extern "C" fn NodeModuleModule__onRequireExtensionModify(
 #[unsafe(no_mangle)]
 extern "C" fn NodeModuleModule__onRequireExtensionModifyNonFunction(
     global: &JSGlobalObject,
-    str: &BunString,
+    str: &StringView<'_>,
 ) {
     let str_slice = str.to_utf8();
     if on_require_extension_modify_non_function(global, str_slice.slice()).is_err() {

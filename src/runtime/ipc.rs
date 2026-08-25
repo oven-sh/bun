@@ -14,7 +14,10 @@ use bun_jsc as jsc;
 use bun_jsc::js_value::Protected;
 #[cfg(windows)]
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, StringJsc as _, Task};
+use bun_jsc::{
+    JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, StringJsc as _,
+    StringViewJsc as _, Task,
+};
 use bun_sys::Fd;
 use bun_sys::FdExt;
 #[cfg(windows)]
@@ -486,13 +489,11 @@ mod json {
             kind = Kind::Internal;
         }
 
-        let is_ascii = strings::is_all_ascii(json_data);
-        let mut was_ascii_string_freed = false;
-
         // Use ExternalString to avoid copying data if possible.
         // This is only possible for ascii data, as that fits into latin1
         // otherwise we have to convert it utf-8 into utf16-le.
-        let str = if is_ascii {
+        let parsed = if strings::is_all_ascii(json_data) {
+            let mut was_ascii_string_freed = false;
             // .dead if `json_data` exceeds max length
             let s = BunString::create_external::<*mut bool>(
                 json_data,
@@ -504,21 +505,20 @@ mod json {
                 bun_core::hint::cold();
                 return Err(IPCDecodeError::Js(JsError::OutOfMemory));
             }
-            s
+            // The free callback (`json_ipc_data_string_free_cb`) only fires
+            // when the WTFStringImpl refcount hits zero — i.e. *during* the
+            // drop — so the freed-flag check must follow it.
+            let parsed = s.to_js_by_parse_json(global_this);
+            drop(s);
+            if !was_ascii_string_freed {
+                panic!(
+                    "Expected ascii string to be freed by ExternalString, but it wasn't. This is a bug in Bun."
+                );
+            }
+            parsed
         } else {
-            BunString::borrow_utf8(json_data)
+            bun_core::StringView::borrow_utf8(json_data).to_js_by_parse_json(global_this)
         };
-
-        // The ASCII-path free callback (`json_ipc_data_string_free_cb`) only
-        // fires when the WTFStringImpl refcount hits zero — i.e. *during* the
-        // drop — so the freed-flag check must follow it.
-        let parsed = str.to_js_by_parse_json(global_this);
-        drop(str);
-        if is_ascii && !was_ascii_string_freed {
-            panic!(
-                "Expected ascii string to be freed by ExternalString, but it wasn't. This is a bug in Bun."
-            );
-        }
         let deserialized = match parsed {
             Ok(v) => v,
             Err(JsError::Terminated) => return Err(IPCDecodeError::Js(JsError::Terminated)),

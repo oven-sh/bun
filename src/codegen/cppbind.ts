@@ -542,6 +542,11 @@ function rustIdent(name: string): string {
 
 function generateRustType(type: CppType, parent: CppType | null): string {
   if (type.type === "pointer") {
+    // `const BunString*` is a read-only borrow: the layout-identical
+    // `StringView` (never the owning `String`).
+    if (type.isConst && type.child.type === "named" && type.child.name === "BunString") {
+      return "*const bun_core::StringView<'_>";
+    }
     const constKw = type.isConst ? "*const " : "*mut ";
     return constKw + generateRustType(type.child, type);
   }
@@ -610,6 +615,16 @@ function opaqueHandleRustType(t: CppType): string | null {
   return rustSharedTypes[t.child.name] ?? null;
 }
 
+// `const BunString*` → `&bun_core::StringView<'_>` (read-only borrow, same 24
+// bytes as `String`); `BunString*` → `&mut bun_core::String` (C++ writes the
+// owner in place).
+function bunStringRefRustType(t: CppType): { param: string; arg: (ident: string) => string } | null {
+  if (t.type !== "pointer" || t.child.type !== "named" || t.child.name !== "BunString" || t.isMany) return null;
+  return t.isConst
+    ? { param: "&bun_core::StringView<'_>", arg: ident => `core::ptr::from_ref(${ident})` }
+    : { param: "&mut bun_core::String", arg: ident => `core::ptr::from_mut(${ident})` };
+}
+
 const RUST_ALLOW = "#[allow(dead_code, unreachable_pub, unused)]";
 
 function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void {
@@ -617,16 +632,19 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
   const rawParams = fn.parameters.map(p => `${rustIdent(p.name)}: ${generateRustType(p.type, null)}`).join(", ");
   rustRaw.push(`    pub fn ${fn.name}(${rawParams})${ret === "()" ? "" : ` -> ${ret}`};`);
 
-  // Compute wrapper parameter list: opaque-ZST handle pointers become `&T`;
-  // everything else passes through verbatim. The wrapper is `pub fn` (safe)
-  // iff no raw pointer survives — otherwise the caller is still responsible
-  // for the pointer's validity invariants and the wrapper stays `unsafe fn`.
+  // Compute wrapper parameter list: opaque-ZST handle pointers become `&T`,
+  // `const BunString*` becomes `&StringView<'_>`, `BunString*` becomes
+  // `&mut String`; everything else passes through verbatim. The wrapper is
+  // `pub fn` (safe) iff no raw pointer survives — otherwise the caller is still
+  // responsible for the pointer's validity invariants and the wrapper stays
+  // `unsafe fn`.
   let needsUnsafe = false;
   const wrapParams: string[] = [];
   const callArgs: string[] = [];
   for (const p of fn.parameters) {
     const ident = rustIdent(p.name);
     const handle = opaqueHandleRustType(p.type);
+    const bunString = bunStringRefRustType(p.type);
     if (handle) {
       wrapParams.push(`${ident}: &${handle}`);
       callArgs.push(
@@ -634,6 +652,9 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
           ? `core::ptr::from_ref(${ident})`
           : `core::ptr::from_ref(${ident}).cast_mut()`,
       );
+    } else if (bunString) {
+      wrapParams.push(`${ident}: ${bunString.param}`);
+      callArgs.push(bunString.arg(ident));
     } else if (p.type.type === "pointer" || p.type.type === "fn") {
       needsUnsafe = true;
       wrapParams.push(`${ident}: ${generateRustType(p.type, null)}`);
@@ -658,7 +679,7 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
         RUST_ALLOW,
         `#[inline]`,
         `pub fn ${fn.name}(${wrapParamsStr})${ret === "()" ? "" : ` -> ${ret}`} {`,
-        `    // SAFETY: \`[[ZIG_EXPORT(nothrow)]]\` extern; ref args are opaque-ZST handles valid for the call.`,
+        `    // SAFETY: \`[[ZIG_EXPORT(nothrow)]]\` extern; ref args (opaque-ZST handles, \`&StringView\`, \`&mut String\`) are valid for the call.`,
         `    unsafe { raw::${fn.name}(${callArgsStr}) }`,
         `}`,
       );
@@ -699,7 +720,7 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
       `#[inline]`,
       `pub ${safeKw}fn ${fn.name}(${wrapParamsStr}) -> crate::JsResult<${ret}> {`,
       `    crate::top_scope!(__scope, ${gname});`,
-      `    // SAFETY: \`[[ZIG_EXPORT(check_slow)]]\` extern; ref args are opaque-ZST handles valid for the call;`,
+      `    // SAFETY: \`[[ZIG_EXPORT(check_slow)]]\` extern; ref args (opaque-ZST handles, \`&StringView\`, \`&mut String\`) are valid for the call;`,
       `    // any raw-pointer args are forwarded under the wrapper's own \`unsafe fn\` contract.`,
       `    let __r = unsafe { raw::${fn.name}(${callArgsStr}) };`,
       `    __scope.return_if_exception()?;`,
@@ -736,7 +757,7 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
     `#[inline]`,
     `pub ${safeKw}fn ${fn.name}(${wrapParamsStr}) -> crate::JsResult<${okType}> {`,
     `    crate::validation_scope!(__scope, ${gname});`,
-    `    // SAFETY: \`[[ZIG_EXPORT(${fn.tag})]]\` extern; ref args are opaque-ZST handles valid for the call;`,
+    `    // SAFETY: \`[[ZIG_EXPORT(${fn.tag})]]\` extern; ref args (opaque-ZST handles, \`&StringView\`, \`&mut String\`) are valid for the call;`,
     `    // any raw-pointer args are forwarded under the wrapper's own \`unsafe fn\` contract.`,
     `    let __v = unsafe { raw::${fn.name}(${callArgsStr}) };`,
     `    __scope.assert_exception_presence_matches(${errCond});`,

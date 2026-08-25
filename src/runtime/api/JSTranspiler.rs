@@ -1569,8 +1569,11 @@ fn named_exports_to_js(
     }
     index_sort::sort_slice_unstable_by(&mut keys, |a, b| a.cmp(b));
 
-    let names: Vec<BunString> = keys.into_iter().map(BunString::from_bytes).collect();
-    bun_string_jsc::to_js_array(global, &names)
+    let names: Vec<bun_core::StringView<'_>> = keys
+        .into_iter()
+        .map(bun_core::StringView::from_bytes)
+        .collect();
+    bun_string_jsc::views_to_js_array(global, &names)
 }
 
 fn named_imports_to_js(

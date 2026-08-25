@@ -1,6 +1,6 @@
 use core::ptr::NonNull;
 
-use bun_core::String as BunString;
+use bun_core::StringView;
 use bun_options_types::Format;
 
 bun_opaque::opaque_ffi! {
@@ -46,7 +46,7 @@ unsafe extern "C" {
     );
 
     fn generateCachedModuleByteCodeFromSourceCode(
-        source_provider_url: &BunString,
+        source_provider_url: &StringView<'_>,
         input_code: *const u8,
         input_source_code_size: usize,
         output_byte_code: *mut Option<NonNull<u8>>,
@@ -56,7 +56,7 @@ unsafe extern "C" {
     ) -> bool;
 
     fn generateCachedCommonJSProgramByteCodeFromSourceCode(
-        source_provider_url: &BunString,
+        source_provider_url: &StringView<'_>,
         input_code: *const u8,
         input_source_code_size: usize,
         output_byte_code: *mut Option<NonNull<u8>>,
@@ -90,7 +90,7 @@ impl CachedBytecode {
     pub(crate) fn generate(
         format: Format,
         input: &[u8],
-        source_provider_url: &BunString,
+        source_provider_url: StringView<'_>,
         external_strings: Option<NonNull<EncoderStringTable>>,
     ) -> Option<(&'static [u8], NonNull<CachedBytecode>)> {
         let f = match format {
@@ -104,7 +104,7 @@ impl CachedBytecode {
         // SAFETY: out-params are valid for write; input slice valid for read.
         let ok = unsafe {
             f(
-                source_provider_url,
+                &source_provider_url,
                 input.as_ptr(),
                 input.len(),
                 &raw mut out_ptr,
@@ -145,7 +145,7 @@ impl bun_alloc::Allocator for CachedBytecode {}
 pub(crate) fn __bun_jsc_generate_cached_bytecode(
     format: Format,
     source: &[u8],
-    source_provider_url: &BunString,
+    source_provider_url: StringView<'_>,
     external_strings: Option<NonNull<EncoderStringTable>>,
 ) -> Option<Box<[u8]>> {
     crate::virtual_machine::IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.set(true);

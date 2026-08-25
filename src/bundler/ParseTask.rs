@@ -2073,14 +2073,12 @@ pub mod parse_worker {
             // only, making `from_field_ptr!` in `get_wrapper` out-of-provenance
             // UB (and pushes a Unique tag that invalidates this raw under SB).
             let result_ptr = core::ptr::addr_of_mut!(wrapper.result);
-            let namespace_str;
             let namespace = if self.file_path.namespace == b"file" {
-                &bun_core::String::EMPTY
+                bun_core::StringView::EMPTY
             } else {
-                namespace_str = bun_core::String::from_bytes(self.file_path.namespace);
-                &namespace_str
+                bun_core::StringView::from_bytes(self.file_path.namespace)
             };
-            let path_str = bun_core::String::from_bytes(self.file_path.text);
+            let path_str = bun_core::StringView::from_bytes(self.file_path.text);
             // Copy the `&Cell<i32>` out so passing it to FFI doesn't go through
             // `&mut self` after `self_ptr` is derived.
             let should_continue_running = self.should_continue_running;
@@ -2094,7 +2092,7 @@ pub mod parse_worker {
             let count = plugin.call_on_before_parse_plugins(
                 self_ptr.cast(),
                 namespace,
-                &path_str,
+                path_str,
                 &raw mut args,
                 result_ptr,
                 should_continue_running,

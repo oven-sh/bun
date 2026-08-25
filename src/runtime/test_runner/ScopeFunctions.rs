@@ -1,8 +1,8 @@
+use bun_core::StringView;
 use core::fmt;
 use crate::test_runner::expect::JSValueTestExt;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
-use bun_core::String as BunString;
 
 use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, DescribeScope};
 use crate::test_runner::bun_test::js_fns::Signature;
@@ -205,7 +205,7 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 };
 
                 let bound = if let Some(cb) = args.callback {
-                    Some(JSValueTestExt::bind(cb, global, item, &BunString::static_("cb"), 0.0, args_list.as_slice())?)
+                    Some(JSValueTestExt::bind(cb, global, item, StringView::static_("cb"), 0.0, args_list.as_slice())?)
                 } else {
                     None
                 };
@@ -326,7 +326,7 @@ impl ScopeFunctions {
             if debugger.test_reporter_agent.is_enabled() {
                 debugger.test_reporter_agent.next_test_id += 1;
                 let id = debugger.test_reporter_agent.next_test_id;
-                let name = BunString::from_bytes(description.unwrap_or(b"(unnamed)"));
+                let name = bun_core::StringView::from_bytes(description.unwrap_or(b"(unnamed)"));
                 let parent: &DescribeScope = bun_test.collection.active_scope();
                 let parent_id = if parent.base.test_id_for_debugger != 0 {
                     parent.base.test_id_for_debugger
@@ -336,7 +336,7 @@ impl ScopeFunctions {
                 debugger.test_reporter_agent.report_test_found(
                     frame,
                     id,
-                    &name,
+                    name,
                     match self.mode {
                         Mode::Describe => TestReporterKind::Describe,
                         Mode::Test => TestReporterKind::Test,
@@ -393,7 +393,7 @@ impl ScopeFunctions {
                         filter_names(&mut rem, description, Some(active_scope));
                         debug_assert!(rem.buf.is_empty());
 
-                        let str = BunString::from_bytes(bun_test.collection.filter_buffer.as_slice());
+                        let str = bun_core::StringView::from_bytes(bun_test.collection.filter_buffer.as_slice());
                         group_log::log(format_args!(
                             "matches_filter \"{}\"",
                             bstr::BStr::new(bun_test.collection.filter_buffer.as_slice())
@@ -401,7 +401,7 @@ impl ScopeFunctions {
                         // SAFETY: `filter_regex` is the FFI-allocated Yarr handle stored in
                         // `TestRunner` for the process lifetime; single-threaded here so the
                         // exclusive borrow is unaliased.
-                        matches_filter = unsafe { &mut *filter_regex.as_ptr() }.matches(&str);
+                        matches_filter = unsafe { &mut *filter_regex.as_ptr() }.matches(str);
 
                         bun_test.collection.filter_buffer.clear();
                     }
@@ -774,7 +774,7 @@ fn bind(value: JSValue, global: &JSGlobalObject, name: &'static str) -> JsResult
     // `__jsc_host_call_as_function`; `JSFunction::create` wants the raw
     // `JSHostFn` shape, not the safe Rust signature.
     let call_fn = bun_jsc::JSFunction::create(global, name, __jsc_host_call_as_function, 1, Default::default());
-    let bound = JSValueTestExt::bind(call_fn, global, value, &BunString::static_(name), 1.0, &[])?;
+    let bound = JSValueTestExt::bind(call_fn, global, value, StringView::static_(name), 1.0, &[])?;
     set_prototype_direct(bound, value.get_prototype(global)?, global)?;
     Ok(bound)
 }

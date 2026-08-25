@@ -117,22 +117,22 @@ pub(crate) fn throw_sign_error(err: SignError, global_this: &JSGlobalObject) -> 
 }
 
 #[repr(C)]
-struct JSS3Error {
+struct JSS3Error<'a> {
     code: BunString,
     message: BunString,
-    path: BunString,
+    path: bun_core::StringView<'a>,
 }
 
-impl JSS3Error {
-    fn init(code: &[u8], message: &[u8], path: Option<&[u8]>) -> Self {
+impl<'a> JSS3Error<'a> {
+    fn init(code: &[u8], message: &[u8], path: Option<&'a [u8]>) -> Self {
         Self {
             // lets make sure we can reuse code and message and keep it service independent
             code: BunString::create_atom_if_possible(code),
             message: BunString::create_atom_if_possible(message),
             path: if let Some(p) = path {
-                BunString::from_bytes(p)
+                bun_core::StringView::from_bytes(p)
             } else {
-                BunString::EMPTY
+                bun_core::StringView::EMPTY
             },
         }
     }

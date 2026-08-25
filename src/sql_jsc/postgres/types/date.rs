@@ -85,7 +85,7 @@ pub(crate) fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResul
         value.as_number()
     } else if value.is_string() {
         let str = value.to_bun_string(global_object).expect("unreachable");
-        bun_string_jsc::parse_date(&str, global_object)?
+        bun_string_jsc::parse_date(str.as_view(), global_object)?
     } else {
         return Ok(0);
     };

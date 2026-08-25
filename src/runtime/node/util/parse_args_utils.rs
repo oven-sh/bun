@@ -20,7 +20,7 @@ impl From<OptionValueType> for &'static str {
 
 impl super::validators::StringEnum for OptionValueType {
     const VALUES_INFO: &'static str = "boolean|string";
-    fn from_bun_string(s: &String) -> Option<Self> {
+    fn from_bun_string(s: StringView<'_>) -> Option<Self> {
         if s.eq_ascii(b"boolean") {
             Some(Self::Boolean)
         } else if s.eq_ascii(b"string") {
@@ -80,7 +80,7 @@ pub(crate) enum TokenSubtype {
 }
 
 #[inline]
-pub(crate) fn classify_token(arg: &String, options: &[OptionDefinition]) -> TokenSubtype {
+pub(crate) fn classify_token(arg: StringView<'_>, options: &[OptionDefinition]) -> TokenSubtype {
     let len = arg.length();
 
     if len == 2 {
@@ -100,7 +100,7 @@ pub(crate) fn classify_token(arg: &String, options: &[OptionDefinition]) -> Toke
             };
         } else if arg.starts_with_ascii(b"-") {
             let first_char = arg.substring_with_len(1, 2);
-            let option_idx = find_option_by_short_name(&first_char, options);
+            let option_idx = find_option_by_short_name(first_char, options);
             if let Some(i) = option_idx {
                 return if options[i].r#type == OptionValueType::String {
                     TokenSubtype::ShortOptionAndValue
@@ -119,7 +119,7 @@ pub(crate) fn classify_token(arg: &String, options: &[OptionDefinition]) -> Toke
 /// Detect whether there is possible confusion and user may have omitted
 /// the option argument, like `--port --verbose` when `port` of type:string.
 /// In strict mode we throw errors if value is option-like.
-pub(crate) fn is_option_like_value(value: &String) -> bool {
+pub(crate) fn is_option_like_value(value: StringView<'_>) -> bool {
     value.length() > 1 && value.starts_with_ascii(b"-")
 }
 
@@ -133,15 +133,15 @@ pub(crate) fn is_option_like_value(value: &String) -> bool {
 /// }) // returns "bar"
 /// ```
 pub(crate) fn find_option_by_short_name(
-    short_name: &String,
+    short_name: StringView<'_>,
     options: &[OptionDefinition],
 ) -> Option<usize> {
     let mut long_option_index: Option<usize> = None;
     for (i, option) in options.iter().enumerate() {
-        if short_name.eql(&option.short_name) {
+        if short_name.eql(option.short_name.as_view()) {
             return Some(i);
         }
-        if option.long_name.length() == 1 && short_name.eql(&option.long_name) {
+        if option.long_name.length() == 1 && short_name.eql(option.long_name) {
             long_option_index = Some(i);
         }
     }

@@ -12,7 +12,7 @@ use bun_core::String as BunString;
 use bun_core::ZStr;
 use bun_core::strings;
 use bun_jsc::EncodedSliceJsc as _;
-use bun_jsc::StringJsc as _;
+use bun_jsc::StringViewJsc as _;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult,
@@ -590,8 +590,8 @@ impl<'a> ShellSrcBuilder<'a> {
             // `needs_escape_bunstr` is true for empty strings: `${''}` must still
             // produce an argument. Routing through appendJSStrRef makes the \x08
             // marker recognized regardless of quote context (e.g. inside single quotes).
-            if needs_escape_bunstr(&bunstr)
-                || is_if_clause_keyword_bunstr(&bunstr)
+            if needs_escape_bunstr(bunstr.as_view())
+                || is_if_clause_keyword_bunstr(bunstr.as_view())
                 || self.outbuf_ends_with_var_ref()
             {
                 self.append_js_str_ref(bunstr)?;
@@ -808,8 +808,7 @@ pub mod testing_apis {
         }
 
         let str = format!("{}", test::tokens_json_fmt(&test_tokens[..]));
-        let bun_str = BunString::from_bytes(str.as_bytes());
-        bun_str.to_js(global)
+        bun_core::StringView::borrow_utf8(str.as_bytes()).to_js(global)
     }
 
     /// Testing API: parse the shell template-string arguments and return the

@@ -675,7 +675,7 @@ mod _impl {
             // environment variable, then falls back to reading the passwd entry.
             if let Some(home) = env_var::HOME.get() {
                 if !home.is_empty() {
-                    return Ok(BunString::from_bytes(home));
+                    return Ok(BunString::clone_utf8(home));
                 }
             }
 

@@ -468,7 +468,7 @@ pub mod bun_cpu_profiler;
 pub mod bun_heap_profiler;
 #[path = "bun_string_jsc.rs"]
 pub mod bun_string_jsc;
-pub use bun_string_jsc::{ErrorKind, StringJsc, Utf8WithStringJsc};
+pub use bun_string_jsc::{ErrorKind, StringJsc, StringViewJsc, Utf8WithStringJsc};
 #[path = "comptime_string_map_jsc.rs"]
 pub mod comptime_string_map_jsc;
 #[path = "EventLoopHandle.rs"]

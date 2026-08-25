@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 
 use crate::{JSGlobalObject, JSValue, JsResult};
-use bun_core::String;
+use bun_core::StringView;
 
 const SIZE: usize = 24;
 // alignment = 8 is encoded in #[repr(align(8))] below.
@@ -42,8 +42,8 @@ impl StringBuilder {
         StringBuilder__appendUsize(self, value)
     }
 
-    pub fn append_string(&mut self, value: &String) {
-        StringBuilder__appendString(self, value)
+    pub fn append_string(&mut self, value: StringView<'_>) {
+        StringBuilder__appendString(self, &value)
     }
 
     pub fn append_lchar(&mut self, value: u8) {
@@ -85,7 +85,7 @@ unsafe extern "C" {
     safe fn StringBuilder__appendDouble(this: &mut StringBuilder, num: f64);
     safe fn StringBuilder__appendInt(this: &mut StringBuilder, num: i32);
     safe fn StringBuilder__appendUsize(this: &mut StringBuilder, num: usize);
-    safe fn StringBuilder__appendString(this: &mut StringBuilder, str: &String);
+    safe fn StringBuilder__appendString(this: &mut StringBuilder, str: &StringView<'_>);
     safe fn StringBuilder__appendLChar(this: &mut StringBuilder, c: u8);
     safe fn StringBuilder__appendUChar(this: &mut StringBuilder, c: u16);
     safe fn StringBuilder__toString(this: &mut StringBuilder, global: &JSGlobalObject) -> JSValue;

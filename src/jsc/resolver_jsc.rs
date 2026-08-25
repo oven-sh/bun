@@ -5,7 +5,7 @@ use crate::HostReturn as _;
 use bstr::BStr;
 
 use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::{String as BunString, strings};
+use bun_core::{String as BunString, StringView, strings};
 use bun_paths::resolve_path;
 use bun_paths::{Platform, SEP, SEP_STR};
 
@@ -19,20 +19,20 @@ fn node_module_paths_for_js(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
     }
 
     let in_str = argument.to_bun_string(global)?;
-    Ok(node_module_paths_js_value(&in_str, global, false))
+    Ok(node_module_paths_js_value(&in_str.as_view(), global, false))
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObject) -> JSValue {
     crate::mark_binding!();
 
-    node_module_paths_js_value(&BunString::static_("."), global, false)
+    node_module_paths_js_value(&StringView::static_("."), global, false)
 }
 
 // C++ callers pass a borrowed `const BunString*` (`Bun::toString`).
 #[unsafe(export_name = "Resolver__nodeModulePathsJSValue")]
 extern "C" fn node_module_paths_js_value(
-    in_str: &BunString,
+    in_str: &StringView<'_>,
     global: &JSGlobalObject,
     use_dirname: bool,
 ) -> JSValue {

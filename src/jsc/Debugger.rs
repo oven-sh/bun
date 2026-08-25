@@ -11,7 +11,7 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use bun_core::String as BunString;
+use bun_core::{String as BunString, StringView};
 use bun_io::KeepAlive;
 use bun_io::posix_event_loop::{AllocatorType, get_vm_ctx};
 
@@ -164,7 +164,7 @@ unsafe extern "C" {
     safe fn Bun__startJSDebuggerThread(
         global: &JSGlobalObject,
         ctx_id: u32,
-        url: &BunString,
+        url: &StringView<'_>,
         from_env: c_int,
         is_connect: bool,
         is_node_inspector: bool,
@@ -487,13 +487,13 @@ impl Debugger {
         } = init;
 
         if !from_env.is_empty() {
-            let url = BunString::borrow_utf8(from_env);
+            let url = bun_core::StringView::borrow_utf8(from_env);
             let _scope = this.enter_event_loop_scope();
             Bun__startJSDebuggerThread(global, ctx_id, &url, 1, is_connect, false);
         }
 
         if let Some(path_or_port) = path_or_port {
-            let url = BunString::borrow_utf8(path_or_port);
+            let url = bun_core::StringView::borrow_utf8(path_or_port);
             let _scope = this.enter_event_loop_scope();
             Bun__startJSDebuggerThread(global, ctx_id, &url, 0, is_connect, is_node_inspector);
         }
@@ -808,17 +808,17 @@ unsafe extern "C" {
         agent: &mut TestReporterHandle,
         call_frame: &CallFrame,
         test_id: c_int,
-        name: &BunString,
+        name: &StringView<'_>,
         item_type: TestType,
         parent_id: c_int,
     );
     safe fn Bun__TestReporterAgentReportTestFoundWithLocation(
         agent: &mut TestReporterHandle,
         test_id: c_int,
-        name: &BunString,
+        name: &StringView<'_>,
         item_type: TestType,
         parent_id: c_int,
-        source_url: &BunString,
+        source_url: &StringView<'_>,
         line: c_int,
     );
     safe fn Bun__TestReporterAgentReportTestStart(agent: &mut TestReporterHandle, test_id: c_int);
@@ -835,26 +835,32 @@ impl TestReporterHandle {
         &mut self,
         call_frame: &CallFrame,
         test_id: i32,
-        name: &BunString,
+        name: StringView<'_>,
         item_type: TestType,
         parent_id: i32,
     ) {
         Bun__TestReporterAgentReportTestFound(
-            self, call_frame, test_id, name, item_type, parent_id,
+            self, call_frame, test_id, &name, item_type, parent_id,
         );
     }
 
     pub fn report_test_found_with_location(
         &mut self,
         test_id: i32,
-        name: &BunString,
+        name: StringView<'_>,
         item_type: TestType,
         parent_id: i32,
-        source_url: &BunString,
+        source_url: StringView<'_>,
         line: i32,
     ) {
         Bun__TestReporterAgentReportTestFoundWithLocation(
-            self, test_id, name, item_type, parent_id, source_url, line,
+            self,
+            test_id,
+            &name,
+            item_type,
+            parent_id,
+            &source_url,
+            line,
         );
     }
 
@@ -929,7 +935,7 @@ impl TestReporterAgent {
         &self,
         call_frame: &CallFrame,
         test_id: i32,
-        name: &BunString,
+        name: StringView<'_>,
         item_type: TestType,
         parent_id: i32,
     ) {

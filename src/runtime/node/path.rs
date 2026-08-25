@@ -1262,7 +1262,7 @@ fn format(global_object: &JSGlobalObject, is_windows: bool, args: &[JSValue]) ->
     )
 }
 
-fn is_absolute_posix_string(path: &bun_core::String) -> bool {
+fn is_absolute_posix_string(path: bun_core::StringView<'_>) -> bool {
     let path_trunc = path.trunc(1);
     if path_trunc.is_utf16() {
         is_absolute_posix_t::<u16>(path_trunc.utf16())
@@ -1271,7 +1271,7 @@ fn is_absolute_posix_string(path: &bun_core::String) -> bool {
     }
 }
 
-fn is_absolute_windows_string(path: &bun_core::String) -> bool {
+fn is_absolute_windows_string(path: bun_core::StringView<'_>) -> bool {
     if path.is_utf16() {
         is_absolute_windows_t::<u16>(path.utf16())
     } else {
@@ -1297,9 +1297,9 @@ fn is_absolute(
         return Ok(JSValue::FALSE);
     }
     if is_windows {
-        return Ok(JSValue::from(is_absolute_windows_string(&path_str)));
+        return Ok(JSValue::from(is_absolute_windows_string(*path_str)));
     }
-    Ok(JSValue::from(is_absolute_posix_string(&path_str)))
+    Ok(JSValue::from(is_absolute_posix_string(*path_str)))
 }
 
 /// Based on Node v21.6.1 path.posix.join:
@@ -1353,7 +1353,7 @@ fn join_posix_t<'a, T: PathCharCwd>(
 /// `rhs_ptr[..rhs_len]` must be a valid readable slice. Called only from C++.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__Node__Path_joinWTF(
-    lhs: &bun_core::String,
+    lhs: &bun_core::StringView<'_>,
     rhs_ptr: *const u8,
     rhs_len: usize,
 ) -> bun_core::String {

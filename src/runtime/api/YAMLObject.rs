@@ -4,7 +4,7 @@ use core::ffi::c_void;
 use bun_ast::{Expr, expr::Data as ExprData};
 use bun_collections::{HashMap, StringHashMap};
 use bun_core::StackCheck;
-use bun_core::String as BunString;
+use bun_core::{String as BunString, StringView};
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
     JsError, JsResult, MarkedArgumentBuffer, wtf,
@@ -122,7 +122,7 @@ impl AnchorAlias {
                 ValueOrigin::Root => AnchorAliasName::Root,
                 ValueOrigin::ArrayItem => AnchorAliasName::ArrayItem(0),
                 ValueOrigin::PropValue(prop_name) => AnchorAliasName::PropValue {
-                    prop_name: (*prop_name).clone(),
+                    prop_name: prop_name.to_owned(),
                     counter: 0,
                 },
             },
@@ -145,7 +145,7 @@ pub(crate) enum AnchorAliasName {
 pub(crate) enum ValueOrigin<'a> {
     Root,
     ArrayItem,
-    PropValue(&'a BunString),
+    PropValue(bun_core::StringView<'a>),
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
@@ -259,7 +259,7 @@ impl Stringifier {
                 AnchorAliasName::PropValue { prop_name, counter } => {
                     // Unsafe names use generated `value<counter>` anchors, keyed on
                     // "value" so the counter is shared with literal "value" properties.
-                    let key: &[u8] = if can_use_prop_name_as_anchor(prop_name) {
+                    let key: &[u8] = if can_use_prop_name_as_anchor(prop_name.as_view()) {
                         prop_name.byte_slice()
                     } else {
                         b"value"
@@ -306,7 +306,7 @@ impl Stringifier {
             if value.is_undefined() || value.is_symbol() || value.is_function() {
                 continue;
             }
-            self.find_anchors_and_aliases(global, value, ValueOrigin::PropValue(&prop_name))?;
+            self.find_anchors_and_aliases(global, value, ValueOrigin::PropValue(prop_name))?;
         }
 
         Ok(())
@@ -374,7 +374,7 @@ impl Stringifier {
 
         if unwrapped.is_string() {
             let value_str = unwrapped.to_bun_string(global)?;
-            self.append_string(&value_str);
+            self.append_string(value_str.as_view());
             return Ok(());
         }
 
@@ -405,11 +405,11 @@ impl Stringifier {
                     self.builder.append_usize(*counter);
                 }
                 AnchorAliasName::PropValue { prop_name, counter } => {
-                    if !can_use_prop_name_as_anchor(prop_name) {
+                    if !can_use_prop_name_as_anchor(prop_name.as_view()) {
                         self.builder.append_latin1(b"value");
                         self.builder.append_usize(*counter);
                     } else {
-                        self.builder.append_string(prop_name);
+                        self.builder.append_string(prop_name.as_view());
                         if *counter != 0 {
                             self.builder.append_usize(*counter);
                         }
@@ -518,7 +518,7 @@ impl Stringifier {
                     }
                     first = false;
 
-                    self.append_string(&prop_name);
+                    self.append_string(prop_name);
                     self.builder.append_latin1(b": ");
 
                     self.stringify(global, value)?;
@@ -539,7 +539,7 @@ impl Stringifier {
                     }
                     first = false;
 
-                    self.append_string(&prop_name);
+                    self.append_string(prop_name);
                     self.builder.append_latin1(b": ");
 
                     self.indent += 1;
@@ -583,13 +583,13 @@ impl Stringifier {
                 self.builder
                     .ensure_unused_capacity(indent_count * clamped.length());
                 for _ in 0..indent_count {
-                    self.builder.append_string(&clamped);
+                    self.builder.append_string(clamped);
                 }
             }
         }
     }
 
-    fn append_double_quoted_string(&mut self, str: &BunString) {
+    fn append_double_quoted_string(&mut self, str: StringView<'_>) {
         self.builder.append_lchar(b'"');
 
         for i in 0..str.length() {
@@ -649,7 +649,7 @@ impl Stringifier {
         self.builder.append_lchar(b'"');
     }
 
-    fn append_string(&mut self, str: &BunString) {
+    fn append_string(&mut self, str: StringView<'_>) {
         if string_needs_quotes(str) {
             self.append_double_quoted_string(str);
             return;
@@ -666,7 +666,7 @@ fn prop_value_needs_newline(value: JSValue) -> bool {
 /// Can this property name be emitted verbatim as an anchor/alias name?
 /// Anchor names can't be quoted or escaped, so only unambiguously safe characters
 /// are reused; anything else falls back to a generated `value<counter>` name.
-fn can_use_prop_name_as_anchor(str: &BunString) -> bool {
+fn can_use_prop_name_as_anchor(str: StringView<'_>) -> bool {
     if str.is_empty() {
         return false;
     }
@@ -687,7 +687,7 @@ fn can_use_prop_name_as_anchor(str: &BunString) -> bool {
 }
 
 /// `value0`, `item12`, `root1`, ... — names that could duplicate a generated anchor name.
-fn matches_generated_anchor_name(str: &BunString) -> bool {
+fn matches_generated_anchor_name(str: StringView<'_>) -> bool {
     const PREFIXES: [&[u8]; 3] = [b"value", b"item", b"root"];
 
     'next_prefix: for prefix in PREFIXES {
@@ -713,7 +713,7 @@ fn matches_generated_anchor_name(str: &BunString) -> bool {
     false
 }
 
-fn string_needs_quotes(str: &BunString) -> bool {
+fn string_needs_quotes(str: StringView<'_>) -> bool {
     if str.is_empty() {
         return true;
     }
@@ -897,7 +897,7 @@ fn string_needs_quotes(str: &BunString) -> bool {
 ///   The parser-side gate now rejects non-conforming float-like tokens
 ///   (e.g. `"1+5"`, `"1e"`, `"."`) so this mirror should err on the side of
 ///   *quoting* whenever a token *might* parse as a number.
-fn string_is_number(str: &BunString) -> bool {
+fn string_is_number(str: StringView<'_>) -> bool {
     let len = str.length();
     if len == 0 {
         return false;
@@ -1007,7 +1007,7 @@ fn string_is_number(str: &BunString) -> bool {
 /// or "INF" — the suffix the YAML parser accepts after a signed `.` to mean
 /// +/- infinity. Over-matches `+.infX` etc., which is harmless for the quoting
 /// decision.
-fn is_inf_suffix(str: &BunString, i: usize) -> bool {
+fn is_inf_suffix(str: StringView<'_>, i: usize) -> bool {
     if i + 4 > str.length() {
         return false;
     }
@@ -1188,7 +1188,7 @@ impl<'a> ParserCtx<'a> {
                     let value = self.to_js(args, value_expr)?;
 
                     let key_str = key.to_bun_string(self.global)?;
-                    obj.put_may_be_index(self.global, &key_str, value)?;
+                    obj.put_may_be_index(self.global, key_str.as_view(), value)?;
                 }
 
                 Ok(obj)

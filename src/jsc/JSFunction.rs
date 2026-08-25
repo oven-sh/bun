@@ -1,4 +1,4 @@
-use bun_core::String as BunString;
+use bun_core::{String as BunString, StringView};
 
 use crate::{JSGlobalObject, JSHostFn, JSValue};
 
@@ -48,7 +48,7 @@ pub struct CreateJSFunctionOptions {
 unsafe extern "C" {
     safe fn JSFunction__createFromZig(
         global: &JSGlobalObject,
-        fn_name: &BunString,
+        fn_name: &StringView<'_>,
         implementation: JSHostFn,
         arg_count: u32,
         implementation_visibility: ImplementationVisibility,
@@ -69,7 +69,7 @@ impl JSFunction {
     ) -> JSValue {
         JSFunction__createFromZig(
             global,
-            &BunString::static_(fn_name),
+            &StringView::static_(fn_name),
             implementation,
             function_length,
             options.implementation_visibility,

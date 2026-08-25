@@ -159,7 +159,8 @@ impl SSLConfigFromJs for SSLConfig {
             any = true;
         }
         if let Some(dh_params_file) = generated.dh_params_file.as_ref() {
-            result.dh_params_file_name = handle_path(global, "dhParamsFile", dh_params_file)?;
+            result.dh_params_file_name =
+                handle_path(global, "dhParamsFile", dh_params_file.as_view())?;
             any = true;
         }
         if let Some(server_name) = generated.server_name.as_ref() {
@@ -220,15 +221,15 @@ impl SSLConfigFromJs for SSLConfig {
             || result.allow_partial_trust_chain;
 
         if let Some(key_file) = generated.key_file.as_ref() {
-            result.key_file_name = handle_path(global, "keyFile", key_file)?;
+            result.key_file_name = handle_path(global, "keyFile", key_file.as_view())?;
             result.requires_custom_request_ctx = true;
         }
         if let Some(cert_file) = generated.cert_file.as_ref() {
-            result.cert_file_name = handle_path(global, "certFile", cert_file)?;
+            result.cert_file_name = handle_path(global, "certFile", cert_file.as_view())?;
             result.requires_custom_request_ctx = true;
         }
         if let Some(ca_file) = generated.ca_file.as_ref() {
-            result.ca_file_name = handle_path(global, "caFile", ca_file)?;
+            result.ca_file_name = handle_path(global, "caFile", ca_file.as_view())?;
             result.requires_custom_request_ctx = true;
         }
 
@@ -294,7 +295,7 @@ pub fn resolve_reject_unauthorized(
 fn handle_path(
     global: &JSGlobalObject,
     field: &'static str,
-    string: &bun_core::String,
+    string: bun_core::StringView<'_>,
 ) -> JsResult<*const c_char> {
     let name = string.to_owned_slice_z();
     // `bun_sys::access` routes to `access(2)` on POSIX and

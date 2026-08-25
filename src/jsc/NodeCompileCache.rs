@@ -907,7 +907,10 @@ fn generate_bytecode(format: Format, code: &[u8], url: &[u8]) -> Option<Box<[u8]
                     for job in rx {
                         let url = BunString::clone_utf8(&job.url);
                         let result = crate::cached_bytecode::__bun_jsc_generate_cached_bytecode(
-                            job.format, &job.code, &url, None,
+                            job.format,
+                            &job.code,
+                            url.as_view(),
+                            None,
                         );
                         let _ = job.resp.send(result);
                     }

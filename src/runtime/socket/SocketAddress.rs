@@ -197,7 +197,7 @@ impl SocketAddress {
             str
         };
 
-        let Some(url) = bun_jsc::url::Parsed::from_string(&url_str) else {
+        let Some(url) = bun_jsc::url::Parsed::from_string(url_str.as_view()) else {
             return Ok(JSValue::UNDEFINED);
         };
         let host: BunString = url.host();

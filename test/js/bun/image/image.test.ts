@@ -913,6 +913,7 @@ describe("Bun.Image", () => {
           const dv = new DataView(nclx!.payload.buffer, nclx!.payload.byteOffset, nclx!.payload.byteLength);
           expect(dv.getUint16(0)).not.toBe(2);
           expect(dv.getUint16(2)).not.toBe(2);
+          expect(dv.getUint16(4)).not.toBe(2); // matrix coefficients
         }
       },
     );

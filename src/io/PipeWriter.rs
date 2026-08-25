@@ -1104,8 +1104,7 @@ pub trait BaseWindowsPipeWriter: Sized {
     fn closed_without_reporting(&self) -> bool;
     fn set_closed_without_reporting(&mut self, v: bool);
 
-    /// The payload of the last write handed to libuv, moved out of the writer.
-    /// Empty for a writer whose payload the parent owns.
+    /// The payload of the last write handed to libuv, moved out. Empty when the parent owns it.
     fn take_write_payload(&mut self) -> Vec<u8> {
         Vec::new()
     }
@@ -1260,8 +1259,7 @@ pub trait BaseWindowsPipeWriter: Sized {
         self.start_with_current_pipe()
     }
 
-    /// A restart (`FileSink.start({ path })` on a live sink) replaces the source.
-    /// Close the old one first, as `PosixStreamingWriter::start` does.
+    /// A restart replaces the source: close the old one first, as the POSIX writer does.
     fn close_current_source(&mut self) -> sys::Result<()> {
         match self.source() {
             None => {}

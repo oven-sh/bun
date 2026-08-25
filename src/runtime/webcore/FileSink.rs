@@ -765,8 +765,7 @@ impl FileSink {
                 return sys::Result::Err(err);
             }
             sys::Result::Ok(()) => {
-                // `open_for_writing` opened or dup'd `fd` for this sink, so `end()` closes
-                // it even when the writer started on a borrowed fd.
+                // `open_for_writing` opened or dup'd `fd` for this sink: `end()` closes it.
                 #[cfg(windows)]
                 self.writer.with_mut(|w| w.owns_fd = true);
                 // Only keep the event loop ref'd while there's a pending write in progress.

@@ -1,6 +1,6 @@
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -973,16 +973,15 @@ describe.concurrent("start() on a live writer", () => {
   `;
 
   async function run(script: string) {
-    const dir = tmpdirSync();
+    using dir = tempDir("filesink-restart", {});
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", prelude + script, dir],
+      cmd: [bunExe(), "-e", prelude + script, String(dir)],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ stderr: "", exitCode: 0 });
     return JSON.parse(stdout);
   }
 
@@ -1085,13 +1084,13 @@ describe.concurrent("start() on a live writer", () => {
   // cancel callback would then tear down the replacement. The Windows writer
   // refuses the restart and keeps the pipe; POSIX has no in-flight write.
   it.skipIf(!isWindows)("start({ path }) while a pipe write is in flight throws EBUSY and keeps the pipe", async () => {
-    const dir = tmpdirSync();
+    using dir = tempDir("filesink-restart-pipe", {});
     const script = `
       const writer = Bun.file(3).writer();
       writer.write("x");
       let code = null;
       try {
-        writer.start({ path: ${JSON.stringify(join(dir, "target.txt"))} });
+        writer.start({ path: ${JSON.stringify(join(String(dir), "target.txt"))} });
       } catch (e) {
         code = e.code;
       }
@@ -1108,7 +1107,11 @@ describe.concurrent("start() on a live writer", () => {
     child.stderr!.on("data", d => (stderr += d));
     (child.stdio[3] as Readable).on("data", d => (pipe += d));
     const exitCode = await new Promise(resolve => child.on("close", resolve));
-    expect(stderr).toBe("");
-    expect({ stdout: stdout.trim(), pipe, exitCode }).toEqual({ stdout: '{"code":"EBUSY"}', pipe: "xy", exitCode: 0 });
+    expect({ stdout: stdout.trim(), stderr, pipe, exitCode }).toEqual({
+      stdout: '{"code":"EBUSY"}',
+      stderr: "",
+      pipe: "xy",
+      exitCode: 0,
+    });
   });
 });

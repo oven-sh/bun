@@ -107,8 +107,7 @@ where
             is_pollable,
         );
     }
-    // NtCreateFile opens an `O_NONBLOCK` file for asynchronous I/O; the
-    // synchronous `WriteFile` behind `uv_fs_write` then fails with EINVAL.
+    // NtCreateFile makes an `O_NONBLOCK` handle asynchronous; `uv_fs_write` then fails with EINVAL.
     #[cfg(windows)]
     let input_flags = input_flags & !bun_sys::O::NONBLOCK;
     // TODO: this should be concurrent.

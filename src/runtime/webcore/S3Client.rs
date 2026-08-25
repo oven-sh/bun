@@ -354,7 +354,7 @@ impl S3Client {
     fn construct_blob(
         &self,
         global: &JSGlobalObject,
-        path: PathLike,
+        path: PathLike<'static>,
         options: Option<JSValue>,
     ) -> JsResult<crate::webcore::blob::Blob> {
         S3File::construct_s3_file_with_s3_credentials_and_options(

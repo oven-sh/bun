@@ -920,6 +920,20 @@ describe("Query Execution", () => {
     const cteReturning = await sql`WITH bump AS (SELECT 1) UPDATE gadgets2 SET id = id - 10 RETURNING id`;
     expect(cteReturning).toHaveLength(2);
     expect(cteReturning.affectedRows).toBe(2);
+
+    // a CTE DELETE: the write verb is not the statement's first token
+    const cteDelete = await sql`WITH pick AS (SELECT 1 AS id) DELETE FROM gadgets2 WHERE id IN (SELECT id FROM pick)`;
+    expect(cteDelete.command).toBe("DELETE");
+    expect(cteDelete.affectedRows).toBeNull();
+
+    const cteDeleteReturning = await sql`WITH pick AS (SELECT 2 AS id) DELETE FROM gadgets2 WHERE id IN (SELECT id FROM pick) RETURNING id`;
+    expect(cteDeleteReturning).toHaveLength(1);
+    expect(cteDeleteReturning.affectedRows).toBe(1);
+
+    // a RETURNING keyword inside a comment is not a RETURNING clause
+    const commentedReturning = await sql`INSERT INTO gadgets2 VALUES (3) /* no RETURNING here */`;
+    expect(commentedReturning.command).toBe("INSERT");
+    expect(commentedReturning.affectedRows).toBe(1);
   });
 
   test("SELECT with various clauses", async () => {

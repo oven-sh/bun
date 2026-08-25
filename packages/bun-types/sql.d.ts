@@ -468,10 +468,11 @@ declare module "bun" {
        */
       command: string | null;
       /**
-       * The number of rows an `INSERT`, `UPDATE`, or `DELETE` changed. `0`
-       * for statements that do not write. This is the portable way to read
-       * the affected-row count on every adapter. On SQLite, `null` when the
-       * count is unknown: a write wrapped in a CTE without `RETURNING`.
+       * The number of rows an `INSERT`, `UPDATE`, `DELETE`, or `MERGE`
+       * (PostgreSQL) changed. `0` for statements that do not write. This is
+       * the portable way to read the affected-row count on every adapter. On
+       * SQLite, `null` when the count is unknown: a write wrapped in a CTE
+       * without `RETURNING`.
        */
       affectedRows: number | bigint | null;
       /**

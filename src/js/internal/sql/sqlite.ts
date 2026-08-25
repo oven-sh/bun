@@ -35,6 +35,8 @@ interface SQLParsedInfo {
   lastToken?: string;
   canReturnRows: boolean;
   hasReturning: boolean;
+  /** The statement's write verb (INSERT/UPDATE/DELETE/REPLACE), or null for non-writes. */
+  writeCommand: string | null;
 }
 
 function commandToString(command: SQLCommand, lastToken?: string): string {
@@ -66,43 +68,45 @@ function isWriteCommand(commandString: string): boolean {
   }
 }
 
-/** Skips leading whitespace and SQL comments so the scan sees the statement's first keyword. */
-function skipLeadingComments(text: string): string {
-  let i = 0;
-  const len = text.length;
-  while (i < len) {
-    switch (text[i]) {
-      case " ":
-      case "\n":
-      case "\t":
-      case "\r":
-      case "\f":
-      case "\v":
-        i++;
-        continue;
-      case "-": {
-        if (text[i + 1] !== "-") {
-          return text.slice(i);
-        }
-        const newline = text.indexOf("\n", i + 2);
-        if (newline === -1) return "";
-        i = newline + 1;
-        continue;
-      }
-      case "/": {
-        if (text[i + 1] !== "*") {
-          return text.slice(i);
-        }
-        const end = text.indexOf("*/", i + 2);
-        if (end === -1) return "";
-        i = end + 2;
-        continue;
-      }
-      default:
-        return i === 0 ? text : text.slice(i);
-    }
+/** Removes -- and slash-star comments (outside string literals) so the token scan sees only real SQL. */
+function stripComments(text: string): string {
+  if (!text.includes("--") && !text.includes("/*")) {
+    return text;
   }
-  return "";
+  let out = "";
+  let quote: false | "'" | '"' = false;
+  const len = text.length;
+  for (let i = 0; i < len; i++) {
+    const char = text[i];
+    if (quote) {
+      if (char === quote) {
+        quote = false;
+      }
+      out += char;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      out += char;
+      continue;
+    }
+    if (char === "-" && text[i + 1] === "-") {
+      out += " ";
+      const newline = text.indexOf("\n", i + 2);
+      if (newline === -1) break;
+      i = newline;
+      continue;
+    }
+    if (char === "/" && text[i + 1] === "*") {
+      out += " ";
+      const end = text.indexOf("*/", i + 2);
+      if (end === -1) break;
+      i = end + 1;
+      continue;
+    }
+    out += char;
+  }
+  return out;
 }
 
 /**
@@ -112,7 +116,8 @@ function skipLeadingComments(text: string): string {
  * @returns The command, the last token, and whether it can return rows
  */
 function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
-  const text = skipLeadingComments(query.toUpperCase().trim());
+  // the scan relies on a trimmed input: a leading comment leaves whitespace behind
+  const text = stripComments(query.toUpperCase().trim()).trim();
   const text_len = text.length;
 
   let token = "";
@@ -120,6 +125,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
   let lastToken = "";
   let canReturnRows = false;
   let hasReturning = false;
+  let writeVerb: string | null = null;
   let quoted: false | "'" | '"' = false;
   // we need to reverse search so we find the closest command to the parameter
   for (let i = text_len - 1; i >= 0; i--) {
@@ -136,10 +142,11 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             if (command === SQLCommand.none) {
               command = SQLCommand.insert;
             }
+            writeVerb = token;
             lastToken = token;
             token = "";
             if (partial) {
-              return { command: SQLCommand.insert, lastToken, canReturnRows, hasReturning };
+              return { command: SQLCommand.insert, lastToken, canReturnRows, hasReturning, writeCommand: null };
             }
             continue;
           }
@@ -147,11 +154,19 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             if (command === SQLCommand.none) {
               command = SQLCommand.update;
             }
+            writeVerb = token;
             lastToken = token;
             token = "";
             if (partial) {
-              return { command: SQLCommand.update, lastToken, canReturnRows, hasReturning };
+              return { command: SQLCommand.update, lastToken, canReturnRows, hasReturning, writeCommand: null };
             }
+            continue;
+          }
+          case "DELETE":
+          case "REPLACE": {
+            writeVerb = token;
+            lastToken = token;
+            token = "";
             continue;
           }
           case "WHERE": {
@@ -161,7 +176,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             lastToken = token;
             token = "";
             if (partial) {
-              return { command: SQLCommand.where, lastToken, canReturnRows, hasReturning };
+              return { command: SQLCommand.where, lastToken, canReturnRows, hasReturning, writeCommand: null };
             }
             continue;
           }
@@ -172,7 +187,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             lastToken = token;
             token = "";
             if (partial) {
-              return { command: SQLCommand.updateSet, lastToken, canReturnRows, hasReturning };
+              return { command: SQLCommand.updateSet, lastToken, canReturnRows, hasReturning, writeCommand: null };
             }
             continue;
           }
@@ -183,7 +198,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             lastToken = token;
             token = "";
             if (partial) {
-              return { command: SQLCommand.in, lastToken, canReturnRows, hasReturning };
+              return { command: SQLCommand.in, lastToken, canReturnRows, hasReturning, writeCommand: null };
             }
             continue;
           }
@@ -263,7 +278,15 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
         break;
     }
   }
-  return { command, lastToken, canReturnRows, hasReturning };
+  // lastToken ends as the statement's first keyword. A CTE body can only
+  // contain SELECTs in SQLite, so any write verb seen belongs to the statement.
+  let writeCommand: string | null = null;
+  if (isWriteCommand(lastToken)) {
+    writeCommand = lastToken;
+  } else if (lastToken === "WITH") {
+    writeCommand = writeVerb;
+  }
+  return { command, lastToken, canReturnRows, hasReturning, writeCommand };
 }
 
 class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
@@ -318,14 +341,13 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         const sqlResult = $isArray(result) ? new SQLResultArray(result) : new SQLResultArray([result]);
 
         const count = $isArray(result) ? result.length : 1;
-        const commandString = commandToString(command, parsedInfo.lastToken);
-        sqlResult.command = commandString;
+        sqlResult.command = parsedInfo.writeCommand ?? commandToString(command, parsedInfo.lastToken);
         sqlResult.count = count;
-        if (isWriteCommand(commandString) && parsedInfo.lastToken !== "EXPLAIN") {
+        if (parsedInfo.writeCommand) {
           // RETURNING emits one row per affected row; a CTE-wrapped write without it returns no rows (count unknown).
           sqlResult.affectedRows = parsedInfo.hasReturning ? count : null;
         } else {
-          // reads and EXPLAIN <write> (lastToken = first token) change nothing
+          // reads and EXPLAIN change nothing
           sqlResult.affectedRows = 0;
         }
 
@@ -335,12 +357,11 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         const changes = db.run.$call(db, sql, values);
         const sqlResult = new SQLResultArray();
 
-        const commandString = commandToString(command, parsedInfo.lastToken);
-        sqlResult.command = commandString;
+        sqlResult.command = parsedInfo.writeCommand ?? commandToString(command, parsedInfo.lastToken);
         sqlResult.count = changes.changes;
         sqlResult.lastInsertRowid = changes.lastInsertRowid;
         // non-writes keep 0: sqlite3_changes() still reports the previous write after e.g. CREATE TABLE
-        sqlResult.affectedRows = isWriteCommand(commandString) ? changes.changes : 0;
+        sqlResult.affectedRows = parsedInfo.writeCommand ? changes.changes : 0;
 
         query.resolve(sqlResult);
       }

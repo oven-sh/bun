@@ -2038,7 +2038,7 @@ fn parse_build_command_options(
 
     if ctx.bundler_options.bytecode {
         ctx.bundler_options.output_format = options::Format::Cjs;
-        ctx.args.target = Some(api::Target::Bun);
+        // build_command forces the bun target for bytecode after parsing.
     }
 
     if let Some(public_path) = args.option(b"--public-path") {

@@ -1467,7 +1467,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         if args.flag(b"--zero-fill-buffers") {
             Bun__Node__ZeroFillBuffers.store(true, core::sync::atomic::Ordering::Relaxed);
         }
-        if args.flag(b"--no-use-system-ca") {
+        let no_use_system_ca = args.flag(b"--no-use-system-ca");
+        if no_use_system_ca {
             Bun__Node__NoUseSystemCA.store(true, core::sync::atomic::Ordering::Relaxed);
         }
         let use_system_ca = args.flag(b"--use-system-ca");
@@ -1483,7 +1484,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             Global::exit(1);
         }
 
-        let no_use_system_ca = args.flag(b"--no-use-system-ca");
         let store: Option<BunCAStore> = if use_bundled_ca {
             Some(BunCAStore::Bundled)
         } else if use_openssl_ca {

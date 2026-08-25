@@ -598,25 +598,6 @@ pub fn rsplit_once_char(self_: &[u8], delimiter: u8) -> Option<(&[u8], &[u8])> {
     Some((&self_[..i], &self_[i + 1..]))
 }
 
-/// `str::split_once` for bytes with a multi-byte delimiter. An empty
-/// delimiter never matches.
-#[inline]
-pub fn split_once<'a>(self_: &'a [u8], delimiter: &[u8]) -> Option<(&'a [u8], &'a [u8])> {
-    let i = index_of(self_, delimiter)?;
-    Some((&self_[..i], &self_[i + delimiter.len()..]))
-}
-
-/// `str::rsplit_once` for bytes with a multi-byte delimiter. An empty
-/// delimiter never matches.
-#[inline]
-pub fn rsplit_once<'a>(self_: &'a [u8], delimiter: &[u8]) -> Option<(&'a [u8], &'a [u8])> {
-    if delimiter.is_empty() {
-        return None;
-    }
-    let i = last_index_of(self_, delimiter)?;
-    Some((&self_[..i], &self_[i + delimiter.len()..]))
-}
-
 pub struct SplitIterator<'a> {
     pub(crate) buffer: &'a [u8],
     pub(crate) index: Option<usize>,

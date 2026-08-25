@@ -53,8 +53,7 @@ fn signal_code_from_js(val: JSValue, global: &JSGlobalObject) -> JsResult<Signal
     bun_sys_jsc::signal_code_jsc::from_js(val, global)
 }
 
-/// `uid` / `gid` are int32s passed through to the OS (negative values are cast
-/// to uid_t/gid_t, matching libuv).
+/// Like node, `uid` / `gid` are int32s that the OS casts to uid_t / gid_t.
 fn user_or_group_id_from_js(
     global: &JSGlobalObject,
     value: JSValue,

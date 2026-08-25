@@ -639,6 +639,7 @@ impl Options {
                                 && (new_url.is_https() || !prev_url.is_https())
                             {
                                 api_registry.token = core::mem::take(&mut self.scope.token);
+                                api_registry.auth = core::mem::take(&mut self.scope.auth);
                             }
                         }
                         self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;

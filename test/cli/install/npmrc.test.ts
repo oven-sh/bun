@@ -607,6 +607,48 @@ registry=https://somehost.com/org1/npm/registry/
     });
   });
 
+  // `$npm_config_registry` pointing at the host `.npmrc` already configured rebuilds the
+  // scope; the `.npmrc` `_auth` must survive that the way `_authToken` does.
+  test("an env registry on the same host keeps the .npmrc _auth", async () => {
+    const blob = Buffer.from("alice:hunter2").toString("base64");
+    const authorizations: (string | null)[] = [];
+    await using registry = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        authorizations.push(req.headers.get("authorization"));
+        return Response.json({
+          name: "pkg",
+          "dist-tags": { latest: "1.0.0" },
+          versions: { "1.0.0": { name: "pkg", version: "1.0.0" } },
+        });
+      },
+    });
+    const host = `127.0.0.1:${registry.port}`;
+    using dir = tempDir("npmrc-env-registry-auth", {
+      "home/.gitkeep": "",
+      "package.json": JSON.stringify({ name: "probe", version: "0.0.0" }),
+      ".npmrc": `registry=http://${host}/\n//${host}/:_auth=${blob}\n`,
+    });
+    const homeDir = join(String(dir), "home");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "view", "pkg", "version"],
+      cwd: String(dir),
+      env: {
+        ...env,
+        HOME: homeDir,
+        USERPROFILE: homeDir,
+        XDG_CONFIG_HOME: homeDir,
+        npm_config_registry: `http://${host}/`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ authorizations, stdout }).toEqual({ authorizations: [`Basic ${blob}`], stdout: "1.0.0\n" });
+    expect(exitCode).toBe(0);
+  });
+
   describe("bun pm whoami derives the username from _auth", () => {
     async function whoamiWith(files: Record<string, string>) {
       using dir = tempDir("npmrc-whoami-auth", {
@@ -630,7 +672,7 @@ registry=https://somehost.com/org1/npm/registry/
 
     function whoami(authValue: string) {
       return whoamiWith({
-        ".npmrc": `registry=https://somehost.com/\n//somehost.com/:_auth=${authValue}\n`,
+        ".npmrc": `registry=https://registry.invalid/\n//registry.invalid/:_auth=${authValue}\n`,
       });
     }
 
@@ -669,7 +711,7 @@ registry=https://somehost.com/org1/npm/registry/
       ["blank-password", Buffer.from("tok:").toString("base64")],
     ])("the registry URL's username/password do not leak an identity past _auth (%s)", async (_name, authValue) => {
       const { stdout, stderr, exitCode } = await whoamiWith({
-        ".npmrc": `registry=https://url-user:url-pass@somehost.com/\n//somehost.com/:_auth=${authValue}\n`,
+        ".npmrc": `registry=https://url-user:url-pass@registry.invalid/\n//registry.invalid/:_auth=${authValue}\n`,
       });
       expect(stdout).toBe("");
       expect(stderr).toContain("missing authentication");
@@ -680,8 +722,8 @@ registry=https://somehost.com/org1/npm/registry/
     // so whoami reports the bunfig identity and the _auth line is never consulted.
     test("bunfig.toml username/password are the identity when bunfig declares the registry", async () => {
       const { stdout, exitCode } = await whoamiWith({
-        "bunfig.toml": `[install.registry]\nurl = "https://somehost.com/"\nusername = "bunfig-user"\npassword = "bunfig-pass"\n`,
-        ".npmrc": `//somehost.com/:_auth=!!not-base64!!\n`,
+        "bunfig.toml": `[install.registry]\nurl = "https://registry.invalid/"\nusername = "bunfig-user"\npassword = "bunfig-pass"\n`,
+        ".npmrc": `//registry.invalid/:_auth=!!not-base64!!\n`,
       });
       expect(stdout).toBe("bunfig-user\n");
       expect(exitCode).toBe(0);

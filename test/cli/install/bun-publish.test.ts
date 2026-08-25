@@ -522,6 +522,7 @@ describe("can publish with only _auth from .npmrc", () => {
     const { promise: sawPublish, resolve: onPublish, reject: onUnexpected } = Promise.withResolvers<string | null>();
     using mockRegistry = Bun.serve({
       port: 0,
+      hostname: "127.0.0.1",
       fetch(req) {
         const pathname = new URL(req.url).pathname;
         if (req.method === "PUT" && pathname === "/npmrc-auth-pkg") {
@@ -533,7 +534,7 @@ describe("can publish with only _auth from .npmrc", () => {
       },
     });
 
-    const host = `localhost:${mockRegistry.port}`;
+    const host = `127.0.0.1:${mockRegistry.port}`;
     using dir = tempDir("publish-npmrc-auth", {
       "package.json": JSON.stringify({ name: "npmrc-auth-pkg", version: "1.0.0" }),
       ".npmrc": `registry=http://${host}/\n//${host}/:_auth=${blob}\n`,

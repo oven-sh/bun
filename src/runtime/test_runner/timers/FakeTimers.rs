@@ -324,24 +324,25 @@ fn error_unless_fake_timers(global: &JSGlobalObject) -> JsResult<()> {
 /// Set or remove the "clock" property on setTimeout to indicate that fake timers are active.
 /// This is used by testing-library/react's jestFakeTimersAreEnabled() function to detect
 /// if jest.advanceTimersByTime() should be called when draining the microtask queue.
-fn set_fake_timer_marker(global: &JSGlobalObject, enabled: bool) {
+fn set_fake_timer_marker(global: &JSGlobalObject, enabled: bool) -> JsResult<()> {
     let global_this = global.to_js_value();
     // `get()` (vs `get_own_truthy`) so the LUT-registered `setTimeout` is
     // resolved even before first reification — semantically equivalent on
     // the global since `setTimeout` is always an own property.
-    let Ok(Some(set_timeout_fn)) = global_this.get(global, "setTimeout") else {
-        return;
+    let Some(set_timeout_fn) = global_this.get(global, "setTimeout")? else {
+        return Ok(());
     };
     if !set_timeout_fn.is_object() {
-        return;
+        return Ok(());
     }
     // testing-library/react checks Object.hasOwnProperty.call(setTimeout, 'clock')
     // to detect if fake timers are enabled.
     if enabled {
         set_timeout_fn.put(global, "clock", JSValue::TRUE);
     } else {
-        let _ = set_timeout_fn.delete_property(global, "clock");
+        set_timeout_fn.delete_property(global, "clock")?;
     }
+    Ok(())
 }
 
 #[bun_jsc::host_fn]
@@ -377,7 +378,7 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
 
     // Set setTimeout.clock = true to signal that fake timers are enabled.
     // This is used by testing-library/react to detect if jest.advanceTimersByTime should be called.
-    set_fake_timer_marker(global, true);
+    set_fake_timer_marker(global, true)?;
 
     Ok(frame.this())
 }
@@ -389,7 +390,7 @@ fn use_real_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     cleared.release(global.bun_vm_ptr());
 
     // Remove the setTimeout.clock marker when switching back to real timers.
-    set_fake_timer_marker(global, false);
+    set_fake_timer_marker(global, false)?;
 
     Ok(frame.this())
 }

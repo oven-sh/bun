@@ -186,8 +186,8 @@ fn find_option_by_long_name(long_name: &String, options: &[OptionDefinition]) ->
 fn get_default_args(global: &JSGlobalObject) -> JsResult<ArgsSlice> {
     // Work out where to slice process.argv for user supplied arguments
 
-    let exec_argv = super::process::get_exec_argv(global);
-    let argv = super::process::get_argv(global);
+    let exec_argv = super::process::get_exec_argv(global)?;
+    let argv = super::process::get_argv(global)?;
     if argv.is_array() && exec_argv.is_array() {
         let mut iter = exec_argv.array_iterator(global)?;
         while let Some(item) = iter.next()? {

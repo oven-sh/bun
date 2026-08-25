@@ -434,7 +434,7 @@ impl PendingValue {
                     // The ReadableStream within is expected to keep this Promise alive.
                     // If you try to protect() this, it will leak memory because the other end of the ReadableStream won't call it.
                     // See https://github.com/oven-sh/bun/issues/13678
-                    return Ok(promise);
+                    return promise;
                 }
                 Action::None => {}
             }

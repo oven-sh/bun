@@ -1113,28 +1113,38 @@ impl JSGlobalObject {
         crate::from_js_host_call_generic(self, || JSC__JSGlobalObject__handleRejectedPromises(self))
     }
 
-    pub fn readable_stream_to_array_buffer(&self, value: JSValue) -> JSValue {
-        ZigGlobalObject__readableStreamToArrayBuffer(self, value)
+    // The `readableStreamTo*` consumers throw `ERR_INVALID_ARG_TYPE` when
+    // `value` is not a `ReadableStream` and propagate what the consumer throws.
+    pub fn readable_stream_to_array_buffer(&self, value: JSValue) -> JsResult<JSValue> {
+        crate::call_zero_is_throw(self, || {
+            ZigGlobalObject__readableStreamToArrayBuffer(self, value)
+        })
     }
 
-    pub fn readable_stream_to_bytes(&self, value: JSValue) -> JSValue {
-        ZigGlobalObject__readableStreamToBytes(self, value)
+    pub fn readable_stream_to_bytes(&self, value: JSValue) -> JsResult<JSValue> {
+        crate::call_zero_is_throw(self, || ZigGlobalObject__readableStreamToBytes(self, value))
     }
 
-    pub fn readable_stream_to_text(&self, value: JSValue) -> JSValue {
-        ZigGlobalObject__readableStreamToText(self, value)
+    pub fn readable_stream_to_text(&self, value: JSValue) -> JsResult<JSValue> {
+        crate::call_zero_is_throw(self, || ZigGlobalObject__readableStreamToText(self, value))
     }
 
-    pub fn readable_stream_to_json(&self, value: JSValue) -> JSValue {
-        ZigGlobalObject__readableStreamToJSON(self, value)
+    pub fn readable_stream_to_json(&self, value: JSValue) -> JsResult<JSValue> {
+        crate::call_zero_is_throw(self, || ZigGlobalObject__readableStreamToJSON(self, value))
     }
 
-    pub fn readable_stream_to_blob(&self, value: JSValue) -> JSValue {
-        ZigGlobalObject__readableStreamToBlob(self, value)
+    pub fn readable_stream_to_blob(&self, value: JSValue) -> JsResult<JSValue> {
+        crate::call_zero_is_throw(self, || ZigGlobalObject__readableStreamToBlob(self, value))
     }
 
-    pub fn readable_stream_to_form_data(&self, value: JSValue, content_type: JSValue) -> JSValue {
-        ZigGlobalObject__readableStreamToFormData(self, value, content_type)
+    pub fn readable_stream_to_form_data(
+        &self,
+        value: JSValue,
+        content_type: JSValue,
+    ) -> JsResult<JSValue> {
+        crate::call_zero_is_throw(self, || {
+            ZigGlobalObject__readableStreamToFormData(self, value, content_type)
+        })
     }
 
     /// Returns a freshly-created `napi_env` owned by this global, for use by

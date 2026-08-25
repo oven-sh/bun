@@ -373,8 +373,8 @@ run until something actually closes the session; a browser surfaces the signal a
 sessions finish before a redeploy, and `close()` when they should stop now.
 
 In the `close` handler the session is already gone: `sendDatagram` returns `0` and `closed` is `true`. `code` and
-`reason` come from the peer's capsule, or are `0` and `""` when the session went away without one — which is what a
-dropped connection looks like.
+`reason` are whatever ended the session: the peer's capsule, the arguments of your own `close()`, or `0` and `""` when
+it went away without either — which is what a dropped connection looks like.
 
 ### Streams are not implemented
 
@@ -533,7 +533,8 @@ server.reload({
 });
 ```
 
-Use this for development and hot reloading. You can update only `fetch`, `error`, `routes`, and `websocket`.
+Use this for development and hot reloading. You can update only `fetch`, `error`, `routes`, `websocket`, and — on a
+server that started with it — `webtransport` (see [WebTransport](#webtransport)).
 
 ---
 

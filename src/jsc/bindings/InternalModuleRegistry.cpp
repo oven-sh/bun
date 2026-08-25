@@ -267,7 +267,7 @@ extern "C" bool Bun__generateInternalModuleBytecode(uint32_t id, uint32_t depth,
     JSC::recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, executable, source, error, depth);
     if (error.isValid())
         return false;
-    RefPtr<JSC::CachedBytecode> result = JSC::encodeBuiltinFunction(vm, executable, source.length(), InternalModuleRegistryConstants::sourceStamp, externalStrings);
+    RefPtr<JSC::CachedBytecode> result = JSC::encodeBuiltinFunction(vm, executable, source.length(), InternalModuleRegistryConstants::sourceStamp, externalStrings, JSC::BytecodeCacheChecksums::No, JSC::BytecodeCacheUpdatable::No);
     if (!result)
         return false;
     result->ref();

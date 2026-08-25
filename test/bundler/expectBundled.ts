@@ -6,16 +6,7 @@ import { callerSourceOrigin } from "bun:jsc";
 import type { Matchers } from "bun:test";
 import * as esbuild from "esbuild";
 import filenamify from "filenamify";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isCI, isDebug } from "harness";
 import { tmpdir } from "os";
 import path from "path";
@@ -234,6 +225,7 @@ export interface BundlerTestInput {
   globalName?: string;
   ignoreDCEAnnotations?: boolean;
   bytecode?: boolean;
+  bytecodeDepth?: number;
   emitDCEAnnotations?: boolean;
   inject?: string[];
   jsx?: {
@@ -337,7 +329,7 @@ export interface BundlerTestInput {
   capture?: string[];
 
   /** Run after bundle happens but before runtime. */
-  onAfterBundle?(api: BundlerTestBundleAPI): void;
+  onAfterBundle?(api: BundlerTestBundleAPI): Promise<void> | void;
 
   /* TODO: remove this from the tests after this is implemented */
   skipIfWeDidNotImplementWildcardSideEffects?: boolean;
@@ -545,6 +537,7 @@ function expectBundled(
     useDefineForClassFields,
     ignoreDCEAnnotations,
     bytecode = false,
+    bytecodeDepth,
     emitDCEAnnotations,
     production,
     // @ts-expect-error
@@ -839,6 +832,7 @@ function expectBundled(
               loader && Object.entries(loader).map(([k, v]) => ["--loader", `${k}:${v}`]),
               publicPath && `--public-path=${publicPath}`,
               bytecode && "--bytecode",
+              bytecodeDepth !== undefined && `--bytecode-depth=${bytecodeDepth}`,
               production && "--production",
             ]
           : [
@@ -1195,6 +1189,7 @@ function expectBundled(
           reactCompiler,
           reactCompilerOutputMode,
           bytecode,
+          bytecodeDepth,
           publicPath,
           emitDCEAnnotations,
           ignoreDCEAnnotations,
@@ -1588,7 +1583,7 @@ for (const [key, blob] of build.outputs) {
     }
 
     if (onAfterBundle) {
-      onAfterBundle(api);
+      await onAfterBundle(api);
     }
 
     // check reference

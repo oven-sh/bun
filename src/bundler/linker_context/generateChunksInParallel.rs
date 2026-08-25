@@ -1084,6 +1084,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             c.options.output_format,
                             &code_result.buffer,
                             &source_provider_url,
+                            c.options.bytecode_depth,
                             external_string_table.as_ref().and_then(|table| table.get()),
                         ) {
                             let source_provider_url_str = source_provider_url.to_utf8();
@@ -1413,7 +1414,7 @@ fn append_internal_module_bytecode(
     }
     for (id, bytecode) in crate::bundle_v2::dispatch::generate_internal_module_bytecode(
         &specifiers,
-        u32::MAX,
+        c.options.bytecode_depth,
         external_strings,
     ) {
         debug!("Internal module bytecode {}: {} bytes", id, bytecode.len());

@@ -305,13 +305,13 @@ describe.concurrent("bun run", () => {
     });
   }
 
-  it("should show the correct working directory when run with --cwd", async () => {
-    using dir = tempDir("bun-run-cwd", {
+  it.each(["--cwd", "--prefix"])("should show the correct working directory when run with %s", async flag => {
+    using dir = tempDir(`bun-run-${flag.replace("--", "")}`, {
       "subdir/test.js": `console.log(process.cwd());`,
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "--cwd", "subdir", "test.js"],
+      cmd: [bunExe(), "run", flag, "subdir", "test.js"],
       cwd: String(dir),
       stdin: "ignore",
       stdout: "pipe",
@@ -322,10 +322,136 @@ describe.concurrent("bun run", () => {
       },
     });
 
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toMatch(/subdir/);
     // The exit code will not be 1 if it panics.
+    expect(exitCode).toBe(0);
+  });
+
+  it.each(["--cwd", "--prefix"])(
+    "should show the correct working directory when run with %s after the script name",
+    async flag => {
+      using dir = tempDir(`bun-run-${flag.replace("--", "")}-after-script`, {
+        "subdir/test.js": `console.log(process.cwd());`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "test.js", flag, "subdir"],
+        cwd: String(dir),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...bunEnv,
+          BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
+        },
+      });
+
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toMatch(/subdir/);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it("should run package.json scripts with --prefix after the script name", async () => {
+    using dir = tempDir("bun-run-dev-prefix-after-script", {
+      "subdir/test.js": `console.log(process.cwd());`,
+      "subdir/package.json": JSON.stringify({
+        name: "test",
+        scripts: { dev: "bun ./test.js" },
+      }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "dev", "--prefix", "subdir/"],
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
+      },
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toMatch(/subdir/);
+    expect(exitCode).toBe(0);
+  });
+
+  it("should prefer --cwd over --prefix when both are set", async () => {
+    using dir = tempDir("bun-run-cwd-over-prefix", {
+      "good/test.js": `console.log(process.cwd());`,
+      "bad/test.js": `console.log("wrong");`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--cwd", "good", "--prefix", "bad", "test.js"],
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
+      },
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toMatch(/good/);
+    expect(stdout).not.toMatch(/wrong/);
+    expect(exitCode).toBe(0);
+  });
+
+  it("should prefer --cwd over --prefix when both appear after the script name", async () => {
+    using dir = tempDir("bun-run-cwd-over-prefix-after-script", {
+      "good/test.js": `console.log(process.cwd());`,
+      "bad/test.js": `console.log("wrong");`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "test.js", "--cwd", "good", "--prefix", "bad"],
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
+      },
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toMatch(/good/);
+    expect(stdout).not.toMatch(/wrong/);
+    expect(exitCode).toBe(0);
+  });
+
+  it("should not treat --cwd or --prefix after -- as bun flags", async () => {
+    using dir = tempDir("bun-run-double-dash-cwd", {
+      "test.js": `console.log(JSON.stringify(process.argv.slice(2)));`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "test.js", "--", "--cwd", "ignored"],
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
+      },
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.replaceAll("\r\n", "\n")).toBe('["--cwd","ignored"]\n');
     expect(exitCode).toBe(0);
   });
 

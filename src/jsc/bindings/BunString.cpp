@@ -320,7 +320,7 @@ WTF::String toCrossThreadShareable(const WTF::String& string)
         return isolatedCopyForSharing(*impl);
 
     // 2) Don't share slices, or external buffers whose finalizer belongs to the creating thread
-    if (impl->bufferOwnership() == StringImpl::BufferSubstring || impl->isExternal())
+    if (impl->isSubString() || impl->isExternal())
         return isolatedCopyForSharing(*impl);
 
     // 3) Ensure we won't lazily touch hash/flags on the consumer thread
@@ -798,7 +798,7 @@ extern "C" BunString BunString__createExternalGloballyAllocatedUTF16(
 extern "C" [[ZIG_EXPORT(nothrow)]] bool WTFStringImpl__isThreadSafe(
     const WTF::StringImpl* wtf)
 {
-    return !wtf->isAtom() && !wtf->isSymbol() && wtf->bufferOwnership() != WTF::StringImpl::BufferSubstring && !wtf->isExternal();
+    return !wtf->isAtom() && !wtf->isSymbol() && !wtf->isSubString() && !wtf->isExternal();
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__ensureHash(WTF::StringImpl* str)

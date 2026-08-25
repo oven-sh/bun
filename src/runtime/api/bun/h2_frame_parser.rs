@@ -1244,14 +1244,8 @@ pub(crate) struct SignalRef {
     // (signal is `ref_()`'d in `attach_signal` and outlives this struct until
     // `Drop` calls `detach()`/`unref()`), so reads go through safe `Deref`.
     signal: bun_ptr::BackRef<AbortSignal>,
-    // LIFETIMES.tsv: SHARED — H2FrameParser carries an intrusive RefCount and is
-    // recovered via `from_field_ptr!` from the auto-flusher. It uses a hand-rolled
-    // `Cell<u32>` ref count (not `bun_ptr::RefCount<Self>`), so `RefPtr`'s
-    // `RefCounted` bound is unsatisfiable. `ParentRef` captures the backref
-    // invariant (parser is `ref_()`'d in `attach_signal` and outlives the
-    // `SignalRef` until `Drop` calls `deref()`), so reads go through safe
-    // `Deref`; the explicit `ref_()/deref()` balancing stays.
-    parser: bun_ptr::ParentRef<H2FrameParser>,
+    // TODO: We should not need this ref counting here, since Parser owns Stream
+    parser: RefPtr<H2FrameParser>,
     stream_id: u32,
 }
 
@@ -1264,9 +1258,7 @@ impl SignalRef {
     pub(crate) fn abort_listener(this: &mut SignalRef, reason: JSValue) {
         bun_output::scoped_log!(H2FrameParser, "abortListener");
         reason.ensure_still_alive();
-        // ParentRef backref — ref()'d in `attach_signal`, valid until detach/deinit.
-        // R-2: shared deref — `abort_stream` takes `&self`.
-        let parser = this.parser.get();
+        let parser = &*this.parser;
         let Some(stream) = parser.streams.get().get(&this.stream_id).copied() else {
             return;
         };
@@ -1287,10 +1279,6 @@ impl Drop for SignalRef {
         // taken by `from_mut` doesn't overlap the receiver borrow.
         let signal = self.signal;
         signal.detach(std::ptr::from_mut(self).cast::<c_void>());
-        // ParentRef backref — parser outlives every SignalRef (ref()'d in
-        // `attach_signal`); release that ref now via the inherent `deref()`.
-        H2FrameParser::deref(self.parser.get());
-        // bun.destroy(this) handled by Box drop
     }
 }
 
@@ -1811,14 +1799,13 @@ impl Stream {
         // we need a stable pointer to know what signal points to what stream_id + parser
         let mut signal_ref = Box::new(SignalRef {
             signal: bun_ptr::BackRef::from(refed),
-            parser: bun_ptr::ParentRef::new(parser),
+            // SAFETY: `parser` is the live m_ctx allocation.
+            parser: unsafe { RefPtr::init_ref(parser.as_ctx_ptr()) },
             stream_id: self.id,
         });
         // `signal_ref` is heap-allocated and outlives the listener registration
         // (cleared via `detach` in `Drop for SignalRef`).
         signal.listen(&raw mut *signal_ref);
-        // TODO: We should not need this ref counting here, since Parser owns Stream
-        parser.ref_();
         self.signal = Some(signal_ref);
     }
 

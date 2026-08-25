@@ -53,14 +53,11 @@ fn signal_code_from_js(val: JSValue, global: &JSGlobalObject) -> JsResult<Signal
     bun_sys_jsc::signal_code_jsc::from_js(val, global)
 }
 
-/// `Terminal.CreateResult` — local mirror that flattens `RefPtr<Terminal>`
-/// to a `BackRef<Terminal>` used by `Subprocess.terminal`, so the scopeguard /
-/// field-assignment paths share one pointer type with `existing_terminal`.
+/// `Terminal.CreateResult` with the pointer as the `BackRef<Terminal>` that
+/// `Subprocess.terminal` and `existing_terminal` use.
 struct TerminalCreateResult {
-    /// BACKREF — the `RefPtr<Terminal>` pointer leaked via `into_raw()`
-    /// when this struct was populated; the +1 ref is held until
-    /// `Subprocess::finalize` (or the spawn-error scopeguard's
-    /// `abandon_from_spawn`) releases it, so the pointee outlives this struct.
+    /// Kept alive by its JS wrapper (`js_value`), which holds itself strong
+    /// until the terminal closes.
     pub terminal: bun_ptr::BackRef<Terminal, bun_ptr::Mut>,
     pub js_value: JSValue,
 }
@@ -847,14 +844,11 @@ fn spawn_maybe_sync(
                         match Terminal::create_from_spawn(global_this, &term_options) {
                             Ok(created) => {
                                 **terminal_info = Some(TerminalCreateResult {
-                                    // Transfer the +1 ref to `Subprocess.terminal` (released
-                                    // in `Subprocess::finalize`); the scopeguard's
-                                    // `abandon_from_spawn` path covers the error case.
-                                    // `RefPtr::into_raw` is never null (NonNull-backed).
-                                    // SAFETY: `into_raw()` yields the live heap pointer
-                                    // (write provenance, non-null); ref released later.
+                                    // Non-owning: the terminal is kept alive by its JS
+                                    // wrapper (`js_value`, held strong until closed).
+                                    // SAFETY: live heap pointer from `heap::into_raw`.
                                     terminal: unsafe {
-                                        bun_ptr::BackRef::from_raw_mut(created.terminal.into_raw())
+                                        bun_ptr::BackRef::from_raw_mut(created.terminal.as_ptr())
                                     },
                                     js_value: created.js_value,
                                 });

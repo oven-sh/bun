@@ -11,6 +11,7 @@
 
 use core::cell::Cell;
 use core::ffi::{c_int, c_void};
+use core::ptr::NonNull;
 #[cfg(windows)]
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -298,7 +299,8 @@ impl Options {
 
 /// Result from creating a Terminal
 pub(crate) struct CreateResult {
-    pub terminal: bun_ptr::RefPtr<Terminal>,
+    /// The new terminal; its initial ref belongs to the JS wrapper (`js_value`).
+    pub terminal: NonNull<Terminal>,
     pub js_value: JSValue,
 }
 
@@ -539,9 +541,8 @@ impl Terminal {
         }
 
         Ok(CreateResult {
-            // SAFETY: `parent_ptr` is the heap-allocated allocation above with
-            // ref_count >= 1; RefPtr::from_raw adopts one existing ref.
-            terminal: unsafe { bun_ptr::RefPtr::from_raw(parent_ptr) },
+            // SAFETY: `heap::into_raw` is never null.
+            terminal: unsafe { NonNull::new_unchecked(parent_ptr) },
             js_value: this_value,
         })
     }
@@ -571,7 +572,7 @@ impl Terminal {
             Ok(result) => {
                 // Hand the intrusive ref to the JS wrapper as m_ctx; finalize()
                 // releases it via deref_().
-                Ok(bun_ptr::RefPtr::into_raw(result.terminal))
+                Ok(result.terminal.as_ptr())
             }
             Err(err) => Err(match err {
                 InitError::OpenPtyFailed => global_object.throw(format_args!("Failed to open PTY")),

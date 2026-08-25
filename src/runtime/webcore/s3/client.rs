@@ -566,7 +566,7 @@ pub(crate) fn writable_stream(
 }
 
 pub struct S3UploadStreamWrapper {
-    // intrusive ref_count — bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) → bun_ptr::RefPtr<Self>
+    /// Hand-rolled intrusive count; released through [`Self::deref_`].
     pub(crate) ref_count: core::cell::Cell<u32>,
 
     pub sink: Option<NonNull<NetworkSink>>,

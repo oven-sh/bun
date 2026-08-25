@@ -264,7 +264,7 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
     int err = uv_tty_set_mode(ttyWrap->handle->tty(), mode.toInt32(globalObject));
 #else
     // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
-    int err = Bun__ttySetMode(fd, mode.toInt32(globalObject), &ttyWrap->ttyState, 1);
+    int err = Bun__ttySetMode(fd, JSC::toInt32(mode.asNumber()), &ttyWrap->ttyState, 1);
 #endif
     return JSValue::encode(jsNumber(err));
 }
@@ -299,7 +299,9 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionGetWindowSize,
     }
 
     array->putDirectIndex(globalObject, 0, jsNumber(width));
+    RETURN_IF_EXCEPTION(throwScope, {});
     array->putDirectIndex(globalObject, 1, jsNumber(height));
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     return JSC::JSValue::encode(jsBoolean(true));
 }

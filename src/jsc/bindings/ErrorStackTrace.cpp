@@ -116,6 +116,7 @@ JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::St
 void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit)
 {
     UNUSED_PARAM(callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Delegate to Interpreter::getStackTrace which includes async stack frames
     // (from the await chain via getAsyncStackTrace). The previous hand-rolled
@@ -153,6 +154,7 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     JSC::JSObject* callerObject = caller.getObject();
     auto* globalObject = callerObject->globalObject();
     WTF::String callerName = Zig::functionName(vm, globalObject, callerObject);
+    RETURN_IF_EXCEPTION(scope, );
 
     // Match V8: remove all frames up to and including the caller. If the caller
     // is not found anywhere in the sync portion of the stack, remove everything.
@@ -169,9 +171,13 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
             removeCount = i + 1;
             break;
         }
-        if (!callerName.isEmpty() && Zig::functionName(vm, globalObject, frame, FinalizerSafety::NotInFinalizer, nullptr) == callerName) {
-            removeCount = i + 1;
-            break;
+        if (!callerName.isEmpty()) {
+            WTF::String frameName = Zig::functionName(vm, globalObject, frame, FinalizerSafety::NotInFinalizer, nullptr);
+            RETURN_IF_EXCEPTION(scope, );
+            if (frameName == callerName) {
+                removeCount = i + 1;
+                break;
+            }
         }
     }
 
@@ -485,9 +491,9 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
         if (object->getOwnNonIndexPropertySlot(vm, object->structure(), vm.propertyNames->name, slot)) {
             if (!slot.isAccessor()) {
                 JSValue functionNameValue = slot.getValue(lexicalGlobalObject, vm.propertyNames->name);
-                if (functionNameValue && functionNameValue.isString()) {
+                if (!topExceptionScope.exception() && functionNameValue && functionNameValue.isString()) {
                     name = functionNameValue.toWTFString(lexicalGlobalObject);
-                    if (!name.isEmpty()) {
+                    if (!topExceptionScope.exception() && !name.isEmpty()) {
                         return name;
                     }
                 }

@@ -840,7 +840,9 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__upsertBunStringArray(
         } else {
             // Create new array with both values
             JSC::JSArray* array = JSC::constructEmptyArray(global, nullptr, 2);
+            RETURN_IF_EXCEPTION(scope, {});
             array->putDirectIndex(global, 0, existingValue);
+            RETURN_IF_EXCEPTION(scope, {});
             array->putDirectIndex(global, 1, newValue);
             target->putDirect(vm, id, array, 0);
         }

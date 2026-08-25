@@ -1,7 +1,7 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { resolve } from "path";
 
 declare global {
@@ -900,6 +900,61 @@ it.concurrent("onLoad runs for a file without an extension", async () => {
   expect(stdout.trim() || stderr).toBe(
     ["dynamic:MIT License text", "require:MIT License text", "static:MIT License text", "seen:true"].join("\n"),
   );
+  expect(exitCode).toBe(0);
+});
+
+// A colon in a directory name is legal on POSIX. The loader must not read the
+// resolved path "/dir/a:b/file" as the namespace "/dir/a" plus the path "b/file".
+it.concurrent.skipIf(isWindows)("onLoad runs in the file namespace for a path that contains a colon", async () => {
+  using dir = tempDir("plugin-onload-colon-path", {
+    "with:colon/LICENSE": "MIT License text",
+    "with:colon/note.txt": "note text",
+    "entry.js": `
+      import { readFileSync } from "node:fs";
+      import { basename } from "node:path";
+
+      const seen = [];
+      Bun.plugin({
+        name: "colon-loader",
+        setup(build) {
+          build.onLoad({ filter: /(LICENSE|\\.txt)$/ }, args => {
+            seen.push(basename(args.path));
+            return {
+              contents: "export default " + JSON.stringify("plugin:" + readFileSync(args.path, "utf8")) + ";",
+              loader: "js",
+            };
+          });
+        },
+      });
+
+      async function attempt(specifier) {
+        try {
+          return (await import(specifier)).default;
+        } catch (error) {
+          return "threw: " + error.message;
+        }
+      }
+
+      const note = await attempt("./with:colon/note.txt");
+      const license = await attempt("./with:colon/LICENSE");
+      console.log(JSON.stringify({ note, license, seen }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // The fixture catches its own failures, so empty stdout means it crashed.
+  expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
+    note: "plugin:note text",
+    license: "plugin:MIT License text",
+    seen: ["note.txt", "LICENSE"],
+  });
   expect(exitCode).toBe(0);
 });
 

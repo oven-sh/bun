@@ -243,19 +243,25 @@ unsafe extern "C" fn Bun__runVirtualModule(
     let specifier = specifier_slice.slice();
 
     // The specifier is the resolved module key. An absolute path is a file on
-    // disk whether or not it has an extension, so the `file` namespace filters
-    // always see it. `could_be_plugin` keys off the extension and would skip
-    // `/dir/LICENSE`. Under `bun test` this runs before the builtin lookup, so
-    // the pre-filter still screens bare names such as `ws` or `bun`.
-    if !bun_paths::is_absolute(specifier) && !PluginRunner::could_be_plugin(specifier) {
-        return JSValue::ZERO;
-    }
-
-    let namespace = PluginRunner::extract_namespace(specifier);
-    let after_namespace = if namespace.is_empty() {
-        specifier
+    // disk, so it always goes to the `file` namespace filters, with or without
+    // an extension. It skips `could_be_plugin`, which keys off the extension,
+    // and `extract_namespace`, which would read the first colon in
+    // `/dir/a:b/x.js` or a `Z:\` drive as a namespace. Every other key keeps
+    // the pre-filter: under `bun test` this runs before the builtin lookup, and
+    // a bare name such as `ws` must stay out of the `file` namespace.
+    let (namespace, after_namespace): (&[u8], &[u8]) = if bun_paths::is_absolute(specifier) {
+        (b"", specifier)
     } else {
-        &specifier[(namespace.len() + 1).min(specifier.len())..]
+        if !PluginRunner::could_be_plugin(specifier) {
+            return JSValue::ZERO;
+        }
+        let namespace = PluginRunner::extract_namespace(specifier);
+        let after_namespace = if namespace.is_empty() {
+            specifier
+        } else {
+            &specifier[(namespace.len() + 1).min(specifier.len())..]
+        };
+        (namespace, after_namespace)
     };
 
     match global.run_on_load_plugins(

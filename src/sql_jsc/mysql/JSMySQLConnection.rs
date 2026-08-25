@@ -298,7 +298,7 @@ impl JSMySQLConnection {
                 self.connection_timeout_ms,
                 "",
             ),
-            S::Handshaking | S::Authenticating | S::AuthenticationAwaitingPk => (
+            S::Handshaking | S::Authenticating | S::AuthenticationAwaitingPk | S::SessionSetup => (
                 AnyMySQLErrorT::ConnectionTimedOut,
                 Connection,
                 self.connection_timeout_ms,
@@ -622,7 +622,11 @@ impl JSMySQLConnection {
             // fail chain never runs: fail directly so the JS onclose callback
             // fires and the status goes terminal instead of staying
             // Connecting forever.
-            S::Connecting | S::Handshaking | S::Authenticating | S::AuthenticationAwaitingPk => {
+            S::Connecting
+            | S::Handshaking
+            | S::Authenticating
+            | S::AuthenticationAwaitingPk
+            | S::SessionSetup => {
                 this.fail(b"Connection closed", AnyMySQLErrorT::ConnectionClosed);
             }
             S::Connected | S::Disconnected | S::Failed => {

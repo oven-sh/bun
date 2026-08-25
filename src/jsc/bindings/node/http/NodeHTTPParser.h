@@ -168,6 +168,8 @@ public:
 
     int trackHeader(size_t len);
     void flush();
+    // Return value for an llhttp callback whose JS threw: stops llhttp; execute() rethrows the exception.
+    int stopForPendingException();
 
     inline bool headersCompleted() const { return m_headersCompleted; }
     inline uint64_t lastMessageStart() const { return m_lastMessageStart; }

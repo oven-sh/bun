@@ -242,6 +242,8 @@ pub struct ArgumentsSlice<'a> {
     pub all: &'a [JSValue],
     pub(crate) protected: IntegerBitSet<32>,
     pub will_be_async: bool,
+    /// An errno a converter met under `will_be_async`; the binding rejects its promise with it.
+    pub deferred_error: Option<Box<bun_sys::SystemError>>,
 }
 
 impl<'a> ArgumentsSlice<'a> {
@@ -286,6 +288,7 @@ impl<'a> ArgumentsSlice<'a> {
             all: slice,
             protected: IntegerBitSet::<32>::init_empty(),
             will_be_async: false,
+            deferred_error: None,
         }
     }
 

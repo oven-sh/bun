@@ -198,8 +198,6 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
     return result;
 }
 
-extern "C" bool Bun__isBunMain(JSC::JSGlobalObject* global, const BunString*);
-
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -211,8 +209,8 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     bool isESM = callFrame->argument(2).asBoolean();
     bool isRequireDotResolve = callFrame->argument(3).isTrue();
     JSValue userPathList = callFrame->argument(4);
-
-    RETURN_IF_EXCEPTION(scope, {});
+    JSValue parentModule = callFrame->argument(5);
+    JSValue resolveFilenameOptions = callFrame->argument(6);
 
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
         if (moduleName.isString()) {
@@ -234,33 +232,15 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                 auto overrideHandler = uncheckedDowncast<JSObject>(globalObject->m_moduleResolveFilenameFunction.getInitializedOnMainThread(globalObject));
                 if (overrideHandler) [[likely]] {
                     ASSERT(overrideHandler->isCallable());
-                    JSValue parentModuleObject = globalObject->requireMap()->get(globalObject, from);
-                    RETURN_IF_EXCEPTION(scope, {});
-
-                    JSValue parentID = jsUndefined();
-                    if (auto* parent = dynamicDowncast<Bun::JSCommonJSModule>(parentModuleObject)) {
-                        parentID = parent->filename();
-                    } else {
-                        parentID = from;
-                    }
 
                     MarkedArgumentBuffer args;
                     args.append(moduleName);
-                    args.append(parentModuleObject);
-                    auto parentIdStr = parentID.toWTFString(globalObject);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    auto bunStr = Bun::toString(parentIdStr);
-                    args.append(jsBoolean(Bun__isBunMain(lexicalGlobalObject, &bunStr)));
+                    args.append(parentModule);
+                    args.append(jsBoolean(false));
+                    args.append(resolveFilenameOptions);
 
-                    // Pass options object with paths if provided
-                    if (!userPathList.isUndefinedOrNull()) {
-                        JSObject* options = JSC::constructEmptyObject(globalObject);
-                        RETURN_IF_EXCEPTION(scope, {});
-                        options->putDirect(vm, JSC::Identifier::fromString(vm, "paths"_s), userPathList);
-                        args.append(options);
-                    }
-
-                    JSValue result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, overrideHandler, JSC::getCallData(overrideHandler), parentModuleObject, args);
+                    JSValue thisValue = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
+                    JSValue result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, overrideHandler, JSC::getCallData(overrideHandler), thisValue, args);
                     RETURN_IF_EXCEPTION(scope, {});
                     if (!isRequireDotResolve) {
                         JSString* string = result.toString(globalObject);

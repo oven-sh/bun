@@ -1997,7 +1997,6 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
 
                 if (encodingView != "buffer"_s) {
                     encoding = parseEnumerationFromView<BufferEncodingType>(encodingView).value_or(BufferEncodingType::utf8);
-                    RETURN_IF_EXCEPTION(scope, {});
                 }
             }
 

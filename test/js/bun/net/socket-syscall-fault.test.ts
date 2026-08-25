@@ -100,7 +100,9 @@ describe.skipIf(!fault.available())("poll_start failure is reported, not a crash
 // (EPOLLHUP is level-triggered and cannot be masked) and registered again by
 // resume(), which is a fresh EPOLL_CTL_ADD and can fail the way the first one
 // can. epoll only: kqueue and libuv never park the fd, so their resume is a
-// plain filter/poll change with nothing for the hook to fail.
+// plain filter/poll change with nothing for the hook to fail. onread mode, because
+// like in node only that mode's pause() stops the handle (a plain pause() keeps
+// reading into the stream's buffer, which would deliver the reply as data here).
 test.skipIf(!fault.available() || !isLinux)(
   "resume() of a parked socket that cannot be registered again fails the socket instead of leaving it deaf",
   async () => {
@@ -120,7 +122,8 @@ test.skipIf(!fault.available() || !isLinux)(
           s.on("close", resolveClosed);
         });
         server.listen(0, async () => {
-          const conn = net.connect({ port: server.address().port, allowHalfOpen: true });
+          const onread = { buffer: Buffer.alloc(4096), callback: () => console.log("data") };
+          const conn = net.connect({ port: server.address().port, allowHalfOpen: true, onread });
           await once(conn, "connect");
           conn.end();
           conn.pause();
@@ -130,7 +133,6 @@ test.skipIf(!fault.available() || !isLinux)(
           // the next poll phase reports the hangup and parks the socket; an
           // immediate runs after that phase.
           await new Promise(r => setImmediate(r));
-          conn.on("data", () => console.log("data"));
           conn.on("error", e => console.log("error", e.code, e.syscall));
           conn.on("end", () => console.log("end"));
           conn.on("close", hadError => console.log("close", hadError));

@@ -227,6 +227,20 @@ extern "C" fn Bun__getDefaultLoader(
     loader
 }
 
+/// The `ns` of an `ns:path` module key when a plugin registered an onLoad
+/// callback in `ns`. `C:\...` is a Windows drive, never a namespace. This is
+/// the same rule `moduleLoaderResolve` applies to already-resolved keys.
+fn registered_on_load_namespace<'a>(global: &JSGlobalObject, key: &'a [u8]) -> Option<&'a [u8]> {
+    let colon = bun_core::strings::index_of_char_usize(key, b':')?;
+    if colon == 0 || (colon == 1 && key[0].is_ascii_alphabetic()) {
+        return None;
+    }
+    let namespace = &key[..colon];
+    global
+        .has_on_load_namespace(&bun_core::String::from_bytes(namespace))
+        .then_some(namespace)
+}
+
 /// C++ entry point: runs the plugin for a virtual-module specifier, returning its exports (or zero when no plugin runner is set).
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__runVirtualModule(
@@ -242,21 +256,25 @@ unsafe extern "C" fn Bun__runVirtualModule(
     let specifier_slice = unsafe { &*specifier_ptr }.to_utf8();
     let specifier = specifier_slice.slice();
 
-    // A resolved absolute path is a file, whatever its extension or colons.
-    let (namespace, after_namespace): (&[u8], &[u8]) = if bun_paths::is_absolute(specifier) {
-        (b"", specifier)
-    } else {
-        if !PluginRunner::could_be_plugin(specifier) {
-            return JSValue::ZERO;
-        }
-        let namespace = PluginRunner::extract_namespace(specifier);
-        let after_namespace = if namespace.is_empty() {
-            specifier
+    // A key whose prefix is a registered onLoad namespace is a virtual module.
+    // Any other absolute path is a file, whatever its extension or colons.
+    let (namespace, after_namespace): (&[u8], &[u8]) =
+        if let Some(namespace) = registered_on_load_namespace(global, specifier) {
+            (namespace, &specifier[namespace.len() + 1..])
+        } else if bun_paths::is_absolute(specifier) {
+            (b"", specifier)
         } else {
-            &specifier[(namespace.len() + 1).min(specifier.len())..]
+            if !PluginRunner::could_be_plugin(specifier) {
+                return JSValue::ZERO;
+            }
+            let namespace = PluginRunner::extract_namespace(specifier);
+            let after_namespace = if namespace.is_empty() {
+                specifier
+            } else {
+                &specifier[(namespace.len() + 1).min(specifier.len())..]
+            };
+            (namespace, after_namespace)
         };
-        (namespace, after_namespace)
-    };
 
     match global.run_on_load_plugins(
         &bun_core::String::from_bytes(namespace),

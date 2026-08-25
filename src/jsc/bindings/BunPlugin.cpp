@@ -910,6 +910,11 @@ extern "C" JSC::EncodedJSValue Bun__runOnLoadPlugins(Zig::GlobalObject* globalOb
     return globalObject->onLoadPlugins.run(globalObject, namespaceString, path);
 }
 
+extern "C" bool Bun__onLoadPluginsHasNamespace(Zig::GlobalObject* globalObject, const BunString* namespaceString)
+{
+    return globalObject->onLoadPlugins.group(namespaceString->toWTFString(BunString::ZeroCopy)) != nullptr;
+}
+
 namespace Bun {
 
 Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)

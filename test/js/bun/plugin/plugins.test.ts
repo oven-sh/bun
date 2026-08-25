@@ -958,6 +958,36 @@ it.concurrent.skipIf(isWindows)("onLoad runs in the file namespace for a path th
   expect(exitCode).toBe(0);
 });
 
+// The key of a module in the namespace "/virtual" is "/virtual:foo.txt", which
+// also reads as an absolute path. The registered namespace wins.
+it.concurrent("onLoad runs in a registered namespace whose key looks like an absolute path", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        Bun.plugin({
+          name: "slash-namespace",
+          setup(build) {
+            build.onResolve({ filter: /^virt\\.mod$/ }, () => ({ path: "foo.txt", namespace: "/virtual" }));
+            build.onLoad({ filter: /.*/, namespace: "/virtual" }, args => ({
+              contents: "export default " + JSON.stringify("virtual:" + args.path) + ";",
+              loader: "js",
+            }));
+          },
+        });
+        console.log((await import("virt.mod")).default);
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim() || stderr).toBe("virtual:foo.txt");
+  expect(exitCode).toBe(0);
+});
+
 // `bun test` consults plugins before the builtin modules so that mock.module()
 // can replace a builtin. A file-namespace onLoad filter must still see a file
 // without an extension there, and must not see bare builtin names such as "ws".

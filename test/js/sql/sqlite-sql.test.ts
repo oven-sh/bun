@@ -900,6 +900,17 @@ describe("Query Execution", () => {
     const explained = await sql`EXPLAIN UPDATE gadgets SET price = 1`;
     expect(explained.length).toBeGreaterThan(0);
     expect(explained.affectedRows).toBe(0);
+
+    // leading comments do not hide the write command
+    const lineComment = await sql`
+      -- remove the remaining row
+      DELETE FROM gadgets WHERE id = 1`;
+    expect(lineComment.command).toBe("DELETE");
+    expect(lineComment.affectedRows).toBe(1);
+
+    const blockComment = await sql`/* seed */ INSERT INTO gadgets2 VALUES (1), (2)`;
+    expect(blockComment.command).toBe("INSERT");
+    expect(blockComment.affectedRows).toBe(2);
   });
 
   test("SELECT with various clauses", async () => {

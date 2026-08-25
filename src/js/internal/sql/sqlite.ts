@@ -66,6 +66,45 @@ function affectedRowsForCommand(commandString: string, count: number | bigint): 
   }
 }
 
+/** Skips leading whitespace and SQL comments so the scan sees the statement's first keyword. */
+function skipLeadingComments(text: string): string {
+  let i = 0;
+  const len = text.length;
+  while (i < len) {
+    switch (text[i]) {
+      case " ":
+      case "\n":
+      case "\t":
+      case "\r":
+      case "\f":
+      case "\v":
+        i++;
+        continue;
+      case "-": {
+        if (text[i + 1] !== "-") {
+          return text.slice(i);
+        }
+        const newline = text.indexOf("\n", i + 2);
+        if (newline === -1) return "";
+        i = newline + 1;
+        continue;
+      }
+      case "/": {
+        if (text[i + 1] !== "*") {
+          return text.slice(i);
+        }
+        const end = text.indexOf("*/", i + 2);
+        if (end === -1) return "";
+        i = end + 2;
+        continue;
+      }
+      default:
+        return i === 0 ? text : text.slice(i);
+    }
+  }
+  return "";
+}
+
 /**
  * Parse the SQL query and return the command and the last token
  * @param query - The SQL query to parse
@@ -73,7 +112,7 @@ function affectedRowsForCommand(commandString: string, count: number | bigint): 
  * @returns The command, the last token, and whether it can return rows
  */
 function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
-  const text = query.toUpperCase().trim();
+  const text = skipLeadingComments(query.toUpperCase().trim());
   const text_len = text.length;
 
   let token = "";
@@ -276,8 +315,7 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         const count = $isArray(result) ? result.length : 1;
         sqlResult.command = commandToString(command, parsedInfo.lastToken);
         sqlResult.count = count;
-        // A write with RETURNING emits one row per affected row. EXPLAIN <write>
-        // (lastToken is the statement's first token) changes nothing.
+        // RETURNING emits one row per affected row; EXPLAIN <write> (lastToken = first token) changes nothing.
         sqlResult.affectedRows =
           parsedInfo.lastToken === "EXPLAIN" ? 0 : affectedRowsForCommand(sqlResult.command, count);
 

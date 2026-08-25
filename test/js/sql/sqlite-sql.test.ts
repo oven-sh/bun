@@ -926,7 +926,8 @@ describe("Query Execution", () => {
     expect(cteDelete.command).toBe("DELETE");
     expect(cteDelete.affectedRows).toBeNull();
 
-    const cteDeleteReturning = await sql`WITH pick AS (SELECT 2 AS id) DELETE FROM gadgets2 WHERE id IN (SELECT id FROM pick) RETURNING id`;
+    const cteDeleteReturning =
+      await sql`WITH pick AS (SELECT 2 AS id) DELETE FROM gadgets2 WHERE id IN (SELECT id FROM pick) RETURNING id`;
     expect(cteDeleteReturning).toHaveLength(1);
     expect(cteDeleteReturning.affectedRows).toBe(1);
 

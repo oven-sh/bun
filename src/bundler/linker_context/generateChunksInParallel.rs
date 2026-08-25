@@ -1316,10 +1316,13 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
     }
 
-    // Only `StandaloneModuleGraph::to_bytes` reads `load_order`.
+    // Only `StandaloneModuleGraph::to_bytes` reads these.
     if is_compile {
-        for (chunk_index, &position) in chunk_load_order(c, chunks).iter().enumerate() {
-            output_files.output_files[chunk_index].load_order = position;
+        let (order, startup_count) = chunk_load_order(chunks, &output_files.output_files);
+        for (chunk_index, &position) in order.iter().enumerate() {
+            let file = &mut output_files.output_files[chunk_index];
+            file.load_order = position;
+            file.loads_at_startup = position < startup_count;
         }
     }
 
@@ -1436,23 +1439,28 @@ fn append_internal_module_bytecode(
 /// load it: the entry point's static cross-chunk imports in evaluation order,
 /// then the closures of its dynamic imports, breadth-first. The standalone
 /// module graph lays modules out by this so booting faults in one run of pages
-/// rather than one page per chunk scattered across the payload.
-fn chunk_load_order(c: &LinkerContext, chunks: &[Chunk]) -> Vec<u32> {
-    let entry_point_kinds = c.graph.files.items_entry_point_kind();
+/// rather than one page per chunk scattered across the payload. Also returns
+/// how many of the positions make up the static closure of the entry point
+/// the executable runs: the first server-side one, as `to_bytes` picks it.
+/// `output_files[i]` is chunk `i`'s output file.
+fn chunk_load_order(chunks: &[Chunk], output_files: &[options::OutputFile]) -> (Vec<u32>, u32) {
     let mut visited = AutoBitSet::init_empty(chunks.len()).expect("oom");
     let mut order: Vec<u32> = Vec::with_capacity(chunks.len());
-    let mut dynamic_frontier: std::collections::VecDeque<u32> = chunks
-        .iter()
-        .enumerate()
-        .filter(|(_, chunk)| {
-            chunk.entry_point.is_entry_point()
-                && entry_point_kinds[chunk.entry_point.source_index() as usize].output_kind()
-                    == options::OutputKind::EntryPoint
-        })
-        .map(|(i, _)| i as u32)
-        .collect();
+    let entry_points = |side_is_client: bool| {
+        output_files[..chunks.len()]
+            .iter()
+            .enumerate()
+            .filter(move |(_, file)| {
+                file.output_kind == options::OutputKind::EntryPoint
+                    && (file.side == Some(options::Side::Client)) == side_is_client
+            })
+            .map(|(i, _)| i as u32)
+    };
+    let mut dynamic_frontier: std::collections::VecDeque<u32> =
+        entry_points(false).chain(entry_points(true)).collect();
 
     let mut stack: Vec<(u32, usize)> = Vec::new();
+    let mut startup_count: Option<u32> = None;
     while let Some(root) = dynamic_frontier.pop_front() {
         if visited.is_set(root as usize) {
             continue;
@@ -1481,6 +1489,8 @@ fn chunk_load_order(c: &LinkerContext, chunks: &[Chunk]) -> Vec<u32> {
                 }
             }
         }
+        // The first root is the entry point; everything placed so far is its static closure.
+        startup_count.get_or_insert(order.len() as u32);
     }
     for chunk_index in 0..chunks.len() as u32 {
         if !visited.is_set(chunk_index as usize) {
@@ -1492,7 +1502,7 @@ fn chunk_load_order(c: &LinkerContext, chunks: &[Chunk]) -> Vec<u32> {
     for (i, &chunk_index) in order.iter().enumerate() {
         position[chunk_index as usize] = i as u32;
     }
-    position
+    (position, startup_count.unwrap_or(0))
 }
 
 use crate::EntryPoint;

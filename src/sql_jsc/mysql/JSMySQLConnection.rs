@@ -305,6 +305,12 @@ impl JSMySQLConnection {
                 self.connection_timeout_ms,
                 " (during authentication)",
             ),
+            S::SessionSetup => (
+                AnyMySQLErrorT::ConnectionTimedOut,
+                Connection,
+                self.connection_timeout_ms,
+                " (during session setup)",
+            ),
             S::Disconnected | S::Failed => return,
         };
         self.fail_fmt(code, format_args!("{}", fmt_conn_timeout(kind, ms, sfx)));
@@ -624,7 +630,11 @@ impl JSMySQLConnection {
             // fail chain never runs: fail directly so the JS onclose callback
             // fires and the status goes terminal instead of staying
             // Connecting forever.
-            S::Connecting | S::Handshaking | S::Authenticating | S::AuthenticationAwaitingPk => {
+            S::Connecting
+            | S::Handshaking
+            | S::Authenticating
+            | S::AuthenticationAwaitingPk
+            | S::SessionSetup => {
                 this.fail(b"Connection closed", AnyMySQLErrorT::ConnectionClosed);
             }
             S::Connected | S::Disconnected | S::Failed => {
@@ -957,11 +967,17 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // connection so the error is actionable.
         use my_sql_connection::Status as S;
         let (message, err): (&'static [u8], AnyMySQLErrorT) = match this.connection.get().status {
-            S::Connecting | S::Handshaking | S::Authenticating | S::AuthenticationAwaitingPk => (
+            S::Connecting
+            | S::Handshaking
+            | S::Authenticating
+            | S::AuthenticationAwaitingPk
+            | S::SessionSetup => (
                 b"Connection closed before the connection was established",
                 AnyMySQLErrorT::ConnectionFailed,
             ),
-            _ => (b"Connection closed", AnyMySQLErrorT::ConnectionClosed),
+            S::Connected | S::Disconnected | S::Failed => {
+                (b"Connection closed", AnyMySQLErrorT::ConnectionClosed)
+            }
         };
         this.fail(message, err);
     }

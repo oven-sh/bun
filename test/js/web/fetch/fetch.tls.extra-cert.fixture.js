@@ -1,11 +1,13 @@
+// Fetches process.env.SERVER with strict certificate verification, so only
+// the CA store (plus NODE_EXTRA_CA_CERTS) decides the outcome. Prints one JSON
+// line: the body, or the error code.
 try {
-  const response = await fetch(process.env.SERVER, {
+  const body = await fetch(process.env.SERVER, {
     tls: {
       rejectUnauthorized: true,
     },
   }).then(res => res.text());
-  process.exit(response === "OK" ? 0 : 1);
+  console.log(JSON.stringify({ body }));
 } catch (err) {
-  console.error(err);
-  process.exit(1);
+  console.log(JSON.stringify({ code: err.code }));
 }

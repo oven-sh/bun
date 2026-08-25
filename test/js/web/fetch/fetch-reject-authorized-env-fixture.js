@@ -1,8 +1,8 @@
-const { SERVER } = process.env;
-
+// Fetches process.env.SERVER under the process's NODE_TLS_REJECT_UNAUTHORIZED
+// setting and prints the outcome as one JSON line: the body, or the error code.
 try {
-  const result = await fetch(SERVER).then(res => res.text());
-  if (result !== "Hello World") process.exit(2);
+  const body = await fetch(process.env.SERVER).then(res => res.text());
+  console.log(JSON.stringify({ body }));
 } catch (err) {
-  process.exit(err.code.indexOf("CERT") !== -1 ? 1 : 3);
+  console.log(JSON.stringify({ code: err.code }));
 }

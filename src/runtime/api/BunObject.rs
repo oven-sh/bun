@@ -63,7 +63,6 @@ pub(crate) fn get_public_path_with_asset_prefix(
 }
 
 use bun_jsc::HostReturn as _;
-use core::ffi::c_void;
 use std::io::Write as _;
 
 use bun_core::Output;
@@ -163,202 +162,317 @@ mod static_adapters {
 
 /// How to add a new function or property to the Bun global
 ///
-/// - Add a callback or property to the below struct
-/// - @export it in the appropriate place
+/// - Add a `// HOST_EXPORT`ed callback or property to `exports` below
 /// - Update "@begin bunObjectTable" in BunObject.cpp
 ///     - Getters use a generated wrapper function `BunObject_getter_wrap_<name>`
 /// - Update "BunObject+exports.h"
 /// - Run `bun run build`
-pub mod bun_object {
+pub mod exports {
     use super::*;
 
-    // Each callback is exported under
-    // `BunObject_callback_<name>` / `BunObject_lazyPropCb_<name>`. The
-    // two `macro_rules!` below expand the static export tables.
-    // ABI check vs the C++ declarations (BunObject+exports.h:90):
-    // `extern "C" EncodedJSValue SYSV_ABI (JSGlobalObject*, JSObject*)` for the
-    // property variants — matched here by `jsc_host_abi!` (`extern "sysv64"`
-    // on Windows-x64, `extern "C"` elsewhere) returning `JSValue`, which is
-    // `#[repr(transparent)]` over `EncodedJSValue`.
-
-    // Ident concat via `${concat()}` is unstable (`macro_metavar_expr_concat`),
-    // so the full `BunObject_callback_<name>` / `BunObject_lazyPropCb_<name>`
-    // export symbol is supplied verbatim by the caller (same pattern as
-    // `lazy_prop!` above).
-    macro_rules! export_callbacks {
-        ($( $(#[$attr:meta])* $sym:ident => $target:expr ),* $(,)?) => {
-            $(
-                // C++ declares
-                // these via `BUN_DECLARE_HOST_FUNCTION` → `JSC_HOST_CALL_ATTRIBUTES`
-                // = SysV on Windows-x64. Mismatching `extern "C"` here puts
-                // `globalObject` in RCX vs C++'s RDI → garbage deref.
-                bun_jsc::jsc_host_abi! {
-                    $(#[$attr])*
-                    #[unsafe(no_mangle)]
-                    pub unsafe fn $sym(
-                        g: *mut JSGlobalObject,
-                        f: *mut CallFrame,
-                    ) -> JSValue {
-                        // SAFETY: JSC always passes valid pointers here.
-                        let (g, f) = unsafe { (&*g, &*f) };
-                        bun_jsc::to_js_host_call(g, || $target(g, f))
-                    }
-                }
-            )*
-        };
-    }
-
-    /// Adapter so `export_lazy_prop_callbacks!` accepts targets returning either
-    /// a bare `JSValue` (most getters) or a `JsResult<JSValue>` (e.g.
-    /// `get_embedded_files`, which can OOM allocating the result array).
-    trait IntoLazyPropResult {
-        fn into_lazy_prop_result(self) -> JsResult<JSValue>;
-    }
-    impl IntoLazyPropResult for JSValue {
-        #[inline]
-        fn into_lazy_prop_result(self) -> JsResult<JSValue> {
-            Ok(self)
-        }
-    }
-    impl IntoLazyPropResult for JsResult<JSValue> {
-        #[inline]
-        fn into_lazy_prop_result(self) -> JsResult<JSValue> {
-            self
-        }
-    }
-
-    macro_rules! export_lazy_prop_callbacks {
-        ($( $sym:ident => $target:path ),* $(,)?) => {
-            $(
-                // C++ declares the extern as `SYSV_ABI`
-                // (`BunObject+exports.h:91`); on Windows-x64 that's RDI/RSI,
-                // not RCX/RDX, so `extern "C"` reads garbage for both args.
-                bun_jsc::jsc_host_abi! {
-                    #[unsafe(no_mangle)]
-                    pub unsafe fn $sym(
-                        this: *mut JSGlobalObject,
-                        object: *mut JSObject,
-                    ) -> JSValue {
-                        // SAFETY: JSC always passes valid pointers here.
-                        let (g, o) = unsafe { (&*this, &*object) };
-                        bun_jsc::to_js_host_call(g, || {
-                            IntoLazyPropResult::into_lazy_prop_result($target(g, o))
-                        })
-                    }
-                }
-            )*
-        };
-    }
+    // Each `Bun.*` callback / lazy property is exported as
+    // `BunObject_callback_<name>` / `BunObject_lazyPropCb_<name>`. The thunks
+    // are emitted by `generate-host-exports.ts` from the markers below with the
+    // JSC host-call ABI (`SYSV_ABI` on Windows-x64), matching the
+    // `BUN_DECLARE_HOST_FUNCTION` / `SYSV_ABI` declarations in
+    // BunObject+exports.h.
 
     // --- Callbacks ---
-    export_callbacks! {
-        BunObject_callback_allocUnsafe => super::alloc_unsafe,
-        BunObject_callback_build => super::static_adapters::js_bundler_build,
-        BunObject_callback_color => bun_css_jsc::js_function_color,
-        BunObject_callback_connect => super::static_adapters::listener_connect,
-        BunObject_callback_deflateSync => JSZlib::deflate_sync,
-        BunObject_callback_file => crate::webcore::blob::construct_bun_file,
-        BunObject_callback_gunzipSync => JSZlib::gunzip_sync,
-        BunObject_callback_gzipSync => JSZlib::gzip_sync,
-        BunObject_callback_indexOfLine => super::index_of_line,
-        BunObject_callback_inflateSync => JSZlib::inflate_sync,
-        BunObject_callback_jest => Jest::call,
-        BunObject_callback_listen => super::static_adapters::listener_listen,
-        BunObject_callback_mmap => super::mmap_file,
-        BunObject_callback_openInEditor => super::open_in_editor,
-        BunObject_callback_registerMacro => super::register_macro,
-        BunObject_callback_resolve => super::resolve,
-        BunObject_callback_resolveSync => super::resolve_sync,
-        BunObject_callback_serve => super::serve,
-        BunObject_callback_sha => super::static_adapters::sha,
-        BunObject_callback_shellEscape => super::shell_escape,
-        BunObject_callback_shrink => super::shrink,
-        BunObject_callback_sleepSync => super::sleep_sync,
-        BunObject_callback_spawn => super::static_adapters::subprocess_spawn,
-        BunObject_callback_spawnSync => super::static_adapters::subprocess_spawn_sync,
-        BunObject_callback_udpSocket => super::static_adapters::udp_socket,
-        BunObject_callback_which => super::which,
-        BunObject_callback_write => crate::webcore::blob::write_file,
-        BunObject_callback_zstdCompressSync => JSZstd::compress_sync,
-        BunObject_callback_zstdDecompressSync => JSZstd::decompress_sync,
-        BunObject_callback_zstdCompress => JSZstd::compress,
-        BunObject_callback_zstdDecompress => JSZstd::decompress,
+    // HOST_EXPORT(BunObject_callback_allocUnsafe)
+    pub fn cb_alloc_unsafe(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        super::alloc_unsafe(g, f)
     }
-    // `createParsedShellScript` / `createShellInterpreter` go through the same
-    // `to_js_host_call` thunk as the macro-generated callbacks (their bodies
-    // are already `JSHostFnZig`-shaped).
-    export_callbacks! {
-        BunObject_callback_createParsedShellScript => super::static_adapters::parsed_shell_script_create,
-        BunObject_callback_createShellInterpreter => super::static_adapters::shell_interpreter_create,
+    // HOST_EXPORT(BunObject_callback_build)
+    pub fn cb_build(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        super::static_adapters::js_bundler_build(g, f)
     }
-    // --- Callbacks ---
+    // HOST_EXPORT(BunObject_callback_color)
+    pub fn cb_color(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        bun_css_jsc::js_function_color(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_connect)
+    pub fn cb_connect(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        super::static_adapters::listener_connect(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_deflateSync)
+    pub fn cb_deflate_sync(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        JSZlib::deflate_sync(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_file)
+    pub fn cb_file(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        crate::webcore::blob::construct_bun_file(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_gunzipSync)
+    pub fn cb_gunzip_sync(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        JSZlib::gunzip_sync(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_gzipSync)
+    pub fn cb_gzip_sync(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        JSZlib::gzip_sync(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_indexOfLine)
+    pub fn cb_index_of_line(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        super::index_of_line(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_inflateSync)
+    pub fn cb_inflate_sync(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        JSZlib::inflate_sync(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_jest)
+    pub fn cb_jest(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        Jest::call(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_listen)
+    pub fn cb_listen(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        super::static_adapters::listener_listen(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_mmap)
+    pub fn cb_mmap(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        super::mmap_file(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_openInEditor)
+    pub fn cb_open_in_editor(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        super::open_in_editor(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_registerMacro)
+    pub fn cb_register_macro(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        super::register_macro(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_resolve)
+    pub fn cb_resolve(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        super::resolve(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_resolveSync)
+    pub fn cb_resolve_sync(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        super::resolve_sync(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_serve)
+    pub fn cb_serve(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        super::serve(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_sha)
+    pub fn cb_sha(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        super::static_adapters::sha(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_shellEscape)
+    pub fn cb_shell_escape(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        super::shell_escape(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_shrink)
+    pub fn cb_shrink(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        super::shrink(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_sleepSync)
+    pub fn cb_sleep_sync(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        super::sleep_sync(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_spawn)
+    pub fn cb_spawn(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        super::static_adapters::subprocess_spawn(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_spawnSync)
+    pub fn cb_spawn_sync(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        super::static_adapters::subprocess_spawn_sync(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_udpSocket)
+    pub fn cb_udp_socket(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        super::static_adapters::udp_socket(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_which)
+    pub fn cb_which(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        super::which(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_write)
+    pub fn cb_write(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        crate::webcore::blob::write_file(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_zstdCompressSync)
+    pub fn cb_zstd_compress_sync(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        JSZstd::compress_sync(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_zstdDecompressSync)
+    pub fn cb_zstd_decompress_sync(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        JSZstd::decompress_sync(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_zstdCompress)
+    pub fn cb_zstd_compress(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        JSZstd::compress(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_zstdDecompress)
+    pub fn cb_zstd_decompress(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        JSZstd::decompress(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_createParsedShellScript)
+    pub fn cb_create_parsed_shell_script(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        super::static_adapters::parsed_shell_script_create(g, f)
+    }
+    // HOST_EXPORT(BunObject_callback_createShellInterpreter)
+    pub fn cb_create_shell_interpreter(g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+        super::static_adapters::shell_interpreter_create(g, f)
+    }
 
     // --- Lazy property callbacks ---
-    export_lazy_prop_callbacks! {
-        BunObject_lazyPropCb_Archive => super::get_archive_constructor,
-        BunObject_lazyPropCb_CryptoHasher => Crypto::CryptoHasher::getter,
-        BunObject_lazyPropCb_CSRF => super::get_csrf_object,
-        BunObject_lazyPropCb_FFI => crate::ffi::ffi_object_draft::getter,
-        BunObject_lazyPropCb_FileSystemRouter => super::get_file_system_router,
-        BunObject_lazyPropCb_Glob => super::get_glob_constructor,
-        BunObject_lazyPropCb_Image => super::get_image_constructor,
-        BunObject_lazyPropCb_MD4 => Crypto::MD4::getter,
-        BunObject_lazyPropCb_MD5 => Crypto::MD5::getter,
-        BunObject_lazyPropCb_SHA1 => Crypto::SHA1::getter,
-        BunObject_lazyPropCb_SHA224 => Crypto::SHA224::getter,
-        BunObject_lazyPropCb_SHA256 => Crypto::SHA256::getter,
-        BunObject_lazyPropCb_SHA384 => Crypto::SHA384::getter,
-        BunObject_lazyPropCb_SHA512 => Crypto::SHA512::getter,
-        BunObject_lazyPropCb_SHA512_256 => Crypto::SHA512_256::getter,
-        BunObject_lazyPropCb_JSONC => super::get_jsonc_object,
-        BunObject_lazyPropCb_markdown => super::get_markdown_object,
-        BunObject_lazyPropCb_TOML => super::get_toml_object,
-        BunObject_lazyPropCb_JSON5 => super::get_json5_object,
-        BunObject_lazyPropCb_XML => super::get_xml_object,
-        BunObject_lazyPropCb_YAML => super::get_yaml_object,
-        BunObject_lazyPropCb_Transpiler => super::get_transpiler_constructor,
-        BunObject_lazyPropCb_argv => super::get_argv,
-        BunObject_lazyPropCb_cron => super::get_cron_object,
-        BunObject_lazyPropCb_cwd => super::get_cwd,
-        BunObject_lazyPropCb_embeddedFiles => super::get_embedded_files,
-        BunObject_lazyPropCb_enableANSIColors => super::enable_ansi_colors,
-        BunObject_lazyPropCb_isStandaloneExecutable => super::get_is_standalone_executable,
-        BunObject_lazyPropCb_hash => super::get_hash_object,
-        BunObject_lazyPropCb_inspect => super::get_inspect,
-        BunObject_lazyPropCb_origin => super::get_origin,
-        BunObject_lazyPropCb_semver => super::get_semver,
-        BunObject_lazyPropCb_unsafe => super::get_unsafe,
-        BunObject_lazyPropCb_S3Client => super::get_s3_client_constructor,
-        BunObject_lazyPropCb_s3 => super::get_s3_default_client,
-        BunObject_lazyPropCb_ValkeyClient => super::get_valkey_client_constructor,
-        BunObject_lazyPropCb_valkey => super::get_valkey_default_client,
-        BunObject_lazyPropCb_Terminal => super::get_terminal_constructor,
+    // HOST_EXPORT(BunObject_lazyPropCb_Archive, jsc)
+    pub fn lazy_archive(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        super::get_archive_constructor(g, o)
     }
-    // --- Lazy property callbacks ---
-
-    // --- Getters ---
-    // --- Getters ---
-
-    // --- Setters ---
-    // --- Setters ---
-
-    // The export names
-    // are spelled out verbatim in the `export_*!` macro invocations above.
-
-    // type LazyPropertyCallback = extern "C" fn(*mut JSGlobalObject, *mut JSObject) -> JSValue
-    // (the `callconv(jsc.conv)` ABI is emitted by `#[bun_jsc::host_fn]` / the macro above;
-    // see PORTING.md §FFI — cannot write `extern jsc_conv!()` in Rust.)
+    // HOST_EXPORT(BunObject_lazyPropCb_CryptoHasher, jsc)
+    pub fn lazy_crypto_hasher(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        Crypto::CryptoHasher::getter(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_CSRF, jsc)
+    pub fn lazy_csrf(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        super::get_csrf_object(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_FFI, jsc)
+    pub fn lazy_ffi(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        crate::ffi::ffi_object_draft::getter(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_FileSystemRouter, jsc)
+    pub fn lazy_file_system_router(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        super::get_file_system_router(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_Glob, jsc)
+    pub fn lazy_glob(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        super::get_glob_constructor(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_Image, jsc)
+    pub fn lazy_image(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        super::get_image_constructor(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_MD4, jsc)
+    pub fn lazy_md4(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        Crypto::MD4::getter(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_MD5, jsc)
+    pub fn lazy_md5(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        Crypto::MD5::getter(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_SHA1, jsc)
+    pub fn lazy_sha1(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        Crypto::SHA1::getter(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_SHA224, jsc)
+    pub fn lazy_sha224(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        Crypto::SHA224::getter(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_SHA256, jsc)
+    pub fn lazy_sha256(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        Crypto::SHA256::getter(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_SHA384, jsc)
+    pub fn lazy_sha384(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        Crypto::SHA384::getter(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_SHA512, jsc)
+    pub fn lazy_sha512(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        Crypto::SHA512::getter(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_SHA512_256, jsc)
+    pub fn lazy_sha512_256(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        Crypto::SHA512_256::getter(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_JSONC, jsc)
+    pub fn lazy_jsonc(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        super::get_jsonc_object(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_markdown, jsc)
+    pub fn lazy_markdown(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        super::get_markdown_object(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_TOML, jsc)
+    pub fn lazy_toml(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        super::get_toml_object(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_JSON5, jsc)
+    pub fn lazy_json5(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        super::get_json5_object(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_XML, jsc)
+    pub fn lazy_xml(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        super::get_xml_object(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_YAML, jsc)
+    pub fn lazy_yaml(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        super::get_yaml_object(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_Transpiler, jsc)
+    pub fn lazy_transpiler(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        super::get_transpiler_constructor(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_argv, jsc)
+    pub fn lazy_argv(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        super::get_argv(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_cron, jsc)
+    pub fn lazy_cron(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        super::get_cron_object(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_cwd, jsc)
+    pub fn lazy_cwd(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        super::get_cwd(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_embeddedFiles, jsc)
+    pub fn lazy_embedded_files(g: &JSGlobalObject, o: &JSObject) -> JsResult<JSValue> {
+        super::get_embedded_files(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_enableANSIColors, jsc)
+    pub fn lazy_enable_ansi_colors(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        super::enable_ansi_colors(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_isStandaloneExecutable, jsc)
+    pub fn lazy_is_standalone_executable(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        super::get_is_standalone_executable(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_hash, jsc)
+    pub fn lazy_hash(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        super::get_hash_object(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_inspect, jsc)
+    pub fn lazy_inspect(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        super::get_inspect(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_origin, jsc)
+    pub fn lazy_origin(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        super::get_origin(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_semver, jsc)
+    pub fn lazy_semver(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        super::get_semver(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_unsafe, jsc)
+    pub fn lazy_unsafe(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        super::get_unsafe(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_S3Client, jsc)
+    pub fn lazy_s3_client(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        super::get_s3_client_constructor(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_s3, jsc)
+    pub fn lazy_s3(g: &JSGlobalObject, o: &JSObject) -> JsResult<JSValue> {
+        super::get_s3_default_client(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_ValkeyClient, jsc)
+    pub fn lazy_valkey_client(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        super::get_valkey_client_constructor(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_valkey, jsc)
+    pub fn lazy_valkey(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        super::get_valkey_default_client(g, o)
+    }
+    // HOST_EXPORT(BunObject_lazyPropCb_Terminal, jsc)
+    pub fn lazy_terminal(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+        super::get_terminal_constructor(g, o)
+    }
 
     // --- LazyProperty initializers ---
     // (BunObject__createBunStdin / Stderr / Stdout exported at file scope below.)
-    // --- LazyProperty initializers ---
 
     // --- Getters / Setters ---
     // `BunObject_getter_main` / `BunObject_setter_main` thunks are emitted by
     // `generate-host-exports.ts` from the `// HOST_EXPORT` markers on
     // `super::{get_main, set_main}` below (SYSV_ABI on win-x64 — matches the
     // `extern "C" SYSV_ABI` decl in BunObject.cpp:1103).
-    // --- Getters / Setters ---
 }
 
 fn get_cron_object(global_this: &JSGlobalObject, obj: &JSObject) -> JSValue {
@@ -874,23 +988,12 @@ fn get_argv(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
 // into `bun_jsc`'s graph. Semantically it is
 // per-JS-thread state (one VM per thread), so a `thread_local` here is
 // equivalent and breaks the cycle without type erasure.
-//
-// `name_storage` owns the user-supplied editor name so `EditorContext.name`
-// (typed `&'static [u8]`) can borrow it
-// without leaking; the borrow lives as long as the thread.
-struct EditorContextSlot {
-    ctx: crate::cli::open::EditorContext,
-    name_storage: Vec<u8>,
-}
 thread_local! {
-    static EDITOR_CONTEXT: core::cell::RefCell<EditorContextSlot> =
-        const { core::cell::RefCell::new(EditorContextSlot {
-            ctx: crate::cli::open::EditorContext {
-                editor: None,
-                name: b"",
-                path: b"",
-            },
-            name_storage: Vec::new(),
+    static EDITOR_CONTEXT: core::cell::RefCell<crate::cli::open::EditorContext> =
+        const { core::cell::RefCell::new(crate::cli::open::EditorContext {
+            editor: None,
+            name: Vec::new(),
+            path: b"",
         }) };
 }
 
@@ -928,45 +1031,23 @@ fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
     }
 
     EDITOR_CONTEXT.with(|cell| -> JsResult<JSValue> {
-        let mut slot = cell.borrow_mut();
-        let slot = &mut *slot;
-        let edit = &mut slot.ctx;
+        let mut edit = cell.borrow_mut();
+        let edit = &mut *edit;
         let env = vm.transpiler.env_mut();
         let mut editor_choice: Option<Editor> = None;
 
         if let Some(sliced) = &editor_name {
-            let prev_name = edit.name;
-
-            if !strings::eql_long(prev_name, sliced.slice(), true) {
+            if !strings::eql_long(&edit.name, sliced.slice(), true) {
                 let prev = core::mem::take(edit);
-                // Own the bytes in `name_storage` and
-                // hand back a thread-lifetime borrow.
-                let prev_storage =
-                    core::mem::replace(&mut slot.name_storage, sliced.slice().to_vec());
-                // SAFETY: `name_storage` lives in a thread_local that
-                // outlives any caller; we never reallocate it while
-                // `edit.name` is observed (single-threaded JS VM).
-                edit.name = unsafe { bun_ptr::detach_lifetime(slot.name_storage.as_slice()) };
+                edit.name = sliced.slice().to_vec();
                 edit.detect_editor(env);
                 editor_choice = edit.found();
                 if editor_choice.is_none() {
-                    slot.name_storage = prev_storage;
                     *edit = prev;
                     return Err(global_this.throw(format_args!(
                         "Could not find editor \"{}\"",
                         bstr::BStr::new(sliced.slice()),
                     )));
-                } else if edit.name.as_ptr() == edit.path.as_ptr() {
-                    // `detect_editor` aliased `path` to `name` (absolute
-                    // editor path). `name` is backed by `slot.name_storage`,
-                    // which a later call may drop while the detached editor
-                    // thread is still reading argv[0]. Give `path`
-                    // process-lifetime storage, matching every other
-                    // `detect_editor` branch.
-                    edit.path = bun_resolver::fs::FileSystem::instance()
-                        .dirname_store
-                        .append_slice(edit.path)
-                        .expect("unreachable");
                 }
             }
         }
@@ -1205,31 +1286,14 @@ pub fn bun_resolve_sync(
 }
 
 // HOST_EXPORT(Bun__resolveSyncWithPaths, c)
-/// # Safety
-/// `paths_ptr` must be null or point to `paths_len` initialized `BunString`s
-/// that remain valid for the duration of this call.
-// FFI entry point exported via HOST_EXPORT and called only from C++
-// (ImportMetaObject.cpp / NodeModuleModule.cpp), which upholds the contract
-// above. clippy excludes `extern "C"` fns from this lint; the export wrapper
-// lives in generated code, so allow it here.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn bun_resolve_sync_with_paths(
     global: &JSGlobalObject,
     specifier: JSValue,
     source: JSValue,
     is_esm: bool,
     is_user_require_resolve: bool,
-    paths_ptr: *const BunString,
-    paths_len: usize,
+    paths: &[BunString],
 ) -> JSValue {
-    let paths: &[BunString] = if paths_len == 0 {
-        &[]
-    } else {
-        // SAFETY: C++ caller guarantees `paths_ptr` points to `paths_len`
-        // initialized `BunString`s that outlive this call; `paths_len > 0` here.
-        unsafe { core::slice::from_raw_parts(paths_ptr, paths_len) }
-    };
-
     let Ok(specifier_str) = specifier.to_bun_string(global) else {
         return JSValue::ZERO;
     };
@@ -1251,9 +1315,7 @@ pub fn bun_resolve_sync_with_paths(
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let bun_vm = global.bun_vm().as_mut();
     debug_assert!(bun_vm.transpiler.resolver.custom_dir_paths.is_none());
-    // SAFETY: `paths` borrows C++-owned BunStrings valid for the duration of
-    // this synchronous resolve call; lifetime is erased for the resolver slot.
-    bun_vm.transpiler.resolver.custom_dir_paths = Some(unsafe { bun_ptr::detach_lifetime(paths) });
+    bun_vm.transpiler.resolver.custom_dir_paths = Some(paths.into());
     scopeguard::defer! {
         // SAFETY: same VM pointer; called before returning to C++.
         global.bun_vm().as_mut().transpiler.resolver.custom_dir_paths = None;
@@ -1403,46 +1465,16 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
     // SAFETY: same VM pointer; re-borrow after `args` is dropped.
     let vm = global_object.bun_vm().as_mut();
 
-    // NOTE (layering): `HotMap` is a tagged union over the four
-    // `NewServer` monomorphizations + sockets. `bun_jsc::rare_data::HotMapEntry`
-    // is the erased `(tag: u8, ptr: *mut ())` lowering of that union; the tag
-    // values for servers are pinned here to match `crate::server::AnyServerTag`
-    // (= the runtime-side discriminant) so a HotMap entry produced by `serve`
-    // is round-trippable through `serve` again on hot-reload.
-    use crate::server::{AnyServer, AnyServerTag};
-    use bun_jsc::rare_data::HotMapEntry;
+    use crate::server::{AnyServer, hot_servers};
 
     if config.allow_hot {
-        if let Some(hot) = vm.hot_map() {
+        if let Some(hot) = hot_servers(vm) {
             if config.id.is_empty() {
                 config.id = config.compute_id().into();
             }
 
-            if let Some(entry) = hot.get_entry(&config.id) {
-                macro_rules! reload {
-                    ($T:ty) => {{
-                        // SAFETY: tag was matched; ptr was inserted as `*mut $T` below
-                        // and the entry is removed (`stop()`) before the server frees.
-                        let server: &$T = unsafe { &*entry.ptr.cast::<$T>() };
-                        server.on_reload_from_zig(&mut config, global_object);
-                        return Ok(server
-                            .js_value
-                            .get()
-                            .try_get()
-                            .unwrap_or(JSValue::UNDEFINED));
-                    }};
-                }
-                match entry.tag {
-                    t if t == AnyServerTag::HTTPServer as u8 => reload!(crate::api::HTTPServer),
-                    t if t == AnyServerTag::DebugHTTPServer as u8 => {
-                        reload!(crate::api::DebugHTTPServer)
-                    }
-                    t if t == AnyServerTag::DebugHTTPSServer as u8 => {
-                        reload!(crate::api::DebugHTTPSServer)
-                    }
-                    t if t == AnyServerTag::HTTPSServer as u8 => reload!(crate::api::HTTPSServer),
-                    _ => {}
-                }
+            if let Some(&server) = hot.get(&config.id) {
+                return Ok(server.reload(&mut config, global_object));
             }
         }
     }
@@ -1499,14 +1531,10 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
             // and `id` from the server's own config or the registration is
             // keyed on the wrong (empty) id.
             if server_ref.config().allow_hot {
-                if let Some(hot) = global_object.bun_vm().as_mut().hot_map() {
-                    hot.insert_raw(
-                        &server_ref.config().id,
-                        HotMapEntry {
-                            tag: AnyServerTag::$tag as u8,
-                            ptr: any.as_opaque_ptr(),
-                        },
-                    );
+                if let Some(hot) = hot_servers(global_object.bun_vm().as_mut()) {
+                    let id = &server_ref.config().id;
+                    assert!(!hot.contains(id), "HotMap already contains key");
+                    bun_core::handle_oom(hot.put(id, any));
                 }
             }
 
@@ -1647,7 +1675,7 @@ fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
             }
         }
 
-        let (map, delta) = match bun_sys::mmap_file(buf_z, flags, map_size, offset) {
+        let map = match bun_sys::mmap_file(buf_z, flags, map_size, offset) {
             Ok(result) => result,
             Err(err) => {
                 use bun_jsc::SysErrorJsc as _;
@@ -1655,34 +1683,7 @@ fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
             }
         };
 
-        extern "C" fn munmap_dealloc(ptr: *mut c_void, size: *mut c_void) {
-            // `ptr` is `map_base + delta` where `map_base` is page-aligned and
-            // `delta < page_size`, so rounding down recovers the mmap base.
-            let page = bun_sys::page_size();
-            let addr = ptr as usize;
-            let _ = sys::munmap((addr - addr % page) as *mut u8, size as usize);
-        }
-
-        let map_len = map.len();
-        // SAFETY: `mmap_file` guarantees `map_len == view_size + delta` with
-        // `view_size > 0`, so `delta < map_len` and the add stays in-bounds.
-        let view_ptr = unsafe { map.as_ptr().add(delta) };
-        let view_len = map_len - delta;
-
-        // SAFETY: `map` is the live mapping `bun_sys::mmap_file` just created
-        // (`&'static mut [u8]`, no drop guard); ownership moves to JSC, which
-        // unmaps it exactly once via `munmap_dealloc` with the full mapping
-        // length stuffed into the ctx pointer.
-        unsafe {
-            jsc::array_buffer::make_typed_array_with_bytes_no_copy(
-                global_this,
-                jsc::TypedArrayType::TypeUint8,
-                view_ptr.cast_mut().cast::<c_void>(),
-                view_len,
-                Some(munmap_dealloc),
-                map_len as *mut c_void,
-            )
-        }
+        jsc::array_buffer::uint8_array_from_mapped_file(global_this, map)
     }
 }
 
@@ -1748,20 +1749,15 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
     use bun_jsc::StrongOptional;
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let vm = global_this.bun_vm().as_mut();
-    // NOTE: reshaped for borrowck — capture the raw env loader pointer
-    // before `rare_data()` takes the long-lived `&mut` of `vm`.
-    let env_ptr = vm.transpiler.env;
-    let rare = vm.rare_data();
-    if let Some(v) = rare.s3_default_client.get() {
+    if let Some(v) = vm.rare_data().s3_default_client.get() {
         return Ok(v);
     }
     // NOTE (layering): `bun_dotenv::Loader::get_s3_credentials` returns the
     // T2 POD mirror; lift it into the refcounted `bun_s3_signing::S3Credentials`
     // here at the high-tier call site (dotenv ≤T2 may not name s3_signing T5).
-    // SAFETY: `transpiler.env` is the process-lifetime dotenv loader; disjoint
-    // from `rare_data` storage.
-    let env_creds =
-        crate::webcore::fetch::s3_credentials_from_env(unsafe { (*env_ptr).get_s3_credentials() });
+    let env_creds = crate::webcore::fetch::s3_credentials_from_env(
+        vm.transpiler.env_mut().get_s3_credentials(),
+    );
     let aws_options = match crate::webcore::s3::credentials_jsc::get_credentials_with_options(
         &env_creds,
         Default::default(),
@@ -1785,7 +1781,7 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
     };
     let js_client = <S3Client as bun_jsc::JsClass>::to_js(client, global_this);
     js_client.ensure_still_alive();
-    rare.s3_default_client = StrongOptional::create(js_client, global_this);
+    vm.rare_data().s3_default_client = StrongOptional::create(js_client, global_this);
     Ok(js_client)
 }
 
@@ -1803,10 +1799,9 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
     };
 
     let as_js = JSValkeyClient::ptr_to_js(valkey, global_this);
-
-    // SAFETY: `valkey` is a fresh heap allocation owned by the JS wrapper; we
-    // hold the only reference for field init below.
-    let valkey_ref = unsafe { &*valkey };
+    let valkey_ref = as_js
+        .as_class_ref::<JSValkeyClient>()
+        .expect("ptr_to_js wraps the client");
     valkey_ref.this_value.set(jsc::JsRef::init_weak(as_js));
     match SubscriptionCtx::init(valkey_ref) {
         Ok(ctx) => valkey_ref._subscription_ctx.set(ctx),
@@ -1834,7 +1829,7 @@ fn get_is_standalone_executable(global_this: &JSGlobalObject, _: &JSObject) -> J
 }
 
 fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
-    use crate::webcore::blob::{Blob, BlobExt as _};
+    use crate::webcore::blob::BlobExt as _;
     use bun_standalone_graph::{File as GraphFile, Graph as StandaloneModuleGraph};
     let Some(graph) = StandaloneModuleGraph::get_ref() else {
         return JSValue::create_empty_array(global_this, 0);
@@ -1867,12 +1862,12 @@ fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JS
         let file: &GraphFile = &unsorted_files[*index as usize];
         // `file_blob` keeps the embedded path (minus the `/$bunfs/root/` prefix)
         // as the blob name, preserving any subdirectory from the asset template.
-        let blob = Blob::new(crate::api::standalone_graph_jsc::file_blob(
-            file,
+        let blob = crate::api::standalone_graph_jsc::file_blob(file, global_this);
+        array.put_index(
             global_this,
-        ));
-        // SAFETY: `blob` is heap-allocated and lives until JS owns it via to_js.
-        array.put_index(global_this, i as u32, unsafe { (*blob).to_js(global_this) })?;
+            i as u32,
+            bun_jsc::JsClass::to_js(blob, global_this),
+        )?;
     }
 
     Ok(array)
@@ -1898,36 +1893,15 @@ impl CSRFObject {
     fn create(global_this: &JSGlobalObject) -> JSValue {
         let object = JSValue::create_empty_object(global_this, 2);
 
-        // NOTE: `JSFunction::create` takes the raw JSC-ABI host fn pointer,
-        // so wrap the safe Rust-style `JsResult` fns via `to_js_host_call`.
-        bun_jsc::jsc_host_abi! {
-            unsafe fn csrf_generate_shim(
-                g: *mut JSGlobalObject,
-                f: *mut CallFrame,
-            ) -> JSValue {
-                // SAFETY: JSC always passes valid pointers here.
-                let (g, f) = unsafe { (&*g, &*f) };
-                bun_jsc::to_js_host_call(g, || csrf_jsc::csrf__generate(g, f))
-            }
-        }
-        bun_jsc::jsc_host_abi! {
-            unsafe fn csrf_verify_shim(
-                g: *mut JSGlobalObject,
-                f: *mut CallFrame,
-            ) -> JSValue {
-                // SAFETY: JSC always passes valid pointers here.
-                let (g, f) = unsafe { (&*g, &*f) };
-                bun_jsc::to_js_host_call(g, || csrf_jsc::csrf__verify(g, f))
-            }
-        }
-
+        // `#[bun_jsc::host_fn]` on `csrf__generate` / `csrf__verify` emits the
+        // JSC-ABI `__jsc_host_*` shims.
         object.put(
             global_this,
             b"generate",
             JSFunction::create(
                 global_this,
                 "generate",
-                csrf_generate_shim,
+                csrf_jsc::__jsc_host_csrf__generate,
                 1,
                 Default::default(),
             ),
@@ -1939,7 +1913,7 @@ impl CSRFObject {
             JSFunction::create(
                 global_this,
                 "verify",
-                csrf_verify_shim,
+                csrf_jsc::__jsc_host_csrf__verify,
                 1,
                 Default::default(),
             ),
@@ -1950,43 +1924,33 @@ impl CSRFObject {
 }
 
 // This is aliased to Bun.env
-pub(crate) mod environment_variables {
+pub mod environment_variables {
     use super::*;
 
-    #[unsafe(no_mangle)]
-    extern "C" fn Bun__getEnvCount(
-        global_object: &JSGlobalObject,
-        ptr: &mut core::mem::MaybeUninit<*const Box<[u8]>>,
-    ) -> usize {
-        let bun_vm = global_object.bun_vm().as_mut();
-        let env = bun_vm.env_loader();
-        let keys: &[Box<[u8]>] = env.map.map.keys();
-        // C++ declares this out-param as `void**` and only ever round-trips it
-        // back into `Bun__getEnvKey` below; the element layout is opaque to it.
-        // The backing Vec lives for the VM lifetime and is not reallocated
-        // between this call and `Bun__getEnvKey`.
-        ptr.write(keys.as_ptr());
-        keys.len()
+    // HOST_EXPORT(Bun__getEnvCount, c)
+    pub fn get_env_count(global_object: &JSGlobalObject) -> usize {
+        global_object.bun_vm().env_loader().map.map.keys().len()
     }
 
-    /// # Safety
-    /// `ptr` must be the value written by `Bun__getEnvCount` and `i` must be
-    /// less than the count it returned; the backing storage must not have been
-    /// reallocated in between.
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn Bun__getEnvKey(
-        ptr: *const Box<[u8]>,
+    /// The `i`th key (as counted by [`get_env_count`]): its length, with its
+    /// address in `data_ptr`. The bytes are the env map's; the caller copies
+    /// them before the map can mutate. `0` when out of range.
+    // HOST_EXPORT(Bun__getEnvKey, c)
+    pub fn get_env_key(
+        global_object: &JSGlobalObject,
         i: usize,
         data_ptr: &mut core::mem::MaybeUninit<*const u8>,
     ) -> usize {
-        // SAFETY: ptr was returned from Bun__getEnvCount; i < count.
-        let item: &[u8] = unsafe { &**ptr.add(i) };
-        data_ptr.write(item.as_ptr());
-        item.len()
+        let key: &[u8] = match global_object.bun_vm().env_loader().map.map.keys().get(i) {
+            Some(key) => key,
+            None => b"",
+        };
+        data_ptr.write(key.as_ptr());
+        key.len()
     }
 
-    #[unsafe(no_mangle)]
-    extern "C" fn Bun__getEnvValue<'a>(
+    // HOST_EXPORT(Bun__getEnvValue, c)
+    pub fn get_env_value_zig<'a>(
         global_object: &'a JSGlobalObject,
         name: &EncodedSlice<'_>,
         value: &mut core::mem::MaybeUninit<EncodedSlice<'a>>,
@@ -2001,8 +1965,8 @@ pub(crate) mod environment_variables {
 
     /// The value borrows the env map; the caller copies before the map can
     /// mutate. `Dead` when absent.
-    #[unsafe(no_mangle)]
-    extern "C" fn Bun__getEnvValueBunString<'a>(
+    // HOST_EXPORT(Bun__getEnvValueBunString, c)
+    pub fn get_env_value_bun_string<'a>(
         global_object: &'a JSGlobalObject,
         name: &BunString,
     ) -> bun_core::StringView<'a> {
@@ -2024,12 +1988,8 @@ pub(crate) mod environment_variables {
     /// rather than cloning. A worker only allocates its own value if it
     /// writes to that var. Parent deref'ing on overwrite won't free the
     /// bytes while a worker still holds a ref.
-    #[unsafe(no_mangle)]
-    extern "C" fn Bun__setEnvValue(
-        global_object: &JSGlobalObject,
-        name: &BunString,
-        value: &BunString,
-    ) {
+    // HOST_EXPORT(Bun__setEnvValue, c)
+    pub fn set_env_value(global_object: &JSGlobalObject, name: &BunString, value: &BunString) {
         let vm = global_object.bun_vm().as_mut();
         let name_slice = name.to_utf8();
 
@@ -2080,8 +2040,8 @@ pub(crate) mod environment_variables {
     }
 }
 
-#[unsafe(no_mangle)]
-extern "C" fn Bun__reportError(global_object: &JSGlobalObject, err: JSValue) {
+// HOST_EXPORT(Bun__reportError, c)
+pub fn report_error(global_object: &JSGlobalObject, err: JSValue) {
     // SAFETY: VirtualMachine::get() returns the thread-local VM raw pointer.
     let vm = jsc::virtual_machine::VirtualMachine::get().as_mut();
     let _ = vm.uncaught_exception(global_object, err, false);
@@ -2169,10 +2129,8 @@ pub mod JSZlib {
     // NOTE: no `reader_deallocator` / `compressor_deallocator` exports are
     // needed to free a heap-allocated reader/compressor from the ArrayBuffer
     // finalizer. The reader stays on-stack
-    // borrowing a local `Vec<u8>`, then leaks only the Vec's allocation into
-    // the ArrayBuffer — so both zlib paths converge on `global_deallocator`
-    // and the per-type callbacks are gone. (`no_mangle` dropped: 0 C++ refs.)
-    use bun_alloc::c_thunks::mi_free_ctx as global_deallocator;
+    // borrowing a local `Vec<u8>`, then moves only the Vec's allocation into
+    // the ArrayBuffer (`ArrayBuffer::create_uint8_array_from_vec`).
 
     #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr, strum::EnumString)]
     #[strum(serialize_all = "lowercase")]
@@ -2190,35 +2148,13 @@ pub mod JSZlib {
     }
 
     /// Move `list`'s allocation into a `Uint8Array` backing store without
-    /// copying. After `shrink_to_fit`, an empty `Vec` owns no allocation (its
-    /// pointer is dangling), so no deallocator is registered for it.
+    /// copying, after returning its unused capacity.
     fn leak_list_into_uint8array(
         global_this: &JSGlobalObject,
         mut list: Vec<u8>,
     ) -> JsResult<JSValue> {
         list.shrink_to_fit();
-        let is_empty = list.is_empty();
-        let leaked: &'static mut [u8] = list.leak();
-        let ptr = leaked.as_mut_ptr();
-        let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-        // SAFETY: non-empty: `ptr` is the just-leaked `Vec` allocation, freed
-        // exactly once at GC by `global_deallocator` (`mi_free_ctx`) via the ctx
-        // pointer. Empty: no callback, and the dangling `ptr` is never read.
-        unsafe {
-            array_buffer.to_js_with_context(
-                global_this,
-                if is_empty {
-                    core::ptr::null_mut()
-                } else {
-                    ptr.cast::<c_void>()
-                },
-                if is_empty {
-                    None
-                } else {
-                    Some(global_deallocator)
-                },
-            )
-        }
+        ArrayBuffer::create_uint8_array_from_vec(global_this, list)
     }
 
     #[bun_jsc::host_fn]
@@ -2372,8 +2308,7 @@ pub mod JSZlib {
                 }
                 // NOTE: the reader *borrows* `list_ptr`,
                 // so drop the reader to release the borrow, then leak the owned
-                // `list` directly into the ArrayBuffer (freed by
-                // `global_deallocator`).
+                // `list` directly into the ArrayBuffer.
                 drop(reader);
                 leak_list_into_uint8array(global_this, list)
             }
@@ -2413,21 +2348,9 @@ pub mod JSZlib {
                     }
                 }
 
-                // Ownership of the allocation transfers to JSC; freed via
-                // `global_deallocator` once the ArrayBuffer is finalized.
-                let leaked: &'static mut [u8] = list.leak();
-                let ptr = leaked.as_mut_ptr();
-                let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-                // SAFETY: `ptr` is the just-leaked `Vec` allocation, live until
-                // `global_deallocator` (`mi_free_ctx`) frees it exactly once at
-                // GC via the ctx pointer (the data pointer itself).
-                unsafe {
-                    array_buffer.to_js_with_context(
-                        global_this,
-                        ptr.cast::<c_void>(),
-                        Some(global_deallocator),
-                    )
-                }
+                // Ownership of the allocation transfers to JSC; freed once the
+                // ArrayBuffer is finalized.
+                ArrayBuffer::create_uint8_array_from_vec(global_this, list)
             }
         }
     }
@@ -2548,21 +2471,9 @@ pub mod JSZlib {
                     )));
                 }
 
-                // Ownership of the allocation transfers to JSC; freed via
-                // `global_deallocator` once the ArrayBuffer is finalized.
-                let leaked: &'static mut [u8] = list.leak();
-                let ptr = leaked.as_mut_ptr();
-                let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-                // SAFETY: `ptr` is the just-leaked `Vec` allocation, live until
-                // `global_deallocator` (`mi_free_ctx`) frees it exactly once at
-                // GC via the ctx pointer (the data pointer itself).
-                unsafe {
-                    array_buffer.to_js_with_context(
-                        global_this,
-                        ptr.cast::<c_void>(),
-                        Some(global_deallocator),
-                    )
-                }
+                // Ownership of the allocation transfers to JSC; freed once the
+                // ArrayBuffer is finalized.
+                ArrayBuffer::create_uint8_array_from_vec(global_this, list)
             }
         }
     }
@@ -2806,10 +2717,6 @@ pub mod JSZstd {
     }
 }
 
-// NOTE: symbols are linked via the `#[unsafe(no_mangle)]` exports above.
-// Referenced: Crypto::JSPasswordObject::JSPasswordObject__create,
-// bun_jsc::btjs::dump_btjs_trace.
-
 // LazyProperty initializers for stdin/stderr/stdout
 //
 // NOTE (layering): `RareData.{stdin,stdout,stderr}_store` are typed as
@@ -2867,9 +2774,9 @@ mod stdio_stores {
             // store.ref() — extra +1 for the new Blob.
             s.as_ref().unwrap().clone()
         });
-        let blob = Blob::new(Blob::init_with_store(store, global_this));
-        // SAFETY: `Blob::new` heap-allocates; the JS wrapper takes ownership.
-        unsafe { (&*blob).to_js(global_this) }
+        let blob = Blob::init_with_store(store, global_this);
+        blob.calculate_estimated_byte_size();
+        bun_jsc::JsClass::to_js(blob, global_this)
     }
 
     pub(super) fn stdin(global_this: &JSGlobalObject) -> JSValue {

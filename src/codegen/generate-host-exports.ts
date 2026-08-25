@@ -123,12 +123,14 @@ interface Export {
   ret: string;
   shape: "host" | "reaction" | "lazy" | "generic" | "rust";
   isUnsafe: boolean;
+  /** lifetime params (`<'a, 'b>`) to re-declare on the thunk, or "" */
+  lifetimes: string;
 }
 
 const markerRe = /^\s*\/\/\s*HOST_EXPORT\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:,\s*(jsc|c|rust))?\s*\)\s*$/;
 // `pub fn name(` — capture name; the param list and return type are pulled by
 // a small balanced-paren scanner because params routinely span lines.
-const fnHeadRe = /^\s*pub\s+(unsafe\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/;
+const fnHeadRe = /^\s*pub\s+(unsafe\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*(<[^>]*>)?\s*\(/;
 
 function ptrify(ty: string): { cTy: string; deref: (n: string) => string; extraLen?: boolean } {
   ty = ty.trim();
@@ -232,6 +234,13 @@ for (const { dir, crate } of scanRoots) {
       }
       const isUnsafe = !!head[1];
       const fnName = head[2];
+      // Lifetime-only generics are forwarded onto the thunk (an `extern "C"`
+      // fn may be generic over lifetimes); type/const generics are not.
+      const lifetimes = (head[3] ?? "").trim();
+      if (lifetimes && !/^<\s*'\w+(\s*,\s*'\w+)*\s*,?\s*>$/.test(lifetimes)) {
+        errors.push(`${file}:${j + 1}: HOST_EXPORT(${symbol}) fn has non-lifetime generics \`${lifetimes}\``);
+        continue;
+      }
       // Balanced-paren scan for the param list + return type.
       let buf = lines[j].slice(lines[j].indexOf("(") + 1);
       let depth = 1,
@@ -328,6 +337,19 @@ for (const { dir, crate } of scanRoots) {
             .filter(Boolean)
             .join("::");
       }
+      // Inline `mod name { … }` blocks enclosing the marker (rustfmt layout:
+      // the closing brace sits at the opening line's indentation).
+      const inlineMods: { name: string; indent: string }[] = [];
+      for (let m = 0; m < i; m++) {
+        const open = /^(\s*)(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*\{\s*$/.exec(lines[m]);
+        if (open) {
+          inlineMods.push({ name: open[2], indent: open[1] });
+          continue;
+        }
+        const top = inlineMods[inlineMods.length - 1];
+        if (top && lines[m] === `${top.indent}}`) inlineMods.pop();
+      }
+      for (const im of inlineMods) modPath += `::${im.name}`;
 
       if (seenSymbols.has(symbol)) {
         errors.push(`${where}: duplicate HOST_EXPORT(${symbol}) — first at ${seenSymbols.get(symbol)}`);
@@ -348,7 +370,19 @@ for (const { dir, crate } of scanRoots) {
       }
       const retRw = rewriteTy(ret);
 
-      exportsFound.push({ symbol, abi, file, line: j + 1, fnName, modPath, params, ret: retRw, shape, isUnsafe });
+      exportsFound.push({
+        symbol,
+        abi,
+        file,
+        line: j + 1,
+        fnName,
+        modPath,
+        params,
+        ret: retRw,
+        shape,
+        isUnsafe,
+        lifetimes,
+      });
     }
   }
 }
@@ -389,12 +423,13 @@ function emitNoMangle(
   ret: string,
   body: string,
   unsafeFn = false,
+  lifetimes = "",
 ): string {
   const qual = unsafeFn ? "unsafe " : "";
   const item = (abiStr: string, cfg: string) =>
     `${cfg}#[allow(dead_code, unreachable_pub, unused)]
 #[unsafe(no_mangle)]
-pub ${qual}extern "${abiStr}" fn ${symbol}(${sig}) -> ${ret} {
+pub ${qual}extern "${abiStr}" fn ${symbol}${lifetimes}(${sig}) -> ${ret} {
 ${body}
 }`;
   if (abi === "jsc") {
@@ -521,7 +556,7 @@ pub extern "Rust" fn ${e.symbol}(${sig}) -> ${e.ret} {
       const body = retIsJsResult && globalParam ? `host_fn::host_fn_result(${globalParam.name}, || ${inner})` : inner;
       return `
 // ${loc}
-${emitNoMangle(e.abi, e.symbol, sig, cRet, `${binds}    ${body}`)}`;
+${emitNoMangle(e.abi, e.symbol, sig, cRet, `${binds}    ${body}`, false, e.lifetimes)}`;
     }
   }
 }

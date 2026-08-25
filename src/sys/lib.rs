@@ -3325,16 +3325,50 @@ mod posix_impl {
         Ok(())
     }
 
+    /// A shared file mapping from [`mmap_file`]: the whole page-aligned region,
+    /// of which [`bytes`](Self::bytes) is the part starting at the requested file
+    /// offset. Unmapped on drop unless released with [`into_raw`](Self::into_raw).
+    pub struct MappedFile {
+        base: core::ptr::NonNull<u8>,
+        len: usize,
+        delta: usize,
+    }
+
+    impl MappedFile {
+        /// The mapped bytes from the requested file offset on.
+        pub fn bytes(&self) -> &[u8] {
+            // SAFETY: `base[..len]` is this value's live mapping and `delta < len`.
+            unsafe {
+                core::slice::from_raw_parts(
+                    self.base.as_ptr().add(self.delta),
+                    self.len - self.delta,
+                )
+            }
+        }
+
+        /// Release the mapping to the caller as `(base, len, delta)`; the caller
+        /// `munmap`s `base[..len]`.
+        pub fn into_raw(self) -> (core::ptr::NonNull<u8>, usize, usize) {
+            let this = core::mem::ManuallyDrop::new(self);
+            (this.base, this.len, this.delta)
+        }
+    }
+
+    impl Drop for MappedFile {
+        fn drop(&mut self) {
+            let _ = munmap(self.base.as_ptr(), self.len);
+        }
+    }
+
     /// `bun.sys.mmapFile` — open `path` RDWR, fstat for size, mmap [offset, offset+len).
-    /// Returns `(map, delta)` where `map` is the full page-aligned mapping and
-    /// `delta = offset % page_size` is the byte offset into `map` at which the
-    /// requested `offset` begins. Caller is responsible for `munmap(map)`.
+    /// The mapping starts at the page boundary below `offset`;
+    /// [`MappedFile::bytes`] begins `offset % page_size` bytes in.
     pub fn mmap_file(
         path: &ZStr,
         flags: libc::c_int,
         wanted_size: Option<usize>,
         offset: usize,
-    ) -> Maybe<(&'static mut [u8], usize)> {
+    ) -> Maybe<MappedFile> {
         let fd = open(path, O::RDWR, 0)?;
         // close fd regardless of mmap outcome (the mapping outlives the fd).
         let _close = CloseOnDrop::new(fd);
@@ -3367,13 +3401,11 @@ mod posix_impl {
             fd,
             aligned_offset as i64,
         ) {
-            Ok(ptr) => {
-                // SAFETY: mmap returned a valid mapping of `map_len` bytes.
-                Ok((
-                    unsafe { core::slice::from_raw_parts_mut(ptr, map_len) },
-                    delta,
-                ))
-            }
+            Ok(ptr) => Ok(MappedFile {
+                base: core::ptr::NonNull::new(ptr).expect("mmap returned a mapping"),
+                len: map_len,
+                delta,
+            }),
             Err(err) => Err(err),
         }
     }

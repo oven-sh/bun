@@ -35,8 +35,8 @@
 
 using namespace JSC;
 
-extern "C" size_t Bun__getEnvCount(JSGlobalObject* globalObject, void** list_ptr);
-extern "C" size_t Bun__getEnvKey(void* list, size_t index, unsigned char** out);
+extern "C" size_t Bun__getEnvCount(JSGlobalObject* globalObject);
+extern "C" size_t Bun__getEnvKey(JSGlobalObject* globalObject, size_t index, unsigned char** out);
 
 extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, const EncodedSlice* name, EncodedSlice* value);
 extern "C" BunString Bun__getEnvValueBunString(JSGlobalObject* globalObject, const BunString* name);
@@ -987,8 +987,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    void* list;
-    size_t count = Bun__getEnvCount(globalObject, &list);
+    size_t count = Bun__getEnvCount(globalObject);
 #if OS(WINDOWS)
     // On Windows the windowsEnv Proxy intercepts every operation before the exotic
     // method table, and its internal setup (Bun.inspect.custom symbol, toJSON) would hit
@@ -1043,7 +1042,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
     for (size_t i = 0; i < count; i++) {
         unsigned char* chars;
-        size_t len = Bun__getEnvKey(list, i, &chars);
+        size_t len = Bun__getEnvKey(globalObject, i, &chars);
         // We can't really trust that the OS gives us valid UTF-8
         auto name = String::fromUTF8ReplacingInvalidSequences(std::span { chars, len });
 #if OS(WINDOWS)

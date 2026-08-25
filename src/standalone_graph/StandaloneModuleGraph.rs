@@ -25,7 +25,7 @@ use bun_sys::{self as Syscall, E, Fd, FdExt as _, Stat};
 
 bun_core::declare_scope!(StandaloneModuleGraph, hidden);
 
-// `bun_webcore::Blob` lives in a higher tier and `cached_blob` is only ever
+// `bun_webcore::Blob` lives in a higher tier and is only ever
 // set from `bun_runtime`, so it is modeled as an opaque erased pointer here.
 bun_opaque::opaque_ffi! {
     /// Opaque stand-in for `bun_webcore::Blob`. Only stored as `NonNull<Blob>`.
@@ -173,13 +173,26 @@ impl StandaloneModuleGraph {
     }
 
     fn lookup_file(&self, name: &[u8]) -> Option<&File> {
+        self.lookup_index(name).map(|i| &self.files.values()[i])
+    }
+
+    fn lookup_index(&self, name: &[u8]) -> Option<usize> {
         #[cfg(windows)]
         {
             let mut buf = PathBuffer::uninit();
-            return self.files.get(normalize_file_key(name, &mut buf));
+            return self.files.get_index(normalize_file_key(name, &mut buf));
         }
         #[cfg(not(windows))]
-        self.files.get(name)
+        self.files.get_index(name)
+    }
+
+    /// [`find_ref`](Self::find_ref), also returning the file's index in `files`.
+    pub fn find_with_index(&self, name: &[u8]) -> Option<(usize, &File)> {
+        if !is_bun_standalone_file_path(name) {
+            return None;
+        }
+        let i = self.lookup_index(name)?;
+        Some((i, &self.files.values()[i]))
     }
 
     pub fn find_ref(&self, name: &[u8]) -> Option<&File> {

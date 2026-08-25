@@ -573,7 +573,7 @@ pub struct Resolver<'a> {
     /// is overwritten while the resolution happens.
     ///
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
-    pub custom_dir_paths: Option<&'a [bun_core::String]>,
+    pub custom_dir_paths: Option<Box<[bun_core::String]>>,
 }
 
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
@@ -1828,10 +1828,10 @@ impl<'a> Resolver<'a> {
         let check_package = is_package_path_;
 
         if check_relative {
-            if let Some(custom_paths) = self.custom_dir_paths {
+            if let Some(custom_paths) = self.custom_dir_paths.clone() {
                 // @branchHint(.unlikely)
                 bun_core::hint::cold();
-                for custom_path in custom_paths {
+                for custom_path in &*custom_paths {
                     let custom_utf8 = custom_path.to_utf8();
                     match self.check_relative_path(
                         custom_utf8.slice(),
@@ -1969,9 +1969,9 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            if let Some(custom_paths) = self.custom_dir_paths {
+            if let Some(custom_paths) = self.custom_dir_paths.clone() {
                 bun_core::hint::cold();
-                for custom_path in custom_paths {
+                for custom_path in &*custom_paths {
                     let custom_utf8 = custom_path.to_utf8();
                     match self.check_package_path(
                         custom_utf8.slice(),

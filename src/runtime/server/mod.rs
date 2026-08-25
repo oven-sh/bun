@@ -1679,8 +1679,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         {
             let config = self.config();
             if config.allow_hot && !config.id.is_empty() {
-                if let Some(hot) = self.vm().as_mut().hot_map() {
-                    hot.remove(&config.id);
+                if let Some(hot) = hot_servers(self.vm().as_mut()) {
+                    hot.swap_remove(&config.id);
                 }
             }
         }
@@ -3184,9 +3184,19 @@ pub enum AnyServerTag {
     DebugHTTPSServer = 3,
 }
 
+/// The VM's `--hot` registry: running servers by `ServerConfig::id`. A server
+/// removes itself in [`NewServer::stop`], before it can be freed.
+pub(crate) type HotServers = bun_collections::StringArrayHashMap<AnyServer>;
+
+/// This VM's [`HotServers`], or `None` when not running with `--hot`.
+pub(crate) fn hot_servers(vm: &mut jsc::VirtualMachine) -> Option<&mut HotServers> {
+    vm.hot_map().map(|hot| hot.get_or_init::<HotServers>())
+}
+
 /// Back-reference to one of the four `NewServer` monomorphizations. Held by
 /// the routes, request contexts, websockets and `NodeHTTPResponse`s a server
-/// creates — all of which it outlives (it is freed only once drained).
+/// creates, and the VM's [`HotServers`] — all of which it outlives (it is freed
+/// only once drained and stopped).
 #[derive(Clone, Copy)]
 pub enum AnyServer {
     HTTPServer(bun_ptr::BackRef<HTTPServer>),
@@ -3317,6 +3327,15 @@ impl AnyServer {
     #[inline]
     pub(crate) fn config(&self) -> &ServerConfig {
         any_server_dispatch!(self, |s| s.config())
+    }
+
+    /// `--hot` reload: hand `new_config` to the running server and return its
+    /// JS wrapper (or `undefined`).
+    pub(crate) fn reload(&self, new_config: &mut ServerConfig, global: &JSGlobalObject) -> JSValue {
+        any_server_dispatch!(self, |s| {
+            s.on_reload_from_zig(new_config, global);
+            s.js_value.get().try_get().unwrap_or(JSValue::UNDEFINED)
+        })
     }
 
     /// Same gate as [`NewServer::js_value_for_dispatch`].

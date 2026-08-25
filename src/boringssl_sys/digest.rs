@@ -43,7 +43,7 @@ pub fn digest(
             input.as_ptr().cast::<c_void>(),
             input.len(),
             out.as_mut_ptr(),
-            &mut out_len,
+            &raw mut out_len,
             md,
             engine_ptr(engine),
         )
@@ -72,7 +72,7 @@ impl DigestCtx {
     /// `EVP_DigestInit_ex` — restart with `md` (BoringSSL always returns 1).
     pub fn init(&mut self, md: &'static EVP_MD, engine: Option<&ENGINE>) -> bool {
         // SAFETY: `self.0` is initialised; `md` is a static digest; `engine` is unused.
-        unsafe { EVP_DigestInit_ex(&mut self.0, md, engine_ptr(engine)) == 1 }
+        unsafe { EVP_DigestInit_ex(&raw mut self.0, md, engine_ptr(engine)) == 1 }
     }
 
     /// The installed digest.
@@ -83,7 +83,7 @@ impl DigestCtx {
     /// `EVP_DigestUpdate`.
     pub fn update(&mut self, data: &[u8]) -> bool {
         // SAFETY: a digest is installed (type invariant); `data` is readable for its length.
-        unsafe { EVP_DigestUpdate(&mut self.0, data.as_ptr().cast::<c_void>(), data.len()) == 1 }
+        unsafe { EVP_DigestUpdate(&raw mut self.0, data.as_ptr().cast::<c_void>(), data.len()) == 1 }
     }
 
     /// `EVP_DigestFinal_ex` into `out`, which must hold at least [`size`](Self::size)
@@ -95,28 +95,28 @@ impl DigestCtx {
         }
         let mut out_len: c_uint = 0;
         // SAFETY: a digest is installed; `out` holds the `size()` bytes written (checked above).
-        let rc = unsafe { EVP_DigestFinal_ex(&mut self.0, out.as_mut_ptr(), &mut out_len) };
+        let rc = unsafe { EVP_DigestFinal_ex(&raw mut self.0, out.as_mut_ptr(), &raw mut out_len) };
         (rc == 1).then_some(out_len)
     }
 
     /// `EVP_MD_CTX_size` — the installed digest's output length.
     pub fn size(&self) -> usize {
         // SAFETY: a digest is installed (type invariant).
-        unsafe { EVP_MD_CTX_size(&self.0) }
+        unsafe { EVP_MD_CTX_size(&raw const self.0) }
     }
 
     /// `EVP_MD_CTX_copy_ex(self, other)` — make `self` a copy of `other`'s
     /// state. `false` on allocation failure.
     pub fn copy_from(&mut self, other: &DigestCtx) -> bool {
         // SAFETY: both contexts are initialised.
-        unsafe { EVP_MD_CTX_copy_ex(&mut self.0, &other.0) != 0 }
+        unsafe { EVP_MD_CTX_copy_ex(&raw mut self.0, &raw const other.0) != 0 }
     }
 }
 
 impl Drop for DigestCtx {
     fn drop(&mut self) {
         // SAFETY: `self.0` was initialised in `new`; cleanup returns it to the zero state.
-        unsafe { EVP_MD_CTX_cleanup(&mut self.0) };
+        unsafe { EVP_MD_CTX_cleanup(&raw mut self.0) };
     }
 }
 
@@ -139,7 +139,7 @@ impl HmacCtx {
         // SAFETY: `this.0` is initialised; `key` is readable for its length; `md` is static.
         let rc = unsafe {
             HMAC_Init_ex(
-                &mut this.0,
+                &raw mut this.0,
                 key.as_ptr().cast::<c_void>(),
                 key.len(),
                 md,
@@ -152,20 +152,20 @@ impl HmacCtx {
     /// `HMAC_Update`.
     pub fn update(&mut self, data: &[u8]) -> bool {
         // SAFETY: keyed in `new` (type invariant); `data` is readable for its length.
-        unsafe { HMAC_Update(&mut self.0, data.as_ptr(), data.len()) == 1 }
+        unsafe { HMAC_Update(&raw mut self.0, data.as_ptr(), data.len()) == 1 }
     }
 
     /// `HMAC_size` — the digest's output length.
     pub fn size(&self) -> usize {
         // SAFETY: keyed in `new`, so `md` is set.
-        unsafe { HMAC_size(&self.0) }
+        unsafe { HMAC_size(&raw const self.0) }
     }
 
     /// `HMAC_CTX_copy` into a fresh context; `None` on failure.
     pub fn copy(&self) -> Option<Self> {
         let mut out = Self::zeroed();
         // SAFETY: both contexts are initialised.
-        let rc = unsafe { HMAC_CTX_copy(&mut out.0, &self.0) };
+        let rc = unsafe { HMAC_CTX_copy(&raw mut out.0, &raw const self.0) };
         (rc == 1).then_some(out)
     }
 
@@ -177,7 +177,7 @@ impl HmacCtx {
         }
         let mut out_len: c_uint = 0;
         // SAFETY: keyed in `new`; `out` holds the `size()` bytes written (checked above).
-        unsafe { HMAC_Final(&mut self.0, out.as_mut_ptr(), &mut out_len) };
+        unsafe { HMAC_Final(&raw mut self.0, out.as_mut_ptr(), &raw mut out_len) };
         out_len as usize
     }
 }
@@ -185,7 +185,7 @@ impl HmacCtx {
 impl Drop for HmacCtx {
     fn drop(&mut self) {
         // SAFETY: `self.0` was initialised by `HMAC_CTX_init`.
-        unsafe { HMAC_CTX_cleanup(&mut self.0) };
+        unsafe { HMAC_CTX_cleanup(&raw mut self.0) };
     }
 }
 

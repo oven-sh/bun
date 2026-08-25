@@ -729,8 +729,7 @@ impl JSGlobalObject {
         Ok(Some(result))
     }
 
-    /// `args` formatted as UTF-8. `None` when a `Display` impl ran user JS that
-    /// threw; the exception stays pending for the caller to propagate.
+    /// `args` formatted as UTF-8, or `None` when formatting threw a JS exception (left pending).
     fn error_message(&self, args: Arguments<'_>) -> Option<Vec<u8>> {
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
         use core::fmt::Write;

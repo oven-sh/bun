@@ -71,17 +71,25 @@ describe("bundler", () => {
     },
     run: {
       stdout: "<!DOCTYPE html><html><body><h1>Hello World</h1><p>This is an example.</p></body></html>",
+      stderr: "",
     },
   });
   itBundled("npm/LodashES", {
-    install: ["lodash-es"],
+    install: ["lodash-es@4.17.21"],
     files: {
-      "/entry.ts": /* tsx */ `
+      "/entry.ts": /* ts */ `
         import { isEqual, isBuffer } from "lodash-es";
 
         // https://github.com/oven-sh/bun/issues/3206
-        if(!isEqual({a: 1}, {a: 1})) throw "error 1";
-        if(isEqual({a: 1}, {a: 2})) throw "error 2";
+        // isEqual calls isBuffer, whose module reads the free variables
+        // "exports" and "module" to detect CommonJS.
+        console.log(JSON.stringify({
+          equal: isEqual({ a: 1 }, { a: 1 }),
+          differentValue: isEqual({ a: 1 }, { a: 2 }),
+          nested: isEqual({ a: [1, { b: 2 }] }, { a: [1, { b: 2 }] }),
+          nestedDifferent: isEqual({ a: [1, { b: 2 }] }, { a: [1, { b: 3 }] }),
+          isBufferType: typeof isBuffer,
+        }));
 
         // Uncomment when https://github.com/lodash/lodash/issues/5660 is fixed
         // It prevents isBuffer from working at all since it evaluates to 'stubFalse'
@@ -90,12 +98,17 @@ describe("bundler", () => {
         // if(isBuffer({})) throw "error 5";
         // if(isBuffer(new Uint8Array([1]))) throw "error 6";
         // if(isBuffer(new ArrayBuffer(1))) throw "error 7";
-
-        console.log('pass')
       `,
     },
     run: {
-      stdout: "pass",
+      stdout: JSON.stringify({
+        equal: true,
+        differentValue: false,
+        nested: true,
+        nestedDifferent: false,
+        isBufferType: "function",
+      }),
+      stderr: "",
     },
   });
 });

@@ -2439,8 +2439,6 @@ impl BlobExt for Blob {
                 if let Ok(result) =
                     crate::allocators::linux_mem_fd_allocator::LinuxMemFdAllocator::create(bytes_)
                 {
-                    // spell out all fields — `..Default::default()` would
-                    // attempt a partial move out of `Store` which has a `Drop` impl.
                     let store = RefPtr::from(Store::new(Store {
                         data: store::Data::Bytes(result),
                         mime_type: bun_http_types::MimeType::NONE,

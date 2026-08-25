@@ -42,8 +42,6 @@ impl FileJsc for File {
                     bun_alloc::basic::C_ALLOCATOR,
                 )
             };
-            // Cannot use `..Default::default()` — `Store: Drop`
-            // forbids partial moves out of the temporary default.
             let store = RefPtr::from(Store::new(Store {
                 data: Data::Bytes(bytes),
                 mime_type: MimeType::NONE,

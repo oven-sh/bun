@@ -78,8 +78,7 @@ pub struct JSBundleCompletionTask {
     pub(crate) stage: core::sync::atomic::AtomicU8,
 
     /// The route this build is for, kept alive until `on_complete` hands it
-    /// the result (leaked with the rest of the route if the build is cancelled
-    /// at VM teardown).
+    /// the result.
     pub(crate) html_build_task: Option<RefPtr<html_bundle::Route>>,
 
     pub(crate) result: BundleV2Result,

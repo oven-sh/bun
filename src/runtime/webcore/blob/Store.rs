@@ -340,8 +340,7 @@ impl S3Ext for S3 {
             Wrapper::resolve,
             bun_core::heap::into_raw(Wrapper::new(Wrapper {
                 promise,
-                // SAFETY: `store` is a live heap `Store`; `retained` bumps the
-                // intrusive refcount.
+                // SAFETY: `store` is a live heap `Store`.
                 store: unsafe { RefPtr::init_ref(core::ptr::from_ref(store).cast_mut()) },
                 global: bun_ptr::BackRef::new(global_this),
             }))
@@ -434,8 +433,7 @@ impl S3Ext for S3 {
         // `Drop` after the async callback.
         let wrapper = bun_core::heap::into_raw(Box::new(Wrapper {
             promise,
-            // SAFETY: `store` is a live heap `Store`; `retained` bumps the
-            // intrusive refcount.
+            // SAFETY: `store` is a live heap `Store`.
             store: unsafe { RefPtr::init_ref(core::ptr::from_ref(store).cast_mut()) },
             resolved_list_options: options,
             global: bun_ptr::BackRef::new(global_this),

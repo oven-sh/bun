@@ -2666,7 +2666,7 @@ pub mod args {
                 ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray"))
             })?;
             // Node treats an explicit `undefined` len the same as a missing one: 0.
-            let len_value = arguments.next().unwrap_or(JSValue::UNDEFINED);
+            let len_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
             let len: u64 = if len_value.is_undefined() {
                 0
             } else {
@@ -2744,7 +2744,7 @@ pub mod args {
         ) -> JsResult<FTruncate> {
             let fd = FD::from_js_required(ctx, arguments)?;
             // Node treats an explicit `undefined` len the same as a missing one: 0.
-            let len_value = arguments.next().unwrap_or(JSValue::UNDEFINED);
+            let len_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
             let len: BlobSizeType = if len_value.is_undefined() {
                 0
             } else {

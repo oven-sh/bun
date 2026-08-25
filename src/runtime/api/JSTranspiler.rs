@@ -934,8 +934,8 @@ impl TransformTask {
             .into_js(global)
             .and_then(|code_js| {
                 let map_js = core::mem::take(&mut self.output_map).into_js(global)?;
-                let code_key = ZigString::static_(b"code");
-                let map_key = ZigString::static_(b"map");
+                let code_key = bun_core::EncodedSlice::latin1(b"code");
+                let map_key = bun_core::EncodedSlice::latin1(b"map");
                 JSValue::create_object2(global, &code_key, &map_key, code_js, map_js)
             });
         promise.settle(global, result)
@@ -1657,17 +1657,12 @@ fn build_transform_result(
 ) -> JsResult<JSValue> {
     match source_map_mode {
         api::SourceMapMode::None => {
-            let mut out = JscZigString::init(buffer_writer.buffer.list.as_slice());
-            out.set_output_encoding();
-            Ok(out.to_js(global))
+            bun_string_jsc::create_utf8_for_js(global, buffer_writer.buffer.list.as_slice())
         }
         api::SourceMapMode::Inline => {
             // Append the inline footer to the printer's buffer before the final copy.
             append_inline_source_map(&mut buffer_writer.buffer, capture.json.list.as_slice());
-
-            let mut out = JscZigString::init(buffer_writer.buffer.list.as_slice());
-            out.set_output_encoding();
-            Ok(out.to_js(global))
+            bun_string_jsc::create_utf8_for_js(global, buffer_writer.buffer.list.as_slice())
         }
         api::SourceMapMode::Linked => {
             // Reference a sibling `.map` file the caller is expected to write.
@@ -1767,20 +1762,12 @@ fn create_code_map_object(
     code_bytes: &[u8],
     map_bytes: &[u8],
 ) -> JsResult<JSValue> {
-    let mut code_zig = JscZigString::init(code_bytes);
-    code_zig.set_output_encoding();
-    let mut map_zig = JscZigString::init(map_bytes);
-    map_zig.set_output_encoding();
+    let code_js = bun_string_jsc::create_utf8_for_js(global, code_bytes)?;
+    let map_js = bun_string_jsc::create_utf8_for_js(global, map_bytes)?;
 
-    let code_key = ZigString::static_(b"code");
-    let map_key = ZigString::static_(b"map");
-    JSValue::create_object2(
-        global,
-        &code_key,
-        &map_key,
-        code_zig.to_js(global),
-        map_zig.to_js(global),
-    )
+    let code_key = bun_core::EncodedSlice::latin1(b"code");
+    let map_key = bun_core::EncodedSlice::latin1(b"map");
+    JSValue::create_object2(global, &code_key, &map_key, code_js, map_js)
 }
 
 fn named_exports_to_js(

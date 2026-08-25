@@ -202,6 +202,14 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
 export interface CompileOpts {
   /** Compiler flags (including -I, -D — caller assembles). */
   flags: string[];
+  /**
+   * Flags for the ninja command only, left out of compile_commands.json.
+   * For compiler plugins: clangd would try to load them, and the
+   * standalone jsc-exception-lint tool parses the compile database itself.
+   * Paths in here are buildDir-relative (the caller's job) so ccache keys
+   * are the same in every checkout.
+   */
+  ninjaOnlyFlags?: string[];
   /** PCH to use (absolute path to .pch/.gch output). */
   pch?: string;
   /** Original header the PCH was built from (needed for clang-cl /Yu). */
@@ -295,7 +303,7 @@ function compile(n: Ninja, cfg: Config, src: string, opts: CompileOpts, lang: "c
 
   const implicitInputs: string[] = [...(opts.implicitInputs ?? [])];
   const vars: Record<string, string> = {
-    [flagVar]: opts.flags.join(" "),
+    [flagVar]: [...opts.flags, ...(opts.ninjaOnlyFlags ?? [])].join(" "),
   };
 
   // PCH is always an implicit dep — if it changes, recompile.

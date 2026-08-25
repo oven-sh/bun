@@ -14,7 +14,7 @@ import { NODEJS_ABI_VERSION, NODEJS_V8_VERSION, NODEJS_VERSION } from "./deps/no
 import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { assert, BuildError } from "./error.ts";
 import { resolveMacosSdkPath } from "./macos-sdk.ts";
-import { clangTargetArch, toolchainOverride } from "./tools.ts";
+import { clangTargetArch, findLlvmDevDir, toolchainOverride } from "./tools.ts";
 import { cyan, dim, green } from "./tty.ts";
 
 export type OS = "linux" | "darwin" | "windows" | "freebsd";
@@ -158,6 +158,13 @@ export interface Config {
   archiveDeps: boolean;
   /** Emit clang -ftime-trace .json next to each .o for build profiling. */
   timeTrace: boolean;
+  /**
+   * Load the jsc-exception-lint compiler plugin into every compile of bun's
+   * own C++ (scripts/jsc-exception-lint). A missing JSC exception check is a
+   * compile error. Default: on when `llvmDevDir` is found and the target is
+   * not Windows (clang-cl does not load plugins).
+   */
+  exceptionLint: boolean;
 
   // ─── Environment ───
   ci: boolean;
@@ -209,6 +216,14 @@ export interface Config {
    * explicitly. undefined on Windows (nothing consumes it there).
    */
   clangResourceDir: string | undefined;
+  /**
+   * Root of the host LLVM install that has the clang development headers
+   * (`include/clang/Frontend/FrontendPluginRegistry.h`) and libclang-cpp.
+   * Compiler plugins are built against it. undefined when the distro's dev
+   * package is not installed (apt: libclang-<N>-dev + libclang-cpp<N>-dev,
+   * both in `llvm.sh <N> all`; brew: part of llvm) or on Windows.
+   */
+  llvmDevDir: string | undefined;
   ar: string;
   /** llvm-ranlib. undefined on windows (llvm-lib indexes itself). */
   ranlib: string | undefined;
@@ -341,6 +356,7 @@ export interface PartialConfig {
   unifiedSources?: boolean;
   archiveDeps?: boolean;
   timeTrace?: boolean;
+  exceptionLint?: boolean;
   ci?: boolean;
   buildkite?: boolean;
   webkit?: WebKitMode;
@@ -1150,6 +1166,26 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     }
   }
 
+  // ─── jsc-exception-lint compiler plugin ───
+  // The plugin is built for the host against the host LLVM's clang headers
+  // and loaded into the same clang. clang-cl (windows targets) has no plugin
+  // interface, and Windows LLVM exports no symbols for one to bind to.
+  const llvmDevDir =
+    host.os === "windows" || windows
+      ? undefined
+      : findLlvmDevDir(toolchain.hostCxx ?? toolchain.cxx, toolchain.clangResourceDir);
+  const exceptionLint = partial.exceptionLint ?? llvmDevDir !== undefined;
+  if (exceptionLint && llvmDevDir === undefined) {
+    throw new BuildError("--exceptionLint=on needs the clang development headers", {
+      hint:
+        host.os === "windows" || windows
+          ? "The plugin does not work with clang-cl. Build with --exceptionLint=off."
+          : host.os === "darwin"
+            ? "brew's llvm ships them; the toolchain in use does not (include/clang/Frontend/FrontendPluginRegistry.h is missing next to clang++)."
+            : "apt: install libclang-<N>-dev and libclang-cpp<N>-dev for your clang (llvm.sh <N> all installs both).",
+    });
+  }
+
   return {
     os,
     arch,
@@ -1190,6 +1226,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     unifiedSources: partial.unifiedSources ?? true,
     archiveDeps: partial.archiveDeps ?? false,
     timeTrace: partial.timeTrace ?? false,
+    exceptionLint,
     ci,
     buildkite,
     webkit: partial.webkit ?? "prebuilt",
@@ -1205,6 +1242,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     hostCxx: toolchain.hostCxx ?? toolchain.cxx,
     clangVersion: toolchain.clangVersion,
     clangResourceDir: toolchain.clangResourceDir,
+    llvmDevDir,
     ar: toolchain.ar,
     ranlib: toolchain.ranlib,
     ld: ld64StripSwap?.ld ?? ld,

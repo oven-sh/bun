@@ -22,6 +22,7 @@
 import { registerCodegenRules } from "./codegen.ts";
 import { registerCompileRules, registerDirStamps } from "./compile.ts";
 import type { Config } from "./config.ts";
+import { registerExceptionLintRules } from "./exception-lint.ts";
 import type { Ninja } from "./ninja.ts";
 import { registerRustRules } from "./rust.ts";
 import { registerShimRules } from "./shims.ts";
@@ -54,4 +55,7 @@ export function registerAllRules(n: Ninja, cfg: Config): void {
 
   // shim_dylib (darwin+asan only)
   registerShimRules(n, cfg);
+
+  // clang_plugin (when cfg.exceptionLint)
+  registerExceptionLintRules(n, cfg);
 }

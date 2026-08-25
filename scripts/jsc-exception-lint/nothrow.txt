@@ -110,3 +110,12 @@ indirect:toThis
 
 # Wraps an ArrayBuffer in its JS object. Bun's override does not throw.
 JSC::TypedArrayController::toJS
+
+# Name lookups. They resolve a rope with a null global object, so an out of
+# memory condition is not thrown (JSRopeString::resolveRope(nullptr)).
+JSC::JSString::tryGetValue
+JSC::JSString::tryGetValueWithoutGC
+JSC::JSFunction::name
+JSC::JSFunction::nameWithoutGC
+JSC::InternalFunction::name
+JSC::getCalculatedDisplayName

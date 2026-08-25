@@ -1,5 +1,9 @@
-// jsc-exception-lint: a clang LibTooling checker for JavaScriptCore exception
-// discipline in Bun's C++ bindings.
+// jsc-exception-lint: a clang checker for JavaScriptCore exception discipline
+// in Bun's C++ bindings. One source, two builds: a LibTooling program
+// (scripts/jsc-exception-lint/run.ts, whole-tree runs and summary passes) and,
+// with -DJSC_EXCEPTION_LINT_PLUGIN, a compiler plugin that the build loads
+// into every C++ compile (scripts/build/exception-lint.ts), where a finding is
+// a compile error.
 //
 // JSC's debug-only validator (BUN_JSC_validateExceptionChecks=1) works like
 // this: every function that can throw declares a ThrowScope. When a callee's
@@ -27,12 +31,11 @@
 // lambdas): a visible body that constructs a ThrowScope, or calls something
 // that may throw, may throw. For callees defined in another translation unit,
 // summaries exported by a previous run over the whole project are consulted
-// (--export-summaries / --import-summaries). For everything else the JSC
+// (--export-summaries / --import-summaries; the committed ones live in
+// scripts/jsc-exception-lint/summaries). For everything else the JSC
 // convention applies: a parameter of type JSGlobalObject* (or a subclass), or
 // ThrowScope&, means it may throw, unless the qualified name is listed in the
 // nothrow allowlist passed with --nothrow=<file>.
-//
-// Build and run through scripts/jsc-exception-lint/run.ts.
 
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/ASTContext.h"
@@ -47,12 +50,17 @@
 #include "clang/Basic/SourceManager.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendAction.h"
+#include "clang/Frontend/FrontendPluginRegistry.h"
 #include "clang/Lex/Lexer.h"
 #include "clang/Tooling/CommonOptionsParser.h"
 #include "clang/Tooling/Tooling.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <chrono>
 #include <fstream>
 #include <map>
 #include <set>
@@ -65,6 +73,28 @@
 using namespace clang;
 using namespace clang::tooling;
 
+// Options shared by the standalone tool (set from the command line) and the
+// compiler plugin (set from -plugin-arg key=value pairs).
+struct Options {
+  std::string nothrowFile;
+  std::string maythrowFile;
+  // Analyze the functions defined in files whose real path contains this.
+  std::string onlyUnder = "src/jsc/bindings";
+  // Repository root (real path). Baseline keys are relative to it.
+  std::string root;
+  // Plugin mode: findings listed in this file are not reported.
+  std::string baselineFile;
+  std::string exportSummaries;
+  std::vector<std::string> exportUnder;
+  std::vector<std::string> importSummaries;
+  bool json = false;
+  bool verbose = false;
+  bool werror = false; // plugin mode: findings are errors, not warnings
+  bool time = false;
+};
+static Options gOptions;
+
+#ifndef JSC_EXCEPTION_LINT_PLUGIN
 static llvm::cl::OptionCategory Category("jsc-exception-lint options");
 static llvm::cl::opt<std::string>
     NothrowFile("nothrow",
@@ -102,6 +132,7 @@ static llvm::cl::opt<bool>
     Verbose("verbose",
             llvm::cl::desc("print callee classification for every call"),
             llvm::cl::cat(Category));
+#endif
 
 namespace {
 
@@ -221,6 +252,7 @@ static Summary mergeSummaries(const Summary &a, const Summary &b) {
 }
 
 struct Finding {
+  SourceLocation loc; // expansion location, for compiler diagnostics
   std::string file;
   unsigned line = 0;
   unsigned col = 0;
@@ -236,6 +268,7 @@ struct Finding {
 // --nothrow file), maythrow (default for the --maythrow file), thrower,
 // check, checkrelease, release. `indirect:<member>` classifies calls
 // through a function pointer member of that name (method tables).
+static long gCfgCount = 0;
 static std::map<std::string, Summary> gClassified;
 static std::map<std::string, Summary> gImported; // key: name/arity
 
@@ -282,31 +315,37 @@ static void loadList(const std::string &path, Summary::Kind defaultKind) {
 
 // Summary line format (tab separated):
 //   mangledName  qualifiedName/arity  kind  exitStates  verifiesAtEntry  why
+//   conventional
+// Columns after the fifth are optional; the committed files drop `why`.
 // The mangled name identifies one overload across translation units. extern
 // "C" functions have no mangling and use their plain name.
 static void loadSummaries(const std::string &path) {
-  std::ifstream in(path);
-  std::string line;
-  while (std::getline(in, line)) {
-    std::vector<std::string> cols;
-    std::stringstream ss(line);
-    std::string col;
-    while (std::getline(ss, col, '\t'))
-      cols.push_back(col);
+  // Read in one go and split in place: this runs in every compiler process
+  // the build starts.
+  auto buffer = llvm::MemoryBuffer::getFile(path);
+  if (!buffer)
+    return;
+  StringRef rest = (*buffer)->getBuffer();
+  while (!rest.empty()) {
+    StringRef line;
+    std::tie(line, rest) = rest.split('\n');
+    llvm::SmallVector<StringRef, 8> cols;
+    line.split(cols, '\t');
     if (cols.size() < 5)
       continue;
     Summary s;
-    if (!Summary::parseKind(cols[2], s.kind))
+    if (!Summary::parseKind(cols[2].str(), s.kind))
       continue;
     unsigned exitStates = 0;
-    if (llvm::StringRef(cols[3]).getAsInteger(10, exitStates))
+    if (cols[3].getAsInteger(10, exitStates))
       continue; // malformed line
     s.exitStates = exitStates;
     s.verifiesAtEntry = cols[4] == "1";
-    s.why = cols.size() > 5 ? cols[5] : "";
-    auto it = gImported.find(cols[0]);
+    if (cols.size() > 5)
+      s.why = cols[5].str();
+    auto it = gImported.find(cols[0].str());
     if (it == gImported.end())
-      gImported.emplace(cols[0], s);
+      gImported.emplace(cols[0].str(), std::move(s));
     else
       it->second = mergeSummaries(it->second, s);
   }
@@ -318,6 +357,49 @@ static std::string qualifiedName(const NamedDecl *D) {
   D->printQualifiedName(os);
   return os.str();
 }
+
+// Absolute path of a file, symlinks resolved. The build compiles with paths
+// relative to the build directory (../../src/...), so the spelled name
+// cannot be compared with the repo root.
+static std::string realPathOf(FileEntryRef ref) {
+  StringRef real = ref.getFileEntry().tryGetRealPathName();
+  if (!real.empty())
+    return real.str();
+  llvm::SmallString<256> abs(ref.getName());
+  llvm::sys::fs::make_absolute(abs);
+  llvm::sys::path::remove_dots(abs, /*remove_dot_dot=*/true);
+  return std::string(abs);
+}
+
+// Real paths of the files of one translation unit, one lookup per file
+// instead of one per declaration.
+class PathCache {
+public:
+  explicit PathCache(SourceManager &SM) : m_sm(SM) {}
+
+  const std::string &get(FileID fid) {
+    auto it = m_paths.find(fid);
+    if (it != m_paths.end())
+      return it->second;
+    std::string path;
+    if (OptionalFileEntryRef ref = m_sm.getFileEntryRefForID(fid))
+      path = realPathOf(*ref);
+    return m_paths.emplace(fid, std::move(path)).first->second;
+  }
+
+  // Empty for locations that are not in a file (builtins, command line).
+  const std::string &get(SourceLocation loc) {
+    static const std::string empty;
+    loc = m_sm.getExpansionLoc(loc);
+    if (loc.isInvalid())
+      return empty;
+    return get(m_sm.getFileID(loc));
+  }
+
+private:
+  SourceManager &m_sm;
+  std::map<FileID, std::string> m_paths;
+};
 
 static std::string summaryKey(const FunctionDecl *FD) {
   return qualifiedName(FD) + "/" + std::to_string(FD->getNumParams());
@@ -331,8 +413,10 @@ static bool isGlobalObjectRecord(const CXXRecordDecl *RD) {
   std::string name = qualifiedName(RD);
   if (name == "JSC::JSGlobalObject")
     return true;
+  // Forward-declared only: go by the name. JSDOMGlobalObject and
+  // Zig::GlobalObject are global objects; GlobalObjectMethodTable is not.
   if (!RD->hasDefinition())
-    return name.find("GlobalObject") != std::string::npos;
+    return llvm::StringRef(name).ends_with("GlobalObject");
   for (const CXXBaseSpecifier &base : RD->bases()) {
     if (const CXXRecordDecl *baseRD = base.getType()->getAsCXXRecordDecl())
       if (isGlobalObjectRecord(baseRD))
@@ -406,8 +490,9 @@ static bool isExceptionOwnerRecord(const CXXRecordDecl *RD) {
 
 class Analyzer {
 public:
-  Analyzer(ASTContext &Ctx, std::vector<Finding> &out)
-      : m_ctx(Ctx), m_sm(Ctx.getSourceManager()), m_findings(out),
+  Analyzer(ASTContext &Ctx, PathCache &paths, std::vector<Finding> &out)
+      : m_ctx(Ctx), m_sm(Ctx.getSourceManager()), m_paths(paths),
+        m_findings(out),
         m_mangler(ItaniumMangleContext::create(Ctx, Ctx.getDiagnostics())) {}
 
   // One name per overload, stable across translation units.
@@ -450,7 +535,7 @@ public:
     if (!m_analyzed.insert(FD->getCanonicalDecl()).second)
       return;
     runBody(FD, /*report=*/true);
-    if (!ExportSummaries.empty())
+    if (!gOptions.exportSummaries.empty())
       summarize(FD);
   }
 
@@ -485,17 +570,22 @@ public:
       if (isa<CXXMethodDecl>(def) &&
           cast<CXXMethodDecl>(def)->getParent()->isLambda())
         continue;
-      PresumedLoc P =
-          m_sm.getPresumedLoc(m_sm.getExpansionLoc(def->getLocation()));
-      if (!P.isValid())
-        continue;
-      std::string file = P.getFilename();
-      if (!matchesAny(file, under) ||
+      const std::string &file = m_paths.get(def->getLocation());
+      if (file.empty() || !matchesAny(file, under) ||
           file.find("vendor/WebKit") != std::string::npos)
         continue;
+      // The last column says whether the fallback classification (the
+      // rules after the import lookup in computeSummary) already gives this
+      // summary; the driver drops those rows from the committed files.
+      bool carrier = hasThrowCarrierParam(FD);
+      bool conventional =
+          !FD->isExternC() && !s.consumesException &&
+          ((carrier && s.kind == Summary::MayThrow && s.verifiesAtEntry) ||
+           (!carrier && s.kind == Summary::Nothrow && !s.verifiesAtEntry));
       os << mangledKey(FD) << "\t" << summaryKey(FD) << "\t"
          << Summary::kindName(s.kind) << "\t" << s.exitStates << "\t"
-         << (s.verifiesAtEntry ? "1" : "0") << "\t" << s.why << "\n";
+         << (s.verifiesAtEntry ? "1" : "0") << "\t" << s.why << "\t"
+         << (conventional ? "1" : "0") << "\n";
     }
   }
 
@@ -708,7 +798,10 @@ private:
     SourceLocation spelling = m_sm.getExpansionLoc(loc);
     PresumedLoc P = m_sm.getPresumedLoc(spelling);
     Finding f;
-    f.file = P.isValid() ? P.getFilename() : "<unknown>";
+    f.loc = spelling;
+    f.file = m_paths.get(spelling);
+    if (f.file.empty())
+      f.file = P.isValid() ? P.getFilename() : "<unknown>";
     f.line = P.isValid() ? P.getLine() : 0;
     f.col = P.isValid() ? P.getColumn() : 0;
     f.function = qualifiedName(FD);
@@ -716,10 +809,25 @@ private:
       if (MD->getParent()->isLambda())
         f.function =
             "<lambda at " + locString(MD->getParent()->getLocation()) + ">";
-    f.callee = callee;
+    f.callee = stableCallee(callee);
     f.kind = kind;
     f.message = message;
     m_findings.push_back(std::move(f));
+  }
+
+  // The callee as it appears in a baseline key. `lastSource` strings carry
+  // a "(file:line)" suffix for the message; the key must survive edits
+  // elsewhere in the file.
+  static std::string stableCallee(const std::string &callee) {
+    static const std::string nested = "the nested ThrowScope declared at ";
+    if (callee.rfind(nested, 0) == 0)
+      return "nested ThrowScope";
+    if (!callee.empty() && callee.back() == ')') {
+      auto open = callee.rfind(" (");
+      if (open != std::string::npos)
+        return callee.substr(0, open);
+    }
+    return callee;
   }
 
   // Per-walk context: the last call that made the state pending/thrown, for
@@ -818,7 +926,7 @@ private:
     if (!CE)
       return in;
     Summary s = summarizeCall(CE);
-    if (Verbose) {
+    if (gOptions.verbose) {
       llvm::errs() << locString(CE->getBeginLoc()) << " call "
                    << describeCallee(CE) << " -> " << Summary::kindName(s.kind)
                    << " exit=" << s.exitStates << " (" << s.why << ")\n";
@@ -945,6 +1053,7 @@ private:
     opts.AddCXXDefaultInitExprInCtors = true;
     opts.setAllAlwaysAdd();
     std::unique_ptr<CFG> cfg = CFG::buildCFG(FD, FD->getBody(), &m_ctx, opts);
+    gCfgCount++;
     if (!cfg)
       return result;
 
@@ -1020,77 +1129,236 @@ private:
 
   ASTContext &m_ctx;
   SourceManager &m_sm;
+  PathCache &m_paths;
   std::vector<Finding> &m_findings;
   std::unique_ptr<ItaniumMangleContext> m_mangler;
   std::unordered_map<const FunctionDecl *, Summary> m_summaries;
   std::unordered_set<const FunctionDecl *> m_analyzed;
 };
 
-class Visitor : public RecursiveASTVisitor<Visitor> {
+// Finds the lambdas inside one function body so their call operators can be
+// analyzed as functions of their own.
+class LambdaFinder : public RecursiveASTVisitor<LambdaFinder> {
 public:
-  Visitor(ASTContext &Ctx, Analyzer &A, std::string onlyUnder,
-          std::vector<std::string> exportUnder)
-      : m_ctx(Ctx), m_analyzer(A), m_onlyUnder(std::move(onlyUnder)),
-        m_exportUnder(std::move(exportUnder)) {}
-
-  bool shouldVisitTemplateInstantiations() const { return true; }
-  bool shouldVisitImplicitCode() const { return false; }
-
-  bool VisitFunctionDecl(FunctionDecl *FD) {
-    maybeAnalyze(FD);
-    return true;
-  }
-
+  std::vector<CXXMethodDecl *> found;
   bool VisitLambdaExpr(LambdaExpr *LE) {
     if (CXXMethodDecl *op = LE->getCallOperator())
-      maybeAnalyze(op);
+      found.push_back(op);
     return true;
   }
+};
+
+// Walks the declaration tree of the translation unit and prunes every
+// namespace, class and template that lives in a file we do not analyze or
+// export (the WebKit headers are most of the tree). Function bodies are only
+// walked for the functions that are analyzed.
+class Walker {
+public:
+  Walker(ASTContext &Ctx, PathCache &paths, Analyzer &A, std::string onlyUnder,
+         std::vector<std::string> exportUnder)
+      : m_ctx(Ctx), m_sm(Ctx.getSourceManager()), m_paths(paths), m_analyzer(A),
+        m_onlyUnder(std::move(onlyUnder)),
+        m_exportUnder(std::move(exportUnder)) {}
+
+  void run() { walkContext(m_ctx.getTranslationUnitDecl()); }
 
 private:
+  enum class Where { Skip, Analyze, Export };
+
+  // One lookup per file instead of one per declaration.
+  Where whereIs(SourceLocation loc) {
+    loc = m_sm.getExpansionLoc(loc);
+    if (loc.isInvalid())
+      return Where::Skip;
+    FileID fid = m_sm.getFileID(loc);
+    auto it = m_fileKind.find(fid);
+    if (it != m_fileKind.end())
+      return it->second;
+    Where w = Where::Skip;
+    const std::string &file = m_paths.get(fid);
+    if (!file.empty()) {
+      if (file.find(m_onlyUnder) != std::string::npos)
+        w = Where::Analyze;
+      else if (!gOptions.exportSummaries.empty() &&
+               Analyzer::matchesAny(file, m_exportUnder) &&
+               file.find("vendor/WebKit") == std::string::npos)
+        w = Where::Export;
+    }
+    m_fileKind[fid] = w;
+    return w;
+  }
+
+  void walkContext(const DeclContext *DC) {
+    for (Decl *D : DC->decls())
+      walkDecl(D);
+  }
+
+  void walkDecl(Decl *D) {
+    if (auto *FD = dyn_cast<FunctionDecl>(D)) {
+      maybeAnalyze(FD);
+      return;
+    }
+    if (auto *FT = dyn_cast<FunctionTemplateDecl>(D)) {
+      if (whereIs(FT->getLocation()) == Where::Skip)
+        return;
+      for (FunctionDecl *spec : FT->specializations())
+        maybeAnalyze(spec);
+      return;
+    }
+    if (auto *CT = dyn_cast<ClassTemplateDecl>(D)) {
+      if (whereIs(CT->getLocation()) == Where::Skip)
+        return;
+      for (ClassTemplateSpecializationDecl *spec : CT->specializations())
+        walkContext(spec);
+      return;
+    }
+    if (auto *RD = dyn_cast<CXXRecordDecl>(D)) {
+      if (!RD->isThisDeclarationADefinition())
+        return;
+      if (whereIs(RD->getLocation()) == Where::Skip)
+        return;
+      walkContext(RD);
+      return;
+    }
+    if (auto *NS = dyn_cast<NamespaceDecl>(D)) {
+      if (whereIs(NS->getLocation()) == Where::Skip)
+        return;
+      walkContext(NS);
+      return;
+    }
+    if (auto *LS = dyn_cast<LinkageSpecDecl>(D)) {
+      if (whereIs(LS->getLocation()) == Where::Skip)
+        return;
+      walkContext(LS);
+      return;
+    }
+  }
+
   void maybeAnalyze(FunctionDecl *FD) {
     if (!FD->doesThisDeclarationHaveABody() || !FD->getBody())
       return;
     if (FD->isDependentContext())
-      return; // uninstantiated template pattern; instantiations are visited
+      return; // uninstantiated template pattern; specializations are walked
               // separately
-    SourceManager &SM = m_ctx.getSourceManager();
-    SourceLocation loc = SM.getExpansionLoc(FD->getLocation());
-    if (loc.isInvalid())
+    switch (whereIs(FD->getLocation())) {
+    case Where::Skip:
       return;
-    PresumedLoc P = SM.getPresumedLoc(loc);
-    if (!P.isValid())
-      return;
-    std::string file = P.getFilename();
-    if (file.find(m_onlyUnder) != std::string::npos)
+    case Where::Analyze: {
       m_analyzer.analyzeFunction(FD);
-    else if (!ExportSummaries.empty() &&
-             Analyzer::matchesAny(file, m_exportUnder) &&
-             file.find("vendor/WebKit") == std::string::npos)
+      LambdaFinder finder;
+      finder.TraverseStmt(FD->getBody());
+      for (CXXMethodDecl *op : finder.found)
+        if (op->doesThisDeclarationHaveABody() && op->getBody())
+          m_analyzer.analyzeFunction(op);
+      return;
+    }
+    case Where::Export:
       m_analyzer.summarizeForExport(FD);
+      return;
+    }
   }
 
   ASTContext &m_ctx;
+  SourceManager &m_sm;
+  PathCache &m_paths;
   Analyzer &m_analyzer;
   std::string m_onlyUnder;
   std::vector<std::string> m_exportUnder;
+  std::map<FileID, Where> m_fileKind;
 };
+
+// Baseline: findings that are known and tolerated while they are being fixed.
+// One per line: <file relative to root>\t<function>\t<kind>\t<callee>.
+static std::set<std::string> gBaseline;
+
+static void loadBaseline(const std::string &path) {
+  if (path.empty())
+    return;
+  std::ifstream in(path);
+  std::string line;
+  while (std::getline(in, line)) {
+    if (line.empty() || line[0] == '#')
+      continue;
+    gBaseline.insert(line);
+  }
+}
+
+static std::string relativeToRoot(const std::string &file) {
+  if (!gOptions.root.empty() && file.rfind(gOptions.root, 0) == 0) {
+    std::string rel = file.substr(gOptions.root.size());
+    if (!rel.empty() && rel[0] == '/')
+      rel = rel.substr(1);
+    return rel;
+  }
+  return file;
+}
+
+// A name without its template arguments: one baseline entry covers every
+// instantiation of a template (each translation unit may instantiate
+// different ones). `<lambda at file:line>` is kept; it is the lambda's name.
+static std::string stripTemplateArgs(const std::string &name) {
+  std::string out;
+  int depth = 0;
+  for (size_t i = 0; i < name.size(); i++) {
+    char c = name[i];
+    if (c == '<' && depth == 0 && name.compare(i, 8, "<lambda ") == 0) {
+      size_t close = name.find('>', i);
+      if (close == std::string::npos)
+        return name;
+      out += name.substr(i, close - i + 1);
+      i = close;
+      continue;
+    }
+    if (c == '<') {
+      depth++;
+      continue;
+    }
+    if (c == '>' && depth > 0) {
+      depth--;
+      continue;
+    }
+    if (depth == 0)
+      out += c;
+  }
+  return depth == 0 ? out : name;
+}
+
+static std::string baselineKey(const Finding &f) {
+  return relativeToRoot(f.file) + "\t" + stripTemplateArgs(f.function) + "\t" +
+         f.kind + "\t" + stripTemplateArgs(f.callee);
+}
 
 class Consumer : public ASTConsumer {
 public:
+  // `CI` is set in plugin mode: findings become compiler diagnostics. The
+  // standalone tool prints them.
+  explicit Consumer(CompilerInstance *CI = nullptr) : m_ci(CI) {}
+
   void HandleTranslationUnit(ASTContext &Ctx) override {
+    // A translation unit that did not compile has an incomplete AST. The
+    // compile fails on its own errors; findings on top would be noise.
+    if (m_ci && m_ci->getDiagnostics().hasErrorOccurred())
+      return;
+    auto started = std::chrono::steady_clock::now();
     std::vector<Finding> findings;
-    Analyzer analyzer(Ctx, findings);
-    std::vector<std::string> exportUnder(ExportUnder.begin(),
-                                         ExportUnder.end());
+    PathCache paths(Ctx.getSourceManager());
+    Analyzer analyzer(Ctx, paths, findings);
+    std::vector<std::string> exportUnder = gOptions.exportUnder;
     if (exportUnder.empty())
       exportUnder.push_back("/src/");
-    Visitor visitor(Ctx, analyzer, OnlyPathPrefix, exportUnder);
-    visitor.TraverseDecl(Ctx.getTranslationUnitDecl());
+    Walker walker(Ctx, paths, analyzer, gOptions.onlyUnder, exportUnder);
+    walker.run();
+    if (gOptions.time) {
+      auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - started)
+                    .count();
+      llvm::errs() << "jsc-exception-lint: analysis " << ms << " ms, "
+                   << gCfgCount << " cfgs\n";
+    }
 
-    if (!ExportSummaries.empty()) {
+    if (!gOptions.exportSummaries.empty()) {
       std::error_code ec;
-      llvm::raw_fd_ostream os(ExportSummaries, ec,
+      llvm::raw_fd_ostream os(gOptions.exportSummaries, ec,
                               llvm::sys::fs::OF_Append |
                                   llvm::sys::fs::OF_Text);
       if (!ec)
@@ -1099,12 +1367,29 @@ public:
 
     // Dedupe (template instantiations report the same line many times).
     std::set<std::string> seen;
+    std::set<std::string> usedBaseline;
     for (const Finding &f : findings) {
       std::string key = f.file + ":" + std::to_string(f.line) + ":" +
                         std::to_string(f.col) + ":" + f.kind + ":" + f.callee;
       if (!seen.insert(key).second)
         continue;
-      if (JsonOutput) {
+      if (m_ci) {
+        // The compile fails on sure findings only. maybe-thrown-call marks
+        // a call after a helper that may have thrown into our scope and
+        // returned a failure value the caller usually tests, which the
+        // analysis cannot see; the standalone tool shows them on request.
+        if (f.kind == "maybe-thrown-call" ||
+            !ownsFile(Ctx.getSourceManager(), f.file))
+          continue;
+        std::string bkey = baselineKey(f);
+        if (gBaseline.count(bkey)) {
+          usedBaseline.insert(bkey);
+          continue;
+        }
+        emit(f);
+        continue;
+      }
+      if (gOptions.json) {
         auto esc = [](const std::string &s) {
           std::string o;
           for (char c : s) {
@@ -1130,9 +1415,166 @@ public:
                      << "\n";
       }
     }
+    if (m_ci)
+      reportStaleBaseline(Ctx.getSourceManager(), usedBaseline);
     llvm::outs().flush();
   }
+
+private:
+  // A header is included by many translation units. Report its findings
+  // from the one that also compiles the .cpp with the same stem, or from
+  // every unit when no such .cpp exists anywhere.
+  bool ownsFile(SourceManager &SM, const std::string &file) {
+    if (file.size() > 4 && file.compare(file.size() - 4, 4, ".cpp") == 0)
+      return true;
+    auto slash = file.rfind('/');
+    auto dot = file.rfind('.');
+    if (dot == std::string::npos || (slash != std::string::npos && dot < slash))
+      return true;
+    std::string dir =
+        slash == std::string::npos ? "" : file.substr(0, slash + 1);
+    std::string stem =
+        file.substr(slash == std::string::npos ? 0 : slash + 1,
+                    dot - (slash == std::string::npos ? 0 : slash + 1));
+    if (m_cppStems.empty()) {
+      for (auto it = SM.fileinfo_begin(); it != SM.fileinfo_end(); ++it) {
+        std::string name = realPathOf(it->first);
+        if (name.size() > 4 && name.compare(name.size() - 4, 4, ".cpp") == 0) {
+          auto s2 = name.rfind('/');
+          m_cppStems.insert(name.substr(
+              s2 == std::string::npos ? 0 : s2 + 1,
+              name.size() - 4 - (s2 == std::string::npos ? 0 : s2 + 1)));
+        }
+      }
+      if (m_cppStems.empty())
+        m_cppStems.insert("");
+    }
+    if (m_cppStems.count(stem))
+      return true;
+    return !llvm::sys::fs::exists(dir + stem + ".cpp");
+  }
+
+  void emit(const Finding &f) {
+    DiagnosticsEngine &diags = m_ci->getDiagnostics();
+    unsigned id = diags.getCustomDiagID(
+        gOptions.werror ? DiagnosticsEngine::Error : DiagnosticsEngine::Warning,
+        "jsc-exception-lint: %0");
+    diags.Report(f.loc, id) << f.message;
+    // The key this finding has in baseline.tsv, for the case where it has
+    // to be tolerated for a while (tabs shown as " | ").
+    unsigned noteId = diags.getCustomDiagID(DiagnosticsEngine::Note,
+                                            "in %0; baseline entry: %1");
+    std::string key = baselineKey(f);
+    size_t tab;
+    while ((tab = key.find('\t')) != std::string::npos)
+      key.replace(tab, 1, " | ");
+    diags.Report(f.loc, noteId) << f.function << key;
+  }
+
+  // Baseline entries for a .cpp compiled in this unit that did not fire are
+  // stale: the finding was fixed and the entry should go.
+  void reportStaleBaseline(SourceManager &SM,
+                           const std::set<std::string> &used) {
+    if (gBaseline.empty())
+      return;
+    std::set<std::string> filesHere;
+    for (auto it = SM.fileinfo_begin(); it != SM.fileinfo_end(); ++it)
+      filesHere.insert(relativeToRoot(realPathOf(it->first)));
+    DiagnosticsEngine &diags = m_ci->getDiagnostics();
+    unsigned id = diags.getCustomDiagID(
+        DiagnosticsEngine::Warning,
+        "jsc-exception-lint: baseline entry no longer fires, remove it: %0");
+    for (const std::string &entry : gBaseline) {
+      if (used.count(entry))
+        continue;
+      std::string file = entry.substr(0, entry.find('\t'));
+      if (file.size() > 4 && file.compare(file.size() - 4, 4, ".cpp") == 0 &&
+          filesHere.count(file))
+        diags.Report(id) << entry;
+    }
+  }
+
+  CompilerInstance *m_ci;
+  std::set<std::string> m_cppStems;
 };
+
+#ifdef JSC_EXCEPTION_LINT_PLUGIN
+
+// Loaded into the compiler with -fplugin=. Arguments come in as
+// -Xclang -plugin-arg-jsc-exception-lint -Xclang key=value. Paths are
+// relative to the compiler's working directory (the build directory), so
+// the command line is the same in every checkout and ccache entries are
+// shared. `root` is the repository; functions defined under <root>/src/ are
+// analyzed unless only-under says otherwise.
+class PluginAction : public PluginASTAction {
+protected:
+  std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
+                                                 StringRef) override {
+    return std::make_unique<Consumer>(&CI);
+  }
+
+  bool ParseArgs(const CompilerInstance &CI,
+                 const std::vector<std::string> &args) override {
+    std::string onlyUnder;
+    for (const std::string &arg : args) {
+      auto eq = arg.find('=');
+      std::string key = arg.substr(0, eq);
+      std::string value = eq == std::string::npos ? "" : arg.substr(eq + 1);
+      if (key == "nothrow")
+        gOptions.nothrowFile = value;
+      else if (key == "maythrow")
+        gOptions.maythrowFile = value;
+      else if (key == "import")
+        gOptions.importSummaries.push_back(value);
+      else if (key == "only-under")
+        onlyUnder = value;
+      else if (key == "root") {
+        llvm::SmallString<256> real;
+        if (llvm::sys::fs::real_path(value, real))
+          real = value;
+        gOptions.root = std::string(real);
+      } else if (key == "baseline")
+        gOptions.baselineFile = value;
+      else if (key == "export")
+        gOptions.exportSummaries = value;
+      else if (key == "export-under")
+        gOptions.exportUnder.push_back(value);
+      else if (key == "werror")
+        gOptions.werror = true;
+      else if (key == "time")
+        gOptions.time = true;
+      else if (key == "verbose")
+        gOptions.verbose = true;
+      else if (key == "data-hash") {
+        // A digest of the data files, put on the command line by the build
+        // so that a compiler cache keyed on the command line misses when
+        // they change. Nothing to do with it here.
+      } else {
+        DiagnosticsEngine &diags = CI.getDiagnostics();
+        unsigned id = diags.getCustomDiagID(
+            DiagnosticsEngine::Error,
+            "jsc-exception-lint: unknown plugin argument '%0'");
+        diags.Report(id) << arg;
+        return false;
+      }
+    }
+    if (!onlyUnder.empty())
+      gOptions.onlyUnder = onlyUnder;
+    else if (!gOptions.root.empty())
+      gOptions.onlyUnder = gOptions.root + "/src/";
+    loadList(gOptions.nothrowFile, Summary::Nothrow);
+    loadList(gOptions.maythrowFile, Summary::MayThrow);
+    for (const std::string &path : gOptions.importSummaries)
+      loadSummaries(path);
+    loadBaseline(gOptions.baselineFile);
+    return true;
+  }
+
+  // Run after the main action so the object file is still produced.
+  ActionType getActionType() override { return AddAfterMainAction; }
+};
+
+#else
 
 class Action : public ASTFrontendAction {
 public:
@@ -1144,7 +1586,16 @@ public:
   }
 };
 
+#endif
+
 } // namespace
+
+#ifdef JSC_EXCEPTION_LINT_PLUGIN
+
+static FrontendPluginRegistry::Add<PluginAction>
+    X("jsc-exception-lint", "check JavaScriptCore exception discipline");
+
+#else
 
 int main(int argc, const char **argv) {
   auto parser = CommonOptionsParser::create(argc, argv, Category);
@@ -1152,9 +1603,19 @@ int main(int argc, const char **argv) {
     llvm::errs() << llvm::toString(parser.takeError());
     return 1;
   }
-  loadList(NothrowFile, Summary::Nothrow);
-  loadList(ThrowFile, Summary::MayThrow);
-  for (const std::string &path : ImportSummaries)
+  gOptions.nothrowFile = NothrowFile;
+  gOptions.maythrowFile = ThrowFile;
+  gOptions.onlyUnder = OnlyPathPrefix;
+  gOptions.exportSummaries = ExportSummaries;
+  gOptions.exportUnder.assign(ExportUnder.begin(), ExportUnder.end());
+  gOptions.importSummaries.assign(ImportSummaries.begin(),
+                                  ImportSummaries.end());
+  gOptions.json = JsonOutput;
+  gOptions.verbose = Verbose;
+  gOptions.time = getenv("JSC_EXCEPTION_LINT_TIME") != nullptr;
+  loadList(gOptions.nothrowFile, Summary::Nothrow);
+  loadList(gOptions.maythrowFile, Summary::MayThrow);
+  for (const std::string &path : gOptions.importSummaries)
     loadSummaries(path);
   ClangTool tool(parser->getCompilations(), parser->getSourcePathList());
   // Drop flags that only matter for code generation and slow down parsing.
@@ -1185,3 +1646,5 @@ int main(int argc, const char **argv) {
   });
   return tool.run(newFrontendActionFactory<Action>().get());
 }
+
+#endif

@@ -671,10 +671,8 @@ struct IWICImagingFactoryVTable {
     CreateBitmapFlipRotator: *const c_void,
     CreateStream:
         unsafe extern "system" fn(*mut IWICImagingFactory, *mut *mut IWICStream) -> HRESULT,
-    CreateColorContext: unsafe extern "system" fn(
-        *mut IWICImagingFactory,
-        *mut *mut IWICColorContext,
-    ) -> HRESULT,
+    CreateColorContext:
+        unsafe extern "system" fn(*mut IWICImagingFactory, *mut *mut IWICColorContext) -> HRESULT,
     CreateColorTransformer: *const c_void,
     CreateBitmap: *const c_void,
     CreateBitmapFromSource: *const c_void,

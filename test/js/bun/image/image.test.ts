@@ -848,64 +848,70 @@ describe("Bun.Image", () => {
     // only assert colour tagging where the codec exists. HEIC covers every
     // macOS CI machine (HEVC ships unconditionally); AVIF additionally runs
     // where an AV1 encoder exists (M3+).
-    test.each(["heic", "avif"] as const)("PNG iCCP transfers to .%s() — colr box carries the ICC profile", async fmt => {
-      const src = pngWithIccp(cornersPng, p3Profile);
-      let out: Uint8Array;
-      try {
-        out = await new Bun.Image(src)[fmt]({ quality: 60 }).bytes();
-      } catch (e: any) {
-        expect(e?.code).toBe("ERR_IMAGE_FORMAT_UNSUPPORTED");
-        return;
-      }
-      const colrs = extractIsobmffColr(out);
-      const prof = colrs.find(c => c.type === "prof" || c.type === "rICC");
-      if (prof) {
-        // The encoder may re-serialise the profile, so assert a well-formed
-        // RGB ICC profile rather than byte equality: data colour space
-        // "RGB " at offset 16, signature "acsp" at offset 36.
-        const p = prof.payload;
-        expect(String.fromCharCode(p[16], p[17], p[18], p[19])).toBe("RGB ");
-        expect(String.fromCharCode(p[36], p[37], p[38], p[39])).toBe("acsp");
-      } else {
-        // ImageIO may normalise a recognised profile to CICP instead of
-        // embedding it. That still carries the colour meaning — but sRGB
-        // primaries (1) here would mean the P3 profile was dropped and the
-        // no-profile fallback tag won, and unspecified (2) is the bug.
-        const nclx = colrs.find(c => c.type === "nclx");
-        expect(nclx).toBeDefined();
-        const dv = new DataView(nclx!.payload.buffer, nclx!.payload.byteOffset, nclx!.payload.byteLength);
-        expect(dv.getUint16(0)).not.toBe(2);
-        expect(dv.getUint16(0)).not.toBe(1);
-        expect(dv.getUint16(2)).not.toBe(2);
-      }
-    });
+    test.each(["heic", "avif"] as const)(
+      "PNG iCCP transfers to .%s() — colr box carries the ICC profile",
+      async fmt => {
+        const src = pngWithIccp(cornersPng, p3Profile);
+        let out: Uint8Array;
+        try {
+          out = await new Bun.Image(src)[fmt]({ quality: 60 }).bytes();
+        } catch (e: any) {
+          expect(e?.code).toBe("ERR_IMAGE_FORMAT_UNSUPPORTED");
+          return;
+        }
+        const colrs = extractIsobmffColr(out);
+        const prof = colrs.find(c => c.type === "prof" || c.type === "rICC");
+        if (prof) {
+          // The encoder may re-serialise the profile, so assert a well-formed
+          // RGB ICC profile rather than byte equality: data colour space
+          // "RGB " at offset 16, signature "acsp" at offset 36.
+          const p = prof.payload;
+          expect(String.fromCharCode(p[16], p[17], p[18], p[19])).toBe("RGB ");
+          expect(String.fromCharCode(p[36], p[37], p[38], p[39])).toBe("acsp");
+        } else {
+          // ImageIO may normalise a recognised profile to CICP instead of
+          // embedding it. That still carries the colour meaning — but sRGB
+          // primaries (1) here would mean the P3 profile was dropped and the
+          // no-profile fallback tag won, and unspecified (2) is the bug.
+          const nclx = colrs.find(c => c.type === "nclx");
+          expect(nclx).toBeDefined();
+          const dv = new DataView(nclx!.payload.buffer, nclx!.payload.byteOffset, nclx!.payload.byteLength);
+          expect(dv.getUint16(0)).not.toBe(2);
+          expect(dv.getUint16(0)).not.toBe(1);
+          expect(dv.getUint16(2)).not.toBe(2);
+        }
+      },
+    );
 
     // macOS only: WIC exposes no CICP control, so the "tag sane defaults
     // without a profile" half of the fix is ImageIO-specific.
-    test.skipIf(!isMacOS).each(["heic", "avif"] as const)("no source profile → .%s() tags a defined colour space, not unspecified CICP", async fmt => {
-      let out: Uint8Array;
-      try {
-        out = await new Bun.Image(cornersPng)[fmt]({ quality: 60 }).bytes();
-      } catch (e: any) {
-        expect(e?.code).toBe("ERR_IMAGE_FORMAT_UNSUPPORTED");
-        return;
-      }
-      const colrs = extractIsobmffColr(out);
-      expect(colrs.length).toBeGreaterThan(0);
-      const nclx = colrs.find(c => c.type === "nclx");
-      if (nclx) {
-        const dv = new DataView(nclx.payload.buffer, nclx.payload.byteOffset, nclx.payload.byteLength);
-        // 2 = "unspecified" in both CICP fields — the bug. sRGB-tagged
-        // pixels must come out with defined primaries/transfer (1/13).
-        expect({ primaries: dv.getUint16(0), transfer: dv.getUint16(2) }).toEqual({
-          primaries: 1,
-          transfer: 13,
-        });
-      } else {
-        // No nclx — then an ICC `colr` must define the colour space.
-        expect(colrs.some(c => c.type === "prof" || c.type === "rICC")).toBe(true);
-      }
-    });
+    test.skipIf(!isMacOS).each(["heic", "avif"] as const)(
+      "no source profile → .%s() tags a defined colour space, not unspecified CICP",
+      async fmt => {
+        let out: Uint8Array;
+        try {
+          out = await new Bun.Image(cornersPng)[fmt]({ quality: 60 }).bytes();
+        } catch (e: any) {
+          expect(e?.code).toBe("ERR_IMAGE_FORMAT_UNSUPPORTED");
+          return;
+        }
+        const colrs = extractIsobmffColr(out);
+        expect(colrs.length).toBeGreaterThan(0);
+        const nclx = colrs.find(c => c.type === "nclx");
+        if (nclx) {
+          const dv = new DataView(nclx.payload.buffer, nclx.payload.byteOffset, nclx.payload.byteLength);
+          // 2 = "unspecified" in both CICP fields — the bug. sRGB-tagged
+          // pixels must come out with defined primaries/transfer (1/13).
+          expect({ primaries: dv.getUint16(0), transfer: dv.getUint16(2) }).toEqual({
+            primaries: 1,
+            transfer: 13,
+          });
+        } else {
+          // No nclx — then an ICC `colr` must define the colour space.
+          expect(colrs.some(c => c.type === "prof" || c.type === "rICC")).toBe(true);
+        }
+      },
+    );
   });
 
   // EXIF: build a minimal JPEG via Bun.Image, then splice in an APP1 segment

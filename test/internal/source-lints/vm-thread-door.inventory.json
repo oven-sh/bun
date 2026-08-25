@@ -76,22 +76,12 @@
       "Store"
     ]
   },
-  "src/runtime/api/JSTranspiler.rs": {
-    "unsafe impl Send": [
-      "TransformTask"
-    ]
-  },
   "src/runtime/api/bun/Terminal.rs": {
     "thread spawn": 1
   },
   "src/runtime/api/glob.rs": {
     "unsafe impl Send": [
       "WalkTask"
-    ]
-  },
-  "src/runtime/api/js_bundle_completion_task.rs": {
-    "unsafe impl Send": [
-      "JSBundleCompletionTask"
     ]
   },
   "src/runtime/bake/production.rs": {

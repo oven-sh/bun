@@ -1415,7 +1415,7 @@ pub mod parse_worker {
                 let ctx = unsafe { task.ctx() };
 
                 // Check FileMap for in-memory files first
-                if let Some(file_map) = ctx.file_map {
+                if let Some(file_map) = &ctx.file_map {
                     if let Some(file_contents) = file_map.get(file_path.text) {
                         break 'brk Ok(CacheEntry {
                             contents: crate::cache::Contents::SharedBuffer {

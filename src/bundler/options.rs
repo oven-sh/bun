@@ -1352,7 +1352,7 @@ pub struct BundleOptions<'a> {
     /// When set, barrel files from these packages will only load submodules
     /// that are actually imported. Also, any file with sideEffects: false
     /// in its package.json is automatically a barrel candidate.
-    pub optimize_imports: Option<&'a StringSet>,
+    pub optimize_imports: Option<std::sync::Arc<StringSet>>,
 }
 
 // B-3 UNIFIED: was a local dup of `bun_options_types::bundle_enums::ForceNodeEnv`
@@ -1517,7 +1517,7 @@ impl<'a> BundleOptions<'a> {
             supports_multiple_outputs: self.supports_multiple_outputs,
             force_node_env: self.force_node_env,
             ignore_module_resolution_errors: self.ignore_module_resolution_errors,
-            optimize_imports: self.optimize_imports,
+            optimize_imports: self.optimize_imports.clone(),
         }
     }
 

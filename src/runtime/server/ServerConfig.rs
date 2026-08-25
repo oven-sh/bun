@@ -978,11 +978,8 @@ impl ServerConfig {
                         (None, Some(serve_define)) => Some(serve_define.clone()),
                         (Some(define), Some(serve_define)) => {
                             let mut merged = define.clone();
-                            for (k, v) in
-                                serve_define.keys.iter().zip(serve_define.values.iter())
-                            {
-                                if let Some(i) = merged.keys.iter().position(|key| **key == **k)
-                                {
+                            for (k, v) in serve_define.keys.iter().zip(serve_define.values.iter()) {
+                                if let Some(i) = merged.keys.iter().position(|key| **key == **k) {
                                     merged.values[i] = v.clone();
                                 } else {
                                     merged.keys.push(k.clone());

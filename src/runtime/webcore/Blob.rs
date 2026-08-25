@@ -4246,7 +4246,6 @@ pub(crate) fn mkdirp_parent(path: &[u8]) -> bun_sys::Result<()> {
 }
 
 // TODO: move this to bun_sys?
-// we choose not to inline this so that the path buffer is not on the stack unless necessary.
 #[inline(never)]
 pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
     this: &mut T,
@@ -4255,18 +4254,16 @@ pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
     err_path: &[u8],
 ) -> Retry {
     if err.get_errno() == bun_sys::E::ENOENT && this.mkdirp_if_not_exists() {
-        {
-            match mkdirp_parent(path_string.as_bytes()) {
-                bun_sys::Result::Ok(()) => {
-                    this.set_mkdirp_if_not_exists(false);
-                    return Retry::Continue;
-                }
-                bun_sys::Result::Err(err2) => {
-                    this.set_errno_if_present(bun_errno::from_errno(err2.errno as i32).into());
-                    this.set_system_error(err.with_path(err_path).to_system_error());
-                    this.set_opened_fd_if_present(Fd::INVALID);
-                    return Retry::Fail;
-                }
+        match mkdirp_parent(path_string.as_bytes()) {
+            bun_sys::Result::Ok(()) => {
+                this.set_mkdirp_if_not_exists(false);
+                return Retry::Continue;
+            }
+            bun_sys::Result::Err(err2) => {
+                this.set_errno_if_present(bun_errno::from_errno(err2.errno as i32).into());
+                this.set_system_error(err.with_path(err_path).to_system_error());
+                this.set_opened_fd_if_present(Fd::INVALID);
+                return Retry::Fail;
             }
         }
     }

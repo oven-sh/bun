@@ -789,9 +789,9 @@ async function rawOrigin(framing: Framing, length: number, holdTail = false) {
 }
 
 // One full collection per event-loop turn (an fs round trip, not a timer) until `event` settles.
-// A single collection right after the last `await fetch()` can miss the newest Response: a heap
-// snapshot then shows it with no incoming edge and no root entry, i.e. found only by the
-// conservative scan of the frames that just delivered it. The next turn's collection takes it.
+// What `event` waits for is several hops away from the collection itself: the finalizer runs in
+// the sweep, the abort is a message to the HTTP thread, and the origin sees the close on its own
+// socket. Loop on the event, not on a count of collections.
 async function collectUntil<T>(event: Promise<T>): Promise<T> {
   let settled = false;
   const result = event.finally(() => (settled = true));
@@ -1021,15 +1021,32 @@ describe("S3 receive backpressure", () => {
     expect(bucket.completed()).toBe(0);
   });
 
-  test("Bun.write(s3file, res) and s3file.writer() resolve with the byte count", async () => {
+  test("Bun.write(s3file, res) resolves with the byte count", async () => {
     await using origin = await serve("h1");
     await using bucket = await fakeUploadBucket();
     expect(await Bun.write(bucket.s3.file("up"), await fetch(origin.url))).toBe(TOTAL);
     expect(bucket.uploaded()).toBe(TOTAL);
-    const writer = bucket.s3.file("up2").writer();
-    writer.write(Buffer.alloc(1000, 1));
-    writer.write("héllo");
-    expect(await writer.end()).toBe(1006);
+  });
+
+  test("s3file.writer().end() resolves with the byte count, also once the writer is collected", async () => {
+    const hold = Promise.withResolvers<void>();
+    await using bucket = await fakeUploadBucket(hold.promise);
+    const collected = Promise.withResolvers<void>();
+    const registry = new FinalizationRegistry(() => collected.resolve());
+    // Its own frame: once it returns, only the pending end() refers to the upload.
+    function start() {
+      const writer = bucket.s3.file("up2").writer();
+      registry.register(writer, null);
+      writer.write(Buffer.alloc(1000, 1));
+      writer.write("héllo");
+      return writer.end();
+    }
+    const ended = start();
+    await bucket.firstPart;
+    // The count must not depend on the writer object: it is collectable while the PUT is out.
+    await collectUntil(collected.promise);
+    hold.resolve();
+    expect(await ended).toBe(1006);
   });
 });
 

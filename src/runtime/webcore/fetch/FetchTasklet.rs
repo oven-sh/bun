@@ -1648,8 +1648,9 @@ impl FetchTasklet {
     }
 
     /// reader.cancel() / body.cancel(): the server has to see the close (Node, Deno and browsers
-    /// abort too).
-    pub(crate) fn on_stream_cancelled(&mut self) {
+    /// abort too). `&self`: a sink whose write failed cancels the stream from inside
+    /// `on_body_received`, while that `&mut self` is still live.
+    pub(crate) fn on_stream_cancelled(&self) {
         self.abort_task();
         self.abandon_response_body();
     }
@@ -2280,7 +2281,7 @@ impl FetchTasklet {
         FetchTasklet::deref(this_ptr);
     }
 
-    fn abort_task(&mut self) {
+    fn abort_task(&self) {
         if self.abort_transport() {
             self.tracker.did_cancel(&self.global_this);
         }

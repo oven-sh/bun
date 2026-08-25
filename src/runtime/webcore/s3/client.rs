@@ -424,8 +424,13 @@ pub(crate) fn writable_stream(
     storage_class: Option<StorageClass>,
     request_payer: bool,
 ) -> JsResult<JSValue> {
-    // Local callback wrapper
-    fn wrapper_callback(result: S3UploadResult, sink: &mut NetworkSink) -> JsResult<()> {
+    // Local callback wrapper. `uploaded` comes from the upload itself: the sink has already let
+    // go of its ref when its JS wrapper was collected while `end()` was pending.
+    fn wrapper_callback(
+        result: S3UploadResult,
+        uploaded: u64,
+        sink: &mut NetworkSink,
+    ) -> JsResult<()> {
         // `global_this` is a `BackRef` set at construction; copy it so the
         // re-borrow does not hold `&sink` across the `&mut sink` calls below.
         let global = sink
@@ -440,7 +445,6 @@ pub(crate) fn writable_stream(
             let _exit_guard = unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
             match result {
                 S3UploadResult::Success => {
-                    let uploaded = sink.task.as_ref().map_or(0, |t| t.uploaded_bytes.get());
                     if sink.flush_promise.has_value() {
                         sink.flush_promise
                             .resolve(global, JSValue::js_number(0.0))?;
@@ -470,11 +474,15 @@ pub(crate) fn writable_stream(
 
     // Thunks adapting typed callbacks to the erased `*mut c_void` signatures stored on
     // MultiPartUpload.
-    fn wrapper_callback_thunk(result: S3UploadResult, ctx: *mut c_void) -> JsResult<()> {
+    fn wrapper_callback_thunk(
+        task: &MultiPartUpload,
+        result: S3UploadResult,
+        ctx: *mut c_void,
+    ) -> JsResult<()> {
         let sink = ctx.cast::<NetworkSink>();
         // SAFETY: ctx was set to `response_stream: *mut NetworkSink` below; the box is live
         // while the upload holds it.
-        let r = wrapper_callback(result, unsafe { &mut *sink });
+        let r = wrapper_callback(result, task.uploaded_bytes.get(), unsafe { &mut *sink });
         // SAFETY: the upload's hold on the box ends here; `sink` is not used afterwards.
         unsafe { NetworkSink::release_writer_holder(sink) };
         r
@@ -923,7 +931,11 @@ pub(crate) fn upload_stream(
 
     // Thunks adapting typed callbacks to the erased `*mut c_void` signatures stored on
     // MultiPartUpload.
-    fn resolve_thunk(result: S3UploadResult, ctx: *mut c_void) -> JsResult<()> {
+    fn resolve_thunk(
+        _: &MultiPartUpload,
+        result: S3UploadResult,
+        ctx: *mut c_void,
+    ) -> JsResult<()> {
         // SAFETY: ctx was set to `*mut S3UploadStreamWrapper` below.
         S3UploadStreamWrapper::resolve(result, unsafe {
             bun_ptr::callback_ctx::<S3UploadStreamWrapper>(ctx)

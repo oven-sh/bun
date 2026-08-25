@@ -157,7 +157,9 @@ pub struct MultiPartUpload {
 
     pub(crate) state: Cell<State>,
 
-    pub callback: fn(S3UploadResult, *mut c_void) -> bun_jsc::JsResult<()>,
+    /// Completion. Receives the upload so the callee can read `uploaded_bytes` even after it let
+    /// go of its own ref (the `writer()` sink detaches when its JS wrapper is collected).
+    pub callback: fn(&MultiPartUpload, S3UploadResult, *mut c_void) -> bun_jsc::JsResult<()>,
     pub(crate) on_writable: Option<fn(&MultiPartUpload, *mut c_void, u64)>,
     pub(crate) callback_context: Cell<*mut c_void>,
 }
@@ -577,7 +579,11 @@ impl MultiPartUpload {
         }
         if self.state.get() != State::Finished {
             let old_state = self.state.replace(State::Finished);
-            (self.callback)(S3UploadResult::Failure(err), self.callback_context.get())?;
+            (self.callback)(
+                self,
+                S3UploadResult::Failure(err),
+                self.callback_context.get(),
+            )?;
 
             if old_state == State::MultipartCompleted {
                 // we are a multipart upload so we need to rollback
@@ -624,7 +630,7 @@ impl MultiPartUpload {
             self.state.set(State::Finished);
             // single file upload no need to commit
             // The deref must run after the callback:
-            let r = (self.callback)(S3UploadResult::Success, self.callback_context.get());
+            let r = (self.callback)(self, S3UploadResult::Success, self.callback_context.get());
             MultiPartUpload::deref_(self.root_ptr());
             r
         } else {
@@ -738,15 +744,19 @@ impl MultiPartUpload {
                 }
                 self_.state.set(State::Finished);
                 // The deref must run after the callback:
-                let r =
-                    (self_.callback)(S3UploadResult::Failure(err), self_.callback_context.get());
+                let r = (self_.callback)(
+                    self_,
+                    S3UploadResult::Failure(err),
+                    self_.callback_context.get(),
+                );
                 MultiPartUpload::deref_(this);
                 r
             }
             S3CommitResult::Success => {
                 self_.state.set(State::Finished);
                 // The deref must run after the callback:
-                let r = (self_.callback)(S3UploadResult::Success, self_.callback_context.get());
+                let r =
+                    (self_.callback)(self_, S3UploadResult::Success, self_.callback_context.get());
                 MultiPartUpload::deref_(this);
                 r
             }

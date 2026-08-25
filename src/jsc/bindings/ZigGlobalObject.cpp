@@ -4296,10 +4296,8 @@ void GlobalObject::prepareForDestruction()
         nextTickQueue->discard(vm);
 
     // Tell cross-thread posters not to bother from here (what still lands is queued and released
-    // unrun by the teardown, or refused once the VM handle closes). DeferredWorkTimer is fenced
-    // separately because finalizers during the final collection and ~VM both reach scheduleWorkSoon().
+    // unrun by the teardown, or refused once the VM handle closes).
     context->markTerminating();
-    WebCore::clientData(vm)->deferredWorkTimer.markShuttingDown();
 
     // WorkerOrWorkletGlobalScope::prepareForDestruction(): stop every ActiveDOMObject (workers are
     // asked to terminate, ports/channels/sockets close without dispatching) and strip listeners,

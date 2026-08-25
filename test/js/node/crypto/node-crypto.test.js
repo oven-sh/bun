@@ -720,6 +720,24 @@ describe("DiffieHellman", () => {
       expect(elapsed).toBeLessThan(5_000);
     });
 
+    // RFC 7919 appendix A.1. Node has no group name for it, so it only arrives
+    // as a prime. It is 2048 bits wide, like modp14, so it also shows that the
+    // match is on the value and not on the width alone.
+    it("recognizes ffdhe2048", () => {
+      const ffdhe2048 =
+        "FFFFFFFFFFFFFFFFADF85458A2BB4A9AAFDC5620273D3CF1D8B9C583CE2D3695" +
+        "A9E13641146433FBCC939DCE249B3EF97D2FE363630C75D8F681B202AEC4617A" +
+        "D3DF1ED5D5FD65612433F51F5F066ED0856365553DED1AF3B557135E7F57C935" +
+        "984F0C70E0E68B77E2A689DAF3EFE8721DF158A136ADE73530ACCA4F483A797A" +
+        "BC0AB182B324FB61D108A94BB2C8E3FBB96ADAB760D7F4681D4F42A3DE394DF4" +
+        "AE56EDE76372BB190B07A7C8EE0A6D709E02FCE1CDF7E2ECC03404CD28342F61" +
+        "9172FE9CE98583FF8E4F1232EEF28183C3FE3B1B4C6FAD733BB5FCBC2EC22005" +
+        "C58EF1837D1683B2C6F34A26C1B2EFFA886B423861285C97FFFFFFFFFFFFFFFF";
+      const dh = crypto.createDiffieHellman(ffdhe2048, "hex", 2);
+      expect(dh.getPrime().length).toBe(crypto.getDiffieHellman("modp14").getPrime().length);
+      expect(dh.verifyError).toBe(0);
+    });
+
     it("matches the prime by value, not by length", () => {
       const p = crypto.getDiffieHellman("modp5").getPrime();
       // Flip bit 1 so p stays odd and keeps its width, but is no longer prime.

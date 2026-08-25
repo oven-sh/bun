@@ -150,7 +150,9 @@ pub struct Blob {
 // `content_type` are atomically refcounted.
 unsafe impl Send for Blob {}
 // SAFETY: concurrent `&Blob` access only occurs under `ObjectURLRegistry`'s
-// mutex or on the single owning JS thread; the `Cell` fields are never raced.
+// mutex, on the standalone-graph template (never written after its `OnceLock`
+// init; dupes only bump atomic refcounts), or on the single owning JS thread;
+// the `Cell` fields are never raced with a writer.
 unsafe impl Sync for Blob {}
 
 impl Default for Blob {

@@ -319,8 +319,8 @@ WTF::String toCrossThreadShareable(const WTF::String& string)
     if (impl->isAtom() || impl->isSymbol())
         return isolatedCopyForSharing(*impl);
 
-    // 2) Don't share slices
-    if (impl->bufferOwnership() == StringImpl::BufferSubstring)
+    // 2) Don't share slices, or external buffers whose finalizer belongs to the creating thread
+    if (impl->bufferOwnership() == StringImpl::BufferSubstring || impl->isExternal())
         return isolatedCopyForSharing(*impl);
 
     // 3) Ensure we won't lazily touch hash/flags on the consumer thread

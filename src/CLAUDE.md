@@ -384,13 +384,18 @@ non-transferring path UAFs at GC.
 
 ### Cross-thread string hazards
 
-`AtomString`s live in a per-thread table. Never deref one from another thread —
-it trips `wasRemoved` in `AtomStringImpl::remove()`. If a `bun_core::String`
-may be dropped from a non-JS thread (HTTP worker, threadpool, dying VM), build
-it via `String::clone_utf8` (a plain `WTFStringImpl` with an atomic refcount),
-not from an interned/atomized JS string. See the comment in
-`src/runtime/webcore/fetch/FetchTasklet.rs` near `Response::init` for the
-canonical example of this bug class and its fix.
+`StringImpl` refcounts are atomic, but atom tables are per thread: using a
+string as a property key (`Identifier::fromString`) atomizes its impl *in
+place* into the current thread's table, and the last `deref()` of an atom
+removes it from the current thread's table (`RELEASE_ASSERT(wasRemoved)` if it
+is not there). So one impl must never be reachable from two VMs — not via a
+process-global registry handing out `String::clone()`s, not via one
+`SerializedScriptValue` deserialized by several receivers. Hand another thread
+its own bytes (`Box<[u8]>` / `clone_utf8` on arrival) or a
+`Bun::isolatedCopyForSharing` copy (pre-hashed, never atomized in place; see
+`src/jsc/bindings/BunString.cpp`). `String::to_thread_safe()` is a plain
+isolated copy for handing a value to *one* other owner. `ObjectURLRegistry`
+and the structured-clone object fast paths are the worked examples.
 
 ## Common Patterns
 

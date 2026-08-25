@@ -473,6 +473,8 @@ impl FetchTasklet {
 
     fn clear_data(&mut self) {
         bun_output::scoped_log!(FetchTasklet, "clearData ");
+        // `http.client` borrows `url_proxy_buffer` / `hostname` / `unix_socket_path` / `request_headers`.
+        self.http = None;
         if !self.url_proxy_buffer.is_empty() {
             self.url_proxy_buffer = Box::default();
         }
@@ -488,10 +490,6 @@ impl FetchTasklet {
 
         // Drop on assignment runs the cleanup. MultiArrayList has no `clear()`.
         self.request_headers = Headers::default();
-
-        if let Some(http_) = self.http.as_mut() {
-            http_.clear_data();
-        }
 
         if let Some(metadata) = self.metadata.take() {
             drop(metadata);
@@ -531,7 +529,6 @@ impl FetchTasklet {
         // SAFETY: this was allocated via heap::alloc in `get()`; ref_count == 0 so exclusive
         let mut boxed = unsafe { bun_core::heap::take(this) };
         boxed.clear_data();
-        // self.http: Option<Box<AsyncHTTP>> dropped here automatically
         drop(boxed);
     }
 

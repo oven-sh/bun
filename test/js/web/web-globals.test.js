@@ -419,6 +419,67 @@ test("confirm (no) windows newline", async () => {
   expect(await proc.stderr.text()).toBe("No\n");
 });
 
+test.each(["\n", "\r\n"])("prompt returns the default as a DOMString on empty input (%j)", async nl => {
+  const src = `
+    const d = { a: 1 };
+    const r1 = prompt("q1", 42);
+    const r2 = prompt("q2", d);
+    const r3 = prompt("q3", "hi");
+    console.error(JSON.stringify({
+      r1, t1: typeof r1,
+      r2, t2: typeof r2, same: r2 === d,
+      r3, t3: typeof r3,
+    }));
+  `;
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", src],
+    stdio: ["pipe", "pipe", "pipe"],
+    env: bunEnv,
+  });
+
+  proc.stdin.write(nl + nl + nl);
+  await proc.stdin.flush();
+  proc.stdin.end();
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("q1 [42] q2 [[object Object]] q3 [hi] ");
+  expect(JSON.parse(stderr)).toEqual({
+    r1: "42",
+    t1: "string",
+    r2: "[object Object]",
+    t2: "string",
+    same: false,
+    r3: "hi",
+    t3: "string",
+  });
+  expect(exitCode).toBe(0);
+});
+
+test("prompt calls toString on the default exactly once", async () => {
+  const src = `
+    let calls = 0;
+    const d = { toString() { calls++; return "dflt"; } };
+    const r = prompt("q", d);
+    console.error(JSON.stringify({ r, t: typeof r, calls }));
+  `;
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", src],
+    stdio: ["pipe", "pipe", "pipe"],
+    env: bunEnv,
+  });
+
+  proc.stdin.write("\n");
+  await proc.stdin.flush();
+  proc.stdin.end();
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("q [dflt] ");
+  expect(JSON.parse(stderr)).toEqual({ r: "dflt", t: "string", calls: 1 });
+  expect(exitCode).toBe(0);
+});
+
 test("globalThis.self = 123 works", () => {
   expect(Object.getOwnPropertyDescriptor(globalThis, "self")).toMatchObject({
     configurable: true,

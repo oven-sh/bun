@@ -253,7 +253,6 @@ impl Options {
         js_options: JSValue,
     ) -> JsResult<Options> {
         let mut options = Options::default();
-        // errdefer options.deinit() — handled by Drop on early return.
 
         if let Some(n) = js_options.get_optional_i32(global_object, b"cols")? {
             if n > 0 && n <= 65535 {
@@ -267,6 +266,8 @@ impl Options {
             }
         }
 
+        // `name` is a documented option (bun.d.ts) that nothing consumes yet;
+        // it is still type- and length-checked.
         if let Some(name) = js_options.get_optional_slice(global_object, b"name")? {
             if name.slice().len() > Self::MAX_TERM_NAME_LEN {
                 return Err(global_object.throw(format_args!(

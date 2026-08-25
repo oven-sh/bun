@@ -843,6 +843,26 @@ describe("Bun.Image", () => {
       return found;
     }
 
+    // Read the red colorant (rXYZ X component, s15Fixed16) out of an ICC
+    // profile. The D50-adapted red X is ~0.515 for Display P3 and ~0.436
+    // for sRGB, so it distinguishes the carried P3 profile from the sRGB
+    // fallback even if the encoder re-serialises the profile.
+    function iccRedColorantX(p: Uint8Array): number | null {
+      if (p.length < 132) return null;
+      const dv = new DataView(p.buffer, p.byteOffset, p.byteLength);
+      const count = dv.getUint32(128);
+      for (let i = 0; i < count; i++) {
+        const entry = 132 + i * 12;
+        if (entry + 12 > p.length) return null;
+        const sig = String.fromCharCode(p[entry], p[entry + 1], p[entry + 2], p[entry + 3]);
+        if (sig !== "rXYZ") continue;
+        const off = dv.getUint32(entry + 4);
+        if (off + 12 > p.length) return null;
+        return dv.getInt32(off + 8) / 65536;
+      }
+      return null;
+    }
+
     // Encode availability is machine-specific (see the HEIC/AVIF describe
     // below), so both tests pin the ERR_IMAGE_FORMAT_UNSUPPORTED branch and
     // only assert colour tagging where the codec exists. HEIC covers every
@@ -859,15 +879,20 @@ describe("Bun.Image", () => {
           expect(e?.code).toBe("ERR_IMAGE_FORMAT_UNSUPPORTED");
           return;
         }
+        // Windows: the WIC HEIF encoder may reject SetColorContexts (the
+        // attach is best-effort), so only the encode itself is pinned there.
+        if (isWindows) return;
         const colrs = extractIsobmffColr(out);
         const prof = colrs.find(c => c.type === "prof" || c.type === "rICC");
         if (prof) {
           // The encoder may re-serialise the profile, so assert a well-formed
           // RGB ICC profile rather than byte equality: data colour space
-          // "RGB " at offset 16, signature "acsp" at offset 36.
+          // "RGB " at offset 16, signature "acsp" at offset 36. The red
+          // colorant proves it is the P3 profile, not the sRGB fallback.
           const p = prof.payload;
           expect(String.fromCharCode(p[16], p[17], p[18], p[19])).toBe("RGB ");
           expect(String.fromCharCode(p[36], p[37], p[38], p[39])).toBe("acsp");
+          expect(iccRedColorantX(p)).toBeGreaterThan(0.47);
         } else {
           // ImageIO may normalise a recognised profile to CICP instead of
           // embedding it. That still carries the colour meaning — but sRGB

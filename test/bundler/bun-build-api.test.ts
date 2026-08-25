@@ -2041,7 +2041,11 @@ describe("Bun.build production option", () => {
 
   test.concurrent("an explicit minify overrides the production default", async () => {
     using dir = tempDir("build-production-minify", files);
-    const { stdout, exitCode } = await buildAndReadOutput(String(dir), `{ production: true, minify: false }`, "./index.js");
+    const { stdout, exitCode } = await buildAndReadOutput(
+      String(dir),
+      `{ production: true, minify: false }`,
+      "./index.js",
+    );
     expect(stdout).toContain('console.log("production")');
     expect(stdout).toContain("longFunctionName");
     expect(exitCode).toBe(0);

@@ -1035,8 +1035,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     }
 
     pub fn start(&mut self, fd: Fd, is_pollable: bool) -> sys::Result<()> {
-        // A restart after `end()` or a failed write writes again, as the
-        // Windows writer does in `start_with_current_pipe`.
+        // A restart writes again, as the Windows writer does.
         self.is_done = false;
         if !is_pollable {
             self.close();
@@ -1105,10 +1104,8 @@ pub trait BaseWindowsPipeWriter: Sized {
     fn closed_without_reporting(&self) -> bool;
     fn set_closed_without_reporting(&mut self, v: bool);
 
-    /// The payload of the write this writer last handed to libuv, moved out
-    /// of the writer. `close()` parks it on the detached `File` while a
-    /// `uv_fs_write` still reads it; `start()` drops what a failed write left
-    /// behind. A writer whose payload the parent owns has none.
+    /// The payload of the last write handed to libuv, moved out of the writer.
+    /// Empty for a writer whose payload the parent owns.
     fn take_write_payload(&mut self) -> Vec<u8> {
         Vec::new()
     }
@@ -1179,8 +1176,7 @@ pub trait BaseWindowsPipeWriter: Sized {
                 // the only remaining reference via the fs_t it points into.
                 unsafe {
                     if has_inflight_write {
-                        // The threadpool write still reads the payload: it goes
-                        // with the File, freed only once that write completes.
+                        // The threadpool write still reads it: it goes with the File.
                         (*raw).orphaned_buf = self.take_write_payload();
                     }
                     if self.owns_fd() {
@@ -1264,22 +1260,18 @@ pub trait BaseWindowsPipeWriter: Sized {
         self.start_with_current_pipe()
     }
 
-    /// `start()`/`start_sync()` on a writer that already has a source
-    /// (`FileSink.start({ path })` on a live sink) replaces it. Hand the old
-    /// one to libuv for close first, as `PosixStreamingWriter::start` does:
-    /// assigning over it would drop the box without `uv_close` and leak its fd.
+    /// A restart (`FileSink.start({ path })` on a live sink) replaces the source.
+    /// Close the old one first, as `PosixStreamingWriter::start` does.
     fn close_current_source(&mut self) -> sys::Result<()> {
         match self.source() {
             None => {}
-            // The pending `uv_write` belongs to that stream: `uv_close` cancels
-            // it, and its completion would then tear down the replacement.
+            // `uv_close` would cancel the `uv_write`, and its callback closes the replacement.
             Some(Source::Pipe(_) | Source::Tty(_)) if self.has_inflight_stream_write() => {
                 return sys::Result::Err(sys::Error::from_code(sys::E::BUSY, sys::Tag::write));
             }
             Some(_) => self.close(),
         }
-        // What a failed write left behind. libuv is done with it: the `File`
-        // arm of `close()` took a payload a write still reads.
+        // Left by a failed write. `close()` parked any payload libuv still reads.
         drop(self.take_write_payload());
         sys::Result::Ok(())
     }
@@ -2035,16 +2027,13 @@ impl<Parent: WindowsStreamingWriterParent> BaseWindowsPipeWriter
     }
 
     fn take_write_payload(&mut self) -> Vec<u8> {
-        // libuv's copy of `write_buffer` points into this Vec's heap bytes;
-        // moving the Vec leaves them in place. The empty `current_payload`
-        // lets `process_send` write to a replacement source.
+        // Moving the Vec keeps the heap bytes libuv's copy of `write_buffer` points at.
         self.current_payload.cursor = 0;
         mem::take(&mut self.current_payload.list)
     }
 
     fn has_inflight_stream_write(&self) -> bool {
-        // `on_write_complete` resets `current_payload` once the `uv_write`
-        // behind it has completed.
+        // `on_write_complete` resets it once the `uv_write` completed.
         self.current_payload.is_not_empty()
     }
 

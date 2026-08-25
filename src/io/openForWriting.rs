@@ -107,10 +107,8 @@ where
             is_pollable,
         );
     }
-    // NtCreateFile opens an `O_NONBLOCK` file for asynchronous I/O, and the
-    // synchronous `WriteFile` behind libuv's `uv_fs_write` fails on such a
-    // handle with EINVAL. The writer runs file writes on the threadpool, so
-    // the flag means nothing here.
+    // NtCreateFile opens an `O_NONBLOCK` file for asynchronous I/O; the
+    // synchronous `WriteFile` behind `uv_fs_write` then fails with EINVAL.
     #[cfg(windows)]
     let input_flags = input_flags & !bun_sys::O::NONBLOCK;
     // TODO: this should be concurrent.
@@ -181,9 +179,7 @@ where
         *pollable = (bun_sys::windows::GetFileType(fd.native()) & bun_sys::windows::FILE_TYPE_PIPE)
             != 0
             && !force_sync;
-        // Both arms yield a HANDLE-backed fd (NtCreateFile for a path,
-        // DuplicateHandle for an fd). The writer drives it through libuv,
-        // which needs a CRT fd: `Fd::uv()` panics on a HANDLE.
+        // Both arms yield a HANDLE; the libuv writer needs a CRT fd (`Fd::uv()` panics on a HANDLE).
         return fd
             .make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail);
     }

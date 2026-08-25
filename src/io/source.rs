@@ -69,11 +69,8 @@ pub struct File {
     /// When true, file will close itself when the current operation completes.
     pub(crate) close_after_operation: bool,
 
-    /// The buffer of an operation still in flight when its owner let go of
-    /// this file: a reader's buffer (`iov` points into it) or a writer's
-    /// payload (the `uv_fs_write` reads it). Kept alive here until the
-    /// detached completion frees the Box, so the pending ReadFile/WriteFile
-    /// never touches freed memory.
+    /// The buffer an in-flight read (`iov`) or write (`uv_fs_write`) still uses after
+    /// its owner let go of this file. Lives until the detached completion frees the Box.
     pub(crate) orphaned_buf: Vec<u8>,
 }
 

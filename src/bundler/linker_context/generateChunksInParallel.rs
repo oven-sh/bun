@@ -440,6 +440,12 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 continue;
             }
 
+            // A `./[dir]/…` template with `[dir] == "."` yields `././x.js`,
+            // which importers of the chunk would copy verbatim.
+            while let Some(i) = strings::index_of(&rel_path, b"/./") {
+                rel_path.drain(i..i + 2);
+            }
+
             chunk.final_rel_path = rel_path.into_boxed_slice();
         }
 

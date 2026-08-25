@@ -452,6 +452,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                 continue;
             }
 
+            let entry_point = chunk.entry_point;
             let repr = chunk.content.javascript_mut();
 
             match c.options.output_format {
@@ -464,6 +465,25 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         );
                     repr.exports_to_other_chunks.reserve(stable_ref_list.len());
                     r.clear_retaining_capacity();
+
+                    // An entry point chunk already exports its own names
+                    // (`generate_entry_point_tail_js`); a cross-chunk export
+                    // reusing one would be a duplicate export.
+                    if entry_point.is_entry_point() {
+                        let entry_source = entry_point.source_index() as usize;
+                        let flags = &c.graph.meta.items_flags()[entry_source];
+                        if flags.wrap == WrapKind::Cjs || flags.needs_synthetic_default_export {
+                            r.reserve_name(b"default");
+                        }
+                        if flags.wrap != WrapKind::Cjs {
+                            for alias in c.graph.meta.items_sorted_and_filtered_export_aliases()
+                                [entry_source]
+                                .iter()
+                            {
+                                r.reserve_name(alias);
+                            }
+                        }
+                    }
 
                     for stable_ref in stable_ref_list.iter() {
                         let ref_ = stable_ref.r#ref;

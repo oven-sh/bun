@@ -557,6 +557,41 @@ The generated `chunk-dqmx6gc8.js` file contains the shared code. To avoid collis
 
 Each `import()` of a bundled JavaScript module also becomes its own chunk. Tree shaking applies to these chunks too: if every `import()` of a module lives in code that tree shaking removes — for example inside a function that is only called behind a [`define`](#define) or [`features`](#features) gate that evaluates to `false` — and nothing else in the live output imports the module, its chunk is not written and the module is absent from the [metafile](#metafile)'s `inputs` and `outputs`. Setting `treeShaking: false` keeps every `import()` chunk. This differs from esbuild, which emits a chunk for every reachable `import()` target.
 
+### minChunkSize
+
+With `splitting`, fold small chunks into a chunk that is always loaded together with them.
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      splitting: true,
+      minChunkSize: 16 * 1024, // default 0 (disabled)
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --splitting --min-chunk-size=16384
+    ```
+  </Tab>
+</Tabs>
+
+Code splitting gives each distinct set of importers its own chunk. A module that `index.tsx` imports and that a lazily `import()`ed module also imports ends up in a chunk of its own, even though that chunk is loaded every time `index.tsx` runs: the lazy module is only ever loaded after `index.tsx`. Large applications with many `import()` boundaries can produce hundreds of such chunks of a few kilobytes each, and every one of them costs a module record, a link step, and a file read at startup.
+
+`minChunkSize` folds a chunk whose source files add up to fewer than this many bytes into another chunk when doing so is unobservable:
+
+- into a chunk that is loaded under exactly the same conditions — in the example above, into `index.js` itself, which the lazy module then imports those symbols from. No entrypoint loads more or less code than before.
+- when none of the chunk's modules run anything at the top level (only declarations, `"sideEffects": false` in their `package.json`, or a lazily initialized `__esm`/`__commonJS` wrapper), into a chunk loaded by a superset of its importers, provided everything the chunk imports is already loaded whenever that target is or is side-effect free as well. The extra entrypoints then carry some unused definitions — capped at about 1.5% of what each entrypoint loaded to begin with — but no side effect runs earlier than before and nothing lazy becomes eager.
+
+Because these rules, not the size, bound what an entrypoint can end up loading, a large `minChunkSize` is reasonable: it lets every chunk that can safely fold do so.
+
+Code with top-level side effects that is shared only between lazy modules stays in its own chunk, since folding it anywhere would run it earlier than before.
+
+A chunk that absorbs other chunks exports the symbols those chunks' importers need. For an entrypoint this adds named exports to its module namespace alongside its own exports. With `--compile`, nothing folds into the entrypoint's own chunk.
+
 ### plugins
 
 A list of plugins to use during bundling.
@@ -1682,6 +1717,7 @@ interface BuildConfig {
       };
   root?: string; // project root
   splitting?: boolean; // default false, enable code splitting
+  minChunkSize?: number; // default 0, fold chunks smaller than this many source bytes
   plugins?: BunPlugin[];
   external?: string[];
   packages?: "bundle" | "external";

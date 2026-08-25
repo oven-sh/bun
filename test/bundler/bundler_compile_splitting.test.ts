@@ -199,5 +199,43 @@ describe("bundler", () => {
         },
       });
     }
+
+    // The executable keys the entry point's module at `/$bunfs/root/<outfile>`,
+    // so nothing may fold into the entry's own chunk; chunks shared between
+    // `import()` targets still fold into the first target's chunk.
+    itBundled("compile/splitting/MinChunkSizeKeepsEntryChunkImportable", {
+      compile: true,
+      splitting: true,
+      bytecode: true,
+      format: "esm",
+      minChunkSize: 1024 * 1024,
+      files: {
+        "/entry.ts": /* js */ `
+          import { shared } from "./shared";
+          console.log("entry", shared());
+          const a = await import("./a");
+          console.log("a", a.a());
+        `,
+        "/a.ts": /* js */ `
+          import { shared } from "./shared";
+          import { helper } from "./helper";
+          export function a() { return shared() + helper() }
+          export const b = import("./b").then(m => m.b());
+        `,
+        "/b.ts": /* js */ `
+          import { helper } from "./helper";
+          export function b() { return helper() * 2 }
+        `,
+        "/shared.ts": /* js */ `
+          export function shared() { return 40 }
+        `,
+        "/helper.ts": /* js */ `
+          export function helper() { return 1 }
+        `,
+      },
+      run: {
+        stdout: "entry 40\na 41",
+      },
+    });
   });
 });

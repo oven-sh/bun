@@ -3173,6 +3173,20 @@ declare module "bun" {
     splitting?: boolean;
 
     /**
+     * With `splitting`, fold chunks whose combined source size is below this
+     * many bytes into another chunk, so fewer modules are loaded at runtime:
+     * into a chunk that is always loaded together with them (for example an
+     * entry point's own chunk), or — when none of their modules have
+     * top-level side effects — into a chunk loaded by a superset of their
+     * importers. Nothing lazy becomes eager and no side effect runs earlier;
+     * the chunk that absorbs a folded chunk exports the symbols other chunks
+     * import from it.
+     *
+     * @default 0 (disabled)
+     */
+    minChunkSize?: number;
+
+    /**
      * List of entrypoints, usually file paths
      */
     entrypoints: string[];

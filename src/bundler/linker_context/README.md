@@ -732,6 +732,17 @@ The renamed symbols are then used during final code generation to produce output
 - Manages HTML chunk creation
 - Assigns unique keys and templates to chunks
 
+#### `mergeSmallChunks.rs`
+
+**Purpose**: With `--min-chunk-size`, folds small code-splitting chunks into a chunk that is loaded under exactly the same conditions, so every entry point still loads the same files but fewer modules.
+
+**Key functions**:
+
+- Computes, per `import()` entry point, which other entry points are guaranteed to be loaded already whenever it loads
+- Reduces each chunk key (`File.entry_bits`) to its load-condition class by dropping such redundant dynamic entries
+- Rewrites the entry bits of files in small chunks to those of the class's parent chunk (the chunk keyed by the reduced set, else the largest member) before `computeChunks()` groups files
+- Additionally folds small chunks with no top-level side effects into a chunk loaded by a superset of their entries when every dependency is already loaded wherever the target is
+
 #### `computeCrossChunkDependencies.rs`
 
 **Purpose**: Resolves dependencies between different chunks.

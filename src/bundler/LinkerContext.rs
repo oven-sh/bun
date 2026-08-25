@@ -336,6 +336,14 @@ impl<'a> LinkerContext<'a> {
             && record.source_index.get() != source_index
     }
 
+    /// `"sideEffects": false` (or the resolver's equivalent), unless
+    /// `--ignore-dce-annotations` says not to trust it.
+    pub(crate) fn file_has_no_side_effects(&self, source_index: u32) -> bool {
+        self.parse_graph().input_files.items_side_effects()[source_index as usize]
+            != SideEffects::HasSideEffects
+            && !self.options.ignore_dce_annotations
+    }
+
     /// Note: this should call a `MimallocArena` debug hook
     /// (`helpCatchMemoryIssues`), but `Graph.heap` is currently
     /// `bun_alloc::Arena = bumpalo::Bump`, which has no such hook, so this is a
@@ -847,8 +855,6 @@ impl<'a> LinkerContext<'a> {
         let import_records: *const [bun_ast::import_record::List<'a>] =
             self.graph.ast.items_import_records();
         let css_reprs: *const [crate::bundled_ast::CssCol] = self.graph.ast.items_css();
-        let side_effects: *const [SideEffects] =
-            self.parse_graph().input_files.items_side_effects();
         let entry_point_kinds: *const [EntryPoint::Kind] =
             std::ptr::from_ref(self.graph.files.items_entry_point_kind());
         let entry_points: *const [crate::IndexInt] = self.graph.entry_points.items_source_index();
@@ -862,7 +868,6 @@ impl<'a> LinkerContext<'a> {
         // nor form a competing `&mut` to any read-only column.
         let (
             entry_points,
-            side_effects,
             import_records,
             entry_point_kinds,
             css_reprs,
@@ -873,7 +878,6 @@ impl<'a> LinkerContext<'a> {
         ) = unsafe {
             (
                 &*entry_points,
-                &*side_effects,
                 &*import_records,
                 &*entry_point_kinds,
                 &*css_reprs,
@@ -889,7 +893,6 @@ impl<'a> LinkerContext<'a> {
             let _trace2 = bun::perf::trace("Bundler.markFileLiveForTreeShaking");
 
             let mut ctx = TreeShakeCtx {
-                side_effects,
                 parts,
                 parts_live,
                 import_records,
@@ -1260,6 +1263,10 @@ pub struct LinkerOptions {
     pub(crate) banner: &'static [u8],
     pub(crate) footer: &'static [u8],
     pub(crate) css_chunking: bool,
+    /// Code splitting: chunks whose summed source size is below this are
+    /// folded into a chunk with identical load conditions (0 = off). See
+    /// `merge_small_chunks`.
+    pub(crate) min_chunk_size: u64,
     pub(crate) source_maps: SourceMapOption,
     pub(crate) target: Target,
     pub(crate) compile_mode: CompileMode,
@@ -1300,6 +1307,7 @@ impl Default for LinkerOptions {
             banner: b"",
             footer: b"",
             css_chunking: false,
+            min_chunk_size: 0,
             source_maps: SourceMapOption::None,
             target: Target::Browser,
             compile_mode: CompileMode::None,
@@ -2590,7 +2598,6 @@ impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
 // DFS). Packing the slices into a borrowed context struct keeps each step at
 // 3-4 register-sized arguments.
 pub(crate) struct TreeShakeCtx<'a, 'r> {
-    pub(crate) side_effects: &'r [SideEffects],
     pub(crate) parts: &'r [bun_ast::PartList<'a>],
     pub(crate) parts_live: &'r mut [bun_collections::AutoBitSet],
     pub(crate) import_records: &'r [bun_ast::import_record::List<'a>],
@@ -2822,9 +2829,7 @@ impl<'a> LinkerContext<'a> {
 
                     // Don't include this module for its side effects if it can be
                     // considered to have no side effects
-                    let se = ctx.side_effects[other_source_index as usize];
-
-                    if se != SideEffects::HasSideEffects && !self.options.ignore_dce_annotations {
+                    if self.file_has_no_side_effects(other_source_index) {
                         continue;
                     }
 

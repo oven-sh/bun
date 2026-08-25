@@ -1281,6 +1281,9 @@ pub struct BundleOptions<'a> {
     /// captures the last expression in { value: expr } for result extraction.
     pub repl_mode: bool,
     pub css_chunking: bool,
+    /// Code splitting: fold chunks whose source is smaller than this many
+    /// bytes into a chunk with identical load conditions. 0 disables.
+    pub min_chunk_size: u64,
 
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
@@ -1475,6 +1478,7 @@ impl<'a> BundleOptions<'a> {
             dead_code_elimination: self.dead_code_elimination,
             repl_mode: self.repl_mode,
             css_chunking: self.css_chunking,
+            min_chunk_size: self.min_chunk_size,
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
             bytecode: self.bytecode,
@@ -1654,6 +1658,7 @@ impl<'a> BundleOptions<'a> {
             env: Env::default(),
             transform_options: std::sync::Arc::clone(&transform),
             css_chunking: false,
+            min_chunk_size: 0,
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,
 

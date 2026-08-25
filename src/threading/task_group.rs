@@ -126,3 +126,56 @@ impl Drop for TaskGroup {
         drop(unsafe { Box::from_raw(self.group.as_ptr()) });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::sync::atomic::{AtomicU32, Ordering};
+
+    struct Job {
+        task: GroupedTask,
+        hits: &'static AtomicU32,
+    }
+    bun_core::intrusive_field!(Job, task: GroupedTask);
+    impl GroupTask for Job {
+        fn run(self: Box<Self>) {
+            self.hits.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    struct SendBatch(Batch);
+    // SAFETY: what a thread pool does with a batch: run its tasks elsewhere.
+    unsafe impl Send for SendBatch {}
+
+    /// Queue tasks, *move the `TaskGroup`*, run the tasks on another thread,
+    /// wait. Under Miri this fails if the tasks reach the wait group through
+    /// a `Box` the move retagged.
+    #[test]
+    fn tasks_finish_a_group_that_moved() {
+        static HITS: AtomicU32 = AtomicU32::new(0);
+        let group = TaskGroup::new();
+        let mut batch = Batch::default();
+        for _ in 0..3 {
+            group.push(
+                &mut batch,
+                Box::new(Job {
+                    task: GroupedTask::default(),
+                    hits: &HITS,
+                }),
+            );
+        }
+        let holder = (group, 0u8); // the move
+        let batch = SendBatch(batch);
+        let t = std::thread::spawn(move || {
+            let mut batch = batch;
+            while let Some(task) = batch.0.pop() {
+                // SAFETY: how the pool runs a task.
+                unsafe { ((*task.as_ptr()).callback)(task.as_ptr()) };
+            }
+        });
+        holder.0.wait();
+        t.join().unwrap();
+        assert_eq!(HITS.load(Ordering::Relaxed), 3);
+        drop(holder);
+    }
+}

@@ -411,7 +411,7 @@ pub struct Batch {
 impl Batch {
     pub fn pop(&mut self) -> Option<NonNull<Task>> {
         // SAFETY: `len` is only read here for the fast-path zero check.
-        let len = unsafe { (*(&raw const self.len).cast::<AtomicUsize>()).load(Ordering::Relaxed) };
+        let len = unsafe { AtomicUsize::from_ptr(&raw mut self.len) }.load(Ordering::Relaxed);
         if len == 0 {
             return None;
         }

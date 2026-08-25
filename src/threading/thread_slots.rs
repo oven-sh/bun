@@ -134,3 +134,32 @@ impl<T> Drop for SlotGuard<'_, T> {
         self.slot.in_use.store(false, Ordering::Relaxed);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two threads each get their own value; the owner then takes both.
+    #[test]
+    fn one_value_per_thread_then_take_all() {
+        let slots = std::sync::Arc::new(ThreadSlots::<Vec<u32>>::new(2));
+        {
+            let mut mine = slots.get_or_init(|i| vec![i as u32]);
+            mine.push(10);
+        }
+        let other = std::sync::Arc::clone(&slots);
+        std::thread::spawn(move || {
+            let mut v = other.get_or_init(|i| vec![i as u32]);
+            v.push(20);
+            drop(v);
+            // Same thread again: same slot, same value.
+            assert_eq!(other.get_or_init(|_| unreachable!()).len(), 2);
+        })
+        .join()
+        .unwrap();
+        let mut slots = std::sync::Arc::try_unwrap(slots).ok().unwrap();
+        let mut all: Vec<Vec<u32>> = slots.take_all().map(|b| *b).collect();
+        all.sort();
+        assert_eq!(all, vec![vec![0, 10], vec![1, 20]]);
+    }
+}

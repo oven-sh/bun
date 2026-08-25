@@ -110,3 +110,37 @@ impl<O: 'static, F: RefFamily> Drop for OwnerCell<O, F> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct View<'a> {
+        owner: &'a Vec<u32>,
+        scratch: u32,
+    }
+    struct ViewFamily;
+    impl RefFamily for ViewFamily {
+        type Of<'a> = View<'a>;
+    }
+
+    /// A pointer into the dependent (as handed to another thread / C++)
+    /// stays valid while the cell itself moves. (A later `with_mut` is a
+    /// fresh exclusive borrow of the whole dependent and does invalidate it —
+    /// anything lent out for longer must live in its own allocation.)
+    #[test]
+    fn dependent_address_is_stable_across_moves() {
+        let mut cell: OwnerCell<Vec<u32>, ViewFamily> =
+            OwnerCell::new(Box::new(vec![1, 2, 3]), |owner| View { owner, scratch: 0 });
+        cell.with_mut(|v| v.scratch += v.owner.len() as u32);
+        let foreign: *mut u32 = cell.with_mut(|v| core::ptr::from_mut(&mut v.scratch));
+        let moved = (cell, 0u8);
+        let moved_again = moved;
+        // SAFETY: what the foreign holder does with the address it was handed;
+        // no `with`/`with_mut` borrow has been taken since.
+        unsafe { *foreign += 1 };
+        assert_eq!(moved_again.0.with(|v| v.scratch), 4);
+        let owner = moved_again.0.into_owner();
+        assert_eq!(*owner, vec![1, 2, 3]);
+    }
+}

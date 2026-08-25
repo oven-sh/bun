@@ -1665,18 +1665,22 @@ pub mod bv2_impl {
         /// plugins — unless the pass is already cancelled: then it is never
         /// handed over and answered here, through the inbox like every other
         /// answer.
+        /// `requests[id]`'s own pointer is what the plugins get (and hand
+        /// back to `JSBundlerPlugin__on*Async`); the bundle thread's later
+        /// accesses go through the same pointer (`StableVec::get_mut`).
         fn dispatch_plugin_request<T: jsc_api::JSBundler::PluginRequest>(
             cancelled: bool,
             completion: Option<dispatch::CompletionHandle>,
             event_loop: &bun_event_loop::AnyEventLoop,
-            request: &mut T,
+            requests: &mut bun_ptr::StableVec<T>,
+            id: u32,
         ) {
             if cancelled {
-                request.answer_cancelled();
+                requests.get_mut(id as usize).answer_cancelled();
                 return;
             }
             let task = bun_event_loop::ConcurrentTask::ConcurrentTask::create(
-                bun_event_loop::Task::init(std::ptr::from_mut(request)),
+                bun_event_loop::Task::init(requests.ptr(id as usize).as_ptr()),
             );
             Self::enqueue_on_js_loop_for_plugins(completion, event_loop, task);
         }
@@ -1689,12 +1693,7 @@ pub mod bv2_impl {
                 event_loop,
                 ..
             } = self;
-            Self::dispatch_plugin_request(
-                graph.cancelled,
-                *completion,
-                event_loop,
-                loads.get_mut(id as usize),
-            );
+            Self::dispatch_plugin_request(graph.cancelled, *completion, event_loop, loads, id);
         }
 
         fn dispatch_resolve(&mut self, id: u32) {
@@ -1705,12 +1704,7 @@ pub mod bv2_impl {
                 event_loop,
                 ..
             } = self;
-            Self::dispatch_plugin_request(
-                graph.cancelled,
-                *completion,
-                event_loop,
-                resolves.get_mut(id as usize),
-            );
+            Self::dispatch_plugin_request(graph.cancelled, *completion, event_loop, resolves, id);
         }
 
         fn new_resolve(&mut self, record: jsc_api::JSBundler::MiniImportRecord) -> u32 {

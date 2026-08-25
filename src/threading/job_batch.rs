@@ -28,9 +28,10 @@ struct Slot<'c, C, T> {
 
 /// See the module doc.
 pub struct JobBatch<'c, C: Sync, T: BatchJob<C>> {
-    slots: Box<[Slot<'c, C, T>]>,
-    /// Heap-allocated (a leaked box, freed in `Drop`) so the slots can point
-    /// at it while `self` moves.
+    /// Both leaked boxes, freed in `Drop`/`finish` after `wait()`: the pool
+    /// holds pointers to the slots, and the slots to the group, while `self`
+    /// is free to move.
+    slots: NonNull<[Slot<'c, C, T>]>,
     group: NonNull<WaitGroup>,
     scheduled: bool,
     waited: bool,
@@ -40,18 +41,19 @@ impl<'c, C: Sync, T: BatchJob<C>> JobBatch<'c, C, T> {
     pub fn new(ctx: &'c C, jobs: impl ExactSizeIterator<Item = T>) -> Self {
         let group = NonNull::from(Box::leak(Box::new(WaitGroup::init_with_count(jobs.len()))));
         let group_ptr: *const WaitGroup = group.as_ptr();
+        let slots: Box<[Slot<'c, C, T>]> = jobs
+            .map(|job| Slot {
+                task: Task {
+                    node: Node::default(),
+                    callback: run_slot::<C, T>,
+                },
+                group: group_ptr,
+                ctx,
+                job: UnsafeCell::new(job),
+            })
+            .collect();
         Self {
-            slots: jobs
-                .map(|job| Slot {
-                    task: Task {
-                        node: Node::default(),
-                        callback: run_slot::<C, T>,
-                    },
-                    group: group_ptr,
-                    ctx,
-                    job: UnsafeCell::new(job),
-                })
-                .collect(),
+            slots: NonNull::from(Box::leak(slots)),
             group,
             scheduled: false,
             waited: false,
@@ -63,16 +65,23 @@ impl<'c, C: Sync, T: BatchJob<C>> JobBatch<'c, C, T> {
         self.slots.len()
     }
 
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Every job, as one pool batch (not yet scheduled). Once only.
     pub fn as_batch(&mut self) -> Batch {
         assert!(!self.scheduled, "JobBatch scheduled twice");
         self.scheduled = true;
         let mut batch = Batch::default();
-        for slot in self.slots.iter_mut() {
-            let slot: *mut Slot<'c, C, T> = slot;
-            // The whole-slot pointer (not a reborrow of `task`) so the
-            // callback's cast back to `Slot` has provenance over `job`.
-            batch.push(Batch::from(slot.cast::<Task>()));
+        let base: *mut Slot<'c, C, T> = self.slots.as_ptr().cast();
+        for i in 0..self.len() {
+            // The whole-slot pointer, derived from the leaked allocation (not
+            // from a reborrow), so the callback's cast back to `Slot` keeps
+            // provenance over `job` for as long as the allocation lives.
+            // SAFETY: `i < len`.
+            batch.push(Batch::from(unsafe { base.add(i) }.cast::<Task>()));
         }
         batch
     }
@@ -89,7 +98,11 @@ impl<'c, C: Sync, T: BatchJob<C>> JobBatch<'c, C, T> {
     /// [`wait`](Self::wait), then the jobs.
     pub fn finish(mut self) -> impl ExactSizeIterator<Item = T> {
         self.wait();
-        core::mem::take(&mut self.slots)
+        let empty: Box<[Slot<'c, C, T>]> = Box::new([]);
+        let slots = core::mem::replace(&mut self.slots, NonNull::from(Box::leak(empty)));
+        // SAFETY: from `Box::leak` in `new`; every job has finished with it
+        // (`wait` above). `self` keeps an empty leaked slice for its `Drop`.
+        unsafe { Box::from_raw(slots.as_ptr()) }
             .into_vec()
             .into_iter()
             .map(|slot| slot.job.into_inner())
@@ -100,8 +113,12 @@ impl<C: Sync, T: BatchJob<C>> Drop for JobBatch<'_, C, T> {
     fn drop(&mut self) {
         // A scheduled job points into `slots`; wait it out rather than free it.
         self.wait();
-        // SAFETY: from `Box::leak` in `new`; every job has finished with it.
-        drop(unsafe { Box::from_raw(self.group.as_ptr()) });
+        // SAFETY: both from `Box::leak` (`new`/`finish`); every job has
+        // finished with them.
+        unsafe {
+            drop(Box::from_raw(self.slots.as_ptr()));
+            drop(Box::from_raw(self.group.as_ptr()));
+        }
     }
 }
 
@@ -124,4 +141,50 @@ unsafe fn run_slot<C: Sync, T: BatchJob<C>>(task: *mut Task) {
     // SAFETY: `group` is the batch's boxed `WaitGroup`, alive until `wait`
     // returns — which this may allow; `job` is not touched past this point.
     unsafe { WaitGroup::finish_raw(group) };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Doubler(u32);
+    impl BatchJob<u32> for Doubler {
+        fn run(&mut self, k: &u32) {
+            self.0 *= *k;
+        }
+    }
+
+    struct SendBatch(Batch);
+    // SAFETY: what a thread pool does with a batch: run its tasks elsewhere.
+    unsafe impl Send for SendBatch {}
+
+    /// Hand the pool the slots, *move the `JobBatch`* (into a struct, like
+    /// `SourceMapJobs`), run the slots on another thread, then collect. Under
+    /// Miri this fails if the slots or the wait group were reached through a
+    /// `Box` that the move retagged.
+    #[test]
+    fn jobs_run_elsewhere_while_the_batch_moves() {
+        let k = 3u32;
+        let mut jobs = JobBatch::new(&k, (1..5u32).map(Doubler));
+        let batch = SendBatch(jobs.as_batch());
+        struct Holder<'c>(Option<JobBatch<'c, u32, Doubler>>);
+        let holder = Holder(Some(jobs)); // the move
+        let t = std::thread::spawn(move || {
+            let mut batch = batch;
+            while let Some(task) = batch.0.pop() {
+                // SAFETY: how the pool runs a task.
+                unsafe { ((*task.as_ptr()).callback)(task.as_ptr()) };
+            }
+        });
+        let out: Vec<u32> = holder.0.unwrap().finish().map(|d| d.0).collect();
+        t.join().unwrap();
+        assert_eq!(out, vec![3, 6, 9, 12]);
+    }
+
+    #[test]
+    fn unscheduled_batch_drops_without_waiting() {
+        let k = 1u32;
+        let jobs = JobBatch::new(&k, (0..2u32).map(Doubler));
+        drop(jobs);
+    }
 }

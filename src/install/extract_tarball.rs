@@ -37,13 +37,11 @@ pub struct ExtractTarball {
     pub(crate) in_trusted_dependencies: bool,
     pub(crate) integrity: Integrity, // = Integrity::default()
     pub(crate) url: StringOrTinyString,
-    /// For a Github resolution whose lockfile entry already carries a bun-tag
-    /// (`repository.resolved`), the tag's bytes, copied on the main thread
-    /// (worker threads must not read lockfile buffers). The cache lookup is
-    /// keyed by that tag, so the extracted cache folder and `.bun-tag` adopt
-    /// it instead of the archive's root directory name, which can differ
-    /// (a package-lock.json migration only knows the commit sha). Empty for a
-    /// fresh resolve: the archive's root directory name is used as today.
+    /// The lockfile's existing bun-tag (`repository.resolved`) for a Github
+    /// resolution, copied out because workers must not read lockfile buffers.
+    /// Cache lookups are keyed by it, so extraction names the cache folder and
+    /// `.bun-tag` after it. Empty on a fresh resolve (no tag yet): the
+    /// archive's root directory name is used instead.
     pub(crate) github_resolved: StringOrTinyString,
     /// BACKREF: PackageManager owns the task pool that owns this struct.
     pub(crate) package_manager: bun_ptr::BackRef<PackageManager>,

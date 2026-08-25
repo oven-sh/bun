@@ -1586,10 +1586,8 @@ impl<'a> PackageInstaller<'a> {
             {
                 debug_assert!(resolution.can_enqueue_install_task());
 
-                // `needs_verify == false` means the download for this package
-                // already completed, so the cache must have it. Re-enqueueing
-                // would dedupe against the finished task and never call back,
-                // silently skipping the package. Fail loudly instead.
+                // The download already completed, so re-enqueueing would
+                // dedupe against the finished task and never call back.
                 if !needs_verify {
                     if log_level != Options::LogLevel::Silent {
                         bun_core::pretty_errorln!(

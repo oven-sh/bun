@@ -2006,8 +2006,7 @@ pub fn generate_network_task_for_tarball<'a>(
             &mut crate::network_task::filename_store_appender(),
         )
         .expect("unreachable"),
-        // Copied out of the lockfile here on the main thread: the extract
-        // task runs on a worker and must not read lockfile buffers.
+        // Copied here: extract workers must not read lockfile buffers.
         github_resolved: if package.resolution.tag == bun_install::ResolutionTag::Github {
             strings::StringOrTinyString::init_append_if_needed(
                 this.lockfile.str(&package.resolution.github().resolved),

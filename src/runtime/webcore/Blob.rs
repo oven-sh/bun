@@ -2122,7 +2122,7 @@ impl BlobExt for Blob {
                 // `resolve_file_stat` — it materializes `&mut File` on the same
                 // memory (Stacked Borrows UB; the optimizer may legally cache the
                 // pre-call `last_modified` and return the stale `INIT_TIMESTAMP`).
-                // Re-read via `RefPtr<Store>::data_mut` (raw-ptr-backed accessor) after
+                // Re-read via `Store::data_mut` (raw-ptr-backed accessor) after
                 // the mutating call.
                 let last_modified = Store::data_mut(store).as_file().last_modified;
                 // last_modified can be already set during read.
@@ -2253,7 +2253,7 @@ impl BlobExt for Blob {
         // materializes `&mut File` on the same memory via the raw
         // `heap::alloc` pointer — Stacked Borrows UB, and under noalias the
         // optimizer may legally cache the pre-call `seekable: None` and fall
-        // through to `self.size.get() = 0`. `RefPtr<Store>::data_mut` centralises
+        // through to `self.size.get() = 0`. `Store::data_mut` centralises
         // the raw-ptr deref so each read here is a fresh, safe borrow.
         match Store::data_mut(store).tag() {
             store::DataTag::Bytes => {
@@ -2302,7 +2302,7 @@ impl BlobExt for Blob {
             return (self.offset.get(), 0);
         };
         // see `resolve_size` — dispatch on the copied tag and re-read
-        // via `RefPtr<Store>::data_mut` after `resolve_file_stat` so no
+        // via `Store::data_mut` after `resolve_file_stat` so no
         // `Deref`-produced `&Data`/`&File` is live across the mutating call.
         match Store::data_mut(store).tag() {
             store::DataTag::Bytes => {
@@ -2507,7 +2507,7 @@ impl BlobExt for Blob {
         let Some(store_ref) = self.store() else {
             return empty();
         };
-        // `RefPtr<Store>::data_mut` derefs the original `heap::alloc` `*mut Store`
+        // `Store::data_mut` derefs the original `heap::alloc` `*mut Store`
         // (mutable provenance over the whole allocation) without materializing
         // a `Deref`-produced `&Store`, so the brief `&mut` to the payload does
         // not alias any outstanding borrow (other `RefPtr<Store>`s only hold raw
@@ -2524,7 +2524,7 @@ impl BlobExt for Blob {
                 let off = (self.offset.get() as usize).min(len);
                 let clamped = (len - off).min(self.size.get() as usize);
                 // `v` already carries mutable provenance (derived through
-                // `RefPtr<Store>::data_mut`); safe sub-slicing then raw-ptr coercion
+                // `Store::data_mut`); safe sub-slicing then raw-ptr coercion
                 // preserves it without `from_raw_parts_mut`/`ptr::add`.
                 core::ptr::from_mut::<[u8]>(&mut v[off..off + clamped])
             }
@@ -6137,7 +6137,7 @@ fn window_size(current: SizeType, available: SizeType) -> SizeType {
 
 /// resolve file stat like size, last_modified
 fn resolve_file_stat(store: &RefPtr<Store>) {
-    // `RefPtr<Store>::data_mut` encapsulates the raw-pointer deref under the
+    // `Store::data_mut` encapsulates the raw-pointer deref under the
     // `RefPtr<Store>` liveness invariant; the caller holds the only ref across
     // this call, so an exclusive borrow is sound.
     let file = Store::data_mut(store).as_file_mut();

@@ -43,7 +43,7 @@ pub(super) fn wtf_impl(s: &WTFStringImpl) -> &WTFStringImplStruct {
 /// Mutable view of a [`Blob`]'s backing `Store` through its
 /// `JsCell<Option<RefPtr<Store>>>` field. Centralises the per-site raw
 /// `(*blob.store.get()…as_ptr()).mime_type = …` deref under the same
-/// invariant `RefPtr<Store>::data_mut` already documents:
+/// invariant `Store::data_mut` already documents:
 /// shared-mutable interior, single-threaded JS event-loop, no concurrent
 /// `&Store` outstanding for the borrow's duration.
 #[inline]

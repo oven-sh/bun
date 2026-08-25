@@ -266,7 +266,7 @@ pub enum AbortReason {
 // tier). The per-VM timer heap (`Timer::All`) lives in `bun_runtime` (higher
 // tier) and is reached through `RuntimeHooks::{timer_insert,timer_remove}` —
 // see `VirtualMachine::timer_insert/remove`. C++ only ever sees `*mut Timeout`
-// as an opaque token round-tripped through `create`/`run`/`deinit`, so the
+// as an opaque token round-tripped through `create`/`deinit`, so the
 // concrete layout is private to Rust; `repr(C)` is here so `offset_of!` is
 // well-defined for the `container_of` recovery in `bun_runtime::dispatch`.
 // ──────────────────────────────────────────────────────────────────────────

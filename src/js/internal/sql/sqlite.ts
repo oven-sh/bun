@@ -337,7 +337,11 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             }
             parenDepth++;
           } else if (char === "(" && parenDepth > 0) {
+            // "(" is a token boundary: discard the paren content so "RETURNING(id)" classifies.
+            // The content is not classified, so a subquery's SELECT does not set canReturnRows.
             parenDepth--;
+            token = "";
+            continue;
           } else if (char === ";" && parenDepth === 0) {
             // the reverse scan crosses statement boundaries; later statements' state must not leak into the first
             writeVerb = null;

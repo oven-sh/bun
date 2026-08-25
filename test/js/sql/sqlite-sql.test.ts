@@ -1012,6 +1012,11 @@ describe("Query Execution", () => {
     const quotedInto = await sql.unsafe("WITH c AS (SELECT 1) REPLACE INTO'weird' ([a;b]) VALUES (9)");
     expect(quotedInto.command).toBe("REPLACE");
     expect(quotedInto.affectedRows).toBeNull();
+
+    // a keyword flush against an opening paren keeps its meaning
+    const parenLeft = await sql.unsafe("DELETE FROM weird WHERE [a;b] = 9 RETURNING([a;b]) AS v");
+    expect(parenLeft).toEqual([{ v: 9 }]);
+    expect(parenLeft.affectedRows).toBe(1);
   });
 
   test("SELECT with various clauses", async () => {

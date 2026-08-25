@@ -1030,11 +1030,7 @@ describe.concurrent("start() on a live writer", () => {
       writer.write("first");
       const queued = writer.write("second");
       writer.start({ path: b });
-      const { promise, resolve } = Promise.withResolvers();
-      const timer = setTimeout(() => resolve("timeout"), 3_000);
-      Promise.resolve(queued).then(() => resolve("settled"));
-      const settled = await promise;
-      clearTimeout(timer);
+      const settled = typeof (await queued) === "number";
       writer.write("third");
       await writer.end();
       const deadline = Date.now() + 10_000;
@@ -1042,7 +1038,7 @@ describe.concurrent("start() on a live writer", () => {
       const out = { settled, combined: read(a) + read(b), bEndsWithQueued: read(b).endsWith("secondthird") };
       console.log(JSON.stringify({ ...out, closed: await closed() }));
     `);
-    expect(result).toEqual({ settled: "settled", combined: "firstsecondthird", bEndsWithQueued: true, closed: "all" });
+    expect(result).toEqual({ settled: true, combined: "firstsecondthird", bEndsWithQueued: true, closed: "all" });
   });
 
   it("start({ path }) after a failed write writes to the new path", async () => {

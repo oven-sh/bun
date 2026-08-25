@@ -1114,6 +1114,11 @@ pub trait BaseWindowsPipeWriter: Sized {
         false
     }
 
+    /// Chunks wait in the writer's queue behind the write in flight.
+    fn has_queued_write(&self) -> bool {
+        false
+    }
+
     /// `uv::open_handles` closes this writer's stream through here at teardown.
     unsafe fn stop_for_vm_teardown(this: *mut c_void) {
         // SAFETY: recorded via `Source::set_owner` by this live writer; cleared
@@ -1277,6 +1282,10 @@ pub trait BaseWindowsPipeWriter: Sized {
     }
 
     fn start_sync(&mut self, fd: Fd, _pollable: bool) -> sys::Result<()> {
+        // A `SyncFile` takes each chunk as it is written; it cannot drain a queue.
+        if self.has_queued_write() {
+            return sys::Result::Err(sys::Error::from_code(sys::E::BUSY, sys::Tag::write));
+        }
         self.close_current_source()?;
         let mut source = Source::SyncFile(Source::open_file(fd));
         source.set_data(core::ptr::from_mut(self).cast::<c_void>());
@@ -2037,18 +2046,16 @@ impl<Parent: WindowsStreamingWriterParent> BaseWindowsPipeWriter
         self.current_payload.is_not_empty()
     }
 
+    fn has_queued_write(&self) -> bool {
+        self.outgoing.is_not_empty()
+    }
+
     fn start_with_current_pipe(&mut self) -> sys::Result<()> {
         debug_assert!(self.source.is_some());
         self.is_done = false;
-        // A restart can find chunks queued behind a write the replaced source will not report.
+        // A restart finds chunks queued behind a write the replaced source will not report.
         if self.outgoing.is_not_empty() {
-            match self.sync_file_fd() {
-                Some(fd) => {
-                    self.last_write_result = Self::write_sync(fd, self.outgoing.slice());
-                    self.outgoing.reset();
-                }
-                None => self.process_send(),
-            }
+            self.process_send();
         }
         sys::Result::Ok(())
     }
@@ -2285,31 +2292,6 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         Self::r(this).on_write_complete(uv::ReturnCode::zero());
     }
 
-    /// The fd of a `SyncFile` source, which is written to synchronously.
-    fn sync_file_fd(&self) -> Option<Fd> {
-        match &self.source {
-            Some(Source::SyncFile(file)) => Some(Fd::from_uv(file.file)),
-            _ => None,
-        }
-    }
-
-    /// `write(2)` until `buf` is through or the fd takes no more.
-    fn write_sync(fd: Fd, buf: &[u8]) -> WriteResult {
-        let mut remain = buf;
-        while !remain.is_empty() {
-            match sys::write(fd, remain) {
-                sys::Result::Err(err) => return WriteResult::Err(err),
-                sys::Result::Ok(0) => break,
-                sys::Result::Ok(wrote) => remain = &remain[wrote..],
-            }
-        }
-        let wrote = buf.len() - remain.len();
-        if wrote == 0 {
-            return WriteResult::Done(0);
-        }
-        WriteResult::Wrote(wrote)
-    }
-
     /// this tries to send more data returning if we are writable or not after this
     fn process_send(&mut self) {
         log!("processSend");
@@ -2447,11 +2429,37 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             return WriteResult::Done(0);
         }
 
-        if let Some(fd) = self.sync_file_fd() {
-            let result = match self.outgoing.write_or_fallback(Some(buffer), None, kind) {
-                Ok(remain) => Self::write_sync(fd, remain),
-                Err(_) => WriteResult::Err(sys::Error::oom()),
-            };
+        if matches!(self.source, Some(Source::SyncFile(_))) {
+            let result = (|| {
+                let remain = match self.outgoing.write_or_fallback(Some(buffer), None, kind) {
+                    Ok(r) => r,
+                    Err(_) => return WriteResult::Err(sys::Error::oom()),
+                };
+                let initial_len = remain.len();
+                let mut remain = remain;
+                let fd = Fd::from_uv(match &self.source {
+                    Some(Source::SyncFile(f)) => f.file,
+                    _ => unreachable!(),
+                });
+
+                while remain.len() > 0 {
+                    match sys::write(fd, remain) {
+                        sys::Result::Err(err) => return WriteResult::Err(err),
+                        sys::Result::Ok(wrote) => {
+                            remain = &remain[wrote..];
+                            if wrote == 0 {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                let wrote = initial_len - remain.len();
+                if wrote == 0 {
+                    return WriteResult::Done(wrote);
+                }
+                WriteResult::Wrote(wrote)
+            })();
             self.outgoing.reset();
             return result;
         }
@@ -2477,14 +2485,41 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             return WriteResult::Done(0);
         }
 
-        if let Some(fd) = self.sync_file_fd() {
-            let result = match self
-                .outgoing
-                .write_or_fallback(None, Some(buffer), WriteKind::Utf16)
-            {
-                Ok(remain) => Self::write_sync(fd, remain),
-                Err(_) => WriteResult::Err(sys::Error::oom()),
-            };
+        if matches!(self.source, Some(Source::SyncFile(_))) {
+            let result = (|| {
+                let remain =
+                    match self
+                        .outgoing
+                        .write_or_fallback(None, Some(buffer), WriteKind::Utf16)
+                    {
+                        Ok(r) => r,
+                        Err(_) => return WriteResult::Err(sys::Error::oom()),
+                    };
+                let initial_len = remain.len();
+                let mut remain = remain;
+                let fd = Fd::from_uv(match &self.source {
+                    Some(Source::SyncFile(f)) => f.file,
+                    _ => unreachable!(),
+                });
+
+                while remain.len() > 0 {
+                    match sys::write(fd, remain) {
+                        sys::Result::Err(err) => return WriteResult::Err(err),
+                        sys::Result::Ok(wrote) => {
+                            remain = &remain[wrote..];
+                            if wrote == 0 {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                let wrote = initial_len - remain.len();
+                if wrote == 0 {
+                    return WriteResult::Done(wrote);
+                }
+                WriteResult::Wrote(wrote)
+            })();
             self.outgoing.reset();
             return result;
         }

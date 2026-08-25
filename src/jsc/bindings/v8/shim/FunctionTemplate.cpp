@@ -250,6 +250,9 @@ JSC::JSValue FunctionTemplate::invokeCallback(JSC::JSGlobalObject* globalObject,
         functionTemplate->m_callback(info);
     }
 
+    if (isolate->globalInternals()->throwPendingException(globalObject)) [[unlikely]]
+        return {};
+
     TaggedPointer& return_value = slot(Info::kReturnValueIndex);
     if (return_value.isEmpty()) {
         // callback forgot to set a return value, so return undefined

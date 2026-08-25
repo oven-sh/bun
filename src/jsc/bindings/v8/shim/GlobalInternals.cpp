@@ -64,9 +64,22 @@ void GlobalInternals::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_functionTemplateStructure.visit(visitor);
     thisObject->m_v8FunctionStructure.visit(visitor);
     thisObject->m_globalHandles.visit(visitor);
+    visitor.append(thisObject->m_pendingException);
 }
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE, GlobalInternals);
+
+bool GlobalInternals::throwPendingException(JSC::JSGlobalObject* globalObject)
+{
+    JSC::VM& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue thrown = takePendingException();
+    RETURN_IF_EXCEPTION(scope, true);
+    if (!thrown) [[likely]]
+        return false;
+    JSC::throwException(globalObject, scope, thrown);
+    return true;
+}
 
 } // namespace shim
 } // namespace v8

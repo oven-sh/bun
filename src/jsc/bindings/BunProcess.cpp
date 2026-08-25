@@ -440,6 +440,12 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 
     globalObject->m_pendingNapiModuleAndExports[0].set(vm, globalObject, moduleObject);
     globalObject->m_pendingNapiModuleAndExports[1].set(vm, globalObject, exports);
+    // The slots are how registration (which may run under dlopen()) talks to this call; nothing may be left in them
+    // for the next — possibly nested — process.dlopen to misread.
+    auto clearModuleSlots = WTF::makeScopeExit([&] {
+        globalObject->m_pendingNapiModuleAndExports[0].clear();
+        globalObject->m_pendingNapiModuleAndExports[1].clear();
+    });
 
     Strong<JSC::Unknown> strongExports;
 
@@ -590,8 +596,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             globalObject->m_pendingV8Modules.clear();
             globalObject->m_pendingNapiModules.clear();
             globalObject->napiModuleRegisterCallCount = 0;
-            globalObject->m_pendingNapiModuleAndExports[0].clear();
-            globalObject->m_pendingNapiModuleAndExports[1].clear();
         });
 
         if (handle) {
@@ -607,9 +611,13 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             }
         }
 
-        // A V8-style module's nm_register_func already ran inside dlopen() (node_module_register)
-        // and may have thrown.
+        // A V8-style module's nm_register_func already ran inside dlopen() (node_module_register) and may have
+        // thrown, or reported its failure through slot 0.
         RETURN_IF_EXCEPTION(scope, {});
+        if (JSValue thrown = globalObject->m_pendingNapiModuleAndExports[0].get(); thrown && thrown != strongModule.get()) {
+            JSC::throwException(globalObject, scope, thrown);
+            return {};
+        }
 
         // Execute all NAPI modules. If an nm_register_func registers more
         // modules re-entrantly, they accumulate back in m_pendingNapiModules;
@@ -629,12 +637,11 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             pendingNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
         }
 
+        // Slot 0 holds either the module object or what registration threw.
         JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
         if (resultValue && resultValue != strongModule.get()) {
-            if (resultValue.isCell() && resultValue.getObject()->isErrorInstance()) {
-                JSC::throwException(globalObject, scope, resultValue);
-                return {};
-            }
+            JSC::throwException(globalObject, scope, resultValue);
+            return {};
         }
 
         return JSValue::encode(jsUndefined());
@@ -647,8 +654,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             globalObject->m_pendingV8Modules.clear();
             globalObject->m_pendingNapiModules.clear();
             globalObject->napiModuleRegisterCallCount = 0;
-            globalObject->m_pendingNapiModuleAndExports[0].clear();
-            globalObject->m_pendingNapiModuleAndExports[1].clear();
         });
 
         // Replay all registrations from this handle. napi ones only queue into
@@ -657,6 +662,10 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             if (auto* const* nodeModule = std::get_if<node::node_module*>(&registration)) {
                 node::node_module_register(*nodeModule);
                 RETURN_IF_EXCEPTION(scope, {});
+                if (JSValue thrown = globalObject->m_pendingNapiModuleAndExports[0].get(); thrown && thrown != strongModule.get()) {
+                    JSC::throwException(globalObject, scope, thrown);
+                    return {};
+                }
             } else {
                 napi_module_register(std::get<napi_module*>(registration));
             }
@@ -678,12 +687,11 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             }
         }
 
+        // Slot 0 holds either the module object or what registration threw.
         JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
         if (resultValue && resultValue != strongModule.get()) {
-            if (resultValue.isCell() && resultValue.getObject()->isErrorInstance()) {
-                JSC::throwException(globalObject, scope, resultValue);
-                return {};
-            }
+            JSC::throwException(globalObject, scope, resultValue);
+            return {};
         }
 
         return JSValue::encode(jsUndefined());
@@ -767,8 +775,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         }
     }
 
-    globalObject->m_pendingNapiModuleAndExports[0].clear();
-    globalObject->m_pendingNapiModuleAndExports[1].clear();
     globalObject->m_pendingNapiModuleDlopenHandle = nullptr;
 
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_api.cc#L734-L742

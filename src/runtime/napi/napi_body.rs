@@ -93,6 +93,7 @@ unsafe extern "C" {
     fn NapiEnv__globalObject(env: *mut NapiEnv) -> *mut JSGlobalObject;
     fn NapiEnv__getAndClearPendingException(env: *mut NapiEnv, out: *mut JSValue) -> bool;
     fn NapiEnv__hasPendingException(env: *mut NapiEnv) -> bool;
+    fn NapiEnv__latchException(env: *mut NapiEnv);
     fn NapiEnv__deref(env: *mut NapiEnv);
     fn NapiEnv__ref(env: *mut NapiEnv);
     /// The reference to its VM's handle the env holds (`BunVmHandleRef`).
@@ -145,8 +146,17 @@ impl NapiEnv {
         Self::set_last_error(Some(self), NapiStatus::pending_exception)
     }
 
-    /// Checks both `env->m_pendingException` (set by `napi_throw*`) and the JSC
-    /// VM exception slot. This is the gate Node.js's `NAPI_PREAMBLE` enforces.
+    /// A JS exception was raised inside this call (`JsError` from a JSC operation): hand it to the addon the way
+    /// napi.cpp's `NAPI_RETURN_IF_EXCEPTION` does — off the VM, latched on the env, thrown into JS when the addon
+    /// returns — and report `status`.
+    pub(crate) fn threw(&self, status: NapiStatus) -> napi_status {
+        // SAFETY: env is non-null and live for the call.
+        unsafe { NapiEnv__latchException(self.as_mut_ptr()) };
+        Self::set_last_error(Some(self), status)
+    }
+
+    /// The gate Node's `NAPI_PREAMBLE` enforces: an exception latched on the env (by `napi_throw*` or by an earlier
+    /// call that threw), or a termination pending on the VM.
     pub(crate) fn has_pending_exception(&self) -> bool {
         // SAFETY: env is non-null; C++ side is read-only here.
         unsafe { NapiEnv__hasPendingException(self.as_mut_ptr()) }
@@ -168,11 +178,10 @@ impl NapiEnv {
         None
     }
 
-    /// After a native addon callback (a `complete`, a finalizer, a `call_js`):
-    /// what it raised through Node-API — latched on the env — or left on the VM
-    /// is that call's exception, surfaced as `Err` with it pending on the VM.
-    /// If both exist the VM's own wins and the latched one is discarded (it
-    /// cannot be reported without running JS over the pending one).
+    /// After a native addon callback (a `complete`, a finalizer, a `call_js`): what it raised through Node-API —
+    /// latched on the env — is that call's exception, surfaced as `Err` with it pending on the VM. If the VM
+    /// already has one (a termination; or a nested trampoline already threw), that wins and the latched one is
+    /// discarded, as it would be by any catch of the first.
     pub(crate) fn surface_exception(&self, global: &JSGlobalObject) -> JsResult<()> {
         let latched = self.get_and_clear_pending_exception();
         if global.has_exception() {
@@ -614,7 +623,7 @@ extern "C" fn napi_create_array(env_: napi_env, result_: *mut napi_value) -> nap
     let result = get_out!(env, result_);
     let arr = match JSValue::create_empty_array(env.to_js(), 0) {
         Ok(v) => v,
-        Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception),
+        Err(_) => return env.threw(NapiStatus::pending_exception),
     };
     result.set(env, arr);
     env.ok()
@@ -640,7 +649,7 @@ extern "C" fn napi_create_array_with_length(
 
     let array = match JSValue::create_empty_array(env.to_js(), len as usize) {
         Ok(v) => v,
-        Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception),
+        Err(_) => return env.threw(NapiStatus::pending_exception),
     };
     array.ensure_still_alive();
     result.set(env, array);
@@ -743,7 +752,7 @@ extern "C" fn napi_create_string_latin1(
 
     let js = match string.into_js(env.to_js()) {
         Ok(v) => v,
-        Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
+        Err(_) => return env.threw(NapiStatus::generic_failure),
     };
     result.set(env, js);
     env.ok()
@@ -784,7 +793,7 @@ extern "C" fn napi_create_string_utf8(
     let global_object = env.to_js();
     let string = match bun_string_jsc::create_utf8_for_js(global_object, slice) {
         Ok(v) => v,
-        Err(_) => return env.generic_failure(),
+        Err(_) => return env.threw(NapiStatus::generic_failure),
     };
     result.set(env, string);
     env.ok()
@@ -840,7 +849,7 @@ extern "C" fn napi_create_string_utf16(
 
     let js = match string.into_js(env.to_js()) {
         Ok(v) => v,
-        Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
+        Err(_) => return env.threw(NapiStatus::generic_failure),
     };
     result.set(env, js);
     env.ok()
@@ -966,7 +975,7 @@ extern "C" fn napi_get_prototype(
     // non-object values) handles them without an allocation.
     if object.is_undefined_or_null() {
         let _ = object.to_object(env.to_js());
-        return NapiEnv::set_last_error(Some(env), NapiStatus::object_expected);
+        return env.threw(NapiStatus::object_expected);
     }
 
     // Like V8's Object::GetPrototype: a Proxy yields null and its trap never runs.
@@ -976,7 +985,7 @@ extern "C" fn napi_get_prototype(
     }
     let prototype = match object.get_prototype(env.to_js()) {
         Ok(prototype) => prototype,
-        Err(_) => return env.pending_exception(),
+        Err(_) => return env.threw(NapiStatus::pending_exception),
     };
     result.set(env, prototype);
     env.ok()
@@ -1058,7 +1067,7 @@ extern "C" fn napi_get_array_length(
 
     *result = match value.get_length(env.to_js()) {
         Ok(len) => len as u32, // intentional truncation
-        Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception),
+        Err(_) => return env.threw(NapiStatus::pending_exception),
     };
     env.ok()
 }
@@ -1079,7 +1088,7 @@ extern "C" fn napi_strict_equals(
     }
     *result = match lhs.is_strict_equal(rhs, env.to_js()) {
         Ok(b) => b,
-        Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception),
+        Err(_) => return env.threw(NapiStatus::pending_exception),
     };
     env.ok()
 }
@@ -1276,7 +1285,7 @@ extern "C" fn napi_make_callback(
     // without throwing is napi_ok.
     let res = match func.call(env.to_js(), this_value, args_slice) {
         Ok(v) => v,
-        Err(_) => return env.pending_exception(),
+        Err(_) => return env.threw(NapiStatus::pending_exception),
     };
 
     // SAFETY: `maybe_result` is null or a valid exclusive out-param per N-API contract.
@@ -1644,7 +1653,7 @@ extern "C" fn napi_resolve_deferred(
     let resolution = resolution_.get();
     let prom = deferred_box.get();
     if prom.resolve(env.to_js(), resolution).is_err() {
-        return env.generic_failure();
+        return env.threw(NapiStatus::generic_failure);
     }
     env.ok()
 }
@@ -1662,7 +1671,7 @@ extern "C" fn napi_reject_deferred(
     let rejection = rejection_.get();
     let prom = deferred_box.get();
     if prom.reject(env.to_js(), Ok(rejection)).is_err() {
-        return env.generic_failure();
+        return env.threw(NapiStatus::generic_failure);
     }
     env.ok()
 }

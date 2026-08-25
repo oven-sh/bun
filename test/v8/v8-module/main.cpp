@@ -1808,6 +1808,19 @@ void test_v8_exception(const FunctionCallbackInfo<Value> &info) {
   isolate->ThrowException(err);
 }
 
+// ThrowException() with the addon still running afterwards: it keeps
+// allocating through the API before it returns, and what it threw — a
+// non-Error here — is what the JS caller catches.
+void test_v8_throw_then_continue(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  isolate->ThrowException(Number::New(isolate, 42));
+  Local<String> s =
+      String::NewFromUtf8(isolate, "still running").ToLocalChecked();
+  LOG_EXPR(describe(isolate, s));
+  Local<Object> o = Object::New(isolate);
+  LOG_EXPR(o->IsObject());
+}
+
 void test_v8_aligned_pointer_in_internal_field(
     const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
@@ -2144,6 +2157,8 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_getfunction_memoized);
   NODE_SET_METHOD(exports, "test_v8_map", test_v8_map);
   NODE_SET_METHOD(exports, "test_v8_exception", test_v8_exception);
+  NODE_SET_METHOD(exports, "test_v8_throw_then_continue",
+                  test_v8_throw_then_continue);
   NODE_SET_METHOD(exports, "test_v8_aligned_pointer_in_internal_field",
                   test_v8_aligned_pointer_in_internal_field);
   NODE_SET_METHOD(exports, "test_v8_cpu_profiler", test_v8_cpu_profiler);

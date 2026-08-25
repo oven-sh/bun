@@ -589,6 +589,24 @@ static napi_value test_napi_run_script(const Napi::CallbackInfo &info) {
   return ret;
 }
 
+// After a throwing napi_run_script, napi_get_and_clear_last_exception hands
+// the addon the value the script threw (not an engine wrapper around it).
+static napi_value
+test_napi_run_script_last_exception(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value ret = nullptr;
+  napi_status status = napi_run_script(env, info[1], &ret);
+  napi_value exc = nullptr;
+  NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exc));
+  napi_valuetype type;
+  NODE_API_CALL(env, napi_typeof(env, exc, &type));
+  bool is_error = false;
+  NODE_API_CALL(env, napi_is_error(env, exc, &is_error));
+  printf("status=%d typeof=%d is_error=%d\n", (int)status, (int)type,
+         is_error ? 1 : 0);
+  return exc;
+}
+
 static napi_value test_napi_throw_with_nullptr(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   const napi_status status = napi_throw(env, nullptr);
@@ -1763,6 +1781,33 @@ test_napi_dataview_bounds_errors(const Napi::CallbackInfo &info) {
            "buffer\n");
   }
 
+  return ok(env);
+}
+
+// napi_create_dataview on a detached ArrayBuffer: must fail with the engine's
+// TypeError pending, not return napi_ok with a NULL result.
+static napi_value test_napi_dataview_detached(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value arraybuffer;
+  void *data = nullptr;
+  NODE_API_CALL(env, napi_create_arraybuffer(env, 8, &data, &arraybuffer));
+  NODE_API_CALL(env, napi_detach_arraybuffer(env, arraybuffer));
+
+  napi_value dataview = nullptr;
+  napi_status status = napi_create_dataview(env, 0, arraybuffer, 0, &dataview);
+  bool pending = false;
+  NODE_API_CALL(env, napi_is_exception_pending(env, &pending));
+  char name[64] = "";
+  if (pending) {
+    napi_value exc, ctor, name_val;
+    NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exc));
+    NODE_API_CALL(env, napi_get_named_property(env, exc, "constructor", &ctor));
+    NODE_API_CALL(env, napi_get_named_property(env, ctor, "name", &name_val));
+    NODE_API_CALL(env, napi_get_value_string_utf8(env, name_val, name,
+                                                  sizeof(name), nullptr));
+  }
+  printf("status=%d result_null=%d pending=%d error=%s\n", (int)status,
+         dataview == nullptr ? 1 : 0, pending ? 1 : 0, name);
   return ok(env);
 }
 
@@ -4473,6 +4518,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_handle_scope_many_args);
   REGISTER_FUNCTION(env, exports, test_napi_ref);
   REGISTER_FUNCTION(env, exports, test_napi_run_script);
+  REGISTER_FUNCTION(env, exports, test_napi_run_script_last_exception);
   REGISTER_FUNCTION(env, exports, test_napi_throw_with_nullptr);
   REGISTER_FUNCTION(env, exports, test_extended_error_messages);
   REGISTER_FUNCTION(env, exports, bigint_to_i64);
@@ -4490,6 +4536,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_new_instance_status);
   REGISTER_FUNCTION(env, exports, test_napi_create_array_boundary);
   REGISTER_FUNCTION(env, exports, test_napi_dataview_bounds_errors);
+  REGISTER_FUNCTION(env, exports, test_napi_dataview_detached);
   REGISTER_FUNCTION(env, exports, test_napi_typeof_empty_value);
   REGISTER_FUNCTION(env, exports, test_napi_null_value_args);
   REGISTER_FUNCTION(env, exports, test_napi_null_env_and_result);

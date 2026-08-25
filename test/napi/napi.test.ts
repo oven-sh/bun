@@ -960,6 +960,15 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("propagates exceptions", async () => {
       await checkSameOutput("test_napi_run_script", ["(()=>{ throw new TypeError('oops'); })()"]);
     });
+    it("hands the addon the thrown value via napi_get_and_clear_last_exception", async () => {
+      // 9 = napi_generic_failure; 6 = napi_object, 3 = napi_number
+      let out = await checkSameOutput("test_napi_run_script_last_exception", [
+        "(()=>{ throw new TypeError('oops'); })()",
+      ]);
+      expect(out).toContain("status=9 typeof=6 is_error=1");
+      out = await checkSameOutput("test_napi_run_script_last_exception", ["(()=>{ throw 42; })()"]);
+      expect(out).toContain("status=9 typeof=3 is_error=0");
+    });
     it("cannot see locals from around its invocation", async () => {
       // variable should_not_exist is declared on main.js:18, but it should not be in scope for the eval'd code
       // this doesn't use await checkSameOutput because V8 and JSC use different error messages for a missing variable
@@ -1390,6 +1399,24 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       "register_cb_b",
       "register_cb_reentrant x 64",
     ]);
+    expect(exitCode).toBe(0);
+  });
+
+  it("an addon registered with napi_module_register whose init throws makes require() throw that error", async () => {
+    const addonPath = join(__dirname, "napi-app", "build", "Debug", "throwing_init_addon.node");
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try { require(${JSON.stringify(addonPath)}); console.log("no throw"); } catch (e) { console.log(e.code, e.message); }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("ERR_THROWING_INIT init threw on purpose");
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
@@ -1887,6 +1914,14 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
   });
 
   describe("napi_create_dataview", () => {
+    // Node hands back a zero-length DataView here; JSC has no DataView over a detached buffer, so Bun reports
+    // the TypeError instead (it used to crash).
+    it("on a detached ArrayBuffer fails with a pending TypeError", async () => {
+      const output = await runOn(bunExe(), "test_napi_dataview_detached", []);
+      // 10 = napi_pending_exception
+      expect(output).toContain("status=10 result_null=1 pending=1 error=TypeError");
+    });
+
     it("should validate bounds and provide consistent error messages", async () => {
       const output = await checkSameOutput("test_napi_dataview_bounds_errors", []);
       expect(output).toContain("napi_create_dataview");

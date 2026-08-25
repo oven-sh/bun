@@ -122,6 +122,10 @@
             ],
         },
         {
+            "target_name": "throwing_init_addon",
+            "sources": ["throwing_init_addon.c"],
+        },
+        {
             "target_name": "reentrant_register_addon",
             "sources": ["reentrant_register_addon.cpp"],
             "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],

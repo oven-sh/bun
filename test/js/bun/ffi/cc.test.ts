@@ -1017,6 +1017,65 @@ describe("double <-> JSValue conversions", () => {
     });
   });
 
+  it.skipIf(isWindows)(
+    "a JS exception raised through Node-API inside cc() code is thrown when it returns",
+    async () => {
+      using dir = tempDir("bun-ffi-napi-throws", {
+        "throws.c": /* c */ `
+        typedef struct napi_env_fake* napi_env_t;
+        typedef struct napi_value_fake* napi_value_t;
+        extern int napi_get_global(napi_env_t env, napi_value_t* result);
+        extern int napi_get_named_property(napi_env_t env, napi_value_t object, const char* name, napi_value_t* result);
+        extern int napi_call_function(napi_env_t env, napi_value_t recv, napi_value_t fn, unsigned long argc, const napi_value_t* argv, napi_value_t* result);
+        extern int napi_throw_error(napi_env_t env, const char* code, const char* msg);
+        napi_value_t call_cb(napi_env_t env) {
+          napi_value_t global, fn, result = 0;
+          napi_get_global(env, &global);
+          napi_get_named_property(env, global, "__cb", &fn);
+          napi_call_function(env, global, fn, 0, 0, &result);
+          return result;
+        }
+        napi_value_t throw_it(napi_env_t env) {
+          napi_throw_error(env, "ERR_FROM_CC", "thrown from cc");
+          return 0;
+        }
+      `,
+        "fixture.js": /* js */ `
+        import { cc } from "bun:ffi";
+        import path from "path";
+        const { symbols } = cc({
+          source: path.join(import.meta.dir, "throws.c"),
+          symbols: {
+            call_cb: { args: ["napi_env"], returns: "napi_value" },
+            throw_it: { args: ["napi_env"], returns: "napi_value" },
+          },
+        });
+        const err = new Error("from the callback");
+        const out = {};
+        globalThis.__cb = () => { throw err; };
+        try { symbols.call_cb(); out.callCb = "returned"; } catch (e) { out.callCb = e === err; }
+        try { symbols.throw_it(); out.throwIt = "returned"; } catch (e) { out.throwIt = e.code + ": " + e.message; }
+        // and the env is usable afterwards
+        globalThis.__cb = () => 7;
+        out.after = symbols.call_cb();
+        console.log(JSON.stringify(out));
+      `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out: JSON.parse(stdout.trim().split("\n").at(-1) || "null"), stderr, exitCode }).toMatchObject({
+        out: { callCb: true, throwIt: "ERR_FROM_CC: thrown from cc", after: 7 },
+        exitCode: 0,
+      });
+    },
+  );
+
   // napi_create_double and napi_create_date take the double from the addon
   // verbatim, so they are the same boundary. cc()-compiled C resolves napi_*
   // from the host process; that lookup is only exercised on POSIX today (see

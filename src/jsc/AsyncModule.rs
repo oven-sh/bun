@@ -260,7 +260,6 @@ impl Queue {
         self.vm().package_manager().drain_dependency_list();
     }
 
-
     /// `WakeHandler::handler` — runs on install / HTTP-callback threads
     /// (`PackageManager::wake_raw`). `ctx` is the [`WakeContext`] registered in
     /// `runtime/jsc_hooks.rs`; the VM is reached only through its handle.

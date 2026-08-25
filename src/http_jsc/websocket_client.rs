@@ -1335,7 +1335,6 @@ impl<const SSL: bool> WebSocket<SSL> {
         !tcp.is_closed() && !tcp.is_shutdown()
     }
 
-
     pub(crate) fn write_string(this: ThisPtr<Self>, str: &EncodedSlice, op: u8) {
         // See write_binary_data() — tunnel.write() can re-enter fail().
         let _guard = RefPtr::from_this(this);

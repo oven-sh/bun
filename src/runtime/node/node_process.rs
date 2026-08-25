@@ -37,21 +37,6 @@ extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
     EncodedSlice::from_bytes(out.as_bytes()).to_js(global_object)
 }
 
-/// A worker's `argv`/`execArgv` strings live in its parent-thread
-/// `WorkerOptions`; the worker thread gets its own copy (the parent may
-/// atomize its impls), and an empty one is spelled as `BunString::EMPTY`.
-pub(crate) fn worker_option_string(wtf: bun_core::WTFStringImpl) -> bun_core::String {
-    // SAFETY: non-null impl borrowed from the live `WorkerOptions`.
-    let imp = unsafe { &*wtf };
-    if imp.length() == 0 {
-        bun_core::String::EMPTY
-    } else if imp.is_8bit() {
-        bun_core::String::clone_latin1(imp.latin1_slice())
-    } else {
-        bun_core::String::clone_utf16(imp.utf16_slice())
-    }
-}
-
 // ───────────────────────────── argv (C++ accessor wrappers) ─────────────────
 
 pub(crate) fn get_argv(global: &JSGlobalObject) -> JsResult<JSValue> {
@@ -229,8 +214,8 @@ mod _impl {
         if let Some(worker) = vm.worker_ref() {
             // was explicitly overridden for the worker?
             if let Some(exec_argv) = worker.exec_argv() {
-                return JSValue::create_array_from_iter(global_object, exec_argv.iter(), |&wtf| {
-                    super::worker_option_string(wtf).into_js(global_object)
+                return JSValue::create_array_from_iter(global_object, exec_argv.iter(), |arg| {
+                    arg.to_bun_string().into_js(global_object)
                 });
             }
         }
@@ -391,12 +376,7 @@ mod _impl {
         }
 
         if let Some(worker) = worker {
-            args_list.extend(
-                worker
-                    .argv()
-                    .iter()
-                    .map(|&arg| super::worker_option_string(arg)),
-            );
+            args_list.extend(worker.argv().iter().map(|arg| arg.to_bun_string()));
         } else {
             for arg in &vm.argv {
                 let str_ = BunString::borrow_utf8(arg);

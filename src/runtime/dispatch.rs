@@ -378,21 +378,16 @@ pub(crate) fn run_task(
 
         // ── hot-reload (early-returns from the drain loop) ───────────────
         task_tag::HotReloadTask => {
-            let t = cast_ptr!(hot_reloader::HotReloadTask);
-            // The task was heap-allocated in `Task::enqueue`; `deinit` frees it.
-            // SAFETY: tag identifies pointee; live Box'd HotReloadTask.
-            unsafe { (*t).run() };
-            // SAFETY: paired with heap::alloc in `Task::enqueue`.
-            unsafe { hot_reloader::HotReloadTask::deinit(t) };
-            return Ok(RunTaskResult::EarlyReturn);
+            // SAFETY: boxed by `hot_reloader::Task::enqueue`; the arm consumes it.
+            if unsafe { bun_core::heap::take(cast_ptr!(hot_reloader::HotReloadTask)) }.run() {
+                return Ok(RunTaskResult::EarlyReturn);
+            }
         }
         task_tag::WatchReloadTask => {
-            let t = cast_ptr!(hot_reloader::WatchReloadTask);
-            // SAFETY: tag identifies pointee; live Box'd WatchReloadTask.
-            unsafe { (*t).run() };
-            // SAFETY: paired with heap::alloc in `Task::enqueue`.
-            unsafe { hot_reloader::WatchReloadTask::deinit(t) };
-            return Ok(RunTaskResult::EarlyReturn);
+            // SAFETY: boxed by `hot_reloader::Task::enqueue`; the arm consumes it.
+            if unsafe { bun_core::heap::take(cast_ptr!(hot_reloader::WatchReloadTask)) }.run() {
+                return Ok(RunTaskResult::EarlyReturn);
+            }
         }
         // ── bake dev-server (cold — hoisted to `run_task_cold`) ──────────
         task_tag::BakeHotReloadEvent => run_task_cold(task),

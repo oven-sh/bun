@@ -144,7 +144,7 @@ pub struct VirtualMachine {
     /// [`crate::hot_reloader::HotReloaderCtx::install_bun_watcher`]); null when
     /// hot reload is disabled. Read via [`Self::bun_watcher_ptr`].
     pub bun_watcher: *mut crate::hot_reloader::ImportWatcher,
-    pub(crate) console: *mut crate::console_object::ConsoleObject,
+    pub(crate) console: Option<Box<crate::console_object::ConsoleObject>>,
     // BORROW_PARAM (`&'a mut bun_ast::Log` per LIFETIMES.tsv) — raw NonNull
     // used because VM is self-referential and cannot carry `<'a>`.
     pub log: Option<NonNull<bun_ast::Log>>,
@@ -324,12 +324,11 @@ pub struct VirtualMachine {
 
     pub(crate) gc_controller: crate::GarbageCollectionController,
     /// The `WebWorker` whose thread this VM runs on (`None` on the main thread).
-    /// The thread holds a ref on it for its whole life.
-    pub worker: Option<*const c_void>,
+    pub worker: Option<std::sync::Arc<crate::web_worker::WebWorker>>,
     /// Workers created on this thread and not yet released by it. Parent-thread
     /// only: `WebWorker::create` pushes, `release_parent_poll_ref` removes,
     /// `join_child_workers` drains at exit.
-    pub child_workers: Vec<*mut crate::web_worker::WebWorker>,
+    pub child_workers: Vec<std::sync::Arc<crate::web_worker::WebWorker>>,
     /// This VM's live pool jobs (`bun_jsc::job`); JS thread only, zero-valid.
     pub(crate) jobs: crate::JsCell<crate::job::JobList>,
     /// The door out of this thread (`bun_jsc::vm_handle`): tickets for work
@@ -1197,14 +1196,23 @@ impl VirtualMachine {
         self.as_mut().log.map(|mut p| unsafe { p.as_mut() })
     }
 
-    /// Safe `&WebWorker` accessor for the optional owning worker. The
-    /// `WebWorker` is a heap allocation owned by C++ that outlives this VM.
+    /// The worker whose thread this VM runs on, if any.
     #[inline]
     pub fn worker_ref(&self) -> Option<&crate::web_worker::WebWorker> {
-        // SAFETY: `worker` is a `*const c_void` pointing at a heap `WebWorker`
-        // owned by C++ that outlives this VM (BACKREF — see field decl).
-        self.worker
-            .map(|w| unsafe { &*w.cast::<crate::web_worker::WebWorker>() })
+        self.worker.as_deref()
+    }
+
+    /// This VM's `console` state (buffered writers, group depth, counters).
+    #[inline]
+    pub fn console_mut(&mut self) -> &mut crate::console_object::ConsoleObject {
+        self.console.as_deref_mut().expect("VirtualMachine.console")
+    }
+
+    /// The `void*` the C++ `ConsoleObject` client round-trips back as the
+    /// first argument of every `Bun__ConsoleObject__*` call.
+    #[inline]
+    pub(crate) fn console_cpp_ptr(&mut self) -> *mut c_void {
+        self.console_mut().as_cpp_ptr()
     }
 
     #[inline]
@@ -2292,14 +2300,14 @@ pub struct RuntimeHooks {
     /// worker's transpiler. `graph` is the same trait object stored in
     /// `vm.standalone_module_graph` (the high tier downcasts to its concrete
     /// `bun_standalone_graph::Graph` — the sole implementor).
-    pub apply_standalone_runtime_flags: unsafe fn(
-        transpiler: *mut Transpiler<'static>,
+    pub apply_standalone_runtime_flags: fn(
+        transpiler: &mut Transpiler<'static>,
         graph: &'static dyn bun_resolver::StandaloneModuleGraph,
     ),
     /// Parse a Worker's `execArgv` for the flags in [`WorkerExecArgvFlags`].
     /// `None` if parsing failed.
     pub parse_worker_exec_argv_flags:
-        unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> Option<WorkerExecArgvFlags>,
+        fn(exec_argv: &[bun_core::String]) -> Option<WorkerExecArgvFlags>,
     /// `CronJob.clearAllForVM(vm, .teardown)`. `CronJob` lives in
     /// `bun_runtime::api::cron`.
     pub stop_cron_for_vm_teardown: fn(vm: &mut VirtualMachine),
@@ -2329,7 +2337,7 @@ pub struct RuntimeHooks {
     /// `TestReporterAgent::next_test_id` through by value; no-op returns it
     /// unchanged.
     pub retroactively_report_discovered_tests:
-        unsafe fn(agent: *mut crate::debugger::TestReporterHandle, next_test_id: i32) -> i32,
+        fn(agent: &mut crate::debugger::TestReporterHandle, next_test_id: i32) -> i32,
     /// Cancel every `TimeoutObject` / `ImmediateObject` still in the calling
     /// thread's `timer::All` heap so their JS pins and in-heap `+1` refs drop
     /// before the GC sweep. `timer::All` lives in `bun_runtime` (forward-dep);
@@ -2584,20 +2592,13 @@ impl VirtualMachine {
             MAIN_THREAD_VM.store(vm, core::sync::atomic::Ordering::Release);
         }
 
-        // ConsoleObject is self-referential (buffers + adapters) — allocate
-        // stable storage and init in place.
-        // `console.init(Output.rawErrorWriter(), Output.rawWriter())` must
-        // happen BEFORE the pointer is stored/passed; the previous port left
-        // it as raw `MaybeUninit` (UB on first C++ read).
-        let mut console_box: Box<core::mem::MaybeUninit<crate::console_object::ConsoleObject>> =
-            Box::new(core::mem::MaybeUninit::uninit());
-        crate::console_object::ConsoleObject::init_in_place(
-            &mut console_box,
+        // ConsoleObject is self-referential (buffers + adapters), hence boxed;
+        // it must be initialized before its pointer reaches C++.
+        let mut console_box = crate::console_object::ConsoleObject::new(
             bun_core::Output::raw_error_writer(),
             bun_core::Output::raw_writer(),
         );
-        let console =
-            bun_core::heap::into_raw(console_box).cast::<crate::console_object::ConsoleObject>();
+        let console: *mut c_void = console_box.as_cpp_ptr();
 
         let context_id = opts
             .context_id
@@ -2611,7 +2612,7 @@ impl VirtualMachine {
         unsafe {
             use core::ptr::addr_of_mut;
             addr_of_mut!((*vm).global).write(core::ptr::null_mut());
-            addr_of_mut!((*vm).console).write(console);
+            addr_of_mut!((*vm).console).write(Some(console_box));
             // `log` is a fresh leaked Box; outlives the VM.
             addr_of_mut!((*vm).log).write(NonNull::new(log));
             addr_of_mut!((*vm).main).write(bun_ptr::RawSlice::EMPTY);
@@ -2719,7 +2720,7 @@ impl VirtualMachine {
         // the new global. `worker_ptr` is the C++ `WebCore::Worker*` (or null on
         // the main thread).
         let global = Zig__GlobalObject__create(
-            console.cast(),
+            console,
             context_id,
             opts.mini_mode,
             opts.eval_mode,
@@ -2864,14 +2865,9 @@ impl VirtualMachine {
                 .worker_ref()
                 .and_then(crate::web_worker::WebWorker::exec_argv)
                 .is_some_and(|exec_argv| {
-                    use bun_core::WTFStringImplExt as _;
-                    exec_argv.iter().any(|&arg| {
-                        // SAFETY: each entry borrows the C++ `WorkerOptions`
-                        // array, kept alive by the owning `WebCore::Worker`
-                        // for the worker's lifetime (see `WebWorker::argv`).
-                        !arg.is_null()
-                            && is_bootstrap_flag(unsafe { &*arg }.to_owned_slice_z().as_bytes())
-                    })
+                    exec_argv
+                        .iter()
+                        .any(|arg| is_bootstrap_flag(arg.to_utf8().slice()))
                 });
         if needs_pre_execution {
             // The C++ side catches and reports any JS exception thrown while
@@ -3288,6 +3284,59 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
 // Options / IPC / per-thread printer — supporting types referenced by the
 // impl below.
 // ──────────────────────────────────────────────────────────────────────────
+
+/// The `VirtualMachine` a `WebWorker` thread built with
+/// [`VirtualMachine::init_worker`] and owns: the thread's per-thread VM
+/// (`VirtualMachine::get()` on that thread) until
+/// [`teardown_and_free`](Self::teardown_and_free) destroys it.
+#[must_use = "the VM leaks unless `teardown_and_free` consumes this"]
+pub(crate) struct WorkerVm(NonNull<VirtualMachine>);
+
+impl Drop for WorkerVm {
+    fn drop(&mut self) {
+        debug_assert!(false, "WorkerVm dropped without teardown_and_free()");
+    }
+}
+
+impl core::ops::Deref for WorkerVm {
+    type Target = VirtualMachine;
+    #[inline]
+    fn deref(&self) -> &VirtualMachine {
+        // SAFETY: the allocation `init` returned; live until `teardown_and_free` consumes `self`.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl WorkerVm {
+    /// [`VirtualMachine::teardown`] (stop → forbid script → wait → ~VM → loops
+    /// → destroy), then free the VM's storage and clear the thread's VM slot.
+    /// Worker thread; the VM's handle is unpublished and its exit handlers ran.
+    pub(crate) fn teardown_and_free(self) {
+        let vm = core::mem::ManuallyDrop::new(self).0.as_ptr();
+        // SAFETY: this thread's VM, solely owned by `self` (no other thread
+        // holds a pointer to it — they only ever held its handle); nothing
+        // dereferences it after the dealloc.
+        unsafe {
+            VirtualMachine::teardown(vm, Teardown::Worker);
+            // `destroy()` deinits the fields; reclaim the storage `init` put on
+            // the global heap (`init_worker` always passes `log: None`, so the
+            // log box is VM-owned here).
+            drop((*vm).console.take());
+            if let Some(log) = (*vm).log.take() {
+                bun_core::heap::destroy(log.as_ptr());
+            }
+            drop((*vm).worker.take());
+            VMHolder::set_vm(None);
+            // The VM was `alloc_zeroed(Layout::<VirtualMachine>())` in `init`,
+            // NOT `Box::new` — dealloc the raw storage directly so field `Drop`s
+            // do not re-run on already-`deinit`'d state.
+            std::alloc::dealloc(
+                vm.cast::<u8>(),
+                core::alloc::Layout::new::<VirtualMachine>(),
+            );
+        }
+    }
+}
 
 /// `allocator` dropped per §Allocators (global mimalloc).
 #[derive(Default)]
@@ -4094,14 +4143,11 @@ impl VirtualMachine {
         Ok(vm)
     }
 
-    /// Note: takes `&WebWorker` (not `&mut`) — the worker thread may only
-    /// hold a shared reference to its `WebWorker` (the parent / main thread
-    /// concurrently observes it; see `web_worker.rs` worker-thread `&self`
-    /// note). All accesses on `worker` here are read-only.
+    /// Build the VM a `WebWorker` thread runs (called on that thread).
     pub(crate) fn init_worker(
-        worker: &crate::web_worker::WebWorker,
+        worker: &std::sync::Arc<crate::web_worker::WebWorker>,
         opts: Options,
-    ) -> crate::CrateResult<*mut VirtualMachine> {
+    ) -> crate::CrateResult<WorkerVm> {
         let init_opts = InitOptions {
             transform_options: opts.args,
             graph: opts.graph,
@@ -4113,7 +4159,7 @@ impl VirtualMachine {
             is_main_thread: false,
             // The global is created with the worker's messaging proxy, context id
             // and `mini` so the C++ ZigGlobalObject is born with its options wired.
-            worker_ptr: worker.messaging_proxy(),
+            worker_ptr: worker.messaging_proxy().as_mut_ptr().cast(),
             context_id: Some(worker.execution_context_id() as i32),
             mini_mode: worker.mini(),
             ..Default::default()
@@ -4121,10 +4167,9 @@ impl VirtualMachine {
         // Route through
         // [`init`] (which already wires console / event-loop / global / jsc_vm
         // / RuntimeHooks) and then patch the worker-specific fields.
-        let vm = Self::init(init_opts)?;
-        // SAFETY: `vm` is the unique live VM on this thread.
-        let vm_ref = unsafe { &mut *vm };
-        vm_ref.worker = Some(std::ptr::from_ref::<crate::web_worker::WebWorker>(worker).cast());
+        let vm = WorkerVm(NonNull::new(Self::init(init_opts)?).expect("VirtualMachine::init"));
+        let vm_ref = vm.as_mut();
+        vm_ref.worker = Some(std::sync::Arc::clone(worker));
         if worker.arm_test_gate() {
             vm_ref.handle.arm_test_gate();
         }
@@ -4167,7 +4212,7 @@ impl VirtualMachine {
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
         // `console` is the opaque round-trip pointer C++ stores into the new global.
-        let new_global = BakeCreateProdGlobal(vm_ref.console.cast());
+        let new_global = BakeCreateProdGlobal(vm_ref.console_cpp_ptr());
         vm_ref.global = new_global;
         VMHolder::set_cached_global_object(Some(new_global));
         vm_ref.regular_event_loop.global = NonNull::new(new_global);
@@ -5209,7 +5254,7 @@ impl VirtualMachine {
         // `console` is the live per-VM ConsoleObject.
         let new_global: *mut JSGlobalObject = JSGlobalObject::create_for_test_isolation(
             JSGlobalObject::opaque_ref(old_global),
-            self.console.cast(),
+            self.console_cpp_ptr(),
         );
         self.global = new_global;
         VMHolder::set_cached_global_object(Some(new_global));
@@ -6543,11 +6588,9 @@ impl VirtualMachine {
         for &err in &errors_to_append {
             // Circular-ref guard for cause chains.
             if formatter.map_node.is_none() {
-                let mut node = NonNull::new(console_object::formatter::visited::Pool::get_node())
-                    .expect("ObjectPool::get_node always returns a valid heap node");
-                let data = console_object::formatter::visited::node_data_mut(&mut node);
-                data.clear();
-                formatter.map = core::mem::take(data);
+                let mut node = console_object::formatter::visited::Pool::get();
+                node.clear();
+                formatter.map = core::mem::take(&mut *node);
                 formatter.map_node = Some(node);
             }
 

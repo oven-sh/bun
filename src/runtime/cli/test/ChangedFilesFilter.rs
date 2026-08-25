@@ -367,16 +367,13 @@ pub(crate) fn init_watch_trigger() {
             fresh
         };
 
-        // Process-lifetime singletons — store in the CLI arena so the borrows
-        // are legitimately `&'static`.
+        // Process-lifetime: the path lives in the CLI arena so the borrow is
+        // legitimately `&'static`. Both are set once here, before the watcher
+        // thread starts; see doc on `hot_reloader::WATCH_CHANGED_PATHS`.
         let arena = crate::cli::cli_arena();
-        let set: &'static mut StringSet = arena.alloc(StringSet::new());
-        // Written once on the main thread before the watcher thread starts;
-        // after that only the watcher thread touches these. See doc on
-        // `hot_reloader::WATCH_CHANGED_PATHS`.
         let _ = jsc::hot_reloader::WATCH_CHANGED_TRIGGER_FILE.set(arena.alloc(path).as_zstr());
         let _ = jsc::hot_reloader::WATCH_CHANGED_PATHS
-            .set(jsc::hot_reloader::WatchChangedPaths::new(set));
+            .set(jsc::hot_reloader::WatchChangedPaths::new(StringSet::new()));
     }
 }
 

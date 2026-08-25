@@ -467,13 +467,13 @@ ${emitNoMangle(e.abi, e.symbol, "g: &JSGlobalObject", "JSValue", body)}`;
     case "rust": {
       // `extern "Rust"` link-time hook: forward the safe signature verbatim
       // (no pointer rewriting; `extern "Rust"` ABI == native Rust ABI).
-      // Reference params/returns are rejected — `extern "Rust" fn` items need
-      // explicit lifetimes for borrowed types and the generator does not
-      // synthesise them. Use raw pointers in the impl signature instead.
+      // Reference params need an explicit lifetime (`extern "Rust" fn` items
+      // cannot elide them and the generator does not synthesise one);
+      // reference returns are rejected.
       for (const p of e.params)
-        if (p.ty.startsWith("&"))
+        if (p.ty.startsWith("&") && !/^&'/.test(p.ty))
           throw new Error(
-            `${loc}: HOST_EXPORT(${e.symbol}, rust) param \`${p.raw}\` is a reference; use a raw pointer`,
+            `${loc}: HOST_EXPORT(${e.symbol}, rust) param \`${p.raw}\` is a reference without an explicit lifetime`,
           );
       if (e.ret.startsWith("&"))
         throw new Error(

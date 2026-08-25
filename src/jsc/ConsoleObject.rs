@@ -111,16 +111,14 @@ impl core::fmt::Display for ConsoleObject {
 }
 
 impl ConsoleObject {
-    /// `adapt_to_new_api(&mut self.stderr_buffer)` captures a raw pointer into
-    /// the buffer field, so the struct is self-referential once initialized:
-    /// the address of `*out` MUST be stable for the value's entire lifetime —
-    /// moving it afterwards leaves the writer adapters dangling.
-    pub(crate) fn init_in_place(
-        out: &mut core::mem::MaybeUninit<ConsoleObject>,
+    /// Boxed because the writer adapters point into the buffer fields: the
+    /// value is self-referential and must stay at this address (the VM keeps
+    /// the box for its whole life and never moves out of it).
+    pub(crate) fn new(
         error_writer: Output::StreamType,
         writer: Output::StreamType,
-    ) -> &mut ConsoleObject {
-        let out = out.write(ConsoleObject {
+    ) -> Box<ConsoleObject> {
+        let mut out = Box::new(ConsoleObject {
             stderr_buffer: [0; 4096],
             stdout_buffer: [0; 4096],
             error_writer_backing: Output::QuietWriterAdapter::uninit(),
@@ -129,20 +127,21 @@ impl ConsoleObject {
             counts: Counter::default(),
             _pin: core::marker::PhantomPinned,
         });
-        let p: *mut ConsoleObject = out;
-        // SAFETY: `out` is now fully initialized at its final address; the
-        // adapters store raw pointers into `out.stderr_buffer` /
-        // `out.stdout_buffer`, which remain valid for `out`'s lifetime
-        // *provided the caller never moves it* (see fn doc).
-        unsafe {
-            (*p).error_writer_backing = error_writer
-                .quiet_writer()
-                .adapt_to_new_api(&mut (*p).stderr_buffer);
-            (*p).writer_backing = writer
-                .quiet_writer()
-                .adapt_to_new_api(&mut (*p).stdout_buffer);
-        }
+        let this = &mut *out;
+        this.error_writer_backing = error_writer
+            .quiet_writer()
+            .adapt_to_new_api(&mut this.stderr_buffer);
+        this.writer_backing = writer
+            .quiet_writer()
+            .adapt_to_new_api(&mut this.stdout_buffer);
         out
+    }
+
+    /// The `void*` handed to the C++ `ConsoleObject` client, which passes it
+    /// back (unused) as the first argument of every `Bun__ConsoleObject__*`.
+    #[inline]
+    pub(crate) fn as_cpp_ptr(&mut self) -> *mut c_void {
+        core::ptr::from_mut(self).cast()
     }
 
     /// Returns the buffered stderr writer interface.
@@ -240,34 +239,23 @@ impl MessageType {
 
 use bun_threading::Mutex;
 
-/// `globalThis.bunVM().console` — `VirtualMachine.console` is typed
-/// `*mut c_void` (erased so `virtual_machine.rs` need not name this module's
-/// type). This is the single re-entry point that casts it back; every body
-/// below goes through it instead of touching the field directly.
+/// `globalThis.bunVM().console`, for one short read or update. Every
+/// `Bun__ConsoleObject__*` entry point is a top-level JS-thread host call.
 #[inline]
-fn vm_console(global: &JSGlobalObject) -> *mut ConsoleObject {
-    // SAFETY: `VirtualMachine.console` is initialized once at VM construction
-    // (see `init` above — written into stable boxed storage) and lives for the
-    // VM's lifetime; the C++ side never calls into `Bun__ConsoleObject__*`
-    // before that. Returned as a raw pointer (not `&'static mut`) so callers
-    // dereference at each use site without holding overlapping `&mut`
-    // references.
-    global.bun_vm().as_mut().console.cast::<ConsoleObject>()
+fn with_console<R>(global: &JSGlobalObject, f: impl FnOnce(&mut ConsoleObject) -> R) -> R {
+    f(global.bun_vm().as_mut().console_mut())
 }
 
-/// `&mut ConsoleObject` accessor for the set-once `VirtualMachine.console`
-/// box. Consolidates the open-coded `&mut *vm_console(global)` deref at the
-/// `Bun__ConsoleObject__*` FFI entry points (each is a top-level JS-thread
-/// host call, so the `&mut` is exclusive for the duration). Callers that need
-/// to interleave borrows across a deferred guard (`message_with_type_and_level_`)
-/// keep using the raw [`vm_console`] pointer instead.
+/// The VM console's buffered stdout/stderr writer. Formatting through it runs
+/// user JS, which may re-enter `console.*` and write through the same stream.
 #[inline]
-unsafe fn vm_console_mut<'a>(global: &JSGlobalObject) -> &'a mut ConsoleObject {
-    // SAFETY: see [`vm_console`] — `VirtualMachine.console` is initialized once
-    // at VM construction to a boxed `ConsoleObject` that lives for the VM's
-    // lifetime; the C++ side never calls into `Bun__ConsoleObject__*` before
-    // that. Single-JS-thread invariant ⇒ the returned `&mut` is exclusive.
-    unsafe { &mut *vm_console(global) }
+fn console_writer(global: &JSGlobalObject, stderr: bool) -> &mut bun_core::io::Writer {
+    let console = global.bun_vm().as_mut().console_mut();
+    if stderr {
+        console.error_writer()
+    } else {
+        console.writer()
+    }
 }
 
 static STDERR_MUTEX: Mutex = Mutex::new();
@@ -349,16 +337,13 @@ impl Drop for FlushOnDrop<'_> {
 }
 
 /// <https://console.spec.whatwg.org/#formatter>
-#[crate::host_call]
-pub extern "C" fn message_with_type_and_level(
-    ctype: *mut ConsoleObject,
+pub fn message_with_type_and_level(
     message_type: MessageType,
     level: MessageLevel,
     global: &JSGlobalObject,
-    vals: *const JSValue,
-    len: usize,
+    vals: &[JSValue],
 ) {
-    if let Err(err) = message_with_type_and_level_(ctype, message_type, level, global, vals, len) {
+    if let Err(err) = message_with_type_and_level_(message_type, level, global, vals) {
         // The exception is already set on the VM (`JsError::Thrown`); for OOM
         // make sure something is pending. Mirrors `host_fn::void_from_js_error`.
         if matches!(err, jsc::JsError::OutOfMemory) {
@@ -369,26 +354,18 @@ pub extern "C" fn message_with_type_and_level(
 }
 
 fn message_with_type_and_level_(
-    _ctype: *mut ConsoleObject,
     message_type: MessageType,
     level: MessageLevel,
     global: &JSGlobalObject,
-    vals: *const JSValue,
-    len: usize,
+    vals_slice: &[JSValue],
 ) -> JsResult<()> {
-    let console: *mut ConsoleObject = vm_console(global);
+    let len = vals_slice.len();
     // `defer console.default_indent +|= (message_type == StartGroup) as u16;`
-    // Capture the raw pointer (Copy) by `move` so no borrow of the local is
-    // held across the body; dereference only at scope-exit.
     let is_start_group = message_type == MessageType::StartGroup;
-    let _indent_guard = scopeguard::guard(console, move |console| {
-        // SAFETY: see `vm_console` — points at the live boxed
-        // `ConsoleObject` for this VM; JS-thread-only.
-        unsafe {
-            (*console).default_indent = (*console)
-                .default_indent
-                .saturating_add(is_start_group as u16);
-        }
+    let _indent_guard = scopeguard::guard(global, move |global| {
+        with_console(global, |console| {
+            console.default_indent = console.default_indent.saturating_add(is_start_group as u16)
+        });
     });
 
     if message_type == MessageType::StartGroup && len == 0 {
@@ -397,11 +374,9 @@ fn message_with_type_and_level_(
     }
 
     if message_type == MessageType::EndGroup {
-        // SAFETY: set-once `VirtualMachine.console` box — no other
-        // borrow of the console is live yet; the deferred `_indent_guard`
-        // captured only the raw pointer.
-        let c = unsafe { vm_console_mut(global) };
-        c.default_indent = c.default_indent.saturating_sub(1);
+        with_console(global, |c| {
+            c.default_indent = c.default_indent.saturating_sub(1)
+        });
         return Ok(());
     }
 
@@ -422,10 +397,7 @@ fn message_with_type_and_level_(
         } else {
             "Assertion failed\n"
         };
-        // SAFETY: no other borrow of the console is live in this
-        // early-return arm (the deferred `_indent_guard` only holds the raw
-        // pointer, not a reference).
-        let ew = unsafe { vm_console_mut(global) }.error_writer();
+        let ew = console_writer(global, true);
         let _ = ew.write_all(text.as_bytes());
         let _ = ew.flush();
         return Ok(());
@@ -439,23 +411,13 @@ fn message_with_type_and_level_(
 
     // Snapshot before borrowing the writer; `default_indent` is not mutated
     // again until the deferred `_indent_guard` runs on scope exit, so the two
-    // later reads (FormatOptions / TablePrinter) can use this cached copy
-    // instead of re-dereferencing the raw `console` pointer.
-    // SAFETY: see [`vm_console`] — single-JS-thread; no other `&mut` is live.
-    let default_indent = unsafe { vm_console_mut(global) }.default_indent;
+    // later reads (FormatOptions / TablePrinter) use this cached copy.
+    let default_indent = with_console(global, |c| c.default_indent);
 
-    // SAFETY: see [`vm_console`] — `console` points at the live boxed
-    // `ConsoleObject` for this VM; JS-thread-only. Kept as a raw deref (not
-    // `vm_console_mut`) so the resulting `writer` borrow does not pin a
-    // long-lived `&mut ConsoleObject` across the re-derive in the empty-`Log`
-    // arm below.
-    let raw_writer: &mut bun_core::io::Writer = unsafe {
-        if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
-            (*console).error_writer()
-        } else {
-            (*console).writer()
-        }
-    };
+    let raw_writer: &mut bun_core::io::Writer = console_writer(
+        global,
+        matches!(level, MessageLevel::Warning | MessageLevel::Error),
+    );
     // `bun_core::io::Writer: bun_io::Write` — `&mut Writer` unsize-coerces directly.
     let writer: &mut dyn bun_io::Write = raw_writer;
 
@@ -486,9 +448,6 @@ fn message_with_type_and_level_(
         },
         ..FormatOptions::default()
     };
-
-    // SAFETY: caller (JSC C++) guarantees `vals` points to `len` JSValues.
-    let vals_slice = unsafe { bun_core::ffi::slice(vals, len) };
 
     if message_type == MessageType::Table && len >= 1 {
         // if value is not an object/array/iterable, don't print a table and just print it
@@ -541,10 +500,9 @@ fn message_with_type_and_level_(
             print_options,
         )?;
     } else if message_type == MessageType::Log {
-        // SAFETY: see [`vm_console`]. `writer` (above) is dead in this arm —
-        // the only later uses are in the mutually-exclusive `Trace` block, and
-        // `message_type == Log` here.
-        let w = unsafe { (*console).writer() };
+        // `writer` (above) is dead in this arm — the only later uses are in
+        // the mutually-exclusive `Trace` block, and `message_type == Log` here.
+        let w = console_writer(global, false);
         let _ = w.write_all(b"\n");
         let _ = w.flush();
     } else if message_type != MessageType::Trace {
@@ -900,7 +858,7 @@ impl<'a> TablePrinter<'a> {
         let mut rows: Vec<CollectedRow> = Vec::new();
         {
             if self.is_iterable {
-                struct Ctx<'c, 'a> {
+                struct Ctx<'c, 'a, const C: bool> {
                     this: &'c mut TablePrinter<'a>,
                     cell_text: &'c mut Vec<u8>,
                     columns: &'c mut Vec<Column>,
@@ -910,7 +868,7 @@ impl<'a> TablePrinter<'a> {
                 }
                 // Capture before constructing `ctx` (which mutably borrows `*self`).
                 let tabular_data = self.tabular_data;
-                let mut ctx = Ctx {
+                let mut ctx = Ctx::<'_, '_, ENABLE_ANSI_COLORS> {
                     this: self,
                     cell_text: &mut cell_text,
                     columns: &mut columns,
@@ -918,36 +876,27 @@ impl<'a> TablePrinter<'a> {
                     idx: 0,
                     err: None,
                 };
-                extern "C" fn callback<const C: bool>(
-                    _: *mut jsc::VM,
-                    _: &JSGlobalObject,
-                    ctx: *mut c_void,
-                    value: JSValue,
-                ) {
-                    // SAFETY: ctx points to the stack `Ctx` above.
-                    let ctx = unsafe { bun_ptr::callback_ctx::<Ctx<'_, '_>>(ctx) };
-                    // Once a cell failed, a JS exception may be pending (or
-                    // the VM terminating); don't re-enter user code for the
-                    // remaining elements.
-                    if ctx.err.is_some() {
-                        return;
+                impl<const C: bool> jsc::ForEachContext for Ctx<'_, '_, C> {
+                    fn on_value(&mut self, _: &JSGlobalObject, value: JSValue) {
+                        // Once a cell failed, a JS exception may be pending (or
+                        // the VM terminating); don't re-enter user code for the
+                        // remaining elements.
+                        if self.err.is_some() {
+                            return;
+                        }
+                        match self.this.collect_row::<C>(
+                            self.cell_text,
+                            self.columns,
+                            RowKey::Num(self.idx),
+                            value,
+                        ) {
+                            Ok(row) => self.rows.push(row),
+                            Err(err) => self.err = Some(err),
+                        }
+                        self.idx += 1;
                     }
-                    match ctx.this.collect_row::<C>(
-                        ctx.cell_text,
-                        ctx.columns,
-                        RowKey::Num(ctx.idx),
-                        value,
-                    ) {
-                        Ok(row) => ctx.rows.push(row),
-                        Err(err) => ctx.err = Some(err),
-                    }
-                    ctx.idx += 1;
                 }
-                tabular_data.for_each_with_context(
-                    global_object,
-                    (&raw mut ctx).cast::<c_void>(),
-                    callback::<ENABLE_ANSI_COLORS>,
-                )?;
+                tabular_data.for_each_ctx(global_object, &mut ctx)?;
                 if let Some(err) = ctx.err {
                     return Err(err);
                 }
@@ -1071,59 +1020,8 @@ impl<'a> TablePrinter<'a> {
 // writeTrace
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Adapter: erase a `&mut dyn bun_io::Write` behind the `bun_core::io::Writer`
-/// vtable header so it can be handed to `VirtualMachine::print_stack_trace` /
-/// `print_errorlike_object`, which take the concrete `io::Writer` type.
-///
-/// `bun_core::io::Writer` is the first `#[repr(C)]` field, so the vtable thunks
-/// recover `&mut Self` from the `*mut io::Writer` they receive (same pattern as
-/// `Output::QuietWriterAdapter::new_interface`).
-#[repr(C)]
-struct DynWriteAdapter<'a> {
-    head: bun_core::io::Writer,
-    inner: &'a mut dyn bun_io::Write,
-}
-
-impl<'a> DynWriteAdapter<'a> {
-    fn new(inner: &'a mut dyn bun_io::Write) -> Self {
-        Self {
-            head: bun_core::io::Writer {
-                write_all: Self::thunk_write_all,
-                flush: Self::thunk_flush,
-            },
-            inner,
-        }
-    }
-
-    /// Reborrow as the `io::Writer` head.
-    #[inline]
-    fn interface(&mut self) -> &mut bun_core::io::Writer {
-        // SAFETY: `head` is the first `#[repr(C)]` field, so `&mut self.head`
-        // and `&mut *self as *mut io::Writer` are the same address; the thunks
-        // below cast back to `*mut Self`.
-        &mut self.head
-    }
-
-    fn thunk_write_all(w: *mut bun_core::io::Writer, bytes: &[u8]) -> Result<(), bun_core::Error> {
-        // SAFETY: only reachable via the `io::Writer` vtable installed in
-        // `Self::new`, which always passes `&mut self.head` (first repr(C)
-        // field) as `w`; safe-fn coerces to the unsafe-fn-ptr slot type.
-        let this = unsafe { &mut *w.cast::<Self>() };
-        this.inner.write_all(bytes)
-    }
-
-    fn thunk_flush(w: *mut bun_core::io::Writer) -> Result<(), bun_core::Error> {
-        // SAFETY: only reachable via the `io::Writer` vtable installed in
-        // `Self::new`, which always passes `&mut self.head` (first repr(C)
-        // field) as `w`; safe-fn coerces to the unsafe-fn-ptr slot type.
-        let this = unsafe { &mut *w.cast::<Self>() };
-        this.inner.flush()
-    }
-}
-
 pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
     let mut holder = crate::zig_exception::Holder::init();
-    // SAFETY: per-thread VM; `console.trace()` only runs on the JS thread.
     let vm = VirtualMachine::get().as_mut();
 
     let mut source_code_slice: Option<bun_core::Utf8Bytes> = None;
@@ -1144,7 +1042,7 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
     );
     holder.need_to_clear_parser_arena_on_deinit = need_to_clear;
 
-    let mut adapter = DynWriteAdapter::new(writer);
+    let mut adapter = bun_io::IoWriterAdapter::new(writer);
     let _ = VirtualMachine::print_stack_trace(
         adapter.interface(),
         &holder.zig_exception().stack,
@@ -1479,99 +1377,30 @@ pub use formatter::{Formatter, Tag, TagOptions, TagPayload, TagResult, visited};
 pub mod formatter {
     use super::*;
 
-    /// RAII: write `prev` back through `place` on drop. Holds a raw `*mut` so the body of the
-    /// scope can freely take `&mut self` without aliasing the borrow.
-    ///
-    /// NOTE(aliasing): the `addr_of_mut!(self.field)` → body uses `&mut self`
-    /// → guard derefs raw pointer pattern is sound under Tree Borrows but
-    /// pops the raw pointer's tag under Stacked Borrows. Miri runs of this
-    /// module require `-Zmiri-tree-borrows`. Applies to `Decrement` below and
-    /// the `scopeguard::defer!` raw-pointer captures throughout `print_as`.
-    pub(super) struct Restore<T: Copy> {
-        place: *mut T,
-        prev: T,
+    /// `&mut Formatter` for a scope that changed some formatter state; `undo`
+    /// puts it back when the scope ends, however it ends.
+    pub(super) struct Scoped<'f, 'a, U: FnMut(&mut Formatter<'a>)> {
+        fmt: &'f mut Formatter<'a>,
+        undo: U,
     }
-    impl<T: Copy> Drop for Restore<T> {
+    impl<'a, U: FnMut(&mut Formatter<'a>)> core::ops::Deref for Scoped<'_, 'a, U> {
+        type Target = Formatter<'a>;
+        #[inline]
+        fn deref(&self) -> &Formatter<'a> {
+            self.fmt
+        }
+    }
+    impl<'a, U: FnMut(&mut Formatter<'a>)> core::ops::DerefMut for Scoped<'_, 'a, U> {
+        #[inline]
+        fn deref_mut(&mut self) -> &mut Formatter<'a> {
+            self.fmt
+        }
+    }
+    impl<'a, U: FnMut(&mut Formatter<'a>)> Drop for Scoped<'_, 'a, U> {
         #[inline]
         fn drop(&mut self) {
-            // SAFETY: `place` was taken via `addr_of_mut!` on a field of a
-            // value that outlives this guard; no other borrow is live at drop.
-            unsafe { *self.place = self.prev };
+            (self.undo)(self.fmt);
         }
-    }
-
-    /// `saturating_sub(1)` for the integer field types `Decrement` is used on.
-    pub(super) trait SaturatingDec: Copy {
-        fn saturating_dec(self) -> Self;
-    }
-    impl SaturatingDec for u16 {
-        #[inline]
-        fn saturating_dec(self) -> Self {
-            self.saturating_sub(1)
-        }
-    }
-    impl SaturatingDec for u32 {
-        #[inline]
-        fn saturating_dec(self) -> Self {
-            self.saturating_sub(1)
-        }
-    }
-
-    /// RAII: saturating-decrement `*place` on drop. Holds a
-    /// raw `*mut` so the body can freely take `&mut self`.
-    pub(super) struct Decrement<T: SaturatingDec> {
-        place: *mut T,
-    }
-    impl<T: SaturatingDec> Drop for Decrement<T> {
-        #[inline]
-        fn drop(&mut self) {
-            // SAFETY: `place` was taken via `addr_of_mut!` on a field of a
-            // value that outlives this guard; no other borrow is live at drop.
-            unsafe { *self.place = (*self.place).saturating_dec() };
-        }
-    }
-
-    /// RAII: `map.remove(value)` on drop iff `*armed`. Holds
-    /// raw pointers so the body can freely take `&mut self`; smaller than the
-    /// equivalent `scopeguard::defer!` closure under ASAN stack redzones.
-    pub(super) struct VisitedRemove {
-        map: *mut visited::Map,
-        armed: *const bool,
-        value: JSValue,
-    }
-    impl Drop for VisitedRemove {
-        #[inline]
-        fn drop(&mut self) {
-            // SAFETY: `map`/`armed` were taken via `addr_of!` on locals that
-            // outlive this guard; no other borrow is live at drop.
-            unsafe {
-                if *self.armed {
-                    let _ = (*self.map).remove(&self.value);
-                }
-            }
-        }
-    }
-
-    /// Restore a field to `prev` at scope exit without holding a live borrow
-    /// on `self` for the body of the scope. The guard reads at scope-exit
-    /// time and never aliases: it captures a raw `*mut` to the field and
-    /// writes through it on drop. This lets the body freely take `&mut self`.
-    macro_rules! defer_restore {
-        ($place:expr, $prev:expr) => {
-            Restore {
-                place: core::ptr::addr_of_mut!($place),
-                prev: $prev,
-            }
-        };
-    }
-
-    /// Saturating-decrement a field at scope exit without holding a live borrow.
-    macro_rules! defer_decrement {
-        ($place:expr) => {
-            Decrement {
-                place: core::ptr::addr_of_mut!($place),
-            }
-        };
     }
 
     pub struct Formatter<'a> {
@@ -1584,10 +1413,9 @@ pub mod formatter {
         pub(crate) remaining_values: bun_ptr::RawSlice<JSValue>,
         pub map: visited::Map,
         /// Pooled backing for `map`. `None` until the first cell that can have
-        /// circular refs is formatted; `Drop` returns it to `visited::Pool`.
-        /// Raw pointer (not `Box`) because `visited::Pool` owns the
-        /// `heap::alloc`/`from_raw` lifecycle.
-        pub(crate) map_node: Option<core::ptr::NonNull<visited::PoolNode>>,
+        /// circular refs is formatted; `Drop` moves `map` back into it and the
+        /// guard returns it to `visited::Pool`.
+        pub(crate) map_node: Option<visited::PoolGuard>,
         pub(crate) hide_native: bool,
         pub(crate) indent: u32,
         pub depth: u16,
@@ -1692,28 +1520,53 @@ pub mod formatter {
             let s = self.remaining_values;
             self.remaining_values = bun_ptr::RawSlice::new(&s.slice()[1..]);
         }
+
+        #[inline]
+        pub(super) fn scoped<U: FnMut(&mut Formatter<'a>)>(
+            &mut self,
+            undo: U,
+        ) -> Scoped<'_, 'a, U> {
+            Scoped { fmt: self, undo }
+        }
+
+        /// `indent`/`depth` go back down by one when the scope ends.
+        #[inline]
+        pub(super) fn indented(&mut self) -> Scoped<'_, 'a, impl FnMut(&mut Formatter<'a>)> {
+            self.scoped(|f| {
+                f.indent = f.indent.saturating_sub(1);
+                f.depth = f.depth.saturating_sub(1);
+            })
+        }
+
+        /// `quote_strings = true` until the scope ends.
+        #[inline]
+        pub(super) fn quoting_strings(&mut self) -> Scoped<'_, 'a, impl FnMut(&mut Formatter<'a>)> {
+            let prev = self.quote_strings;
+            self.quote_strings = true;
+            self.scoped(move |f| f.quote_strings = prev)
+        }
+
+        /// `quote_keys = true` until the scope ends.
+        #[inline]
+        pub(super) fn quoting_keys(&mut self) -> Scoped<'_, 'a, impl FnMut(&mut Formatter<'a>)> {
+            let prev = self.quote_keys;
+            self.quote_keys = true;
+            self.scoped(move |f| f.quote_keys = prev)
+        }
     }
 
     impl Drop for Formatter<'_> {
         fn drop(&mut self) {
             if let Some(mut node) = self.map_node.take() {
                 // Move the working map back into the pooled node, shrink if it
-                // ballooned, then return the node to the thread-local pool.
-                let map = core::mem::take(&mut self.map);
-                // `node_data_mut` is safe: `Map::INIT` is `Some`, so the
-                // pooled slot already holds an (empty, post-`take`) `Map`;
-                // assigning over it drops that empty value and moves `map` in.
-                let data = visited::node_data_mut(&mut node);
-                *data = map;
-                if data.capacity() > 512 {
-                    data.deinit();
+                // ballooned; dropping the guard returns the node to the
+                // thread-local pool.
+                *node = core::mem::take(&mut self.map);
+                if node.capacity() > 512 {
+                    node.deinit();
                 } else {
-                    data.clear();
+                    node.clear();
                 }
-                // SAFETY: `node` was obtained from `Pool::get_node()` and is
-                // exclusively owned by this formatter; `Map::INIT` is `Some`,
-                // so `data` is initialized. Ownership returns to the pool.
-                unsafe { visited::Pool::release(node.as_ptr()) };
             }
         }
     }
@@ -1809,22 +1662,8 @@ pub mod formatter {
 
         // Thread-local free list, capped at 16 nodes.
         bun_collections::object_pool!(pub Pool: Map, threadsafe, 16);
-        pub type PoolNode = bun_collections::pool::Node<Map>;
-
-        /// Safe `&mut Map` accessor for a pooled node. `Map::INIT` is `Some`,
-        /// so every node returned by [`Pool::get_node`] carries an initialized
-        /// `data` payload, and the caller exclusively owns the node until
-        /// [`Pool::release`]. Centralises the `NonNull::as_mut()` +
-        /// `assume_init_mut()` pair so the four call sites in this file (and
-        /// the cause-chain guard in `VirtualMachine::print_error_instance`)
-        /// don't each open-code two `unsafe` operations.
-        #[inline]
-        pub(crate) fn node_data_mut(node: &mut core::ptr::NonNull<PoolNode>) -> &mut Map {
-            // SAFETY: `Map::INIT` is `Some`, so `data` is initialized for
-            // every node from `Pool::get_node()`; the caller owns `node`
-            // exclusively until `Pool::release`, so forming `&mut` is sound.
-            unsafe { node.as_mut().data.assume_init_mut() }
-        }
+        /// A node checked out of [`Pool`]; returned to it on drop.
+        pub type PoolGuard = bun_collections::pool::PoolGuard<'static, Map>;
     }
 
     // ───────────────────────────────────────────────────────────────────────
@@ -2763,20 +2602,11 @@ pub mod formatter {
         pub(crate) count: usize,
     }
 
-    impl<'a, 'b, const C: bool, const IS_ITERATOR: bool, const SINGLE_LINE: bool>
-        MapIteratorCtx<'a, 'b, C, IS_ITERATOR, SINGLE_LINE>
+    impl<const C: bool, const IS_ITERATOR: bool, const SINGLE_LINE: bool> jsc::ForEachContext
+        for MapIteratorCtx<'_, '_, C, IS_ITERATOR, SINGLE_LINE>
     {
-        pub(crate) extern "C" fn for_each(
-            _: *mut jsc::VM,
-            global_object: &JSGlobalObject,
-            ctx: *mut c_void,
-            next_value: JSValue,
-        ) {
-            // SAFETY: ctx points to the stack-allocated `Self` passed by the caller via the C forEach callback.
-            let Some(ctx) = (unsafe { ctx.cast::<Self>().as_mut() }) else {
-                return;
-            };
-            let this = ctx;
+        fn on_value(&mut self, global_object: &JSGlobalObject, next_value: JSValue) {
+            let this = self;
             if this.formatter.failed {
                 return;
             }
@@ -2862,17 +2692,11 @@ pub mod formatter {
         pub(crate) is_first: bool,
     }
 
-    impl<'a, 'b, const C: bool, const SINGLE_LINE: bool> SetIteratorCtx<'a, 'b, C, SINGLE_LINE> {
-        pub(crate) extern "C" fn for_each(
-            _: *mut jsc::VM,
-            global_object: &JSGlobalObject,
-            ctx: *mut c_void,
-            next_value: JSValue,
-        ) {
-            // SAFETY: ctx points to the stack-allocated `Self` passed by the caller via the C forEach callback.
-            let Some(this) = (unsafe { ctx.cast::<Self>().as_mut() }) else {
-                return;
-            };
+    impl<const C: bool, const SINGLE_LINE: bool> jsc::ForEachContext
+        for SetIteratorCtx<'_, '_, C, SINGLE_LINE>
+    {
+        fn on_value(&mut self, global_object: &JSGlobalObject, next_value: JSValue) {
+            let this = self;
             if this.formatter.failed {
                 return;
             }
@@ -3050,13 +2874,11 @@ pub mod formatter {
         fn for_each_prelude(
             ctx: &mut Self,
             global_this: &JSGlobalObject,
-            key: *mut EncodedSlice,
+            key: &EncodedSlice,
             value: JSValue,
             is_symbol: bool,
             is_private_symbol: bool,
         ) -> Option<TagResult> {
-            // SAFETY: caller passes a valid `*EncodedSlice`.
-            let key = unsafe { &*key };
             if key.eq_ascii(b"constructor") {
                 return None;
             }
@@ -3126,20 +2948,18 @@ pub mod formatter {
             }
             Some(tag)
         }
+    }
 
-        pub(crate) extern "C" fn for_each(
+    impl<const C: bool> jsc::ForEachPropertyContext for PropertyIteratorCtx<'_, '_, C> {
+        fn on_property(
+            &mut self,
             global_this: &JSGlobalObject,
-            ctx_ptr: *mut c_void,
-            key: *mut EncodedSlice,
+            key: &EncodedSlice,
             value: JSValue,
             is_symbol: bool,
             is_private_symbol: bool,
         ) {
-            // SAFETY: ctx_ptr points to the stack-allocated `Self` passed by the caller via the C forEach callback.
-            let Some(ctx) = (unsafe { ctx_ptr.cast::<Self>().as_mut() }) else {
-                return;
-            };
-
+            let ctx = self;
             let Some(tag) =
                 Self::for_each_prelude(ctx, global_this, key, value, is_symbol, is_private_symbol)
             else {
@@ -3232,11 +3052,9 @@ pub mod formatter {
             }
 
             if self.map_node.is_none() {
-                let mut node = core::ptr::NonNull::new(visited::Pool::get_node())
-                    .expect("ObjectPool::get_node always returns a valid heap node");
-                let data = visited::node_data_mut(&mut node);
-                data.clear();
-                self.map = core::mem::take(data);
+                let mut node = visited::Pool::get();
+                node.clear();
+                self.map = core::mem::take(&mut *node);
                 self.map_node = Some(node);
             }
 
@@ -3275,19 +3093,10 @@ pub mod formatter {
                 return Ok(());
             }
 
-            // The body mutates both `self` and `remove_before_recurse`, so
-            // capture raw pointers and read the *current* `remove_before_recurse`
-            // at scope-exit time.
-            let _visited = VisitedRemove {
-                map: &raw mut self.map,
-                armed: &raw const remove_before_recurse,
-                value,
-            };
-
             // Each arm is hoisted to its own `#[inline(never)]` helper so the
             // `print_as` frame stays small enough to recurse 512 levels under
             // debug/ASAN before the stack-safety check fires.
-            match format {
+            let result = match format {
                 Tag::StringPossiblyFormatted => {
                     self.print_string_possibly_formatted::<ENABLE_ANSI_COLORS>(writer_, value)
                 }
@@ -3347,7 +3156,12 @@ pub mod formatter {
                 }
                 Tag::RevokedProxy => self.print_revoked_proxy::<ENABLE_ANSI_COLORS>(writer_),
                 Tag::Proxy => self.print_proxy::<ENABLE_ANSI_COLORS>(writer_, value),
+            };
+            // The arms may flip `remove_before_recurse`; act on its final value.
+            if remove_before_recurse {
+                let _ = self.map.remove(&value);
             }
+            result
         }
     }
 
@@ -3849,21 +3663,13 @@ pub mod formatter {
             } else {
                 false
             };
-            let map_restore_ptr: *mut visited::Map = &raw mut self.map;
-            scopeguard::defer! {
-                // SAFETY: `self.map` outlives this guard; no other borrow is
-                // live at the drop point.
-                unsafe {
-                    if was_in_map {
-                        let _ = (*map_restore_ptr).insert(value, ());
-                    }
-                }
-            }
 
-            let mut adapter = DynWriteAdapter::new(&mut *writer_);
-            // SAFETY: per-thread VM.
+            let mut adapter = bun_io::IoWriterAdapter::new(&mut *writer_);
             let vm = VirtualMachine::get().as_mut();
             vm.print_errorlike_object(value, None, None, self, adapter.interface(), C, false);
+            if was_in_map {
+                let _ = self.map.insert(value, ());
+            }
             Ok(())
         }
 
@@ -4151,11 +3957,10 @@ pub mod formatter {
         ) -> JsResult<()> {
             if let Some(func) = value.get(self.global_this, "toJSON")? {
                 let result = func.call(self.global_this, value, &[])?;
-                let prev_quote_keys = self.quote_keys;
-                self.quote_keys = true;
-                let _r = defer_restore!(self.quote_keys, prev_quote_keys);
-                let tag = Tag::get(result, self.global_this)?;
-                return self.format::<C>(tag, writer_, result, self.global_this);
+                let mut scope = self.quoting_keys();
+                let this = &mut *scope;
+                let tag = Tag::get(result, this.global_this)?;
+                return this.format::<C>(tag, writer_, result, this.global_this);
             }
 
             if writer_.write_all(b"{}").is_err() {
@@ -4252,32 +4057,36 @@ pub mod formatter {
             let mut was_good_time = self.always_newline_scope ||
                 // heuristic: more than 10, probably should have a newline before it
                 len > 10;
+            let writer_failed;
             {
                 self.indent += 1;
                 self.depth += 1;
-                let _depth = defer_decrement!(self.depth);
-                let _indent = defer_decrement!(self.indent);
+                let mut scope = self.indented();
+                let mut scope = scope.quoting_strings();
+                let this = &mut *scope;
+                let mut writer = WrappedWriter {
+                    ctx: writer_,
+                    failed: false,
+                    estimated_line_length: &mut this.estimated_line_length,
+                };
 
                 writer.add_for_new_line(2);
 
-                let prev_quote_strings = self.quote_strings;
-                self.quote_strings = true;
-                let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
                 let mut empty_start: Option<u32> = None;
                 'first: {
-                    let element = value.get_direct_index(self.global_this, 0)?;
+                    let element = value.get_direct_index(this.global_this, 0)?;
 
-                    let tag = Tag::get_advanced(element, self.global_this, tag_opts)?;
+                    let tag = Tag::get_advanced(element, this.global_this, tag_opts)?;
 
                     was_good_time = was_good_time
                         || !tag.tag.is_primitive()
-                        || writer.good_time_for_a_new_line(self.indent);
+                        || writer.good_time_for_a_new_line(this.indent);
 
-                    if !self.single_line && (self.ordered_properties || was_good_time) {
-                        writer.reset_line(self.indent);
+                    if !this.single_line && (this.ordered_properties || was_good_time) {
+                        writer.reset_line(this.indent);
                         writer.write_all(b"[");
                         writer.write_all(b"\n");
-                        writer.write_indent(self.indent);
+                        writer.write_indent(this.indent);
                         writer.add_for_new_line(1);
                     } else {
                         writer.write_all(b"[ ");
@@ -4289,11 +4098,11 @@ pub mod formatter {
                         break 'first;
                     }
 
-                    self.format::<C>(tag, writer_, element, self.global_this)?;
+                    this.format::<C>(tag, writer_, element, this.global_this)?;
                     writer = WrappedWriter {
                         ctx: writer_,
                         failed: false,
-                        estimated_line_length: &mut self.estimated_line_length,
+                        estimated_line_length: &mut this.estimated_line_length,
                     };
 
                     if tag.cell.is_string_like() && C {
@@ -4305,7 +4114,7 @@ pub mod formatter {
                 let mut nonempty_count: u32 = 1;
 
                 while (i as u64) < len {
-                    let element = value.get_direct_index(self.global_this, i)?;
+                    let element = value.get_direct_index(this.global_this, i)?;
                     if element.is_empty() {
                         if empty_start.is_none() {
                             empty_start = Some(i);
@@ -4330,7 +4139,7 @@ pub mod formatter {
                         writer.print_comma::<C>();
                         writer.write_all(b"\n"); // we want the line break to be unconditional here
                         *writer.estimated_line_length = 0;
-                        writer.write_indent(self.indent);
+                        writer.write_indent(this.indent);
                         writer.pretty::<C>(
                             "... N more items".len(),
                             format_args!(
@@ -4347,13 +4156,13 @@ pub mod formatter {
                     if let Some(empty) = empty_start {
                         if empty > 0 {
                             writer.print_comma::<C>();
-                            if !self.single_line
-                                && (self.ordered_properties
-                                    || writer.good_time_for_a_new_line(self.indent))
+                            if !this.single_line
+                                && (this.ordered_properties
+                                    || writer.good_time_for_a_new_line(this.indent))
                             {
                                 was_good_time = true;
                                 writer.write_all(b"\n");
-                                writer.write_indent(self.indent);
+                                writer.write_indent(this.indent);
                             } else {
                                 writer.space();
                             }
@@ -4380,23 +4189,23 @@ pub mod formatter {
                     }
 
                     writer.print_comma::<C>();
-                    if !self.single_line
-                        && (self.ordered_properties || writer.good_time_for_a_new_line(self.indent))
+                    if !this.single_line
+                        && (this.ordered_properties || writer.good_time_for_a_new_line(this.indent))
                     {
                         writer.write_all(b"\n");
                         was_good_time = true;
-                        writer.write_indent(self.indent);
+                        writer.write_indent(this.indent);
                     } else {
                         writer.space();
                     }
 
-                    let tag = Tag::get_advanced(element, self.global_this, tag_opts)?;
+                    let tag = Tag::get_advanced(element, this.global_this, tag_opts)?;
 
-                    self.format::<C>(tag, writer_, element, self.global_this)?;
+                    this.format::<C>(tag, writer_, element, this.global_this)?;
                     writer = WrappedWriter {
                         ctx: writer_,
                         failed: false,
-                        estimated_line_length: &mut self.estimated_line_length,
+                        estimated_line_length: &mut this.estimated_line_length,
                     };
 
                     if tag.cell.is_string_like() && C {
@@ -4408,13 +4217,13 @@ pub mod formatter {
                 if let Some(empty) = empty_start.take() {
                     if empty > 0 {
                         writer.print_comma::<C>();
-                        if !self.single_line
-                            && (self.ordered_properties
-                                || writer.good_time_for_a_new_line(self.indent))
+                        if !this.single_line
+                            && (this.ordered_properties
+                                || writer.good_time_for_a_new_line(this.indent))
                         {
                             writer.write_all(b"\n");
                             was_good_time = true;
-                            writer.write_indent(self.indent);
+                            writer.write_indent(this.indent);
                         } else {
                             writer.space();
                         }
@@ -4444,33 +4253,35 @@ pub mod formatter {
                     // Hoist field reads before `formatter: self` reborrows the
                     // whole `*self` (struct-literal field order is not eval
                     // order in the borrow checker's eyes once `self` is moved).
-                    let always_newline = !self.single_line
-                        && (self.always_newline_scope || self.good_time_for_a_new_line());
-                    let single_line = self.single_line;
-                    let global_this = self.global_this;
+                    let always_newline = !this.single_line
+                        && (this.always_newline_scope || this.good_time_for_a_new_line());
+                    let single_line = this.single_line;
+                    let global_this = this.global_this;
                     let mut iter = PropertyIteratorCtx::<C> {
-                        formatter: self,
+                        formatter: this,
                         writer: writer_,
                         always_newline,
                         single_line,
                         parent: value,
                         i: i as usize,
                     };
-                    value.for_each_property_non_indexed(
-                        global_this,
-                        (&raw mut iter).cast::<c_void>(),
-                        PropertyIteratorCtx::<C>::for_each,
-                    )?;
-                    if self.failed {
+                    value.for_each_property_non_indexed_ctx(global_this, &mut iter)?;
+                    if this.failed {
                         return Ok(());
                     }
                     writer = WrappedWriter {
                         ctx: writer_,
                         failed: false,
-                        estimated_line_length: &mut self.estimated_line_length,
+                        estimated_line_length: &mut this.estimated_line_length,
                     };
                 }
+                writer_failed = writer.failed;
             }
+            let mut writer = WrappedWriter {
+                ctx: writer_,
+                failed: writer_failed,
+                estimated_line_length: &mut self.estimated_line_length,
+            };
 
             if !self.single_line
                 && (self.ordered_properties
@@ -4520,12 +4331,10 @@ pub mod formatter {
             // so use its dedicated `from_js` FFI downcast instead of `value.as_`.
             if crate::DOMFormData::from_js(value).is_some() {
                 if let Some(to_json_function) = value.get(self.global_this, "toJSON")? {
-                    let prev_quote_keys = self.quote_keys;
-                    self.quote_keys = true;
-                    let _r = defer_restore!(self.quote_keys, prev_quote_keys);
-
-                    let result = to_json_function.call(self.global_this, value, &[])?;
-                    return self.print_as::<C>(Tag::Object, writer_, result, jsc::JSType::Object);
+                    let mut scope = self.quoting_keys();
+                    let this = &mut *scope;
+                    let result = to_json_function.call(this.global_this, value, &[])?;
+                    return this.print_as::<C>(Tag::Object, writer_, result, jsc::JSType::Object);
                 }
 
                 // this case should never happen
@@ -4569,9 +4378,8 @@ pub mod formatter {
                 .unwrap_or_else(|| JSValue::js_number_from_int32(0));
             let length = length_value.coerce_to_i32(self.global_this)?;
 
-            let prev_quote_strings = self.quote_strings;
-            self.quote_strings = true;
-            let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
+            let mut scope = self.quoting_strings();
+            let this = &mut *scope;
 
             let map_name = if value.js_type() == jsc::JSType::WeakMap {
                 "WeakMap"
@@ -4584,28 +4392,24 @@ pub mod formatter {
                 return Ok(());
             }
 
-            if self.single_line {
+            if this.single_line {
                 let _ = write!(writer_, "{map_name}({length}) {{ ");
             } else {
                 let _ = writeln!(writer_, "{map_name}({length}) {{");
             }
             {
-                self.indent += 1;
-                self.depth = self.depth.saturating_add(1);
-                let _i = defer_decrement!(self.indent);
-                let _d = defer_decrement!(self.depth);
-                let global_this = self.global_this;
-                if self.single_line {
+                this.indent += 1;
+                this.depth = this.depth.saturating_add(1);
+                let mut scope = this.indented();
+                let this = &mut *scope;
+                let global_this = this.global_this;
+                if this.single_line {
                     let mut iter = MapIteratorCtx::<C, false, true> {
-                        formatter: self,
+                        formatter: this,
                         writer: writer_,
                         count: 0,
                     };
-                    value.for_each(
-                        global_this,
-                        (&raw mut iter).cast::<c_void>(),
-                        MapIteratorCtx::<C, false, true>::for_each,
-                    )?;
+                    value.for_each_ctx(global_this, &mut iter)?;
                     let count = iter.count;
                     if iter.formatter.failed {
                         return Ok(());
@@ -4615,22 +4419,18 @@ pub mod formatter {
                     }
                 } else {
                     let mut iter = MapIteratorCtx::<C, false, false> {
-                        formatter: self,
+                        formatter: this,
                         writer: writer_,
                         count: 0,
                     };
-                    value.for_each(
-                        global_this,
-                        (&raw mut iter).cast::<c_void>(),
-                        MapIteratorCtx::<C, false, false>::for_each,
-                    )?;
+                    value.for_each_ctx(global_this, &mut iter)?;
                     if iter.formatter.failed {
                         return Ok(());
                     }
                 }
             }
-            if !self.single_line {
-                let _ = self.write_indent(writer_);
+            if !this.single_line {
+                let _ = this.write_indent(writer_);
             }
             let _ = writer_.write_all(b"}");
             Ok(())
@@ -4643,28 +4443,23 @@ pub mod formatter {
             value: JSValue,
             label: &'static str,
         ) -> JsResult<()> {
-            let prev_quote_strings = self.quote_strings;
-            self.quote_strings = true;
-            let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
+            let mut scope = self.quoting_strings();
+            let this = &mut *scope;
 
             let _ = write!(writer_, "{label} {{ ");
             {
-                self.indent += 1;
-                self.depth = self.depth.saturating_add(1);
-                let _i = defer_decrement!(self.indent);
-                let _d = defer_decrement!(self.depth);
-                let global_this = self.global_this;
-                if self.single_line {
+                this.indent += 1;
+                this.depth = this.depth.saturating_add(1);
+                let mut scope = this.indented();
+                let this = &mut *scope;
+                let global_this = this.global_this;
+                if this.single_line {
                     let mut iter = MapIteratorCtx::<C, true, true> {
-                        formatter: self,
+                        formatter: this,
                         writer: writer_,
                         count: 0,
                     };
-                    value.for_each(
-                        global_this,
-                        (&raw mut iter).cast::<c_void>(),
-                        MapIteratorCtx::<C, true, true>::for_each,
-                    )?;
+                    value.for_each_ctx(global_this, &mut iter)?;
                     let count = iter.count;
                     if iter.formatter.failed {
                         return Ok(());
@@ -4675,15 +4470,11 @@ pub mod formatter {
                     }
                 } else {
                     let mut iter = MapIteratorCtx::<C, true, false> {
-                        formatter: self,
+                        formatter: this,
                         writer: writer_,
                         count: 0,
                     };
-                    value.for_each(
-                        global_this,
-                        (&raw mut iter).cast::<c_void>(),
-                        MapIteratorCtx::<C, true, false>::for_each,
-                    )?;
+                    value.for_each_ctx(global_this, &mut iter)?;
                     let count = iter.count;
                     if iter.formatter.failed {
                         return Ok(());
@@ -4693,8 +4484,8 @@ pub mod formatter {
                     }
                 }
             }
-            if !self.single_line {
-                let _ = self.write_indent(writer_);
+            if !this.single_line {
+                let _ = this.write_indent(writer_);
             }
             let _ = writer_.write_all(b"}");
             Ok(())
@@ -4711,9 +4502,8 @@ pub mod formatter {
                 .unwrap_or_else(|| JSValue::js_number_from_int32(0));
             let length = length_value.coerce_to_i32(self.global_this)?;
 
-            let prev_quote_strings = self.quote_strings;
-            self.quote_strings = true;
-            let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
+            let mut scope = self.quoting_strings();
+            let this = &mut *scope;
 
             let set_name = if value.js_type() == jsc::JSType::WeakSet {
                 "WeakSet"
@@ -4726,28 +4516,24 @@ pub mod formatter {
                 return Ok(());
             }
 
-            if self.single_line {
+            if this.single_line {
                 let _ = write!(writer_, "{set_name}({length}) {{ ");
             } else {
                 let _ = writeln!(writer_, "{set_name}({length}) {{");
             }
             {
-                self.indent += 1;
-                self.depth = self.depth.saturating_add(1);
-                let _i = defer_decrement!(self.indent);
-                let _d = defer_decrement!(self.depth);
-                let global_this = self.global_this;
-                if self.single_line {
+                this.indent += 1;
+                this.depth = this.depth.saturating_add(1);
+                let mut scope = this.indented();
+                let this = &mut *scope;
+                let global_this = this.global_this;
+                if this.single_line {
                     let mut iter = SetIteratorCtx::<C, true> {
-                        formatter: self,
+                        formatter: this,
                         writer: writer_,
                         is_first: true,
                     };
-                    value.for_each(
-                        global_this,
-                        (&raw mut iter).cast::<c_void>(),
-                        SetIteratorCtx::<C, true>::for_each,
-                    )?;
+                    value.for_each_ctx(global_this, &mut iter)?;
                     let is_first = iter.is_first;
                     if iter.formatter.failed {
                         return Ok(());
@@ -4757,22 +4543,18 @@ pub mod formatter {
                     }
                 } else {
                     let mut iter = SetIteratorCtx::<C, false> {
-                        formatter: self,
+                        formatter: this,
                         writer: writer_,
                         is_first: true,
                     };
-                    value.for_each(
-                        global_this,
-                        (&raw mut iter).cast::<c_void>(),
-                        SetIteratorCtx::<C, false>::for_each,
-                    )?;
+                    value.for_each_ctx(global_this, &mut iter)?;
                     if iter.formatter.failed {
                         return Ok(());
                     }
                 }
             }
-            if !self.single_line {
-                let _ = self.write_indent(writer_);
+            if !this.single_line {
+                let _ = this.write_indent(writer_);
             }
             let _ = writer_.write_all(b"}");
             Ok(())
@@ -4836,14 +4618,12 @@ pub mod formatter {
             {
                 self.indent += 1;
                 self.depth = self.depth.saturating_add(1);
-                let _i = defer_decrement!(self.indent);
-                let _d = defer_decrement!(self.depth);
-                let old_quote_strings = self.quote_strings;
-                self.quote_strings = true;
-                let _qs = defer_restore!(self.quote_strings, old_quote_strings);
-                self.write_indent(writer_).expect("unreachable");
+                let mut scope = self.indented();
+                let mut scope = scope.quoting_strings();
+                let this = &mut *scope;
+                this.write_indent(writer_).expect("unreachable");
 
-                if self.single_line {
+                if this.single_line {
                     let _ = write!(
                         writer_,
                         "{}type: {}\"{}\"{}{},{} ",
@@ -4868,11 +4648,11 @@ pub mod formatter {
                 }
 
                 if let Some(message_value) =
-                    value.fast_get(self.global_this, jsc::BuiltinName::Message)?
+                    value.fast_get(this.global_this, jsc::BuiltinName::Message)?
                 {
                     if message_value.is_string() {
-                        if !self.single_line {
-                            self.write_indent(writer_).expect("unreachable");
+                        if !this.single_line {
+                            this.write_indent(writer_).expect("unreachable");
                         }
                         let _ = write!(
                             writer_,
@@ -4882,13 +4662,13 @@ pub mod formatter {
                             pf!("<r>")
                         );
                         let tag =
-                            Tag::get_advanced(message_value, self.global_this, self.tag_opts())?;
-                        self.format::<C>(tag, writer_, message_value, self.global_this)?;
-                        if self.failed {
+                            Tag::get_advanced(message_value, this.global_this, this.tag_opts())?;
+                        this.format::<C>(tag, writer_, message_value, this.global_this)?;
+                        if this.failed {
                             return Ok(());
                         }
-                        self.print_comma::<C>(writer_).expect("unreachable");
-                        if !self.single_line {
+                        this.print_comma::<C>(writer_).expect("unreachable");
+                        if !this.single_line {
                             let _ = writer_.write_all(b"\n");
                         }
                     }
@@ -4896,8 +4676,8 @@ pub mod formatter {
 
                 match event_type {
                     EventType::MessageEvent => {
-                        if !self.single_line {
-                            self.write_indent(writer_).expect("unreachable");
+                        if !this.single_line {
+                            this.write_indent(writer_).expect("unreachable");
                         }
                         let _ = write!(
                             writer_,
@@ -4907,24 +4687,24 @@ pub mod formatter {
                             pf!("<r>")
                         );
                         let data: JSValue = value
-                            .fast_get(self.global_this, jsc::BuiltinName::Data)?
+                            .fast_get(this.global_this, jsc::BuiltinName::Data)?
                             .unwrap_or(JSValue::UNDEFINED);
-                        let tag = Tag::get_advanced(data, self.global_this, self.tag_opts())?;
-                        self.format::<C>(tag, writer_, data, self.global_this)?;
-                        if self.failed {
+                        let tag = Tag::get_advanced(data, this.global_this, this.tag_opts())?;
+                        this.format::<C>(tag, writer_, data, this.global_this)?;
+                        if this.failed {
                             return Ok(());
                         }
-                        self.print_comma::<C>(writer_).expect("unreachable");
-                        if !self.single_line {
+                        this.print_comma::<C>(writer_).expect("unreachable");
+                        if !this.single_line {
                             let _ = writer_.write_all(b"\n");
                         }
                     }
                     EventType::ErrorEvent => {
                         if let Some(error_value) =
-                            value.fast_get(self.global_this, jsc::BuiltinName::Error)?
+                            value.fast_get(this.global_this, jsc::BuiltinName::Error)?
                         {
-                            if !self.single_line {
-                                self.write_indent(writer_).expect("unreachable");
+                            if !this.single_line {
+                                this.write_indent(writer_).expect("unreachable");
                             }
                             let _ = write!(
                                 writer_,
@@ -4934,13 +4714,13 @@ pub mod formatter {
                                 pf!("<r>")
                             );
                             let tag =
-                                Tag::get_advanced(error_value, self.global_this, self.tag_opts())?;
-                            self.format::<C>(tag, writer_, error_value, self.global_this)?;
-                            if self.failed {
+                                Tag::get_advanced(error_value, this.global_this, this.tag_opts())?;
+                            this.format::<C>(tag, writer_, error_value, this.global_this)?;
+                            if this.failed {
                                 return Ok(());
                             }
-                            self.print_comma::<C>(writer_).expect("unreachable");
-                            if !self.single_line {
+                            this.print_comma::<C>(writer_).expect("unreachable");
+                            if !this.single_line {
                                 let _ = writer_.write_all(b"\n");
                             }
                         }
@@ -5033,19 +4813,19 @@ pub mod formatter {
                         writer.write_all(b"key=");
                     }
 
-                    let old_quote_strings = self.quote_strings;
-                    self.quote_strings = true;
-                    let _qs = defer_restore!(self.quote_strings, old_quote_strings);
-
                     if writer.failed {
                         self.failed = true;
                     }
-                    self.format::<C>(
-                        Tag::get_advanced(key_value, self.global_this, self.tag_opts())?,
-                        writer_,
-                        key_value,
-                        self.global_this,
-                    )?;
+                    {
+                        let mut scope = self.quoting_strings();
+                        let this = &mut *scope;
+                        this.format::<C>(
+                            Tag::get_advanced(key_value, this.global_this, this.tag_opts())?,
+                            writer_,
+                            key_value,
+                            this.global_this,
+                        )?;
+                    }
                     writer = WrappedWriter {
                         ctx: writer_,
                         failed: false,
@@ -5057,238 +4837,28 @@ pub mod formatter {
             }
 
             if let Some(props) = value.get(self.global_this, "props")? {
-                let prev_quote_strings = self.quote_strings;
-                let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
-                self.quote_strings = true;
-
-                let Some(props_obj) = props.get_object() else {
-                    writer.write_all(b" />");
-                    if writer.failed {
-                        self.failed = true;
-                    }
+                let writer_failed = writer.failed;
+                let outcome = {
+                    let mut scope = self.quoting_strings();
+                    let this = &mut *scope;
+                    this.print_jsx_props::<C>(
+                        writer_,
+                        props,
+                        tag_opts,
+                        needs_space,
+                        is_tag_kind_primitive,
+                        tag_name_slice.slice(),
+                        writer_failed,
+                    )?
+                };
+                let Some(writer_failed) = outcome else {
                     return Ok(());
                 };
-                let props_iter = jsc::JSPropertyIterator::init(
-                    self.global_this,
-                    props_obj,
-                    jsc::PropertyIteratorOptions {
-                        skip_empty_name: true,
-                        include_value: true,
-                    },
-                )?;
-
-                let children_prop = props.get(self.global_this, "children")?;
-                if props_iter.len > 0 {
-                    {
-                        self.indent += 1;
-                        let _ind = defer_decrement!(self.indent);
-                        let count_without_children =
-                            props_iter.len - usize::from(children_prop.is_some());
-
-                        while let Some((prop, property_value)) = props_iter.next()? {
-                            if prop.eq_ascii(b"children") {
-                                continue;
-                            }
-
-                            let tag =
-                                Tag::get_advanced(property_value, self.global_this, tag_opts)?;
-
-                            if tag.cell.is_hidden() {
-                                continue;
-                            }
-
-                            if needs_space {
-                                writer.space();
-                            }
-                            needs_space = false;
-
-                            writer.print(format_args!(
-                                "{}{}{}={}",
-                                pf!("<r><blue>"),
-                                prop.trunc(128),
-                                pf!("<d>"),
-                                pf!("<r>")
-                            ));
-                            let props_i = props_iter.i.get() as usize;
-
-                            if tag.cell.is_string_like() && C {
-                                writer.write_all(pfmt!("<r><green>", true).as_bytes());
-                            }
-
-                            if writer.failed {
-                                self.failed = true;
-                            }
-                            self.format::<C>(tag, writer_, property_value, self.global_this)?;
-                            writer = WrappedWriter {
-                                ctx: writer_,
-                                failed: false,
-                                estimated_line_length: &mut self.estimated_line_length,
-                            };
-
-                            if tag.cell.is_string_like() && C {
-                                writer.write_all(pfmt!("<r>", true).as_bytes());
-                            }
-
-                            if !self.single_line
-                                && (
-                                    // count_without_children is necessary to prevent
-                                    // printing an extra newline if there are children
-                                    // and one prop and the child prop is the last prop
-                                    props_i + 1 < count_without_children
-                                    // 3 is arbitrary but basically
-                                    //  <input type="text" value="foo" />
-                                    //  ^ should be one line
-                                    // <input type="text" value="foo" bar="true" baz={false} />
-                                    //  ^ should be multiple lines
-                                    && props_i > 3
-                                )
-                            {
-                                writer.write_all(b"\n");
-                                write_indent_n(self.indent, writer.ctx).expect("unreachable");
-                            } else if props_i + 1 < count_without_children {
-                                writer.space();
-                            }
-                        }
-                    }
-
-                    if let Some(children) = children_prop {
-                        let tag = Tag::get(children, self.global_this)?;
-
-                        let print_children =
-                            matches!(tag.tag.tag(), Tag::String | Tag::JSX | Tag::Array);
-
-                        if print_children && !self.single_line {
-                            'print_children: {
-                                match tag.tag.tag() {
-                                    Tag::String => {
-                                        let children_string =
-                                            children.to_js_string_view(self.global_this)?;
-                                        if children_string.is_empty() {
-                                            break 'print_children;
-                                        }
-                                        if C {
-                                            writer.write_all(pfmt!("<r>", true).as_bytes());
-                                        }
-                                        writer.write_all(b">");
-                                        if children_string.length() < 128 {
-                                            writer.write_string(&children_string);
-                                        } else {
-                                            self.indent += 1;
-                                            writer.write_all(b"\n");
-                                            write_indent_n(self.indent, writer.ctx)
-                                                .expect("unreachable");
-                                            self.indent = self.indent.saturating_sub(1);
-                                            writer.write_string(&children_string);
-                                            writer.write_all(b"\n");
-                                            write_indent_n(self.indent, writer.ctx)
-                                                .expect("unreachable");
-                                        }
-                                    }
-                                    Tag::JSX => {
-                                        writer.write_all(b">\n");
-                                        {
-                                            self.indent += 1;
-                                            write_indent_n(self.indent, writer.ctx)
-                                                .expect("unreachable");
-                                            let _ind = defer_decrement!(self.indent);
-                                            if writer.failed {
-                                                self.failed = true;
-                                            }
-                                            self.format::<C>(
-                                                Tag::get(children, self.global_this)?,
-                                                writer_,
-                                                children,
-                                                self.global_this,
-                                            )?;
-                                            writer = WrappedWriter {
-                                                ctx: writer_,
-                                                failed: false,
-                                                estimated_line_length: &mut self
-                                                    .estimated_line_length,
-                                            };
-                                        }
-                                        writer.write_all(b"\n");
-                                        write_indent_n(self.indent, writer.ctx)
-                                            .expect("unreachable");
-                                    }
-                                    Tag::Array => {
-                                        let length = children.get_length(self.global_this)?;
-                                        if length == 0 {
-                                            break 'print_children;
-                                        }
-                                        writer.write_all(b">\n");
-                                        {
-                                            self.indent += 1;
-                                            write_indent_n(self.indent, writer.ctx)
-                                                .expect("unreachable");
-                                            let _prev_quote_strings = self.quote_strings;
-                                            self.quote_strings = false;
-                                            let _qs2 = defer_restore!(
-                                                self.quote_strings,
-                                                _prev_quote_strings
-                                            );
-                                            let _ind = defer_decrement!(self.indent);
-
-                                            let mut j: usize = 0;
-                                            while (j as u64) < length {
-                                                let child = children.get_index(
-                                                    self.global_this,
-                                                    u32::try_from(j).expect("int cast"),
-                                                )?;
-                                                if writer.failed {
-                                                    self.failed = true;
-                                                }
-                                                self.format::<C>(
-                                                    Tag::get_advanced(
-                                                        child,
-                                                        self.global_this,
-                                                        self.tag_opts(),
-                                                    )?,
-                                                    writer_,
-                                                    child,
-                                                    self.global_this,
-                                                )?;
-                                                writer = WrappedWriter {
-                                                    ctx: writer_,
-                                                    failed: false,
-                                                    estimated_line_length: &mut self
-                                                        .estimated_line_length,
-                                                };
-                                                if (j as u64) + 1 < length {
-                                                    writer.write_all(b"\n");
-                                                    write_indent_n(self.indent, writer.ctx)
-                                                        .expect("unreachable");
-                                                }
-                                                j += 1;
-                                            }
-                                        }
-                                        writer.write_all(b"\n");
-                                        write_indent_n(self.indent, writer.ctx)
-                                            .expect("unreachable");
-                                    }
-                                    _ => unreachable!(),
-                                }
-
-                                writer.write_all(b"</");
-                                if !is_tag_kind_primitive {
-                                    writer.write_all(pf!("<r><cyan>").as_bytes());
-                                } else {
-                                    writer.write_all(pf!("<r><green>").as_bytes());
-                                }
-                                writer.write_all(tag_name_slice.slice());
-                                if C {
-                                    writer.write_all(pf!("<r>").as_bytes());
-                                }
-                                writer.write_all(b">");
-                            }
-
-                            if writer.failed {
-                                self.failed = true;
-                            }
-                            return Ok(());
-                        }
-                    }
-                }
+                writer = WrappedWriter {
+                    ctx: writer_,
+                    failed: writer_failed,
+                    estimated_line_length: &mut self.estimated_line_length,
+                };
             }
 
             writer.write_all(b" />");
@@ -5296,6 +4866,284 @@ pub mod formatter {
                 self.failed = true;
             }
             Ok(())
+        }
+
+        /// The `props` (and children) half of [`print_jsx`](Self::print_jsx),
+        /// run with `quote_strings` set. `None`: the element was closed here;
+        /// `Some(failed)`: the caller writes the self-closing tail.
+        #[allow(clippy::too_many_arguments)]
+        fn print_jsx_props<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            props: JSValue,
+            tag_opts: TagOptions,
+            mut needs_space: bool,
+            is_tag_kind_primitive: bool,
+            tag_name_slice: &[u8],
+            mut writer_failed: bool,
+        ) -> JsResult<Option<bool>> {
+            macro_rules! pf {
+                ($s:literal) => {
+                    pfmt!($s, C)
+                };
+            }
+            let mut writer = WrappedWriter {
+                ctx: writer_,
+                failed: writer_failed,
+                estimated_line_length: &mut self.estimated_line_length,
+            };
+            let Some(props_obj) = props.get_object() else {
+                writer.write_all(b" />");
+                if writer.failed {
+                    self.failed = true;
+                }
+                return Ok(None);
+            };
+            let props_iter = jsc::JSPropertyIterator::init(
+                self.global_this,
+                props_obj,
+                jsc::PropertyIteratorOptions {
+                    skip_empty_name: true,
+                    include_value: true,
+                },
+            )?;
+
+            let children_prop = props.get(self.global_this, "children")?;
+            writer_failed = writer.failed;
+            if props_iter.len > 0 {
+                {
+                    self.indent += 1;
+                    let mut scope = self.scoped(|f| f.indent = f.indent.saturating_sub(1));
+                    let this = &mut *scope;
+                    let mut writer = WrappedWriter {
+                        ctx: writer_,
+                        failed: writer_failed,
+                        estimated_line_length: &mut this.estimated_line_length,
+                    };
+                    let count_without_children =
+                        props_iter.len - usize::from(children_prop.is_some());
+
+                    while let Some((prop, property_value)) = props_iter.next()? {
+                        if prop.eq_ascii(b"children") {
+                            continue;
+                        }
+
+                        let tag = Tag::get_advanced(property_value, this.global_this, tag_opts)?;
+
+                        if tag.cell.is_hidden() {
+                            continue;
+                        }
+
+                        if needs_space {
+                            writer.space();
+                        }
+                        needs_space = false;
+
+                        writer.print(format_args!(
+                            "{}{}{}={}",
+                            pf!("<r><blue>"),
+                            prop.trunc(128),
+                            pf!("<d>"),
+                            pf!("<r>")
+                        ));
+                        let props_i = props_iter.i.get() as usize;
+
+                        if tag.cell.is_string_like() && C {
+                            writer.write_all(pfmt!("<r><green>", true).as_bytes());
+                        }
+
+                        if writer.failed {
+                            this.failed = true;
+                        }
+                        this.format::<C>(tag, writer_, property_value, this.global_this)?;
+                        writer = WrappedWriter {
+                            ctx: writer_,
+                            failed: false,
+                            estimated_line_length: &mut this.estimated_line_length,
+                        };
+
+                        if tag.cell.is_string_like() && C {
+                            writer.write_all(pfmt!("<r>", true).as_bytes());
+                        }
+
+                        if !this.single_line
+                            && (
+                                // count_without_children is necessary to prevent
+                                // printing an extra newline if there are children
+                                // and one prop and the child prop is the last prop
+                                props_i + 1 < count_without_children
+                                    // 3 is arbitrary but basically
+                                    //  <input type="text" value="foo" />
+                                    //  ^ should be one line
+                                    // <input type="text" value="foo" bar="true" baz={false} />
+                                    //  ^ should be multiple lines
+                                    && props_i > 3
+                            )
+                        {
+                            writer.write_all(b"\n");
+                            write_indent_n(this.indent, writer.ctx).expect("unreachable");
+                        } else if props_i + 1 < count_without_children {
+                            writer.space();
+                        }
+                    }
+                    writer_failed = writer.failed;
+                }
+                let mut writer = WrappedWriter {
+                    ctx: writer_,
+                    failed: writer_failed,
+                    estimated_line_length: &mut self.estimated_line_length,
+                };
+
+                if let Some(children) = children_prop {
+                    let tag = Tag::get(children, self.global_this)?;
+
+                    let print_children =
+                        matches!(tag.tag.tag(), Tag::String | Tag::JSX | Tag::Array);
+
+                    if print_children && !self.single_line {
+                        'print_children: {
+                            match tag.tag.tag() {
+                                Tag::String => {
+                                    let children_string =
+                                        children.to_js_string_view(self.global_this)?;
+                                    if children_string.is_empty() {
+                                        break 'print_children;
+                                    }
+                                    if C {
+                                        writer.write_all(pfmt!("<r>", true).as_bytes());
+                                    }
+                                    writer.write_all(b">");
+                                    if children_string.length() < 128 {
+                                        writer.write_string(&children_string);
+                                    } else {
+                                        self.indent += 1;
+                                        writer.write_all(b"\n");
+                                        write_indent_n(self.indent, writer.ctx)
+                                            .expect("unreachable");
+                                        self.indent = self.indent.saturating_sub(1);
+                                        writer.write_string(&children_string);
+                                        writer.write_all(b"\n");
+                                        write_indent_n(self.indent, writer.ctx)
+                                            .expect("unreachable");
+                                    }
+                                }
+                                Tag::JSX => {
+                                    writer.write_all(b">\n");
+                                    {
+                                        self.indent += 1;
+                                        write_indent_n(self.indent, writer.ctx)
+                                            .expect("unreachable");
+                                        if writer.failed {
+                                            self.failed = true;
+                                        }
+                                        let mut scope =
+                                            self.scoped(|f| f.indent = f.indent.saturating_sub(1));
+                                        let this = &mut *scope;
+                                        this.format::<C>(
+                                            Tag::get(children, this.global_this)?,
+                                            writer_,
+                                            children,
+                                            this.global_this,
+                                        )?;
+                                    }
+                                    writer = WrappedWriter {
+                                        ctx: writer_,
+                                        failed: false,
+                                        estimated_line_length: &mut self.estimated_line_length,
+                                    };
+                                    writer.write_all(b"\n");
+                                    write_indent_n(self.indent, writer.ctx).expect("unreachable");
+                                }
+                                Tag::Array => {
+                                    let length = children.get_length(self.global_this)?;
+                                    if length == 0 {
+                                        break 'print_children;
+                                    }
+                                    writer.write_all(b">\n");
+                                    {
+                                        self.indent += 1;
+                                        write_indent_n(self.indent, writer.ctx)
+                                            .expect("unreachable");
+                                        let writer_failed = writer.failed;
+                                        let prev_quote_strings = self.quote_strings;
+                                        self.quote_strings = false;
+                                        let mut scope = self.scoped(move |f| {
+                                            f.indent = f.indent.saturating_sub(1);
+                                            f.quote_strings = prev_quote_strings;
+                                        });
+                                        let this = &mut *scope;
+                                        let mut writer = WrappedWriter {
+                                            ctx: writer_,
+                                            failed: writer_failed,
+                                            estimated_line_length: &mut this.estimated_line_length,
+                                        };
+
+                                        let mut j: usize = 0;
+                                        while (j as u64) < length {
+                                            let child = children.get_index(
+                                                this.global_this,
+                                                u32::try_from(j).expect("int cast"),
+                                            )?;
+                                            if writer.failed {
+                                                this.failed = true;
+                                            }
+                                            this.format::<C>(
+                                                Tag::get_advanced(
+                                                    child,
+                                                    this.global_this,
+                                                    this.tag_opts(),
+                                                )?,
+                                                writer_,
+                                                child,
+                                                this.global_this,
+                                            )?;
+                                            writer = WrappedWriter {
+                                                ctx: writer_,
+                                                failed: false,
+                                                estimated_line_length: &mut this
+                                                    .estimated_line_length,
+                                            };
+                                            if (j as u64) + 1 < length {
+                                                writer.write_all(b"\n");
+                                                write_indent_n(this.indent, writer.ctx)
+                                                    .expect("unreachable");
+                                            }
+                                            j += 1;
+                                        }
+                                    }
+                                    writer = WrappedWriter {
+                                        ctx: writer_,
+                                        failed: false,
+                                        estimated_line_length: &mut self.estimated_line_length,
+                                    };
+                                    writer.write_all(b"\n");
+                                    write_indent_n(self.indent, writer.ctx).expect("unreachable");
+                                }
+                                _ => unreachable!(),
+                            }
+
+                            writer.write_all(b"</");
+                            if !is_tag_kind_primitive {
+                                writer.write_all(pf!("<r><cyan>").as_bytes());
+                            } else {
+                                writer.write_all(pf!("<r><green>").as_bytes());
+                            }
+                            writer.write_all(tag_name_slice);
+                            if C {
+                                writer.write_all(pf!("<r>").as_bytes());
+                            }
+                            writer.write_all(b">");
+                        }
+
+                        if writer.failed {
+                            self.failed = true;
+                        }
+                        return Ok(None);
+                    }
+                }
+                writer_failed = writer.failed;
+            }
+            Ok(Some(writer_failed))
         }
 
         #[inline(never)]
@@ -5307,8 +5155,13 @@ pub mod formatter {
         ) -> JsResult<()> {
             debug_assert!(value.is_cell());
             let prev_quote_strings = self.quote_strings;
+            let prev_always_newline_scope = self.always_newline_scope;
             self.quote_strings = true;
-            let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
+            let mut scope = self.scoped(move |f| {
+                f.quote_strings = prev_quote_strings;
+                f.always_newline_scope = prev_always_newline_scope;
+            });
+            let this = &mut *scope;
 
             // We want to figure out if we should print this object on one line
             // or multiple lines.
@@ -5330,22 +5183,20 @@ pub mod formatter {
             //       Set, or Blob
             //
             //   Then, we print it each property on a new line, recursively.
-            let prev_always_newline_scope = self.always_newline_scope;
-            let _ans = defer_restore!(self.always_newline_scope, prev_always_newline_scope);
-            // Hoist all `self.*` reads before constructing the iterator ctx —
-            // `formatter: self` is a `&mut Self` reborrow, so once it's moved
-            // into the struct literal we can no longer touch `self` until
+            // Hoist all `this.*` reads before constructing the iterator ctx —
+            // `formatter: this` is a `&mut Self` reborrow, so once it's moved
+            // into the struct literal we can no longer touch `this` until
             // `iter` is dropped (or via `iter.formatter`).
-            let single_line = self.single_line;
+            let single_line = this.single_line;
             let always_newline =
-                !single_line && (self.always_newline_scope || self.good_time_for_a_new_line());
-            if self.depth > self.max_depth {
-                return self.print_object_depth_exceeded::<C>(writer_, value);
+                !single_line && (this.always_newline_scope || this.good_time_for_a_new_line());
+            if this.depth > this.max_depth {
+                return this.print_object_depth_exceeded::<C>(writer_, value);
             }
-            let ordered_properties = self.ordered_properties;
-            let global_this = self.global_this;
+            let ordered_properties = this.ordered_properties;
+            let global_this = this.global_this;
             let mut iter = PropertyIteratorCtx::<C> {
-                formatter: self,
+                formatter: this,
                 writer: writer_,
                 always_newline,
                 single_line,
@@ -5354,29 +5205,21 @@ pub mod formatter {
             };
 
             if ordered_properties {
-                value.for_each_property_ordered(
-                    global_this,
-                    (&raw mut iter).cast::<c_void>(),
-                    PropertyIteratorCtx::<C>::for_each,
-                )?;
+                value.for_each_property_ordered_ctx(global_this, &mut iter)?;
             } else {
-                value.for_each_property(
-                    global_this,
-                    (&raw mut iter).cast::<c_void>(),
-                    PropertyIteratorCtx::<C>::for_each,
-                )?;
+                value.for_each_property_ctx(global_this, &mut iter)?;
             }
 
-            // Extract what we need from `iter` so its `&mut self` / `&mut writer_`
-            // reborrows end here (NLL) and the tail can use `self`/`writer_` again.
+            // Extract what we need from `iter` so its `&mut Formatter` / `&mut writer_`
+            // reborrows end here (NLL) and the tail can use `this`/`writer_` again.
             let iter_i = iter.i;
             let iter_always_newline = iter.always_newline;
 
-            if self.failed {
+            if this.failed {
                 return Ok(());
             }
 
-            self.print_object_tail::<C>(writer_, value, js_type, iter_i, iter_always_newline)
+            this.print_object_tail::<C>(writer_, value, js_type, iter_i, iter_always_newline)
         }
 
         #[inline(never)]
@@ -5604,13 +5447,15 @@ pub mod formatter {
             global_this: &'a JSGlobalObject,
         ) -> JsResult<()> {
             let prev_global_this = self.global_this;
-            let _restore = defer_restore!(self.global_this, prev_global_this);
             self.global_this = global_this;
 
             if let TagPayload::CustomFormattedObject(obj) = result.tag {
                 self.custom_formatted_object = obj;
             }
-            self.print_as::<ENABLE_ANSI_COLORS>(result.tag.tag(), writer, value, result.cell)
+            let result =
+                self.print_as::<ENABLE_ANSI_COLORS>(result.tag.tag(), writer, value, result.cell);
+            self.global_this = prev_global_this;
+            result
         }
 
         /// Format a single value into `writer`, propagating a JS exception
@@ -5688,65 +5533,48 @@ pub mod formatter {
 // C-exported entry points (count / time / etc.)
 // ───────────────────────────────────────────────────────────────────────────
 
-#[unsafe(no_mangle)]
-#[crate::host_call]
-pub(crate) extern "C" fn Bun__ConsoleObject__count(
-    _console: *mut ConsoleObject,
-    global_this: &JSGlobalObject,
-    ptr: *const u8,
-    len: usize,
-) {
-    // SAFETY: top-level JS-thread host call ⇒ exclusive access to the
-    // set-once `VirtualMachine.console` box.
-    let this = unsafe { vm_console_mut(global_this) };
-    // SAFETY: caller passes a valid (ptr, len) pair.
-    let slice = unsafe { bun_core::ffi::slice(ptr, len) };
-    let hash = bun_wyhash::hash(slice);
+// HOST_EXPORT(Bun__ConsoleObject__count, jsc)
+pub fn count(_console: *mut c_void, global_this: &JSGlobalObject, chars: &[u8]) {
+    let hash = bun_wyhash::hash(chars);
     // we don't want to store these strings, it will take too much memory
-    let counter = this.counts.get_or_put(hash).expect("unreachable");
-    let current: u32 = if counter.found_existing {
-        *counter.value_ptr
-    } else {
-        0
-    } + 1;
-    *counter.value_ptr = current;
+    let current: u32 = with_console(global_this, |this| {
+        let counter = this.counts.get_or_put(hash).expect("unreachable");
+        let current: u32 = if counter.found_existing {
+            *counter.value_ptr
+        } else {
+            0
+        } + 1;
+        *counter.value_ptr = current;
+        current
+    });
 
-    let writer = this.writer();
+    let writer = console_writer(global_this, false);
     if Output::enable_ansi_colors_stdout() {
         let _ = writeln!(
             writer,
             "{}{}{}: {}{}{}",
             pfmt!("<r>", true),
-            bstr::BStr::new(slice),
+            bstr::BStr::new(chars),
             pfmt!("<d>", true),
             pfmt!("<r><yellow>", true),
             current,
             pfmt!("<r>", true),
         );
     } else {
-        let _ = writeln!(writer, "{}: {}", bstr::BStr::new(slice), current);
+        let _ = writeln!(writer, "{}: {}", bstr::BStr::new(chars), current);
     }
     let _ = writer.flush();
 }
 
-#[unsafe(no_mangle)]
-#[crate::host_call]
-pub(crate) extern "C" fn Bun__ConsoleObject__countReset(
-    _console: *mut ConsoleObject,
-    global_this: &JSGlobalObject,
-    ptr: *const u8,
-    len: usize,
-) {
-    // SAFETY: top-level JS-thread host call ⇒ exclusive access to the
-    // set-once `VirtualMachine.console` box.
-    let this = unsafe { vm_console_mut(global_this) };
-    // SAFETY: caller passes a valid (ptr, len) pair.
-    let slice = unsafe { bun_core::ffi::slice(ptr, len) };
-    let hash = bun_wyhash::hash(slice);
+// HOST_EXPORT(Bun__ConsoleObject__countReset, jsc)
+pub fn count_reset(_console: *mut c_void, global_this: &JSGlobalObject, chars: &[u8]) {
+    let hash = bun_wyhash::hash(chars);
     // we don't delete it because deleting is implemented via tombstoning
-    if let Some(v) = this.counts.get_mut(&hash) {
-        *v = 0;
-    }
+    with_console(global_this, |this| {
+        if let Some(v) = this.counts.get_mut(&hash) {
+            *v = 0;
+        }
+    });
 }
 
 type PendingTimers = bun_collections::HashMap<u64, Option<bun_core::time::Timer>>;
@@ -5755,16 +5583,9 @@ thread_local! {
     static PENDING_TIME_LOGS_LOADED: Cell<bool> = const { Cell::new(false) };
 }
 
-#[unsafe(no_mangle)]
-#[crate::host_call]
-pub(crate) extern "C" fn Bun__ConsoleObject__time(
-    _console: *mut ConsoleObject,
-    _global: &JSGlobalObject,
-    chars: *const u8,
-    len: usize,
-) {
-    // SAFETY: caller passes a valid (ptr, len) pair.
-    let id = bun_wyhash::hash(unsafe { bun_core::ffi::slice(chars, len) });
+// HOST_EXPORT(Bun__ConsoleObject__time, jsc)
+pub fn time(_console: *mut c_void, _global: &JSGlobalObject, chars: &[u8]) {
+    let id = bun_wyhash::hash(chars);
     if !PENDING_TIME_LOGS_LOADED.with(|c| c.get()) {
         PENDING_TIME_LOGS.with_borrow_mut(|m| *m = PendingTimers::default());
         PENDING_TIME_LOGS_LOADED.with(|c| c.set(true));
@@ -5778,21 +5599,13 @@ pub(crate) extern "C" fn Bun__ConsoleObject__time(
     });
 }
 
-#[unsafe(no_mangle)]
-#[crate::host_call]
-pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
-    _console: *mut ConsoleObject,
-    _global: &JSGlobalObject,
-    chars: *const u8,
-    len: usize,
-) {
+// HOST_EXPORT(Bun__ConsoleObject__timeEnd, jsc)
+pub fn time_end(_console: *mut c_void, _global: &JSGlobalObject, chars: &[u8]) {
     if !PENDING_TIME_LOGS_LOADED.with(|c| c.get()) {
         return;
     }
 
-    // SAFETY: caller passes a valid (ptr, len) pair.
-    let slice = unsafe { bun_core::ffi::slice(chars, len) };
-    let id = bun_wyhash::hash(slice);
+    let id = bun_wyhash::hash(chars);
     // Replace the slot with `None`, returning the previous value.
     let Some(prev) = PENDING_TIME_LOGS.with_borrow_mut(|m| m.get_mut(&id).map(|slot| slot.take()))
     else {
@@ -5803,31 +5616,21 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
     Output::print_elapsed(
         (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
     );
-    match len {
+    match chars.len() {
         0 => Output::print_errorln(format_args!("")),
-        _ => Output::print_errorln(format_args!(" {}", bstr::BStr::new(slice))),
+        _ => Output::print_errorln(format_args!(" {}", bstr::BStr::new(chars))),
     }
 
     Output::flush();
 }
 
-#[unsafe(no_mangle)]
-#[crate::host_call]
-pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
-    _console: *mut ConsoleObject,
-    global: &JSGlobalObject,
-    chars: *const u8,
-    len: usize,
-    args: *const JSValue,
-    args_len: usize,
-) {
+// HOST_EXPORT(Bun__ConsoleObject__timeLog, jsc)
+pub fn time_log(_console: *mut c_void, global: &JSGlobalObject, chars: &[u8], args: &[JSValue]) {
     if !PENDING_TIME_LOGS_LOADED.with(|c| c.get()) {
         return;
     }
 
-    // SAFETY: caller passes a valid (ptr, len) pair.
-    let slice = unsafe { bun_core::ffi::slice(chars, len) };
-    let id = bun_wyhash::hash(slice);
+    let id = bun_wyhash::hash(chars);
     let Some(Some(value)) = PENDING_TIME_LOGS.with_borrow(|m| m.get(&id).copied()) else {
         return;
     };
@@ -5835,9 +5638,9 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     Output::print_elapsed(
         (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
     );
-    match len {
+    match chars.len() {
         0 => {}
-        _ => Output::print_error(format_args!(" {}", bstr::BStr::new(slice))),
+        _ => Output::print_error(format_args!(" {}", bstr::BStr::new(chars))),
     }
     Output::flush();
 
@@ -5850,14 +5653,10 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
         .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
     fmt.stack_check = StackCheck::init();
     fmt.can_throw_stack_overflow = true;
-    let console = vm_console(global);
-    // SAFETY: see [`vm_console`] — points at the live boxed `ConsoleObject` for
-    // this VM; JS-thread-only. Kept as a raw deref (not `vm_console_mut`) so the
-    // resulting `writer` borrow does not pin a long-lived `&mut ConsoleObject`
-    // across the `fmt.format(...)` calls below, which can re-enter JS.
-    let mut writer = unsafe { (*console).error_writer() };
-    // SAFETY: caller passes a valid (args, args_len) pair.
-    for &arg in unsafe { bun_core::ffi::slice(args, args_len) } {
+    // The `fmt.format(...)` calls below can re-enter JS (and `console.*`);
+    // `writer` is the VM console's buffered stderr for the duration.
+    let mut writer = console_writer(global, true);
+    for &arg in args {
         let Ok(tag) = formatter::Tag::get(arg, global) else {
             return;
         };
@@ -5872,96 +5671,73 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     let _ = bun_io::Write::flush(&mut writer);
 }
 
-/// Stamp out the empty `Bun__ConsoleObject__*` C-ABI hooks that JSC's
-/// `ConsoleClient` vtable requires but Bun leaves unimplemented. Two arms cover
-/// the two trailing-arg shapes the C++ side declares in
-/// `bindings/headers.h:686-694`: `(…, *const u8, usize)` for the title-string
-/// hooks and `(…, *mut ScriptArguments)` for the inspector-args hooks.
-///
-/// Ident concat via `${concat()}` is unstable (`macro_metavar_expr_concat`)
-/// and `paste` is not a `bun_jsc` dep, so the full `Bun__ConsoleObject__<name>`
-/// export symbol is passed verbatim — same pattern as `export_callbacks!` in
-/// `runtime/api/BunObject.rs`.
-macro_rules! console_noop_hooks {
-    (str: $($name:ident),+ $(,)?) => {$(
-        #[unsafe(no_mangle)]
-        #[crate::host_call]
-        pub extern "C" fn $name(
-            _console: *mut ConsoleObject,
-            _global: &JSGlobalObject,
-            _chars: *const u8,
-            _len: usize,
-        ) {
-        }
-    )+};
-    (args: $($name:ident),+ $(,)?) => {$(
-        #[unsafe(no_mangle)]
-        #[crate::host_call]
-        pub extern "C" fn $name(
-            _console: *mut ConsoleObject,
-            _global: &JSGlobalObject,
-            _args: *mut ScriptArguments,
-        ) {
-        }
-    )+};
-}
+// JSC's `ConsoleClient` vtable requires these; Bun leaves them unimplemented.
 
-console_noop_hooks!(str: Bun__ConsoleObject__profile, Bun__ConsoleObject__profileEnd);
+// HOST_EXPORT(Bun__ConsoleObject__profile, jsc)
+pub fn profile(_console: *mut c_void, _global: &JSGlobalObject, _chars: &[u8]) {}
 
-#[unsafe(no_mangle)]
-#[crate::host_call]
-pub(crate) extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
-    _console: *mut ConsoleObject,
-    global_this: &JSGlobalObject,
-    _chars: *const u8,
-    _len: usize,
-) {
+// HOST_EXPORT(Bun__ConsoleObject__profileEnd, jsc)
+pub fn profile_end(_console: *mut c_void, _global: &JSGlobalObject, _chars: &[u8]) {}
+
+// HOST_EXPORT(Bun__ConsoleObject__takeHeapSnapshot, jsc)
+pub fn take_heap_snapshot(_console: *mut c_void, global_this: &JSGlobalObject, _chars: &[u8]) {
     // TODO: this does an extra JSONStringify and we don't need it to!
     let snapshot: [JSValue; 1] = [global_this.generate_heap_snapshot()];
-    // SAFETY: re-entry into our own host shim with a stack-local args slice.
-    unsafe {
-        message_with_type_and_level(
-            core::ptr::null_mut(), // unused by the callee
-            MessageType::Log,
-            MessageLevel::Debug,
-            global_this,
-            snapshot.as_ptr(),
-            1,
-        );
-    }
+    message_with_type_and_level(
+        MessageType::Log,
+        MessageLevel::Debug,
+        global_this,
+        &snapshot,
+    );
 }
 
-console_noop_hooks!(
-    args:
-    Bun__ConsoleObject__timeStamp,
-    Bun__ConsoleObject__record,
-    Bun__ConsoleObject__recordEnd,
-    Bun__ConsoleObject__screenshot,
-);
+// HOST_EXPORT(Bun__ConsoleObject__timeStamp, jsc)
+pub fn time_stamp(
+    _console: *mut c_void,
+    _global: &JSGlobalObject,
+    _args: *mut crate::console_object::ScriptArguments,
+) {
+}
 
-#[unsafe(no_mangle)]
-#[crate::host_call]
-pub(crate) extern "C" fn Bun__ConsoleObject__messageWithTypeAndLevel(
-    ctype: *mut ConsoleObject,
-    // Taking the
-    // exhaustive Rust enums by value at the C ABI would be UB on an
-    // out-of-range discriminant, so accept the raw `u32` (matching the C++
-    // header in `bindings/headers.h`) and clamp via `from_raw`.
+// HOST_EXPORT(Bun__ConsoleObject__record, jsc)
+pub fn record(
+    _console: *mut c_void,
+    _global: &JSGlobalObject,
+    _args: *mut crate::console_object::ScriptArguments,
+) {
+}
+
+// HOST_EXPORT(Bun__ConsoleObject__recordEnd, jsc)
+pub fn record_end(
+    _console: *mut c_void,
+    _global: &JSGlobalObject,
+    _args: *mut crate::console_object::ScriptArguments,
+) {
+}
+
+// HOST_EXPORT(Bun__ConsoleObject__screenshot, jsc)
+pub fn screenshot(
+    _console: *mut c_void,
+    _global: &JSGlobalObject,
+    _args: *mut crate::console_object::ScriptArguments,
+) {
+}
+
+/// Taking the exhaustive Rust enums by value at the C ABI would be UB on an
+/// out-of-range discriminant, so accept the raw `u32` (matching the C++
+/// header in `bindings/headers.h`) and clamp via `from_raw`.
+// HOST_EXPORT(Bun__ConsoleObject__messageWithTypeAndLevel, jsc)
+pub fn message_with_type_and_level_raw(
+    _console: *mut c_void,
     message_type: u32,
     level: u32,
     global: &JSGlobalObject,
-    vals: *const JSValue,
-    len: usize,
+    vals: &[JSValue],
 ) {
-    // SAFETY: forwarding the same FFI args to the inner host shim.
-    unsafe {
-        message_with_type_and_level(
-            ctype,
-            MessageType::from_raw(message_type),
-            MessageLevel::from_raw(level),
-            global,
-            vals,
-            len,
-        )
-    };
+    message_with_type_and_level(
+        MessageType::from_raw(message_type),
+        MessageLevel::from_raw(level),
+        global,
+        vals,
+    );
 }

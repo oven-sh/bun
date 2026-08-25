@@ -175,9 +175,9 @@ pub mod uuid;
 pub mod weak;
 
 pub use self::js_value::{
-    CoerceTo, ComparisonResult, ForEachCallback, FromAny, FromJsEnum, JSValue,
-    Protected as ProtectedJSValue, ProxyField, SerializedFlags, SerializedScriptValue,
-    TemporalType,
+    CoerceTo, ComparisonResult, ForEachCallback, ForEachContext, ForEachPropertyContext, FromAny,
+    FromJsEnum, JSValue, Protected as ProtectedJSValue, ProxyField, SerializedFlags,
+    SerializedScriptValue, TemporalType,
 };
 
 // LAYERING (PORTING.md §Dispatch): the task dispatch covers every concrete
@@ -1218,7 +1218,9 @@ pub use self::runtime_transpiler_store::RuntimeTranspilerStore;
 
 #[path = "web_worker.rs"]
 pub mod web_worker;
+pub mod worker_messaging_proxy;
 pub use self::web_worker::WebWorker;
+pub use self::worker_messaging_proxy::WorkerMessagingProxy;
 
 // LAYERING: `Jest`/`TestScope`/`Expect`/`Snapshot` live in
 // `bun_runtime::test_runner` — a forward-dep on `bun_runtime`, which itself

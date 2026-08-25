@@ -92,10 +92,11 @@ function nextTokenIs(text: string, index: number, word: string): boolean {
     case "\r":
     case "\f":
     case "\v":
-    // a quoted identifier can follow with no space: INTO"t", INTO`t`, INTO[t]
+    // a quoted identifier can follow with no space: INTO"t", INTO`t`, INTO[t], INTO't'
     case '"':
     case "`":
     case "[":
+    case "'":
       return true;
     default:
       return false;
@@ -327,13 +328,12 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             continue;
           }
           if (char === ")") {
-            // a write verb can sit flush against the CTE's closing paren: "(SELECT 1)DELETE"
-            if (
-              parenDepth === 0 &&
-              isWriteCommand(token) &&
-              (token !== "REPLACE" || nextTokenIs(text, i + 1 + token.length, "INTO"))
-            ) {
-              writeVerb = token;
+            // a token can sit flush against the closing paren: "(SELECT 1)DELETE", "VALUES(1)RETURNING"
+            if (token) {
+              const early = classifyToken(i);
+              if (early) {
+                return early;
+              }
             }
             parenDepth++;
           } else if (char === "(" && parenDepth > 0) {

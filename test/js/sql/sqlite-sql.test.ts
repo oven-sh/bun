@@ -1002,6 +1002,16 @@ describe("Query Execution", () => {
     const afterQuote = await sql.unsafe("DELETE FROM weird WHERE [a;b] = 4 AND 'x' = 'x'RETURNING [a;b] AS v");
     expect(afterQuote).toEqual([{ v: 4 }]);
     expect(afterQuote.affectedRows).toBe(1);
+
+    // a keyword flush against a closing paren keeps its meaning
+    const parenReturning = await sql.unsafe("INSERT INTO weird VALUES (7)RETURNING [a;b] AS v");
+    expect(parenReturning).toEqual([{ v: 7 }]);
+    expect(parenReturning.affectedRows).toBe(1);
+
+    // a single-quoted table name can follow INTO with no space
+    const quotedInto = await sql.unsafe("WITH c AS (SELECT 1) REPLACE INTO'weird' ([a;b]) VALUES (9)");
+    expect(quotedInto.command).toBe("REPLACE");
+    expect(quotedInto.affectedRows).toBeNull();
   });
 
   test("SELECT with various clauses", async () => {

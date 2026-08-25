@@ -1822,7 +1822,7 @@ impl PathOrBlob {
 
     /// Panics on a non-file `Blob` (a `write_file_internal` precondition; that is the only caller).
     #[cfg(not(windows))]
-    pub(crate) fn pathlike(&self) -> &PathOrFileDescriptor {
+    pub(crate) fn pathlike(&self) -> &PathOrFileDescriptor<'static> {
         match self {
             PathOrBlob::Path(path) => path,
             PathOrBlob::Blob(blob) => {

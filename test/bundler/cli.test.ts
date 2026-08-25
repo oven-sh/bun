@@ -941,7 +941,7 @@ describe.concurrent("--outfile extension implies the output format", () => {
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("error");
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     const output = await Bun.file(path.join(String(dir), "out.cjs")).text();
     expect(output).not.toContain("export {");
@@ -968,7 +968,7 @@ describe.concurrent("--outfile extension implies the output format", () => {
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("error");
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     const output = await Bun.file(path.join(String(dir), "out.cjs")).text();
     expect(output).toContain("node-branch");
@@ -985,7 +985,7 @@ describe.concurrent("--outfile extension implies the output format", () => {
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("error");
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     const output = await Bun.file(path.join(String(dir), "out.js")).text();
     expect(output).toContain("node-branch");
@@ -1002,7 +1002,7 @@ describe.concurrent("--outfile extension implies the output format", () => {
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("error");
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     const output = await Bun.file(path.join(String(dir), "out.cjs")).text();
     expect(output).toContain("await Promise.resolve(42)");
@@ -1018,7 +1018,7 @@ describe.concurrent("--outfile extension implies the output format", () => {
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("error");
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     const output = await Bun.file(path.join(String(dir), "out.mjs")).text();
     expect(output).toContain("await Promise.resolve(42)");

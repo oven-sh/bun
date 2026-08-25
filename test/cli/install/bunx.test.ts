@@ -520,7 +520,7 @@ it.concurrent.skipIf(!isWindows)("bunx --bun in-process launch can fork children
     "package.json": JSON.stringify({ name: "repro", dependencies: { showexec: "file:./showexec" } }),
     "showexec/package.json": JSON.stringify({ name: "showexec", version: "1.0.0", bin: { showexec: "cli.js" } }),
     "showexec/cli.js": `#!/usr/bin/env node
-      console.log(JSON.stringify({ argv0: process.argv[0], execPath: process.execPath, execArgv: process.execArgv }));
+      console.log(JSON.stringify({ argv0: process.argv[0], execPath: process.execPath, execArgv: process.execArgv, npmExecpath: process.env.npm_execpath }));
       const { fork } = require("node:child_process");
       const cp = fork(require("node:path").join(__dirname, "child.js"));
       cp.on("exit", code => console.log("child exit", code));
@@ -552,7 +552,7 @@ it.concurrent.skipIf(!isWindows)("bunx --bun in-process launch can fork children
   await using proc = spawn({
     cmd: [join(exeDir, "bunx.exe"), "--bun", "--no-install", "showexec"],
     cwd: String(dir),
-    env: bunEnv,
+    env: { ...bunEnv, BUN_OPTIONS: "--smol" },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -562,7 +562,9 @@ it.concurrent.skipIf(!isWindows)("bunx --bun in-process launch can fork children
   const bunExePath = realpathSync(join(exeDir, "bun.exe")).toLowerCase();
   expect(realpathSync(state.execPath).toLowerCase()).toBe(bunExePath);
   expect(realpathSync(state.argv0).toLowerCase()).toBe(bunExePath);
-  expect(state.execArgv).toEqual([]);
+  expect(realpathSync(state.npmExecpath).toLowerCase()).toBe(bunExePath);
+  // BUN_OPTIONS flags stay in execArgv; the bunx CLI flags must not.
+  expect(state.execArgv).toEqual(["--smol"]);
   expect(out).toContain("CHILD OK");
   expect(out).toContain("child exit 0");
   expect(err).not.toContain("error:");

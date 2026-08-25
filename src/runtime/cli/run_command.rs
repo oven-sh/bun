@@ -728,10 +728,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         if env_loader.get(b"npm_execpath").is_none() {
             // we don't care if this fails
-            if let Ok(self_exe_path) = bun_core::self_exe_path() {
+            if let Some(exec_path) = crate::node::process::exec_path_bytes() {
                 env_loader
                     .map
-                    .put_default(b"npm_execpath", self_exe_path.as_bytes())
+                    .put_default(b"npm_execpath", exec_path)
                     .expect("unreachable");
             }
         }
@@ -4000,9 +4000,10 @@ impl BunXFastPath {
 
     /// Give the in-process launch the identity a POSIX bunx child gets by
     /// exec'ing through the temp `node` shim: argv in the
-    /// `bun <script> <args>` shape (the `process.execArgv` re-parse must not
-    /// see bunx CLI flags) and `process.execPath` at the sibling `bun.exe`
-    /// (a fork of `bunx.exe` re-enters bunx CLI mode, #40298).
+    /// `bun <BUN_OPTIONS> <script> <args>` shape (the `process.execArgv`
+    /// re-parse must not see bunx CLI flags) and argv[0] at the override
+    /// `cli::detect_bunx_exec_path_override` recorded (a fork of `bunx.exe`
+    /// re-enters bunx CLI mode, #40298).
     fn assume_runtime_identity(script_path: &[u8], passthrough: &[Box<[u8]>]) {
         fn leak_zstr(bytes: &[u8]) -> &'static ZStr {
             let mut v = Vec::with_capacity(bytes.len() + 1);
@@ -4011,33 +4012,25 @@ impl BunXFastPath {
             ZStr::from_slice_with_nul(v.leak())
         }
 
-        let self_exe: Option<&'static ZStr> = core::self_exe_path().ok();
-
-        if let Some(self_exe) = self_exe {
-            let bytes = self_exe.as_bytes();
-            if strings::eql_case_insensitive_ascii_check_length(paths::basename(bytes), b"bunx.exe")
-            {
-                if let Some(dir) = paths::dirname(bytes) {
-                    let mut sibling = Vec::with_capacity(dir.len() + b"\\bun.exe".len());
-                    sibling.extend_from_slice(dir);
-                    sibling.extend_from_slice(b"\\bun.exe");
-                    if sys::exists(&sibling) {
-                        let _ = cli::Bun__Node__ExecPathOverride.set(core::ZBox::from_vec(sibling));
-                    }
-                }
-            }
-        }
-
         let argv0: &'static ZStr = match cli::Bun__Node__ExecPathOverride.get() {
             Some(path) => path.as_zstr(),
-            None => match self_exe {
+            None => match core::self_exe_path().ok() {
                 Some(z) => z,
                 None => core::argv().get(0).unwrap_or(core::zstr!("bun")),
             },
         };
 
-        let mut new_argv: Vec<&'static ZStr> = Vec::with_capacity(2 + passthrough.len());
+        let bun_options_argc = core::bun_options_argc();
+        let mut new_argv: Vec<&'static ZStr> =
+            Vec::with_capacity(2 + bun_options_argc + passthrough.len());
         new_argv.push(argv0);
+        // BUN_OPTIONS tokens sit at argv[1..]; keep them so `process.execArgv`
+        // reports them, as the POSIX child does after its own env re-splice.
+        for i in 1..=bun_options_argc {
+            if let Some(z) = core::argv().get(i) {
+                new_argv.push(z);
+            }
+        }
         new_argv.push(leak_zstr(script_path));
         for arg in passthrough {
             new_argv.push(leak_zstr(arg));

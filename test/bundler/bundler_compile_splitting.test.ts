@@ -106,7 +106,7 @@ describe("bundler", () => {
         const startupCount = u32(at);
 
         // `CompiledModuleGraphFile`: name, contents, sourcemap, bytecode, module_info, bytecode_origin_path
-        // (StringPointer each), then 4 bytes. Chunks are numbered, so identify them by their source text.
+        // (StringPointer each), then 4 bytes. Chunk names are hashed, so identify them by their source text.
         const index: Record<string, number> = {};
         const bytecodeEnd: number[] = [];
         for (let i = 0; i < count; i++) {
@@ -126,6 +126,41 @@ describe("bundler", () => {
         // The string table sits between the startup modules' bytecode and the lazy chunk's.
         expect(stringTable.offset).toBeGreaterThanOrEqual(Math.max(bytecodeEnd[0], bytecodeEnd[1]));
         expect(stringTable.offset + stringTable.length).toBeLessThanOrEqual(bytecodeEnd[2]);
+      },
+    });
+
+    itBundled("compile/splitting/ChunkNamesAreHashed", {
+      compile: true,
+      splitting: true,
+      files: {
+        "/entry.ts": /* js */ `
+          console.log("mark:entry");
+          await import("./lazy");
+        `,
+        "/lazy.ts": /* js */ `
+          console.log("mark:lazy");
+        `,
+      },
+      run: {
+        stdout: "mark:entry\nmark:lazy",
+      },
+      onAfterBundle(api) {
+        const file = readFileSync(api.outfile);
+        const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined, "latin1");
+        expect(trailer).toBeGreaterThan(0);
+        const offsets = trailer - 32;
+        const base = offsets - Number(file.readBigUInt64LE(offsets));
+        const modules = { offset: file.readUInt32LE(offsets + 8), length: file.readUInt32LE(offsets + 12) };
+        expect(modules.length).toBe(2 * 52);
+        const names: string[] = [];
+        for (let i = 0; i < 2; i++) {
+          const record = base + modules.offset + i * 52;
+          const name = { offset: file.readUInt32LE(record), length: file.readUInt32LE(record + 4) };
+          names.push(file.toString("latin1", base + name.offset, base + name.offset + name.length));
+        }
+        expect(names).toHaveLength(2);
+        expect(names[0]).toBe("/$bunfs/root/out");
+        expect(names[1]).toMatch(/^\/\$bunfs\/root\/chunk-[0-9a-z]+\.js$/);
       },
     });
 

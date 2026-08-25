@@ -1815,12 +1815,12 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
             // would still be dispatched against the finished pass. The build
             // runs on; its completion lands on the next file's global.
             ActiveHandle::Bundle(_) if reason == StopReason::TestIsolation => kept.push(kv.key),
-            // SAFETY: live until it unregisters in `on_complete_anytask`.
-            ActiveHandle::Bundle(c) => unsafe {
+            ActiveHandle::Bundle(c) => {
                 crate::api::js_bundle_completion_task::JSBundleCompletionTask::stop_for_vm_teardown(
-                    c.as_ptr(),
+                    // SAFETY: registered (from its `ThisPtr`) until `on_complete` unregisters ⇒ live.
+                    unsafe { bun_ptr::ThisPtr::new(c.as_ptr()) },
                 )
-            },
+            }
             // Live until it unregisters in `destroy_channel`.
             // SAFETY: registered ⇒ live; may free itself inside, not touched after.
             ActiveHandle::DnsResolver(r) => unsafe {

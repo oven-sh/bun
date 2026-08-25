@@ -63,6 +63,26 @@ pub unsafe trait Linked: Sized {
     unsafe fn link(item: *mut Self) -> *const Link<Self>;
 }
 
+/// `unsafe impl Linked for $T` through its embedded `$field: Link<$T>`: the
+/// projection is a fixed field, which is the whole of [`Linked`]'s contract.
+///
+/// ```ignore
+/// bun_threading::intrusive_link!(NetworkTask, next);
+/// ```
+#[macro_export]
+macro_rules! intrusive_link {
+    ($T:ty, $field:ident) => {
+        // SAFETY: always projects the same embedded `Link<Self>` field.
+        unsafe impl $crate::Linked for $T {
+            #[inline]
+            unsafe fn link(item: *mut Self) -> *const $crate::Link<Self> {
+                // SAFETY: `item` is valid and aligned per `UnboundedQueue`'s contract.
+                unsafe { ::core::ptr::addr_of!((*item).$field) }
+            }
+        }
+    };
+}
+
 // SAFETY: all four accessors route through `T::link(item)`, which by `Linked`'s
 // contract returns the same embedded `Link<Self>` field every time; `Link` is a
 // `#[repr(transparent)]` `AtomicPtr`, so atomic ops are truly atomic at the

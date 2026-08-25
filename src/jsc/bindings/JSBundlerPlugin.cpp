@@ -47,11 +47,31 @@ extern "C" void OnBeforeParseResult__reset(OnBeforeParseResult* result);
 #define WRAP_BUNDLER_PLUGIN(argName) jsDoubleNumber(std::bit_cast<double>(reinterpret_cast<uintptr_t>(argName)))
 #define UNWRAP_BUNDLER_PLUGIN(callFrame) reinterpret_cast<void*>(std::bit_cast<uintptr_t>(callFrame->argument(0).asDouble()))
 
-/// These are native callbacks to be run after their associated JS version is run
-extern "C" void JSBundlerPlugin__addError(void*, void*, JSC::EncodedJSValue, uint8_t);
-extern "C" void JSBundlerPlugin__onLoadAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
-extern "C" void JSBundlerPlugin__onResolveAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
+/// These are native callbacks to be run after their associated JS version is run. `context` is the
+/// bundler's `Resolve*` (RequestKind::Resolve) or `Load*` (RequestKind::Load).
+extern "C" void JSBundlerPlugin__addErrorResolve(void*, JSC::JSGlobalObject*, JSC::EncodedJSValue);
+extern "C" void JSBundlerPlugin__addErrorLoad(void*, JSC::JSGlobalObject*, JSC::EncodedJSValue);
+extern "C" void JSBundlerPlugin__answerCancelledResolve(void*);
+extern "C" void JSBundlerPlugin__answerCancelledLoad(void*);
+extern "C" void JSBundlerPlugin__onLoadAsync(void*, JSC::JSGlobalObject*, JSC::EncodedJSValue, JSC::EncodedJSValue);
+extern "C" void JSBundlerPlugin__onResolveAsync(void*, JSC::JSGlobalObject*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__onDefer(void*, JSC::JSGlobalObject*);
+
+static void JSBundlerPlugin__addError(void* context, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue exception, uint8_t kind)
+{
+    if (kind == static_cast<uint8_t>(BundlerPlugin::RequestKind::Resolve))
+        JSBundlerPlugin__addErrorResolve(context, globalObject, exception);
+    else
+        JSBundlerPlugin__addErrorLoad(context, globalObject, exception);
+}
+
+static void JSBundlerPlugin__answerCancelled(BundlerPlugin::RequestKind kind, void* context)
+{
+    if (kind == BundlerPlugin::RequestKind::Resolve)
+        JSBundlerPlugin__answerCancelledResolve(context);
+    else
+        JSBundlerPlugin__answerCancelledLoad(context);
+}
 
 JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter);
 JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_addError);
@@ -124,13 +144,12 @@ public:
     static JSBundlerPlugin* create(JSC::VM& vm,
         JSC::JSGlobalObject* globalObject,
         JSC::Structure* structure,
-        void* config,
         BunPluginTarget target,
         JSBundlerPluginAddErrorCallback addError = JSBundlerPlugin__addError,
         JSBundlerPluginOnLoadAsyncCallback onLoadAsync = JSBundlerPlugin__onLoadAsync,
         JSBundlerPluginOnResolveAsyncCallback onResolveAsync = JSBundlerPlugin__onResolveAsync)
     {
-        JSBundlerPlugin* ptr = new (NotNull, JSC::allocateCell<JSBundlerPlugin>(vm)) JSBundlerPlugin(vm, globalObject, structure, config, target,
+        JSBundlerPlugin* ptr = new (NotNull, JSC::allocateCell<JSBundlerPlugin>(vm)) JSBundlerPlugin(vm, globalObject, structure, target,
             addError,
             onLoadAsync,
             onResolveAsync);
@@ -171,10 +190,10 @@ public:
     }
 
 private:
-    JSBundlerPlugin(JSC::VM& vm, JSC::JSGlobalObject* global, JSC::Structure* structure, void* config, BunPluginTarget target,
+    JSBundlerPlugin(JSC::VM& vm, JSC::JSGlobalObject* global, JSC::Structure* structure, BunPluginTarget target,
         JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
         : Base(vm, structure)
-        , plugin(BundlerPlugin(config, target, addError, onLoadAsync, onResolveAsync))
+        , plugin(BundlerPlugin(target, addError, onLoadAsync, onResolveAsync))
         , m_globalObject(global)
     {
     }
@@ -426,7 +445,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addError, (JSC::JSGlobalObject 
     JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(callFrame->thisValue());
     void* context = UNWRAP_BUNDLER_PLUGIN(callFrame);
     if (auto kind = thisObject->plugin.takeRequest(context))
-        thisObject->plugin.addError(context, thisObject, JSValue::encode(callFrame->argument(1)), static_cast<uint8_t>(*kind));
+        thisObject->plugin.addError(context, globalObject, JSValue::encode(callFrame->argument(1)), static_cast<uint8_t>(*kind));
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
@@ -436,7 +455,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onLoadAsync, (JSC::JSGlobalObje
     if (thisObject->plugin.takeRequest(BundlerPlugin::RequestKind::Load, UNWRAP_BUNDLER_PLUGIN(callFrame))) {
         thisObject->plugin.onLoadAsync(
             UNWRAP_BUNDLER_PLUGIN(callFrame),
-            thisObject->plugin.config,
+            globalObject,
             JSValue::encode(callFrame->argument(1)),
             JSValue::encode(callFrame->argument(2)));
     }
@@ -449,7 +468,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onResolveAsync, (JSC::JSGlobalO
     if (thisObject->plugin.takeRequest(BundlerPlugin::RequestKind::Resolve, UNWRAP_BUNDLER_PLUGIN(callFrame))) {
         thisObject->plugin.onResolveAsync(
             UNWRAP_BUNDLER_PLUGIN(callFrame),
-            thisObject->plugin.config,
+            globalObject,
             JSValue::encode(callFrame->argument(1)),
             JSValue::encode(callFrame->argument(2)),
             JSValue::encode(callFrame->argument(3)));
@@ -523,8 +542,6 @@ extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, 
     return pluginObject->plugin.anyMatchesCrossThread(pluginObject->vm(), namespaceString, path, isOnLoad);
 }
 
-extern "C" void JSBundlerPlugin__answerCancelled(uint8_t kind, void* context);
-
 // The bundle thread hands an onResolve / onLoad request over to the plugins' (this) thread. From here it is
 // answered exactly once, on this thread: by the plugin, or as cancelled if the plugin can no longer run.
 template<typename BuildArguments>
@@ -533,7 +550,7 @@ static void dispatchRequest(Bun::JSBundlerPlugin* plugin, BundlerPlugin::Request
     JSC::JSGlobalObject* globalObject = plugin->globalObject();
     JSC::CallData callData = function ? JSC::getCallData(function) : JSC::CallData {};
     if (plugin->plugin.tombstoned || callData.type == JSC::CallData::Type::None) [[unlikely]] {
-        JSBundlerPlugin__answerCancelled(static_cast<uint8_t>(kind), context);
+        JSBundlerPlugin__answerCancelled(kind, context);
         return;
     }
     plugin->plugin.holdRequest(kind, context);
@@ -543,7 +560,7 @@ static void dispatchRequest(Bun::JSBundlerPlugin* plugin, BundlerPlugin::Request
     // cancelled (if the plugin has not answered already); the termination stays for the landing frame.
     auto cancel = [&] {
         if (plugin->plugin.takeRequest(kind, context))
-            JSBundlerPlugin__answerCancelled(static_cast<uint8_t>(kind), context);
+            JSBundlerPlugin__answerCancelled(kind, context);
     };
     JSC::MarkedArgumentBuffer arguments;
     buildArguments(globalObject, scope, arguments);
@@ -558,7 +575,7 @@ static void dispatchRequest(Bun::JSBundlerPlugin* plugin, BundlerPlugin::Request
         }
         // The plugin threw before answering: that is its answer.
         if (plugin->plugin.takeRequest(kind, context))
-            plugin->plugin.addError(context, plugin, JSC::JSValue::encode(exception), static_cast<uint8_t>(kind));
+            plugin->plugin.addError(context, globalObject, JSC::JSValue::encode(exception), static_cast<uint8_t>(kind));
     }
 }
 
@@ -599,7 +616,6 @@ extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* glob
             globalObject->vm(),
             globalObject,
             globalObject->objectPrototype()),
-        nullptr,
         target);
 }
 
@@ -657,11 +673,6 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
     return JSValue::encode(result);
 }
 
-extern "C" void JSBundlerPlugin__setConfig(Bun::JSBundlerPlugin* plugin, void* config)
-{
-    plugin->plugin.config = config;
-}
-
 extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObject, bool rejected)
 {
     auto* globalObject = pluginObject->globalObject();
@@ -687,7 +698,7 @@ void BundlerPlugin::tombstone()
 {
     tombstoned = true;
     for (auto& [context, kind] : std::exchange(held, {}))
-        JSBundlerPlugin__answerCancelled(static_cast<uint8_t>(kind), context);
+        JSBundlerPlugin__answerCancelled(kind, context);
 }
 
 extern "C" void JSBundlerPlugin__tombstone(Bun::JSBundlerPlugin* plugin)

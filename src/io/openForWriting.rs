@@ -1,5 +1,4 @@
 use bun_core::ZStr;
-#[cfg(unix)]
 use bun_sys::FdExt;
 use bun_sys::{self, Fd, Mode};
 
@@ -176,6 +175,17 @@ where
         *pollable = (bun_sys::windows::GetFileType(fd.native()) & bun_sys::windows::FILE_TYPE_PIPE)
             != 0
             && !force_sync;
-        return Ok(fd);
+        // Both arms yield a HANDLE-backed fd (NtCreateFile / DuplicateHandle);
+        // the libuv writer needs a CRT fd, and `Fd::uv()` panics on a HANDLE.
+        return match fd.make_libuv_owned() {
+            Ok(uv_fd) => Ok(uv_fd),
+            Err(()) => {
+                fd.close();
+                Err(bun_sys::Error::from_code(
+                    bun_sys::E::EMFILE,
+                    bun_sys::Tag::open,
+                ))
+            }
+        };
     }
 }

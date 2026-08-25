@@ -1,7 +1,8 @@
 use core::fmt;
 use std::borrow::Cow;
 
-use bun_core::{String, StringView, ZigString};
+use bun_core::{String, StringView};
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, StringJsc};
 
 use super::parse_args_utils::{
@@ -150,7 +151,7 @@ impl OptionToken<'_> {
                 let written = 8 - cursor.len();
                 &buf[..written]
             };
-            String::borrow_utf8(str).to_js(global)
+            bun_string_jsc::create_utf8_for_js(global, str)
         } else {
             match self.parse_type {
                 OptionParseType::LoneShortOption | OptionParseType::LoneLongOption => {
@@ -185,17 +186,17 @@ fn find_option_by_long_name(long_name: &String, options: &[OptionDefinition]) ->
 fn get_default_args(global: &JSGlobalObject) -> JsResult<ArgsSlice> {
     // Work out where to slice process.argv for user supplied arguments
 
-    let exec_argv = super::process::get_exec_argv(global);
-    let argv = super::process::get_argv(global);
+    let exec_argv = super::process::get_exec_argv(global)?;
+    let argv = super::process::get_argv(global)?;
     if argv.is_array() && exec_argv.is_array() {
         let mut iter = exec_argv.array_iterator(global)?;
         while let Some(item) = iter.next()? {
             if item.is_string() {
                 let str = item.to_bun_string(global)?;
-                if str.eql_comptime(b"-e")
-                    || str.eql_comptime(b"--eval")
-                    || str.eql_comptime(b"-p")
-                    || str.eql_comptime(b"--print")
+                if str.eq_ascii(b"-e")
+                    || str.eq_ascii(b"--eval")
+                    || str.eq_ascii(b"-p")
+                    || str.eq_ascii(b"--print")
                 {
                     return Ok(ArgsSlice {
                         array: argv,
@@ -226,7 +227,7 @@ fn check_option_like_value(global: &JSGlobalObject, token: &OptionToken) -> JsRe
         let raw_name = RawNameFormatter { token: *token, raw };
 
         // Only show short example if user used short option.
-        let err: JSValue = if raw_name.raw.has_prefix_comptime(b"--") {
+        let err: JSValue = if raw_name.raw.starts_with_ascii(b"--") {
             global.to_type_error(
                 bun_jsc::ErrorCode::PARSE_ARGS_INVALID_OPTION_VALUE,
                 format_args!(
@@ -357,7 +358,7 @@ fn store_option(
     values: JSValue,
 ) -> JsResult<()> {
     let key = option_name.as_bun_string(global)?;
-    if key.eql_comptime(b"__proto__") {
+    if key.eq_ascii(b"__proto__") {
         return Ok(());
     }
 
@@ -498,7 +499,7 @@ fn parse_option_definitions<'a>(
             if !option.short_name.is_empty() {
                 StringView::new(&option.short_name)
             } else {
-                StringView::static_(b"none")
+                StringView::static_("none")
             },
             option.multiple as u8,
             if option.default_value.is_some() {
@@ -690,7 +691,7 @@ fn tokenize_args(
                 // e.g. '--foo'
                 let mut long_option = arg.substring(2);
 
-                let negative = if ctx.allow_negative && long_option.has_prefix_comptime(b"no-") {
+                let negative = if ctx.allow_negative && long_option.starts_with_ascii(b"no-") {
                     long_option = arg.substring(2 + 3);
                     true
                 } else {
@@ -839,31 +840,19 @@ impl<'a> ParseArgsState<'a> {
             };
 
             let obj = JSValue::create_empty_object(global, num_properties);
-            obj.put(global, ZigString::static_("kind"), kind_jsvalue);
+            obj.put(global, b"kind", kind_jsvalue);
             match &token_generic {
                 Token::Option(token) => {
-                    obj.put(
-                        global,
-                        ZigString::static_("name"),
-                        token.name.as_js_value(global)?,
-                    );
-                    obj.put(
-                        global,
-                        ZigString::static_("rawName"),
-                        token.make_raw_name_js_value(global)?,
-                    );
-                    obj.put(
-                        global,
-                        ZigString::static_("index"),
-                        JSValue::js_number(token.index as f64),
-                    );
+                    obj.put(global, b"name", token.name.as_js_value(global)?);
+                    obj.put(global, b"rawName", token.make_raw_name_js_value(global)?);
+                    obj.put(global, b"index", JSValue::js_number(token.index as f64));
 
                     // value exists only for string options, otherwise the property exists with "undefined" as value
                     let value = token.value.as_js_value(global)?;
-                    obj.put(global, ZigString::static_("value"), value);
+                    obj.put(global, b"value", value);
                     obj.put(
                         global,
-                        ZigString::static_("inlineValue"),
+                        b"inlineValue",
                         if value.is_undefined() {
                             JSValue::UNDEFINED
                         } else {
@@ -872,23 +861,11 @@ impl<'a> ParseArgsState<'a> {
                     );
                 }
                 Token::Positional { index, value } => {
-                    obj.put(
-                        global,
-                        ZigString::static_("index"),
-                        JSValue::js_number(*index as f64),
-                    );
-                    obj.put(
-                        global,
-                        ZigString::static_("value"),
-                        value.as_js_value(global)?,
-                    );
+                    obj.put(global, b"index", JSValue::js_number(*index as f64));
+                    obj.put(global, b"value", value.as_js_value(global)?);
                 }
                 Token::OptionTerminator { index } => {
-                    obj.put(
-                        global,
-                        ZigString::static_("index"),
-                        JSValue::js_number(*index as f64),
-                    );
+                    obj.put(global, b"index", JSValue::js_number(*index as f64));
                 }
             }
             self.tokens.push(global, obj)?;
@@ -1042,7 +1019,7 @@ fn parse_args_impl(
 
     for option in &option_defs {
         if let Some(default_value) = option.default_value {
-            if !option.long_name.eql_comptime(b"__proto__") {
+            if !option.long_name.eq_ascii(b"__proto__") {
                 if state.values.get_own(global, &option.long_name)?.is_none() {
                     bun_output::scoped_log!(
                         parseArgs,
@@ -1063,10 +1040,10 @@ fn parse_args_impl(
     bun_output::scoped_log!(parseArgs, "Phase 4: Build result object");
 
     let result = JSValue::create_empty_object(global, if return_tokens { 3 } else { 2 });
-    result.put(global, ZigString::static_("values"), state.values);
-    result.put(global, ZigString::static_("positionals"), state.positionals);
+    result.put(global, b"values", state.values);
+    result.put(global, b"positionals", state.positionals);
     if return_tokens {
-        result.put(global, ZigString::static_("tokens"), state.tokens);
+        result.put(global, b"tokens", state.tokens);
     }
     Ok(result)
 }

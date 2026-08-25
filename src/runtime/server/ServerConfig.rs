@@ -1056,11 +1056,10 @@ impl ServerConfig {
         }
 
         if let Some(base_uri) = arg.get_truthy(global, "baseURI")? {
-            let sliced = base_uri.to_slice(global)?;
+            let utf8 = base_uri.to_utf8(global)?;
 
-            if !sliced.slice().is_empty() {
-                // sliced drops at scope end
-                args.base_uri = Box::<[u8]>::from(sliced.slice());
+            if !utf8.slice().is_empty() {
+                args.base_uri = Box::<[u8]>::from(utf8.slice());
             }
         }
 
@@ -1100,7 +1099,7 @@ impl ServerConfig {
             if id.is_undefined_or_null() {
                 args.allow_hot = false;
             } else {
-                let id_str = id.to_slice(global)?;
+                let id_str = id.to_utf8(global)?;
                 if !id_str.slice().is_empty() {
                     args.id = Box::<[u8]>::from(id_str.slice());
                 } else {

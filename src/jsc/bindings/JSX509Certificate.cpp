@@ -363,6 +363,7 @@ static JSObject* GetX509NameObject(JSGlobalObject* globalObject, const X509* cer
                     return nullptr;
                 }
                 array->putDirectIndex(globalObject, 0, existing);
+                RETURN_IF_EXCEPTION(scope, nullptr);
                 array->putDirectIndex(globalObject, 1, jsvalue);
                 result->putDirect(vm, Identifier::fromString(vm, key), array, 0);
             } else {
@@ -761,7 +762,7 @@ __attribute__((minsize)) JSC::JSObject* JSX509Certificate::toLegacyObject(ncrypt
 
     // Helper function to convert JSValue to undefined if empty/null
     auto valueOrUndefined = [&](JSValue value) -> JSValue {
-        if (value.isEmpty() || value.isNull() || (value.isString() && value.toString(globalObject)->length() == 0))
+        if (value.isEmpty() || value.isNull() || (value.isString() && asString(value)->length() == 0))
             return jsUndefined();
         return value;
     };
@@ -971,7 +972,7 @@ JSC::JSObject* JSX509Certificate::toLegacyObject(JSGlobalObject* globalObject)
 
     // Helper function to convert JSValue to undefined if empty/null
     auto valueOrUndefined = [&](JSValue value) -> JSValue {
-        if (value.isEmpty() || value.isNull() || (value.isString() && value.toString(globalObject)->length() == 0))
+        if (value.isEmpty() || value.isNull() || (value.isString() && asString(value)->length() == 0))
             return jsUndefined();
         return value;
     };

@@ -218,7 +218,7 @@ impl Start {
 
                     return Ok(Start::FileSink(FileSinkOptions {
                         input_path: crate::webcore::PathOrFileDescriptor::Path(
-                            path.to_slice(global_this)?,
+                            path.to_utf8(global_this)?,
                         ),
                         ..Default::default()
                     }));

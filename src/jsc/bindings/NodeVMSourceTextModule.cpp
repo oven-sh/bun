@@ -295,6 +295,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         requestObject->putDirect(vm, attributesIdentifier, attributesObject);
         addModuleRequest({ request.m_specifier.string(), WTF::move(attributeMap) });
         requestsArray->putDirectIndex(globalObject, i, requestObject);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     m_moduleRequestsArray.set(vm, this, requestsArray);

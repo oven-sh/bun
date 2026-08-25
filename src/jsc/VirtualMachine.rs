@@ -5467,9 +5467,7 @@ impl VirtualMachine {
             if frame.position.is_invalid() || frame.remapped {
                 continue;
             }
-            let source_url = frame.source_url.to_utf8();
-            let path = source_url.slice();
-            if path.is_empty() {
+            if frame.source_url.is_empty() {
                 frame.remapped = true;
                 continue;
             }
@@ -5477,14 +5475,22 @@ impl VirtualMachine {
             // Slow path: drops and re-acquires the source_mappings lock around
             // resolve_source_mapping().
             self.source_mappings.unlock();
-            if let Some(lookup) = self.resolve_source_mapping(
-                path,
-                frame.position.line,
-                frame.position.column,
-                bun_sourcemap::SourceContentHandling::NoSourceContents,
-            ) {
-                let display_url = lookup.display_source_url_if_needed(path);
-                drop(source_url);
+            let resolved = {
+                let source_url = frame.source_url.to_utf8();
+                self.resolve_source_mapping(
+                    source_url.slice(),
+                    frame.position.line,
+                    frame.position.column,
+                    bun_sourcemap::SourceContentHandling::NoSourceContents,
+                )
+                .map(|lookup| {
+                    (
+                        lookup.display_source_url_if_needed(source_url.slice()),
+                        lookup,
+                    )
+                })
+            };
+            if let Some((display_url, lookup)) = resolved {
                 if let Some(source_url) = display_url {
                     frame.source_url = source_url;
                 }
@@ -5678,58 +5684,62 @@ impl VirtualMachine {
             enable_source_code_preview.set(false);
         }
 
-        let top_source_url = frames[top].source_url.to_utf8();
-
         let already_remapped = frames[top].remapped;
-        let maybe_lookup: Option<bun_sourcemap::mapping::Lookup> = if already_remapped {
-            Some(bun_sourcemap::mapping::Lookup {
-                mapping: bun_sourcemap::mapping::Mapping {
-                    generated: bun_sourcemap::LineColumnOffset::default(),
-                    original: bun_sourcemap::LineColumnOffset {
-                        lines: bun_sourcemap::Ordinal::from_zero_based(
-                            frames[top].position.line.zero_based().max(0),
-                        ),
-                        columns: bun_sourcemap::Ordinal::from_zero_based(
-                            frames[top].position.column.zero_based().max(0),
-                        ),
+        // `(mapping, display_url, external_code)`; the `to_utf8()` borrow of
+        // `frames[top].source_url` ends with this block so it can be reassigned.
+        let resolved = {
+            let top_source_url = frames[top].source_url.to_utf8();
+            let maybe_lookup: Option<bun_sourcemap::mapping::Lookup> = if already_remapped {
+                Some(bun_sourcemap::mapping::Lookup {
+                    mapping: bun_sourcemap::mapping::Mapping {
+                        generated: bun_sourcemap::LineColumnOffset::default(),
+                        original: bun_sourcemap::LineColumnOffset {
+                            lines: bun_sourcemap::Ordinal::from_zero_based(
+                                frames[top].position.line.zero_based().max(0),
+                            ),
+                            columns: bun_sourcemap::Ordinal::from_zero_based(
+                                frames[top].position.column.zero_based().max(0),
+                            ),
+                        },
+                        source_index: 0,
+                        name_index: -1,
                     },
-                    source_index: 0,
-                    name_index: -1,
-                },
-                source_map: None,
-                prefetched_source_code: None,
+                    source_map: None,
+                    prefetched_source_code: None,
+                })
+            } else {
+                self.resolve_source_mapping(
+                    top_source_url.slice(),
+                    frames[top].position.line,
+                    frames[top].position.column,
+                    bun_sourcemap::SourceContentHandling::SourceContents,
+                )
+            };
+
+            maybe_lookup.map(|lookup| {
+                // The source-map Arc drops on scope exit.
+                let mapping = lookup.mapping;
+                let display_url = if !already_remapped {
+                    lookup.display_source_url_if_needed(top_source_url.slice())
+                } else {
+                    None
+                };
+                let external_code = if enable_source_code_preview.get()
+                    && !already_remapped
+                    && lookup
+                        .source_map
+                        .as_deref()
+                        .is_some_and(|m| m.is_external())
+                {
+                    lookup.get_source_code(top_source_url.slice())
+                } else {
+                    None
+                };
+                (mapping, display_url, external_code)
             })
-        } else {
-            self.resolve_source_mapping(
-                top_source_url.slice(),
-                frames[top].position.line,
-                frames[top].position.column,
-                bun_sourcemap::SourceContentHandling::SourceContents,
-            )
         };
 
-        if let Some(lookup) = maybe_lookup {
-            // The source-map Arc drops on scope exit.
-            let mapping = lookup.mapping;
-            let display_url = if !already_remapped {
-                lookup.display_source_url_if_needed(top_source_url.slice())
-            } else {
-                None
-            };
-            let external_code = if enable_source_code_preview.get()
-                && !already_remapped
-                && lookup
-                    .source_map
-                    .as_deref()
-                    .is_some_and(|m| m.is_external())
-            {
-                lookup.get_source_code(top_source_url.slice())
-            } else {
-                drop(lookup);
-                None
-            };
-            drop(top_source_url);
-
+        if let Some((mapping, display_url, external_code)) = resolved {
             if let Some(src) = display_url {
                 frames[top].source_url = src;
             }
@@ -5805,11 +5815,8 @@ impl VirtualMachine {
             if !code.slice().is_empty() {
                 *source_code_slice = Some(code);
             }
-        } else {
-            drop(top_source_url);
-            if enable_source_code_preview.get() {
-                exception.collect_source_lines(error_instance, global);
-            }
+        } else if enable_source_code_preview.get() {
+            exception.collect_source_lines(error_instance, global);
         }
 
         if frames.len() > 1 {
@@ -5818,15 +5825,22 @@ impl VirtualMachine {
                 if i == top || frames[i].remapped || frames[i].position.is_invalid() {
                     continue;
                 }
-                let source_url = frames[i].source_url.to_utf8();
-                if let Some(lookup) = self.resolve_source_mapping(
-                    source_url.slice(),
-                    frames[i].position.line,
-                    frames[i].position.column,
-                    bun_sourcemap::SourceContentHandling::NoSourceContents,
-                ) {
-                    let display_url = lookup.display_source_url_if_needed(source_url.slice());
-                    drop(source_url);
+                let resolved = {
+                    let source_url = frames[i].source_url.to_utf8();
+                    self.resolve_source_mapping(
+                        source_url.slice(),
+                        frames[i].position.line,
+                        frames[i].position.column,
+                        bun_sourcemap::SourceContentHandling::NoSourceContents,
+                    )
+                    .map(|lookup| {
+                        (
+                            lookup.display_source_url_if_needed(source_url.slice()),
+                            lookup,
+                        )
+                    })
+                };
+                if let Some((display_url, lookup)) = resolved {
                     if let Some(src) = display_url {
                         frames[i].source_url = src;
                     }

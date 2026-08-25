@@ -48,7 +48,7 @@ fn run_grouped<T: GroupTask>(task: *mut Task) {
     // `Box<T>` `TaskGroup::push` leaked; the pool runs this once for it.
     let (group, this) = unsafe { ((*node).group, Box::from_raw(T::from_field_ptr(node))) };
     this.run();
-    // SAFETY: `group` is the `TaskGroup`'s boxed `WaitGroup`, counted for this
+    // SAFETY: `group` is the `TaskGroup`'s heap `WaitGroup`, counted for this
     // task; `finish_raw` is this thread's last access to it.
     unsafe { WaitGroup::finish_raw(group) };
 }

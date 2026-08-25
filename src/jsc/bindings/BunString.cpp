@@ -102,7 +102,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUT
 JSC::JSValue BunString::transferToJS(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
-    if (this->tag == BunStringTag::Empty)
+    if (this->tag != BunStringTag::Dead && this->isEmpty())
         return jsEmptyString(vm);
     auto str = this->transferToWTFString();
     if (str.isNull()) [[unlikely]] {
@@ -148,7 +148,7 @@ namespace Bun {
 JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
 {
     auto& vm = JSC::getVM(globalObject);
-    if (bunString.tag == BunStringTag::Empty)
+    if (bunString.tag != BunStringTag::Dead && bunString.isEmpty())
         return JSC::jsEmptyString(vm);
     auto str = bunString.toWTFString();
     if (str.isNull()) [[unlikely]] {

@@ -61,8 +61,7 @@ function affectedRowsForCommand(commandString: string, count: number | bigint): 
     case "REPLACE":
       return count;
     default:
-      // Keep non-write statements at 0 instead of sqlite3_changes(), which
-      // still reports the previous write after e.g. CREATE TABLE.
+      // sqlite3_changes() still reports the previous write after e.g. CREATE TABLE.
       return 0;
   }
 }
@@ -277,9 +276,8 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         const count = $isArray(result) ? result.length : 1;
         sqlResult.command = commandToString(command, parsedInfo.lastToken);
         sqlResult.count = count;
-        // A write with RETURNING emits one row per affected row. lastToken is
-        // the first token of the statement: EXPLAIN <write> classifies as the
-        // inner write command but returns plan rows and changes nothing.
+        // A write with RETURNING emits one row per affected row. EXPLAIN <write>
+        // (lastToken is the statement's first token) changes nothing.
         sqlResult.affectedRows =
           parsedInfo.lastToken === "EXPLAIN" ? 0 : affectedRowsForCommand(sqlResult.command, count);
 

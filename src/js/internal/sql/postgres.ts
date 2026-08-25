@@ -274,9 +274,7 @@ initPostgres(
     }
 
     result.count = count || 0;
-    // For write commands the tag count is the number of rows the statement
-    // changed. Mirror it into affectedRows so the same property carries the
-    // affected-row count on every adapter (MySQL reports it only there).
+    // For writes the tag count is rows changed; affectedRows is the adapter-portable field.
     switch (result.command) {
       case "INSERT":
       case "UPDATE":

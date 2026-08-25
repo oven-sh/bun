@@ -73,10 +73,15 @@ fn set_blob_content_type_from_headers(blob: &Blob, fetch_headers: Option<NonNull
         let fetch_headers = bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
         if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
             let content_type = content_type.to_latin1();
-            // https://fetch.spec.whatwg.org/#concept-body-mime-type: an unparseable Content-Type yields `type === ""`.
+            // https://fetch.spec.whatwg.org/#concept-body-mime-type: a Content-Type that
+            // cannot be parsed as a MIME type (non-ASCII or control bytes; HTAB is
+            // HTTP whitespace) yields `type === ""`.
+            let parseable = content_type
+                .iter()
+                .all(|&c| c == b'\t' || matches!(c, 0x20..=0x7E));
             set_blob_content_type(
                 blob,
-                if blob::is_valid_blob_type(&content_type) {
+                if parseable {
                     MimeType::init(&content_type, true, None)
                 } else {
                     bun_http_types::MimeType::NONE

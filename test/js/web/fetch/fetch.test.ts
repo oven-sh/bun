@@ -71,10 +71,13 @@ it("Response#blob().type is empty when Content-Type is not a valid MIME type", a
   // File API: a type with any character outside U+0020..U+007E is the empty string.
   await using server = net
     .createServer(socket => {
-      socket.on("data", () => {
+      socket.on("data", data => {
+        const contentType = data.toString().startsWith("GET /tab")
+          ? "text/html;\tcharset=utf-8"
+          : "text/pl\xe2in; charset=utf-8";
         socket.end(
           Buffer.from(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/pl\xe2in; charset=utf-8\r\nContent-Length: 1\r\nConnection: close\r\n\r\nx",
+            `HTTP/1.1 200 OK\r\nContent-Type: ${contentType}\r\nContent-Length: 1\r\nConnection: close\r\n\r\nx`,
             "latin1",
           ),
         );
@@ -85,6 +88,9 @@ it("Response#blob().type is empty when Content-Type is not a valid MIME type", a
   const res = await fetch(`http://127.0.0.1:${server.address().port}/`);
   expect(res.headers.get("content-type")).toBe("text/plâin; charset=utf-8");
   expect((await res.blob()).type).toBe("");
+  // HTAB is HTTP whitespace, not a parse failure.
+  const tab = await fetch(`http://127.0.0.1:${server.address().port}/tab`);
+  expect((await tab.blob()).type).toBe("text/html;charset=utf-8");
 });
 
 describe("fetch data urls", () => {

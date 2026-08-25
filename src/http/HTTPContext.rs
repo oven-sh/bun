@@ -699,7 +699,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
             ProxyTunnel::shutdown(t.as_non_null());
             crate::proxy_tunnel::raw_as_mut(t.as_ptr()).detach_socket();
         }
-        drop(h2_session);
         Self::close_socket(socket);
     }
 

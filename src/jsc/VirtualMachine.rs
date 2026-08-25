@@ -2850,8 +2850,7 @@ impl VirtualMachine {
                             if let Some(stored) = self.pending_internal_promise {
                                 return Ok(stored);
                             }
-                            // `Promise.resolve(ret)` reads `ret.constructor` / `ret.then`,
-                            // which may throw.
+                            // `Promise.resolve(ret)` reads `ret.constructor` / `ret.then`: may throw.
                             jsc::call_check_slow(global_ref, || {
                                 JSC__JSInternalPromise__resolvedPromise(global_ref, ret)
                             })

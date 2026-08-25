@@ -106,10 +106,6 @@ impl ProducerHold {
         self.source.get().is_some()
     }
 
-    pub fn is_parked(&self) -> bool {
-        self.parked.get()
-    }
-
     /// The held stream, pinned for the guard's life: a consumer inside `on_data` can cancel the
     /// producer (which drops the hold), and while parked the wrapper is not rooted.
     pub fn bytes(&self) -> Option<PinnedBytes> {

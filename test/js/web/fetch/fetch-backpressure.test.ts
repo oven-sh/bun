@@ -814,7 +814,8 @@ describe("fetch() receive backpressure — a Response whose body nothing touches
       stdout: "pipe",
       stderr: "pipe",
     });
-    expect({ exitCode: await proc.exited, stderr: await proc.stderr.text() }).toEqual({ exitCode: 0, stderr: "" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
     expect(server.sent()).toBeLessThan(BODY);
   });
 
@@ -929,7 +930,8 @@ describe("S3 receive backpressure", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    expect({ exitCode: await proc.exited, stderr: await proc.stderr.text() }).toEqual({ exitCode: 0, stderr: "" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
     expect(bucket.sent()).toBeLessThan(BODY);
   });
 

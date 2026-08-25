@@ -935,13 +935,15 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     async function origin(gate) {
       const payload = Buffer.alloc(CHUNK, "a");
       const server = http.createServer(async (req, res) => {
+        // The client may go away mid-body (a failed write cancels the source, or the test ends).
+        res.on("error", () => {});
         if (req.url.endsWith("/small")) return res.end(payload.subarray(0, 1000));
         res.writeHead(200, { "content-length": String(CHUNK * COUNT) });
-        for (let i = 0; i < COUNT; i++) {
+        for (let i = 0; i < COUNT && !res.destroyed; i++) {
           if (gate && i === COUNT / 2) await gate;
-          if (!res.write(payload)) await once(res, "drain");
+          if (!res.write(payload)) await once(res, "drain").catch(() => {});
         }
-        res.end();
+        if (!res.destroyed) res.end();
       });
       server.listen(0, "127.0.0.1");
       await once(server, "listening");

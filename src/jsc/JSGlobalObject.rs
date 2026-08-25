@@ -778,9 +778,7 @@ impl JSGlobalObject {
                 EncodedSlice::from_bytes(lit.as_bytes()).to_dom_exception_instance(self, code)
             }
             None => match self.error_message(args) {
-                Some(message) => {
-                    EncodedSlice::utf8(&message).to_dom_exception_instance(self, code)
-                }
+                Some(message) => EncodedSlice::utf8(&message).to_dom_exception_instance(self, code),
                 None => JSValue::ZERO,
             },
         }

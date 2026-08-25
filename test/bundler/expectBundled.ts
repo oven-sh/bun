@@ -770,9 +770,6 @@ function expectBundled(
       if (optimizeImports) {
         throw new Error("optimizeImports not possible in backend=CLI (API-only option)");
       }
-      if (reactCompilerOutputMode) {
-        throw new Error("reactCompilerOutputMode not possible in backend=CLI (API-only option)");
-      }
       const cmd = (
         !ESBUILD
           ? [
@@ -825,6 +822,7 @@ function expectBundled(
               splitting && `--splitting`,
               serverComponents && "--server-components",
               reactCompiler && "--react-compiler",
+              reactCompilerOutputMode && ["--react-compiler-output-mode", reactCompilerOutputMode],
               outbase && `--root=${outbase}`,
               banner && `--banner="${banner}"`, // TODO: --banner-css=*
               footer && `--footer="${footer}"`,

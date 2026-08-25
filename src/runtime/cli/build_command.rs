@@ -197,11 +197,13 @@ impl BuildCommand {
         this_transpiler.options.server_components = ctx.bundler_options.server_components;
         this_transpiler.options.react_fast_refresh = ctx.bundler_options.react_fast_refresh;
         this_transpiler.options.react_compiler = if ctx.bundler_options.react_compiler {
-            if this_transpiler.options.target.is_server_side() {
-                bun_ast::runtime::ReactCompilerMode::Ssr
-            } else {
-                bun_ast::runtime::ReactCompilerMode::Client
-            }
+            ctx.bundler_options.react_compiler_output_mode.unwrap_or({
+                if this_transpiler.options.target.is_server_side() {
+                    bun_ast::runtime::ReactCompilerMode::Ssr
+                } else {
+                    bun_ast::runtime::ReactCompilerMode::Client
+                }
+            })
         } else {
             bun_ast::runtime::ReactCompilerMode::Disabled
         };

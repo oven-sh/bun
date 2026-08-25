@@ -106,14 +106,12 @@ pub enum S3PartResult<'a> {
 }
 
 pub struct S3HttpSimpleTask {
-    // `http` is `MaybeUninit` because (a) it is initialised late —
-    // `AsyncHTTP` contains `&'static [u8]` and `fn(...)` fields, so a
-    // zeroed/default value would be instant UB; and (b) `Drop` only calls
-    // `http.clear_data()`, never a full destructor, and `http_callback` does a no-drop bitwise
-    // overwrite. Wrapping in `MaybeUninit` makes both possible: write-without-
-    // drop on assignment, and `clear_data()`-only in `Drop`. Invariant: `http` is initialised by
-    // `execute_simple_s3_request` before the task pointer escapes, so every later access (in
-    // `http_callback` / `Drop`) may `assume_init`.
+    // `http` is `MaybeUninit` because it is initialised late — `AsyncHTTP`
+    // contains `&'static [u8]` and `fn(...)` fields, so a zeroed/default
+    // value would be instant UB. Invariant: `http` is initialised by
+    // `execute_simple_s3_request` before the task pointer escapes, so every
+    // later access (in `http_callback` / `Drop`) may `assume_init`, and `Drop`
+    // drops it.
     pub(crate) http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
     /// Held while the request is out on the HTTP thread: how it delivers the
     /// response, and what makes the VM wait for it.
@@ -463,13 +461,8 @@ impl S3HttpSimpleTask {
 
     fn release_portable(&mut self) {
         // SAFETY: `http` is always initialised before the task pointer escapes (see
-        // `execute_simple_s3_request`).
-        let http = unsafe { self.http.assume_init_mut() };
-        http.clear_data();
-        http.request_headers = Default::default();
-        if http.client.is_present() {
-            http.client.header_entries = Default::default();
-        }
+        // `execute_simple_s3_request`); this runs once, from `Drop`.
+        unsafe { self.http.assume_init_drop() };
     }
 }
 
@@ -486,8 +479,6 @@ impl Drop for S3HttpSimpleTask {
         self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
             bun_io::AllocatorType::Js,
         ));
-        // Only `http.clear_data()` runs — never a full AsyncHTTP destructor —
-        // so we intentionally do NOT `assume_init_drop`.
         self.release_portable();
     }
 }

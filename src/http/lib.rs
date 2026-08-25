@@ -852,46 +852,13 @@ impl<S: 'static> Drop for InFlight<S> {
 /// lists — drop or clear it before the cell is retired.
 pub(crate) type RequestRef = bun_ptr::BackRef<RequestCell>;
 
-/// A request's [`HTTPClient`] while the caller still holds it; moved into the
-/// HTTP thread's [`RequestCell`] when the request is scheduled, after which the
-/// caller has nothing to configure and this derefs to a panic.
-#[derive(Default)]
-pub struct ClientSlot(Option<HTTPClient>);
-
-impl ClientSlot {
-    pub(crate) fn filled(client: HTTPClient) -> Self {
-        Self(Some(client))
-    }
-    fn take(&mut self) -> HTTPClient {
-        self.0.take().expect("request already scheduled")
-    }
-    #[inline]
-    pub fn is_present(&self) -> bool {
-        self.0.is_some()
-    }
-}
-
-impl core::ops::Deref for ClientSlot {
-    type Target = HTTPClient;
-    #[inline]
-    fn deref(&self) -> &HTTPClient {
-        self.0.as_ref().expect("request already scheduled")
-    }
-}
-
-impl core::ops::DerefMut for ClientSlot {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut HTTPClient {
-        self.0.as_mut().expect("request already scheduled")
-    }
-}
-
-/// The HTTP thread's working state for one request: its own [`HTTPClient`]
-/// built from the caller's queued [`AsyncHTTP`], plus what it needs to hand
-/// the results back. Heap-allocated by [`RequestCell::start`] and owned by the
-/// thread (`ThreadState::in_flight`); everything else refers to it through a
-/// [`RequestRef`]. Once the terminal result has gone out it is retired and
-/// freed between events (`ThreadState::reap`).
+/// A request's [`HTTPClient`] plus what the HTTP thread needs to work on it
+/// and hand the results back. Built with the caller's [`AsyncHTTP`] and held
+/// by it; while the request is in flight the thread owns it
+/// (`ThreadState::in_flight`) and everything else refers to it through a
+/// [`RequestRef`]; once the terminal result is produced,
+/// `ThreadState::flush_completions` hands it back ([`RequestCell::finish`])
+/// so the request can be scheduled again.
 pub struct RequestCell {
     /// Set when the HTTP thread picks the cell up.
     thread: Cell<Option<&'static http_thread::ThreadState>>,
@@ -903,6 +870,10 @@ pub struct RequestCell {
     /// Identifies the caller's request to `ThreadState::free_owned_request`.
     origin_ptr: *const AsyncHTTP<'static>,
     client: RefCell<HTTPClient>,
+    /// Set the first time the request is scheduled.
+    owner_config: Option<OwnerConfig>,
+    /// Index in `ThreadState::in_flight` while the thread owns the cell.
+    pub(crate) in_flight_slot: Cell<usize>,
     result_callback: HTTPClientResultCallback,
     async_http_id: u32,
     signals: Signals,
@@ -914,23 +885,49 @@ pub struct RequestCell {
 }
 
 impl RequestCell {
-    /// The cell a request is queued in: its client moves in (one copy, on
-    /// the scheduling thread); the HTTP thread fills in the rest in
-    /// [`RequestCell::start`].
-    pub(crate) fn new_for(request: &mut AsyncHTTP<'_>) -> Box<RequestCell> {
-        let client = request.client.take();
+    pub(crate) fn new(client: HTTPClient) -> Box<RequestCell> {
         bun_core::heap::new_with(|| RequestCell {
             thread: Cell::new(None),
             origin: Cell::new(None),
             origin_ptr: core::ptr::null(),
             client: RefCell::new(client),
-            result_callback: request.result_callback.clone(),
-            async_http_id: request.async_http_id,
-            signals: request.signals,
+            owner_config: None,
+            in_flight_slot: Cell::new(0),
+            result_callback: HTTPClientResultCallback::None,
+            async_http_id: 0,
+            signals: Signals::default(),
             started_at: 0,
             done: Cell::new(false),
             terminal: RefCell::new(None),
         })
+    }
+
+    /// The client while its owner holds the cell.
+    #[inline]
+    pub(crate) fn client_mut(&mut self) -> &mut HTTPClient {
+        self.client.get_mut()
+    }
+
+    /// Get ready to be queued for `request`: the first time, take what the
+    /// owner configured; after that, put it back.
+    pub(crate) fn arm(&mut self, request: &AsyncHTTP<'_>) {
+        debug_assert!(self.thread.get().is_none() && !self.done.get());
+        let client = self.client.get_mut();
+        match &self.owner_config {
+            None => self.owner_config = Some(OwnerConfig::take(client)),
+            Some(config) => client.reset_for_owner(request, config),
+        }
+        self.result_callback = request.result_callback.clone();
+        self.async_http_id = request.async_http_id;
+        self.signals = request.signals;
+    }
+
+    /// Release the caller's unix socket path early.
+    pub(crate) fn clear_data(&mut self) {
+        self.client.get_mut().unix_socket_path = ZigStringSlice::EMPTY;
+        if let Some(config) = &mut self.owner_config {
+            config.unix_socket_path = ZigStringSlice::EMPTY;
+        }
     }
 
     /// Set the thread up to work on `origin`: take the cell it queued and
@@ -940,10 +937,7 @@ impl RequestCell {
         origin: http_thread::LentRequest,
     ) -> RequestRef {
         let _ = async_http::ACTIVE_REQUESTS_COUNT.fetch_add(1, Ordering::Relaxed);
-        let mut cell = origin
-            .cell
-            .take()
-            .expect("request queued without a cell");
+        let mut cell = origin.cell.take().expect("request already in flight");
         cell.thread.set(Some(thread));
         cell.origin.set(Some(origin));
         cell.origin_ptr = origin.as_const_ptr();
@@ -1001,9 +995,10 @@ impl RequestCell {
         result
     }
 
-    /// Deliver `result`. A terminal result (`!has_more`) also hands the
-    /// caller's request back and retires this cell; the caller's client borrow
-    /// may still be live, so the cell is only freed at the next `reap`.
+    /// Deliver `result`. A progress result (`has_more`) goes straight to the
+    /// callback; the terminal one is recorded and goes out from
+    /// `ThreadState::flush_completions` ([`RequestCell::finish`]) once the
+    /// caller's client borrow has ended.
     pub(crate) fn deliver(&self, mut result: HTTPClientResult<'_>) {
         if result.has_more {
             self.result_callback.run(result);
@@ -1018,13 +1013,16 @@ impl RequestCell {
         // (which moves it home) and the callback run once that frame is done,
         // before the thread looks at its next event.
         *self.terminal.borrow_mut() = Some(result.into_owned());
-        thread.completed.borrow_mut().push_back(bun_ptr::BackRef::new(self));
+        thread
+            .completed
+            .borrow_mut()
+            .push_back(bun_ptr::BackRef::new(self));
     }
 
-    /// Hand the finished request back to its owner: restore the client to the
-    /// state the owner may re-schedule it with, park the cell on the owner's
-    /// `AsyncHTTP`, mark it handed back, then deliver the terminal result. Runs
-    /// from `ThreadState::flush_completions`, where no request is borrowed.
+    /// Hand the finished request back to its owner: release what the attempt
+    /// holds on this thread, park the cell on the owner's `AsyncHTTP`, mark it
+    /// handed back, then deliver the terminal result. Runs from
+    /// `ThreadState::flush_completions`, where no request is borrowed.
     pub(crate) fn finish(mut self: Box<Self>, thread: &http_thread::ThreadState) {
         let result = self
             .terminal
@@ -1053,9 +1051,7 @@ impl RequestCell {
         let origin_ptr = self.origin_ptr;
         match origin {
             Some(origin) => {
-                // What the connection lent this attempt stays on this thread;
-                // what goes home is the owner's configuration.
-                self.client.get_mut().reset_for_owner(&origin);
+                self.client.get_mut().release_attempt();
                 self.thread.set(None);
                 self.done.set(false);
                 origin.cell.set(Some(self));
@@ -1389,7 +1385,7 @@ impl RequestUrl {
         }
     }
 
-    fn lend_inner(&self) -> RequestUrl {
+    pub(crate) fn lend_inner(&self) -> RequestUrl {
         RequestUrl {
             backing: None,
             href: self.href,
@@ -1491,12 +1487,13 @@ impl RequestUrl {
 // TODO: reduce the size of this struct
 // Many of these fields can be moved to a packed struct and use less space
 //
-// Lifetime `'a` is the caller's storage for the borrowed inputs — `url`,
-// `header_buf`, `if_modified_since`, `hostname`, and the borrowed
-// `Body::Bytes` payload. The HTTP thread's working copy
-// (`RequestCell`, built by [`HTTPClient::clone_for_thread`]) is `'static`: by
-// then the caller has promised (by queueing the request) to keep that storage
-// alive until the terminal result.
+// The borrowed inputs — `url`, `header_buf`, `if_modified_since`, `hostname`,
+// and a borrowed `Body::Bytes` payload — point into the caller's storage,
+// which the caller keeps alive (by queueing the request) until the terminal
+// result; the lifetime that says so is `AsyncHTTP<'a>`'s. The client lives in
+// the request's [`RequestCell`], which the HTTP thread holds while it runs;
+// what a run rewrote of the owner's configuration is put back from
+// [`OwnerConfig`] before it runs again.
 pub struct HTTPClient {
     pub(crate) method: Method,
     pub header_entries: headers::EntryList,
@@ -1589,12 +1586,69 @@ pub struct HTTPClient {
     pub(crate) session_sink: Option<std::rc::Rc<session_cache::SessionSink>>,
 }
 
+/// The owner-configured [`HTTPClient`] fields a run may rewrite, as the
+/// owner set them: taken when the request is first scheduled
+/// ([`RequestCell::arm`]) and applied again before every re-run
+/// ([`HTTPClient::reset_for_owner`]). The two that own storage live here for
+/// good and the client works on borrowed views of them, so a hop replacing
+/// its view frees nothing of the owner's.
+struct OwnerConfig {
+    flags: Flags,
+    remaining_redirect_count: i8,
+    hostname: Option<bun_ptr::RawSlice<u8>>,
+    if_modified_since: bun_ptr::RawSlice<u8>,
+    /// Boxed: mostly absent, and large enough to matter in every cell.
+    http_proxy: Option<Box<RequestUrl>>,
+    unix_socket_path: ZigStringSlice,
+}
+
+impl OwnerConfig {
+    fn take(client: &mut HTTPClient) -> OwnerConfig {
+        let mut config = OwnerConfig {
+            flags: client.flags,
+            remaining_redirect_count: client.remaining_redirect_count,
+            hostname: client.hostname,
+            if_modified_since: client.if_modified_since,
+            http_proxy: None,
+            unix_socket_path: ZigStringSlice::EMPTY,
+        };
+        if client.http_proxy.is_some() {
+            config.take_http_proxy(client);
+        }
+        if !client.unix_socket_path.slice().is_empty() {
+            config.unix_socket_path = core::mem::take(&mut client.unix_socket_path);
+            client.unix_socket_path = config.lend_unix_socket_path();
+        }
+        config
+    }
+
+    #[inline(never)]
+    fn take_http_proxy(&mut self, client: &mut HTTPClient) {
+        let proxy = client.http_proxy.take().expect("checked by the caller");
+        client.http_proxy = Some(proxy.lend_inner());
+        self.http_proxy = Some(Box::new(proxy));
+    }
+
+    /// Views the bytes `unix_socket_path` owns (or itself borrows); moving
+    /// the config does not move them.
+    fn lend_unix_socket_path(&self) -> ZigStringSlice {
+        ZigStringSlice::from_utf8_never_free(self.unix_socket_path.slice())
+    }
+
+    fn apply(&self, client: &mut HTTPClient) {
+        client.flags = self.flags;
+        client.remaining_redirect_count = self.remaining_redirect_count;
+        client.hostname = self.hostname;
+        client.if_modified_since = self.if_modified_since;
+        client.http_proxy = self.http_proxy.as_deref().map(RequestUrl::lend_inner);
+        client.unix_socket_path = self.lend_unix_socket_path();
+    }
+}
+
 impl HTTPClient {
-    /// Back to what the owner configured: release everything this attempt
-    /// acquired on the HTTP thread (here, on that thread) and undo the
-    /// per-hop rewrites (`url`, `method`, stripped headers), so the owner may
-    /// schedule the request again.
-    fn reset_for_owner(&mut self, origin: &AsyncHTTP<'static>) {
+    /// Release what this attempt acquired or buffered on the HTTP thread
+    /// (here, on that thread), so the cell can leave it.
+    fn release_attempt(&mut self) {
         self.close_proxy_tunnel(false);
         if let Some(ctx) = self.custom_ssl_ctx.take() {
             ctx.deref();
@@ -1603,8 +1657,29 @@ impl HTTPClient {
         self.pending_h2 = None;
         self.h2_attached = false;
         self.req = None;
+        // `state` was reset when the terminal result was built; this is what
+        // that keeps.
+        self.state.decoded_body = MutableString::init_empty();
         self.pending_body = None;
+        self.compressed_request_body = Vec::new();
+        self.proxy_authorization = None;
+    }
+
+    /// Back to exactly what the owner configured, so the request can run
+    /// again: clear the per-attempt state and undo the per-hop rewrites —
+    /// `url`, `method` and the headers from the owner's `AsyncHTTP`, the rest
+    /// from `config`. Runs when the owner re-schedules ([`RequestCell::arm`]);
+    /// a one-shot owner never pays for it.
+    fn reset_for_owner(&mut self, origin: &AsyncHTTP<'_>, config: &OwnerConfig) {
+        debug_assert!(self.req.is_none());
+        // per-attempt state
         self.state = InternalState::default();
+        self.connected_hostname.clear();
+        self.connected_port = 0;
+        self.compressed_body_len = 0;
+        self.allow_retry = false;
+        self.h2_retries = 0;
+        // the owner's configuration
         self.header_entries.clear_retaining_capacity();
         if self.header_entries.capacity() >= origin.request_headers.len() {
             self.header_entries
@@ -1612,15 +1687,9 @@ impl HTTPClient {
         } else {
             self.header_entries = origin.request_headers.clone().expect("OOM");
         }
-        self.url = origin.url.clone();
+        self.url = origin.url.lend_inner();
         self.method = origin.method;
-        self.connected_hostname.clear();
-        self.connected_port = 0;
-        self.compressed_request_body = Vec::new();
-        self.compressed_body_len = 0;
-        self.proxy_authorization = None;
-        self.allow_retry = false;
-        self.h2_retries = 0;
+        config.apply(self);
     }
 
     /// The cell this working copy lives in.
@@ -2509,10 +2578,7 @@ impl HTTPClient {
         if self.unix_socket_path.slice().len() > 0 {
             return false;
         }
-        if matches!(
-            self.state.original_request_body,
-            Body::Sendfile(_)
-        ) {
+        if matches!(self.state.original_request_body, Body::Sendfile(_)) {
             return false;
         }
         self.flags.forced_protocol == Some(Protocol::Http2)
@@ -2558,10 +2624,7 @@ impl HTTPClient {
         if self.unix_socket_path.slice().len() > 0 {
             return false;
         }
-        if matches!(
-            self.state.original_request_body,
-            Body::Sendfile(_)
-        ) {
+        if matches!(self.state.original_request_body, Body::Sendfile(_)) {
             return false;
         }
         if self.has_tls_options_unsupported_by_h3() {
@@ -3608,8 +3671,7 @@ impl HTTPClient {
             );
         }
 
-        let has_sent_body = if matches!(self.state.original_request_body, Body::Bytes(_))
-        {
+        let has_sent_body = if matches!(self.state.original_request_body, Body::Bytes(_)) {
             self.request_body().is_empty()
         } else {
             false
@@ -5530,8 +5592,7 @@ impl HTTPClient {
                 // return a network error." A ReadableStream body has no
                 // source to replay from, so only 303 (which drops the body
                 // and switches to GET) may be followed.
-                if status_code != 303
-                    && matches!(self.state.original_request_body, Body::Stream(_))
+                if status_code != 303 && matches!(self.state.original_request_body, Body::Stream(_))
                 {
                     return Err(crate::Error::RequestBodyNotReusable);
                 }
@@ -5786,4 +5847,3 @@ impl HTTPClient {
         }
     }
 } // impl HTTPClient
-

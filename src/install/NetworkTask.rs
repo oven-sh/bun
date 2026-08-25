@@ -672,10 +672,10 @@ impl NetworkTask {
                 ..Default::default()
             },
         ));
-        self.http_mut().client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
+        self.http_mut().client_mut().flags.reject_unauthorized = pm.tls_reject_unauthorized();
 
         if PackageManager::verbose_install() {
-            self.http_mut().client.verbose = HTTPVerboseLevel::Headers;
+            self.http_mut().client_mut().verbose = HTTPVerboseLevel::Headers;
         }
 
         self.callback = Callback::PackageManifest {
@@ -688,7 +688,7 @@ impl NetworkTask {
         };
 
         if PackageManager::verbose_install() {
-            self.http_mut().client.verbose = HTTPVerboseLevel::Headers;
+            self.http_mut().client_mut().verbose = HTTPVerboseLevel::Headers;
         }
 
         // Incase the ETag causes invalidation, we fallback to the last modified date.
@@ -697,10 +697,10 @@ impl NetworkTask {
                 .get()
                 .unwrap_or(false)
         {
-            self.http_mut().client.flags.force_last_modified = true;
+            self.http_mut().client_mut().flags.force_last_modified = true;
             // `last_modified` points into `self.header_buf` or into the manifest
             // `string_buf` cloned into `self.callback`; both outlive the request.
-            self.http_mut().client.if_modified_since = bun_ptr::RawSlice::new(last_modified);
+            self.http_mut().client_mut().if_modified_since = bun_ptr::RawSlice::new(last_modified);
         }
 
         Ok(())
@@ -921,9 +921,9 @@ impl NetworkTask {
             http::FetchRedirect::Follow,
             http_options,
         ));
-        self.http_mut().client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
+        self.http_mut().client_mut().flags.reject_unauthorized = pm.tls_reject_unauthorized();
         if PackageManager::verbose_install() {
-            self.http_mut().client.verbose = HTTPVerboseLevel::Headers;
+            self.http_mut().client_mut().verbose = HTTPVerboseLevel::Headers;
         }
 
         Ok(())

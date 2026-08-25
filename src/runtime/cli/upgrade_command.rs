@@ -267,12 +267,13 @@ impl UpgradeCommand {
             http_proxy,
             HTTP::FetchRedirect::Follow,
         ));
-        async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
+        async_http.client_mut().flags.reject_unauthorized =
+            env_loader.get_tls_reject_unauthorized();
 
         if !SILENT {
             // `send_sync` below completes before this frame returns, so
             // `progress` outlives every use.
-            async_http.client.progress_node =
+            async_http.client_mut().progress_node =
                 Some(bun_ptr::BackRef::new(progress.as_deref().unwrap()));
         }
         let response = async_http.send_sync(metadata_body)?;
@@ -660,12 +661,13 @@ impl UpgradeCommand {
             ));
             // `progress` is intentionally leaked (process-lifetime), so the
             // back-reference stored in `progress_node` can never dangle.
-            async_http.client.progress_node = Some(
+            async_http.client_mut().progress_node = Some(
                 NonNull::new(progress)
                     .expect("leaked Box is non-null")
                     .into(),
             );
-            async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
+            async_http.client_mut().flags.reject_unauthorized =
+                env_loader.get_tls_reject_unauthorized();
 
             let response = async_http.send_sync(zip_file_buffer)?;
 

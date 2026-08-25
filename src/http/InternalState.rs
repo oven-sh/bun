@@ -2,7 +2,7 @@ use crate::Error;
 use bun_core::MutableString;
 use bun_core::Output;
 
-use crate::{CertificateInfo, Decompressor, Encoding, Body, HTTPResponseMetadata};
+use crate::{Body, CertificateInfo, Decompressor, Encoding, HTTPResponseMetadata};
 
 bun_core::define_scoped_log!(log, HTTPInternalState, hidden);
 

@@ -1333,6 +1333,7 @@ pub trait InternalLoopDataExt {
 impl InternalLoopDataExt for InternalLoopData {
     /// Low tier returns the (tag, ptr)
     /// pair; the typed enum wrapper lives in the higher-tier crate that can
+    /// name `jsc::EventLoop` / `jsc::MiniEventLoop`.
     #[inline]
     fn get_parent(&self) -> (core::ffi::c_char, *mut c_void) {
         self.get_parent_raw()

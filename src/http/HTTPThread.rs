@@ -855,8 +855,9 @@ impl ThreadState {
     fn drain_queued_preconnects(&self) {
         let batch = core::mem::take(&mut *HttpThread::get().queued_preconnects.lock());
         for url in batch {
-            let mut request = crate::async_http::PreparedPreconnect::into_request(url);
-            let cell = RequestCell::new_for(&mut request);
+            let request = crate::async_http::PreparedPreconnect::into_request(url);
+            let mut cell = request.cell.take().expect("just built");
+            cell.arm(&request);
             request.cell.set(Some(cell));
             let ptr = core::ptr::NonNull::from(&*request);
             self.owned_requests.borrow_mut().push(request);
@@ -990,7 +991,9 @@ impl ThreadState {
     /// Take over a request the thread is going to work on.
     pub(crate) fn adopt_request(&self, cell: Box<RequestCell>) -> BackRef<RequestCell> {
         let this = BackRef::new(&*cell);
-        self.in_flight.borrow_mut().push(cell);
+        let mut in_flight = self.in_flight.borrow_mut();
+        cell.in_flight_slot.set(in_flight.len());
+        in_flight.push(cell);
         this
     }
 
@@ -1013,14 +1016,19 @@ impl ThreadState {
             };
             let cell = {
                 let mut in_flight = self.in_flight.borrow_mut();
-                let Some(i) = in_flight
-                    .iter()
-                    .position(|c| core::ptr::eq(&raw const **c, done.get()))
-                else {
+                let i = done.in_flight_slot.get();
+                if !in_flight
+                    .get(i)
+                    .is_some_and(|c| core::ptr::eq(&raw const **c, done.get()))
+                {
                     debug_assert!(false, "completed request not in flight");
                     continue;
-                };
-                in_flight.swap_remove(i)
+                }
+                let cell = in_flight.swap_remove(i);
+                if let Some(moved) = in_flight.get(i) {
+                    moved.in_flight_slot.set(i);
+                }
+                cell
             };
             cell.finish(self);
         }

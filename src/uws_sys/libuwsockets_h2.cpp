@@ -85,11 +85,15 @@ void uws_h2_res_end_stream(uws_h2_res_t* res, bool close_connection)
     r->sendTerminatingChunk(close_connection);
 }
 
+bool uws_h2_res_is_closed(uws_h2_res_t* res) { return ((Http2Response*)res)->dead; }
+
+/* Server-side failure after the response started (a body stream errored,
+ * a file read failed): the peer sees INTERNAL_ERROR, not a cancel. */
 void uws_h2_res_force_close(uws_h2_res_t* res)
 {
     Http2Response* r = (Http2Response*)res;
     r->clearOnWritableAndAborted();
-    r->close();
+    r->close(uWS::http2::ERR_INTERNAL_ERROR);
 }
 
 bool uws_h2_res_try_end(uws_h2_res_t* res, const char* bytes, size_t len, size_t total_len, bool close)

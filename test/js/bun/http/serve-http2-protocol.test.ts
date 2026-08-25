@@ -1180,11 +1180,23 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     raw.close();
   });
 
-  test("te: trailers is accepted", async () => {
+  test("te: trailers is accepted (any case)", async () => {
     const raw = await RawH2.connect(fx.port, secure);
     raw.headers(1, [...baseHeaders("/hello"), ["te", "trailers"]]);
-    const d = await raw.waitFor(f => f.type === T.DATA && f.streamId === 1);
-    expect(d.payload.toString()).toBe("hello");
+    raw.headers(3, [...baseHeaders("/hello"), ["te", "Trailers"]]);
+    expect((await raw.body(1)).toString()).toBe("hello");
+    expect((await raw.body(3)).toString()).toBe("hello");
+    raw.close();
+  });
+
+  test("a response body that errors after bytes are on the wire resets the stream with INTERNAL_ERROR", async () => {
+    const raw = await RawH2.connect(fx.port, secure);
+    raw.headers(1, baseHeaders("/stream-error"));
+    await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && f.payload.length > 0);
+    expect(await raw.rst(1)).toBe(2);
+    await barrier(raw, "after-er");
+    raw.headers(3, baseHeaders("/hello"));
+    expect((await raw.body(3)).toString()).toBe("hello");
     raw.close();
   });
 

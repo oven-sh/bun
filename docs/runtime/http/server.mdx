@@ -236,7 +236,7 @@ With `tls`, Bun picks the protocol per connection using ALPN. Clients that offer
 
 Without `tls`, Bun serves HTTP/2 to connections that open with the HTTP/2 preface ("prior knowledge"), such as `curl --http2-prior-knowledge` or `http2.connect("http://...")` from `node:http2`. Other connections get HTTP/1.1.
 
-Set `http1: false` to refuse HTTP/1.x clients. Over TLS, the handshake fails for clients that don't offer `h2`. Without TLS, connections that don't start with the preface receive `505 HTTP Version Not Supported`.
+Set `http1: false` to refuse HTTP/1.x clients. Over TLS, clients that offer ALPN without `h2` fail the handshake; clients that send no ALPN at all, and cleartext connections that don't start with the preface, receive `505 HTTP Version Not Supported`. With `http1: false` the server cannot accept WebSocket connections, since `server.upgrade()` is HTTP/1.1-only.
 
 `server.upgrade()` only works on HTTP/1.1 requests. WebSockets over HTTP/2, server push, and response trailers (needed by gRPC) are not supported.
 

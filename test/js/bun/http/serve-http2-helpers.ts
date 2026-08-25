@@ -93,6 +93,10 @@ async function handler(req, server) {
         return new Response("hi", { headers: { "transfer-encoding": "chunked", connection: "close", "keep-alive": "timeout=5", upgrade: "websocket", "proxy-connection": "x", "x-kept": "1" } });
       case "/empty":
         return new Response("");
+      case "/stream-error": {
+        let sent = false;
+        return new Response(new ReadableStream({ async pull(c) { if (!sent) { sent = true; c.enqueue(new TextEncoder().encode("partial")); await Bun.sleep(10); } else c.error(new Error("boom")); } }));
+      }
       case "/pull-1mb": {
         let i = 0;
         return new Response(new ReadableStream({ async pull(c) { await null; if (i++ < 8) c.enqueue(new Uint8Array(1 << 20).fill(i)); else c.close(); } }));

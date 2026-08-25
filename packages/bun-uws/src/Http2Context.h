@@ -291,9 +291,10 @@ struct Http2Response {
     inline Http2Response *cork(MoveOnlyFunction<void()> &&fn);
     void uncork() {}
     bool isCorked() { return false; }
-    /* RST_STREAM(ERR_CANCEL): the transport-level equivalent of dropping an
+    /* RST_STREAM: the transport-level equivalent of dropping an
      * HTTP/1 socket mid-response. */
-    inline void close();
+    /* RST_STREAM (unless already closed both ways) and retire. */
+    inline void close(http2::ErrorCode code = http2::ERR_CANCEL);
     void *getNativeHandle() { return this; }
     void *getSocketData() { return data.socketData; }
     bool isConnectRequest() { return false; }
@@ -493,6 +494,7 @@ struct Http2Connection {
     size_t writeData(Http2Response *stream, const char *body, size_t length, bool endStream) {
         size_t allowed = std::min(length, sendAllowance(stream));
         if (length && !allowed) return 0;
+        out.reserve(out.length() + allowed + http2::FRAME_HEADER_SIZE * (allowed / peerMaxFrameSize + 1));
         size_t sent = 0;
         do {
             uint32_t chunk = (uint32_t) std::min<size_t>(allowed - sent, peerMaxFrameSize);
@@ -738,11 +740,17 @@ struct Http2Context {
      * route lambda copied what it needs and returns straight after. */
     void clearRoutes() { router = decltype(router){}; }
 
+    /* fn may close connections (and run JS that closes others), so snapshot
+     * the group's list first and pin each entry across the call. */
     template <typename F> void forEachConnection(F &&fn) {
-        for (us_socket_t *s = group.head_sockets, *next; s; s = next) {
-            next = s->next;
+        std::vector<Http2Connection *> list;
+        for (us_socket_t *s = group.head_sockets; s; s = s->next) {
             Http2Connection *conn = connection(s);
+            if (!conn->closed) { conn->busy++; list.push_back(conn); }
+        }
+        for (Http2Connection *conn : list) {
             if (!conn->closed) fn(conn);
+            if (--conn->busy == 0 && conn->closed) delete conn;
         }
     }
 
@@ -1341,8 +1349,6 @@ inline bool Http2Connection::handleFrame(uint8_t type, uint8_t flags, uint32_t s
             if (wasResetByUs(streamId)) return true;
             return connectionError(http2::ERR_STREAM_CLOSED);
         }
-        /* An empty non-final DATA frame moves nothing. */
-        if (length > 0 || (flags & http2::END_STREAM)) progressed = true;
         return handleData(stream, flags, payload, length);
     }
 
@@ -1472,6 +1478,8 @@ inline bool Http2Connection::handleData(Http2Response *stream, uint8_t flags, co
         bodyLength = length - 1 - pad;
     }
     bool fin = (flags & http2::END_STREAM) != 0;
+    /* A frame with no body bytes (empty, or all padding) moves nothing. */
+    if (bodyLength > 0 || fin) progressed = true;
     /* §6.9.1: the peer may not send beyond what we advertised for this stream. */
     if (length > stream->receiveWindow - stream->unackedReceive) return streamError(stream->id, stream, http2::ERR_FLOW_CONTROL_ERROR);
     stream->receivedBodyBytes += bodyLength;
@@ -1624,7 +1632,7 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
             sawRegular = true;
             switch (f) {
             case http2::Field::ConnectionSpecific: malformed = true; break;
-            case http2::Field::Te: malformed = value != "trailers"; break;
+            case http2::Field::Te: malformed = !(value.size() == 8 && asciiIEquals(value, "trailers")); break;
             case http2::Field::Host: malformed = !host.empty(); host = value; break;
             case http2::Field::ContentLength: {
                 uint64_t v = 0;
@@ -1933,11 +1941,11 @@ inline void Http2Response::resetTimeout() {
     if (!dead) conn->touch();
 }
 
-inline void Http2Response::close() {
+inline void Http2Response::close(http2::ErrorCode code) {
     if (dead) return;
     Http2Connection *c = conn;
     if (!reset && !(localClosed && remoteClosed)) {
-        c->writeRstStream(id, http2::ERR_CANCEL);
+        c->writeRstStream(id, code);
         reset = true;
     }
     c->retireStream(this, false);

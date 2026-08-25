@@ -1546,8 +1546,10 @@ static int us_alpn_select_h2(SSL *ssl, const unsigned char **out, unsigned char 
     *outlen = 8;
     return SSL_TLSEXT_ERR_OK;
   }
-  /* No overlap: a client that only speaks HTTP/1.x without saying so still
-   * gets through when HTTP/1 is allowed; otherwise refuse the handshake. */
+  /* The client offered ALPN but not h2 (this callback doesn't run at all for
+   * a client that sends no ALPN extension; that one completes the handshake
+   * and is answered at the HTTP layer). Proceed without ALPN when HTTP/1 is
+   * allowed; otherwise refuse the handshake with no_application_protocol. */
   return allow_http1 ? SSL_TLSEXT_ERR_NOACK : SSL_TLSEXT_ERR_ALERT_FATAL;
 }
 

@@ -158,6 +158,8 @@ describe("Bun.serve http2 lifecycle", () => {
     ["PING", (raw: RawH2) => raw.write(frame(T.PING, 0, 0, Buffer.from("keepaliv")))],
     // An open POST sending empty non-final DATA frames.
     ["empty DATA", (raw: RawH2) => raw.write(frame(T.DATA, 0, 101))],
+    // One byte on the wire, all of it padding.
+    ["padded empty DATA", (raw: RawH2) => raw.write(frame(T.DATA, F.PADDED, 101, Buffer.from([0])))],
   ] as const) {
     test(`${name} frames do not keep a connection alive whose streams are all stalled at a zero window`, async () => {
       await using fx = await startFixture({ tls: false, idleTimeout: 8 });
@@ -193,19 +195,56 @@ describe("Bun.serve http2 lifecycle", () => {
   test("server.timeout(req, n) on h2 is per connection: the most permissive open request wins", async () => {
     await using fx = await startFixture({
       tls: false,
-      idleTimeout: 8,
+      idleTimeout: 4,
       extra: `routes: { "/t": async (req, server) => { const u = new URL(req.url); server.timeout(req, Number(u.searchParams.get("s"))); await Bun.sleep(Number(u.searchParams.get("ms"))); return new Response("t" + u.searchParams.get("s")); } },`,
     });
     const session = await connectH2(fx.port, false);
-    // One stream asks for 1 s, another for 30 s; both sleep 6 s. With per-request
-    // semantics the first would be cut at the next tick; per-connection, 30 wins.
-    const [a, b] = await Promise.all([
-      request(session, { ":path": "/t?s=1&ms=6000" }),
-      request(session, { ":path": "/t?s=30&ms=6000" }),
-    ]);
-    expect([a.body.toString(), b.body.toString()]).toEqual(["t1", "t30"]);
+    // 30 s is set first, then 1 s; both sleep 6 s. Max-wins keeps the
+    // connection; last-wins, min-wins or a no-op would all close it at the 4 s tick.
+    const a = request(session, { ":path": "/t?s=30&ms=6000" });
+    await new Promise<void>(r => setTimeout(r, 100));
+    const b = request(session, { ":path": "/t?s=1&ms=6000" });
+    const [ra, rb] = await Promise.all([a, b]);
+    expect([ra.body.toString(), rb.body.toString()]).toEqual(["t30", "t1"]);
     session.close();
   }, 40000);
+
+  // Same two shapes serve.test.ts has for HTTP/1: stop(true) synchronously
+  // inside the handler, and stop(true) between two awaits; each over a GET and
+  // a POST whose body is still arriving.
+  for (const shape of ["sync", "after-await"] as const) {
+    for (const method of ["GET", "POST"] as const) {
+      test(`server.stop(true) from inside an h2 handler (${shape}, ${method}) lets the process exit`, async () => {
+        const src = `
+          const server = Bun.serve({
+            port: 0,
+            http2: true,
+            idleTimeout: 30,
+            error() { return new Response("error", { status: 500 }); },
+            async fetch(req, server) {
+              ${shape === "after-await" ? "await Bun.sleep(20);" : ""}
+              server.stop(true);
+              ${shape === "after-await" ? "await Bun.sleep(20);" : ""}
+              return new Response("bye");
+            },
+          });
+          const http2 = require("node:http2");
+          const s = http2.connect("http://127.0.0.1:" + server.port);
+          s.on("error", () => {});
+          const r = s.request({ ":path": "/", ":method": ${JSON.stringify(method)} }, { endStream: ${method === "GET"} });
+          r.on("error", () => {});
+          r.on("response", () => {});
+          r.resume();
+          ${method === "POST" ? 'r.write(Buffer.alloc(100000)); setTimeout(() => { try { r.end("x"); } catch {} }, 50);' : ""}
+          r.on("close", () => s.close());
+        `;
+        await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "inherit", stderr: "pipe" });
+        const [stderr, code] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("error:");
+        expect(code).toBe(0);
+      }, 20000);
+    }
+  }
 
   test("--max-http-header-size applies to h2 like HTTP/1.1", async () => {
     await using fx = await startFixture({ tls: false, execArgv: ["--max-http-header-size=4096"] });

@@ -122,9 +122,11 @@ impl Response {
     pub(crate) fn should_close_connection(&mut self) -> bool {
         self.state().is_http_connection_close()
     }
-    /// A stream is freed right after its onAborted fires: a live handle is never closed.
+    /// True once the stream is retired (peer reset, connection closed, or
+    /// `server.stop(true)` from inside the handler) even if onAborted was not
+    /// armed yet; the handle stays valid until the current call unwinds.
     pub(crate) fn is_closed(&self) -> bool {
-        false
+        c::uws_h2_res_is_closed(self)
     }
     pub(crate) fn is_corked(&self) -> bool {
         false
@@ -598,6 +600,7 @@ mod c {
         pub(super) fn uws_h2_res_end(res: *mut Response, p: *const u8, n: usize, close: bool);
         pub(super) safe fn uws_h2_res_end_stream(res: &mut Response, close: bool);
         pub(super) safe fn uws_h2_res_force_close(res: &mut Response);
+        pub(super) safe fn uws_h2_res_is_closed(res: &Response) -> bool;
         pub(super) fn uws_h2_res_try_end(
             res: *mut Response,
             p: *const u8,

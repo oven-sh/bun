@@ -327,9 +327,8 @@ int32_t bun_coregraphics_decode(const uint8_t* bytes, size_t len, uint64_t max_p
 }
 
 // Encode RGBA8 → format. format: 0=jpeg, 1=png, 2=webp, 3=heic, 4=avif.
-// Quality 1-100. `icc`/`icc_len` (nullable) is the source ICC profile; the
-// pixels are tagged with it so the output carries the colour space (#40493).
-// Two-phase like decode: pass `out=nullptr` to get the encoded
+// Quality 1-100. `icc`/`icc_len` (nullable): source ICC profile to tag the
+// pixels with. Two-phase like decode: pass `out=nullptr` to get the encoded
 // size into `*out_len`; the encoded bytes are held in a static-thread-local
 // CFData until the next call so the second call can copy them out without
 // re-encoding. (One encode, one memcpy — same allocation count as the static
@@ -383,19 +382,15 @@ int32_t bun_coregraphics_encode(const uint8_t* rgba, uint32_t width, uint32_t he
     } r {};
     r.s = s;
 
-    // Tag the pixels with their actual colour space. The pipeline's RGBA is
-    // still in the source space (decode does not colour-convert), so attach
-    // the source ICC profile when there is one — ImageIO then embeds it in
-    // the output (`colr` of type `prof` for HEIC/AVIF). Without a profile,
-    // tag sRGB by name: device RGB has no defined primaries, so ImageIO
-    // wrote the AVIF CICP fields as "unspecified" (2/2) and downstream
-    // decoders had no colour information at all (#40493).
+    // Tag the pixels with their colour space: the source ICC profile when
+    // present (ImageIO embeds it in the output), else sRGB — device RGB made
+    // ImageIO write unspecified CICP (2/2) in HEIC/AVIF output (#40493).
     if (icc && icc_len) {
         r.iccData = s->CFDataCreateWithBytesNoCopy(nullptr, icc, static_cast<long>(icc_len), *s->kCFAllocatorNull);
         if (r.iccData) {
             CFRef cs = s->CGColorSpaceCreateWithICCData(r.iccData);
-            // CGImageCreate below needs a 3-component space for RGBA pixels;
-            // a non-RGB profile falls back to the sRGB tag.
+            // CGImageCreate needs a 3-component space for RGBA; a non-RGB
+            // profile falls back to the sRGB tag.
             if (cs && s->CGColorSpaceGetNumberOfComponents(cs) != 3) {
                 s->CGColorSpaceRelease(cs);
                 cs = nullptr;

@@ -256,11 +256,8 @@ pub(crate) fn encode(
     if frame.set_pixel_format(&mut pf) < 0 {
         return Err(EncodeFailed);
     }
-    // Attach the source ICC profile so the output keeps its colour meaning
-    // (#40493) — the HEIC/AVIF analogue of the JPEG APP2 / PNG iCCP / WebP
-    // ICCP carry-through. Best-effort like ImageQuality above: a codec that
-    // cannot store a colour context should still produce pixels, and the
-    // profile-less behaviour is unchanged.
+    // Attach the source ICC profile (#40493). Best-effort like ImageQuality
+    // above: a codec that cannot store a colour context still encodes.
     if let Some(p) = opts.icc_profile {
         // SAFETY: `EncodeOptions.icc_profile` is borrowed from the caller for
         // the duration of this call (raw-ptr stand-in for a lifetime param).

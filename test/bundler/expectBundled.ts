@@ -19,7 +19,7 @@ import {
 import { bunEnv, bunExe, isCI, isDebug } from "harness";
 import { tmpdir } from "os";
 import path from "path";
-import { SourceMapConsumer } from "source-map";
+import { SourceMapConsumer, type MappingItem } from "source-map";
 
 /** Dedent module does a bit too much with their stuff. we will be much simpler */
 export function dedent(str: string | TemplateStringsArray, ...args: any[]) {
@@ -53,35 +53,67 @@ export function dedent(str: string | TemplateStringsArray, ...args: any[]) {
   );
 }
 
+const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const B64_VALUE = new Int8Array(128).fill(-1);
+for (let i = 0; i < B64.length; i++) B64_VALUE[B64.charCodeAt(i)] = i;
+
+/**
+ * Decodes one line of a source map `mappings` string. Each segment carries the
+ * running totals within that line: `gen` is the generated column, and `src`,
+ * `ol`, `oc` are the source index, original line and original column summed
+ * from the start of the line, so they are absolute only on the first line.
+ *
+ * This runs over every line of every external source map. It works on char
+ * codes and does not allocate per field: a real-world bundle has tens of
+ * thousands of segments, and the string-based version took ~8s in a debug
+ * build.
+ */
 export function decodeSourceMappingsLine(line: string) {
-  const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   const segs: { gen: number; src: number; ol: number; oc: number }[] = [];
+  const n = line.length;
+  if (n === 0) return segs;
   let gen = 0;
   let src = 0;
   let ol = 0;
   let oc = 0;
-  for (const raw of line ? line.split(",") : []) {
-    const f: number[] = [];
-    let v = 0;
-    let sh = 0;
-    for (const c of raw) {
-      const d = B64.indexOf(c);
-      v |= (d & 31) << sh;
-      if (d & 32) {
-        sh += 5;
-        continue;
+  // VLQ state for the current field of the current segment
+  let v = 0;
+  let sh = 0;
+  let field = 0;
+  let f0 = 0;
+  let f1 = 0;
+  let f2 = 0;
+  let f3 = 0;
+  for (let i = 0; i <= n; i++) {
+    const c = i < n ? line.charCodeAt(i) : 44;
+    if (c === 44 /* , */) {
+      gen += f0;
+      if (field > 1) {
+        src += f1;
+        ol += f2;
+        oc += f3;
       }
-      f.push(v & 1 ? -(v >>> 1) : v >>> 1);
+      segs.push({ gen, src, ol, oc });
+      field = 0;
+      f0 = f1 = f2 = f3 = 0;
       v = 0;
       sh = 0;
+      continue;
     }
-    gen += f[0];
-    if (f.length > 1) {
-      src += f[1];
-      ol += f[2];
-      oc += f[3];
+    const d = B64_VALUE[c];
+    v |= (d & 31) << sh;
+    if (d & 32) {
+      sh += 5;
+      continue;
     }
-    segs.push({ gen, src, ol, oc });
+    const value = v & 1 ? -(v >>> 1) : v >>> 1;
+    if (field === 0) f0 = value;
+    else if (field === 1) f1 = value;
+    else if (field === 2) f2 = value;
+    else if (field === 3) f3 = value;
+    field++;
+    v = 0;
+    sh = 0;
   }
   return segs;
 }
@@ -1643,28 +1675,43 @@ for (const [key, blob] of build.outputs) {
               }
             }
           }
-          const mappedLocations = new Map();
+          // Keyed by generated position. A real-world bundle has tens of
+          // thousands of mappings, so this loop uses plain checks and numeric
+          // keys: five expect() calls per mapping cost ~20s in a debug build.
+          const mappedLocations = new Map<number, MappingItem>();
+          const fmtLoc = (loc: MappingItem) =>
+            `${loc.generatedLine}:${loc.generatedColumn} -> ${loc.originalLine}:${loc.originalColumn} [${loc.source === null ? "no source" : loc.source.replaceAll(/^(\.\.\/)+/g, "/").replace(root, "")}]`;
           await SourceMapConsumer.with(parsed, null, async map => {
             map.eachMapping(m => {
-              expect(m.source).toBeDefined();
-              expect(m.generatedLine).toBeGreaterThanOrEqual(1);
-              expect(m.generatedColumn).toBeGreaterThanOrEqual(0);
-              expect(m.originalLine).toBeGreaterThanOrEqual(1);
-              expect(m.originalColumn).toBeGreaterThanOrEqual(0);
-
-              const loc_key = `${m.generatedLine}:${m.generatedColumn}`;
-              if (mappedLocations.has(loc_key)) {
-                const fmtLoc = (loc: typeof m) =>
-                  `${loc.generatedLine}:${loc.generatedColumn} -> ${loc.originalLine}:${loc.originalColumn} [${loc.source.replaceAll(/^(\.\.\/)+/g, "/").replace(root, "")}]`;
-
-                const a = fmtLoc(mappedLocations.get(loc_key));
-                const b = fmtLoc(m);
-
-                // We only care about duplicates that point to
-                // multiple source locations.
-                if (a !== b) throw new Error("Duplicate mapping in source-map for " + loc_key + "\n" + a + "\n" + b);
+              if (
+                m.source === undefined ||
+                typeof m.generatedLine !== "number" ||
+                m.generatedLine < 1 ||
+                typeof m.generatedColumn !== "number" ||
+                m.generatedColumn < 0 ||
+                typeof m.originalLine !== "number" ||
+                m.originalLine < 1 ||
+                typeof m.originalColumn !== "number" ||
+                m.originalColumn < 0
+              ) {
+                throw new Error(`Invalid mapping in ${file}: ${fmtLoc(m)}`);
               }
-              mappedLocations.set(loc_key, { ...m });
+
+              const loc_key = m.generatedLine * 2 ** 32 + m.generatedColumn;
+              const previous = mappedLocations.get(loc_key);
+              // We only care about duplicates that point to
+              // multiple source locations.
+              if (
+                previous !== undefined &&
+                (previous.originalLine !== m.originalLine ||
+                  previous.originalColumn !== m.originalColumn ||
+                  previous.source !== m.source)
+              ) {
+                throw new Error(
+                  `Duplicate mapping in source-map for ${m.generatedLine}:${m.generatedColumn}\n${fmtLoc(previous)}\n${fmtLoc(m)}`,
+                );
+              }
+              mappedLocations.set(loc_key, m);
             });
             const map_tests = snapshotSourceMap?.[path.basename(file)];
             if (map_tests) {

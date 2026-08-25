@@ -923,7 +923,7 @@ describe.concurrent("--outfile extension implies the output format", () => {
       cmd: [bunExe(), "build", "entry.ts", "--target=node", "--outfile", "out.cjs"],
       env: bunEnv,
       cwd: String(dir),
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
@@ -937,7 +937,7 @@ describe.concurrent("--outfile extension implies the output format", () => {
       cmd: [bunExe(), "build", "entry.ts", "--outfile", "out.cjs"],
       env: bunEnv,
       cwd: String(dir),
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
@@ -962,7 +962,7 @@ describe.concurrent("--outfile extension implies the output format", () => {
       cmd: [bunExe(), "build", "entry.ts", "--outfile", "out.cjs"],
       env: bunEnv,
       cwd: String(dir),
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
@@ -979,7 +979,7 @@ describe.concurrent("--outfile extension implies the output format", () => {
       cmd: [bunExe(), "build", "entry.ts", "--target=node", "--format=esm", "--outfile", "out.cjs"],
       env: bunEnv,
       cwd: String(dir),
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
@@ -995,7 +995,7 @@ describe.concurrent("--outfile extension implies the output format", () => {
       cmd: [bunExe(), "build", "entry.ts", "--target=node", "--outfile", "out.mjs"],
       env: bunEnv,
       cwd: String(dir),
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

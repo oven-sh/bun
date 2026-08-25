@@ -930,6 +930,11 @@ describe("Bun.Image", () => {
     expect(() => img().modulate({ brightness: "2" as any })).toThrow(/"brightness"/);
     expect(() => img().modulate({ saturation: "2" as any })).toThrow(/"saturation"/);
     expect(() => new Bun.Image(cornersPng, { maxPixels: "100" as any })).toThrow(/"maxPixels"/);
+    // resize height: a wrong-type value throws; undefined/null keep meaning
+    // "preserve aspect ratio".
+    expect(() => img().resize(100, "50" as any)).toThrow(/height/);
+    img().resize(100, undefined);
+    img().resize(100, null as any);
     // undefined still selects the default and must not throw: the output is
     // byte-identical to omitting the option entirely.
     const out = await img().jpeg({ quality: undefined }).bytes();

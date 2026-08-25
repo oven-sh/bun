@@ -479,17 +479,22 @@ impl Image {
                 global.throw_invalid_arguments(format_args!("resize(width, height?, options?)"))
             );
         }
+        // 0 height = preserve aspect ratio (resolved at execute time once the
+        // source dimensions are known). undefined/null keep that Sharp-compat
+        // meaning; any other non-number throws instead of being silently 0.
+        let h = if args.len() > 1 && !args[1].is_undefined_or_null() {
+            if !args[1].is_number() {
+                return Err(global.throw_invalid_argument_type("resize", "height", "number"));
+            }
+            coerce_int!(u32, args[1].as_number(), 0.0, 0x3FFFF as f64)
+        } else {
+            0
+        };
         // 0x3FFF² is the max_pixels default; capping each side at 0x3FFFF (≈262k)
         // keeps every downstream u32 product in range without a per-stage check.
         let mut r = Resize {
             w: coerce_int!(u32, args[0].as_number(), 1.0, 0x3FFFF as f64),
-            // 0 height = preserve aspect ratio (resolved at execute time once the
-            // source dimensions are known).
-            h: if args.len() > 1 && args[1].is_number() {
-                coerce_int!(u32, args[1].as_number(), 0.0, 0x3FFFF as f64)
-            } else {
-                0
-            },
+            h,
             ..Default::default()
         };
         if args.len() > 2 && args[2].is_object() {

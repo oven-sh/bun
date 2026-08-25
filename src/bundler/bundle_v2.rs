@@ -3950,10 +3950,8 @@ pub mod bv2_impl {
             fetcher.analyzer.borrow_mut().on_analyze(&mut result)
         }
 
-        /// The full `bun build` pipeline on the calling thread. With
-        /// `enable_reloading`, the bundle is kept for the process (the hot
-        /// reloader watches through it) — hence `'static`.
-        /// `bun build`: bundle `transpiler`'s entry points into `heap`.
+        /// The full `bun build` pipeline on the calling thread: bundle
+        /// `transpiler`'s entry points into `heap`.
         pub fn generate_from_cli(
             transpiler: &mut Transpiler<'static>,
             heap: &'a BundleHeap,

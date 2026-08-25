@@ -1271,6 +1271,8 @@ pub trait BaseWindowsPipeWriter: Sized {
         }
         // Left by a failed write. `close()` parked any payload libuv still reads.
         drop(self.take_write_payload());
+        // `close()` set it; `set_parent` records the replacement's owner only while it is clear.
+        self.set_is_done(false);
         sys::Result::Ok(())
     }
 

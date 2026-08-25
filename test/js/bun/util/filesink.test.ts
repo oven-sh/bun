@@ -1106,7 +1106,10 @@ describe.concurrent("start() on a live writer", () => {
     child.stdout!.on("data", d => (stdout += d));
     child.stderr!.on("data", d => (stderr += d));
     (child.stdio[3] as Readable).on("data", d => (pipe += d));
-    const exitCode = await new Promise(resolve => child.on("close", resolve));
+    const { promise: closed, resolve, reject } = Promise.withResolvers<number | null>();
+    child.on("close", resolve);
+    child.on("error", reject);
+    const exitCode = await closed;
     expect({ stdout: stdout.trim(), stderr, pipe, exitCode }).toEqual({
       stdout: '{"code":"EBUSY"}',
       stderr: "",

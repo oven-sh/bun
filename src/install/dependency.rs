@@ -806,8 +806,7 @@ impl TagExt for Tag {
                                 }
                             }
                             b'+' => {
-                                // `git+git:` is how a Git resolution of a `git://` dependency is
-                                // written back to bun.lock (`git+` label + the original URL).
+                                // bun.lock writes a `git://` resolution as `git+git://...`.
                                 if url.starts_with(b"+ssh:")
                                     || url.starts_with(b"+file:")
                                     || url.starts_with(b"+git:")

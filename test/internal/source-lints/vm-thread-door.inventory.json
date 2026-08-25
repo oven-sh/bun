@@ -50,7 +50,7 @@
   },
   "src/jsc/node_path.rs": {
     "unsafe impl Send": [
-      "ThreadSafe<T>"
+      "ThreadShareable<T>"
     ]
   },
   "src/jsc/web_worker.rs": {

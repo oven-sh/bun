@@ -536,7 +536,7 @@ describe("bundler", () => {
       api.expectFile("/out/entry.js").toContain("41");
       api.expectFile("/out/entry.js").not.toMatch(/^\s*import\s*[{"]/m);
       expect(api.readFile("/out/entry.js").match(/^\s*export\b/gm)).toHaveLength(1);
-      expect(jsOutput(api, "lazy")).toMatch(/import\s*\{\s*helper,\s*shared\s*\}\s*from "\.\/entry\.js"/);
+      expect(jsOutput(api, "lazy")).toMatch(/import\s*\{\s*shared,\s*helper\s*\}\s*from "\.\/entry\.js"/);
     },
     run: { file: "/out/entry.js", stdout: "shared\nentry 41 1\nlazy 42" },
   });

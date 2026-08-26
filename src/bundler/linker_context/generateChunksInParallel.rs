@@ -60,6 +60,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     {
         // TODO: instead of running a renamer per chunk, run it per file
         debug!(" START {} renamers", chunks.len());
+        if c.graph.code_splitting && !c.options.minify_identifiers {
+            crate::linker_context::cross_chunk_names::assign_unminified(c, chunks)?;
+        }
         let ctx = GenerateChunkCtx {
             chunk: bun_ptr::BackRef::new_mut(&mut chunks[0]),
             // SAFETY: `c` is the live `&mut LinkerContext` for the link step;
@@ -71,6 +74,16 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // link step); `pool` is the arena-allocated bundler ThreadPool.
         c.worker_pool()
             .each_ptr(ctx, LinkerContext::generate_js_renamer, chunks);
+        if c.graph.code_splitting {
+            if c.options.minify_identifiers {
+                // Counts are in; name the cross-chunk bindings, pin them, then
+                // let every chunk name the rest.
+                crate::linker_context::cross_chunk_names::assign_minified(c, chunks)?;
+                c.worker_pool()
+                    .each_ptr(ctx, LinkerContext::finish_js_renamer, chunks);
+            }
+            crate::linker_context::cross_chunk_names::apply_to_clauses(c, chunks);
+        }
         debug!("  DONE {} renamers", chunks.len());
     }
 

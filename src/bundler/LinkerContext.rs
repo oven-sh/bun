@@ -122,6 +122,11 @@ pub struct LinkerContext<'a> {
     pub(crate) framework: Option<bun_ptr::BackRef<bake::Framework>>,
 
     pub(crate) mangled_props: MangledProps,
+
+    /// One name per binding that crosses a chunk boundary, shared by the
+    /// chunk that exports it and every chunk that imports it
+    /// (`assign_cross_chunk_names`). Values live in the linker arena.
+    pub(crate) cross_chunk_names: bun_collections::HashMap<bun_ast::Ref, &'static [u8]>,
 }
 
 // SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /
@@ -155,6 +160,7 @@ impl<'a> Default for LinkerContext<'a> {
             dev_server: None,
             framework: None,
             mangled_props: Default::default(),
+            cross_chunk_names: Default::default(),
         }
     }
 }
@@ -999,6 +1005,20 @@ impl<'a> LinkerContext<'a> {
         let mut worker = scopeguard::guard(worker, |w| w.unget());
         if let crate::chunk::Content::Javascript(_) = chunk.content {
             Self::generate_js_renamer_(*ctx, &mut **worker, chunk, chunk_index);
+        }
+    }
+
+    /// Second half of the minifying renamer under code splitting: names every
+    /// slot `assign_cross_chunk_names` did not pin. Writes `chunk.renamer` only.
+    pub(crate) fn finish_js_renamer(
+        _ctx: &GenerateChunkCtx,
+        chunk: *mut Chunk,
+        _chunk_index: usize,
+    ) {
+        // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task.
+        let chunk: &mut Chunk = unsafe { &mut *chunk };
+        if let crate::bun_renamer::ChunkRenamer::Minify(r) = &mut chunk.renamer {
+            r.finish().expect("TODO: handle error");
         }
     }
 

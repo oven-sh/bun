@@ -1533,7 +1533,6 @@ pub(crate) type ImportsFromOtherChunks = ArrayHashMap<IndexInt, cross_chunk_impo
 
 #[derive(Default, Clone)]
 pub struct CrossChunkImportItem {
-    pub(crate) export_alias: Box<[u8]>,
     pub(crate) r#ref: Ref,
 }
 pub type CrossChunkImportItemList = Vec<CrossChunkImportItem>;
@@ -1552,6 +1551,7 @@ impl CrossChunkImport {
         list: &mut Vec<CrossChunkImport>,
         chunks: &mut [Chunk],
         imports_from_other_chunks: &mut ImportsFromOtherChunks,
+        stable_source_indices: &[u32],
     ) -> Result<(), crate::Error> {
         list.clear();
         list.reserve(imports_from_other_chunks.count());
@@ -1560,14 +1560,24 @@ impl CrossChunkImport {
             let chunk_index = imports_from_other_chunks.keys()[i];
             let chunk = &mut chunks[chunk_index as usize];
 
-            let exports_to_other_chunks = &chunk.content.javascript().exports_to_other_chunks;
+            debug_assert!({
+                let exports_to_other_chunks = &chunk.content.javascript().exports_to_other_chunks;
+                imports_from_other_chunks.values()[i]
+                    .iter()
+                    .all(|item| exports_to_other_chunks.contains(&item.r#ref))
+            });
+            let _ = chunk;
             let import_items = &mut imports_from_other_chunks.values_mut()[i];
-            for item in import_items.slice_mut() {
-                item.export_alias = (*exports_to_other_chunks.get(&item.r#ref).unwrap()).into();
-                debug_assert!(!item.export_alias.is_empty());
-            }
+            // Deterministic order; the names are only known after renaming.
             index_sort::sort_slice_by(import_items.slice_mut(), |a, b| {
-                strings::order(&a.export_alias, &b.export_alias)
+                (
+                    stable_source_indices[a.r#ref.source_index() as usize],
+                    a.r#ref.inner_index(),
+                )
+                    .cmp(&(
+                        stable_source_indices[b.r#ref.source_index() as usize],
+                        b.r#ref.inner_index(),
+                    ))
             });
 
             list.push(CrossChunkImport {

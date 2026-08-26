@@ -803,7 +803,7 @@ describe("bundler", () => {
     files: {
       "/entry.js": `await import('./a.js'); await import('./b.js'); await import('./e.js')`,
       "/a.js": `import './c.js'; import './d.js'; console.log('a')`,
-      "/b.js": `import './c.js'; console.log('b')`,
+      "/b.js": `import './c.js'; import './shared.js'; console.log('b')`,
       "/e.js": `import './d.js'; console.log('e')`,
       "/c.js": `export function dead() {}`,
       // only live part is a bare import of an unwrapped file: prints nothing either

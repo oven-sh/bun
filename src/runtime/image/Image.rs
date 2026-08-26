@@ -394,9 +394,8 @@ fn source_from_js(
             out.truncate(r.written);
             return Ok(Source::Owned(out));
         }
-        // Same check as `Bun.file()` / node:fs. The worker opens this path
-        // through a C string, which would stop at an interior NUL and open
-        // the prefix instead of the string the caller validated.
+        // Same check as `Bun.file()`: the worker opens this as a C string, so
+        // an interior NUL would open the prefix.
         crate::node::types::Valid::path_null_bytes(s, global)?;
         return Ok(Source::Path(ZBox::from_bytes(s)));
     }

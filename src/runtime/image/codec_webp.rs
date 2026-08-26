@@ -207,8 +207,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
         if iter.chunk.bytes.is_null() {
             break 'blk None;
         }
-        // RIFF chunks are stored raw, so an ICCP chunk can be as large as the
-        // file itself; the cap keeps that out of the encoders.
+        // RIFF stores chunks raw: an ICCP chunk can be as large as the file.
         if iter.chunk.size == 0 || iter.chunk.size > codecs::MAX_ICC_PROFILE_BYTES {
             break 'blk None;
         }

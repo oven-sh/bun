@@ -253,14 +253,10 @@ bun_core::oom_from_alloc!(Error);
 /// cap is ~1 GiB, which is already past where you'd want to be.
 pub(crate) const DEFAULT_MAX_PIXELS: u64 = 0x3FFF * 0x3FFF;
 
-/// Largest ICC profile the pipeline carries from decode to encode; anything
-/// bigger is treated as "no profile". Real profiles are well under 4 MB
-/// (libpng's user-chunk default is 8 MB). The container bound is JPEG: the
-/// `ICC_PROFILE` APP2 sequence counter is one byte, so a profile over
-/// 255 × 65519 bytes gets marker numbers that wrap and libjpeg-turbo itself
-/// then refuses to read the file it wrote. Decoders check this before
-/// copying the profile out of the codec, so an oversized profile costs
-/// nothing.
+/// Largest ICC profile carried from decode to encode; bigger is "no
+/// profile", decided before the bytes leave the codec. Real profiles are
+/// under 4 MB. JPEG caps at 255 × 65519 bytes (one-byte APP2 sequence
+/// counter) and libjpeg-turbo cannot read back what it writes past that.
 pub(crate) const MAX_ICC_PROFILE_BYTES: usize = 8 << 20;
 
 /// Hint from the pipeline about the eventual output size. JPEG can do M/8
@@ -390,10 +386,7 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
         }
         Format::Gif => {
             // The decoder sizes its output from the first Image Descriptor,
-            // not the Logical Screen Descriptor, so report and guard those
-            // dims: a 1×1 screen wrapping a 16383×16383 frame must not read
-            // as 1×1 here and then decode to a 1 GiB frame. The walk skips
-            // extension sub-blocks and stops at the first image; no LZW.
+            // not the Logical Screen Descriptor; guard the same dims.
             let hdr = gif::parse_header(bytes)?;
             w = hdr.width;
             h = hdr.height;

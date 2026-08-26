@@ -116,21 +116,16 @@ const TJPARAM_MAXPIXELS: c_int = 24;
 const TJPARAM_SAVEMARKERS: c_int = 25;
 const TJPF_RGBA: c_int = 7;
 const TJSAMP_420: c_int = 2;
-/// `tj3GetErrorCode` after a failed call: `TJERR_WARNING` means libjpeg
-/// emitted a warning and carried on, `TJERR_FATAL` (1) means it bailed out.
+/// `tj3GetErrorCode` value for a -1 return where libjpeg only warned and
+/// kept going (`TJERR_FATAL` = 1 means it bailed out).
 const TJERR_WARNING: c_int = 0;
 
 /// Parse the header (SOF dims, saved markers) without touching scan data.
 ///
-/// libjpeg reports a malformed ancillary marker as a *warning* and keeps
-/// going: an `ICC_PROFILE` APP2 sequence that does not reassemble (sequence
-/// number above the count, a duplicate, more than 255 segments) is
-/// `JWRN_BOGUS_ICC`, and `tj3DecompressHeader` still returns -1 for it. The
-/// SOF fields are valid in that case and the pixels are untouched, so a
-/// warning is accepted here and the profile is simply absent; only a fatal
-/// error rejects the file. Browsers and libvips decode such files the same
-/// way. The full decode stays strict: `tj3Decompress8` re-parses the header
-/// and any warning there (truncated scan data, extraneous bytes) still fails.
+/// A warning still yields valid SOF fields, so only a fatal error rejects.
+/// The case that matters is `JWRN_BOGUS_ICC`: an ICC marker sequence that
+/// does not reassemble leaves the pixels intact and the profile absent.
+/// `tj3Decompress8` re-parses the header and stays strict about warnings.
 pub(crate) fn read_header(h: tjhandle, bytes: &[u8]) -> Result<(u32, u32), codecs::Error> {
     // SAFETY: `h` is a live tjhandle; ptr/len come from a valid `&[u8]`
     // borrowed for the call.
@@ -143,9 +138,8 @@ pub(crate) fn read_header(h: tjhandle, bytes: &[u8]) -> Result<(u32, u32), codec
     let rw = unsafe { tj3Get(h, TJPARAM_JPEGWIDTH) };
     // SAFETY: `h` is live; tj3Get only reads handle state.
     let rh = unsafe { tj3Get(h, TJPARAM_JPEGHEIGHT) };
-    // tj3Get returns -1 on error (and 0 when the header never reached SOF);
-    // treat any non-positive dim as a decode failure rather than letting
-    // the cast trap on hostile input.
+    // -1 on error, 0 when the header never reached SOF; either way reject
+    // instead of letting the cast trap on hostile input.
     if rw <= 0 || rh <= 0 {
         return Err(codecs::Error::DecodeFailed);
     }

@@ -129,17 +129,14 @@ impl Dict {
     }
 }
 
-/// Everything in front of the first frame's LZW data. `width`/`height` are
-/// the frame's, from its Image Descriptor: that is the size the decoder
-/// produces, so `codecs::probe` reports the same numbers (the Logical Screen
-/// Descriptor can say anything). Byte ranges instead of slices so the struct
-/// carries no borrow.
+/// Everything in front of the first frame's LZW data. `width`/`height` come
+/// from the Image Descriptor, not the Logical Screen Descriptor: that is the
+/// size the decoder produces, and `codecs::probe` must report the same.
 pub(crate) struct Header {
     pub(crate) width: u32,
     pub(crate) height: u32,
     interlace: bool,
-    /// Active colour table (local if the frame has one, else global) as a
-    /// byte range into the input.
+    /// Local colour table if the frame has one, else the global one.
     color_table: core::ops::Range<usize>,
     min_code: u8,
     /// Transparency index from the most recent Graphics Control Extension.
@@ -148,9 +145,8 @@ pub(crate) struct Header {
     lzw_off: usize,
 }
 
-/// Walk header, Logical Screen Descriptor and the block stream up to the
-/// first Image Descriptor. Extensions are skipped by sub-block length; no LZW
-/// is read.
+/// Walk to the first Image Descriptor, skipping extensions by sub-block
+/// length. No LZW is read.
 pub(crate) fn parse_header(bytes: &[u8]) -> Result<Header, codecs::Error> {
     // ── header + LSD ───────────────────────────────────────────────────────
     if bytes.len() < 13 || !(&bytes[0..6] == b"GIF89a" || &bytes[0..6] == b"GIF87a") {

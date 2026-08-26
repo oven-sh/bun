@@ -47,14 +47,11 @@ unsafe extern "C" {
     fn spng_set_chunk_limits(ctx: *mut spng_ctx, chunk_size: usize, cache_limit: usize) -> c_int;
 }
 
-/// Caps on what libspng inflates and keeps for ancillary chunks (iCCP,
-/// zTXt, iTXt, eXIf, sPLT): `MAX_CHUNK_BYTES` is the decompressed size of
-/// one chunk, `MAX_CHUNK_CACHE_BYTES` the total across the file. libspng
-/// reads these chunks before the first IDAT, so without the caps a 1 MB PNG
-/// whose iCCP inflates to 1 GiB costs that much memory and seconds of CPU
-/// no matter what `maxPixels` says. A chunk over either cap fails the
-/// decode (`SPNG_ECHUNK_LIMITS`). The per-chunk cap equals the pipeline's
-/// ICC cap so any profile that decodes is one the encoders will carry.
+/// libspng inflates ancillary chunks (iCCP, zTXt, iTXt) before the first
+/// IDAT, outside the reach of `max_pixels`. Cap one chunk's inflated size
+/// and the total it keeps; over either, the decode fails with
+/// `SPNG_ECHUNK_LIMITS`. The per-chunk cap is the ICC cap so any profile
+/// that decodes is one the encoders carry.
 const MAX_CHUNK_BYTES: usize = codecs::MAX_ICC_PROFILE_BYTES;
 const MAX_CHUNK_CACHE_BYTES: usize = 4 * MAX_CHUNK_BYTES;
 

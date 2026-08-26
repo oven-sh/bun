@@ -637,6 +637,9 @@ function expectBundled(
   if (ESBUILD && minChunkSize !== undefined) {
     throw new Error("minChunkSize not possible in esbuild backend");
   }
+  if (ESBUILD && splitRequire !== undefined) {
+    throw new Error("splitRequire not possible in esbuild backend");
+  }
   if (ESBUILD && allowUnresolved !== undefined) {
     throw new Error("allowUnresolved not possible in esbuild backend");
   }

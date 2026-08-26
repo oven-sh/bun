@@ -610,10 +610,8 @@ extern "C" void Bun__setCTRLHandler(BOOL add)
     SetConsoleCtrlHandler(Ctrlhandler, add);
 }
 
-// ExitProcess kills every other thread. A WTF suspender (Wasm i-cache barrier, GC
-// stack scan, libpas scavenger) killed between SuspendThread and ResumeThread of
-// this thread would leave it suspended inside NtTerminateProcess forever. All of
-// them hold ThreadSuspendLocker across that pair: hold it here, never release it.
+// Held, never released, across ExitProcess: a WTF suspender it kills between
+// SuspendThread and ResumeThread of this thread would leave it suspended forever.
 extern "C" void Bun__lockThreadSuspensionForExit()
 {
     static std::atomic<DWORD> owner { 0 };

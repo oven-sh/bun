@@ -113,6 +113,7 @@ describe("Bun.open", () => {
       const result = await Bun.open("hermetic-target", { app: launcherPath, wait: true });
       expect(Number.isInteger(result.pid)).toBe(true);
       expect(result.pid).toBeGreaterThan(0);
+      expect(result.ok).toBe(true);
       expect(result.exited).toBeInstanceOf(Promise);
       const exitCode = await result.exited;
       expect(typeof exitCode).toBe("number");

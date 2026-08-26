@@ -564,7 +564,8 @@ pub(crate) mod watch {
                 // strong slot; the result object needs the same promise.
                 if let Some(mut outer) = w.outer.take() {
                     let exited_value = w.exited.value();
-                    let result = JSValue::create_empty_object(global, 2);
+                    let result = JSValue::create_empty_object(global, 3);
+                    result.put(global, b"ok", JSValue::from(true));
                     result.put(global, b"pid", JSValue::js_number(f64::from(w.pid)));
                     result.put(global, b"exited", exited_value);
                     let _ = w.exited.resolve(global, code_val);

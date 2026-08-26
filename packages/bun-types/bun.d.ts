@@ -5582,6 +5582,13 @@ declare module "bun" {
 
   interface BunOpenResult {
     /**
+     * Always `true` when the outer promise resolves. Launch failures are
+     * reported by rejecting the outer promise (or, for `wait: true`,
+     * rejecting `exited`), so `ok` is only read on the success path.
+     */
+    ok: true;
+
+    /**
      * PID of the launched handler process. On Windows this is the process
      * the shell actually created (not an intermediate cmd.exe); `0` when the
      * shell reused an already-running singleton and no fresh handle exists.

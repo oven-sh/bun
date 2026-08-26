@@ -1169,7 +1169,8 @@ fn do_open(global_this: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsRe
                 let exited = exited.unwrap_or_else(|| {
                     JSPromise::resolved_promise_value(global_this, JSValue::ZERO)
                 });
-                let result = JSValue::create_empty_object(global_this, 2);
+                let result = JSValue::create_empty_object(global_this, 3);
+                result.put(global_this, b"ok", JSValue::from(true));
                 result.put(global_this, b"pid", pid);
                 result.put(global_this, b"exited", exited);
                 let mut outer = JSPromiseStrong::init(global_this);
@@ -1246,7 +1247,8 @@ fn do_open(global_this: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsRe
             .get(global_this, b"exited")?
             .unwrap_or_else(|| JSPromise::resolved_promise_value(global_this, JSValue::ZERO));
 
-        let result = JSValue::create_empty_object(global_this, 2);
+        let result = JSValue::create_empty_object(global_this, 3);
+        result.put(global_this, b"ok", JSValue::from(true));
         result.put(global_this, b"pid", pid);
         result.put(global_this, b"exited", exited);
 
@@ -1392,7 +1394,8 @@ fn make_open_result_windows(
         // for. The handler accepted the target, so report success now.
         drop(exited_promise);
         let exited = JSPromise::resolved_promise_value(global_this, JSValue::js_number(0.0));
-        let result = JSValue::create_empty_object(global_this, 2);
+        let result = JSValue::create_empty_object(global_this, 3);
+        result.put(global_this, b"ok", JSValue::from(true));
         result.put(global_this, b"pid", JSValue::ZERO);
         result.put(global_this, b"exited", exited);
 
@@ -1413,7 +1416,8 @@ fn make_open_result_windows(
     // JSPromiseStrong releases its root, so `exited_value` must already be
     // safely held by the (still-live) result object.
     let pid = launch.pid;
-    let result = JSValue::create_empty_object(global_this, 2);
+    let result = JSValue::create_empty_object(global_this, 3);
+    result.put(global_this, b"ok", JSValue::from(true));
     result.put(global_this, b"pid", JSValue::js_number(f64::from(pid)));
     result.put(global_this, b"exited", exited_value);
 

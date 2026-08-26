@@ -725,6 +725,22 @@ static bool isModuleEvaluated(JSC::AbstractModuleRecord* record)
     return record->moduleEnvironmentMayBeNull() != nullptr;
 }
 
+// A non-TLA record that is mid-evaluation: require() re-entered it from
+// inside its own evaluation (a require cycle). Its namespace is live —
+// hoisted functions callable, bindings not yet initialized in TDZ — the same
+// as a static import in that cycle would see.
+static bool isModuleEvaluatingSync(JSC::AbstractModuleRecord* record)
+{
+    auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
+    return cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluating && !cyclic->hasTLA() && !cyclic->evaluationError();
+}
+
+static bool isModuleEvaluating(JSC::AbstractModuleRecord* record)
+{
+    auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
+    return cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluating;
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionEsmNamespaceForCjs, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -791,11 +807,15 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     bool entryExistedBefore = false;
     if (auto* entry = loader->registryEntry(key)) {
         entryExistedBefore = true;
-        if (isModuleEvaluated(entry->record())) {
+        if (isModuleEvaluated(entry->record()) || isModuleEvaluatingSync(entry->record())) {
             auto* ns = entry->record()->getModuleNamespace(globalObject, false);
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(ns);
         }
+        // Any other Evaluating record (one with top-level await) must not
+        // reach loadModuleSync: Link() and Evaluate() reject that status.
+        if (isModuleEvaluating(entry->record()))
+            return throwVMTypeError(globalObject, scope, makeString("require() async module \""_s, keyString, "\" is unsupported. use \"await import()\" instead."_s));
     }
 
     JSPromise* promise = loader->loadModuleSync(globalObject, key, nullptr, nullptr);
@@ -824,9 +844,11 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
         // still be in TDZ and we must throw the "async module" error instead
         // of returning a half-initialized namespace.
         if (auto* entry = loader->registryEntry(key)) {
-            if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record())) {
-                auto status = cyclic->status();
-                if ((status == JSC::CyclicModuleRecord::Status::Evaluating || status == JSC::CyclicModuleRecord::Status::Evaluated) && !cyclic->hasTLA() && !cyclic->evaluationError())
+            auto* record = entry->record();
+            if (isModuleEvaluatingSync(record))
+                break;
+            if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record)) {
+                if (cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluated && !cyclic->hasTLA() && !cyclic->evaluationError())
                     break;
             }
         }

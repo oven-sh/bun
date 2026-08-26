@@ -3175,6 +3175,18 @@ declare module "bun" {
     splitting?: boolean;
 
     /**
+     * With `splitting` and `target: "bun"`, every `require()` of a bundled ES
+     * module is a chunk boundary too. The call stays synchronous: it is
+     * emitted as `import.meta.require("./chunk-…js")` and the chunk is
+     * evaluated when the call runs, so a `require()` inside a function that
+     * never runs costs nothing at startup. Set to `false` to keep such
+     * modules inlined in the calling chunk. No effect for other targets.
+     *
+     * @default true
+     */
+    splitRequire?: boolean;
+
+    /**
      * With `splitting`, chunks that are always loaded together are folded
      * into one (for example, code shared by an entry point and a module it
      * `import()`s lives in the entry point's chunk). This option additionally
@@ -5037,6 +5049,26 @@ declare module "bun" {
      * Immediately terminates the connection
      */
     terminate(): void;
+
+    /**
+     * Stops reading from the underlying socket, so the peer sees TCP
+     * backpressure instead of the client buffering in memory. Messages
+     * already received may still be dispatched. A pause before the
+     * connection opens takes effect once it does.
+     * @returns `true` if the socket was paused (or will be on open), `false` if there is no socket to pause
+     */
+    pause(): boolean;
+
+    /**
+     * Resumes reading from the underlying socket after `pause()`.
+     * @returns `true` if the socket was resumed (or will be on open), `false` if there is no socket to resume
+     */
+    resume(): boolean;
+
+    /**
+     * Whether the connection is currently paused via `pause()`.
+     */
+    readonly isPaused: boolean;
 
     /**
      * Registers an event handler of a specific event type on the WebSocket.

@@ -220,15 +220,11 @@ fn collect_newly_loaded(
 /// Runs before `compute_chunks` groups files by `entry_bits`; it rewrites
 /// `File.entry_bits` in place so everything downstream (chunk membership,
 /// cross-chunk imports) sees the merged layout.
-///
-/// Returns `guaranteed` (see below) for `split_chunks_for_evaluation_order`:
-/// per entry point, the entries that have finished evaluating whenever it
-/// loads. Empty when there is no `import()` entry point.
 pub(crate) fn merge_small_chunks(
     this: &mut LinkerContext,
     temp: &Arena,
     min_chunk_size: u64,
-) -> crate::Result<Vec<AutoBitSet>> {
+) -> crate::Result<()> {
     let _trace = bun_core::perf::trace("Bundler.mergeSmallChunks");
     debug_assert!(this.graph.code_splitting);
 
@@ -242,7 +238,7 @@ pub(crate) fn merge_small_chunks(
             .iter()
             .any(|&source_index| kinds[source_index as usize] == EntryPoint::Kind::DynamicImport)
     {
-        return Ok(Vec::new());
+        return Ok(());
     }
     let css_asts = this.graph.ast.items_css();
     let ast_targets = this.graph.ast.items_target();
@@ -562,7 +558,7 @@ pub(crate) fn merge_small_chunks(
             "mergeSmallChunks: {} chunks folded into chunks with the same load conditions",
             folded_same
         );
-        return Ok(guaranteed);
+        return Ok(());
     }
 
     // A parent's extra entries now reach everything the folded members
@@ -737,7 +733,7 @@ pub(crate) fn merge_small_chunks(
         "mergeSmallChunks: {} chunks folded into chunks with the same load conditions, {} side-effect-free chunks folded into a superset (min size {} bytes)",
         folded_same, folded_pure, min_chunk_size
     );
-    Ok(guaranteed)
+    Ok(())
 }
 
 fn rekey_files(

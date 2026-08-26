@@ -88,7 +88,7 @@ img.resize(800, 600, { colorspace: "linear" }); // physically correct averaging
 
 The linear path always runs Bun's portable kernel, so its output is byte-identical across platforms and `Bun.Image.backend` settings.
 
-When the source is a JPEG and the target is at most half the source size, decode skips straight to the nearest M/8 IDCT scale. As a result, generating a thumbnail from a 24 MP photo never materializes the full-resolution buffer.
+When the source is a JPEG and the target is at most half the source size, decode skips straight to the nearest M/8 IDCT scale. As a result, generating a thumbnail from a 24 MP photo never materializes the full-resolution buffer. `colorspace: "linear"` disables this shortcut: the IDCT scale averages encoded values, so the linear path decodes JPEG sources at full resolution.
 
 ## Rotate · flip
 

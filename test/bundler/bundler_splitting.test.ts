@@ -728,7 +728,9 @@ describe("bundler", () => {
       // use nothing from it and loading it runs nothing: only the lib.js
       // chunk is imported. c.js uses \`z\`.
       const importsIn = (name: string) =>
-        [...api.readFile("/out/" + name).matchAll(/^\s*import\s*(\{[^}]*\})?\s*(?:from\s*)?"/gm)].map(m => m[1] ?? "bare");
+        [...api.readFile("/out/" + name).matchAll(/^\s*import\s*(\{[^}]*\})?\s*(?:from\s*)?"/gm)].map(
+          m => m[1] ?? "bare",
+        );
       expect(importsIn("a.js")).toEqual([expect.stringContaining("x")]);
       expect(importsIn("b.js")).toEqual([expect.stringContaining("x")]);
       expect(importsIn("c.js")).toEqual([expect.stringContaining("z")]);

@@ -3365,4 +3365,26 @@ describe.concurrent.skipIf(!isWindows)("external command resolution on Windows u
     expect(JSON.parse(stdout)).toEqual({ stdout: "from-runtime", stderr: "", exitCode: 0 });
     expect(exitCode).toBe(0);
   });
+
+  // `bun run <script>` runs package.json scripts through the Bun shell on
+  // Windows, with the shell environment seeded from the process environment.
+  test("export PATH in a package.json script", async () => {
+    using dir = toolDir("onlyintool-script", "from-script");
+    using project = tempDir("shell-argv0-project", {
+      "package.json": JSON.stringify({
+        scripts: { tool: `export PATH='${String(dir)};${processPath}'; onlyintool-script` },
+      }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--silent", "run", "tool"],
+      env: { ...envWithoutPath, Path: processPath },
+      cwd: String(project),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("from-script");
+    expect(exitCode).toBe(0);
+  });
 });

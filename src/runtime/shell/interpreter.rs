@@ -2081,6 +2081,42 @@ impl ShellExecEnv {
                 })
             })
     }
+
+    /// The `PATH` that resolves an external command (and a `which` operand):
+    /// a `PATH=... cmd` prefix first, then `export_env`, then the process
+    /// environment. `_PATH_DEFPATH` on POSIX when none of them has one
+    /// (Android often has no PATH). An explicit `PATH=""` searches nothing.
+    ///
+    /// `EnvMap` lookups are case-insensitive on Windows, so `PATH` written by
+    /// `export` or `.env()` is found under the `Path` key the process
+    /// environment uses there.
+    pub(crate) fn get_path(&self, event_loop: EventLoopHandle) -> Vec<u8> {
+        use crate::shell::env_str::EnvStr;
+        let key = EnvStr::init_slice(b"PATH");
+        if let Some(path) = self
+            .cmd_local_env
+            .get(key)
+            .or_else(|| self.export_env.get(key))
+        {
+            // `EnvMap::get` refs the returned string; balance it.
+            let bytes = path.slice().to_vec();
+            path.deref();
+            return bytes;
+        }
+        // SAFETY: `event_loop.env()` is the VM's long-lived `Loader`, and
+        // `BUN_DEFAULT_PATH_FOR_SPAWN` is a NUL-terminated C-string constant.
+        unsafe {
+            if let Some(path) = (*event_loop.env()).get(b"PATH") {
+                path.to_vec()
+            } else if cfg!(unix) {
+                core::ffi::CStr::from_ptr(crate::shell::subproc::BUN_DEFAULT_PATH_FOR_SPAWN)
+                    .to_bytes()
+                    .to_vec()
+            } else {
+                Vec::new()
+            }
+        }
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────

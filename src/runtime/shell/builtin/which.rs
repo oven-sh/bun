@@ -5,7 +5,6 @@
 //! are processed.
 
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
-use crate::shell::env_str::EnvStr;
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -203,18 +202,8 @@ struct SearchEnv {
 impl SearchEnv {
     fn load(interp: &Interpreter, cmd: NodeId) -> Self {
         let shell = Builtin::shell(interp, cmd);
-        // `EnvMap::get` refs the returned string; balance it.
-        let path_env = shell
-            .export_env
-            .get(EnvStr::init_slice(b"PATH"))
-            .map(|s| {
-                let v = s.slice().to_vec();
-                s.deref();
-                v
-            })
-            .unwrap_or_default();
         Self {
-            path_env,
+            path_env: shell.get_path(interp.event_loop),
             cwd: shell.cwd().to_vec(),
         }
     }

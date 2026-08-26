@@ -232,7 +232,8 @@ run_test() {
       BT="--expose-internals --smol --timeout ${BUN_TIMEOUT}"
       ;;
     */spawn/spawn.test.ts)
-      WT=600
+      # OHOS 减量后单跑实测 519s，并行 5 worker 下留余量
+      WT=$((TMOUT * 3))       # 900s
       BT="--expose-internals --smol --timeout 600000"
       ;;
     */bake/dev/server-sourcemap.test.ts|*/web/fetch/fetch.test.ts|*/cli/create/create-jsx.test.ts|*/shell/bunshell.test.ts|*/terminal/terminal.test.ts|*/websocket/websocket-server.test.ts)

@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 
 use crate::exception_list;
 use bun_core::String as BunString;
-use bun_core::ZigStringSlice;
+use bun_core::Utf8Bytes;
 use bun_url::URL as ZigURL;
 
 use crate::SourceProvider;
@@ -27,6 +27,14 @@ pub struct ZigStackTrace {
     /// `Option<NonNull<_>>` niche-optimizes to a single thin pointer, so the
     /// FFI layout is exactly one nullable pointer.
     pub(crate) referenced_source_provider: Option<NonNull<SourceProvider>>,
+}
+
+impl Drop for ZigStackTrace {
+    fn drop(&mut self) {
+        if let Some(source) = self.referenced_source_provider.take() {
+            SourceProvider::opaque_mut(source.as_ptr()).deref();
+        }
+    }
 }
 
 impl ZigStackTrace {
@@ -79,20 +87,6 @@ impl ZigStackTrace {
         unsafe { bun_core::ffi::slice(self.frames_ptr, self.frames_len as usize) }
     }
 
-    pub(crate) fn frames_mutable(&mut self) -> &mut [ZigStackFrame] {
-        // SAFETY: frames_ptr points to a caller-owned buffer of at least frames_len elements.
-        unsafe { bun_core::ffi::slice_mut(self.frames_ptr, self.frames_len as usize) }
-    }
-
-    /// Mutable view of the populated source-line strings (`[0..source_lines_len]`).
-    #[inline]
-    pub(crate) fn source_lines_mut(&mut self) -> &mut [BunString] {
-        // SAFETY: `source_lines_ptr` points to a caller-owned buffer of at least
-        // `source_lines_len` initialized elements (populated by C++ via FFI).
-        // The borrow is tied to `&mut self`.
-        unsafe { bun_core::ffi::slice_mut(self.source_lines_ptr, self.source_lines_len as usize) }
-    }
-
     /// Immutable view of the populated source-line numbers (`[0..source_lines_len]`).
     #[inline]
     pub(crate) fn source_line_numbers(&self) -> &[i32] {
@@ -118,12 +112,12 @@ pub(crate) struct SourceLineIterator<'a> {
     pub(crate) i: i32,
 }
 
-pub(crate) struct SourceLine {
+pub(crate) struct SourceLine<'a> {
     pub line: i32,
-    pub text: ZigStringSlice,
+    pub text: Utf8Bytes<'a>,
 }
 
-impl SourceLine {
+impl SourceLine<'_> {
     /// The line as it should be displayed: surrounding newlines and trailing
     /// indentation removed.
     pub(crate) fn trimmed_text(&self) -> &[u8] {
@@ -146,7 +140,7 @@ impl<'a> SourceLineIterator<'a> {
         count
     }
 
-    pub(crate) fn until_last(&mut self) -> Option<SourceLine> {
+    pub(crate) fn until_last(&mut self) -> Option<SourceLine<'a>> {
         if self.i < 1 {
             return None;
         }
@@ -154,7 +148,7 @@ impl<'a> SourceLineIterator<'a> {
     }
 
     #[allow(clippy::should_implement_trait)]
-    pub(crate) fn next(&mut self) -> Option<SourceLine> {
+    pub(crate) fn next(&mut self) -> Option<SourceLine<'a>> {
         if self.i < 0 {
             return None;
         }

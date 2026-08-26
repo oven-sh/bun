@@ -8,6 +8,7 @@ use bun_core::strings;
 
 use crate::HTTPClient;
 use crate::NewHTTPContext;
+use crate::PeerVerification;
 use crate::ssl_config::SSLConfig;
 
 #[derive(Default)]
@@ -16,12 +17,11 @@ pub struct PendingConnect {
     pub(crate) port: u16,
     // Compared by pointer identity only, never derefed/freed here; lifetime-erased.
     pub(crate) ssl_config: Option<NonNull<SSLConfig>>,
-    /// Whether the client that initiated this in-flight TLS connect requested
-    /// `rejectUnauthorized`. The eventual `ClientSession` records this as
-    /// `established_with_reject_unauthorized`; mirroring it here lets the
-    /// coalescing path apply the same strictness guard *before* the session
+    /// How the client that initiated this in-flight TLS connect will verify
+    /// the peer. The eventual `ClientSession` records the same value; mirroring
+    /// it here lets the coalescing path apply the guard *before* the session
     /// exists, so a strict caller never waits on a connect started by a lax one.
-    pub(crate) reject_unauthorized: bool,
+    pub(crate) verification: PeerVerification,
     pub(crate) host_header_hash: u64,
     // BACKREF: waiters are borrowed HTTP clients owned elsewhere; lifetime-erased.
     pub(crate) waiters: Vec<NonNull<HTTPClient<'static>>>,

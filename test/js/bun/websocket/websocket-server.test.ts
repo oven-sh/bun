@@ -671,6 +671,41 @@ describe("Server", () => {
         done();
       },
     }));
+    test("returning an Error from message() is not treated as a throw", (done, connect) => ({
+      open(ws) {
+        ws.send("trigger");
+      },
+      message(ws) {
+        queueMicrotask(() => done());
+        return new Error("returned, not thrown");
+      },
+      error(error) {
+        done(error);
+      },
+    }));
+    for (const hook of ["ping", "pong", "close"] as const) {
+      test(`${hook} handler that throws passes its error to error()`, done => {
+        const thrown = new Error(`${hook} threw`);
+        return {
+          open(ws) {
+            if (hook === "ping") ws.ping();
+            else if (hook === "pong") ws.pong();
+            else ws.close();
+          },
+          [hook]() {
+            throw thrown;
+          },
+          error(error) {
+            try {
+              expect(error).toBe(thrown);
+              done();
+            } catch (e) {
+              done(e);
+            }
+          },
+        };
+      });
+    }
     test("maxPayloadLength", done => ({
       maxPayloadLength: 4,
       open(ws) {
@@ -2193,6 +2228,160 @@ describe("server.upgrade() validates the opening handshake", () => {
     expect(v8.status).toBe(426);
     expect(v8.headers.toLowerCase()).toContain("sec-websocket-version: 13");
     expect(upgradeResult).toBe(false);
+  });
+});
+
+// The 101 switches protocols: the connection stops being HTTP, so the HTTP
+// layer's "close after this response" (the request said Connection: close or
+// was HTTP/1.0, or a graceful server.stop() marked the connection to close
+// once idle) does not apply to the WebSocket that takes over the socket. A
+// synchronous server.upgrade() always behaved that way. One made after an
+// await used to send the 101 and shut the socket down right under the new
+// WebSocket: open() ran on a dead socket, close() never ran, and the
+// ServerWebSocket leaked.
+describe.concurrent("server.upgrade() after an await on a connection the HTTP layer marked to close", () => {
+  const K = "dGhlIHNhbXBsZSBub25jZQ==";
+
+  function maskedFrame(opcode: number, payload: Buffer): Buffer {
+    const mask = Buffer.from([0x12, 0x34, 0x56, 0x78]);
+    const masked = Buffer.from(payload.map((byte, i) => byte ^ mask[i % 4]));
+    return Buffer.concat([Buffer.from([0x80 | opcode, 0x80 | payload.length]), mask, masked]);
+  }
+
+  // Server frames are unmasked; every frame in this test has a short payload.
+  function parseServerFrames(buf: Buffer): { frames: { opcode: number; payload: Buffer }[]; rest: Buffer } {
+    const frames: { opcode: number; payload: Buffer }[] = [];
+    let offset = 0;
+    while (buf.length - offset >= 2) {
+      const opcode = buf[offset] & 0x0f;
+      const length = buf[offset + 1] & 0x7f;
+      if (length >= 126 || buf[offset + 1] & 0x80) throw new Error(`unexpected server frame header ${buf[offset + 1]}`);
+      if (buf.length - offset - 2 < length) break;
+      frames.push({ opcode, payload: buf.subarray(offset + 2, offset + 2 + length) });
+      offset += 2 + length;
+    }
+    return { frames, rest: buf.subarray(offset) };
+  }
+
+  async function upgradeAfterAwait(opts: {
+    requestLine: string;
+    headers: string[];
+    beforeUpgrade?: (server: Server) => void;
+    sync?: boolean;
+  }) {
+    const events: string[] = [];
+    const serverClosed = Promise.withResolvers<void>();
+    let upgradeResult: boolean | undefined;
+    using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req, srv) {
+        // Leave the parser's stack, where the socket is corked.
+        if (!opts.sync) await new Promise(resolve => setImmediate(resolve));
+        opts.beforeUpgrade?.(srv);
+        upgradeResult = srv.upgrade(req);
+        if (upgradeResult) return;
+        return new Response("no", { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          events.push("open");
+          ws.send("from open()");
+        },
+        message(ws, message) {
+          events.push(`message:${message}`);
+          ws.send(`echo:${message}`);
+        },
+        close(ws, code) {
+          events.push(`close:${code}`);
+          serverClosed.resolve();
+        },
+      },
+    });
+
+    const socket = net.connect({ port: server.port, host: "127.0.0.1" });
+    const socketClosed = Promise.withResolvers<never>();
+    // Only observed through the races in `until` below.
+    socketClosed.promise.catch(() => {});
+    socket.on("error", error => socketClosed.reject(error));
+    socket.on("close", () => socketClosed.reject(new Error("the server closed the socket")));
+
+    let buffered = Buffer.alloc(0);
+    let onData = () => {};
+    socket.on("data", (chunk: Buffer) => {
+      buffered = Buffer.concat([buffered, chunk]);
+      onData();
+    });
+    // Rejects if the server closes the socket before the condition holds.
+    const until = <T>(condition: () => T | undefined) =>
+      Promise.race([
+        socketClosed.promise,
+        new Promise<T>(resolve => {
+          onData = () => {
+            const value = condition();
+            if (value !== undefined) resolve(value);
+          };
+          onData();
+        }),
+      ]);
+    const nextFrame = () =>
+      until(() => {
+        const { frames, rest } = parseServerFrames(buffered);
+        if (frames.length === 0) return undefined;
+        buffered = rest;
+        return frames[0];
+      });
+
+    await new Promise<void>(resolve => socket.once("connect", resolve));
+    socket.write(`${opts.requestLine}\r\nHost: 127.0.0.1\r\n${opts.headers.join("\r\n")}\r\n\r\n`);
+
+    const head = await until(() => {
+      const end = buffered.indexOf("\r\n\r\n");
+      if (end === -1) return undefined;
+      const head = buffered.subarray(0, end).toString();
+      buffered = buffered.subarray(end + 4);
+      return head;
+    });
+    expect(head.split("\r\n")[0]).toBe("HTTP/1.1 101 Switching Protocols");
+    expect(upgradeResult).toBe(true);
+
+    // The socket is a live WebSocket in both directions.
+    expect(await nextFrame()).toEqual({ opcode: 1, payload: Buffer.from("from open()") });
+    socket.write(maskedFrame(1, Buffer.from("hi")));
+    expect(await nextFrame()).toEqual({ opcode: 1, payload: Buffer.from("echo:hi") });
+
+    // A clean close reaches close() with the client's code.
+    socket.write(maskedFrame(8, Buffer.from([0x03, 0xe8])));
+    expect(await nextFrame()).toEqual({ opcode: 8, payload: Buffer.from([0x03, 0xe8]) });
+    socket.end();
+    await serverClosed.promise;
+    expect(events).toEqual(["open", "message:hi", "close:1000"]);
+  }
+
+  const handshake = [`Upgrade: websocket`, `Sec-WebSocket-Key: ${K}`, `Sec-WebSocket-Version: 13`];
+
+  it("Connection: close", async () => {
+    await upgradeAfterAwait({ requestLine: "GET / HTTP/1.1", headers: [...handshake, "Connection: close"] });
+  });
+
+  it("HTTP/1.0", async () => {
+    await upgradeAfterAwait({ requestLine: "GET / HTTP/1.0", headers: [...handshake, "Connection: Upgrade"] });
+  });
+
+  it("a graceful server.stop() during the await", async () => {
+    await upgradeAfterAwait({
+      requestLine: "GET / HTTP/1.1",
+      headers: [...handshake, "Connection: Upgrade"],
+      beforeUpgrade: srv => srv.stop(),
+    });
+  });
+
+  it("the synchronous path (Connection: close) is unchanged", async () => {
+    await upgradeAfterAwait({
+      requestLine: "GET / HTTP/1.1",
+      headers: [...handshake, "Connection: close"],
+      sync: true,
+    });
   });
 });
 

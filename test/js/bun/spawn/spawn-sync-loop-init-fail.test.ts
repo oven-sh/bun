@@ -54,12 +54,10 @@ describe.skipIf(!isPosix)("Bun.spawnSync event-loop creation under EMFILE", () =
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "",
-      stderr: expect.stringContaining("SURVIVED"),
-      exitCode: 0,
-    });
+    expect(stdout).toBe("");
     expect(stderr).toContain("spawnSync threw: EMFILE");
     expect(stderr).toContain("retry exit: 0");
+    expect(stderr).toContain("SURVIVED");
+    expect(exitCode).toBe(0);
   });
 });

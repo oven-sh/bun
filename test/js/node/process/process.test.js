@@ -2316,8 +2316,13 @@ it("delete process.env.TZ invalidates existing Date instances", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const machineHours = Number((await machine.stdout.text()).trim());
-  expect(await machine.exited).toBe(0);
+  const [machineStdout, machineStderr, machineExitCode] = await Promise.all([
+    machine.stdout.text(),
+    machine.stderr.text(),
+    machine.exited,
+  ]);
+  expect({ stderr: machineStderr, exitCode: machineExitCode }).toEqual({ stderr: "", exitCode: 0 });
+  const machineHours = Number(machineStdout.trim());
 
   await using proc = Bun.spawn({
     cmd: [

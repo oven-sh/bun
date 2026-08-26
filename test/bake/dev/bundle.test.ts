@@ -3,6 +3,7 @@ import { expect } from "bun:test";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
+  concurrent: true,
   framework: minimalFramework,
   files: {
     "db.ts": `export const abc = "123";`,
@@ -29,6 +30,7 @@ devTest("import identifier doesnt get renamed", {
   },
 });
 devTest("symbol collision with import identifier", {
+  concurrent: true,
   framework: minimalFramework,
   files: {
     "db.ts": `export const abc = "123";`,
@@ -51,6 +53,7 @@ devTest("symbol collision with import identifier", {
   },
 });
 devTest('uses "development" condition', {
+  concurrent: true,
   framework: minimalFramework,
   files: {
     "node_modules/example/package.json": JSON.stringify({
@@ -77,6 +80,7 @@ devTest('uses "development" condition', {
   },
 });
 devTest("importing a file before it is created", {
+  concurrent: true,
   files: {
     "index.html": emptyHtmlFile({
       styles: [],
@@ -100,6 +104,7 @@ devTest("importing a file before it is created", {
   },
 });
 devTest("default export same-scope handling", {
+  concurrent: true,
   files: {
     "index.html": emptyHtmlFile({
       styles: [],
@@ -168,7 +173,7 @@ devTest("default export same-scope handling", {
   },
   async test(dev) {
     await using c = await dev.client("/", { storeHotChunks: true });
-    c.expectMessage(
+    await c.expectMessage(
       //
       "ONE",
       "TWO",
@@ -198,10 +203,11 @@ devTest("default export same-scope handling", {
 
     // Since fixture7.ts is not marked as accepting, it will bubble the update
     // to `index.ts`, re-evaluate it and some of the dependencies.
-    c.expectMessage("TWO", "FOUR", "FIVE", "SEVEN", "EIGHT", "NINE", "ELEVEN");
+    await c.expectMessage("TWO", "FOUR", "FIVE", "SEVEN", "EIGHT", "NINE", "ELEVEN");
   },
 });
 devTest("directory cache bust case #17576", {
+  concurrent: true,
   files: {
     "web/index.html": emptyHtmlFile({
       styles: [],
@@ -235,6 +241,7 @@ devTest("directory cache bust case #17576", {
   },
 });
 devTest("deleting imported file shows error then recovers", {
+  concurrent: true,
   skip: [
     "win32", // unlinkSync is having weird behavior
   ],
@@ -281,6 +288,7 @@ devTest("deleting imported file shows error then recovers", {
 // Dep was left pointing at freed memory, and the next directory-watch event
 // that re-resolved that Dep read it (use-after-free, caught by ASAN).
 devTest("removing 'use client' from a component with a pending resolution failure", {
+  concurrent: true,
   // separateSSRGraph is required so the "use client" file is parsed with the
   // browser target; otherwise the resolution failure is attributed to the
   // server graph and the client-graph key is never borrowed.
@@ -353,12 +361,14 @@ devTest("removing 'use client' from a component with a pending resolution failur
     // a heap-use-after-free here and the dev server aborts.
     await dev.write("components/missing.ts", `export const value = "ok";`, { errors: null });
 
-    // The server must still be alive and responding.
+    // The server must still be alive and responding. The route stays failed:
+    // Sibling.ts still imports the missing './sibling-missing'.
     const res = await dev.fetch("/");
-    expect(res).toBeInstanceOf(Response);
+    expect(res.status).toBe(500);
   },
 });
 devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
+  concurrent: true,
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
     // Import-record order is source order, so trackResolutionFailure is
@@ -388,9 +398,11 @@ devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
       await dev.write("sub/a.ts", `export {};`);
     }
 
-    // The server should still respond.
+    // The server should still respond, and the route builds now that index.ts
+    // has no failing import.
     const res = await dev.fetch("/");
-    expect(res).toBeInstanceOf(Response);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("/_bun/client/");
 
     // Test teardown sends graceful-exit, which calls DevServer.deinit.
     // Before the fix, deinit iterated every dependencies.items slot and
@@ -399,6 +411,7 @@ devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
   },
 });
 devTest("importing html file", {
+  concurrent: true,
   files: {
     "index.html": emptyHtmlFile({
       styles: [],
@@ -416,6 +429,7 @@ devTest("importing html file", {
   },
 });
 devTest("importing html file with text loader (#18154)", {
+  concurrent: true,
   files: {
     "index.html": emptyHtmlFile({
       styles: [],
@@ -434,6 +448,7 @@ devTest("importing html file with text loader (#18154)", {
   },
 });
 devTest("importing bun on the client", {
+  concurrent: true,
   files: {
     "index.html": emptyHtmlFile({
       styles: [],
@@ -451,6 +466,7 @@ devTest("importing bun on the client", {
   },
 });
 devTest("import.meta.main", {
+  concurrent: true,
   files: {
     "index.html": emptyHtmlFile({
       styles: [],
@@ -476,7 +492,7 @@ devTest("import.meta.main", {
   },
 });
 devTest("commonjs forms", {
-  timeoutMultiplier: 2,
+  concurrent: true,
   files: {
     "index.html": emptyHtmlFile({
       styles: [],
@@ -491,60 +507,31 @@ devTest("commonjs forms", {
     `,
   },
   async test(dev) {
-    console.log("Initial");
     await using c = await dev.client("/");
-    console.log("  expecting message");
     await c.expectMessage({ field: {} });
-    console.log("  expecting reload");
-    await c.expectReload(async () => {
-      console.log("  writing");
-      await dev.write("cjs.js", `exports.field = "1";`);
-      console.log("  now reloading");
-    });
-    console.log("  expecting message");
-    await c.expectMessage({ field: "1" });
-    console.log("Second");
-    console.log("  expecting reload");
-    await c.expectReload(async () => {
-      console.log("  writing");
-      await dev.write("cjs.js", `let theExports = exports; theExports.field = "2";`);
-    });
-    console.log("  expecting message");
-    await c.expectMessage({ field: "2" });
-    console.log("Third");
-    console.log("  expecting reload");
-    await c.expectReload(async () => {
-      console.log("  writing");
-      await dev.write("cjs.js", `let theModule = module; theModule.exports.field = "3";`);
-    });
-    console.log("  expecting message");
-    await c.expectMessage({ field: "3" });
-    console.log("Fourth");
-    await c.expectReload(async () => {
-      await dev.write("cjs.js", `let { exports } = module; exports.field = "4";`);
-    });
-    await c.expectMessage({ field: "4" });
-    console.log("Fifth");
-    await c.expectReload(async () => {
-      await dev.write("cjs.js", `var { exports } = module; exports.field = "4.5";`);
-    });
-    await c.expectMessage({ field: "4.5" });
-    console.log("Sixth");
-    await c.expectReload(async () => {
-      await dev.write("cjs.js", `let theExports = module.exports; theExports.field = "5";`);
-    });
-    await c.expectMessage({ field: "5" });
-    console.log("Seventh");
-    await c.expectReload(async () => {
-      await dev.write("cjs.js", `require; eval("module.exports.field = '6'");`);
-    });
-    await c.expectMessage({ field: "6" });
+    // A CommonJS module does not accept hot updates, so each form reloads the page.
+    const forms: [source: string, field: string][] = [
+      [`exports.field = "1";`, "1"],
+      [`let theExports = exports; theExports.field = "2";`, "2"],
+      [`let theModule = module; theModule.exports.field = "3";`, "3"],
+      [`let { exports } = module; exports.field = "4";`, "4"],
+      [`var { exports } = module; exports.field = "4.5";`, "4.5"],
+      [`let theExports = module.exports; theExports.field = "5";`, "5"],
+      [`require; eval("module.exports.field = '6'");`, "6"],
+    ];
+    for (const [source, field] of forms) {
+      await c.expectReload(async () => {
+        await dev.write("cjs.js", source);
+      });
+      await c.expectMessage({ field });
+    }
   },
 });
 
 // --- Barrel optimization tests ---
 
 devTest("barrel optimization skips unused submodules", {
+  concurrent: true,
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
     "index.ts": `
@@ -575,6 +562,7 @@ devTest("barrel optimization skips unused submodules", {
 });
 
 devTest("barrel optimization: adding a new import triggers reload", {
+  concurrent: true,
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
     "index.ts": `
@@ -629,6 +617,7 @@ devTest("barrel optimization: adding a new import triggers reload", {
 });
 
 devTest("barrel optimization: multi-file imports preserved across rebuilds", {
+  concurrent: true,
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
     "index.ts": `
@@ -675,6 +664,7 @@ devTest("barrel optimization: multi-file imports preserved across rebuilds", {
 });
 
 devTest("barrel optimization: export star target not deferred (#27521)", {
+  concurrent: true,
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
     // The user imports from consumer-lib, which is a non-barrel package
@@ -738,6 +728,7 @@ devTest("barrel optimization: export star target not deferred (#27521)", {
 });
 
 devTest("barrel optimization: two export-from blocks pointing to the same source", {
+  concurrent: true,
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
     "index.ts": `
@@ -785,6 +776,7 @@ devTest("barrel optimization: two export-from blocks pointing to the same source
 // record and marks its target submodule as unused → submodule stays `{}` →
 // the export is `undefined` at runtime.
 devTest("barrel optimization: two import statements from the same barrel (#28886)", {
+  concurrent: true,
   // Flakes on darwin in CI (timing); fix is platform-agnostic, coverage via linux/windows/alpine.
   skip: ["darwin"],
   files: {
@@ -816,6 +808,7 @@ devTest("barrel optimization: two import statements from the same barrel (#28886
 });
 
 devTest("barrel optimization: namespace re-export cycle through a star-exported module", {
+  concurrent: true,
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
     "index.ts": `

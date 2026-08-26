@@ -134,6 +134,12 @@ export interface DevServerTest {
    */
   only?: boolean;
   /**
+   * Register with `test.concurrent`, so this test overlaps with the other
+   * concurrent tests in its file. Every test has its own directory, dev server
+   * (`port: 0`) and clients, so a test that shares nothing else can opt in.
+   */
+  concurrent?: boolean;
+  /**
    * Extra environment variables for the spawned dev-server process.
    */
   env?: Record<string, string>;
@@ -203,6 +209,12 @@ export class Dev extends EventEmitter {
   nodeEnv: "development" | "production";
   batchingChanges: { write?: () => void } | null = null;
   stressTestEndurance = false;
+  /**
+   * The dev server and every client this test spawned. The test kills the ones
+   * that still run when it ends. Tests in one file can run concurrently, so
+   * this is per test, not module-global.
+   */
+  processes: Set<Subprocess> = new Set();
 
   socket?: WebSocket;
 
@@ -223,6 +235,7 @@ export class Dev extends EventEmitter {
     this.port = port;
     this.baseUrl = `http://localhost:${port}`;
     this.devProcess = process;
+    this.processes.add(process);
     this.output = stream;
     this.options = options as any;
     this.output.on("panic", () => {
@@ -543,7 +556,9 @@ export class Dev extends EventEmitter {
         hmr: this.nodeEnv === "development",
         expectErrors: !!options.errors,
         allowUnlimitedReloads: options.allowUnlimitedReloads,
+        logName: `web ${path.basename(this.rootDir)}`,
       });
+      this.processes.add(client.process);
       const onPanic = () => client.output.emit("panic");
       this.output.on("panic", onPanic);
       if (this.nodeEnv === "development") {
@@ -845,7 +860,14 @@ export class Client extends EventEmitter {
 
   constructor(
     url: string,
-    options: { storeHotChunks?: boolean; hmr: boolean; expectErrors?: boolean; allowUnlimitedReloads?: boolean },
+    options: {
+      storeHotChunks?: boolean;
+      hmr: boolean;
+      expectErrors?: boolean;
+      allowUnlimitedReloads?: boolean;
+      /** Prefix of this client's output lines in the test log. */
+      logName?: string;
+    },
   ) {
     super();
     activeClient = this;
@@ -893,8 +915,13 @@ export class Client extends EventEmitter {
     });
     this.#proc = proc;
     this.hmr = options.hmr;
-    this.output = new OutputLineStream("web", proc.stdout, proc.stderr);
+    this.output = new OutputLineStream(options.logName ?? "web", proc.stdout, proc.stderr);
     proc.exited.then(exitCode => (this.output.exitCode = exitCode));
+  }
+
+  /** The node subprocess that runs the page. */
+  get process(): Subprocess {
+    return this.#proc;
   }
 
   hardReload(options: { errors?: ErrorSpec[] } = {}) {
@@ -2071,14 +2098,6 @@ function testImpl<T extends DevServerTest>(
       `,
     );
 
-    using _ = {
-      [Symbol.dispose]: () => {
-        for (const proc of danglingProcesses) {
-          proc.kill("SIGKILL");
-        }
-      },
-    };
-
     await using devProcess = Bun.spawn({
       cwd: root,
       cmd: [process.execPath, "./harness_start.ts"],
@@ -2108,10 +2127,20 @@ function testImpl<T extends DevServerTest>(
     if (interactive) {
       console.log("\x1b[35mDev Server PID: " + devProcess.pid + "\x1b[0m");
     }
-    using stream = new OutputLineStream("dev", devProcess.stdout, devProcess.stderr);
+    // The test's directory name tags its lines, so concurrent tests stay apart in the log.
+    using stream = new OutputLineStream(`dev ${basename}${count}`, devProcess.stdout, devProcess.stderr);
     devProcess.exited.then(exitCode => (stream.exitCode = exitCode));
     const port = parseInt((await stream.waitForLine(/localhost:(\d+)/))[1], 10);
     const dev = new Dev(root, port, devProcess, stream, NODE_ENV, options);
+    using _ = {
+      [Symbol.dispose]: () => {
+        // Only this test's processes. Another test in the file may still be
+        // running its own dev server and clients.
+        for (const proc of dev.processes) {
+          proc.kill("SIGKILL");
+        }
+      },
+    };
     if (dev.nodeEnv === "development") {
       await dev.connectSocket();
     }
@@ -2154,7 +2183,8 @@ function testImpl<T extends DevServerTest>(
       return options;
     }
 
-    (options.only ? jest.test.only : jest.test)(
+    const test = options.only ? jest.test.only : jest.test;
+    (options.concurrent ? test.concurrent : test)(
       name,
       run,
       isStressTest

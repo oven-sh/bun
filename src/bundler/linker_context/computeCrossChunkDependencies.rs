@@ -638,8 +638,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                 &mut imports_from_other_chunks,
                 c.graph.stable_source_indices.slice(),
                 &evaluation_rank,
-            )
-            .expect("unreachable");
+            );
             for &other in reached.iter() {
                 evaluation_rank[other as usize] = u32::MAX;
             }

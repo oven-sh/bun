@@ -1562,7 +1562,7 @@ impl CrossChunkImport {
         imports_from_other_chunks: &mut ImportsFromOtherChunks,
         stable_source_indices: &[u32],
         evaluation_rank: &[u32],
-    ) -> Result<(), crate::Error> {
+    ) {
         list.clear();
         list.reserve(imports_from_other_chunks.count());
 
@@ -1601,7 +1601,6 @@ impl CrossChunkImport {
             (evaluation_rank[a.chunk_index as usize], a.chunk_index)
                 .cmp(&(evaluation_rank[b.chunk_index as usize], b.chunk_index))
         });
-        Ok(())
     }
 }
 

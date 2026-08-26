@@ -169,6 +169,74 @@ test("empty Transfer-Encoding with Content-Length frames the body like node", as
   expect(response).toStartWith("HTTP/1.1 200");
 });
 
+// llhttp checks a Transfer-Encoding field against an already-seen Content-Length
+// when the field name completes, before it reads the value. So the leniency
+// above is one-directional: an empty field before Content-Length is ignored,
+// the same field after Content-Length fails the request, and no 'request' is
+// emitted because the head never completes.
+describe("empty Transfer-Encoding field relative to Content-Length", () => {
+  // The pipelined GET carries Connection: close so the socket closes (and the
+  // test finishes) whether the POST is rejected or wrongly served.
+  async function send(headers: string[], options: { insecureHTTPParser?: boolean } = {}) {
+    const events: string[] = [];
+    await using server = createServer(options, (req, res) => {
+      let body = "";
+      req.on("data", d => (body += d));
+      req.on("end", () => {
+        events.push(`request ${req.url} body=${body}`);
+        res.end("ok");
+      });
+    });
+    server.on("clientError", (err: any, socket) => {
+      events.push(`clientError ${err.code}`);
+      socket.destroy();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const socket = connect(port, "127.0.0.1", () => {
+      socket.write(
+        `POST /p HTTP/1.1\r\nHost: x\r\n${headers.join("\r\n")}\r\n\r\nhello` +
+          "GET /after HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+      );
+    });
+    let raw = "";
+    socket.on("data", chunk => (raw += chunk.toString()));
+    socket.on("error", () => {});
+    socket.on("close", () => resolve(raw));
+    const response = await promise;
+    return { events, statuses: response.match(/HTTP\/1\.1 \d+/g) ?? [] };
+  }
+
+  test.each([
+    ["empty", ["Content-Length: 5", "Transfer-Encoding:"]],
+    ["whitespace-only", ["Content-Length: 5", "Transfer-Encoding:   "]],
+    ["a second empty", ["Transfer-Encoding:", "Content-Length: 5", "Transfer-Encoding:"]],
+  ])("%s Transfer-Encoding after Content-Length fires clientError like node", async (name, headers) => {
+    expect(await send(headers)).toEqual({
+      events: ["clientError HPE_INVALID_TRANSFER_ENCODING"],
+      statuses: [],
+    });
+  });
+
+  test("two empty Transfer-Encoding fields before Content-Length are ignored like node", async () => {
+    expect(await send(["Transfer-Encoding:", "Transfer-Encoding:", "Content-Length: 5"])).toEqual({
+      events: ["request /p body=hello", "request /after body="],
+      statuses: ["HTTP/1.1 200", "HTTP/1.1 200"],
+    });
+  });
+
+  // kLenientAll (insecureHTTPParser) includes LENIENT_CHUNKED_LENGTH, which
+  // skips llhttp's name check, so the empty value is ignored in either order.
+  test("insecureHTTPParser ignores an empty Transfer-Encoding after Content-Length like node", async () => {
+    expect(await send(["Content-Length: 5", "Transfer-Encoding:"], { insecureHTTPParser: true })).toEqual({
+      events: ["request /p body=hello", "request /after body="],
+      statuses: ["HTTP/1.1 200", "HTTP/1.1 200"],
+    });
+  });
+});
+
 // An empty field followed by "Transfer-Encoding: chunked" combines to just
 // "chunked" (RFC 9110 5.6.1). llhttp frames the body as chunked and node
 // delivers it. The has-body decision must look at every Transfer-Encoding

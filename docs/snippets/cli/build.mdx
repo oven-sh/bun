@@ -90,6 +90,11 @@ bun build <entry points>
   Enable code splitting for shared modules
 </ParamField>
 
+<ParamField path="--min-chunk-size" type="number">
+  With `--splitting`, also fold side-effect-free chunks smaller than this many source bytes into a chunk loaded by a
+  superset of their importers
+</ParamField>
+
 <ParamField path="--public-path" type="string">
   Prefix the bundler adds to import paths in bundled code
 </ParamField>

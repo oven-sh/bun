@@ -14,7 +14,7 @@ use crate::webcore::body::Value as BodyValue;
 use crate::webcore::fetch as Fetch;
 use crate::webcore::response::HeadersRef;
 use crate::webcore::{
-    self as WebCore, AbortSignal, AnyBlob, Blob, FetchHeaders, Request, Response,
+    self as WebCore, AbortSignal, AnyBlob, Blob, FetchHeaders, Request, Response, request,
 };
 use ::bstr::BStr;
 use bun_collections::HashMap;
@@ -874,8 +874,6 @@ pub struct ServePlugins {
 }
 
 // Reference count is incremented while there are other objects waiting on plugin loads.
-// Maps to bun_ptr::IntrusiveRc<ServePlugins> — *ServePlugins crosses FFI as promise context ptr.
-
 pub(crate) enum ServePluginsState {
     Unqueued(Box<[Box<[u8]>]>),
     Pending {
@@ -1119,7 +1117,6 @@ impl ServePlugins {
                 route.this_ptr(),
                 Some(NonNull::from(plugin_ref)),
             ));
-            route.deref();
         }
         if let Some(mut server) = dev_server {
             // SAFETY: dev_server outlives plugin load (stored as a back-reference
@@ -1147,7 +1144,6 @@ impl ServePlugins {
 
         for route in html_bundle_routes {
             bun_core::handle_oom(route.on_plugins_rejected());
-            route.deref();
         }
         if let Some(mut server) = dev_server {
             // SAFETY: dev_server outlives plugin load
@@ -2053,7 +2049,7 @@ where
         // SAFETY: plain-field detach through the root pointer; the shared
         // borrow above is not used past this point.
         unsafe { (*request_ptr).request_context = AnyRequestContext::NULL };
-        upgrader.request_weakref.with_mut(|w| w.deref());
+        upgrader.request_weakref.set(request::WeakRef::EMPTY);
 
         data_value.ensure_still_alive();
         let ws = ServerWebSocket::init(

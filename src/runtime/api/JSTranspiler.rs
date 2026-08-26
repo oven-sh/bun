@@ -49,9 +49,6 @@ pub struct JSTranspiler {
     // address is stable across the move into `Box<JSTranspiler>` —
     // `transpiler.arena` holds a `&'static Arena` pointing into it.
     pub arena: Box<Arena>,
-    // Intrusive refcount field for `bun_ptr::IntrusiveRc<JSTranspiler>`:
-    // single-thread intrusive `bun.ptr.RefCount` because `*JSTranspiler`
-    // crosses FFI as `m_ctx` (per PORTING.md §Pointers; not `Arc`).
     pub(crate) ref_count: bun_ptr::RefCount<JSTranspiler>,
 }
 
@@ -636,7 +633,7 @@ impl Config {
 /// into the owning `JSTranspiler`'s config (its `Transpiler` is bit-copied),
 /// which the job's Js side keeps alive and the pool borrow keeps valid.
 pub(crate) struct TransformTask {
-    pub input_code: bun_jsc::ThreadSafe<StringOrBuffer<'static>>,
+    pub input_code: bun_jsc::ThreadIsolated<StringOrBuffer<'static>>,
     pub output_code: BunString,
     pub transpiler: core::mem::ManuallyDrop<Transpiler::Transpiler<'static>>,
     pub log: bun_ast::Log,
@@ -676,7 +673,7 @@ impl TransformTask {
     fn schedule(
         transpiler: &JSTranspiler,
         transpiler_js: JSValue,
-        input_code: bun_jsc::ThreadSafe<StringOrBuffer<'static>>,
+        input_code: bun_jsc::ThreadIsolated<StringOrBuffer<'static>>,
         global: &JSGlobalObject,
         loader: Loader,
     ) -> JSValue {
@@ -1087,7 +1084,6 @@ impl Drop for JSTranspiler {
         // buffer_writer.?.buffer.deinit() → Option<BufferWriter>: Drop
         // config.tsconfig.deinit() → Option<Box<TSConfigJSON>>: Drop
         // arena.deinit() → Arena: Drop
-        // bun.destroy(this) → handled by Box owner / IntrusiveRc.
     }
 }
 
@@ -1387,9 +1383,9 @@ impl JSTranspiler {
             code = StringOrBuffer::owned(bytes);
         }
         // `errdefer code.deinitAndUnprotect()` — `from_js_with_encoding_maybe_async`
-        // (`Flavor::Async`) already protected; adopt into a `ThreadSafe` so any
+        // (`Flavor::Async`) already protected; adopt into a `ThreadIsolated` so any
         // early-return drop unprotects. `TransformTask::create` takes the guard.
-        let code = bun_jsc::ThreadSafe::adopt(code);
+        let code = bun_jsc::ThreadIsolated::adopt(code);
 
         args.eat();
         let loader: Option<Loader> = 'brk: {

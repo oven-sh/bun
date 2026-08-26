@@ -500,6 +500,10 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--bundle                         Bundle dependencies into the output. This is the default behavior"
         ),
         parse_param!("--no-bundle                      Transpile file only, do not bundle"),
+        // Hidden: the old docs showed `bun build --entrypoints ./a.ts`, and the
+        // token only worked because the unknown flag was skipped and its value
+        // fell through as a positional. Keep it parsing as a real entry point.
+        parse_param!("--entrypoints <STR>..."),
         parse_param!(
             "--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed."
         ),
@@ -787,9 +791,15 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 _ => &[],
             },
             // `bun build` has no argv passthrough, so a flag it does not know
-            // is a typo (e.g. esbuild's `--define:K=V` spelling). Skipping it
-            // in silence ships the un-substituted output (#40558).
+            // is a typo. Skipping it in silence ships the un-substituted
+            // output (#40558).
             reject_unrecognized_flags: cmd == CommandTag::BuildCommand,
+            // esbuild's `--define:K=V` spelling. The react `bun init` template
+            // shipped it in its build script, so it must keep parsing.
+            colon_value_flags: match cmd {
+                CommandTag::BuildCommand => &[b"define"],
+                _ => &[],
+            },
         },
     ) {
         Ok(a) => a,
@@ -1537,6 +1547,14 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
 
         opts.entry_points = entry_points.to_vec();
+
+        if cmd == CommandTag::BuildCommand {
+            opts.entry_points.extend(
+                args.options(b"--entrypoints")
+                    .iter()
+                    .map(|s| Box::<[u8]>::from(*s)),
+            );
+        }
     }
 
     let jsx_factory = args.option(b"--jsx-factory");

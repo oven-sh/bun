@@ -926,18 +926,19 @@ describe.concurrent("bun build unrecognized flags", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("Unrecognized flag '--totally-bogus-flag'");
+    expect(stdout).toContain("Usage:");
     expect(exitCode).toBe(1);
     expect(fs.existsSync(path.join(String(dir), "b.js"))).toBe(false);
   });
 
-  test("esbuild-style --define:K=V is an error, not a silent no-op", async () => {
+  test("esbuild-style --define:K=V substitutes", async () => {
     using dir = tempDir("build-define-colon", {
       "a.js": "export const x = { v: __FOO__ };",
     });
-    // `--define:__FOO__=...` parses as one unknown long flag. It used to be
-    // skipped in silence and the placeholder shipped in the output.
+    // `--define:K=V` used to parse as one unknown long flag that was skipped
+    // in silence, so the placeholder shipped in the output.
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "a.js", "--outfile=b.js", '--define:__FOO__="1.2.3"'],
       env: bunEnv,
@@ -945,37 +946,50 @@ describe.concurrent("bun build unrecognized flags", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("Unrecognized flag '--define:__FOO__'");
-    expect(exitCode).toBe(1);
-    expect(fs.existsSync(path.join(String(dir), "b.js"))).toBe(false);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("Unrecognized flag");
+    expect(stdout).not.toContain("Usage:");
+    expect(exitCode).toBe(0);
+    expect(await Bun.file(path.join(String(dir), "b.js")).text()).toContain('"1.2.3"');
+  });
 
-    // Bun's own spelling still substitutes.
-    await using ok = Bun.spawn({
+  test("bun-style --define K=V substitutes", async () => {
+    using dir = tempDir("build-define-space", {
+      "a.js": "export const x = { v: __FOO__ };",
+    });
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "a.js", "--outfile=b.js", "--define", '__FOO__="1.2.3"'],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
-    expect(await ok.exited).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("b.js");
+    expect(exitCode).toBe(0);
     expect(await Bun.file(path.join(String(dir), "b.js")).text()).toContain('"1.2.3"');
   });
 
-  test("--bundle is accepted (bundling is the default)", async () => {
-    using dir = tempDir("build-bundle-flag", {
+  test("--bundle and --entrypoints are accepted", async () => {
+    // `--bundle` is the default behavior. `--entrypoints` appeared in old
+    // docs and previously worked only because the unknown flag was skipped
+    // and its value fell through as a positional.
+    using dir = tempDir("build-compat-flags", {
       "a.js": "export const x = { v: 1 };",
     });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "a.js", "--bundle", "--outfile=b.js"],
+      cmd: [bunExe(), "build", "--bundle", "--entrypoints", "a.js", "--outfile=b.js"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("Unrecognized flag");
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("b.js");
     expect(exitCode).toBe(0);
+    expect(fs.existsSync(path.join(String(dir), "b.js"))).toBe(true);
   });
 
   test("run mode still ignores unknown flags", async () => {
@@ -987,7 +1001,8 @@ describe.concurrent("bun build unrecognized flags", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
     expect(stdout).toBe("ok\n");
     expect(exitCode).toBe(0);
   });

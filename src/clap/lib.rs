@@ -380,6 +380,10 @@ pub struct ParseOptions<'a> {
     /// `bun run` pass unknown argv through in silence). Commands with no
     /// passthrough semantics (`bun build`) set this to make them an error.
     pub reject_unrecognized_flags: bool,
+    /// Long names that also accept esbuild's `--name:VALUE` spelling
+    /// (`--define:K=V`). The token is rewritten to the named param with
+    /// `VALUE` as its value instead of being treated as an unknown flag.
+    pub colon_value_flags: &'static [&'static [u8]],
 }
 
 // Help/usage/error rendering — none of this is on the cold-start hot chain
@@ -463,6 +467,7 @@ pub fn parse<Id: 'static>(
             stop_after_positional_at: opt.stop_after_positional_at,
             short_aliases: opt.short_aliases,
             reject_unrecognized_flags: opt.reject_unrecognized_flags,
+            colon_value_flags: opt.colon_value_flags,
         },
     )?;
     Ok(Args { clap })
@@ -484,6 +489,7 @@ pub fn parse_with_table<Id: 'static>(
             stop_after_positional_at: opt.stop_after_positional_at,
             short_aliases: opt.short_aliases,
             reject_unrecognized_flags: opt.reject_unrecognized_flags,
+            colon_value_flags: opt.colon_value_flags,
         },
     )?;
     Ok(Args { clap })

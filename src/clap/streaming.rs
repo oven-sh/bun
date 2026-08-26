@@ -63,6 +63,10 @@ pub struct StreamingClap<'p, 'a, Id, ArgIterator> {
     /// `bun run` must pass unknown argv through in silence). Commands with no
     /// passthrough semantics (`bun build`) set this to make them an error.
     pub(crate) reject_unrecognized_flags: bool,
+    /// Long names that also accept esbuild's `--name:VALUE` spelling. The `:`
+    /// makes the whole token an unknown name, so the rewrite runs on the
+    /// unmatched path and hands `VALUE` to the named param.
+    pub(crate) colon_value_flags: &'static [&'static [u8]],
 }
 
 // ArgIterator is the
@@ -152,6 +156,24 @@ where
                         param,
                         value: Some(value),
                     }));
+                }
+
+                if let Some(colon) = strings::index_of_char_usize(arg, b':')
+                    && eql_index.is_none_or(|eq| colon < eq)
+                {
+                    let prefix = &arg[..colon];
+                    if self.colon_value_flags.iter().any(|f| *f == prefix) {
+                        for param in params {
+                            if param.names.matches_long(prefix)
+                                && param.takes_value != clap::Values::None
+                            {
+                                return Ok(Some(Arg {
+                                    param,
+                                    value: Some(&arg[colon + 1..]),
+                                }));
+                            }
+                        }
+                    }
                 }
 
                 if self.reject_unrecognized_flags {
@@ -355,6 +377,7 @@ mod tests {
             positional: None,
             diagnostic: None,
             reject_unrecognized_flags: false,
+            colon_value_flags: &[],
         };
 
         for res in results {
@@ -398,6 +421,7 @@ mod tests {
             positional: None,
             diagnostic: Some(&mut diag),
             reject_unrecognized_flags,
+            colon_value_flags: &[],
         };
         loop {
             match c.next() {
@@ -844,5 +868,38 @@ mod tests {
             &[b"--cc"],
             b"The argument '--cc' requires a value but none was supplied\n",
         );
+    }
+
+    #[test]
+    fn colon_value_flags() {
+        let params: [clap::Param<u8>; 1] = [clap::Param {
+            id: 0,
+            names: clap::Names {
+                long: Some(b"define"),
+                ..Default::default()
+            },
+            takes_value: clap::Values::Many,
+            ..Default::default()
+        }];
+
+        let args: &[&[u8]] = &[b"--define:K=V", b"--define:a:b"];
+        let mut iter = args::SliceIterator { remain: args };
+        let mut c = StreamingClap::<u8, args::SliceIterator> {
+            short_aliases: &[],
+            params: &params,
+            iter: &mut iter,
+            state: State::Normal,
+            positional: None,
+            diagnostic: None,
+            reject_unrecognized_flags: true,
+            colon_value_flags: &[b"define"],
+        };
+
+        let arg = c.next().expect("parse").expect("arg");
+        assert!(core::ptr::eq(arg.param, &params[0]));
+        assert_eq!(arg.value, Some(b"K=V".as_slice()));
+        let arg = c.next().expect("parse").expect("arg");
+        assert_eq!(arg.value, Some(b"a:b".as_slice()));
+        assert!(c.next().expect("parse").is_none());
     }
 }

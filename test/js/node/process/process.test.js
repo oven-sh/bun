@@ -2305,6 +2305,20 @@ setImmediate(() => parentPort.postMessage("worker-warned:" + warned));`,
 });
 
 it("delete process.env.TZ invalidates existing Date instances", async () => {
+  // `delete process.env.TZ` also unsets TZ in the OS environment (Node's
+  // RealEnvStore::Delete), so the process falls back to the machine's zone, not
+  // to the TZ it was launched with. Read that zone from a child with no TZ.
+  const noTZEnv = { ...bunEnv };
+  delete noTZEnv.TZ;
+  await using machine = Bun.spawn({
+    cmd: [bunExe(), "-e", `console.log(new Date("2024-01-15T12:00:00Z").getHours())`],
+    env: noTZEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const machineHours = Number((await machine.stdout.text()).trim());
+  expect(await machine.exited).toBe(0);
+
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -2327,11 +2341,11 @@ it("delete process.env.TZ invalidates existing Date instances", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // NY is UTC-5 in January; after delete the override is cleared so getHours
-  // reverts to the UTC start value (12) and the property is gone.
+  // NY is UTC-5 in January; after delete the override is cleared and the
+  // property is gone.
   expect({ ...JSON.parse(stdout), exitCode }).toEqual({
     ny: 7,
-    afterDelete: 12,
+    afterDelete: machineHours,
     has: false,
     afterReSet: 7,
     exitCode: 0,

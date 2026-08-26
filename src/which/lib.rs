@@ -200,8 +200,7 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
 
 #[cfg(windows)]
 static WIN_EXTENSIONS_W: [&[u16]; 3] = [w!("exe"), w!("cmd"), w!("bat")];
-/// Probed in a separate last pass over `$PATH`, so the rare `.com` program
-/// does not cost one more stat per directory on every spawn.
+/// Probed in a last pass over `$PATH`: the rare `.com` is not worth a stat per directory.
 #[cfg(windows)]
 static WIN_COM_EXTENSION_W: [&[u16]; 1] = [w!("com")];
 #[cfg(windows)]
@@ -237,8 +236,7 @@ fn has_extension(bin: &[u8]) -> bool {
     }
 }
 
-/// `C:\Windows\System32\chcp.com`, `.\tool.exe`: a path with nothing left to
-/// complete, which spawn hands to libuv without a lookup.
+/// `C:\Windows\System32\chcp.com`: nothing to complete, spawn skips the lookup.
 pub fn is_windows_path_with_extension(bin: &[u8]) -> bool {
     strings::contains_any(bin, b"/\\") && has_extension(bin)
 }
@@ -372,9 +370,7 @@ pub(crate) fn which_win<'a>(
 
     let spells_executable_extension = ends_with_extension(bin);
     let has_dir = strings::contains_any(bin, b"/\\");
-    // A path names one file and is stat'd as spelled for any extension, like
-    // libuv does. A bare name only with an executable one: `bun run` puts the
-    // package directory on `$PATH`, and `x.ts` in it is not a program.
+    // `bun run` puts the package dir on `$PATH`, so a bare `x.ts` must not match.
     let try_as_spelled = spells_executable_extension || (has_dir && has_extension(bin));
     let extensions: &[&[u16]] = if spells_executable_extension {
         &[]

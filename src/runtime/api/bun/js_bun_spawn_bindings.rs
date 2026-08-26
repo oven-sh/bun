@@ -113,8 +113,7 @@ fn get_argv0(
 
     // This mimicks libuv's behavior, which mimicks execvpe
     // Only resolve from $PATH when the command is not an absolute path.
-    // An extensionless `\` path is still completed here: libuv never appends
-    // `.cmd`/`.bat`.
+    // libuv never appends .cmd/.bat, so an extensionless `\` path is still completed here.
     let names_a_file = strings::index_of_char(argv0_to_use, b'/').is_some()
         || (cfg!(windows) && bun_which::is_windows_path_with_extension(argv0_to_use));
     let path_to_use: &[u8] = if names_a_file {

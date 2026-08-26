@@ -2965,15 +2965,17 @@ describe.concurrent("uncaughtException from socket listeners", () => {
   it("without an uncaughtException handler a throwing 'data' listener crashes the process", async () => {
     const { stdout, stderr, exitCode } = await runFixture(`
       const net = require("node:net");
-      const srv = net.createServer(s => s.end("x"));
+      // Only the live connection holds the loop: a swallowed throw drains to a
+      // clean exit 0 instead of a hang on the listening server.
+      const srv = net.createServer(s => s.end("x")).unref();
       srv.listen(0, "127.0.0.1", () => {
         const c = net.connect(srv.address().port, "127.0.0.1");
         c.on("error", e => { console.log("socket-error:" + e.message); process.exit(7); });
         c.on("data", () => { throw new Error("fatal-boom"); });
+        c.on("close", () => console.log("close"));
       });
     `);
-    expect(stdout).not.toContain("socket-error:");
+    expect({ stdout, exitCode, ...(exitCode === 1 ? {} : { stderr }) }).toEqual({ stdout: "", exitCode: 1 });
     expect(stderr).toContain("fatal-boom");
-    expect(exitCode).toBe(1);
   });
 });

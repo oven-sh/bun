@@ -289,9 +289,10 @@ impl Options {
     /// port), whatever its path. That fallback serves GitLab's instance-level
     /// registry, whose tarballs live under a project path with no key of their own.
     ///
-    /// One refinement to npm's order: a key the registry URL itself resolves to is
-    /// already reflected in `scope`, behind any bunfig, env or CLI credential, so it
-    /// does not override `scope`; only a key specific to the tarball's path does.
+    /// One refinement to npm's order: when the tarball resolves to the same key the
+    /// registry URL resolved to, that key is already reflected in `scope`, behind any
+    /// bunfig, env or CLI credential, so `scope` wins; any other key is the tarball's
+    /// own and wins as in npm.
     /// A path the server would resolve elsewhere (`..`, `%2e`, a backslash) gets
     /// nothing.
     pub fn tarball_credentials<'a>(
@@ -304,8 +305,11 @@ impl Options {
         }
         let own = Npm::registry::UrlAuth::find_entry(&self.url_auth, tarball);
         if scope.has_credentials() && same_origin(tarball, &scope.url.url()) {
+            let registry_own = Npm::registry::UrlAuth::find_entry(&self.url_auth, &scope.url.url());
             return match own {
-                Some(entry) if !entry.applies_to(&scope.url.url()) => Some(entry.credentials()),
+                Some(entry) if !registry_own.is_some_and(|r| r.same_key(entry)) => {
+                    Some(entry.credentials())
+                }
                 _ => Some(scope),
             };
         }

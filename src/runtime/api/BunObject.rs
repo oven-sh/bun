@@ -1017,11 +1017,27 @@ fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
 /// See `src/runtime/api/open.rs` for the per-OS argv construction; this
 /// function decodes the JS arguments, builds the argv, and hands it to
 /// `Bun.spawn` with the fire-and-forget stdio + detached posture.
+///
+/// Every failure mode (argument validation, unsupported platform, spawn
+/// errors from the OS) rejects the returned promise rather than throwing
+/// synchronously, matching the npm `open` package's all-async contract.
 #[bun_jsc::host_fn]
 fn open(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let vm = global_this.bun_vm();
     let mut arguments = ArgumentsSlice::init(vm, callframe.arguments());
 
+    match do_open(global_this, &mut arguments) {
+        Ok(result_value) => Ok(JSPromise::resolved_promise_value(global_this, result_value)),
+        Err(err) => {
+            let thrown = global_this.take_error(err);
+            Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                global_this, thrown,
+            ))
+        }
+    }
+}
+
+fn do_open(global_this: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<JSValue> {
     // Required positional arg: the URL / path / folder to open.
     let target_value = arguments
         .next_eat()
@@ -1034,18 +1050,44 @@ fn open(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
         .map_err(|_| global_this.throw_invalid_arguments(format_args!("`target` is not valid UTF-8")))?;
 
     // Optional second arg: the options object. All fields are optional; the
-    // default `OpenOptions` matches the npm `open` package's defaults.
+    // default `OpenOptions` launches the platform's default opener.
     let mut options = OpenOptions::default();
-    options.hide_errors = true; // suppress Windows "no association" dialogs
     if let Some(opts_value) = arguments.next_eat() {
         if !opts_value.is_undefined_or_null() {
+            if !opts_value.is_object() || opts_value.js_type().is_array() {
+                return Err(
+                    global_this
+                        .throw_invalid_arguments(format_args!(
+                            "`options` must be an object when provided"
+                        )),
+                );
+            }
+
             // Coerce each option individually so a bad type on one field
             // doesn't abandon the rest of the parse.
-            if let Some(app) = opts_value.get_truthy(global_this, "app")? {
-                options.app = Some(app.to_utf8(global_this)?);
-            }
-            if let Some(wait) = opts_value.get_truthy(global_this, "wait")? {
-                options.wait = wait.to_boolean();
+            if let Some(app) = opts_value.get(global_this, b"app")? {
+                // An explicit `app: undefined/null` keeps the platform
+                // default opener; anything else present must be a usable
+                // binary name. An empty string would otherwise silently
+                // fall back to the default opener, hiding the caller's
+                // intent behind an accidental default.
+                if !app.is_undefined_or_null() {
+                    if !app.is_string() {
+                        return Err(
+                            global_this
+                                .throw_invalid_arguments(format_args!("`options.app` must be a string")),
+                        );
+                    }
+                    let app_bytes = app.to_utf8(global_this)?;
+                    if app_bytes.slice().is_empty() {
+                        return Err(
+                            global_this.throw_invalid_arguments(format_args!(
+                                "`options.app` must be a non-empty string"
+                            )),
+                        );
+                    }
+                    options.app = Some(app_bytes);
+                }
             }
             if let Some(bg) = opts_value.get_truthy(global_this, "background")? {
                 options.background = bg.to_boolean();
@@ -1056,35 +1098,51 @@ fn open(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
             if let Some(edit) = opts_value.get_truthy(global_this, "edit")? {
                 options.edit = edit.to_boolean();
             }
-            if let Some(he) = opts_value.get_truthy(global_this, "hideErrors")? {
-                options.hide_errors = he.to_boolean();
-            }
         }
     }
 
     // Build the per-OS argv. Errors here are caller-input failures (NUL
-    // bytes, empty target, unsupported OS) and become thrown JS errors
-    // without ever reaching `Bun.spawn`.
-    let _argv = match open_api::argv_for(target_str, &options) {
-        Ok(argv) => argv,
-        Err(err) => {
-            return Err(global_this.throw(format_args!("{}", err)));
-        }
-    };
+    // bytes, empty target, unsupported OS) and reject the promise without
+    // ever reaching `Bun.spawn`.
+    let argv = open_api::argv_for(target_str, &options).map_err(|err| {
+        global_this
+            .err(jsc::ErrCode::INVALID_ARG_VALUE, format_args!("{}", err))
+            .throw()
+    })?;
 
-    // Construct the JS options object that `Bun.spawn` accepts. We need:
-    //   - stdio: [ignore, ignore, ignore] (don't pop a console window)
-    //   - detached: true (fire and forget; the JS caller doesn't await)
-    //   - argv: the prepared Vec<Vec<u8>>
-    //   - env: inherit (the platform opener resolves its own user env)
-    //   - cwd: inherit (use the current working directory for relative
-    //     paths; matches the `open` package's behavior)
-    //
-    // TODO: route through `js_bun_spawn_bindings::spawn` once we confirm the
-    //   JSObject construction matches what the binding expects. Scaffold
-    //   throws so the registration compiles end-to-end before the spawn
-    //   glue lands.
-    Err(global_this.throw(format_args!("Bun.open host_fn (scaffold)")))
+    // The opener runs detached from this process with every stdio stream
+    // ignored: nothing pops a console window, nothing ties the opener's
+    // lifetime to Bun's, and no pipe buffers fill up behind a long-lived
+    // browser process.
+    let cmd_strings: Vec<BunString> = argv.iter().map(|arg| BunString::from_bytes(arg)).collect();
+    let cmd_array = bun_string_jsc::to_js_array(global_this, &cmd_strings)?;
+
+    let ignore_string = BunString::from_bytes(b"ignore");
+    let spawn_options = JSValue::create_empty_object(global_this, 5);
+    spawn_options.put(global_this, b"stdin", ignore_string.to_js(global_this)?);
+    spawn_options.put(global_this, b"stdout", ignore_string.to_js(global_this)?);
+    spawn_options.put(global_this, b"stderr", ignore_string.to_js(global_this)?);
+    spawn_options.put(global_this, b"detached", JSValue::from(true));
+    #[cfg(windows)]
+    spawn_options.put(global_this, b"windowsHide", JSValue::from(true));
+
+    // Reuse the full `Bun.spawn` machinery: PID reporting, zombie reaping,
+    // and the exited promise all come from the same code path user code
+    // exercises, instead of a hand-rolled waiter.
+    let subprocess =
+        crate::api::js_bun_spawn_bindings::spawn(global_this, cmd_array, Some(spawn_options))?;
+
+    let pid = subprocess
+        .get(global_this, b"pid")?
+        .unwrap_or(JSValue::ZERO);
+    let exited = subprocess
+        .get(global_this, b"exited")?
+        .unwrap_or_else(|| JSPromise::resolved_promise_value(global_this, JSValue::ZERO));
+
+    let result = JSValue::create_empty_object(global_this, 2);
+    result.put(global_this, b"pid", pid);
+    result.put(global_this, b"exited", exited);
+    Ok(result)
 }
 
 #[bun_jsc::host_fn]

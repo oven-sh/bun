@@ -5498,10 +5498,15 @@ declare module "bun" {
   /**
    * Open a file, URL, or folder with the platform's default handler.
    *
+   * The platform opener runs detached from the current process with every
+   * stdio stream ignored: it keeps running after Bun exits and never pops a
+   * console window. All failures — argument validation, a missing opener
+   * binary, OS spawn errors — reject the returned promise.
+   *
    * @category Utilities
    *
    * @param target The URL, file path, or folder to open
-   * @param options Behavior overrides (app, wait, background, newInstance, edit, hideErrors)
+   * @param options Behavior overrides (app, background, newInstance, edit)
    * @returns A {@link BunOpenResult} describing the launch
    *
    * @example
@@ -5514,6 +5519,10 @@ declare module "bun" {
    *
    * // Open a URL in a specific app (macOS / Windows)
    * await Bun.open("https://example.com", { app: "Safari" });
+   *
+   * // Emulate the npm `open` package's `wait: true`: await the opener's exit
+   * const { exited } = await Bun.open("https://example.com");
+   * await exited;
    * ```
    */
   function open(target: string, options?: BunOpenOptions): Promise<BunOpenResult>;
@@ -5521,19 +5530,10 @@ declare module "bun" {
   interface BunOpenOptions {
     /**
      * Application to open with. On macOS this maps to `/usr/bin/open -a`.
-     * On Windows the named binary is used as `lpFile` with `lpVerb = "open"`.
-     * On Linux the named binary is executed directly; `xdg-open` is only
-     * used when `app` is omitted.
+     * On Windows and Linux the named binary is executed directly with the
+     * target as its only argument; the platform default opener is bypassed.
      */
     app?: string;
-
-    /**
-     * Wait for the launched app to exit before the returned `exited` promise
-     * resolves. macOS: `open -W`. Windows: blocks on the process handle.
-     * Linux: best-effort; the returned promise resolves immediately after
-     * the child PID is reported.
-     */
-    wait?: boolean;
 
     /**
      * macOS only. Maps to `open -g` — launch the app without bringing it
@@ -5548,41 +5548,26 @@ declare module "bun" {
     newInstance?: boolean;
 
     /**
-     * macOS: `open -e`. Windows: `lpVerb = "edit"`. Linux: ignored.
+     * macOS only. Maps to `open -e`. Ignored on other platforms.
      */
     edit?: boolean;
-
-    /**
-     * Windows only. Pass `SEE_MASK_FLAG_NO_UI` so the shell does not pop
-     * "no application is associated with this file" dialogs. Defaults to
-     * `true` because scripted use of `Bun.open` should never block on a
-     * dialog box.
-     */
-    hideErrors?: boolean;
   }
 
   interface BunOpenResult {
     /**
-     * `true` when the platform opener accepted the launch. `false` on
-     * Windows when the shell reused an already-running singleton process
-     * and the OS did not hand back a fresh PID; the caller should treat
-     * this as "open succeeded, but the launched process is an existing
-     * one" rather than as an error.
-     */
-    ok: boolean;
-
-    /**
-     * PID of the launched process. `0` on Windows when `ok` is still
-     * `true` (see above).
+     * PID of the launched opener process (`cmd.exe` on Windows when using
+     * the default `start` route, `/usr/bin/open` on macOS, `xdg-open` or
+     * the named app elsewhere).
      */
     pid: number;
 
     /**
-     * Resolves when the launched process exits. Rejects with a JS error
-     * (matching the npm `open` package's contract) when the platform
-     * opener exits with a non-zero status.
+     * Resolves with the opener process's exit code once it exits. On Linux
+     * and Windows' default `start` route the opener hands off to an already-
+     * running application and exits immediately; awaiting this emulates the
+     * npm `open` package's `wait: true`.
      */
-    exited: Promise<{ exitCode: number | null; signal: number | null; exitedAt: number }>;
+    exited: Promise<number>;
   }
 
   /**

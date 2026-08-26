@@ -194,8 +194,8 @@ describe.concurrent("spawnSync isolated event loop", () => {
   // poll count reaches zero while the next spawnSync still has live polls, and
   // that spawnSync spins without polling until its timeout.
   // BUN_JSC_slowPathAllocsBetweenGCs runs a full synchronous GC every few
-  // slow-path allocations, so the allocations that build the first spawnSync's
-  // result run the writers' finalizers while the isolated loop is installed.
+  // slow-path allocations. A warmed-up spawnSync allocates nothing before it
+  // installs the isolated loop, so the GC that frees the writers runs inside it.
   test.skipIf(isWindows)("finalizers that run inside spawnSync do not stall the next spawnSync", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -203,8 +203,7 @@ describe.concurrent("spawnSync isolated event loop", () => {
         "-e",
         `
         // Three writers on stderr (a pipe here), each with a poll registered
-        // on the main loop. They stay reachable until right before the first
-        // spawnSync so that no earlier GC frees them.
+        // on the main loop.
         let writers = [];
         for (let i = 0; i < 3; i++) {
           const writer = Bun.stderr.writer();
@@ -212,11 +211,19 @@ describe.concurrent("spawnSync isolated event loop", () => {
           writer.flush();
           writers.push(writer);
         }
-        const first = { cmd: ["echo", "first"], stdout: "pipe", stderr: "ignore" };
+        const first = { cmd: ["echo", "first"], stdout: "pipe", stderr: "ignore", timeout: 2000 };
         // pidfd + stdout + stderr: three polls, the same count the three
-        // writers release.
-        const second = { cmd: ["echo", "second"], stdout: "pipe", stderr: "pipe", timeout: 2000 };
+        // writers release. The child outlives the parent's poll registration,
+        // so the parent has to poll for its exit.
+        const second = { cmd: ["sh", "-c", "sleep 0.3; echo second"], stdout: "pipe", stderr: "pipe", timeout: 2000 };
+
+        // Warm up while the writers are still reachable: lazy structures and
+        // Bun.spawnSync itself are created here, on the main loop.
+        Bun.spawnSync(first);
         writers = null;
+        // The first allocations after the drop are this call's result, built
+        // while the isolated loop is installed: the GC they trigger frees the
+        // writers there.
         Bun.spawnSync(first);
 
         const result = Bun.spawnSync(second);

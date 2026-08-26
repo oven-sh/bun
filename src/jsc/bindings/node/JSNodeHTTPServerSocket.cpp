@@ -6,6 +6,7 @@
 #include "ScriptExecutionContext.h"
 #include "helpers.h"
 #include "JSSocketAddressDTO.h"
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
@@ -85,7 +86,8 @@ void JSNodeHTTPServerSocket::close()
                 flushPartialResponseBeforeClose<false>(socket);
             }
         }
-        us_socket_close(socket, 0, nullptr);
+        // Forceful: code 0 defers the fd close until a close_notify reply that a half-open peer never sends.
+        us_socket_close(socket, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
     }
 }
 
@@ -672,13 +674,23 @@ void JSNodeHTTPServerSocket::onClose()
         EnsureStillAliveScope ensureStillAlive(self);
 
         if (globalObject->scriptExecutionStatus(globalObject, thisObject) == ScriptExecutionStatus::Running) {
+            // Notifying the responses runs script; it may leave an exception (a
+            // termination arriving meanwhile), and nothing is entered on top of one.
+            auto& vm = JSC::getVM(globalObject);
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             notifyResponsesOnClose(thisObject);
-
-            profiledCall(globalObject, JSC::ProfilingReason::API, callbackObject, callData, thisObject, args, exception);
-
-            if (auto* ptr = exception.get()) {
-                exception.clear();
+            if (!scope.exception()) {
+                profiledCall(globalObject, JSC::ProfilingReason::API, callbackObject, callData, thisObject, args, exception);
+                if (auto* ptr = exception.get()) {
+                    exception.clear();
+                    globalObject->reportUncaughtExceptionAtEventLoop(globalObject, ptr);
+                    RETURN_IF_EXCEPTION(scope, );
+                }
+            } else if (!vm.hasPendingTerminationException()) {
+                auto* ptr = scope.exception();
+                scope.clearException();
                 globalObject->reportUncaughtExceptionAtEventLoop(globalObject, ptr);
+                RETURN_IF_EXCEPTION(scope, );
             }
         }
         thisObject->detach();
@@ -701,6 +713,7 @@ void JSNodeHTTPServerSocket::onDrain()
         if (auto* exception = scope.exception()) {
             (void)scope.tryClearException();
             globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
+            RETURN_IF_EXCEPTION(scope, );
             return;
         }
         bufferedSize = this->streamBuffer.bufferedSize();
@@ -754,6 +767,7 @@ void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
         if (auto* exception = scope.exception()) {
             (void)scope.tryClearException();
             globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
+            RETURN_IF_EXCEPTION(scope, );
             return;
         }
         gcProtect(chunk);
@@ -790,7 +804,7 @@ JSC::Structure* JSNodeHTTPServerSocket::createStructure(JSC::VM& vm, JSC::JSGlob
 {
     auto* structure = JSC::Structure::create(vm, globalObject, globalObject->objectPrototype(), JSC::TypeInfo(JSC::ObjectType, StructureFlags), JSNodeHTTPServerSocketPrototype::info());
     auto* prototype = JSNodeHTTPServerSocketPrototype::create(vm, structure);
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
 }
 
 void JSNodeHTTPServerSocket::finishCreation(JSC::VM& vm)
@@ -861,9 +875,6 @@ extern "C" JSC::EncodedJSValue Bun__getNodeHTTPServerSocketThisValue(bool is_ssl
 extern "C" JSC::EncodedJSValue Bun__getOrCreateNodeHTTPServerSocket(bool isSSL, us_socket_t* us_socket, Zig::GlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    RETURN_IF_EXCEPTION(scope, {});
 
     if (isSSL) {
         uWS::HttpResponse<true>* response = reinterpret_cast<uWS::HttpResponse<true>*>(us_socket);
@@ -891,7 +902,6 @@ extern "C" JSC::EncodedJSValue Bun__getOrCreateNodeHTTPServerSocket(bool isSSL, 
         uWS::HttpResponse<false>* response = reinterpret_cast<uWS::HttpResponse<false>*>(us_socket);
         response->getHttpResponseData()->socketData = socket;
     }
-    RETURN_IF_EXCEPTION(scope, {});
     if (socket) {
         socket->strongThis.set(vm, socket);
         return JSValue::encode(socket);

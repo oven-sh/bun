@@ -28,6 +28,7 @@ extern SSL_CTX *us_ssl_ctx_build_raw(
     struct us_bun_socket_context_options_t options,
     enum create_bun_socket_error_t *err);
 extern X509_STORE *us_get_default_ca_store(void);
+extern struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl);
 
 #define US_QUIC_READ_BUF (16 * 1024)
 
@@ -40,6 +41,7 @@ struct us_quic_hset {
     struct lsxpack_header scratch;
     struct us_quic_header_t *headers;
     unsigned int count, hcap;
+    int is_server;
 };
 
 struct us_quic_sni {
@@ -423,8 +425,32 @@ static int us_quic_alpn_select(SSL *ssl, const unsigned char **out, unsigned cha
 /* ───── header-set interface ───── */
 
 static void *us_quic_hsi_create(void *hsi_ctx, lsquic_stream_t *s, int is_push) {
-    (void) hsi_ctx; (void) s; (void) is_push;
-    return us_calloc(1, sizeof(struct us_quic_hset));
+    (void) s; (void) is_push;
+    struct us_quic_hset *h = (struct us_quic_hset *) us_calloc(1, sizeof(struct us_quic_hset));
+    if (h) h->is_server = !((us_quic_socket_context_t *) hsi_ctx)->is_client;
+    return h;
+}
+
+static int us_quic_field_is_malformed(const struct lsxpack_header *hdr) {
+    const unsigned char *name = (const unsigned char *) lsxpack_header_get_name(hdr);
+    const unsigned char *val = (const unsigned char *) lsxpack_header_get_value(hdr);
+    if (hdr->name_len == 0) return 1;
+    if (name[0] == ':' && hdr->name_len == 1) return 1;
+    for (unsigned int i = name[0] == ':'; i < hdr->name_len; i++) {
+        unsigned char c = name[i];
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) continue;
+        switch (c) {
+        case '!': case '#': case '$': case '%': case '&': case '\'': case '*':
+        case '+': case '-': case '.': case '^': case '_': case '`': case '|': case '~':
+            continue;
+        }
+        return 1;
+    }
+    for (unsigned int i = 0; i < hdr->val_len; i++) {
+        unsigned char c = val[i];
+        if (c == 0 || c == '\r' || c == '\n') return 1;
+    }
+    return 0;
 }
 
 static struct lsxpack_header *us_quic_hsi_prepare(void *hset_p, struct lsxpack_header *hdr, size_t space) {
@@ -455,6 +481,7 @@ static struct lsxpack_header *us_quic_hsi_prepare(void *hset_p, struct lsxpack_h
 static int us_quic_hsi_process(void *hset_p, struct lsxpack_header *hdr) {
     struct us_quic_hset *h = (struct us_quic_hset *) hset_p;
     if (hdr == NULL) return 0; /* end of headers */
+    if (h->is_server && us_quic_field_is_malformed(hdr)) return 1;
     if (h->count == h->hcap) {
         unsigned int ncap = h->hcap ? h->hcap * 2 : 16;
         struct us_quic_header_t *nh = (struct us_quic_header_t *)
@@ -496,9 +523,18 @@ static void us_quic_hsi_discard(void *hset_p) {
 
 /* ───── stream interface ───── */
 
+static int us_quic_server_peer_verified(us_quic_socket_context_t *ctx, lsquic_conn_t *conn) {
+    SSL *ssl = lsquic_conn_get_ssl(conn);
+    int enforce = us_ssl_ctx_reject_unauthorized(ctx->ssl_ctx) ||
+        (ssl && us_ssl_ctx_reject_unauthorized(SSL_get_SSL_CTX(ssl)));
+    if (!enforce) return 1;
+    if (!ssl) return 0;
+    return us_ssl_socket_verify_error_from_ssl(ssl).error == 0;
+}
+
 static lsquic_conn_ctx_t *us_quic_on_new_conn(void *if_ctx, lsquic_conn_t *conn) {
     us_quic_socket_context_t *ctx = (us_quic_socket_context_t *) if_ctx;
-    if (ctx->closing) {
+    if (ctx->closing || (!ctx->is_client && !us_quic_server_peer_verified(ctx, conn))) {
         lsquic_conn_close(conn);
         return NULL;
     }
@@ -683,11 +719,12 @@ void us_quic_global_init(void) {
 #endif
 }
 
-static void us_quic_prepare_ssl_ctx(SSL_CTX *ssl) {
+static void us_quic_prepare_ssl_ctx(SSL_CTX *ssl, const struct us_bun_socket_context_options_t *options) {
     SSL_CTX_set_min_proto_version(ssl, TLS1_3_VERSION);
     SSL_CTX_set_max_proto_version(ssl, TLS1_3_VERSION);
     SSL_CTX_set_alpn_select_cb(ssl, us_quic_alpn_select, NULL);
     SSL_CTX_set_early_data_enabled(ssl, 0);
+    us_ssl_ctx_set_sni_policy(ssl, options->request_cert, options->reject_unauthorized);
 }
 
 us_quic_socket_context_t *us_create_quic_socket_context(
@@ -697,7 +734,7 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     enum create_bun_socket_error_t ssl_err = 0;
     SSL_CTX *ssl = us_ssl_ctx_build_raw(options, &ssl_err);
     if (!ssl) return NULL;
-    us_quic_prepare_ssl_ctx(ssl);
+    us_quic_prepare_ssl_ctx(ssl, &options);
 
     us_quic_socket_context_t *ctx = (us_quic_socket_context_t *)
         us_calloc(1, sizeof(us_quic_socket_context_t) + ext_size);
@@ -757,7 +794,9 @@ int us_quic_socket_context_add_server_name(us_quic_socket_context_t *ctx,
     enum create_bun_socket_error_t ssl_err = 0;
     SSL_CTX *ssl = us_ssl_ctx_build_raw(options, &ssl_err);
     if (!ssl) return -1;
-    us_quic_prepare_ssl_ctx(ssl);
+    us_quic_prepare_ssl_ctx(ssl, &options);
+    SSL_CTX_set_verify(ssl, SSL_CTX_get_verify_mode(ssl) | SSL_CTX_get_verify_mode(ctx->ssl_ctx),
+        SSL_CTX_get_verify_callback(ssl));
     if (ctx->sni_count == ctx->sni_cap) {
         unsigned ncap = ctx->sni_cap ? ctx->sni_cap * 2 : 4;
         struct us_quic_sni *n = (struct us_quic_sni *) us_realloc(ctx->sni, ncap * sizeof(*n));

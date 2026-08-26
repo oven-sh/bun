@@ -28,7 +28,6 @@
 #include "SocketKinds.h"
 
 #include <string>
-#include <map>
 #include <string_view>
 #include "MoveOnlyFunction.h"
 #include "HttpParser.h"
@@ -108,19 +107,6 @@ private:
      * SSL_CTX comes from the listener, not from here. */
     us_socket_group_t group{};
     HttpContextData<SSL> data;
-
-    /* fromSocket() / getSocketContextDataS() cast group.ext back to
-     * HttpContext*; nothing else relies on offsetof(data), but pin group at 0
-     * so a future base class or vptr doesn't quietly break the cast. */
-    static void layoutAssert() {
-        static_assert(!std::is_polymorphic_v<HttpContext>,
-                      "HttpContext must stay non-polymorphic (group.ext = this)");
-        static_assert(offsetof(HttpContext, group) == 0,
-                      "HttpContext::fromSocket layout assumption broken");
-    }
-
-    /* Maximum delay allowed until an HTTP connection is terminated due to outstanding request or rejected data (slow loris protection) */
-    static constexpr int HTTP_IDLE_TIMEOUT_S = 10;
 
     /* Minimum allowed receive throughput per second (clients uploading less than 16kB/sec get dropped) */
     static constexpr int HTTP_RECEIVE_THROUGHPUT_BYTES = 16 * 1024;
@@ -231,8 +217,13 @@ private:
          * for both transports. */
         s->flags.allow_half_open = 1;
 
+        /* Call filter: accepted (both transports)... */
+        ((AsyncSocketData<SSL> *) us_socket_ext(s))->filteredAccept = true;
+        for (auto &f : httpContextData->filterHandlers) {
+            f((HttpResponse<SSL> *) s, 2);
+        }
+        /* ...and open (TLS: once the handshake completes, in onHandshake) */
         if(!SSL) {
-            /* Call filter */
             ((AsyncSocketData<SSL> *) us_socket_ext(s))->filteredOpen = true;
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, 1);
@@ -269,6 +260,11 @@ private:
         if (httpResponseData->filteredOpen) {
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, -1);
+            }
+        }
+        if (httpResponseData->filteredAccept) {
+            for (auto &f : httpContextData->filterHandlers) {
+                f((HttpResponse<SSL> *) s, -2);
             }
         }
 
@@ -328,8 +324,12 @@ private:
         /* Cork this socket */
         ((AsyncSocket<SSL> *) s)->cork();
 
-        /* Mark that we are inside the parser now */
+        /* Mark that we are inside the parser now. Save/restore the parsed
+         * socket: node:http's read replay can nest a parse inside another
+         * socket's dispatch. */
         httpContextData->flags.isParsingHttp = true;
+        struct us_socket_t *prevParsingSocket = httpContextData->parsingSocket;
+        httpContextData->parsingSocket = s;
         httpResponseData->isIdle = false;
 
         /* node:http compat: maintain the headers/request timeout window (see
@@ -338,11 +338,6 @@ private:
 
         // clients need to know the cursor after http parse, not servers!
         // how far did we read then? we need to know to continue with websocket parsing data? or?
-
-        void *proxyParser = nullptr;
-#ifdef UWS_WITH_PROXY
-        proxyParser = &httpResponseData->proxyParser;
-#endif
 
         /* The return value is entirely up to us to interpret. The HttpParser cares only for whether the returned value is DIFFERENT from passed user */
 
@@ -355,7 +350,7 @@ private:
             nodeHttpRequestTrailers = &nodeHttpResponseData->nodeHttpRequestTrailers;
         }
 
-        auto result = httpResponseData->template consumePostPadded<IsNodeHttp>(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, httpContextData->flags.useInsecureHTTPParser, httpContextData->flags.useLenientTransferEncoding, nodeHttpRequestTrailers, &httpResponseData->chunkedExtensionsByteCount, data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
+        auto result = httpResponseData->template consumePostPadded<IsNodeHttp>(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, httpContextData->flags.useInsecureHTTPParser, httpContextData->flags.useLenientTransferEncoding, nodeHttpRequestTrailers, &httpResponseData->chunkedExtensionsByteCount, data, (unsigned int) length, s, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
 
 
             /* For every request we reset the timeout and hang until user makes action */
@@ -581,6 +576,7 @@ private:
 
         /* Mark that we are no longer parsing Http */
         httpContextData->flags.isParsingHttp = false;
+        httpContextData->parsingSocket = prevParsingSocket;
         /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
         if (httpErrorStatusCode) {
             /* node:http compat: parse errors surface as the server's 'clientError'
@@ -696,9 +692,12 @@ private:
             if (asyncSocket->getBufferedAmount() > 0) {
                 /* onEnd deferred close for these bytes; a writable event that
                  * moves nothing (EPIPE) means the peer is gone and this would
-                 * otherwise spin the writable dispatch until idle timeout. */
+                 * otherwise spin the writable dispatch until idle timeout.
+                 * Except on libuv, where a stale SEND completion can move
+                 * nothing on a healthy socket; there the kernel is asked. */
                 if (flushed == 0
-                    && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)) {
+                    && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)
+                    && us_socket_stalled_write_means_peer_gone((us_socket_t *) asyncSocket)) {
                     return asyncSocket->close();
                 }
                 /* Socket buffer is not completely empty yet
@@ -734,11 +733,14 @@ private:
             if constexpr (!IsNodeHttp) {
                 /* Bun.serve: onEnd deferred close for a tryEnd tail (offset < total,
                  * nothing in AsyncSocketData::buffer). A retry that moves zero bytes
-                 * after the peer's FIN is EPIPE; close instead of spinning. */
+                 * after the peer's FIN is EPIPE; close instead of spinning. Except
+                 * on libuv, where the retry can stall while the TLS layer's spill
+                 * is still blocked on a healthy socket; there the kernel is asked. */
                 if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)
                     && (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING)
                     && httpResponseData->offset == offsetBefore
-                    && asyncSocket->hasFullyDrained()) {
+                    && asyncSocket->hasFullyDrained()
+                    && us_socket_stalled_write_means_peer_gone((us_socket_t *) asyncSocket)) {
                     return asyncSocket->close();
                 }
             }
@@ -956,28 +958,10 @@ public:
             return;
         }
 
-        /* Record this route's parameter offsets */
-        std::map<std::string, unsigned short, std::less<>> parameterOffsets;
-        unsigned short offset = 0;
-        for (unsigned int i = 0; i < pattern.length(); i++) {
-            if (pattern[i] == ':') {
-                i++;
-                unsigned int start = i;
-                while (i < pattern.length() && pattern[i] != '/') {
-                    i++;
-                }
-                parameterOffsets[std::string(pattern.data() + start, i - start)] = offset;
-                offset++;
-            }
-        }
-
-
-
-        httpContextData->currentRouter->add(methods, pattern, [handler = std::move(handler), parameterOffsets = std::move(parameterOffsets), httpContextData](auto *r) mutable {
+        httpContextData->currentRouter->add(methods, pattern, [handler = std::move(handler), httpContextData](auto *r) mutable {
             auto user = r->getUserData();
             user.httpRequest->setYield(false);
             user.httpRequest->setParameters(r->getParameters());
-            user.httpRequest->setParameterOffsets(&parameterOffsets);
 
             if (!httpContextData->flags.usingCustomExpectHandler) {
                 /* Middleware? Automatically respond to expectations */

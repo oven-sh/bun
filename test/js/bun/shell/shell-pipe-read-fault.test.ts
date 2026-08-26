@@ -228,6 +228,12 @@ const r = await $\`sh -c 'printf AAAA; exec sleep 5' 2> /dev/null\`.quiet().noth
 console.log(JSON.stringify({ exitCode: r.exitCode }));
 `;
 
+const TEE_CHUNK_FIXTURE = /* js */ `
+import { $ } from "bun";
+const r = await $\`sh -c 'printf AAAA; exec sleep 5' 2> /dev/null\`.nothrow();
+console.log(JSON.stringify({ exitCode: r.exitCode }));
+`;
+
 let shimPath: string;
 let dir: ReturnType<typeof tempDir> | undefined;
 
@@ -239,6 +245,7 @@ beforeAll(async () => {
     "both-pipes.js": BOTH_PIPES_FIXTURE,
     "quiet-chunk.js": QUIET_CHUNK_FIXTURE,
     "poll-chunk.js": POLL_CHUNK_FIXTURE,
+    "tee-chunk.js": TEE_CHUNK_FIXTURE,
   });
   shimPath = join(String(dir), "shim.so");
   await using ccProc = Bun.spawn({
@@ -270,11 +277,10 @@ const MODES = [
 // Integer-valued fault knobs; cleared alongside MODES and set through `extraEnv`.
 const VALUE_MODES = ["SHELL_FAIL_EPOLL_FROM", "SHELL_RECV_BULK"] as const;
 
-async function expectShellFault(
-  script: string,
+function shimEnv(
   modes: (typeof MODES)[number][],
   extraEnv: Partial<Record<(typeof VALUE_MODES)[number], string>> = {},
-) {
+): Record<string, string | undefined> {
   const existing = bunEnv.LD_PRELOAD;
   const env: Record<string, string | undefined> = {
     ...bunEnv,
@@ -286,6 +292,15 @@ async function expectShellFault(
   for (const m of [...MODES, ...VALUE_MODES]) env[m] = undefined;
   for (const m of modes) env[m] = "1";
   Object.assign(env, extraEnv);
+  return env;
+}
+
+async function expectShellFault(
+  script: string,
+  modes: (typeof MODES)[number][],
+  extraEnv: Partial<Record<(typeof VALUE_MODES)[number], string>> = {},
+) {
+  const env = shimEnv(modes, extraEnv);
   await using proc = Bun.spawn({
     // If the fixture does crash, skip the debug build's slow symbolized
     // backtrace so the failure surfaces as the panic message, not a test
@@ -385,6 +400,73 @@ test.concurrent.skipIf(!isLinux || !cc || !isASAN)(
     await expectShellFault("poll-chunk.js", ["SHELL_RECV_EAGAIN_FIRST"], {
       SHELL_FAIL_EPOLL_FROM: "3",
       SHELL_RECV_BULK: "1",
+    });
+  },
+);
+
+const mkfifo = Bun.which("mkfifo");
+const cat = Bun.which("cat");
+
+// The bulk recv (256 KB of 'A') is delivered, then the real recv picks up the
+// child's `printf AAAA` before the EAGAIN whose re-registration fails: the read
+// loop hands over everything it read before attempting the (failing, possibly
+// parent-freeing) re-arm, so all 256 KB + 4 bytes reach stdout.
+test.concurrent.skipIf(!isLinux || !cc || !mkfifo || !cat)(
+  "shell delivers the already-read output and the reader error when the read fails while that output is still queued for stdout",
+  async () => {
+    const fifo = join(String(dir), "tee-chunk.fifo");
+    {
+      await using mk = Bun.spawn({ cmd: [mkfifo!, fifo], env: bunEnv, stdout: "ignore", stderr: "pipe" });
+      const [mkErr, mkExit] = await Promise.all([mk.stderr.text(), mk.exited]);
+      if (mkExit !== 0) throw new Error(`mkfifo failed: ${mkErr}`);
+    }
+
+    await using reader = Bun.spawn({
+      cmd: [cat!, fifo],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "tee-chunk.js", "--debug-crash-handler-use-trace-string"],
+      cwd: String(dir),
+      env: shimEnv(["SHELL_RECV_EAGAIN_FIRST"], { SHELL_FAIL_EPOLL_FROM: "3", SHELL_RECV_BULK: "1" }),
+      stdout: Bun.file(fifo),
+      stderr: "pipe",
+    });
+    const [piped, readerStderr, stderr, exitCode, readerExitCode] = await Promise.all([
+      reader.stdout.text(),
+      reader.stderr.text(),
+      proc.stderr.text(),
+      proc.exited,
+      reader.exited,
+    ]);
+
+    const jsonStart = piped.lastIndexOf("{");
+    const teed = jsonStart === -1 ? piped : piped.slice(0, jsonStart);
+    const line = jsonStart === -1 ? "" : piped.slice(jsonStart).trim();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      parsed = line;
+    }
+    expect({
+      teedIsAllA: teed === Buffer.alloc(teed.length, "A").toString(),
+      teedLength: teed.length,
+      parsed,
+      stderr,
+      readerStderr,
+      exitCode,
+      readerExitCode,
+    }).toEqual({
+      teedIsAllA: true,
+      teedLength: 256 * 1024 + "AAAA".length,
+      parsed: { exitCode: ENOMEM },
+      stderr: "",
+      readerStderr: "",
+      exitCode: 0,
+      readerExitCode: 0,
     });
   },
 );

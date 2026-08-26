@@ -32,7 +32,6 @@ struct HttpFlags {
     bool rejectUnauthorized: 1 = false;
     bool usingCustomExpectHandler: 1 = false;
     bool requireHostHeader: 1 = true;
-    bool isAuthorized: 1 = false;
     bool useStrictMethodValidation: 1 = false;
     /* node:http parser leniency. Two llhttp lenient bits: useInsecureHTTPParser = LENIENT_HEADERS
      * ("relaxed"+"insecure"); useLenientTransferEncoding = LENIENT_TRANSFER_ENCODING ("insecure"
@@ -67,6 +66,14 @@ private:
 
     /* This is the currently browsed-to router when using SNI */
     HttpRouter<RouterData> *currentRouter = &router;
+
+    /* The socket onData is currently parsing, nullptr outside a parse. The
+     * close gates in internalEnd need the per-socket identity: a DIFFERENT
+     * socket's response can complete inside this window (a microtask drained
+     * during a request dispatch), and the context-wide isParsingHttp bit
+     * alone would wrongly defer its close to a post-parse gate that only
+     * checks the parsed socket. */
+    struct us_socket_t *parsingSocket = nullptr;
 
     /* This is the default router for default SNI or non-SSL */
     HttpRouter<RouterData> router;

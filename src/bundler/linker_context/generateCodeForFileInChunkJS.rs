@@ -7,6 +7,7 @@ use bun_collections::{BoundedArray, VecExt};
 use bun_js_printer::renamer;
 use bun_js_printer::{self as js_printer, PrintResult, PrintResultSuccess};
 
+use crate::analyze_transpiled_module::ModuleInfo;
 use crate::generic_path_with_pretty_initialized;
 use crate::linker_context_mod::{StmtList, StmtListWhich};
 use crate::options::Format as OutputFormat;
@@ -33,6 +34,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     stmts: &mut StmtList,
     arena: &Bump,
     temp_arena: &Bump,
+    module_info: Option<&mut ModuleInfo>,
 ) -> js_printer::PrintResult {
     let source_index = part_range.source_index.get() as usize;
 
@@ -226,6 +228,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 None,
                 part_range.source_index,
                 source,
+                module_info,
             );
         }
     }
@@ -421,8 +424,10 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     {
                         continue;
                     }
-                    let name = match &mut prop.key.as_mut().unwrap().data {
-                        ExprData::EString(s) => s.slice(temp_arena),
+                    let name: &[u8] = match &prop.key.as_ref().unwrap().data {
+                        ExprData::EString(s) => {
+                            bun_core::handle_oom(s.flattened(temp_arena).string(temp_arena))
+                        }
                         _ => unreachable!(),
                     };
                     if name == b"default" || name == b"__esModule" || !js_lexer::is_identifier(name)
@@ -930,6 +935,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         runtime_require_ref,
         part_range.source_index,
         source,
+        module_info,
     )
 }
 

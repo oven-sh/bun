@@ -1676,10 +1676,7 @@ static long us_internal_verify_peer_certificate(const SSL *ssl, long def) {
     err = SSL_get_verify_result(ssl);
   } else {
     const SSL_CIPHER *curr_cipher = SSL_get_current_cipher(ssl);
-    const SSL_SESSION *sess = SSL_get_session(ssl);
-    if ((curr_cipher && SSL_CIPHER_get_auth_nid(curr_cipher) == NID_auth_psk) ||
-        (sess && SSL_SESSION_get_protocol_version(sess) == TLS1_3_VERSION &&
-         SSL_session_reused(ssl))) {
+    if (curr_cipher && SSL_CIPHER_get_auth_nid(curr_cipher) == NID_auth_psk) {
       return X509_V_OK;
     }
   }
@@ -1945,9 +1942,12 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
     if (ssl_gone(s)) return s;
   }
 
-  /* code != 0 (forceful — `_destroy()` / `_handle.close()` / abort): send
-   * close_notify best-effort and raw-close now. The Zig destroy path detaches
-   * + poll_ref.unref() right after, so deferring would orphan the us_socket_t.
+  /* code == 2 (forceful — `_destroy()` / `_handle.close()`): send close_notify
+   * best-effort and raw-close now. The destroy path detaches + poll_ref.unref()
+   * right after, so deferring would orphan the us_socket_t.
+   *
+   * code == 1 (reset — terminate() / abort): no close_notify, only the RST,
+   * like node's resetAndDestroy().
    *
    * code == 0 (graceful — `end()` → markInactive → closeAndDetach(.normal)):
    * send close_notify and DEFER the fd close until the peer replies. The
@@ -1957,7 +1957,7 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
    * under low-prio fan-out (connectionListener race). The actual raw-close
    * happens via on_end/ZERO_RETURN re-entering this function with
    * SSL_SENT_SHUTDOWN already set (ssl_handle_shutdown then returns 1). */
-  if (ssl_handle_shutdown(s, code != 0)) {
+  if (code == LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET || ssl_handle_shutdown(s, code != 0)) {
     return us_internal_socket_close_raw(s, code, reason);
   }
   return s;
@@ -2032,7 +2032,15 @@ static void ssl_update_handshake(struct us_socket_t *s) {
     }
     s->ssl_handshake_state = HANDSHAKE_PENDING;
     s->ssl_write_wants_read = 1;
-    s->flags.last_write_failed = 1;
+    /* Keep writable interest only for a blocked write. Setting this for
+     * WANT_READ too kept the always-writable socket's writable event firing
+     * every tick with zero progress (100% CPU) whenever writable interest
+     * existed while the handshake stalled, e.g. pause() mid-handshake.
+     * WANT_WRITE's blocked BIO write normally sets it in us_socket_raw_write
+     * already; kept for BIO retry paths that buffer without a send. */
+    if (err == SSL_ERROR_WANT_WRITE) {
+      s->flags.last_write_failed = 1;
+    }
     return;
   }
 
@@ -2062,16 +2070,25 @@ struct us_socket_t *us_internal_ssl_on_close(struct us_socket_t *s, int code, vo
   return ret;
 }
 
-/* The EOF dispatch below is scoped to uWS HTTP server sockets: their
- * context's onEnd owns the EOF (premature-EOF clientError
- * HPE_INVALID_EOF_STATE, CONNECT/Upgrade half-open, pipeline drain after
- * FIN), and closing without dispatching silently skipped all of it for
- * node:https. Every other TLS socket kind predates the dispatch and
- * synthesizes its JS 'end' from the close event, so they keep the
- * historical force-close (dispatching for them strands sockets whose end
- * handler expects the transport to close underneath it). */
-static int ssl_wants_eof_dispatch(struct us_socket_t *s) {
+static int ssl_is_uws_http_tls(struct us_socket_t *s) {
   return us_socket_kind(s) == BUN_SOCKET_KIND_UWS_HTTP_TLS;
+}
+
+/* EOF dispatch only for kinds whose user layer consumes 'end' + honors
+ * allow_half_open (uWS HTTP server: their context's onEnd owns the EOF;
+ * Bun.connect/listen, which node:tls rides on). All other TLS kinds derive
+ * EOF from close and keep the historical force-close (dispatching for them
+ * strands sockets whose end handler expects the transport to close
+ * underneath it). */
+static int ssl_wants_eof_dispatch(struct us_socket_t *s) {
+  unsigned char kind = us_socket_kind(s);
+  if (kind == BUN_SOCKET_KIND_UWS_HTTP_TLS) {
+    return 1;
+  }
+  /* Mid-handshake EOF keeps the force-close so JS surfaces it as a failed
+   * handshake (ECONNRESET "socket hang up", like Node) not a clean 'end'. */
+  return kind == BUN_SOCKET_KIND_BUN_SOCKET_TLS &&
+         s->ssl_handshake_state == HANDSHAKE_COMPLETED;
 }
 
 /* Deliver the plaintext EOF to the user layer once, like the plain-TCP path
@@ -2113,11 +2130,15 @@ struct us_socket_t *us_internal_ssl_on_end(struct us_socket_t *s) {
     if (!s || us_socket_is_closed(s)) {
       return s;
     }
-    if (s->flags.allow_half_open) {
+    if (s->flags.allow_half_open &&
+        (ssl_gone(s) || !(SSL_get_shutdown(s_ssl(s)) & SSL_SENT_SHUTDOWN))) {
       /* Keep the write side alive like the plain-TCP half-open branch in
        * loop.c: TCP permits writing after a received FIN, so queued
        * responses still flush and the app's own end() completes the
-       * shutdown. */
+       * shutdown. With SENT_SHUTDOWN both directions are closed; fall
+       * through so a deferred graceful close completes (mirrors the
+       * ZERO_RETURN path; loop.c raw-closes this case first on the
+       * epoll/kqueue backend, the libuv one reaches here). */
       return s;
     }
   }
@@ -2158,8 +2179,12 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
        * uWS layer's flushed==0-after-FIN guard, or hasFullyDrained() when
        * nothing is buffered, then closes the connection on this dispatch)
        * and dispatch directly, bypassing the is_shut_down gate below that
-       * ssl_fatal_error would otherwise trip. */
-      if (s->ssl_end_delivered && loop_ssl_data->ssl_spill_off == spill_off_before) {
+       * ssl_fatal_error would otherwise trip. On the libuv backend zero
+       * progress does not prove death (a stale SEND completion can run
+       * after this loop turn refilled the buffer), so confirm with the
+       * kernel before declaring the spill undrainable. */
+      if (s->ssl_end_delivered && loop_ssl_data->ssl_spill_off == spill_off_before &&
+          us_socket_stalled_write_means_peer_gone(s)) {
         ssl_release_spill(s->group->loop, s);
         s->ssl_fatal_error = 1;
         return us_dispatch_writable(s);
@@ -2192,7 +2217,7 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
    * onWritable clears the teardown timeout armed at shutdown. node sockets
    * still get write-completion dispatch after a half-close in either
    * direction. */
-  if (ssl_wants_eof_dispatch(s) && us_internal_ssl_is_shut_down(s)) return s;
+  if (ssl_is_uws_http_tls(s) && us_internal_ssl_is_shut_down(s)) return s;
 
   if (s->ssl_handshake_state == HANDSHAKE_COMPLETED) {
     s = us_dispatch_writable(s);
@@ -2301,11 +2326,15 @@ restart:
           if (ssl_wants_eof_dispatch(s)) {
             s = ssl_deliver_eof(s);
             if (!s || ssl_gone(s)) return NULL;
-            if (s->flags.allow_half_open) {
+            if (s->flags.allow_half_open &&
+                !(SSL_get_shutdown(s_ssl(s)) & SSL_SENT_SHUTDOWN)) {
               /* close_notify only ended the peer's write side; ours may
                * still flush queued bytes, and the app's own end() completes
                * the shutdown (ssl_handle_shutdown sees RECEIVED_SHUTDOWN and
-               * finishes immediately). */
+               * finishes immediately). With SENT_SHUTDOWN both directions are
+               * closed and nothing is left to hold open: fall through so the
+               * deferred graceful close (code 0, no FIN sent) completes here
+               * instead of waiting for a FIN that may never come. */
               return s;
             }
           }
@@ -2474,6 +2503,13 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
     return 0;
   }
 
+  /* Called from inside SSL_read/SSL_do_handshake on this socket (an ALPN/SNI
+   * callback writing): wait for the handshake, same as WANT_READ below. */
+  if (s->ssl_in_use) {
+    s->ssl_write_wants_read = 1;
+    return 0;
+  }
+
     struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
 
   /* Earlier batched records of ours must reach the wire before anything new:
@@ -2502,7 +2538,18 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
   while (total < length) {
     int chunk = length - total;
     if (chunk > 16384) chunk = 16384;
+    /* Same deferred-close protocol as the SSL_do_handshake/SSL_read drivers. */
+    s->ssl_in_use = 1;
     last_ssl_written = SSL_write(s_ssl(s), data + total, chunk);
+    s->ssl_in_use = 0;
+    if (s->ssl_pending_detach) {
+      /* Closed from inside the call: drop this write's records and close now. */
+      loop_ssl_data->ssl_write_batching = 0;
+      loop_ssl_data->ssl_write_batch_len = 0;
+      s->ssl_pending_detach = 0;
+      us_socket_close(s, s->ssl_pending_close_code, NULL);
+      return 0;
+    }
     if (last_ssl_written <= 0) break;
     total += last_ssl_written;
     /* A batching allocation failure marks the socket fatal from inside the BIO;
@@ -2628,11 +2675,6 @@ void us_socket_sni_resolve(struct us_socket_t *s, struct ssl_ctx_st *ctx, int er
   ssl_update_handshake(s);
 }
 
-void us_internal_ssl_handshake_abort(struct us_socket_t *s) {
-  s->ssl_fatal_error = 1;
-  ssl_close(s, 0, NULL);
-}
-
 /* ── Adopt-TLS (STARTTLS / Bun.connect upgrade) ──────────────────────────── */
 
 /* Feed bytes that were already read off the wire (e.g. a ClientHello consumed
@@ -2738,13 +2780,16 @@ static void us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx) {
 /* Whether the SNI-selected context of this connection demands closing on a
  * client-certificate verification error (requestCert && rejectUnauthorized
  * of the per-serverName entry). */
-int us_socket_server_name_reject_unauthorized(struct us_socket_t *s) {
-  if (!s->ssl || us_ctx_sni_policy_ex_idx < 0) return 0;
-  SSL_CTX *ctx = SSL_get_SSL_CTX(s_ssl(s));
-  if (!ctx) return 0;
+int us_ssl_ctx_reject_unauthorized(SSL_CTX *ctx) {
+  if (!ctx || us_ctx_sni_policy_ex_idx < 0) return 0;
   uintptr_t packed = (uintptr_t)SSL_CTX_get_ex_data(ctx, us_ctx_sni_policy_ex_idx);
   return (packed & US_SNI_POLICY_REQUEST_CERT) &&
          (packed & US_SNI_POLICY_REJECT_UNAUTHORIZED);
+}
+
+int us_socket_server_name_reject_unauthorized(struct us_socket_t *s) {
+  if (!s->ssl) return 0;
+  return us_ssl_ctx_reject_unauthorized(SSL_get_SSL_CTX(s_ssl(s)));
 }
 
 /* Extracts the host_name from the ClientHello's server_name extension.
@@ -3036,10 +3081,6 @@ void us_socket_on_server_name(struct us_socket_t *s, us_socket_server_name_cb cb
 void *us_socket_server_name_userdata(struct us_socket_t *s) {
   if (!s->ssl || !s_ssl(s) || us_sni_ex_idx < 0) return NULL;
   return SSL_CTX_get_ex_data(SSL_get_SSL_CTX(s_ssl(s)), us_sni_ex_idx);
-}
-
-void *us_internal_ssl_sni_userdata(struct us_socket_t *s) {
-  return us_socket_server_name_userdata(s);
 }
 
 const char *us_internal_ssl_sni_servername(struct us_socket_t *s) {

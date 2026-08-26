@@ -1,6 +1,6 @@
 import { AnyFunction, serve, ServeOptions, Server, sleep, TCPSocketListener } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { chmodSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, closeSync, ftruncateSync, openSync, rmSync, writeFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -16,6 +16,7 @@ import {
   isWindows,
   rss,
   runFixtureMaxRSS,
+  tempDir,
   tls,
   tmpdirSync,
   withoutAggressiveGC,
@@ -2967,8 +2968,7 @@ it("combines duplicate response headers per the Fetch spec", async () => {
 
 it("drops a custom Host header when following a cross-origin redirect", async () => {
   // A per-request Host override must not survive a change of origin: the
-  // follow-up request's Host header (and the TLS SNI / certificate identity
-  // derived from the same field) has to be re-computed from the redirect
+  // follow-up request's Host header has to be re-computed from the redirect
   // target's URL, not carried over from the previous origin.
   await using target = Bun.serve({
     port: 0,
@@ -3195,6 +3195,135 @@ it("releases interim 1xx response bytes as they are parsed while waiting for the
   }
 }, 60_000);
 
+it("does not reuse a keep-alive connection when bytes follow a response that ended at its header block", async () => {
+  // Bodyless counterpart of the Content-Length overshoot test below. Each of these
+  // responses is complete once its header block is in (the followed 3xx through the
+  // redirect path, which pools the socket itself), so trailing bytes must cost the
+  // connection while the same responses without them must still be pooled.
+  const injected = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 8\r\n\r\ninjected";
+  const responses: Record<string, { head: string; junk: string }> = {
+    "/204": { head: "HTTP/1.1 204 No Content\r\nConnection: keep-alive\r\n\r\n", junk: injected },
+    "/304": { head: 'HTTP/1.1 304 Not Modified\r\nETag: "x"\r\nConnection: keep-alive\r\n\r\n', junk: injected },
+    "/empty": { head: "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n", junk: injected },
+    // Answered with HEAD: Content-Length describes the GET body, nothing may follow.
+    // The junk variant sends that body anyway.
+    "/head": { head: "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: keep-alive\r\n\r\n", junk: "hello" },
+    "/303": {
+      head: "HTTP/1.1 303 See Other\r\nLocation: /legit\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n",
+      junk: injected,
+    },
+  };
+  const legit =
+    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 6\r\nConnection: keep-alive\r\n\r\nlegit!";
+
+  let connections = 0;
+  const sockets: net.Socket[] = [];
+  const server = net.createServer(socket => {
+    connections++;
+    sockets.push(socket);
+    socket.on("error", () => {});
+    let buffered = "";
+    socket.on("data", data => {
+      buffered += data.toString("latin1");
+      while (true) {
+        const headerEnd = buffered.indexOf("\r\n\r\n");
+        if (headerEnd === -1) return;
+        const head = buffered.slice(0, headerEnd);
+        // Consume the request body (the redirect case is a POST) before answering, so
+        // body bytes are never mistaken for the next request.
+        let requestEnd = headerEnd + 4;
+        if (/^transfer-encoding:.*\bchunked\b/im.test(head)) {
+          const terminator = buffered.indexOf("0\r\n\r\n", requestEnd);
+          if (terminator === -1) return;
+          requestEnd = terminator + 5;
+        } else {
+          requestEnd += Number(/^content-length:\s*(\d+)/im.exec(head)?.[1] ?? 0);
+          if (buffered.length < requestEnd) return;
+        }
+        buffered = buffered.slice(requestEnd);
+
+        const target = head.split("\r\n")[0].split(" ")[1];
+        const [path, query] = target.split("?");
+        const response = responses[path];
+        if (response) {
+          socket.write(response.head + (query === "junk" ? response.junk : ""));
+        } else {
+          socket.write(legit);
+        }
+      }
+    });
+  });
+  // 127.0.0.1 explicitly: counting connections requires the server to listen on the
+  // address fetch() connects to.
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+  const origin = `http://127.0.0.1:${port}`;
+
+  const cases: { path: string; init?: () => RequestInit }[] = [
+    { path: "/204" },
+    { path: "/304" },
+    { path: "/empty" },
+    { path: "/head", init: () => ({ method: "HEAD" }) },
+    // The redirect path only pools the socket once the upload is known to be
+    // complete, which today is the case for streamed bodies, so a streamed POST is
+    // what exercises that path's pooling decision.
+    {
+      path: "/303",
+      init: () => ({
+        method: "POST",
+        body: new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("payload"));
+            controller.close();
+          },
+        }),
+      }),
+    },
+  ];
+
+  try {
+    // Warm the pool with one clean connection so every case below starts out
+    // reusing a pooled socket.
+    expect(await (await fetch(`${origin}/legit`)).text()).toBe("legit!");
+    expect(connections).toBe(1);
+
+    const results: { request: string; status: number; body: string; newConnections: number }[] = [];
+    for (const { path, init } of cases) {
+      for (const junk of [true, false]) {
+        const before = connections;
+        const response = await fetch(`${origin}${path}${junk ? "?junk" : ""}`, init?.());
+        const body = await response.text();
+        // newConnections counts what this response plus the follow-up request opened.
+        const followUp = await fetch(`${origin}/legit`);
+        expect(await followUp.text()).toBe("legit!");
+        results.push({
+          request: `${path}${junk ? " + trailing bytes" : ""}`,
+          status: response.status,
+          body,
+          newConnections: connections - before,
+        });
+      }
+    }
+
+    expect(results).toEqual([
+      { request: "/204 + trailing bytes", status: 204, body: "", newConnections: 1 },
+      { request: "/204", status: 204, body: "", newConnections: 0 },
+      { request: "/304 + trailing bytes", status: 304, body: "", newConnections: 1 },
+      { request: "/304", status: 304, body: "", newConnections: 0 },
+      { request: "/empty + trailing bytes", status: 200, body: "", newConnections: 1 },
+      { request: "/empty", status: 200, body: "", newConnections: 0 },
+      { request: "/head + trailing bytes", status: 200, body: "", newConnections: 1 },
+      { request: "/head", status: 200, body: "", newConnections: 0 },
+      // The redirect is still followed; only the hop to /legit needs the new connection.
+      { request: "/303 + trailing bytes", status: 200, body: "legit!", newConnections: 1 },
+      { request: "/303", status: 200, body: "legit!", newConnections: 0 },
+    ]);
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    server.close();
+  }
+});
+
 it("does not reuse a keep-alive connection whose response carried more bytes than its Content-Length", async () => {
   // Surplus bytes past the declared Content-Length mean the connection's framing can
   // no longer be trusted: anything still buffered on (or later delivered to) that
@@ -3366,9 +3495,9 @@ it("the idle timer is an absolute deadline for the response header block (not re
       );
 
     // /h: DRIP_N bytes * DRIP_MS = ~20s of drip before the response would
-    // complete; the 5s idle deadline (uSockets 4s-tick sweep, so ~5-9s) must
-    // fire first. A build that re-arms on every partial header read resolves
-    // 200 after the full drip instead.
+    // complete; the 5s idle deadline (armed padded on uSockets' 4s-tick
+    // sweep, so it fires at ~8-12s) must fire first. A build that re-arms on
+    // every partial header read resolves 200 after the full drip instead.
     // /b: headers arrive in one write, then the 3-byte body trickles at
     // DRIP_MS/byte (~8s). Each body chunk re-arms the idle timer, so this
     // resolves despite taking longer than IDLE_MS overall.
@@ -3383,3 +3512,130 @@ it("the idle timer is an absolute deadline for the response header block (not re
     await new Promise<void>(r => server.close(() => r()));
   }
 }, 60_000);
+
+// https://github.com/oven-sh/bun/issues/39952
+it("a numeric `timeout` does not abort in-flight requests on the 4s sweep tick", async () => {
+  // Regression: a `timeout` of 4000ms or less was armed as a single tick of
+  // uSockets' 4s sweep timer, whose phase is unrelated to the request, so the
+  // next sweep aborted whichever request was in flight, no matter how long it
+  // had been running. Keep at least one request in flight for longer than one
+  // full sweep period: none may abort, because each request idles only
+  // ~SLEEP_MS against a 1000ms budget.
+  const SLEEP_MS = 600;
+  const WINDOW_MS = 5_500; // one full 4s sweep period at any phase, plus slop
+  await using server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    async fetch() {
+      await Bun.sleep(SLEEP_MS);
+      return new Response("ok");
+    },
+  });
+  const errors: string[] = [];
+  const start = Date.now();
+  const worker = async (offsetMs: number) => {
+    // Stagger the start so the workers' request waves interleave: workers
+    // launched together stay phase-locked, and their inter-request gaps
+    // could all line up with the sweep tick.
+    await Bun.sleep(offsetMs);
+    while (Date.now() - start < WINDOW_MS && errors.length === 0) {
+      const t0 = Date.now();
+      try {
+        const res = await fetch(server.url, { timeout: 1000 });
+        await res.text();
+      } catch (e) {
+        errors.push(`${(e as Error).name} after ${Date.now() - t0}ms on the request started at t=${t0 - start}ms`);
+      }
+    }
+  };
+  // Three staggered workers so a sweep tick always lands on an in-flight
+  // request in the unfixed build.
+  await Promise.all([worker(0), worker(SLEEP_MS / 3), worker((2 * SLEEP_MS) / 3)]);
+  expect(errors).toEqual([]);
+}, 20_000);
+
+it.skipIf(isWindows)("sends the exact Content-Length for a file body of 100 GB", async () => {
+  using dir = tempDir("fetch-large-file-body", { "large.bin": "" });
+  const path = join(String(dir), "large.bin");
+  const size = 100_000_000_000;
+  const fd = openSync(path, "r+");
+  try {
+    ftruncateSync(fd, size);
+  } finally {
+    closeSync(fd);
+  }
+  expect(Bun.file(path).size).toBe(size);
+
+  const { promise: headPromise, resolve: resolveHead } = Promise.withResolvers<string>();
+  let received = "";
+  let headComplete = false;
+  using listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      data(socket, chunk) {
+        if (headComplete) return;
+        received += chunk.toString("latin1");
+        const end = received.indexOf("\r\n\r\n");
+        if (end !== -1) {
+          headComplete = true;
+          resolveHead(received.slice(0, end));
+          socket.end();
+        }
+      },
+    },
+  });
+
+  const controller = new AbortController();
+  const result = fetch(`http://${listener.hostname}:${listener.port}/upload`, {
+    method: "PUT",
+    body: Bun.file(path),
+    signal: controller.signal,
+  }).then(
+    () => null,
+    e => e,
+  );
+
+  const head = await headPromise;
+  controller.abort();
+  await result;
+
+  const contentLength = head
+    .split("\r\n")
+    .find(line => line.toLowerCase().startsWith("content-length:"))
+    ?.slice("content-length:".length)
+    .trim();
+  expect(contentLength).toBe(String(size));
+});
+
+it("verbose fetch logging prints [redacted] in place of Authorization credentials", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      return new Response(req.headers.get("authorization") ?? "");
+    },
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const res = await fetch(process.env.SERVER_URL, { headers: { Authorization: "Bearer sekret-token" } });
+       console.log(await res.text());`,
+    ],
+    env: { ...bunEnv, BUN_CONFIG_VERBOSE_FETCH: "1", SERVER_URL: server.url.href },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("Bearer sekret-token\n");
+  const authorizationLines = stderr.split(/\r?\n/).flatMap(line => {
+    const match = /^(?:\[fetch\])?\s*>?\s*authorization:(.*)$/i.exec(line);
+    return match ? [match[1].trim()] : [];
+  });
+  expect(authorizationLines).toEqual(["Bearer [redacted]"]);
+  expect(stderr).not.toContain("sekret-token");
+  expect(exitCode).toBe(0);
+});

@@ -15,6 +15,7 @@ use bun_event_loop::EventLoopHandle;
 use bun_io::ParentDeathWatchdog;
 #[cfg(unix)]
 use bun_io::{FilePoll, KeepAlive};
+use bun_ptr::RefPtr;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
@@ -36,7 +37,7 @@ pub struct WaitPidResult {}
 
 /// Low-level fd / memfd helpers historically grouped here as `spawn_sys`.
 /// MOVE_DOWN: real impls now live in `bun_sys` (lower crate); re-export so
-/// higher-tier callers (`bun_runtime::api::bun::spawn::stdio`, `Terminal`)
+/// higher-tier callers (`bun_runtime::api::bun_spawn::stdio`, `Terminal`)
 /// keep their `bun_spawn::process::spawn_sys::*` import path.
 pub mod spawn_sys {
     // POSIX-only — memfd / FD_CLOEXEC have no Windows equivalent
@@ -55,12 +56,12 @@ bun_core::declare_scope!(PROCESS, visible);
 // The raw OS spawn layer (option/result structs, `Rusage`, `spawn_process_posix`)
 // moved into the leaf `bun_spawn_sys` crate so it has no event-loop dependency.
 // Re-export here so existing `bun_spawn::process::*` paths keep resolving.
-pub use bun_spawn_sys::spawn_process::{IoCounters, WinRusage, WinTimeval, rusage_zeroed};
+pub use bun_spawn_sys::spawn_process::rusage_zeroed;
 #[cfg(windows)]
 pub use bun_spawn_sys::uv_getrusage;
 pub use bun_spawn_sys::{
-    Argv, CStrPtr, Dup2, Envp, ExtraPipe, FdT, PidFdType, PidT, PosixSpawnOptions,
-    PosixSpawnResult, PosixStdio, Rusage, StdioKind,
+    Argv, CStrPtr, Dup2, Envp, ExtraPipe, PidFdType, PidT, PosixSpawnOptions, PosixSpawnResult,
+    PosixStdio, Rusage, StdioKind,
 };
 
 /// Whether the process-exit poll should be registered one-shot.
@@ -128,6 +129,10 @@ pub struct Process {
     pub(crate) ref_count: bun_ptr::ThreadSafeRefCount<Process>,
     pub exit_handler: ProcessExitHandler,
     pub(crate) event_loop: EventLoopHandle,
+    /// How the waiter thread delivers this process's exit to a JS VM
+    /// (`None` when owned by a mini event loop, which it posts to directly).
+    #[cfg(unix)]
+    pub(crate) js_poster: Option<bun_event_loop::JsPoster>,
 }
 
 impl Drop for Process {
@@ -135,6 +140,55 @@ impl Drop for Process {
     /// above; this `Drop` body covers the `poller.deinit()` call.
     fn drop(&mut self) {
         self.poller.deinit();
+    }
+}
+
+/// The exit-handler owner's handle on a [`Process`]: one owned ref, and
+/// dropping it detaches the handler before releasing that ref. The owner must
+/// stay live until the handle is dropped or the exit has been dispatched —
+/// keeping the handle in one of the owner's fields satisfies that.
+///
+/// Every method projects a call-scoped borrow of the `Process` (its own heap
+/// allocation, event-loop thread only); none escapes this type. Dropping the
+/// handle from inside the exit handler re-enters the `Process` whose `on_exit`
+/// is dispatching, exactly as the raw-pointer owners do.
+pub struct ProcessHandle(RefPtr<Process>);
+
+impl ProcessHandle {
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    fn process_mut(&self) -> &mut Process {
+        // SAFETY: we hold a ref, so the pointee is live; the borrow ends with
+        // the forwarding call (see the type-level note on re-entrancy).
+        unsafe { &mut *self.0.as_ptr() }
+    }
+
+    /// Dispatch this process's exit to `owner` (see the type-level contract).
+    pub fn set_exit_handler<T: crate::ProcessExitOwner>(&self, owner: bun_ptr::ThisPtr<T>) {
+        // SAFETY: `owner` is live now (`ThisPtr` invariant) and, per the
+        // type-level contract, for every dispatch.
+        let h = unsafe { ProcessExit::of(owner.as_ptr()) };
+        self.process_mut().set_exit_handler(h);
+    }
+
+    /// See [`Process::watch_or_reap`]; may synchronously run the exit handler.
+    pub fn watch_or_reap(&self) -> bun_sys::Result<bool> {
+        self.process_mut().watch_or_reap()
+    }
+
+    /// See [`Process::on_exit`]; runs the exit handler.
+    pub fn on_exit(&self, status: Status, rusage: &Rusage) {
+        self.process_mut().on_exit(status, rusage)
+    }
+
+    pub fn has_exited(&self) -> bool {
+        self.0.has_exited()
+    }
+}
+
+impl Drop for ProcessHandle {
+    fn drop(&mut self) {
+        self.process_mut().detach();
     }
 }
 
@@ -223,6 +277,7 @@ impl Process {
             pid: posix.pid,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             pidfd: posix.pidfd.unwrap_or(0),
+            js_poster: event_loop.js_poster(),
             event_loop,
             poller: Poller::Detached,
             status,
@@ -262,7 +317,7 @@ impl Process {
 
     /// # Safety
     /// `this` carries the +1 ref taken when the waiter-thread task was queued.
-    /// `ScopedRef::adopt` releases it on return — which may free `this` — so
+    /// `RefPtr::from_raw` releases it on return — which may free `this` — so
     /// this takes `*mut Self`, not `&mut self` (a `&mut` argument's
     /// Stacked-Borrows protector outliving the allocation is UB; see :215).
     #[cfg(unix)]
@@ -272,8 +327,8 @@ impl Process {
         rusage: &Rusage,
     ) {
         // SAFETY: caller contract — adopts the queued +1 ref.
-        let _g = unsafe { bun_ptr::ScopedRef::<Process>::adopt(this) };
-        // SAFETY: `_g` keeps `this` live; `&mut` scoped to the poller unref.
+        let _guard = unsafe { RefPtr::from_raw(this) };
+        // SAFETY: `_guard` keeps `this` live; `&mut` scoped to the poller unref.
         unsafe {
             if let Poller::WaiterThread(waiter) = &mut (*this).poller {
                 let ctx = event_loop_handle_to_ctx((*this).event_loop);
@@ -281,7 +336,7 @@ impl Process {
                 (*this).poller = Poller::Detached;
             }
         }
-        // SAFETY: `_g` keeps `this` live; `&mut` scoped to this call (which
+        // SAFETY: `_guard` keeps `this` live; `&mut` scoped to this call (which
         // can fire the JS exit handler).
         unsafe { (*this).on_wait_pid(waitpid_result, rusage) };
     }
@@ -291,8 +346,8 @@ impl Process {
     #[cfg(unix)]
     pub unsafe fn on_wait_pid_from_event_loop_task(this: *mut Self) {
         // SAFETY: caller contract — adopts the queued +1 ref.
-        let _g = unsafe { bun_ptr::ScopedRef::<Process>::adopt(this) };
-        // SAFETY: `_g` keeps `this` live.
+        let _guard = unsafe { RefPtr::from_raw(this) };
+        // SAFETY: `_guard` keeps `this` live.
         unsafe { (*this).wait(false) };
     }
 
@@ -518,6 +573,7 @@ impl Process {
                 Status::Exited(Exited {
                     code: exit_code,
                     signal: 0,
+                    raw: exit_status as u32,
                 }),
                 &rusage,
             );
@@ -541,13 +597,13 @@ impl Process {
         // `Poller::Uv` payload inside `*this` (see `on_exit_uv`).
         let _pid = unsafe { (*uv_handle).pid };
         // SAFETY: `*mut Process` back-pointer stashed in `data` at spawn. Stay
-        // raw — `ScopedRef::Drop` may free the allocation, so never bind a
+        // raw — `RefPtr::drop` may free the allocation, so never bind a
         // `&mut Process` whose tag would have to outlive that.
         let this: *mut Process = unsafe { (*uv_handle).data.cast() };
         // SAFETY: adopts the +1 ref taken at `uv_spawn`.
-        let _g = unsafe { bun_ptr::ScopedRef::<Process>::adopt(this) };
+        let _guard = unsafe { RefPtr::from_raw(this) };
         bun_sys::windows::libuv::log!("Process.onClose({})", _pid);
-        // SAFETY: `_g` keeps `this` live for this block.
+        // SAFETY: `_guard` keeps `this` live for this block.
         unsafe {
             if matches!((*this).poller, Poller::Uv(_)) {
                 (*this).poller = Poller::Detached;
@@ -699,6 +755,10 @@ pub struct Exited {
     /// `SignalCode` discriminants are 1..=31; storing it as the
     /// enum and transmuting `0` would be UB. Convert via `Status::signal_code`.
     pub signal: u8,
+    /// Untruncated `GetExitCodeProcess` DWORD; `code` is its low byte.
+    /// NTSTATUS crash codes only survive here (0xC0000409 → `code` 9).
+    #[cfg(windows)]
+    pub raw: u32,
 }
 
 impl Status {
@@ -957,12 +1017,6 @@ pub mod waiter_thread_posix {
         }
     }
 
-    impl<T: 'static> Default for NewQueue<T> {
-        fn default() -> Self {
-            Self::new()
-        }
-    }
-
     /// Intrusive node pushed onto `ConcurrentQueue` from the JS thread and
     /// drained on the waiter thread.
     pub struct TaskQueueEntry<T: 'static> {
@@ -987,6 +1041,20 @@ pub mod waiter_thread_posix {
         pub(crate) result: bun_sys::Result<WaitPidResult>,
         pub(crate) subprocess: *mut T,
         pub(crate) rusage: Rusage,
+    }
+
+    impl<T: ProcessLike> bun_event_loop::Taskable for ResultTask<T> {
+        const TAG: TaskTag = T::TASK_TAG;
+        /// An exit status the waiter thread posted whose delivery will not run:
+        /// drop it and the strong ref it carried for the JS thread.
+        unsafe fn release_unrun(this: *mut Self) {
+            // SAFETY: fn contract — the box `ResultTask::new` made; `subprocess`
+            // holds the ref taken before `append()`.
+            unsafe {
+                let t = bun_core::heap::take(this);
+                T::release_ref_from_waiter_thread(t.subprocess);
+            }
+        }
     }
 
     impl<T: ProcessLike> ResultTask<T> {
@@ -1047,6 +1115,14 @@ pub mod waiter_thread_posix {
         const TASK_TAG: TaskTag;
         fn pid(&self) -> PidT;
         fn event_loop(&self) -> EventLoopHandle;
+        /// The poster for a JS-owned process (see `Process::js_poster`).
+        fn js_poster(&self) -> Option<&bun_event_loop::JsPoster>;
+        /// Waiter thread, VM gone: release the strong ref the result would have
+        /// consumed on the JS thread.
+        ///
+        /// # Safety
+        /// `this` is a live, strong-ref'd pointer; callee releases one ref.
+        unsafe fn release_ref_from_waiter_thread(this: *mut Self);
         /// # Safety
         /// `this` must be a live, strong-ref'd pointer; callee releases one ref.
         unsafe fn on_wait_pid_from_waiter_thread(
@@ -1065,6 +1141,15 @@ pub mod waiter_thread_posix {
         #[inline]
         fn event_loop(&self) -> EventLoopHandle {
             self.event_loop
+        }
+        #[inline]
+        fn js_poster(&self) -> Option<&bun_event_loop::JsPoster> {
+            self.js_poster.as_ref()
+        }
+        #[inline]
+        unsafe fn release_ref_from_waiter_thread(this: *mut Self) {
+            // SAFETY: fn contract.
+            unsafe { Process::deref(this) };
         }
         #[inline]
         unsafe fn on_wait_pid_from_waiter_thread(
@@ -1137,17 +1222,25 @@ pub mod waiter_thread_posix {
                         remove = true;
 
                         match T::event_loop(process_ref) {
-                            EventLoopHandle::Js { owner } => {
-                                let ct = ConcurrentTask::create(Task::new(
-                                    T::TASK_TAG,
-                                    ResultTask::<T>::new(ResultTask {
-                                        result,
-                                        subprocess: process,
-                                        rusage,
-                                    })
-                                    .cast(),
-                                ));
-                                owner.enqueue_task_concurrent(ct);
+                            EventLoopHandle::Js { .. } => {
+                                let rt = ResultTask::<T>::new(ResultTask {
+                                    result,
+                                    subprocess: process,
+                                    rusage,
+                                });
+                                let ct = ConcurrentTask::create(Task::init(rt));
+                                let poster = T::js_poster(process_ref)
+                                    .expect("JS-owned process has a poster");
+                                if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
+                                    // VM torn down: nobody will observe this exit. Free the
+                                    // task and drop the ref its delivery would have released.
+                                    // SAFETY: refused ⇒ we own both boxes; `process` is strong-ref'd.
+                                    unsafe {
+                                        drop(bun_core::heap::take(ct.as_ptr()));
+                                        drop(bun_core::heap::take(rt));
+                                        T::release_ref_from_waiter_thread(process);
+                                    }
+                                }
                             }
                             EventLoopHandle::Mini(mut mini) => {
                                 let out = ResultTaskMini::<T>::new(ResultTaskMini {
@@ -1417,6 +1510,12 @@ pub enum WindowsStdioResult {
     Unavailable,
     Buffer(Box<uv::Pipe>),
     BufferFd(Fd),
+    /// A stdio slot at index >= 3 whose value `Subprocess.stdio` has exposed:
+    /// a duplicate of the pipe's HANDLE that the caller owns and closes
+    /// (`net.connect({ fd })` adopts it). The `Buffer` it came from is closed
+    /// when the slot is downgraded, so nothing here closes this handle. The
+    /// counterpart of the POSIX `ExtraPipe::UnownedFd`.
+    UnownedFd(Fd),
 }
 
 #[cfg(windows)]
@@ -1472,6 +1571,14 @@ impl Drop for WindowsSpawnResult {
 impl WindowsSpawnResult {
     pub fn to_process(&mut self, _event_loop: impl Sized) -> *mut Process {
         self.process.take().unwrap()
+    }
+
+    /// [`to_process`](Self::to_process), returning the owning handle.
+    pub fn to_process_handle(&mut self, event_loop: impl Sized) -> ProcessHandle {
+        // SAFETY: `to_process` returns the live heap `Process` allocated by
+        // `spawn_process_windows` with its initial ref; that ref moves into
+        // the handle.
+        ProcessHandle(unsafe { RefPtr::from_raw(self.to_process(event_loop)) })
     }
 }
 
@@ -1630,8 +1737,15 @@ impl WindowsSpawnOptions {
 /// `bun_spawn_sys`. The result type itself lives in the leaf `-sys` crate (no
 /// `Process`/`EventLoopHandle` dependency); `to_process` is added here as a
 /// trait method so callers keep the `.to_process(loop_, sync)` spelling.
-pub trait SpawnResultExt {
+pub trait SpawnResultExt: Sized {
     fn to_process(self, event_loop: EventLoopHandle) -> *mut Process;
+
+    /// [`to_process`](Self::to_process), returning the owning handle.
+    fn to_process_handle(self, event_loop: EventLoopHandle) -> ProcessHandle {
+        // SAFETY: `to_process` returns a live heap `Process` whose initial ref
+        // the caller owns; that ref moves into the handle.
+        ProcessHandle(unsafe { RefPtr::from_raw(self.to_process(event_loop)) })
+    }
 }
 
 #[cfg(unix)]
@@ -1698,7 +1812,8 @@ mod spawn_process_body {
     /// # Safety
     /// `argv` must point to a null-terminated array of NUL-terminated C
     /// strings with at least one non-null element; `envp` must point to a
-    /// null-terminated array of NUL-terminated C strings. Both must remain
+    /// null-terminated array of NUL-terminated C strings, or be null on
+    /// Windows (libuv then inherits the parent environment). Both must remain
     /// valid for the duration of the call.
     pub unsafe fn spawn_process(
         options: &SpawnOptions,
@@ -1714,6 +1829,50 @@ mod spawn_process_body {
         {
             spawn_process_windows(options, argv, envp)
         }
+    }
+
+    /// The environment block handed to the child by [`spawn_process_cstr`].
+    #[derive(Clone, Copy)]
+    pub enum SpawnEnv<'a> {
+        /// This process's own `environ`.
+        Inherit,
+        /// `KEY=VALUE` strings; the null-terminated pointer block is built here.
+        Strings(&'a [&'a core::ffi::CStr]),
+    }
+
+    /// [`spawn_process`] for callers holding borrowed C strings: builds the
+    /// null-terminated `argv`/`envp` pointer blocks for the duration of the call.
+    pub fn spawn_process_cstr(
+        options: &SpawnOptions,
+        argv: &[&core::ffi::CStr],
+        env: SpawnEnv<'_>,
+    ) -> Result<bun_sys::Result<SpawnProcessResult>, crate::Error> {
+        assert!(!argv.is_empty(), "spawn_process_cstr: argv[0] is required");
+        let argv: Vec<CStrPtr> = argv
+            .iter()
+            .map(|s| s.as_ptr())
+            .chain(core::iter::once(core::ptr::null()))
+            .collect();
+        let env_block: Vec<CStrPtr>;
+        let envp: Envp = match env {
+            // libuv: a null `env` inherits the parent's environment.
+            #[cfg(windows)]
+            SpawnEnv::Inherit => core::ptr::null(),
+            #[cfg(unix)]
+            SpawnEnv::Inherit => bun_core::c_environ(),
+            SpawnEnv::Strings(strings) => {
+                env_block = strings
+                    .iter()
+                    .map(|s| s.as_ptr())
+                    .chain(core::iter::once(core::ptr::null()))
+                    .collect();
+                env_block.as_ptr()
+            }
+        };
+        // SAFETY: `argv` is a null-terminated array of NUL-terminated strings
+        // with argv[0] non-null (asserted); `envp` is likewise, or null on
+        // Windows for `Inherit`. Both are borrowed for the call.
+        unsafe { spawn_process(options, argv.as_ptr(), envp) }
     }
 
     #[cfg(windows)]
@@ -1768,10 +1927,6 @@ mod spawn_process_body {
         };
 
         let mut uv_files_to_close: Vec<uv::uv_file> = Vec::new();
-
-        // defer: close uv_files_to_close — handled at each return site below
-        // via explicit cleanup calls at each error return; no
-        // `failed` flag is needed.
 
         if let Some(hpcon) = options.pseudoconsole {
             uv_process_options.pseudoconsole = hpcon;
@@ -1933,7 +2088,7 @@ mod spawn_process_body {
             match ipc {
                 WindowsStdio::Dup2(_) => panic!("TODO dup2 extra fd"),
                 WindowsStdio::Inherit => {
-                    stdio.flags = uv::StdioFlags::INHERIT_FD;
+                    stdio.flags = uv::UV_INHERIT_FD;
                     stdio.data.fd = uv::uv_file::try_from(3 + i).expect("int cast");
                 }
                 WindowsStdio::Ignore => {
@@ -1966,7 +2121,7 @@ mod spawn_process_body {
                         cleanup_uv_files(&uv_files_to_close, loop_);
                         return Ok(Err(err));
                     }
-                    stdio.flags = uv::StdioFlags::INHERIT_FD;
+                    stdio.flags = uv::UV_INHERIT_FD;
                     let fd = rc.int();
                     uv_files_to_close.push(fd);
                     stdio.data.fd = fd;
@@ -2000,7 +2155,7 @@ mod spawn_process_body {
                     stdio.data.stream = (*my_pipe).cast::<uv::uv_stream_t>();
                 }
                 WindowsStdio::Pipe(fd) => {
-                    stdio.flags = uv::StdioFlags::INHERIT_FD;
+                    stdio.flags = uv::UV_INHERIT_FD;
                     stdio.data.fd = fd.uv();
                 }
             }
@@ -2019,8 +2174,6 @@ mod spawn_process_body {
             exit_handler: ProcessExitHandler::default(),
         }));
 
-        // defer if failed: process.close(); process.deref(); — handled at error sites
-
         // SAFETY: process is freshly allocated
         unsafe {
             // SAFETY: all-zero is valid uv::Process
@@ -2033,7 +2186,6 @@ mod spawn_process_body {
             uv_proc.data = process.cast::<c_void>();
         }
 
-        // defer dup_fds cleanup — handled below at each exit
         let cleanup_dup = |failed: bool| {
             if dup_src.is_some() {
                 debug_assert!(dup_src.is_some() && dup_tgt.is_some());
@@ -2064,6 +2216,25 @@ mod spawn_process_body {
                 Process::deref(process);
             }
             return Ok(Err(err));
+        }
+        // The process handle is open on this thread's loop until `close()`; a
+        // thread teardown closes it through us (the child keeps running, as with
+        // Node's ProcessWrap), so no exit callback can fire after the VM is gone.
+        unsafe fn stop_for_vm_teardown(p: *mut c_void) {
+            // SAFETY: recorded for this live Process; the handle leaves the list
+            // when `close()` issues its uv_close.
+            unsafe { (*p.cast::<Process>()).close() };
+        }
+        // SAFETY: `process` is live; poller was just set to the spawned Uv handle.
+        unsafe {
+            let Poller::Uv(ref mut uv_proc) = (*process).poller else {
+                unreachable!()
+            };
+            uv::open_handles::set_owner(
+                core::ptr::from_mut(uv_proc).cast(),
+                process.cast(),
+                Some(stop_for_vm_teardown),
+            );
         }
 
         // SAFETY: process is valid, poller is Uv
@@ -2563,6 +2734,8 @@ mod spawn_process_body {
             envp: *const *const c_char,
         ) -> core::result::Result<Maybe<Result>, crate::Error> {
             let loop_ = options.windows.loop_.platform_event_loop();
+            // All stdio inherited: the child is the foreground program on our console.
+            let _child = crate::ctrl_c::Child::enter();
             let mut spawned =
                 match spawn_process_windows(&options.to_spawn_options(false), argv, envp)? {
                     Err(err) => return Ok(Err(err)),
@@ -3103,8 +3276,6 @@ mod spawn_process_body {
                 process.stderr.unwrap_or(Fd::INVALID),
             ];
             let mut success = false;
-            // defer cleanup — handled at end / via guards below; error returns
-            // run their cleanup manually
 
             let mut out_fds_to_wait_for: [Fd; 2] = [
                 process.stdout.unwrap_or(Fd::INVALID),
@@ -3814,5 +3985,6 @@ mod spawn_process_body {
 pub use spawn_process_body::spawn_process;
 #[cfg(unix)]
 pub use spawn_process_body::spawn_process_posix;
+pub use spawn_process_body::{SpawnEnv, spawn_process_cstr};
 
 pub use spawn_process_body::sync;

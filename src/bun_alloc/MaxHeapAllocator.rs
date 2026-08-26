@@ -44,12 +44,6 @@ impl MaxHeapAllocator {
     }
 }
 
-impl Default for MaxHeapAllocator {
-    fn default() -> Self {
-        Self::init()
-    }
-}
-
 /// RAII guard returned by [`MaxHeapAllocator::scope`]. Derefs to the underlying
 /// allocator so callers can hand out `&mut MaxHeapAllocator` (or a derived
 /// `&dyn Allocator`) for the duration of the scope, and resets it on drop.

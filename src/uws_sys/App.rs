@@ -5,12 +5,14 @@ use core::ptr;
 use bun_core::ZStr;
 use bun_http_types::Method::Method;
 
+use crate::response::Response;
 use crate::socket_context::BunSocketContextOptions;
 use crate::web_socket::c::uws_ws;
 use crate::{
-    ListenSocket as UwsListenSocket, Opcode, Request, SendStatus, WebSocketBehavior, us_socket_t,
-    uws_res,
+    AnyRequest, AnyResponse, ListenSocket as UwsListenSocket, Opcode, Request, SendStatus,
+    WebSocketBehavior, thunk, us_socket_t, uws_res,
 };
+use bun_ptr::ThisPtr;
 
 // This file provides Rust bindings for the uWebSockets App class.
 // It wraps the C API exposed in libuwsockets.cpp which provides a C interface
@@ -100,8 +102,13 @@ impl<const SSL: bool> App<SSL> {
         c::uws_app_close(Self::SSL_FLAG, self.as_raw())
     }
 
-    pub fn close_idle_connections(&mut self) {
-        c::uws_app_close_idle(Self::SSL_FLAG, self.as_raw())
+    /// Close every HTTP connection that is idle (no request being received, no
+    /// response in flight). With `close_when_idle`, connections that are busy
+    /// right now are additionally marked to close as soon as their in-flight
+    /// work completes. Never touches WebSockets or the listen socket.
+    /// Returns the number of connections closed.
+    pub fn close_idle_connections(&mut self, close_when_idle: bool) -> usize {
+        c::uws_app_close_idle(Self::SSL_FLAG, self.as_raw(), i32::from(close_when_idle))
     }
 
     pub fn create(opts: &BunSocketContextOptions) -> Option<*mut Self> {
@@ -219,6 +226,51 @@ impl<const SSL: bool> App<SSL> {
             Method::TRACE => self.trace(pattern, handler, user_data),
             _ => {}
         }
+    }
+
+    /// [`method`](Self::method) with an intrusively-refcounted `U` as the
+    /// route userdata. The registrant keeps a ref on `this` for as long as the
+    /// route is registered, so the trampoline can hand the handler a `ThisPtr`.
+    pub fn method_this<U: 'static, H>(
+        &mut self,
+        method_: Method,
+        pattern: &[u8],
+        _handler: H,
+        this: ThisPtr<U>,
+    ) where
+        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+    {
+        self.method(
+            method_,
+            pattern,
+            Some(Self::route_this_thunk::<U, H>),
+            this.as_ptr().cast(),
+        );
+    }
+
+    /// [`any`](Self::any) counterpart of [`method_this`](Self::method_this).
+    pub fn any_this<U: 'static, H>(&mut self, pattern: &[u8], _handler: H, this: ThisPtr<U>)
+    where
+        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+    {
+        self.any(
+            pattern,
+            Some(Self::route_this_thunk::<U, H>),
+            this.as_ptr().cast(),
+        );
+    }
+
+    extern "C" fn route_this_thunk<U: 'static, H>(
+        resp: *mut uws_res,
+        req: *mut Request,
+        user_data: *mut c_void,
+    ) where
+        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+    {
+        let resp = Response::<SSL>::res_to_any(resp);
+        // SAFETY: `user_data` is the `ThisPtr` registered with this thunk; the registrant holds a ref on it while the route is registered.
+        let this = unsafe { ThisPtr::new(user_data.cast::<U>()) };
+        thunk::zst::<H>()(this, AnyRequest::H1(req), resp)
     }
 
     pub fn domain(&mut self, pattern: &ZStr) {
@@ -467,7 +519,11 @@ pub mod c {
 
     unsafe extern "C" {
         pub(crate) safe fn uws_app_close(ssl: i32, app: &mut uws_app_s);
-        pub(crate) safe fn uws_app_close_idle(ssl: i32, app: &mut uws_app_s);
+        pub(crate) safe fn uws_app_close_idle(
+            ssl: i32,
+            app: &mut uws_app_s,
+            close_when_idle: i32,
+        ) -> usize;
         // safe: `&mut uws_app_s` is ABI-identical to a non-null `*mut`;
         // `handler`/`user_data` are stored opaquely (never dereferenced by the
         // C++ shim itself) — no preconditions on this call.

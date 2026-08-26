@@ -6,16 +6,7 @@ import { callerSourceOrigin } from "bun:jsc";
 import type { Matchers } from "bun:test";
 import * as esbuild from "esbuild";
 import filenamify from "filenamify";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isCI, isDebug } from "harness";
 import { tmpdir } from "os";
 import path from "path";
@@ -234,6 +225,7 @@ export interface BundlerTestInput {
   globalName?: string;
   ignoreDCEAnnotations?: boolean;
   bytecode?: boolean;
+  bytecodeDepth?: number;
   emitDCEAnnotations?: boolean;
   inject?: string[];
   jsx?: {
@@ -264,6 +256,10 @@ export interface BundlerTestInput {
   targetFromAPI?: "TargetWasConfigured";
   minifyWhitespace?: boolean;
   splitting?: boolean;
+  /** `splitRequire` (`--no-split-require` when false); on by default for target bun. */
+  splitRequire?: boolean;
+  /** `--min-chunk-size` / `minChunkSize`; requires `splitting` */
+  minChunkSize?: number;
   serverComponents?: boolean;
   reactCompiler?: boolean;
   reactCompilerOutputMode?: "client" | "ssr";
@@ -337,7 +333,7 @@ export interface BundlerTestInput {
   capture?: string[];
 
   /** Run after bundle happens but before runtime. */
-  onAfterBundle?(api: BundlerTestBundleAPI): void;
+  onAfterBundle?(api: BundlerTestBundleAPI): Promise<void> | void;
 
   /* TODO: remove this from the tests after this is implemented */
   skipIfWeDidNotImplementWildcardSideEffects?: boolean;
@@ -537,6 +533,8 @@ function expectBundled(
     snapshotSourceMap,
     sourceMap,
     splitting,
+    splitRequire,
+    minChunkSize,
     target,
     todo: notImplemented,
     treeShaking,
@@ -545,6 +543,7 @@ function expectBundled(
     useDefineForClassFields,
     ignoreDCEAnnotations,
     bytecode = false,
+    bytecodeDepth,
     emitDCEAnnotations,
     production,
     // @ts-expect-error
@@ -634,6 +633,12 @@ function expectBundled(
   }
   if (ESBUILD && _throw) {
     throw new Error("throw not implemented in esbuild");
+  }
+  if (ESBUILD && minChunkSize !== undefined) {
+    throw new Error("minChunkSize not possible in esbuild backend");
+  }
+  if (ESBUILD && splitRequire !== undefined) {
+    throw new Error("splitRequire not possible in esbuild backend");
   }
   if (ESBUILD && allowUnresolved !== undefined) {
     throw new Error("allowUnresolved not possible in esbuild backend");
@@ -815,14 +820,16 @@ function expectBundled(
               jsx.factory && ["--jsx-factory", jsx.factory],
               jsx.fragment && ["--jsx-fragment", jsx.fragment],
               jsx.importSource && ["--jsx-import-source", jsx.importSource],
-              jsx.side_effects && ["--jsx-side-effects"],
+              jsx.sideEffects && ["--jsx-side-effects"],
               dotenv && ["--env", dotenv],
-              // metafile && `--manifest=${metafile}`,
+              metafile && `--metafile=${metafile}`,
               sourceMap && `--sourcemap=${sourceMap}`,
               entryNaming && entryNaming !== "[dir]/[name].[ext]" && [`--entry-naming`, entryNaming],
               chunkNaming && chunkNaming !== "[name]-[hash].[ext]" && [`--chunk-naming`, chunkNaming],
               assetNaming && assetNaming !== "[name]-[hash].[ext]" && [`--asset-naming`, assetNaming],
               splitting && `--splitting`,
+              splitRequire === false && `--no-split-require`,
+              minChunkSize !== undefined && `--min-chunk-size=${minChunkSize}`,
               serverComponents && "--server-components",
               reactCompiler && "--react-compiler",
               outbase && `--root=${outbase}`,
@@ -839,6 +846,7 @@ function expectBundled(
               loader && Object.entries(loader).map(([k, v]) => ["--loader", `${k}:${v}`]),
               publicPath && `--public-path=${publicPath}`,
               bytecode && "--bytecode",
+              bytecodeDepth !== undefined && `--bytecode-depth=${bytecodeDepth}`,
               production && "--production",
             ]
           : [
@@ -1191,10 +1199,13 @@ function expectBundled(
           outdir: generateOutput ? buildOutDir : undefined,
           sourcemap: sourceMap,
           splitting,
+          splitRequire,
+          minChunkSize,
           target,
           reactCompiler,
           reactCompilerOutputMode,
           bytecode,
+          bytecodeDepth,
           publicPath,
           emitDCEAnnotations,
           ignoreDCEAnnotations,
@@ -1588,7 +1599,7 @@ for (const [key, blob] of build.outputs) {
     }
 
     if (onAfterBundle) {
-      onAfterBundle(api);
+      await onAfterBundle(api);
     }
 
     // check reference

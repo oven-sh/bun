@@ -36,7 +36,16 @@ pub(crate) fn view(
             'from_package_json: {
                 // `root_dir` is set once by `PackageManager::init()` and points
                 // into the resolver's directory cache for the process lifetime.
-                if !manager.root_dir.has_comptime_query(b"package.json") {
+                // `.data` probes must hold `entries_mutex` (uncontended on
+                // this single-threaded CLI path).
+                let has_package_json = {
+                    let _entries_lock = bun_resolver::fs::FileSystem::instance()
+                        .fs
+                        .entries_mutex
+                        .lock_guard();
+                    manager.root_dir.has_comptime_query(b"package.json")
+                };
+                if !has_package_json {
                     break 'from_package_json;
                 }
                 let fd = manager.root_dir.fd;
@@ -120,7 +129,6 @@ pub(crate) fn view(
         header_buf,
         b"",
         http_proxy,
-        None,
         http::FetchRedirect::Follow,
     );
     req.client.flags.reject_unauthorized = manager.tls_reject_unauthorized();
@@ -198,11 +206,7 @@ pub(crate) fn view(
                         // Parse as semver query and find best version
                         let sliced_literal = Semver::SlicedString::init(version, version);
                         let query = Semver::query::parse(version, sliced_literal)?;
-                        // `defer query.deinit()` — handled by Drop
-                        // Use the same pattern as outdated_command: findBestVersion(query.head, string_buf)
-                        if let Some(result) =
-                            parsed_manifest.find_best_version(&query, &parsed_manifest.string_buf)
-                        {
+                        if let Some(result) = parsed_manifest.find_best_version(&query, version) {
                             break 'brk2 result.version;
                         }
                     }

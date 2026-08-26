@@ -1,86 +1,74 @@
-use std::borrow::Cow;
-
-use bun_jsc::bun_string_jsc::create_utf8_for_js;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 // Shared S3 option-string ladder (get_truthy → is_string → from_js → to_utf8).
 use super::__s3_credentials_jsc::get_truthy_string_utf8;
-use bun_core::{ZigStringSlice as Utf8Slice, strings};
+use super::s3::xml_response;
+use bun_core::Utf8Bytes;
 
 pub struct S3ListObjectsOptions {
-    // Each `Utf8Slice` owns (or ref-holds) its backing storage; readers go
-    // through `.slice()`.
-    pub(crate) continuation_token: Option<Utf8Slice>,
-    pub(crate) delimiter: Option<Utf8Slice>,
-    pub(crate) encoding_type: Option<Utf8Slice>,
+    pub(crate) continuation_token: Option<Utf8Bytes<'static>>,
+    pub(crate) delimiter: Option<Utf8Bytes<'static>>,
+    pub(crate) encoding_type: Option<Utf8Bytes<'static>>,
     pub(crate) fetch_owner: Option<bool>,
     pub(crate) max_keys: Option<i64>,
-    pub(crate) prefix: Option<Utf8Slice>,
-    pub(crate) start_after: Option<Utf8Slice>,
+    pub(crate) prefix: Option<Utf8Bytes<'static>>,
+    pub(crate) start_after: Option<Utf8Bytes<'static>>,
 }
 
-// Each Utf8Slice field cleans up via Drop, so no explicit `impl Drop` is
-// needed here.
-
-// result structs borrow slices out of the input `xml: &[u8]`
-// passed to `parse_s3_list_objects_result` (they alias the request body
-// buffer). Represented with an explicit `'a` —
-// the borrow is unambiguous and any other encoding (Box / raw ptr) would
-// misrepresent ownership. The caller keeps `xml` alive for the result's
-// lifetime (result is consumed by toJS before the response body is freed).
-
-struct ObjectOwner<'a> {
-    id: Option<&'a [u8]>,
-    display_name: Option<&'a [u8]>,
+struct ObjectOwner {
+    id: Option<Box<[u8]>>,
+    display_name: Option<Box<[u8]>>,
 }
 
-pub struct S3ListObjectsContents<'a> {
-    key: &'a [u8],
-    // a maybe-owned slice.
-    etag: Option<Cow<'a, [u8]>>,
-    checksum_type: Option<&'a [u8]>,
-    checksum_algorithm: Option<&'a [u8]>,
-    last_modified: Option<&'a [u8]>,
+pub struct S3ListObjectsContents {
+    key: Box<[u8]>,
+    etag: Option<Box<[u8]>>,
+    checksum_type: Option<Box<[u8]>>,
+    checksum_algorithm: Option<Box<[u8]>>,
+    last_modified: Option<Box<[u8]>>,
     object_size: Option<i64>,
-    storage_class: Option<&'a [u8]>,
-    owner: Option<ObjectOwner<'a>>,
+    storage_class: Option<Box<[u8]>>,
+    owner: Option<ObjectOwner>,
 }
 
-pub struct S3ListObjectsV2Result<'a> {
-    pub name: Option<&'a [u8]>,
-    pub(crate) prefix: Option<&'a [u8]>,
+#[derive(Default)]
+pub struct S3ListObjectsV2Result {
+    pub name: Option<Box<[u8]>>,
+    pub(crate) prefix: Option<Box<[u8]>>,
     pub(crate) key_count: Option<i64>,
     pub(crate) max_keys: Option<i64>,
-    pub(crate) delimiter: Option<&'a [u8]>,
-    pub(crate) encoding_type: Option<&'a [u8]>,
+    pub(crate) delimiter: Option<Box<[u8]>>,
+    pub(crate) encoding_type: Option<Box<[u8]>>,
     pub(crate) is_truncated: Option<bool>,
-    pub(crate) continuation_token: Option<&'a [u8]>,
-    pub(crate) next_continuation_token: Option<&'a [u8]>,
-    pub(crate) start_after: Option<&'a [u8]>,
-    pub(crate) common_prefixes: Option<Vec<&'a [u8]>>,
-    pub(crate) contents: Option<Vec<S3ListObjectsContents<'a>>>,
+    pub(crate) continuation_token: Option<Box<[u8]>>,
+    pub(crate) next_continuation_token: Option<Box<[u8]>>,
+    pub(crate) start_after: Option<Box<[u8]>>,
+    pub(crate) common_prefixes: Option<Vec<Box<[u8]>>>,
+    pub(crate) contents: Option<Vec<S3ListObjectsContents>>,
 }
 
-// `contents` items (etag) + the two Vecs are all handled by Drop on
-// Vec / Cow; no explicit Drop impl needed.
-
-impl<'a> S3ListObjectsV2Result<'a> {
+impl S3ListObjectsV2Result {
     pub(crate) fn to_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let js_result = JSValue::create_empty_object(global_object, 0);
 
-        js_result.put_optional_utf8(global_object, b"name", self.name)?;
-        js_result.put_optional_utf8(global_object, b"prefix", self.prefix)?;
-        js_result.put_optional_utf8(global_object, b"delimiter", self.delimiter)?;
-        js_result.put_optional_utf8(global_object, b"startAfter", self.start_after)?;
-        js_result.put_optional_utf8(global_object, b"encodingType", self.encoding_type)?;
+        js_result.put_optional_utf8(global_object, b"name", self.name.as_deref())?;
+        js_result.put_optional_utf8(global_object, b"prefix", self.prefix.as_deref())?;
+        js_result.put_optional_utf8(global_object, b"delimiter", self.delimiter.as_deref())?;
+        js_result.put_optional_utf8(global_object, b"startAfter", self.start_after.as_deref())?;
+        js_result.put_optional_utf8(
+            global_object,
+            b"encodingType",
+            self.encoding_type.as_deref(),
+        )?;
         js_result.put_optional_utf8(
             global_object,
             b"continuationToken",
-            self.continuation_token,
+            self.continuation_token.as_deref(),
         )?;
         js_result.put_optional_utf8(
             global_object,
             b"nextContinuationToken",
-            self.next_continuation_token,
+            self.next_continuation_token.as_deref(),
         )?;
         js_result.put_optional(global_object, b"isTruncated", self.is_truncated);
         js_result.put_optional(global_object, b"keyCount", self.key_count.map(|n| n as f64));
@@ -94,12 +82,13 @@ impl<'a> S3ListObjectsV2Result<'a> {
                 object_info.put(
                     global_object,
                     b"key",
-                    create_utf8_for_js(global_object, item.key)?,
+                    bun_string_jsc::create_utf8_for_js(global_object, &item.key)?,
                 );
 
                 object_info.put_optional_utf8(global_object, b"eTag", item.etag.as_deref())?;
-                if let Some(algorithm) = item.checksum_algorithm {
-                    let js_algorithm = create_utf8_for_js(global_object, algorithm)?;
+                if let Some(algorithm) = item.checksum_algorithm.as_deref() {
+                    let js_algorithm =
+                        bun_string_jsc::create_utf8_for_js(global_object, algorithm)?;
                     object_info.put(global_object, b"checksumAlgorithm", js_algorithm);
                     // Back-compat alias for the original misspelling (#19142).
                     object_info.put_non_enumerable(
@@ -111,12 +100,12 @@ impl<'a> S3ListObjectsV2Result<'a> {
                 object_info.put_optional_utf8(
                     global_object,
                     b"checksumType",
-                    item.checksum_type,
+                    item.checksum_type.as_deref(),
                 )?;
                 object_info.put_optional_utf8(
                     global_object,
                     b"lastModified",
-                    item.last_modified,
+                    item.last_modified.as_deref(),
                 )?;
                 object_info.put_optional(
                     global_object,
@@ -126,16 +115,16 @@ impl<'a> S3ListObjectsV2Result<'a> {
                 object_info.put_optional_utf8(
                     global_object,
                     b"storageClass",
-                    item.storage_class,
+                    item.storage_class.as_deref(),
                 )?;
 
                 if let Some(owner) = &item.owner {
                     let js_owner = JSValue::create_empty_object(global_object, 0);
-                    js_owner.put_optional_utf8(global_object, b"id", owner.id)?;
+                    js_owner.put_optional_utf8(global_object, b"id", owner.id.as_deref())?;
                     js_owner.put_optional_utf8(
                         global_object,
                         b"displayName",
-                        owner.display_name,
+                        owner.display_name.as_deref(),
                     )?;
                     object_info.put(global_object, b"owner", js_owner);
                 }
@@ -159,7 +148,7 @@ impl<'a> S3ListObjectsV2Result<'a> {
                 js_prefix.put(
                     global_object,
                     b"prefix",
-                    create_utf8_for_js(global_object, prefix)?,
+                    bun_string_jsc::create_utf8_for_js(global_object, prefix)?,
                 );
                 js_common_prefixes.put_index(
                     global_object,
@@ -175,354 +164,56 @@ impl<'a> S3ListObjectsV2Result<'a> {
     }
 }
 
-// Infallible: the only fallible operations are allocations
-// (Vec::push / alloc), which abort on OOM.
-pub(crate) fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
-    let mut result = S3ListObjectsV2Result {
-        contents: None,
-        common_prefixes: None,
-        continuation_token: None,
-        delimiter: None,
-        encoding_type: None,
-        is_truncated: None,
-        key_count: None,
-        max_keys: None,
-        name: None,
-        next_continuation_token: None,
-        prefix: None,
-        start_after: None,
-    };
-
-    let mut contents: Vec<S3ListObjectsContents<'_>> = Vec::new();
-    let mut common_prefixes: Vec<&[u8]> = Vec::new();
-
-    // we dont use trailing ">" as it may finish with xmlns=...
-    if let Some(delete_result_pos) = strings::index_of(xml, b"<ListBucketResult") {
-        let mut i: usize = 0;
-        while i < xml[delete_result_pos..].len() {
-            if xml[i] != b'<' {
-                i += 1;
-                continue;
-            }
-
-            if let Some(end) = strings::index_of(&xml[i + 1..], b">") {
-                i += 1;
-                let tag_name_end_pos = i + end; // +1 for <
-
-                let tag_name = &xml[i..tag_name_end_pos];
-                i = tag_name_end_pos + 1; // +1 for >
-
-                if tag_name == b"Contents" {
-                    let mut looking_for_end_tag = true;
-
-                    let mut object_key: Option<&[u8]> = None;
-                    let mut last_modified: Option<&[u8]> = None;
-                    let mut object_size: Option<i64> = None;
-                    let mut storage_class: Option<&[u8]> = None;
-                    let mut etag: Option<&[u8]> = None;
-                    let mut etag_owned: Option<Vec<u8>> = None;
-                    let mut checksum_type: Option<&[u8]> = None;
-                    let mut checksum_algorithm: Option<&[u8]> = None;
-                    let mut owner_id: Option<&[u8]> = None;
-                    let mut owner_display_name: Option<&[u8]> = None;
-
-                    while looking_for_end_tag {
-                        if i >= xml.len() {
-                            break;
-                        }
-
-                        if xml[i] == b'<' {
-                            if let Some(__end) = strings::index_of(&xml[i + 1..], b">") {
-                                let inner_tag_name_or_tag_end = &xml[i + 1..i + 1 + __end];
-
-                                i = i + 2 + __end;
-
-                                if inner_tag_name_or_tag_end == b"/Contents" {
-                                    looking_for_end_tag = false;
-                                } else if inner_tag_name_or_tag_end == b"Key" {
-                                    if let Some(__tag_end) = strings::index_of(&xml[i..], b"</Key>")
-                                    {
-                                        object_key = Some(&xml[i..i + __tag_end]);
-                                        i = i + __tag_end + 6;
-                                    } else {
-                                        i = xml.len();
-                                    }
-                                } else if inner_tag_name_or_tag_end == b"LastModified" {
-                                    if let Some(__tag_end) =
-                                        strings::index_of(&xml[i..], b"</LastModified>")
-                                    {
-                                        last_modified = Some(&xml[i..i + __tag_end]);
-                                        i = i + __tag_end + 15;
-                                    } else {
-                                        i = xml.len();
-                                    }
-                                } else if inner_tag_name_or_tag_end == b"Size" {
-                                    if let Some(__tag_end) =
-                                        strings::index_of(&xml[i..], b"</Size>")
-                                    {
-                                        let size = &xml[i..i + __tag_end];
-
-                                        object_size = bun_core::fmt::parse_decimal::<i64>(size);
-                                        i = i + __tag_end + 7;
-                                    } else {
-                                        i = xml.len();
-                                    }
-                                } else if inner_tag_name_or_tag_end == b"StorageClass" {
-                                    if let Some(__tag_end) =
-                                        strings::index_of(&xml[i..], b"</StorageClass>")
-                                    {
-                                        storage_class = Some(&xml[i..i + __tag_end]);
-                                        i = i + __tag_end + 15;
-                                    } else {
-                                        i = xml.len();
-                                    }
-                                } else if inner_tag_name_or_tag_end == b"ChecksumType" {
-                                    if let Some(__tag_end) =
-                                        strings::index_of(&xml[i..], b"</ChecksumType>")
-                                    {
-                                        checksum_type = Some(&xml[i..i + __tag_end]);
-                                        i = i + __tag_end + 15;
-                                    } else {
-                                        i = xml.len();
-                                    }
-                                } else if inner_tag_name_or_tag_end == b"ChecksumAlgorithm" {
-                                    if let Some(__tag_end) =
-                                        strings::index_of(&xml[i..], b"</ChecksumAlgorithm>")
-                                    {
-                                        checksum_algorithm = Some(&xml[i..i + __tag_end]);
-                                        i = i + __tag_end + 20;
-                                    } else {
-                                        i = xml.len();
-                                    }
-                                } else if inner_tag_name_or_tag_end == b"ETag" {
-                                    if let Some(__tag_end) =
-                                        strings::index_of(&xml[i..], b"</ETag>")
-                                    {
-                                        let input = &xml[i..i + __tag_end];
-
-                                        // unescape "&quot;" → "\""
-                                        let output =
-                                            strings::replace_owned(input, b"&quot;", b"\"");
-                                        if output.len() != input.len() {
-                                            etag_owned = Some(output);
-                                            etag = None; // sentinel: owned path uses etag_owned
-                                        } else {
-                                            etag = Some(input);
-                                        }
-
-                                        i = i + __tag_end + 7;
-                                    } else {
-                                        i = xml.len();
-                                    }
-                                } else if inner_tag_name_or_tag_end == b"Owner" {
-                                    if let Some(__tag_end) =
-                                        strings::index_of(&xml[i..], b"</Owner>")
-                                    {
-                                        let owner = &xml[i..i + __tag_end];
-                                        i = i + __tag_end + 8;
-
-                                        if let Some(id_start) = strings::index_of(owner, b"<ID>") {
-                                            let id_start_pos = id_start + 4;
-                                            if let Some(id_end) = strings::index_of(owner, b"</ID>")
-                                            {
-                                                let is_not_empty = id_start_pos < id_end;
-                                                if is_not_empty {
-                                                    owner_id = Some(&owner[id_start_pos..id_end]);
-                                                }
-                                            }
-                                        }
-
-                                        if let Some(id_start) =
-                                            strings::index_of(owner, b"<DisplayName>")
-                                        {
-                                            let id_start_pos = id_start + 13;
-                                            if let Some(id_end) =
-                                                strings::index_of(owner, b"</DisplayName>")
-                                            {
-                                                let is_not_empty = id_start_pos < id_end;
-                                                if is_not_empty {
-                                                    owner_display_name =
-                                                        Some(&owner[id_start_pos..id_end]);
-                                                }
-                                            }
-                                        }
-                                    } else {
-                                        i = xml.len();
-                                    }
-                                } else if inner_tag_name_or_tag_end == b"RestoreStatus" {
-                                    if let Some(__tag_end) =
-                                        strings::index_of(&xml[i..], b"</RestoreStatus>")
-                                    {
-                                        i = i + __tag_end + 16;
-                                    } else {
-                                        i = xml.len();
-                                    }
-                                }
-                            } else {
-                                i = xml.len();
-                            }
-                        } else {
-                            // char is not <
-                            i += 1;
-                        }
-                    }
-
-                    if let Some(object_key_val) = object_key {
-                        let mut owner: Option<ObjectOwner<'_>> = None;
-
-                        if owner_id.is_some() || owner_display_name.is_some() {
-                            owner = Some(ObjectOwner {
-                                id: owner_id,
-                                display_name: owner_display_name,
-                            });
-                        }
-
-                        contents.push(S3ListObjectsContents {
-                            key: object_key_val,
-                            etag: match (etag_owned, etag) {
-                                (Some(owned), _) => Some(Cow::Owned(owned)),
-                                (None, Some(borrowed)) => Some(Cow::Borrowed(borrowed)),
-                                (None, None) => None,
-                            },
-                            checksum_type,
-                            checksum_algorithm,
-                            last_modified,
-                            object_size,
-                            storage_class,
-                            owner,
-                        });
-                    }
-                } else if tag_name == b"Name" {
-                    if let Some(_end) = strings::index_of(&xml[i..], b"</Name>") {
-                        result.name = Some(&xml[i..i + _end]);
-                        i += _end;
-                    } else {
-                        break;
-                    }
-                } else if tag_name == b"Delimiter" {
-                    if let Some(_end) = strings::index_of(&xml[i..], b"</Delimiter>") {
-                        result.delimiter = Some(&xml[i..i + _end]);
-                        i += _end;
-                    } else {
-                        break;
-                    }
-                } else if tag_name == b"NextContinuationToken" {
-                    if let Some(_end) = strings::index_of(&xml[i..], b"</NextContinuationToken>") {
-                        result.next_continuation_token = Some(&xml[i..i + _end]);
-                        i += _end;
-                    } else {
-                        break;
-                    }
-                } else if tag_name == b"ContinuationToken" {
-                    if let Some(_end) = strings::index_of(&xml[i..], b"</ContinuationToken>") {
-                        result.continuation_token = Some(&xml[i..i + _end]);
-                        i += _end;
-                    } else {
-                        break;
-                    }
-                } else if tag_name == b"StartAfter" {
-                    if let Some(_end) = strings::index_of(&xml[i..], b"</StartAfter>") {
-                        result.start_after = Some(&xml[i..i + _end]);
-                        i += _end;
-                    } else {
-                        break;
-                    }
-                } else if tag_name == b"EncodingType" {
-                    if let Some(_end) = strings::index_of(&xml[i..], b"</EncodingType>") {
-                        result.encoding_type = Some(&xml[i..i + _end]);
-                        i += _end;
-                    } else {
-                        break;
-                    }
-                } else if tag_name == b"KeyCount" {
-                    if let Some(_end) = strings::index_of(&xml[i..], b"</KeyCount>") {
-                        let key_count = &xml[i..i + _end];
-                        result.key_count = bun_core::fmt::parse_decimal::<i64>(key_count);
-
-                        i += _end;
-                    } else {
-                        break;
-                    }
-                } else if tag_name == b"MaxKeys" {
-                    if let Some(_end) = strings::index_of(&xml[i..], b"</MaxKeys>") {
-                        let max_keys = &xml[i..i + _end];
-                        result.max_keys = bun_core::fmt::parse_decimal::<i64>(max_keys);
-
-                        i += _end;
-                    } else {
-                        break;
-                    }
-                } else if tag_name == b"Prefix" {
-                    if let Some(_end) = strings::index_of(&xml[i..], b"</Prefix>") {
-                        let prefix = &xml[i..i + _end];
-
-                        if !prefix.is_empty() {
-                            result.prefix = Some(prefix);
-                        }
-
-                        i += _end;
-                    } else {
-                        break;
-                    }
-                } else if tag_name == b"IsTruncated" {
-                    if let Some(_end) = strings::index_of(&xml[i..], b"</IsTruncated>") {
-                        let is_truncated = &xml[i..i + _end];
-
-                        if is_truncated == b"true" {
-                            result.is_truncated = Some(true);
-                        } else if is_truncated == b"false" {
-                            result.is_truncated = Some(false);
-                        }
-
-                        i += _end;
-                    } else {
-                        break;
-                    }
-                } else if tag_name == b"CommonPrefixes" {
-                    if let Some(_end) = strings::index_of(&xml[i..], b"</CommonPrefixes>") {
-                        let common_prefixes_string = &xml[i..i + _end];
-                        i += _end;
-
-                        let mut j: usize = 0;
-                        while j < common_prefixes_string.len() {
-                            if let Some(start) =
-                                strings::index_of(&common_prefixes_string[j..], b"<Prefix>")
-                            {
-                                j = j + start + 8;
-
-                                if let Some(__end) =
-                                    strings::index_of(&common_prefixes_string[j..], b"</Prefix>")
-                                {
-                                    common_prefixes.push(&common_prefixes_string[j..j + __end]);
-                                    j += __end;
-                                } else {
-                                    break;
-                                }
-                            } else {
-                                break;
-                            }
-                        }
-                    } else {
-                        break;
-                    }
-                }
-            } else {
-                break;
-            }
+/// Reads a `ListObjectsV2` response body; `None` unless it is a well-formed
+/// `<ListBucketResult>` document.
+pub(crate) fn parse_s3_list_objects_result(body: &[u8]) -> Option<S3ListObjectsV2Result> {
+    xml_response::parse(body, |root| {
+        if root.name != b"ListBucketResult" {
+            return None;
         }
-
-        if !contents.is_empty() {
-            result.contents = Some(contents);
-        }
-        // else branch: Vec drops itself
-
-        if !common_prefixes.is_empty() {
-            result.common_prefixes = Some(common_prefixes);
-        }
-        // else branch: Vec drops itself
-    }
-
-    result
+        // Every `<Contents>` names a key, or the listing is not one.
+        let contents: Vec<S3ListObjectsContents> = root
+            .children(b"Contents")
+            .map(|object| {
+                Some(S3ListObjectsContents {
+                    key: object.child_text(b"Key")?,
+                    etag: object.child_text(b"ETag"),
+                    checksum_type: object.child_text(b"ChecksumType"),
+                    checksum_algorithm: object.child_text(b"ChecksumAlgorithm"),
+                    last_modified: object.child_text(b"LastModified"),
+                    object_size: object.child_i64(b"Size"),
+                    storage_class: object.child_text(b"StorageClass"),
+                    owner: object.child(b"Owner").and_then(|owner| {
+                        let id = owner.child_nonempty_text(b"ID");
+                        let display_name = owner.child_nonempty_text(b"DisplayName");
+                        (id.is_some() || display_name.is_some())
+                            .then_some(ObjectOwner { id, display_name })
+                    }),
+                })
+            })
+            .collect::<Option<_>>()?;
+        let common_prefixes: Vec<Box<[u8]>> = root
+            .children(b"CommonPrefixes")
+            .flat_map(|entry| entry.children(b"Prefix"))
+            .filter_map(xml_response::Node::text)
+            .filter(|prefix| !prefix.is_empty())
+            .collect();
+        Some(S3ListObjectsV2Result {
+            name: root.child_text(b"Name"),
+            prefix: root.child_nonempty_text(b"Prefix"),
+            key_count: root.child_i64(b"KeyCount"),
+            max_keys: root.child_i64(b"MaxKeys"),
+            delimiter: root.child_text(b"Delimiter"),
+            encoding_type: root.child_text(b"EncodingType"),
+            is_truncated: root.child_bool(b"IsTruncated"),
+            continuation_token: root.child_text(b"ContinuationToken"),
+            next_continuation_token: root.child_text(b"NextContinuationToken"),
+            start_after: root.child_text(b"StartAfter"),
+            common_prefixes: (!common_prefixes.is_empty()).then_some(common_prefixes),
+            contents: (!contents.is_empty()).then_some(contents),
+        })
+    })
+    .flatten()
 }
 
 pub(crate) fn get_list_objects_options_from_js(

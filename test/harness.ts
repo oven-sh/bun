@@ -20,7 +20,9 @@ export const BREAKING_CHANGES_BUN_1_2 = false;
 export const isMacOS = process.platform === "darwin";
 export const isLinux = process.platform === "linux";
 export const isFreeBSD = process.platform === "freebsd";
-export const isPosix = isMacOS || isLinux || isFreeBSD;
+/** Bun (like Node) reports `"android"` on Android; it is not folded into `isLinux`. */
+export const isAndroid = process.platform === "android";
+export const isPosix = isMacOS || isLinux || isFreeBSD || isAndroid;
 export const isWindows = process.platform === "win32";
 export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isArm64 = process.arch === "arm64";
@@ -335,6 +337,35 @@ export async function runFixtureMaxRSS(fixture: string, expected: unknown) {
   expect(maxRSS).toBeGreaterThan(1024 * 1024);
   return maxRSS;
 }
+
+/**
+ * Runs `cmd` (a script that prints `{"deltaMiB": number}` as its last stdout
+ * line) under bun with ASAN quarantine disabled, and asserts the delta is below
+ * `release` MiB (or `debug` MiB under ASAN/debug builds).
+ */
+export async function expectRssDeltaBelow(
+  cmd: string[] /* args after bunExe(), e.g. ["--smol", "-e", code] or [fixturePath] */,
+  bounds: { release: number; debug: number },
+): Promise<void> {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...cmd],
+    env: {
+      ...bunEnv,
+      // ASAN's quarantine pins freed blocks and keeps RSS at peak.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+        .filter(Boolean)
+        .join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr.trim()).toBe("");
+  const { deltaMiB } = JSON.parse(stdout.trim().split("\n").at(-1)!);
+  expect(deltaMiB).toBeLessThan(isASAN || isDebug ? bounds.debug : bounds.release);
+  expect(exitCode).toBe(0);
+}
+
 let emptyBunMaxRSS: Promise<number> | undefined;
 export function emptyProcessMaxRSS() {
   return (emptyBunMaxRSS ??= (async () => {
@@ -1171,6 +1202,7 @@ export async function describeWithContainer(
     "mysql_plain": 3306,
     "mysql_native_password": 3306,
     "mysql_tls": 3306,
+    "mariadb_plain": 3306,
     "mysql:8": 3306, // Map mysql:8 to mysql_plain
     "mysql:9": 3306, // Map mysql:9 to mysql_native_password
     "redis_plain": 6379,
@@ -1842,8 +1874,12 @@ export function libcPathForDlopen() {
       }
     case "darwin":
       return "libc.dylib";
+    case "android":
+      return "libc.so";
+    case "freebsd":
+      return "libc.so.7";
     default:
-      throw new Error("TODO");
+      throw new Error(`libcPathForDlopen: unsupported platform ${process.platform}`);
   }
 }
 

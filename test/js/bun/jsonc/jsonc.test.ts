@@ -140,6 +140,22 @@ test("Bun.JSONC.parse throws a SyntaxError on invalid input", () => {
   }
 });
 
+test("Bun.JSONC.parse throws on undefined and null input", () => {
+  expect(() => Bun.JSONC.parse(undefined as any)).toThrow("Expected a string to parse");
+  expect(() => (Bun.JSONC.parse as any)()).toThrow("Expected a string to parse");
+  expect(() => Bun.JSONC.parse(null as any)).toThrow("Expected a string to parse");
+});
+
+test("Bun.JSONC.parse stringifies non-string input like JSON.parse does", () => {
+  expect(Bun.JSONC.parse(42 as any)).toBe(42);
+  expect(Bun.JSONC.parse({ toString: () => "[1, 2,] // ok" } as any)).toEqual([1, 2]);
+  // A Buffer stringifies to its text; a Blob stringifies to "[object Blob]"
+  // rather than being read as bytes (unlike Bun.TOML.parse and friends).
+  expect(Bun.JSONC.parse(Buffer.from('{"a": 1, /* c */}') as any)).toEqual({ a: 1 });
+  expect(() => Bun.JSONC.parse(new Blob(['{"a": 1}']) as any)).toThrow(SyntaxError);
+  expect(() => JSON.parse(new Blob(['{"a": 1}']) as any)).toThrow(SyntaxError);
+});
+
 test("Bun.JSONC.parse SyntaxError names the actual error, not a preceding warning", () => {
   let thrown: unknown;
   try {
@@ -390,6 +406,17 @@ test("Bun.JSONC.parse throws on documents that only parse with error recovery", 
     expect(() => Bun.JSONC.parse(doc), doc).toThrow();
     expect(() => JSON.parse(doc), doc).toThrow();
   }
+});
+
+test("Bun.JSONC.parse builds objects the way JSON.parse does: index keys first, __proto__ own, keys of every kind", () => {
+  const doc = `{"b":1,"0":2,"a":3,"__proto__":{"x":1},"ünï":4,"${"k".repeat(40)}":5,"1":6,"":7,"s":"","t":"x","u":"${"y".repeat(40)}","v":"ünï"}`;
+  const parsed = Bun.JSONC.parse(doc) as any;
+  const reference = JSON.parse(doc);
+  expect(parsed).toEqual(reference);
+  expect(Object.keys(parsed)).toEqual(Object.keys(reference));
+  expect(Object.getPrototypeOf(parsed)).toBe(Object.prototype);
+  expect(Object.hasOwn(parsed, "__proto__")).toBe(true);
+  expect(Bun.JSONC.parse(`[[],[1,"a",{}],[[["deep"]]]]`)).toEqual([[], [1, "a", {}], [[["deep"]]]]);
 });
 
 describe("structural index window seams", () => {

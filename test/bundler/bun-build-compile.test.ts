@@ -35,6 +35,96 @@ describe("Bun.build compile", () => {
     expect(exists).toBe(true);
   });
 
+  // The executable's embedded bytecode is mapped for the life of the process, so decoded instruction streams alias it
+  // instead of being copied into private memory. Same binary with the aliasing switched off is the control.
+  test.skipIf(!isLinux)(
+    "bytecode from a compiled executable is not copied into private memory",
+    async () => {
+      const body = Array.from(
+        { length: 24 },
+        (_, j) => `s = (s * ${j + 3} + a) ^ (b + ${j}); if (s & ${1 << j % 20}) s = s - ${j} | 0; o.p${j} = s;`,
+      ).join(" ");
+      const functions = Array.from(
+        { length: 4000 },
+        (_, i) => `export function f${i}(a, b) { let s = ${i}; const o = {}; ${body} return [s, ${i}, o]; }`,
+      ).join("\n");
+      using dir = tempDir("build-compile-bytecode-rss", {
+        "funcs.js": functions,
+        "app.js": `import * as m from "./funcs.js";
+let n = 0;
+for (const k in m) n += m[k](2, 3)[1] & 1;
+const smaps = require("fs").readFileSync("/proc/self/smaps_rollup", "utf8");
+const anon = Number(/Anonymous: +([0-9]+) kB/.exec(smaps)[1]);
+console.log(JSON.stringify({ n, anonKB: anon }));`,
+      });
+      const outfile = join(dir + "", "app");
+      const result = await Bun.build({
+        entrypoints: [join(dir + "", "app.js")],
+        compile: { outfile },
+        bytecode: true,
+        format: "esm",
+        target: "bun",
+      });
+      expect(result.success).toBe(true);
+
+      const run = async (extraEnv: Record<string, string>) => {
+        await using proc = Bun.spawn({
+          cmd: [outfile],
+          env: { ...bunEnv, ...extraEnv },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout).toContain("anonKB");
+        expect(exitCode).toBe(0);
+        return JSON.parse(stdout.trim()) as { n: number; anonKB: number };
+      };
+      const aliased = await run({});
+      const copied = await run({ BUN_JSC_useBorrowedBytecodeFromCache: "0" });
+      expect(aliased.n).toBe(2000);
+      expect(copied.n).toBe(2000);
+      // 4000 decoded functions carry ~11 MB of instruction stream + expression info; copied, that is anonymous memory the aliasing run never allocates.
+      expect(copied.anonKB - aliased.anonKB).toBeGreaterThan(4096);
+    },
+    60_000,
+  );
+
+  test.each([false, true])(
+    "--bytecode=%p: internal modules the app imports come from embedded bytecode",
+    async bytecode => {
+      using dir = tempDir("build-compile-builtin-bytecode", {
+        "app.js": `import { join } from "node:path";
+import http from "node:http";
+import { internalModulesLoadedFromBytecode } from "bun:internal-for-testing";
+const server = http.createServer(() => {});
+console.log(JSON.stringify({ joined: join("a", "b"), fromBytecode: internalModulesLoadedFromBytecode() }));
+server.close();`,
+      });
+      const outfile = join(dir + "", "app");
+      const result = await Bun.build({
+        entrypoints: [join(dir + "", "app.js")],
+        compile: { outfile },
+        bytecode,
+        format: "esm",
+        target: "bun",
+      });
+      expect(result.success).toBe(true);
+      await using proc = Bun.spawn({ cmd: [outfile], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const { joined, fromBytecode } = JSON.parse(stdout.trim());
+      expect(joined).toBe(join("a", "b"));
+      if (bytecode) {
+        // node:path, node:http and what they require at load (node:net, node:events, the stream internals, ...).
+        expect(fromBytecode).toBeGreaterThan(10);
+      } else {
+        expect(fromBytecode).toBe(0);
+      }
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test("compile with invalid target fails gracefully", async () => {
     using dir = tempDir("build-compile-invalid", {
       "index.js": `console.log("test");`,
@@ -50,41 +140,27 @@ describe("Bun.build compile", () => {
       }),
     ).toThrowErrorMatchingInlineSnapshot(`"Unknown compile target: bun-invalid-platform"`);
   });
-  test("compile with relative outfile paths", async () => {
-    using dir = tempDir("build-compile-relative-paths", {
-      "app.js": `console.log("Testing relative paths");`,
-    });
 
-    // Test 1: Nested forward slash path
-    const result1 = await Bun.build({
-      entrypoints: [join(dir + "", "app.js")],
-      compile: {
-        outfile: join(dir + "", "output/nested/app1"),
-      },
-    });
-    expect(result1.success).toBe(true);
-    expect(result1.outputs[0].path).toContain(join("output", "nested", isWindows ? "app1.exe" : "app1"));
+  // One compile per test: each compile copies the whole bun binary (~1 GB under debug+ASAN),
+  // which by itself takes a good part of the default per-test timeout.
+  test.each(["output/nested/app1", "app2", "a/b/c/d/app3"])(
+    "compile writes the executable to outfile %s",
+    async relativeOutfile => {
+      using dir = tempDir("build-compile-outfile", {
+        "app.js": `console.log("Testing outfile paths");`,
+      });
+      const outfile = join(String(dir), relativeOutfile);
 
-    // Test 2: Current directory relative path
-    const result2 = await Bun.build({
-      entrypoints: [join(dir + "", "app.js")],
-      compile: {
-        outfile: join(dir + "", "app2"),
-      },
-    });
-    expect(result2.success).toBe(true);
-    expect(result2.outputs[0].path).toEndWith(isWindows ? "app2.exe" : "app2");
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "app.js")],
+        compile: { outfile },
+      });
 
-    // Test 3: Deeply nested path
-    const result3 = await Bun.build({
-      entrypoints: [join(dir + "", "app.js")],
-      compile: {
-        outfile: join(dir + "", "a/b/c/d/app3"),
-      },
-    });
-    expect(result3.success).toBe(true);
-    expect(result3.outputs[0].path).toContain(join("a", "b", "c", "d", isWindows ? "app3.exe" : "app3"));
-  });
+      expect(result.success).toBe(true);
+      expect(result.outputs.map(output => output.path)).toEqual([isWindows ? `${outfile}.exe` : outfile]);
+      expect(await Bun.file(result.outputs[0].path).exists()).toBe(true);
+    },
+  );
 
   test("compile with embedded resources uses correct module prefix", async () => {
     using dir = tempDir("build-compile-embedded-resources", {
@@ -772,10 +848,8 @@ describe("compiled binary in a deleted cwd", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      // The entry never runs (VM init aborts first), the ENOENT surfaces, and the
-      // process exits 1 — a crash would terminate via a signal, never exit 1.
       expect(stdout).toBe("");
-      expect(stderr).toContain("ENOENT");
+      expect(stderr).toContain("The current working directory was deleted");
       expect(exitCode).toBe(1);
     },
     60_000,

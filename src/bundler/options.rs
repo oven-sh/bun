@@ -359,9 +359,12 @@ impl LoaderExt for Loader {
         match self {
             Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx => MimeType::JAVASCRIPT,
             Loader::Css => MimeType::CSS,
-            Loader::Toml | Loader::Yaml | Loader::Json | Loader::Jsonc | Loader::Json5 => {
-                MimeType::JSON
-            }
+            Loader::Toml
+            | Loader::Yaml
+            | Loader::Json
+            | Loader::Jsonc
+            | Loader::Json5
+            | Loader::Xml => MimeType::JSON,
             Loader::Wasm => MimeType::WASM,
             Loader::Html | Loader::Md => MimeType::HTML,
             _ => {
@@ -517,7 +520,7 @@ pub fn get_loader_and_virtual_source<'a>(
 
             // "file:" loader makes no sense for blobs
             // so let's default to tsx.
-            if let Some(filename) = jsc_vm.blob_file_name(blob) {
+            if let Some(filename) = jsc_vm.blob_store_path(blob) {
                 let current_path = Fs::Path::init(filename);
 
                 // Only treat it as a file if is a Bun.file()
@@ -600,6 +603,7 @@ const DEFAULT_LOADERS_POSIX: &[(&[u8], Loader)] = &[
     (b".html", Loader::Html),
     (b".jsonc", Loader::Jsonc),
     (b".json5", Loader::Json5),
+    (b".xml", Loader::Xml),
     (b".md", Loader::Md),
     (b".markdown", Loader::Md),
 ];
@@ -611,7 +615,7 @@ const DEFAULT_LOADERS_WIN32_EXTRA: &[(&[u8], Loader)] = &[(b".sh", Loader::Bunsh
 ///
 /// PERF: deliberately not a hashed map (the old `phf::Map` SipHash-ed the full
 /// key, probed a displacement table, and finished with a memcmp on every
-/// lookup). With only 22 keys bucketing into 5 distinct lengths
+/// lookup). With only 23 keys bucketing into 5 distinct lengths
 /// (3/4/5/6/9, all `.`-prefixed), a length-gated `match` is cheaper: one
 /// `usize` compare rejects every wrong-length probe, and within each bucket
 /// rustc lowers the fixed-width byte-slice arms to single u32/u64 compares (no
@@ -651,6 +655,7 @@ impl DefaultLoaders {
                 b".cts" => Some(&Loader::Ts),
                 b".css" => Some(&Loader::Css),
                 b".yml" => Some(&Loader::Yaml),
+                b".xml" => Some(&Loader::Xml),
                 b".txt" => Some(&Loader::Text),
                 _ => None,
             },
@@ -1248,6 +1253,10 @@ pub struct BundleOptions<'a> {
     pub tree_shaking: bool,
     pub tree_shaking_override: Option<bool>,
     pub code_splitting: bool,
+    /// With `code_splitting`, target bun: `require()` of a bundled ESM file
+    /// becomes a chunk of its own, loaded synchronously at the call. On by
+    /// default; `--no-split-require` / `splitRequire: false` opts out.
+    pub split_require: bool,
     pub source_map: SourceMapOption,
     pub packages: PackagesOption,
 
@@ -1276,10 +1285,19 @@ pub struct BundleOptions<'a> {
     /// captures the last expression in { value: expr } for result extraction.
     pub repl_mode: bool,
     pub css_chunking: bool,
+    /// Code splitting: also fold side-effect-free chunks whose source is
+    /// smaller than this many bytes into a chunk more entry points load.
+    /// 0 disables that; chunks with identical load conditions always fold.
+    pub min_chunk_size: u64,
 
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
     pub bytecode: bool,
+    /// How many levels of nested functions get bytecode (`u32::MAX` = all; 0 = only each module's top level).
+    pub bytecode_depth: u32,
+    /// `--compile --bytecode` for another platform: the executable's internal-module sources (and their bytecode) are that
+    /// platform's, not this one's, so don't embed bytecode generated from ours.
+    pub compile_target_is_host: bool,
 
     pub code_coverage: bool,
     pub debugger: bool,
@@ -1353,6 +1371,14 @@ impl<'a> BundleOptions<'a> {
         if self.force_node_env == ForceNodeEnv::Unspecified {
             self.production = value;
             self.jsx.development = !value;
+        }
+    }
+
+    pub(crate) fn forced_jsx_development(&self) -> bool {
+        match self.force_node_env {
+            ForceNodeEnv::Development => true,
+            ForceNodeEnv::Production => false,
+            ForceNodeEnv::Unspecified => self.jsx.development,
         }
     }
 
@@ -1444,6 +1470,7 @@ impl<'a> BundleOptions<'a> {
             tree_shaking: self.tree_shaking,
             tree_shaking_override: self.tree_shaking_override,
             code_splitting: self.code_splitting,
+            split_require: self.split_require,
             source_map: self.source_map,
             packages: self.packages,
             disable_transpilation: self.disable_transpilation,
@@ -1459,9 +1486,12 @@ impl<'a> BundleOptions<'a> {
             dead_code_elimination: self.dead_code_elimination,
             repl_mode: self.repl_mode,
             css_chunking: self.css_chunking,
+            min_chunk_size: self.min_chunk_size,
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
             bytecode: self.bytecode,
+            bytecode_depth: self.bytecode_depth,
+            compile_target_is_host: self.compile_target_is_host,
             code_coverage: self.code_coverage,
             debugger: self.debugger,
             compile_mode: self.compile_mode,
@@ -1637,6 +1667,7 @@ impl<'a> BundleOptions<'a> {
             env: Env::default(),
             transform_options: std::sync::Arc::clone(&transform),
             css_chunking: false,
+            min_chunk_size: 0,
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,
 
@@ -1689,6 +1720,7 @@ impl<'a> BundleOptions<'a> {
             tree_shaking: false,
             tree_shaking_override: None,
             code_splitting: false,
+            split_require: true,
             source_map: SourceMapOption::None,
             packages: PackagesOption::Bundle,
             disable_transpilation: false,
@@ -1706,6 +1738,8 @@ impl<'a> BundleOptions<'a> {
             ignore_dce_annotations: false,
             emit_dce_annotations: false,
             bytecode: false,
+            bytecode_depth: u32::MAX,
+            compile_target_is_host: true,
             code_coverage: false,
             debugger: false,
             compile_mode: CompileMode::None,
@@ -1749,7 +1783,7 @@ impl<'a> BundleOptions<'a> {
         }
 
         if let Some(jsx_opts) = &transform.jsx {
-            opts.jsx = jsx::Pragma::from_api(jsx_opts.clone())?;
+            opts.jsx = jsx::Pragma::from_api(jsx_opts.clone());
         }
 
         if !transform.extension_order.is_empty() {

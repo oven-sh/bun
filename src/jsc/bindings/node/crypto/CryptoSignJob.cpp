@@ -258,19 +258,6 @@ JSCallbackArgs SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
     return {};
 }
 
-extern "C" SignJob* Bun__SignJob__create(JSGlobalObject* globalObject, SignJobCtx* ctx, EncodedJSValue callback);
-SignJob* SignJob::create(JSGlobalObject* globalObject, SignJobCtx&& ctx, JSValue callback)
-{
-    SignJobCtx* ctxCopy = new SignJobCtx(WTF::move(ctx));
-    return Bun__SignJob__create(globalObject, ctxCopy, JSValue::encode(callback));
-}
-
-extern "C" void Bun__SignJob__schedule(SignJob* job);
-void SignJob::schedule()
-{
-    Bun__SignJob__schedule(this);
-}
-
 extern "C" void Bun__SignJob__createAndSchedule(JSGlobalObject* globalObject, SignJobCtx* ctx, EncodedJSValue callback);
 void SignJob::createAndSchedule(JSGlobalObject* globalObject, SignJobCtx&& ctx, JSValue callback)
 {

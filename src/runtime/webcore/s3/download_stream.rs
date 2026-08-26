@@ -2,14 +2,15 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use bun_core::{MutableString, strings};
+use bun_core::MutableString;
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_http::{AsyncHTTP, HTTPClientResult, Headers, Signals};
 use bun_io::KeepAlive;
-use bun_jsc::virtual_machine::VirtualMachine;
 use bun_s3_signing::credentials::SignResult;
 use bun_s3_signing::error::S3Error;
+
+use crate::webcore::s3::xml_response;
 use bun_threading::Mutex;
 
 bun_core::declare_scope!(S3, hidden);
@@ -18,9 +19,9 @@ pub struct S3HttpDownloadStreamingTask {
     // `MaybeUninit` because `AsyncHTTP` contains non-null references, so
     // `mem::zeroed()` can't be used here (mirrors `S3HttpSimpleTask`).
     pub(crate) http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
-    /// JSC_BORROW: per-thread VM singleton, outlives every task. `None` only in
-    /// the inert `Default` placeholder (overwritten before the task escapes).
-    pub(crate) vm: Option<bun_ptr::BackRef<VirtualMachine>>,
+    /// Held while the download is out on the HTTP thread: how it delivers
+    /// chunks, and what makes the VM wait for it.
+    pub(crate) http_ticket: Option<bun_jsc::Ticket>,
     pub(crate) sign_result: SignResult,
     pub(crate) headers: Headers,
     pub(crate) callback_context: NonNull<()>,
@@ -48,38 +49,15 @@ pub struct S3HttpDownloadStreamingTask {
 // Hot-dispatch tag for `ConcurrentTask::from`.
 impl Taskable for S3HttpDownloadStreamingTask {
     const TAG: TaskTag = task_tag::S3HttpDownloadStreamingTask;
-}
-
-impl Default for S3HttpDownloadStreamingTask {
-    fn default() -> Self {
-        // only the fields `has_schedule_callback` .. `concurrent_task`
-        // are observed via this path; the rest are placeholders that the caller (client.rs
-        // `..Default::default()`) overwrites before the task pointer escapes
-        // (see S3HttpSimpleTask in simple_request.rs).
-        Self {
-            // never read — fully overwritten by `AsyncHTTP::init` before first use.
-            http: core::mem::MaybeUninit::uninit(),
-            vm: None,
-            sign_result: SignResult::default(),
-            headers: Headers::default(),
-            callback_context: NonNull::dangling(),
-            callback: |_, _, _, _| {},
-            proxy_url: Box::default(),
-            has_schedule_callback: AtomicBool::new(false),
-            signal_store: bun_http::signals::Store::default(),
-            signals: Signals::default(),
-            poll_ref: KeepAlive::default(),
-            mutex: Mutex::default(),
-            reported_response_buffer: MutableString::default(),
-            request_error: None,
-            state: AtomicU64::new(State::default().0),
-            concurrent_task: ConcurrentTask::default(),
-            async_http_id: 0,
-        }
+    /// As `S3HttpSimpleTask`: the completion frees the context; run it.
+    unsafe fn release_unrun(this: *mut Self) {
+        S3HttpDownloadStreamingTask::on_response(this);
     }
 }
 
 impl S3HttpDownloadStreamingTask {
+    const HOLDS_TICKET: &str = "S3 download on the HTTP thread holds a ticket";
+
     pub(crate) fn new(init: Self) -> Box<Self> {
         Box::new(init)
     }
@@ -92,88 +70,76 @@ impl S3HttpDownloadStreamingTask {
         self.state.store(state.0, Ordering::Relaxed);
     }
 
-    fn report_progress(&mut self, state: State) {
+    /// The chunk callback runs JS, which reaches back into this task through the stream
+    /// wrapper's pointer (`pause_receive`, `poll_ref`). No borrow of `this` may span that call,
+    /// so this takes the raw pointer and scopes every access to its statement.
+    ///
+    /// # Safety
+    /// `this` is live and exclusively accessed by this thread for the duration of the call
+    /// (`on_response`).
+    unsafe fn report_progress(this: *mut Self, state: State) {
         let has_more = state.has_more();
-        let mut err: Option<S3Error> = None;
         let failed = match state.status_code() {
             200 | 204 | 206 => state.request_error() != 0,
             _ => true,
         };
-
-        // reshaped for borrowck — `code`/`message` borrow from
-        // `self.reported_response_buffer`, so we compute the chunk after the
-        // borrow scope ends rather than inside the labeled block.
-        let chunk: MutableString = 'brk: {
-            if failed {
-                if !has_more {
-                    let mut _has_body_code = false;
-                    let mut _has_body_message = false;
-
-                    let mut code: &[u8] = b"UnknownError";
-                    let mut message: &[u8] = b"an unexpected error has occurred";
-                    if let Some(req_err) = self.request_error {
-                        code = req_err.name().as_bytes();
-                        _has_body_code = true;
-                    } else {
-                        let bytes = self.reported_response_buffer.list.as_slice();
-                        if !bytes.is_empty() {
-                            message = bytes;
-
-                            if let Some(start) = strings::index_of(bytes, b"<Code>") {
-                                let value_start = start + b"<Code>".len();
-                                if let Some(end) =
-                                    strings::index_of(&bytes[value_start..], b"</Code>")
-                                {
-                                    code = &bytes[value_start..value_start + end];
-                                    _has_body_code = true;
-                                }
-                            }
-                            if let Some(start) = strings::index_of(bytes, b"<Message>") {
-                                let value_start = start + b"<Message>".len();
-                                if let Some(end) =
-                                    strings::index_of(&bytes[value_start..], b"</Message>")
-                                {
-                                    message = &bytes[value_start..value_start + end];
-                                    _has_body_message = true;
-                                }
-                            }
-                        }
-                    }
-
-                    // `code`/`message` borrow `self.reported_response_buffer`;
-                    // the callback consumes them before any reset/deinit.
-                    err = Some(S3Error { code, message });
-                }
-                break 'brk MutableString::default();
-            } else {
-                // `core::mem::take` transfers ownership of the buffer, leaving an
-                // empty MutableString behind.
-                let buffer = core::mem::take(&mut self.reported_response_buffer);
-                break 'brk buffer;
-            }
-        };
+        // SAFETY: fn contract; `callback` and `callback_context` are set once, before the task
+        // is queued.
+        let (callback, callback_context) =
+            unsafe { ((*this).callback, (*this).callback_context.as_ptr().cast()) };
         bun_core::scoped_log!(
             S3,
             "reportProgres failed: {} has_more: {} len: {}",
             failed,
             has_more,
-            chunk.len()
+            // SAFETY: fn contract.
+            unsafe { (*this).reported_response_buffer.list.len() }
         );
+
         if failed {
-            if !has_more {
-                (self.callback)(&chunk, false, err, self.callback_context.as_ptr().cast());
+            if has_more {
+                return;
             }
-        } else {
-            // dont report empty chunks if we have more data to read
-            if !has_more || chunk.len() > 0 {
-                (self.callback)(
-                    &chunk,
-                    has_more,
-                    None,
-                    self.callback_context.as_ptr().cast(),
-                );
-                self.reported_response_buffer.reset();
+            let empty = MutableString::default();
+            let mut code: &[u8] = b"UnknownError";
+            let mut message: &[u8] = b"an unexpected error has occurred";
+            let parsed;
+            // SAFETY: fn contract.
+            if let Some(req_err) = unsafe { (*this).request_error } {
+                code = req_err.name().as_bytes();
+            } else {
+                // SAFETY: fn contract; the buffer is not touched again before the callback
+                // returns, and `message` is not used after it.
+                let bytes = unsafe { (*this).reported_response_buffer.list.as_slice() };
+                if !bytes.is_empty() {
+                    message = bytes;
+                }
+                parsed = xml_response::parse_error(bytes);
+                if let Some(error) = &parsed {
+                    code = error.code.as_deref().unwrap_or(code);
+                    message = error.message.as_deref().unwrap_or(message);
+                }
             }
+            callback(
+                &empty,
+                false,
+                Some(S3Error { code, message }),
+                callback_context,
+            );
+            return;
+        }
+
+        // dont report empty chunks if we have more data to read
+        // SAFETY: fn contract.
+        if !has_more || unsafe { (*this).reported_response_buffer.list.len() } > 0 {
+            // `core::mem::take` transfers ownership of the buffer, leaving an
+            // empty MutableString behind.
+            // SAFETY: fn contract; the borrow ends with the statement.
+            let chunk = unsafe { core::mem::take(&mut (*this).reported_response_buffer) };
+            callback(&chunk, has_more, None, callback_context);
+            // SAFETY: fn contract; the callback does not free the task, `on_response` does,
+            // after this returns.
+            unsafe { (*this).reported_response_buffer.reset() };
         }
     }
 
@@ -202,6 +168,7 @@ impl S3HttpDownloadStreamingTask {
             unsafe {
                 (*this_ptr).mutex.unlock();
                 if !has_more {
+                    crate::jsc_hooks::ActiveHandle::S3Download(core::ptr::NonNull::new(this_ptr).expect("task")).unregister();
                     drop(bun_core::heap::take(this_ptr));
                 }
             }
@@ -216,8 +183,8 @@ impl S3HttpDownloadStreamingTask {
                     .store(false, Ordering::Relaxed)
             };
         }
-        // SAFETY: as above; exclusive borrow scoped to the call.
-        unsafe { (*this).report_progress(state) };
+        // SAFETY: as above.
+        unsafe { Self::report_progress(this, state) };
     }
 
     /// this function is only called from the http callback in the HTTPThread and returns true if we
@@ -256,7 +223,7 @@ impl S3HttpDownloadStreamingTask {
             // bitwise read+write copies its current state into `self.http` without running
             // destructors (the HTTP thread retains ownership of the source until the request
             // completes). `self.http` was previously initialised in
-            // `execute_s3_streaming_download`.
+            // `client::download_stream`.
             unsafe { core::ptr::write(self.http.as_mut_ptr(), core::ptr::read(async_http)) };
         }
         wait_until_done
@@ -294,6 +261,15 @@ impl S3HttpDownloadStreamingTask {
         );
 
         result.body_into(&mut self.reported_response_buffer.list);
+        // Only a body that is being delivered can be resumed: the wrapper resumes as JS takes
+        // chunks. An error body is collected whole before it is reported, with no chunk
+        // delivered in between, so pausing it would never be undone.
+        if !is_done
+            && !wait_until_done
+            && self.reported_response_buffer.list.len() >= bun_http::signals::BODY_HIGH_WATER_MARK
+        {
+            self.signal_store.pause_receive();
+        }
         if should_enqueue {
             if self.reported_response_buffer.list.is_empty() && !is_done {
                 return false;
@@ -327,20 +303,93 @@ impl S3HttpDownloadStreamingTask {
         // SAFETY: `this` is live for the duration of the HTTP request; HTTPThread holds the only
         // concurrent reference and `mutex` serializes against `on_response`. `async_http` is the
         // live HTTP-thread copy, non-null for the callback's duration. Borrows scoped to the call.
+        let is_done = !result.has_more;
+        // No refcount here: on the final callback `on_response` may free `this`
+        // as soon as the task is queued, so the ticket has to be out first.
+        let done_ticket = is_done.then(|| {
+            // SAFETY: as above; HTTP-thread field.
+            unsafe { (*this).http_ticket.take() }.expect(Self::HOLDS_TICKET)
+        });
+        // SAFETY: as above; the HTTP thread is the only one touching it here.
         if unsafe { (*this).process_http_callback(&mut *async_http, result) } {
             // we are always unlocked here and its safe to enqueue
             // SAFETY: same exclusivity as above; `task` is the inline `concurrent_task` field of
-            // this heap request and the queue takes ownership of its `next` link.
-            let (vm, task) = unsafe {
+            // this heap request and the queue takes ownership of its `next` link. Not done ⇒
+            // `this` (and the ticket in it) outlives the post.
+            unsafe {
                 let task = core::ptr::NonNull::from(
                     (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
                 );
-                ((*this).vm.expect("vm set at task creation"), task)
-            };
-            // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
-            // is initialized for the request's lifetime and enqueue is thread-safe (`&self`).
-            vm.event_loop_shared().enqueue_task_concurrent(task);
+                done_ticket
+                    .as_ref()
+                    .unwrap_or_else(|| (*this).http_ticket.as_ref().expect(Self::HOLDS_TICKET))
+                    .post(task);
+            }
         }
+        drop(done_ticket);
+    }
+
+    /// `HTTPClientResultCallback::release_at_shutdown`: the exiting main
+    /// thread parked the HTTP thread, which will not call back; hand the
+    /// download back as failed/finished so its VM's wait ends and the JS
+    /// thread frees it.
+    ///
+    /// # Safety
+    /// `this` is the live task registered with the callback; HTTP thread parked.
+    pub(crate) unsafe fn release_at_shutdown(this: *mut ()) {
+        let this = this.cast::<Self>();
+        // SAFETY: fn contract — nothing else touches the task now (the JS
+        // thread is waiting in the HTTP shutdown).
+        unsafe {
+            let ticket = (*this).http_ticket.take().expect(Self::HOLDS_TICKET);
+            let should_enqueue = {
+                let _guard = (*this).mutex.lock_guard();
+                let mut state = (*this).get_state();
+                state.set_has_more(false);
+                (*this).request_error = Some(bun_http::Error::Aborted);
+                state.set_request_error(1);
+                (*this).set_state(state);
+                (*this)
+                    .has_schedule_callback
+                    .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                    .is_ok()
+            };
+            if should_enqueue {
+                let task = core::ptr::NonNull::from(
+                    (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
+                );
+                ticket.post(task);
+            }
+            drop(ticket);
+        }
+    }
+
+    /// VM teardown's stop phase (JS thread): abort the transport so the HTTP
+    /// thread fails the request promptly and hands it back.
+    ///
+    /// # Safety
+    /// `this` is live (registered ⇒ not yet freed by `on_response`); JS thread.
+    pub(crate) unsafe fn stop_for_vm_teardown(this: *mut Self) {
+        // SAFETY: fn contract; `http` is initialised before the task is registered.
+        unsafe {
+            (*this).signal_store.aborted.store(true, Ordering::Relaxed);
+            bun_http::http_thread().schedule_shutdown((*this).http.assume_init_ref());
+        }
+    }
+
+    /// A consumer took bytes: undo a pause from either side of the hop.
+    pub(crate) fn resume_receive(&self) {
+        if self.signal_store.unpause_receive() {
+            bun_http::http_thread().schedule_receive_resume(self.async_http_id);
+        }
+    }
+
+    fn release_portable(&mut self) {
+        // SAFETY: `http` is always initialised before the task is scheduled / dropped.
+        let http = unsafe { self.http.assume_init_mut() };
+        http.clear_data();
+        http.request_headers = Default::default();
+        http.client.header_entries = Default::default();
     }
 }
 
@@ -354,14 +403,7 @@ impl Drop for S3HttpDownloadStreamingTask {
         ));
         // reported_response_buffer, headers, sign_result, range, proxy_url:
         // dropped automatically (Box/Vec-backed fields).
-        // SAFETY: `http` is always initialised before the task is scheduled / dropped.
-        let http = unsafe { self.http.assume_init_mut() };
-        http.clear_data();
-        // `init` clones the EntryList into task.headers / request_headers /
-        // client.header_entries, so free the two copies clear_data() skips.
-        // (Same fix as `S3HttpSimpleTask::drop` in simple_request.rs.)
-        http.request_headers = Default::default();
-        http.client.header_entries = Default::default();
+        self.release_portable();
     }
 }
 

@@ -91,8 +91,8 @@ void CallSitePrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalO
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
-    reifyStaticProperties(vm, CallSite::info(), CallSitePrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, CallSite::info(), CallSitePrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 // TODO: doesn't recognize thisValue as global object
@@ -257,6 +257,7 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncToString, (JSGlobalObject * globalObje
     ENTER_PROTO_FUNC();
     WTF::StringBuilder sb;
     callSite->formatAsString(vm, globalObject, sb);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(jsString(vm, sb.toString()));
 }
 
@@ -264,10 +265,10 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncToJSON, (JSGlobalObject * globalObject
 {
     ENTER_PROTO_FUNC();
     JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
-    obj->putDirect(vm, JSC::Identifier::fromString(vm, "sourceURL"_s), callSite->sourceURL());
-    obj->putDirect(vm, JSC::Identifier::fromString(vm, "lineNumber"_s), jsNumber(callSite->lineNumber().oneBasedInt()));
-    obj->putDirect(vm, JSC::Identifier::fromString(vm, "columnNumber"_s), jsNumber(callSite->columnNumber().zeroBasedInt()));
-    obj->putDirect(vm, JSC::Identifier::fromString(vm, "functionName"_s), callSite->functionName());
+    Bun::putDirectNamed(vm, obj, "sourceURL"_s, callSite->sourceURL());
+    Bun::putDirectNamed(vm, obj, "lineNumber"_s, jsNumber(callSite->lineNumber().oneBasedInt()));
+    Bun::putDirectNamed(vm, obj, "columnNumber"_s, jsNumber(callSite->columnNumber().zeroBasedInt()));
+    Bun::putDirectNamed(vm, obj, "functionName"_s, callSite->functionName());
     return JSC::JSValue::encode(obj);
 }
 

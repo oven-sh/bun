@@ -97,12 +97,12 @@ use bstr::BStr;
 
 use bun_alloc::AllocError;
 use bun_collections::IntegerBitSet;
-use bun_core::strings;
 use bun_core::{declare_scope, scoped_log};
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JsCell};
+use bun_ptr::RefPtr;
 use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::S3Credentials;
 use bun_s3_signing::error::S3Error;
@@ -116,8 +116,8 @@ use crate::webcore::s3::simple_request::{
     self as s3_simple_request, S3CommitResult, S3DownloadResult, S3PartResult, S3UploadResult,
     execute_simple_s3_request,
 };
-
-type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
+use crate::webcore::s3::xml_response;
+use bun_collections::index_sort;
 
 declare_scope!(S3MultiPartUpload, hidden);
 
@@ -128,20 +128,23 @@ pub struct MultiPartUpload {
     pub(crate) available: Cell<IntegerBitSet<{ Self::MAX_QUEUE_SIZE }>>,
 
     pub(crate) current_part_number: Cell<u16>,
-    pub(crate) ref_count: Cell<u32>, // intrusive refcount — see bun_ptr::IntrusiveRc
+    pub(crate) ref_count: Cell<u32>,
     pub(crate) ended: Cell<bool>,
 
     pub(crate) options: Cell<MultiPartUploadOptions>,
     pub(crate) acl: Option<ACL>,
     pub(crate) storage_class: Option<StorageClass>,
     pub(crate) request_payer: bool,
-    pub(crate) credentials: bun_ptr::IntrusiveRc<S3Credentials>,
+    pub(crate) credentials: RefPtr<S3Credentials>,
     pub poll_ref: JsCell<KeepAlive>,
     pub(crate) vm: &'static VirtualMachine,
     // JSC_BORROW per LIFETIMES.tsv row 1886 — rust_type `&JSGlobalObject` used verbatim
     pub global_this: GlobalRef,
 
     pub(crate) buffered: JsCell<StreamBuffer>,
+    /// Bytes accepted by `write*` (after encoding): what a streamed `Bun.write`/`writer.end()`
+    /// resolves with.
+    pub(crate) uploaded_bytes: Cell<u64>,
 
     pub path: Box<[u8]>,
     pub(crate) proxy: Box<[u8]>,
@@ -155,7 +158,9 @@ pub struct MultiPartUpload {
 
     pub(crate) state: Cell<State>,
 
-    pub callback: fn(S3UploadResult, *mut c_void) -> JsTerminatedResult<()>,
+    /// Completion. The upload is passed so `uploaded_bytes` can be read by a callee that no
+    /// longer holds a ref to it (a `writer()` sink whose JS wrapper was collected).
+    pub callback: fn(&MultiPartUpload, S3UploadResult, *mut c_void) -> bun_jsc::JsResult<()>,
     pub(crate) on_writable: Option<fn(&MultiPartUpload, *mut c_void, u64)>,
     pub(crate) callback_context: Cell<*mut c_void>,
 }
@@ -255,7 +260,7 @@ impl UploadPart {
         unsafe { &*self.data.get() }
     }
 
-    fn on_part_response(result: S3PartResult, this: *mut c_void) -> JsTerminatedResult<()> {
+    fn on_part_response(result: S3PartResult, this: *mut c_void) -> bun_jsc::JsResult<()> {
         // SAFETY: callback context — `this` is the queue slot passed in `perform()`; the
         // ref this part holds on `ctx` keeps the queue alive until the tail `deref_` below.
         let this = unsafe { &*this.cast::<Self>() };
@@ -315,7 +320,7 @@ impl UploadPart {
         }
     }
 
-    fn perform(&self) -> JsTerminatedResult<()> {
+    fn perform(&self) -> bun_jsc::JsResult<()> {
         let ctx = self.ctx.get();
         let mut params_buffer = [0u8; 2048];
         let written = {
@@ -346,7 +351,7 @@ impl UploadPart {
         )
     }
 
-    fn start(&self) -> JsTerminatedResult<()> {
+    fn start(&self) -> bun_jsc::JsResult<()> {
         let ctx = self.ctx.get();
         if self.state.get() != PartState::Pending || ctx.state.get() != State::MultipartCompleted {
             return Ok(());
@@ -381,13 +386,6 @@ impl Drop for MultiPartUpload {
                 bun_io::AllocatorType::Js,
             ))
         });
-        // path, proxy, content_type, content_disposition, content_encoding — Box dropped automatically
-        // `IntrusiveRc<T>` (= `RefPtr<T>`) has no `Drop` — release the +1 the
-        // constructing `writable_stream`/`upload_stream` adopted.
-        self.credentials.deref();
-        // multipart_etags: Vec<UploadPartResult> — Drop (each etag Box<[u8]> freed)
-        // multipart_upload_list: Vec<u8> — Drop
-        // bun.destroy(this) — handled by deref_() via heap::take
     }
 }
 
@@ -395,12 +393,11 @@ impl MultiPartUpload {
     pub(crate) fn single_send_upload_response(
         result: S3UploadResult,
         this: *mut c_void,
-    ) -> JsTerminatedResult<()> {
+    ) -> bun_jsc::JsResult<()> {
         let this = this.cast::<Self>();
-        // `adopt` consumes the ref `process_buffered` (or the retry path)
-        // took for this request.
-        // SAFETY: callback context — `this` is the live allocation ref'd before dispatch.
-        let _deref_guard = unsafe { bun_ptr::ScopedRef::<Self>::adopt(this) };
+        // SAFETY: callback context — `this` is live; this takes over the ref
+        // `process_buffered` (or the retry path) took for this request.
+        let _guard = unsafe { RefPtr::from_raw(this) };
         // SAFETY: `this` is live for at least the guard's duration.
         let self_ = unsafe { &*this };
         if self_.state.get() == State::Finished {
@@ -519,7 +516,7 @@ impl MultiPartUpload {
     }
 
     /// Drain the parts, this is responsible for starting the parts and processing the buffered data
-    fn drain_enqueued_parts(&self, flushed: u64) -> JsTerminatedResult<()> {
+    fn drain_enqueued_parts(&self, flushed: u64) -> bun_jsc::JsResult<()> {
         let state = self.state.get();
         if state == State::Finished || state == State::SinglefileStarted {
             return Ok(());
@@ -558,7 +555,7 @@ impl MultiPartUpload {
         Ok(())
     }
 
-    pub(crate) fn fail(&self, err: S3Error) -> JsTerminatedResult<()> {
+    pub(crate) fn fail(&self, err: S3Error) -> bun_jsc::JsResult<()> {
         scoped_log!(
             S3MultiPartUpload,
             "fail {}:{}",
@@ -575,7 +572,11 @@ impl MultiPartUpload {
         }
         if self.state.get() != State::Finished {
             let old_state = self.state.replace(State::Finished);
-            (self.callback)(S3UploadResult::Failure(err), self.callback_context.get())?;
+            (self.callback)(
+                self,
+                S3UploadResult::Failure(err),
+                self.callback_context.get(),
+            )?;
 
             if old_state == State::MultipartCompleted {
                 // we are a multipart upload so we need to rollback
@@ -589,7 +590,7 @@ impl MultiPartUpload {
         Ok(())
     }
 
-    fn done(&self) -> JsTerminatedResult<()> {
+    fn done(&self) -> bun_jsc::JsResult<()> {
         let state = self.state.get();
         if state == State::MultipartCompleted && self.is_queue_empty() {
             // we are a multipart upload so we need to send the etags and commit
@@ -601,7 +602,7 @@ impl MultiPartUpload {
                 );
                 self.multipart_etags.with_mut(|etags| {
                     // sort the etags
-                    etags.sort_by_key(|a| a.number);
+                    index_sort::sort_slice_by(etags, |a, b| a.number.cmp(&b.number));
                     for tag in etags.drain(..) {
                         write!(
                             list,
@@ -622,7 +623,7 @@ impl MultiPartUpload {
             self.state.set(State::Finished);
             // single file upload no need to commit
             // The deref must run after the callback:
-            let r = (self.callback)(S3UploadResult::Success, self.callback_context.get());
+            let r = (self.callback)(self, S3UploadResult::Success, self.callback_context.get());
             MultiPartUpload::deref_(self.root_ptr());
             r
         } else {
@@ -634,12 +635,11 @@ impl MultiPartUpload {
     pub(crate) fn start_multi_part_request_result(
         result: S3DownloadResult,
         this: *mut c_void,
-    ) -> JsTerminatedResult<()> {
+    ) -> bun_jsc::JsResult<()> {
         let this = this.cast::<Self>();
-        // `adopt` consumes the prior +1 on Drop.
-        // SAFETY: callback context — a ref was taken before the request was queued.
-        let _deref_guard = unsafe { bun_ptr::ScopedRef::<Self>::adopt(this) };
-        // SAFETY: `this` is live for at least the adopted ref's duration.
+        // SAFETY: callback context — takes over the ref taken before the request was queued.
+        let _guard = unsafe { RefPtr::from_raw(this) };
+        // SAFETY: `this` is live for at least the guard's duration.
         let self_ = unsafe { &*this };
         if self_.state.get() == State::Finished {
             return Ok(());
@@ -658,24 +658,27 @@ impl MultiPartUpload {
             S3DownloadResult::Success(response) => {
                 // response.body is bun.MutableString — `list` is a Vec<u8>
                 let slice = response.body.list.as_slice();
-                // PERF: upload_id is duped out of the body instead of slicing into it
-                if let Some(start) = strings::index_of(slice, b"<UploadId>") {
-                    let value_start = start + b"<UploadId>".len();
-                    if let Some(end) = strings::index_of(slice, b"</UploadId>") {
-                        if end >= value_start {
-                            self_
-                                .upload_id
-                                .set(Box::<[u8]>::from(&slice[value_start..end]));
-                        }
-                    }
+                // <InitiateMultipartUploadResult><Bucket/><Key/><UploadId/></…>
+                let upload_id = xml_response::parse(slice, |root| {
+                    (root.name == b"InitiateMultipartUploadResult")
+                        .then(|| root.child_text(b"UploadId"))
+                        .flatten()
+                })
+                .flatten()
+                // It goes into query strings as is: printable, and nothing
+                // that would end or split a query value.
+                .filter(|id| {
+                    !id.is_empty()
+                        && id.len() <= Self::MAX_UPLOAD_ID_LEN
+                        && id
+                            .iter()
+                            .all(|&b| b.is_ascii_graphic() && !matches!(b, b'&' | b'#' | b'?'))
+                });
+                let valid = upload_id.is_some();
+                if let Some(upload_id) = upload_id {
+                    self_.upload_id.set(upload_id);
                 }
-                let upload_id = self_.upload_id.get();
-                if upload_id.is_empty()
-                    || upload_id.len() > Self::MAX_UPLOAD_ID_LEN
-                    || upload_id
-                        .iter()
-                        .any(|b| !b.is_ascii() || b.is_ascii_control())
-                {
+                if !valid {
                     // Unknown type of response error from AWS
                     scoped_log!(
                         S3MultiPartUpload,
@@ -692,7 +695,7 @@ impl MultiPartUpload {
                     S3MultiPartUpload,
                     "startMultiPartRequestResult {} success id: {}",
                     BStr::new(&self_.path),
-                    BStr::new(upload_id)
+                    BStr::new(self_.upload_id.get())
                 );
                 self_.state.set(State::MultipartCompleted);
                 // start draining the parts
@@ -710,7 +713,7 @@ impl MultiPartUpload {
     pub(crate) fn on_commit_multi_part_request(
         result: S3CommitResult,
         this: *mut c_void,
-    ) -> JsTerminatedResult<()> {
+    ) -> bun_jsc::JsResult<()> {
         let this = this.cast::<Self>();
         // SAFETY: callback context — `this` is live; the request owns the final-step ref,
         // released as the tail statement below.
@@ -733,15 +736,19 @@ impl MultiPartUpload {
                 }
                 self_.state.set(State::Finished);
                 // The deref must run after the callback:
-                let r =
-                    (self_.callback)(S3UploadResult::Failure(err), self_.callback_context.get());
+                let r = (self_.callback)(
+                    self_,
+                    S3UploadResult::Failure(err),
+                    self_.callback_context.get(),
+                );
                 MultiPartUpload::deref_(this);
                 r
             }
             S3CommitResult::Success => {
                 self_.state.set(State::Finished);
                 // The deref must run after the callback:
-                let r = (self_.callback)(S3UploadResult::Success, self_.callback_context.get());
+                let r =
+                    (self_.callback)(self_, S3UploadResult::Success, self_.callback_context.get());
                 MultiPartUpload::deref_(this);
                 r
             }
@@ -752,7 +759,7 @@ impl MultiPartUpload {
     pub(crate) fn on_rollback_multi_part_request(
         result: S3UploadResult,
         this: *mut c_void,
-    ) -> JsTerminatedResult<()> {
+    ) -> bun_jsc::JsResult<()> {
         let this = this.cast::<Self>();
         // SAFETY: callback context — `this` is live; the request owns the final-step ref,
         // released as the tail statement below.
@@ -782,7 +789,7 @@ impl MultiPartUpload {
         }
     }
 
-    fn commit_multi_part_request(&self) -> JsTerminatedResult<()> {
+    fn commit_multi_part_request(&self) -> bun_jsc::JsResult<()> {
         scoped_log!(
             S3MultiPartUpload,
             "commitMultiPartRequest {}",
@@ -812,7 +819,7 @@ impl MultiPartUpload {
         )
     }
 
-    fn rollback_multi_part_request(&self) -> JsTerminatedResult<()> {
+    fn rollback_multi_part_request(&self) -> bun_jsc::JsResult<()> {
         scoped_log!(
             S3MultiPartUpload,
             "rollbackMultiPartRequest {}",
@@ -847,7 +854,7 @@ impl MultiPartUpload {
         chunk: &[u8],
         allocated_size: usize,
         needs_clone: bool,
-    ) -> JsTerminatedResult<bool> {
+    ) -> bun_jsc::JsResult<bool> {
         let Some(part) = self.get_create_part(chunk, allocated_size, needs_clone) else {
             return Ok(false);
         };
@@ -881,7 +888,7 @@ impl MultiPartUpload {
         Ok(true)
     }
 
-    fn process_multi_part(&self, part_size: usize) -> JsTerminatedResult<()> {
+    fn process_multi_part(&self, part_size: usize) -> bun_jsc::JsResult<()> {
         scoped_log!(
             S3MultiPartUpload,
             "processMultiPart {} {}",
@@ -1041,6 +1048,7 @@ impl MultiPartUpload {
     }
 
     fn append_chunk(&self, encoding: WriteEncoding, chunk: &[u8]) -> Result<(), AllocError> {
+        let before = self.buffered.get().size();
         self.buffered.with_mut(|buffered| match encoding {
             WriteEncoding::Bytes => buffered.write(chunk),
             WriteEncoding::Latin1 => buffered.write_latin1::<true>(chunk),
@@ -1050,6 +1058,8 @@ impl MultiPartUpload {
                 buffered.write_utf16(utf16)
             }
         })?;
+        self.uploaded_bytes
+            .set(self.uploaded_bytes.get() + (self.buffered.get().size() - before) as u64);
         Ok(())
     }
 
@@ -1065,9 +1075,8 @@ impl MultiPartUpload {
             return Ok(UploadBackpressure::Done); // no backpressure since we are done
         }
         // we may call done inside processBuffered so we ensure that we keep a ref until we are done
-        // SAFETY: `self` is the live IntrusiveRc allocation; `ScopedRef` bumps the count
-        // and derefs on every exit path.
-        let _deref_guard = unsafe { bun_ptr::ScopedRef::new(self.root_ptr()) };
+        // SAFETY: `self` is live; `root_ptr()` carries the allocation's provenance.
+        let _guard = unsafe { RefPtr::init_ref(self.root_ptr()) };
 
         if self.state.get() == State::WaitStreamCheck && chunk.is_empty() && is_last {
             // we do this because stream will close if the file dont exists and we dont wanna to send an empty part in this case

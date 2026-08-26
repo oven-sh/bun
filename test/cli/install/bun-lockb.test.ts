@@ -115,6 +115,43 @@ it("should continue using a binary lockfile if it exists", async () => {
   expect(thirdLockfile).not.toBe(secondLockfile);
 });
 
+it("migrating bun.lockb keeps a peer required when it is satisfied only by the dependent's own nested copy", async () => {
+  // a `file:` override never hoists, so the only no-deps entry is `peer-deps/no-deps`
+  const files = {
+    "package.json": JSON.stringify({
+      name: "lockb-nested-peer",
+      version: "1.0.0",
+      dependencies: { "peer-deps": "1.0.0" },
+      overrides: { "no-deps": "file:./vendor/no-deps" },
+    }),
+    "vendor/no-deps/package.json": JSON.stringify({ name: "no-deps", version: "1.0.0" }),
+  };
+  const [{ packageDir: fromLockb }, { packageDir: fresh }] = await Promise.all([
+    registry.createTestDir({ bunfigOpts: { saveTextLockfile: false }, files }),
+    registry.createTestDir({ bunfigOpts: { saveTextLockfile: true }, files }),
+  ]);
+
+  await runBunInstall(env, fromLockb);
+  expect(await exists(join(fromLockb, "bun.lockb"))).toBe(true);
+  expect(await exists(join(fromLockb, "bun.lock"))).toBe(false);
+
+  await runBunInstall(env, fromLockb, { saveTextLockfile: true });
+  expect(await exists(join(fromLockb, "bun.lockb"))).toBe(false);
+  const migrated = await file(join(fromLockb, "bun.lock")).text();
+
+  const { packages } = Bun.JSONC.parse(migrated) as { packages: Record<string, unknown[]> };
+  expect(Object.keys(packages).sort()).toStrictEqual(["peer-deps", "peer-deps/no-deps"]);
+  expect(packages["peer-deps"][2]).toStrictEqual({ peerDependencies: { "no-deps": "*" } });
+  expect(packages["peer-deps/no-deps"][0]).toBe("no-deps@file:./vendor/no-deps");
+  expect(migrated).not.toContain("optionalPeers");
+
+  await runBunInstall(env, fresh);
+  expect(migrated).toBe(await file(join(fresh, "bun.lock")).text());
+
+  await runBunInstall(env, fromLockb, { frozenLockfile: true });
+  expect(await file(join(fromLockb, "bun.lock")).text()).toBe(migrated);
+});
+
 it("recovers from a corrupted binary lockfile instead of panicking", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
 

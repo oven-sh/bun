@@ -293,6 +293,8 @@ function buildScriptCoverageList(
 
   for (const script of rawScripts) {
     const { scriptId, sourceLength } = script;
+    // V8 does not report empty scripts (the whole-script range would be zero-width).
+    if (sourceLength === 0) continue;
     let { url } = script;
     // V8 coverage reports file-backed scripts with file:// URLs even when the
     // script name is a plain filesystem path (e.g. a vm script filename or a
@@ -302,11 +304,12 @@ function buildScriptCoverageList(
     }
 
     // Outer functions before nested ones, so a stack-based sweep below sees
-    // enclosing ranges first.
+    // enclosing ranges first. Zero-width entries are dropped: V8 never emits
+    // startOffset === endOffset, and @bcoe/v8-coverage recurses forever on one.
     const functions = script.functions
-      .filter(([start, end]) => start >= 0 && end >= start)
+      .filter(([start, end]) => start >= 0 && end > start)
       .sort((a, b) => a[0] - b[0] || b[1] - a[1]);
-    const blocks = script.blocks.filter(([start, end]) => start >= 0 && end >= start).sort((a, b) => a[0] - b[0]);
+    const blocks = script.blocks.filter(([start, end]) => start >= 0 && end > start).sort((a, b) => a[0] - b[0]);
 
     // Assign each basic block to the innermost function range containing it.
     const blocksPerFunction: Array<Array<[number, number, number]>> = functions.map(() => []);
@@ -422,6 +425,25 @@ class Session extends EventEmitter {
   // Baseline for delta semantics: takePreciseCoverage must reset counters, but
   // JSC has no counter-reset API, so subtract the previous take instead.
   #coverageBaseline: Map<string, number> = new Map();
+
+  // Report each block's count relative to the baseline, and make the raw
+  // counts the new baseline.
+  #rebaseCoverage(scripts: any[]) {
+    const baseline = this.#coverageBaseline;
+    for (const script of scripts) {
+      for (const block of script.blocks) {
+        const key = `${script.scriptId}:${block[0]}:${block[1]}`;
+        const raw = block[2];
+        block[2] = Math.max(0, raw - (baseline.$get(key) ?? 0));
+        baseline.$set(key, raw);
+      }
+    }
+  }
+
+  #snapshotCoverageBaseline() {
+    const scripts = collectCoverageScripts();
+    if (!(scripts instanceof Error)) this.#rebaseCoverage(scripts);
+  }
 
   connect() {
     if (this.#connected) {
@@ -571,7 +593,12 @@ class Session extends EventEmitter {
         }
         this.#preciseCoverageCallCount = !!(params as any)?.callCount;
         this.#preciseCoverageDetailed = !!(params as any)?.detailed;
+        // Counts start from zero here: the VM's profiler is never torn down once
+        // enabled (see JSInspectorProfiler.cpp), so whatever it accumulated
+        // before this start — an earlier session, or the window since a
+        // stopPreciseCoverage — becomes the baseline the next take subtracts.
         this.#coverageBaseline.$clear();
+        this.#snapshotCoverageBaseline();
         // CDP: monotonic seconds since an arbitrary origin (V8 uses TimeTicks).
         return { timestamp: performance.now() / 1000 };
       }
@@ -595,15 +622,7 @@ class Session extends EventEmitter {
         // second take reports the delta. JSC has no counter reset, so subtract
         // the previous take's raw block counts (function-level call counts are
         // derived from the entry block, so they follow automatically).
-        const baseline = this.#coverageBaseline;
-        for (const script of scripts) {
-          for (const block of script.blocks) {
-            const key = `${script.scriptId}:${block[0]}:${block[1]}`;
-            const raw = block[2];
-            block[2] = Math.max(0, raw - (baseline.$get(key) ?? 0));
-            baseline.$set(key, raw);
-          }
-        }
+        this.#rebaseCoverage(scripts);
         return {
           result: buildScriptCoverageList(scripts, this.#preciseCoverageCallCount, this.#preciseCoverageDetailed),
           timestamp: performance.now() / 1000,

@@ -2584,6 +2584,14 @@ console.log(<div {...obj} key="after" />);`),
   });
 
   describe("scanImports", () => {
+    it("decodes non-ASCII specifiers as UTF-8", () => {
+      const imports = transpiler.scanImports(`import a from "./módulo-ü.js"; import b from "pkg-日本";`, "js");
+      expect(imports.map(i => i.path)).toEqual(["./módulo-ü.js", "pkg-日本"]);
+      expect(transpiler.scan(`import a from "./módulo-ü.js";`, "js").imports.map(i => i.path)).toEqual([
+        "./módulo-ü.js",
+      ]);
+    });
+
     it("reports import paths, excluding types", () => {
       const imports = transpiler.scanImports(code, "tsx");
       expect(imports.filter(({ path }) => path === "remix")).toHaveLength(1);
@@ -3504,6 +3512,51 @@ class Foo {
     expectParseError("class Foo { #x() { this.#x += 1 } }", 'Writing to read-only method "#x" will throw');
   });
 
+  it("class bodies keep `this` and the class name as written", () => {
+    expectPrinted_(
+      "class Foo { static x = this; static { this.y = Foo } z = () => this }",
+      "class Foo {\n  static x = this;\n  static {\n    this.y = Foo;\n  }\n  z = () => this;\n}",
+    );
+    expectPrinted_("(class { static x = this })", "(class {\n  static x = this;\n})");
+    expectPrinted_(
+      "let Foo = class Bar { static self = Bar; m() { return Bar } }",
+      "let Foo = class Bar {\n  static self = Bar;\n  m() {\n    return Bar;\n  }\n}",
+    );
+  });
+
+  it("declarations named eval or arguments, and reserved words, in strict mode", () => {
+    expectParseError(
+      '"use strict"; var arguments = 1',
+      'Declarations with the name "arguments" cannot be used in strict mode',
+    );
+    expectParseError(
+      '"use strict"; function eval() {}',
+      'Declarations with the name "eval" cannot be used in strict mode',
+    );
+    expectParseError('"use strict"; var package = 1', '"package" is a reserved word and cannot be used in strict mode');
+    expectParseError(
+      '"use strict"; let implements = 1',
+      '"implements" is a reserved word and cannot be used in strict mode',
+    );
+
+    // Strict mode implied by `export`, by a class body, and by top-level await.
+    expectParseError("export {}; let eval = 1", 'Declarations with the name "eval" cannot be used in strict mode');
+    expectParseError(
+      "class A { m(arguments) {} }",
+      'Declarations with the name "arguments" cannot be used in strict mode',
+    );
+    expectParseError(
+      "await 1; var arguments = 1",
+      'Declarations with the name "arguments" cannot be used in strict mode',
+    );
+
+    // Sloppy mode allows all of them when the transpiler is not bundling.
+    expectPrinted_(
+      "var arguments = 1; var package = 2; function eval() {}",
+      "var arguments = 1;\nvar package = 2;\nfunction eval() {}",
+    );
+  });
+
   describe("simplification", () => {
     const transpiler = new Bun.Transpiler({
       loader: "tsx",
@@ -4422,6 +4475,58 @@ console.log(foo, array);
 
       expect(out.includes("keepSecondArgument")).toBe(false);
       expect(out.includes("otherNamesStillWork")).toBe(true);
+    });
+
+    it("a macro that runs a nested transformSync macro and then requires a module leaves the importing file intact", async () => {
+      const otherLines = [];
+      for (let i = 0; i < 300; i++) {
+        otherLines.push(`const v${i} = { a: [${i}, "s${i}"], b: (${i} + 1) * 2, c: String(${i}).length };`);
+      }
+      otherLines.push(`module.exports = { value: v299.b + v0.c };`);
+
+      using dir = tempDir("macro-nested-transform-sync", {
+        "inner-macro.ts": `export function inner() { return "inner-value"; }`,
+        "outer-macro.ts": `
+          import { join } from "node:path";
+          export function outer() {
+            const source =
+              "import { inner } from " +
+              JSON.stringify(join(import.meta.dir, "inner-macro.ts")) +
+              ' with { type: "macro" };\\nexport const v = inner();\\n';
+            const code = new Bun.Transpiler({ loader: "ts" }).transformSync(source);
+            const expanded = code.includes('"inner-value"') && !code.includes("inner(");
+            const other = import.meta.require("./other.cjs");
+            return "expanded=" + expanded + " other=" + other.value;
+          }
+        `,
+        "other.cjs": otherLines.join("\n"),
+        "index.ts": `
+          import { writeFileSync } from "node:fs";
+          import { join } from "node:path";
+          import { inner } from "./inner-macro.ts" with { type: "macro" };
+          import { outer } from "./outer-macro.ts" with { type: "macro" };
+          const pre = inner();
+          const res = outer();
+          const tail = { list: [1, 2, 3].map(n => n * 2), label: ["a", "b"].join("-") };
+          writeFileSync(join(import.meta.dir, "out.json"), JSON.stringify({ pre, res, tail }));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "index.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      expect(await Bun.file(join(String(dir), "out.json")).text()).toBe(
+        JSON.stringify({
+          pre: "inner-value",
+          res: "expanded=true other=601",
+          tail: { list: [2, 4, 6], label: "a-b" },
+        }),
+      );
     });
 
     it("special identifier in import statement", () => {

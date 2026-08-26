@@ -285,6 +285,9 @@ declare module "bun" {
      * - if `nodebuffer`, binary data is returned as `Buffer` objects. **(default)**
      * - if `arraybuffer`, binary data is returned as `ArrayBuffer` objects.
      * - if `uint8array`, binary data is returned as `Uint8Array` objects.
+     * - if `blob`, binary data is returned as `Blob` objects.
+     *
+     * This applies to binary messages and to the payloads of pings and pongs.
      *
      * @example
      * ```ts
@@ -295,7 +298,7 @@ declare module "bun" {
      * });
      * ```
      */
-    binaryType?: "nodebuffer" | "arraybuffer" | "uint8array";
+    binaryType?: "nodebuffer" | "arraybuffer" | "uint8array" | "blob";
 
     /**
      * Custom data you can assign to a client. It can be read and written at any time.
@@ -411,6 +414,9 @@ declare module "bun" {
      * - if `nodebuffer`, then the message is a `Buffer`.
      * - if `arraybuffer`, then the message is an `ArrayBuffer`.
      * - if `uint8array`, then the message is a `Uint8Array`.
+     * - if `blob`, then the message is a `Blob`.
+     *
+     * The declared type of `message` is the one of the default `binaryType`.
      *
      * @param ws The websocket that sent the message
      * @param message The message received
@@ -444,6 +450,9 @@ declare module "bun" {
     /**
      * Called when a ping is received.
      *
+     * Like a binary message, `data` has the type that `binaryType` selects.
+     * The declared type is the one of the default `binaryType`.
+     *
      * @param ws The websocket that received the ping
      * @param data The data sent with the ping
      */
@@ -451,6 +460,9 @@ declare module "bun" {
 
     /**
      * Called when a pong is received.
+     *
+     * Like a binary message, `data` has the type that `binaryType` selects.
+     * The declared type is the one of the default `binaryType`.
      *
      * @param ws The websocket that received the pong
      * @param data The data sent with the pong
@@ -910,12 +922,28 @@ declare module "bun" {
     /**
      * Stop listening to prevent new connections from being accepted.
      *
-     * By default, it does not cancel in-flight requests or websockets. That means it may take some time before all network activity stops.
+     * By default, it does not cancel in-flight requests or websockets. Idle
+     * keep-alive connections are closed right away, and connections with a
+     * request in flight close as soon as their response completes. That means
+     * it may take some time before all network activity stops.
+     *
+     * The returned promise resolves once every connection is closed.
      *
      * @param closeActiveConnections Immediately terminate in-flight requests, websockets, and stop accepting new connections.
      * @default false
      */
     stop(closeActiveConnections?: boolean): Promise<void>;
+
+    /**
+     * Close every connection that is not currently sending a request or
+     * waiting for a response, without stopping the server.
+     *
+     * In-flight requests and open WebSockets are untouched, and the server
+     * keeps accepting new connections.
+     *
+     * @returns The number of connections that were closed.
+     */
+    closeIdleConnections(): number;
 
     /**
      * Update the `fetch` and `error` handlers without restarting the server.

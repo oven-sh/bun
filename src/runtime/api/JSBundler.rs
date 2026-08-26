@@ -831,6 +831,11 @@ pub mod js_bundler {
                         "format must be 'cjs' or 'esm' when bytecode is true."
                     )));
                 }
+
+                // CommonJS output defaults to the node target, like `--format=cjs`.
+                if format == options::Format::Cjs && !did_set_target && !this.bytecode {
+                    this.target = Target::Node;
+                }
             }
 
             if let Some(hot) = config.get_boolean_loose(global_this, "splitting")? {

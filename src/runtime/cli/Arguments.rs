@@ -2509,8 +2509,9 @@ fn parse_build_command_options(
                 Output::flush();
             }
             options::Format::Cjs => {
-                if ctx.args.target.is_none() {
-                    ctx.args.target = Some(api::Target::Node);
+                // `parse` returns `opts`, so a write to `ctx.args` here is lost.
+                if opts.target.is_none() {
+                    opts.target = Some(api::Target::Node);
                 }
             }
             _ => {}

@@ -393,12 +393,6 @@ impl HTMLRewriter {
         Ok(call_frame.this())
     }
 
-    // `Box<Self>` is the JsClass finalizer thunk contract — generated codegen
-    // calls `Box::from_raw` and dispatches to this signature; the Box drop
-    // releases `context` (an `Rc`), so there is nothing left to do here.
-    #[expect(clippy::boxed_local)]
-    pub fn finalize(self: Box<Self>) {}
-
     /// `sync_only_noun` is `Some("a string" | "an ArrayBuffer")` when the
     /// caller needs the rewrite to finish before `transform()` returns; a
     /// handler that would suspend then fails the rewrite instead.

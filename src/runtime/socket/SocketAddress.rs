@@ -489,15 +489,6 @@ impl SocketAddress {
 // =============================================================================
 
 impl SocketAddress {
-    pub fn finalize(self: Box<Self>) {
-        bun_jsc::mark_binding!();
-        drop(self);
-    }
-}
-
-// =============================================================================
-
-impl SocketAddress {
     /// Turn this address into a DTO.
     ///
     /// This is similar to `.toJS`, but differs in the following ways:

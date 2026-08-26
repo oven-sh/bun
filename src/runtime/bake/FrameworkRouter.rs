@@ -1976,11 +1976,6 @@ impl JSFrameworkRouter {
         Ok(obj)
     }
 
-    pub fn finalize(self: Box<Self>) {
-        drop(self);
-        // files, router, stored_parse_errors freed by Drop.
-    }
-
     pub(crate) fn parse_route_pattern(
         global: &JSGlobalObject,
         frame: &CallFrame,

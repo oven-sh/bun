@@ -119,12 +119,10 @@ impl FSWatcher {
         std::ptr::from_ref::<Self>(self).cast_mut()
     }
 
-    /// `pub const finalize = deinit;` — codegen `finalize: true` entry point.
-    /// Runs on the mutator thread during lazy sweep.
+    /// Codegen `finalize: true` entry point. Runs on the mutator thread during lazy sweep.
     pub fn finalize(self: Box<Self>) {
         // stop all managers and signals
         self.detach();
-        drop(self);
     }
 }
 

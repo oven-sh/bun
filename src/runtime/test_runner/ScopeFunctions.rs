@@ -745,14 +745,6 @@ impl fmt::Display for ScopeFunctions {
     }
 }
 
-impl ScopeFunctions {
-    /// `.classes.ts` `finalize: true` — runs on mutator thread during lazy sweep.
-    pub fn finalize(self: Box<Self>) {
-        let _g = group_log::begin();
-        drop(self);
-    }
-}
-
 fn create_unbound(global: &JSGlobalObject, mode: Mode, each: JSValue, cfg: BaseScopeCfg) -> JSValue {
     let _g = group_log::begin();
 

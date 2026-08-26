@@ -12,6 +12,7 @@ const env = { ...bunEnv };
 delete env.NODE_COMPILE_CACHE;
 delete env.NODE_COMPILE_CACHE_PORTABLE;
 delete env.NODE_DISABLE_COMPILE_CACHE;
+delete env.NODE_DEBUG_NATIVE;
 
 test(
   "NODE_COMPILE_CACHE is ignored by compiled executables and honored by bun",

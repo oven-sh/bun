@@ -300,7 +300,6 @@ dependencies = [
  "bun_jsc",
  "bun_opaque",
  "bun_options_types",
- "scopeguard",
 ]
 
 [[package]]

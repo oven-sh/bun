@@ -390,7 +390,8 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
             match e.trim_ascii() {
                 b"otlp" => want_otlp = true,
                 b"console" => c.console_exporter = true,
-                b"none" | b"" => {
+                b"" => {}
+                b"none" => {
                     c.otlp_exporters.clear();
                     c.console_exporter = false;
                     want_otlp = false;

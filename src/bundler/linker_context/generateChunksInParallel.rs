@@ -502,6 +502,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     // cross-chunk import specifiers. During printing, cross-chunk imports use
     // unique_key placeholders as paths. Now that final paths are known, replace
     // those placeholders with the resolved paths and serialize.
+    let mut module_info_strings =
+        bun_js_printer::analyze_transpiled_module::ModuleInfoStringTable::default();
     if c.options.generates_module_info() {
         // Build map from unique_key -> final resolved path
         // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
@@ -531,7 +533,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             }
         }
 
-        // Fix up each chunk's module_info
+        // Fix up each chunk's module_info; every chunk's strings go into one
+        // table (`OutputKind::ModuleInfoStringTable`) their bodies index into.
+        let mut table_ids: Vec<Vec<u32>> = Vec::new();
         for chunk in chunks.iter_mut() {
             let crate::chunk::Content::Javascript(js) = &mut chunk.content else {
                 continue;
@@ -570,14 +574,25 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 mi.replace_string_id(rep.old_id, new_id);
             }
 
-            // Serialize the fixed-up module_info
-            js.module_info_bytes = bun_js_printer::serialize_module_info(Some(mi));
-
-            // Free the ModuleInfo now that it's been serialized to bytes.
-            // It was allocated with bun.default_allocator (not the arena),
-            // so it must be explicitly destroyed.
-            // In Rust, dropping the Option<Box<ModuleInfo>> frees it.
-            js.module_info = None;
+            if mi.finalize().is_err() {
+                js.module_info = None;
+                continue;
+            }
+            table_ids.push(module_info_strings.intern_all(mi));
+        }
+        let mut table_ids = table_ids.iter();
+        for chunk in chunks.iter_mut() {
+            let crate::chunk::Content::Javascript(js) = &mut chunk.content else {
+                continue;
+            };
+            let Some(mi) = js.module_info.take() else {
+                continue;
+            };
+            js.module_info_bytes = Some(bun_js_printer::serialize_module_info_body(
+                &mi,
+                module_info_strings.count(),
+                table_ids.next().expect("one per chunk with module_info"),
+            ));
         }
     }
 
@@ -1337,6 +1352,34 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             &mut result,
             external_string_table.as_ref().and_then(|t| t.get()),
         );
+    }
+    if c.options.generates_module_info() {
+        let mut bytes = Vec::new();
+        module_info_strings
+            .serialize(&mut bytes)
+            .expect("Vec<u8> write");
+        debug!(
+            "module_info string table: {} strings, {} bytes",
+            module_info_strings.count(),
+            bytes.len()
+        );
+        result.push(options::OutputFile::init(options::OutputFileInit {
+            output_path: b".module-info-strings".to_vec().into_boxed_slice(),
+            input_path: Box::default(),
+            input_loader: Loader::File,
+            hash: None,
+            output_kind: options::OutputKind::ModuleInfoStringTable,
+            loader: Loader::File,
+            size: Some(bytes.len()),
+            display_size: bytes.len() as u32,
+            data: options::OutputFileData::Buffer {
+                data: bytes.into_boxed_slice(),
+            },
+            side: None,
+            entry_point_index: None,
+            is_executable: false,
+            ..Default::default()
+        }));
     }
     if let Some(table) = external_string_table {
         let bytes = table.take();

@@ -714,8 +714,10 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetrySpanProtoFuncDispose, (JSGlobalObject * lexi
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* span = thisSpan(globalObject, callFrame, scope);
     RETURN_IF_EXCEPTION(scope, {});
-    telemetryEndSpan(globalObject, span, 0);
+    // Leave the scope (lexical restore, disarms Restore), then end: end() has
+    // no context work left to do.
     exitSpan(globalObject, span);
+    telemetryEndSpan(globalObject, span, 0);
     return JSValue::encode(jsUndefined());
 }
 

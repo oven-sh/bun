@@ -207,28 +207,49 @@ describe("Bun.otel", () => {
       await collect();
     }));
 
-  test("a span kept past its block does not pin the AsyncLocalStorage stores it was created under once it ends", async () => {
+  test("a span kept past its block does not pin the AsyncLocalStorage stores it was created under once it ends", () => {
     const { AsyncLocalStorage } = require("node:async_hooks");
     const als = new AsyncLocalStorage();
-    const refs: WeakRef<object>[] = [];
+    class Marker {}
     const kept: any[] = [];
-    for (let i = 0; i < 50; i++) {
-      als.run({ big: Buffer.alloc(1024) }, () => {
-        refs.push(new WeakRef(als.getStore() as object));
-        const s = Bun.otel.span("session");
-        kept.push(s);
-        s.end();
-      });
+    als.run(new Marker(), () => {
+      const s = Bun.otel.span("ended");
+      s.end();
+      kept.push(s);
+    });
+    // control: a span that is still open keeps what it will restore on exit
+    als.run(new Marker(), () => kept.push(Bun.otel.span("open")));
+    // Reachability, not GC timing: count Marker objects reachable (≤3 edges)
+    // from Span cells in a heap snapshot.
+    const snap = Bun.generateHeapSnapshot() as any;
+    const { nodes, edges, nodeClassNames } = snap;
+    const cls = (i: number) => nodeClassNames[nodes[i * 4 + 2]];
+    const index = new Map<number, number>();
+    for (let i = 0; i < nodes.length / 4; i++) index.set(nodes[i * 4], i);
+    const out = new Map<number, number[]>();
+    for (let i = 0; i < edges.length; i += 4) {
+      const f = index.get(edges[i]),
+        t = index.get(edges[i + 1]);
+      if (f !== undefined && t !== undefined) (out.get(f) ?? out.set(f, []).get(f)!).push(t);
     }
-    await Bun.sleep(0);
-    Bun.gc(true);
-    await Bun.sleep(0);
-    Bun.gc(true);
-    // A retained Restore slot would keep all 50 alive; allow a straggler or two
-    // that a register/stack word may still reference.
-    expect(refs.filter(r => r.deref() !== undefined).length).toBeLessThan(5);
-    expect(kept.length).toBe(50);
-    await collect();
+    const reachable = (name: string) => {
+      let n = 0;
+      for (let i = 0; i < nodes.length / 4; i++) {
+        if (cls(i) !== "Span") continue;
+        const seen = new Set([i]);
+        let frontier = [i];
+        for (let d = 0; d < 3; d++) {
+          const next: number[] = [];
+          for (const f of frontier) for (const t of out.get(f) ?? []) if (!seen.has(t)) (seen.add(t), next.push(t));
+          frontier = next;
+        }
+        for (const x of seen) if (cls(x) === name) n++;
+      }
+      return n;
+    };
+    expect(reachable("Marker")).toBe(1); // only the open span's
+    kept[1].exit();
+    expect(kept.length).toBe(2);
   });
 
   test("context.with(suppressTracing(ctx)) suppresses native spans, and exporter callbacks run suppressed", async () => {

@@ -720,7 +720,7 @@ impl Processor {
             let exporters = self.exporters.read().clone();
             if exporters.is_empty() {
                 self.drop_unexported(&payload);
-                return;
+                continue;
             }
             payload.expect(exporters.len());
             for e in exporters {

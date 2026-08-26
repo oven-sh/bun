@@ -7,8 +7,7 @@ extern "C" size_t Bun__stringSyntheticAllocationLimit;
 
 namespace Bun {
 
-// WTF::Vector::append CRASH()es once a 1.5x growth step asks for more than
-// isValidCapacityForVector<T> (INT32_MAX bytes). These two bound the size instead.
+// Vector::append CRASH()es once a 1.5x growth step passes isValidCapacityForVector<T>. These bound the size instead.
 
 // Follows Bun__stringSyntheticAllocationLimit so tests reach the limit with small inputs.
 template<typename T>

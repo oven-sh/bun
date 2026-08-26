@@ -43,8 +43,7 @@ public:
     static ExceptionOr<Ref<URLSearchParams>> create(std::variant<Vector<Vector<String>>, Vector<KeyValuePair<String, String>>, String>&&);
     static ExceptionOr<Ref<URLSearchParams>> create(const String& string, DOMURL* associatedURL);
 
-    // WTF::URLParser::parseURLEncodedForm RELEASE_ASSERTs, instead of failing, on a
-    // name or value whose UTF-8 form does not fit a WTF::Vector. Call before parsing.
+    // WTF::URLParser::parseURLEncodedForm RELEASE_ASSERTs on a name or value whose UTF-8 form does not fit a Vector.
     static ExceptionOr<void> checkURLEncodedFormLength(StringView);
 
     void append(const String& name, const String& value);

@@ -47,8 +47,7 @@ extern "C" void URLSearchParams__toString(WebCore::URLSearchParams* urlSearchPar
     callback(ctx, &slice);
 }
 
-// Mirrors WTF::isValidCapacityForVector<char16_t>: String::fromUTF8ReplacingInvalidSequences
-// sizes a Vector<char16_t> by the UTF-8 byte count of each decoded name and value.
+// String::fromUTF8ReplacingInvalidSequences sizes a Vector<char16_t> by the UTF-8 byte count.
 static constexpr size_t maxURLEncodedFormUTF8Length = (std::numeric_limits<unsigned>::max() >> 1) / sizeof(char16_t);
 static_assert(WTF::isValidCapacityForVector<char16_t>(maxURLEncodedFormUTF8Length));
 static_assert(!WTF::isValidCapacityForVector<char16_t>(maxURLEncodedFormUTF8Length + 1));

@@ -17,18 +17,23 @@ import { gzipSync } from "zlib";
 //     cross-compiled to or from them would crash or misbehave at runtime. Do not update the snapshot; fix the
 //     divergence in JavaScriptCore's runtime/CachedTypes.cpp (the comment at the top of that file lists the causes).
 //
-// Coverage of the corpus (features.js + module.js + the generated big.js), measured against JSC with llvm-cov on
-// runtime/CachedTypes.cpp and --dumpGeneratedBytecodes when it was written: every encode path that user source can
-// reach (every Cached* record type, every CachedJSValue kind, 8- and 16-bit / inline / shared / payload-aliased strings,
-// 16- and 32-bit metadata tables, multi-page payloads, out-of-line jump targets, every jump/switch table kind), and 173
-// of JSC's 194 bytecode opcodes. The other 21 cannot appear in a cached code block built from source: they are emitted
-// only for @-intrinsics in JSC's own builtins (op_argument_count is the exception that leaks into user code and is
-// covered; op_create_promise, op_new_generator, op_identity_with_profile, op_has_structure_with_flags,
-// op_is_undefined_or_null unfused), only under a debugger/profiler option (op_debug, op_profile_type,
-// op_profile_control_flow, op_super_sampler_begin/end, op_log_shadow_chicken_prologue/tail), only with USE(BIGINT32)
-// (op_is_big_int), are rewritten away before a code block is final (op_yield, op_create_generator_frame_environment),
-// have no emitter (op_below, op_beloweq, op_jbelow, op_jbeloweq, op_define_accessor_property), or belong to the
-// call-kind stub of a class constructor, which is not what gets cached (op_unreachable).
+// This test is also what guards the format's portability: JavaScriptCore does not assert that its cache records are
+// laid out identically by every compiler; it relies on this corpus reaching every record type and every opcode so that
+// a platform that lays one out differently shows up here. Coverage when it was written, measured against JSC with
+// llvm-cov on runtime/CachedTypes.cpp and an opcode histogram at generation time: every encode path user source can
+// reach (every Cached* record type and presence bit, every CachedJSValue kind, 8- and 16-bit / inline / shared /
+// payload-aliased strings, 16- and 32-bit metadata tables, wide16 and wide32 operands, multi-page payloads, out-of-line
+// jump targets, every jump/switch table kind, shared identical arrays), and 170 of JSC's 194 bytecode opcodes. The
+// other 24 cannot appear in a cached code block built from user source: they are emitted only for @-intrinsics in
+// JSC's own builtins (op_create_promise, op_new_generator, op_new_array_with_species, op_to_object, op_is_callable,
+// op_identity_with_profile, op_has_structure_with_flags, op_is_undefined_or_null unfused), only under a
+// debugger/profiler option (op_debug, op_profile_type, op_profile_control_flow, op_super_sampler_begin/end,
+// op_log_shadow_chicken_prologue/tail), only with USE(BIGINT32) (op_is_big_int), are rewritten away before a code
+// block is final (op_yield, op_create_generator_frame_environment), have no emitter (op_below, op_beloweq, op_jbelow,
+// op_jbeloweq, op_define_accessor_property), or belong to the call-kind stub of a class constructor, which is not what
+// gets cached (op_unreachable). For breadth, several real-world libraries from test/node_modules (versions pinned in
+// test/package.json) go through the same check; bumping one of them moves its hash on every platform at once, which is
+// the "update the snapshot" case above.
 const corpusDir = join(import.meta.dir, "bytecode-portability");
 const featuresSource = readFileSync(join(corpusDir, "features.js"), "utf8");
 const moduleSource = readFileSync(join(corpusDir, "module.js"), "utf8");
@@ -46,6 +51,7 @@ const featuresOutput = [
   `6 "sent" "gen" "asyncFn" "asyncArrow" 2 2 9 true 3 4 5 6 -1`,
   `"a|ab|abc||abcd" 20 72 50 1 3 false 11 "0,1,-1,18446744073709551616,18446744073709551615" ",dgimsuy,v,v" 3 [3,"x",2] true 122`,
   `"function" "function/undefined" 17 1024 0.25 3 null 0.0010000000000000002 4 2`,
+  `"hoisted" 3 [5,6,5] "twomany" "1,argumentCount,postfix,2"`,
   `["p1","p2",0,2,8,"p","q","r","s2","00","10","11","20","21","22",7,1,3,2,"undefined"]`,
 ].join("\n");
 
@@ -78,11 +84,23 @@ function bigSource() {
 }
 const bigOutput = "160307 70000";
 
-const bundlerBuilds = [
-  { name: "bun build --bytecode features.js", entry: "./features.js", args: [] },
+const corpusBuilds = [
+  { name: "bun build --bytecode features.js", entry: "./features.js", args: [] as string[] },
   { name: "bun build --bytecode --minify features.js", entry: "./features.js", args: ["--minify"] },
-  { name: "bun build --bytecode big.js", entry: "./big.js", args: [] },
-] as const;
+  { name: "bun build --bytecode big.js", entry: "./big.js", args: [] as string[] },
+];
+// Entries are relative to the corpus directory so the module paths the bundler writes into its output are the same on
+// every machine.
+const libraries = [
+  "lodash/lodash.js",
+  "acorn/dist/acorn.mjs",
+  "react-dom/cjs/react-dom.development.js",
+  "svelte/compiler/index.js",
+  "rollup/dist/es/rollup.js",
+  "typescript/lib/typescript.js",
+];
+const libraryBuilds = libraries.map(lib => ({ name: `bun build --bytecode ${lib}`, entry: `../../node_modules/${lib}`, args: [] as string[] }));
+const bundlerBuilds = [...corpusBuilds, ...libraryBuilds];
 
 // big.js is generated next to the checked-in corpus once per run (same bytes every time).
 const bigPath = join(corpusDir, "big.js");
@@ -101,8 +119,9 @@ async function bundle(outdir: string, entry: string, args: readonly string[], en
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
-  expect(readdirSync(outdir).sort()).toEqual([name, name + ".jsc"]);
-  return { js: readFileSync(join(outdir, name)), jsc: readFileSync(join(outdir, name + ".jsc")) };
+  const output = name.replace(/\.[cm]?js$/, ".js"); // the bundler names its output .js whatever the entry's extension
+  expect(readdirSync(outdir).sort()).toEqual([output, output + ".jsc"]);
+  return { js: readFileSync(join(outdir, output)), jsc: readFileSync(join(outdir, output + ".jsc")) };
 }
 
 // The payload starts with GenericCacheEntry { uint32 cacheVersion; uint32 headerSize; uint32 headerChecksum; ... }.
@@ -145,6 +164,15 @@ describe("bytecode cache portability", () => {
       "vm.Script big.js",
       new vm.Script(bigSource(), { filename: "big.js", produceCachedData: true }).cachedData!,
     );
+    const librarySource = (lib: string) => readFileSync(join(corpusDir, "../../node_modules", lib), "utf8");
+    outputs["vm.Script lodash.js"] = fingerprint(
+      "vm.Script lodash.js",
+      new vm.Script(librarySource("lodash/lodash.js"), { filename: "lodash.js", produceCachedData: true }).cachedData!,
+    );
+    outputs["vm.SourceTextModule acorn.mjs"] = fingerprint(
+      "vm.SourceTextModule acorn.mjs",
+      new vm.SourceTextModule(librarySource("acorn/dist/acorn.mjs"), { identifier: "acorn.mjs" }).createCachedData(),
+    );
     try {
       expectOutputs(outputs);
     } catch (e) {
@@ -160,37 +188,87 @@ describe("bytecode cache portability", () => {
     ).toMatchInlineSnapshot(`
       {
         "bun build --bytecode --minify features.js": {
-          "js": "845ea6c8d04fa2d382915b58c652f01c2a1bf124b588f837f3554fa5b24a1d77",
+          "js": "39d8010f7ae727ce650a5c8f1d90f6e9054ec18de5f2efb7dde474becea3c74a",
           "jsc": {
-            "bytes": 52800,
-            "sha256": "7752dca4a9526b9aaa62cb2e3de8109febec28c177618d51007bc080f7541263",
+            "bytes": 45744,
+            "sha256": "a967a089add68a9c257f8301c9a56e0e12d93a7a4191293e0c38dc062254d18f",
+          },
+        },
+        "bun build --bytecode acorn/dist/acorn.mjs": {
+          "js": "2ed858fa1b38a20673cee13a857ccdaedb9da0a325ebc47e81c4851de77eef3c",
+          "jsc": {
+            "bytes": 266064,
+            "sha256": "4b431a514916bb73e8daba7977ca1ca8d3cdec350c57e45222ff9b0a56691498",
           },
         },
         "bun build --bytecode big.js": {
           "js": "df5367354d3dbd2b81114585fb2a21d058910c869ece4404ef015c0efaf5c689",
           "jsc": {
-            "bytes": 166960,
-            "sha256": "a66b81636f53b8251697a3c694e24ec8e84bb3f7d781a870165b740644a905d1",
+            "bytes": 168656,
+            "sha256": "cf4792f2ea174083447f9fa12860dce4e08ac5a22774cc80c3ea02b5ffb87e64",
           },
         },
         "bun build --bytecode features.js": {
-          "js": "f379d51aef463e0c8060b6f31a3cf784dd783a036de345b8909ed084078f1f69",
+          "js": "1e8a739b8e899b7191a2a53748d27b06c616ef821df85d00e0b64ff4a7b094e4",
           "jsc": {
-            "bytes": 54552,
-            "sha256": "613a0a30bf5754fa249084b00cc87b6881aa48b60b8141776ceede8684383775",
+            "bytes": 48208,
+            "sha256": "3eaab66c513c7ebad6f7a966d281596a250cd758b5c9605dc5ec13f61a1a8034",
+          },
+        },
+        "bun build --bytecode lodash/lodash.js": {
+          "js": "0b575ee1213807337c15c47d07864bb299cc361a983c8668f0ba164d646aa210",
+          "jsc": {
+            "bytes": 346976,
+            "sha256": "3047eae43d99d73191c7d3eed6eb5505ee27fcdc3de041507b2000caf5f3adfe",
+          },
+        },
+        "bun build --bytecode react-dom/cjs/react-dom.development.js": {
+          "js": "06099121265fa73020167d9aa9a72adf8f7e92f9c5f9ae801c52ea5248aab2a6",
+          "jsc": {
+            "bytes": 979432,
+            "sha256": "3afdbd09ae9ee90215811d5ea0c0a08f19414383bb0fbe1cc0f7a7c929ac2446",
+          },
+        },
+        "bun build --bytecode rollup/dist/es/rollup.js": {
+          "js": "4e9f4045dd7953296c405173a38c8c3402832167a5bf2bb4bd470fb8b1446454",
+          "jsc": {
+            "bytes": 1521152,
+            "sha256": "06908894dfc31e373e17488032b64e4564ac3d0125a92f259b63304caf552f80",
+          },
+        },
+        "bun build --bytecode svelte/compiler/index.js": {
+          "js": "91d38e665639adcb4ec160c966e6d72161ee07083363c04670ee82e82c001414",
+          "jsc": {
+            "bytes": 1995984,
+            "sha256": "d7e03d48ff4b43d79d442bcbd5a8b12169323f86841ae1ba19a933e5133c3a16",
+          },
+        },
+        "bun build --bytecode typescript/lib/typescript.js": {
+          "js": "1c02b1695ecb00487cb6230346dff7042a43727e99ec5163fd0b4ac16145dc1d",
+          "jsc": {
+            "bytes": 12024624,
+            "sha256": "f31fca83b43d27a36cebd40fff8bd6be8026052a6ce373543144a13b17b51059",
           },
         },
         "vm.Script big.js": {
-          "bytes": 166792,
-          "sha256": "fe5d1f42164a1e0e90f4e3e5a5e372004398fcd6167e12ec14b4a7f0de0bc735",
+          "bytes": 168560,
+          "sha256": "5666dd9957cb8fb428d8fb690ef722eee980a7dc9dd8657c227af498f511441e",
         },
         "vm.Script features.js": {
-          "bytes": 53904,
-          "sha256": "6c060dd330a6b6b048532848dace5d5e0ec31a9bf78b51020e2172ad70954e8a",
+          "bytes": 48232,
+          "sha256": "aaf19b57794b38aebded10c25cde40810c5e0ba96148400070ee1131649f4ae4",
+        },
+        "vm.Script lodash.js": {
+          "bytes": 354672,
+          "sha256": "ff430fa41f4192baaeb922b03ff28b68609abc2e41e40016d15a078af984d042",
+        },
+        "vm.SourceTextModule acorn.mjs": {
+          "bytes": 264064,
+          "sha256": "ff74b78ba0543c10860dca0a86e899cb20e147a5c15881abaf17f3d1048ac2de",
         },
         "vm.SourceTextModule module.js": {
-          "bytes": 3144,
-          "sha256": "adceee619784e4af53bfa6af5fd94ab6ddea4b4f1689d24909b9a9305863f350",
+          "bytes": 2840,
+          "sha256": "595652c14c69e7601c1b9ef94d923db08aa9a20e7e2147565923cc3b7427ee37",
         },
       }
     `);
@@ -247,7 +325,7 @@ describe("bytecode cache portability", () => {
   });
 
   // Identical bytes only help if this platform also decodes what it encodes.
-  for (const { name, entry, args } of bundlerBuilds) {
+  for (const { name, entry, args } of corpusBuilds) {
     test(`output of \`${name}\` loads from the cache`, async () => {
       using dir = tempDir("bytecode-portable-run", {});
       await bundle(String(dir), entry, args);

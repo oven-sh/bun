@@ -319,6 +319,19 @@ b`;
   function after() { return spansLines.toString().split("\n").length; }
   return [typeof second, fourth(), new ManyComputed().total(), 2 ** 10, 2 ** -2, 9 ** 0.5, (-8) ** (1 / 3), 0.1 ** 3, spansLines(1).length, after()];
 }
+// A sloppy script's top-level block functions resolve their var scope with an opcode nothing else emits; `arguments`
+// used only for its length has its own; a postfix increment whose value is used converts through op_to_numeric; two
+// byte-identical functions share one instruction stream and one jump table in the payload; a string constant equal to
+// an identifier written earlier points at that identifier's characters.
+{
+  function blockHoisted() { return "hoisted"; }
+  function alsoHoisted() { return blockHoisted(); }
+}
+function argumentCount() { return arguments.length; }
+function postfix(n) { const before = n++; const after = n--; return [before, after, n]; }
+function twinA(x) { switch (x) { case 1: return "one"; case 2: return "two"; case 3: return "three"; default: return "many"; } }
+function twinB(x) { switch (x) { case 1: return "one"; case 2: return "two"; case 3: return "three"; default: return "many"; } }
+function sharedContents(o) { return [o.argumentCount, "argumentCount", "postfix", o.postfix].join(); }
 //# sourceURL=features-corpus.js
 //# sourceMappingURL=data:application/json;base64,e30=
 
@@ -334,6 +347,7 @@ record(...sloppyOnly("a0", "b0"));
 record(...functionForms());
 record(...constants("c"));
 record(...orderSensitive(true));
+record(alsoHoisted(), argumentCount(1, 2, 3), postfix(5), twinA(2) + twinB(4), sharedContents({ argumentCount: 1, postfix: 2 }));
 asyncStuff(2, "r1", "r2").then(seen => {
   record(seen);
   console.log(log.join("\n"));

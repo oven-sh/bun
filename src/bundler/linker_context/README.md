@@ -762,7 +762,7 @@ The renamed symbols are then used during final code generation to produce output
 
 - Orders files by distance from entry point
 - Handles part dependencies within chunks
-- Manages import precedence
+- Records the other chunks in the order the walk reaches their first file with side effects (`reached_chunks_in_order`), which orders the chunk's cross-chunk `import` statements
 - Ensures proper evaluation order
 
 #### `findImportedCSSFilesInJSOrder.rs`

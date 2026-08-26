@@ -932,6 +932,51 @@ describe("bundler", () => {
     ],
   });
 
+  // The chunks an output file imports, in statement order.
+  const chunkImportsIn = (api: BundlerTestBundleAPI, name: string) =>
+    [...api.readFile("/out/" + name).matchAll(/^import\b[^;]*?"\.\/([^"]+)";$/gms)].map(m => m[1]);
+
+  // Two shared chunks are imported in the order the entry first reaches
+  // them, not in chunk index order.
+  itBundled("splitting/EvaluationOrderOfSharedChunkImports", {
+    files: {
+      "/e1.js": /* js */ `
+        import { b } from './b.js'
+        import { a } from './a.js'
+        console.log('e1', a + b, JSON.stringify(globalThis.log))
+      `,
+      "/e2.js": /* js */ `
+        import { a } from './a.js'
+        console.log('e2', a)
+      `,
+      "/e3.js": /* js */ `
+        import { b } from './b.js'
+        console.log('e3', b)
+      `,
+      "/a.js": /* js */ `
+        (globalThis.log ||= []).push('a')
+        export const a = 'a'
+      `,
+      "/b.js": /* js */ `
+        (globalThis.log ||= []).push('b')
+        export const b = 'b'
+      `,
+    },
+    entryPoints: ["/e1.js", "/e2.js", "/e3.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      // Three entries and a chunk each for a.js and b.js; nothing had to be cut.
+      expect(jsFilesIn(api)).toHaveLength(5);
+      const imports = chunkImportsIn(api, "e1.js");
+      expect(imports).toHaveLength(2);
+      expect(api.readFile("/out/" + imports[0])).toContain('push("b")');
+      expect(api.readFile("/out/" + imports[1])).toContain('push("a")');
+    },
+    run: { file: "/out/e1.js", stdout: 'e1 ab ["b","a"]' },
+  });
+
   // import() of another chunk is printed as import(); it does not pull the
   // runtime's __require into the bundle.
   itBundled("splitting/DynamicImportDoesNotNeedRequireShim", {
@@ -1119,7 +1164,7 @@ describe("bundler", () => {
       api.expectFile("/out/entry1.js").toContain(`"./${pureChunk}"`);
     },
     run: [
-      { file: "/out/entry1.js", stdout: "impure evaluated\ncommon evaluated\nentry1 2\nlazy 42" },
+      { file: "/out/entry1.js", stdout: "common evaluated\nimpure evaluated\nentry1 2\nlazy 42" },
       { file: "/out/entry2.js", stdout: "common evaluated\nentry2 40\nimpure evaluated\nlazy 42" },
     ],
   });

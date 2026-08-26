@@ -18,31 +18,62 @@ pub(crate) fn find_all_imported_parts_in_js_order(
         return Ok(());
     }
 
+    // With code splitting a live JS file is in exactly one chunk. The walk
+    // below orders each chunk's cross-chunk imports by where it reaches the
+    // files that run something when loaded; the rest (and every file without
+    // code splitting) map to `u32::MAX`.
+    let mut chunk_of_file: Vec<u32> = vec![u32::MAX; this.graph.files.len()];
+    if this.graph.code_splitting {
+        for (chunk_index, chunk) in chunks.iter().enumerate() {
+            if !matches!(chunk.content, chunk::Content::Javascript(_)) {
+                continue;
+            }
+            for &source_index in chunk.files_with_parts_in_chunk.keys() {
+                if !this.loading_file_has_no_side_effects(source_index) {
+                    chunk_of_file[source_index as usize] = chunk_index as u32;
+                }
+            }
+        }
+    }
+
+    struct Ctx<'a, 'f> {
+        inner: crate::linker_context_mod::GenerateChunkCtx<'a>,
+        chunk_of_file: &'f [u32],
+    }
+
     // One chunk per task. Each task writes only its own `Chunk` and, for
     // server-component files, that file's `entry_point_chunk_index` slot (a
     // file belongs to exactly one chunk), and reads the graph columns.
-    let ctx = crate::linker_context_mod::GenerateChunkCtx {
-        chunk: bun_ptr::BackRef::new_mut(&mut chunks[0]),
-        // SAFETY: `this` is the live `&mut LinkerContext` for the link step.
-        c: unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(this)) },
-        chunks: bun_ptr::BackRef::new(&*chunks),
+    let ctx = Ctx {
+        inner: crate::linker_context_mod::GenerateChunkCtx {
+            chunk: bun_ptr::BackRef::new_mut(&mut chunks[0]),
+            // SAFETY: `this` is the live `&mut LinkerContext` for the link step.
+            c: unsafe {
+                bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(this))
+            },
+            chunks: bun_ptr::BackRef::new(&*chunks),
+        },
+        chunk_of_file: &chunk_of_file,
     };
+    let chunks_len = chunks.len();
     this.worker_pool().each_ptr(
         ctx,
-        |ctx: &crate::linker_context_mod::GenerateChunkCtx, chunk: *mut Chunk, index: usize| {
+        |ctx: &Ctx, chunk: *mut Chunk, index: usize| {
             // SAFETY: `each_ptr` hands each task a distinct `*mut Chunk`.
             let chunk = unsafe { &mut *chunk };
             if !matches!(chunk.content, chunk::Content::Javascript(_)) {
                 return; // CSS: `find_imported_css_files_in_js_order`; HTML: nothing
             }
             // SAFETY: shared for reading; see the note above on the one column written.
-            let c: &LinkerContext = unsafe { &*ctx.c.as_mut_ptr() };
+            let c: &LinkerContext = unsafe { &*ctx.inner.c.as_mut_ptr() };
             bun_core::handle_oom(find_imported_parts_in_js_order(
                 c,
                 chunk,
                 &mut Vec::new(),
                 &mut Vec::new(),
                 u32::try_from(index).expect("int cast"),
+                ctx.chunk_of_file,
+                chunks_len,
             ));
         },
         chunks,
@@ -56,6 +87,8 @@ pub(crate) fn find_imported_parts_in_js_order(
     part_ranges_shared: &mut Vec<PartRange>,
     parts_prefix_shared: &mut Vec<PartRange>,
     chunk_index: u32,
+    chunk_of_file: &[u32],
+    chunks_len: usize,
 ) -> Result<(), bun_alloc::AllocError> {
     let mut chunk_order_array: Vec<Order> =
         Vec::with_capacity(chunk.files_with_parts_in_chunk.count());
@@ -90,7 +123,7 @@ pub(crate) fn find_imported_parts_in_js_order(
     let entry_point_chunk_indices: *mut [u32] =
         this.graph.files.slice().split_raw().entry_point_chunk_index;
 
-    let (files_in_chunk_order, parts_in_chunk_order) = {
+    let (files_in_chunk_order, parts_in_chunk_order, reached_chunks) = {
         let mut visitor = FindImportedPartsVisitor {
             files: Vec::new(),
             part_ranges: core::mem::take(part_ranges_shared),
@@ -104,6 +137,9 @@ pub(crate) fn find_imported_parts_in_js_order(
             chunk_index,
             entry_point_chunk_indices,
             stack: Vec::new(),
+            chunk_of_file,
+            reached_chunks: Vec::new(),
+            reached_chunk_set: AutoBitSet::init_empty(chunks_len)?,
         };
 
         match (with_code_splitting, with_scb) {
@@ -124,13 +160,14 @@ pub(crate) fn find_imported_parts_in_js_order(
         *parts_prefix_shared = visitor.parts_prefix;
         // visitor.visited dropped implicitly
 
-        (visitor.files, parts_in_chunk_order)
+        (visitor.files, parts_in_chunk_order, visitor.reached_chunks)
     };
 
     match &mut chunk.content {
         chunk::Content::Javascript(js) => {
             js.files_in_chunk_order = files_in_chunk_order.into_boxed_slice();
             js.parts_in_chunk_in_order = parts_in_chunk_order.into_boxed_slice();
+            js.reached_chunks_in_order = reached_chunks.into_boxed_slice();
         }
         // Caller only invokes this for `.javascript` chunks (see
         // `find_all_imported_parts_in_js_order`).
@@ -165,6 +202,12 @@ pub(crate) struct FindImportedPartsVisitor<'a, 'ctx> {
     /// `visit` (see the raw-pointer note above).
     entry_point_chunk_indices: *mut [u32],
     stack: Vec<PartsFrame>,
+    /// The chunk of each file that runs something when loaded; `u32::MAX`
+    /// for the others (and everywhere without code splitting).
+    chunk_of_file: &'a [u32],
+    /// `JavaScriptChunk::reached_chunks_in_order` under construction.
+    reached_chunks: Vec<u32>,
+    reached_chunk_set: AutoBitSet,
 }
 
 #[derive(Copy, Clone)]
@@ -282,6 +325,18 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                                 part_index_begin: 0,
                                 part_index_end: self.parts[source_index as usize].len() as u32,
                             });
+                        }
+                    } else {
+                        // Post-order, like the files above: another chunk's
+                        // first file with side effects finishes here exactly
+                        // when the unbundled module would have run them.
+                        let other = self.chunk_of_file[source_index as usize];
+                        if other != u32::MAX
+                            && other != self.chunk_index
+                            && !self.reached_chunk_set.is_set(other as usize)
+                        {
+                            self.reached_chunk_set.set(other as usize);
+                            self.reached_chunks.push(other);
                         }
                     }
                     continue;

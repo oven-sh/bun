@@ -2220,7 +2220,6 @@ fn parse_build_command_options(
 
     if args.flag(b"--compile") {
         ctx.bundler_options.compile = true;
-        ctx.bundler_options.inline_entrypoint_import_meta_main = true;
     }
 
     if let Some(compile_exec_argv) = args.option(b"--compile-exec-argv") {

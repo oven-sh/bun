@@ -662,8 +662,7 @@ fn mul_div_255(c: u32, a: u32) -> u8 {
     ((x + (x >> 8)) >> 8) as u8
 }
 
-/// Premultiplied copy of `src`, or `None` when every pixel is opaque (the
-/// round trip would be an identity, so skip the copy).
+/// Premultiplied copy of `src`, or `None` when every pixel is opaque.
 fn premultiplied(src: &[u8]) -> Option<Vec<u8>> {
     if !src.as_chunks::<4>().0.iter().any(|p| p[3] != 255) {
         return None;
@@ -701,8 +700,8 @@ fn unpremultiply(rgba: &mut [u8]) {
 }
 
 /// Resample through premultiplied alpha so transparent pixels don't bleed
-/// their RGB into neighbours. `nearest` copies single source samples (no
-/// mixing), so it skips the lossy u8 premultiply round trip and stays exact.
+/// RGB into neighbours. `nearest` copies single source samples (no mixing),
+/// so it skips the lossy u8 round trip and stays bit-exact.
 pub(crate) fn resize(
     src: &[u8],
     sw: u32,

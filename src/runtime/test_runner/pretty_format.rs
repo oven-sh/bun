@@ -1626,7 +1626,6 @@ impl<'a> Formatter<'a> {
                 .is_err()
             {
                 self.failed = true;
-                // TODO: make this better
                 if !self.global_this.has_exception() {
                     return Err(self.global_this.throw_error(
                         bun_core::Error::FmtError,
@@ -1644,7 +1643,6 @@ impl<'a> Formatter<'a> {
                 .is_err()
             {
                 self.failed = true;
-                // TODO: make this better
                 if !self.global_this.has_exception() {
                     return Err(self.global_this.throw_error(
                         bun_core::Error::FmtError,
@@ -1664,7 +1662,6 @@ impl<'a> Formatter<'a> {
                 .is_err()
             {
                 self.failed = true;
-                // TODO: make this better
                 if !self.global_this.has_exception() {
                     return Err(self.global_this.throw_error(
                         bun_core::Error::FmtError,
@@ -1682,7 +1679,6 @@ impl<'a> Formatter<'a> {
                 .is_err()
             {
                 self.failed = true;
-                // TODO: make this better
                 if !self.global_this.has_exception() {
                     return Err(self.global_this.throw_error(
                         bun_core::Error::FmtError,

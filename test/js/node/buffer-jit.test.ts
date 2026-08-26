@@ -37,9 +37,13 @@ async function run(source: string, extraEnv: Record<string, string> = {}) {
 
 // Warm-up calls on the fast path: reaches the FTL many times over under this tier-up policy.
 const N = 500;
-// Repetitions of an input that makes optimized code exit: enough for several exit -> recompile
-// rounds, so a site that never settles shows up as a runaway compile count.
+// Repetitions of an input that makes optimized code exit, in the tests that pin compile counts
+// after a change of receiver or method: enough for the exit, the jettison after 20 of them, the
+// recompile, and a long run of the recompiled code.
 const T = 300;
+// Calls per host-semantics case. Each call exits the compiled site, so the jettison and the
+// recompile without the intrinsic are over by call 50. The rest runs the recompiled code.
+const R = 150;
 
 // Shared prelude: helpers and a deterministic buffer.
 const prelude = `
@@ -49,7 +53,7 @@ function report(result) { console.log(JSON.stringify(result)); }
 const buf = Buffer.alloc(256);
 const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
 for (let i = 0; i < buf.length; i++) buf[i] = (i * 37 + 11) & 0xff;
-const N = ${N}, T = ${T};
+const N = ${N}, T = ${T}, R = ${R};
 `;
 
 // Runs a scenario and returns the object it passed to report(). The scenario body is the harness
@@ -84,8 +88,15 @@ describe.concurrent("Buffer accessor JIT", () => {
   });
 
   // Each case gets its own call site: warm it on the fast path, then keep feeding it one input that
-  // makes the optimized code exit, with a fast call in between. The site must settle on a bounded
-  // number of recompiles, and every exit must land on the same answer as the host.
+  // makes the optimized code exit, with a fast call in between, until the site has settled. Every
+  // exit must land on the same answer as the host.
+  //
+  // Optimized code is jettisoned after osrExitCountForReoptimization exits, doubled for every
+  // recompile the function already had (CodeBlock::adjustedExitCountThreshold), so a site whose
+  // latest code still exits on every bad call recompiles again within 20 << (compiles - 1)
+  // iterations plus a short re-warm. The loop runs until the compile count has held still for
+  // longer than that, so the count it reports is final. A site that never settles reads 7 or more
+  // at the 2000-iteration cap.
   //
   // compiles: 1 for the warm-up plus 1 per speculation the bad input defeats, each followed by a
   // recompile without it. outcomes: a single entry means every exit produced the host's answer,
@@ -101,11 +112,14 @@ describe.concurrent("Buffer accessor JIT", () => {
       const expected = outcome(fn, fast);
       for (let i = 0; i < N; i++) assert(outcome(fn, fast) === expected, "warm-up");
       const seen = new Set();
-      for (let i = 0; i < T; i++) {
+      let compiles = numberOfDFGCompiles(fn), lastRecompile = 0;
+      for (let i = 0; i < 2000 && i - lastRecompile <= (20 << (compiles - 1)) + 100; i++) {
         seen.add(outcome(fn, bad));
         assert(outcome(fn, fast) === expected, "the fast path between exits");
+        const now = numberOfDFGCompiles(fn);
+        if (now !== compiles) { compiles = now; lastRecompile = i; }
       }
-      return { compiles: numberOfDFGCompiles(fn), outcomes: [...seen] };
+      return { compiles, outcomes: [...seen] };
     }
     noInline(exercise); noFTL(exercise);
   `;
@@ -183,31 +197,33 @@ describe.concurrent("Buffer accessor JIT", () => {
     // uint32 writers' Int52 conversion exits with Int52Overflow and the int8 writer's Int32
     // conversion exits unconditionally (Uncountable). Neither is the BadType exit a boxed argument
     // produces, and both must stop the intrinsic from being inlined again: one exit, one recompile,
-    // 2 compiles. A compiler that inlines it again after these exit kinds reaches 10 or more here.
+    // 2 compiles. A compiler that inlines it again after these exit kinds exits on every call and
+    // reads 5 here (recompiles after 20, 60, 140 and 300 exits).
     expect(result).toEqual({ writeUInt32LE: 2, writeUIntBE: 2, writeInt8: 2 });
   });
 
   // Host semantics under the JIT: each case is its own function, so its constants are compiled into
-  // the call site, and it runs T times on a zeroed scratch buffer. The outcome of a call is what it
+  // the call site, and it runs R times on a zeroed scratch buffer. The outcome of a call is what it
   // returned and what the bytes say afterwards, or what it threw. One outcome per case means every
   // call gave the host's answer, from the first (interpreted) to the last (compiled, or recompiled
   // after an exit).
   const semanticsHelpers = `
     const s = Buffer.alloc(16);
     const sv = new DataView(s.buffer, s.byteOffset, s.byteLength);
+    function bytesAfter(readBack) { return readBack ? ", bytes " + String(readBack()) : ""; }
+    noInline(bytesAfter); noFTL(bytesAfter);
     function effect(fn, i, readBack) {
-      const bytes = () => (readBack ? ", bytes " + String(readBack()) : "");
-      try { return "returns " + String(fn(s, i)) + bytes(); }
-      catch (e) { return "throws " + e.constructor.name + ":" + e.code + bytes(); }
+      try { return "returns " + String(fn(s, i)) + bytesAfter(readBack); }
+      catch (e) { return "throws " + e.constructor.name + ":" + e.code + bytesAfter(readBack); }
     }
     noInline(effect); noFTL(effect);
     function outcomesOf(cases) {
       const outcomes = {};
       for (const [name, [fn, readBack]] of Object.entries(cases)) {
         noInline(fn);
-        if (readBack) noInline(readBack);
+        if (readBack) { noInline(readBack); noFTL(readBack); } // harness, like effect
         const seen = new Set();
-        for (let i = 0; i < T; i++) {
+        for (let i = 0; i < R; i++) {
           sv.setBigUint64(0, 0n, true); // the bytes a write may touch start out zero on every call
           seen.add(effect(fn, i, readBack));
         }
@@ -279,7 +295,7 @@ describe.concurrent("Buffer accessor JIT", () => {
         "uint64 negative": ["throws RangeError:ERR_OUT_OF_RANGE, bytes 0"],
       },
       // The value is coerced exactly once per call, even when the call then throws.
-      coerced: 2 * T,
+      coerced: 2 * R,
     });
   });
 
@@ -715,7 +731,8 @@ describe.concurrent("Buffer accessor JIT", () => {
     `);
     // The site sees three things worth one recompile each, in an order that depends on when the
     // first compile lands: offset + 4 overflowing int32 at the ceiling, a second receiver shape, and
-    // a straddling offset that is not an int32. A site that keeps exiting reaches 8 or more here.
+    // a straddling offset that is not an int32. A site that keeps exiting on every call has 1800
+    // exits to spend here and reads 6 or 7 (the exit budget doubles with every recompile).
     expect(result.straddling).toEqual(["ERR_OUT_OF_RANGE"]);
     expect(result.compiles.readAt).toBeLessThanOrEqual(5);
     expect(result.compiles.writeAt).toBeLessThanOrEqual(5);
@@ -746,7 +763,8 @@ describe.concurrent("Buffer accessor JIT", () => {
     `);
     // The last stores landed at byteOffset + offset (seen through a DataView over the whole 4GB
     // buffer), and a read past the end of the tiny high-offset view throws. wide.length is 2**31,
-    // not an int32, so offsets computed from it cost the site a recompile or two, not a storm.
+    // not an int32, so offsets computed from it cost the site a recompile or two; a site that keeps
+    // exiting on every call has 1000 exits to spend here and reads 6.
     expect(result).toMatchObject({ tailStore: N - 1, wideStore: ~(N - 1), straddling: "ERR_OUT_OF_RANGE" });
     expect(result.compiles.readAt).toBeLessThanOrEqual(5);
     expect(result.compiles.writeAt).toBeLessThanOrEqual(5);

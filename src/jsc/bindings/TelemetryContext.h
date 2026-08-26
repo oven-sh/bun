@@ -86,5 +86,4 @@ JSC_DECLARE_HOST_FUNCTION(jsTelemetryEnterContext);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetryExitContext);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetryActiveExtras);
 
-
 } // namespace Bun

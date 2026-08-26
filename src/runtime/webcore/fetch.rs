@@ -405,8 +405,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut proxy: Option<ZigURL> = None;
     let mut redirect_type: FetchRedirect = FetchRedirect::Follow;
     let signal: Option<AbortSignalRef>;
-    // Custom Hostname
-    let mut hostname: Option<Box<[u8]>> = None;
     let mut range: Option<bun_core::ZBox> = None;
     let mut unix_socket_path: Box<[u8]> = Box::default();
 
@@ -429,7 +427,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut reject_unauthorized = vm.get_tls_reject_unauthorized();
     let mut check_server_identity: JSValue = JSValue::ZERO;
 
-    // signal/unix_socket_path/url_proxy_buffer/headers/body/hostname/range/
+    // signal/unix_socket_path/url_proxy_buffer/headers/body/range/
     // ssl_config are all owning types whose Drop runs on early return.
 
     let options_object: Option<JSValue> = 'brk: {
@@ -1179,9 +1177,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // refcounted via `created_headers` above). `FetchHeaders` is
             // an opaque ZST FFI handle (S008) — safe `*mut → &mut` deref.
             let headers_ref = bun_opaque::opaque_deref_mut(headers_);
-            if let Some(hostname_) = headers_ref.fast_get(HTTPHeaderName::Host) {
-                hostname = Some(hostname_.to_owned_slice().into_boxed_slice());
-            }
             if url.is_s3() {
                 if let Some(range_) = headers_ref.fast_get(HTTPHeaderName::Range) {
                     range = Some(range_.to_owned_slice_z());
@@ -1867,7 +1862,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         url_proxy_buffer: url_proxy_boxed,
         signal,
         ssl_config: ssl_config.take(),
-        hostname: hostname.take(),
         upgraded_connection,
         forced_protocol,
         is_node_http_client: ALLOW_GET_BODY,

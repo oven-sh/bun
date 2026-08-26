@@ -306,10 +306,11 @@ test("rejects cached module records containing out-of-range string indices", () 
   //   0: cache_version u32, 4: module_type u8, 5: output_encoding u8,
   //   then twelve u64 fields; esm_record_byte_offset @ 78,
   //   esm_record_byte_length @ 86, esm_record_hash @ 94. Payload follows @ 102.
-  // Serialized module record layout (src/bundler/analyze_transpiled_module.rs,
-  // serialize()):
-  //   [record_kinds_len u32][record_kinds, 1 byte each][pad to 4]
-  //   [buffer_len u32][buffer: u32 string index x buffer_len] ...
+  // Serialized module record layout (ModuleInfoStringTable + body, see
+  // `ModuleInfoDeserialized::serialize` in src/js_printer/lib.rs):
+  //   table: [offset_width u8][0;3][count u32][(count+1) offsets][bytes]
+  //   body:  [flags u8][id_width u8][0;2][n_requested u32][n_records u32]
+  //          [n_records tag bytes][n_requested tag bytes][string ids @ id_width ...]
   const ESM_RECORD_BYTE_OFFSET_AT = 78;
   const ESM_RECORD_BYTE_LENGTH_AT = 86;
   const ESM_RECORD_HASH_AT = 94;
@@ -322,18 +323,22 @@ test("rejects cached module records containing out-of-range string indices", () 
     const esmLen = Number(data.readBigUInt64LE(ESM_RECORD_BYTE_LENGTH_AT));
     if (esmLen === 0 || esmOff + esmLen > data.length) return false;
 
-    const recordKindsLen = data.readUInt32LE(esmOff);
-    const pad = (4 - (recordKindsLen % 4)) % 4;
-    let off = esmOff + 4 + recordKindsLen + pad;
-    const bufferLen = data.readUInt32LE(off);
-    off += 4;
-    if (bufferLen === 0) return false;
+    const readUint = (at: number, width: number) =>
+      width === 1 ? data.readUInt8(at) : width === 2 ? data.readUInt16LE(at) : data.readUInt32LE(at);
+    const offsetWidth = data.readUInt8(esmOff);
+    const count = data.readUInt32LE(esmOff + 4);
+    const offsetsAt = esmOff + 8;
+    const total = readUint(offsetsAt + count * offsetWidth, offsetWidth);
+    const bodyAt = offsetsAt + (count + 1) * offsetWidth + total;
+    const nRequested = data.readUInt32LE(bodyAt + 4);
+    const nRecords = data.readUInt32LE(bodyAt + 8);
+    const idsAt = bodyAt + 12 + nRecords + nRequested;
+    const end = esmOff + esmLen;
+    if (nRecords === 0 || idsAt >= end) return false;
 
-    // Point every string index in the record buffer far beyond the identifier
-    // table (but below the reserved sentinel range near u32::MAX).
-    for (let i = 0; i < bufferLen; i++) {
-      data.writeUInt32LE(0x7fffffff, off + i * 4);
-    }
+    // Point every string id in the body past the table (and past the two
+    // sentinels count / count+1): all-ones at whatever width the ids use.
+    data.fill(0xff, idsAt, end);
     // The cache loader skips esm-record content verification when the stored
     // hash field is zero, so whoever writes the cache file controls exactly
     // what reaches the module record deserializer.

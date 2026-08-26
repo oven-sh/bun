@@ -361,9 +361,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
                         continue;
                     }
 
-                    // Options::initialize runs notifyOptionsChanged once after this callback, and
-                    // that pass applies jitPolicyScale. Verifying each option here would apply the
-                    // scale once per BUN_JSC_ variable.
+                    // Options::initialize verifies all of them once after this callback.
                     if (!JSC::Options::setOption(env + 8, /* verify */ false)) [[unlikely]] {
                         onCrash(env, strlen(env));
                     }

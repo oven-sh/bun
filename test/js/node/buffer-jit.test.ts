@@ -9,6 +9,7 @@
 // that the test compares as a whole.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug } from "harness";
+import { totalmem } from "node:os";
 
 // One eager, deterministic tier-up policy for every subprocess. forceEagerCompilation compiles a
 // function to baseline after 10 and to DFG and FTL after 20 execution counts (a call counts 15)
@@ -686,10 +687,13 @@ describe.concurrent("Buffer accessor JIT", () => {
     if (!isDebug) expect(referenceResult.resizes).toBeGreaterThan(10);
   });
 
-  test("a >2GB receiver stays optimized: no exit storm, and OOB still throws", async () => {
+  // The two large-view scenarios allocate 3GB and 4GB. The pages are never touched, so the cost is
+  // address space and the allocator's consent, not RSS; still, only ask on a machine that has it.
+  const enoughMemory = totalmem() >= 8 * 1024 ** 3;
+
+  test.skipIf(!enoughMemory)("a >2GB receiver stays optimized: no exit storm, and OOB still throws", async () => {
     const result = await scenario(`
-      let big;
-      try { big = new Uint8Array(3 * 2**30); } catch { report({ skipped: "could not allocate 3GB" }); process.exit(0); }
+      const big = new Uint8Array(3 * 2**30);
       Object.setPrototypeOf(big, Buffer.prototype);
       const small = Buffer.alloc(64);
       function readAt(b, o) { return b.readInt32LE(o); }
@@ -707,7 +711,6 @@ describe.concurrent("Buffer accessor JIT", () => {
       for (let i = 0; i < T; i++) { try { readAt(big, big.length - 3); straddling.add("no throw"); } catch (e) { straddling.add(e.code); } }
       report({ compiles: { readAt: numberOfDFGCompiles(readAt), writeAt: numberOfDFGCompiles(writeAt) }, straddling: [...straddling] });
     `);
-    if (result.skipped) return;
     // The site sees three things worth one recompile each, in an order that depends on when the
     // first compile lands: offset + 4 overflowing int32 at the ceiling, a second receiver shape, and
     // a straddling offset that is not an int32. A site that keeps exiting reaches 8 or more here.
@@ -716,10 +719,9 @@ describe.concurrent("Buffer accessor JIT", () => {
     expect(result.compiles.writeAt).toBeLessThanOrEqual(5);
   });
 
-  test("views with 2GB and ~4GB byteOffsets read and write correctly after tier-up", async () => {
+  test.skipIf(!enoughMemory)("views with 2GB and ~4GB byteOffsets read and write correctly after tier-up", async () => {
     const result = await scenario(`
-      let ab;
-      try { ab = new ArrayBuffer(4 * 2**30); } catch { report({ skipped: "could not allocate 4GB" }); process.exit(0); }
+      const ab = new ArrayBuffer(4 * 2**30);
       const tailOffset = 4 * 2**30 - 64;
       const tail = Buffer.from(ab, tailOffset, 64);
       const wide = Buffer.from(ab, 2**31);
@@ -740,7 +742,6 @@ describe.concurrent("Buffer accessor JIT", () => {
         straddling,
       });
     `);
-    if (result.skipped) return;
     // The last stores landed at byteOffset + offset (seen through a DataView over the whole 4GB
     // buffer), and a read past the end of the tiny high-offset view throws. wide.length is 2**31,
     // not an int32, so offsets computed from it cost the site a recompile or two, not a storm.

@@ -285,12 +285,13 @@ extern "C" fn select_alpn_callback(
 // load — the systemic fix vs the per-method `black_box` launder previously
 // applied in `internal_flush`.
 #[repr(C)]
+#[derive(bun_ptr::RefCounted)]
 pub struct NewSocket<const SSL: bool> {
     pub(crate) socket: Cell<uws::NewSocketHandler<SSL>>,
     /// `SSL_CTX*` this client connection was opened with. One owned ref —
     /// `SSL_CTX_free` on deinit. Server-accepted sockets and plain TCP
     /// leave this `None` (the Listener / SecureContext owns the ref there).
-    pub(crate) owned_ssl_ctx: Cell<Option<*mut SSL_CTX>>,
+    pub(crate) owned_ssl_ctx: JsCell<Option<boringssl_sys::OwnedSslCtx>>,
 
     pub(crate) flags: Cell<Flags>,
     pub(crate) ref_count: bun_ptr::RefCount<Self>,
@@ -335,16 +336,15 @@ pub struct NewSocket<const SSL: bool> {
 /// Associated `Socket` handler type.
 pub(super) type SocketHandler<const SSL: bool> = uws::NewSocketHandler<SSL>;
 
-// Intrusive refcount mixin.
-impl<const SSL: bool> bun_ptr::RefCounted for NewSocket<SSL> {
-    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
-        // SAFETY: caller contract — `this` points to a live Self.
-        unsafe { &raw mut (*this).ref_count }
-    }
-    unsafe fn destructor(this: *mut Self) {
-        // SAFETY: refcount reached zero; we are the unique owner of the
-        // `heap::alloc` allocation and `this` is not used after.
-        unsafe { Self::deinit_and_destroy(this) };
+impl<const SSL: bool> Drop for NewSocket<SSL> {
+    fn drop(&mut self) {
+        self.mark_inactive();
+        self.detach_native_callback();
+        self.poll_ref.with_mut(|p| {
+            p.unref(bun_io::posix_event_loop::get_vm_ctx(
+                bun_io::AllocatorType::Js,
+            ))
+        });
     }
 }
 
@@ -472,13 +472,13 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
     // R-2: takes `&self` — every mutated field is `UnsafeCell`-backed so the
     // `*mut Self` formed for `RefCount::deref` (and onward into
-    // `deinit_and_destroy`) writes only through interior-mutable storage. The
+    // `Drop`) writes only through interior-mutable storage. The
     // codegen host-fn shim still hands us a `&mut Self`-derived borrow whose
     // root provenance is the heap allocation, so `heap::take` in the
     // destructor remains valid.
     pub fn deref(&self) {
         // SAFETY: `self` is live; if count hits 0, `RefCounted::destructor`
-        // (→ `deinit_and_destroy`) runs and `self` is not used after.
+        // (→ `Drop`) runs and `self` is not used after.
         unsafe { bun_ptr::RefCount::<Self>::deref(self.as_ctx_ptr()) };
     }
 
@@ -598,7 +598,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             0
         };
         let ssl_ctx: Option<*mut uws::SslCtx> = if SSL {
-            self.owned_ssl_ctx.get().map(|p| p.cast::<uws::SslCtx>())
+            self.owned_ssl_ctx
+                .get()
+                .as_ref()
+                .map(|p| p.as_ptr().cast::<uws::SslCtx>())
         } else {
             None
         };
@@ -3270,47 +3273,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Called when refcount reaches zero. NOT `impl Drop` — this struct is the
-    /// `m_ctx` payload of a `.classes.ts` class; teardown is owned by the
-    /// intrusive refcount + `finalize()`.
-    // SAFETY: `this` was allocated via `heap::alloc` and refcount == 0.
-    unsafe fn deinit_and_destroy(this: *mut Self) {
-        // Not a `ThisPtr`: the refcount is already zero, so `RefPtr::from_this` here
-        // would be a resurrection bug.
-        // SAFETY: per fn contract — sole owner, live until the `heap::take` below.
-        let this_ref: &Self = unsafe { &*this };
-        this_ref.mark_inactive();
-        this_ref.detach_native_callback();
-        // Reset to empty (Strong drops on assign).
-        this_ref.this_value.set(JsRef::empty());
-
-        this_ref
-            .buffered_data_for_node_net
-            .with_mut(|b| b.clear_and_free());
-
-        this_ref.poll_ref.with_mut(|p| {
-            p.unref(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
-            ))
-        });
-        // need to deinit event without being attached
-        if this_ref.flags.get().contains(Flags::OWNED_PROTOS) {
-            this_ref.protos.set(None); // Box::<[u8]> drops
-        }
-
-        this_ref.server_name.set(None); // Box::<[u8]> drops
-
-        if let Some(connection) = this_ref.connection.with_mut(|c| c.take()) {
-            drop(connection);
-        }
-        if let Some(ctx) = this_ref.owned_ssl_ctx.take() {
-            // SAFETY: BoringSSL FFI; we hold one owned ref.
-            unsafe { boringssl_sys::SSL_CTX_free(ctx) };
-        }
-        // SAFETY: `this` was heap-allocated in `new()`.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
-
     pub fn finalize(&self) {
         log!("finalize() {}", core::ptr::from_ref(self) as usize);
         self.update_flags(|f| f.insert(Flags::FINALIZING));
@@ -3580,9 +3542,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             ref_count: bun_ptr::RefCount::init(),
             handlers: JsCell::new(Some(handlers)),
             socket: Cell::new(SocketHandler::<true>::DETACHED),
-            // Ownership of the +1 `SSL_CTX` ref transfers here; the
-            // `OwnedSslCtx` guard stays armed until this point.
-            owned_ssl_ctx: Cell::new(owned_ctx.map(|c| c.into_raw())),
+            owned_ssl_ctx: JsCell::new(owned_ctx),
             connection: JsCell::new(this.connection.get().clone()),
             local_binding: JsCell::new(None),
             protos: JsCell::new(cfg.and_then(|c| c.protos_bytes().map(Box::<[u8]>::from))),
@@ -3616,7 +3576,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             (*raw_socket).adopt_tls(
                 group,
                 uws::SocketKind::BunSocketTls,
-                &mut *(tls.owned_ssl_ctx.get().unwrap()),
+                &mut *(tls.owned_ssl_ctx.get().as_ref().unwrap().as_ptr()),
                 sni,
                 !is_server,
                 adopt_request_cert,
@@ -3629,7 +3589,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             None => {
                 let err = boringssl_sys::ERR_get_error();
                 let _clear_err = ClearErrorQueue(err != 0);
-                // `deref` runs `deinit_and_destroy`, which drops the owned_ctx
+                // `deref` runs `Drop`, which drops the owned_ctx
                 // ref and the handlers `Rc`. Sole owner of the fresh allocation.
                 tls.get().deref();
                 if err != 0 {
@@ -3684,7 +3644,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             ref_count: bun_ptr::RefCount::init(),
             handlers: JsCell::new(raw_handlers),
             socket: Cell::new(SocketHandler::<true>::from(new_raw.as_ptr())),
-            owned_ssl_ctx: Cell::new(None),
+            owned_ssl_ctx: JsCell::new(None),
             connection: JsCell::new(None),
             local_binding: JsCell::new(None),
             protos: JsCell::new(None),
@@ -4725,7 +4685,7 @@ pub fn js_upgrade_duplex_to_tls(
         ref_count: bun_ptr::RefCount::init(),
         handlers: JsCell::new(Some(handlers)),
         socket: Cell::new(SocketHandler::<true>::DETACHED),
-        owned_ssl_ctx: Cell::new(None),
+        owned_ssl_ctx: JsCell::new(None),
         connection: JsCell::new(None),
         local_binding: JsCell::new(None),
         protos: JsCell::new(

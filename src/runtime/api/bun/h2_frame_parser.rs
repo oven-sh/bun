@@ -947,7 +947,7 @@ impl core::ops::DerefMut for GuardedStream<'_> {
 // `&mut T` auto-derefs to `&T` so the impls below compile against either.
 #[bun_jsc::JsClass]
 #[derive(bun_ptr::RefCounted)]
-#[ref_count(destroy = Self::deinit_raw)]
+#[ref_count(destroy = Self::release)]
 pub struct H2FrameParser {
     strong_this: JsCell<JsRef>,
     global_this: GlobalRef, // JSC_BORROW — read-only after construction
@@ -1095,16 +1095,23 @@ pub struct H2FrameParser {
 }
 
 impl H2FrameParser {
-    /// `RefCounted` destructor thunk: `deinit` takes `&self`, not `*mut Self`.
-    ///
-    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
-    /// whose generated trait `destroy` upholds the sole-owner contract
-    /// (refcount hit zero; `this` is the sole owner of the `heap::alloc`
-    /// allocation). `deinit` frees `this` via `heap::take`.
-    #[inline]
-    fn deinit_raw(this: *mut Self) {
-        // SAFETY: refcount hit zero; sole owner.
-        unsafe { (*this).deinit() };
+    /// `RefCounted` destructor: drop in place, then return the slot to the
+    /// pool (or free the Box). `this`: sole owner, refcount zero.
+    fn release(this: *mut Self) {
+        if ENABLE_ALLOCATOR_POOL {
+            POOL.with_borrow_mut(|pool| {
+                // SAFETY: `this` is a live, fully-initialised allocation we exclusively
+                // own; `put` drops it in place and recycles the storage.
+                unsafe {
+                    pool.as_mut()
+                        .expect("H2FrameParser released before constructor initialised pool")
+                        .put(this)
+                }
+            });
+        } else {
+            // SAFETY: `this` was `heap::alloc`'d in `constructor`.
+            unsafe { bun_core::heap::destroy(this) };
+        }
     }
 
     /// Safe accessor for the JSC_BORROW global.
@@ -7599,11 +7606,8 @@ impl H2FrameParser {
         // The remaining `?` sites below may throw a JS
         // exception; the guard returns the slot to the pool / frees the Box on that
         // path. Defused on success.
-        let guard = scopeguard::guard(this, |this| {
-            // SAFETY: `this` is the freshly-allocated parser above; on the error path
-            // it has refcount 1 and no other owners, so `deinit` is the sole release.
-            unsafe { (*this).deinit() };
-        });
+        // On the error path `this` has refcount 1 and no other owners.
+        let guard = scopeguard::guard(this, Self::release);
         // SAFETY: `this` was just allocated above; unique ownership, non-null.
         // R-2: deref as shared — every method below takes `&self`.
         let this_ref = unsafe { &*this };
@@ -7821,13 +7825,13 @@ impl H2FrameParser {
             self.deref();
         }
     }
+}
 
-    fn deinit(&self) {
+impl Drop for H2FrameParser {
+    fn drop(&mut self) {
         bun_output::scoped_log!(H2FrameParser, "deinit");
 
         self.detach();
-        // Note: JsRef::deinit() dropped — overwrite with empty(); Drop releases the Strong slot.
-        self.strong_this.set(JsRef::empty());
         // Note: take the map out first so `self` is free for
         // `free_resources(self)` while we walk the entries.
         let streams = self.streams.replace(BunHashMap::default());
@@ -7840,33 +7844,10 @@ impl H2FrameParser {
             }
         }
         drop(streams);
-
-        // Drop is still owed on the remaining fields (`handlers`, `auto_flusher`, the now-
-        // empty `streams`/`write_buffer`/`strong_this`, …);
-        // `HiveArrayFallback::put` runs `drop_in_place` before recycling the slot,
-        // and `heap::destroy` drops via `Box<T>`, so both branches drop exactly once.
-        // R-2: refcount==0, sole owner — `as_ctx_ptr()` is sound for the
-        // teardown writes (`put` / `destroy` write only via `drop_in_place`,
-        // which on `Cell`/`JsCell` fields goes through `UnsafeCell`).
-        let this = self.as_ctx_ptr();
-        if ENABLE_ALLOCATOR_POOL {
-            POOL.with_borrow_mut(|pool| {
-                // SAFETY: `this` is a live, fully-initialised allocation we exclusively
-                // own (refcount hit zero / errdefer path); `put` drops it in place and
-                // recycles the storage.
-                unsafe {
-                    pool.as_mut()
-                        .expect("H2FrameParser deinit before constructor initialised pool")
-                        .put(this)
-                }
-            });
-        } else {
-            // SAFETY: `this` was `heap::alloc`'d in `constructor`; reconstruct the
-            // `Box<Self>` so Drop runs and the allocation is freed.
-            unsafe { bun_core::heap::destroy(this) };
-        }
     }
+}
 
+impl H2FrameParser {
     pub(crate) fn finalize(&self) {
         bun_output::scoped_log!(H2FrameParser, "finalize");
         self.strong_this.set(JsRef::empty());

@@ -2807,7 +2807,6 @@ impl_wrapper_like!(EndTag, RawEndTag, end_tag, suspended_end_tag);
 /// The JS `AttributeIterator` heap-boxes one of these over `Element::attributes`
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
-#[ref_count(destroy = AttributeIterator::destroy_on_zero)]
 pub struct AttributeIterator {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
@@ -2823,16 +2822,6 @@ pub struct AttributeIterator {
 }
 
 impl AttributeIterator {
-    // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
-
-    /// `CellRefCounted::destroy` target.
-    ///
-    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
-    /// whose generated trait `destroy` upholds the sole-owner contract.
-    fn destroy_on_zero(this: *mut Self) {
-        bun_ptr::destroy_box_with(this, |t| t.detach());
-    }
-
     /// Drop the backref. The element owns our `+1` and clears it here, so the
     /// raw pointer is never read after the element stops tracking us.
     fn detach(&self) {
@@ -2903,7 +2892,6 @@ impl AttributeIterator {
 
 #[bun_jsc::JsClass(no_construct, no_finalize, no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
-#[ref_count(destroy = Element::destroy_on_zero)]
 pub struct Element {
     // Intrusive RefCount; *Self is the JS wrapper m_ctx.
     ref_count: Cell<u32>,
@@ -2916,20 +2904,17 @@ pub struct Element {
     /// (`get_attributes`, `set_attribute`, `remove_attribute`). The `with_mut`
     /// closures do not call into JS, so the short `&mut Vec` borrow cannot
     /// overlap a re-entrant access.
-    pub(crate) attribute_iterators: JsCell<Vec<NonNull<AttributeIterator>>>,
+    pub(crate) attribute_iterators: JsCell<Vec<RefPtr<AttributeIterator>>>,
+}
+
+impl Drop for Element {
+    fn drop(&mut self) {
+        self.invalidate();
+    }
 }
 
 impl Element {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
-
-    /// `CellRefCounted::destroy` target — invalidate borrowed sub-objects
-    /// before freeing the Box.
-    ///
-    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
-    /// whose generated trait `destroy` upholds the sole-owner contract.
-    fn destroy_on_zero(this: *mut Self) {
-        bun_ptr::destroy_box_with(this, |t| t.invalidate());
-    }
 
     pub(crate) fn init(element: *mut RawElement) -> NonNull<Element> {
         bun_core::heap::alloc_nn(Element {
@@ -2949,8 +2934,7 @@ impl Element {
         // not re-enter JS, but defence-in-depth keeps the JsCell borrow zero-len).
         let iters = self.attribute_iterators.replace(Vec::new());
         for iter in iters {
-            BackRef::from(iter).detach();
-            <AttributeIterator as CellRefCounted>::deref_nn(iter);
+            iter.detach();
         }
     }
 
@@ -2960,7 +2944,6 @@ impl Element {
     pub(crate) fn invalidate(&self) {
         self.element.detach();
         self.detach_attribute_iterators();
-        self.attribute_iterators.set(Vec::new());
     }
 
     pub(crate) fn on_end_tag_(
@@ -3241,17 +3224,21 @@ impl Element {
         // The iterator reads attributes back through `self` on every `next()`,
         // so it follows a retarget (suspension) and never caches a borrow into
         // the attribute buffer.
-        let attr_iter = bun_core::heap::alloc_nn(AttributeIterator {
+        let attr_iter = RefPtr::new(AttributeIterator {
             ref_count: Cell::new(1),
             element: Cell::new(Some(BackRef::new(self))),
             index: Cell::new(0),
         });
         // Track this iterator so we can detach it when the handler returns or
         // an attribute mutation invalidates it.
-        <AttributeIterator as CellRefCounted>::ref_nn(attr_iter);
         // R-2: `with_mut` — closure does not call into JS (push only).
-        self.attribute_iterators.with_mut(|v| v.push(attr_iter));
-        Ok(AttributeIterator::to_js_nonnull(attr_iter, global_object))
+        self.attribute_iterators
+            .with_mut(|v| v.push(attr_iter.clone()));
+        // The JS wrapper owns this ref.
+        Ok(AttributeIterator::to_js_nonnull(
+            NonNull::new(attr_iter.into_raw()).expect("RefPtr"),
+            global_object,
+        ))
     }
 }
 

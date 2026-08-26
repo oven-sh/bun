@@ -300,6 +300,7 @@ impl JSValkeyClient {
 // `*mut JSValkeyClient` and `*mut ValkeyClient` alias (the socket ext slot did
 // — see `connect()` below).
 #[repr(C)]
+#[derive(bun_ptr::RefCounted)]
 pub struct JSValkeyClient {
     pub(crate) client: JsCell<valkey::ValkeyClient>,
     pub(crate) global_object: GlobalRef,
@@ -419,15 +420,19 @@ bun_event_loop::impl_timer_owner!(JSValkeyClient;
 // `Js` (= `jsc.Codegen.JSRedisClient`) is re-exported above; `to_js`/`from_js`
 // live in that generated module.
 
-// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` → intrusive refcount.
-impl bun_ptr::RefCounted for JSValkeyClient {
-    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
-        // SAFETY: caller contract — `this` is live.
-        unsafe { &raw mut (*this).ref_count }
-    }
-    unsafe fn destructor(this: *mut Self) {
-        // SAFETY: last ref dropped; sole owner.
-        unsafe { JSValkeyClient::deinit(this) };
+impl Drop for JSValkeyClient {
+    fn drop(&mut self) {
+        debug_assert!(self.client.get().socket.is_closed());
+        debug_assert!(!self.timer.ref_held.get());
+        debug_assert!(!self.reconnect_timer.ref_held.get());
+        if let Some(s) = self._secure.get() {
+            // SAFETY: SSL_CTX is C-refcounted; this releases our ref.
+            unsafe { boringssl::c::SSL_CTX_free(s) };
+        }
+        self.client_mut().shutdown(None);
+        self.poll_ref.with_mut(|r| r.disable());
+        self.stop_timers();
+        self.ref_count.assert_no_refs();
     }
 }
 
@@ -1607,37 +1612,6 @@ impl JSValkeyClient {
         }
         memory_cost += client.queue.len() * core::mem::size_of::<super::valkey_command::Entry>();
         memory_cost
-    }
-
-    // Called by RefCounted::destructor when ref_count hits 0.
-    unsafe fn deinit(this: *mut JSValkeyClient) {
-        // SAFETY: last ref dropped; exclusive access. The shared borrow is
-        // scoped so it ends before we reclaim the Box below — the final
-        // `heap::take` must consume the original `*mut` (which carries the
-        // allocation's Unique provenance from `Box::into_raw`), not a
-        // pointer re-derived from `&Self` (SharedReadOnly under Stacked
-        // Borrows, which would make the dealloc-write UB).
-        {
-            // SAFETY: last ref dropped — sole owner of `*this` (see above).
-            let this_ref = unsafe { &*this };
-            debug_assert!(this_ref.client.get().socket.is_closed());
-            debug_assert!(!this_ref.timer.ref_held.get());
-            debug_assert!(!this_ref.reconnect_timer.ref_held.get());
-            if let Some(s) = this_ref._secure.get() {
-                // SAFETY: SSL_CTX is C-refcounted; this releases our ref.
-                unsafe { boringssl::c::SSL_CTX_free(s) };
-            }
-            this_ref.client_mut().shutdown(None);
-            this_ref.poll_ref.with_mut(|r| r.disable());
-            this_ref.stop_timers();
-            this_ref.ref_count.assert_no_refs();
-        }
-
-        // bun.destroy(this) → reclaim the Box allocated in `new()`.
-        // SAFETY: `this` was created via `heap::alloc` in `new()`; the shared
-        // borrow above has ended, and `this` is the original raw pointer with
-        // its Box-derived write provenance intact.
-        drop(unsafe { bun_core::heap::take(this) });
     }
 
     /// Keep the event loop alive, or don't keep it alive. Also valid once the JS wrapper is dead.

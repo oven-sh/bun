@@ -431,7 +431,6 @@ impl StatWatcherScheduler {
 // JS-thread-only. Read-only-after-construction fields stay bare.
 #[bun_jsc::JsClass(no_constructor)]
 #[derive(bun_ptr::ThreadSafeRefCounted)]
-#[ref_count(destroy = Self::deinit)]
 pub struct StatWatcher {
     pub(crate) next: bun_threading::Link<StatWatcher>, // INTRUSIVE link for UnboundedQueue
 
@@ -461,6 +460,25 @@ pub struct StatWatcher {
     last_stat: Guarded<PosixStat>,
 
     scheduler: RefPtr<StatWatcherScheduler>,
+}
+
+impl Drop for StatWatcher {
+    fn drop(&mut self) {
+        log!("deinit {:x}", std::ptr::from_ref(self) as usize);
+        // Isolation-registry removal lives in `close()`, NOT here: the last
+        // `deref` can happen on the work-pool thread (queue ref dropped in
+        // `work_pool_callback` / `InitialStatTask`), where the thread-local
+        // `active_handles()` is null and the removal would silently no-op,
+        // leaving a dangling registry pointer. Every drop of a registered
+        // watcher is preceded by a JS-thread `close()` (the Strong `this_value`
+        // self-ref keeps the wrapper alive until `close()` downgrades it, so
+        // `finalize` cannot drop the wrapper ref first).
+        if cfg!(debug_assertions) && self.poll_ref.get().is_active() {
+            debug_assert!(core::ptr::eq(VirtualMachine::get(), self.ctx.as_ptr())); // We cannot unref() on another thread this way.
+        }
+        let el_ctx = self.ctx_el_ctx();
+        self.poll_ref.with_mut(|p| p.unref(el_ctx));
+    }
 }
 
 impl StatWatcher {
@@ -582,48 +600,6 @@ impl StatWatcher {
         let mut value = self.last_stat.lock();
         *value = *stat;
         // unlock on Drop of guard
-    }
-
-    // Safe fn: reachable via the `#[ref_count(destroy = …)]` derive (whose
-    // generated trait `destructor` upholds the sole-owner contract) and
-    // the `errdefer` scopeguard in `init` (which owns the only reference
-    // on the error path). Not `impl Drop` — this is a `.classes.ts` m_ctx
-    // payload with intrusive refcount; teardown is driven by ref_count, and
-    // `finalize()` is the GC entry point.
-    fn deinit(this: *mut StatWatcher) {
-        log!("deinit {:x}", this as usize);
-
-        // BACKREF — last ref; exclusive access. R-2: all field mutation goes
-        // through Cell/JsCell/Atomic so shared `&` suffices; `ParentRef` Deref
-        // collapses the per-site raw deref.
-        let this_ref = ParentRef::from(NonNull::new(this).expect("deinit: watcher"));
-
-        // Isolation-registry removal lives in `close()`, NOT here: the last
-        // `deref` can happen on the work-pool thread (queue ref dropped in
-        // `work_pool_callback` / `InitialStatTask`), where the thread-local
-        // `active_handles()` is null and the removal would silently no-op,
-        // leaving a dangling registry pointer. Every deinit of a registered
-        // watcher is preceded by a JS-thread `close()` (the Strong `this_value`
-        // self-ref keeps the wrapper alive until `close()` downgrades it, so
-        // `finalize` cannot drop the wrapper ref first).
-        this_ref.persistent.set(false);
-        if cfg!(debug_assertions) {
-            if this_ref.poll_ref.get().is_active() {
-                debug_assert!(core::ptr::eq(VirtualMachine::get(), this_ref.ctx.as_ptr())); // We cannot unref() on another thread this way.
-            }
-        }
-        let el_ctx = this_ref.ctx_el_ctx();
-        this_ref.poll_ref.with_mut(|p| p.unref(el_ctx));
-        this_ref.closed.store(true, Ordering::Relaxed);
-        // `this_value.deinit()` handled by JsRef Drop below; explicit reset
-        // drops the Strong before dealloc.
-        this_ref.this_value.set(JsRef::empty());
-        // `path` freed by ZBox Drop below.
-
-        // SAFETY: the caller is the sole owner (refcount hit zero, or the
-        // error-path scopeguard in `init` holds the only reference);
-        // heap::take reclaims and drops the allocation.
-        drop(unsafe { bun_core::heap::take(this) });
     }
 
     #[bun_jsc::host_fn(method)]
@@ -889,9 +865,9 @@ impl StatWatcher {
             scheduler: Self::lazy_scheduler(vm),
         });
         let this_ptr = bun_core::heap::into_raw(this);
-        // errdefer this.deinit() — `p` was heap-allocated above; on the error
-        // path we own the only reference (sole-owner contract for `deinit`).
-        let guard = scopeguard::guard(this_ptr, Self::deinit);
+        // errdefer: on the error path we own the only reference.
+        // SAFETY: sole owner on that path.
+        let guard = scopeguard::guard(this_ptr, |p| drop(unsafe { bun_core::heap::take(p) }));
         // BACKREF — `this_ptr` just leaked from Box; alive until deref drops
         // it. R-2: all field mutation goes through Cell/JsCell so shared `&`
         // suffices (and `to_js_ptr` below creates the JS wrapper, after which

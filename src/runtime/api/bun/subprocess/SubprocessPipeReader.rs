@@ -28,7 +28,7 @@ pub enum State {
 
 // Intrusive, single-thread ref-count; `deinit` runs when the last ref drops.
 #[derive(bun_ptr::RefCounted)]
-#[ref_count(destroy = PipeReader::deinit, debug_name = "PipeReader")]
+#[ref_count(debug_name = "PipeReader")]
 pub struct PipeReader {
     pub(crate) reader: IOReader,
     // Backref to owning Subprocess; cleared in detach()/onReaderDone()/onReaderError().
@@ -380,23 +380,12 @@ impl PipeReader {
             uws.cast()
         }
     }
+}
 
-    /// Called when ref_count hits zero. Consumes the Box allocation.
-    ///
-    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
-    /// whose generated trait `destructor` upholds the sole-owner contract.
-    fn deinit(this: *mut PipeReader) {
+impl Drop for PipeReader {
+    fn drop(&mut self) {
         #[cfg(unix)]
-        {
-            // SAFETY: refcount == 0 ⇒ `this` is the unique owner.
-            let this_ref = unsafe { &*this };
-            debug_assert!(this_ref.reader.is_done() || matches!(this_ref.state, State::Err(_)));
-        }
-
-        // The `state` buffer and `reader` are freed by Drop when the Box drops.
-
-        // SAFETY: `this` was created via heap::alloc in `create()`.
-        drop(unsafe { bun_core::heap::take(this) });
+        debug_assert!(self.reader.is_done() || matches!(self.state, State::Err(_)));
     }
 }
 

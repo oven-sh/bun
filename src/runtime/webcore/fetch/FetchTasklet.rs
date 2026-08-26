@@ -61,8 +61,8 @@ impl FetchTaskletDeinitHop {
     /// # Safety
     /// `this` is the tasklet the hop was created from, ref_count == 0, JS thread.
     pub(crate) unsafe fn run(this: *mut Self) {
-        // SAFETY: fn contract.
-        unsafe { FetchTasklet::deinit(this.cast()) }
+        // SAFETY: fn contract — sole owner.
+        drop(unsafe { bun_core::heap::take(this.cast::<FetchTasklet>()) });
     }
 }
 
@@ -85,7 +85,6 @@ const SCHEDULED_PRERESERVE_MAX: usize = 256 * 1024 * 1024;
 use http::signals::BodyReceiveMode;
 
 #[derive(bun_ptr::ThreadSafeRefCounted)]
-#[ref_count(destroy = FetchTasklet::deinit)]
 pub struct FetchTasklet {
     // Heap-allocated `FetchRequestBodySink` (a `JSSink`). FetchTasklet owns the
     // allocation from `start_request_stream` until `clear_sink`; the JS
@@ -283,6 +282,16 @@ impl HTTPRequestBody {
             HTTPRequestBody::ReadableStream(stream) => stream.has(),
             HTTPRequestBody::Sendfile(_) => true,
         }
+    }
+}
+
+impl Drop for FetchTasklet {
+    fn drop(&mut self) {
+        bun_output::scoped_log!(FetchTasklet, "deinit");
+        self.ref_count.assert_no_refs();
+        // JS thread: no longer something the VM must abort at teardown.
+        crate::jsc_hooks::ActiveHandle::Fetch(NonNull::from(&*self)).unregister();
+        self.clear_data();
     }
 }
 
@@ -494,21 +503,6 @@ impl FetchTasklet {
         self.clear_abort_signal();
         // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
         self.clear_sink();
-    }
-
-    /// SAFETY: `this` must be the last reference (ref_count == 0) and have been allocated via heap::alloc.
-    unsafe fn deinit(this: *mut FetchTasklet) {
-        bun_output::scoped_log!(FetchTasklet, "deinit");
-
-        // SAFETY: caller contract — `this` is live with ref_count == 0.
-        unsafe { (*this).ref_count.assert_no_refs() };
-        // JS thread: no longer something the VM must abort at teardown.
-        crate::jsc_hooks::ActiveHandle::Fetch(NonNull::new(this).expect("tasklet")).unregister();
-
-        // SAFETY: this was allocated via heap::alloc in `get()`; ref_count == 0 so exclusive
-        let mut boxed = unsafe { bun_core::heap::take(this) };
-        boxed.clear_data();
-        drop(boxed);
     }
 
     /// VM teardown's stop phase (JS thread): abort the transport. The HTTP

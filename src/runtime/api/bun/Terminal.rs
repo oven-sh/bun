@@ -101,7 +101,6 @@ pub mod js {
 // `&*this` (shared); all field mutation routes through the cells.
 #[bun_jsc::JsClass(no_construct, no_finalize)]
 #[derive(bun_ptr::RefCounted)]
-#[ref_count(destroy = deinit_and_destroy)]
 pub struct Terminal {
     ref_count: bun_ptr::RefCount<Terminal>,
 
@@ -1956,28 +1955,16 @@ impl Terminal {
     }
 }
 
-/// `deinit` — NOT mapped to `impl Drop` because Terminal is an intrusive-refcounted
-/// `.classes.ts` m_ctx payload: destruction is driven by `deref_()` reaching zero,
-/// and the body calls `bun.destroy(this)` (frees its own allocation). Drop cannot
-/// express that. Kept as a free fn called from `deref_()`.
-///
-/// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
-/// whose generated trait `destructor` upholds the sole-owner contract.
-fn deinit_and_destroy(this: *mut Terminal) {
-    bun_output::scoped_log!(Terminal, "deinit");
-    // SAFETY: caller is `deref_()` with ref_count == 0; `this` was heap-allocated.
-    // R-2: deref as shared — `close_internal` takes `&self` and all field
-    // mutation routes through `Cell`/`JsCell`.
-    let t = unsafe { &*this };
-    // Set reader/writer done flags to prevent extra deref calls in closeInternal
-    t.update_flags(|f| f.insert(Flags::READER_DONE | Flags::WRITER_DONE));
-    // Close all FDs if not already closed (handles constructor error paths)
-    // closeInternal() checks flags.closed and returns early on subsequent calls,
-    // so this is safe even if finalize() already called it
-    t.close_internal();
-    // SAFETY: `this` was heap-allocated in init_terminal and ref_count == 0, so
-    // no other live references exist.
-    drop(unsafe { bun_core::heap::take(this) });
+impl Drop for Terminal {
+    fn drop(&mut self) {
+        bun_output::scoped_log!(Terminal, "deinit");
+        // Set reader/writer done flags to prevent extra deref calls in closeInternal
+        self.update_flags(|f| f.insert(Flags::READER_DONE | Flags::WRITER_DONE));
+        // Close all FDs if not already closed (handles constructor error paths)
+        // closeInternal() checks flags.closed and returns early on subsequent calls,
+        // so this is safe even if finalize() already called it
+        self.close_internal();
+    }
 }
 
 // BufferedReader vtable parent: Terminal declares

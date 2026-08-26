@@ -1930,15 +1930,6 @@ impl GlobalData {
     }
 }
 
-impl Drop for GlobalData {
-    fn drop(&mut self) {
-        // `Resolver::deinit` ends with `heap::take(this)`, which is wrong for a
-        // value field — open-code the channel teardown so the c-ares state
-        // frees when this box drops in `deinit_runtime_state`.
-        self.resolver.destroy_channel();
-    }
-}
-
 impl Resolver {
     /// Worker-terminate / main-VM-destruct hook: tear down the c-ares channel
     /// while the JSC VM, `RareData.file_polls`, event loop, and `runtime_state`
@@ -3564,8 +3555,9 @@ type PollsMap = ArrayHashMap<c_ares::ares_socket_t, *mut PollType>;
 // cache them across re-entrant FFI calls (the proper fix for the
 // PROVEN_CACHED ref_count miscompile previously laundered with `black_box`).
 #[bun_jsc::JsClass(name = "DNSResolver", no_constructor)]
+#[derive(bun_ptr::RefCounted)]
 pub struct Resolver {
-    pub(crate) ref_count: bun_ptr::RefCount<Resolver>, // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — already Cell-backed
+    pub(crate) ref_count: bun_ptr::RefCount<Resolver>,
     pub(crate) channel: Cell<Option<*mut c_ares::Channel>>, // FFI
     pub(crate) vm: bun_ptr::BackRef<VirtualMachine>, // JSC_BORROW (BACKREF — VirtualMachine outlives the resolver; read-only after init)
     pub(crate) polls: JsCell<PollsMap>,
@@ -3593,13 +3585,9 @@ pub struct Resolver {
 
 bun_event_loop::impl_timer_owner!(Resolver; from_timer_ptr => event_loop_timer);
 
-impl bun_ptr::RefCounted for Resolver {
-    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
-        // SAFETY: caller contract — `this` points to a live Self.
-        unsafe { &raw mut (*this).ref_count }
-    }
-    unsafe fn destructor(this: *mut Self) {
-        Self::deinit(this);
+impl Drop for Resolver {
+    fn drop(&mut self) {
+        self.destroy_channel();
     }
 }
 
@@ -3874,8 +3862,7 @@ impl Resolver {
     /// `heap::alloc` (see `init`). If this call may drop the last reference,
     /// the caller must not hold any live `&`/`&mut` borrow of `*this`.
     pub unsafe fn deref(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live; `RefCount::deref` invokes
-        // `RefCounted::destructor` (→ `Self::deinit`) on the 1→0 transition.
+        // SAFETY: caller contract — `this` is live; the 1→0 transition drops the Box.
         unsafe { bun_ptr::RefCount::<Self>::deref(this) };
     }
 
@@ -3911,15 +3898,6 @@ impl Resolver {
     pub(crate) fn init(vm: &VirtualMachine) -> *mut Self {
         bun_output::scoped_log!(DNSResolver, "init");
         bun_core::heap::into_raw(Box::new(Self::setup(vm)))
-    }
-
-    fn deinit(this: *mut Self) {
-        // SAFETY: `this` is the heap allocation from `init()`; refcount has hit
-        // zero (sole caller is `Self::deref`), so we hold exclusive ownership.
-        unsafe {
-            (*this).destroy_channel();
-            drop(bun_core::heap::take(this));
-        }
     }
 
     // ─── R-2 interior-mutability helpers ────────────────────────────────────

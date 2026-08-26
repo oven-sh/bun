@@ -636,9 +636,7 @@ impl File {
                     Encoding::Latin1 => {
                         BunString::create_static_external(self.contents.as_bytes(), true)
                     }
-                    Encoding::Utf16 => {
-                        BunString::create_static_external_utf16(self.utf16_units())
-                    }
+                    Encoding::Utf16 => BunString::create_static_external_utf16(self.utf16_units()),
                 };
                 s.make_thread_shareable();
                 s
@@ -658,7 +656,9 @@ impl File {
         )]
         // SAFETY: `to_bytes` serializes `Utf16` contents as u16 code units at
         // a 2-byte-aligned offset of a section that is never freed.
-        unsafe { core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2) }
+        unsafe {
+            core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2)
+        }
     }
 
     /// The bytes a filesystem read of this file returns. JS module text is

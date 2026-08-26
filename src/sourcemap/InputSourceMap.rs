@@ -1,13 +1,10 @@
-//! The sourcemap an input file points at via `//# sourceMappingURL=`. The
-//! bundler chains through it so output maps reach the authored source
-//! instead of stopping at the intermediate file.
+//! The sourcemap an input file points at via `//# sourceMappingURL=`, chained into the output map.
 
 use std::sync::Arc;
 
 use crate::ParsedSourceMap;
 
-/// `sources_content[i]` pairs with `map.external_source_names[i]`; an
-/// empty slot means the map carried no content for that source.
+/// `sources_content[i]` pairs with `map.external_source_names[i]`; empty when the map had none.
 pub struct InputSourceMap {
     pub map: Arc<ParsedSourceMap>,
     pub sources_content: Box<[Box<[u8]>]>,
@@ -25,8 +22,7 @@ impl InputSourceMap {
         parse_data_url(url)
     }
 
-    /// Also reads a sidecar `.map` relative to `source_dir`. Remote URLs
-    /// and unreadable sidecars return `None`.
+    /// Also reads a sidecar `.map` relative to `source_dir`; remote or unreadable returns `None`.
     pub fn parse_from_source_with_fs(
         source: &[u8],
         source_dir: &[u8],
@@ -50,8 +46,7 @@ impl InputSourceMap {
     }
 }
 
-/// Scheme or protocol-relative names are emitted verbatim, never joined
-/// against a directory.
+/// Scheme or protocol-relative names are emitted verbatim, never joined against a directory.
 pub fn is_url_like_source_name(name: &[u8]) -> bool {
     bun_core::strings::contains(name, b"://") || bun_core::strings::has_prefix_comptime(name, b"//")
 }
@@ -64,8 +59,7 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
     let json_src = bun_ast::Source::init_path_string("sourcemap.json", json_bytes);
     let mut log = bun_ast::Log::init();
 
-    // The JSON parser doesn't respect the supplied allocator for every
-    // alloc, so reset the AST store on entry and exit.
+    // The JSON parser allocates into the AST store; reset it on entry and exit.
     let _store_scope = DataStoreScope::new();
 
     let parsed = bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log)
@@ -79,8 +73,7 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
         }
     }
 
-    // `Expr::get` returns an owned `Expr`; bind each to a local so the
-    // string / array borrows below outlive the match that produced them.
+    // `Expr::get` returns an owned `Expr`; bind locals so the borrows below outlive the match.
     let mappings_expr = json.get(b"mappings").ok_or(InvalidSourceMap)?;
     let mappings_slice: &[u8] = mappings_expr
         .as_utf8_string_literal()
@@ -112,8 +105,7 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
 
     let source_count = sources_paths.items().len();
 
-    // `sourceRoot` is optional; per the spec it is prepended to each entry
-    // in `sources` before further resolution.
+    // Per spec, `sourceRoot` is prepended to each `sources` entry.
     let source_root_expr = json.get(b"sourceRoot");
     let source_root: &[u8] = source_root_expr
         .as_ref()
@@ -127,8 +119,7 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
         let owned: Box<[u8]> = if source_root.is_empty() {
             Box::<[u8]>::from(s)
         } else {
-            // Insert a separator if the root doesn't end in one and the
-            // source name doesn't begin with one (matches esbuild).
+            // Add a separator only when neither side has one (matches esbuild).
             let need_sep = !matches!(source_root.last(), Some(b'/') | Some(b'\\'))
                 && !matches!(s.first(), Some(b'/') | Some(b'\\'));
             let mut v = Vec::with_capacity(source_root.len() + need_sep as usize + s.len());
@@ -158,8 +149,7 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
         }
     }
 
-    // Consumers index `sources[]` by `1 + source_index` without clamping,
-    // so reject any VLQ entry outside the real source count here.
+    // Consumers index `sources[]` by `1 + source_index` unclamped, so reject out-of-range VLQ here.
     let sources_count_i32: i32 = i32::try_from(source_count).map_err(|_| InvalidSourceMap)?;
     let map_data = match crate::mapping::parse(
         mappings_slice,
@@ -184,8 +174,7 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
     }))
 }
 
-/// Only the last non-blank line counts (per spec), so a string literal
-/// containing the marker earlier in the file cannot hijack the lookup.
+/// Only the last non-blank line counts (per spec), so an earlier string literal cannot hijack it.
 fn find_source_mapping_url(source: &[u8]) -> Option<&[u8]> {
     let mut end = source.len();
     while end > 0 {
@@ -230,8 +219,7 @@ fn find_source_mapping_url(source: &[u8]) -> Option<&[u8]> {
     Some(url)
 }
 
-/// Decode `data:application/json[;...;base64],...` payloads. Returns `None`
-/// when the URL is not a supported data scheme.
+/// Decode `data:application/json[;...;base64],...`; `None` for an unsupported scheme.
 fn parse_data_url(url: &[u8]) -> Option<Box<InputSourceMap>> {
     const PREFIX: &[u8] = b"data:application/json";
     if !url.starts_with(PREFIX) || url.len() <= PREFIX.len() + 1 {

@@ -369,14 +369,10 @@ pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
     /// `line_offset_table_byte_offset_list`.
     pub line_offset_table_first_non_ascii: RawSlice<u32>,
 
-    /// The input file's own `//# sourceMappingURL=` map, when it has one.
-    /// `add_source_mapping` remaps each mapping through it so the output
-    /// points at the authored source rather than this intermediate file.
+    /// The input file's own `//# sourceMappingURL=` map; `add_source_mapping` remaps through it.
     pub input_source_map: Option<&'a crate::InputSourceMap>,
 
-    /// Hint for `find_line_with_hint`, in the intermediate file's line
-    /// space. `prev_state.original_line` cannot serve: when chaining is
-    /// active it holds the remapped authored line instead.
+    /// Hint for `find_line_with_hint`; `prev_state.original_line` is in the authored space when chaining.
     pub prev_intermediate_line: i32,
 
     // This is a workaround for a bug in the popular "source-map" library:
@@ -680,9 +676,7 @@ impl NewBuilder<'_, VLQSourceMap> {
         }
         let byte_offsets = self.line_offset_table_byte_offset_list.slice();
 
-        // The printer emits mappings in (mostly) source order, so the previous
-        // call's intermediate line is the right answer or one/two lines
-        // before it >95% of the time; the fallback is a binary search.
+        // Mappings arrive in (mostly) source order, so the previous line is the right hint >95% of the time.
         let original_line = LineOffsetTable::find_line_with_hint(
             byte_offsets,
             loc,
@@ -712,9 +706,7 @@ impl NewBuilder<'_, VLQSourceMap> {
 
         self.update_generated_line_and_column(output);
 
-        // Chunk-local source slots: 0 is the intermediate file, `1 + i` is
-        // inner `sources[i]`. The linker adds the chunk's absolute base
-        // when stitching. A miss in the inner map stays on slot 0.
+        // Chunk-local slots: 0 is this file, `1 + i` is inner `sources[i]`; a miss stays on 0.
         let mut mapped_source_index: i32 = 0;
         let mut mapped_original_line: i32 = original_line.max(0);
         let mut mapped_original_column: i32 = original_column.max(0);

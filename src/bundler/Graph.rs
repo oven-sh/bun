@@ -112,8 +112,7 @@ pub struct InputFile {
     pub unique_key_for_additional_file: Box<[u8], AstAlloc>,
     pub content_hash_for_additional_file: u64,
     pub flags: InputFileFlags,
-    /// The file's own `//# sourceMappingURL=` map (inline or sidecar), so
-    /// the output map can chain through to the authored source.
+    /// The file's own `//# sourceMappingURL=` map (inline or sidecar), chained into the output map.
     pub input_source_map: Option<Box<bun_sourcemap::InputSourceMap>>,
 }
 

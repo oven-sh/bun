@@ -256,8 +256,7 @@ impl Entry {
                 debug_assert!(false); // vlq without source contents!
                 j.push_static(b"\"// Did not have source contents for this file.\n// This is a bug in Bun's bundler and should be reported with a reproduction.\"");
             } else {
-                // Kept so error remapping can show the code as it was when
-                // this map was served, without re-reading disk.
+                // Kept so error remapping can show the code as served, without re-reading disk.
                 debug_assert_eq!(quoted_slice[0], b'"');
                 debug_assert_eq!(quoted_slice[quoted_slice.len() - 1], b'"');
                 j.push_static(quoted_slice);
@@ -332,9 +331,7 @@ impl Entry {
         // The runtime ends at line 2942 with })({ so modules start after that.
         let mut lines_between: u32 = runtime_line_count;
 
-        // Each file's VLQ uses chunk-local source indices (0 = the file,
-        // 1+i = its inner sources); rebase the first segment onto the
-        // file's absolute slot.
+        // Each file's VLQ is chunk-local (0 = the file, 1+i = inner sources); rebase onto its absolute slot.
         let mut next_source_index: usize = 1; // slot 0 = HMR runtime
         for (i, file) in map_files.iter().enumerate() {
             match file {

@@ -5041,8 +5041,7 @@ pub mod bv2_impl {
             // `memcpy` of `graph.ast`), and `CssChunk::asts` `forget()`s its
             // aliases, so this is the unique drop.
             {
-                // `MultiArrayList::drop` is slab-only; these boxes live on
-                // the global heap and must be dropped explicitly.
+                // `MultiArrayList::drop` is slab-only; these global-heap boxes need an explicit drop.
                 for m in self.graph.input_files.items_input_source_map_mut() {
                     drop(m.take());
                 }

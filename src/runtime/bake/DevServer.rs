@@ -3741,8 +3741,7 @@ impl<'a> HotUpdateContext<'a> {
     }
 }
 
-/// Inner paths are made absolute here so `render_json` can `file://`
-/// them like any other source.
+/// Inner paths are made absolute here so `render_json` can `file://` them like any other source.
 fn collect_inner_sources(
     input_source_map: Option<&bun_sourcemap::InputSourceMap>,
     intermediate_path: &bun_paths::fs::Path<'_>,

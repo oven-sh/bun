@@ -7,9 +7,7 @@ use std::rc::Rc;
 /// Line count newtype.
 pub(crate) type LineCount = bun_core::GenericIndex<u32, u8>;
 
-/// `PackedMap.end_state` — the fields the bundler needs to thread between
-/// chunks (generated_column is always 0 because minification is off,
-/// generated_line is recomputed per concatenation).
+/// The fields threaded between chunks; generated line/column are recomputed per concatenation.
 #[derive(Copy, Clone, Default)]
 pub struct EndState {
     pub(crate) original_line: i32,
@@ -18,8 +16,7 @@ pub struct EndState {
     pub(crate) source_index: i32,
 }
 
-/// One entry of the input file's own sourcemap `sources[]`.
-/// `escaped_content` is already JSON-quoted; empty when the map had none.
+/// One entry of the input file's own sourcemap `sources[]`; `escaped_content` is JSON-quoted, empty when absent.
 pub struct InnerSource {
     pub(crate) path: Box<[u8]>,
     pub(crate) escaped_content: Box<[u8]>,

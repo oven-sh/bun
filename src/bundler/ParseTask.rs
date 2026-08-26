@@ -188,8 +188,7 @@ pub(crate) struct Success {
     /// The package name from package.json, used for barrel optimization.
     pub(crate) package_name: ast::StoreStr,
 
-    /// The file's own `//# sourceMappingURL=` map, if any and if
-    /// sourcemaps are enabled; moved onto `graph.input_files` on completion.
+    /// The file's own `//# sourceMappingURL=` map; moved onto `graph.input_files` on completion.
     pub(crate) input_source_map: Option<Box<bun_sourcemap::InputSourceMap>>,
 }
 
@@ -2625,8 +2624,7 @@ pub mod parse_worker {
         // SAFETY: task.ctx backref valid for the bundle pass (outlives `'r`).
         let task_ctx = unsafe { task.ctx() };
         let module_type = opts.module_type;
-        // Read before `get_ast`, which reborrows `(*transpiler).options`
-        // mutably and invalidates `topts`.
+        // Read before `get_ast`, which reborrows `(*transpiler).options` mutably and invalidates `topts`.
         let source_map_option = topts.source_map;
         // `topts` (a `&BundleOptions`) is dead past this point; the callees take
         // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
@@ -2688,8 +2686,7 @@ pub mod parse_worker {
 
         *step = Step::Resolve;
 
-        // Sidecar `.map` files are only resolvable for on-disk inputs;
-        // plugin `onLoad` contents get the inline `data:` scan only.
+        // Sidecar `.map` files are only resolvable for on-disk inputs; plugin contents get the `data:` scan only.
         let input_source_map: Option<Box<bun_sourcemap::InputSourceMap>> = if source_map_option
             != options::SourceMapOption::None
             && loader.can_have_source_map()

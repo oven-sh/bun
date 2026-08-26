@@ -1377,8 +1377,7 @@ pub struct Options<'a> {
     /// builder as `LineOffsetTables::Borrowed`.
     pub line_offset_tables: Option<&'a SourceMap::line_offset_table::List<bun_alloc::AstAlloc>>,
 
-    /// The input file's own `//# sourceMappingURL=` map, when it has one;
-    /// the chunk builder remaps each mapping through it.
+    /// The input file's own `//# sourceMappingURL=` map; the chunk builder remaps through it.
     pub input_source_map: Option<&'a SourceMap::InputSourceMap>,
 
     pub mangled_props: Option<&'a crate::MangledProps>,

@@ -1080,8 +1080,7 @@ impl<'a> LinkerContext<'a> {
         // is actually many to one, where a source file can have multiple chunks
         // in the sourcemap.
         //
-        // Compilation `source_index` -> first `sources[]` slot for that
-        // file. A file with an input sourcemap spans `base..=base+N`.
+        // Compilation `source_index` -> first `sources[]` slot; a chained file spans `base..=base+N`.
         let mut source_id_map: ArrayHashMap<u32, i32> = ArrayHashMap::new();
 
         let source_indices = results.items_source_index();
@@ -1232,8 +1231,7 @@ impl<'a> LinkerContext<'a> {
     }
 }
 
-/// Emits the outer path then its inner-source paths, matching the
-/// chunk-local slot layout `Chunk::Builder` emits (0, then `1 + i`).
+/// Emits the outer path then its inner-source paths, matching `Chunk::Builder`'s slot layout (0, then `1 + i`).
 fn write_sources_for(
     joiner: &mut StringJoiner,
     chunk_abs_dir: &[u8],
@@ -1273,8 +1271,7 @@ fn write_sources_for(
                 // Virtual module or URL-scheme name: not a filesystem path.
                 name
             } else {
-                // `join_abs` returns a thread-local borrow; `source_map_relative_path`
-                // copies it out before the next call.
+                // `join_abs` returns a thread-local borrow; `source_map_relative_path` copies it out.
                 let abs_path: &[u8] = if bun_paths::resolve_path::Platform::AUTO.is_absolute(name) {
                     name
                 } else {

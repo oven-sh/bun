@@ -570,7 +570,7 @@ pub fn fetch(
             return entry
                 .blob
                 .as_ref()
-                .map(|b| crate::resolved_source::Bytecode::borrowed(b.as_slice()));
+                .map(|b| crate::resolved_source::Bytecode::persistent(b.as_slice()));
         }
     }
 
@@ -595,7 +595,7 @@ pub fn fetch(
         entry
             .blob
             .as_ref()
-            .map(|b| crate::resolved_source::Bytecode::borrowed(b.as_slice()))
+            .map(|b| crate::resolved_source::Bytecode::persistent(b.as_slice()))
     } else {
         cclog!(
             "[compile cache] code cache for {} {} was not initialized, initializing the in-memory entry\n",
@@ -907,7 +907,11 @@ fn generate_bytecode(format: Format, code: &[u8], url: &[u8]) -> Option<Box<[u8]
                     for job in rx {
                         let url = BunString::clone_utf8(&job.url);
                         let result = crate::cached_bytecode::__bun_jsc_generate_cached_bytecode(
-                            job.format, &job.code, &url,
+                            job.format,
+                            &job.code,
+                            &url,
+                            u32::MAX,
+                            None,
                         );
                         let _ = job.resp.send(result);
                     }

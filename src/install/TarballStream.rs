@@ -227,7 +227,19 @@ impl TarballStream {
         );
 
         let npm_mode = tarball.resolution.tag != ResolutionTag::Github;
-        let want_first_dirname = tarball.resolution.tag == ResolutionTag::Github;
+        // An existing lockfile bun-tag keys the cache lookup; prefer it over the root dir name.
+        let lockfile_github_tag = tarball.github_resolved.slice();
+        let resolved_github_dirname: &'static [u8] =
+            if tarball.resolution.tag == ResolutionTag::Github && !lockfile_github_tag.is_empty() {
+                FileSystem::instance()
+                    .dirname_store()
+                    .append(lockfile_github_tag)
+                    .expect("unreachable")
+            } else {
+                b""
+            };
+        let want_first_dirname =
+            tarball.resolution.tag == ResolutionTag::Github && resolved_github_dirname.is_empty();
         let hasher = integrity::Streaming::init(
             &if tarball.skip_verify {
                 Integrity::default()
@@ -261,7 +273,7 @@ impl TarballStream {
             dest: None,
             tmpname: ZBox::from_bytes(b""),
             hasher,
-            resolved_github_dirname: b"",
+            resolved_github_dirname,
             want_first_dirname,
             npm_mode,
             #[cfg(unix)]

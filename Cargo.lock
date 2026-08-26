@@ -138,7 +138,6 @@ name = "bun_alloc"
 version = "0.0.0"
 dependencies = [
  "allocator-api2",
- "bstr",
  "bun_mimalloc_sys",
  "bun_opaque",
  "bun_wyhash",
@@ -301,7 +300,6 @@ dependencies = [
  "bun_jsc",
  "bun_opaque",
  "bun_options_types",
- "scopeguard",
 ]
 
 [[package]]
@@ -765,7 +763,6 @@ dependencies = [
  "bun_alloc",
  "bun_api",
  "bun_ast",
- "bun_ast_jsc",
  "bun_core",
  "bun_dotenv",
  "bun_ini",

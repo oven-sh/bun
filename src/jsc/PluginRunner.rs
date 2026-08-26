@@ -57,19 +57,19 @@ impl PluginResolver for PluginRunner {
 
         let namespace_slice = Self::extract_namespace(specifier);
         let namespace = if !namespace_slice.is_empty() && namespace_slice != b"file" {
-            BunString::init(namespace_slice)
+            BunString::from_bytes(namespace_slice)
         } else {
-            BunString::empty()
+            BunString::EMPTY
         };
         let Some(on_resolve_plugin) = global
             .run_on_resolve_plugins(
                 &namespace,
-                &BunString::init(specifier).substring(if namespace.length() > 0 {
+                &BunString::from_bytes(specifier).substring(if namespace.length() > 0 {
                     namespace.length() + 1
                 } else {
                     0
                 }),
-                &BunString::init(importer),
+                &BunString::from_bytes(importer),
                 target,
             )
             .map_err(js_err)?
@@ -98,10 +98,10 @@ impl PluginResolver for PluginRunner {
             return Ok(None);
         } else if
         // TODO: validate this better
-        file_path.eql_comptime(b".")
-            || file_path.eql_comptime(b"..")
-            || file_path.eql_comptime(b"...")
-            || file_path.eql_comptime(b" ")
+        file_path.eq_ascii(b".")
+            || file_path.eq_ascii(b"..")
+            || file_path.eq_ascii(b"...")
+            || file_path.eq_ascii(b" ")
         {
             log.add_error(None, loc, b"Invalid file path from onResolve plugin");
             return Ok(None);
@@ -118,19 +118,19 @@ impl PluginResolver for PluginRunner {
 
                 let namespace_str = namespace_value.to_bun_string(global).map_err(js_err)?;
                 if namespace_str.length() == 0 {
-                    break 'brk BunString::init(b"file");
+                    break 'brk BunString::static_("file");
                 }
 
-                if namespace_str.eql_comptime(b"file") {
-                    break 'brk BunString::init(b"file");
+                if namespace_str.eq_ascii(b"file") {
+                    break 'brk BunString::static_("file");
                 }
 
-                if namespace_str.eql_comptime(b"bun") {
-                    break 'brk BunString::init(b"bun");
+                if namespace_str.eq_ascii(b"bun") {
+                    break 'brk BunString::static_("bun");
                 }
 
-                if namespace_str.eql_comptime(b"node") {
-                    break 'brk BunString::init(b"node");
+                if namespace_str.eq_ascii(b"node") {
+                    break 'brk BunString::static_("node");
                 }
 
                 static_namespace = false;
@@ -138,7 +138,7 @@ impl PluginResolver for PluginRunner {
                 break 'brk namespace_str;
             }
 
-            break 'brk BunString::init(b"file");
+            break 'brk BunString::static_("file");
         };
 
         // `FsPath<'static>` borrows, so the formatted buffer is leaked to
@@ -153,9 +153,9 @@ impl PluginResolver for PluginRunner {
             // `byte_slice()` borrows `&self`; re-match to recover the
             // `'static` literal so the result typechecks as `FsPath<'static>`
             // without an extra alloc.
-            let ns: &'static [u8] = if user_namespace.eql_comptime(b"bun") {
+            let ns: &'static [u8] = if user_namespace.eq_ascii(b"bun") {
                 b"bun"
-            } else if user_namespace.eql_comptime(b"node") {
+            } else if user_namespace.eq_ascii(b"node") {
                 b"node"
             } else {
                 b"file"

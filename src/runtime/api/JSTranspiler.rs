@@ -18,9 +18,8 @@ use bun_js_parser::parser::Runtime;
 use bun_js_parser::parser::ScanPassResult;
 use bun_js_parser::{self as JSAst};
 use bun_js_printer as JSPrinter;
-use bun_jsc::ZigStringJsc as _;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::zig_string::ZigString as JscZigString;
 use bun_jsc::{
     self as jsc, ArgumentsSlice, CallFrame, ComptimeStringMapExt, JSArrayIterator, JSGlobalObject,
     JSPromise, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell, JsResult, LogJsc,
@@ -30,7 +29,7 @@ use bun_resolver::package_json::{MacroMap, PackageJSON};
 use bun_resolver::tsconfig_json::TSConfigJSON;
 // `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
 use bun_collections::ArrayHashMapExt;
-use bun_core::{String as BunString, ZigString};
+use bun_core::{EncodedSlice, String as BunString};
 use bun_options_types::schema::api;
 
 // Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
@@ -50,9 +49,6 @@ pub struct JSTranspiler {
     // address is stable across the move into `Box<JSTranspiler>` —
     // `transpiler.arena` holds a `&'static Arena` pointing into it.
     pub arena: Box<Arena>,
-    // Intrusive refcount field for `bun_ptr::IntrusiveRc<JSTranspiler>`:
-    // single-thread intrusive `bun.ptr.RefCount` because `*JSTranspiler`
-    // crosses FFI as `m_ctx` (per PORTING.md §Pointers; not `Arc`).
     pub(crate) ref_count: bun_ptr::RefCount<JSTranspiler>,
 }
 
@@ -637,7 +633,7 @@ impl Config {
 /// into the owning `JSTranspiler`'s config (its `Transpiler` is bit-copied),
 /// which the job's Js side keeps alive and the pool borrow keeps valid.
 pub(crate) struct TransformTask {
-    pub input_code: bun_jsc::ThreadSafe<StringOrBuffer>,
+    pub input_code: bun_jsc::ThreadIsolated<StringOrBuffer<'static>>,
     pub output_code: BunString,
     pub transpiler: core::mem::ManuallyDrop<Transpiler::Transpiler<'static>>,
     pub log: bun_ast::Log,
@@ -677,7 +673,7 @@ impl TransformTask {
     fn schedule(
         transpiler: &JSTranspiler,
         transpiler_js: JSValue,
-        input_code: bun_jsc::ThreadSafe<StringOrBuffer>,
+        input_code: bun_jsc::ThreadIsolated<StringOrBuffer<'static>>,
         global: &JSGlobalObject,
         loader: Loader,
     ) -> JSValue {
@@ -693,7 +689,7 @@ impl TransformTask {
 
         let task = TransformTask {
             input_code,
-            output_code: BunString::empty(),
+            output_code: BunString::EMPTY,
             transpiler: transpiler_copy,
             macro_map: clone_macro_map(&config.macro_map),
             tsconfig: config
@@ -803,7 +799,7 @@ impl TransformTask {
         };
 
         if parse_result.empty {
-            self.output_code = BunString::empty();
+            self.output_code = BunString::EMPTY;
             return;
         }
 
@@ -835,7 +831,7 @@ impl TransformTask {
             // bytes, then the local writer is dropped.
             self.output_code = BunString::clone_utf8(buffer_writer.written());
         } else {
-            self.output_code = BunString::empty();
+            self.output_code = BunString::EMPTY;
         }
     }
 
@@ -859,7 +855,7 @@ impl TransformTask {
                     }
                 }
 
-                break 'brk self.log.to_js(global, "Transform failed");
+                break 'brk self.log.to_js(global, format_args!("Transform failed"));
             };
 
             promise.reject_with_async_stack(global, error_value)?;
@@ -964,9 +960,11 @@ impl JSTranspiler {
         config.from_js(global, config_arg, arena_ref)?;
 
         if (config.log.warnings + config.log.errors) > 0 {
-            return Err(
-                global.throw_value(config.log.to_js(global, "Failed to create transpiler")?)
-            );
+            return Err(global.throw_value(
+                config
+                    .log
+                    .to_js(global, format_args!("Failed to create transpiler"))?,
+            ));
         }
 
         // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
@@ -981,9 +979,9 @@ impl JSTranspiler {
             Err(err) => {
                 let log = &mut config.log;
                 if (log.warnings + log.errors) > 0 {
-                    return Err(
-                        global.throw_value(log.to_js(global, "Failed to create transpiler")?)
-                    );
+                    return Err(global.throw_value(
+                        log.to_js(global, format_args!("Failed to create transpiler"))?,
+                    ));
                 }
                 return Err(global.throw_error(err, "Error creating transpiler"));
             }
@@ -1017,7 +1015,9 @@ impl JSTranspiler {
         if let Err(err) = transpiler.configure_defines() {
             let log = &mut config.log;
             if (log.warnings + log.errors) > 0 {
-                return Err(global.throw_value(log.to_js(global, "Failed to load define")?));
+                return Err(
+                    global.throw_value(log.to_js(global, format_args!("Failed to load define"))?)
+                );
             }
             return Err(global.throw_error(err, "Failed to load define"));
         }
@@ -1081,7 +1081,6 @@ impl Drop for JSTranspiler {
         // buffer_writer.?.buffer.deinit() → Option<BufferWriter>: Drop
         // config.tsconfig.deinit() → Option<Box<TSConfigJSON>>: Drop
         // arena.deinit() → Arena: Drop
-        // bun.destroy(this) → handled by Box owner / IntrusiveRc.
     }
 }
 
@@ -1313,17 +1312,17 @@ impl JSTranspiler {
         let log_ref = self.transpiler.get().log_mut();
         let Some(mut parse_result) = parse_result else {
             if (log_ref.warnings + log_ref.errors) > 0 {
-                return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));
+                return Err(global.throw_value(log_ref.to_js(global, format_args!("Parse error"))?));
             }
             return Err(global.throw(format_args!("Failed to parse")));
         };
 
         if (log_ref.warnings + log_ref.errors) > 0 {
-            return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));
+            return Err(global.throw_value(log_ref.to_js(global, format_args!("Parse error"))?));
         }
 
-        let exports_label = ZigString::static_(b"exports");
-        let imports_label = ZigString::static_(b"imports");
+        let exports_label = EncodedSlice::latin1(b"exports");
+        let imports_label = EncodedSlice::latin1(b"imports");
         let named_imports_value = named_imports_to_js(
             global,
             parse_result.ast.import_records.as_slice(),
@@ -1378,12 +1377,12 @@ impl JSTranspiler {
             let bytes = code.slice().to_vec();
             global.vm().report_extra_memory(bytes.len());
             bun_jsc::Unprotect::unprotect(&mut code);
-            code = StringOrBuffer::EncodedSlice(bun_core::ZigStringSlice::init_owned(bytes));
+            code = StringOrBuffer::owned(bytes);
         }
         // `errdefer code.deinitAndUnprotect()` — `from_js_with_encoding_maybe_async`
-        // (`Flavor::Async`) already protected; adopt into a `ThreadSafe` so any
+        // (`Flavor::Async`) already protected; adopt into a `ThreadIsolated` so any
         // early-return drop unprotects. `TransformTask::create` takes the guard.
-        let code = bun_jsc::ThreadSafe::adopt(code);
+        let code = bun_jsc::ThreadIsolated::adopt(code);
 
         args.eat();
         let loader: Option<Loader> = 'brk: {
@@ -1509,13 +1508,13 @@ impl JSTranspiler {
         let log_ref = self.transpiler.get().log_mut();
         let Some(parse_result) = parse_result else {
             if (log_ref.warnings + log_ref.errors) > 0 {
-                return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));
+                return Err(global.throw_value(log_ref.to_js(global, format_args!("Parse error"))?));
             }
             return Err(global.throw(format_args!("Failed to parse code")));
         };
 
         if (log_ref.warnings + log_ref.errors) > 0 {
-            return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));
+            return Err(global.throw_value(log_ref.to_js(global, format_args!("Parse error"))?));
         }
 
         let mut buffer_writer = self.buffer_writer.replace(None).unwrap_or_else(|| {
@@ -1540,12 +1539,9 @@ impl JSTranspiler {
 
         // TODO: benchmark if pooling this way is faster or moving is faster
         buffer_writer = printer.ctx;
-        let mut out = JscZigString::init(buffer_writer.written());
-        out.set_output_encoding();
-
-        let result = out.to_js(global);
+        let result = bun_string_jsc::create_utf8_for_js(global, buffer_writer.written());
         self.buffer_writer.set(Some(buffer_writer));
-        Ok(result)
+        result
     }
 }
 
@@ -1567,7 +1563,7 @@ fn named_exports_to_js(
     index_sort::sort_slice_unstable_by(&mut keys, |a, b| a.cmp(b));
 
     let names: Vec<BunString> = keys.into_iter().map(BunString::from_bytes).collect();
-    bun_jsc::bun_string_jsc::to_js_array(global, &names)
+    bun_string_jsc::to_js_array(global, &names)
 }
 
 fn named_imports_to_js(
@@ -1575,8 +1571,8 @@ fn named_imports_to_js(
     import_records: &[ImportRecord],
     trim_unused_imports: bool,
 ) -> JsResult<JSValue> {
-    let path_label = ZigString::static_(b"path");
-    let kind_label = ZigString::static_(b"kind");
+    let path_label = EncodedSlice::latin1(b"path");
+    let kind_label = EncodedSlice::latin1(b"kind");
 
     let mut count: u32 = 0;
     for record in import_records {
@@ -1602,8 +1598,8 @@ fn named_imports_to_js(
         }
 
         array.ensure_still_alive();
-        let path = JscZigString::init(record.path.text).to_js(global);
-        let kind = JscZigString::init(record.kind.label()).to_js(global);
+        let path = bun_string_jsc::create_utf8_for_js(global, record.path.text)?;
+        let kind = BunString::static_(record.kind.label()).to_js(global)?;
         let entry = JSValue::create_object2(global, &path_label, &kind_label, path, kind)?;
         array.put_index(global, i, entry)?;
         i += 1;
@@ -1721,13 +1717,16 @@ impl JSTranspiler {
         let result = (|| -> JsResult<JSValue> {
             if let Err(err) = scan_result {
                 if (log.warnings + log.errors) > 0 {
-                    return Err(global.throw_value(log.to_js(global, "Failed to scan imports")?));
+                    return Err(global
+                        .throw_value(log.to_js(global, format_args!("Failed to scan imports"))?));
                 }
                 return Err(global.throw_error(err, "Failed to scan imports"));
             }
 
             if (log.warnings + log.errors) > 0 {
-                return Err(global.throw_value(log.to_js(global, "Failed to scan imports")?));
+                return Err(
+                    global.throw_value(log.to_js(global, format_args!("Failed to scan imports"))?)
+                );
             }
 
             named_imports_to_js(

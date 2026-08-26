@@ -7,6 +7,7 @@ import {
   bunRun,
   isASAN,
   isDebug,
+  isMacOS,
   isWindows,
   tempDir,
   tempDirWithFiles,
@@ -69,6 +70,194 @@ describe("Bun.build", () => {
     expect(build.outputs[0].kind).toBe("entry-point");
     expect(build.outputs[1].kind).toBe("bytecode");
     expect(await bunRun(build.outputs[0].path)).toSpawn("world");
+  });
+
+  const nestedSource = `
+    export function outer() {
+      function middle() {
+        function inner() {
+          return "world";
+        }
+        return inner();
+      }
+      return middle();
+    }
+
+    console.log(outer());
+  `;
+
+  async function bytecodeSize(dir: string, depth: number | undefined) {
+    const outdir = join(dir, depth === undefined ? "all" : `depth-${depth}`);
+    const build = await Bun.build({
+      entrypoints: [join(dir, "index.ts")],
+      outdir,
+      target: "bun",
+      bytecode: true,
+      bytecodeDepth: depth,
+    });
+    expect(build.outputs.map(o => o.kind)).toStrictEqual(["entry-point", "bytecode"]);
+    expect(await bunRun(build.outputs[0].path)).toSpawn("world");
+    return build.outputs[1].size;
+  }
+
+  test("bytecodeDepth bounds nested function bytecode", async () => {
+    const dir = tempDirWithFiles("bun-build-api-bytecode-depth", {
+      "package.json": `{}`,
+      "index.ts": nestedSource,
+    });
+
+    const depth0 = await bytecodeSize(dir, 0);
+    const depth1 = await bytecodeSize(dir, 1);
+    const depth2 = await bytecodeSize(dir, 2);
+    const all = await bytecodeSize(dir, undefined);
+
+    expect(depth0).toBeLessThan(depth1);
+    expect(depth1).toBeLessThan(depth2);
+    expect(depth2).toBeLessThan(all);
+    expect(await bytecodeSize(dir, 3)).toBe(all);
+  });
+
+  test("bytecodeDepth rejects invalid values", async () => {
+    const dir = tempDirWithFiles("bun-build-api-bytecode-depth-invalid", {
+      "package.json": `{}`,
+      "index.ts": nestedSource,
+    });
+    for (const bytecodeDepth of [-1, 1.5, "abc", Infinity, NaN]) {
+      expect(() =>
+        Bun.build({
+          entrypoints: [join(dir, "index.ts")],
+          outdir: join(dir, "out"),
+          target: "bun",
+          bytecode: true,
+          // @ts-expect-error
+          bytecodeDepth,
+        }),
+      ).toThrow(/bytecodeDepth/);
+    }
+  });
+
+  test("--bytecode-depth on the CLI", async () => {
+    const dir = tempDirWithFiles("bun-build-cli-bytecode-depth", {
+      "package.json": `{}`,
+      "index.ts": nestedSource,
+    });
+
+    async function cliBytecodeSize(args: string[]) {
+      const outdir = join(dir, "out-" + args.join("").replace(/[^a-z0-9]/g, ""));
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", join(dir, "index.ts"), "--target=bun", "--bytecode", "--outdir", outdir, ...args],
+        env: bunEnv,
+        cwd: dir,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toContain("index.js.jsc");
+      expect(exitCode).toBe(0);
+      expect(await bunRun(join(outdir, "index.js"))).toSpawn("world");
+      return Bun.file(join(outdir, "index.js.jsc")).size;
+    }
+
+    const depth0 = await cliBytecodeSize(["--bytecode-depth=0"]);
+    const depth1 = await cliBytecodeSize(["--bytecode-depth", "1"]);
+    const all = await cliBytecodeSize([]);
+    expect(depth0).toBeLessThan(depth1);
+    expect(depth1).toBeLessThan(all);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", join(dir, "index.ts"), "--target=bun", "--bytecode", "--bytecode-depth=nope"],
+      env: bunEnv,
+      cwd: dir,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('Invalid value for --bytecode-depth: "nope"');
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  // A function's record stores its own offset as a varint, so its size depends on where it lands. Sweep the payload
+  // size across the encoder's first page boundary (64 KB) with a few tail shapes so a record lands exactly on it.
+  test("bytecode: function record on an encoder page boundary", async () => {
+    using dir = tempDir("bun-build-api-bytecode-page-boundary", {
+      "sweep-fixture.ts": /* ts */ `
+        import { writeFileSync } from "fs";
+        const variant = Number(process.argv[2]);
+        const params = variant & 1 ? Array.from({ length: 130 }, (_, i) => "a" + i).join(",") : "";
+        const consts = variant & 2 ? "var c = " + Array.from({ length: 130 }, (_, i) => i + ".5").join("+") + ";" : "";
+        async function bytecodeSize(n: number) {
+          const file = "in" + variant + ".js";
+          writeFileSync(file, 'function p(){ return "' + Buffer.alloc(n, "p").toString() + '"; }\\n'
+            + "function t(" + params + "){ " + consts + ' return "' + Buffer.alloc(200, "t").toString() + '"; }\\n'
+            + "module.exports = [p, t];\\n");
+          const build = await Bun.build({ entrypoints: ["./" + file], outdir: "./out" + variant, target: "bun", format: "cjs", bytecode: true });
+          if (!build.success) throw new AggregateError(build.logs);
+          return build.outputs.find(o => o.kind === "bytecode")!.size;
+        }
+        const pageEnd = 64 * 1024;
+        const n0 = 60000;
+        const target = n0 + (pageEnd - (await bytecodeSize(n0)));
+        for (let n = target - 24; n < target + 104; n++) await bytecodeSize(n);
+        console.log("ok");
+      `,
+    });
+    await Promise.all(
+      [0, 1, 2, 3].map(async variant => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "sweep-fixture.ts", String(variant)],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        expect(stdout).toBe("ok\n");
+        expect(exitCode).toBe(0);
+      }),
+    );
+  });
+
+  test("bytecode: repeated builds don't retain the generated code", async () => {
+    using dir = tempDir("bun-build-api-bytecode-retained", {
+      "retained-fixture.ts": /* ts */ `
+        import { writeFileSync } from "fs";
+        const [functions, limit] = process.argv.slice(2).map(Number);
+        let source = "";
+        for (let i = 0; i < functions; i++)
+          source += "export function f" + i + "(a, b) { if (a > " + i + ") { return a * b + " + i + "; } for (let j = 0; j < b; j++) a += j ^ " + i + '; return { a, b, name: "f' + i + '" }; }\\n';
+        writeFileSync("in.js", source);
+        const build = (bytecode: boolean) => Bun.build({ entrypoints: ["./in.js"], outdir: "./out", target: "bun", format: "cjs", bytecode });
+        const rss = () => Math.round(process.memoryUsage.rss() / 1024 / 1024);
+        if (!(await build(false)).success) throw new Error("build failed");
+        Bun.gc(true);
+        const base = rss();
+        for (let i = 0; i < 3; i++) if (!(await build(true)).success) throw new Error("build failed");
+        // The bundle thread frees its bytecode VM once it goes idle.
+        const deadline = Date.now() + 5000;
+        let after = rss();
+        while ((Bun.gc(true), (after = rss())) - base > limit && Date.now() < deadline) await Bun.sleep(20);
+        console.log(JSON.stringify({ base, after }));
+      `,
+    });
+    // Linux/Windows release, 20k functions: ~+65 MB without freeing the VM, about level with the baseline with it.
+    // Debug/ASAN parse far slower and hold freed pages in quarantine, so they get a smaller module and only guard against
+    // gross retention. macOS reports +230-280 MB here even with the VM freed (the pages leave RSS lazily), so same there.
+    const slow = isASAN || isDebug;
+    const [functions, limit] = slow ? [3000, 400] : [20000, isMacOS ? 400 : 40];
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "retained-fixture.ts", String(functions), String(limit)],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toStartWith("{");
+    expect(exitCode).toBe(0);
+    const { base, after } = JSON.parse(stdout);
+    expect(after - base).toBeLessThanOrEqual(limit);
   });
 
   test("passing undefined doesnt segfault", () => {

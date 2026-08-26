@@ -53,6 +53,10 @@ impl<T> GenOpt<T> {
     pub fn as_ref(&self) -> Option<&T> {
         self.0.as_ref()
     }
+    #[inline]
+    pub fn into_inner(self) -> Option<T> {
+        self.0
+    }
 }
 
 /// Required-value accessor: `field.get() -> T` (used inside tagged-union arms).
@@ -617,6 +621,7 @@ pub struct SocketConfig {
     pub allow_half_open: bool,
     pub reuse_port: bool,
     pub ipv6_only: bool,
+    pub pause_on_connect: bool,
 }
 
 /// `BindgenSocketConfigTLS.ExternType` =
@@ -665,6 +670,7 @@ struct ExternSocketConfig {
     exclusive: bool,
     reuse_port: bool,
     ipv6_only: bool,
+    pause_on_connect: bool,
     unix_: RawWTFStringImpl,
     fd: ExternOptional<i32>,
 }
@@ -691,6 +697,7 @@ impl SocketConfig {
             exclusive: ext.exclusive,
             reuse_port: ext.reuse_port,
             ipv6_only: ext.ipv6_only,
+            pause_on_connect: ext.pause_on_connect,
             unix_: adopt_opt_string(ext.unix_),
             fd: ext.fd.get(),
         }

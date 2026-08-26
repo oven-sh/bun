@@ -7,6 +7,7 @@ use core::ffi::{c_char, c_void};
 use ::argon2 as rust_argon2;
 use bun_boringssl as boringssl;
 use bun_collections::CaseInsensitiveAsciiStringArrayHashMap;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSValue, Job, JobContext, JsPtr, JsResult,
     JsThread, Protected, Strong,
@@ -754,12 +755,12 @@ pub mod random {
 // Scrypt
 // ───────────────────────────────────────────────────────────────────────────
 pub(crate) struct Scrypt {
-    // Plain `StringOrBuffer` — NOT `ThreadSafe<_>`. The struct serves both
+    // Plain `StringOrBuffer` — NOT `ThreadIsolated<_>`. The struct serves both
     // `scryptSync` (no protect taken) and async `scrypt` (protect taken in
-    // `from_js_maybe_async(.., Flavor::Async, ..)`, adopted into a `ThreadSafe`
+    // `from_js_maybe_async(.., Flavor::Async, ..)`, adopted into a `ThreadIsolated`
     // by the job).
-    password: StringOrBuffer,
-    salt: StringOrBuffer,
+    password: StringOrBuffer<'static>,
+    salt: StringOrBuffer<'static>,
     n: u32,
     r: u32,
     p: u32,
@@ -1086,7 +1087,7 @@ mod _impl {
 
     impl bun_jsc::Unprotect for Scrypt {
         /// Release the `protect()` taken by `from_js_maybe_async(.., Flavor::Async, ..)`
-        /// on the async path (via the job's `ThreadSafe`). The sync path never calls this.
+        /// on the async path (via the job's `ThreadIsolated`). The sync path never calls this.
         #[inline]
         fn unprotect(&mut self) {
             bun_jsc::Unprotect::unprotect(&mut self.password);
@@ -1097,7 +1098,7 @@ mod _impl {
     /// `crypto.scrypt` off the JS thread: derives straight into the result
     /// ArrayBuffer's bytes under the job's ticket, which keeps their VM alive.
     pub(crate) struct ScryptJob {
-        params: bun_jsc::ThreadSafe<Scrypt>,
+        params: bun_jsc::ThreadIsolated<Scrypt>,
         result: JsPtr<[u8]>,
         err: Option<u32>,
     }
@@ -1295,7 +1296,7 @@ mod _impl {
         let array = JSValue::create_empty_array(global, hashes.count())?;
 
         for (i, hash) in hashes.keys().iter().enumerate() {
-            let str = jsc::bun_string_jsc::create_utf8_for_js(global, hash)?;
+            let str = bun_string_jsc::create_utf8_for_js(global, hash)?;
             array.put_index(global, u32::try_from(i).expect("int cast"), str)?;
         }
 
@@ -1306,7 +1307,7 @@ mod _impl {
     fn scrypt(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (ctx, callback) = Scrypt::from_js::<true>(global, call_frame)?;
         // Protected by `from_js::<true>`; released with the job wherever it ends.
-        let params = bun_jsc::ThreadSafe::adopt(ctx);
+        let params = bun_jsc::ThreadIsolated::adopt(ctx);
         if params.keylen as usize > jsc::virtual_machine::synthetic_allocation_limit() {
             return Err(global.throw_out_of_memory());
         }

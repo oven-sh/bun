@@ -11,7 +11,7 @@ use crate::webcore::jsc::{
     JsResult, StringJsc as _,
 };
 use bun_core::Output;
-use bun_core::{String as BunString, ZigStringSlice};
+use bun_core::{String as BunString, Utf8Bytes};
 use bun_http_types::Method::Method;
 
 use super::body::{Body, BodyMixin, Value as BodyValue, ValueError as BodyValueError};
@@ -126,7 +126,7 @@ impl BodyAbortListener {
         // `attach_abort_signal`; `clean_native_bindings` removes it before the
         // box is dropped, so it is live here. Copy out up front: erroring a
         // still-streaming body can re-enter `Response::unref` via
-        // `FetchTasklet::ignore_remaining_response_body` and destroy this box.
+        // `FetchTasklet::abandon_response_body` and destroy this box.
         let (response, global) =
             unsafe { ((*ctx.cast::<Self>()).response, (*ctx.cast::<Self>()).global) };
         Response::ref_(response.as_mut_ptr());
@@ -221,7 +221,7 @@ impl Default for Response {
         Self {
             body: JsCell::new(Body::default()),
             init: JsCell::new(Init::default()),
-            url: JsCell::new(BunString::empty()),
+            url: JsCell::new(BunString::EMPTY),
             redirected: Cell::new(false),
             ref_count: Cell::new(1),
             weak_ptr_data: WeakPtrData::EMPTY,
@@ -338,11 +338,6 @@ impl Response {
     #[inline]
     pub(crate) fn set_url(&self, url: BunString) {
         self.url.set(url);
-    }
-
-    #[inline]
-    pub(crate) fn get_utf8_url(&self) -> bun_core::ZigStringSlice {
-        self.url.get().to_utf8()
     }
 
     /// The JS getter keeps `get_url` (codegen calls that name); this internal
@@ -607,19 +602,19 @@ impl Response {
         Ok(this.get_or_create_headers(global_this)?.to_js(global_this))
     }
 
-    pub(crate) fn get_content_type(&self) -> JsResult<Option<ZigStringSlice>> {
+    pub(crate) fn get_content_type(&self) -> JsResult<Option<Utf8Bytes<'_>>> {
         // R-2 escape hatch via `init_mut()` — `fast_get` (FFI out-param write)
         // does not re-enter JS.
         if let Some(headers) = self.init_mut().headers.as_mut() {
             if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
-                return Ok(Some(value.to_slice()));
+                return Ok(Some(value.to_utf8()));
             }
         }
 
         if let BodyValue::Blob(blob) = self.body.get().value.get() {
             let content_type = blob.content_type_slice();
             if !content_type.is_empty() {
-                return Ok(Some(ZigStringSlice::from_utf8_never_free(content_type)));
+                return Ok(Some(Utf8Bytes::Borrowed(content_type)));
             }
         }
 
@@ -824,7 +819,7 @@ impl Response {
             // - `JsRef` — assignment drops the `Strong` arm (block slot released).
             (*this).init.set(Init::default());
             (*this).body.get_mut().reset();
-            (*this).url.set(BunString::empty());
+            (*this).url.set(BunString::EMPTY);
             (*this).js_ref.set(JsRef::empty());
             (*this).abort_listener.set(None);
 
@@ -1015,7 +1010,7 @@ impl Response {
 
             let url_string_value = args.next_eat().unwrap_or_default();
             url_string = if url_string_value.is_empty() {
-                BunString::empty()
+                BunString::EMPTY
             } else {
                 url_string_value.to_bun_string(global_this)?
             };
@@ -1230,7 +1225,7 @@ impl Default for Init {
         Self {
             headers: None,
             status_code: 0,
-            status_text: BunString::empty(),
+            status_text: BunString::EMPTY,
             method: Method::GET,
         }
     }

@@ -14,37 +14,49 @@ pub(crate) fn find_all_imported_parts_in_js_order(
     chunks: &mut [Chunk],
 ) -> Result<(), crate::Error> {
     let _trace = perf::trace("Bundler.findAllImportedPartsInJSOrder");
-
-    let mut part_ranges_shared: Vec<PartRange> = Vec::new();
-    let mut parts_prefix_shared: Vec<PartRange> = Vec::new();
-    // PERF: these scratch lists could become
-    // `bun_alloc::ArenaVec<'bump, PartRange>` with a threaded `&'bump Bump`
-    // (introduces lifetimes on this fn + visitor). Profile if hot.
-    for (index, chunk) in chunks.iter_mut().enumerate() {
-        match &chunk.content {
-            chunk::Content::Javascript(_) => {
-                find_imported_parts_in_js_order(
-                    this,
-                    chunk,
-                    &mut part_ranges_shared,
-                    &mut parts_prefix_shared,
-                    u32::try_from(index).expect("int cast"),
-                )?;
-            }
-            chunk::Content::Css(_) => {} // handled in `find_imported_css_files_in_js_order`
-            chunk::Content::Html => {}
-        }
+    if chunks.is_empty() {
+        return Ok(());
     }
+
+    // One chunk per task. Each task writes only its own `Chunk` and, for
+    // server-component files, that file's `entry_point_chunk_index` slot (a
+    // file belongs to exactly one chunk), and reads the graph columns.
+    let ctx = crate::linker_context_mod::GenerateChunkCtx {
+        chunk: bun_ptr::BackRef::new_mut(&mut chunks[0]),
+        // SAFETY: `this` is the live `&mut LinkerContext` for the link step.
+        c: unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(this)) },
+        chunks: bun_ptr::BackRef::new(&*chunks),
+    };
+    this.worker_pool().each_ptr(
+        ctx,
+        |ctx: &crate::linker_context_mod::GenerateChunkCtx, chunk: *mut Chunk, index: usize| {
+            // SAFETY: `each_ptr` hands each task a distinct `*mut Chunk`.
+            let chunk = unsafe { &mut *chunk };
+            if !matches!(chunk.content, chunk::Content::Javascript(_)) {
+                return; // CSS: `find_imported_css_files_in_js_order`; HTML: nothing
+            }
+            // SAFETY: shared for reading; see the note above on the one column written.
+            let c: &LinkerContext = unsafe { &*ctx.c.as_mut_ptr() };
+            bun_core::handle_oom(find_imported_parts_in_js_order(
+                c,
+                chunk,
+                &mut Vec::new(),
+                &mut Vec::new(),
+                u32::try_from(index).expect("int cast"),
+            ));
+        },
+        chunks,
+    );
     Ok(())
 }
 
 pub(crate) fn find_imported_parts_in_js_order(
-    this: &mut LinkerContext,
+    this: &LinkerContext,
     chunk: &mut Chunk,
     part_ranges_shared: &mut Vec<PartRange>,
     parts_prefix_shared: &mut Vec<PartRange>,
     chunk_index: u32,
-) -> Result<(), crate::Error> {
+) -> Result<(), bun_alloc::AllocError> {
     let mut chunk_order_array: Vec<Order> =
         Vec::with_capacity(chunk.files_with_parts_in_chunk.count());
     {
@@ -88,7 +100,7 @@ pub(crate) fn find_imported_parts_in_js_order(
             parts: this.graph.ast.items_parts(),
             import_records: this.graph.ast.items_import_records(),
             entry_bits: chunk.entry_bits(),
-            c: &*this,
+            c: this,
             chunk_index,
             entry_point_chunk_indices,
             stack: Vec::new(),
@@ -240,11 +252,25 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                             // for `entry_point_chunk_index` (distinct from every
                             // column read through `self.c` / `self.flags` / `self.parts`),
                             // valid for `graph.files.len()` writes for the duration of the
-                            // link step. No `&` to this column is live here.
-                            unsafe {
-                                (*self.entry_point_chunk_indices)[source_index as usize] =
-                                    self.chunk_index;
-                            }
+                            // link step. Chunks run in parallel and, without code
+                            // splitting, several may contain this file: highest index wins
+                            // (unset is `u32::MAX`), as when this ran chunk by chunk.
+                            // Err = another chunk with a higher index already claimed it.
+                            let _ = unsafe {
+                                core::sync::atomic::AtomicU32::from_ptr(
+                                    (*self.entry_point_chunk_indices)
+                                        .as_mut_ptr()
+                                        .add(source_index as usize),
+                                )
+                                .try_update(
+                                    core::sync::atomic::Ordering::Relaxed,
+                                    core::sync::atomic::Ordering::Relaxed,
+                                    |cur| {
+                                        (cur == u32::MAX || cur < self.chunk_index)
+                                            .then_some(self.chunk_index)
+                                    },
+                                )
+                            };
                         }
 
                         self.files.push(source_index);

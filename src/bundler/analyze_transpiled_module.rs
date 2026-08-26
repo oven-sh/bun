@@ -141,8 +141,16 @@ pub enum ModuleInfoError {
 /// pointers) because Rust references cannot express the self-borrow.
 ///
 pub struct ModuleInfoDeserialized {
+    /// When the ids index the executable's shared module-info string table:
+    /// that table. Identifiers then come from the VM-wide slots
+    /// (`Bun__VM__moduleInfoIdentifiers`), filled on first use, and
+    /// `strings_buf` / `string_ranges` are empty.
+    pub(crate) shared_table: Option<ModuleInfoStringTable<'static>>,
+    /// Base the `string_ranges` offsets index: the decoded copy of a module's
+    /// own table, or the live `ModuleInfo`'s string buffer.
     pub(crate) strings_buf: bun_ptr::RawSlice<u8>,
-    pub(crate) strings_lens: bun_ptr::RawSlice<u32>,
+    /// `(offset, len)` into `strings_buf` per local string id.
+    pub(crate) string_ranges: bun_ptr::RawSlice<[u32; 2]>,
     pub(crate) requested_modules_keys: bun_ptr::RawSlice<StringID>,
     pub(crate) requested_modules_values: bun_ptr::RawSlice<FetchParameters>,
     pub(crate) requested_modules_phases: bun_ptr::RawSlice<u8>,
@@ -153,15 +161,17 @@ pub struct ModuleInfoDeserialized {
 }
 
 pub enum Owner {
-    /// `Box<ModuleInfo>` whose internal vectors back the raw slice fields.
-    ModuleInfo(*mut ModuleInfo),
+    /// `Box<ModuleInfo>` whose internal vectors back the raw slice fields,
+    /// plus the `string_ranges` derived from its length list.
+    ModuleInfo(*mut ModuleInfo, Box<[[u32; 2]]>),
     /// Decoded from the wire format by [`ModuleInfoDeserialized::create`].
     Decoded(Box<Decoded>),
 }
 
 /// The fixed-width in-memory layout the wire format decodes into: one `u32`
-/// arena (`[strings_lens | requested keys | requested values | buffer]`) and
-/// one byte arena (`[record_kinds | requested phases | strings_buf]`).
+/// arena (`[string ranges | requested keys | requested values | buffer]`) and
+/// one byte arena (`[record_kinds | requested phases | strings?]` — the string
+/// bytes only when the table they came from does not outlive the record).
 pub struct Decoded {
     words: Box<[u32]>,
     bytes: Box<[u8]>,
@@ -169,7 +179,7 @@ pub struct Decoded {
 
 impl Drop for ModuleInfoDeserialized {
     fn drop(&mut self) {
-        if let Owner::ModuleInfo(mi) = self.owner {
+        if let Owner::ModuleInfo(mi, _) = self.owner {
             // SAFETY: `owner` is the unique owner of the leaked `Box<ModuleInfo>`.
             drop(unsafe { bun_core::heap::take(mi) });
         }
@@ -187,13 +197,28 @@ impl ModuleInfoDeserialized {
     // Both constructors borrow from typed `Vec<T>` / `Box<[T]>` storage,
     // which is naturally aligned.
 
+    /// Ids below this are strings; the rest are sentinels.
     #[inline]
-    pub fn strings_buf(&self) -> &[u8] {
-        self.strings_buf.slice()
+    pub fn strings_count(&self) -> usize {
+        match &self.shared_table {
+            Some(table) => table.count as usize,
+            None => self.string_ranges.len(),
+        }
     }
     #[inline]
-    pub fn strings_lens(&self) -> &[u32] {
-        self.strings_lens.slice()
+    pub fn shared_table(&self) -> Option<&ModuleInfoStringTable<'static>> {
+        self.shared_table.as_ref()
+    }
+    /// The WTF-8 bytes of string `id`, or `None` if out of bounds (corrupt input).
+    #[inline]
+    pub fn string(&self, id: usize) -> Option<&[u8]> {
+        if let Some(table) = &self.shared_table {
+            return table.get(u32::try_from(id).ok()?);
+        }
+        let [offset, len] = *self.string_ranges.slice().get(id)?;
+        self.strings_buf
+            .slice()
+            .get(offset as usize..offset as usize + len as usize)
     }
     #[inline]
     pub fn requested_modules_keys(&self) -> &[StringID] {
@@ -231,31 +256,31 @@ impl ModuleInfoDeserialized {
     pub(crate) fn create(source: &[u8]) -> Result<Box<ModuleInfoDeserialized>, ModuleInfoError> {
         let table = ModuleInfoStringTable::parse(source)?;
         let body = &source[table.byte_len..];
-        Self::decode(&table, body, false)
+        Self::decode(&table, None, body)
     }
 
-    /// Decodes a body whose ids index `table`, a string table shared by many
-    /// modules (`StandaloneModuleGraph`); only the strings this body uses are
-    /// copied out.
+    /// Decodes a body whose ids index `table`, the string table an executable
+    /// shares between all its modules (`StandaloneModuleGraph`). The record
+    /// keeps the table's ids and references its bytes in place.
     pub fn create_with_table(
-        table: &ModuleInfoStringTable<'_>,
+        table: &ModuleInfoStringTable<'static>,
         body: &[u8],
     ) -> Option<Box<ModuleInfoDeserialized>> {
-        Self::decode(table, body, true).ok()
+        Self::decode(table, Some(*table), body).ok()
     }
 
     /// Widens the body wire format written by
     /// `bun_js_printer::analyze_transpiled_module::ModuleInfoDeserialized::serialize_body`
     /// (layout documented there) into the fixed `u32` layout
     /// `to_js_module_record` reads: one `u32` arena
-    /// `[strings_lens | requested keys | requested values | buffer]` and one
-    /// byte arena `[record_kinds | requested phases | strings_buf]`. With
-    /// `remap`, table ids are renumbered densely in first-use order so the
-    /// module's identifier array holds only its own strings.
+    /// `[string ranges? | requested keys | requested values | buffer]` and one
+    /// byte arena `[record_kinds | requested phases | strings?]` — the string
+    /// ranges and bytes only when the table is the module's own (it does not
+    /// outlive `body`); with a `shared_table` the ids are left as they are.
     fn decode(
         table: &ModuleInfoStringTable<'_>,
+        shared_table: Option<ModuleInfoStringTable<'static>>,
         body: &[u8],
-        remap: bool,
     ) -> Result<Box<ModuleInfoDeserialized>, ModuleInfoError> {
         use ModuleInfoError::BadModuleInfo;
         let mut r = Reader { rem: body };
@@ -278,30 +303,18 @@ impl ModuleInfoDeserialized {
             buffer_len += RecordKind(tag & 0b111).len().map_err(|_| BadModuleInfo)?;
         }
 
-        // Table id -> local id. Without `remap` the table is this module's own
-        // and ids pass through.
         struct Ids {
             table_count: u32,
             id_width: usize,
-            remap: bool,
-            local_of: bun_collections::HashMap<u32, u32>,
-            used: Vec<u32>,
         }
         impl Ids {
             fn id(&mut self, r: &mut Reader<'_>) -> Result<u32, ModuleInfoError> {
                 let v = r.uint(self.id_width)?;
                 Ok(match v.checked_sub(self.table_count) {
+                    None => v,
                     Some(0) => StringID::STAR_NAMESPACE.0,
                     Some(1) => StringID::STAR_DEFAULT.0,
                     Some(_) => return Err(ModuleInfoError::BadModuleInfo),
-                    None if !self.remap => v,
-                    None => {
-                        let used = &mut self.used;
-                        *self.local_of.entry(v).or_insert_with(|| {
-                            used.push(v);
-                            (used.len() - 1) as u32
-                        })
-                    }
                 })
             }
             fn fetch(&mut self, r: &mut Reader<'_>, kind: u8) -> Result<u32, ModuleInfoError> {
@@ -319,9 +332,6 @@ impl ModuleInfoDeserialized {
         let mut ids = Ids {
             table_count,
             id_width,
-            remap,
-            local_of: Default::default(),
-            used: Vec::new(),
         };
         let mut words: Vec<u32> = Vec::with_capacity(2 * requested_count + buffer_len);
         // requested keys, then values
@@ -369,57 +379,53 @@ impl ModuleInfoDeserialized {
             }
             words.push(ids.fetch(&mut r, (tag >> 3) & 0b111)?);
         }
-        let used = ids.used;
         if !r.rem.is_empty() {
             return Err(BadModuleInfo);
         }
         debug_assert_eq!(words.len(), 2 * requested_count + buffer_len);
 
-        // Local string table: lengths up front in `words`, bytes at the end of `bytes`.
-        let strings_count = if remap {
-            used.len()
+        // A module's own table does not outlive `body`: copy its bytes and
+        // build `(offset, len)` ranges. A shared table is referenced as is.
+        let strings_count = if shared_table.is_some() {
+            0
         } else {
             table_count as usize
         };
-        let string = |local: usize| {
-            if remap {
-                table.get(used[local])
-            } else {
-                table.get(local as u32)
-            }
-        };
-        let mut strings_total = 0usize;
-        let mut all_words: Vec<u32> = Vec::with_capacity(strings_count + words.len());
-        for local in 0..strings_count {
-            let s = string(local).ok_or(BadModuleInfo)?;
-            strings_total += s.len();
-            all_words.push(s.len() as u32);
+        let mut all_words: Vec<u32> = Vec::with_capacity(2 * strings_count + words.len());
+        for id in 0..strings_count as u32 {
+            let [offset, len] = table.range(id).ok_or(BadModuleInfo)?;
+            all_words.extend([offset, len]);
         }
         all_words.extend_from_slice(&words);
         drop(words);
-        let mut bytes: Vec<u8> = Vec::with_capacity(record_count + requested_count + strings_total);
+        let strings_bytes: &[u8] = if shared_table.is_some() {
+            &[]
+        } else {
+            table.buf
+        };
+        let mut bytes: Vec<u8> =
+            Vec::with_capacity(record_count + requested_count + strings_bytes.len());
         bytes.extend(record_tags.iter().map(|&tag| tag & 0b111));
         bytes.extend(requested_tags.iter().map(|&tag| tag & 1));
-        for local in 0..strings_count {
-            bytes.extend_from_slice(string(local).ok_or(BadModuleInfo)?);
-        }
+        bytes.extend_from_slice(strings_bytes);
 
         let decoded = Box::new(Decoded {
             words: all_words.into(),
             bytes: bytes.into(),
         });
-        let (strings_lens, rest) = decoded.words.split_at(strings_count);
+        let (string_ranges, rest) = decoded.words.split_at(2 * strings_count);
         let (requested_keys, rest) = rest.split_at(requested_count);
         let (requested_values, buffer) = rest.split_at(requested_count);
         let (record_kinds, rest) = decoded.bytes.split_at(record_count);
         let (requested_phases, strings_buf) = rest.split_at(requested_count);
-        // All seven views borrow the boxed `Decoded` moved into `owner` below;
-        // its two heap slices stay at a stable address for the struct's lifetime.
-        // `StringID` / `FetchParameters` / `RecordKind` are `#[repr(transparent)]`
-        // over `u32` / `u32` / `u8` (Pod), so `cast_slice` is a safe reinterpret.
+        // All views borrow the boxed `Decoded` moved into `owner` below; its two
+        // heap slices stay at a stable address for the struct's lifetime.
+        // `StringID` / `FetchParameters` / `RecordKind` / `[u32; 2]` are
+        // plain-old-data over `u32` / `u8`, so `cast_slice` is a safe reinterpret.
         Ok(Box::new(ModuleInfoDeserialized {
+            shared_table,
             strings_buf: bun_ptr::RawSlice::new(strings_buf),
-            strings_lens: bun_ptr::RawSlice::new(strings_lens),
+            string_ranges: bun_ptr::RawSlice::new(bytemuck::cast_slice(string_ranges)),
             requested_modules_keys: bun_ptr::RawSlice::new(bytemuck::cast_slice(requested_keys)),
             requested_modules_values: bun_ptr::RawSlice::new(bytemuck::cast_slice(
                 requested_values,
@@ -479,6 +485,7 @@ fn width(b: u8) -> Result<usize, ModuleInfoError> {
 /// Borrowed view over a serialized
 /// `bun_js_printer::analyze_transpiled_module::ModuleInfoStringTable`
 /// (layout documented there).
+#[derive(Clone, Copy)]
 pub struct ModuleInfoStringTable<'a> {
     count: u32,
     offset_width: usize,
@@ -520,15 +527,24 @@ impl<'a> ModuleInfoStringTable<'a> {
             byte_len: bytes.len() - r.rem.len(),
         })
     }
+    /// `[offset, len]` of string `id` within `buf`, bounds-checked.
     #[inline]
-    fn get(&self, id: u32) -> Option<&'a [u8]> {
+    fn range(&self, id: u32) -> Option<[u32; 2]> {
         if id >= self.count {
             return None;
         }
         let at = id as usize * self.offset_width;
-        let start = read_uint(&self.offsets[at..], self.offset_width) as usize;
-        let end = read_uint(&self.offsets[at + self.offset_width..], self.offset_width) as usize;
-        self.buf.get(start..end)
+        let start = read_uint(&self.offsets[at..], self.offset_width);
+        let end = read_uint(&self.offsets[at + self.offset_width..], self.offset_width);
+        if start > end || end as usize > self.buf.len() {
+            return None;
+        }
+        Some([start, end - start])
+    }
+    #[inline]
+    pub fn get(&self, id: u32) -> Option<&'a [u8]> {
+        let [offset, len] = self.range(id)?;
+        Some(&self.buf[offset as usize..(offset + len) as usize])
     }
 }
 
@@ -567,11 +583,20 @@ impl ModuleInfoExt for ModuleInfo {
         }
         // Reshaped for borrowck — capture lifetime-erased `RawSlice`
         // views before `heap::into_raw(self)` consumes the box.
-        let (strings_buf, strings_lens, rm_keys, rm_values, rm_phases, buffer, record_kinds, flags);
+        let (strings_buf, ranges, rm_keys, rm_values, rm_phases, buffer, record_kinds, flags);
         {
             let view = self.as_deserialized();
             strings_buf = bun_ptr::RawSlice::new(view.strings_buf);
-            strings_lens = bun_ptr::RawSlice::new(view.strings_lens);
+            let mut offset = 0u32;
+            ranges = view
+                .strings_lens
+                .iter()
+                .map(|&len| {
+                    let range = [offset, len];
+                    offset += len;
+                    range
+                })
+                .collect::<Box<[[u32; 2]]>>();
             rm_keys = bun_ptr::RawSlice::new(view.requested_modules_keys);
             rm_values = bun_ptr::RawSlice::new(view.requested_modules_values);
             // Printer's `ModulePhase` is `#[repr(u8)] NoUninit` — safe to view as `&[u8]`.
@@ -590,19 +615,21 @@ impl ModuleInfoExt for ModuleInfo {
             f.set(Flags::HAS_TLA, view.flags.has_tla);
             flags = f;
         }
-        // All seven views point into the `Box<ModuleInfo>`'s vectors, moved into
+        // The views point into the `Box<ModuleInfo>`'s vectors (and `ranges`), moved into
         // `owner` below; they stay valid and stable for the lifetime of every
         // `RawSlice` copied from this struct.
         Box::new(ModuleInfoDeserialized {
+            shared_table: None,
             strings_buf,
-            strings_lens,
+            // Boxed slice: its heap address is stable across the move into `owner`.
+            string_ranges: bun_ptr::RawSlice::new(&ranges),
             requested_modules_keys: rm_keys,
             requested_modules_values: rm_values,
             requested_modules_phases: rm_phases,
             buffer,
             record_kinds,
             flags,
-            owner: Owner::ModuleInfo(bun_core::heap::into_raw(self)),
+            owner: Owner::ModuleInfo(bun_core::heap::into_raw(self), ranges),
         })
     }
 }

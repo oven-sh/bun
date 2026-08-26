@@ -29,15 +29,13 @@ extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     // `ModuleInfoDeserialized` accessors. If a strict-alignment target is ever
     // added, switch element reads to `read_unaligned` per the upstream note in
     // `analyze_transpiled_module.rs`.
-    let strings_buf: &[u8] = res.strings_buf();
-    let strings_lens: &[u32] = res.strings_lens();
     let requested_modules_keys: &[StringID] = res.requested_modules_keys();
     let requested_modules_values: &[RequestedModuleValue] = res.requested_modules_values();
     let requested_modules_phases: &[u8] = res.requested_modules_phases();
     let buffer: &[StringID] = res.buffer();
     let record_kinds: &[RecordKind] = res.record_kinds();
 
-    let identifier_count = strings_lens.len();
+    let identifier_count = res.strings_count();
     let is_valid_string_id =
         |id: StringID| (id.0 as usize) < identifier_count || id.0 >= StringID::STAR_NAMESPACE.0;
     let is_valid_fetch_parameters =
@@ -53,25 +51,42 @@ extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
         return core::ptr::null_mut();
     }
 
-    let identifiers = IdentifierArray::create(strings_lens.len());
-    // SAFETY: `identifiers` is non-null (returned by `create`); the scopeguard destroys it
-    // exactly once at scope exit (on both success and early-return paths).
-    let _identifiers_guard = scopeguard::guard(identifiers, |p| unsafe {
-        IdentifierArray::destroy(p);
-    });
-    let identifiers: *mut IdentifierArray = *_identifiers_guard;
-
-    let mut offset: usize = 0;
-    for (index, &len) in strings_lens.iter().enumerate() {
-        let len = len as usize;
-        if strings_buf.len() < offset + len {
-            return core::ptr::null_mut(); // error!
+    // Both arrays live on the VM's client data and outlive this call.
+    let identifiers: *mut IdentifierArray = if res.shared_table().is_some() {
+        // Ids index the executable's shared table: fill only the slots this
+        // record touches that no earlier module filled.
+        let identifiers = IdentifierArray::shared(vm, identifier_count);
+        for id in requested_modules_keys
+            .iter()
+            .map(|k| k.0)
+            .chain(requested_modules_values.iter().map(|v| v.0))
+            .chain(buffer.iter().map(|s| s.0))
+        {
+            // Sentinels and non-host-defined fetch parameters sit above the count.
+            if (id as usize) >= identifier_count {
+                continue;
+            }
+            // SAFETY: `identifiers` has at least `identifier_count` slots.
+            if unsafe { IdentifierArray::is_null(identifiers, id as usize) } {
+                let Some(sub) = res.string(id as usize) else {
+                    return core::ptr::null_mut();
+                };
+                // SAFETY: as above.
+                unsafe { IdentifierArray::set_from_utf8(identifiers, id as usize, vm, sub) };
+            }
         }
-        let sub = &strings_buf[offset..offset + len];
-        // SAFETY: `identifiers` is live for the scope of this fn (guard above).
-        unsafe { IdentifierArray::set_from_utf8(identifiers, index, vm, sub) };
-        offset += len;
-    }
+        identifiers
+    } else {
+        let identifiers = IdentifierArray::scratch(vm, identifier_count);
+        for index in 0..identifier_count {
+            let Some(sub) = res.string(index) else {
+                return core::ptr::null_mut();
+            };
+            // SAFETY: `identifiers` has at least `identifier_count` slots.
+            unsafe { IdentifierArray::set_from_utf8(identifiers, index, vm, sub) };
+        }
+        identifiers
+    };
 
     {
         let mut i: usize = 0;
@@ -234,8 +249,9 @@ extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
 
 bun_opaque::opaque_ffi! { pub struct IdentifierArray; }
 unsafe extern "C" {
-    fn JSC__IdentifierArray__create(len: usize) -> *mut IdentifierArray;
-    fn JSC__IdentifierArray__destroy(identifier_array: *mut IdentifierArray);
+    fn Bun__VM__sharedModuleInfoIdentifiers(vm: *const VM, count: usize) -> *mut IdentifierArray;
+    fn Bun__VM__scratchModuleInfoIdentifiers(vm: *const VM, count: usize) -> *mut IdentifierArray;
+    fn JSC__IdentifierArray__isNull(identifier_array: *mut IdentifierArray, n: usize) -> bool;
     fn JSC__IdentifierArray__setFromUtf8(
         identifier_array: *mut IdentifierArray,
         n: usize,
@@ -245,17 +261,26 @@ unsafe extern "C" {
     );
 }
 impl IdentifierArray {
+    /// The VM's slots for the executable's shared module-info string table,
+    /// grown to at least `count`; null until filled.
     #[inline]
-    pub(crate) fn create(len: usize) -> *mut IdentifierArray {
-        // SAFETY: FFI call; C++ side allocates.
-        unsafe { JSC__IdentifierArray__create(len) }
+    pub(crate) fn shared(vm: &VM, count: usize) -> *mut IdentifierArray {
+        // SAFETY: FFI call; the vector lives on the VM's client data.
+        unsafe { Bun__VM__sharedModuleInfoIdentifiers(vm, count) }
+    }
+    /// The VM's reusable scratch slots, grown to at least `count`; every
+    /// slot must be written before it is read.
+    #[inline]
+    pub(crate) fn scratch(vm: &VM, count: usize) -> *mut IdentifierArray {
+        // SAFETY: FFI call; the vector lives on the VM's client data.
+        unsafe { Bun__VM__scratchModuleInfoIdentifiers(vm, count) }
     }
     /// # Safety
-    /// `identifier_array` must be a pointer previously returned by `create` and not yet destroyed.
+    /// `this` must be live; `n` must be in-bounds for the array's length.
     #[inline]
-    pub(crate) unsafe fn destroy(identifier_array: *mut IdentifierArray) {
-        // SAFETY: caller contract — `identifier_array` came from `create` and has not been destroyed.
-        unsafe { JSC__IdentifierArray__destroy(identifier_array) }
+    pub(crate) unsafe fn is_null(this: *mut IdentifierArray, n: usize) -> bool {
+        // SAFETY: caller contract.
+        unsafe { JSC__IdentifierArray__isNull(this, n) }
     }
     /// # Safety
     /// `this` must be live; `n` must be in-bounds for the array's length.
@@ -496,7 +521,7 @@ trait JSModuleRecordExt {
 }
 impl JSModuleRecordExt for *mut JSModuleRecord {
     // SAFETY (all below): `self` is the non-null pointer returned by JSC_JSModuleRecord__create;
-    // `ia` is the live IdentifierArray guarded by scopeguard for the duration of the caller.
+    // `ia` is one of the VM-owned identifier arrays, which outlive the caller.
     #[inline]
     fn add_indirect_export(
         self,
@@ -506,7 +531,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         module_request_type: u8,
     ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is VM-owned and outlives the call.
         unsafe {
             JSC_JSModuleRecord__addIndirectExport(
                 self,
@@ -525,7 +550,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         export_name: StringID,
         local_name: StringID,
     ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is VM-owned and outlives the call.
         unsafe { JSC_JSModuleRecord__addLocalExport(self, ia, export_name, local_name) }
     }
     #[inline]
@@ -536,7 +561,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         module_request_type: u8,
     ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is VM-owned and outlives the call.
         unsafe {
             JSC_JSModuleRecord__addNamespaceExport(
                 self,
@@ -554,7 +579,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         module_request_type: u8,
     ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is VM-owned and outlives the call.
         unsafe { JSC_JSModuleRecord__addStarExport(self, ia, module_name, module_request_type) }
     }
     #[inline]
@@ -564,7 +589,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         phase_defer: bool,
     ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is VM-owned and outlives the call.
         unsafe {
             JSC_JSModuleRecord__addRequestedModuleNullAttributesPtr(
                 self,
@@ -581,7 +606,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         phase_defer: bool,
     ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is VM-owned and outlives the call.
         unsafe {
             JSC_JSModuleRecord__addRequestedModuleJavaScript(self, ia, module_name, phase_defer)
         }
@@ -593,7 +618,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         phase_defer: bool,
     ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is VM-owned and outlives the call.
         unsafe {
             JSC_JSModuleRecord__addRequestedModuleWebAssembly(self, ia, module_name, phase_defer)
         }
@@ -605,7 +630,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         phase_defer: bool,
     ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is VM-owned and outlives the call.
         unsafe { JSC_JSModuleRecord__addRequestedModuleJSON(self, ia, module_name, phase_defer) }
     }
     #[inline]
@@ -616,7 +641,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         host_defined_import_type: StringID,
         phase_defer: bool,
     ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is VM-owned and outlives the call.
         unsafe {
             JSC_JSModuleRecord__addRequestedModuleHostDefined(
                 self,
@@ -636,7 +661,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         module_request_type: u8,
     ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is VM-owned and outlives the call.
         unsafe {
             JSC_JSModuleRecord__addImportEntrySingle(
                 self,
@@ -657,7 +682,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         module_request_type: u8,
     ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is VM-owned and outlives the call.
         unsafe {
             JSC_JSModuleRecord__addImportEntrySingleTypeScript(
                 self,
@@ -678,7 +703,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         module_request_type: u8,
     ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is VM-owned and outlives the call.
         unsafe {
             JSC_JSModuleRecord__addImportEntryNamespace(
                 self,
@@ -699,7 +724,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         module_request_type: u8,
     ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is kept alive by the caller's scopeguard.
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is VM-owned and outlives the call.
         unsafe {
             JSC_JSModuleRecord__addImportEntryNamespaceDefer(
                 self,

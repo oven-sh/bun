@@ -134,6 +134,20 @@ describe.concurrent("spawnSync isolated event loop", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("spawnSync under GC pressure with a worker and a server keeps the main loop balanced and exits", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "spawnSync-keepalive-stress-fixture.js")],
+      env: { ...bunEnv, BUN_JSC_collectContinuously: "1" },
+      stderr: "inherit",
+      stdout: "pipe",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout).toBe("OK\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("multiple spawnSync calls should each use isolated event loop", async () => {
     await using proc = Bun.spawn({
       cmd: [

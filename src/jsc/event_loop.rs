@@ -1036,6 +1036,9 @@ impl EventLoop {
     pub fn ensure_waker(&mut self) {
         jsc::mark_binding();
         if self.uws_loop.is_none() {
+            // The VM's embedded loops run on the thread's loop, the one
+            // `vm.event_loop_handle` names below.
+            debug_assert_eq!(Async::uws_to_native(uws::Loop::get()), Async::Loop::get());
             self.uws_loop = NonNull::new(uws::Loop::get());
         }
         if self.vm_ref().event_loop_handle.is_none() {

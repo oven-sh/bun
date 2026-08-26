@@ -1,4 +1,3 @@
-use crate::bun_renamer as renamer;
 use crate::mal_prelude::*;
 use bun_alloc::ArenaVecExt as _;
 use bun_collections::{ArrayHashMap, VecExt, index_sort};
@@ -459,10 +458,9 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                             other_chunk_index,
                             CrossChunkImportItemList::default(),
                         )?;
-                        entry.value_ptr.push(CrossChunkImportItem {
-                            r#ref: import_ref,
-                            ..Default::default()
-                        });
+                        entry
+                            .value_ptr
+                            .push(CrossChunkImportItem { r#ref: import_ref });
                     }
                     let _ = chunk_metas[other_chunk_index as usize]
                         .exports
@@ -551,12 +549,11 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         }
     }
 
-    // Generate cross-chunk exports. These must be computed before cross-chunk
-    // imports because of export alias renaming, which must consider all export
-    // aliases simultaneously to avoid collisions.
+    // Generate cross-chunk export clauses. Aliases are left empty here and in
+    // the import clauses below; `cross_chunk_names` fills both in once every
+    // chunk's renamer has run.
     {
         debug_assert!(chunk_metas.len() == chunks.len());
-        let mut r = renamer::ExportRenamer::init();
         debug!("Generating cross-chunk exports");
 
         let mut stable_ref_list: Vec<StableRef> = Vec::new();
@@ -567,7 +564,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                 continue;
             }
 
-            let entry_point = chunk.entry_point;
             let repr = chunk.content.javascript_mut();
 
             match c.options.output_format {
@@ -579,66 +575,22 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                             c.arena(),
                         );
                     repr.exports_to_other_chunks.reserve(stable_ref_list.len());
-                    r.clear_retaining_capacity();
 
-                    // An entry point chunk already exports its own names
-                    // (`generate_entry_point_tail_js`); a cross-chunk export
-                    // reusing one would be a duplicate export.
-                    if entry_point.is_entry_point() && !stable_ref_list.is_empty() {
-                        let entry_source = entry_point.source_index() as usize;
-                        let flags = &c.graph.meta.items_flags()[entry_source];
-                        if flags.wrap == WrapKind::Cjs || flags.needs_synthetic_default_export {
-                            r.reserve_name(b"default");
-                        }
-                        if flags.wrap != WrapKind::Cjs {
-                            for alias in c.graph.meta.items_sorted_and_filtered_export_aliases()
-                                [entry_source]
-                                .iter()
-                            {
-                                r.reserve_name(alias);
-                            }
-                        }
-                    }
-
+                    // The alias is the bundle-wide name `assign_cross_chunk_names`
+                    // gives the binding once every chunk's renamer has counted
+                    // its uses; until then the clause item carries an empty one.
                     for stable_ref in stable_ref_list.iter() {
                         let ref_ = stable_ref.r#ref;
-                        let original_name = c
-                            .graph
-                            .symbols
-                            .get_const(ref_)
-                            .unwrap()
-                            .original_name
-                            .slice();
-                        // The alias is stored on the chunk (`exports_to_other_chunks`,
-                        // `cross_chunk_suffix_stmts`) and read later in postProcessJSChunk,
-                        // so it must live in the linker arena — `r`'s internal arena is
-                        // reset per chunk and dropped at the end of this block.
-                        let alias: bun_ast::StoreStr = if c.options.minify_identifiers {
-                            bun_ast::StoreStr::new(
-                                c.arena()
-                                    .alloc_slice_copy(&r.next_minified_name().expect("OOM")),
-                            )
-                        } else {
-                            bun_ast::StoreStr::new(
-                                c.arena()
-                                    .alloc_slice_copy(r.next_renamed_name(original_name)),
-                            )
-                        };
-
                         clause_items.push(bun_ast::ClauseItem {
                             name: bun_ast::LocRef {
                                 ref_,
                                 loc: bun_ast::Loc::EMPTY,
                             },
-                            alias,
+                            alias: bun_ast::StoreStr::EMPTY,
                             alias_loc: bun_ast::Loc::EMPTY,
-                            original_name: bun_ast::StoreStr::new(b"" as &[u8]),
+                            original_name: bun_ast::StoreStr::EMPTY,
                         });
-
-                        // `alias` points into the link-pass arena (see note above),
-                        // which outlives `exports_to_other_chunks`; `.slice()` re-borrows
-                        // under the StoreStr arena contract.
-                        let _ = repr.exports_to_other_chunks.put(ref_, alias.slice()); // OOM-only Result
+                        let _ = repr.exports_to_other_chunks.put(ref_, ()); // OOM-only Result
                     }
 
                     if clause_items.len() > 0 {
@@ -663,9 +615,8 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         }
     }
 
-    // Generate cross-chunk imports. These must be computed after cross-chunk
-    // exports because the export aliases must already be finalized so they can
-    // be embedded in the generated import statements.
+    // Generate cross-chunk import clauses (needs `exports_to_other_chunks`
+    // from the loop above to know which chunk declares each binding).
     {
         debug!("Generating cross-chunk imports");
         let mut list: Vec<CrossChunkImport> = Vec::new();
@@ -694,6 +645,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                 &mut list,
                 chunks,
                 &mut imports_from_other_chunks,
+                c.graph.stable_source_indices.slice(),
             )
             .expect("unreachable");
             let cross_chunk_imports_input: &[CrossChunkImport] = list.as_slice();
@@ -714,7 +666,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                                     ref_: item.r#ref,
                                     loc: bun_ast::Loc::EMPTY,
                                 },
-                                alias: bun_ast::StoreStr::new(item.export_alias.as_ref()),
+                                alias: bun_ast::StoreStr::EMPTY,
                                 alias_loc: bun_ast::Loc::EMPTY,
                                 original_name: bun_ast::StoreStr::new(b"" as &[u8]),
                             });

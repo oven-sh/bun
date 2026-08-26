@@ -538,7 +538,7 @@ describe("bundler", () => {
       api.expectFile("/out/entry.js").toContain("41");
       api.expectFile("/out/entry.js").not.toMatch(/^\s*import\s*[{"]/m);
       expect(api.readFile("/out/entry.js").match(/^\s*export\b/gm)).toHaveLength(1);
-      expect(jsOutput(api, "lazy")).toMatch(/import\s*\{\s*helper,\s*shared\s*\}\s*from "\.\/entry\.js"/);
+      expect(jsOutput(api, "lazy")).toMatch(/import\s*\{\s*shared,\s*helper\s*\}\s*from "\.\/entry\.js"/);
     },
     run: { file: "/out/entry.js", stdout: "shared\nentry 41 1\nlazy 42" },
   });
@@ -607,6 +607,195 @@ describe("bundler", () => {
     run: { file: "/out/entry.js", stdout: "shared evaluated\nentry 1\nlazy 2" },
   });
 
+  // A binding shared across chunks carries one bundle-wide name that every
+  // chunk's renamer pins; locals that already have that name (top level or
+  // nested) are renamed around it and the import stays bare.
+  itBundled("splitting/CrossChunkNameCollidesWithLocal", {
+    files: {
+      "/a.js": /* js */ `
+        import { foo } from './shared.js'
+        function foo2() { return 'a-foo2' }
+        var local = (function () { var foo = 'nested'; return foo })()
+        console.log(foo(), foo2(), local)
+      `,
+      "/b.js": /* js */ `
+        import { foo as sharedFoo } from './shared.js'
+        function foo() { return 'b-local-foo' }
+        console.log(sharedFoo(), foo())
+      `,
+      "/shared.js": /* js */ `
+        export function foo() { return 'shared' }
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/a.js").toMatch(/import\s*\{\s*foo\s*\}\s*from/);
+      api.expectFile("/out/b.js").toMatch(/import\s*\{\s*foo\s*\}\s*from/);
+    },
+    run: [
+      { file: "/out/a.js", stdout: "shared a-foo2 nested" },
+      { file: "/out/b.js", stdout: "shared b-local-foo" },
+    ],
+  });
+
+  // Same under --minify-identifiers: the shared bindings take the shortest
+  // names bundle-wide; a chunk with many hot locals of its own must not hand
+  // one of those names out again, and both clauses stay free of `as`.
+  itBundled("splitting/CrossChunkNameCollidesWithLocalMinified", {
+    files: {
+      "/a.js": /* js */ `
+        import { s0, s1, s2 } from './shared.js'
+        ${Array.from({ length: 80 }, (_, i) => `var l${i} = ${i}; l${i}++; l${i}++; l${i}++; l${i}++;`).join("\n")}
+        console.log(s0() + s1() + s2(), ${Array.from({ length: 80 }, (_, i) => `l${i}`).join("+")})
+      `,
+      "/b.js": /* js */ `
+        import { s0, s1, s2 } from './shared.js'
+        console.log(s0() + s1() + s2())
+      `,
+      "/shared.js": /* js */ `
+        export function s0() { return 1 }
+        export function s1() { return 20 }
+        export function s2() { return 300 }
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    minifyIdentifiers: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      for (const f of jsFilesIn(api)) {
+        const out = api.readFile("/out/" + f);
+        for (const clause of out.match(/(?:import|export)\s*\{[^}]*\}/g) ?? []) expect(clause).not.toContain(" as ");
+      }
+    },
+    run: [
+      { file: "/out/a.js", stdout: `321 ${80 * 4 + (79 * 80) / 2}` },
+      { file: "/out/b.js", stdout: "321" },
+    ],
+  });
+
+  // Direct eval keeps every name in its scope chain as written — including a
+  // CommonJS-wrapped file's top level — so the bundle-wide namer must route
+  // around those names, and the shared bindings such a file declares fall
+  // back to `export { name as alias }`.
+  itBundled("splitting/CrossChunkNamesWithDirectEvalMinified", {
+    files: {
+      "/a.js": /* js */ `
+        import { a, b } from './shared.js'
+        var x = 'ax'
+        function a2() { return 'local-a2' }
+        console.log(a(), b, eval('x'), eval('a2()'))
+      `,
+      "/b.js": /* js */ `
+        import { a, b } from './shared.js'
+        console.log(a(), b)
+      `,
+      "/shared.js": /* js */ `
+        export function a() { return 'A' }
+        export var b = eval('"B"')
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    minifyIdentifiers: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/a.js").toContain('var x = "ax"');
+    },
+    run: [
+      { file: "/out/a.js", stdout: "A B ax local-a2" },
+      { file: "/out/b.js", stdout: "A B" },
+    ],
+  });
+  // The eval file's *import* bindings must not be pinned: the linker merges
+  // them into the exporter's symbol, and a third chunk importing that symbol
+  // would then print it under its source name without having reserved it.
+  itBundled("splitting/DirectEvalDoesNotPinSharedExport", {
+    files: {
+      "/e.js": /* js */ `
+        import { a } from './shared.js'
+        var x = 'ex'
+        console.log(a(), eval('x'))
+      `,
+      "/p.js": /* js */ `
+        import { a, b } from './shared.js'
+        ${Array.from({ length: 120 }, (_, i) => `var l${i} = ${i}; l${i}++; l${i}++; l${i}++;`).join("\n")}
+        console.log(a(), b(), ${Array.from({ length: 120 }, (_, i) => `l${i}`).join("+")})
+      `,
+      "/q.js": /* js */ `
+        import { a, b } from './shared.js'
+        console.log(a(), b())
+      `,
+      "/shared.js": /* js */ `
+        export function a() { return 'A' }
+        export function b() { return 'B' }
+      `,
+    },
+    entryPoints: ["/e.js", "/p.js", "/q.js"],
+    splitting: true,
+    minifyIdentifiers: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/e.js", stdout: "A ex" },
+      { file: "/out/p.js", stdout: `A B ${120 * 3 + (119 * 120) / 2}` },
+      { file: "/out/q.js", stdout: "A B" },
+    ],
+  });
+  itBundled("splitting/CrossChunkNamesWithDirectEval", {
+    files: {
+      "/a.js": /* js */ `
+        import { a, b } from './shared.js'
+        var x = 'ax'
+        function a2() { return 'local-a2' }
+        console.log(a(), b, eval('x'), eval('a2()'))
+      `,
+      "/b.js": /* js */ `
+        import { a, b } from './shared.js'
+        console.log(a(), b)
+      `,
+      "/shared.js": /* js */ `
+        export function a() { return 'A' }
+        export var b = eval('"B"')
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/a.js", stdout: "A B ax local-a2" },
+      { file: "/out/b.js", stdout: "A B" },
+    ],
+  });
+
+  // Two chunks that import() each other reach the same set of chunks; their
+  // content hashes must still differ, or hash-only naming collides.
+  itBundled("splitting/ChunkImportCycleDistinctHashes", {
+    files: {
+      "/a.js": /* js */ `
+        export function a() { return 'a' }
+        import('./b.js').then(m => console.log(a(), m.b()))
+      `,
+      "/b.js": /* js */ `
+        export function b() { return 'b' }
+        export const again = () => import('./a.js')
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    entryNaming: "[hash].[ext]",
+    onAfterBundle(api) {
+      expect(readdirSync(api.outdir).filter(f => f.endsWith(".js"))).toHaveLength(2);
+    },
+  });
   // An entry point with exports of its own keeps its module namespace as
   // written: shared code is not folded into it (which would add exports),
   // but the chunks that are always loaded with it still fold into one.

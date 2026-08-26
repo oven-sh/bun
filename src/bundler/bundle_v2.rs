@@ -1425,6 +1425,7 @@ pub mod bv2_impl {
             ) -> Vec<(u32, Box<[u8]>)>;
 
             safe fn __bun_jsc_encoder_string_table_new() -> core::ptr::NonNull<EncoderStringTable>;
+            pub(crate) safe fn __bun_jsc_destroy_bytecode_cache_vm();
             safe fn __bun_jsc_encoder_string_table_take(
                 table: core::ptr::NonNull<EncoderStringTable>,
             ) -> Box<[u8]>;

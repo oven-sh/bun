@@ -113,10 +113,10 @@ impl Targets {
     /// Bundler targets with an explicit user override (the `cssTarget` build
     /// option). An override with no browser entries (for example only
     /// `"esnext"` or `"node20"`) disables downleveling entirely.
-    pub fn for_bundler(target: bun_ast::Target, user_browsers: Option<Browsers>) -> Targets {
+    pub fn for_bundler(target: bun_ast::Target, user_browsers: Option<&Browsers>) -> Targets {
         match user_browsers {
             Some(browsers) => Targets {
-                browsers: (browsers != Browsers::default()).then_some(browsers),
+                browsers: (*browsers != Browsers::default()).then_some(*browsers),
                 ..Default::default()
             },
             None => Self::for_bundler_target(target),
@@ -405,18 +405,16 @@ impl Browsers {
             let version: u32 = {
                 let version_str = &entry[idx..];
                 let mut components: [u32; 3] = [0; 3];
-                let mut count: usize = 0;
-                for part in strings::split(version_str, b".") {
+                for (i, part) in strings::split(version_str, b".").enumerate() {
+                    if i == 3 {
+                        return Err(crate::CrateError::UnsupportedCSSTarget);
+                    }
                     // u8: a component over 255 does not fit its byte and
                     // would spill into the neighbor.
                     let Ok(component) = strings::parse_int::<u8>(part, 10) else {
                         return Err(crate::CrateError::UnsupportedCSSTarget);
                     };
-                    if count == 3 {
-                        return Err(crate::CrateError::UnsupportedCSSTarget);
-                    }
-                    components[count] = component as u32;
-                    count += 1;
+                    components[i] = component as u32;
                 }
                 (components[0] << 16) | (components[1] << 8) | components[2]
             };

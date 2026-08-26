@@ -465,21 +465,28 @@ describe.concurrent("--cpu-prof", () => {
     using dir = tempDir("cpu-prof-entry-churn", {
       "churn.js": `
         const params = Array.from({ length: 2000 }, (_, i) => "p" + i).join(",");
-        const f = new Function(params, "c.n++;");
-        globalThis.c = { n: 0 };
+        // One huge-arity callback per native entry point, each counting its own
+        // calls, so the run proves every path was exercised.
+        const counts = { immediate: 0, then: 0, microtask: 0, message: 0 };
+        globalThis.counts = counts;
+        const callback = key => new Function(params, "counts." + key + "++;");
+        const onImmediate = callback("immediate");
+        const onThen = callback("then");
+        const onMicrotask = callback("microtask");
         const { port1, port2 } = new MessageChannel();
-        port1.onmessage = f;
+        port1.onmessage = callback("message");
         const deadline = performance.now() + ${isWindows ? 1500 : 150};
         function loop() {
           if (performance.now() >= deadline) {
-            console.log("calls made:", c.n > 0);
+            const missing = Object.keys(counts).filter(key => counts[key] === 0);
+            console.log("calls made:", missing.length === 0 ? "all" : "missing " + missing.join(","));
             port1.close();
             port2.close();
             return;
           }
-          setImmediate(f);
-          Promise.resolve().then(f);
-          queueMicrotask(f);
+          setImmediate(onImmediate);
+          Promise.resolve().then(onThen);
+          queueMicrotask(onMicrotask);
           port2.postMessage(1);
           setImmediate(loop);
         }
@@ -497,7 +504,7 @@ describe.concurrent("--cpu-prof", () => {
 
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-    expect(stdout).toContain("calls made: true");
+    expect(stdout).toContain("calls made: all");
 
     // The profiler must actually have sampled the churn, or the test exercised
     // nothing.

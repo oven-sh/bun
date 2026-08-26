@@ -2082,14 +2082,8 @@ impl ShellExecEnv {
             })
     }
 
-    /// The `PATH` that resolves an external command (and a `which` operand):
-    /// a `PATH=... cmd` prefix first, then `export_env`, then the process
-    /// environment. `_PATH_DEFPATH` on POSIX when none of them has one
-    /// (Android often has no PATH). An explicit `PATH=""` searches nothing.
-    ///
-    /// `EnvMap` lookups are case-insensitive on Windows, so `PATH` written by
-    /// `export` or `.env()` is found under the `Path` key the process
-    /// environment uses there.
+    /// PATH for argv[0] resolution and `which`. `EnvMap` is case-insensitive
+    /// on Windows, so `export PATH=` is found under the process's `Path` key.
     pub(crate) fn get_path(&self, event_loop: EventLoopHandle) -> Vec<u8> {
         use crate::shell::env_str::EnvStr;
         let key = EnvStr::init_slice(b"PATH");
@@ -2109,6 +2103,7 @@ impl ShellExecEnv {
             if let Some(path) = (*event_loop.env()).get(b"PATH") {
                 path.to_vec()
             } else if cfg!(unix) {
+                // Android often has no PATH at all.
                 core::ffi::CStr::from_ptr(crate::shell::subproc::BUN_DEFAULT_PATH_FOR_SPAWN)
                     .to_bytes()
                     .to_vec()

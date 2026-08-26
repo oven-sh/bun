@@ -295,7 +295,10 @@ pub(crate) fn merge_small_chunks(
                 if target_entry == u32::MAX {
                     continue;
                 }
-                if record.flags.contains(ImportRecordFlags::CROSS_CHUNK_REQUIRE) {
+                if record
+                    .flags
+                    .contains(ImportRecordFlags::CROSS_CHUNK_REQUIRE)
+                {
                     required_sync.set(target_entry as usize);
                 } else {
                     importer_bits[target_entry as usize]

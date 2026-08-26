@@ -1955,7 +1955,8 @@ pub mod bv2_impl {
                                     // build's browser-side files do not).
                                     ImportKind::Require => {
                                         let splits = self.split_require
-                                            && self.all_targets[source_index.get() as usize].is_bun()
+                                            && self.all_targets[source_index.get() as usize]
+                                                .is_bun()
                                             && next_source.is_valid()
                                             && next_source != import_record_list_id
                                             && self.all_exports_kinds[next_source.get() as usize]

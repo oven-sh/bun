@@ -522,8 +522,14 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         // of hash calculation.
         let chunk_meta = &mut chunk_metas[chunk_index];
         for (lazy_imports, import_kind) in [
-            (&mut chunk_meta.dynamic_imports, bun_ast::ImportKind::Dynamic),
-            (&mut chunk_meta.require_imports, bun_ast::ImportKind::Require),
+            (
+                &mut chunk_meta.dynamic_imports,
+                bun_ast::ImportKind::Dynamic,
+            ),
+            (
+                &mut chunk_meta.require_imports,
+                bun_ast::ImportKind::Require,
+            ),
         ] {
             if lazy_imports.count() == 0 {
                 continue;

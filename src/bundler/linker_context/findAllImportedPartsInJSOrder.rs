@@ -139,7 +139,7 @@ pub(crate) fn find_imported_parts_in_js_order(
             stack: Vec::new(),
             chunk_of_file,
             reached_chunks: Vec::new(),
-            reached_chunk_set: vec![false; chunks_len],
+            reached_chunk_set: AutoBitSet::init_empty(chunks_len)?,
         };
 
         match (with_code_splitting, with_scb) {
@@ -207,7 +207,7 @@ pub(crate) struct FindImportedPartsVisitor<'a, 'ctx> {
     chunk_of_file: &'a [u32],
     /// `JavaScriptChunk::reached_chunks_in_order` under construction.
     reached_chunks: Vec<u32>,
-    reached_chunk_set: Vec<bool>,
+    reached_chunk_set: AutoBitSet,
 }
 
 #[derive(Copy, Clone)]
@@ -333,9 +333,9 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                         let other = self.chunk_of_file[source_index as usize];
                         if other != u32::MAX
                             && other != self.chunk_index
-                            && !self.reached_chunk_set[other as usize]
+                            && !self.reached_chunk_set.is_set(other as usize)
                         {
-                            self.reached_chunk_set[other as usize] = true;
+                            self.reached_chunk_set.set(other as usize);
                             self.reached_chunks.push(other);
                         }
                     }

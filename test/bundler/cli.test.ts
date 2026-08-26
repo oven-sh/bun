@@ -912,3 +912,83 @@ describe.concurrent("modules that fail to print", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// https://github.com/oven-sh/bun/issues/40558
+describe.concurrent("bun build unrecognized flags", () => {
+  test("an unrecognized flag is an error", async () => {
+    using dir = tempDir("build-unknown-flag", {
+      "a.js": "export const x = { v: 1 };",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "a.js", "--outfile=b.js", "--totally-bogus-flag"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Unrecognized flag '--totally-bogus-flag'");
+    expect(exitCode).toBe(1);
+    expect(fs.existsSync(path.join(String(dir), "b.js"))).toBe(false);
+  });
+
+  test("esbuild-style --define:K=V is an error, not a silent no-op", async () => {
+    using dir = tempDir("build-define-colon", {
+      "a.js": "export const x = { v: __FOO__ };",
+    });
+    // `--define:__FOO__=...` parses as one unknown long flag. It used to be
+    // skipped in silence and the placeholder shipped in the output.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "a.js", "--outfile=b.js", '--define:__FOO__="1.2.3"'],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Unrecognized flag '--define:__FOO__'");
+    expect(exitCode).toBe(1);
+    expect(fs.existsSync(path.join(String(dir), "b.js"))).toBe(false);
+
+    // Bun's own spelling still substitutes.
+    await using ok = Bun.spawn({
+      cmd: [bunExe(), "build", "a.js", "--outfile=b.js", "--define", '__FOO__="1.2.3"'],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await ok.exited).toBe(0);
+    expect(await Bun.file(path.join(String(dir), "b.js")).text()).toContain('"1.2.3"');
+  });
+
+  test("--bundle is accepted (bundling is the default)", async () => {
+    using dir = tempDir("build-bundle-flag", {
+      "a.js": "export const x = { v: 1 };",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "a.js", "--bundle", "--outfile=b.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("Unrecognized flag");
+    expect(exitCode).toBe(0);
+  });
+
+  test("run mode still ignores unknown flags", async () => {
+    // `bun <flags> <file>` forwards unknown argv for node compat; erroring is
+    // scoped to `bun build`.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--totally-bogus-flag", "-e", "console.log('ok')"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  });
+});

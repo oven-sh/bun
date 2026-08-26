@@ -1,13 +1,7 @@
-use core::sync::atomic::{AtomicBool, Ordering};
-
-use bun_core::Output;
 use bun_core::strings;
 
 use crate as clap;
 use crate::args::ArgIter;
-
-// Disabled because not all CLI arguments are parsed with Clap.
-pub static WARN_ON_UNRECOGNIZED_FLAG: AtomicBool = AtomicBool::new(false);
 
 /// The result returned from StreamingClap.next
 pub(crate) struct Arg<'p, 'a, Id> {
@@ -35,6 +29,8 @@ pub(crate) enum ArgError {
     MissingValue,
     #[error("InvalidArgument")]
     InvalidArgument,
+    #[error("UnrecognizedFlag")]
+    UnrecognizedFlag,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -63,6 +59,10 @@ pub struct StreamingClap<'p, 'a, Id, ArgIterator> {
     pub(crate) positional: Option<&'p clap::Param<Id>>,
     pub(crate) diagnostic: Option<&'p mut clap::Diagnostic>,
     pub(crate) short_aliases: &'static [(&'static [u8], &'static [u8])],
+    /// Unrecognized `--long` flags are skipped by default (node-mode and
+    /// `bun run` must pass unknown argv through in silence). Commands with no
+    /// passthrough semantics (`bun build`) set this to make them an error.
+    pub(crate) reject_unrecognized_flags: bool,
 }
 
 // ArgIterator is the
@@ -154,31 +154,12 @@ where
                     }));
                 }
 
-                // unrecognized command
-                // if flag else arg
-                if arg_info.kind == ArgKind::Long || arg_info.kind == ArgKind::Short {
-                    if WARN_ON_UNRECOGNIZED_FLAG.load(Ordering::Relaxed) {
-                        bun_core::warn!(
-                            "unrecognized flag: {}{}\n",
-                            if arg_info.kind == ArgKind::Long {
-                                "--"
-                            } else {
-                                "-"
-                            },
-                            bstr::BStr::new(name),
-                        );
-                        Output::flush();
-                    }
-
-                    // continue parsing after unrecognized flag
-                    return self.next();
+                if self.reject_unrecognized_flags {
+                    return Err(self.err(arg, None, Some(name), ArgError::UnrecognizedFlag));
                 }
 
-                if WARN_ON_UNRECOGNIZED_FLAG.load(Ordering::Relaxed) {
-                    bun_core::warn!("unrecognized argument: {}\n", bstr::BStr::new(name));
-                    Output::flush();
-                }
-                Ok(None)
+                // continue parsing after unrecognized flag
+                self.next()
             }
             ArgKind::Short => self.chainging(Chaining { arg, index: 0 }),
             ArgKind::Positional => {
@@ -373,6 +354,7 @@ mod tests {
             state: State::Normal,
             positional: None,
             diagnostic: None,
+            reject_unrecognized_flags: false,
         };
 
         for res in results {
@@ -395,6 +377,15 @@ mod tests {
     }
 
     fn test_err(params: &[clap::Param<u8>], args_strings: &[&[u8]], expected: &[u8]) {
+        test_err_ex(params, args_strings, expected, false);
+    }
+
+    fn test_err_ex(
+        params: &[clap::Param<u8>],
+        args_strings: &[&[u8]],
+        expected: &[u8],
+        reject_unrecognized_flags: bool,
+    ) {
         let mut diag = clap::Diagnostic::default();
         let mut iter = args::SliceIterator {
             remain: args_strings,
@@ -406,6 +397,7 @@ mod tests {
             state: State::Normal,
             positional: None,
             diagnostic: Some(&mut diag),
+            reject_unrecognized_flags,
         };
         loop {
             match c.next() {
@@ -827,9 +819,11 @@ mod tests {
         ];
         test_err(&params, &[b"q"], b"Invalid argument 'q'\n");
         test_err(&params, &[b"-q"], b"Invalid argument '-q'\n");
-        // Unrecognized long flags are skipped (opt-in warning), not errors.
+        // Unrecognized long flags are skipped by default, rejected in strict mode.
         test_no_err(&params, &[b"--q"], &[]);
         test_no_err(&params, &[b"--q=1"], &[]);
+        test_err_ex(&params, &[b"--q"], b"Unrecognized flag '--q'\n", true);
+        test_err_ex(&params, &[b"--q=1"], b"Unrecognized flag '--q'\n", true);
         test_err(
             &params,
             &[b"-a=1"],

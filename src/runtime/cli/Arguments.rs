@@ -496,6 +496,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!(
             "--react-compiler                 Enable the React Compiler optimizing transform"
         ),
+        parse_param!(
+            "--bundle                         Bundle dependencies into the output. This is the default behavior"
+        ),
         parse_param!("--no-bundle                      Transpile file only, do not bundle"),
         parse_param!(
             "--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed."
@@ -783,6 +786,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,
                 _ => &[],
             },
+            // `bun build` has no argv passthrough, so a flag it does not know
+            // is a typo (e.g. esbuild's `--define:K=V` spelling). Skipping it
+            // in silence ships the un-substituted output (#40558).
+            reject_unrecognized_flags: cmd == CommandTag::BuildCommand,
         },
     ) {
         Ok(a) => a,

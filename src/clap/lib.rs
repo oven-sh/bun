@@ -334,6 +334,9 @@ impl Diagnostic {
             crate::Error::InvalidArgument => {
                 bun_core::pretty_errorln!("<red>error<r><d>:<r> Invalid Argument '{}'", name)
             }
+            crate::Error::UnrecognizedFlag => {
+                bun_core::pretty_errorln!("<red>error<r><d>:<r> Unrecognized flag '{}'", name)
+            }
         }
         bun_core::Output::flush();
         Ok(())
@@ -373,6 +376,10 @@ pub struct ParseOptions<'a> {
     /// flag, never to an option's value or a `--` target. Node keeps its own
     /// aliases on exactly that branch (node_options-inl.h).
     pub short_aliases: &'static [(&'static [u8], &'static [u8])],
+    /// Unrecognized `--long` flags are skipped by default (node-mode and
+    /// `bun run` pass unknown argv through in silence). Commands with no
+    /// passthrough semantics (`bun build`) set this to make them an error.
+    pub reject_unrecognized_flags: bool,
 }
 
 // Help/usage/error rendering — none of this is on the cold-start hot chain
@@ -455,6 +462,7 @@ pub fn parse<Id: 'static>(
             diagnostic: opt.diagnostic,
             stop_after_positional_at: opt.stop_after_positional_at,
             short_aliases: opt.short_aliases,
+            reject_unrecognized_flags: opt.reject_unrecognized_flags,
         },
     )?;
     Ok(Args { clap })
@@ -475,6 +483,7 @@ pub fn parse_with_table<Id: 'static>(
             diagnostic: opt.diagnostic,
             stop_after_positional_at: opt.stop_after_positional_at,
             short_aliases: opt.short_aliases,
+            reject_unrecognized_flags: opt.reject_unrecognized_flags,
         },
     )?;
     Ok(Args { clap })

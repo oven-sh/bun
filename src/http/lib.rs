@@ -879,13 +879,9 @@ pub struct HTTPClient<'a> {
     /// Compressed length for `Content-Length`; 0 when `compress` is None or
     /// the body hasn't been compressed yet.
     pub(crate) compressed_body_len: usize,
-    /// A `Sendfile` body read into memory because a hop has to send it over
-    /// TLS (see [`buffer_sendfile_body_for_tls`]); `state.original_request_body`
-    /// borrows it as `Bytes` from then on, so it is filled at most once per
-    /// request and, like `compressed_request_body`, freed only when the
-    /// HTTP-thread clone is torn down.
-    ///
-    /// [`buffer_sendfile_body_for_tls`]: Self::buffer_sendfile_body_for_tls
+    /// A `Sendfile` body read into memory for a TLS hop
+    /// (`buffer_sendfile_body_for_tls`). `state.original_request_body` borrows
+    /// it, so it must outlive `state`; clone-owned like `compressed_request_body`.
     pub(crate) buffered_sendfile_body: Vec<u8>,
 }
 
@@ -2165,9 +2161,8 @@ impl<'a> HTTPClient<'a> {
         if in_progress
             && self.allow_retry
             && self.method.is_idempotent()
-            // Only an in-memory body is retried. A Stream body in particular is
-            // consumed as it is written, so retrying it would silently replay a
-            // truncated request.
+            // Only an in-memory body is retried; a Stream body is consumed as it
+            // is written and cannot be replayed.
             && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
             && self.state.response_stage != ResponseStage::Body
             && self.state.response_stage != ResponseStage::BodyChunk
@@ -2697,14 +2692,10 @@ impl<'a> HTTPClient<'a> {
         self.start(request_body);
     }
 
-    /// The body for the hop a redirect is about to start. The send path never
-    /// advances `original_request_body` (its cursors are `state.request_body`
-    /// and `state.sendfile`), so a `Bytes` or `Sendfile` body goes to `start()`
-    /// again unchanged. A `Stream` body only gets this far on a 303, which
-    /// `handle_response_metadata` has already turned into a bodiless GET; every
-    /// other status fails it with `RequestBodyNotReusable` instead.
-    ///
-    /// Must run before `state.reset()`, which clears both the flag and the body.
+    /// The body for the next redirect hop. `Bytes` and `Sendfile` replay as-is
+    /// (the send cursors live in `state`, not in the body). A `Stream` only
+    /// reaches this on a 303, already downgraded to a bodiless GET.
+    /// Call before `state.reset()`.
     fn request_body_for_redirect(&self) -> HTTPRequestBody<'a> {
         if !self.state.flags.resend_request_body_on_redirect {
             return HTTPRequestBody::Bytes(b"");
@@ -2928,13 +2919,11 @@ impl<'a> HTTPClient<'a> {
         self.complete_connecting_process();
     }
 
-    /// `sendfile(2)` copies the file straight onto the socket's fd, so a
-    /// `Sendfile` body needs a plaintext socket with no CONNECT tunnel inside
-    /// it; `on_writable` panics otherwise. `fetch()` only builds one for such a
-    /// request, but a redirect to `https://` (or an `https://` proxy taken from
-    /// the environment) can route it onto a TLS hop. For that hop, read the
-    /// file into `buffered_sendfile_body` and send it as `Bytes`, which is how
-    /// `fetch()` sends a file to an `https://` URL in the first place.
+    /// `sendfile(2)` needs a plaintext socket with no CONNECT tunnel, but a
+    /// redirect to `https://` (or an `https://` proxy from the environment) can
+    /// route a `Sendfile` body onto TLS. Read the file into
+    /// `buffered_sendfile_body` and send it as `Bytes`, as a direct `https://`
+    /// fetch would.
     fn buffer_sendfile_body_for_tls<const IS_SSL: bool>(&mut self) -> crate::Result<()> {
         let HTTPRequestBody::Sendfile(sendfile) = self.state.original_request_body else {
             return Ok(());
@@ -2945,10 +2934,9 @@ impl<'a> HTTPClient<'a> {
         }
         debug_assert!(self.buffered_sendfile_body.is_empty());
         self.buffered_sendfile_body = sendfile.read_to_vec()?;
-        // SAFETY: `buffered_sendfile_body` is only assigned here, and this runs
-        // at most once per request: the body is `Bytes` from now on, including
-        // the copies `request_body_for_redirect` hands to later hops. The Vec
-        // lives on `self`, which outlives every `InternalState` that borrows it.
+        // SAFETY: the Vec is assigned only here, once per request (the body is
+        // `Bytes` from now on), and lives on `self`, which outlives every
+        // `InternalState` that borrows it.
         let bytes: &'a [u8] = unsafe { bun_ptr::detach_lifetime(&self.buffered_sendfile_body) };
         self.state = InternalState::init(HTTPRequestBody::Bytes(bytes));
         Ok(())

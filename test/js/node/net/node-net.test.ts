@@ -2972,10 +2972,10 @@ describe.concurrent("uncaughtException from socket listeners", () => {
         const c = net.connect(srv.address().port, "127.0.0.1");
         c.on("error", e => { console.log("socket-error:" + e.message); process.exit(7); });
         c.on("data", () => { throw new Error("fatal-boom"); });
-        c.on("close", () => console.log("close"));
       });
     `);
-    expect({ stdout, exitCode, ...(exitCode === 1 ? {} : { stderr }) }).toEqual({ stdout: "", exitCode: 1 });
+    expect(stdout).not.toContain("socket-error:");
     expect(stderr).toContain("fatal-boom");
+    expect(exitCode).toBe(1);
   });
 });

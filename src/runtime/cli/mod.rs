@@ -940,10 +940,11 @@ pub mod command {
             return Tag::AutoCommand;
         };
         // `--filter=pat` / `-F=pat` / `-Fpat` / `--workspaces` before the
-        // subcommand word select workspace packages, so a following `test`
-        // must take the filtered-run path (AutoCommand), not TestCommand.
-        // The space form (`--filter pat test`) never reaches the `test` case:
-        // the loop below stops at `pat`, which is not a subcommand keyword.
+        // subcommand word select workspace packages, so a following `test` or
+        // `build` must take the filtered-run path (AutoCommand), not the
+        // test runner or the bundler. The space form (`--filter pat test`)
+        // never reaches those cases: the loop below stops at `pat`, which is
+        // not a subcommand keyword.
         let mut saw_filter_flag = false;
         while !first_arg_name.is_empty()
             && first_arg_name[0] == b'-'
@@ -973,6 +974,11 @@ pub mod command {
             return Tag::InitCommand;
         }
         if x == RootCommandMatcher::case(b"build") || x == RootCommandMatcher::case(b"bun") {
+            if saw_filter_flag && x == RootCommandMatcher::case(b"build") {
+                // `bun --filter=<pat> build` runs each matched package's
+                // "build" script, same as `bun run --filter=<pat> build`.
+                return Tag::AutoCommand;
+            }
             return Tag::BuildCommand;
         }
         if x == RootCommandMatcher::case(b"discord") {

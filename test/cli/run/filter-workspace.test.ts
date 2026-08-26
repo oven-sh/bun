@@ -479,7 +479,8 @@ describe("bun", () => {
 
   // #40544: `bun --filter=<pat> test` must run each matched package's "test"
   // script (like `bun run --filter=<pat> test`), not bun's own test runner.
-  describe.concurrent("routes `test` to the package test script", () => {
+  // Same for `build` and the bundler.
+  describe.concurrent("routes `test` and `build` to the package scripts", () => {
     const test_root = tempDirWithFiles("filter-test-subcommand", {
       packages: {
         pkga: {
@@ -488,6 +489,7 @@ describe("bun", () => {
             name: "pkga",
             scripts: {
               test: `${bunExe()} -e "console.log('testa', process.env.FILTER_TEST_ENV)"`,
+              build: "echo builda",
             },
           }),
         },
@@ -496,6 +498,7 @@ describe("bun", () => {
             name: "pkgb",
             scripts: {
               test: "echo testb",
+              build: "echo buildb",
             },
           }),
         },
@@ -538,6 +541,32 @@ describe("bun", () => {
       });
       expect(stdout.toString()).toMatch(/testa from-pkga-env/);
       expect(stdout.toString()).toMatch(/testb/);
+      expect(exitCode).toBe(0);
+    });
+
+    test("bun --filter=pkga build runs the package build script", () => {
+      const { exitCode, stdout } = spawnSync({
+        cwd: test_root,
+        cmd: [bunExe(), "--filter=pkga", "build"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(stdout.toString()).toMatch(/builda/);
+      expect(stdout.toString()).not.toMatch(/buildb/);
+      expect(exitCode).toBe(0);
+    });
+
+    test("bun --workspaces build runs every package build script", () => {
+      const { exitCode, stdout } = spawnSync({
+        cwd: test_root,
+        cmd: [bunExe(), "--workspaces", "build"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(stdout.toString()).toMatch(/builda/);
+      expect(stdout.toString()).toMatch(/buildb/);
       expect(exitCode).toBe(0);
     });
 

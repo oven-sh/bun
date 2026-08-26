@@ -149,12 +149,12 @@ impl TimerObjectInternals {
     /// Hold a ref on the parent container for the guard's lifetime.
     fn ref_guard(&self) -> TimerParentRef {
         match self.parent_ptr() {
-            // SAFETY: `p` is a live container per `parent_ptr()`.
             TimerParent::Immediate(p) => TimerParentRef::Immediate {
+                // SAFETY: `p` is a live container per `parent_ptr()`.
                 _ref: unsafe { RefPtr::init_ref(p) },
             },
-            // SAFETY: as above.
             TimerParent::Timeout(p) => TimerParentRef::Timeout {
+                // SAFETY: as above.
                 _ref: unsafe { RefPtr::init_ref(p) },
             },
         }

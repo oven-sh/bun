@@ -7470,15 +7470,15 @@ impl H2FrameParser {
             }
         } else if SSL {
             let socket = socket_nn.cast::<TLSSocket>();
-            // SAFETY: `socket` is live (see above).
             self.writeonly_socket_ref.set(Some(WriteonlySocketRef::Tls {
+                // SAFETY: `socket` is live (see above).
                 _ref: unsafe { RefPtr::init_ref(socket.as_ptr()) },
             }));
             BunSocket::TlsWriteonly(bun_ptr::BackRef::from(socket))
         } else {
             let socket = socket_nn.cast::<TCPSocket>();
-            // SAFETY: `socket` is live (see above).
             self.writeonly_socket_ref.set(Some(WriteonlySocketRef::Tcp {
+                // SAFETY: `socket` is live (see above).
                 _ref: unsafe { RefPtr::init_ref(socket.as_ptr()) },
             }));
             BunSocket::TcpWriteonly(bun_ptr::BackRef::from(socket))

@@ -1374,13 +1374,17 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
         step: "close while editing",
         log: ["blur inWindow=true listed=true", "close inWindow=false listed=false", "closed"],
       });
-      expect(step(r, "default button")).toEqual({
+      // Return presses the default button only when it arrives as the
+      // application's current key event; a session that drops the posted
+      // event (the process cannot become active there) sees no press.
+      const pressedDefault = step(r, "default button");
+      expect(pressedDefault).toMatchObject({
         step: "default button",
         withoutKey: [],
-        withKey: ["default"],
-        eventType: "number",
-        withSubmit: ["submit:typed"],
+        withKey: pressedDefault.pressed.dequeued ? ["default"] : [],
+        withSubmit: pressedDefault.pressedOther.dequeued ? ["submit:typed"] : [],
         cell: true,
+        keyEquivalent: "\r",
       });
       expect(step(r, "slider")).toEqual({
         step: "slider",

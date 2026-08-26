@@ -65,6 +65,11 @@ await run(async () => {
   /**
    * What pressing Return does: a keyDown event, dequeued (so it is the
    * current event) and dispatched by NSApp to the window's field editor.
+   * Never blocks: if AppKit will not hand the posted event back (a session
+   * where this process cannot become active drops key events for a window
+   * that is not key), the made event goes to the window directly and
+   * `dequeued` says so; the window then sees a Return that is not the
+   * application's current event.
    */
   const pressReturn = (win: Window) => {
     const NSApp = NSApplication.sharedApplication();
@@ -84,15 +89,15 @@ await run(async () => {
     NSApp.postEvent_atStart_(made, true);
     const event = NSApp.nextEventMatchingMask_untilDate_inMode_dequeue_(
       objc.enums.NSEventMask.keyDown,
-      null,
+      objc.classes.NSDate.distantPast(),
       objc.constants.NSDefaultRunLoopMode,
       true,
     );
     // To the window itself, as -[NSApplication sendEvent:] does once it has
     // found the key window: on a display with other apps up, that lookup can
     // land elsewhere, and the key goes nowhere or into a tracking loop.
-    win.native.sendEvent_(event);
-    return typeof event.type();
+    win.native.sendEvent_(event ?? made);
+    return { dequeued: event !== null, isKey: Boolean(win.native.isKeyWindow()), active: Boolean(NSApp.isActive()) };
   };
 
   // Text: a label; everything reads the NSTextField.
@@ -328,7 +333,7 @@ await run(async () => {
     const win = new Window({ width: 300, height: 120, content: new VStack({ children: [field, button] }) });
     act(field);
     const withoutKey = log.splice(0);
-    const eventType = pressReturn(win);
+    const pressed = pressReturn(win);
     const withKey = log.splice(0);
     win.close();
     // With an onSubmit, Return is the field's alone.
@@ -341,14 +346,16 @@ await run(async () => {
       }),
     });
     submitting.native.setStringValue_("typed");
-    pressReturn(other);
+    const pressedOther = pressReturn(other);
     emit({
       step: "default button",
       withoutKey,
+      pressed,
       withKey,
-      eventType,
+      pressedOther,
       withSubmit: log.splice(0),
       cell: other.native.defaultButtonCell() !== null,
+      keyEquivalent: String(button.native.keyEquivalent()),
     });
     other.close();
   }

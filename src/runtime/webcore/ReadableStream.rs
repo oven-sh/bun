@@ -185,8 +185,9 @@ impl ReadableStream {
     /// Lock this stream behind an identity proxy (fetch "create a proxy") and
     /// return the proxy. Cancelling the proxy forwards the reason to `self`.
     pub fn proxy(&self, global_this: &JSGlobalObject) -> JsResult<Option<ReadableStream>> {
-        let out =
-            bun_jsc::from_js_host_call(global_this, || ReadableStream__proxy(self.value, global_this))?;
+        let out = bun_jsc::from_js_host_call(global_this, || {
+            ReadableStream__proxy(self.value, global_this)
+        })?;
         Ok(ReadableStream::from_js_direct(out))
     }
 

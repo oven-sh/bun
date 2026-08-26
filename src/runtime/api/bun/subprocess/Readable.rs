@@ -93,16 +93,6 @@ impl Readable {
         super::assert_stdio_result!(result);
 
         let mut stdio = stdio;
-        if let Some(memfd) = stdio.take_memfd() {
-            #[cfg(unix)]
-            return Readable::Memfd(memfd);
-            #[cfg(not(unix))]
-            {
-                let _ = memfd;
-                return Readable::Ignore;
-            }
-        }
-
         #[cfg(unix)]
         {
             if matches!(stdio, Stdio::Pipe) {
@@ -125,13 +115,16 @@ impl Readable {
                 }
             }
             Stdio::Memfd(_) => {
+                // Ownership of the fd moves into the Readable; `Stdio`'s Drop would close it.
+                let memfd = stdio.take_memfd().unwrap();
                 #[cfg(unix)]
                 {
-                    unreachable!()
+                    Readable::Memfd(memfd)
                 }
                 #[cfg(not(unix))]
                 {
-                    unreachable!()
+                    let _ = memfd;
+                    Readable::Ignore
                 }
             }
             Stdio::Dup2(dup2) => {

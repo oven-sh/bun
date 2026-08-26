@@ -126,6 +126,14 @@ bool isNonNegativeNumber(JSC::JSValue); // userJS: no — WebStreamsMisc.cpp
 RefPtr<JSC::ArrayBuffer> transferArrayBufferImpl(JSC::JSGlobalObject*, JSC::ArrayBuffer&); // userJS: no — WebStreamsMisc.cpp
 bool canTransferArrayBuffer(JSC::ArrayBuffer&); // userJS: no — WebStreamsMisc.cpp
 // spec CanTransferArrayBuffer(O) — pure.
+// An ArrayBuffer / ArrayBufferView chunk whose backing store has been detached (transferred,
+// or a WebAssembly.Memory that grew) has no bytes left. Every native consumer that copies
+// chunk bytes out of a stream errors on one instead of reading it as empty, which would
+// silently drop the producer's data. Pure.
+bool isDetachedBufferSource(JSC::JSValue chunk); // userJS: no — WebStreamsMisc.cpp
+// The TypeError those consumers throw (or error the stream with) for such a chunk.
+JSC::JSObject* createDetachedChunkError(JSC::JSGlobalObject*); // userJS: no — WebStreamsMisc.cpp
+void throwDetachedChunkError(JSC::JSGlobalObject*, JSC::ThrowScope&); // userJS: no — WebStreamsMisc.cpp
 // spec CloneAsUint8Array(O) — allocation-throws only.
 JSC::JSUint8Array* cloneAsUint8Array(JSC::JSGlobalObject*, JSC::JSArrayBufferView*); // userJS: no — WebStreamsMisc.cpp
 // spec StructuredClone(v): no caller — every tee path passes cloneForBranch2 = false.

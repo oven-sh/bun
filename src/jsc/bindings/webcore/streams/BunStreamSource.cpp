@@ -898,16 +898,23 @@ static void rsisAbrupt(JSC::VM&, JSGlobalObject*, JSReadStreamIntoSinkOperation*
 
 static JSValue rsisSinkWrite(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue chunk)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // Both sink paths below read a detached view or buffer as 0 bytes, which would end the
+    // sink successfully with the chunk's data gone.
+    if (isDetachedBufferSource(chunk)) [[unlikely]] {
+        throwDetachedChunkError(globalObject, scope);
+        return {};
+    }
     if (auto* view = dynamicDowncast<JSArrayBufferView>(chunk)) {
         if (auto* ctrl = dynamicDowncast<WebCore::JSReadableSinkControllerBase>(op->m_sink.get())) {
             if (void* sinkPtr = ctrl->wrapped())
-                return JSValue::decode(Bun__NativeTransformSink__writeBytes(static_cast<uint8_t>(ctrl->sinkId()), sinkPtr, globalObject, static_cast<const uint8_t*>(view->vector()), view->byteLength()));
+                RELEASE_AND_RETURN(scope, JSValue::decode(Bun__NativeTransformSink__writeBytes(static_cast<uint8_t>(ctrl->sinkId()), sinkPtr, globalObject, static_cast<const uint8_t*>(view->vector()), view->byteLength())));
         }
     }
     MarkedArgumentBuffer args;
     args.append(chunk);
     ASSERT(!args.hasOverflowed());
-    return invokeMethod(vm, globalObject, op->m_sink.get(), builtinNames(vm).writePublicName(), args);
+    RELEASE_AND_RETURN(scope, invokeMethod(vm, globalObject, op->m_sink.get(), builtinNames(vm).writePublicName(), args));
 }
 
 static JSValue rsisSinkEnd(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op)

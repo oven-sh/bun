@@ -172,6 +172,29 @@ bool canTransferArrayBuffer(JSC::ArrayBuffer& buffer)
     return !buffer.isDetached() && buffer.isDetachable();
 }
 
+bool isDetachedBufferSource(JSValue chunk)
+{
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(chunk))
+        return view->isDetached();
+    if (auto* buffer = dynamicDowncast<JSArrayBuffer>(chunk)) {
+        auto* impl = buffer->impl();
+        return !impl || impl->isDetached();
+    }
+    return false;
+}
+
+static constexpr ASCIILiteral detachedChunkMessage = "Cannot read a ReadableStream chunk whose ArrayBuffer has been detached"_s;
+
+JSObject* createDetachedChunkError(JSGlobalObject* globalObject)
+{
+    return createTypeError(globalObject, detachedChunkMessage);
+}
+
+void throwDetachedChunkError(JSGlobalObject* globalObject, ThrowScope& scope)
+{
+    throwTypeError(globalObject, scope, detachedChunkMessage);
+}
+
 // spec TransferArrayBuffer(O) = ArrayBufferCopyAndDetach(O, undefined, fixed-length):
 // resizability must NOT survive the transfer, or a later user resize() invalidates every
 // byte length the byte controller recorded. No JSArrayBuffer wrapper cell is created.

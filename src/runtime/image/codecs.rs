@@ -665,11 +665,11 @@ fn mul_div_255(c: u32, a: u32) -> u8 {
 /// Premultiplied copy of `src`, or `None` when every pixel is opaque (the
 /// round trip would be an identity, so skip the copy).
 fn premultiplied(src: &[u8]) -> Option<Vec<u8>> {
-    if !src.chunks_exact(4).any(|p| p[3] != 255) {
+    if !src.as_chunks::<4>().0.iter().any(|p| p[3] != 255) {
         return None;
     }
     let mut out = src.to_vec();
-    for p in out.chunks_exact_mut(4) {
+    for p in out.as_chunks_mut::<4>().0 {
         let a = u32::from(p[3]);
         if a == 255 {
             continue;
@@ -682,7 +682,7 @@ fn premultiplied(src: &[u8]) -> Option<Vec<u8>> {
 }
 
 fn unpremultiply(rgba: &mut [u8]) {
-    for p in rgba.chunks_exact_mut(4) {
+    for p in rgba.as_chunks_mut::<4>().0 {
         let a = u32::from(p[3]);
         if a == 255 {
             continue;

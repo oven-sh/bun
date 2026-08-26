@@ -196,8 +196,9 @@ describe.concurrent("Buffer accessor JIT", () => {
     const s = Buffer.alloc(16);
     const sv = new DataView(s.buffer, s.byteOffset, s.byteLength);
     function effect(fn, i, readBack) {
-      try { return "returns " + String(fn(s, i)) + (readBack ? ", bytes " + String(readBack()) : ""); }
-      catch (e) { return "throws " + e.constructor.name + ":" + e.code + ", bytes " + String(readBack()); }
+      const bytes = () => (readBack ? ", bytes " + String(readBack()) : "");
+      try { return "returns " + String(fn(s, i)) + bytes(); }
+      catch (e) { return "throws " + e.constructor.name + ":" + e.code + bytes(); }
     }
     noInline(effect); noFTL(effect);
     function outcomesOf(cases) {

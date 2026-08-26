@@ -42,7 +42,7 @@ use std::io::Write as _;
 use crate::webcore::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
-use bun_core::{String as BunString, Tag as BunStringTag, Utf8Bytes};
+use bun_core::{String as BunString, Tag as BunStringTag};
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
@@ -446,7 +446,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // Custom Hostname
     let mut hostname: Option<Box<[u8]>> = None;
     let mut range: Option<bun_core::ZBox> = None;
-    let mut unix_socket_path: Utf8Bytes<'static> = Utf8Bytes::EMPTY;
+    let mut unix_socket_path: Box<[u8]> = Box::default();
 
     // `url_proxy_buffer` gets reassigned while `url`/`proxy`
     // still point into it (or into the buffer about to replace it). Detach the
@@ -738,7 +738,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if !obj.is_empty() {
                 if let Some(socket_path) = obj.get(global_this, "unix")? {
                     if socket_path.is_string() && socket_path.get_length(ctx)? > 0 {
-                        break 'extract_unix_socket_path socket_path.to_utf8(global_this)?;
+                        break 'extract_unix_socket_path socket_path
+                            .to_bun_string(global_this)?
+                            .to_owned_slice()
+                            .into_boxed_slice();
                     }
                 }
             }
@@ -1261,7 +1264,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'extract_headers result;
     };
 
-    if proxy.is_some() && !unix_socket_path.slice().is_empty() {
+    if proxy.is_some() && !unix_socket_path.is_empty() {
         let err = ctx.to_type_error(
             jsc::ErrorCode::INVALID_ARG_VALUE,
             format_args!("fetch() cannot use a proxy with a unix socket."),
@@ -1304,7 +1307,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // Support blob: urls
             if url_type == URLType::Blob {
                 if let Some(blob) =
-                    ObjectURLRegistry::singleton().resolve_and_dupe(url_path_decoded)
+                    ObjectURLRegistry::singleton().resolve_and_dupe(url_path_decoded, global_this)
                 {
                     url_string = BunString::create_format(format_args!(
                         "blob:{}",

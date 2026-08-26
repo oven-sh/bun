@@ -133,6 +133,13 @@ describe("advanceTimersByTime", () => {
     expect(order.takeOrderMessages()).toEqual([]);
     vi.useRealTimers();
   });
+
+  test.each([NaN, -1, Infinity, 2 ** 32])("advanceTimersByTime(%p) throws and does not move the clock", ms => {
+    vi.useFakeTimers({ now: 1000 });
+    expect(() => vi.advanceTimersByTime(ms)).toThrow("ms is out of range. It must be >= 0 and <= 4294967295");
+    expect(Date.now()).toBe(1000);
+    expect(performance.now()).toBe(0);
+  });
 });
 describe("runOnlyPendingTimers", () => {
   test("two setIntervals", () => {
@@ -634,6 +641,40 @@ describe("performance.now() mocking", () => {
     expect(performance.timeOrigin).toBe(realTimeOrigin);
     setSystemTime();
   });
+
+  // setSystemTime() with no argument, NaN, or an Invalid Date resets Date.now()
+  // to the real clock. The origin goes back to real with it.
+  test.each([undefined, NaN, new Date(NaN)])(
+    "setSystemTime(%p) under fake timers resets performance.timeOrigin too",
+    reset => {
+      const realTimeOrigin = performance.timeOrigin;
+      const realBefore = Date.now();
+      vi.useFakeTimers({ now: 5000 });
+      expect(performance.timeOrigin).toBe(5000);
+
+      setSystemTime(reset);
+      expect(Date.now()).toBeGreaterThanOrEqual(realBefore);
+      expect(performance.timeOrigin).toBe(realTimeOrigin);
+      expect(performance.toJSON().timeOrigin).toBe(realTimeOrigin);
+
+      // The next tick of the fake clock overrides Date.now() again, and the origin follows it.
+      vi.advanceTimersByTime(1000);
+      expect(Date.now()).toBe(6000);
+      expect(performance.timeOrigin).toBe(5000);
+      expect(performance.timeOrigin + performance.now()).toBe(Date.now());
+    },
+  );
+
+  test.each([Infinity, -Infinity])("setSystemTime(%p) throws and leaves the clocks alone", ms => {
+    const realBefore = Date.now();
+    expect(() => setSystemTime(ms)).toThrow("setSystemTime() expects a finite number or a Date");
+    expect(Date.now()).toBeGreaterThanOrEqual(realBefore);
+
+    vi.useFakeTimers({ now: 5000 });
+    expect(() => setSystemTime(ms)).toThrow("setSystemTime() expects a finite number or a Date");
+    expect(Date.now()).toBe(5000);
+    expect(performance.timeOrigin).toBe(5000);
+  });
 });
 
 describe("useFakeTimers with options", () => {
@@ -726,5 +767,15 @@ describe("useFakeTimers with options", () => {
   test("useFakeTimers still rejects non-string non-object arguments", () => {
     expect(() => vi.useFakeTimers(123 as any)).toThrow("useFakeTimers() expects an options object");
     expect(vi.isFakeTimers()).toBe(false);
+  });
+
+  // NaN is the "no override" sentinel of the Date.now() override. A NaN clock
+  // left Date.now() real while performance.timeOrigin read NaN.
+  test.each([NaN, Infinity, -Infinity, new Date(NaN)])("useFakeTimers({ now: %p }) throws", now => {
+    const realTimeOrigin = performance.timeOrigin;
+    expect(() => vi.useFakeTimers({ now })).toThrow("'now' must be a finite number or a valid Date");
+    expect(vi.isFakeTimers()).toBe(false);
+    expect(performance.timeOrigin).toBe(realTimeOrigin);
+    expect(performance.toJSON().timeOrigin).toBe(realTimeOrigin);
   });
 });

@@ -1623,7 +1623,8 @@ impl Interpreter {
                     if vm_args_utf8.len() != argv.len() {
                         vm_args_utf8.reserve(argv.len());
                         for arg in argv {
-                            vm_args_utf8.push(bun_core::String::retain_wtf_impl(*arg).into_utf8());
+                            vm_args_utf8
+                                .push(crate::node::process::worker_option_string(*arg).into_utf8());
                         }
                     }
                     out.extend_from_slice(vm_args_utf8[int as usize].slice());

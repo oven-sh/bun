@@ -767,6 +767,25 @@ impl CompileC {
                 }
             }
 
+            // OHOS SDK sysroot uses the musl multi-arch layout: the flat
+            // <stdint.h> wrappers live in <sysroot>/usr/include and include
+            // <bits/alltypes.h>, which lives in the arch subdir
+            // <sysroot>/usr/include/aarch64-linux-ohos. Both must be on the
+            // include path; without the arch subdir TinyCC fails with
+            // "include file 'bits/alltypes.h' not found".
+            #[cfg(target_env = "ohos")]
+            if let Some(sysroot) = std::env::var("OHOS_SYSROOT")
+                .ok()
+                .or_else(|| std::env::var("OHOS_SDK_ROOT").ok())
+            {
+                let mut arch_include = sysroot.as_bytes().to_vec();
+                arch_include.extend_from_slice(b"/usr/include/aarch64-linux-ohos");
+                let arch_z = ZBox::from_bytes(&arch_include);
+                if state.add_sys_include_path(&arch_z).is_err() {
+                    bun_output::scoped_log!(TCC, "TinyCC failed to add OHOS arch sysinclude path");
+                }
+            }
+
             if let Some(library_dir) = Self::get_system_library_dir() {
                 if state.add_library_path(library_dir).is_err() {
                     bun_output::scoped_log!(TCC, "TinyCC failed to add library path");

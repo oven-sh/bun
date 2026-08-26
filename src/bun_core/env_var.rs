@@ -215,6 +215,11 @@ pub mod feature_flag {
     // Disable "nativeDependencies"
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER, "BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER", {});
 
+    // bun:objc (the Objective-C bridge) sends every message through NSInvocation
+    // instead of libffi (macOS): the A/B switch while the libffi path is being
+    // proven on every build configuration, not a fallback anything selects.
+    new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_OBJC_LIBFFI, "BUN_FEATURE_FLAG_DISABLE_OBJC_LIBFFI", {});
+
     // Disable "ignoreScripts" in package.json
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS, "BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS", {});
 

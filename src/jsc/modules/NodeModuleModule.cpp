@@ -66,8 +66,14 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "assert/strict"_s,
     "async_hooks"_s,
     "buffer"_s,
+#if OS(DARWIN)
+    "bun:appkit"_s,
+#endif
     "bun:ffi"_s,
     "bun:jsc"_s,
+#if OS(DARWIN)
+    "bun:objc"_s,
+#endif
     "bun:sqlite"_s,
     "bun:test"_s,
     "bun"_s,

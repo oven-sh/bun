@@ -29,6 +29,8 @@ pub use bun_jsc::BuildMessage;
 pub use bun_jsc::ResolveMessage;
 
 // ─── compiling submodules (api/ dir) ─────────────────────────────────────────
+#[path = "api/appkit/mod.rs"]
+pub mod appkit;
 #[path = "api/Archive.rs"]
 pub mod archive;
 #[path = "api/BunObject.rs"]

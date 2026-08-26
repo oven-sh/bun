@@ -1517,7 +1517,6 @@ impl ValkeyClient {
         Ok(data.len())
     }
 
-    /// Increment reference count
     #[inline]
     fn global_object(&mut self) -> GlobalRef {
         self.parent().global_object

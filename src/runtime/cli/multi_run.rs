@@ -22,8 +22,7 @@ use crate::run_command::{ConfigureEnvOptions, RunCommand};
 #[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{
-    self as spawn, Process, Rusage, SpawnOptions, SpawnProcessResult, Status,
-    event_loop_handle_to_ctx,
+    self as spawn, Rusage, SpawnOptions, SpawnProcessResult, Status, event_loop_handle_to_ctx,
 };
 use bun_collections::index_sort;
 use bun_dotenv::Loader as DotEnvLoader;
@@ -104,7 +103,7 @@ bun_io::impl_buffered_reader_parent! {
 }
 
 struct ProcessSlot {
-    ptr: spawn::ProcessHandle,
+    process: spawn::ProcessHandle,
     status: Status,
     start_time: Instant,
     /// Set together with `status` when the exit arrives.
@@ -254,21 +253,17 @@ impl<'a> ProcessHandle<'a> {
         }
 
         self.process = Some(ProcessSlot {
-            ptr: process,
+            process,
             status: Status::Running,
             start_time,
             end_time: None,
         });
-        let process: *mut Process = self.process.as_ref().unwrap().ptr.as_ptr();
-        // SAFETY: just spawned; owner backref set before any reap callback can fire.
-        let process = unsafe { &mut *process };
+        let self_ptr = std::ptr::from_mut::<Self>(self);
+        let process = &self.process.as_ref().unwrap().process;
         // SAFETY: `self` is the live `ProcessHandle` slot in `State.handles`;
         // it lives for the whole event loop and outlives `process`.
-        process.set_exit_handler(unsafe {
-            bun_spawn::ProcessExit::new(
-                bun_spawn::ProcessExitKind::MultiRunHandle,
-                std::ptr::from_mut::<Self>(self),
-            )
+        process.process_mut().set_exit_handler(unsafe {
+            bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::MultiRunHandle, self_ptr)
         });
 
         match process.watch_or_reap() {
@@ -578,7 +573,7 @@ impl<'a> State<'a> {
             // SAFETY: points into `self.handles`, live for the whole run loop.
             if let Some(proc) = unsafe { (*handle).process.as_ref() } {
                 if matches!(proc.status, Status::Running) {
-                    let _ = proc.ptr.kill(bun_sys::SignalCode::SIGINT.0);
+                    let _ = proc.process.kill(bun_sys::SignalCode::SIGINT.0);
                 }
             }
             // An already-exited handle may be waiting on pipes a grandchild

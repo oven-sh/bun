@@ -156,7 +156,7 @@ export class ClassDefinition {
    * The JS wrapper owns the payload: when it is collected the payload is
    * handed to `fn finalize(self: Box<Self>)` (an inherent method if the type
    * has one, else `bun_jsc::JsFinalize`'s default, which drops the Box).
-   * For a payload the wrapper only holds one ref on, set `rc` instead.
+   * For a payload the wrapper only holds one ref on, set `refCounted` instead.
    * @todo remove this and require all classes to implement `finalize`.
    */
   finalize?: boolean;
@@ -164,10 +164,10 @@ export class ClassDefinition {
    * The payload is intrusively refcounted (`CellRefCounted` /
    * `ThreadSafeRefCounted` / `RefCounted`) and the JS wrapper holds one ref.
    * Collection runs `fn finalize(&self)` (inherent if present — e.g. to clear
-   * a `this_value` — else `bun_jsc::JsFinalizeRc`'s no-op) and then drops
+   * a `this_value` — else `bun_jsc::JsFinalizeRefCounted`'s no-op) and then drops
    * the wrapper's ref; the payload's `Drop` runs when the last ref goes.
    */
-  rc?: boolean;
+  refCounted?: boolean;
   overridesToJS?: boolean;
   /**
    * Static properties and methods.
@@ -258,8 +258,8 @@ export function define(
   }
   return new ClassDefinition({
     ...rest,
-    // `rc` is a kind of finalize as far as the C++ wrapper is concerned.
-    finalize: rest.finalize || rest.rc,
+    // `refCounted` is a kind of finalize as far as the C++ wrapper is concerned.
+    finalize: rest.finalize || rest.refCounted,
     call,
     overridesToJS,
     construct,

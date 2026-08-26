@@ -471,14 +471,8 @@ impl WebWorker {
             .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
             .spawn(move || {
                 let start = start;
-                let ThreadStart {
-                    worker,
-                    init,
-                    _parent_ticket,
-                } = start;
-                worker.thread_main(init);
-                // The thread's ref drops here.
-                drop(worker);
+                start.worker.thread_main(start.init);
+                // The thread's ref (and the parent ticket) drop here.
             });
         match spawn {
             Ok(handle) => {

@@ -14,7 +14,7 @@ for (const type of types) {
       name: `${type}Connection`,
       rustPath: rustPaths[`${type}Connection`],
       construct: true,
-      rc: true,
+      refCounted: true,
       configurable: false,
       hasPendingActivity: type === "PostgresSQL",
       klass: {
@@ -78,7 +78,7 @@ for (const type of types) {
       name: `${type}Query`,
       rustPath: rustPaths[`${type}Query`],
       construct: true,
-      rc: true,
+      refCounted: true,
       configurable: false,
       JSType: "0b11101110",
       klass: {},

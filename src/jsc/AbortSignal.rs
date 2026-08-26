@@ -157,8 +157,11 @@ impl AbortSignal {
         ))
     }
 
-    pub fn ref_(&self) -> *mut AbortSignal {
-        WebCore__AbortSignal__ref(self)
+    /// Take a ref on the signal.
+    pub fn ref_(&self) -> AbortSignalRef {
+        // SAFETY: `WebCore__AbortSignal__ref` bumps the intrusive refcount and
+        // returns `self` with that +1.
+        unsafe { AbortSignalRef::adopt(WebCore__AbortSignal__ref(self)) }
     }
 
     pub fn unref(&self) {
@@ -245,12 +248,8 @@ impl AbortSignal {
     /// moved here because inherent impls cannot be added to a type alias.)
     #[inline]
     pub fn ref_from_js(value: JSValue) -> Option<AbortSignalRef> {
-        AbortSignal::from_js(value).map(|p| {
-            // SAFETY: `from_js` returned a live borrow of the JS wrapper's
-            // payload; `ref_()` bumps the intrusive refcount and returns the
-            // same non-null pointer with +1 ownership.
-            unsafe { AbortSignalRef::adopt((*p).ref_()) }
-        })
+        // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
+        AbortSignal::from_js(value).map(|p| bun_opaque::opaque_deref(p).ref_())
     }
 }
 

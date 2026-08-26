@@ -25,7 +25,7 @@ use bun_sys::{self as sys, FdExt as _, SignalCode};
 use crate::api::bun_process::ExtraPipe;
 #[cfg(not(windows))]
 use crate::api::bun_process::SpawnResultExt as _;
-use crate::api::bun_process::{self as spawn, CStrPtr, Process, Rusage, SpawnOptions};
+use crate::api::bun_process::{self as spawn, CStrPtr, Rusage, SpawnOptions};
 // User-facing JS `Stdio` enum (extract/as_spawn_option/is_piped).
 use crate::api::bun_spawn::stdio::{self, Stdio};
 use crate::api::bun_subprocess::{
@@ -517,8 +517,7 @@ fn spawn_maybe_sync(
                     if let Some(abort_error) = sig.node_abort_error_if_aborted(global_this) {
                         return Err(global_this.throw_value(abort_error));
                     }
-                    // SAFETY: `ref_()` returns the signal with a +1 we adopt.
-                    **abort_signal = Some(unsafe { bun_jsc::AbortSignalRef::adopt(sig.ref_()) });
+                    **abort_signal = Some(sig.ref_());
                 } else {
                     return Err(global_this.throw_invalid_argument_type_value(
                         b"signal",
@@ -1256,12 +1255,7 @@ fn spawn_maybe_sync(
     let spawned_stdout = spawned.stdout.take();
     let spawned_stderr = spawned.stderr.take();
     let mut spawned_extra_pipes = core::mem::take(&mut spawned.extra_pipes);
-    // `to_process` returns a freshly Box-allocated `Process` carrying an
-    // intrusive `ThreadSafeRefCount` initialized to 1. `Subprocess.process`
-    // stores it as `*mut Process`; the matching `deref()` in
-    // `Subprocess::finalize` (or the error path below) frees the Box when the
-    // refcount reaches zero.
-    let process: *mut Process = spawned.to_process(loop_handle);
+    let process = spawned.to_process(loop_handle);
 
     #[cfg(unix)]
     let posix_ipc_fd = if !is_sync && maybe_ipc_mode.is_some() {
@@ -1277,9 +1271,7 @@ fn spawn_maybe_sync(
     // address-dependent fields (maxbufs, ipc_data on Windows) afterward.
     let subprocess_ptr = bun_core::heap::into_raw(Box::new(SubprocessT {
         global_this: bun_ptr::BackRef::new(global_this),
-        // SAFETY: `to_process` returns a non-null `Box::into_raw` pointer
-        // carrying its construction ref.
-        process: unsafe { bun_ptr::RefPtr::from_raw(process) },
+        process,
         pid_rusage: Cell::new(None),
         // stdin/stdout/stderr are assigned immediately after this literal.
         // `Writable.init()` writes to `subprocess.weak_file_sink_stdin_ptr`,
@@ -1978,9 +1970,9 @@ fn spawn_maybe_sync(
     if global_this.has_exception() {
         // e.g. a termination exception.
         // SAFETY: same as below; `subprocess` is not used after this line.
-        let wrapper_ref = unsafe { bun_ptr::RefPtr::from_raw(subprocess_ptr) };
-        wrapper_ref.finalize();
-        drop(wrapper_ref);
+        unsafe {
+            bun_jsc::host_fn::host_fn_finalize_ref_counted(subprocess_ptr, SubprocessT::finalize)
+        };
         return Ok(JSValue::ZERO);
     }
 
@@ -2003,11 +1995,11 @@ fn spawn_maybe_sync(
     let exited_due_to_max_buffer = subprocess.exited_due_to_maxbuf.get();
     let result_pid = JSValue::js_number_from_int32(subprocess.pid());
     // SAFETY: `subprocess_ptr` was produced by `heap::into_raw(Box::new(...))`
-    // above (spawnSync path: never handed to a JS wrapper); release the ref a
-    // wrapper would have held. `subprocess` is not used after this line.
-    let wrapper_ref = unsafe { bun_ptr::RefPtr::from_raw(subprocess_ptr) };
-    wrapper_ref.finalize();
-    drop(wrapper_ref);
+    // above (spawnSync path: never handed to a JS wrapper); do what the
+    // wrapper's finalizer would have. `subprocess` is not used after this line.
+    unsafe {
+        bun_jsc::host_fn::host_fn_finalize_ref_counted(subprocess_ptr, SubprocessT::finalize)
+    };
     let (stdout, stderr, resource_usage) = output?;
 
     let sync_value = JSValue::create_empty_object(global_this, 0);

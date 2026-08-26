@@ -1421,11 +1421,12 @@ impl PostgresSQLConnection {
         // black_box launder (b818e70e1c57-style) is no longer needed.
         // The connection is kept alive by the caller's `ref_and_close` ref
         // bracket for the duration of this loop, so re-entry never frees `*self`.
-        while let Some(request_ptr) = self.requests.get().front().map(RefPtr::as_ptr) {
+        while let Some(request) = self.requests.get().front().map(RefPtr::as_non_null) {
             // The queue's `RefPtr` keeps the query live. R-2: `ParentRef`
             // yields `&T` only — `PostgresSQLQuery` is Cell/JsCell-backed. Raw
             // `*mut` retained for `discard_request` below.
-            let request = ParentRef::from(NonNull::new(request_ptr).expect("queue item non-null"));
+            let request_ptr = request.as_ptr();
+            let request = ParentRef::from(request);
             match request.status.get() {
                 // pending we will fail the request and the stmt will be marked as error ConnectionClosed too
                 QueryStatus::Pending => {
@@ -1780,11 +1781,12 @@ impl PostgresSQLConnection {
         // expanded as a closure called at every return point below.
         macro_rules! defer_cleanup {
             ($self:ident) => {{
-                while let Some(result_ptr) = $self.requests.get().front().map(RefPtr::as_ptr) {
+                while let Some(result) = $self.requests.get().front().map(RefPtr::as_non_null) {
                     // The queue's `RefPtr` keeps the query live. R-2:
                     // `ParentRef` yields `&T` only — `PostgresSQLQuery` is
                     // Cell/JsCell-backed.
-                    let result = ParentRef::from(NonNull::new(result_ptr).expect("queue item non-null"));
+                    let result_ptr = result.as_ptr();
+                    let result = ParentRef::from(result);
                     // An item may be in the success or failed state and still be inside the queue (see deinit later comments)
                     // so we do the cleanup here
                     match result.status.get() {
@@ -1805,10 +1807,11 @@ impl PostgresSQLConnection {
         while self.requests.get().len() > offset
             && !self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE)
         {
-            let req_ptr: *mut PostgresSQLQuery = self.requests.get()[offset].as_ptr();
             // The queue's `RefPtr` keeps the query live. R-2: `ParentRef`
             // yields `&T` only — `PostgresSQLQuery` is Cell/JsCell-backed.
-            let req = ParentRef::from(NonNull::new(req_ptr).expect("queue item non-null"));
+            let req = self.requests.get()[offset].as_non_null();
+            let req_ptr: *mut PostgresSQLQuery = req.as_ptr();
+            let req = ParentRef::from(req);
             match req.status.get() {
                 QueryStatus::Pending => {
                     // Optimistically account for this request leaving Pending; the

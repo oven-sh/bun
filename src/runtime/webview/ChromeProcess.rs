@@ -18,7 +18,6 @@
 //! and the write path can share it.
 //! Windows (no inheritable sockets): two uv_pipe()s driven here instead, see [`PipeEvent`] and `Bun__Chrome__writePipe`.
 
-use bun_ptr::RefPtr;
 use core::ffi::{CStr, c_char};
 use core::ptr;
 #[cfg(windows)]
@@ -38,7 +37,8 @@ use bun_paths::{self, path_buffer_pool, platform, resolve_path};
 #[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::{
-    self, EventLoopHandle, Process, ProcessExit, ProcessExitKind, SpawnOptions, Status, Stdio,
+    self, EventLoopHandle, Process, ProcessExit, ProcessExitKind, ProcessHandle, SpawnOptions,
+    Status, Stdio,
 };
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
@@ -50,10 +50,7 @@ use bun_which::which;
 declare_scope!(Chrome, hidden);
 
 pub(crate) struct ChromeProcess {
-    // Intrusive refcount (`.deref()` called in on_process_exit); kept raw
-    // because the refcount, not this struct, owns the allocation.
-    /// Our ref on the child; released when this box drops.
-    process: RefPtr<Process>,
+    process: ProcessHandle,
     /// Set by [`Bun__Chrome__retire`]: the exit is reaped but not reported to C++.
     retired: bool,
     #[cfg(windows)]
@@ -93,9 +90,7 @@ extern "C" fn Bun__Chrome__kill() {
     // SAFETY: JS-thread-only global; see INSTANCE decl.
     unsafe {
         if let Some(i) = INSTANCE.load(Ordering::Relaxed).as_mut() {
-            // SAFETY: INSTANCE is set to a live heap-allocated pointer in
-            // spawn() and cleared in on_process_exit before the box is dropped.
-            let _ = (*i.process.as_ptr()).kill(9);
+            let _ = i.process.kill(9);
         }
     }
 }
@@ -116,8 +111,7 @@ extern "C" fn Bun__Chrome__retire() {
         GENERATION.fetch_add(1, Ordering::Relaxed);
         chrome.pipes.close();
     }
-    // SAFETY: `process` is live until `on_exit` derefs it.
-    let _ = unsafe { (*chrome.process.as_ptr()).kill(9) };
+    let _ = chrome.process.kill(9);
 }
 
 /// Returns the parent's socketpair fd (POSIX, owned by usockets from then on), 0 (Windows), or -1 on failure.
@@ -614,8 +608,7 @@ fn spawn(
         // Keeping our copies of the child's ends would mask Chrome's death (no EOF).
         endpoints.close_child_ends();
 
-        let process = spawned.to_process_handle(event_loop).into_ref();
-        endpoints.attach(process)
+        endpoints.attach(spawned.to_process_handle(event_loop))
     }
 }
 
@@ -679,19 +672,21 @@ impl Endpoints {
     }
 
     /// Publishes the singleton and returns our fd for C++ to adopt.
-    fn attach(mut self, process_ref: RefPtr<Process>) -> crate::Result<i32> {
-        let process: *mut Process = process_ref.as_ptr();
+    fn attach(mut self, process: ProcessHandle) -> crate::Result<i32> {
         let self_ptr = bun_core::heap::into_raw(Box::new(ChromeProcess {
-            process: process_ref,
+            process,
             retired: false,
         }));
-        // SAFETY: `self_ptr` is a freshly-allocated, exclusively-owned Box that
-        // owns `process` and outlives it.
-        unsafe {
-            (*process).set_exit_handler(ProcessExit::new(ProcessExitKind::ChromeProcess, self_ptr));
-        }
-        // SAFETY: process is live and exclusively owned here.
-        if let Err(e) = unsafe { (*process).watch() } {
+        // SAFETY: `self_ptr` is the freshly-allocated Box that owns `process`
+        // and outlives it.
+        let process = unsafe {
+            let process = &(*self_ptr).process;
+            process
+                .process_mut()
+                .set_exit_handler(ProcessExit::new(ProcessExitKind::ChromeProcess, self_ptr));
+            process
+        };
+        if let Err(e) = process.process_mut().watch() {
             scoped_log!(Chrome, "watch failed: {}", e);
             // SAFETY: reclaim the Box (drops our process ref).
             drop(unsafe { bun_core::heap::take(self_ptr) });
@@ -701,8 +696,7 @@ impl Endpoints {
         // Same weak-handle reasoning as HostProcess: parent exit → Chrome's
         // fd 3 EOFs → DevToolsPipeHandler::Shutdown → exit. dispatchOnExit
         // also SIGKILLs via Bun__Chrome__kill.
-        // SAFETY: process is live and exclusively owned here.
-        unsafe { (*process).disable_keeping_event_loop_alive() };
+        process.process_mut().disable_keeping_event_loop_alive();
         INSTANCE.store(self_ptr, Ordering::Relaxed);
 
         let fds = self.fds.take().expect("endpoints live");
@@ -813,8 +807,7 @@ impl Endpoints {
     }
 
     /// Moves our ends into a [`ChromeProcess`], starts reading replies, and publishes it.
-    fn attach(mut self, process_ref: RefPtr<Process>) -> crate::Result<i32> {
-        let process: *mut Process = process_ref.as_ptr();
+    fn attach(mut self, process: ProcessHandle) -> crate::Result<i32> {
         let pipes = WindowsPipes {
             cmd: core::mem::replace(&mut self.cmd, ptr::null_mut()),
             reply: core::mem::replace(&mut self.reply, ptr::null_mut()),
@@ -823,11 +816,13 @@ impl Endpoints {
         let reply = pipes.reply;
         let generation = GENERATION.load(Ordering::Relaxed).wrapping_add(1);
         let self_ptr = bun_core::heap::into_raw(Box::new(ChromeProcess {
-            process: process_ref,
+            process,
             retired: false,
             pipes,
             generation,
         }));
+        // SAFETY: `self_ptr` is the freshly-allocated Box that owns `process`.
+        let process: *mut Process = unsafe { (*self_ptr).process.as_ptr() };
 
         // Unlike POSIX the exit can't be delivered before we return (it comes
         // through this thread's loop), so the exit handler is installed after.
@@ -841,13 +836,12 @@ impl Endpoints {
         };
         if let Err(err) = started {
             scoped_log!(Chrome, "read_start/watch failed: {}", err);
-            // SAFETY: `self_ptr` is unpublished and we hold the strong ref;
-            // `detach` closes the handle before the deref can free the Process.
+            // SAFETY: `self_ptr` is unpublished; dropping it closes the pipes,
+            // then detaches and releases the process.
             unsafe {
                 let mut chrome = bun_core::heap::take(self_ptr);
                 chrome.pipes.close();
-                let _ = (*process).kill(9);
-                (*process).detach();
+                let _ = chrome.process.kill(9);
             }
             return Err(err.into());
         }

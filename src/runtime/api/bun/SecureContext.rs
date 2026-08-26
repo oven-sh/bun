@@ -35,7 +35,7 @@ pub use crate::generated_classes::js_SecureContext as js;
 #[bun_jsc::JsClass]
 #[repr(C)]
 pub struct SecureContext {
-    pub ctx: *mut boringssl::SSL_CTX,
+    pub ctx: boringssl::OwnedSslCtx,
     /// `BunSocketContextOptions.digest()` — exactly the fields that reach
     /// `us_ssl_ctx_from_options`. Stored so an `intern()` WeakGCMap hit (keyed by
     /// the low 64 bits) can do a full content-equality check before reusing.
@@ -54,13 +54,6 @@ pub(crate) fn js_live_count(_global: &JSGlobalObject, _callframe: &CallFrame) ->
     // `us_ssl_ctx_live_count` is declared `safe fn` (reads a global atomic
     // counter, no preconditions).
     Ok(JSValue::js_number(c::us_ssl_ctx_live_count() as f64))
-}
-
-impl Drop for SecureContext {
-    fn drop(&mut self) {
-        // SAFETY: `ctx` was created by `SSL_CTX_new`; freed exactly once here.
-        unsafe { boringssl::SSL_CTX_free(self.ctx) };
-    }
 }
 
 impl SecureContext {
@@ -369,15 +362,11 @@ impl SecureContext {
         }))
     }
 
-    /// `SSL_CTX_up_ref` and return — for callers that want to outlive this
+    /// Another ref on the context, for callers that want to outlive this
     /// wrapper's GC. Most paths just pass `this.ctx` directly and let `SSL_new`
     /// take its own ref.
-    pub(crate) fn borrow(&self) -> *mut boringssl::SSL_CTX {
-        unsafe {
-            // SAFETY: self.ctx is a valid SSL_CTX* held for the lifetime of this wrapper.
-            let _ = boringssl::SSL_CTX_up_ref(self.ctx);
-        }
-        self.ctx
+    pub(crate) fn borrow(&self) -> boringssl::OwnedSslCtx {
+        self.ctx.clone()
     }
 
     /// `secureContext.context._external` — Node exposes the SSL_CTX here as an
@@ -422,7 +411,10 @@ impl SecureContext {
         // SAFETY: `this.ctx` is the live SSL_CTX this object owns a reference
         // to, and `owned` is a NUL-terminated buffer valid for the call.
         let ok = unsafe {
-            c::us_ssl_ctx_add_ca_cert(this.ctx, owned.as_ptr().cast::<core::ffi::c_char>())
+            c::us_ssl_ctx_add_ca_cert(
+                this.ctx.as_ptr(),
+                owned.as_ptr().cast::<core::ffi::c_char>(),
+            )
         };
         if ok == 0 {
             return Err(global.throw(format_args!("Invalid CA certificate")));

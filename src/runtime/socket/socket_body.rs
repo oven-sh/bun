@@ -288,9 +288,9 @@ extern "C" fn select_alpn_callback(
 #[derive(bun_ptr::RefCounted)]
 pub struct NewSocket<const SSL: bool> {
     pub(crate) socket: Cell<uws::NewSocketHandler<SSL>>,
-    /// `SSL_CTX*` this client connection was opened with. One owned ref —
-    /// `SSL_CTX_free` on deinit. Server-accepted sockets and plain TCP
-    /// leave this `None` (the Listener / SecureContext owns the ref there).
+    /// `SSL_CTX` this client connection was opened with. Server-accepted
+    /// sockets and plain TCP leave this `None` (the Listener / SecureContext
+    /// owns the ref there).
     pub(crate) owned_ssl_ctx: JsCell<Option<boringssl_sys::OwnedSslCtx>>,
 
     pub(crate) flags: Cell<Flags>,
@@ -470,12 +470,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         // is sound for that access.
         unsafe { bun_ptr::RefCount::<Self>::ref_(self.as_ctx_ptr()) };
     }
-    // R-2: takes `&self` — every mutated field is `UnsafeCell`-backed so the
-    // `*mut Self` formed for `RefCount::deref` (and onward into
-    // `Drop`) writes only through interior-mutable storage. The
-    // codegen host-fn shim still hands us a `&mut Self`-derived borrow whose
-    // root provenance is the heap allocation, so `heap::take` in the
-    // destructor remains valid.
+    // R-2: takes `&self` — every mutated field is `UnsafeCell`-backed, so the
+    // `*mut Self` formed for `RefCount::deref` (and `Drop`) writes only
+    // through interior-mutable storage.
     pub fn deref(&self) {
         // SAFETY: `self` is live; if count hits 0, `RefCounted::destructor`
         // (→ `Drop`) runs and `self` is not used after.
@@ -873,21 +870,21 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(JSValue::UNDEFINED);
         }
         let is_error = callframe.arguments_count() > 1 && is_error_arg.to_boolean();
-        // The selected context: a native SecureContext (borrow() hands back an
-        // owned SSL_CTX reference that us_socket_sni_resolve consumes) or null
-        // to fall through to the listener's default context.
+        // The selected context: a native SecureContext (a +1 reference that
+        // us_socket_sni_resolve consumes) or null to fall through to the
+        // listener's default context.
         let ctx_ptr = if callframe.arguments_count() >= 1 && !is_error {
             if let Some(sc) =
                 ctx_arg.as_class_ref::<crate::api::bun_secure_context::SecureContext>()
             {
-                sc.borrow()
+                sc.borrow().into_raw()
             } else {
                 core::ptr::null_mut()
             }
         } else {
             core::ptr::null_mut()
         };
-        socket.sni_resolve(ctx_ptr.cast(), is_error);
+        socket.sni_resolve(ctx_ptr, is_error);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -3452,10 +3449,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     sc_js,
                 ));
             };
-            // `borrow()` returns a +1 ref (it calls `SSL_CTX_up_ref`).
-            // SAFETY: that ref is ours to release.
-            owned_ctx =
-                unsafe { boringssl_sys::OwnedSslCtx::from_raw(sc.borrow().cast::<SSL_CTX>()) };
+            owned_ctx = Some(sc.borrow());
             // servername / ALPN still come from the surrounding tls config.
             if let Some(t) = opts.get_truthy(global, "tls")? {
                 if !t.is_boolean() {
@@ -3495,24 +3489,20 @@ impl<const SSL: bool> NewSocket<SSL> {
                 // stable address for the VM's lifetime, JS-thread-only access.
                 unsafe { &mut (*state).ssl_ctx_cache }
             };
-            owned_ctx = match cache.get_or_create(cfg, &mut create_err) {
-                // SAFETY: `get_or_create` hands back a +1 ref.
-                Some(c) => unsafe { boringssl_sys::OwnedSslCtx::from_raw(c.cast::<SSL_CTX>()) },
-                None => {
-                    // us_ssl_ctx_from_options only sets *err for the CA/cipher
-                    // cases; bad cert/key/DH return NULL with err==.none and the
-                    // detail is on the BoringSSL error queue.
-                    if create_err != uws::create_bun_socket_error_t::none {
-                        return Err(global.throw_value(
-                            crate::socket::uws_jsc::create_bun_socket_error_to_js(
-                                create_err, global,
-                            ),
-                        ));
-                    }
-                    return Err(global
-                        .throw_value(boringssl_err_to_js(global, boringssl_sys::ERR_get_error())));
+            owned_ctx = cache.get_or_create(cfg, &mut create_err);
+            if owned_ctx.is_none() {
+                // us_ssl_ctx_from_options only sets *err for the CA/cipher
+                // cases; bad cert/key/DH return NULL with err==.none and the
+                // detail is on the BoringSSL error queue.
+                if create_err != uws::create_bun_socket_error_t::none {
+                    return Err(global.throw_value(
+                        crate::socket::uws_jsc::create_bun_socket_error_to_js(create_err, global),
+                    ));
                 }
-            };
+                return Err(
+                    global.throw_value(boringssl_err_to_js(global, boringssl_sys::ERR_get_error()))
+                );
+            }
         } else {
             return Err(global.throw(format_args!("Expected \"tls\" option")));
         }
@@ -4231,10 +4221,10 @@ pub(crate) struct DuplexUpgradeContext {
     /// Config to build a fresh `SSL_CTX` from (legacy `{ca,cert,key}` callers).
     /// Mutually exclusive with `owned_ctx` — `runEvent` prefers `owned_ctx`.
     pub ssl_config: JsCell<Option<SSLConfig>>,
-    /// One ref on a prebuilt `SSL_CTX` (from `opts.tls.secureContext` — the
-    /// memoised `tls.createSecureContext` path). Adopted by `start_tls_with_ctx`
-    /// on success, freed in `deinit` if Close races ahead of StartTLS.
-    pub owned_ctx: Cell<Option<*mut SSL_CTX>>,
+    /// Prebuilt `SSL_CTX` (from `opts.tls.secureContext` — the memoised
+    /// `tls.createSecureContext` path). Moved into `start_tls_with_ctx`;
+    /// dropped in `deinit` if Close races ahead of StartTLS.
+    pub owned_ctx: JsCell<Option<boringssl_sys::OwnedSslCtx>>,
     pub is_open: Cell<bool>,
     /// Server-side `requestCert`/`rejectUnauthorized`, applied to the `SSL*`
     /// when `StartTLS` builds it. Unused for client upgrades.
@@ -4411,8 +4401,6 @@ impl DuplexUpgradeContext {
                 let is_client = this.mode == SocketMode::Client;
                 let verify = this.server_verify;
                 let started: crate::Result<()> = if let Some(ctx) = this.owned_ctx.take() {
-                    // Transfer the ref into SSLWrapper; null first so the
-                    // failure path / deinit don't double-free it.
                     this.upgrade.start_tls_with_ctx(ctx, is_client, verify)
                 } else if let Some(config) = this.ssl_config.replace(None) {
                     // Lent out of the cell: `start_tls` dispatches `on_open` synchronously.
@@ -4519,12 +4507,9 @@ impl DuplexUpgradeContext {
             // SAFETY: `this` is live; this borrow ends with the block, before the `heap::take` free below.
             let ctx = unsafe { &*this };
             ctx.tls.set(None);
-            // Close raced ahead of StartTLS — drop the unconsumed config.
+            // Close raced ahead of StartTLS — drop the unconsumed config / ctx.
             ctx.ssl_config.set(None);
-            if let Some(ssl_ctx) = ctx.owned_ctx.take() {
-                // SAFETY: BoringSSL FFI; we hold one owned ref.
-                unsafe { boringssl_sys::SSL_CTX_free(ssl_ctx) };
-            }
+            ctx.owned_ctx.set(None);
         }
         // `UpgradedDuplex` cleanup
         // runs via `Drop` when `heap::take(this)` frees the containing
@@ -4628,9 +4613,7 @@ pub fn js_upgrade_duplex_to_tls(
                 sc_js,
             ));
         };
-        // `borrow()` returns a +1 ref (it calls `SSL_CTX_up_ref`).
-        // SAFETY: that ref is ours to release.
-        owned_ctx = unsafe { boringssl_sys::OwnedSslCtx::from_raw(sc.borrow().cast::<SSL_CTX>()) };
+        owned_ctx = Some(sc.borrow());
     }
 
     // Still parse SSLConfig for servername/ALPN (those live on the JS-side
@@ -4708,8 +4691,7 @@ pub fn js_upgrade_duplex_to_tls(
     let tls_js_value = tls_ref.get_this_value(global);
     TLSSocket::data_set_cached(tls_js_value, global, default_data);
 
-    // The +1 `SSL_CTX` ref transfers into `DuplexUpgradeContext.owned_ctx` below.
-    let owned_ctx_taken = owned_ctx.map(|c| c.into_raw());
+    let has_owned_ctx = owned_ctx.is_some();
 
     // `DuplexUpgradeContext` is self-referential: `task.ctx` and
     // `upgrade.handlers.ctx` both point at the containing allocation, and
@@ -4735,14 +4717,12 @@ pub fn js_upgrade_duplex_to_tls(
         // `ssl_config` for SSL_CTX construction; servername/ALPN already
         // copied onto `tls` above so the config's only remaining use is the
         // legacy build path.
-        ptr::addr_of_mut!((*duplex_context).ssl_config).write(JsCell::new(
-            if owned_ctx_taken.is_none() {
-                ssl_opts.take()
-            } else {
-                None
-            },
-        ));
-        ptr::addr_of_mut!((*duplex_context).owned_ctx).write(Cell::new(owned_ctx_taken));
+        ptr::addr_of_mut!((*duplex_context).ssl_config).write(JsCell::new(if has_owned_ctx {
+            None
+        } else {
+            ssl_opts.take()
+        }));
+        ptr::addr_of_mut!((*duplex_context).owned_ctx).write(JsCell::new(owned_ctx));
         ptr::addr_of_mut!((*duplex_context).is_open).write(Cell::new(false));
         ptr::addr_of_mut!((*duplex_context).server_verify).write(server_verify);
         ptr::addr_of_mut!((*duplex_context).mode).write(if is_server {

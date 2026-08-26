@@ -47,7 +47,7 @@ export default [
     sharedThis: true,
     construct: true,
     noConstructor: true,
-    rc: true,
+    refCounted: true,
     configurable: false,
     memoryCost: true,
     klass: {},

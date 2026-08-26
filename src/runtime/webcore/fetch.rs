@@ -936,11 +936,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                             proxy_headers =
                                                 Some(from_fetch_headers(Some(&*fetch_hdrs), None));
                                         } else if let Some(fetch_hdrs) =
-                                            FetchHeaders::create_from_js(ctx, headers_value)?
+                                            HeadersRef::create_from_js(ctx, headers_value)?
                                         {
-                                            // SAFETY: `create_from_js` returns a +1 ref.
-                                            let fetch_hdrs =
-                                                unsafe { HeadersRef::adopt(fetch_hdrs) };
                                             proxy_headers =
                                                 Some(from_fetch_headers(Some(&fetch_hdrs), None));
                                         }
@@ -986,8 +983,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         if let Some(req) = request_mut!() {
             if let Some(signal_) = req.abort_signal() {
-                // SAFETY: `ref_()` returns the signal with a +1 we adopt.
-                break 'extract_signal Some(unsafe { AbortSignalRef::adopt(signal_.ref_()) });
+                break 'extract_signal Some(signal_.ref_());
             }
             break 'extract_signal None;
         }
@@ -1121,7 +1117,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // headers: Headers | undefined;
     headers = 'extract_headers: {
         // Holds the +1 from `create_from_js` until this block exits.
-        let mut _created_headers: Option<HeadersRef> = None;
+        let mut created_headers: Option<HeadersRef> = None;
 
         let fetch_headers: Option<*mut FetchHeaders> = 'brk: {
             if let Some(options) = options_object {
@@ -1137,10 +1133,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             break 'brk Some(headers__.as_ptr());
                         }
 
-                        if let Some(headers__) = FetchHeaders::create_from_js(ctx, headers_value)? {
-                            // SAFETY: `create_from_js` returns a +1 ref.
-                            _created_headers = Some(unsafe { HeadersRef::adopt(headers__) });
-                            break 'brk Some(headers__.as_ptr());
+                        if let Some(headers__) = HeadersRef::create_from_js(ctx, headers_value)? {
+                            break 'brk Some(created_headers.insert(headers__).as_ptr());
                         }
 
                         break 'brk None;
@@ -1168,10 +1162,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             break 'brk Some(headers__.as_ptr());
                         }
 
-                        if let Some(headers__) = FetchHeaders::create_from_js(ctx, headers_value)? {
-                            // SAFETY: `create_from_js` returns a +1 ref.
-                            _created_headers = Some(unsafe { HeadersRef::adopt(headers__) });
-                            break 'brk Some(headers__.as_ptr());
+                        if let Some(headers__) = HeadersRef::create_from_js(ctx, headers_value)? {
+                            break 'brk Some(created_headers.insert(headers__).as_ptr());
                         }
 
                         break 'brk None;
@@ -1184,7 +1176,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         let result = if let Some(headers_) = fetch_headers {
             // `headers_` points to a live FetchHeaders (either JS-owned or
-            // refcounted via `_created_headers` above). `FetchHeaders` is
+            // refcounted via `created_headers` above). `FetchHeaders` is
             // an opaque ZST FFI handle (S008) — safe `*mut → &mut` deref.
             let headers_ref = bun_opaque::opaque_deref_mut(headers_);
             if let Some(hostname_) = headers_ref.fast_get(HTTPHeaderName::Host) {

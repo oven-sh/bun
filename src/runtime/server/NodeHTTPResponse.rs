@@ -21,9 +21,7 @@ use crate::webcore::AutoFlusher;
 
 bun_core::declare_scope!(NodeHTTPResponse, visible);
 
-/// Intrusive ref-counted; `ref_count` is managed by `ref_` / `deref` below
-/// (FFI rule — `*mut NodeHTTPResponse` is the m_ctx payload of a
-/// `.classes.ts` wrapper). `deinit` runs when count hits zero.
+/// Intrusively ref-counted m_ctx payload of a `.classes.ts` wrapper.
 ///
 /// `#[JsClass(no_constructor)]` wires the import-side `${T}__fromJS` /
 /// `__fromJSDirect` / `__create` externs into a `JsClass` impl plus an
@@ -32,8 +30,9 @@ bun_core::declare_scope!(NodeHTTPResponse, visible);
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
 #[bun_jsc::JsClass(no_constructor)]
+#[derive(bun_ptr::RefCounted)]
 pub struct NodeHTTPResponse {
-    pub(crate) ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount<Self>,
 
     pub(crate) raw_response: Cell<Option<uws::AnyResponse>>,
 
@@ -79,9 +78,6 @@ pub struct NodeHTTPResponse {
 
     pub(crate) auto_flusher: JsCell<AutoFlusher>,
 }
-
-// Intrusive refcount methods (`ref_` / `deref`) are hand-rolled below over the
-// `ref_count` field; `deinit` is the destructor invoked when count hits zero.
 
 bitflags! {
     #[repr(transparent)]
@@ -2515,8 +2511,30 @@ impl NodeHTTPResponse {
         self.armed_this_value.set(JSValue::ZERO);
     }
 
-    /// Called by intrusive RefCount when count reaches zero.
-    fn deinit(&self) {
+    #[inline]
+    fn ref_(&self) {
+        // SAFETY: `self` is live; only the interior-mutable count is touched.
+        unsafe { bun_ptr::RefCount::<Self>::ref_(self.as_ctx_ptr()) };
+    }
+
+    #[inline]
+    pub(crate) fn deref(&self) {
+        // SAFETY: `self` is the live heap allocation; every field is
+        // `Cell`/`JsCell`, so `Drop` writes only through interior-mutable
+        // storage. Callers do not touch `self` after this when it was the last ref.
+        unsafe { bun_ptr::RefCount::<Self>::deref(self.as_ctx_ptr()) };
+    }
+
+    /// Hold a ref on `self` for the guard's lifetime (across re-entrant JS).
+    #[inline]
+    fn ref_guard(&self) -> bun_ptr::RefPtr<Self> {
+        // SAFETY: `self` is the live heap allocation.
+        unsafe { bun_ptr::RefPtr::init_ref(self.as_ctx_ptr()) }
+    }
+}
+
+impl Drop for NodeHTTPResponse {
+    fn drop(&mut self) {
         debug_assert!(!self.body_read_ref.get().has);
         debug_assert!(!self.poll_ref.get().has);
         debug_assert!(!self.pending_pinned_write.get().is_some());
@@ -2535,57 +2553,6 @@ impl NodeHTTPResponse {
         self.body_read_ref.with_mut(|r| r.unref(vm_get()));
 
         self.promise.with_mut(|p| p.deinit());
-        // SAFETY: self was allocated via `heap::into_raw` in `NodeHTTPResponse__createForJS`;
-        // refcount is zero so no other references remain — `self` is the unique
-        // owner at count==0, so the `*const → *mut` cast is sound.
-        unsafe { drop(bun_core::heap::take(self.as_ctx_ptr())) };
-    }
-
-    // Intrusive refcount helpers.
-    #[inline]
-    fn ref_(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
-    }
-
-    #[inline]
-    pub(crate) fn deref(&self) {
-        let n = self.ref_count.get() - 1;
-        self.ref_count.set(n);
-        if n == 0 {
-            self.deinit();
-        }
-    }
-
-    /// Hold a ref on `self` for the guard's lifetime (across re-entrant JS).
-    #[inline]
-    fn ref_guard(&self) -> bun_ptr::RefPtr<Self> {
-        // SAFETY: `self` is the live heap allocation.
-        unsafe { bun_ptr::RefPtr::init_ref(self.as_ctx_ptr()) }
-    }
-}
-
-// `AnyRefCounted` bridge so `RefPtr` / the `rc` finalizer accept this
-// type. Hand-written (not `#[derive(CellRefCounted)]`) because the existing
-// `&self`-receiver `deref()` above is called from ~10 sites that route through
-// `as_ctx_ptr()`-derived provenance; converting them to `unsafe deref(*mut)`
-// is a separate sweep.
-impl bun_ptr::AnyRefCounted for NodeHTTPResponse {
-    #[inline]
-    unsafe fn rc_ref(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live; touches only the
-        // interior-mutable `Cell<u32>` field.
-        unsafe { (*this).ref_() }
-    }
-    #[inline]
-    unsafe fn rc_deref(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live; `deref()` touches only
-        // `Cell`/`JsCell` fields and on zero frees via `heap::take`.
-        unsafe { (*this).deref() }
-    }
-    #[inline]
-    unsafe fn rc_has_one_ref(this: *const Self) -> bool {
-        // SAFETY: caller contract — `this` is live.
-        unsafe { (*this).ref_count.get() == 1 }
     }
 }
 
@@ -2658,7 +2625,7 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         // 1 - the HTTP response
         // 1 - the JS object
         // 1 - the Server handler.
-        ref_count: Cell::new(3),
+        ref_count: bun_ptr::RefCount::init_exact_refs(3),
         upgrade_context: JsCell::new(UpgradeCTX {
             context: upgrade_ctx,
             request,

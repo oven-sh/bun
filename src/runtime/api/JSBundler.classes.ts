@@ -5,7 +5,7 @@ export default [
     name: "Transpiler",
     rustPath: "crate::api::js_transpiler::JSTranspiler",
     construct: true,
-    rc: true,
+    refCounted: true,
     hasPendingActivity: false,
     configurable: false,
     klass: {},

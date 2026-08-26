@@ -88,15 +88,15 @@ unsafe extern "C" {
 /// §Forbidden — the callback can reach the same field via `cancel()`/
 /// `refresh()`). Provenance is `&self`-derived (read-only); the `*mut` is a
 /// type-only cast — writes must go through `Cell`/`UnsafeCell` fields.
+enum TimerParent {
+    Immediate(*mut ImmediateObject),
+    Timeout(*mut TimeoutObject),
+}
+
 /// A ref held on whichever container `TimerObjectInternals` lives in.
 enum TimerParentRef {
     Immediate { _ref: RefPtr<ImmediateObject> },
     Timeout { _ref: RefPtr<TimeoutObject> },
-}
-
-enum TimerParent {
-    Immediate(*mut ImmediateObject),
-    Timeout(*mut TimeoutObject),
 }
 
 impl TimerObjectInternals {

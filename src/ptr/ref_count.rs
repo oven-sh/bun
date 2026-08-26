@@ -617,7 +617,13 @@ impl<T: AnyRefCounted> RefPtr<T> {
     /// (`Arc::into_raw` semantics).
     #[inline]
     pub fn into_raw(self) -> *mut T {
-        core::mem::ManuallyDrop::new(self).0.as_ptr()
+        self.into_non_null().as_ptr()
+    }
+
+    /// [`into_raw`](Self::into_raw) as a `NonNull`.
+    #[inline]
+    pub fn into_non_null(self) -> NonNull<T> {
+        core::mem::ManuallyDrop::new(self).0
     }
 
     /// A [`ThisPtr`](crate::ThisPtr) to the pointee, valid while this (or

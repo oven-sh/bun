@@ -801,7 +801,10 @@ thread_local! {
     // Reused iovec scratch for the vectored flush.
     static BATCH_IOVECS: RefCell<Vec<bun_uws_sys::UsIoVec>> = const { RefCell::new(Vec::new()) };
     /// The parser whose frames `CORK_BUFFER` holds; the slot keeps a ref on it.
-    static CORKED_H2: Cell<Option<RefPtr<H2FrameParser>>> = const { Cell::new(None) };
+    /// `ManuallyDrop` so the slot needs no TLS destructor (a bare
+    /// `#[thread_local]`, and nothing derefs a parser at thread exit).
+    static CORKED_H2: Cell<ManuallyDrop<Option<RefPtr<H2FrameParser>>>> =
+        const { Cell::new(ManuallyDrop::new(None)) };
     // `ManuallyDrop` inside the `Box`: the TLS destructor runs after
     // `WebWorker::destroy` has raw-deallocated the VM, so `HiveArray::Drop`
     // on any leaked parser would touch freed JSC/uws state. Skip slot
@@ -1157,12 +1160,12 @@ impl H2FrameParser {
         unsafe { bun_ptr::RefCount::<Self>::ref_(self.as_ctx_ptr()) };
     }
     // R-2: `&self` — `RefCount` is `Cell`-backed and every other field is
-    // `Cell`/`JsCell`, so `destructor()` (→ `deinit()`) writes only through
-    // `UnsafeCell`-derived pointers; the `*mut` cast is signature-only.
+    // `Cell`/`JsCell`, so `Drop` writes only through `UnsafeCell`-derived
+    // pointers; the `*mut` cast is signature-only.
     pub(crate) fn deref(&self) {
         // SAFETY: `self` is live; `deref` decrements the intrusive count and,
-        // on zero, calls `destructor(this)` which frees via `heap::take`.
-        // The caller must not touch `self` after this returns when count was 1.
+        // on zero, drops and releases the slot. The caller must not touch
+        // `self` after this returns when count was 1.
         unsafe { bun_ptr::RefCount::<Self>::deref(self.as_ctx_ptr()) };
     }
 }
@@ -1800,15 +1803,9 @@ impl Stream {
     }
 
     pub fn attach_signal(&mut self, parser: &H2FrameParser, signal: &mut AbortSignal) {
-        // `ref_()` bumps the C++ intrusive refcount and returns the same live
-        // `self` pointer with FFI (wildcard) provenance — store *that* in the
-        // `BackRef` so its validity is tied to the refcount, not to the
-        // borrowed `&mut AbortSignal` parameter's lifetime.
-        // SAFETY: `ref_()` returns the signal with a +1 we adopt.
-        let refed = unsafe { bun_jsc::AbortSignalRef::adopt(signal.ref_()) };
         // we need a stable pointer to know what signal points to what stream_id + parser
         let mut signal_ref = Box::new(SignalRef {
-            signal: refed,
+            signal: signal.ref_(),
             parser: parser.ref_guard(),
             stream_id: self.id,
         });
@@ -2411,10 +2408,14 @@ impl H2FrameParser {
         self.register_auto_flush();
     }
 
+    fn set_corked(parser: Option<RefPtr<H2FrameParser>>) -> Option<RefPtr<H2FrameParser>> {
+        CORKED_H2.with(|c| ManuallyDrop::into_inner(c.replace(ManuallyDrop::new(parser))))
+    }
+
     /// The parser holding the cork slot, if any.
     fn corked() -> Option<*mut H2FrameParser> {
         // SAFETY: JS-thread-local; peeks without moving the ref out.
-        CORKED_H2.with(|c| unsafe { (*c.as_ptr()).as_ref().map(RefPtr::as_ptr) })
+        CORKED_H2.with(|c| unsafe { (**c.as_ptr()).as_ref().map(RefPtr::as_ptr) })
     }
 
     fn cork(&self) {
@@ -2428,8 +2429,7 @@ impl H2FrameParser {
             unsafe { (*corked.cast_const()).uncork() };
         }
         // cork
-        // SAFETY: `self` is live.
-        CORKED_H2.with(|c| c.set(Some(unsafe { RefPtr::init_ref(self.as_ctx_ptr()) })));
+        Self::set_corked(Some(self.ref_guard()));
         self.register_auto_flush();
         bun_output::scoped_log!(H2FrameParser, "cork {:p}", self);
         CORK_OFFSET.with(|c| c.set(0));
@@ -2799,7 +2799,7 @@ impl H2FrameParser {
         self.unregister_auto_flush();
         bun_output::scoped_log!(H2FrameParser, "uncork {:p}", corked_ptr);
         // The slot's ref on `self`, released once the corked bytes are written.
-        let _slot_ref = CORKED_H2.with(|c| c.take());
+        let _slot_ref = Self::set_corked(None);
 
         // _write can re-enter JS (JS-stream-backed sockets, h2-over-h2 tunnels),
         // so no thread-local borrow may be held across it: move the corked bytes
@@ -7810,7 +7810,7 @@ impl H2FrameParser {
     /// `process.exit()` never unwinds: the VM is destructed from inside the `exit()` call, so
     /// every `+1` taken by a frame that was still on the stack when JS called it — an inbound
     /// dispatch (`on_native_read`), a write that re-entered JS (`_write`, `send_data`) — is never
-    /// released, and neither is the cork slot's ref nor the queued auto-flush task's. `deinit()`
+    /// released, and neither is the cork slot's ref nor the queued auto-flush task's. `Drop`
     /// therefore never runs and the parser leaks everything it owns (LeakSanitizer sees the
     /// refcount's own debug map, the HPACK handle, the read/write buffers).
     ///
@@ -7823,7 +7823,7 @@ impl H2FrameParser {
         // socket; the process is exiting, so drop them and just release the slot's ref.
         if Self::corked() == Some(self.as_ctx_ptr()) {
             CORK_OFFSET.with(|c| c.set(0));
-            drop(CORKED_H2.with(|c| c.take()));
+            drop(Self::set_corked(None));
         }
         // Removes the deferred task (its ctx is `self`) and releases the ref it holds.
         self.unregister_auto_flush();
@@ -7860,7 +7860,7 @@ impl H2FrameParser {
         self.strong_this.set(JsRef::empty());
         if VirtualMachine::get().is_shutting_down() {
             // Free the streams first: `free_resources` releases the refs their signals hold.
-            // The map is emptied so a later deinit() won't double-free.
+            // The map is emptied so a later `Drop` won't double-free.
             let streams = self.streams.replace(BunHashMap::default());
             for (_, item) in streams.iter() {
                 let stream = *item;
@@ -7872,7 +7872,7 @@ impl H2FrameParser {
             }
             drop(streams);
             // Then the refs of frames/tasks that will never run again, so the
-            // wrapper's deref can actually reach zero and run deinit().
+            // wrapper's deref can actually reach zero and run `Drop`.
             self.release_refs_stranded_by_exit();
         }
     }

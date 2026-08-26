@@ -31,7 +31,6 @@ mod _impl {
     // `mod js { write_callback_*, error_callback_*, ... }` is emitted by
     // `__impl_compression_stream!` below (wraps `bun_jsc::codegen_cached_accessors!`).
 
-    /// Intrusive refcount; [`NativeZlib::deinit`] runs when it hits zero.
     #[bun_jsc::JsClass]
     #[derive(bun_ptr::CellRefCounted)]
     pub struct NativeZlib {

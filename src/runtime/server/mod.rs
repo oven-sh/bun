@@ -263,10 +263,7 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
 
     pub(crate) flags: ServerFlags,
 
-    /// Intrusively-refcounted plugin state. Stored as a `BackRef` (not `Rc`)
-    /// because (a) the same `*mut ServePlugins` is smuggled through
-    /// `JSValue::then` as a promise context and (b) `ServePlugins` is mutated
-    /// through any owner.
+    /// Shared plugin state; also passed through `JSValue::then` as a promise context.
     pub(crate) plugins: Option<bun_ptr::RefPtr<ServePlugins>>,
 
     pub(crate) dev_server: Option<Box<crate::bake::DevServer::DevServer>>,
@@ -788,9 +785,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         ctx_ref.signal.set(core::ptr::NonNull::new(signal));
         bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
 
-        // SAFETY: `signal.ref_()` bumps the intrusive count and returns +1.
-        let signal_ref =
-            unsafe { jsc::AbortSignalRef::adopt(bun_opaque::opaque_deref_mut(signal).ref_()) };
+        let signal_ref = bun_opaque::opaque_deref_mut(signal).ref_();
         // ownership: `Request::new` is `bun.TrivialNew` — the heap
         // allocation is handed to the JS GC via `to_js`/`to_js_for_bake` (C++
         // wrapper finalizer frees it), or, for `CreateJsRequest::No`, retained

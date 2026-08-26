@@ -5,7 +5,7 @@ use std::time::Instant;
 
 #[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
-use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
+use crate::api::bun::process::{self as spawn, Rusage, SpawnOptions, Status};
 use crate::cli::Command;
 use crate::cli::filter_arg as FilterArg;
 use crate::cli::run_command::{ConfigureEnvOptions, RunCommand};
@@ -40,7 +40,7 @@ struct ScriptConfig {
 }
 
 struct ProcessInfo {
-    ptr: spawn::ProcessHandle,
+    process: spawn::ProcessHandle,
     status: Status,
     start_time: Instant,
     /// Set together with `status` when the exit arrives.
@@ -181,21 +181,17 @@ impl<'a> ProcessHandle<'a> {
         }
 
         handle.process = Some(ProcessInfo {
-            ptr: process,
+            process,
             status: Status::Running,
             start_time,
             end_time: None,
         });
-        let process: *mut Process = handle.process.as_ref().unwrap().ptr.as_ptr();
-        // SAFETY: just spawned; owner backref set before any reap callback can fire.
-        let process = unsafe { &mut *process };
+        let handle_ptr = std::ptr::from_mut::<ProcessHandle<'a>>(handle);
+        let process = &handle.process.as_ref().unwrap().process;
         // SAFETY: `handle` is the live `ProcessHandle` slot in `State.handles`;
         // it owns `process` and outlives it.
-        process.set_exit_handler(unsafe {
-            bun_spawn::ProcessExit::new(
-                bun_spawn::ProcessExitKind::FilterRunHandle,
-                std::ptr::from_mut::<ProcessHandle<'a>>(handle),
-            )
+        process.process_mut().set_exit_handler(unsafe {
+            bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::FilterRunHandle, handle_ptr)
         });
 
         match process.watch_or_reap() {
@@ -649,7 +645,7 @@ impl<'a> State<'a> {
             // SAFETY: points into `self.handles`, live for the whole run loop.
             if let Some(proc) = unsafe { (*handle).process.as_ref() } {
                 // if we get an error here we simply ignore it
-                let _ = proc.ptr.kill(bun_sys::SignalCode::SIGINT.0);
+                let _ = proc.process.kill(bun_sys::SignalCode::SIGINT.0);
             }
             // An already-exited handle may be waiting on pipes a grandchild
             // still holds; with `aborted` set this finishes it now. Killed

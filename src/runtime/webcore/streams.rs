@@ -2176,10 +2176,6 @@ impl NetworkSink {
     }
 
     /// Shared borrow of the upload task, if attached.
-    ///
-    /// SAFETY (invariant): `task` is an intrusively ref-counted heap allocation;
-    /// while `Some`, this sink holds a counted ref (released in `detach_writable`),
-    /// so the pointee is live for at least `'_`.
     #[inline]
     fn task_ref(&self) -> Option<&bun_s3::MultiPartUpload> {
         self.task.as_deref()
@@ -2442,13 +2438,13 @@ impl NetworkSink {
             return;
         }
         // SAFETY: scoped accesses for field writes; no re-entry in this block.
-        let (task_ref, wrapper) = unsafe {
+        let (task, wrapper) = unsafe {
             (*this).ended = true;
             (*this).source.clear();
-            let Some(task_ref) = (*this).task.as_deref() else {
+            let Some(task) = (*this).task.as_deref() else {
                 return;
             };
-            let wrapper = task_ref
+            let wrapper = task
                 .callback_context
                 .get()
                 .cast::<crate::webcore::s3::client::S3UploadStreamWrapper>();
@@ -2462,9 +2458,8 @@ impl NetworkSink {
                     (*this).upstream_error.set(&global, js_err);
                 }
             }
-            (task_ref, wrapper)
+            (task, wrapper)
         };
-        let task = task_ref;
         if err.is_some() {
             let _ = task.fail(bun_s3_signing::error::S3Error {
                 code: b"UnknownError",

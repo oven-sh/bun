@@ -325,14 +325,13 @@ impl MySQLQuery {
                 }
             }
         }
-        let stmt: *mut MySQLStatement = self.statement.as_ref().expect("set above").as_ptr();
         // `stmt` is kept alive by the ref in `self.statement`; separate heap
         // allocation (never aliases `*self`). `ParentRef` collapses the
         // read-only derefs below into one safe `Deref`; the `.Pending` arm's
         // status write goes through `get_statement()`.
-        let stmt_ref = bun_ptr::ParentRef::from(
-            core::ptr::NonNull::new(stmt).expect("self.statement set above"),
-        );
+        let stmt = self.statement.as_ref().expect("set above").as_non_null();
+        let stmt_ref = bun_ptr::ParentRef::from(stmt);
+        let stmt: *mut MySQLStatement = stmt.as_ptr();
         match stmt_ref.status {
             my_sql_statement::Status::Failed => {
                 debug!("failed");

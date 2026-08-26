@@ -1,4 +1,3 @@
-use core::cell::Cell;
 use core::ffi::c_void;
 
 use crate::socket::{SSLConfig, SSLConfigFromJs};
@@ -308,9 +307,9 @@ pub struct JSValkeyClient {
     pub poll_ref: JsCell<KeepAlive>,
 
     pub(crate) _subscription_ctx: JsCell<SubscriptionCtx>,
-    /// `us_ssl_ctx_t` for `tls: { …custom CA… }`. `tls: true` borrows
+    /// `SSL_CTX` for `tls: { …custom CA… }`. `tls: true` borrows
     /// `RareData.defaultClientSslCtx()` instead; `tls: false` leaves this null.
-    pub(crate) _secure: Cell<Option<*mut uws::SslCtx>>,
+    pub(crate) _secure: JsCell<Option<boringssl::c::OwnedSslCtx>>,
 
     pub(crate) timer: RefCountedTimer,
     pub(crate) reconnect_timer: RefCountedTimer,
@@ -418,10 +417,6 @@ impl Drop for JSValkeyClient {
         debug_assert!(self.client.get().socket.is_closed());
         debug_assert!(self.timer.held_ref.get().is_none());
         debug_assert!(self.reconnect_timer.held_ref.get().is_none());
-        if let Some(s) = self._secure.get() {
-            // SAFETY: SSL_CTX is C-refcounted; this releases our ref.
-            unsafe { boringssl::c::SSL_CTX_free(s) };
-        }
         self.client_mut().shutdown(None);
         self.poll_ref.with_mut(|r| r.disable());
         self.stop_timers();
@@ -430,28 +425,6 @@ impl Drop for JSValkeyClient {
 }
 
 impl JSValkeyClient {
-    #[inline]
-    pub fn ref_(&self) {
-        // SAFETY: `self` is live; intrusive count is interior-mutable.
-        unsafe { bun_ptr::RefCount::ref_(std::ptr::from_ref::<Self>(self).cast_mut()) };
-    }
-    /// Decrement the intrusive refcount; on zero runs [`deinit`](Self::deinit)
-    /// which frees the heap allocation. After this returns `this` may dangle.
-    ///
-    /// Takes a raw pointer (not `&self`) because a `&self` argument would carry
-    /// a Stacked Borrows protector for the whole call frame, making the
-    /// in-frame deallocation in `deinit` UB ("deallocating while item is
-    /// protected"). Callers that hold a live `&Self` and can prove the count
-    /// stays > 0 may pass `std::ptr::from_ref(self).cast_mut()`.
-    ///
-    /// # Safety
-    /// `this` must point to a live, `heap`-allocated `JSValkeyClient` and the
-    /// caller must own one ref.
-    #[inline]
-    pub unsafe fn deref(this: *mut Self) {
-        // SAFETY: caller contract.
-        unsafe { bun_ptr::RefCount::deref(this) };
-    }
     /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
     #[inline]
     pub(crate) fn ref_guard(&self) -> RefPtr<Self> {
@@ -764,7 +737,7 @@ impl JSValkeyClient {
             global_object,
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::default()),
-            _secure: Cell::new(None),
+            _secure: JsCell::new(None),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
         }))
@@ -876,7 +849,7 @@ impl JSValkeyClient {
             global_object,
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::default()),
-            _secure: Cell::new(None),
+            _secure: JsCell::new(None),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
         }))
@@ -1503,7 +1476,7 @@ impl JSValkeyClient {
         let ssl_ctx: Option<*mut uws::SslCtx> = match &self.client.get().tls {
             valkey::TLS::None => None,
             valkey::TLS::Enabled => Some(crate::jsc_hooks::default_client_ssl_ctx(vm)),
-            valkey::TLS::Custom(_) => Some(self._secure.get().unwrap()),
+            valkey::TLS::Custom(_) => Some(self._secure.get().as_ref().unwrap().as_ptr()),
         };
 
         self.client_mut().status = valkey::Status::Connecting;

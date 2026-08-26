@@ -148,20 +148,26 @@ impl Drop for Process {
 /// stay live until the handle is dropped or the exit has been dispatched —
 /// keeping the handle in one of the owner's fields satisfies that.
 ///
-/// Every method projects a call-scoped borrow of the `Process` (its own heap
-/// allocation, event-loop thread only); none escapes this type. Dropping the
-/// handle from inside the exit handler re-enters the `Process` whose `on_exit`
-/// is dispatching, exactly as the raw-pointer owners do.
+/// Borrows of the `Process` (its own heap allocation, event-loop thread only)
+/// are call-scoped. Dropping the handle from inside the exit handler re-enters
+/// the `Process` whose `on_exit` is dispatching.
 pub struct ProcessHandle(RefPtr<Process>);
 
+impl core::ops::Deref for ProcessHandle {
+    type Target = Process;
+    #[inline]
+    fn deref(&self) -> &Process {
+        &self.0
+    }
+}
+
 impl ProcessHandle {
-    /// Call-scoped `&mut` to the process (event-loop thread only; see the
-    /// type-level note on re-entrancy).
+    /// Call-scoped `&mut` to the process (event-loop thread only).
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn process_mut(&self) -> &mut Process {
-        // SAFETY: we hold a ref, so the pointee is live; the borrow ends with
-        // the forwarding call (see the type-level note on re-entrancy).
+        // SAFETY: we hold a ref, so the pointee is live; callers keep the
+        // borrow call-scoped.
         unsafe { &mut *self.0.as_ptr() }
     }
 
@@ -183,10 +189,6 @@ impl ProcessHandle {
         self.process_mut().on_exit(status, rusage)
     }
 
-    pub fn has_exited(&self) -> bool {
-        self.0.has_exited()
-    }
-
     pub fn kill(&self, signal: u8) -> Maybe<()> {
         self.process_mut().kill(signal)
     }
@@ -194,13 +196,6 @@ impl ProcessHandle {
     /// The process's address, for identity checks in exit callbacks.
     pub fn as_ptr(&self) -> *mut Process {
         self.0.as_ptr()
-    }
-
-    /// Give up the detach-on-drop, keeping only the ref.
-    pub fn into_ref(self) -> RefPtr<Process> {
-        let this = core::mem::ManuallyDrop::new(self);
-        // SAFETY: `this` is never dropped, so the field is moved out exactly once.
-        unsafe { core::ptr::read(&raw const this.0) }
     }
 }
 
@@ -1587,16 +1582,15 @@ impl Drop for WindowsSpawnResult {
 
 #[cfg(windows)]
 impl WindowsSpawnResult {
-    pub fn to_process(&mut self, _event_loop: impl Sized) -> *mut Process {
-        self.process.take().unwrap()
+    pub fn to_process(&mut self, _event_loop: impl Sized) -> RefPtr<Process> {
+        // SAFETY: the live heap `Process` allocated by `spawn_process_windows`
+        // with its initial ref.
+        unsafe { RefPtr::from_raw(self.process.take().unwrap()) }
     }
 
-    /// [`to_process`](Self::to_process), returning the owning handle.
+    /// [`to_process`](Self::to_process) as the exit-handler owner's handle.
     pub fn to_process_handle(&mut self, event_loop: impl Sized) -> ProcessHandle {
-        // SAFETY: `to_process` returns the live heap `Process` allocated by
-        // `spawn_process_windows` with its initial ref; that ref moves into
-        // the handle.
-        ProcessHandle(unsafe { RefPtr::from_raw(self.to_process(event_loop)) })
+        ProcessHandle(self.to_process(event_loop))
     }
 }
 
@@ -1756,20 +1750,19 @@ impl WindowsSpawnOptions {
 /// `Process`/`EventLoopHandle` dependency); `to_process` is added here as a
 /// trait method so callers keep the `.to_process(loop_, sync)` spelling.
 pub trait SpawnResultExt: Sized {
-    fn to_process(self, event_loop: EventLoopHandle) -> *mut Process;
+    fn to_process(self, event_loop: EventLoopHandle) -> RefPtr<Process>;
 
-    /// [`to_process`](Self::to_process), returning the owning handle.
+    /// [`to_process`](Self::to_process) as the exit-handler owner's handle.
     fn to_process_handle(self, event_loop: EventLoopHandle) -> ProcessHandle {
-        // SAFETY: `to_process` returns a live heap `Process` whose initial ref
-        // the caller owns; that ref moves into the handle.
-        ProcessHandle(unsafe { RefPtr::from_raw(self.to_process(event_loop)) })
+        ProcessHandle(self.to_process(event_loop))
     }
 }
 
 #[cfg(unix)]
 impl SpawnResultExt for PosixSpawnResult {
-    fn to_process(self, event_loop: EventLoopHandle) -> *mut Process {
-        Process::init_posix(&self, event_loop)
+    fn to_process(self, event_loop: EventLoopHandle) -> RefPtr<Process> {
+        // SAFETY: `init_posix` heap-allocates the `Process` with its initial ref.
+        unsafe { RefPtr::from_raw(Process::init_posix(&self, event_loop)) }
     }
 }
 
@@ -2806,7 +2799,7 @@ mod spawn_process_body {
             // Borrows.
             let this_ptr: *mut SyncWindowsProcess =
                 bun_core::heap::into_raw(SyncWindowsProcess::new(SyncWindowsProcess {
-                    process: spawned.to_process(()),
+                    process: spawned.to_process(()).into_raw(),
                     stderr: Vec::new(),
                     stdout: Vec::new(),
                     err: bun_sys::E::SUCCESS,

@@ -5,7 +5,7 @@ export default [
     name: "CronJob",
     construct: false,
     noConstructor: true,
-    rc: true,
+    refCounted: true,
     configurable: false,
     klass: {},
     JSType: "0b11101110",

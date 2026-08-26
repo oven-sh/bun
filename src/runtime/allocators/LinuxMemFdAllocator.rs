@@ -67,14 +67,6 @@ impl LinuxMemFdAllocator {
         })
     }
 
-    pub fn ref_(&self) {
-        // SAFETY: `self` is a live `Self`; `ThreadSafeRefCount::ref_` only
-        // touches the interior-mutable atomic `ref_count` field.
-        unsafe {
-            bun_ptr::ThreadSafeRefCount::<Self>::ref_(std::ptr::from_ref::<Self>(self).cast_mut())
-        };
-    }
-
     /// # Safety
     /// `this` must point to a live, Box-allocated `Self` (as produced by
     /// [`Self::new`] / `RefPtr::new`), and the caller must own one

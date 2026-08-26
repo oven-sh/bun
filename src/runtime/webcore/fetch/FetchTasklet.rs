@@ -103,9 +103,6 @@ pub struct FetchTasklet {
     pub(crate) http_ticket: Option<jsc::Ticket>,
     pub global_this: GlobalRef,
     pub(crate) request_body: HTTPRequestBody,
-    // ThreadSafeStreamBuffer is intrusively refcounted (`ref_count: AtomicU32`,
-    // starts at 2) and shared with the HTTP thread via raw ptr; `Arc` can't be mutably
-    // borrowed for `acquire/release`. Model as a raw pointer.
     /// This side's ref; the HTTP thread holds the other of the two initial refs.
     pub(crate) request_body_streaming_buffer: Option<RefPtr<ThreadSafeStreamBuffer>>,
 
@@ -114,8 +111,6 @@ pub struct FetchTasklet {
     /// response weak ref we need this to track the response JS lifetime
     pub(crate) response: jsc::Weak<FetchTasklet>,
     /// native response ref if we still need it when JS is discarted
-    // Response is intrusively refcounted; modeled as a raw ptr. `Cell`: released from
-    // `on_body_stream_collected`, which only has a shared ref.
     pub(crate) native_response: JsCell<Option<RefPtr<Response>>>,
     /// The response body stream while this tasklet is its producer.
     pub(crate) response_stream: crate::webcore::byte_stream::ProducerHold,
@@ -134,9 +129,6 @@ pub struct FetchTasklet {
     /// We always clone url and proxy (if informed)
     pub(crate) url_proxy_buffer: Box<[u8]>,
 
-    // WebCore::AbortSignal is C++-refcounted (intrusive). Model as
-    // raw ptr; ref/unref via `bun_jsc::AbortSignal`
-    // methods (see clear_abort_signal / queue).
     pub(crate) signal: Option<AbortSignalRef>,
     pub(crate) signals: Signals,
     pub(crate) signal_store: http::signals::Store,

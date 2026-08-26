@@ -30,8 +30,8 @@ pub struct ParsedShellScript {
     pub(crate) quiet: Cell<bool>,
     pub(crate) cwd: JsCell<Option<BunString>>,
     /// Self-wrapper backref. `.classes.ts` has `finalize: true`, so the weak arm is
-    /// sound: codegen calls `finalize()` which flips this to `.Finalized` before sweep.
-    /// Read-only after construction; mutated only in `finalize(mut self: Box<Self>)`.
+    /// sound: the codegen finalizer drops this Box (and the `JsRef`) at sweep.
+    /// Read-only after construction.
     pub(crate) this_jsvalue: JsRef,
     /// Read-only after construction (set once before the JS wrapper exists).
     pub(crate) estimated_size_for_gc: usize,

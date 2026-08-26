@@ -42,8 +42,7 @@ pub(crate) struct ConnectionCtorArgs<M> {
     pub database_str: bun_core::String,
     pub ssl_mode: M,
     pub tls_config: SSLConfig,
-    /// `SSL_CTX*` holding one reference the caller must release on every
-    /// early exit (via [`guard_tls`]) until it transfers into the connection.
+    /// Moves into the connection.
     pub secure: Option<OwnedSslCtx>,
 }
 

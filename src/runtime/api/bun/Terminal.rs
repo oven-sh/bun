@@ -385,12 +385,18 @@ impl Terminal {
         unsafe { bun_ptr::RefCount::<Terminal>::ref_(self.as_ctx_ptr()) };
     }
 
+    /// Hold a ref on `self` for the guard's lifetime (across re-entrant JS).
+    #[cfg(unix)]
+    fn ref_guard(&self) -> bun_ptr::RefPtr<Self> {
+        // SAFETY: `self` is the live heap allocation.
+        unsafe { bun_ptr::RefPtr::init_ref(self.as_ctx_ptr()) }
+    }
+
     fn deref_(&self) {
         // SAFETY: `self` derived from a heap-allocated allocation; the RefCount
-        // mixin's `deref` reads/writes `ref_count` via Cell and runs
-        // `destructor()` (→ deinit_and_destroy) iff the count hits zero.
-        // Callers must treat `self` as potentially-freed on return (always
-        // tail-position in this file).
+        // mixin's `deref` reads/writes `ref_count` via Cell and drops the Box
+        // iff the count hits zero. Callers must treat `self` as
+        // potentially-freed on return (always tail-position in this file).
         unsafe { bun_ptr::RefCount::<Terminal>::deref(self.as_ctx_ptr()) };
     }
 
@@ -663,8 +669,7 @@ impl Terminal {
         }
         // Both reader callbacks below re-enter user JS and may deref; hold a
         // +1 so `self` stays live for the trailing field accesses.
-        // SAFETY: `self` is the live heap allocation.
-        let guard = unsafe { bun_ptr::RefPtr::init_ref(self.as_ctx_ptr()) };
+        let guard = self.ref_guard();
         if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
             // SAFETY: single JS thread; re-entrant user JS (data callback may
             // call `terminal.close()`) is handled by `read`'s raw dispatch.
@@ -1945,7 +1950,6 @@ impl Terminal {
         }
     }
 
-    /// Finalize - called by GC when object is collected
     pub(crate) fn finalize(&self) {
         bun_output::scoped_log!(Terminal, "finalize");
         jsc::mark_binding();

@@ -602,10 +602,6 @@ impl S3UploadStreamWrapper {
         self.sink.map(|p| unsafe { &mut *p.as_ptr() })
     }
 
-    fn task_ref(&self) -> &MultiPartUpload {
-        &self.task
-    }
-
     pub(crate) fn on_writable(task: &MultiPartUpload, self_: &mut Self, flushed: u64) {
         bun_output::scoped_log!(
             S3UploadStream,
@@ -651,7 +647,7 @@ impl S3UploadStreamWrapper {
             self.end_promise = bun_jsc::JSPromiseStrong::empty();
         }
         // idempotent (`state != Finished`); `task.ended` was set by the pump's close path
-        let _ = self.task_ref().fail(Error::S3Error {
+        let _ = self.task.fail(Error::S3Error {
             code: b"UnknownError",
             message: b"ReadableStream ended with an error",
         });
@@ -672,7 +668,7 @@ impl S3UploadStreamWrapper {
         let mut settled: JsResult<()> = Ok(());
         match &result {
             S3UploadResult::Success => {
-                let uploaded = JSValue::js_number(self_.task_ref().uploaded_bytes.get() as f64);
+                let uploaded = JSValue::js_number(self_.task.uploaded_bytes.get() as f64);
                 if let Some(sink) = self_.sink_mut() {
                     sink.pending.run();
                     if settled.is_ok() && sink.flush_promise.has_value() {

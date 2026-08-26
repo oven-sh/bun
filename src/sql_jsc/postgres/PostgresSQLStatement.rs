@@ -16,8 +16,6 @@ bun_core::declare_scope!(Postgres, visible);
 #[derive(bun_ptr::CellRefCounted)]
 pub struct PostgresSQLStatement {
     pub(crate) cached_structure: PostgresCachedStructure,
-    // Private — intrusive refcount invariant; reach via `ref_()`/`deref()` or
-    // [`Self::init_exact_refs`] at construction time.
     ref_count: Cell<u32>,
     pub(crate) fields: Vec<protocol::FieldDescription>,
     pub(crate) parameters: Box<[int4]>,

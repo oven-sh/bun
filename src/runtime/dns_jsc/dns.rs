@@ -3846,8 +3846,7 @@ impl Resolver {
         // SAFETY: `self` is live; ref_count uses interior mutability.
         unsafe { bun_ptr::RefCount::<Self>::ref_(std::ptr::from_ref::<Self>(self).cast_mut()) };
     }
-    /// Decrement the intrusive refcount; on last ref, runs `deinit` (frees the
-    /// allocation via `heap::take`).
+    /// Decrement the intrusive refcount; the last ref drops the Box.
     ///
     /// Takes a raw `*mut Self` (not `&self`) because the final deref must write
     /// through / deallocate `*this`; deriving a `*mut` from a `&self` borrow

@@ -400,7 +400,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         let Some(process) = &self.process else {
             return;
         };
-        let status = process.process_mut().status.clone();
+        let status = process.status.clone();
         self.handle_exit(status);
     }
 
@@ -1029,7 +1029,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     pub(crate) fn reset_polls(&mut self) {
         debug_assert!(self.remaining_fds == 0);
 
-        // `ProcessHandle::drop` closes and releases it.
         self.process = None;
 
         self.stdout.deinit();

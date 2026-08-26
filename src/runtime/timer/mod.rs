@@ -205,8 +205,6 @@ macro_rules! impl_timer_object {
                 this.internals.has_ref()
             }
 
-            /// `.classes.ts` `rc: true` hook — runs on the mutator thread
-            /// during lazy sweep. Do not touch any `JSValue`/`Strong` content.
             pub fn finalize(&self) {
                 self.internals.finalize()
             }

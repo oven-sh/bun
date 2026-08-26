@@ -620,7 +620,7 @@ pub fn host_fn_setter_this_shared<T, R: IntoHostSetterReturn>(
 /// body contains zero `unsafe` tokens and user impls need no
 /// soundness-laundering `unsafe { heap::take(this) }`.
 ///
-/// Intrusively-refcounted payloads use `rc: true` / [`host_fn_finalize_rc`]
+/// Intrusively-refcounted payloads use `refCounted: true` / [`host_fn_finalize_ref_counted`]
 /// instead.
 ///
 /// # Safety
@@ -636,14 +636,17 @@ pub unsafe fn host_fn_finalize<T>(this: *mut T, f: impl FnOnce(alloc::boxed::Box
     f(boxed)
 }
 
-/// Finalizer for an `rc: true` class: the wrapper held one ref on an
+/// Finalizer for an `refCounted: true` class: the wrapper held one ref on an
 /// intrusively refcounted payload. Runs the type's `&self` hook (clear a
 /// `this_value`, mark finalized, …) and drops that ref.
 ///
 /// # Safety
 /// `this` is the live `m_ctx` pointer the wrapper holds a ref on.
 #[inline]
-pub unsafe fn host_fn_finalize_rc<T: bun_ptr::AnyRefCounted>(this: *mut T, f: impl FnOnce(&T)) {
+pub unsafe fn host_fn_finalize_ref_counted<T: bun_ptr::AnyRefCounted>(
+    this: *mut T,
+    f: impl FnOnce(&T),
+) {
     // SAFETY: fn contract; other refs may exist, so only `&T` is formed.
     f(unsafe { &*this });
     // SAFETY: fn contract — releases the wrapper's ref.

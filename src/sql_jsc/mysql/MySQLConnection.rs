@@ -211,7 +211,7 @@ impl MySQLConnection {
             && (self.write_buffer.len() > 0
                 || self
                     .queue
-                    .current_ref()
+                    .current()
                     .is_some_and(|r| r.is_pending() && !r.is_being_prepared()))
     }
 
@@ -989,7 +989,7 @@ impl MySQLConnection {
         header_length: u32, // u24 on the wire
     ) -> Result<(), AnyMySQLError> {
         // Get the current request if any
-        let Some(request) = self.queue.current_ref() else {
+        let Some(request) = self.queue.current() else {
             debug!("Received unexpected command response");
             return Err(AnyMySQLError::UnexpectedPacket);
         };
@@ -1257,7 +1257,7 @@ impl MySQLConnection {
         let first_byte = reader.int::<u8>()?;
         reader.skip(-1isize);
 
-        let Some(request) = self.queue.current_ref() else {
+        let Some(request) = self.queue.current() else {
             debug!("Unexpected prepared statement packet missing request");
             return Err(AnyMySQLError::UnexpectedPacket);
         };
@@ -1472,7 +1472,7 @@ impl MySQLConnection {
 
         reader.skip(-1isize);
 
-        let Some(request) = self.queue.current_ref() else {
+        let Some(request) = self.queue.current() else {
             debug!("Unexpected result set packet");
             return Err(AnyMySQLError::UnexpectedPacket);
         };

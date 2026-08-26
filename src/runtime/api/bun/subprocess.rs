@@ -217,27 +217,18 @@ impl<'a> Subprocess<'a> {
         }
     }
 
-    /// Borrow the intrusively-refcounted `Process`. Every access site is
-    /// single-threaded on the JS mutator, so projecting `&`/`&mut` through
-    /// the raw pointer is sound.
     #[inline]
     pub(crate) fn process(&self) -> &Process {
         &self.process
     }
 
-    /// Mutably borrow the owned [`Process`].
-    ///
-    /// Centralises the `BackRef<Process> → &mut Process` projection so callers
-    /// (including `js_bun_spawn_bindings`) stay safe. Caller must be on the
-    /// owning JS thread with no other live `&mut Process`.
+    /// Mutably borrow the [`Process`]. Caller must be on the owning JS thread
+    /// with no other live `&mut Process`.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(super) fn process_mut(&self) -> &mut Process {
-        // SAFETY: see `process()` — all access is on the single JS-mutator
-        // thread. R-2: `&self`
-        // (interior-mutability) so callers don't need `&mut Subprocess`;
-        // `Process` lives in a separate allocation (BackRef) so the returned
-        // `&mut` never aliases `*self`. Single JS-mutator thread.
+        // SAFETY: single JS-mutator thread; `Process` lives in a separate
+        // allocation so the returned `&mut` never aliases `*self`.
         unsafe { &mut *self.process.as_ptr() }
     }
 

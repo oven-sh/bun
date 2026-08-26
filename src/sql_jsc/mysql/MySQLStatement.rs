@@ -16,8 +16,6 @@ bun_core::declare_scope!(MySQLStatement, hidden);
 #[derive(bun_ptr::CellRefCounted)]
 pub struct MySQLStatement {
     pub(crate) cached_structure: CachedStructure,
-    // Private — intrusive refcount invariant; reach via `ref_()`/`deref()` or
-    // [`Self::init_exact_refs`] at construction time.
     ref_count: Cell<u32>,
     pub(crate) statement_id: u32,
     pub(crate) params: Vec<Param>,

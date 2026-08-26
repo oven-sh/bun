@@ -294,7 +294,6 @@ impl ShellSubprocess {
     }
 
     fn close_process(&mut self) {
-        // `ProcessHandle::drop` detaches (clears the exit handler and closes).
         self.process = None;
     }
 

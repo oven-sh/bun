@@ -10,7 +10,7 @@ use crate::{
     get_cert_error_from_no, h2,
 };
 use bun_boringssl::ssl_ctx_setup;
-use bun_boringssl_sys::SSL_CTX;
+use bun_boringssl_sys::{OwnedSslCtx, SSL_CTX};
 use bun_collections::{HiveArray, TaggedPtrUnion};
 use bun_core::strings;
 use bun_core::{self, FeatureFlags};
@@ -39,15 +39,11 @@ pub struct HTTPContext<const SSL: bool> {
     /// struct is either a `http_thread.{http,https}_context` static or a
     /// `bun.default_allocator.create()` for custom-SSL entries.
     pub(crate) group: uws::SocketGroup,
-    /// `SSL_CTX*` built from this context's SSLConfig (or the default
-    /// `request_cert=1` opts). One owned ref; `SSL_CTX_free` on deinit.
-    /// Only meaningful when `SSL`.
-    pub(crate) secure: Option<*mut SSL_CTX>,
+    /// Built from this context's SSLConfig (or the default `request_cert=1`
+    /// opts). Only meaningful when `SSL`.
+    pub(crate) secure: Option<OwnedSslCtx>,
     /// HTTP/2 sessions with at least one active stream, available for
-    /// concurrent attachment if `hasHeadroom()`.
-    // Raw pointers; the intrusive refcount (bumped on insert, dropped on
-    // removal) is what keeps each session alive while listed here.
-    /// Each entry holds a ref on its session.
+    /// concurrent attachment if `hasHeadroom()`. Each entry holds a ref.
     pub(crate) active_h2_sessions: Vec<RefPtr<h2::ClientSession>>,
     /// HTTPClients whose fresh TLS connect is in flight and whose request
     /// is h2-capable. Subsequent h2-capable requests to the same origin
@@ -353,7 +349,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
     /// Shared-borrow a live `*const ClientSession` to read/set its
     /// `Cell<u32>` registry index. Module-private — callers guarantee the
     /// session is live (registry holds a strong ref while indexed).
-    /// `registry_index`/`set_registry_index`/`ref_` only touch `Cell` fields,
+    /// `registry_index`/`set_registry_index` only touch `Cell` fields,
     /// so a shared borrow is sound regardless of other raw aliases on this
     /// single thread.
     ///
@@ -380,15 +376,14 @@ impl<const SSL: bool> HTTPContext<SSL> {
             (idx as usize) < list.len()
                 && core::ptr::eq(list[idx as usize].as_ptr().cast_const(), session)
         );
-        // A listed session always also has a socket-ext or pool holder, so
-        // this is never the last ref.
-        drop(list.swap_remove(idx as usize));
+        let removed = list.swap_remove(idx as usize);
         if (idx as usize) < list.len() {
             // The swapped-in entry is a distinct allocation from `session`
             // (the entry at `idx` was just removed); `set_registry_index`
             // only touches a `Cell<u32>`.
             list[idx as usize].set_registry_index(idx);
         }
+        drop(removed);
     }
 
     pub(crate) fn register_h2(&mut self, session: *mut h2::ClientSession) {
@@ -474,7 +469,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         if !SSL {
             unreachable!();
         }
-        self.secure.unwrap()
+        self.secure.as_ref().unwrap().as_ptr()
     }
 
     pub(crate) fn init_with_client_config(
@@ -817,7 +812,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
         let socket = HTTPSocket::<SSL>::connect_unix_group(
             &mut self.group,
             Self::KIND,
-            if SSL { self.secure } else { None },
+            if SSL {
+                self.secure.as_ref().map(OwnedSslCtx::as_ptr)
+            } else {
+                None
+            },
             socket_path,
             ActiveSocket::<SSL>::init(
                 client
@@ -986,7 +985,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
         let socket = HTTPSocket::<SSL>::connect_group(
             &mut self.group,
             Self::KIND,
-            if SSL { self.secure } else { None },
+            if SSL {
+                self.secure.as_ref().map(OwnedSslCtx::as_ptr)
+            } else {
+                None
+            },
             hostname,
             port as c_int,
             ActiveSocket::<SSL>::init(
@@ -1066,12 +1069,6 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
             // is freed (it unlinks from the loop's group list).
             // SAFETY: group was init()'d in `init`/`init_with_opts`; HTTP-thread-only.
             unsafe { uws::SocketGroup::destroy(&raw mut self.group) };
-        }
-        if SSL {
-            if let Some(c) = self.secure {
-                // SAFETY: we own one ref on the SSL_CTX.
-                unsafe { bun_boringssl_sys::SSL_CTX_free(c) };
-            }
         }
     }
 }

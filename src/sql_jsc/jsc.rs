@@ -230,7 +230,7 @@ pub struct SqlRuntimeHooks {
         cache: *mut c_void,
         opts: &bun_uws::us_bun_socket_context_options_t,
         err: &mut bun_uws::create_bun_socket_error_t,
-    ) -> *mut bun_uws::SslCtx,
+    ) -> Option<OwnedSslCtx>,
     /// `SSLConfig::fromJS` — parse a JS TLS-options object. Returns a boxed
     /// `bun_runtime::socket::SSLConfig` (caller frees via `ssl_config_free`),
     /// or null when the value contained no TLS config / threw (caller checks
@@ -876,14 +876,8 @@ impl SslCtxCache {
         err: &mut bun_uws::create_bun_socket_error_t,
     ) -> Option<OwnedSslCtx> {
         // SAFETY: `self` is `&mut runtime_state().ssl_ctx_cache`; `opts`/`err`
-        // are caller stack locals; the hook returns null or a +1 `SSL_CTX`.
-        unsafe {
-            OwnedSslCtx::from_raw((hooks().ssl_ctx_get_or_create)(
-                self._p.get().cast::<c_void>(),
-                opts,
-                err,
-            ))
-        }
+        // are caller stack locals.
+        unsafe { (hooks().ssl_ctx_get_or_create)(self._p.get().cast::<c_void>(), opts, err) }
     }
 }
 

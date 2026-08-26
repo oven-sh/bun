@@ -57,7 +57,7 @@ impl MySQLRequestQueue {
     #[inline]
     pub(crate) fn mark_as_prepared(&mut self) {
         self.waiting_to_prepare.set(false);
-        if let Some(request) = self.current_ref() {
+        if let Some(request) = self.current() {
             debug!("markAsPrepared markAsPrepared");
             request.mark_as_prepared();
         }
@@ -129,12 +129,13 @@ impl MySQLRequestQueue {
             let mut offset: usize = 0;
 
             while queue_ref.requests.get().len() > offset && conn_ref.is_able_to_write() {
-                let request: *mut JSMySQLQuery = queue_ref.requests.get()[offset].as_ptr();
                 // The queue's `RefPtr` keeps the request live. `JSMySQLQuery`
                 // is a separate heap allocation — never aliases the queue or
                 // `*connection`. R-2: `ParentRef` yields `&T` only — every
                 // method body is `&self` (interior mutability).
-                let req = ParentRef::from(NonNull::new(request).expect("queue item non-null"));
+                let request = queue_ref.requests.get()[offset].as_non_null();
+                let req = ParentRef::from(request);
+                let request = request.as_ptr();
 
                 if req.is_completed() {
                     if offset > 0 {
@@ -261,20 +262,11 @@ impl MySQLRequestQueue {
         self.requests.with_mut(|q| q.push_back(req));
     }
 
+    /// The queue's `RefPtr` keeps the pointee live; `JSMySQLQuery` is a
+    /// separate heap allocation and fully interior-mutable, so a shared
+    /// `&JSMySQLQuery` via `Deref` is sound across `&mut self` on the connection.
     #[inline]
-    pub(crate) fn current(&self) -> Option<*mut JSMySQLQuery> {
-        self.requests.get().front().map(RefPtr::as_ptr)
-    }
-
-    /// [`current`] as a [`bun_ptr::ThisPtr`]. The queue's `RefPtr` keeps the pointee live;
-    /// `JSMySQLQuery` is a separate heap allocation (never aliases the queue or
-    /// its embedding connection) and is fully interior-mutable (R-2: every
-    /// method is `&self`), so a shared `&JSMySQLQuery` derived via `Deref` is
-    /// sound across `&mut self` on the connection.
-    ///
-    /// [`current`]: Self::current
-    #[inline]
-    pub(crate) fn current_ref(&self) -> Option<bun_ptr::ThisPtr<JSMySQLQuery>> {
+    pub(crate) fn current(&self) -> Option<bun_ptr::ThisPtr<JSMySQLQuery>> {
         self.requests.get().front().map(RefPtr::this_ptr)
     }
 

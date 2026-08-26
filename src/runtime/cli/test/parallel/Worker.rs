@@ -38,8 +38,6 @@ pub struct Worker {
     // dereferenced unsafely.
     pub(crate) coord: *const Coordinator<'static>,
     pub(crate) idx: u32,
-    // Intrusive-refcounted (`ThreadSafeRefCount`); `to_process` returns a
-    // `heap::alloc`ed `*mut Process`.
     pub(crate) process: Option<spawn::ProcessHandle>,
 
     /// Bidirectional IPC over fd 3. POSIX: usockets adopted from a socketpair.
@@ -99,7 +97,6 @@ impl Worker {
                 if !p.has_exited() {
                     let _ = p.kill(9);
                 }
-                // `ProcessHandle::drop` detaches and releases it.
             }
             // Reset to fresh state after deinit so reapWorker's `!respawned`
             // cleanup (which can't tell whether start() ran) doesn't deinit on

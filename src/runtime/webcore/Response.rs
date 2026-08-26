@@ -68,7 +68,10 @@ impl HeadersRef {
 
     /// `FetchHeaders.createFromJS(global, value)` — may throw, may return null.
     #[inline]
-    fn create_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
+    pub(crate) fn create_from_js(
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<Option<Self>> {
         // SAFETY: C++ returns a +1 ref or null.
         Ok(FetchHeaders::create_from_js(global, value)?.map(|p| unsafe { Self::adopt(p) }))
     }
@@ -487,8 +490,7 @@ impl Response {
         global: &JSGlobalObject,
         signal: &AbortSignal,
     ) {
-        // SAFETY: `signal` is live; `ref_()` bumps the intrusive refcount.
-        let signal_ref = unsafe { AbortSignalRef::adopt(signal.ref_()) };
+        let signal_ref = signal.ref_();
         signal.pending_activity_ref();
         let mut listener = Box::new(BodyAbortListener {
             signal: signal_ref,

@@ -492,14 +492,12 @@ pub fn get_ipc_instance(
         let loop_ = vm.uws_loop();
         let group: *mut bun_uws::SocketGroup = vm.rare_data().spawn_ipc_group(loop_);
 
-        let send_queue = SendQueue::new(mode, None, IPC::SocketUnion::Uninitialized);
-        let send_queue_ref = send_queue;
-        let send_queue: *mut SendQueue = send_queue_ref.as_ptr();
         let instance = IPCInstance::new(IPCInstance {
-            data: send_queue_ref,
+            data: SendQueue::new(mode, None, IPC::SocketUnion::Uninitialized),
         });
-        // SAFETY: `send_queue` is the live SendQueue just allocated;
-        // `instance` was just boxed.
+        // SAFETY: `instance` was just boxed; `send_queue` is its live SendQueue.
+        let send_queue: *mut SendQueue = unsafe { (*instance).data.as_ptr() };
+        // SAFETY: as above.
         unsafe {
             (*send_queue).set_owner(IPC::SendQueueOwner::Instance(
                 core::ptr::NonNull::new_unchecked(instance),
@@ -538,14 +536,12 @@ pub fn get_ipc_instance(
 
     #[cfg(windows)]
     let instance: *mut IPCInstance = {
-        let send_queue = SendQueue::new(mode, None, IPC::SocketUnion::Uninitialized);
-        let send_queue_ref = send_queue;
-        let send_queue: *mut SendQueue = send_queue_ref.as_ptr();
         let instance = IPCInstance::new(IPCInstance {
-            data: send_queue_ref,
+            data: SendQueue::new(mode, None, IPC::SocketUnion::Uninitialized),
         });
-        // SAFETY: `send_queue` is the live SendQueue just allocated;
-        // `instance` was just boxed.
+        // SAFETY: `instance` was just boxed; `send_queue` is its live SendQueue.
+        let send_queue: *mut SendQueue = unsafe { (*instance).data.as_ptr() };
+        // SAFETY: as above.
         unsafe {
             (*send_queue).set_owner(IPC::SendQueueOwner::Instance(
                 core::ptr::NonNull::new_unchecked(instance),

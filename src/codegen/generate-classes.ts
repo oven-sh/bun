@@ -1879,7 +1879,7 @@ function generateRust(
     construct,
     constructNeedsThis = false,
     finalize,
-    rc = false,
+    refCounted = false,
     noConstructor = false,
     overridesToJS = false,
     estimatedSize,
@@ -1954,14 +1954,14 @@ function generateRust(
     thunk(symbolName(typeName, "hasPendingActivity"), `(this: &${T}) -> bool`, `    ${T}::has_pending_activity(this)`);
   }
 
-  if (rc) {
+  if (refCounted) {
     // The wrapper holds one ref: run the `&self` hook, then drop that ref.
     thunk(
       classSymbolName(typeName, "finalize"),
       `(this: *mut ${T}) -> ()`,
-      `    use bun_jsc::JsFinalizeRc as _;\n` +
+      `    use bun_jsc::JsFinalizeRefCounted as _;\n` +
         `    // SAFETY: this is the live m_ctx pointer the wrapper holds a ref on.\n` +
-        `    unsafe { host_fn::host_fn_finalize_rc(this, |t| ${T}::finalize(t)) }`,
+        `    unsafe { host_fn::host_fn_finalize_ref_counted(this, |t| ${T}::finalize(t)) }`,
     );
   } else if (finalize) {
     // `host_fn_finalize` does the single `Box::from_raw(this)` and hands the

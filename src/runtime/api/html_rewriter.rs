@@ -491,8 +491,7 @@ impl HTMLRewriter {
 
             // Null out the JS wrapper's `m_ctx` so its GC finalize is a no-op,
             // then release the wrapper's +1 ourselves. The pipe still holds its
-            // own +1 (from `Response::ref_` in `init()`); `Drop for RewriterPipe`
-            // reclaims the allocation when the Transform cell is collected.
+            // own (`RewriterPipe.response`).
             js_Response::detach_ptr(out_response_value);
             // SAFETY: adopts the wrapper's ref that `detach_ptr` orphaned.
             drop(unsafe { RefPtr::from_raw(out_response.as_const_ptr().cast_mut()) });
@@ -559,8 +558,8 @@ enum RewritePhase {
     Done,
 }
 
-/// The JS wrapper a suspended handler is still using. Typed so the retarget/
-/// release dispatch is a match, not a `c_void` + fn-ptr pair.
+/// The JS wrapper a suspended handler is still using, plus the ref
+/// `handler_callback` took on it; dropping it detaches the wrapper first.
 enum SuspendedWrapper {
     Element(RefPtr<Element>),
     Comment(RefPtr<Comment>),
@@ -582,9 +581,11 @@ impl SuspendedWrapper {
             Self::DocEnd(p) => p.retarget(DocEnd::suspended_raw(rewriter)),
         }
     }
-    /// Detach the wrapper and drop the ref `handler_callback` took.
-    fn release(self) {
-        match &self {
+}
+
+impl Drop for SuspendedWrapper {
+    fn drop(&mut self) {
+        match self {
             Self::Element(p) => WrapperLike::detach(&**p),
             Self::Comment(p) => WrapperLike::detach(&**p),
             Self::TextChunk(p) => WrapperLike::detach(&**p),
@@ -592,30 +593,6 @@ impl SuspendedWrapper {
             Self::DocType(p) => WrapperLike::detach(&**p),
             Self::DocEnd(p) => WrapperLike::detach(&**p),
         }
-    }
-}
-
-/// Recorded by [`handler_callback`] when a handler returned a still-pending
-/// promise, consumed by [`RewriterPipe::begin_suspension`] immediately after
-/// the lol-html call returns `Err(Suspended)`. The promise itself is rooted in
-/// the cell's `suspensionPromise` WriteBarrier slot, not here.
-struct PendingSuspension {
-    wrapper: SuspendedWrapper,
-}
-
-impl PendingSuspension {
-    /// Hand the wrapper to a caller that adopts its ref, disarming [`Drop`].
-    fn take_wrapper(self) -> SuspendedWrapper {
-        let this = core::mem::ManuallyDrop::new(self);
-        // SAFETY: `this` is never dropped, so the field moves out exactly once.
-        unsafe { core::ptr::read(&raw const this.wrapper) }
-    }
-}
-
-impl Drop for PendingSuspension {
-    fn drop(&mut self) {
-        // SAFETY: dropped exactly once here; the field is not touched again.
-        unsafe { core::ptr::read(&raw const self.wrapper) }.release();
     }
 }
 
@@ -724,11 +701,9 @@ pub struct RewriterPipe {
     /// `Bun.write`, … via [`Self::on_start_buffering`]): the output is
     /// observed and never backpressured.
     buffered_consumer: Cell<bool>,
-    /// Output Response. The pipe holds a native `+1` (released in `Drop`) so
-    /// the body stays reachable on the abandon-suspension path after the
-    /// Response JS wrapper has been swept alongside the Transform cell.
-    /// The pipe's ref, so `fail()` can still reach the body after the
-    /// Response JS wrapper has been swept.
+    /// The pipe's ref on the output Response, so the body stays reachable
+    /// (`fail()`, the abandon-suspension path) after the Response JS wrapper
+    /// has been swept alongside the Transform cell.
     response: JsCell<Option<RefPtr<Response>>>,
 
     // ── suspension (from #33243) ─────────────────────────────────────────
@@ -738,8 +713,9 @@ pub struct RewriterPipe {
     /// fails the whole rewrite instead.
     sync_only_noun: Cell<Option<&'static str>>,
     /// Handed from the suspending [`handler_callback`] to
-    /// [`Self::begin_suspension`] across the lol-html unwind.
-    pending_suspension: Cell<Option<PendingSuspension>>,
+    /// [`Self::begin_suspension`] across the lol-html unwind. The promise
+    /// itself is rooted in the cell's `suspensionPromise` WriteBarrier slot.
+    pending_suspension: JsCell<Option<SuspendedWrapper>>,
     suspended_wrapper: JsCell<Option<SuspendedWrapper>>,
     /// `true` while a lol-html `write`/`end_mut`/`resume` call on this pipe's
     /// `rewriter` is on the stack. The output sink may re-enter the pipe via
@@ -772,9 +748,7 @@ impl RewriterPipe {
 
     /// `JSHTMLRewriterTransform` finalizer. Runs during GC sweep: nothing
     /// here may touch other GC cells, and the other ref holders may still
-    /// dispatch into the pipe after this cell is swept. So only release the
-    /// cell's ref; the last holder frees the Box (once the VM's task queue
-    /// has closed, `DeferredDerefTask::schedule` releases inline instead).
+    /// dispatch into the pipe after this cell is swept.
     pub fn finalize(&self) {
         self.cell.set(JSValue::ZERO);
     }
@@ -926,7 +900,7 @@ impl RewriterPipe {
 
     #[inline]
     fn is_suspended(&self) -> bool {
-        self.suspended_wrapper.get().is_some() || self.pending_suspension.take_peek().is_some()
+        self.suspended_wrapper.get().is_some() || self.pending_suspension.get().is_some()
     }
 
     /// Output emitted but not yet taken by a reader.
@@ -1003,7 +977,7 @@ impl RewriterPipe {
             response: JsCell::new(None),
             phase: Cell::new(RewritePhase::WritePending),
             sync_only_noun: Cell::new(sync_only_noun),
-            pending_suspension: Cell::new(None),
+            pending_suspension: JsCell::new(None),
             suspended_wrapper: JsCell::new(None),
             driving: Cell::new(false),
             pending: JsCell::new(WritablePending::default()),
@@ -1692,8 +1666,7 @@ impl RewriterPipe {
         let wrapper = self
             .pending_suspension
             .take()
-            .expect("lol-html suspended without a pending HTMLRewriter handler promise")
-            .take_wrapper();
+            .expect("lol-html suspended without a pending HTMLRewriter handler promise");
 
         self.rewriter.with_mut(|r| {
             if let Some(r) = r.as_deref_mut() {
@@ -1738,9 +1711,7 @@ impl RewriterPipe {
     /// The suspension begun by `begin_suspension` is over: the settle reaction or the abandonment
     /// (whichever holds the promise context) releases the parked wrapper and then owns the ref.
     fn end_suspension(&self) {
-        if let Some(wrapper) = self.suspended_wrapper.take() {
-            wrapper.release();
-        }
+        self.suspended_wrapper.set(None);
     }
 
     /// Put `err` on the output `Response`'s body / ByteStream.
@@ -1809,9 +1780,7 @@ impl Drop for RewriterPipe {
         // only nulls the wrapper's unit Cell and drops its Box, no GC access)
         // detaches any JS-retained Element/TextChunk before the rewriter it
         // points into is destroyed below.
-        if let Some(w) = self.suspended_wrapper.take() {
-            w.release();
-        }
+        self.suspended_wrapper.set(None);
         self.response.set(None);
     }
 }
@@ -1952,20 +1921,6 @@ fn on_handler_reject(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         return Err(jsc::JsError::Thrown);
     }
     Ok(JSValue::UNDEFINED)
-}
-
-/// Peek helper for `Cell<Option<T>>` where `T` is not `Copy`.
-trait CellOptionPeek<T> {
-    fn take_peek(&self) -> Option<()>;
-}
-impl<T> CellOptionPeek<T> for Cell<Option<T>> {
-    #[inline]
-    fn take_peek(&self) -> Option<()> {
-        let v = self.take();
-        let some = v.is_some().then_some(());
-        self.set(v);
-        some
-    }
 }
 
 // ──────────────────────── DocumentHandler ────────────────────────────────
@@ -2121,8 +2076,7 @@ trait WrapperLike: bun_ptr::AnyRefCounted + Sized {
 }
 
 /// Forwarding `WrapperLike` impl — every wrapper type's trait impl is a pure
-/// pass-through to inherent / `CellRefCounted`-derived / `JsClass`-codegen
-/// methods. `$field` is the wrapper's `DetachablePtr<$raw>`; `$suspended` is the
+/// pass-through to inherent / `JsClass`-codegen methods. `$field` is the wrapper's `DetachablePtr<$raw>`; `$suspended` is the
 /// `lol_html::HtmlRewriter` accessor for the parked unit of that type.
 /// `Element` implements the trait by hand: its `detach` also has to
 /// invalidate the `AttributeIterator`s it handed out.
@@ -2189,7 +2143,7 @@ where
     let wrapper: NonNull<Z> = Z::init(value);
 
     // Our ref across the handler call; the guard detaches then drops it. On
-    // the SUSPEND path the guard is disarmed and `SuspendedWrapper::release`
+    // the SUSPEND path the guard is disarmed and `SuspendedWrapper`'s drop
     // does the same once the handler's promise settles instead.
     // SAFETY: `wrapper` is the live allocation `init` just made.
     let guard = scopeguard::guard(unsafe { RefPtr::init_ref(wrapper.as_ptr()) }, |w| {
@@ -2305,9 +2259,8 @@ where
                 global,
                 result,
             );
-            sink.pending_suspension.set(Some(PendingSuspension {
-                wrapper: Z::into_suspended(wrapper),
-            }));
+            sink.pending_suspension
+                .set(Some(Z::into_suspended(wrapper)));
             HandlerOutcome::Suspend
         }
     }
@@ -3204,7 +3157,7 @@ impl Element {
             .with_mut(|v| v.push(attr_iter.clone()));
         // The JS wrapper owns this ref.
         Ok(AttributeIterator::to_js_nonnull(
-            NonNull::new(attr_iter.into_raw()).expect("RefPtr"),
+            attr_iter.into_non_null(),
             global_object,
         ))
     }

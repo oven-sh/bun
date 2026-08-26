@@ -987,8 +987,6 @@ bun_spawn::link_impl_ProcessExit! {
 
 impl<'a> Drop for SecurityScanSubprocess<'a> {
     fn drop(&mut self) {
-        // Detaches (clears the exit handler so a late callback won't touch a
-        // dangling `self`) and releases our ref.
         self.process = None;
         // Dropping the writer can synchronously close it and re-enter
         // `on_close_io` through the parent backref; move it out first so that

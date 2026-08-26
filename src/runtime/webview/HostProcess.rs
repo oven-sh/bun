@@ -14,12 +14,11 @@
 //! This file owns process lifetime only. The usockets client lives in C++
 //! (WebKitBackend.cpp) — usockets is a C API and the frame protocol is C structs.
 
-use bun_ptr::RefPtr;
 use core::ptr;
 
 use bun_jsc::JSGlobalObject;
 use bun_output::{declare_scope, scoped_log};
-use bun_spawn::{self, Process};
+use bun_spawn::{self, ProcessHandle};
 
 #[cfg(target_os = "macos")]
 use {
@@ -35,10 +34,7 @@ use {
 declare_scope!(WebViewHost, hidden);
 
 pub(crate) struct HostProcess {
-    // Intrusive refcount (`.deref()` called in on_process_exit); kept raw
-    // because the refcount, not this struct, owns the allocation.
-    /// Our ref on the child; released when this box drops.
-    process: RefPtr<Process>,
+    process: ProcessHandle,
     /// Set by [`Bun__WebViewHost__retire`]: the exit is reaped but not reported to C++.
     retired: bool,
 }
@@ -79,8 +75,7 @@ extern "C" fn Bun__WebViewHost__retire() {
         return;
     };
     host.retired = true;
-    // SAFETY: `process` is live until on_process_exit derefs it.
-    let _ = unsafe { (*host.process.as_ptr()).kill(9) };
+    let _ = host.process.kill(9);
 }
 
 /// Lazy: first `new Bun.WebView()` calls this via C++. Returns the parent
@@ -219,28 +214,27 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
         // SAFETY: `vm` is the live thread-local VM; `event_loop()` is its
         // per-thread `jsc::EventLoop`.
         let event_loop = unsafe { EventLoopHandle::init((*vm).event_loop().cast()) };
-        let process = spawned.to_process_handle(event_loop).into_ref();
-        let process_ref = process;
-        let process: *mut Process = process_ref.as_ptr();
         let self_ptr = bun_core::heap::into_raw(Box::new(HostProcess {
-            process: process_ref,
+            process: spawned.to_process_handle(event_loop),
             retired: false,
         }));
-        // SAFETY: `self_ptr` is a freshly-allocated, exclusively-owned Box that
-        // owns `process` and outlives it.
-        unsafe {
-            (*process).set_exit_handler(ProcessExit::new(ProcessExitKind::HostProcess, self_ptr));
-        }
-        // SAFETY: process is live and exclusively owned here.
-        match unsafe { (*process).watch() } {
+        // SAFETY: `self_ptr` is the freshly-allocated Box that owns `process`
+        // and outlives it.
+        let process = unsafe {
+            let process = &(*self_ptr).process;
+            process
+                .process_mut()
+                .set_exit_handler(ProcessExit::new(ProcessExitKind::HostProcess, self_ptr));
+            process
+        };
+        match process.process_mut().watch() {
             Ok(()) => {
                 // Weak handle: parent exits when no views + nothing pending,
                 // child gets socket EOF and exits, EVFILT_PROC fires into a
                 // dead process (kernel discards). If we ref'd, parent would
                 // stay alive forever waiting on a child that is waiting on us.
                 // dispatchOnExit also SIGKILLs via Bun__WebViewHost__kill.
-                // SAFETY: process is live and exclusively owned here.
-                unsafe { (*process).disable_keeping_event_loop_alive() };
+                process.process_mut().disable_keeping_event_loop_alive();
             }
             Err(e) => {
                 scoped_log!(WebViewHost, "watch failed: {}", e);

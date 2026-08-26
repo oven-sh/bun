@@ -2993,10 +2993,8 @@ where
         // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
         bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
 
-        // Bump once for the Request's owned
-        // copy and adopt into RAII so it pairs with `Request::Drop`'s unref.
-        // SAFETY: `signal` is live; `ref_()` returns the same non-null ptr +1.
-        let signal_for_req = unsafe { jsc::AbortSignalRef::adopt((*signal).ref_()) };
+        // The Request's own ref.
+        let signal_for_req = bun_opaque::opaque_deref_mut(signal).ref_();
         let request_object_box = Request::new(Request::init(
             ctx.ctx_method(),
             AnyRequestContext::init(std::ptr::from_ref::<Ctx>(ctx)),
@@ -3267,10 +3265,8 @@ where
         ctx.signal.set(NonNull::new(signal));
         // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
         bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
-        // Bump once for the Request's copy and
-        // adopt into RAII so it pairs with `Request::Drop`'s unref.
-        // SAFETY: `signal` is live; `ref_()` returns the same non-null ptr +1.
-        let signal_for_req = unsafe { jsc::AbortSignalRef::adopt((*signal).ref_()) };
+        // The Request's own ref.
+        let signal_for_req = bun_opaque::opaque_deref_mut(signal).ref_();
         let request_object_box = Request::new(Request::init(
             ctx.method,
             AnyRequestContext::init(std::ptr::from_ref(ctx)),

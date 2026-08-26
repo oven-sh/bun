@@ -5,7 +5,7 @@ function generate(name: string) {
     name,
     construct: true,
     noConstructor: false,
-    rc: true,
+    refCounted: true,
     configurable: false,
     estimatedSize: true,
     klass: {},

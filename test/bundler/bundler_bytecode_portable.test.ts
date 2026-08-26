@@ -90,14 +90,15 @@ const corpusBuilds = [
   { name: "bun build --bytecode big.js", entry: "./big.js", args: [] as string[] },
 ];
 // Entries are relative to the corpus directory so the module paths the bundler writes into its output are the same on
-// every machine.
+// every machine. (A library that uses __dirname / __filename cannot be here: the bundler inlines them as absolute paths.)
 const libraries = [
   "lodash/lodash.js",
   "acorn/dist/acorn.mjs",
   "react-dom/cjs/react-dom.development.js",
   "svelte/compiler/index.js",
-  "rollup/dist/es/rollup.js",
-  "typescript/lib/typescript.js",
+  "undici/index.js",
+  "happy-dom/lib/index.js",
+  "immutable/dist/immutable.es.js",
 ];
 const libraryBuilds = libraries.map(lib => ({ name: `bun build --bytecode ${lib}`, entry: `../../node_modules/${lib}`, args: [] as string[] }));
 const bundlerBuilds = [...corpusBuilds, ...libraryBuilds];
@@ -174,6 +175,10 @@ describe("bytecode cache portability", () => {
       "vm.Script lodash.js",
       new vm.Script(librarySource("lodash/lodash.js"), { filename: "lodash.js", produceCachedData: true }).cachedData!,
     );
+    outputs["vm.Script typescript.js"] = fingerprint(
+      "vm.Script typescript.js",
+      new vm.Script(librarySource("typescript/lib/typescript.js"), { filename: "typescript.js", produceCachedData: true }).cachedData!,
+    );
     outputs["vm.SourceTextModule acorn.mjs"] = fingerprint(
       "vm.SourceTextModule acorn.mjs",
       new vm.SourceTextModule(librarySource("acorn/dist/acorn.mjs"), { identifier: "acorn.mjs" }).createCachedData(),
@@ -220,6 +225,20 @@ describe("bytecode cache portability", () => {
             "sha256": "3eaab66c513c7ebad6f7a966d281596a250cd758b5c9605dc5ec13f61a1a8034",
           },
         },
+        "bun build --bytecode happy-dom/lib/index.js": {
+          "js": "148f0d3e4baf485281725f859deb3e717a6da25a4a08de9af288d5ef54b6414b",
+          "jsc": {
+            "bytes": 2528768,
+            "sha256": "4db53783f201244955f339dd9d9e0755004ca429d265b79e8a345a93ae07e7f4",
+          },
+        },
+        "bun build --bytecode immutable/dist/immutable.es.js": {
+          "js": "c9a2ba9f6b6a662e6bdfd44128bc66284276f5eac2a8875adb4578472328dc9f",
+          "jsc": {
+            "bytes": 280016,
+            "sha256": "2a99c33a2516e2d41187bc322ddd4523318530b51c60c3d9a8bd566d4f2929a1",
+          },
+        },
         "bun build --bytecode lodash/lodash.js": {
           "js": "0b575ee1213807337c15c47d07864bb299cc361a983c8668f0ba164d646aa210",
           "jsc": {
@@ -234,13 +253,6 @@ describe("bytecode cache portability", () => {
             "sha256": "3afdbd09ae9ee90215811d5ea0c0a08f19414383bb0fbe1cc0f7a7c929ac2446",
           },
         },
-        "bun build --bytecode rollup/dist/es/rollup.js": {
-          "js": "4e9f4045dd7953296c405173a38c8c3402832167a5bf2bb4bd470fb8b1446454",
-          "jsc": {
-            "bytes": 1521152,
-            "sha256": "06908894dfc31e373e17488032b64e4564ac3d0125a92f259b63304caf552f80",
-          },
-        },
         "bun build --bytecode svelte/compiler/index.js": {
           "js": "91d38e665639adcb4ec160c966e6d72161ee07083363c04670ee82e82c001414",
           "jsc": {
@@ -248,11 +260,11 @@ describe("bytecode cache portability", () => {
             "sha256": "d7e03d48ff4b43d79d442bcbd5a8b12169323f86841ae1ba19a933e5133c3a16",
           },
         },
-        "bun build --bytecode typescript/lib/typescript.js": {
-          "js": "1c02b1695ecb00487cb6230346dff7042a43727e99ec5163fd0b4ac16145dc1d",
+        "bun build --bytecode undici/index.js": {
+          "js": "d0bd3791e7c8f77a06814429d5d95cb26a06baaa3c135502bcd3e984310f1d2c",
           "jsc": {
-            "bytes": 12024624,
-            "sha256": "f31fca83b43d27a36cebd40fff8bd6be8026052a6ce373543144a13b17b51059",
+            "bytes": 936872,
+            "sha256": "22d555a85e721a83f3699456b8cbee6f3ef6675b7dc217807affc8bf2fb46b71",
           },
         },
         "vm.Script big.js": {
@@ -266,6 +278,10 @@ describe("bytecode cache portability", () => {
         "vm.Script lodash.js": {
           "bytes": 354672,
           "sha256": "ff430fa41f4192baaeb922b03ff28b68609abc2e41e40016d15a078af984d042",
+        },
+        "vm.Script typescript.js": {
+          "bytes": 12095328,
+          "sha256": "6522583256b6d7f0485d895dcfcce4cb967139dc5ed93c08645ae1c818fb9758",
         },
         "vm.SourceTextModule acorn.mjs": {
           "bytes": 264064,

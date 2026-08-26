@@ -402,8 +402,7 @@ function tlsHandshakeError(verifyError) {
   return new ConnResetException("socket hang up");
 }
 
-// Node reports a throwing 'data' listener as uncaughtException and keeps reading;
-// let through, the native dispatch would route it to `error` and destroy the socket.
+// Node reports a throwing 'data' listener as uncaughtException and keeps reading.
 function pushDataToSocket(self, socket, buffer) {
   let full;
   try {

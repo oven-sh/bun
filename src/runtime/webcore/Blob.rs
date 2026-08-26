@@ -248,7 +248,7 @@ pub trait BlobExt {
     fn get_slice(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
     fn get_mime_type_or_content_type(&self) -> Option<MimeType>;
     fn get_type(&self, global_this: &JSGlobalObject) -> JSValue;
-    fn get_name_string(&self) -> Option<&BunString>;
+    fn get_name_string(&self) -> Option<BunString>;
     fn get_name(&self, _: JSValue, global_this: &JSGlobalObject) -> JsResult<JSValue>;
     fn set_name(
         &self,
@@ -1114,7 +1114,7 @@ impl BlobExt for Blob {
                         writer,
                         ENABLE_ANSI_COLORS,
                         "name<d>:<r> <green>\"{f}\"<r>",
-                        self.get_name_string().unwrap_or(&BunString::EMPTY),
+                        self.get_name_string().unwrap_or(BunString::EMPTY),
                     )?;
                     if !self.content_type_slice().is_empty()
                         || self.offset.get() > 0
@@ -2059,21 +2059,20 @@ impl BlobExt for Blob {
         JSValue::js_empty_string(global_this)
     }
 
-    fn get_name_string(&self) -> Option<&BunString> {
-        if self.name.get().tag() != bun_core::Tag::Dead {
-            return Some(self.name.get());
+    /// `name` holds only an assigned name; it stays `Dead` for a plain
+    /// `Bun.file()`, whose name is derived from the store path on each call.
+    fn get_name_string(&self) -> Option<BunString> {
+        let name = self.name.get();
+        if name.tag() != bun_core::Tag::Dead {
+            return Some(name.clone());
         }
-        if let Some(path) = self.store_path() {
-            self.name.set(BunString::clone_utf8(path));
-            return Some(self.name.get());
-        }
-        None
+        self.store_path().map(BunString::clone_utf8)
     }
 
     // TODO: Move this to a separate `File` object or BunFile
     fn get_name(&self, _: JSValue, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(match self.get_name_string() {
-            Some(name) => name.to_js(global_this)?,
+            Some(name) => name.into_js(global_this)?,
             None => JSValue::UNDEFINED,
         })
     }
@@ -4157,19 +4156,14 @@ pub(crate) extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
-    let Some(name) = this.get_name_string() else {
-        return BunString::EMPTY;
-    };
-    // A name equal to the store path was derived from it; a user-assigned name differs and is sent as given.
-    if let Some(path) = this.store_path() {
-        if *name.to_utf8() == *path {
-            let base = bun_paths::basename(path);
-            if base.len() != path.len() {
-                return BunString::clone_utf8(base);
-            }
-        }
+    let name = this.name.get();
+    if name.tag() != bun_core::Tag::Dead {
+        return name.clone();
     }
-    name.clone()
+    match this.store_path() {
+        Some(path) => BunString::clone_utf8(bun_paths::basename(path)),
+        None => BunString::EMPTY,
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

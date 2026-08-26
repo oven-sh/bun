@@ -3780,6 +3780,12 @@ std::optional<KEM::EncapsulateResult> KEM::Encapsulate(
         return std::nullopt;
     }
 
+    // The size query reports maximums; the second call updates the lengths to
+    // the bytes actually written.
+    ciphertext = ciphertext.resize(ciphertext_len);
+    shared_key = shared_key.resize(shared_key_len);
+    if (!ciphertext || !shared_key) return std::nullopt;
+
     return EncapsulateResult(std::move(ciphertext), std::move(shared_key));
 }
 
@@ -3818,7 +3824,7 @@ DataPointer KEM::Decapsulate(const EVPKeyPointer& private_key,
         return {};
     }
 
-    return shared_key;
+    return shared_key.resize(shared_key_len);
 }
 
 } // namespace ncrypto

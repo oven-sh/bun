@@ -224,7 +224,7 @@ pub(crate) fn scan_imports_and_exports(
                     }
                     ImportKind::Require =>
                     // Files that are imported with require() must be CommonJS modules,
-                    // unless `--split-require` loads the file at runtime as its own
+                    // unless a split `require()` loads the file at runtime as its own
                     // chunk (no wrapper, the same as a cross-chunk `import()` below).
                     {
                         if !this.is_external_dynamic_import(record, id as u32) {
@@ -908,7 +908,7 @@ pub(crate) fn scan_imports_and_exports(
                                 // We should use "__require" instead of "require" if we're not
                                 // generating a CommonJS output file, since it won't exist otherwise.
                                 // An `import()` is printed as-is and never becomes `__require()`,
-                                // nor does a `--split-require` `require()` (`import.meta.require`).
+                                // nor does a split `require()` (`import.meta.require`).
                                 if kind != ImportKind::Dynamic
                                     && !is_external_dyn
                                     && should_call_runtime_require(output_format)

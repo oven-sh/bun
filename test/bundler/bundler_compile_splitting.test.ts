@@ -357,15 +357,17 @@ describe("bundler", () => {
       },
     });
 
-    // --split-require in a compiled binary: the required chunk is embedded
-    // under /$bunfs/root and loaded synchronously from the call, including
-    // one made while the entry is still evaluating (a require cycle), with
-    // or without bytecode.
+    // A require()'d ESM chunk in a compiled binary is embedded under
+    // /$bunfs/root and loaded synchronously from the call, including one made
+    // while the entry is still evaluating (a require cycle), with or without
+    // bytecode. With --bytecode every module that loads — the entry, its
+    // static chunks and both require()'d chunks — must come from its embedded
+    // bytecode; JSC logs one line per module, and the only "Cache miss" is the
+    // `bun:main` wrapper, which never has bytecode.
     for (const bytecode of [false, true]) {
       itBundled(`compile/splitting/SplitRequireLoadsChunkSynchronously-${bytecode ? "bytecode" : "source"}`, {
         compile: true,
         splitting: true,
-        splitRequire: true,
         bytecode,
         format: "esm",
         files: {
@@ -392,10 +394,20 @@ describe("bundler", () => {
         },
         run: {
           stdout: "mark:eager\nmark:entry eager\nmark:lazy\nlazy\ntrue",
+          env: bytecode ? { BUN_JSC_verboseDiskCache: "1" } : undefined,
+          validate: bytecode
+            ? ({ stderr }) => {
+                const lines = stderr.trim().split("\n");
+                expect(lines.filter(l => l === "[Disk Cache] Cache miss for sourceCode")).toHaveLength(1);
+                const hits = lines.filter(l => l === "[Disk Cache] Cache hit for sourceCode").length;
+                expect(hits).toBeGreaterThanOrEqual(4);
+                expect(lines).toHaveLength(hits + 1);
+              }
+            : undefined,
         },
         onAfterBundle(api) {
           const payload = readFileSync(api.outfile).toString("latin1");
-          expect(payload).toMatch(/import\.meta\.require\("(\/\$bunfs|B:\/~BUN)\/root\/chunk-/);
+          expect(payload).toMatch(/import\.meta\.require\("(\/\$bunfs|B:\/~BUN)\/root\/[^"]+\.js"\)/);
         },
       });
     }

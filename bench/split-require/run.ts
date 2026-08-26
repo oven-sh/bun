@@ -1,5 +1,5 @@
-// Builds the generated app four ways (splitting ± split-require, source and
-// bytecode) with the given bun binary, then measures startup wall time, the
+// Builds the generated app four ways (splitting with and without the default
+// require() splitting, source and bytecode) with the given bun binary, then measures startup wall time, the
 // in-process time to the end of the entry module, and the physical footprint.
 // Runs are interleaved across variants so drift hits them equally.
 // Usage: bun run.ts <bun-binary> <appdir> [runs]
@@ -14,10 +14,10 @@ if (!bun || !appdir || !(runs > 0)) {
 }
 
 const variants: [name: string, args: string[]][] = [
-  ["source", []],
-  ["source-split-require", ["--split-require"]],
-  ["bytecode", ["--bytecode"]],
-  ["bytecode-split-require", ["--bytecode", "--split-require"]],
+  ["source", ["--no-split-require"]],
+  ["source-split-require", []],
+  ["bytecode", ["--bytecode", "--no-split-require"]],
+  ["bytecode-split-require", ["--bytecode"]],
 ];
 
 function median(xs: number[]) {

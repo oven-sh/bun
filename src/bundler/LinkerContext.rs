@@ -323,7 +323,7 @@ impl<'a> LinkerContext<'a> {
         self.pending_task_count.fetch_sub(1, Ordering::Relaxed);
     }
 
-    /// An `import()` — or a `--split-require` `require()` — whose target is a
+    /// An `import()` — or a split `require()` — whose target is a
     /// chunk entry point: the record is resolved at runtime against the
     /// target's chunk instead of binding to a wrapper.
     pub(crate) fn is_external_dynamic_import(
@@ -1616,7 +1616,7 @@ pub struct ChunkMeta {
     pub(crate) imports: ChunkMetaMap,
     pub(crate) exports: ChunkMetaMap,
     pub(crate) dynamic_imports: ArrayHashMap<crate::IndexInt, ()>,
-    /// `--split-require` `require()` targets, kept apart from `dynamic_imports`
+    /// Split `require()` targets, kept apart from `dynamic_imports`
     /// only so the metafile labels them `require-call`.
     pub(crate) require_imports: ArrayHashMap<crate::IndexInt, ()>,
 }

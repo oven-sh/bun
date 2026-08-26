@@ -1,8 +1,8 @@
 // require(esm) of a module that is still evaluating — the require() sits
 // inside that module's own evaluation (a.mjs → require(b.mjs) → b imports
 // a.mjs). The namespace is live: hoisted functions and already-initialized
-// bindings are visible, later `const`s are in TDZ. The --split-require
-// bundler output relies on this for require() cycles across chunks.
+// bindings are visible, later `const`s are in TDZ. Code-split bundler
+// output (target bun) relies on this for require() cycles across chunks.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 

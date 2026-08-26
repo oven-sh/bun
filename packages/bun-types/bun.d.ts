@@ -3175,13 +3175,14 @@ declare module "bun" {
     splitting?: boolean;
 
     /**
-     * With `splitting`, also make every `require()` of a bundled ES module a
-     * chunk boundary. The call stays synchronous: it is emitted as
-     * `import.meta.require("./chunk-…js")` and the chunk is evaluated when
-     * the call runs, so a `require()` inside a function that never runs
-     * costs nothing at startup. Requires `target: "bun"`.
+     * With `splitting` and `target: "bun"`, every `require()` of a bundled ES
+     * module is a chunk boundary too. The call stays synchronous: it is
+     * emitted as `import.meta.require("./chunk-…js")` and the chunk is
+     * evaluated when the call runs, so a `require()` inside a function that
+     * never runs costs nothing at startup. Set to `false` to keep such
+     * modules inlined in the calling chunk. No effect for other targets.
      *
-     * @default false
+     * @default true
      */
     splitRequire?: boolean;
 

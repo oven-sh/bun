@@ -390,21 +390,6 @@ impl BuildCommand {
             }
         }
 
-        if ctx.bundler_options.split_require {
-            if !ctx.bundler_options.code_splitting {
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r><d>:<r> <b>--split-require<r> requires <b>--splitting<r>"
-                );
-                Global::exit(1);
-            }
-            if !this_transpiler.options.target.is_bun() {
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r><d>:<r> <b>--split-require<r> requires <b>--target bun<r> (chunks are loaded with import.meta.require)"
-                );
-                Global::exit(1);
-            }
-        }
-
         let mut src_root_dir_buf = PathBuffer::uninit();
         let src_root_dir: &[u8] = 'brk1: {
             let path: &[u8] = 'brk2: {

@@ -254,7 +254,7 @@ impl Default for BundlerOptions {
             react_fast_refresh: false,
             react_compiler: false,
             code_splitting: false,
-            split_require: false,
+            split_require: true,
             transform_only: false,
             inline_entrypoint_import_meta_main: false,
             minify_syntax: false,

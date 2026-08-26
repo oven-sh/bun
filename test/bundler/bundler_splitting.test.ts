@@ -1158,7 +1158,7 @@ describe("bundler", () => {
     run: { file: "/out/main.js", stdout: "main 12000" },
   });
 
-  // --split-require: a require() of a bundled ES module becomes a chunk of its
+  // With target bun, a require() of a bundled ES module becomes a chunk of its
   // own, loaded synchronously with import.meta.require() when the call runs.
   const splitRequireFiles = {
     "/main.ts": /* ts */ `
@@ -1188,7 +1188,6 @@ describe("bundler", () => {
       files: splitRequireFiles,
       entryPoints: ["/main.ts"],
       splitting: true,
-      splitRequire: true,
       target: "bun",
       outdir: "/out",
       format: "esm",
@@ -1213,6 +1212,7 @@ describe("bundler", () => {
     files: splitRequireFiles,
     entryPoints: ["/main.ts"],
     splitting: true,
+    splitRequire: false,
     target: "bun",
     outdir: "/out",
     format: "esm",
@@ -1236,7 +1236,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/main.ts"],
     splitting: true,
-    splitRequire: true,
     target: "bun",
     outdir: "/out",
     format: "esm",
@@ -1262,7 +1261,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/main.ts"],
     splitting: true,
-    splitRequire: true,
     target: "bun",
     outdir: "/out",
     format: "esm",
@@ -1298,7 +1296,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/main.ts"],
     splitting: true,
-    splitRequire: true,
     target: "bun",
     outdir: "/out",
     format: "esm",
@@ -1332,7 +1329,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/main.ts"],
     splitting: true,
-    splitRequire: true,
     target: "bun",
     outdir: "/out",
     format: "esm",
@@ -1358,7 +1354,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/main.ts"],
     splitting: true,
-    splitRequire: true,
     target: "bun",
     outdir: "/out",
     format: "esm",
@@ -1384,7 +1379,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/main.ts"],
     splitting: true,
-    splitRequire: true,
     target: "bun",
     outdir: "/out",
     format: "esm",
@@ -1396,36 +1390,20 @@ describe("bundler", () => {
     run: { file: "/out/main.js", stdout: "tool evaluated\ntrue true" },
   });
 
-  for (const backend of ["cli", "api"] as const) {
-    itBundled(`splitting/SplitRequireRequiresSplitting-${backend}`, {
-      files: { "/main.ts": `console.log(require("./a.ts").a)`, "/a.ts": `export const a = 1` },
-      entryPoints: ["/main.ts"],
-      splitRequire: true,
-      target: "bun",
-      outdir: "/out",
-      backend,
-      bundleErrors: {
-        "<bun>": [backend === "cli" ? "--split-require requires --splitting" : "splitRequire requires splitting: true"],
-      },
-    });
-    itBundled(`splitting/SplitRequireRequiresBunTarget-${backend}`, {
-      files: { "/main.ts": `console.log(require("./a.ts").a)`, "/a.ts": `export const a = 1` },
-      entryPoints: ["/main.ts"],
-      splitting: true,
-      splitRequire: true,
-      target: "node",
-      outdir: "/out",
-      format: "esm",
-      backend,
-      bundleErrors: {
-        "<bun>": [
-          backend === "cli"
-            ? "--split-require requires --target bun (chunks are loaded with import.meta.require)"
-            : "splitRequire requires target: 'bun' (chunks are loaded with import.meta.require)",
-        ],
-      },
-    });
-  }
+  // Other targets cannot call import.meta.require: require() keeps the wrapper.
+  itBundled("splitting/SplitRequireIsBunTargetOnly", {
+    files: splitRequireFiles,
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    target: "node",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsFilesIn(api)).toEqual(["main.js"]);
+      api.expectFile("/out/main.js").not.toContain("import.meta.require");
+    },
+    run: { file: "/out/main.js", stdout: "main\ntool evaluated\ntool:helped" },
+  });
 
   // N same-named cross-chunk exports must get unique aliases in O(N) total
   // (ExportRenamer::next_renamed_name). Debug/ASAN builds blow past the 15s

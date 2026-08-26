@@ -256,7 +256,7 @@ export interface BundlerTestInput {
   targetFromAPI?: "TargetWasConfigured";
   minifyWhitespace?: boolean;
   splitting?: boolean;
-  /** `--split-require` / `splitRequire: true` (bun only). */
+  /** `splitRequire` (`--no-split-require` when false); on by default for target bun. */
   splitRequire?: boolean;
   /** `--min-chunk-size` / `minChunkSize`; requires `splitting` */
   minChunkSize?: number;
@@ -825,7 +825,7 @@ function expectBundled(
               chunkNaming && chunkNaming !== "[name]-[hash].[ext]" && [`--chunk-naming`, chunkNaming],
               assetNaming && assetNaming !== "[name]-[hash].[ext]" && [`--asset-naming`, assetNaming],
               splitting && `--splitting`,
-              splitRequire && `--split-require`,
+              splitRequire === false && `--no-split-require`,
               minChunkSize !== undefined && `--min-chunk-size=${minChunkSize}`,
               serverComponents && "--server-components",
               reactCompiler && "--react-compiler",

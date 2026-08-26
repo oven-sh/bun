@@ -1947,12 +1947,12 @@ pub mod bv2_impl {
                             let was_dynamic_import = CHECK_DYNAMIC_IMPORTS
                                 && match import_record.kind {
                                     ImportKind::Dynamic => true,
-                                    // `split_require`: a `require()` of another ESM file
-                                    // is a chunk boundary like `import()`. The flag is
-                                    // the linker's and printer's only signal for it. The
-                                    // call is printed as `import.meta.require`, so the
-                                    // calling file must itself run in Bun (a server
-                                    // build's browser-side files do not).
+                                    // A `require()` of another ESM file is a chunk
+                                    // boundary like `import()`. The flag is the linker's
+                                    // and printer's only signal for it. The call is
+                                    // printed as `import.meta.require`, so the calling
+                                    // file must itself run in Bun (a server build's
+                                    // browser-side files do not).
                                     ImportKind::Require => {
                                         let splits = self.split_require
                                             && self.all_targets[source_index.get() as usize]

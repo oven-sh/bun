@@ -268,7 +268,7 @@ pub(crate) fn merge_small_chunks(
     for _ in 0..entry_points_len {
         importer_bits.push(AutoBitSet::init_empty(entry_points_len)?);
     }
-    // Dynamic entries some live `--split-require` `require()` loads. The call
+    // Dynamic entries some live split `require()` loads. The call
     // runs while its importer is still evaluating, so no importer is
     // guaranteed to precede the target; folding shared code into the
     // importer's chunk could place it after the call site.

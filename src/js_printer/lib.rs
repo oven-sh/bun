@@ -2676,7 +2676,7 @@ pub(crate) mod __gated_printer {
                     .flags
                     .contains(ImportRecordFlags::CROSS_CHUNK_REQUIRE)
                 {
-                    // `--split-require`: the path is a sibling chunk, resolved
+                    // A split `require()`: the path is a sibling chunk, resolved
                     // relative to this chunk — not through the runtime's
                     // `__require`, which would resolve it relative to the
                     // runtime's chunk.

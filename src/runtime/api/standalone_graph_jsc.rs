@@ -43,6 +43,8 @@ fn template_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleG
             is_all_ascii: IsAllAscii::default(),
         };
         let blob = Blob::default();
+        // Every dupe of the template is an embedded File.
+        blob.is_jsdom_file.set(true);
         if let Some(mime) = MimeType::by_extension_no_default(strings::trim_leading_char(
             bun_paths::extension(file.name),
             b'.',

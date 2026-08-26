@@ -1138,6 +1138,9 @@ impl Value {
                         let blob_ptr = Blob::new(new.use_());
                         // SAFETY: `Blob::new` returns a freshly heap-allocated *mut Blob.
                         let blob = unsafe { &mut *blob_ptr };
+                        // body.blob() returns a Blob even when the body was a File.
+                        blob.is_jsdom_file.set(false);
+                        blob.last_modified.set(0.0);
                         if let Some(fetch_headers) = headers {
                             // `headers` is a live C++ FetchHeaders handle;
                             // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
@@ -2136,6 +2139,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         let blob_ptr = Blob::new(value.use_());
         // SAFETY: `Blob::new` returns a freshly heap-allocated, ref-counted Blob.
         let blob = unsafe { &mut *blob_ptr };
+        // body.blob() returns a Blob even when the body was a File.
+        blob.is_jsdom_file.set(false);
+        blob.last_modified.set(0.0);
         if blob.content_type().is_empty() {
             if let Some(fetch_headers) = BodyMixin::get_fetch_headers(self) {
                 // `fetch_headers` is a live C++ FetchHeaders handle;

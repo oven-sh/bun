@@ -2673,9 +2673,9 @@ declare module "bun" {
      *
      * @param begin - start offset in bytes
      * @param end - absolute offset in bytes (relative to 0)
-     * @param contentType - MIME type for the new BunFile
+     * @param contentType - MIME type for the new Blob
      */
-    slice(begin?: number, end?: number, contentType?: string): BunFile;
+    slice(begin?: number, end?: number, contentType?: string): Blob;
 
     /**
      * Offset any operation on the file starting at `begin`
@@ -2685,16 +2685,16 @@ declare module "bun" {
      * If `begin` > 0, {@link Bun.write}() is slower on macOS
      *
      * @param begin - start offset in bytes
-     * @param contentType - MIME type for the new BunFile
+     * @param contentType - MIME type for the new Blob
      */
-    slice(begin?: number, contentType?: string): BunFile;
+    slice(begin?: number, contentType?: string): Blob;
 
     /**
      * Slice the file from the beginning to the end, optionally with a new MIME type.
      *
-     * @param contentType - MIME type for the new BunFile
+     * @param contentType - MIME type for the new Blob
      */
-    slice(contentType?: string): BunFile;
+    slice(contentType?: string): Blob;
 
     /**
      * Incremental writer for files and pipes.

@@ -976,6 +976,63 @@ mod tests {
         assert_eq!(drops(), before + 1);
     }
 
+    // What `#[derive(ThreadSafeRefCounted)]` emits for a real host. Spelled out
+    // because the derive expands to `::bun_ptr::` paths, which do not resolve
+    // from inside this crate.
+    impl AnyRefCounted for Shared {
+        unsafe fn rc_ref(this: *mut Self) {
+            // SAFETY: caller contract — `this` points to a live `Shared`.
+            unsafe { ThreadSafeRefCount::<Shared>::ref_(this) }
+        }
+        unsafe fn rc_deref(this: *mut Self) {
+            // SAFETY: caller contract — `this` points to a live `Shared`.
+            unsafe { ThreadSafeRefCount::<Shared>::deref(this) }
+        }
+        unsafe fn rc_has_one_ref(this: *const Self) -> bool {
+            // SAFETY: caller contract — `this` points to a live `Shared`.
+            unsafe { (*ThreadSafeRefCounted::get_ref_count(this.cast_mut())).has_one_ref() }
+        }
+        unsafe fn rc_assert_valid(this: *const Self) {
+            // SAFETY: caller contract — `this` points to a live `Shared`.
+            unsafe { (*ThreadSafeRefCounted::get_ref_count(this.cast_mut())).assert_valid() }
+        }
+    }
+
+    // SAFETY: the count is atomic and `payload` is only ever read, so `&Shared`
+    // may be used from any thread and the last thread out may run the
+    // destructor. This is what makes `RefPtr<Shared>: Send + Sync`.
+    unsafe impl Send for Shared {}
+    // SAFETY: as above.
+    unsafe impl Sync for Shared {}
+
+    #[test]
+    fn ref_ptr_clones_cross_threads_and_the_last_one_destroys() {
+        let _serial = serial();
+        let before = drops();
+        let main_ref = RefPtr::new(Shared {
+            ref_count: ThreadSafeRefCount::init(),
+            payload: Box::new(5),
+        });
+
+        // Each thread gets its own clone and releases it by dropping it.
+        // `RefPtr<Shared>: Send` is what lets the clone move into the closure.
+        let workers: Vec<_> = (0..4)
+            .map(|_| {
+                let theirs = main_ref.clone();
+                std::thread::spawn(move || *theirs.payload)
+            })
+            .collect();
+        for worker in workers {
+            assert_eq!(worker.join().unwrap(), 5);
+        }
+        assert_eq!(drops(), before);
+        assert!(main_ref.ref_count.has_one_ref());
+
+        // The destroying release may also happen off the creating thread.
+        std::thread::spawn(move || drop(main_ref)).join().unwrap();
+        assert_eq!(drops(), before + 1);
+    }
+
     #[test]
     fn thread_safe_release_defers_destruction() {
         let _serial = serial();

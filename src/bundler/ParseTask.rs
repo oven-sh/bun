@@ -861,6 +861,7 @@ pub mod parse_worker {
                         &mut temp_log,
                         bump,
                         bun_parsers::yaml::CyclicAliases::Reject,
+                        false,
                     )?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(

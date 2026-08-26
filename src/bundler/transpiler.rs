@@ -1889,6 +1889,7 @@ fn parse_data_loader<'a>(
             log,
             arena,
             bun_parsers::yaml::CyclicAliases::Reject,
+            false,
         ) {
             Ok(e) => e,
             Err(_) => return None,

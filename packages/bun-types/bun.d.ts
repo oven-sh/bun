@@ -1477,6 +1477,18 @@ declare module "bun" {
    * YAML related APIs
    */
   namespace YAML {
+    /** Options controlling YAML parse behavior. */
+    export interface ParseOptions {
+      /**
+       * Reject documents with duplicate keys (last-wins by default).
+       * When `true`, `Bun.YAML.parse` throws with a positional "Duplicate key"
+       * error at the second occurrence. Mirrors yaml@2's `uniqueKeys: true`
+       * opt-in; `false` (default) keeps js-yaml / yaml@2 default semantics.
+       * @default false
+       */
+      uniqueKeys?: boolean;
+    }
+
     /**
      * Parse a YAML string into a JavaScript value. Every alias (`*name`) of an anchored collection yields the
      * same object, and an alias may refer to a collection that contains it, so the result can be cyclic.
@@ -1484,6 +1496,7 @@ declare module "bun" {
      * @category Utilities
      *
      * @param input The YAML string to parse
+     * @param options Optional parse behavior controls
      * @returns A JavaScript value, or an array of them for a multi-document stream
      *
      * @example
@@ -1496,9 +1509,12 @@ declare module "bun" {
      * console.log(YAML.parse("abc")) // "abc"
      * console.log(YAML.parse("- abc")) // [ "abc" ]
      * console.log(YAML.parse("abc: def")) // { "abc": "def" }
+     *
+     * // Reject duplicate keys
+     * YAML.parse("a: 1\na: 2", { uniqueKeys: true }) // throws "Duplicate key"
      * ```
      */
-    export function parse(input: string): unknown;
+    export function parse(input: string, options?: ParseOptions): unknown;
 
     /**
      * Convert a JavaScript value into a YAML string. Strings are double quoted if they contain keywords, non-printable or

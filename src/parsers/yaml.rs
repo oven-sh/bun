@@ -41,11 +41,13 @@ impl YAML {
         log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
         cyclic_aliases: CyclicAliases,
+        unique_keys: bool,
     ) -> Result<Expr, YamlParseError> {
         bun_core::analytics::Features::yaml_parse_inc();
         source.check_parseable_len(log, "YAML document")?;
 
-        let mut parser: Parser<Utf8> = Parser::init(bump, source.contents(), cyclic_aliases);
+        let mut parser: Parser<Utf8> =
+            Parser::init(bump, source.contents(), cyclic_aliases, unique_keys);
 
         let stream = match parser.parse() {
             Ok(s) => s,
@@ -719,6 +721,8 @@ pub enum ParseError {
     CyclicAlias,
     #[error("CyclicMerge")]
     CyclicMerge,
+    #[error("DuplicateKey")]
+    DuplicateKey,
 }
 
 bun_core::oom_from_alloc!(ParseError);
@@ -1942,6 +1946,7 @@ pub enum ParseResultError {
     ExcessiveAliasing { pos: Pos },
     CyclicAlias { pos: Pos },
     CyclicMerge { pos: Pos },
+    DuplicateKey { pos: Pos },
 }
 
 impl ParseResultError {
@@ -2013,6 +2018,9 @@ impl ParseResultError {
                     b"Merge key cannot reference an enclosing node",
                 );
             }
+            ParseResultError::DuplicateKey { pos } => {
+                log.add_error(Some(source), pos.loc(), b"Duplicate key");
+            }
         }
         Ok(())
     }
@@ -2078,6 +2086,9 @@ impl ParseResultError {
             ParseError::CyclicMerge => ParseResultError::CyclicMerge {
                 pos: parser.token.start,
             },
+            ParseError::DuplicateKey => ParseResultError::DuplicateKey {
+                pos: parser.token.start,
+            },
         }
     }
 }
@@ -2140,6 +2151,11 @@ pub struct Parser<'i, Enc: Encoding> {
 
     pub(crate) merge_props_budget: usize,
     pub(crate) alias_expansion_budget: usize,
+    /// When `true`, `append_entry` rejects duplicate keys with
+    /// `ParseError::DuplicateKey` (positioned at the second occurrence).
+    /// Matches yaml@2's `uniqueKeys: true` opt-in; `false` (default) keeps
+    /// last-wins semantics to match js-yaml and yaml@2 defaults.
+    pub(crate) unique_keys: bool,
 }
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
@@ -2155,6 +2171,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         bump: &'i bun_alloc::Arena,
         input: &'i [Enc::Unit],
         cyclic_aliases: CyclicAliases,
+        unique_keys: bool,
     ) -> Self {
         // [206] l-document-prefix ::= c-byte-order-mark? l-comment*
         let start = Pos::from(Enc::bom_len(input));
@@ -2183,6 +2200,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             stack_check: StackCheck::init(),
             merge_props_budget: MappingProps::MAX_MERGED_PROPERTIES,
             alias_expansion_budget: Self::MAX_ALIAS_EXPANSION,
+            unique_keys,
         }
     }
 
@@ -3120,6 +3138,35 @@ impl MappingProps {
         Ok(())
     }
 
+/// Index one newly-to-be-appended key by its eventual list position.
+/// Called by `append_entry` *before* `append`, so the index is the current
+/// length of `self.list` (the slot `append` will fill next). `self.merge_indexed`
+/// is advanced past it so future scans do not re-index the same entry.
+pub(crate) fn record_key(&mut self, key: &Expr) -> Result<(), AllocError> {
+    let hash = yaml_merge_key_expr_hash(key);
+    let idx = self.list.len() as u32;
+    self.merge_index
+        .get_or_put(hash)?
+        .value_ptr
+        .push(idx);
+    self.merge_indexed = self.list.len() + 1;
+    Ok(())
+}
+
+    /// Return `true` when a key equal to `key` already appears in `self.list`
+    /// (either as a direct `append` or inside a prior `<<:` merge). Used by
+    /// `append_entry` to enforce `uniqueKeys: true`.
+    pub(crate) fn contains_key(&self, key: &Expr) -> bool {
+        let hash = yaml_merge_key_expr_hash(key);
+        let Some(candidates) = self.merge_index.get(&hash) else {
+            return false;
+        };
+        candidates.iter().any(|idx| {
+            let existing_key = self.list[*idx as usize].key.as_ref().unwrap();
+            yaml_merge_key_expr_eql(existing_key, key)
+        })
+    }
+
     pub(crate) fn merge(
         &mut self,
         merge_props: &[G::Property],
@@ -3179,6 +3226,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// Appends `key: value` to `props`, expanding a `<<` merge key. A merge
     /// cannot pull in a collection that is still being parsed (its properties
     /// are not there yet).
+    ///
+    /// When `self.unique_keys` is `true`, any key that already appears in
+    /// `props` (either as a direct entry or inside a prior `<<:` merge) is
+    /// rejected with `ParseError::DuplicateKey`, positioned at the second
+    /// occurrence. Matches yaml@2's `uniqueKeys: true` opt-in; when `false`
+    /// (the default) duplicates keep last-wins semantics, matching js-yaml
+    /// and yaml@2 defaults.
     fn append_entry(
         &mut self,
         props: &mut MappingProps,
@@ -3211,6 +3265,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
         }
 
+        if self.unique_keys && props.contains_key(&key) {
+            return Err(ParseError::DuplicateKey);
+        }
+
+        props.record_key(&key)?;
         Ok(props.append(G::Property {
             key: Some(key),
             value: Some(value),

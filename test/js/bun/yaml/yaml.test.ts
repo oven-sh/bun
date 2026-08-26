@@ -2573,6 +2573,67 @@ production:
       });
     });
 
+    describe("duplicate keys", () => {
+      test("duplicate keys are last-wins by default (matches js-yaml / yaml@2)", () => {
+        expect(YAML.parse("a: 1\na: 2\n")).toEqual({ a: 2 });
+        expect(YAML.parse("{a: 1, a: 2}")).toEqual({ a: 2 });
+      });
+
+      test("uniqueKeys option rejects duplicate block keys with positional error", () => {
+        let err: unknown;
+        try {
+          YAML.parse("a: 1\na: 2\n", { uniqueKeys: true });
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeInstanceOf(SyntaxError);
+        const msg = (err as SyntaxError).message;
+        expect(msg).toMatch(/Duplicate key/);
+        expect(msg).toMatch(/\(line \d+, column \d+\)/);
+      });
+
+      test("uniqueKeys option rejects duplicate flow keys", () => {
+        let err: unknown;
+        try {
+          YAML.parse("{a: 1, a: 2}", { uniqueKeys: true });
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeInstanceOf(SyntaxError);
+        expect((err as SyntaxError).message).toMatch(/Duplicate key/);
+      });
+
+      test("uniqueKeys option rejects duplicates after a merge key", () => {
+        let err: unknown;
+        try {
+          // `host` is introduced by the merge, then redeclared by the
+          // explicit entry — uniqueKeys should reject at the second occurrence.
+          YAML.parse(
+            `defaults: &d\n  host: x\n  port: 1\ndevelopment:\n  <<: *d\n  host: y\n`,
+            { uniqueKeys: true },
+          );
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeInstanceOf(SyntaxError);
+        expect((err as SyntaxError).message).toMatch(/Duplicate key/);
+      });
+
+      test("uniqueKeys does not affect duplicate keys inside arrays", () => {
+        expect(YAML.parse("[1, 1, 1]", { uniqueKeys: true })).toEqual([1, 1, 1]);
+      });
+
+      test("uniqueKeys does not affect duplicate keys at different nesting depths", () => {
+        expect(YAML.parse("a: { a: 1 }\n")).toEqual({ a: { a: 1 } });
+        expect(
+          YAML.parse(
+            `outer:\n  a: 1\n  b:\n    a: 2\n`,
+            { uniqueKeys: true },
+          ),
+        ).toEqual({ outer: { a: 1, b: { a: 2 } } });
+      });
+    });
+
     test("issue 22659", () => {
       const input1 = `- test2: next
   test1: +`;

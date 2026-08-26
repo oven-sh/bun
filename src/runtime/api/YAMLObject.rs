@@ -6,7 +6,7 @@ use bun_collections::{HashMap, StringHashMap};
 use bun_core::StackCheck;
 use bun_core::String as BunString;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
+    self as jsc, CallFrame, JSGlobalObject, JSObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
     JsError, JsResult, MarkedArgumentBuffer, wtf,
 };
 use bun_parsers::yaml::{CyclicAliases, YAML, YamlParseError};
@@ -1021,6 +1021,29 @@ fn is_inf_suffix(str: &BunString, i: usize) -> bool {
 
 #[bun_jsc::host_fn]
 pub(crate) fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    // `Bun.YAML.parse(str, { uniqueKeys?: boolean })` — `uniqueKeys` mirrors
+    // yaml@2's `parseDocument` opt-in. Default `false` keeps last-wins
+    // semantics to match js-yaml and yaml@2 defaults.
+    let unique_keys = {
+        let mut value = false;
+        let args = call_frame.arguments();
+        if args.len() > 1 {
+            let opts = args.get(1);
+            if let Some(opts) = opts {
+                if opts.is_object() {
+                    let raw: *mut JSObject =
+                        if let Ok(raw) = opts.to_object(global) { raw } else { std::ptr::null_mut() };
+                    if !raw.is_null() {
+                        if let Ok(Some(v)) = unsafe { (*raw).get(global, b"uniqueKeys") } {
+                            value = v.as_boolean();
+                        }
+                    }
+                }
+            }
+        }
+        value
+    };
+
     // `NullishInput::ToString` preserves YAML's coerce-undefined-to-"undefined" behavior.
     super::with_text_format_source(
         global,
@@ -1031,7 +1054,8 @@ pub(crate) fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult
         |arena, log, source| {
             // `ParserCtx::to_js` materializes each `E::Array`/`E::Object`
             // once by pointer identity, so a cyclic graph is fine here.
-            let root = match YAML::parse(source, log, arena, CyclicAliases::Allow) {
+            let root =
+                match YAML::parse(source, log, arena, CyclicAliases::Allow, unique_keys) {
                 Ok(root) => root,
                 Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
                 Err(YamlParseError::StackOverflow) => return Err(global.throw_stack_overflow()),

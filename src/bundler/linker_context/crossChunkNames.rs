@@ -38,7 +38,6 @@ fn cross_chunk_refs(chunks: &[Chunk]) -> Vec<Ref> {
 fn reserved_names(
     c: &LinkerContext,
     chunks: &[Chunk],
-    minify: bool,
 ) -> Result<StringHashMap<u32>, bun_alloc::AllocError> {
     let mut reserved = renamer::compute_initial_reserved_names(c.options.output_format)?;
     let scopes = c.graph.ast.items_module_scope();
@@ -61,11 +60,6 @@ fn reserved_names(
             }
         }
     }
-    // `MinifyRenamer::init` never hands out bare `$` (#14586); an unminified
-    // binding named `$` keeps it.
-    if minify {
-        reserved.put(b"$", 1)?;
-    }
     Ok(reserved)
 }
 
@@ -86,7 +80,7 @@ pub(crate) fn assign_unminified(
     if refs.is_empty() {
         return Ok(());
     }
-    let mut used = reserved_names(c, chunks, false)?;
+    let mut used = reserved_names(c, chunks)?;
     let mut buf: Vec<u8> = Vec::new();
     c.cross_chunk_names.reserve(refs.len());
     for ref_ in refs {
@@ -126,24 +120,53 @@ pub(crate) fn assign_minified(
     if refs.is_empty() {
         return Ok(());
     }
-    let reserved = reserved_names(c, chunks, true)?;
-
-    // (total count, first-seen order) per binding; most used first.
-    let mut order: Vec<(u32, u32, Ref, bool)> = Vec::with_capacity(refs.len());
-    for (i, &ref_) in refs.iter().enumerate() {
-        let mut count = 0u32;
-        for chunk in chunks.iter() {
-            if let ChunkRenamer::Minify(r) = &chunk.renamer {
-                count = count.saturating_add(r.top_level_count(ref_).unwrap_or(0));
+    // Every chunk's renamer already reserved the keywords plus its own module
+    // scopes' unbound / pinned names; a bundle-wide name avoids all of them.
+    let mut reserved = StringHashMap::<u32>::default();
+    let export_aliases = c.graph.meta.items_sorted_and_filtered_export_aliases();
+    for chunk in chunks.iter() {
+        if let ChunkRenamer::Minify(r) = &chunk.renamer {
+            for (name, _) in r.reserved_names().iter() {
+                reserved.put(name, 1)?;
             }
         }
+        if chunk.entry_point.is_entry_point() {
+            for alias in export_aliases[chunk.entry_point.source_index() as usize].iter() {
+                reserved.put(alias, 1)?;
+            }
+        }
+    }
+
+    // (total count, first-seen order) per binding; most used first. Each
+    // chunk contributes the count of the bindings it declares or imports.
+    let mut index_of: bun_collections::HashMap<Ref, u32> = Default::default();
+    let mut order: Vec<(u32, u32, Ref, bool)> = Vec::with_capacity(refs.len());
+    for (i, &ref_) in refs.iter().enumerate() {
         let capital = c
             .graph
             .symbols
             .get_const(ref_)
             .unwrap()
             .must_start_with_capital_letter_for_jsx();
-        order.push((count, i as u32, ref_, capital));
+        index_of.insert(ref_, i as u32);
+        order.push((0, i as u32, ref_, capital));
+    }
+    for chunk in chunks.iter() {
+        let (Content::Javascript(js), ChunkRenamer::Minify(r)) = (&chunk.content, &chunk.renamer)
+        else {
+            continue;
+        };
+        let refs_here = js.exports_to_other_chunks.keys().iter().copied().chain(
+            js.imports_from_other_chunks
+                .values()
+                .iter()
+                .flat_map(|items| items.iter().map(|item| item.r#ref)),
+        );
+        for ref_ in refs_here {
+            if let (Some(&i), Some(count)) = (index_of.get(&ref_), r.top_level_count(ref_)) {
+                order[i as usize].0 = order[i as usize].0.saturating_add(count);
+            }
+        }
     }
     order.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
 

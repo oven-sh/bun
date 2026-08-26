@@ -420,6 +420,11 @@ impl MinifyRenamer {
         Ok(())
     }
 
+    /// Names this renamer will not hand out (keywords, unbound globals, pinned names).
+    pub fn reserved_names(&self) -> &StringHashMap<u32> {
+        &self.reserved_names
+    }
+
     /// The accumulated use count of a top-level symbol in this chunk, if it has one.
     pub fn top_level_count(&self, ref_: Ref) -> Option<u32> {
         let ref_ = self.symbols.follow(ref_);

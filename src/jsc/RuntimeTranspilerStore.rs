@@ -926,8 +926,7 @@ impl TranspilerJob {
             }
         }
 
-        // Errors logged after the AST exists (duplicate export names, `import` next
-        // to `module.exports`) must still fail the load, as in `transpile_source_code_inner`.
+        // The parser can log errors and still return an AST.
         if transpiler.log().errors > 0 {
             self.parse_error = Some(crate::CrateError::ParseError);
             return;

@@ -679,8 +679,40 @@ describe("bundler", () => {
     ],
   });
 
-  // Direct eval keeps every name in its scope chain as written; the shared
-  // bindings are numbered around those and the program still links.
+  // Direct eval keeps every name in its scope chain as written — including a
+  // CommonJS-wrapped file's top level — so the bundle-wide namer must route
+  // around those names, and the shared bindings such a file declares fall
+  // back to `export { name as alias }`.
+  itBundled("splitting/CrossChunkNamesWithDirectEvalMinified", {
+    files: {
+      "/a.js": /* js */ `
+        import { a, b } from './shared.js'
+        var x = 'ax'
+        function a2() { return 'local-a2' }
+        console.log(a(), b, eval('x'), eval('a2()'))
+      `,
+      "/b.js": /* js */ `
+        import { a, b } from './shared.js'
+        console.log(a(), b)
+      `,
+      "/shared.js": /* js */ `
+        export function a() { return 'A' }
+        export var b = eval('"B"')
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    minifyIdentifiers: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/a.js").toContain('var x = "ax"');
+    },
+    run: [
+      { file: "/out/a.js", stdout: "A B ax local-a2" },
+      { file: "/out/b.js", stdout: "A B" },
+    ],
+  });
   itBundled("splitting/CrossChunkNamesWithDirectEval", {
     files: {
       "/a.js": /* js */ `

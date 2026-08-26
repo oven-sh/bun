@@ -2760,16 +2760,11 @@ mod spawn_process_body {
                     Ok(proces) => proces,
                 };
 
-            // `*mut Process` — intrusive refcount (heap::alloc in to_process).
-            let process: *mut Process = spawned.to_process(());
-            let _detach_guard = scopeguard::guard(process, |process| {
-                // SAFETY: sole owner during sync spawn; loop has drained, so no
-                // uv callback holds a competing `&mut Process`.
-                unsafe {
-                    (*process).detach();
-                    Process::deref(process);
-                }
-            });
+            // Sole owner during sync spawn; detached and released on return,
+            // by which time the loop has drained and no uv callback holds a
+            // competing `&mut Process`.
+            let process_handle = spawned.to_process_handle(());
+            let process: *mut Process = process_handle.as_ptr();
             // SAFETY: just allocated; no other borrow live yet.
             unsafe {
                 (*process).enable_keeping_event_loop_alive();
@@ -2820,9 +2815,9 @@ mod spawn_process_body {
                 }));
             // SAFETY: `(*this_ptr).process` was just produced by `to_process` (sole
             // owner, mutable provenance from heap::alloc).
+            let _frame_ref = unsafe { RefPtr::init_ref((*this_ptr).process) };
             unsafe {
                 let p = &mut *(*this_ptr).process;
-                p.ref_();
                 // SAFETY: `this_ptr` is the live `SyncWindowsProcess` on the
                 // caller's stack; `p` is owned by it and dropped before return.
                 p.set_exit_handler(ProcessExit::new(ProcessExitKind::SyncWindows, this_ptr));
@@ -2891,12 +2886,9 @@ mod spawn_process_body {
                     stderr: flatten_owned_chunks(core::mem::take(&mut (*this_ptr).stderr)),
                 }
             };
-            // SAFETY: drop the ref taken above, then reclaim the SyncWindowsProcess
-            // allocation.
-            unsafe {
-                Process::deref((*this_ptr).process);
-                drop(bun_core::heap::take(this_ptr));
-            }
+            // SAFETY: reclaim the SyncWindowsProcess allocation; `_frame_ref`
+            // releases the process after.
+            drop(unsafe { bun_core::heap::take(this_ptr) });
             Ok(Ok(result))
         }
 

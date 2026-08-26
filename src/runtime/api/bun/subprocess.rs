@@ -118,14 +118,8 @@ pub use bun_spawn::process::StdioKind;
 #[derive(bun_ptr::RefCounted)]
 pub struct Subprocess<'a> {
     pub(crate) ref_count: RefCount<Subprocess<'a>>,
-    /// Intrusively-refcounted `Process`. Allocated via
-    /// `heap::alloc` in `Process::init_posix`/`init_windows`; the +1 ref
-    /// from construction is released in [`Subprocess::finalize`] via
-    /// `Process::deref()`. Not `Arc` — `Process` carries its own
-    /// `ThreadSafeRefCount` and crosses the `ProcessAutoKiller`/waiter-thread
-    /// boundary by raw identity, so wrapping in `Arc` would double-count and
-    /// (worse) `Arc::from_raw` on a `Box` allocation is UB.
-    pub(crate) process: bun_ptr::BackRef<Process, bun_ptr::Mut>,
+    /// The construction ref on the `Process` (detached in [`Subprocess::finalize`]).
+    pub(crate) process: RefPtr<Process>,
     pub(crate) stdin: JsCell<Writable<'a>>,
     pub(crate) stdout: JsCell<Readable>,
     pub(crate) stderr: JsCell<Readable>,
@@ -147,10 +141,8 @@ pub struct Subprocess<'a> {
     /// Weak observer of the stdin `FileSink` — holds no ownership/ref. `onStdinDestroyed`
     /// nulls this before the sink is freed, so it is never dereferenced after the sink dies.
     pub(crate) weak_file_sink_stdin_ptr: Cell<Option<NonNull<FileSink>>>,
-    /// +1 C++-intrusive ref held; released in `clear_abort_signal` via
-    /// `AbortSignal::unref()`. Not `Arc` — `AbortSignal` is an opaque FFI
-    /// handle whose refcount lives on the C++ side.
-    pub(crate) abort_signal: Cell<Option<NonNull<AbortSignal>>>,
+    /// Our ref on the `signal` option; released in `clear_abort_signal`.
+    pub(crate) abort_signal: JsCell<Option<bun_jsc::AbortSignalRef>>,
 
     pub(crate) event_loop_timer_refd: Cell<bool>,
     /// Intrusive timer node. `JsCell` so `&self` can hand `*mut EventLoopTimer`
@@ -230,7 +222,7 @@ impl<'a> Subprocess<'a> {
     /// the raw pointer is sound.
     #[inline]
     pub(crate) fn process(&self) -> &Process {
-        self.process.get()
+        &self.process
     }
 
     /// Mutably borrow the owned [`Process`].
@@ -360,15 +352,9 @@ bun_spawn::link_impl_ProcessExit! {
 
 impl Subprocess<'_> {
     /// Shared borrow of the attached `AbortSignal`, if any.
-    ///
-    /// `abort_signal` holds a +1 C++-intrusive ref taken in
-    /// `spawn_maybe_sync`; the pointee is therefore live for as long as the
-    /// cell is `Some` (it is `take`n *before* `unref()` in
-    /// [`clear_abort_signal`](Self::clear_abort_signal)) — i.e. the
-    /// owner-outlives-holder `BackRef` invariant holds.
     #[inline]
-    pub(crate) fn abort_signal_ref(&self) -> Option<bun_ptr::BackRef<AbortSignal>> {
-        self.abort_signal.get().map(bun_ptr::BackRef::from)
+    pub(crate) fn abort_signal_ref(&self) -> Option<&AbortSignal> {
+        self.abort_signal.get().as_deref()
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1296,13 +1282,10 @@ impl Subprocess<'_> {
     }
 
     fn clear_abort_signal(&self) {
-        if let Some(signal) = self.abort_signal.replace(None).map(bun_ptr::BackRef::from) {
-            // `signal` was stored with a +1 C++ intrusive ref (taken in
-            // `spawn_maybe_sync`); it stays live until `unref()` below, so the
-            // `BackRef` invariant (pointee outlives holder) holds for this scope.
+        if let Some(signal) = self.abort_signal.take() {
             signal.pending_activity_unref();
             signal.clean_native_bindings(self.as_ctx_ptr().cast::<c_void>());
-            signal.unref();
+            // Dropping `signal` unrefs it.
         }
     }
 
@@ -1346,13 +1329,6 @@ impl Subprocess<'_> {
         if exit_handler_pending {
             self.deref();
         }
-        // Release the intrusive ref now,
-        // not when `ref_count` → 0. The raw `*mut Process` is left dangling but
-        // no code path reads `self.process` after this (finalize runs once).
-        // SAFETY: `process` is the live Box-backed Process; deref() frees it
-        // when its own ThreadSafeRefCount reaches zero.
-        unsafe { Process::deref(self.process.as_ptr()) };
-
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             Self::timer_all().remove(self.event_loop_timer.as_ptr());
         }

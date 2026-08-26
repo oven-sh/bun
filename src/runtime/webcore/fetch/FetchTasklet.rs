@@ -33,6 +33,7 @@ use crate::webcore::response::HeadersRef;
 use crate::webcore::sink::JSSink;
 use crate::webcore::streams::{SourceHandle, StreamError, StreamResult, Writable};
 use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, SinkHandle};
+use bun_jsc::AbortSignalRef;
 
 // `bun_event_loop::JsResult` (cycle-broken erased error) — used by
 // ConcurrentTask callbacks at the tier-3 layer.
@@ -136,7 +137,7 @@ pub struct FetchTasklet {
     // WebCore::AbortSignal is C++-refcounted (intrusive). Model as
     // raw ptr; ref/unref via `bun_jsc::AbortSignal`
     // methods (see clear_abort_signal / queue).
-    pub(crate) signal: Option<*mut AbortSignal>,
+    pub(crate) signal: Option<AbortSignalRef>,
     pub(crate) signals: Signals,
     pub(crate) signal_store: http::signals::Store,
     pub(crate) has_schedule_callback: AtomicBool,
@@ -365,8 +366,7 @@ impl FetchTasklet {
     /// `clear_abort_signal`).
     #[inline]
     fn abort_signal(&self) -> Option<&AbortSignal> {
-        // S008: `AbortSignal` is an `opaque_ffi!` ZST handle — safe `*const → &`.
-        self.signal.map(|p| bun_opaque::opaque_deref(p))
+        self.signal.as_deref()
     }
 
     /// True iff an attached AbortSignal has fired.
@@ -1275,14 +1275,10 @@ impl FetchTasklet {
         let Some(signal) = self.signal.take() else {
             return;
         };
-        // `signal` is a live C++-owned WebCore::AbortSignal*; we hold one ref
-        // (taken in `fetch.rs` before populating FetchOptions). Order matters:
-        // cleanNativeBindings first, then unref + pending_activity_unref.
-        // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe `*const → &`.
-        let signal = bun_opaque::opaque_deref(signal);
+        // Order matters: cleanNativeBindings first, then pending_activity_unref
+        // and (dropping `signal`) unref.
         signal.clean_native_bindings(std::ptr::from_mut(self).cast::<c_void>());
         signal.pending_activity_unref();
-        signal.unref();
     }
 
     fn on_reject(&mut self) -> BodyValueError {
@@ -2077,12 +2073,7 @@ impl FetchTasklet {
                 http::HTTPRequestBody::Sendfile(*sendfile);
         }
 
-        if let Some(signal) = fetch_tasklet.signal {
-            // `signal` is a live C++-owned WebCore::AbortSignal* (already ref'd by
-            // the caller before populating `fetch_options.signal`).
-            // `add_listener` returns `self`, so the field already holds the right ptr.
-            // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe `*const → &`.
-            let signal = bun_opaque::opaque_deref(signal);
+        if let Some(signal) = &fetch_tasklet.signal {
             signal.pending_activity_ref();
             signal.add_listener(fetch_tasklet_ptr.cast::<c_void>(), Self::__abort_listener_c);
         }
@@ -2619,7 +2610,7 @@ pub struct FetchOptions {
     pub(crate) proxy: Option<ZigURL<'static>>,
     pub(crate) proxy_headers: Option<Headers>,
     pub(crate) url_proxy_buffer: Box<[u8]>,
-    pub(crate) signal: Option<*mut AbortSignal>,
+    pub(crate) signal: Option<AbortSignalRef>,
     // Custom Hostname
     pub(crate) hostname: Option<Box<[u8]>>,
     pub(crate) check_server_identity: StrongOptional,

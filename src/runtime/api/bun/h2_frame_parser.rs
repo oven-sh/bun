@@ -1257,14 +1257,7 @@ pub struct Stream {
 }
 
 pub(crate) struct SignalRef {
-    // LIFETIMES.tsv: SHARED — AbortSignal is intrusively refcounted across FFI/codegen.
-    // `AbortSignal` is an opaque C++ type whose ref/unref go through
-    // `WebCore__AbortSignal__ref/unref`; it does not (and cannot) implement
-    // `bun_ptr::RefCounted`, so balance refs by hand in `attach_signal` /
-    // `Drop`. `BackRef` captures the backref invariant
-    // (signal is `ref_()`'d in `attach_signal` and outlives this struct until
-    // `Drop` calls `detach()`/`unref()`), so reads go through safe `Deref`.
-    signal: bun_ptr::BackRef<AbortSignal>,
+    signal: bun_jsc::AbortSignalRef,
     // TODO: We should not need this ref counting here, since Parser owns Stream
     parser: RefPtr<H2FrameParser>,
     stream_id: u32,
@@ -1272,7 +1265,6 @@ pub(crate) struct SignalRef {
 
 impl SignalRef {
     pub(crate) fn is_aborted(&self) -> bool {
-        // BackRef invariant: signal kept alive via .ref_() in attach_signal.
         self.signal.aborted()
     }
 
@@ -1294,12 +1286,9 @@ impl SignalRef {
 
 impl Drop for SignalRef {
     fn drop(&mut self) {
-        // BackRef invariant: `signal` is the C++-refcounted AbortSignal we
-        // ref_()'d in `attach_signal`; valid until this `detach` releases our
-        // listener and unrefs. Copy the `BackRef` out first so the `&mut self`
-        // taken by `from_mut` doesn't overlap the receiver borrow.
-        let signal = self.signal;
-        signal.detach(std::ptr::from_mut(self).cast::<c_void>());
+        // Release our listener; dropping `signal` then unrefs it.
+        let this = std::ptr::from_mut(self).cast::<c_void>();
+        self.signal.clean_native_bindings(this);
     }
 }
 
@@ -1816,10 +1805,11 @@ impl Stream {
         // `self` pointer with FFI (wildcard) provenance — store *that* in the
         // `BackRef` so its validity is tied to the refcount, not to the
         // borrowed `&mut AbortSignal` parameter's lifetime.
-        let refed = core::ptr::NonNull::new(signal.ref_()).expect("AbortSignal::ref_");
+        // SAFETY: `ref_()` returns the signal with a +1 we adopt.
+        let refed = unsafe { bun_jsc::AbortSignalRef::adopt(signal.ref_()) };
         // we need a stable pointer to know what signal points to what stream_id + parser
         let mut signal_ref = Box::new(SignalRef {
-            signal: bun_ptr::BackRef::from(refed),
+            signal: refed,
             parser: parser.ref_guard(),
             stream_id: self.id,
         });

@@ -1306,24 +1306,20 @@ impl Subprocess<'_> {
         }
     }
 
-    pub fn finalize(self: Box<Self>) {
+    pub fn finalize(&self) {
         bun_output::scoped_log!(Subprocess, "finalize");
-        // Refcounted: the trailing `this.deref()` releases the JS wrapper's +1;
-        // allocation may outlive this call if other refs remain, so hand
-        // ownership back to the raw refcount.
-        let this = bun_core::heap::release(self);
         // Ensure any code which references the "this" value doesn't attempt to
         // access it after it's been freed We cannot call any methods which
         // access GC'd values during the finalizer
-        this.this_value.with_mut(|v| v.finalize());
+        self.this_value.with_mut(|v| v.finalize());
 
-        this.clear_abort_signal();
+        self.clear_abort_signal();
 
         debug_assert!(
-            !this.compute_has_pending_activity()
+            !self.compute_has_pending_activity()
                 || VirtualMachine::VirtualMachine::get().is_shutting_down()
         );
-        this.finalize_streams();
+        self.finalize_streams();
 
         // `Writable::init()` took a +1 (`subprocess.ref_()`, guarded by
         // `DEREF_ON_STDIN_DESTROYED`) for the stdin pipe back-pointer. The
@@ -1338,38 +1334,38 @@ impl Subprocess<'_> {
         // the JSFileSink may be swept after us in the same
         // `lastChanceToFinalize` pass and would otherwise call
         // `on_stdin_destroyed()` against a freed Box.
-        if this.flags.get().contains(Flags::DEREF_ON_STDIN_DESTROYED)
-            && !this.has_called_getter(ObservableGetter::Stdin)
+        if self.flags.get().contains(Flags::DEREF_ON_STDIN_DESTROYED)
+            && !self.has_called_getter(ObservableGetter::Stdin)
         {
-            this.update_flags(|f| f.remove(Flags::DEREF_ON_STDIN_DESTROYED));
-            this.deref();
+            self.update_flags(|f| f.remove(Flags::DEREF_ON_STDIN_DESTROYED));
+            self.deref();
         }
 
-        let exit_handler_pending = this.process().exit_handler.is_some();
-        this.process_mut().detach();
+        let exit_handler_pending = self.process().exit_handler.is_some();
+        self.process_mut().detach();
         if exit_handler_pending {
-            this.deref();
+            self.deref();
         }
         // Release the intrusive ref now,
         // not when `ref_count` → 0. The raw `*mut Process` is left dangling but
-        // no code path reads `this.process` after this (finalize runs once).
+        // no code path reads `self.process` after this (finalize runs once).
         // SAFETY: `process` is the live Box-backed Process; deref() frees it
         // when its own ThreadSafeRefCount reaches zero.
-        unsafe { Process::deref(this.process.as_ptr()) };
+        unsafe { Process::deref(self.process.as_ptr()) };
 
-        if this.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            Self::timer_all().remove(this.event_loop_timer.as_ptr());
+        if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
+            Self::timer_all().remove(self.event_loop_timer.as_ptr());
         }
-        this.set_event_loop_timer_refd(false);
+        self.set_event_loop_timer_refd(false);
 
-        let mut mb = this.stdout_maxbuf.get();
+        let mut mb = self.stdout_maxbuf.get();
         MaxBuf::MaxBuf::remove_from_subprocess(&mut mb);
-        this.stdout_maxbuf.set(mb);
-        let mut mb = this.stderr_maxbuf.get();
+        self.stdout_maxbuf.set(mb);
+        let mut mb = self.stderr_maxbuf.get();
         MaxBuf::MaxBuf::remove_from_subprocess(&mut mb);
-        this.stderr_maxbuf.set(mb);
+        self.stderr_maxbuf.set(mb);
 
-        if let Some(ipc_data) = this.ipc_data.take() {
+        if let Some(ipc_data) = self.ipc_data.take() {
             // In normal operation the socket is already `.closed` by the time we
             // get here (that is what allowed `compute_has_pending_activity` to drop
             // to false and let GC collect us). Detach and release our ref; any
@@ -1382,8 +1378,7 @@ impl Subprocess<'_> {
             }
         }
 
-        this.update_flags(|f| f.insert(Flags::FINALIZED));
-        this.deref();
+        self.update_flags(|f| f.insert(Flags::FINALIZED));
     }
 
     pub(crate) fn get_exited(&self, this_value: JSValue, global_this: &JSGlobalObject) -> JSValue {

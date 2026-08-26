@@ -1947,14 +1947,12 @@ impl Terminal {
     }
 
     /// Finalize - called by GC when object is collected
-    pub(crate) fn finalize(self: Box<Self>) {
+    pub(crate) fn finalize(&self) {
         bun_output::scoped_log!(Terminal, "finalize");
         jsc::mark_binding();
-        bun_ptr::finalize_js_box(self, |this| {
-            this.this_value.with_mut(|v| v.finalize());
-            this.update_flags(|f| f.insert(Flags::FINALIZED));
-            this.close_internal();
-        });
+        self.this_value.with_mut(|v| v.finalize());
+        self.update_flags(|f| f.insert(Flags::FINALIZED));
+        self.close_internal();
     }
 }
 

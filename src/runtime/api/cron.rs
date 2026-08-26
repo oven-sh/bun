@@ -1516,8 +1516,8 @@ impl CronJob {
         }
     }
 
-    pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box(self, |this| this.this_value.with_mut(|v| v.finalize()));
+    pub fn finalize(&self) {
+        self.this_value.with_mut(|v| v.finalize());
     }
 
     fn compute_next_timespec(&self) -> Option<bun_core::Timespec> {

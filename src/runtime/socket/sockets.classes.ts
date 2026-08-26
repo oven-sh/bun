@@ -254,7 +254,7 @@ function generate(ssl) {
       },
       ...(ssl ? sslOnly : {}),
     },
-    finalize: true,
+    rc: true,
     construct: true,
     klass: {},
   });
@@ -498,7 +498,7 @@ export default [
     name: "BlockList",
     construct: true,
     call: false,
-    finalize: true,
+    rc: true,
     estimatedSize: true,
     // inspectCustom: true,
     structuredClone: { transferable: false, tag: 251, storable: false },

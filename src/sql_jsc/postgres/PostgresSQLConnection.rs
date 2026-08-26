@@ -651,16 +651,10 @@ impl PostgresSQLConnection {
         self.update_has_pending_activity();
     }
 
-    pub fn finalize(self: Box<Self>) {
+    pub fn finalize(&self) {
         debug!("PostgresSQLConnection finalize");
-        // Refcounted: release the JS wrapper's +1; allocation may outlive this
-        // call if other refs remain, so hand ownership back to the raw refcount
-        // FIRST so a panic in the work below leaks instead of UAF-ing siblings.
-        let this = bun_core::heap::release(self);
-        this.stop_timers();
-        this.js_value.with_mut(|r| r.finalize());
-        // SAFETY: `this` is the live m_ctx allocation; `deref` frees on count==0.
-        unsafe { Self::deref(this) };
+        self.stop_timers();
+        self.js_value.with_mut(|r| r.finalize());
     }
 
     pub(crate) fn flush_data_and_reset_timeout(&self) {

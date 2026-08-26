@@ -82,9 +82,9 @@ impl JSMySQLQuery {
         }
     }
 
-    pub fn finalize(self: Box<Self>) {
+    pub fn finalize(&self) {
         debug!("MySQLQuery finalize");
-        bun_ptr::finalize_js_box(self, |this| this.this_value.with_mut(|v| v.finalize()));
+        self.this_value.with_mut(|v| v.finalize());
     }
 
     // Reached from JS via `put_host_functions!` in `mysql.rs`.

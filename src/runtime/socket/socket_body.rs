@@ -3311,22 +3311,16 @@ impl<const SSL: bool> NewSocket<SSL> {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    pub fn finalize(self: Box<Self>) {
-        // Refcounted: the trailing `deref()` releases the JS wrapper's +1;
-        // allocation may outlive this call if other refs remain, so hand
-        // ownership back to the raw refcount.
-        let this_ref = bun_core::heap::release(self);
-        log!("finalize() {}", core::ptr::from_mut(this_ref) as usize);
-        this_ref.update_flags(|f| f.insert(Flags::FINALIZING));
-        this_ref.this_value.with_mut(|r| r.finalize());
-        if !this_ref.socket.get().is_closed() {
-            this_ref.socket.get().prepare_for_finalize();
-            this_ref.close_and_detach(uws::CloseCode::Failure);
+    pub fn finalize(&self) {
+        log!("finalize() {}", core::ptr::from_ref(self) as usize);
+        self.update_flags(|f| f.insert(Flags::FINALIZING));
+        self.this_value.with_mut(|r| r.finalize());
+        if !self.socket.get().is_closed() {
+            self.socket.get().prepare_for_finalize();
+            self.close_and_detach(uws::CloseCode::Failure);
         } else {
-            this_ref.detach_native_callback();
+            self.detach_native_callback();
         }
-
-        this_ref.deref();
     }
 
     #[bun_jsc::host_fn(method)]

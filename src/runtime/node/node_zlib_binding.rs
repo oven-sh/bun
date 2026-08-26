@@ -890,13 +890,6 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             Self::close_internal(this);
         }
     }
-
-    pub(crate) fn finalize(this: Box<T>) {
-        // Refcounted: release the JS wrapper's +1; allocation may outlive this
-        // call if other refs remain, so hand ownership back to the raw refcount.
-        // SAFETY: `this` was the unique GC-owned m_ctx; `deref` frees on count==0.
-        unsafe { T::deref(Box::into_raw(this)) };
-    }
 }
 
 /// Expose the [`CompressionStream<T>`] mixin entry points as inherent
@@ -968,10 +961,6 @@ macro_rules! __compression_stream_mixin_reexports {
                 $crate::node::node_zlib_binding::CompressionStream::<Self>::get_on_error(
                     this, this_value, global,
                 )
-            }
-            #[inline]
-            pub fn finalize(self: Box<Self>) {
-                $crate::node::node_zlib_binding::CompressionStream::<Self>::finalize(self)
             }
         }
     };

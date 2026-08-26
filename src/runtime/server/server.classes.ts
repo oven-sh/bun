@@ -240,7 +240,7 @@ export default [
       },
     },
     klass: {},
-    finalize: true,
+    rc: true,
     noConstructor: true,
     values: ["onAborted", "onWritable", "onData", "pendingWriteBuffer"],
   }),
@@ -375,7 +375,7 @@ export default [
   define({
     name: "HTMLBundle",
     noConstructor: true,
-    finalize: true,
+    rc: true,
     proto: {
       index: {
         getter: "getIndex",

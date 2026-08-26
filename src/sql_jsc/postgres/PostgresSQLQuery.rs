@@ -182,9 +182,9 @@ impl PostgresSQLQuery {
         Some(target)
     }
 
-    pub fn finalize(self: Box<Self>) {
+    pub fn finalize(&self) {
         bun_core::scoped_log!(Postgres, "PostgresSQLQuery finalize");
-        bun_ptr::finalize_js_box(self, |this| this.this_value.with_mut(|r| r.finalize()));
+        self.this_value.with_mut(|r| r.finalize());
     }
 
     pub(crate) fn on_write_fail(

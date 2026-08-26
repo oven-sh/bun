@@ -227,13 +227,10 @@ macro_rules! impl_timer_object {
                 this.internals.has_ref()
             }
 
-            /// `.classes.ts` `finalize: true` — runs on the mutator thread
+            /// `.classes.ts` `rc: true` hook — runs on the mutator thread
             /// during lazy sweep. Do not touch any `JSValue`/`Strong` content.
-            pub fn finalize(self: ::std::boxed::Box<Self>) {
-                // Refcounted via `internals`: `internals.finalize()` derefs the
-                // intrusive count; allocation may outlive this call if other
-                // refs remain, so hand ownership back to the raw refcount.
-                ::bun_core::heap::release(self).internals.finalize()
+            pub fn finalize(&self) {
+                self.internals.finalize()
             }
 
             #[::bun_jsc::host_fn(getter)]

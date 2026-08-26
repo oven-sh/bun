@@ -2522,11 +2522,10 @@ impl NodeHTTPResponse {
         result
     }
 
-    pub(crate) fn finalize(self: Box<Self>) {
+    pub(crate) fn finalize(&self) {
         // The JS wrapper is being collected; drop the raw backref so a late
         // body delivery cannot read through a dead cell.
         self.armed_this_value.set(JSValue::ZERO);
-        bun_ptr::finalize_js_box_noop(self);
     }
 
     /// Called by intrusive RefCount when count reaches zero.
@@ -2571,7 +2570,7 @@ impl NodeHTTPResponse {
     }
 }
 
-// `AnyRefCounted` bridge so `bun_ptr::finalize_js_box*` / `RefPtr` accept this
+// `AnyRefCounted` bridge so `RefPtr` / the `rc` finalizer accept this
 // type. Hand-written (not `#[derive(CellRefCounted)]`) because the existing
 // `&self`-receiver `deref()` above is called from ~10 sites that route through
 // `as_ctx_ptr()`-derived provenance; converting them to `unsafe deref(*mut)`

@@ -694,23 +694,11 @@ impl StatWatcher {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// If the scheduler is not using this, free instantly, otherwise mark for being freed.
-    pub(crate) fn finalize(self: Box<Self>) {
+    /// The scheduler holds its own ref; `closed` tells it to drop it.
+    pub(crate) fn finalize(&self) {
         log!("Finalize\n");
-        // Refcounted: hand ownership back to the raw refcount FIRST so a panic
-        // in the work below leaks instead of UAF-ing the scheduler's alias.
-        // R-2: do NOT form `&mut Self` — the work-pool thread may concurrently
-        // hold `&*watcher` (see `work_pool_callback`); `Box::into_raw` then
-        // `&*ptr` keeps the access shared.
-        let this_ptr: *mut Self = bun_core::heap::into_raw(self);
-        // BACKREF — `this_ptr` was just leaked from `Box`; ref_count >= 1.
-        // `ParentRef` Deref gives safe `&Self` for the Cell/Atomic writes.
-        let this = ParentRef::from(NonNull::new(this_ptr).expect("finalize: watcher"));
-        this.this_value.with_mut(|r| r.finalize());
-        this.closed.store(true, Ordering::Relaxed);
-        // but don't deinit until the scheduler drops its reference.
-        // SAFETY: `this_ptr` was just leaked from `Box`; we own one ref.
-        Self::deref(this_ptr);
+        self.this_value.with_mut(|r| r.finalize());
+        self.closed.store(true, Ordering::Relaxed);
     }
 
     fn initial_stat_success_on_main_thread(this: *mut StatWatcher) -> bun_event_loop::JsResult<()> {

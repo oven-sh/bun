@@ -1,4 +1,3 @@
-use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -20,6 +19,7 @@ use bun_io::KeepAlive;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional};
+use bun_ptr::RefPtr;
 use bun_sys::FdExt;
 use bun_threading::Mutex;
 use bun_url::URL as ZigURL;
@@ -115,7 +115,7 @@ pub struct FetchTasklet {
     /// native response ref if we still need it when JS is discarted
     // Response is intrusively refcounted; modeled as a raw ptr. `Cell`: released from
     // `on_body_stream_collected`, which only has a shared ref.
-    pub(crate) native_response: Cell<Option<*mut Response>>,
+    pub(crate) native_response: JsCell<Option<RefPtr<Response>>>,
     /// The response body stream while this tasklet is its producer.
     pub(crate) response_stream: crate::webcore::byte_stream::ProducerHold,
     pub(crate) request_headers: Headers,
@@ -478,10 +478,7 @@ impl FetchTasklet {
         }
 
         self.response.clear();
-        if let Some(response) = self.native_response.take() {
-            // SAFETY: `response` is the +1 ref held in `native_response`.
-            Response::unref(response);
-        }
+        self.native_response.set(None);
 
         self.clear_stream_handlers();
 
@@ -575,8 +572,8 @@ impl FetchTasklet {
 
     fn get_current_response(&self) -> Option<*mut Response> {
         // we need a body to resolve the promise when buffering
-        if let Some(response) = self.native_response.get() {
-            return Some(response);
+        if let Some(response) = self.native_response.get().as_ref() {
+            return Some(response.as_ptr());
         }
 
         // if we did not have a direct reference we check if the Weak ref is still alive
@@ -1827,10 +1824,7 @@ impl FetchTasklet {
             .with_mut(|poll_ref| poll_ref.unref(bun_io::js_vm_ctx()));
         self.clear_stream_handlers();
         self.response.clear();
-        if let Some(response) = self.native_response.take() {
-            // SAFETY: `response` is the +1 ref held in `native_response`.
-            Response::unref(response);
-        }
+        self.native_response.set(None);
     }
 
     fn on_resolve(&mut self) -> JSValue {
@@ -1855,10 +1849,10 @@ impl FetchTasklet {
             jsc::WeakRefType::FetchResponse,
             self,
         );
-        // Response is intrusively refcounted; bump for native_response.
         // SAFETY: `response` is the live heap allocation owned by JSC after
-        // `make_maybe_pooled`; `ref_` bumps the intrusive refcount.
-        self.native_response.set(Some(Response::ref_(response)));
+        // `make_maybe_pooled`.
+        self.native_response
+            .set(Some(unsafe { RefPtr::init_ref(response) }));
         // Response-owned listener so abort still errors the body after this tasklet detaches its own.
         if let Some(signal) = self.abort_signal() {
             // SAFETY: `response` is the live heap allocation owned by JSC.
@@ -1885,7 +1879,7 @@ impl FetchTasklet {
             request_body_streaming_buffer: None,
             scheduled_response_buffer: MutableString::default(),
             response: jsc::Weak::default(),
-            native_response: Cell::new(None),
+            native_response: JsCell::new(None),
             response_stream: Default::default(),
             request_headers: fetch_options.headers,
             promise,
@@ -2592,11 +2586,10 @@ impl FetchTasklet {
     #[bun_uws::uws_callback(export = "Bun__FetchResponse_finalize", no_catch)]
     pub(crate) fn on_response_finalize(&mut self) {
         bun_output::scoped_log!(FetchTasklet, "onResponseFinalize");
-        let Some(response) = self.native_response.get() else {
+        let Some(response) = self.native_response.get().as_deref() else {
             return;
         };
-        // SAFETY: native_response is intrusively-ref'd by FetchTasklet; alive until unref.
-        let BodyValue::Locked(locked) = (unsafe { (*response).get_body_value() }) else {
+        let BodyValue::Locked(locked) = response.get_body_value() else {
             // The body arrived or failed; nothing is underway.
             return;
         };

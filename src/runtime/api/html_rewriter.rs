@@ -16,7 +16,7 @@ use bun_jsc::{
 use bun_jsc::virtual_machine::VirtualMachine;
 
 use bun_collections::ByteVecExt;
-use bun_ptr::{BackRef, CellRefCounted, DetachablePtr, RawSlice};
+use bun_ptr::{BackRef, CellRefCounted, DetachablePtr, RawSlice, RefPtr};
 use bun_sys::Error as SysError;
 
 use crate::api::native_promise_context;
@@ -460,21 +460,15 @@ impl HTMLRewriter {
 
         if kind != ResponseKind::Other {
             let body_value = webcore::body::extract(global, response_value)?;
-            // The guard owns the `Box<Response>` for the whole scope and hands
-            // it to `Response::finalize` on drop (unwind or return) — no raw
-            // pointer round-trip.
-            let resp = scopeguard::guard(
-                Box::new(Response::init(
-                    webcore::response::Init {
-                        status_code: 200,
-                        ..Default::default()
-                    },
-                    body_value,
-                    BunString::EMPTY,
-                    false,
-                )),
-                Response::finalize,
-            );
+            let resp = RefPtr::new(Response::init(
+                webcore::response::Init {
+                    status_code: 200,
+                    ..Default::default()
+                },
+                body_value,
+                BunString::EMPTY,
+                false,
+            ));
 
             // Carries its own article: "an ArrayBuffer", not "a ArrayBuffer".
             let noun = if kind == ResponseKind::String {
@@ -506,7 +500,8 @@ impl HTMLRewriter {
             // own +1 (from `Response::ref_` in `init()`); `Drop for RewriterPipe`
             // reclaims the allocation when the Transform cell is collected.
             js_Response::detach_ptr(out_response_value);
-            Response::unref(out_response.as_const_ptr().cast_mut());
+            // SAFETY: adopts the wrapper's ref that `detach_ptr` orphaned.
+            drop(unsafe { RefPtr::from_raw(out_response.as_const_ptr().cast_mut()) });
 
             return match kind {
                 ResponseKind::String => blob.to_string(global, webcore::Lifetime::Transfer),
@@ -754,7 +749,9 @@ pub struct RewriterPipe {
     /// Output Response. The pipe holds a native `+1` (released in `Drop`) so
     /// the body stays reachable on the abandon-suspension path after the
     /// Response JS wrapper has been swept alongside the Transform cell.
-    response: Cell<Option<bun_ptr::BackRef<Response>>>,
+    /// The pipe's ref, so `fail()` can still reach the body after the
+    /// Response JS wrapper has been swept.
+    response: JsCell<Option<RefPtr<Response>>>,
 
     // ── suspension (from #33243) ─────────────────────────────────────────
     phase: Cell<RewritePhase>,
@@ -800,8 +797,8 @@ impl RewriterPipe {
     /// dispatch into the pipe after this cell is swept. So only release the
     /// cell's ref; the last holder frees the Box (once the VM's task queue
     /// has closed, `DeferredDerefTask::schedule` releases inline instead).
-    pub fn finalize(this: Box<Self>) {
-        bun_ptr::finalize_js_box(this, |pipe| pipe.cell.set(JSValue::ZERO));
+    pub fn finalize(&self) {
+        self.cell.set(JSValue::ZERO);
     }
 
     /// Release one ref, deferring the release of the *last* ref to the event
@@ -1025,7 +1022,7 @@ impl RewriterPipe {
             output: Cell::new(None),
             output_buffer: JsCell::new(Vec::new()),
             buffered_consumer: Cell::new(false),
-            response: Cell::new(None),
+            response: JsCell::new(None),
             phase: Cell::new(RewritePhase::WritePending),
             sync_only_noun: Cell::new(sync_only_noun),
             pending_suspension: Cell::new(None),
@@ -1088,12 +1085,9 @@ impl RewriterPipe {
             false,
         ));
         let result_ref = BackRef::from(result);
-        this.response.set(Some(result_ref));
-        // Pipe owns a `+1` on the Response native so `fail()` can still reach
-        // the body after the Response JS wrapper has been swept (the
-        // abandon-suspension path runs from a deferred task after the
-        // Transform cell and Response wrapper were collected together).
-        Response::ref_(result.as_ptr());
+        // SAFETY: `result` is the live Response just allocated above.
+        this.response
+            .set(Some(unsafe { RefPtr::init_ref(result.as_ptr()) }));
 
         result_ref.set_init(
             original.get_method(),
@@ -1606,7 +1600,7 @@ impl RewriterPipe {
         }
         // No stream attached yet: resolve the output body with the buffered
         // output so `.text()`/`Bun.serve` sees the final bytes.
-        let Some(response) = self.response.get() else {
+        let Some(response) = self.response.get().as_deref() else {
             return;
         };
         // For a waiting `.blob()`'s content type.
@@ -1791,7 +1785,7 @@ impl RewriterPipe {
             let mut err = err;
             out.on_data(StreamResult::Err(err.to_stream_error(&self.global)));
             self.detach_output();
-        } else if let Some(response) = self.response.get() {
+        } else if let Some(response) = self.response.get().as_deref() {
             let body_value = response.get_body_value();
             let has_readable = match body_value {
                 webcore::body::Value::Locked(l) => l.readable.has(),
@@ -1840,10 +1834,7 @@ impl Drop for RewriterPipe {
         if let Some(w) = self.suspended_wrapper.take() {
             w.release();
         }
-        if let Some(response) = self.response.take() {
-            // Balances the `Response::ref_()` in `init()`.
-            Response::unref(response.as_const_ptr().cast_mut());
-        }
+        self.response.set(None);
     }
 }
 
@@ -2553,10 +2544,6 @@ impl TextChunk {
             None => JSValue::UNDEFINED,
         }
     }
-
-    pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box_noop(self);
-    }
 }
 
 impl_wrapper_like!(TextChunk, RawTextChunk, text_chunk, suspended_text_chunk);
@@ -2574,10 +2561,6 @@ pub struct DocType {
 
 impl DocType {
     // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
-
-    pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box_noop(self);
-    }
 
     pub(crate) fn init(doctype: *mut RawDoctype) -> NonNull<DocType> {
         bun_core::heap::alloc_nn(DocType {
@@ -2659,10 +2642,6 @@ impl DocEnd {
     lol_content_ops! { RawDocumentEnd, doc_end, JSValue::NULL;
         append / append_,
     }
-
-    pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box_noop(self);
-    }
 }
 
 impl_wrapper_like!(DocEnd, RawDocumentEnd, doc_end, suspended_document_end);
@@ -2740,10 +2719,6 @@ impl Comment {
             None => JSValue::UNDEFINED,
         }
     }
-
-    pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box_noop(self);
-    }
 }
 
 impl_wrapper_like!(Comment, RawComment, comment, suspended_comment);
@@ -2782,10 +2757,6 @@ impl EndTag {
             ref_count: Cell::new(1),
             end_tag: DetachablePtr::new(end_tag),
         })
-    }
-
-    pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box_noop(self);
     }
 
     lol_content_ops! { RawEndTag, end_tag, JSValue::NULL;
@@ -2868,8 +2839,8 @@ impl AttributeIterator {
         self.element.set(None);
     }
 
-    pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box(self, |t| t.detach());
+    pub fn finalize(&self) {
+        self.detach();
     }
 
     #[bun_jsc::host_fn(method)]
@@ -2966,10 +2937,6 @@ impl Element {
             element: DetachablePtr::new(element),
             attribute_iterators: JsCell::new(Vec::new()),
         })
-    }
-
-    pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box_noop(self);
     }
 
     /// End every `AttributeIterator` we handed to JS: null its backref to us

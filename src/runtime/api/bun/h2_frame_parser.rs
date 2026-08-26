@@ -7867,28 +7867,25 @@ impl H2FrameParser {
         }
     }
 
-    pub(crate) fn finalize(self: Box<Self>) {
+    pub(crate) fn finalize(&self) {
         bun_output::scoped_log!(H2FrameParser, "finalize");
-        // Note: JsRef::deinit() dropped — overwrite with empty(); Drop releases the Strong slot.
-        bun_ptr::finalize_js_box(self, |this| {
-            this.strong_this.set(JsRef::empty());
-            if VirtualMachine::get().is_shutting_down() {
-                // Free the streams first: `free_resources` releases the refs their signals hold.
-                // The map is emptied so a later deinit() won't double-free.
-                let streams = this.streams.replace(BunHashMap::default());
-                for (_, item) in streams.iter() {
-                    let stream = *item;
-                    // SAFETY: map has been emptied; each entry is freed exactly once.
-                    unsafe {
-                        (*stream).free_resources::<true>(this);
-                        drop(bun_core::heap::take(stream));
-                    }
+        self.strong_this.set(JsRef::empty());
+        if VirtualMachine::get().is_shutting_down() {
+            // Free the streams first: `free_resources` releases the refs their signals hold.
+            // The map is emptied so a later deinit() won't double-free.
+            let streams = self.streams.replace(BunHashMap::default());
+            for (_, item) in streams.iter() {
+                let stream = *item;
+                // SAFETY: map has been emptied; each entry is freed exactly once.
+                unsafe {
+                    (*stream).free_resources::<true>(self);
+                    drop(bun_core::heap::take(stream));
                 }
-                drop(streams);
-                // Then the refs of frames/tasks that will never run again, so the trailing
-                // deref below can actually reach zero and run deinit().
-                this.release_refs_stranded_by_exit();
             }
-        });
+            drop(streams);
+            // Then the refs of frames/tasks that will never run again, so the
+            // wrapper's deref can actually reach zero and run deinit().
+            self.release_refs_stranded_by_exit();
+        }
     }
 }

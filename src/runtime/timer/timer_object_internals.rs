@@ -1053,7 +1053,6 @@ impl TimerObjectInternals {
     /// `JSValue`/`Strong` content here.
     pub fn finalize(&self) {
         self.this_value.with_mut(|r| r.finalize());
-        self.deref();
     }
 
     /// `clearTimeout`/`clearInterval`

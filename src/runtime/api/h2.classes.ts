@@ -134,7 +134,7 @@ export default [
         length: 4,
       },
     },
-    finalize: true,
+    rc: true,
     construct: true,
     constructNeedsThis: true,
     klass: {},

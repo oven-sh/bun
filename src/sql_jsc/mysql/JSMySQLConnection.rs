@@ -404,9 +404,9 @@ impl JSMySQLConnection {
         }
     }
 
-    pub fn finalize(self: Box<Self>) {
+    pub fn finalize(&self) {
         bun_core::scoped_log!(MySQLConnection, "finalize");
-        bun_ptr::finalize_js_box(self, |this| this.js_value.with_mut(|r| r.finalize()));
+        self.js_value.with_mut(|r| r.finalize());
     }
 
     fn update_reference_type(&self) {

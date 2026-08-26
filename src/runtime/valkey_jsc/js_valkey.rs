@@ -1438,18 +1438,11 @@ impl JSValkeyClient {
         self.enqueue_deferred_close(DeferredClose::Socket);
     }
 
-    pub fn finalize(self: Box<Self>) {
-        // Refcounted: adopt the JS wrapper's +1 and release it at scope end;
-        // allocation may outlive this call if other refs remain, so hand
-        // ownership back to the raw refcount.
-        let this: &Self = bun_core::heap::release(self);
-        // SAFETY: the JS wrapper owned one ref; this scope consumes it.
-        let _guard = unsafe { RefPtr::from_raw(this.as_ctx_ptr()) };
-
-        this.stop_timers();
-        this.this_value.with_mut(|t| t.finalize());
-        this.client_mut().flags.finalized = true;
-        this.close_socket_next_tick();
+    pub fn finalize(&self) {
+        self.stop_timers();
+        self.this_value.with_mut(|t| t.finalize());
+        self.client_mut().flags.finalized = true;
+        self.close_socket_next_tick();
         // `_subscription_ctx` is three inline bools (no allocation, no GC
         // ref); `is_subscriber` can legitimately still be set here if the
         // server never confirmed UNSUBSCRIBE before disconnect, since

@@ -1,53 +1,32 @@
-//! Per-input-file sourcemap used by the bundler to chain sourcemaps through
-//! upstream compile steps (e.g. `.vue` → `.js`, `.svelte` → `.js`,
-//! TypeScript plugins). When `Bun.build` reads an input file that carries
-//! an inline `//# sourceMappingURL=data:application/json;...` comment, we
-//! parse it into an `InputSourceMap` and store it on the file's
-//! `Graph::InputFile`. `LinkerContext` then emits its `sources` /
-//! `sourcesContent` in place of the intermediate, and `Chunk::Builder`
-//! remaps each mapping through `map.find_mapping` during printing so stack
-//! traces surface in the authored source.
+//! The sourcemap an input file points at via `//# sourceMappingURL=`. The
+//! bundler chains through it so output maps reach the authored source
+//! instead of stopping at the intermediate file.
 
 use std::sync::Arc;
 
 use crate::ParsedSourceMap;
 
-/// Parsed inner sourcemap + per-source content bytes, owned.
-///
-/// `map.external_source_names` holds the chained-in `sources[]`.
-/// `sources_content[i]` is the inner file's `sourcesContent[i]`; an empty
-/// slot (`b""`) means the inner map did not carry content for that source.
+/// `sources_content[i]` pairs with `map.external_source_names[i]`; an
+/// empty slot means the map carried no content for that source.
 pub struct InputSourceMap {
     pub map: Arc<ParsedSourceMap>,
     pub sources_content: Box<[Box<[u8]>]>,
 }
 
 impl InputSourceMap {
-    /// Parse a sourcemap JSON blob intended to chain through a bundler input
-    /// file. Returns `None` when the payload is malformed — callers fall back
-    /// to the raw file bytes. Allocation failures panic via `handle_oom`.
-    ///
-    /// `json_bytes` is borrowed; the function copies out what it needs.
+    /// `None` on malformed input; callers fall back to the raw file bytes.
     pub fn parse(json_bytes: &[u8]) -> Option<Box<InputSourceMap>> {
         parse_internal(json_bytes).ok()
     }
 
-    /// Locate a trailing `//# sourceMappingURL=data:...` inline comment in
-    /// `source` and parse the embedded map. Returns `None` when no URL is
-    /// present, when the URL is not a data URL (e.g. a `.map` filename), or
-    /// when the payload fails to parse. External `.map` file resolution is
-    /// the caller's responsibility.
+    /// Inline `data:` URLs only; see `parse_from_source_with_fs` for sidecars.
     pub fn parse_from_source(source: &[u8]) -> Option<Box<InputSourceMap>> {
         let url = find_source_mapping_url(source)?;
         parse_data_url(url)
     }
 
-    /// Like [`parse_from_source`] but also resolves external `.map`
-    /// references (non-`data:` URLs) relative to `source_dir` and reads
-    /// them from disk. Used by the bundler when the input file lives in
-    /// the `file` namespace. `http(s)://` and other remote schemes are
-    /// skipped. Failure to read the sidecar file returns `None` (the
-    /// build falls back to mapping against the intermediate).
+    /// Also reads a sidecar `.map` relative to `source_dir`. Remote URLs
+    /// and unreadable sidecars return `None`.
     pub fn parse_from_source_with_fs(
         source: &[u8],
         source_dir: &[u8],
@@ -56,15 +35,11 @@ impl InputSourceMap {
         if bun_core::strings::has_prefix_comptime(url, b"data:") {
             return parse_data_url(url);
         }
-        // Skip remote / protocol-relative references; only local paths are
-        // loadable during bundling.
         if is_url_like_source_name(url) {
             return None;
         }
         let mut buf = bun_paths::path_buffer_pool::get();
-        // `url` is the trailing line of an arbitrary input file; use the
-        // length-checked join so an overlong reference falls back to
-        // `None` rather than panicking on the fixed PathBuffer.
+        // Checked join: `url` is untrusted and may exceed the PathBuffer.
         let abs = bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Loose>(
             source_dir,
             &mut buf,
@@ -75,23 +50,14 @@ impl InputSourceMap {
     }
 }
 
-/// True for sourcemap `sources[]` entries / `sourceMappingURL` values that
-/// are URL-shaped (scheme or protocol-relative) rather than filesystem
-/// paths. These are passed through verbatim by the linker / dev server
-/// instead of being joined against an on-disk directory.
+/// Scheme or protocol-relative names are emitted verbatim, never joined
+/// against a directory.
 pub fn is_url_like_source_name(name: &[u8]) -> bool {
     bun_core::strings::contains(name, b"://") || bun_core::strings::has_prefix_comptime(name, b"//")
 }
 
-/// Malformed input is indistinguishable from "no chain available" — callers
-/// treat it as a silent fallback to the raw file bytes.
 struct InvalidSourceMap;
 
-/// Workhorse returning `Result` so `?` fires cleanup on malformed-payload
-/// bails — critical because JSON can pass the structural checks but still
-/// have a malformed `mappings` VLQ, and we'd otherwise leak everything
-/// allocated up to that point (cleanup rides on `Drop` at each early
-/// return).
 fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourceMap> {
     use bun_ast::StoreResetGuard as DataStoreScope;
 
@@ -192,13 +158,8 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
         }
     }
 
-    // `sources_count` bounds every `source_index` encoded in the VLQ
-    // mappings. The downstream consumers (`Chunk::Builder` emits
-    // `1 + inner.source_index`; `LinkerContext` reserves exactly
-    // `1 + external_source_names.len` slots per file) DON'T defensively
-    // clamp — out-of-range indices would alias a neighboring input file's
-    // slot in the output `sources[]`. Pass the real source count so
-    // malformed maps hit `Fail` and we fall back cleanly.
+    // Consumers index `sources[]` by `1 + source_index` without clamping,
+    // so reject any VLQ entry outside the real source count here.
     let sources_count_i32: i32 = i32::try_from(source_count).map_err(|_| InvalidSourceMap)?;
     let map_data = match crate::mapping::parse(
         mappings_slice,
@@ -223,15 +184,9 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
     }))
 }
 
-/// Find the trailing `//# sourceMappingURL=<url>` comment in a file. Per
-/// the Source Map spec the comment MUST be on the last line of the file
-/// (see "3. Source Map Format" / "Linking generated code to source maps"),
-/// so we anchor to the final line rather than the first `last_index_of`
-/// match — a string literal earlier in the file containing that needle
-/// must not hijack the lookup.
+/// Only the last non-blank line counts (per spec), so a string literal
+/// containing the marker earlier in the file cannot hijack the lookup.
 fn find_source_mapping_url(source: &[u8]) -> Option<&[u8]> {
-    // Trim trailing whitespace/newlines so a file that ends with
-    // `\n//# sourceMappingURL=...\n\n` still resolves to its final line.
     let mut end = source.len();
     while end > 0 {
         let c = source[end - 1];
@@ -246,7 +201,7 @@ fn find_source_mapping_url(source: &[u8]) -> Option<&[u8]> {
         return None;
     }
 
-    let last_line_start = match body.iter().rposition(|&b| b == b'\n') {
+    let last_line_start = match bun_core::strings::last_index_of_char(body, b'\n') {
         Some(i) => i + 1,
         None => 0,
     };
@@ -257,10 +212,7 @@ fn find_source_mapping_url(source: &[u8]) -> Option<&[u8]> {
         return None;
     }
     let mut url = &last_line[NEEDLE.len()..];
-    // Trim whitespace (` `, `\r`, `\t`) on both sides within the line: a
-    // leading space after `=` (e.g. `//# sourceMappingURL= data:...`) is
-    // spec-invalid but some toolchains emit it, and `parse_data_url`
-    // would fail on the leading space without this.
+    // Some toolchains emit a space after `=`; tolerate it.
     while let Some(&first) = url.first() {
         if first == b' ' || first == b'\r' || first == b'\t' {
             url = &url[1..];
@@ -286,15 +238,12 @@ fn parse_data_url(url: &[u8]) -> Option<Box<InputSourceMap>> {
         return None;
     }
 
-    // `data:application/json;charset=utf-8;base64,...` is permitted in the
-    // wild; tolerate any number of `;name[=value]` parameters between the
-    // prefix and the final `;base64,` / `,` separator.
+    // Tolerate extra `;param` segments, e.g. `;charset=utf-8;base64,`.
     let mut rest = &url[PREFIX.len()..];
     let mut is_base64 = false;
     while !rest.is_empty() && rest[0] == b';' {
         let after = &rest[1..];
-        // Advance past one parameter up to the next ';' or ','.
-        let param_end = after.iter().position(|&b| b == b';' || b == b',')?;
+        let param_end = bun_core::strings::index_of_any(after, b";,")?;
         let param = &after[..param_end];
         if param == b"base64" {
             is_base64 = true;
@@ -315,7 +264,6 @@ fn parse_data_url(url: &[u8]) -> Option<Box<InputSourceMap>> {
         }
         InputSourceMap::parse(&buf[..decoded.count])
     } else {
-        // Not base64; treat the payload as the raw JSON text.
         InputSourceMap::parse(payload)
     }
 }

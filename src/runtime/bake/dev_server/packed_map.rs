@@ -14,19 +14,12 @@ pub(crate) type LineCount = bun_core::GenericIndex<u32, u8>;
 pub struct EndState {
     pub(crate) original_line: i32,
     pub(crate) original_column: i32,
-    /// Chunk-local source index of the last emitted mapping.
-    /// `0` → the input file itself (the intermediate); `1 + i` → inner
-    /// source `i` from the input file's `//# sourceMappingURL=` chain.
-    /// Only nonzero when `inner_sources` is non-empty.
+    /// Chunk-local: 0 is this file, `1 + i` is `inner_sources[i]`.
     pub(crate) source_index: i32,
 }
 
-/// An inner source contributed by the input file's own
-/// `//# sourceMappingURL=` comment (inline `data:` or external `.map`).
-/// One per entry in the input sourcemap's `sources[]`; `path` is the
-/// resolved absolute path (or the raw name when not resolvable) and
-/// `escaped_content` is the JSON-quoted `sourcesContent[i]` (empty when
-/// the input map did not carry content for that slot).
+/// One entry of the input file's own sourcemap `sources[]`.
+/// `escaped_content` is already JSON-quoted; empty when the map had none.
 pub struct InnerSource {
     pub(crate) path: Box<[u8]>,
     pub(crate) escaped_content: Box<[u8]>,
@@ -41,9 +34,6 @@ pub struct PackedMap {
     /// to preserve that effort for concatenation and re-concatenation.
     escaped_source: Box<[u8]>,
     pub(crate) end_state: EndState,
-    /// Inner sources contributed by the input file's own sourcemap.
-    /// Empty when the input carried no `//# sourceMappingURL=` chain (the
-    /// common case).
     pub(crate) inner_sources: Box<[InnerSource]>,
 }
 
@@ -67,8 +57,7 @@ impl PackedMap {
         })
     }
 
-    /// How many `sources[]` slots this file occupies in the rendered
-    /// sourcemap: one for the intermediate input, plus one per inner source.
+    /// `sources[]` slots this file occupies: itself plus its inner sources.
     #[inline]
     pub(crate) fn source_slot_count(&self) -> usize {
         1 + self.inner_sources.len()

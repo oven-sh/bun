@@ -82,18 +82,14 @@ pub struct Entry {
     pub(crate) overlapping_memory_cost: u32,
 }
 
-/// Result of [`Entry::lookup_source`].
 pub(crate) struct SourceLookup<'a> {
-    /// Absolute path of the source.
     pub(crate) path: &'a [u8],
-    /// JSON-quoted source contents for this slot (empty when unavailable).
+    /// JSON-quoted; empty when unavailable.
     pub(crate) escaped_content: &'a [u8],
 }
 
 impl Entry {
-    /// Total number of `sources[]` slots this entry occupies, excluding the
-    /// HMR runtime at slot 0. One per file plus one per inner source
-    /// contributed by a file's input-sourcemap chain.
+    /// `sources[]` slots excluding the HMR runtime at slot 0.
     pub(crate) fn source_slot_count(&self) -> usize {
         let mut n = 0usize;
         for f in self.files.iter() {
@@ -105,9 +101,7 @@ impl Entry {
         n
     }
 
-    /// Resolve a rendered-sourcemap `source_index` back to the path /
-    /// content it names. Index 0 is the HMR runtime; indices 1.. cover the
-    /// flattened per-file slots in the same order `render_json` emits them.
+    /// Inverse of the slot layout `render_json` emits; 0 is the HMR runtime.
     pub(crate) fn lookup_source(&self, source_index: usize) -> Option<SourceLookup<'_>> {
         if source_index == 0 {
             return None;
@@ -167,9 +161,7 @@ impl Entry {
         #[cfg(windows)]
         let mut buf = bun_paths::path_buffer_pool::get();
 
-        // Walk each file's outer path + inner-source paths together so slot
-        // order matches `join_vlq` / `sourcesContent` below. Files without a
-        // PackedMap (HTML, empty JS) have exactly one slot (their own path).
+        // Slot order must match `join_vlq` and `sourcesContent` below.
         let path_iter = paths.iter().zip(map_files.iter()).flat_map(|(p, f)| {
             let inner: &[packed_map::InnerSource] = match f.get() {
                 Some(pm) => &pm.inner_sources,
@@ -264,19 +256,12 @@ impl Entry {
                 debug_assert!(false); // vlq without source contents!
                 j.push_static(b"\"// Did not have source contents for this file.\n// This is a bug in Bun's bundler and should be reported with a reproduction.\"");
             } else {
-                // Store the location of the source file. Since it is going
-                // to be stored regardless for use by the served source map.
-                // These 8 bytes per file allow remapping sources without
-                // reading from disk, as well as ensuring that remaps to
-                // this exact sourcemap can print the previous state of
-                // the code when it was modified.
+                // Kept so error remapping can show the code as it was when
+                // this map was served, without re-reading disk.
                 debug_assert_eq!(quoted_slice[0], b'"');
                 debug_assert_eq!(quoted_slice[quoted_slice.len() - 1], b'"');
                 j.push_static(quoted_slice);
             }
-            // Inner sources (slots 1..N for this file). An inner source may
-            // legitimately lack content (input map had no `sourcesContent`
-            // entry) — emit `null` there.
             for inner in source_map.inner_sources.iter() {
                 j.push_static(b",");
                 if inner.escaped_content.is_empty() {
@@ -347,13 +332,9 @@ impl Entry {
         // The runtime ends at line 2942 with })({ so modules start after that.
         let mut lines_between: u32 = runtime_line_count;
 
-        // Join all of the mappings together. Each file owns a
-        // contiguous run of `sources[]` slots: one for its own path
-        // (the intermediate), plus one per inner source it
-        // contributed via an input sourcemap chain. Within a file's
-        // VLQ chunk, `source_index` is chunk-local (0 = intermediate,
-        // 1+i = inner i); we rewrite the first segment of each chunk
-        // so chunk-local 0 lands at this file's base slot.
+        // Each file's VLQ uses chunk-local source indices (0 = the file,
+        // 1+i = its inner sources); rebase the first segment onto the
+        // file's absolute slot.
         let mut next_source_index: usize = 1; // slot 0 = HMR runtime
         for (i, file) in map_files.iter().enumerate() {
             match file {
@@ -760,10 +741,7 @@ impl SourceMapStore {
         // PERF: `render_mappings` returns `Vec<u8>` (global alloc); could
         // use an arena.
 
-        // `render_mappings` emits source indices in `0..=slots` (slot 0 is the
-        // HMR runtime, slots `1..=slots` are files / their inner sources).
-        // `mapping::parse` rejects `source_index >= sources_count`, so pass
-        // `slots + 1` to cover the runtime slot.
+        // `+ 1` for the HMR runtime at slot 0.
         match source_map::mapping::parse(
             &vlq_bytes,
             None,

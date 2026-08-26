@@ -1080,15 +1080,8 @@ impl<'a> LinkerContext<'a> {
         // is actually many to one, where a source file can have multiple chunks
         // in the sourcemap.
         //
-        // This hashmap maps:
-        //    `source_index` (per compilation) in a chunk
-        //   -->
-        //    Base source index in the generated sourcemap (inclusive). When
-        //    the input file did not carry an inline sourcemap, the chunk's
-        //    mappings all use that base. When the input file carried an
-        //    inline `//# sourceMappingURL=`, the chunk's mappings were
-        //    remapped through that inner map at print time and now span
-        //    `base .. base + inner.external_source_names.len - 1`.
+        // Compilation `source_index` -> first `sources[]` slot for that
+        // file. A file with an input sourcemap spans `base..=base+N`.
         let mut source_id_map: ArrayHashMap<u32, i32> = ArrayHashMap::new();
 
         let source_indices = results.items_source_index();
@@ -1103,8 +1096,6 @@ impl<'a> LinkerContext<'a> {
                 }
 
                 *gop.value_ptr = next_mapping_source_index;
-                // `1` for the intermediate input, plus one slot per inner
-                // source listed in its `sourceMappingURL`.
                 let inner: Option<&bun_sourcemap::InputSourceMap> =
                     input_source_maps[index as usize].as_deref();
                 let expansion: i32 = 1 + match inner {
@@ -1131,8 +1122,6 @@ impl<'a> LinkerContext<'a> {
         if !source_indices_for_contents.is_empty() {
             let mut emitted_contents: usize = 0;
             for &index in source_indices_for_contents.iter() {
-                // Slot 0: the intermediate input file's contents (already
-                // JSON-quoted by `compute_quoted_source_contents`).
                 {
                     let sep: &[u8] = if emitted_contents == 0 {
                         b"\n    "
@@ -1146,7 +1135,6 @@ impl<'a> LinkerContext<'a> {
                     j.push_static(if content.is_empty() { b"null" } else { content });
                     emitted_contents += 1;
                 }
-                // Slots 1..N: inner sources' contents, if any.
                 if let Some(ism) = input_source_maps[index as usize].as_deref() {
                     for content in ism.sources_content.iter() {
                         j.push_static(b",\n    ");
@@ -1199,11 +1187,7 @@ impl<'a> LinkerContext<'a> {
             )?;
 
             prev_end_state = chunk.end_state;
-            // If the input carried an inline map, `chunk.end_state.source_index`
-            // is the inner source_index of the last mapping within the chunk
-            // (the Builder emits remapped absolute-within-chunk indices).
-            // Otherwise it's 0. Either way, the final absolute index is
-            // `mapping_source_index + chunk.end_state.source_index`.
+            // `end_state.source_index` is chunk-local (0 without chaining).
             prev_end_state.source_index = mapping_source_index + chunk.end_state.source_index;
             prev_column_offset = chunk.final_generated_column;
 
@@ -1248,15 +1232,8 @@ impl<'a> LinkerContext<'a> {
     }
 }
 
-/// Emit one outer source's quoted path, plus any inner source paths
-/// contributed by its `//# sourceMappingURL=` (one slot per inner source,
-/// in `external_source_names` order). `leading_comma` is true when this is
-/// not the first path appended to the running `sources[]` array — we
-/// prefix `", "` before the outer path in that case.
-///
-/// Layout matches the one `Chunk::Builder` assumes in `Chunk.rs`:
-///   slot 0       → the intermediate input (this outer file)
-///   slot 1..N    → inner `sources[i]` (chained)
+/// Emits the outer path then its inner-source paths, matching the
+/// chunk-local slot layout `Chunk::Builder` emits (0, then `1 + i`).
 fn write_sources_for(
     joiner: &mut StringJoiner,
     chunk_abs_dir: &[u8],
@@ -1264,7 +1241,6 @@ fn write_sources_for(
     input_map: Option<&bun_sourcemap::InputSourceMap>,
     leading_comma: bool,
 ) -> Result<(), BunError> {
-    // 1) the intermediate input.
     let rel_path_storage;
     let pretty: &[u8] = if outer_path.is_file() {
         rel_path_storage = LinkerContext::source_map_relative_path(chunk_abs_dir, outer_path.text)?;
@@ -1281,14 +1257,6 @@ fn write_sources_for(
         joiner.push_owned(quote_buf.to_default_owned());
     }
 
-    // 2) inner sources, if any. Each inner `sources[i]` is resolved
-    // relative to the directory of the intermediate file it came from,
-    // then made relative to `chunk_abs_dir` (the chunk's output dir) for
-    // the emitted JSON. Absolute inner paths stay absolute before
-    // relativization. When the intermediate lives in a non-file
-    // namespace (a plugin's virtual module), its `text` is not a
-    // filesystem path, so emit the inner name as-is rather than joining
-    // against a meaningless dirname.
     if let Some(ism) = input_map {
         let is_file = outer_path.is_file();
         let base_dir = if is_file {
@@ -1302,16 +1270,11 @@ fn write_sources_for(
             let name: &[u8] = name.as_ref();
             let rel_path_storage;
             let rel_path: &[u8] = if !is_file || bun_sourcemap::is_url_like_source_name(name) {
-                // Non-file namespace, or a URL-style virtual name
-                // (`webpack://`, `ng://`, `//host/...`): pass through
-                // unchanged so DevTools sees the original identifier.
+                // Virtual module or URL-scheme name: not a filesystem path.
                 name
             } else {
-                // Use `join_abs` to produce an absolute inner path (when
-                // the inner map emitted a relative source name) that can
-                // then be re-relativized against `chunk_abs_dir`.
-                // `join_abs` returns a borrow into a thread-local buffer;
-                // we copy out immediately via `source_map_relative_path`.
+                // `join_abs` returns a thread-local borrow; `source_map_relative_path`
+                // copies it out before the next call.
                 let abs_path: &[u8] = if bun_paths::resolve_path::Platform::AUTO.is_absolute(name) {
                     name
                 } else {
@@ -2325,9 +2288,6 @@ impl<'a> LinkerContext<'a> {
             // SAFETY: `self.mangled_props` is not mutated during printing; detached borrow
             // outlives only this call (see above).
             unsafe { bun_ptr::detach_lifetime_ref(&self.mangled_props) };
-        // DevServer's sourcemap stitcher (`SourceMapStore::join_vlq`) now
-        // tracks per-file inner-source expansion via `PackedMap.inner_sources`,
-        // so chained input sourcemaps flow through both paths.
         let input_source_map: Option<&bun_sourcemap::InputSourceMap> =
             parse_graph.input_files.items_input_source_map()[source_index.get() as usize]
                 .as_deref();

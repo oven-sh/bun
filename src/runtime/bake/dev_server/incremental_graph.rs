@@ -225,8 +225,6 @@ pub enum InsertFailureKey<'a> {
 pub(crate) struct ReceiveChunkSourceMap {
     pub(crate) chunk: bun_sourcemap::Chunk,
     pub(crate) escaped_source: Option<Box<[u8]>>,
-    /// Inner sources contributed by the input file's own
-    /// `//# sourceMappingURL=` chain. Empty when no chain is present.
     pub(crate) inner_sources: Box<[packed_map::InnerSource]>,
 }
 

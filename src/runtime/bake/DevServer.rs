@@ -3741,11 +3741,8 @@ impl<'a> HotUpdateContext<'a> {
     }
 }
 
-/// Build the dev-server `InnerSource` list for a compiled file from its
-/// parsed `//# sourceMappingURL=` chain (if any). Paths are resolved to
-/// absolute against the intermediate file's directory so
-/// `SourceMapStore::render_json` can `file://`-encode them like any other
-/// source; contents are JSON-quoted for direct emission in `sourcesContent`.
+/// Inner paths are made absolute here so `render_json` can `file://`
+/// them like any other source.
 fn collect_inner_sources(
     input_source_map: Option<&bun_sourcemap::InputSourceMap>,
     intermediate_path: &bun_paths::fs::Path<'_>,
@@ -3770,9 +3767,7 @@ fn collect_inner_sources(
             && !bun_paths::resolve_path::Platform::AUTO.is_absolute(name)
             && !bun_sourcemap::is_url_like_source_name(name)
         {
-            // Inner source names come from arbitrary `.map` JSON; use
-            // the length-checked join so an overlong entry falls back
-            // to the raw name rather than panicking on the PathBuffer.
+            // Checked join: names come from untrusted `.map` JSON.
             bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
                 base_dir,
                 &mut **path_buf,
@@ -4601,10 +4596,7 @@ pub(super) fn finalize_bundle(
                         source_map_hash.update(&keys[part.get() as usize]);
                         if let Some(map) = values[part.get() as usize].source_map.get() {
                             source_map_hash.update(map.vlq());
-                            // Inner-source paths/contents shape the rendered
-                            // `.js.map` independently of the VLQ (e.g. a
-                            // sidecar `.map` whose `sources`/`sourcesContent`
-                            // changed but whose mappings are identical).
+                            // These shape the `.js.map` independently of the VLQ.
                             for inner in map.inner_sources.iter() {
                                 source_map_hash.update(&inner.path);
                                 source_map_hash.update(&inner.escaped_content);

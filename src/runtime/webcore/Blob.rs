@@ -3567,8 +3567,8 @@ impl BlobExt for Blob {
                     return crate::api::standalone_graph_jsc::file_blob(file, global_this);
                 }
 
-                path_or_fd.make_thread_isolated_copy();
                 core::mem::replace(path_or_fd, PathOrFileDescriptor::Path(PathLike::default()))
+                    .thread_isolated_copy()
             }
             PathOrFileDescriptor::Fd(fd) => {
                 if let Some(tag) = fd.stdio_tag() {

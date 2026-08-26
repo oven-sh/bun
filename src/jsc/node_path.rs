@@ -208,20 +208,19 @@ impl PathLike<'static> {
         }
     }
 
-    /// For a path a `Blob` store keeps (dropped on any thread): the string
-    /// becomes a private copy never handed to JS; a `Buffer` is protected as
-    /// in [`make_thread_isolated`](Self::make_thread_isolated).
-    pub fn make_thread_isolated_copy(&mut self) {
-        match self {
+    /// For a path a `Blob` store keeps (dropped on any thread): a JS-backed
+    /// string is replaced by a private copy never handed to JS; a `Buffer` is
+    /// protected as in [`make_thread_isolated`](Self::make_thread_isolated).
+    pub fn thread_isolated_copy(mut self) -> Self {
+        match &mut self {
             Self::String(s) | Self::ThreadIsolatedString(s) => {
-                let owned = core::mem::take(s).thread_isolated_copy();
-                *self = Self::ThreadIsolatedString(owned);
+                let s = core::mem::take(s).thread_isolated_copy();
+                self = Self::ThreadIsolatedString(s);
             }
-            Self::Buffer(b) => {
-                b.buffer.value.protect();
-            }
+            Self::Buffer(b) => b.buffer.value.protect(),
             Self::Utf8(_) => {}
         }
+        self
     }
 }
 
@@ -286,9 +285,10 @@ impl PathOrFileDescriptor<'static> {
         }
     }
     #[inline]
-    pub fn make_thread_isolated_copy(&mut self) {
-        if let Self::Path(p) = self {
-            p.make_thread_isolated_copy();
+    pub fn thread_isolated_copy(self) -> Self {
+        match self {
+            Self::Path(p) => Self::Path(p.thread_isolated_copy()),
+            Self::Fd(fd) => Self::Fd(fd),
         }
     }
 }

@@ -1,7 +1,7 @@
 import { write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { rm } from "fs/promises";
-import { VerdaccioRegistry, bunExe, bunEnv as env, isIPv6, tempDir } from "harness";
+import { VerdaccioRegistry, bunExe, bunEnv as env, isIPv6, tempDir, tls } from "harness";
 import { join } from "path";
 const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;
@@ -1939,6 +1939,51 @@ describe.concurrent("//host/ credential lines are matched against the request UR
       exitCode: 0,
       stderr: expect.not.stringContaining("401"),
     });
+  });
+
+  // `.npmrc` keys carry no scheme. A registry-supplied `http://` tarball must not
+  // receive a token the user wrote for an https host: the manifest is registry-controlled.
+  test("an http tarball from an https registry gets no .npmrc credentials", async () => {
+    const tarballRequests: (string | null)[] = [];
+    using plain = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        tarballRequests.push(req.headers.get("authorization"));
+        return new Response(Bun.file(tgz));
+      },
+    });
+    using secure = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls,
+      fetch() {
+        return Response.json({
+          name: "no-deps",
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              name: "no-deps",
+              version: "1.0.0",
+              dist: { tarball: `http://127.0.0.1:${plain.port}/no-deps/-/no-deps-1.0.0.tgz` },
+            },
+          },
+        });
+      },
+    });
+    using dir = tempDir("npmrc-url-auth-http-tarball", {
+      "package.json": packageJson,
+      ".npmrc": [
+        `registry=https://127.0.0.1:${secure.port}/`,
+        `//127.0.0.1:${secure.port}/:_authToken=registry-token`,
+        `//127.0.0.1:${plain.port}/:_authToken=must-not-leak`,
+        "",
+      ].join("\n"),
+    });
+
+    await install(String(dir), ["--ca", tls.cert]);
+
+    expect(tarballRequests).toEqual([null]);
   });
 
   test.each(["/npm/team-a/../team-b/x.tgz", "/npm/team-a/%2e%2e/team-b/x.tgz", "/npm/team-a/..%2fteam-b/x.tgz"])(

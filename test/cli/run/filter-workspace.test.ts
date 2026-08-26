@@ -477,6 +477,83 @@ describe("bun", () => {
     });
   });
 
+  // #40544: `bun --filter=<pat> test` must run each matched package's "test"
+  // script (like `bun run --filter=<pat> test`), not bun's own test runner.
+  describe.concurrent("routes `test` to the package test script", () => {
+    const test_root = tempDirWithFiles("filter-test-subcommand", {
+      packages: {
+        pkga: {
+          ".env": "FILTER_TEST_ENV=from-pkga-env",
+          "package.json": JSON.stringify({
+            name: "pkga",
+            scripts: {
+              test: `${bunExe()} -e "console.log('testa', process.env.FILTER_TEST_ENV)"`,
+            },
+          }),
+        },
+        pkgb: {
+          "package.json": JSON.stringify({
+            name: "pkgb",
+            scripts: {
+              test: "echo testb",
+            },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "ws",
+        workspaces: ["packages/*"],
+      }),
+    });
+
+    for (const args of [
+      ["--filter=pkga", "test"],
+      ["-F=pkga", "test"],
+      ["-Fpkga", "test"],
+      ["--filter", "pkga", "test"],
+    ]) {
+      test(`bun ${args.join(" ")}`, () => {
+        const { exitCode, stdout } = spawnSync({
+          cwd: test_root,
+          cmd: [bunExe(), ...args],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        // The package's own .env is loaded because the script runs with the
+        // package directory as cwd.
+        expect(stdout.toString()).toMatch(/testa from-pkga-env/);
+        expect(stdout.toString()).not.toMatch(/testb/);
+        expect(exitCode).toBe(0);
+      });
+    }
+
+    test("bun --workspaces test", () => {
+      const { exitCode, stdout } = spawnSync({
+        cwd: test_root,
+        cmd: [bunExe(), "--workspaces", "test"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(stdout.toString()).toMatch(/testa from-pkga-env/);
+      expect(stdout.toString()).toMatch(/testb/);
+      expect(exitCode).toBe(0);
+    });
+
+    test("bun --filter=pkgb test forwards extra args to the script", () => {
+      const { exitCode, stdout } = spawnSync({
+        cwd: test_root,
+        cmd: [bunExe(), "--filter=pkgb", "test", "extra-arg"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(stdout.toString()).toMatch(/testb extra-arg/);
+      expect(exitCode).toBe(0);
+    });
+  });
+
   test("should error with missing script", () => {
     runInCwdFailure(cwd_root, "*", "notpresent", /error: No workspace packages matched the filter "\*"/);
   });

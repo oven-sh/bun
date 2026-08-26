@@ -320,10 +320,13 @@ it("process.hrtime()", async () => {
   expect(end[0]).toBe(0);
 
   await Bun.sleep(16);
-  // Compare the whole duration: the nanoseconds field alone wraps to zero at
+  const end2 = process.hrtime(start);
+  // Compare whole durations: the nanoseconds field alone wraps to zero at
   // every second boundary, so it is not ordered across the sleep.
-  const [seconds, nanoseconds] = process.hrtime(start);
-  expect(seconds * 1e9 + nanoseconds).toBeGreaterThan(0);
+  const elapsed = end2[0] * 1e9 + end2[1];
+  expect(elapsed).toBeGreaterThan(end[0] * 1e9 + end[1]);
+  // A 16 ms sleep measures at least 1 ms, with room for a timer that fires early.
+  expect(elapsed).toBeGreaterThanOrEqual(1e6);
 });
 
 it("process.hrtime.bigint()", () => {

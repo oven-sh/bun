@@ -233,9 +233,11 @@ export function createRequireCache() {
   // Node.js never adds builtin modules to require.cache. Serving them from
   // the ESM registry would hand out the frozen module namespace object, which
   // breaks CJS patchers like require-in-the-middle that read require.cache
-  // and expect a mutable exports object. Users can still write their own
-  // entries for builtins; those live in $requireMap.
-  const isBuiltinKey = (key: string | symbol) => typeof key === "string" && key.startsWith("node:");
+  // and expect a mutable exports object. The same applies to bun:* builtins.
+  // Users can still write their own entries for builtins; those live in
+  // $requireMap.
+  const isBuiltinKey = (key: string | symbol) =>
+    typeof key === "string" && (key.startsWith("node:") || key.startsWith("bun:"));
   var proxy = new Proxy(inner, {
     get(_target, key: string) {
       const entry = $requireMap.$get(key);

@@ -108,10 +108,9 @@ enum BunSocket {
 }
 
 /// Held, not read: dropping it releases the socket.
-#[allow(dead_code)]
 enum WriteonlySocketRef {
-    Tls(RefPtr<TLSSocket>),
-    Tcp(RefPtr<TCPSocket>),
+    Tls { _ref: RefPtr<TLSSocket> },
+    Tcp { _ref: RefPtr<TCPSocket> },
 }
 
 unsafe extern "C" {
@@ -7472,18 +7471,16 @@ impl H2FrameParser {
         } else if SSL {
             let socket = socket_nn.cast::<TLSSocket>();
             // SAFETY: `socket` is live (see above).
-            self.writeonly_socket_ref
-                .set(Some(WriteonlySocketRef::Tls(unsafe {
-                    RefPtr::init_ref(socket.as_ptr())
-                })));
+            self.writeonly_socket_ref.set(Some(WriteonlySocketRef::Tls {
+                _ref: unsafe { RefPtr::init_ref(socket.as_ptr()) },
+            }));
             BunSocket::TlsWriteonly(bun_ptr::BackRef::from(socket))
         } else {
             let socket = socket_nn.cast::<TCPSocket>();
             // SAFETY: `socket` is live (see above).
-            self.writeonly_socket_ref
-                .set(Some(WriteonlySocketRef::Tcp(unsafe {
-                    RefPtr::init_ref(socket.as_ptr())
-                })));
+            self.writeonly_socket_ref.set(Some(WriteonlySocketRef::Tcp {
+                _ref: unsafe { RefPtr::init_ref(socket.as_ptr()) },
+            }));
             BunSocket::TcpWriteonly(bun_ptr::BackRef::from(socket))
         }
     }

@@ -292,7 +292,7 @@ impl Drop for FetchTasklet {
         bun_output::scoped_log!(FetchTasklet, "deinit");
         self.ref_count.assert_no_refs();
         // JS thread: no longer something the VM must abort at teardown.
-        crate::jsc_hooks::ActiveHandle::Fetch(NonNull::from(&*self)).unregister();
+        crate::jsc_hooks::ActiveHandle::Fetch(NonNull::from(&mut *self)).unregister();
         self.clear_data();
     }
 }

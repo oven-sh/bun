@@ -78,6 +78,71 @@ impl YAML {
             }
         }
     }
+
+    /// Like `parse`, but also returns the comments collected during parsing.
+    /// `comments` is keyed on `doc_index` so multi-document streams can
+    /// associate comments with the document they appeared in. The returned
+    /// root `Expr` is identical to `parse`'s output for the single-doc case.
+    pub fn parse_with_comments(
+        source: &bun_ast::Source,
+        log: &mut bun_ast::Log,
+        bump: &bun_alloc::Arena,
+        cyclic_aliases: CyclicAliases,
+        unique_keys: bool,
+    ) -> Result<ParsedYaml, YamlParseError> {
+        bun_core::analytics::Features::yaml_parse_inc();
+        source.check_parseable_len(log, "YAML document")?;
+
+        let mut parser: Parser<Utf8> =
+            Parser::init(bump, source.contents(), cyclic_aliases, unique_keys);
+
+        let stream = match parser.parse() {
+            Ok(s) => s,
+            Err(e) => {
+                let err = ParseResultError::from_parse_error(e, &parser);
+                err.add_to_log(source, log)?;
+                return Err(YamlParseError::SyntaxError);
+            }
+        };
+
+        let docs = stream.docs;
+        let n_docs = docs.len();
+
+        let root = match n_docs {
+            0 => Expr::init(E::Null {}, Loc::EMPTY),
+            1 => docs[0].root,
+            _ => {
+                let mut items: ast::ExprNodeList =
+                    ast::ExprNodeList::init_capacity(n_docs);
+                for doc in &docs {
+                    items.push(doc.root);
+                }
+                Expr::init(
+                    E::Array {
+                        items,
+                        ..Default::default()
+                    },
+                    Loc::EMPTY,
+                )
+            }
+        };
+
+        Ok(ParsedYaml {
+            root,
+            docs,
+            source_text: source.contents().to_vec(),
+        })
+    }
+}
+
+/// Parser output that includes retained comments, for `Bun.YAML.Document`.
+#[allow(dead_code)]
+pub struct ParsedYaml {
+    pub root: Expr,
+    pub docs: Vec<Document>,
+    /// Raw source bytes the parser read, kept so comment text can be sliced
+    /// out of it later without re-parsing.
+    pub source_text: Vec<u8>,
 }
 
 #[derive(Debug, thiserror::Error, strum::IntoStaticStr)]
@@ -1621,8 +1686,23 @@ pub(crate) enum Directive {
     Other,
 }
 
-pub(crate) struct Document {
-    pub(crate) root: Expr,
+pub struct Document {
+    pub root: Expr,
+    /// Comments collected during parsing, in source order. Each entry records
+    /// the start/end byte offsets and the line the comment appears on.
+    #[allow(dead_code)]
+    pub comments: Vec<ParsedComment>,
+}
+
+/// A single `#`-comment retained during parsing. `start` points at the `#`
+/// character; `end` is one past the last character before the line break
+/// (or eof). `line` is the 1-based line number, matching what positional
+/// parse errors report.
+#[allow(dead_code)]
+pub struct ParsedComment {
+    pub start: Pos,
+    pub end: Pos,
+    pub line: Line,
 }
 
 /// Should only be used with expressions created with the YAML parser. It assumes
@@ -2156,6 +2236,9 @@ pub struct Parser<'i, Enc: Encoding> {
     /// Matches yaml@2's `uniqueKeys: true` opt-in; `false` (default) keeps
     /// last-wins semantics to match js-yaml and yaml@2 defaults.
     pub(crate) unique_keys: bool,
+    /// Comments collected during parsing, in source order. Appended to by
+    /// `try_skip_to_new_line` whenever a `#`-comment is consumed.
+    pub(crate) comments: Vec<ParsedComment>,
 }
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
@@ -2201,6 +2284,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             merge_props_budget: MappingProps::MAX_MERGED_PROPERTIES,
             alias_expansion_budget: Self::MAX_ALIAS_EXPANSION,
             unique_keys,
+            comments: Vec::new(),
         }
     }
 
@@ -2435,7 +2519,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
         }
 
-        Ok(Document { root })
+        Ok(Document {
+            root,
+            comments: core::mem::take(&mut self.comments),
+        })
     }
 
     /// [149] c-ns-flow-map-json-key-entry — when a JSON-style key (quoted
@@ -6185,7 +6272,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     }
 
     /// s-l-comments
-    /// positions `pos` on the next newline, or eof.
+    /// positions `pos` on the next newline, or eof. Records any `#`-comment
+    /// into `self.comments` before advancing past it so `Bun.YAML.Document`
+    /// can round-trip it.
     fn try_skip_to_new_line(&mut self) -> Result<(), ParseError> {
         let mut whitespace = false;
 
@@ -6198,6 +6287,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             if !whitespace {
                 return Err(ParseError::UnexpectedCharacter);
             }
+            let start = self.pos;
+            let line = self.line;
             self.inc(1);
             while !self.is_b_char_or_eof() {
                 if Enc::wide(self.next()) == 0 {
@@ -6205,6 +6296,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
                 self.inc(1);
             }
+            let end = self.pos;
+            self.comments.push(ParsedComment {
+                start,
+                end,
+                line,
+            });
         }
 
         if self.pos.is_less_than(self.input.len())

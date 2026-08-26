@@ -5522,14 +5522,10 @@ impl NodeFS {
         args: &args::Mkdir,
         ctx: &Ctx,
     ) -> Maybe<ret::Mkdir> {
-        // Node's Windows binding namespaces the path (cwd-resolve + `\\?\`,
-        // `ToNamespacedPath` in node_file.cc) before the mkdirp walk, so the
-        // returned first-path-created is absolute even for relative input
-        // (oven-sh/bun#40535). `os_path_kernel32` already namespaces absolute
-        // input; resolve the plain-relative case here. On POSIX,
-        // `ToNamespacedPath` is a no-op and Node returns the relative path,
-        // so only Windows resolves. Internal callers (`always_return_none`)
-        // ignore the returned path and keep the un-resolved behavior.
+        // Node's Windows binding cwd-resolves the path (`ToNamespacedPath`)
+        // before the mkdirp walk, so the returned first-path-created is
+        // absolute even for relative input (oven-sh/bun#40535). POSIX Node
+        // returns the relative path, so only Windows resolves.
         #[cfg(windows)]
         if !args.always_return_none {
             let s = args.path.slice();

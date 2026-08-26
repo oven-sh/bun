@@ -88,7 +88,11 @@ async function install(
 
 // The cases that build a git repository need the git executable.
 const gitExecutable = Bun.which("git");
-const testWithGit = test.concurrent.skipIf(!gitExecutable);
+// The git patch case is the heaviest of the file: five installs that each
+// clone and check out, after the git commands that build its repository. It
+// runs on its own; inside the concurrent group it takes 2.5 times as long and
+// passes the default timeout on a Windows debug build.
+const heavyGitTest = test.serial.skipIf(!gitExecutable);
 
 beforeAll(async () => {
   await registry.start();
@@ -1113,7 +1117,7 @@ index 1f0e8b9f1f9a56799cdbc1a5a2f8cf9f9a3b2f1c..2f0e8b9f1f9a56799cdbc1a5a2f8cf9f
 // instead of a tarball download). The repo is served over git's dumb HTTP
 // protocol: after `git update-server-info`, a bare repo is plain static
 // files. Requires the git executable to build the fixture repository.
-testWithGit("adding and removing a patch for a git dependency in a workspace completes", async () => {
+heavyGitTest("adding and removing a patch for a git dependency in a workspace completes", async () => {
   const {
     packageJson,
     packageDir,

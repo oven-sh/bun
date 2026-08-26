@@ -5,6 +5,7 @@
 use core::ffi::c_void;
 
 use bun_jsc::{JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsResult};
+use bun_telemetry::otlp::EntryWriter;
 use bun_telemetry::pool::{self, NativeSpan};
 use bun_telemetry::{
     Flags, Limits, Local, ScopeId, SpanContext, SpanId, SpanKind, SpanStub, SpanWriter, StatusCode,
@@ -550,75 +551,16 @@ fn each_attr(
     }
 }
 
-/// Event/link attributes must all be alive at once for `SpanWriter::event` /
-/// `link`, so they are owned: string bytes in one buffer, then borrowed.
-struct OwnedAttrs {
-    bytes: Vec<u8>,
-    /// (key range, value) — `Err(range into arrays)` for array values.
-    entries: Vec<(
-        core::ops::Range<usize>,
-        Result<Scalar, core::ops::Range<usize>>,
-    )>,
-    arrays: Vec<Scalar>,
-}
-
-impl OwnedAttrs {
-    fn collect(refs: &[AttrRef], pool: &AttrPool) -> OwnedAttrs {
-        let mut o = OwnedAttrs {
-            bytes: Vec::new(),
-            entries: Vec::with_capacity(refs.len()),
-            arrays: Vec::new(),
-        };
-        for a in refs {
-            let key = append_utf8(&a.key, &mut o.bytes);
-            if key.is_empty() {
-                continue;
-            }
-            let value = match Scalar::read(a, &mut o.bytes) {
-                Some(s) => Ok(s),
-                None if a.kind == attr_kind::ARRAY => {
-                    let start = o.arrays.len();
-                    // SAFETY: kind == ARRAY selects the live union member.
-                    for it in pool.array(unsafe { a.value.array }) {
-                        if let Some(s) = Scalar::read(it, &mut o.bytes) {
-                            o.arrays.push(s);
-                        }
-                    }
-                    Err(start..o.arrays.len())
-                }
-                None => continue,
-            };
-            o.entries.push((key, value));
-        }
-        o
-    }
-
-    fn with<R>(&self, value_limit: usize, f: impl FnOnce(&[(&[u8], Value<'_>)]) -> R) -> R {
-        let arrays: Vec<Vec<Value<'_>>> = self
-            .entries
-            .iter()
-            .filter_map(|(_, v)| v.as_ref().err())
-            .map(|r| {
-                self.arrays[r.clone()]
-                    .iter()
-                    .map(|s| s.value(&self.bytes, value_limit))
-                    .collect()
-            })
-            .collect();
-        let mut next_array = arrays.iter();
-        let pairs: Vec<(&[u8], Value<'_>)> = self
-            .entries
-            .iter()
-            .map(|(k, v)| {
-                let value = match v {
-                    Ok(s) => s.value(&self.bytes, value_limit),
-                    Err(_) => Value::Array(next_array.next().map(Vec::as_slice).unwrap_or(&[])),
-                };
-                (&self.bytes[k.clone()], value)
-            })
-            .collect();
-        f(&pairs)
-    }
+/// [`each_attr`] into an open event/link entry, then close the entry.
+fn entry_attrs(
+    mut w: EntryWriter<'_>,
+    refs: &[AttrRef],
+    pool: &AttrPool,
+    value_limit: usize,
+    scratch: &mut [Vec<u8>; 3],
+) {
+    each_attr(refs, pool, value_limit, scratch, |k, v| w.attr(k, v));
+    w.finish();
 }
 
 fn status_code(api: u8) -> StatusCode {
@@ -834,19 +776,16 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(global: &JSGlobalObject, desc: &End
                 w.attr_bytes_key(k, *v);
             });
             for e in kept_events {
-                let ename = e.name.to_utf8();
-                let ename = ename.slice();
                 let time_ns = if e.time_ns == 0 { end_ns } else { e.time_ns };
-                OwnedAttrs::collect(desc.pool.slice(e.attrs), &desc.pool)
-                    .with(value_limit, |pairs| w.event(ename, time_ns, pairs));
+                let ev = w.begin_event(e.name.to_utf8().slice(), time_ns);
+                entry_attrs(ev, desc.pool.slice(e.attrs), &desc.pool, value_limit, sc);
             }
             for lk in kept_links {
                 let Some(ctx) = link_context(lk) else {
                     continue;
                 };
-                let ts = lk.trace_state.to_utf8();
-                OwnedAttrs::collect(desc.pool.slice(lk.attrs), &desc.pool)
-                    .with(value_limit, |pairs| w.link(&ctx, ts.slice(), pairs));
+                let lw = w.begin_link(&ctx, lk.trace_state.to_utf8().slice());
+                entry_attrs(lw, desc.pool.slice(lk.attrs), &desc.pool, value_limit, sc);
             }
             let dropped_attrs = desc.dropped_attrs + (attrs.len() - kept_attrs.len()) as u32;
             if dropped_attrs != 0 {
@@ -997,14 +936,15 @@ pub extern "C" fn Bun__Telemetry__nativeAddEvent(
     attrs: &AttrPool,
 ) {
     let lim = limits();
-    let owned = OwnedAttrs::collect(attrs.slice(event.attrs), attrs);
+    let value_limit = lim.attribute_value_length as usize;
     let Some(mut l) = local(global) else { return };
     let Local { pool, scratch, .. } = &mut *l;
-    let name = utf8(&event.name, &mut scratch[0]);
-    owned.with(lim.attribute_value_length as usize, |pairs| {
-        pool::with(pool, NativeSpan(handle), |s| {
-            s.add_event(name, event.time_ns, pairs, lim)
-        });
+    let [scratch @ .., name_buf] = scratch;
+    let name = utf8(&event.name, name_buf);
+    pool::with(pool, NativeSpan(handle), |s| {
+        if let Some(ev) = s.begin_event(name, event.time_ns, lim) {
+            entry_attrs(ev, attrs.slice(event.attrs), attrs, value_limit, scratch);
+        }
     });
 }
 
@@ -1019,13 +959,14 @@ pub extern "C" fn Bun__Telemetry__nativeAddLink(
     let Some(ctx) = link_context(link) else {
         return;
     };
-    let owned = OwnedAttrs::collect(attrs.slice(link.attrs), attrs);
-    let ts = link.trace_state.to_utf8();
+    let value_limit = lim.attribute_value_length as usize;
     let Some(mut l) = local(global) else { return };
-    owned.with(lim.attribute_value_length as usize, |pairs| {
-        pool::with(&mut l.pool, NativeSpan(handle), |s| {
-            s.add_link(&ctx, ts.slice(), pairs, lim)
-        });
+    let Local { pool, scratch, .. } = &mut *l;
+    let [scratch @ .., _] = scratch;
+    pool::with(pool, NativeSpan(handle), |s| {
+        if let Some(lw) = s.begin_link(&ctx, link.trace_state.to_utf8().slice(), lim) {
+            entry_attrs(lw, attrs.slice(link.attrs), attrs, value_limit, scratch);
+        }
     });
 }
 
@@ -1124,9 +1065,9 @@ pub fn record_exception(
     if let Some(mut l) = super::local(global) {
         let lim = limits();
         pool::with(&mut l.pool, span, |s| {
-            bun_telemetry::otlp::with_exception_attrs(ty, msg, stack, |attrs| {
-                s.add_event(b"exception", 0, attrs, lim)
-            });
+            if let Some(ev) = s.begin_event(b"exception", 0, lim) {
+                bun_telemetry::otlp::with_exception_attrs(ty, msg, stack, |a| ev.attrs(a).finish());
+            }
             s.set_attribute(b"error.type", &Value::Str(ty), lim);
             s.http.flags |= bun_telemetry::http_record::FLAG_HAS_ERROR_TYPE;
             s.set_status(StatusCode::Error, msg);

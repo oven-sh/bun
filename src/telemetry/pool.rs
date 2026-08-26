@@ -216,20 +216,35 @@ impl Slot {
         }
     }
 
-    pub fn add_event(
+    /// `None` when the event limit is reached (counted as dropped).
+    pub fn begin_event(
         &mut self,
         name: &[u8],
         time_ns: u64,
-        attrs: &[(&[u8], Value<'_>)],
         limits: &Limits,
-    ) {
+    ) -> Option<otlp::EntryWriter<'_>> {
         if self.n_events >= limits.events {
             self.dropped_events = self.dropped_events.saturating_add(1);
-            return;
+            return None;
         }
         self.n_events += 1;
         let t = clock::or_now(time_ns);
-        otlp::encode_event(&mut self.extra, name, t, attrs);
+        Some(otlp::EntryWriter::event(&mut self.extra, name, t))
+    }
+
+    /// `None` when the link limit is reached (counted as dropped).
+    pub fn begin_link(
+        &mut self,
+        ctx: &crate::SpanContext,
+        trace_state: &[u8],
+        limits: &Limits,
+    ) -> Option<otlp::EntryWriter<'_>> {
+        if self.n_links >= limits.links {
+            self.dropped_links = self.dropped_links.saturating_add(1);
+            return None;
+        }
+        self.n_links += 1;
+        Some(otlp::EntryWriter::link(&mut self.extra, ctx, trace_state))
     }
 
     pub fn add_link(
@@ -239,12 +254,9 @@ impl Slot {
         attrs: &[(&[u8], Value<'_>)],
         limits: &Limits,
     ) {
-        if self.n_links >= limits.links {
-            self.dropped_links = self.dropped_links.saturating_add(1);
-            return;
+        if let Some(w) = self.begin_link(ctx, trace_state, limits) {
+            w.attrs(attrs).finish();
         }
-        self.n_links += 1;
-        otlp::encode_link(&mut self.extra, ctx, trace_state, attrs);
     }
 
     fn write(

@@ -585,6 +585,11 @@ impl<'a> SpanWriter<'a> {
         self
     }
 
+    #[inline]
+    pub fn begin_event(&mut self, name: &[u8], time_ns: u64) -> EntryWriter<'_> {
+        EntryWriter::event(self.out, name, time_ns)
+    }
+
     /// `exception` event per semconv: exception.type / exception.message /
     /// exception.stacktrace.
     pub fn exception(
@@ -623,6 +628,11 @@ impl<'a> SpanWriter<'a> {
     ) -> &mut Self {
         encode_link(self.out, ctx, trace_state, attrs);
         self
+    }
+
+    #[inline]
+    pub fn begin_link(&mut self, ctx: &SpanContext, trace_state: &[u8]) -> EntryWriter<'_> {
+        EntryWriter::link(self.out, ctx, trace_state)
     }
 
     #[inline]
@@ -690,18 +700,60 @@ fn attrs_len(field: u32, attrs: &[(&[u8], Value<'_>)]) -> usize {
     n
 }
 
+/// Streams one `Span.events` / `Span.links` entry: the fixed fields are
+/// written by [`event`](Self::event) / [`link`](Self::link), then `attr`s.
+pub struct EntryWriter<'a> {
+    out: &'a mut Vec<u8>,
+    nested: Nested<2>,
+    field: u32,
+}
+
+impl<'a> EntryWriter<'a> {
+    #[inline]
+    pub fn event(out: &'a mut Vec<u8>, name: &[u8], time_ns: u64) -> EntryWriter<'a> {
+        let nested = Nested::begin(out, f::EVENTS);
+        proto::write_fixed64(out, f::EV_TIME, time_ns);
+        proto::write_bytes(out, f::EV_NAME, name);
+        EntryWriter {
+            out,
+            nested,
+            field: f::EV_ATTRIBUTES,
+        }
+    }
+    #[inline]
+    pub fn link(out: &'a mut Vec<u8>, ctx: &SpanContext, trace_state: &[u8]) -> EntryWriter<'a> {
+        let nested = Nested::begin(out, f::LINKS);
+        proto::write_bytes(out, f::LINK_TRACE_ID, &ctx.trace_id.0);
+        proto::write_bytes(out, f::LINK_SPAN_ID, &ctx.span_id.0);
+        proto::write_bytes_opt(out, f::LINK_TRACE_STATE, trace_state);
+        write_tag(out, f::LINK_FLAGS, WireType::Fixed32);
+        out.extend_from_slice(&ctx.flags.otlp_with_remote(ctx.flags.remote()).to_le_bytes());
+        EntryWriter {
+            out,
+            nested,
+            field: f::LINK_ATTRIBUTES,
+        }
+    }
+    #[inline]
+    pub fn attr(&mut self, key: &[u8], v: &Value<'_>) {
+        write_key_value(self.out, self.field, key, v);
+    }
+    #[inline]
+    pub fn attrs(mut self, attrs: &[(&[u8], Value<'_>)]) -> Self {
+        for (k, v) in attrs {
+            self.attr(k, v);
+        }
+        self
+    }
+    #[inline]
+    pub fn finish(self) {
+        self.nested.finish(self.out);
+    }
+}
+
 /// Append a `Span.events` entry.
 pub fn encode_event(out: &mut Vec<u8>, name: &[u8], time_ns: u64, attrs: &[(&[u8], Value<'_>)]) {
-    let body = tag_len(f::EV_TIME)
-        + 8
-        + len_field_len(f::EV_NAME, name.len())
-        + attrs_len(f::EV_ATTRIBUTES, attrs);
-    write_len_prefix(out, f::EVENTS, body);
-    proto::write_fixed64(out, f::EV_TIME, time_ns);
-    proto::write_bytes(out, f::EV_NAME, name);
-    for (k, v) in attrs {
-        write_key_value(out, f::EV_ATTRIBUTES, k, v);
-    }
+    EntryWriter::event(out, name, time_ns).attrs(attrs).finish();
 }
 
 /// Append a `Span.links` entry.
@@ -711,26 +763,9 @@ pub fn encode_link(
     trace_state: &[u8],
     attrs: &[(&[u8], Value<'_>)],
 ) {
-    let flags = ctx.flags.otlp_with_remote(ctx.flags.remote());
-    let body = len_field_len(f::LINK_TRACE_ID, 16)
-        + len_field_len(f::LINK_SPAN_ID, 8)
-        + if trace_state.is_empty() {
-            0
-        } else {
-            len_field_len(f::LINK_TRACE_STATE, trace_state.len())
-        }
-        + attrs_len(f::LINK_ATTRIBUTES, attrs)
-        + tag_len(f::LINK_FLAGS)
-        + 4;
-    write_len_prefix(out, f::LINKS, body);
-    proto::write_bytes(out, f::LINK_TRACE_ID, &ctx.trace_id.0);
-    proto::write_bytes(out, f::LINK_SPAN_ID, &ctx.span_id.0);
-    proto::write_bytes_opt(out, f::LINK_TRACE_STATE, trace_state);
-    for (k, v) in attrs {
-        write_key_value(out, f::LINK_ATTRIBUTES, k, v);
-    }
-    write_tag(out, f::LINK_FLAGS, WireType::Fixed32);
-    out.extend_from_slice(&flags.to_le_bytes());
+    EntryWriter::link(out, ctx, trace_state)
+        .attrs(attrs)
+        .finish();
 }
 
 /// Encoded `InstrumentationScope` message body.

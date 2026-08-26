@@ -789,11 +789,20 @@ pub(crate) fn resize_linear(
     dh: u32,
     f: Filter,
 ) -> Result<Vec<u8>, Error> {
+    // These buffers are user-sized (up to GiBs at the `maxPixels` cap, and
+    // 2× the u8 path's footprint), so allocate fallibly and surface
+    // `Error::OutOfMemory` instead of aborting.
+    fn alloc_zeroed<T: Copy + Default>(n: usize) -> Result<Vec<T>, Error> {
+        let mut v: Vec<T> = Vec::new();
+        v.try_reserve_exact(n).map_err(|_| Error::OutOfMemory)?;
+        v.resize(n, T::default());
+        Ok(v)
+    }
     let fwd = srgb_to_linear_lut();
     let rev = linear_to_srgb_lut();
     let src_px: usize = (sw as usize) * (sh as usize) * 4;
     let dst_px: usize = (dw as usize) * (dh as usize) * 4;
-    let mut lin: Vec<u16> = vec![0u16; src_px];
+    let mut lin: Vec<u16> = alloc_zeroed(src_px)?;
     for (dst4, src4) in lin
         .as_chunks_mut::<4>()
         .0
@@ -815,10 +824,10 @@ pub(crate) fn resize_linear(
             f as i32,
         )
     };
-    let mut out16: Vec<u16> = vec![0u16; dst_px];
+    let mut out16: Vec<u16> = alloc_zeroed(dst_px)?;
     // u64-element scratch so the kernel's internal u16/Span/i16 partitions
     // are all sufficiently aligned.
-    let mut scratch: Vec<u64> = vec![0u64; scratch_sz.div_ceil(8)];
+    let mut scratch: Vec<u64> = alloc_zeroed(scratch_sz.div_ceil(8))?;
     // SAFETY: lin has sw*sh*4 u16s, out16 has dw*dh*4 u16s, scratch covers
     // the queried size; the kernel writes within those bounds.
     let rc = unsafe {
@@ -838,7 +847,7 @@ pub(crate) fn resize_linear(
     }
     drop(lin);
     drop(scratch);
-    let mut out: Vec<u8> = vec![0u8; dst_px];
+    let mut out: Vec<u8> = alloc_zeroed(dst_px)?;
     for (dst4, src4) in out
         .as_chunks_mut::<4>()
         .0

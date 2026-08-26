@@ -262,6 +262,7 @@ pub fn http_client_end(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
 /// The request method as `(http.request.method, http.request.method_original)`:
 /// semconv's known set by name; anything else (incl. tokens `bun_http::Method`
 /// does not know) is `_OTHER` with the original alongside.
+#[derive(Clone, Copy)]
 pub enum MethodName<'a> {
     Known(Method),
     Other(&'a [u8]),

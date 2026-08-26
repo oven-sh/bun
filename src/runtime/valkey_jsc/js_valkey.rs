@@ -318,12 +318,11 @@ pub struct JSValkeyClient {
 }
 
 /// Intrusive [`EventLoopTimer`] slot that owns one strong ref on
-/// [`JSValkeyClient`] while armed. `ref_held` mirrors the `ref_()` taken in
-/// [`arm`] so [`disarm`] and [`take_fire_ref`] release it exactly once even
-/// when the fire/close/reconnect paths re-enter each other.
+/// [`JSValkeyClient`] (`held_ref`) while armed, so [`disarm`] and
+/// [`take_fire_ref`] release it exactly once even when the
+/// fire/close/reconnect paths re-enter each other.
 ///
 /// [`EventLoopTimer`]: Timer::EventLoopTimer
-/// [`arm`]: Self::arm
 /// [`disarm`]: Self::disarm
 /// [`take_fire_ref`]: Self::take_fire_ref
 #[repr(C)]
@@ -331,7 +330,7 @@ pub struct RefCountedTimer {
     // Must be first (offset 0): `dispatch.rs` recovers `*mut JSValkeyClient`
     // from the fired `*const EventLoopTimer` via `offset_of!(.., timer)`.
     event_loop_timer: JsCell<Timer::EventLoopTimer>,
-    ref_held: Cell<bool>,
+    held_ref: JsCell<Option<RefPtr<JSValkeyClient>>>,
 }
 
 const _: () = assert!(core::mem::offset_of!(RefCountedTimer, event_loop_timer) == 0);
@@ -340,7 +339,7 @@ impl RefCountedTimer {
     fn new(tag: Timer::Tag) -> Self {
         Self {
             event_loop_timer: JsCell::new(Timer::EventLoopTimer::init_paused(tag)),
-            ref_held: Cell::new(false),
+            held_ref: JsCell::new(None),
         }
     }
 
@@ -380,8 +379,8 @@ impl RefCountedTimer {
                     .cast_mut(),
             )
         };
-        if !self.ref_held.replace(true) {
-            owner.ref_();
+        if self.held_ref.get().is_none() {
+            self.held_ref.set(Some(owner.ref_guard()));
         }
     }
 
@@ -393,22 +392,16 @@ impl RefCountedTimer {
             // linked into the heap (state == ACTIVE checked above).
             unsafe { VirtualMachine::timer_remove(vm, self.event_loop_timer.as_ptr()) };
         }
-        if self.ref_held.replace(false) {
-            // SAFETY: balanced with `arm`'s `ref_()`; `_guard`/caller's ref
-            // keeps `owner` live past this call.
-            unsafe { JSValkeyClient::deref(std::ptr::from_ref(owner).cast_mut()) };
-        }
+        // The caller's ref keeps `owner` live past this call.
+        self.held_ref.set(None);
     }
 
     /// Mark fired and hand the keep-alive ref (if held) to the callback scope.
     /// Returns `None` when no ref was held, so a stray fire cannot over-release.
-    fn take_fire_ref(&self, owner: &JSValkeyClient) -> Option<RefPtr<JSValkeyClient>> {
+    fn take_fire_ref(&self) -> Option<RefPtr<JSValkeyClient>> {
         self.event_loop_timer
             .with_mut(|t| t.state = Timer::State::FIRED);
-        self.ref_held.replace(false).then(|| {
-            // SAFETY: `arm`'s `ref_()` set `ref_held`; this scope consumes it.
-            unsafe { RefPtr::from_raw(owner.as_ctx_ptr()) }
-        })
+        self.held_ref.take()
     }
 }
 
@@ -423,8 +416,8 @@ bun_event_loop::impl_timer_owner!(JSValkeyClient;
 impl Drop for JSValkeyClient {
     fn drop(&mut self) {
         debug_assert!(self.client.get().socket.is_closed());
-        debug_assert!(!self.timer.ref_held.get());
-        debug_assert!(!self.reconnect_timer.ref_held.get());
+        debug_assert!(self.timer.held_ref.get().is_none());
+        debug_assert!(self.reconnect_timer.held_ref.get().is_none());
         if let Some(s) = self._secure.get() {
             // SAFETY: SSL_CTX is C-refcounted; this releases our ref.
             unsafe { boringssl::c::SSL_CTX_free(s) };
@@ -1082,7 +1075,7 @@ impl JSValkeyClient {
         debug!("onConnectionTimeout");
 
         let _guard = self.ref_guard();
-        let _timer_ref = self.timer.take_fire_ref(self);
+        let _timer_ref = self.timer.take_fire_ref();
         if self.client.get().flags.failed {
             return Ok(());
         }
@@ -1161,7 +1154,7 @@ impl JSValkeyClient {
         debug!("Reconnect timer fired, attempting to reconnect");
 
         let _guard = self.ref_guard();
-        let _timer_ref = self.reconnect_timer.take_fire_ref(self);
+        let _timer_ref = self.reconnect_timer.take_fire_ref();
 
         // Execute reconnection logic
         self.reconnect()

@@ -618,10 +618,10 @@ impl BlobExt for Blob {
             });
             t.poll.ref_(bun_io::js_vm_ctx());
             let proxy = http_proxy_href(global);
-            // reshaped for borrowck — `heap::alloc(t)` moves `t`,
-            // so clone the `Rc<S3Credentials>` out (cheap ref bump)
-            // and stash `path` as a raw `*const [u8]` whose backing store is
-            // kept alive by the same `t.blob` now owned by the heap task.
+            // reshaped for borrowck — `heap::alloc(t)` moves `t`, so clone the
+            // credentials ref out and stash `path` as a raw `*const [u8]`
+            // whose backing store is kept alive by the same `t.blob` now
+            // owned by the heap task.
             let (cred, path, payer);
             {
                 let s3 = t
@@ -630,7 +630,7 @@ impl BlobExt for Blob {
                     .expect("infallible: store present")
                     .data
                     .as_s3();
-                cred = std::rc::Rc::clone(s3.get_credentials());
+                cred = s3.get_credentials().clone();
                 path = std::ptr::from_ref::<[u8]>(s3.path());
                 payer = s3.request_payer;
             }
@@ -1404,14 +1404,12 @@ impl BlobExt for Blob {
             let proxy_url = proxy.map(|p| p.href);
 
             // When no JS overrides were supplied, hand the store's *base*
-            // credentials to the upload (`upload_stream` consumes an
-            // `RefPtr` by value, so the else-arm heap-dupes from the
-            // store's `Rc` instead of from the `aws_options` clone).
+            // credentials to the upload.
             return crate::webcore::__s3_client::upload_stream(
                 if extra_options.is_some() {
                     aws_options.credentials.dupe()
                 } else {
-                    s3.get_credentials().dupe()
+                    s3.get_credentials().clone()
                 },
                 path,
                 readable_stream,
@@ -1744,7 +1742,7 @@ impl BlobExt for Blob {
             }
 
             return crate::webcore::s3::client::writable_stream(
-                s3.get_credentials().dupe(),
+                s3.get_credentials().clone(),
                 path,
                 global_this,
                 Default::default(),
@@ -4602,7 +4600,7 @@ pub(crate) fn write_file_with_source_destination(
                             if options.extra_options.is_some() {
                                 aws_options.credentials.dupe()
                             } else {
-                                s3.get_credentials().dupe()
+                                s3.get_credentials().clone()
                             },
                             s3.path(),
                             stream,
@@ -4698,7 +4696,7 @@ pub(crate) fn write_file_with_source_destination(
                         if options.extra_options.is_some() {
                             aws_options.credentials.dupe()
                         } else {
-                            s3.get_credentials().dupe()
+                            s3.get_credentials().clone()
                         },
                         s3.path(),
                         stream,
@@ -4985,7 +4983,7 @@ pub(crate) fn write_file_internal(
                                 if options.extra_options.is_some() {
                                     aws_options.credentials.dupe()
                                 } else {
-                                    s3.get_credentials().dupe()
+                                    s3.get_credentials().clone()
                                 },
                                 s3.path(),
                                 readable,

@@ -49,6 +49,8 @@ pub(crate) struct FileResponseStream {
     sendfile: JsCell<Sendfile>,
 
     state: Cell<State>,
+    /// The in-flight read's ref on `self`; released in on_reader_done/on_reader_error.
+    read_ref: JsCell<Option<RefPtr<Self>>>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
@@ -93,7 +95,6 @@ bitflags::bitflags! {
         const FINISHED      = 1 << 1;
         const ERRORED       = 1 << 2;
         const RESP_DETACHED = 1 << 3;
-        const READ_REF_HELD = 1 << 4;
     }
 }
 
@@ -181,6 +182,7 @@ impl FileResponseStream {
                 reader: JsCell::new(BufferedReader::init::<FileResponseStream>()),
                 sendfile: JsCell::new(Sendfile::default()),
                 state: Cell::new(State::default()),
+                read_ref: JsCell::new(None),
             }));
         // SAFETY: `this` is the live allocation above; the guard's ref defers
         // any free until after `this_ref` is dead at the end of this frame.
@@ -362,22 +364,15 @@ impl FileResponseStream {
     }
 
     fn hold_read_ref(&self) {
-        if self.state.get().contains(State::READ_REF_HELD) {
-            return;
+        if self.read_ref.get().is_none() {
+            // SAFETY: `self` is the live intrusive allocation.
+            self.read_ref
+                .set(Some(unsafe { RefPtr::init_ref(self.as_ptr()) }));
         }
-        self.insert_state(State::READ_REF_HELD);
-        self.ref_();
     }
 
     fn take_read_ref(&self) -> Option<RefPtr<Self>> {
-        if !self.state.get().contains(State::READ_REF_HELD) {
-            return None;
-        }
-        self.state
-            .set(self.state.get().difference(State::READ_REF_HELD));
-        // SAFETY: `self` is the live intrusive allocation; `READ_REF_HELD`
-        // witnesses exactly one outstanding ref taken in `hold_read_ref`.
-        Some(unsafe { RefPtr::from_raw(self.as_ptr()) })
+        self.read_ref.take()
     }
 
     fn on_writable(&self, _: u64, _: AnyResponse) -> bool {

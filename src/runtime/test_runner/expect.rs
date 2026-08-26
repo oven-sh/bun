@@ -2872,7 +2872,17 @@ impl ExpectMatcherUtils {
         } else {
             bun_core::pretty_fmt!("<d>(<r><green>expected<r><d>)<r>", false)
         };
-        let buf = format!("{head}{not}{matcher_name}{expected_hint}\n\n{diff_formatter}\n");
+        use fmt::Write as _;
+        let mut buf = String::new();
+        if write!(
+            buf,
+            "{head}{not}{matcher_name}{expected_hint}\n\n{diff_formatter}\n"
+        )
+        .is_err()
+            && global_this.has_exception()
+        {
+            return Err(JsError::Thrown);
+        }
         bun_string_jsc::create_utf8_for_js(global_this, buf.as_bytes())
     }
 }

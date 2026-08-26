@@ -505,12 +505,12 @@ export function windowsEnv(
   // Node hands the name to the OS as a C string: it is cut at the first NUL,
   // and a name that is empty or contains '=' is rejected, so the write is
   // silently dropped (https://github.com/nodejs/node/issues/32920). Returns the
-  // original-case name and its canonical uppercase key, or null when dropped.
-  function envName(p: string): [string, string] | null {
+  // name as the OS will hold it, or null when the write is dropped.
+  function envName(p: string): string | null {
     const nul = p.indexOf("\0");
     if (nul !== -1) p = p.slice(0, nul);
     if (p === "" || p.includes("=")) return null;
-    return [p, p.toUpperCase()];
+    return p;
   }
 
   return new Proxy(internalEnv, {
@@ -541,7 +541,7 @@ export function windowsEnv(
         return true;
       }
       // If toString() throws, we want to avoid the key existing in envMapList.
-      writeEnvVar(name[0], name[1], value);
+      writeEnvVar(name, name.toUpperCase(), value);
       return true;
     },
     preventExtensions() {
@@ -567,7 +567,7 @@ export function windowsEnv(
       if (name === null) {
         return true;
       }
-      const k = name[1];
+      const k = name.toUpperCase();
       const i = envMapList.findIndex(x => x.toUpperCase() === k);
       if (i !== -1) {
         envMapList.splice(i, 1);
@@ -612,7 +612,7 @@ export function windowsEnv(
       }
       // Node's EnvDefiner delegates the validated value to EnvSetter, i.e.
       // plain assignment — never a real defineProperty on the target.
-      writeEnvVar(name[0], name[1], attributes.value);
+      writeEnvVar(name, name.toUpperCase(), attributes.value);
       return true;
     },
     getOwnPropertyDescriptor(target, p) {

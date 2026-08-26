@@ -1,19 +1,44 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import path from "node:path";
 
-test("dev server deinitializes itself", () => {
-  const result = Bun.spawnSync({
-    cmd: [bunExe(), "test", path.join(import.meta.dir, "fixtures/deinitialization/test.ts")],
+test("dev server deinitializes itself", async () => {
+  // The child runs a whole `bun test` suite: nine GC-heavy dev server cases
+  // plus leak reporting at exit (see fixtures/deinitialization/test.ts).
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "./test.ts"],
     env: bunEnv,
-    stdio: ["inherit", "inherit", "inherit"],
     cwd: path.join(import.meta.dir, "fixtures/deinitialization"),
+    stdout: "pipe",
+    stderr: "pipe",
   });
-  expect(result.signalCode).toBeUndefined();
-  expect(result.exitCode).toBe(0);
-  // The child runs a whole `bun test` suite (nine GC-heavy cases plus leak
-  // reporting at exit), which takes longer than the 5s default under ASAN.
-}, 60_000);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Every case's result line plus the child's summary. A case that hangs or
+  // crashes the child is missing from this list before the exit code says so.
+  const results = normalizeBunSnapshot(stderr)
+    .split("\n")
+    .filter(line => /^\((pass|fail|skip|todo)\) /.test(line) || /^\s*\d+ (pass|fail)$/.test(line));
+  expect(results).toMatchInlineSnapshot(`
+    [
+      "(pass) baseline: stopped server wrapper collects",
+      "(pass) flags: ",
+      "(pass) flags: websocket=1",
+      "(pass) flags: closeActiveConnections websocket=1",
+      "(pass) flags: sendAnyRequests",
+      "(pass) flags: sendAnyRequests websocket=1",
+      "(pass) flags: closeActiveConnections sendAnyRequests",
+      "(pass) flags: closeActiveConnections sendAnyRequests websocket=1",
+      "(pass) flags: websocket=8",
+      "(pass) flags: closeActiveConnections websocket=8",
+      " 10 pass",
+      " 0 fail",
+    ]
+  `);
+  expect(stdout).toStartWith("bun test v");
+  expect(exitCode).toBe(0);
+  // About 3s under a debug ASAN build, most of it the child's startup.
+}, 20_000);
 
 test("dev server is deinitialized before its arena when listen fails", async () => {
   using dir = tempDir("dev-server-listen-fails", {

@@ -1,7 +1,7 @@
 import { getDevServerDeinitCount } from "bun:internal-for-testing";
-import html from "./index.html";
-import { afterAll, beforeAll, expect, test } from "bun:test";
 import { fullGC, heapStats } from "bun:jsc";
+import { afterAll, beforeAll, expect, test } from "bun:test";
+import html from "./index.html";
 
 expect(process.cwd()).toBe(import.meta.dir);
 
@@ -26,10 +26,12 @@ async function run({ closeActiveConnections = false, sendAnyRequests = true, web
     expect(globalThis.pluginLoaded).toBeUndefined();
 
     let sockets: WebSocket[] = [];
+    const closes: Promise<void>[] = [];
     if (websocket > 0) {
       const opens: Promise<void>[] = [];
       for (let i = 0; i < websocket; i++) {
         const { promise, resolve, reject } = Promise.withResolvers<void>();
+        const closed = Promise.withResolvers<void>();
         const ws = new WebSocket(server.url.origin + "/_bun/hmr");
         let opened = false;
         ws.onopen = () => {
@@ -44,16 +46,22 @@ async function run({ closeActiveConnections = false, sendAnyRequests = true, web
         ws.onclose = () => {
           console.log("WebSocket closed");
           if (!opened) reject(new Error(`websocket ${i} closed before open`));
+          closed.resolve();
         };
         sockets.push(ws);
         opens.push(promise);
+        closes.push(closed.promise);
       }
       await Promise.all(opens);
     }
 
+    // Runs from the bundler plugin's onLoad, so the server is stopped while
+    // the bundle for the pending request is still in flight. Hold the bundle
+    // until the loop has processed the stop: an abrupt stop closes the HMR
+    // sockets, so wait for every client to observe that; otherwise one turn.
     globalThis.callback = async () => {
       server.stop(closeActiveConnections);
-      await (promise = new Promise(resolve => setTimeout(resolve, 250)));
+      await (promise = closeActiveConnections ? Promise.all(closes) : new Promise(resolve => setImmediate(resolve)));
     };
 
     if (sendAnyRequests) {
@@ -82,20 +90,21 @@ async function run({ closeActiveConnections = false, sendAnyRequests = true, web
   }
 
   if (closeActiveConnections) {
+    // The bundle the plugin held is still finishing; the poll below covers
+    // the ticks it needs to complete and release the request.
     await promise;
-    await new Promise(resolve => setTimeout(resolve, 250));
   }
 
   const targetCount = lastDevServerDeinitCount + 1;
-  let attempts = 0;
-  while (getDevServerDeinitCount() === lastDevServerDeinitCount) {
-    Bun.gc(true);
-    fullGC();
-    await new Promise(resolve => setTimeout(resolve, 100));
-    attempts++;
-    if (attempts > 10) {
+  // The wrapper's finalizer schedules the deinit as a task, so poll: GC, then
+  // give the loop a turn before checking again.
+  for (let attempts = 0; getDevServerDeinitCount() === lastDevServerDeinitCount; attempts++) {
+    if (attempts > 100) {
       throw new Error("Failed to trigger deinit");
     }
+    Bun.gc(true);
+    fullGC();
+    await new Promise(resolve => setTimeout(resolve, 10));
   }
   expect(getDevServerDeinitCount()).toBe(targetCount);
 }

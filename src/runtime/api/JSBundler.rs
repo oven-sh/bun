@@ -343,10 +343,43 @@ pub mod js_bundler {
                         .throw_invalid_arguments(format_args!("windows must be an object")));
                 }
 
+                let is_windows_target =
+                    this.compile_target.os == bun_core::env::OperatingSystem::Windows;
+
                 if let Some(hide_console) =
                     windows.get_own(global_this, &BunString::static_("hideConsole"))?
                 {
+                    if !is_windows_target && hide_console.to_boolean() {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "compile.windows.hideConsole requires a Windows compile target"
+                        )));
+                    }
                     this.windows_hide_console = hide_console.to_boolean();
+                }
+
+                // The metadata below is written with the Win32 resource API, so like the
+                // `--windows-*` CLI flags it needs a Windows host and a Windows target.
+                for name in [
+                    "icon",
+                    "title",
+                    "publisher",
+                    "version",
+                    "description",
+                    "copyright",
+                ] {
+                    if windows.get_own_truthy(global_this, name)?.is_none() {
+                        continue;
+                    }
+                    if !cfg!(windows) {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "compile.windows.{name} is only available when compiling on Windows"
+                        )));
+                    }
+                    if !is_windows_target {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "compile.windows.{name} requires a Windows compile target"
+                        )));
+                    }
                 }
 
                 if let Some(windows_icon_path) =
@@ -1229,11 +1262,14 @@ pub mod js_bundler {
                 if !is_standalone_html {
                     this.target = Target::Bun;
 
+                    // A user `define` for one of these keys wins, like `--define` on the CLI.
                     let define_keys = compile.compile_target.define_keys();
                     let define_values = compile.compile_target.define_values();
                     debug_assert_eq!(define_keys.len(), define_values.len());
                     for (key, value) in define_keys.iter().zip(define_values) {
-                        this.define.insert(key, value)?;
+                        if !this.define.contains_key(key) {
+                            this.define.insert(key, value)?;
+                        }
                     }
 
                     let base_public_path = StandaloneModuleGraph::target_base_public_path(

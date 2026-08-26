@@ -1604,8 +1604,9 @@ impl<'a> Parser<'a> {
         }
 
         if let Some(hmr) = serve_obj.get(b"hmr") {
-            if let Some(v) = hmr.as_bool() {
-                self.ctx.args.serve_hmr = Some(v);
+            match hmr.as_bool() {
+                Some(v) => self.ctx.args.serve_hmr = Some(v),
+                None => self.add_error(hmr.loc, b"Expected hmr to be a boolean")?,
             }
         }
 
@@ -1616,15 +1617,30 @@ impl<'a> Parser<'a> {
                 self.ctx.args.serve_minify_identifiers = Some(v);
             } else if minify.is_object() {
                 if let Some(syntax) = minify.get(b"syntax") {
-                    self.ctx.args.serve_minify_syntax = Some(syntax.as_bool().unwrap_or(false));
+                    match syntax.as_bool() {
+                        Some(v) => self.ctx.args.serve_minify_syntax = Some(v),
+                        None => {
+                            self.add_error(syntax.loc, b"Expected minify.syntax to be a boolean")?
+                        }
+                    }
                 }
                 if let Some(whitespace) = minify.get(b"whitespace") {
-                    self.ctx.args.serve_minify_whitespace =
-                        Some(whitespace.as_bool().unwrap_or(false));
+                    match whitespace.as_bool() {
+                        Some(v) => self.ctx.args.serve_minify_whitespace = Some(v),
+                        None => self.add_error(
+                            whitespace.loc,
+                            b"Expected minify.whitespace to be a boolean",
+                        )?,
+                    }
                 }
                 if let Some(identifiers) = minify.get(b"identifiers") {
-                    self.ctx.args.serve_minify_identifiers =
-                        Some(identifiers.as_bool().unwrap_or(false));
+                    match identifiers.as_bool() {
+                        Some(v) => self.ctx.args.serve_minify_identifiers = Some(v),
+                        None => self.add_error(
+                            identifiers.loc,
+                            b"Expected minify.identifiers to be a boolean",
+                        )?,
+                    }
                 }
             } else {
                 self.add_error(minify.loc, b"Expected minify to be boolean or object")?;
@@ -1658,14 +1674,22 @@ impl<'a> Parser<'a> {
             }
         }
 
+        if let Some(splitting) = serve_obj.get(b"splitting") {
+            match splitting.as_bool() {
+                Some(v) => self.ctx.args.serve_splitting = v,
+                None => self.add_error(splitting.loc, b"Expected splitting to be a boolean")?,
+            }
+        }
+
         if let Some(expr) = serve_obj.get(b"define") {
             self.ctx.args.serve_define = Some(self.parse_define_map(&expr)?);
         }
         self.ctx.args.bunfig_path = Box::<[u8]>::from(self.source.path.text);
 
         if let Some(public_path) = serve_obj.get(b"publicPath") {
-            if let Some(v) = public_path.as_string(self.bump) {
-                self.ctx.args.serve_public_path = Some(v.into());
+            match public_path.as_string(self.bump) {
+                Some(v) => self.ctx.args.serve_public_path = Some(v.into()),
+                None => self.add_error(public_path.loc, b"Expected publicPath to be a string")?,
             }
         }
 

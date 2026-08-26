@@ -272,7 +272,7 @@ impl BlobOrStringOrBuffer {
 /// Rust-side bytes for a synchronous call ([`StringOrBuffer::borrowed`]).
 pub enum StringOrBuffer<'a> {
     String(Utf8WithString),
-    ThreadsafeString(Utf8WithString),
+    ThreadIsolatedString(Utf8WithString),
     Utf8(Utf8Bytes<'a>),
     Buffer(Buffer),
 }
@@ -299,7 +299,7 @@ impl<'a> StringOrBuffer<'a> {
     pub(crate) fn slice(&self) -> &[u8] {
         match self {
             Self::String(str) => str.slice(),
-            Self::ThreadsafeString(str) => str.slice(),
+            Self::ThreadIsolatedString(str) => str.slice(),
             Self::Utf8(str) => str.slice(),
             Self::Buffer(str) => str.slice(),
         }
@@ -309,7 +309,7 @@ impl<'a> StringOrBuffer<'a> {
 impl bun_jsc::Unprotect for BlobOrStringOrBuffer {
     /// JS-side half of cleanup — owned
     /// payloads are released by `Drop` (which runs next when held in a
-    /// [`bun_jsc::ThreadSafe`]).
+    /// [`bun_jsc::ThreadIsolated`]).
     #[inline]
     fn unprotect(&mut self) {
         if let Self::StringOrBuffer(sob) = self {
@@ -320,7 +320,7 @@ impl bun_jsc::Unprotect for BlobOrStringOrBuffer {
 
 impl bun_jsc::Unprotect for StringOrBuffer<'static> {
     /// JS-side half of cleanup — undo the
-    /// `protect()` taken by [`StringOrBuffer::to_thread_safe`] /
+    /// `protect()` taken by [`StringOrBuffer::make_thread_isolated`] /
     /// `from_js_maybe_async(.., Flavor::Async, ..)`. Owned slices are released
     /// by `Drop`.
     #[inline]
@@ -338,7 +338,7 @@ impl bun_jsc::Unprotect for StringOrBuffer<'static> {
 impl StringOrBuffer<'_> {
     pub fn into_js(self, ctx: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
-            Self::ThreadsafeString(str) | Self::String(str) => str.into_js(ctx),
+            Self::ThreadIsolatedString(str) | Self::String(str) => str.into_js(ctx),
             Self::Utf8(utf8) => bun_string_jsc::create_utf8_for_js(ctx, &utf8),
             Self::Buffer(mut buffer) => {
                 if buffer.buffer.value != JSValue::ZERO {
@@ -361,14 +361,14 @@ impl StringOrBuffer<'_> {
 }
 
 impl StringOrBuffer<'static> {
-    pub(crate) fn to_thread_safe(&mut self) {
+    pub(crate) fn make_thread_isolated(&mut self) {
         match self {
             Self::String(s) => {
-                s.to_thread_safe();
+                s.make_thread_isolated();
                 let str = core::mem::take(s);
-                *self = Self::ThreadsafeString(str);
+                *self = Self::ThreadIsolatedString(str);
             }
-            Self::ThreadsafeString(_) | Self::Utf8(_) => {}
+            Self::ThreadIsolatedString(_) | Self::Utf8(_) => {}
             Self::Buffer(buffer) => {
                 buffer.buffer.value.protect();
             }
@@ -421,8 +421,8 @@ impl StringOrBuffer<'static> {
                 *out = if flavor == Flavor::Async {
                     shared_or_utf8(
                         global,
-                        str.into_utf8_with_string_thread_safe(),
-                        Self::ThreadsafeString,
+                        str.into_utf8_with_string_thread_isolated(),
+                        Self::ThreadIsolatedString,
                         Self::Utf8,
                     )
                 } else {
@@ -821,7 +821,7 @@ pub struct NameTooLong;
 
 /// `bun_runtime`-tier behaviour layered on `bun_jsc::node_path::PathLike`.
 ///
-/// `to_thread_safe` / `into_thread_safe` / `slice` / `estimated_size` are
+/// `make_thread_isolated` / `into_thread_isolated` / `slice` / `estimated_size` are
 /// inherent on the lower-tier type (see `bun_jsc::node_path`); this trait
 /// adds only the path-buffer slicers and JS-argument parsing that depend on
 /// `bun_runtime` types (`Valid`, `ArgumentsSlice` cursor flow).
@@ -1233,7 +1233,7 @@ fn path_like_from_string(
     will_be_async: bool,
 ) -> JsResult<PathLike<'static>> {
     let utf8 = if will_be_async {
-        str.into_utf8_with_string_thread_safe()
+        str.into_utf8_with_string_thread_isolated()
     } else {
         str.into_utf8_with_string()
     };
@@ -1241,7 +1241,7 @@ fn path_like_from_string(
     Valid::path_null_bytes(utf8.slice(), global)?;
 
     let shared = if will_be_async {
-        PathLike::ThreadsafeString
+        PathLike::ThreadIsolatedString
     } else {
         PathLike::String
     };

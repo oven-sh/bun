@@ -92,20 +92,15 @@ impl Readable {
     ) -> Readable {
         super::assert_stdio_result!(result);
 
-        // Ownership of any resource inside `stdio` (notably `.memfd`) is being
-        // *transferred* into the returned `Readable`. `Stdio` has a `Drop` impl that
-        // would close the memfd, so suppress it here to avoid a double-close
-        // (EBADF) when the Readable later closes the same fd.
-        let stdio = mem::ManuallyDrop::new(stdio);
-
+        let mut stdio = stdio;
         #[cfg(unix)]
         {
-            if matches!(*stdio, Stdio::Pipe) {
+            if matches!(stdio, Stdio::Pipe) {
                 let _ = bun_sys::set_nonblocking(result.unwrap());
             }
         }
 
-        match &*stdio {
+        match &stdio {
             Stdio::Inherit => Readable::Inherit,
             Stdio::Ignore | Stdio::Ipc | Stdio::Path(..) => Readable::Ignore,
             Stdio::Fd(fd) => {
@@ -119,10 +114,12 @@ impl Readable {
                     Readable::Fd(*fd)
                 }
             }
-            Stdio::Memfd(memfd) => {
+            Stdio::Memfd(_) => {
+                // Ownership of the fd moves into the Readable; `Stdio`'s Drop would close it.
+                let memfd = stdio.take_memfd().unwrap();
                 #[cfg(unix)]
                 {
-                    Readable::Memfd(*memfd)
+                    Readable::Memfd(memfd)
                 }
                 #[cfg(not(unix))]
                 {

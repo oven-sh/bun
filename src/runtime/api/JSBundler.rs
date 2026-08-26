@@ -78,12 +78,12 @@ pub mod js_bundler {
         while let Some((prop, property_value)) = files_iter.next()? {
             // Parse the value as BlobOrStringOrBuffer using async mode for thread safety.
             // Async mode `protect()`s any JS-backed buffer; adopt into a
-            // `ThreadSafe` so the guard unprotects + drops at end of iteration.
+            // `ThreadIsolated` so the guard unprotects + drops at end of iteration.
             let blob_or_string = match crate::node::BlobOrStringOrBuffer::from_js_async(
                 global_this,
                 property_value,
             )? {
-                Some(v) => bun_jsc::ThreadSafe::adopt(v),
+                Some(v) => bun_jsc::ThreadIsolated::adopt(v),
                 None => {
                     return Err(global_this.throw_invalid_arguments(format_args!("Expected file content to be a string, Blob, File, TypedArray, or ArrayBuffer")));
                 }
@@ -148,6 +148,8 @@ pub mod js_bundler {
         /// Path to write markdown metafile (if specified via metafile object) - TEST: moved here
         pub(crate) metafile_markdown_path: OwnedString,
         pub(crate) css_chunking: bool,
+        /// `minChunkSize`: see `BundleOptions::min_chunk_size`.
+        pub(crate) min_chunk_size: u64,
         pub(crate) drop: StringSet,
         pub(crate) features: StringSet,
         pub(crate) throw_on_error: bool,
@@ -209,6 +211,7 @@ pub mod js_bundler {
                 metafile_json_path: OwnedString::default(),
                 metafile_markdown_path: OwnedString::default(),
                 css_chunking: false,
+                min_chunk_size: 0,
                 drop: StringSet::default(),
                 features: StringSet::default(),
                 throw_on_error: true,
@@ -799,6 +802,17 @@ pub mod js_bundler {
 
             if let Some(hot) = config.get_boolean_loose(global_this, "splitting")? {
                 this.code_splitting = hot;
+            }
+
+            if let Some(min_chunk_size) =
+                config.get_optional_int::<u64>(global_this, "minChunkSize")?
+            {
+                if min_chunk_size > 0 && !this.code_splitting {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "minChunkSize requires splitting to be true."
+                    )));
+                }
+                this.min_chunk_size = min_chunk_size;
             }
 
             if let Some(minify) = config.get_truthy(global_this, "minify")? {

@@ -4160,11 +4160,17 @@ pub(crate) extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
     let Some(name) = this.get_name_string() else {
         return BunString::EMPTY;
     };
-    if this.needs_to_read_file() || this.is_s3() {
-        let utf8 = name.to_utf8();
-        let base = bun_paths::basename(&utf8);
-        if base.len() != utf8.len() {
-            return BunString::clone_utf8(base);
+    // A name that `get_name_string` derived from the store path (a `Bun.file()`
+    // path or S3 key) is reduced to its basename so the multipart part never
+    // carries the host directory layout. A name the user assigned (`new
+    // File(bits, name)`, `blob.name = ...`) differs from the store path and is
+    // used as given.
+    if let Some(path) = this.store_path() {
+        if *name.to_utf8() == *path {
+            let base = bun_paths::basename(path);
+            if base.len() != path.len() {
+                return BunString::clone_utf8(base);
+            }
         }
     }
     name.clone()

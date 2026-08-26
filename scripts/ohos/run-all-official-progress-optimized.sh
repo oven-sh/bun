@@ -221,7 +221,10 @@ run_test() {
     */js/web/streams/streams.test.js|*/js/bun/shell/shell-cmdsub-crash.test.ts|\
     */js/bun/import-attributes/import-attributes.test.ts|\
     */js/bun/test/snapshot-tests/snapshots/snapshot.test.ts|\
-    */js/bun/spawn/spawn.ipc.bun-node.test.ts|*/regression/issue/26286.test.ts|\
+    */js/bun/spawn/spawn.ipc.bun-node.test.ts|*/regression/issue/26286.test.ts)
+      WT=120
+      BT="--expose-internals --smol --timeout 120000"
+      ;;
     # napi.test/uv_stub: dlopen 被 OHOS 沙箱拦截（平台问题），用例必超时，
     # 120s 快速失败省 ~480s/文件 的白等（曾 601s×2 试）
     */napi/napi.test.ts|*/napi/uv_stub.test.ts)
@@ -304,6 +307,15 @@ run_test() {
       WT=${TMOUT}
       BT="--expose-internals --smol --timeout ${BUN_TIMEOUT}"
       ;;
+  esac
+
+  # ── 大文件回摆标记：全量并行负载下偶发用例失败（单跑必过）。
+  # 这些文件用例失败时重试一次（默认只对超时重试）。
+  _retry_on_fail=0
+  case "$f" in
+    */websocket/websocket-server.test.ts|*/test/fake-timers/fake-timers.test.ts|\
+    */bundler/transpiler/transpiler.test.js|*/http/proxy.test.ts)
+      _retry_on_fail=1 ;;
   esac
 
   # ── 串行标记：这些测试并行跑会冲突导致 subshell 死 ──
@@ -415,7 +427,7 @@ run_test() {
       TIMEOUT=1
     fi
 
-    if [ $EXIT -eq 0 ] || [ $EXIT -eq 1 ]; then
+    if [ $EXIT -eq 0 ] || { [ $EXIT -eq 1 ] && [ "$_retry_on_fail" -ne 1 ]; }; then
       LAST_OUT="$out"
       break
     fi

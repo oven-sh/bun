@@ -169,6 +169,27 @@ impl jsc::FromJsEnum for codecs::Filter {
     }
 }
 
+/// Which space the resample averages in. `Srgb` (default) averages the
+/// encoded 8-bit codes — Sharp/CoreGraphics/WIC parity. `Linear` decodes to
+/// linear light first, which is the physically correct average (#40510).
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Colorspace {
+    Srgb,
+    Linear,
+}
+bun_core::comptime_string_map! {
+    static COLORSPACE_MAP: Colorspace = {
+        b"srgb" => Colorspace::Srgb,
+        b"linear" => Colorspace::Linear,
+    };
+}
+impl jsc::FromJsEnum for Colorspace {
+    fn from_js_value(v: JSValue, global: &JSGlobalObject, prop: &'static str) -> JsResult<Self> {
+        v.to_enum_from_map(global, prop, &COLORSPACE_MAP, "'srgb' or 'linear'")
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct Resize {
     pub(crate) w: u32,
@@ -176,6 +197,7 @@ pub struct Resize {
     pub(crate) filter: codecs::Filter,
     pub(crate) fit: Fit,
     pub(crate) without_enlargement: bool,
+    pub(crate) colorspace: Colorspace,
 }
 
 impl Default for Resize {
@@ -186,6 +208,7 @@ impl Default for Resize {
             filter: codecs::Filter::Lanczos3,
             fit: Fit::Fill,
             without_enlargement: false,
+            colorspace: Colorspace::Srgb,
         }
     }
 }
@@ -482,6 +505,9 @@ impl Image {
             }
             if let Some(v) = opt.get(global, "withoutEnlargement")? {
                 r.without_enlargement = v.to_boolean();
+            }
+            if let Some(v) = opt.get_optional_enum::<Colorspace>(global, "colorspace")? {
+                r.colorspace = v;
             }
         }
         self.update_pipeline(|p| p.resize = Some(r));
@@ -1971,7 +1997,11 @@ impl PipelineTask {
                 return Err(codecs::Error::TooManyPixels);
             }
             if t.0 != d.width || t.1 != d.height {
-                let next = codecs::resize(&d.rgba, d.width, d.height, t.0, t.1, r.filter)?;
+                let next = if r.colorspace == Colorspace::Linear {
+                    codecs::resize_linear(&d.rgba, d.width, d.height, t.0, t.1, r.filter)?
+                } else {
+                    codecs::resize(&d.rgba, d.width, d.height, t.0, t.1, r.filter)?
+                };
                 d.rgba = next;
                 d.width = t.0;
                 d.height = t.1;

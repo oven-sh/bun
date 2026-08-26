@@ -206,6 +206,21 @@ async function opendir(dir: string, options) {
   return promise;
 }
 
+// `retryErrorCodes` in node's lib/internal/fs/rimraf.js. rmSync's copy of this
+// set is `rm_error_is_retryable` in src/runtime/node/node_fs.rs.
+function isRmRetryError(code): boolean {
+  switch (code) {
+    case "EBUSY":
+    case "EMFILE":
+    case "ENFILE":
+    case "ENOTEMPTY":
+    case "EPERM":
+      return true;
+    default:
+      return false;
+  }
+}
+
 // Node.js closes a FileHandle's fd in its native finalizer and raises
 // ERR_INVALID_STATE (DEP0137 end-of-life) when collected without close().
 // Mirror that with a FinalizationRegistry so dropped handles don't leak fds.
@@ -357,7 +372,24 @@ const exports = {
         });
       }
     }
-    return fs.rm(path, options);
+    // The binding makes one attempt (and validates maxRetries/retryDelay); the
+    // retries are scheduled from here, like node's rimraf, so that waiting does
+    // not occupy a work-pool thread. rmSync retries inside the binding instead.
+    let retries = 0;
+    for (;;) {
+      try {
+        return await fs.rm(path, options);
+      } catch (err) {
+        if (retries >= (options?.maxRetries ?? 0) || !isRmRetryError(err?.code)) throw err;
+      }
+      retries++;
+      const { promise, resolve } = Promise.withResolvers();
+      setTimeout(resolve, retries * (options.retryDelay ?? 100));
+      await promise;
+      // The failed attempt saw the path; if the next one does not, something
+      // else removed it in between, which counts as success (as in rimraf).
+      options = { ...options, force: true };
+    }
   },
   rmdir: async function rmdir(path, options) {
     // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.

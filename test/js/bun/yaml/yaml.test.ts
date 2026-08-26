@@ -1069,6 +1069,52 @@ folded: >
           expect(YAML.parse("a:\n  b:\n    c: |2\n      text\n")).toEqual({ a: { b: { c: "text\n" } } });
         });
       });
+
+      describe("error reporting", () => {
+        test("includes line and column in parse error messages", () => {
+          // A plain block scalar with no indentation is a syntax error at
+          // the first content byte of the second line — line 2, column 0.
+          let err: unknown;
+          try {
+            YAML.parse("key:\n|\n");
+          } catch (e) {
+            err = e;
+          }
+          expect(err).toBeInstanceOf(SyntaxError);
+          const msg = (err as SyntaxError).message;
+          expect(msg).toMatch(/\(line \d+, column \d+\)/);
+          // Regression: previously Bun.YAML.parse threw a bare
+          // "Unable to parse YAML string" with no coordinates.
+          expect(msg).toContain("YAML Parse error:");
+        });
+
+        test("reports column-accurate position for unexpected token in flow mapping", () => {
+          let err: unknown;
+          try {
+            // Two colons in a flow mapping: `{a: b: c}` errors at the
+            // second `:` which is column 6 on line 1.
+            YAML.parse("{a: b: c}\n");
+          } catch (e) {
+            err = e;
+          }
+          expect(err).toBeInstanceOf(SyntaxError);
+          const msg = (err as SyntaxError).message;
+          expect(msg).toMatch(/\(line 1, column \d+\)/);
+        });
+
+        test("reports line/column for tab-indentation error", () => {
+          let err: unknown;
+          try {
+            YAML.parse("a:\n\tbad\n");
+          } catch (e) {
+            err = e;
+          }
+          expect(err).toBeInstanceOf(SyntaxError);
+          const msg = (err as SyntaxError).message;
+          expect(msg).toMatch(/\(line \d+, column \d+\)/);
+          expect(msg).toContain("Tab characters");
+        });
+      });
     });
 
     test("handles special keys", () => {

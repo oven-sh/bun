@@ -67,7 +67,7 @@ pub extern "C" fn Bun__Telemetry__sqliteEnd(
     };
     let g = global.as_ptr().cast();
     if errcode == 0 {
-        db::end(g, span, sql, None, None);
+        db::end(g, span, sql, None);
     } else {
         let code: &[u8] = if code_name.is_null() {
             b"SQLITE_ERROR"
@@ -85,7 +85,6 @@ pub extern "C" fn Bun__Telemetry__sqliteEnd(
             g,
             span,
             sql,
-            None,
             Some(db::DbError {
                 ty: code,
                 message: msg,

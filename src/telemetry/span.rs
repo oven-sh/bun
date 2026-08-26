@@ -36,30 +36,11 @@ fn next_ids(rng: &mut IdRng, out: &mut [u64]) {
     }
 }
 
-#[inline(always)]
-fn next_id_u64(rng: &mut IdRng) -> u64 {
-    let mut v = [0u64; 1];
-    next_ids(rng, &mut v);
-    v[0]
-}
-
 impl TraceId {
     pub const INVALID: TraceId = TraceId([0; 16]);
     #[inline]
     pub fn is_valid(&self) -> bool {
         self.0 != [0; 16]
-    }
-    /// Random 128-bit id from `rng` (see [`crate::Local`]). The W3C/OTel spec
-    /// only requires uniqueness with high probability; samplers read the low 8
-    /// bytes as a uniform integer, which xoshiro256++ provides.
-    #[inline]
-    pub fn generate(rng: &mut IdRng) -> TraceId {
-        let mut v = [0u64; 2];
-        next_ids(rng, &mut v);
-        let mut id = [0u8; 16];
-        id[..8].copy_from_slice(&v[0].to_be_bytes());
-        id[8..].copy_from_slice(&v[1].to_be_bytes());
-        TraceId(id)
     }
     pub fn to_hex(&self, out: &mut [u8; 32]) {
         bun_core::fmt::bytes_to_hex_lower(&self.0, out);
@@ -83,10 +64,6 @@ impl SpanId {
     pub fn is_valid(self) -> bool {
         self.0 != [0; 8]
     }
-    #[inline]
-    pub fn generate(rng: &mut IdRng) -> SpanId {
-        SpanId(next_id_u64(rng).to_be_bytes())
-    }
     pub fn to_hex(self, out: &mut [u8; 16]) {
         bun_core::fmt::bytes_to_hex_lower(&self.0, out);
     }
@@ -95,14 +72,6 @@ impl SpanId {
         hex_decode(s, &mut id)?;
         let s = SpanId(id);
         if s.is_valid() { Some(s) } else { None }
-    }
-    #[inline]
-    pub fn as_u64(self) -> u64 {
-        u64::from_be_bytes(self.0)
-    }
-    #[inline]
-    pub fn from_u64(v: u64) -> SpanId {
-        SpanId(v.to_be_bytes())
     }
 }
 
@@ -162,10 +131,6 @@ impl Flags {
     #[inline]
     pub fn parent_remote(self) -> bool {
         self.0 & Self::PARENT_REMOTE != 0
-    }
-    #[inline]
-    pub fn non_recording(self) -> bool {
-        self.0 & Self::NON_RECORDING != 0
     }
     /// OTLP `Span.flags`: low byte = W3C flags, 0x100 = is-remote known,
     /// 0x200 = parent is remote.

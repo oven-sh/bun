@@ -220,17 +220,11 @@ pub fn discard(global: *mut c_void, span: NativeSpan) {
 
 /// Finish a query span. `statement` is recorded as `db.query.text` when
 /// statement capture is on.
-pub fn end(
-    global: *mut c_void,
-    span: NativeSpan,
-    statement: &[u8],
-    operation: Option<&[u8]>,
-    error: Option<DbError<'_>>,
-) {
+pub fn end(global: *mut c_void, span: NativeSpan, statement: &[u8], error: Option<DbError<'_>>) {
     if !span.is_some() {
         return;
     }
-    let op: Option<&[u8]> = operation.or_else(|| sql_operation(statement).map(str::as_bytes));
+    let op = sql_operation(statement).map(str::as_bytes);
     let capture = rt::capture_db_statement();
     let ended = rt::with_local(global, |local| {
         if let Some(o) = op {

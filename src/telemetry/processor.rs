@@ -27,9 +27,6 @@ pub struct ExportPayload {
 }
 
 impl ExportPayload {
-    pub fn new(body: Vec<u8>, span_count: u32) -> Self {
-        Self::with_seq(body, span_count, 0)
-    }
     pub fn with_seq(body: Vec<u8>, span_count: u32, seq: u64) -> Self {
         Self {
             body,
@@ -55,7 +52,6 @@ pub enum ExportResult {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RetryFilter {
     Due,
-    All,
     OlderThan(u64),
 }
 
@@ -273,11 +269,6 @@ impl Processor {
         self.exporters.read().len()
     }
 
-    /// Payloads parked for a later retry.
-    pub fn pending_retries(&self) -> usize {
-        self.retries.lock().len()
-    }
-
     /// Instead of [`Processor::export_done`]: hand `payload` back to be
     /// exported through `exporter` again after `backoff`, as attempt `attempt`.
     pub fn retry_later(
@@ -306,18 +297,13 @@ impl Processor {
         }
     }
 
-    /// Send parked retries now instead of at their backoff deadline (`forceFlush()`).
-    pub fn retry_now(&'static self) {
-        self.dispatch_retries(RetryFilter::All);
-    }
-
     /// `forceFlush()`: parked retries the flush is waiting on go now.
     pub fn retry_older_than(&'static self, seq: u64) {
         self.dispatch_retries(RetryFilter::OlderThan(seq));
     }
 
-    /// `Due`: retries whose backoff has elapsed; `All`: every parked retry
-    /// now (forceFlush / shutdown). Backoff already staggers them.
+    /// `Due`: retries whose backoff has elapsed; `OlderThan`: the parked
+    /// retries a forceFlush is waiting on. Backoff already staggers them.
     fn dispatch_retries(&'static self, filter: RetryFilter) {
         let due: Vec<ParkedRetry> = {
             let mut q = self.retries.lock();
@@ -325,7 +311,6 @@ impl Processor {
                 return;
             }
             match filter {
-                RetryFilter::All => q.drain(..).collect(),
                 RetryFilter::OlderThan(seq) => {
                     let (older, rest): (Vec<_>, Vec<_>) =
                         q.drain(..).partition(|r| r.payload.seq < seq);

@@ -339,18 +339,8 @@ impl Pool {
     }
 }
 
-/// Claim a slot for a span that has started. Returns `NONE` for `SpanStub::NONE`.
-pub fn begin(
-    p: &mut Pool,
-    stub: SpanStub,
-    scope: ScopeId,
-    name: &[u8],
-    kind: SpanKind,
-) -> NativeSpan {
-    begin_with(p, stub, scope, name, kind, |_| {})
-}
-
-/// [`begin`] plus an initializer run on the fresh slot.
+/// Claim a slot for a span that has started and run `init` on it. Returns
+/// `NONE` for `SpanStub::NONE`.
 #[inline]
 pub fn begin_with(
     p: &mut Pool,
@@ -398,11 +388,6 @@ pub fn with_ref<R>(p: &Pool, handle: NativeSpan, f: impl FnOnce(&Slot) -> R) -> 
         return None;
     }
     Some(f(slot))
-}
-
-#[inline]
-pub fn stub(p: &Pool, handle: NativeSpan) -> SpanStub {
-    with_ref(p, handle, |s| s.stub).unwrap_or(SpanStub::NONE)
 }
 
 /// Result of [`end`]: whether a span was recorded, and the JS cell that had

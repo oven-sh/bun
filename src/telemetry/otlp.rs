@@ -111,28 +111,10 @@ impl From<i64> for Value<'_> {
         Value::Int(v)
     }
 }
-impl From<u32> for Value<'_> {
-    #[inline]
-    fn from(v: u32) -> Self {
-        Value::Int(v as i64)
-    }
-}
 impl From<u16> for Value<'_> {
     #[inline]
     fn from(v: u16) -> Self {
         Value::Int(v as i64)
-    }
-}
-impl From<bool> for Value<'_> {
-    #[inline]
-    fn from(v: bool) -> Self {
-        Value::Bool(v)
-    }
-}
-impl From<f64> for Value<'_> {
-    #[inline]
-    fn from(v: f64) -> Self {
-        Value::Double(v)
     }
 }
 

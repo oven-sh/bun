@@ -216,7 +216,3 @@ pub fn is_shut_down() -> bool {
 pub fn set_shut_down(v: bool) {
     SHUT_DOWN.store(v, Ordering::Release);
 }
-
-pub fn enabled_mask() -> u32 {
-    ENABLED.load(Ordering::Relaxed)
-}

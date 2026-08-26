@@ -88,13 +88,7 @@ impl QuerySpan {
         error: Option<DbError<'_>>,
     ) {
         if let Some(span) = self.take() {
-            bun_telemetry::db::end(
-                global.as_ptr().cast(),
-                span,
-                statement.to_utf8().slice(),
-                None,
-                error,
-            );
+            bun_telemetry::db::end(global.as_ptr().cast(), span, statement.to_utf8().slice(), error);
         }
     }
 
@@ -126,7 +120,6 @@ impl QuerySpan {
             global.as_ptr().cast(),
             span,
             statement.to_utf8().slice(),
-            None,
             Some(error),
         );
         // Describing the error must not change what the application sees:

@@ -83,13 +83,6 @@ pub fn active_span(global: *mut c_void) -> Option<SpanStub> {
     }
 }
 
-#[inline]
-pub fn active_context(global: *mut c_void) -> Option<SpanContext> {
-    active_span(global)
-        .map(|s| s.ctx)
-        .filter(SpanContext::is_valid)
-}
-
 /// The configured span limits (defaults before the runtime is configured).
 #[inline]
 pub fn limits() -> crate::Limits {

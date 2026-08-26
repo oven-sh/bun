@@ -249,20 +249,10 @@ impl Facts {
         }
     }
 
-    /// The span name as it would be exported now: `{METHOD} {route}`, the
-    /// method alone without a route, `HTTP` for methods outside the known set.
+    /// The span name as it would be exported now (see [`span_name`]).
     pub fn append_name(&self, out: &mut Vec<u8>) {
-        let method: &[u8] = match method_name(self.method) {
-            _ if self.flags & FLAG_METHOD_OTHER != 0 => b"HTTP",
-            "_OTHER" => b"HTTP",
-            m => m.as_bytes(),
-        };
-        out.extend_from_slice(method);
-        let route = self.strings().route;
-        if !route.is_empty() && route.len() <= 256 {
-            out.push(b' ');
-            out.extend_from_slice(route);
-        }
+        let mut buf = [0u8; NAME_MAX];
+        out.extend_from_slice(span_name(self, self.strings().route, &mut buf));
     }
 
     #[inline]
@@ -319,20 +309,44 @@ pub struct SpanParts<'a> {
     pub status_message: &'a [u8],
 }
 
-struct Template {
-    // Key.
+/// What a cached encoding depends on besides `Template::pieces`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct TemplateKey {
     flags: u8,
+    status: u16,
     status_code: StatusCode,
     has_parent: bool,
     method: Method,
     version: HttpVersion,
     /// Per-request (tail) attribute count; shapes droppedAttributesCount.
     tail_n: u8,
-    status: u16,
     dropped: u16,
     dropped_events: u16,
     dropped_links: u16,
     lens: [u32; 3],
+}
+
+impl TemplateKey {
+    #[inline]
+    fn of(facts: &Facts, p: &SpanParts<'_>) -> TemplateKey {
+        TemplateKey {
+            flags: facts.flags,
+            status: facts.status,
+            status_code: p.status,
+            has_parent: p.stub.parent.is_valid(),
+            method: facts.method,
+            version: facts.version,
+            tail_n: tail_attr_count(facts) as u8,
+            dropped: p.dropped_attrs,
+            dropped_events: p.dropped_events,
+            dropped_links: p.dropped_links,
+            lens: [facts.lens[2], facts.lens[3], facts.lens[4]],
+        }
+    }
+}
+
+struct Template {
+    key: TemplateKey,
     /// keyed strings | attrs | extra | trace_state | name_override | status_message
     pieces: Vec<u8>,
     piece_len: [u32; 6],
@@ -342,25 +356,8 @@ struct Template {
 
 impl Template {
     #[inline]
-    fn matches(
-        &self,
-        facts: &Facts,
-        p: &SpanParts<'_>,
-        has_parent: bool,
-        pieces: &[&[u8]; 6],
-    ) -> bool {
-        if self.flags != facts.flags
-            || self.status != facts.status
-            || self.status_code != p.status
-            || self.has_parent != has_parent
-            || self.method != facts.method
-            || self.version != facts.version
-            || self.tail_n != tail_attr_count(facts) as u8
-            || self.dropped != p.dropped_attrs
-            || self.dropped_events != p.dropped_events
-            || self.dropped_links != p.dropped_links
-            || self.lens != [facts.lens[2], facts.lens[3], facts.lens[4]]
-        {
+    fn matches(&self, key: &TemplateKey, pieces: &[&[u8]; 6]) -> bool {
+        if self.key != *key {
             return false;
         }
         let mut off = 0usize;
@@ -425,7 +422,7 @@ pub fn encode(c: &mut Cache, out: &mut Vec<u8>, facts: &Facts, p: &SpanParts<'_>
         c.limits = (limits.attribute_value_length, limits.attributes);
     }
     let s = facts.strings();
-    let has_parent = p.stub.parent.is_valid();
+    let key = TemplateKey::of(facts, p);
     let pieces: [&[u8]; 6] = [
         s.keyed,
         p.attrs,
@@ -434,12 +431,8 @@ pub fn encode(c: &mut Cache, out: &mut Vec<u8>, facts: &Facts, p: &SpanParts<'_>
         p.name_override,
         p.status_message,
     ];
-    let Some(i) = c
-        .entries
-        .iter()
-        .position(|t| t.matches(facts, p, has_parent, &pieces))
-    else {
-        return encode_miss(c, out, facts, p, limits, has_parent);
+    let Some(i) = c.entries.iter().position(|t| t.matches(&key, &pieces)) else {
+        return encode_miss(c, out, facts, p, limits, &s, key, &pieces);
     };
     if i != 0 {
         c.entries.swap(0, i);
@@ -450,22 +443,15 @@ pub fn encode(c: &mut Cache, out: &mut Vec<u8>, facts: &Facts, p: &SpanParts<'_>
     out.extend_from_slice(&t.bytes);
     out[start + OFF_TRACE_ID..start + OFF_TRACE_ID + 16].copy_from_slice(&p.stub.ctx.trace_id.0);
     out[start + OFF_SPAN_ID..start + OFF_SPAN_ID + 8].copy_from_slice(&p.stub.ctx.span_id.0);
-    if has_parent {
+    if key.has_parent {
         out[start + OFF_PARENT..start + OFF_PARENT + 8].copy_from_slice(&p.stub.parent.0);
     }
-    let st = start + off_start(has_parent);
+    let st = start + off_start(key.has_parent);
     out[st..st + 8].copy_from_slice(&p.stub.start_ns.to_le_bytes());
     out[st + 9..st + 17].copy_from_slice(&p.end_ns.max(p.stub.start_ns).to_le_bytes());
     // flags: 2-byte tag then fixed32
     out[st + 19..st + 23].copy_from_slice(&p.stub.ctx.flags.otlp().to_le_bytes());
-    append_tail(
-        out,
-        start,
-        &s,
-        facts,
-        limits,
-        (limits.attributes as u32).saturating_sub(user_attr_count(p)),
-    );
+    append_tail(out, start, &s, facts, p, limits);
 }
 
 #[cold]
@@ -473,16 +459,8 @@ pub fn encode(c: &mut Cache, out: &mut Vec<u8>, facts: &Facts, p: &SpanParts<'_>
 fn encode_untemplated(out: &mut Vec<u8>, facts: &Facts, p: &SpanParts<'_>, limits: &Limits) {
     let s = facts.strings();
     let start = out.len();
-    let len_at = encode_head(out, facts, p, &s, limits);
-    debug_assert_eq!(len_at, start + OFF_LEN);
-    append_tail(
-        out,
-        start,
-        &s,
-        facts,
-        limits,
-        (limits.attributes as u32).saturating_sub(user_attr_count(p)),
-    );
+    encode_head(out, facts, p, &s, limits);
+    append_tail(out, start, &s, facts, p, limits);
 }
 
 #[cold]
@@ -493,68 +471,33 @@ fn encode_miss(
     facts: &Facts,
     p: &SpanParts<'_>,
     limits: &Limits,
-    has_parent: bool,
+    s: &Strings<'_>,
+    key: TemplateKey,
+    pieces: &[&[u8]; 6],
 ) {
-    let s = facts.strings();
-    let pieces: [&[u8]; 6] = [
-        s.keyed,
-        p.attrs,
-        p.extra,
-        p.trace_state,
-        p.name_override,
-        p.status_message,
-    ];
     let start = out.len();
-    let len_at = encode_head(out, facts, p, &s, limits);
-    debug_assert_eq!(len_at, start + OFF_LEN);
+    encode_head(out, facts, p, s, limits);
+    // (captured before the tail: patching a long span's length can shift the body)
     let bytes = out[start..].to_vec();
-    debug_assert_eq!(
-        &bytes[OFF_TRACE_ID..OFF_TRACE_ID + 16],
-        &p.stub.ctx.trace_id.0
-    );
-    debug_assert_eq!(&bytes[OFF_SPAN_ID..OFF_SPAN_ID + 8], &p.stub.ctx.span_id.0);
-    debug_assert_eq!(
-        &bytes[off_start(has_parent)..off_start(has_parent) + 8],
-        &p.stub.start_ns.to_le_bytes()
-    );
-    debug_assert_eq!(
-        &bytes[off_start(has_parent) + 9..off_start(has_parent) + 17],
-        &p.end_ns.max(p.stub.start_ns).to_le_bytes()
-    );
-    append_tail(
-        out,
-        start,
-        &s,
-        facts,
-        limits,
-        (limits.attributes as u32).saturating_sub(user_attr_count(p)),
-    );
+    append_tail(out, start, s, facts, p, limits);
     let mut piece_len = [0u32; 6];
     let mut all = Vec::with_capacity(pieces.iter().map(|x| x.len()).sum());
     for (i, piece) in pieces.iter().enumerate() {
         piece_len[i] = piece.len() as u32;
         all.extend_from_slice(piece);
     }
-    let t = Template {
-        flags: facts.flags,
-        status_code: p.status,
-        has_parent,
-        method: facts.method,
-        version: facts.version,
-        tail_n: tail_attr_count(facts) as u8,
-        status: facts.status,
-        dropped: p.dropped_attrs,
-        dropped_events: p.dropped_events,
-        dropped_links: p.dropped_links,
-        lens: [facts.lens[2], facts.lens[3], facts.lens[4]],
-        pieces: all,
-        piece_len,
-        bytes,
-    };
     if c.entries.len() >= TEMPLATES {
         c.entries.pop();
     }
-    c.entries.insert(0, t);
+    c.entries.insert(
+        0,
+        Template {
+            key,
+            pieces: all,
+            piece_len,
+            bytes,
+        },
+    );
 }
 
 /// The originating client per RFC 7239 `Forwarded: for=` (first element) or,
@@ -650,23 +593,23 @@ fn user_attr_count(p: &SpanParts<'_>) -> u32 {
     }
 }
 
-/// Per-request attributes after the templated part (at most `room` of them,
-/// for `attributeCountLimit`), then the span length.
+/// Per-request attributes after the templated part (as many as still fit
+/// under `attributeCountLimit`), then the span length.
 #[inline]
 fn append_tail(
     out: &mut Vec<u8>,
     span_start: usize,
     s: &Strings<'_>,
     facts: &Facts,
+    p: &SpanParts<'_>,
     limits: &Limits,
-    room: u32,
 ) {
     let max = limits.attribute_value_length as usize;
     let url = s.url;
     let pl = (facts.path_len as usize).min(url.len());
     let (path, query) = (&url[..pl], url.get(pl + 1..).unwrap_or(b""));
     // `room`: how many more attributes fit under attributeCountLimit.
-    let mut room = room;
+    let mut room = (limits.attributes as u32).saturating_sub(user_attr_count(p));
     let mut fresh = Vec::new();
     let (encoded, n): (&[u8], u32) = if !s.peer_encoded.is_empty() {
         (s.peer_encoded, facts.peer_encoded_attrs as u32)
@@ -728,36 +671,48 @@ fn append_tail(
     Nested::<SPAN_LEN_RESERVE>::at(span_start + OFF_LEN).finish(out);
 }
 
+const NAME_MAX: usize = 8 + 256;
+
+/// `{METHOD} {route}`; the method alone when there is no route (or one over
+/// 256 bytes), `HTTP` for methods outside the known set (semconv).
+fn span_name<'b>(facts: &Facts, route: &[u8], buf: &'b mut [u8; NAME_MAX]) -> &'b [u8] {
+    let m: &[u8] = match method_name(facts.method) {
+        _ if facts.flags & FLAG_METHOD_OTHER != 0 => b"HTTP",
+        "_OTHER" => b"HTTP",
+        m => m.as_bytes(),
+    };
+    buf[..m.len()].copy_from_slice(m);
+    if route.is_empty() || route.len() > 256 {
+        return &buf[..m.len()];
+    }
+    buf[m.len()] = b' ';
+    buf[m.len() + 1..m.len() + 1 + route.len()].copy_from_slice(route);
+    &buf[..m.len() + 1 + route.len()]
+}
+
 /// Encode everything except the per-request tail, leaving the span length
-/// unpatched (append_tail patches it). Returns where the length bytes are.
+/// unpatched (append_tail patches it).
 fn encode_head(
     out: &mut Vec<u8>,
     facts: &Facts,
     p: &SpanParts<'_>,
     s: &Strings<'_>,
     limits: &Limits,
-) -> usize {
+) {
+    let start = out.len();
     let method: &[u8] = if facts.flags & FLAG_METHOD_OTHER != 0 {
         b"_OTHER"
     } else {
         method_name(facts.method).as_bytes()
     };
-    // semconv: the span name uses `HTTP` for methods outside the known set.
-    let method_in_name: &[u8] = if method == b"_OTHER" { b"HTTP" } else { method };
     let (host, ua, route) = (s.host, s.user_agent, s.route);
     let flags = facts.flags;
     let status = facts.status;
-    let mut name_buf = [0u8; 8 + 256];
-    let name: &[u8] = if !p.name_override.is_empty() {
-        p.name_override
-    } else if !route.is_empty() && route.len() <= 256 {
-        let m = method_in_name;
-        name_buf[..m.len()].copy_from_slice(m);
-        name_buf[m.len()] = b' ';
-        name_buf[m.len() + 1..m.len() + 1 + route.len()].copy_from_slice(route);
-        &name_buf[..m.len() + 1 + route.len()]
+    let mut name_buf = [0u8; NAME_MAX];
+    let name: &[u8] = if p.name_override.is_empty() {
+        span_name(facts, route, &mut name_buf)
     } else {
-        method_in_name
+        p.name_override
     };
     let mut w = SpanWriter::begin(out, p.stub, name, SpanKind::Server, p.end_ns);
     w.trace_state(p.trace_state);
@@ -875,7 +830,19 @@ fn encode_head(
         w.dropped_links(p.dropped_links as u32);
     }
     w.status(span_status, msg);
-    w.finish_unpatched()
+    let len_at = w.finish_unpatched();
+    // The template hit path patches ids and times at these fixed offsets.
+    debug_assert_eq!(len_at, start + OFF_LEN);
+    if cfg!(debug_assertions) {
+        let (b, st) = (&out[start..], off_start(p.stub.parent.is_valid()));
+        debug_assert_eq!(&b[OFF_TRACE_ID..OFF_TRACE_ID + 16], &p.stub.ctx.trace_id.0);
+        debug_assert_eq!(&b[OFF_SPAN_ID..OFF_SPAN_ID + 8], &p.stub.ctx.span_id.0);
+        debug_assert_eq!(&b[st..st + 8], &p.stub.start_ns.to_le_bytes());
+        debug_assert_eq!(
+            &b[st + 9..st + 17],
+            &p.end_ns.max(p.stub.start_ns).to_le_bytes()
+        );
+    }
 }
 
 pub use bun_core::fmt::split_host_port;

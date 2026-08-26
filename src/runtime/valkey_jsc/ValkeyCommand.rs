@@ -294,7 +294,7 @@ impl Promise {
     ) {
         let span = core::mem::take(&mut self.otel);
         if span.is_some() {
-            bun_telemetry::db::end(global_object.as_ptr().cast(), span, b"", None, error);
+            bun_telemetry::db::end(global_object.as_ptr().cast(), span, b"", error);
         }
     }
 

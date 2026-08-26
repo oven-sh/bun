@@ -1,7 +1,6 @@
 // posix types live in `crate::posix` (moved from bun_sys).
 pub use crate::posix::E;
 pub use crate::posix::S;
-pub use crate::posix::mode_t as Mode;
 
 #[repr(u16)]
 #[derive(
@@ -149,5 +148,3 @@ pub mod uv_e {
 // kernel entry goes through libc, so all widths — including `usize` — route to
 // the thread-local `__error()` slot via the shared macro.
 impl_get_errno_libc!(i32, u32, isize, usize, i64);
-
-// ported from: src/errno/darwin_errno.zig

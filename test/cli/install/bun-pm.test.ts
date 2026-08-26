@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, test } from "bun:test";
 import { exists, mkdir, writeFile } from "fs/promises";
-import { bunEnv, bunExe, bunEnv as env, readdirSorted, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunEnv as env, normalizeBunSnapshot, readdirSorted, tempDir, tmpdirSync } from "harness";
 import { cpSync } from "node:fs";
 import { join } from "path";
 import {
@@ -73,7 +73,7 @@ it("should list top-level dependency", async () => {
     env,
   });
   expect(await stderr.text()).toBe("");
-  expect(await stdout.text()).toBe(`${package_dir} node_modules (2)
+  expect(await stdout.text()).toBe(`${package_dir} node_modules (2 installed)
 └── moo@moo
 `);
   expect(await exited).toBe(0);
@@ -190,7 +190,7 @@ it("should list top-level aliased dependency", async () => {
     env,
   });
   expect(await stderr.text()).toBe("");
-  expect(await stdout.text()).toBe(`${package_dir} node_modules (2)
+  expect(await stdout.text()).toBe(`${package_dir} node_modules (2 installed)
 └── moo-1@moo
 `);
   expect(await exited).toBe(0);
@@ -255,6 +255,427 @@ it("should list aliased dependencies", async () => {
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([]);
   expect(requested).toBe(2);
+});
+
+it("should list only trusted dependencies with --trusted", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    Bun.TOML.stringify({
+      install: {
+        cache: false,
+        registry: `${root_url}/`,
+      },
+    }),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        moo: "./moo",
+        bar: "latest",
+      },
+      trustedDependencies: ["bar"],
+    }),
+  );
+  await mkdir(join(package_dir, "moo"));
+  await writeFile(
+    join(package_dir, "moo", "package.json"),
+    JSON.stringify({
+      name: "moo",
+      version: "0.1.0",
+    }),
+  );
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+  }
+  urls.length = 0;
+
+  // --trusted shows only bar (in trustedDependencies), not moo
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "ls", "--trusted"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(await stderr.text()).toBe("");
+    expect(await stdout.text()).toBe(`${package_dir} node_modules (2 installed)
+└── bar@0.0.2
+`);
+    expect(await exited).toBe(0);
+  }
+
+  // without --trusted still shows both
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "ls"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(await stderr.text()).toBe("");
+    expect(await stdout.text()).toBe(`${package_dir} node_modules (2 installed)
+├── bar@0.0.2
+└── moo@moo
+`);
+    expect(await exited).toBe(0);
+  }
+});
+
+it("should list only trusted dependencies with --all --trusted", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    Bun.TOML.stringify({
+      install: {
+        cache: false,
+        registry: `${root_url}/`,
+      },
+    }),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        moo: "./moo",
+      },
+      trustedDependencies: ["bar"],
+    }),
+  );
+  await mkdir(join(package_dir, "moo"));
+  await writeFile(
+    join(package_dir, "moo", "package.json"),
+    JSON.stringify({
+      name: "moo",
+      version: "0.1.0",
+      dependencies: {
+        bar: "latest",
+      },
+    }),
+  );
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+  }
+  urls.length = 0;
+
+  // `bar` is a transitive dependency of `moo` (untrusted). Trust is by
+  // package name, so `--all --trusted` must still find it regardless of
+  // where it sits in the tree.
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "pm", "ls", "--all", "--trusted"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(await stderr.text()).toBe("");
+  expect(await stdout.text()).toBe(`${package_dir} node_modules
+└── bar@0.0.2
+`);
+  expect(await exited).toBe(0);
+});
+
+it("should list trusted transitive dependencies under untrusted parents with --all --trusted (isolated)", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  // Isolated linker gives every package its own nested node_modules, so the
+  // trusted transitive dep lives under an untrusted parent folder.
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    Bun.TOML.stringify({
+      install: {
+        cache: false,
+        registry: `${root_url}/`,
+        linker: "isolated",
+      },
+    }),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        moo: "./moo",
+      },
+      trustedDependencies: ["bar"],
+    }),
+  );
+  await mkdir(join(package_dir, "moo"));
+  await writeFile(
+    join(package_dir, "moo", "package.json"),
+    JSON.stringify({
+      name: "moo",
+      version: "0.1.0",
+      dependencies: {
+        bar: "latest",
+      },
+    }),
+  );
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+  }
+  urls.length = 0;
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "pm", "ls", "--all", "--trusted"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(await stderr.text()).toBe("");
+  expect(await stdout.text()).toBe(`${package_dir} node_modules
+└── bar@0.0.2
+`);
+  expect(await exited).toBe(0);
+});
+
+it("should list nothing with --trusted when no dependencies are trusted", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    Bun.TOML.stringify({
+      install: {
+        cache: false,
+        registry: `${root_url}/`,
+      },
+    }),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        bar: "latest",
+      },
+      trustedDependencies: [],
+    }),
+  );
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+  }
+  urls.length = 0;
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "pm", "ls", "--trusted"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(await stderr.text()).toBe("");
+  expect(await stdout.text()).toBe(`${package_dir} node_modules (1 installed)
+`);
+  expect(await exited).toBe(0);
+});
+
+async function spawnAndCollect(...args: string[]): Promise<[stdout: string, stderr: string, exitCode: number]> {
+  await using proc = spawn({
+    cmd: [bunExe(), ...args],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+}
+
+// The root package has one dependency entry per workspace member plus one per
+// declaration: ws-once has two entries, ws-twice three, ws-undeclared one, and
+// the registry package bar two. `bun pm ls` must print one line per node_modules
+// entry. bar-alias is its own node_modules entry even though it resolves to the
+// same package as bar, so it stays listed.
+async function installWorkspacesTheRootDependsOn(saveTextLockfile: boolean) {
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    Bun.TOML.stringify({
+      install: {
+        cache: false,
+        registry: `${root_url}/`,
+        saveTextLockfile,
+      },
+    }),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      workspaces: ["packages/*"],
+      dependencies: {
+        bar: "latest",
+        "bar-alias": "npm:bar",
+        "ws-twice": "workspace:*",
+      },
+      devDependencies: {
+        bar: "latest",
+        "ws-once": "workspace:*",
+        "ws-twice": "workspace:*",
+      },
+      trustedDependencies: ["ws-once"],
+    }),
+  );
+  for (const name of ["ws-once", "ws-twice", "ws-undeclared"]) {
+    await mkdir(join(package_dir, "packages", name), { recursive: true });
+    await writeFile(join(package_dir, "packages", name, "package.json"), JSON.stringify({ name, version: "1.0.0" }));
+  }
+  const [, err, exitCode] = await spawnAndCollect("install");
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+  expect(exitCode).toBe(0);
+}
+
+it.each([
+  { lockfile: "bun.lock", saveTextLockfile: true },
+  { lockfile: "bun.lockb", saveTextLockfile: false },
+])("should list a workspace the root also depends on once ($lockfile)", async ({ lockfile, saveTextLockfile }) => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await installWorkspacesTheRootDependsOn(saveTextLockfile);
+  expect(await exists(join(package_dir, lockfile))).toBeTrue();
+  urls.length = 0;
+
+  const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls");
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout, package_dir)).toMatchInlineSnapshot(`
+    "<dir> node_modules (5 installed)
+    ├── bar@0.0.2
+    ├── bar-alias@0.0.2
+    ├── ws-once@workspace:packages/ws-once
+    ├── ws-twice@workspace:packages/ws-twice
+    └── ws-undeclared@workspace:packages/ws-undeclared"
+  `);
+  expect(exitCode).toBe(0);
+  expect(urls).toEqual([]);
+});
+
+// bun.lockb stores only the hashes of trustedDependencies and bun does not trust
+// a hash alone, so --trusted lists nothing from a bun.lockb. Use bun.lock here.
+it("should list a trusted workspace the root also depends on once with --trusted", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await installWorkspacesTheRootDependsOn(true);
+  urls.length = 0;
+
+  const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls", "--trusted");
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout, package_dir)).toMatchInlineSnapshot(`
+    "<dir> node_modules (5 installed)
+    └── ws-once@workspace:packages/ws-once"
+  `);
+  expect(exitCode).toBe(0);
+  expect(urls).toEqual([]);
+});
+
+// The root's optional peer on bar is bound to the copy of bar that moo brings
+// in. The listing must still show it: it is one of the root's own dependencies.
+it("should list a root optional peer that a dependency provides", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        moo: "./moo",
+      },
+      peerDependencies: {
+        bar: "*",
+      },
+      peerDependenciesMeta: {
+        bar: { optional: true },
+      },
+    }),
+  );
+  await mkdir(join(package_dir, "moo"));
+  await writeFile(
+    join(package_dir, "moo", "package.json"),
+    JSON.stringify({
+      name: "moo",
+      version: "0.1.0",
+      dependencies: {
+        bar: "latest",
+      },
+    }),
+  );
+  const [, err, installExitCode] = await spawnAndCollect("install");
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+  expect(installExitCode).toBe(0);
+  urls.length = 0;
+
+  const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls");
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout, package_dir)).toMatchInlineSnapshot(`
+    "<dir> node_modules (2 installed)
+    ├── bar@0.0.2
+    └── moo@moo"
+  `);
+  expect(exitCode).toBe(0);
+  expect(urls).toEqual([]);
 });
 
 it("should remove all cache", async () => {
@@ -451,7 +872,7 @@ test.each([
     cmd: ["list"],
     packageName: "test-list",
     dependencies: { bar: "latest" },
-    expectedOutput: (dir: string) => `${dir} node_modules (1)\n└── bar@0.0.2\n`,
+    expectedOutput: (dir: string) => `${dir} node_modules (1 installed)\n└── bar@0.0.2\n`,
     checkReservationMessage: true,
   },
   {
@@ -459,7 +880,7 @@ test.each([
     cmd: ["pm", "list"],
     packageName: "test-pm-list",
     dependencies: { bar: "latest" },
-    expectedOutput: (dir: string) => `${dir} node_modules (1)\n└── bar@0.0.2\n`,
+    expectedOutput: (dir: string) => `${dir} node_modules (1 installed)\n└── bar@0.0.2\n`,
     checkReservationMessage: false,
   },
   {
@@ -467,7 +888,7 @@ test.each([
     cmd: ["pm", "ls"],
     packageName: "test-pm-ls",
     dependencies: { bar: "latest" },
-    expectedOutput: (dir: string) => `${dir} node_modules (1)\n└── bar@0.0.2\n`,
+    expectedOutput: (dir: string) => `${dir} node_modules (1 installed)\n└── bar@0.0.2\n`,
     checkReservationMessage: false,
   },
 ])("$name", async ({ cmd, packageName, dependencies, expectedOutput, checkReservationMessage }) => {
@@ -584,5 +1005,82 @@ test("bun list --all shows full dependency tree", async () => {
 ├── bar@0.0.2
 └── moo@moo
 `);
+  expect(exitCode).toBe(0);
+});
+
+test("bun pm cache rm resolves the cache directory from the process environment, ignoring project-local .env overrides", async () => {
+  using dir = tempDir("pm-cache-rm-project-env", {
+    "package.json": JSON.stringify({ name: "cache-rm-project-env", version: "1.0.0" }),
+    "unrelated/keep.txt": "do not delete",
+    "bun-install/install/cache/cached-package.txt": "cached artifact",
+  });
+  const dirStr = String(dir);
+  const unrelatedDir = join(dirStr, "unrelated");
+  const bunInstallDir = join(dirStr, "bun-install");
+  const realCacheDir = join(bunInstallDir, "install", "cache");
+
+  // Project-local .env points the cache directory at an unrelated directory full of data.
+  await writeFile(join(dirStr, ".env"), `BUN_INSTALL_CACHE_DIR=${unrelatedDir}\n`);
+
+  // The process environment derives the cache location from BUN_INSTALL only;
+  // BUN_INSTALL_CACHE_DIR is intentionally absent so only the project .env names one.
+  const spawnEnv: NodeJS.Dict<string> = {
+    ...env,
+    BUN_INSTALL: bunInstallDir,
+    XDG_CACHE_HOME: join(dirStr, "xdg-cache"),
+    HOME: dirStr,
+  };
+  delete spawnEnv.BUN_INSTALL_CACHE_DIR;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "cache", "rm"],
+    cwd: dirStr,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: spawnEnv,
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  // The directory named only by the project-local .env must remain intact.
+  expect(await exists(join(unrelatedDir, "keep.txt"))).toBeTrue();
+  // The cache derived from the process environment (BUN_INSTALL/install/cache) is what gets cleared.
+  expect(await exists(join(realCacheDir, "cached-package.txt"))).toBeFalse();
+  expect(stdout).toInclude("Cleared 'bun install' cache");
+  expect(exitCode).toBe(0);
+});
+
+test("bun pm cache rm does not create the directory named by a project-local .env override", async () => {
+  using dir = tempDir("pm-cache-rm-no-create", {
+    "package.json": JSON.stringify({ name: "cache-rm-no-create", version: "1.0.0" }),
+    "bun-install/install/cache/cached-package.txt": "cached artifact",
+  });
+  const dirStr = String(dir);
+  const bunInstallDir = join(dirStr, "bun-install");
+  const realCacheDir = join(bunInstallDir, "install", "cache");
+  const overrideDir = join(dirStr, "env-named-cache");
+
+  await writeFile(join(dirStr, ".env"), `BUN_INSTALL_CACHE_DIR=${overrideDir}\n`);
+
+  const spawnEnv: NodeJS.Dict<string> = {
+    ...env,
+    BUN_INSTALL: bunInstallDir,
+    XDG_CACHE_HOME: join(dirStr, "xdg-cache"),
+    HOME: dirStr,
+  };
+  delete spawnEnv.BUN_INSTALL_CACHE_DIR;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "cache", "rm"],
+    cwd: dirStr,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: spawnEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(await exists(overrideDir)).toBeFalse();
+  expect(await exists(join(realCacheDir, "cached-package.txt"))).toBeFalse();
+  expect(stdout).toInclude("Cleared 'bun install' cache");
+  expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
 });

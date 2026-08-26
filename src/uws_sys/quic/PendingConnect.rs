@@ -36,5 +36,3 @@ impl PendingConnect {
         us_quic_pending_connect_cancel(self)
     }
 }
-
-// ported from: src/uws_sys/quic/PendingConnect.zig

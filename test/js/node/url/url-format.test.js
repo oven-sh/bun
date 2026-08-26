@@ -278,4 +278,28 @@ describe("url.format", () => {
       );
     }
   });
+
+  test("format encodes every hash character in the search component", () => {
+    // A search string containing more than one "#" must have all of them
+    // percent-encoded; otherwise re-parsing the formatted URL truncates the
+    // query at the first raw "#" and treats the rest as a fragment.
+    const formatted = url.format({
+      protocol: "http:",
+      hostname: "example.com",
+      pathname: "/",
+      search: "?foo=bar#1#2#3&abc=#4##5",
+    });
+    assert.strictEqual(formatted, "http://example.com/?foo=bar%231%232%233&abc=%234%23%235");
+
+    // Re-parsing the formatted URL keeps the entire query intact and produces no fragment.
+    const reparsed = url.parse(formatted);
+    assert.strictEqual(reparsed.search, "?foo=bar%231%232%233&abc=%234%23%235");
+    assert.strictEqual(reparsed.hash, null);
+
+    // A search with a single "#" is still encoded the same way as before.
+    assert.strictEqual(
+      url.format({ protocol: "http:", hostname: "example.com", pathname: "/", search: "?a=#1" }),
+      "http://example.com/?a=%231",
+    );
+  });
 });

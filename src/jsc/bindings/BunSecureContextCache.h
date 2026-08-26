@@ -6,7 +6,7 @@
 //
 // Backs the JS-side dedup of `tls.createSecureContext()`: same config digest
 // → same `JSSecureContext` cell while it's alive. The native `SSL_CTX*` cache
-// (Zig `SSLContextCache`) is independent — BoringSSL's refcount is the single
+// (`SSLContextCache`) is independent — BoringSSL's refcount is the single
 // source of truth, so the two never need to coordinate.
 
 #include "root.h"

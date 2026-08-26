@@ -1332,7 +1332,10 @@ describe("readline.Interface", () => {
     assert.strictEqual(getStringWidth("你好"), 4);
     assert.strictEqual(getStringWidth("안녕하세요"), 10);
     assert.strictEqual(getStringWidth("A\ud83c\ude00BC"), 5);
-    assert.strictEqual(getStringWidth("👨‍👩‍👦‍👦"), 2);
+    // Node v26.3.0 measures each emoji in a ZWJ sequence individually:
+    // internalBinding("icu").getStringWidth's expand_emoji_sequence defaults
+    // on (src/node_i18n.cc:649), so the family emoji is 2+0+2+0+2+0+2.
+    assert.strictEqual(getStringWidth("👨‍👩‍👦‍👦"), 8);
     assert.strictEqual(getStringWidth("🐕𐐷あ💻😀"), 9);
     // TODO(BridgeAR): This should have a width of 4.
     assert.strictEqual(getStringWidth("⓬⓪"), 2);
@@ -2061,6 +2064,21 @@ describe("readline.createInterface()", () => {
 
     // After exiting the using block, the interface should be closed
     assert.strictEqual(closed, true);
+  });
+
+  it("Symbol.dispose method is named '[Symbol.dispose]' (a string, as Node's assignFunctionName produces)", () => {
+    const fn = readline.Interface.prototype[Symbol.dispose];
+    // Node names it via assignFunctionName(SymbolDispose, fn), which stringifies the
+    // Symbol to `[${description}]`. A raw Symbol here throws on any coercion of .name.
+    assert.strictEqual(typeof fn.name, "string");
+    assert.strictEqual(fn.name, "[Symbol.dispose]");
+    assert.strictEqual(`${fn.name}`, "[Symbol.dispose]");
+    assert.deepStrictEqual(Object.getOwnPropertyDescriptor(fn, "name"), {
+      value: "[Symbol.dispose]",
+      writable: false,
+      enumerable: false,
+      configurable: true,
+    });
   });
 
   it("should support Symbol.dispose as alias for close()", () => {

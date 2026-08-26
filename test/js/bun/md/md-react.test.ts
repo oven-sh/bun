@@ -88,6 +88,45 @@ describe("Bun.markdown.react", () => {
     expect(img.props.children).toBeUndefined();
   });
 
+  test("reference-style link has href/title in props", () => {
+    const md = '[click here][ref]\n\n[ref]: https://example.com/path "the title"\n';
+    const link = children(md)[0].props.children[0];
+    expect(link.type).toBe("a");
+    expect({ href: link.props.href, title: link.props.title, children: link.props.children }).toEqual({
+      href: "https://example.com/path",
+      title: "the title",
+      children: ["click here"],
+    });
+  });
+
+  test("shortcut reference link has href/title in props", () => {
+    const md = '[ref]\n\n[ref]: https://example.com/path "the title"\n';
+    const link = children(md)[0].props.children[0];
+    expect(link.type).toBe("a");
+    expect({ href: link.props.href, title: link.props.title }).toEqual({
+      href: "https://example.com/path",
+      title: "the title",
+    });
+  });
+
+  test("collapsed reference link has href in props", () => {
+    const md = "[ref][]\n\n[ref]: https://example.com/path\n";
+    const link = children(md)[0].props.children[0];
+    expect(link.type).toBe("a");
+    expect(link.props.href).toBe("https://example.com/path");
+  });
+
+  test("reference-style image has src/title in props", () => {
+    const md = '![alt text][ref]\n\n[ref]: https://example.com/img.png "the title"\n';
+    const img = children(md)[0].props.children[0];
+    expect(img.type).toBe("img");
+    expect({ src: img.props.src, title: img.props.title, alt: img.props.alt }).toEqual({
+      src: "https://example.com/img.png",
+      title: "the title",
+      alt: "alt text",
+    });
+  });
+
   test("code block with language", () => {
     const pre = children("```ts\nconst x = 1;\n```\n")[0];
     expect(pre.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
@@ -177,6 +216,84 @@ This is **bold** and *italic*.
     for (const el of els) {
       expect(el.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     }
+  });
+
+  test("every cached tag name resolves to its own tag", () => {
+    // Element types come from a per-global table of cached tag strings
+    // (BunMarkdownTagStrings), so one document exercising every tag the
+    // parser emits checks that each slot holds the right name.
+    const md = [
+      "# H1",
+      "## H2",
+      "### H3",
+      "#### H4",
+      "##### H5",
+      "###### H6",
+      "",
+      "Para *em* **strong** ~~del~~ `code` [a](x) ![i](y.png)  ",
+      "after br",
+      "",
+      "> quote",
+      "",
+      "- ul item",
+      "",
+      "1. ol item",
+      "",
+      "```",
+      "pre",
+      "```",
+      "",
+      "---",
+      "",
+      "<div>raw</div>",
+      "",
+      "| A |",
+      "|---|",
+      "| 1 |",
+      "",
+    ].join("\n");
+
+    const types: string[] = [];
+    function walk(node: any) {
+      if (typeof node !== "object" || node === null) return;
+      types.push(node.type);
+      const kids = node.props.children;
+      if (Array.isArray(kids)) kids.forEach(walk);
+    }
+    children(md).forEach(walk);
+
+    expect(types).toEqual([
+      "h1",
+      "h2",
+      "h3",
+      "h4",
+      "h5",
+      "h6",
+      "p",
+      "em",
+      "strong",
+      "del",
+      "code",
+      "a",
+      "img",
+      "br",
+      "blockquote",
+      "p",
+      "ul",
+      "li",
+      "ol",
+      "li",
+      "pre",
+      "hr",
+      "html",
+      "table",
+      "thead",
+      "tr",
+      "th",
+      "tbody",
+      "tr",
+      "td",
+    ]);
   });
 
   test("blockquote contains nested React elements", () => {

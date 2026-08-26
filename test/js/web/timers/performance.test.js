@@ -40,6 +40,13 @@ it("performance.timeOrigin + performance.now() should be similar to Date.now()",
   expect(Math.abs(performance.timeOrigin + performance.now() - Date.now()) < 1000).toBe(true);
 });
 
+it("performance.now is not a constructor", () => {
+  // Constructing performance.now used to crash instead of throwing.
+  expect(() => new performance.now()).toThrow(TypeError);
+  expect(() => Reflect.construct(performance.now, [])).toThrow(TypeError);
+  expect(typeof performance.now()).toBe("number");
+});
+
 // https://github.com/oven-sh/bun/issues/5604
 it("performance.now() DOMJIT", () => {
   // This test is very finnicky.

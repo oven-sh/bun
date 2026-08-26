@@ -1,66 +1,62 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::ZigString;
 
+use super::throw;
 use super::Expect;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub(crate) fn to_throw_error_matching_inline_snapshot(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // Zig: `defer this.postMatch(globalThis);`
-    // PORT NOTE: reshaped for borrowck — guard owns the &mut and Derefs to it.
+    // The guard owns the &mut, Derefs to it, and runs post_match on Drop.
     let this = scopeguard::guard(this, |t| t.post_match(global));
 
     let this_value = frame.this();
-    let _arguments = frame.arguments_old::<2>();
-    let arguments: &[JSValue] = _arguments.slice();
+    let arguments: &[JSValue] = frame.arguments();
 
     this.increment_expect_call_counter();
 
     let not = this.flags.get().not();
     if not {
         let signature = Expect::get_signature("toThrowErrorMatchingInlineSnapshot", "", true);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!("\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n"),
+            "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n",
         );
     }
 
-    let mut has_expected = false;
-    let mut expected_string: ZigString = ZigString::EMPTY;
+    let mut expected_string = None;
     match arguments.len() {
         0 => {}
         1 => {
             if arguments[0].is_string() {
-                has_expected = true;
-                arguments[0].to_zig_string(&mut expected_string, global)?;
+                expected_string = Some(arguments[0].to_js_string_view(global)?);
             } else {
-                return this.throw(
+                return throw!(
+                    this,
                     global,
                     "",
-                    format_args!("\n\nMatcher error: Expected first argument to be a string\n"),
+                    "\n\nMatcher error: Expected first argument to be a string\n",
                 );
             }
         }
         _ => {
-            return this.throw(
+            return throw!(
+                this,
                 global,
                 "",
-                format_args!("\n\nMatcher error: Expected zero or one arguments\n"),
+                "\n\nMatcher error: Expected zero or one arguments\n",
             );
         }
     }
 
-    // Zig: `expected_string.toSlice(default_allocator)` + `defer expected.deinit()`.
-    // Allocator param dropped; the returned slice owns its buffer and frees on Drop.
-    let expected = expected_string.to_slice();
+    let expected = expected_string.as_ref().map(|s| s.to_utf8());
 
-    let expected_slice: Option<&[u8]> = if has_expected { Some(expected.slice()) } else { None };
+    let expected_slice = expected.as_ref().map(|s| s.slice());
 
-    // PORT NOTE: reshaped for borrowck — hoist get_value out so the two &mut self
+    // reshaped for borrowck — hoist get_value out so the two &mut self
     // receivers don't overlap.
     let received = this.get_value(
         global,
@@ -70,10 +66,11 @@ pub(crate) fn to_throw_error_matching_inline_snapshot(
     )?;
     let Some(value) = this.fn_to_err_string_or_undefined(global, received)? else {
         let signature = Expect::get_signature("toThrowErrorMatchingInlineSnapshot", "", false);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!("\n\n<b>Matcher error<r>: Received function did not throw\n"),
+            "\n\n<b>Matcher error<r>: Received function did not throw\n",
         );
     };
 
@@ -87,5 +84,3 @@ pub(crate) fn to_throw_error_matching_inline_snapshot(
         "toThrowErrorMatchingInlineSnapshot",
     )
 }
-
-// ported from: src/test_runner/expect/toThrowErrorMatchingInlineSnapshot.zig

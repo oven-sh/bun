@@ -2,18 +2,21 @@
 
 use crate::mysql::Capabilities;
 use crate::mysql::StatusFlags;
+use crate::mysql::capabilities::MariaDBCapabilities;
 use crate::mysql::protocol::CharacterSet;
+use crate::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
 use crate::mysql::protocol::new_reader::{NewReader, ReaderContext};
 use crate::shared::Data;
 
 pub struct HandshakeV10 {
-    pub protocol_version: u8,
+    pub(crate) protocol_version: u8,
     pub server_version: Data,
     pub connection_id: u32,
     pub auth_plugin_data_part_1: [u8; 8],
     pub auth_plugin_data_part_2: Box<[u8]>,
     pub capability_flags: Capabilities,
-    pub character_set: CharacterSet,
+    pub mariadb_capability_flags: MariaDBCapabilities,
+    pub(crate) character_set: CharacterSet,
     pub status_flags: StatusFlags,
     pub auth_plugin_name: Data,
 }
@@ -27,6 +30,7 @@ impl Default for HandshakeV10 {
             auth_plugin_data_part_1: [0u8; 8],
             auth_plugin_data_part_2: Box::default(),
             capability_flags: Capabilities::default(),
+            mariadb_capability_flags: MariaDBCapabilities::default(),
             character_set: CharacterSet::default(),
             status_flags: StatusFlags::default(),
             auth_plugin_name: Data::empty(),
@@ -34,19 +38,15 @@ impl Default for HandshakeV10 {
     }
 }
 
-// Zig `deinit` only frees owned fields (`server_version`, `auth_plugin_name`); Rust drops
-// `Data` / `Box<[u8]>` fields automatically, so no explicit `impl Drop` is needed.
-
 impl HandshakeV10 {
-    // TODO(port): narrow error set
     pub fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), AnyMySQLError> {
         // Protocol version
         self.protocol_version = reader.int::<u8>()?;
         if self.protocol_version != 10 {
-            return Err(bun_core::err!("UnsupportedProtocolVersion"));
+            return Err(AnyMySQLError::UnsupportedProtocolVersion);
         }
 
         // Server version (null-terminated string)
@@ -66,8 +66,7 @@ impl HandshakeV10 {
         // Capability flags (lower 2 bytes)
         let capabilities_lower = reader.int::<u16>()?;
 
-        // Character set — Zig uses non-exhaustive `enum(u8)` so any byte is valid;
-        // Rust enum is exhaustive, so route through the range-checked constructor.
+        // Character set — any byte is valid; unknown collation ids are preserved.
         self.character_set = CharacterSet::from_raw(reader.int::<u8>()?);
 
         // Status flags
@@ -80,16 +79,22 @@ impl HandshakeV10 {
         );
 
         // Length of auth plugin data
-        let mut auth_plugin_data_len = reader.int::<u8>()?;
-        if auth_plugin_data_len < 21 {
-            auth_plugin_data_len = 21;
-        }
+        let auth_plugin_data_len = reader.int::<u8>()?.max(21);
 
-        // Skip reserved bytes
-        reader.skip(10);
+        // Reserved bytes: 6 filler, then 4 a MariaDB 10.2+ server uses for
+        // its extended capability flags. MariaDB marks itself by leaving
+        // CLIENT_LONG_PASSWORD (its CLIENT_MYSQL) unset; MySQL zero-fills all 10.
+        // https://mariadb.com/kb/en/connection/#initial-handshake-packet
+        reader.skip(6);
+        let mariadb_flags = reader.int::<u32>()?;
+        self.mariadb_capability_flags = if self.capability_flags.CLIENT_LONG_PASSWORD {
+            MariaDBCapabilities::default()
+        } else {
+            MariaDBCapabilities::from_int(mariadb_flags)
+        };
 
         // Auth plugin data part 2
-        let remaining_auth_len = (auth_plugin_data_len - 8).max(13);
+        let remaining_auth_len = auth_plugin_data_len - 8;
         let auth_data_2 = reader.read(remaining_auth_len as usize)?;
         self.auth_plugin_data_part_2 = Box::<[u8]>::from(auth_data_2.slice());
 
@@ -101,8 +106,3 @@ impl HandshakeV10 {
         Ok(())
     }
 }
-
-// Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
-pub use self::HandshakeV10 as _DecoderWrapTarget;
-
-// ported from: src/sql/mysql/protocol/HandshakeV10.zig

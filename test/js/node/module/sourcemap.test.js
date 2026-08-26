@@ -1,6 +1,6 @@
 const { test, expect } = require("bun:test");
 const { SourceMap } = require("node:module");
-const { bunEnv, bunExe } = require("harness");
+const { bunEnv, bunExe, tempDir } = require("harness");
 
 test("SourceMap class exists", () => {
   expect(SourceMap).toBeDefined();
@@ -213,4 +213,36 @@ console.log("done");`,
   expect(stderr).toBe("");
   expect(stdout).toBe("test.js\ndone\n");
   expect(exitCode).toBe(0);
+});
+
+test("error.stack of // @bun code with a truncated VLQ in sourceMappingURL warns and degrades gracefully", async () => {
+  // 'g' is a single base64 byte with the VLQ continuation bit set, so the
+  // mappings string ends mid-value. The generated-column field is truncated,
+  // so the decoder makes no progress and parsing fails. Bun must reject the
+  // map with a "Could not decode sourcemap" warning instead of silently
+  // accepting a bogus `value: 0` mapping, and reading error.stack must still
+  // print the unmapped location instead of aborting.
+  const map = Buffer.from(
+    JSON.stringify({ version: 3, sources: ["a.ts"], sourcesContent: ["x"], names: [], mappings: "g" }),
+  ).toString("base64");
+  using dir = tempDir("sourcemap-truncated-vlq", {
+    "entry.js": `// @bun\nthrow new Error("boom");\n//# sourceMappingURL=data:application/json;base64,${map}\n`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // The truncated mapping is rejected with a warning rather than silently
+  // decoded as 0 (which left no trace that the map was corrupt).
+  expect(stderr).toContain("Could not decode sourcemap");
+  expect(stderr).toContain("error: boom");
+  expect(stderr).toContain("entry.js:2:");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(1);
 });

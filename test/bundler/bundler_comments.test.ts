@@ -390,4 +390,43 @@ describe("multi-line comments", () => {
       expect(entry.originalLine).toBeGreaterThanOrEqual(0);
     },
   });
+
+  // The lexer skips >=512-byte block comment bodies with SIMD; these verify
+  // large comments end-to-end (legal comment preservation, ASI, output code).
+  itBundled("large legal comment is preserved and does not corrupt the code after it", {
+    files: {
+      "/entry.js":
+        "/*!\r\n" +
+        " * Legal header line with some padding text to make the comment large enough.\r\n".repeat(20) +
+        " * Licensed under the ünïcödé license 🦊\r\n" +
+        " */\r\n" +
+        'console.log("hello");',
+    },
+    run: {
+      stdout: "hello",
+    },
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      expect(output).toContain("Legal header line with some padding text");
+      expect(output).toContain("Licensed under the ünïcödé license 🦊");
+    },
+  });
+
+  itBundled("newline inside a large block comment triggers ASI", {
+    files: {
+      "/entry.js": `function f() { return /*${Buffer.alloc(600, "x").toString()}\n${Buffer.alloc(600, "y").toString()}*/ "value" }\nconsole.log(String(f()));`,
+    },
+    run: {
+      stdout: "undefined",
+    },
+  });
+
+  itBundled("no ASI when a large block comment contains no newline", {
+    files: {
+      "/entry.js": `function f() { return /*${Buffer.alloc(1200, "x").toString()}*/ "value" }\nconsole.log(String(f()));`,
+    },
+    run: {
+      stdout: "value",
+    },
+  });
 });

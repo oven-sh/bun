@@ -2,7 +2,7 @@
 
 exports[`basic detect changes (bun.lock) 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -37,7 +37,7 @@ exports[`basic detect changes (bun.lock) 1`] = `
 
 exports[`basic detect changes (bun.lock) 2`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -72,7 +72,7 @@ exports[`basic detect changes (bun.lock) 2`] = `
 
 exports[`basic detect changes (bun.lock) 3`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {

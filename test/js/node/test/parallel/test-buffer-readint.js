@@ -22,7 +22,7 @@ const assert = require('assert');
         });
     });
 
-    [-1, -4294967295].forEach((offset) => {
+    [Infinity, -1, -4294967295].forEach((offset) => {
       assert.throws(
         () => buffer[`read${fn}`](offset),
         {
@@ -31,7 +31,7 @@ const assert = require('assert');
         });
     });
 
-    [Infinity, NaN, 1.01].forEach((offset) => {
+    [NaN, 1.01].forEach((offset) => {
       assert.throws(
         () => buffer[`read${fn}`](offset),
         {
@@ -171,7 +171,7 @@ const assert = require('assert');
           });
       });
 
-      [-1, -4294967295].forEach((offset) => {
+      [Infinity, -1, -4294967295].forEach((offset) => {
         assert.throws(
           () => buffer[fn](offset, i),
           {
@@ -182,7 +182,7 @@ const assert = require('assert');
           });
       });
 
-      [Infinity, NaN, 1.01].forEach((offset) => {
+      [NaN, 1.01].forEach((offset) => {
         assert.throws(
           () => buffer[fn](offset, i),
           {

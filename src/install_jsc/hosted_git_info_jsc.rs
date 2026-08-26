@@ -1,10 +1,10 @@
-//! JSC bridges for `src/install/hosted_git_info.zig`. Aliased back so call
-//! sites and `$newZigFunction("hosted_git_info.zig", …)` are unchanged.
+//! JSC bridges for `bun_install::hosted_git_info`.
 
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 
-/// Extension trait providing `.to_js()` on `HostedGitInfo` (Zig: `hostedGitInfoToJS`).
-pub trait HostedGitInfoJsc {
+/// Extension trait providing `.to_js()` on `HostedGitInfo`.
+trait HostedGitInfoJsc {
     fn to_js(&self, go: &JSGlobalObject) -> JsResult<JSValue>;
 }
 
@@ -15,23 +15,23 @@ impl HostedGitInfoJsc for bun_install::hosted_git_info::HostedGitInfo {
         obj.put(
             go,
             b"type",
-            BunString::from_bytes(self.host_provider.type_str().as_bytes()).to_js(go)?,
+            BunString::static_(self.host_provider.type_str()).to_js(go)?,
         );
         obj.put(
             go,
             b"domain",
-            BunString::from_bytes(self.host_provider.domain()).to_js(go)?,
+            bun_string_jsc::create_utf8_for_js(go, self.host_provider.domain())?,
         );
         obj.put(
             go,
             b"project",
-            BunString::from_bytes(self.project()).to_js(go)?,
+            bun_string_jsc::create_utf8_for_js(go, self.project())?,
         );
         obj.put(
             go,
             b"user",
             if let Some(user) = self.user() {
-                BunString::from_bytes(user).to_js(go)?
+                bun_string_jsc::create_utf8_for_js(go, user)?
             } else {
                 JSValue::NULL
             },
@@ -40,7 +40,7 @@ impl HostedGitInfoJsc for bun_install::hosted_git_info::HostedGitInfo {
             go,
             b"committish",
             if let Some(committish) = self.committish() {
-                BunString::from_bytes(committish).to_js(go)?
+                bun_string_jsc::create_utf8_for_js(go, committish)?
             } else {
                 JSValue::NULL
             },
@@ -56,8 +56,6 @@ impl HostedGitInfoJsc for bun_install::hosted_git_info::HostedGitInfo {
     }
 }
 
-// TODO(port): proc-macro — `#[bun_jsc::host_fn]` will wrap these into the
-// `JSHostFn` ABI for `$newZigFunction`. Bodies are plain `JSHostFnZig`-shaped fns.
 pub fn js_parse_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     use bun_install::hosted_git_info as hgi;
     if callframe.arguments_count() != 1 {
@@ -76,11 +74,9 @@ pub fn js_parse_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
 
     // TODO(markovejnovic): This feels like there's too much going on all
     // to give us a slice. Maybe there's a better way to code this up.
-    let npa_str = bun_core::OwnedString::new(arg0.to_bun_string(go)?);
-    // PORT NOTE: Zig used `ZigString.Slice.mut()` to get a mutable view; the Rust
-    // `ZigStringSlice` is read-only, so own a mutable copy via `into_vec()`.
-    let mut as_utf8 = npa_str.to_utf8().into_vec();
-    let parsed = match hgi::parse_url(as_utf8.as_mut_slice()) {
+    let npa_str = arg0.to_bun_string(go)?;
+    let as_utf8 = npa_str.to_utf8();
+    let parsed = match hgi::parse_url(as_utf8.slice()) {
         Ok(p) => p,
         Err(err) => {
             return Err(go.throw(format_args!(
@@ -115,10 +111,9 @@ pub fn js_from_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
 
     // TODO(markovejnovic): This feels like there's too much going on all to give us a slice.
     // Maybe there's a better way to code this up.
-    let npa_str = bun_core::OwnedString::new(arg0.to_bun_string(go)?);
-    // PORT NOTE: Zig used `ZigString.Slice.mut()`; own a mutable copy.
-    let mut as_utf8 = npa_str.to_utf8().into_vec();
-    let parsed = match HostedGitInfo::from_url(as_utf8.as_mut_slice()) {
+    let npa_str = arg0.to_bun_string(go)?;
+    let as_utf8 = npa_str.to_utf8();
+    let parsed = match HostedGitInfo::from_url(as_utf8.slice()) {
         Ok(Some(p)) => p,
         Ok(None) => return Ok(JSValue::NULL),
         Err(err) => {
@@ -131,5 +126,3 @@ pub fn js_from_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
 
     parsed.to_js(go)
 }
-
-// ported from: src/install_jsc/hosted_git_info_jsc.zig

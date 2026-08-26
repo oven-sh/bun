@@ -5,8 +5,8 @@ pub enum ConnectionState {
     Handshaking,
     Authenticating,
     AuthenticationAwaitingPk,
+    /// Authenticated; awaiting the OK of the session-setup `SET time_zone`.
+    SessionSetup,
     Connected,
     Failed,
 }
-
-// ported from: src/sql/mysql/ConnectionState.zig

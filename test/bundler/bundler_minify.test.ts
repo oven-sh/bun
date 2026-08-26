@@ -1,8 +1,24 @@
-import { describe, expect } from "bun:test";
-import { normalizeBunSnapshot } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
+  // A direct eval at the top level of a file the bundler wraps in a CommonJS
+  // closure can reach that file's top-level names, so they are not renamed.
+  itBundled("minify/DirectEvalKeepsTopLevelNamesOfWrappedFile", {
+    files: {
+      "/entry.js": /* js */ `
+        var secret = 'top'
+        function helper() { return 'fn' }
+        console.log(eval('secret'), eval('helper()'))
+      `,
+    },
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("secret");
+    },
+    run: { stdout: "top fn" },
+  });
   itBundled("minify/TemplateStringFolding", {
     files: {
       "/entry.js": /* js */ `
@@ -210,6 +226,39 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
       expect([...code.matchAll(/var /g)]).toHaveLength(1);
+    },
+  });
+  itBundled("minify/UnusedCommaAndStrictEqChains", {
+    // Exercises the reusable binary-comma simplification stack, including
+    // recursive re-entry while an outer frame's stack slice is still live.
+    files: {
+      "/entry.js": /* js */ `
+        function eff(n) { console.log(n); return n; }
+        // Deep left-nested comma chain.
+        (${new Array(60)
+          .fill(null)
+          .map((_, i) => `eff(${i + 1})`)
+          .join(", ")});
+        // Comma chain whose right operands are themselves comma chains.
+        (eff(61), (eff(62), (eff(63), eff(64)), eff(65)), eff(66));
+        // Unused strict-eq/ne: pure comparison dropped, operand side effects kept.
+        (eff(67) === (eff(68), eff(69)), eff(70));
+        ((eff(71), eff(72)) !== eff(73), (eff(74), eff(75)) === eff(76));
+        console.log("done");
+      `,
+    },
+    minifySyntax: true,
+    run: {
+      stdout:
+        new Array(76)
+          .fill(null)
+          .map((_, i) => String(i + 1))
+          .join("\n") + "\ndone",
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).not.toContain("===");
+      expect(code).not.toContain("!==");
     },
   });
   itBundled("minify/Infinity", {
@@ -1217,4 +1266,258 @@ describe("bundler", () => {
       stdout: "object\nobject\nobject",
     },
   });
+
+  // https://github.com/oven-sh/bun/issues/31722
+  // An arrow whose body is a single `return <value>` collapses to a shorthand
+  // expression body when minifying: `(a) => { return a; }` becomes `(a) => a`.
+  itBundled("minify/ArrowReturnToExpressionBody", {
+    files: {
+      "/entry.js": /* js */ `
+        export const withArgs = (a, b, c) => { return a + b * c; };
+        export const noArgs = () => { return 42; };
+        export const asyncArrow = async x => { return x + 1; };
+        export const nested = () => () => { return 1; };
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("(a, b, c) => a + b * c");
+      expect(code).toContain("() => 42");
+      expect(code).toContain("async (x) => x + 1");
+      expect(code).toContain("() => () => 1");
+      // The collapsed arrows must not keep the `{ return ... }` block body.
+      expect(code).not.toMatch(/=>\s*\{\s*return/);
+    },
+  });
+
+  // A bare `return;` (no value) cannot be expressed as a shorthand arrow body,
+  // so the block body must be preserved even when minifying.
+  itBundled("minify/ArrowBareReturnKeepsBlock", {
+    files: {
+      "/entry.js": /* js */ `
+        export const bare = (x) => { return; };
+        export const undef = (x) => { return undefined; };
+        export function fn(a) { return a + 1; }
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Bare `return;` and `return undefined;` (normalized to `return;`) stay as blocks.
+      expect(code).toMatch(/bare = \(x\) => \{\s*return;?\s*\}/);
+      expect(code).toMatch(/undef = \(x\) => \{\s*return;?\s*\}/);
+      // Function declarations are never rewritten into arrows.
+      expect(code).toContain("function fn(a)");
+    },
+  });
+
+  // https://github.com/oven-sh/bun/issues/14586
+  // Enough top-level bindings to exhaust every single-char name. With `$`
+  // unreferenced it sorts last in the head alphabet, so it is the 54th name
+  // the minifier would otherwise hand out.
+  const manyDecls = Array.from({ length: 60 }, (_, i) => `class C${i} { m${i}() {} }`).join("\n");
+  const manyRefs = Array.from({ length: 60 }, (_, i) => `C${i}`).join(",");
+  itBundled("minify/IdentifiersNeverBareDollar", {
+    files: {
+      "/entry.js": /* js */ `
+        ${manyDecls}
+        console.log(${manyRefs});
+      `,
+    },
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    target: "browser",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // No bare `$` identifier (allow `$` inside longer names like `a$`/`$a`).
+      const bareDollar = /(?<![A-Za-z0-9_$])\$(?![A-Za-z0-9_$])/;
+      expect(bareDollar.test(code)).toBe(false);
+    },
+  });
+  itBundled("minify/IdentifiersDollarStillUsableWhenReferenced", {
+    files: {
+      "/entry.js": /* js */ `
+        $(document).ready(() => {});
+        ${manyDecls}
+        console.log(${manyRefs});
+      `,
+    },
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    target: "browser",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // The unbound reference to `$` must be preserved verbatim; reserving
+      // the name must not break referencing an existing global `$`.
+      expect(code).toContain("$(document)");
+      // Count bare `$` occurrences: exactly the one reference above.
+      const bareDollar = /(?<![A-Za-z0-9_$])\$(?![A-Za-z0-9_$])/g;
+      expect([...code.matchAll(bareDollar)].length).toBe(1);
+    },
+  });
+  // The reservation is scoped to the minify renamer; the non-minifying
+  // `NumberRenamer` must keep user-written `$` bindings verbatim (React
+  // Compiler emits `let $ = _c(n)` inside every optimized component).
+  itBundled("minify/IdentifiersDollarPreservedWithoutMinify", {
+    files: {
+      "/entry.js": /* js */ `
+        function Component() {
+          let $ = _c(3);
+          return $[0];
+        }
+        console.log(Component);
+      `,
+    },
+    minifyIdentifiers: false,
+    target: "browser",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("let $ = _c(3)");
+      expect(code).toContain("return $[0]");
+      expect(code).not.toContain("$2");
+    },
+  });
+
+  // Without minifySyntax the block body must be preserved verbatim.
+  itBundled("minify/ArrowReturnNotCollapsedWithoutMinifySyntax", {
+    files: {
+      "/entry.js": /* js */ `
+        export const foo = (a) => { return a + 1; };
+      `,
+    },
+    minifySyntax: false,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toMatch(/=>\s*\{\s*return a \+ 1;?\s*\}/);
+    },
+  });
+
+  // The collapse is gated on bundling, so minify-syntax alone (no bundle) must
+  // keep the block body. The runtime transpiler (`bun run`/`bun test`) forces
+  // minify-syntax on for bun targets but never bundles, so collapsing here
+  // would change `Function.prototype.toString()` output at runtime.
+  itBundled("minify/ArrowReturnNotCollapsedWhenNotBundling", {
+    files: {
+      "/entry.js": /* js */ `
+        export const foo = (a) => { return a + 1; };
+      `,
+    },
+    bundling: false,
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toMatch(/=>\s*\{\s*return a \+ 1;?\s*\}/);
+    },
+  });
+
+  // A single-use `let` is substituted into whichever child of the next
+  // expression reads it. `a` is used where the substitution must happen;
+  // `keep` where a side effect in between must block it.
+  itBundled("minify/SingleUseSubstitutionIntoEachChild", {
+    files: {
+      "/entry.js": /* js */ `
+        export function newTarget(c) { let a = c; return new a(); }
+        export function newArgs(c, v) { let a = v; return new c(1, a); }
+        export function spread(v) { let a = v; return [...a]; }
+        export async function awaited(v) { let a = v; return await a; }
+        export function* yielded(v) { let a = v; yield a; }
+        export function dynamicImport(v) { let a = v; return import(a); }
+        export function unary(v) { let a = v; return -a; }
+        export function dot(v) { let a = v; return a.b; }
+        export function binaryLeft(v, w) { let a = v; return a + w; }
+        export function binaryRight(v, w) { let a = v; return w + a; }
+        export function ifTest(v, w, u) { let a = v; return a ? w : u; }
+        export function ifYes(v, w, u) { let a = v; return w ? a : u; }
+        export function ifNo(v, w, u) { let a = v; return w ? u : a; }
+        export function indexTarget(v, i) { let a = v; return a[i]; }
+        export function indexIndex(v, i) { let a = i; return v[a]; }
+        export function callTarget(v) { let a = v; return a(); }
+        export function array(v) { let a = v; return [1, a, 2]; }
+        export function objectValue(v) { let a = v; return { k: 1, v: a }; }
+        export function objectComputedKey(v) { let a = v; return { [a]: 1 }; }
+        export function templateTag(t) { let a = t; return a\`x\`; }
+        export function templateParts(v) { let a = v; return \`1-\${v}-\${a}\`; }
+
+        export function newArgsWithSideEffect(c) { let keep = g(); return new c(keep); }
+        export function* yieldWithoutOperand(v) { let keep = v; yield; return keep; }
+        export function mutatingUnary(v) { let keep = v; return keep++; }
+        export function binaryRightAfterSideEffect(w) { let keep = g(); return w.z + keep; }
+        export function updateAssignment() { let keep = g(); total += keep; }
+        export function ifBranchWithSideEffect(w, u) { let keep = g(); return w ? keep : u; }
+        export function optionalCallArg() { let keep = g(); return f?.(keep); }
+        export function callTargetChangingThis(o) { let keep = o.m; return keep(); }
+        export function objectValueAfterComputedKey() { let keep = g(); return { [k()]: 1, v: keep }; }
+        export function templatePartAfterSideEffect() { let keep = g(); return \`\${h()}-\${keep}\`; }
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).not.toContain("let a");
+      for (const substituted of [
+        "new c;",
+        "new c(1, v)",
+        "[...v]",
+        "await v",
+        "yield v",
+        "import(v)",
+        "return -v",
+        "return v.b",
+        "return v + w",
+        "return w + v",
+        "v ? w : u",
+        "w ? v : u",
+        "w ? u : v",
+        "return v()",
+        "[1, v, 2]",
+        "{ k: 1, v }",
+        "{ [v]: 1 }",
+        "t`x`",
+        "`1-${v}-${v}`",
+      ]) {
+        expect(code).toContain(substituted);
+      }
+      // indexTarget and indexIndex both end up here.
+      expect(code.match(/return v\[i\];/g)).toHaveLength(2);
+      expect(code.match(/let keep = /g)).toHaveLength(10);
+    },
+  });
+});
+
+// The runtime transpiler (`bun run`/`bun test`) implicitly enables
+// minify-syntax for bun targets but never bundles. A block-bodied arrow must
+// keep its block body there so `Function.prototype.toString()` is unchanged —
+// libraries like Elysia parse handler source via `.toString()`.
+// https://github.com/oven-sh/bun/issues/31722
+test("runtime transpiler does not collapse single-return arrow bodies", async () => {
+  using dir = tempDir("arrow-runtime-tostring", {
+    "index.js": /* js */ `
+      const withArgs = (a, b, c) => { return a + b * c; };
+      const noArgs = () => { return 42; };
+      console.log(JSON.stringify([withArgs.toString(), noArgs.toString()]));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const [withArgs, noArgs] = JSON.parse(stdout) as [string, string];
+  // The block body (and its `return`) must survive the runtime transpile.
+  expect(withArgs).toContain("return a + b * c");
+  expect(withArgs).toContain("{");
+  expect(noArgs).toContain("return 42");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });

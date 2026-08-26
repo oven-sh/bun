@@ -1,24 +1,18 @@
-//! Port of `src/jsc/AsyncModule.zig`.
-
 use core::ffi::c_void;
-use core::sync::atomic::AtomicU32;
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_bundler::transpiler::ParseResult;
-use bun_core::{OwnedString, String as BunString, ZigString};
+use bun_core::{EncodedSlice, String as BunString};
 use bun_install::dependency::Dependency;
 use bun_install::{DependencyID, Resolution};
 use bun_io::KeepAlive;
-use bun_options_types::LoaderExt as _;
-use bun_options_types::schema::api;
 use bun_resolver::fs as Fs;
-use bun_resolver::package_json::PackageJSON;
-use bun_sys::Fd;
 
+use crate::bun_string_jsc;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
-    self as jsc, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue, JsError,
-    JsResult, ResolvedSource, StrongOptional, ZigStringJsc as _,
+    self as jsc, EncodedSliceJsc as _, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise,
+    JSValue, JsError, JsResult, ResolvedSource, StringJsc as _, StrongOptional,
 };
 
 bun_core::declare_scope!(AsyncModule, hidden);
@@ -29,10 +23,6 @@ pub struct InitOpts<'a> {
     pub specifier: &'a [u8],
     pub path: Fs::Path<'a>,
     pub promise_ptr: Option<*mut *mut JSInternalPromise>,
-    pub fd: Option<Fd>,
-    pub package_json: Option<&'a PackageJSON>,
-    pub loader: bun_ast::Loader,
-    pub hash: u32,
     pub arena: Box<ArenaAllocator>,
     /// Backs `parse_result`'s small `AstVec`s (inline bump chunk); must stay
     /// alive alongside `arena` until the module finishes loading.
@@ -41,46 +31,36 @@ pub struct InitOpts<'a> {
 
 pub struct AsyncModule {
     // This is all the state used by the printer to print the module
-    pub parse_result: ParseResult<'static>,
-    pub promise: StrongOptional, // Strong.Optional, default .empty
-    /// Packed `referrer ++ specifier ++ path.text`. Owns the bytes that the
-    /// Zig version aliased via `buf.allocatedSlice()`. Stored as offsets so
+    pub(crate) parse_result: ParseResult<'static>,
+    pub(crate) promise: StrongOptional, // Strong.Optional, default .empty
+    /// Packed `referrer ++ specifier ++ path.text`. Owns the bytes; stored as offsets so
     /// the struct stays movable (no self-referential borrows); reconstruct
     /// slices via `referrer()` / `specifier()` / `path_text()`.
-    pub string_buf: Box<[u8]>,
+    pub(crate) string_buf: Box<[u8]>,
     referrer_len: u32,
     specifier_len: u32,
-    pub fd: Option<Fd>,
-    // PORT NOTE: `?*PackageJSON` / `*JSGlobalObject` — both are VM-lifetime
-    // backrefs (BACKREF/JSC_BORROW class in LIFETIMES.tsv). `package_json` is
-    // stored as a raw ptr so `AsyncModule` is `'static`-embeddable in
-    // `Queue`/`VirtualMachine` without a phantom lifetime; `global_this` uses
-    // [`crate::GlobalRef`] which encapsulates the single audited deref.
-    pub package_json: Option<core::ptr::NonNull<PackageJSON>>,
-    pub loader: api::Loader,
-    pub hash: u32, // default = u32::MAX
+    // `*JSGlobalObject` is a VM-lifetime backref (BACKREF/JSC_BORROW class in
+    // LIFETIMES.tsv); [`crate::GlobalRef`] encapsulates the single audited
+    // deref.
     pub global_this: crate::GlobalRef,
-    pub arena: Box<ArenaAllocator>,
+    pub(crate) arena: Box<ArenaAllocator>,
     /// See [`InitOpts::ast_alloc_state`].
     pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
 
     // This is the specific state for making it async
-    pub poll_ref: KeepAlive,
-    pub any_task: bun_event_loop::AnyTask::AnyTask,
+    pub(crate) poll_ref: KeepAlive,
 }
 
-pub type Id = u32;
-
-pub(crate) struct PackageDownloadError<'a> {
+struct PackageDownloadError<'a> {
     pub name: &'a [u8],
     pub resolution: Resolution,
-    pub err: bun_core::Error,
+    pub err: &'static str,
     pub url: &'a [u8],
 }
 
-pub(crate) struct PackageResolveError<'a> {
+struct PackageResolveError<'a> {
     pub name: &'a [u8],
-    pub err: bun_core::Error,
+    pub err: &'static str,
     pub url: &'a [u8],
     pub version: bun_install::dependency::Version,
 }
@@ -90,8 +70,18 @@ pub type Map = Vec<AsyncModule>;
 #[derive(Default)]
 pub struct Queue {
     pub map: Map,
-    pub scheduled: u32,
-    pub concurrent_task_count: AtomicU32,
+    pub(crate) scheduled: u32,
+}
+
+/// What the resolver's `WakeHandler` carries as its opaque context: the
+/// module queue (for the JS-thread dependency-error callback) and the VM's
+/// weak handle (for wake-ups from the process-wide install / HTTP threads,
+/// which outlive any one VM). Allocated once per VM at registration and kept
+/// for the VM's lifetime.
+pub struct WakeContext {
+    pub queue: *mut Queue,
+    pub handle: crate::VmHandle,
+    pub kind: crate::LoopKind,
 }
 
 impl Queue {
@@ -106,176 +96,121 @@ impl Queue {
     /// `&mut self` is kept as a receiver so existing callers
     /// (`self.vm().package_manager()`) don't change shape.
     #[inline]
-    pub fn vm(&mut self) -> &mut VirtualMachine {
+    pub(crate) fn vm(&mut self) -> &mut VirtualMachine {
         VirtualMachine::get().as_mut()
     }
 
-    pub fn on_resolve(_: &mut Queue) {
+    pub(crate) fn on_resolve(_: &mut Queue) {
         bun_core::scoped_log!(AsyncModule, "onResolve");
     }
 }
 
 // Taskable: `Queue` is enqueued via `ConcurrentTask::create_from(this)` in
 // `on_wake_handler` and dispatched in `bun_runtime::dispatch::run_task` →
-// `vm.modules.on_poll()` (Zig: `PollPendingModulesTask`). The pointer is a
+// `vm.modules.on_poll()`. The pointer is a
 // borrow into `VirtualMachine.modules`, never freed by the dispatcher.
 impl bun_event_loop::Taskable for Queue {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::PollPendingModulesTask;
+    /// A "poll your pending modules" ping from an install thread: `this` is
+    /// the VM's own queue; nothing is owned.
+    unsafe fn release_unrun(_: *mut Self) {}
+}
+
+impl bun_event_loop::Taskable for AsyncModule {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncModule;
+    /// A module whose dependencies finished installing but whose fulfilment
+    /// will not run: undo `done()`'s bookkeeping and drop it (its promise
+    /// handle, arena and parse result go with the box).
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box `done()` queued.
+        let mut this = unsafe { bun_core::heap::take(this) };
+        let vm = VirtualMachine::get().as_mut();
+        this.poll_ref.unref(bun_io::js_vm_ctx());
+        vm.modules.scheduled -= 1;
+    }
 }
 
 impl AsyncModule {
     #[inline]
-    pub fn referrer(&self) -> &[u8] {
+    pub(crate) fn referrer(&self) -> &[u8] {
         &self.string_buf[..self.referrer_len as usize]
     }
 
     #[inline]
-    pub fn specifier(&self) -> &[u8] {
+    pub(crate) fn specifier(&self) -> &[u8] {
         let off = self.referrer_len as usize;
         &self.string_buf[off..off + self.specifier_len as usize]
     }
 
     #[inline]
-    pub fn path_text(&self) -> &[u8] {
+    pub(crate) fn path_text(&self) -> &[u8] {
         let off = self.referrer_len as usize + self.specifier_len as usize;
         &self.string_buf[off..]
     }
 
-    /// Spec AsyncModule.zig:412-460. Dispatch the (possibly errored) transpile
-    /// result back into JSC via `Bun__onFulfillAsyncModule`. This is the entry
-    /// point `RuntimeTranspilerStore::run_from_js_thread` calls when a
+    /// Dispatch the (possibly errored) transpile
+    /// result back into JSC via `Bun__onFulfillAsyncModule`. Called from
+    /// `RuntimeTranspilerStore::run_from_js_thread` and `on_done` when a
     /// concurrent transpile job finishes.
-    pub fn fulfill(
+    pub(crate) fn fulfill(
         global_this: &JSGlobalObject,
         promise: JSValue,
-        resolved_source: &mut ResolvedSource,
-        err: Option<bun_core::Error>,
-        specifier_: BunString,
-        referrer_: BunString,
+        result: Result<ResolvedSource, crate::CrateError>,
+        specifier: &BunString,
+        referrer: &BunString,
         log: &mut bun_ast::Log,
     ) -> JsResult<()> {
         jsc::mark_binding();
-        let mut specifier = specifier_;
-        let mut referrer = referrer_;
-        // PORT NOTE: Zig `defer { specifier.deref(); referrer.deref(); scope.deinit(); }` —
-        // BunString is `Copy` in the Rust port (no Drop), so deref the held
-        // refcounts explicitly via scopeguard. The `TopExceptionScope` is
-        // omitted: `from_js_host_call_generic` already checks the VM for a
-        // pending exception after the FFI call (host_fn.rs).
-        //
-        // The guard captures raw pointers to the locals (not by-value copies)
-        // so the deref observes the *post-FFI* value of the variable, matching
-        // Zig `defer` semantics — `Bun__onFulfillAsyncModule` receives
-        // `&mut specifier`/`&mut referrer` and is free to overwrite them.
-        // Safety: `specifier`/`referrer` are declared above this guard, so
-        // they outlive it (locals drop in reverse order); the `&mut` reborrow
-        // passed to FFI below is dead by the time the guard runs.
-        let sp: *mut BunString = &raw mut specifier;
-        let rp: *mut BunString = &raw mut referrer;
-        let _strings_guard = scopeguard::guard((), move |()| {
-            // SAFETY: `sp`/`rp` point at `specifier`/`referrer` declared above
-            // this guard; locals drop in reverse order so they outlive it, and
-            // the `&mut` reborrows passed to FFI are dead by the time this runs.
-            unsafe {
-                (*sp).deref();
-                (*rp).deref();
-            }
-        });
-
-        let mut errorable: ErrorableResolvedSource;
-        if let Some(e) = err {
-            // PORT NOTE: inner Zig `defer { if (needs_deref) { needs_deref = false;
-            // source_code.deref(); } }` — `OwnedString` derefs on Drop at the end
-            // of this `if` arm; `None` is the no-op path.
-            let _source_code_guard = if resolved_source.source_code_needs_deref {
-                resolved_source.source_code_needs_deref = false;
-                Some(OwnedString::new(resolved_source.source_code))
-            } else {
-                None
-            };
-
-            if e == bun_core::err!("JSError") {
-                errorable = ErrorableResolvedSource::err(
-                    bun_core::err!("JSError"),
-                    global_this.take_error(JsError::Thrown),
-                );
-            } else {
-                // Spec AsyncModule.zig:440-447 —
-                // `VirtualMachine.processFetchLog(globalThis, specifier,
-                // referrer, log, &errorable, e)` synthesizes a JS
-                // Error/AggregateError from the parser log and writes it into
-                // `errorable.result.err.value`. Without this the import promise
-                // would reject with `undefined` (ModuleLoader.cpp:473).
-                // PORT NOTE: call the `virtual_machine` impl directly (takes
-                // `&JSGlobalObject`) instead of the `module_loader` shim that
-                // takes `*mut` — avoids a `&T as *const T as *mut T` cast,
-                // which is UB-adjacent under Stacked Borrows even when the
-                // callee never writes through it.
-                errorable = ErrorableResolvedSource::err(e, JSValue::UNDEFINED);
-                crate::virtual_machine::process_fetch_log(
-                    global_this,
-                    specifier,
-                    referrer,
-                    log,
-                    &mut errorable,
-                    e,
-                );
-            }
-        } else {
-            errorable = ErrorableResolvedSource::ok(*resolved_source);
-        }
-        // TODO(port): Zig calls log.deinit() here explicitly (early), then uses
-        // specifier after. In Rust, caller owns `log`; we leave it to caller's
-        // Drop. Verify no behavioral diff.
-
+        let mut errorable = match result {
+            Ok(resolved_source) => ErrorableResolvedSource::ok(resolved_source),
+            Err(
+                crate::CrateError::JSError | crate::CrateError::Bundler(bun_bundler::Error::Js(_)),
+            ) => ErrorableResolvedSource::err(global_this.take_error(JsError::Thrown)),
+            Err(e) => ErrorableResolvedSource::err(crate::virtual_machine::process_fetch_log(
+                global_this,
+                specifier,
+                referrer,
+                log,
+                e,
+            )),
+        };
         bun_core::scoped_log!(AsyncModule, "fulfill: {}", specifier);
 
         jsc::from_js_host_call_generic(global_this, || {
-            Bun__onFulfillAsyncModule(
-                global_this,
-                promise,
-                &mut errorable,
-                &mut specifier,
-                &mut referrer,
-            )
+            Bun__onFulfillAsyncModule(global_this, promise, &mut errorable, specifier, referrer)
         })
     }
 }
 
-// PORT NOTE: pub fn deinit → impl Drop. Body only freed owned fields (promise,
+// pub fn deinit → impl Drop. Body only freed owned fields (promise,
 // parse_result, arena, string_buf), all of which now have Drop impls on their
 // Rust types. No explicit Drop needed; relying on field Drop order.
 // bun.default_allocator.free(this.stmt_blocks);
 // bun.default_allocator.free(this.expr_blocks);
 
-// TODO(port): move to <area>_sys
-//
 // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-// ABI-identical to non-null `*const`); `ErrorableResolvedSource`/`BunString`
-// are `#[repr(C)]` payloads whose `&mut` is exclusive for the call. C++ reads
-// from / writes through these in-place; no caller-side raw-pointer precondition.
+// ABI-identical to non-null `*const`); `res` stays owned by this frame — C++
+// takes the fields it keeps by transfer (zeroing them) and the rest drops here.
 unsafe extern "C" {
+    #[allow(improper_ctypes)]
     safe fn Bun__onFulfillAsyncModule(
         global_object: &JSGlobalObject,
         promise_value: JSValue,
         res: &mut ErrorableResolvedSource,
-        specifier: &mut BunString,
-        referrer: &mut BunString,
+        specifier: &BunString,
+        referrer: &BunString,
     );
 }
 
 use core::sync::atomic::Ordering;
 use std::io::Write as _;
 
-use bun_core::strings;
 use bun_install::package_manager::run_tasks;
 use bun_install::{self as install, LogLevel, PackageID};
 
-use crate::event_loop::{AnyTask, ConcurrentTaskItem, Task};
+use crate::event_loop::{ConcurrentTaskItem, Task};
 
-/// `RunTasksCallbacks` impl for the auto-install module queue. Mirrors the Zig
-/// anonymous `comptime callbacks: anytype` struct passed at
-/// AsyncModule.zig:108-133 — `onExtract = void`, `onResolve` /
+/// `RunTasksCallbacks` impl for the auto-install module queue. `onResolve` /
 /// `onPackageManifestError` / `onPackageDownloadError` forward to the `Queue`
 /// methods, `progress_bar` selected via const generic to match the
 /// `enable_ansi_colors_stderr` branch.
@@ -293,8 +228,13 @@ impl<const PROGRESS: bool> run_tasks::RunTasksCallbacks for QueueRunTasksCallbac
         Queue::on_resolve(ctx)
     }
 
-    fn on_package_manifest_error(ctx: &mut Queue, name: &[u8], err: bun_core::Error, url: &[u8]) {
-        ctx.on_package_manifest_error(name, err, url)
+    fn on_package_manifest_error(
+        ctx: &mut Queue,
+        name: &[u8],
+        err: bun_install::Error,
+        url: &[u8],
+    ) {
+        ctx.on_package_manifest_error(name, err.name(), url)
     }
 
     fn on_package_download_error_pkg(
@@ -302,10 +242,10 @@ impl<const PROGRESS: bool> run_tasks::RunTasksCallbacks for QueueRunTasksCallbac
         package_id: PackageID,
         name: &[u8],
         resolution: &Resolution,
-        err: bun_core::Error,
+        err: bun_install::Error,
         url: &[u8],
     ) {
-        ctx.on_package_download_error(package_id, name, resolution, err, url)
+        ctx.on_package_download_error(package_id, name, resolution, err.name(), url)
     }
 }
 
@@ -317,9 +257,8 @@ impl Queue {
             bun_io::AllocatorType::Js,
         ));
 
-        // PORT NOTE: allocator arg dropped (Vec uses global mimalloc).
+        // allocator arg dropped (Vec uses global mimalloc).
         self.map.push(module);
-        // PERF(port): was assume_capacity-free append
         self.vm().package_manager().drain_dependency_list();
     }
 
@@ -330,7 +269,7 @@ impl Queue {
         ctx: *mut c_void,
         dependency: &Dependency,
         root_dependency_id: DependencyID,
-        err: bun_core::Error,
+        err: &'static str,
     ) {
         // SAFETY: ctx was registered as *Queue when installing this callback.
         let this: &mut Queue = unsafe { bun_ptr::callback_ctx::<Queue>(ctx) };
@@ -340,12 +279,8 @@ impl Queue {
             bstr::BStr::new(this.vm().package_manager().lockfile.str(&dependency.name))
         );
 
-        // PORT NOTE: reshaped for borrowck — Zig iterated copies and
-        // compacted in place; Rust uses retain_mut and lets Drop free
-        // removed modules.
+        // retain_mut lets Drop free removed modules.
         this.map.retain_mut(|module| {
-            // PORT NOTE: Zig `MultiArrayList.items(.root_dependency_id)` →
-            // `Vec<PendingResolution>` field walk.
             for pending in module.parse_result.pending_imports.iter() {
                 if pending.root_dependency_id != root_dependency_id {
                     continue;
@@ -355,45 +290,51 @@ impl Queue {
                 // `container_of`-derived `*mut`; provenance is the original
                 // allocation, disjoint from the `&mut module` borrow above.
                 let vm = VirtualMachine::get().as_mut();
-                // PORT NOTE: reshaped for borrowck — `lockfile.str()` ties the
+                // reshaped for borrowck — `lockfile.str()` ties the
                 // returned slice to `&vm`, which conflicts with passing
                 // `&mut vm` to `resolve_error`. The lockfile string buffer is
                 // stable across `resolve_error` (no realloc on the error
                 // path); detach the borrow via raw ptr.
                 let name =
                     bun_ptr::RawSlice::new(vm.package_manager().lockfile.str(&dependency.name));
-                module
-                    .resolve_error(
-                        vm,
-                        import_record_id,
-                        &PackageResolveError {
-                            name: name.slice(),
-                            err,
-                            url: b"",
-                            version: dependency.version.clone(),
-                        },
-                    )
-                    .expect("unreachable");
+                module.resolve_error(
+                    vm,
+                    import_record_id,
+                    &PackageResolveError {
+                        name: name.slice(),
+                        err,
+                        url: b"",
+                        version: dependency.version.clone(),
+                    },
+                );
                 return false; // continue :outer — drop this module
             }
             true
         });
     }
 
+    /// `WakeHandler::handler` — runs on install / HTTP-callback threads
+    /// (`PackageManager::wake_raw`). `ctx` is the [`WakeContext`] registered in
+    /// `runtime/jsc_hooks.rs`; the VM is reached only through its handle.
     pub fn on_wake_handler(ctx: *mut c_void, _: *mut c_void) {
         bun_core::scoped_log!(AsyncModule, "onWake");
-        let queue = ctx.cast::<Queue>();
-        let task = ConcurrentTaskItem::create_from(queue);
-        // SAFETY: runs on thread-pool / HTTP-callback threads (PackageManager::wake_raw)
-        // where the per-thread `VirtualMachine::get()` singleton is NOT
-        // installed — using it here would panic. `ctx` was registered as
-        // `addr_of_mut!((*vm).modules)` from a raw `*mut VirtualMachine`
-        // (runtime/jsc_hooks.rs), so its provenance covers the whole VM and
-        // `from_field_ptr!` is sound. S017 does not apply: that rule forbids
-        // widening from a `&mut self`-derived pointer, but `ctx` is a raw
-        // `*mut` carried from the original allocation.
-        let vm = unsafe { &mut *bun_core::from_field_ptr!(VirtualMachine, modules, queue) };
-        vm.enqueue_task_concurrent(task);
+        // SAFETY: `ctx` is the leaked `WakeContext` registered with this handler.
+        let ctx = unsafe { &*ctx.cast::<WakeContext>() };
+        let task = ConcurrentTaskItem::create_from(ctx.queue);
+        if let crate::vm_handle::Posted::Refused(task) = ctx.handle.post(ctx.kind, task) {
+            // That VM has closed: nobody is waiting on these modules any more.
+            // SAFETY: refused ⇒ we own the task box.
+            unsafe { drop(bun_core::heap::take(task.as_ptr())) };
+        }
+    }
+
+    /// `WakeHandler::on_dependency_error` context accessor — JS thread.
+    ///
+    /// # Safety
+    /// `ctx` is the leaked `WakeContext` registered in `runtime/jsc_hooks.rs`.
+    pub unsafe fn queue_from_wake_context(ctx: *mut c_void) -> *mut Queue {
+        // SAFETY: fn contract.
+        unsafe { (*ctx.cast::<WakeContext>()).queue }
     }
 
     pub fn on_poll(&mut self) {
@@ -402,10 +343,8 @@ impl Queue {
         self.poll_modules();
     }
 
-    pub fn run_tasks(&mut self) {
-        // PORT NOTE: reshaped for borrowck — Zig held `pm` across the call
-        // while passing `this` (which can recover `pm` via
-        // `@fieldParentPtr`). The Rust `run_tasks` free fn takes both
+    pub(crate) fn run_tasks(&mut self) {
+        // The `run_tasks` free fn takes both
         // `&mut PackageManager` and `&mut Queue`; the package manager is a
         // separate heap allocation (`NonNull<dyn AutoInstaller>` on the
         // resolver), so the two borrows are disjoint.
@@ -428,17 +367,15 @@ impl Queue {
         }
     }
 
-    pub fn on_package_manifest_error(&mut self, name: &[u8], err: bun_core::Error, url: &[u8]) {
+    pub(crate) fn on_package_manifest_error(&mut self, name: &[u8], err: &'static str, url: &[u8]) {
         bun_core::scoped_log!(
             AsyncModule,
             "onPackageManifestError: {}",
             bstr::BStr::new(name)
         );
 
-        // PORT NOTE: reshaped for borrowck — compaction loop → retain_mut.
+        // reshaped for borrowck — compaction loop → retain_mut.
         self.map.retain_mut(|module| {
-            // PORT NOTE: Zig `MultiArrayList.items(.tag)` etc. →
-            // `Vec<PendingResolution>` field walk.
             for pending in module.parse_result.pending_imports.iter() {
                 if pending.tag == bun_resolver::PendingResolutionTag::Resolve {
                     if pending.esm.name.slice(&pending.string_buf) != name {
@@ -450,18 +387,16 @@ impl Queue {
 
                     // S017: per-thread VM singleton (safe accessor).
                     let vm = VirtualMachine::get().as_mut();
-                    module
-                        .resolve_error(
-                            vm,
-                            import_record_id,
-                            &PackageResolveError {
-                                name,
-                                err,
-                                url,
-                                version,
-                            },
-                        )
-                        .expect("unreachable");
+                    module.resolve_error(
+                        vm,
+                        import_record_id,
+                        &PackageResolveError {
+                            name,
+                            err,
+                            url,
+                            version,
+                        },
+                    );
                     return false; // continue :outer
                 }
             }
@@ -469,12 +404,12 @@ impl Queue {
         });
     }
 
-    pub fn on_package_download_error(
+    pub(crate) fn on_package_download_error(
         &mut self,
         package_id: PackageID,
         name: &[u8],
         resolution: &Resolution,
-        err: bun_core::Error,
+        err: &'static str,
         url: &[u8],
     ) {
         bun_core::scoped_log!(
@@ -498,11 +433,8 @@ impl Queue {
                 .as_slice(),
         );
 
-        // PORT NOTE: reshaped for borrowck — compaction loop → retain_mut.
+        // reshaped for borrowck — compaction loop → retain_mut.
         self.map.retain_mut(|module| {
-            // PORT NOTE: Zig `MultiArrayList.items(.import_record_id)` /
-            // `.items(.root_dependency_id)` → `Vec<PendingResolution>` field
-            // walk.
             for pending in module.parse_result.pending_imports.iter() {
                 if resolution_ids.slice()[pending.root_dependency_id as usize] != package_id {
                     continue;
@@ -510,25 +442,23 @@ impl Queue {
                 let import_record_id = pending.import_record_id;
                 // S017: per-thread VM singleton (safe accessor).
                 let vm = VirtualMachine::get().as_mut();
-                module
-                    .download_error(
-                        vm,
-                        import_record_id,
-                        &PackageDownloadError {
-                            name,
-                            resolution: *resolution,
-                            err,
-                            url,
-                        },
-                    )
-                    .expect("unreachable");
+                module.download_error(
+                    vm,
+                    import_record_id,
+                    &PackageDownloadError {
+                        name,
+                        resolution: *resolution,
+                        err,
+                        url,
+                    },
+                );
                 return false; // continue :outer
             }
             true
         });
     }
 
-    pub fn poll_modules(&mut self) {
+    pub(crate) fn poll_modules(&mut self) {
         // S017: per-thread VM singleton (safe accessor) instead of
         // `container_of`-derived `*mut` reborrow. The package manager is a
         // separate heap allocation, disjoint from `self` (= `vm.modules`).
@@ -537,18 +467,13 @@ impl Queue {
             return;
         }
 
-        // PORT NOTE: reshaped for borrowck — Zig compacted by index then
-        // truncated `items.len` without running deinit on finished slots. Rust
-        // walks by index and `remove(i)` finished modules by value into
+        // Walk by index and `remove(i)` finished modules by value into
         // `done(self)`, so each module's owned fields are dropped exactly once
         // (in `on_done`).
         let mut i = 0;
         while i < self.map.len() {
             let (done_count, tags_len) = {
                 let module = &mut self.map[i];
-                // PORT NOTE: Zig `MultiArrayList.items(.tag)` /
-                // `.items(.root_dependency_id)` → `Vec<PendingResolution>`
-                // field walk via `iter_mut()`.
                 let pending_imports = &mut module.parse_result.pending_imports;
                 // var esms = module.parse_result.pending_imports.items(.esm);
                 // var versions = module.parse_result.pending_imports.items(.dependency);
@@ -592,8 +517,7 @@ impl Queue {
 
                     let mut name_and_version_hash: Option<u64> = None;
                     let mut patchfile_hash: Option<u64> = None;
-                    // PORT NOTE: Zig passed `pm.lockfile` as a separate arg;
-                    // the Rust port collapsed it onto `&mut self.lockfile`
+                    // The lockfile is reached through `&mut self.lockfile`
                     // (PackageManagerLifecycle.rs) to avoid the
                     // `&mut self`/`&self.lockfile` aliasing borrowck rejects.
                     match pm.determine_preinstall_state(
@@ -641,13 +565,13 @@ impl Queue {
 }
 
 impl AsyncModule {
-    pub fn init(
+    pub(crate) fn init(
         opts: InitOpts<'_>,
         global_object: &JSGlobalObject,
     ) -> Result<AsyncModule, bun_alloc::AllocError> {
         // var stmt_blocks = js_ast.Stmt.Data.toOwnedSlice();
         // var expr_blocks = js_ast.Expr.Data.toOwnedSlice();
-        // PORT NOTE: `JSInternalPromise` aliases `JSPromise` upstream
+        // `JSInternalPromise` aliases `JSPromise` upstream
         // (JSInternalPromise.rs), so `JSPromise::create` is the
         // `createInternalPromise` equivalent.
         let this_promise = crate::JSPromise::create(global_object).to_js();
@@ -663,9 +587,7 @@ impl AsyncModule {
         unsafe {
             *opts.promise_ptr.unwrap() = this_promise.as_promise().unwrap();
         }
-        // PORT NOTE: Zig kept three aliasing slices into `buf` plus
-        // `buf.allocatedSlice()` as the owning storage. Rust can't store
-        // self-referential borrows, so capture lengths and pack
+        // Self-referential borrows can't be stored, so capture lengths and pack
         // `referrer ++ specifier ++ path.text` into `string_buf`, then expose
         // them via `referrer()`/`specifier()`/`path_text()`. `move_to_slice()`
         // transfers ownership (resets `buf` so its Drop is a no-op) — exactly
@@ -683,56 +605,26 @@ impl AsyncModule {
             string_buf,
             referrer_len,
             specifier_len,
-            fd: opts.fd,
-            package_json: opts.package_json.map(core::ptr::NonNull::from),
-            loader: opts.loader.to_api(),
-            hash: opts.hash,
             // .stmt_blocks = stmt_blocks,
             // .expr_blocks = expr_blocks,
             global_this: crate::GlobalRef::new(global_object),
             arena: opts.arena,
             ast_alloc_state: opts.ast_alloc_state,
             poll_ref: KeepAlive::default(),
-            any_task: AnyTask::AnyTask::default(),
         })
     }
 
-    pub fn done(self, jsc_vm: &mut VirtualMachine) {
-        // PORT NOTE: Zig `allocator.create` + bitwise copy then truncated the
-        // queue without running deinit on the discarded slot — single
-        // ownership transfers to the heap clone. In Rust the caller
-        // (`Queue::poll_modules`) removes the element by value and passes it
-        // here, so `Box::new(self)` is the same single transfer with no
-        // `ptr::read` and no double-Drop.
-        let clone = bun_core::heap::into_raw(Box::new(self));
+    pub(crate) fn done(self, jsc_vm: &mut VirtualMachine) {
         jsc_vm.modules.scheduled += 1;
-        // SAFETY: clone is a valid heap::alloc allocation owned by the
-        // task queue until on_done reclaims it via heap::take; we hold
-        // the only reference here.
-        unsafe {
-            // PORT NOTE: Zig `AnyTask.New(AsyncModule, onDone).init(clone)` —
-            // Rust cannot take a fn as const generic, so hand-write the shim
-            // (option (b) in event_loop/AnyTask.rs).
-            (*clone).any_task = AnyTask::AnyTask {
-                ctx: Some(core::ptr::NonNull::new_unchecked(clone).cast()),
-                callback: |p| {
-                    // SAFETY: `p` is the `clone` heap allocation registered as
-                    // `ctx` above; `on_done` reclaims it via `heap::take`.
-                    Self::on_done(p.cast());
-                    Ok(())
-                },
-            };
-            jsc_vm.enqueue_task(Task::init(&raw mut (*clone).any_task));
-        }
+        jsc_vm.enqueue_task(Task::from_boxed(Box::new(self)));
     }
 
-    /// # Safety
-    /// `this` must be the heap allocation produced by [`AsyncModule::done`]
-    /// (via `bun_core::heap::into_raw`); this fn reclaims and drops it.
-    pub unsafe fn on_done(this: *mut AsyncModule) {
+    #[allow(
+        clippy::boxed_local,
+        reason = "reclaim point for the box `done()` handed to the task queue"
+    )]
+    pub fn on_done(mut this: Box<AsyncModule>) -> JsResult<()> {
         jsc::mark_binding();
-        // SAFETY: `this` was heap-allocated in `done`; reclaimed at end of this fn.
-        let this = unsafe { &mut *this };
         // Copy the `GlobalRef` out (it is `Copy`) so the borrow of `this` ends
         // before `&mut this` reborrows below; deref via the local for the rest
         // of the function. `GlobalRef::deref` encapsulates the JSC_BORROW
@@ -740,7 +632,7 @@ impl AsyncModule {
         let global_ref = this.global_this;
         let global_this: &JSGlobalObject = &global_ref;
         // SAFETY: `VirtualMachine::get()` is the live per-thread VM (one VM per
-        // thread); the Zig `globalThis.bunVM()` returns the same pointer.
+        // thread).
         let jsc_vm = VirtualMachine::get().as_mut();
         jsc_vm.modules.scheduled -= 1;
         if jsc_vm.modules.scheduled == 0 {
@@ -750,56 +642,25 @@ impl AsyncModule {
         this.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
             bun_io::AllocatorType::Js,
         ));
-        let errorable: ErrorableResolvedSource = match this.resume_loading_module(&mut log) {
-            Ok(rs) => ErrorableResolvedSource::ok(rs),
-            Err(err) if err == bun_core::err!("JSError") => ErrorableResolvedSource::err(
-                bun_core::err!("JSError"),
-                global_this.take_error(JsError::Thrown),
-            ),
-            Err(err) => {
-                // PORT NOTE: Zig declared `errorable = undefined` and relied on
-                // `processFetchLog` writing the out-param. Rust pre-seeds the
-                // err so the `&mut` borrow is definitely-initialized;
-                // `process_fetch_log` overwrites `result.err.value`.
-                let mut errorable = ErrorableResolvedSource::err(err, JSValue::UNDEFINED);
-                crate::virtual_machine::process_fetch_log(
-                    global_this,
-                    BunString::init(ZigString::init(this.specifier())),
-                    BunString::init(ZigString::init(this.referrer())),
-                    &mut log,
-                    &mut errorable,
-                    err,
-                );
-                errorable
-            }
-        };
-        let mut errorable = errorable;
-        // log dropped at scope exit (defer log.deinit()).
-
-        let mut spec = BunString::init(ZigString::from_bytes(this.specifier()).with_encoding());
-        let mut ref_ = BunString::init(ZigString::from_bytes(this.referrer()).with_encoding());
-        let _ = jsc::from_js_host_call_generic(global_this, || {
-            Bun__onFulfillAsyncModule(
-                global_this,
-                this.promise.get().unwrap(),
-                &mut errorable,
-                &mut spec,
-                &mut ref_,
-            )
-        });
-        // SAFETY: reclaim the Box allocated in `done`; Drop runs deinit logic.
-        drop(unsafe { bun_core::heap::take(this) });
+        let result = this.resume_loading_module(&mut log);
+        let spec = BunString::borrow_utf8(this.specifier());
+        let referrer = BunString::borrow_utf8(this.referrer());
+        Self::fulfill(
+            global_this,
+            this.promise.get().unwrap(),
+            result,
+            &spec,
+            &referrer,
+            &mut log,
+        )
     }
 
-    // TODO(port): narrow error set to bun_alloc::AllocError — Zig body only
-    // `try`s std.fmt.allocPrint (OOM-only). write! into Vec<u8> is
-    // infallible here; `.ok()` collapses the `fmt::Result`.
     fn resolve_error(
         &mut self,
         vm: &mut VirtualMachine,
         import_record_id: u32,
         result: &PackageResolveError<'_>,
-    ) -> Result<(), bun_core::Error> {
+    ) {
         // Copy the `GlobalRef` out so the borrow of `self` ends before
         // `&mut self` reborrows below; `GlobalRef::deref` is the safe
         // JSC_BORROW accessor.
@@ -808,186 +669,162 @@ impl AsyncModule {
 
         let mut msg: Vec<u8> = Vec::new();
         let e = result.err;
-        if e == bun_core::err!("PackageManifestHTTP400") {
-            write!(
+        if e == "PackageManifestHTTP400" {
+            let _ = write!(
                 &mut msg,
                 "HTTP 400 while resolving package '{}' at '{}'",
                 bstr::BStr::new(result.name),
                 bstr::BStr::new(result.url)
-            )
-            .ok();
-        } else if e == bun_core::err!("PackageManifestHTTP401") {
-            write!(
+            );
+        } else if e == "PackageManifestHTTP401" {
+            let _ = write!(
                 &mut msg,
                 "HTTP 401 while resolving package '{}' at '{}'",
                 bstr::BStr::new(result.name),
                 bstr::BStr::new(result.url)
-            )
-            .ok();
-        } else if e == bun_core::err!("PackageManifestHTTP402") {
-            write!(
+            );
+        } else if e == "PackageManifestHTTP402" {
+            let _ = write!(
                 &mut msg,
                 "HTTP 402 while resolving package '{}' at '{}'",
                 bstr::BStr::new(result.name),
                 bstr::BStr::new(result.url)
-            )
-            .ok();
-        } else if e == bun_core::err!("PackageManifestHTTP403") {
-            write!(
+            );
+        } else if e == "PackageManifestHTTP403" {
+            let _ = write!(
                 &mut msg,
                 "HTTP 403 while resolving package '{}' at '{}'",
                 bstr::BStr::new(result.name),
                 bstr::BStr::new(result.url)
-            )
-            .ok();
-        } else if e == bun_core::err!("PackageManifestHTTP404") {
-            write!(
+            );
+        } else if e == "PackageManifestHTTP404" {
+            let _ = write!(
                 &mut msg,
                 "Package '{}' was not found",
                 bstr::BStr::new(result.name)
-            )
-            .ok();
-        } else if e == bun_core::err!("PackageManifestHTTP4xx") {
-            write!(
+            );
+        } else if e == "PackageManifestHTTP4xx" {
+            let _ = write!(
                 &mut msg,
                 "HTTP 4xx while resolving package '{}' at '{}'",
                 bstr::BStr::new(result.name),
                 bstr::BStr::new(result.url)
-            )
-            .ok();
-        } else if e == bun_core::err!("PackageManifestHTTP5xx") {
-            write!(
+            );
+        } else if e == "PackageManifestHTTP5xx" {
+            let _ = write!(
                 &mut msg,
                 "HTTP 5xx while resolving package '{}' at '{}'",
                 bstr::BStr::new(result.name),
                 bstr::BStr::new(result.url)
-            )
-            .ok();
-        } else if e == bun_core::err!("DistTagNotFound") || e == bun_core::err!("NoMatchingVersion")
-        {
-            // PORT NOTE: Zig peeks at the tagged-union via
-            // `result.version.tag == .npm and
-            // result.version.value.npm.version.isExact()`. The Rust
+            );
+        } else if matches!(e, "DistTagNotFound" | "NoMatchingVersion") {
             // `Version::try_npm()` performs the tag guard and yields the
             // `NpmInfo` (whose `.version` is the semver query group).
             let npm = result.version.try_npm();
-            let prefix: &[u8] = if e == bun_core::err!("NoMatchingVersion")
-                && npm.map(|n| n.version.is_exact()).unwrap_or(false)
-            {
-                b"Version not found"
-            } else if npm.map(|n| !n.version.is_exact()).unwrap_or(false) {
-                b"No matching version found"
-            } else {
-                b"No match found"
-            };
+            let prefix: &[u8] =
+                if e == "NoMatchingVersion" && npm.map(|n| n.version.is_exact()).unwrap_or(false) {
+                    b"Version not found"
+                } else if npm.map(|n| !n.version.is_exact()).unwrap_or(false) {
+                    b"No matching version found"
+                } else {
+                    b"No match found"
+                };
 
-            write!(
+            let _ = write!(
                 &mut msg,
                 "{} '{}' for package '{}' (but package exists)",
                 bstr::BStr::new(prefix),
                 bstr::BStr::new(vm.package_manager().lockfile.str(&result.version.literal)),
                 bstr::BStr::new(result.name)
-            )
-            .ok();
+            );
         } else {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "{} resolving package '{}' at '{}'",
-                e.name(),
+                e,
                 bstr::BStr::new(result.name),
                 bstr::BStr::new(result.url)
-            )
-            .ok();
+            );
         }
-        // msg dropped at scope exit (defer bun.default_allocator.free(msg)).
 
-        let name: &[u8] = if e == bun_core::err!("NoMatchingVersion") {
-            b"PackageVersionNotFound"
-        } else if e == bun_core::err!("DistTagNotFound") {
-            b"PackageTagNotFound"
-        } else if e == bun_core::err!("PackageManifestHTTP403") {
-            b"PackageForbidden"
-        } else if e == bun_core::err!("PackageManifestHTTP404") {
-            b"PackageNotFound"
-        } else {
-            b"PackageResolveError"
+        let name: &[u8] = match e {
+            "NoMatchingVersion" => b"PackageVersionNotFound",
+            "DistTagNotFound" => b"PackageTagNotFound",
+            "PackageManifestHTTP403" => b"PackageForbidden",
+            "PackageManifestHTTP404" => b"PackageNotFound",
+            _ => b"PackageResolveError",
         };
 
-        let error_instance = ZigString::from_bytes(&msg)
-            .with_encoding()
-            .to_error_instance(global_this);
-        if !result.url.is_empty() {
+        let error_instance = EncodedSlice::utf8(&msg).to_error_instance(global_this);
+        let put_properties = || -> JsResult<()> {
+            if !result.url.is_empty() {
+                error_instance.put(
+                    global_this,
+                    b"url",
+                    bun_string_jsc::create_utf8_for_js(global_this, result.url)?,
+                );
+            }
             error_instance.put(
                 global_this,
-                b"url",
-                ZigString::from_bytes(result.url)
-                    .with_encoding()
-                    .to_js(global_this),
+                b"name",
+                BunString::static_(name).to_js(global_this)?,
             );
-        }
-        error_instance.put(
-            global_this,
-            b"name",
-            ZigString::from_bytes(name)
-                .with_encoding()
-                .to_js(global_this),
-        );
-        error_instance.put(
-            global_this,
-            b"pkg",
-            ZigString::from_bytes(result.name)
-                .with_encoding()
-                .to_js(global_this),
-        );
-        error_instance.put(
-            global_this,
-            b"specifier",
-            ZigString::from_bytes(self.specifier())
-                .with_encoding()
-                .to_js(global_this),
-        );
-        let location = bun_ast::range_data(
-            Some(&self.parse_result.source),
-            self.parse_result.ast.import_records[import_record_id as usize].range,
-            b"",
-        )
-        .location
-        .unwrap();
-        error_instance.put(
-            global_this,
-            b"sourceURL",
-            ZigString::from_bytes(self.parse_result.source.path.text)
-                .with_encoding()
-                .to_js(global_this),
-        );
-        error_instance.put(
-            global_this,
-            b"line",
-            JSValue::js_number(location.line as f64),
-        );
-        if let Some(line_text) = location.line_text.as_deref() {
             error_instance.put(
                 global_this,
-                b"lineText",
-                ZigString::from_bytes(line_text)
-                    .with_encoding()
-                    .to_js(global_this),
+                b"pkg",
+                bun_string_jsc::create_utf8_for_js(global_this, result.name)?,
             );
-        }
-        error_instance.put(
-            global_this,
-            b"column",
-            JSValue::js_number(location.column as f64),
-        );
-        let referrer = self.referrer();
-        if !referrer.is_empty() && referrer != b"undefined" {
             error_instance.put(
                 global_this,
-                b"referrer",
-                ZigString::from_bytes(referrer)
-                    .with_encoding()
-                    .to_js(global_this),
+                b"specifier",
+                bun_string_jsc::create_utf8_for_js(global_this, self.specifier())?,
             );
+            let location = bun_ast::range_data(
+                Some(&self.parse_result.source),
+                self.parse_result.ast.import_records[import_record_id as usize].range,
+                b"",
+            )
+            .location
+            .unwrap();
+            error_instance.put(
+                global_this,
+                b"sourceURL",
+                bun_string_jsc::create_utf8_for_js(
+                    global_this,
+                    self.parse_result.source.path.text,
+                )?,
+            );
+            error_instance.put(
+                global_this,
+                b"line",
+                JSValue::js_number(location.line as f64),
+            );
+            if let Some(line_text) = location.line_text.as_deref() {
+                error_instance.put(
+                    global_this,
+                    b"lineText",
+                    bun_string_jsc::create_utf8_for_js(global_this, line_text)?,
+                );
+            }
+            error_instance.put(
+                global_this,
+                b"column",
+                JSValue::js_number(location.column as f64),
+            );
+            let referrer = self.referrer();
+            if !referrer.is_empty() && referrer != b"undefined" {
+                error_instance.put(
+                    global_this,
+                    b"referrer",
+                    bun_string_jsc::create_utf8_for_js(global_this, referrer)?,
+                );
+            }
+            Ok(())
+        };
+        // Building a property value threw (e.g. STRING_TOO_LONG): reject with
+        // the error as built so far rather than an error about the error.
+        if put_properties().is_err() {
+            let _ = global_this.clear_exception_except_termination();
         }
 
         let promise_value = self.promise.swap();
@@ -997,14 +834,12 @@ impl AsyncModule {
         self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
             bun_io::AllocatorType::Js,
         ));
-        // PORT NOTE: Zig called `this.deinit()` here; in Rust the caller
-        // (Queue::retain_mut) returns `false` and Vec drops the element,
-        // running Drop.
+        // The caller (Queue::retain_mut) returns `false` and Vec drops the
+        // element, running Drop.
         // `JSInternalPromise` is an `opaque_ffi!` ZST handle; `opaque_mut` is
         // the centralised non-null deref proof.
         let _ =
             JSInternalPromise::opaque_mut(promise).reject_as_handled(global_this, error_instance);
-        Ok(())
     }
 
     fn download_error(
@@ -1012,7 +847,7 @@ impl AsyncModule {
         vm: &mut VirtualMachine,
         import_record_id: u32,
         result: &PackageDownloadError<'_>,
-    ) -> Result<(), bun_core::Error> {
+    ) {
         // Copy the `GlobalRef` out so the borrow of `self` ends before
         // `&mut vm` / `&mut self` reborrows below; `GlobalRef::deref` is the
         // safe JSC_BORROW accessor.
@@ -1036,75 +871,67 @@ impl AsyncModule {
 
         let mut msg: Vec<u8> = Vec::new();
         let e = result.err;
-        if e == bun_core::err!("TarballHTTP400") {
-            write!(
+        if e == "TarballHTTP400" {
+            let _ = write!(
                 &mut msg,
                 "HTTP 400 downloading package '{}@{}'",
                 bstr::BStr::new(result.name),
                 resolution_fmt
-            )
-            .ok();
-        } else if e == bun_core::err!("TarballHTTP401") {
-            write!(
+            );
+        } else if e == "TarballHTTP401" {
+            let _ = write!(
                 &mut msg,
                 "HTTP 401 downloading package '{}@{}'",
                 bstr::BStr::new(result.name),
                 resolution_fmt
-            )
-            .ok();
-        } else if e == bun_core::err!("TarballHTTP402") {
-            write!(
+            );
+        } else if e == "TarballHTTP402" {
+            let _ = write!(
                 &mut msg,
                 "HTTP 402 downloading package '{}@{}'",
                 bstr::BStr::new(result.name),
                 resolution_fmt
-            )
-            .ok();
-        } else if e == bun_core::err!("TarballHTTP403") {
-            write!(
+            );
+        } else if e == "TarballHTTP403" {
+            let _ = write!(
                 &mut msg,
                 "HTTP 403 downloading package '{}@{}'",
                 bstr::BStr::new(result.name),
                 resolution_fmt
-            )
-            .ok();
-        } else if e == bun_core::err!("TarballHTTP404") {
-            write!(
+            );
+        } else if e == "TarballHTTP404" {
+            let _ = write!(
                 &mut msg,
                 "HTTP 404 downloading package '{}@{}'",
                 bstr::BStr::new(result.name),
                 resolution_fmt
-            )
-            .ok();
-        } else if e == bun_core::err!("TarballHTTP4xx") {
-            write!(
+            );
+        } else if e == "TarballHTTP4xx" {
+            let _ = write!(
                 &mut msg,
                 "HTTP 4xx downloading package '{}@{}'",
                 bstr::BStr::new(result.name),
                 resolution_fmt
-            )
-            .ok();
-        } else if e == bun_core::err!("TarballHTTP5xx") {
-            write!(
+            );
+        } else if e == "TarballHTTP5xx" {
+            let _ = write!(
                 &mut msg,
                 "HTTP 5xx downloading package '{}@{}'",
                 bstr::BStr::new(result.name),
                 resolution_fmt
-            )
-            .ok();
-        } else if e == bun_core::err!("TarballFailedToExtract") {
-            write!(
+            );
+        } else if e == "TarballFailedToExtract" {
+            let _ = write!(
                 &mut msg,
                 "Failed to extract tarball for package '{}@{}'",
                 bstr::BStr::new(result.name),
                 resolution_fmt
-            )
-            .ok();
+            );
         } else {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "{} downloading package '{}@{}'",
-                e.name(),
+                e,
                 bstr::BStr::new(result.name),
                 result.resolution.fmt(
                     vm.package_manager()
@@ -1114,102 +941,93 @@ impl AsyncModule {
                         .as_slice(),
                     bun_core::fmt::PathSep::Any,
                 )
-            )
-            .ok();
+            );
         }
-        // msg dropped at scope exit.
 
-        let name: &[u8] = if e == bun_core::err!("TarballFailedToExtract") {
-            b"PackageExtractionError"
-        } else if e == bun_core::err!("TarballHTTP403") {
-            b"TarballForbiddenError"
-        } else if e == bun_core::err!("TarballHTTP404") {
-            b"TarballNotFoundError"
-        } else {
-            b"TarballDownloadError"
+        let name: &[u8] = match e {
+            "TarballFailedToExtract" => b"PackageExtractionError",
+            "TarballHTTP403" => b"TarballForbiddenError",
+            "TarballHTTP404" => b"TarballNotFoundError",
+            _ => b"TarballDownloadError",
         };
 
-        let error_instance = ZigString::from_bytes(&msg)
-            .with_encoding()
-            .to_error_instance(global_this);
-        if !result.url.is_empty() {
+        let error_instance = EncodedSlice::utf8(&msg).to_error_instance(global_this);
+        let put_properties = || -> JsResult<()> {
+            if !result.url.is_empty() {
+                error_instance.put(
+                    global_this,
+                    b"url",
+                    bun_string_jsc::create_utf8_for_js(global_this, result.url)?,
+                );
+            }
             error_instance.put(
                 global_this,
-                b"url",
-                ZigString::from_bytes(result.url)
-                    .with_encoding()
-                    .to_js(global_this),
+                b"name",
+                BunString::static_(name).to_js(global_this)?,
             );
-        }
-        error_instance.put(
-            global_this,
-            b"name",
-            ZigString::from_bytes(name)
-                .with_encoding()
-                .to_js(global_this),
-        );
-        error_instance.put(
-            global_this,
-            b"pkg",
-            ZigString::from_bytes(result.name)
-                .with_encoding()
-                .to_js(global_this),
-        );
-        let specifier = self.specifier();
-        if !specifier.is_empty() && specifier != b"undefined" {
             error_instance.put(
                 global_this,
-                b"referrer",
-                ZigString::from_bytes(specifier)
-                    .with_encoding()
-                    .to_js(global_this),
+                b"pkg",
+                bun_string_jsc::create_utf8_for_js(global_this, result.name)?,
             );
-        }
+            let specifier = self.specifier();
+            if !specifier.is_empty() && specifier != b"undefined" {
+                error_instance.put(
+                    global_this,
+                    b"referrer",
+                    bun_string_jsc::create_utf8_for_js(global_this, specifier)?,
+                );
+            }
 
-        let location = bun_ast::range_data(
-            Some(&self.parse_result.source),
-            self.parse_result.ast.import_records[import_record_id as usize].range,
-            b"",
-        )
-        .location
-        .unwrap();
-        error_instance.put(
-            global_this,
-            b"specifier",
-            ZigString::from_bytes(
-                self.parse_result.ast.import_records[import_record_id as usize]
-                    .path
-                    .text,
+            let location = bun_ast::range_data(
+                Some(&self.parse_result.source),
+                self.parse_result.ast.import_records[import_record_id as usize].range,
+                b"",
             )
-            .with_encoding()
-            .to_js(global_this),
-        );
-        error_instance.put(
-            global_this,
-            b"sourceURL",
-            ZigString::from_bytes(self.parse_result.source.path.text)
-                .with_encoding()
-                .to_js(global_this),
-        );
-        error_instance.put(
-            global_this,
-            b"line",
-            JSValue::js_number(location.line as f64),
-        );
-        if let Some(line_text) = location.line_text.as_deref() {
+            .location
+            .unwrap();
             error_instance.put(
                 global_this,
-                b"lineText",
-                ZigString::from_bytes(line_text)
-                    .with_encoding()
-                    .to_js(global_this),
+                b"specifier",
+                bun_string_jsc::create_utf8_for_js(
+                    global_this,
+                    self.parse_result.ast.import_records[import_record_id as usize]
+                        .path
+                        .text,
+                )?,
             );
+            error_instance.put(
+                global_this,
+                b"sourceURL",
+                bun_string_jsc::create_utf8_for_js(
+                    global_this,
+                    self.parse_result.source.path.text,
+                )?,
+            );
+            error_instance.put(
+                global_this,
+                b"line",
+                JSValue::js_number(location.line as f64),
+            );
+            if let Some(line_text) = location.line_text.as_deref() {
+                error_instance.put(
+                    global_this,
+                    b"lineText",
+                    bun_string_jsc::create_utf8_for_js(global_this, line_text)?,
+                );
+            }
+            error_instance.put(
+                global_this,
+                b"column",
+                JSValue::js_number(location.column as f64),
+            );
+            Ok(())
+        };
+        // Building a property value threw (e.g. STRING_TOO_LONG): reject with
+        // the error as built so far rather than an error about the error.
+        if put_properties().is_err() {
+            let _ = global_this.clear_exception_except_termination();
         }
-        error_instance.put(
-            global_this,
-            b"column",
-            JSValue::js_number(location.column as f64),
-        );
 
         let promise_value = self.promise.swap();
         let promise = promise_value.as_internal_promise().unwrap();
@@ -1218,26 +1036,23 @@ impl AsyncModule {
         self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
             bun_io::AllocatorType::Js,
         ));
-        // PORT NOTE: Zig called `this.deinit()` here; caller drops via
-        // retain_mut → false.
+        // Caller drops via retain_mut → false.
         // `JSInternalPromise` is an `opaque_ffi!` ZST handle; `opaque_mut` is
         // the centralised non-null deref proof.
         let _ =
             JSInternalPromise::opaque_mut(promise).reject_as_handled(global_this, error_instance);
-        Ok(())
     }
 
-    pub fn resume_loading_module(
+    pub(crate) fn resume_loading_module(
         &mut self,
         log: &mut bun_ast::Log,
-    ) -> Result<ResolvedSource, bun_core::Error> {
+    ) -> crate::CrateResult<ResolvedSource> {
         bun_core::scoped_log!(
             AsyncModule,
             "resumeLoadingModule: {}",
             bstr::BStr::new(self.specifier())
         );
-        // PORT NOTE: Zig copied `parse_result` by value, mutated, wrote
-        // back. Rust takes-by-value via `mem::take` then restores below to
+        // Take `parse_result` by value via `mem::take`, then restore below, to
         // satisfy borrowck around `linker.link(&mut parse_result)` while
         // `self` is also borrowed.
         let arena = *self.parse_result.ast.parts.allocator();
@@ -1254,8 +1069,7 @@ impl AsyncModule {
         let path_text: &[u8] = unsafe { bun_ptr::detach_lifetime(self.path_text()) };
         let path = Fs::Path::init(path_text);
         let jsc_vm = VirtualMachine::get_mut_ptr();
-        // SAFETY: `jsc_vm` is the live per-thread VM (one VM per thread);
-        // raw-ptr aliasing matches the Zig `*VirtualMachine` field accesses
+        // SAFETY: `jsc_vm` is the live per-thread VM (one VM per thread)
         // (`transpiler.log`/`resolver.log`/`linker.log` are themselves raw
         // `*mut Log` aliased deliberately — see `Transpiler::set_log`).
         // `vm.log` is set unconditionally in `init` and never cleared, so the
@@ -1296,21 +1110,18 @@ impl AsyncModule {
             )?;
         }
         self.parse_result = parse_result;
-        // PORT NOTE: `print_with_source_map` consumes `ParseResult` by
+        // `print_with_source_map` consumes `ParseResult` by
         // value (it moves `ast` into `print_ast`). Hoist the post-print
-        // reads (`is_commonjs_module` / `input_fd`) above the move so we
+        // read (`is_commonjs_module`) above the move so we
         // can `mem::take` instead of cloning.
         let is_commonjs_module = self.parse_result.ast.has_commonjs_export_names
             || self.parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
-        let input_fd = self.parse_result.input_fd;
         let arena = *self.parse_result.ast.parts.allocator();
         let parse_result = core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
 
-        // PORT NOTE: `VirtualMachine.source_code_printer` is a thread-local
-        // `?*BufferPrinter` (see `SOURCE_CODE_PRINTER`); Zig dereferenced to
-        // copy by value (`var printer = source_code_printer.?.*`), reset, and
-        // wrote back in a `defer`. `BufferPrinter` is `!Clone` in Rust, so
-        // swap the buffer out instead and write it back via the `_writeback`
+        // `VirtualMachine.source_code_printer` is a thread-local
+        // `?*BufferPrinter` (see `SOURCE_CODE_PRINTER`). `BufferPrinter` is `!Clone`, so
+        // swap the buffer out and write it back via the `_writeback`
         // guard — same observable effect (the thread-local's buffer is
         // reused). Matches RuntimeTranspilerStore.rs.
         let mut printer_ptr = crate::virtual_machine::SOURCE_CODE_PRINTER
@@ -1322,7 +1133,7 @@ impl AsyncModule {
             bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
         );
         printer.ctx.reset();
-        // Zig: `defer source_code_printer.?.* = printer;` — fires at fn exit,
+        // The writeback must fire at fn exit,
         // *after* the `printer.ctx.get_written()` reads below. Declare the
         // guard immediately after `printer` so it drops last (locals drop in
         // reverse declaration order) and the buffer is still populated when
@@ -1363,57 +1174,33 @@ impl AsyncModule {
             }?;
         }
 
-        #[cfg(feature = "dump_source")]
-        crate::runtime_transpiler_store::dump_source_string(
-            // SAFETY: `jsc_vm` is the live per-thread `VirtualMachine` (BACKREF, non-null).
-            unsafe { core::ptr::NonNull::new_unchecked(jsc_vm) },
-            specifier,
-            printer.ctx.get_written(),
-        );
-        // TODO(port): Environment.dump_source mapped to cfg feature; confirm flag name.
+        // `bun_core::env::DUMP_SOURCE` is debug, non-test builds only. The previous
+        // `cfg(feature = "dump_source")` gate referenced a feature that doesn't
+        // exist, which silently compiled this call out everywhere.
+        if bun_core::env::DUMP_SOURCE {
+            crate::runtime_transpiler_store::dump_source_string(
+                // SAFETY: `jsc_vm` is the live per-thread `VirtualMachine` (BACKREF, non-null).
+                unsafe { core::ptr::NonNull::new_unchecked(jsc_vm) },
+                specifier,
+                printer.ctx.get_written(),
+            );
+        }
+
+        // No watcher registration here: `maybe_watch_file` already ran before
+        // the enqueue, and the fd the parse opened may have been closed (and
+        // the number recycled) by the transpile frame's fd guard.
 
         // SAFETY: per-thread VM.
         if unsafe { (*jsc_vm).is_watcher_enabled() } {
             // SAFETY: per-thread VM.
             let mut resolved_source = unsafe {
-                (*jsc_vm).ref_counted_resolved_source::<false>(
+                (*jsc_vm).ref_counted_resolved_source(
                     printer.ctx.get_written(),
-                    BunString::init(specifier),
+                    &BunString::from_bytes(specifier),
                     path.text,
                     None,
                 )
             };
-
-            if let Some(fd_) = input_fd {
-                if bun_paths::is_absolute(path.text)
-                    && !strings::contains(path.text, b"node_modules")
-                {
-                    // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set
-                    // when `is_watcher_enabled()`; cast recovers the
-                    // concrete type (matches VirtualMachine.rs:2301).
-                    let watcher = unsafe {
-                        &mut *(*jsc_vm)
-                            .bun_watcher
-                            .cast::<crate::hot_reloader::ImportWatcher>()
-                    };
-                    // PORT NOTE: `bun_watcher::PackageJSON` is an opaque
-                    // forward-decl of `bun_resolver::PackageJSON`;
-                    // the watcher only stores the pointer, so cast through.
-                    // SAFETY: `package_json` (when set) is a VM-lifetime
-                    // backref — outlives the watcher entry.
-                    let package_json = self
-                        .package_json
-                        .map(|p| unsafe { &*p.as_ptr().cast::<bun_watcher::PackageJSON>() });
-                    let _ = watcher.add_file::<true>(
-                        fd_,
-                        path.text,
-                        self.hash,
-                        bun_ast::Loader::from_api(self.loader),
-                        Fd::INVALID,
-                        package_json,
-                    );
-                }
-            }
 
             resolved_source.is_commonjs_module = is_commonjs_module;
 
@@ -1422,12 +1209,9 @@ impl AsyncModule {
 
         Ok(ResolvedSource {
             source_code: BunString::clone_latin1(printer.ctx.get_written()),
-            specifier: BunString::init(specifier),
-            source_url: BunString::init(path.text),
+            source_url: BunString::from_bytes(path.text),
             is_commonjs_module,
             ..Default::default()
         })
     }
 }
-
-// ported from: src/jsc/AsyncModule.zig

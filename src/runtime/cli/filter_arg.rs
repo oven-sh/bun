@@ -1,12 +1,19 @@
-use core::mem::MaybeUninit;
+use core::ptr::NonNull;
 
 use bun_ast::{self, ExprData, Log};
 use bun_core::Global;
 use bun_core::{ZStr, strings};
 use bun_glob as glob;
+use bun_install::package_manager::workspace_selection::{
+    self, Candidate, RootSelection, WorkspaceGraph,
+};
 use bun_parsers::json;
-use bun_paths::{self, PathBuffer, platform, resolve_path};
+use bun_paths::path_buffer_pool;
+use bun_paths::{PathBuffer, platform, resolve_path};
+use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 use bun_sys;
+
+use crate::cli::Command;
 
 const SKIP_LIST: &[&[u8]] = &[
     // skip hidden directories
@@ -22,7 +29,6 @@ fn glob_ignore_fn(val: &[u8]) -> bool {
         return false;
     }
 
-    // PERF(port): Zig used `inline for` over a comptime tuple — plain loop over const slice here.
     for skip in SKIP_LIST {
         if val == *skip {
             return true;
@@ -32,31 +38,27 @@ fn glob_ignore_fn(val: &[u8]) -> bool {
     false
 }
 
-// PORT NOTE: Zig `glob.GlobWalker(globIgnoreFn, glob.walk.DirEntryAccessor, false)` is a
-// comptime type-generator taking (ignore_fn, Accessor type, sentinel: bool). In Rust the
-// ignore filter is a runtime parameter on `init_with_cwd`, and `DirEntryAccessor` lives in
-// `bun_resolver` (it depends on the resolver's DirEntry cache).
+// The ignore filter is a runtime parameter on `init_with_cwd`, and
+// `DirEntryAccessor` lives in `bun_resolver` (it depends on the resolver's
+// DirEntry cache).
 type GlobWalker = glob::GlobWalker<bun_resolver::DirEntryAccessor, false>;
-// TODO(port): self-referential — Iterator borrows the GlobWalker stored alongside it in
-// `PackageFilterIterator`. Forced to `'static` here; see `init_walker` for the unsafe
-// lifetime erasure. TODO(refactor): Pin<Box<Self>> or fold walker+iter into one type.
+// Borrows the `OwnedWalker` stored next to it in `ActiveWalk`, with the lifetime erased.
 type GlobWalkerIterator = glob::walk::Iterator<'static, bun_resolver::DirEntryAccessor, false>;
 
-pub(crate) fn get_candidate_package_patterns<'a>(
+fn get_candidate_package_patterns<'a>(
     log: &mut Log,
     out_patterns: &mut Vec<Box<[u8]>>,
     workdir_: &[u8],
     root_buf: &'a mut PathBuffer,
-) -> Result<&'a [u8], bun_core::Error> {
-    // TODO(port): narrow error set
+) -> Result<&'a [u8], crate::Error> {
     bun_ast::expr::data::Store::create();
     bun_ast::stmt::data::Store::create();
     let _store_guard = bun_ast::StoreResetGuard::new();
 
     let mut workdir = workdir_;
 
-    // PORT NOTE: reshaped Zig `while (true) : (workdir = dirname(workdir) orelse break)` as a
-    // labeled loop with an inner labeled block; `continue` → `break 'body`, `break` → `break 'walk`.
+    // Labeled loop with an inner labeled block; `continue` → `break 'body`,
+    // `break` → `break 'walk`.
     'walk: loop {
         'body: {
             let mut name_buf = PathBuffer::uninit();
@@ -70,7 +72,7 @@ pub(crate) fn get_candidate_package_patterns<'a>(
             log.errors = 0;
             log.warnings = 0;
 
-            // PORT NOTE: `bun.sys.File.toSource` was MOVE_DOWN'd to `bun_ast::to_source`
+            // Note: `bun.sys.File.toSource` was MOVE_DOWN'd to `bun_ast::to_source`
             // (T1 cannot name T2 — see src/sys/File.rs:446).
             let json_source = match bun_ast::to_source(json_path, Default::default()) {
                 Err(err) => match err.get_errno() {
@@ -84,40 +86,30 @@ pub(crate) fn get_candidate_package_patterns<'a>(
             // `defer allocator.free(json_source.contents)` — deleted; `json_source` owns its
             // contents and drops at end of scope.
 
-            // PERF(port): Zig threaded `ctx.allocator` through `parsePackageJSONUTF8`; the Rust
-            // signature takes a `&Bump` arena explicitly. Nodes go through the global Store, so
-            // this only buffers transient parser scratch — fresh per-iteration is fine.
-            let bump = bun_alloc::Arena::new();
-            let json = json::parse_package_json_utf8(&json_source, log, &bump)?;
+            let parsed = json::ParsedJson::parse_package_json(&json_source, log)?;
+            let json = parsed.root;
 
             let Some(prop) = json.as_property(b"workspaces") else {
                 break 'body;
             };
 
             let json_array = match prop.expr.data {
-                ExprData::EArray(arr) => arr,
-                ExprData::EObject(obj) => {
-                    // `StoreRef::get` (0-arg) shadows `E::Object::get` under autoderef; force
-                    // `Deref` to reach the keyed lookup.
-                    if let Some(packages) = (*obj).get(b"packages") {
-                        match packages.data {
-                            ExprData::EArray(arr) => arr,
-                            _ => break 'walk,
-                        }
-                    } else {
-                        break 'walk;
-                    }
-                }
+                ExprData::EArrayJSON(arr) => arr,
+                ExprData::EObjectJSON(obj) => match (*obj).get(b"packages") {
+                    Some(bun_ast::e::JsonValue::Array(arr)) => *arr,
+                    _ => break 'walk,
+                },
                 _ => break 'walk,
             };
 
-            for expr in json_array.slice() {
-                match expr.data {
-                    ExprData::EString(pattern_expr) => {
-                        let size = pattern_expr.data.len() + b"/package.json".len();
+            for item in json_array.get().items() {
+                match item {
+                    bun_ast::e::JsonValue::String(pattern_str) => {
+                        let pattern_bytes = pattern_str.slice();
+                        let size = pattern_bytes.len() + b"/package.json".len();
                         let mut pattern = vec![0u8; size].into_boxed_slice();
-                        pattern[0..pattern_expr.data.len()].copy_from_slice(&pattern_expr.data);
-                        pattern[pattern_expr.data.len()..size].copy_from_slice(b"/package.json");
+                        pattern[0..pattern_bytes.len()].copy_from_slice(pattern_bytes);
+                        pattern[pattern_bytes.len()..size].copy_from_slice(b"/package.json");
 
                         out_patterns.push(pattern);
                     }
@@ -135,7 +127,6 @@ pub(crate) fn get_candidate_package_patterns<'a>(
             return Ok(&root_buf[0..parent_trimmed.len()]);
         }
 
-        // continue-expression of the Zig `while`
         workdir = match bun_core::dirname(workdir) {
             Some(d) => d,
             None => break 'walk,
@@ -149,243 +140,204 @@ pub(crate) fn get_candidate_package_patterns<'a>(
     Ok(&root_buf[0..root_dir.len()])
 }
 
-pub(crate) struct FilterSet {
-    // `std.mem.Allocator param` — deleted (non-AST crate; global mimalloc).
-
-    // TODO: Pattern should be
-    //  union (enum) { name: []const u32, path: []const u32, any_name: void }
-    pub filters: Vec<Pattern>,
-    pub has_name_filters: bool,
-    pub match_all: bool,
+pub(crate) struct WorkspacePackage {
+    pub(crate) package_json_path: Box<[u8]>,
+    pub(crate) dir: Box<[u8]>,
+    pub(crate) json: bun_resolver::PackageJSON,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum PatternKind {
-    Name,
-    /// THIS MEANS THE PATTERN IS ALLOCATED ON THE HEAP! FREE IT!
-    Path,
+pub(crate) struct SelectedPackages {
+    pub(crate) root_dir: Box<[u8]>,
+    pub(crate) packages: Vec<WorkspacePackage>,
 }
 
-pub struct Pattern {
-    // PERF(port): in Zig, `.name`-kind patterns borrowed the caller's filter slice and only
-    // `.path`-kind patterns were heap-allocated (see `deinit`). Here both are `Box<[u8]>` so
-    // `Drop` is uniform; revisit if filter-arg construction shows up in profiles.
-    pub pattern: Box<[u8]>,
-    pub kind: PatternKind,
-    // negate: bool = false,
-}
+/// Discovers the workspace packages under `cwd` and returns the ones `--filter` / `--workspaces` select, in discovery order.
+pub(crate) fn select_packages(
+    ctx: &Command::ContextData,
+    resolver: &mut bun_resolver::Resolver<'_>,
+    cwd: &[u8],
+) -> Result<SelectedPackages, crate::Error> {
+    let patterns: Vec<&[u8]> = if ctx.workspaces {
+        vec![b"*".as_slice()]
+    } else {
+        ctx.filters.iter().map(|f| &f[..]).collect()
+    };
 
-impl FilterSet {
-    pub(crate) fn matches(&self, path: &[u8], name: &[u8]) -> bool {
-        if self.match_all {
-            // allow empty name if there are any filters which are a relative path
-            // --filter="*" --filter="./bar" script
-            if !name.is_empty() {
-                return true;
-            }
+    let mut glob_patterns: Vec<Box<[u8]>> = Vec::new();
+    let mut root_buf = PathBuffer::uninit();
+    let root_dir: Box<[u8]> = get_candidate_package_patterns(
+        // SAFETY: `ctx.log` is the process-static `Cli::LOG_`; CLI dispatch is single-threaded and no other `&mut Log` is live.
+        unsafe { ctx.log_mut() },
+        &mut glob_patterns,
+        cwd,
+        &mut root_buf,
+    )?
+    .into();
+
+    let mut iter = PackageFilterIterator::init(&glob_patterns, &root_dir)?;
+    let mut discovered: Vec<WorkspacePackage> = Vec::new();
+    while let Some(package_json_path) = iter.next()? {
+        let dir = strings::without_trailing_slash(resolve_path::dirname::<platform::Auto>(
+            &package_json_path,
+        ));
+        if ctx.workspaces && dir == &*root_dir {
+            continue;
         }
-
-        if self.has_name_filters {
-            return self.matches_path_name(path, name);
-        }
-
-        self.matches_path(path)
-    }
-
-    pub(crate) fn init<F: AsRef<[u8]>>(
-        filters: &[F],
-        cwd_: &[u8],
-    ) -> Result<FilterSet, bun_core::Error> {
-        // TODO(port): narrow error set
-        let cwd = cwd_;
-
-        let mut buf = PathBuffer::uninit();
-        // TODO fixed buffer allocator with fallback?
-        let mut list: Vec<Pattern> = Vec::with_capacity(filters.len());
-        let mut self_ = FilterSet {
-            filters: Vec::new(),
-            has_name_filters: false,
-            match_all: false,
+        let Some(json) = bun_resolver::PackageJSON::parse::<{ IncludeDependencies::Main }>(
+            resolver,
+            dir,
+            bun_sys::Fd::invalid(),
+            None,
+            IncludeScripts::IncludeScripts,
+        ) else {
+            bun_core::warn!(
+                "Failed to read {}, skipping this workspace package\n",
+                bun_core::fmt::quote(&*package_json_path),
+            );
+            continue;
         };
-        for filter_utf8_ in filters {
-            let filter_utf8_: &[u8] = filter_utf8_.as_ref();
-            if filter_utf8_ == b"*" || filter_utf8_ == b"**" {
-                self_.match_all = true;
-                continue;
-            }
-
-            let filter_utf8 = filter_utf8_;
-            let is_path = !filter_utf8.is_empty() && filter_utf8[0] == b'.';
-            if is_path {
-                let parts: [&[u8]; 1] = [filter_utf8];
-                let joined =
-                    resolve_path::join_abs_string_buf::<platform::Loose>(cwd, &mut buf[..], &parts);
-                let mut filter_utf8_temp = Box::<[u8]>::from(joined);
-                bun_paths::slashes_to_posix_in_place(&mut filter_utf8_temp[..]);
-                list.push(Pattern {
-                    pattern: filter_utf8_temp,
-                    kind: PatternKind::Path,
-                });
-            } else {
-                self_.has_name_filters = true;
-                list.push(Pattern {
-                    // PERF(port): Zig borrowed `filter_utf8_` here; we dupe to keep `Pattern` owning.
-                    pattern: Box::<[u8]>::from(filter_utf8),
-                    kind: PatternKind::Name,
-                });
-            }
-        }
-        self_.filters = list;
-        Ok(self_)
+        discovered.push(WorkspacePackage {
+            dir: dir.into(),
+            package_json_path,
+            json,
+        });
     }
 
-    // `pub fn deinit` — deleted: `Vec<Pattern>` drops each `Box<[u8]>` automatically.
-    // The Zig conditionally freed only `.path`-kind patterns; see PERF note on `Pattern.pattern`.
+    let mut path_buf = path_buffer_pool::get();
+    let posix_dirs: Vec<Box<[u8]>> = discovered
+        .iter()
+        .map(|p| {
+            strings::without_trailing_slash(resolve_path::join_abs_string_buf::<platform::Posix>(
+                &p.dir,
+                &mut path_buf.0,
+                &[b".".as_slice()],
+            ))
+            .into()
+        })
+        .collect();
+    drop(path_buf);
 
-    pub(crate) fn matches_path(&self, path: &[u8]) -> bool {
-        for filter in &self.filters {
-            if glob::r#match(&filter.pattern, path).matches() {
-                return true;
-            }
-        }
-        false
-    }
+    let candidates: Vec<Candidate<'_>> = discovered
+        .iter()
+        .zip(&posix_dirs)
+        .map(|(p, dir)| Candidate {
+            name: &p.json.name,
+            abs_posix_dir: dir,
+            is_root: false,
+        })
+        .collect();
 
-    pub(crate) fn matches_path_name(&self, path: &[u8], name: &[u8]) -> bool {
-        for filter in &self.filters {
-            let target = match filter.kind {
-                PatternKind::Name => name,
-                PatternKind::Path => path,
-            };
-            if glob::r#match(&filter.pattern, target).matches() {
-                return true;
-            }
-        }
-        false
+    let graph: Option<WorkspaceGraph> =
+        workspace_selection::first_relational(&patterns).map(|_| {
+            let names: Vec<&[u8]> = discovered.iter().map(|p| &p.json.name[..]).collect();
+            WorkspaceGraph::from_dependency_names(&names, |i| {
+                let deps = &discovered[i].json.dependencies;
+                let buf = deps.source_buf;
+                deps.map.keys().iter().map(move |k| k.slice(buf))
+            })
+        });
+
+    let selection = workspace_selection::select(
+        &patterns,
+        cwd,
+        &candidates,
+        graph.as_ref(),
+        RootSelection::Implicit,
+    );
+    workspace_selection::warn_unmatched(&patterns, &selection.unmatched_patterns);
+    let packages = discovered
+        .into_iter()
+        .enumerate()
+        .filter(|&(i, _)| selection.selected.is_set(i))
+        .map(|(_, p)| p)
+        .collect();
+    Ok(SelectedPackages { root_dir, packages })
+}
+
+// Heap-allocated so the walker keeps its address while the `PackageFilterIterator` moves. Held as
+// a `NonNull` rather than a `Box` because moving a `Box` asserts unique access, which the
+// `GlobWalkerIterator` borrowing the walker would violate.
+struct OwnedWalker(NonNull<GlobWalker>);
+
+impl Drop for OwnedWalker {
+    fn drop(&mut self) {
+        // SAFETY: allocated by `heap::alloc_nn` in `start_walk` and freed only here; the
+        // `GlobWalkerIterator` borrowing it is always dropped first (see `ActiveWalk`).
+        unsafe { bun_core::heap::destroy(self.0.as_ptr()) };
     }
 }
 
-pub(crate) struct PackageFilterIterator {
-    // `patterns` and `root_dir` borrow from the caller (Zig: `[]const u8`).
-    // Callers keep them alive for the iterator's lifetime — `RawSlice`
-    // invariant. TODO(refactor): thread a `<'a>` lifetime on the struct instead.
-    patterns: bun_ptr::RawSlice<Box<[u8]>>,
+// Field order is drop order: `iter` borrows `_walker`, so it must go first.
+struct ActiveWalk {
+    iter: GlobWalkerIterator,
+    _walker: OwnedWalker,
+}
+
+struct PackageFilterIterator<'a> {
+    patterns: &'a [Box<[u8]>],
     pattern_idx: usize,
-    root_dir: bun_ptr::RawSlice<u8>,
-
-    walker: MaybeUninit<GlobWalker>,
-    iter: MaybeUninit<GlobWalkerIterator>,
-    valid: bool,
-    // `std.mem.Allocator param` — deleted (non-AST crate).
+    root_dir: &'a [u8],
+    /// The walk for `patterns[pattern_idx]`; `None` until `next` starts it.
+    active: Option<ActiveWalk>,
 }
 
-impl PackageFilterIterator {
-    pub(crate) fn init(
-        patterns: &[Box<[u8]>],
-        root_dir: &[u8],
-    ) -> Result<PackageFilterIterator, bun_core::Error> {
-        // TODO(port): narrow error set (Zig signature was `!PackageFilterIterator` but body is infallible)
+impl<'a> PackageFilterIterator<'a> {
+    fn init(
+        patterns: &'a [Box<[u8]>],
+        root_dir: &'a [u8],
+    ) -> Result<PackageFilterIterator<'a>, crate::Error> {
         Ok(PackageFilterIterator {
-            // Caller keeps `patterns`/`root_dir` alive for the iterator's lifetime — `RawSlice` invariant.
-            patterns: bun_ptr::RawSlice::new(patterns),
+            patterns,
             pattern_idx: 0,
-            root_dir: bun_ptr::RawSlice::new(root_dir),
-            walker: MaybeUninit::uninit(),
-            iter: MaybeUninit::uninit(),
-            valid: false,
+            root_dir,
+            active: None,
         })
     }
 
-    fn walker_next(&mut self) -> Result<Option<glob::walk::MatchedPath>, bun_core::Error> {
-        // TODO(port): narrow error set
-        loop {
-            // SAFETY: `valid == true` (caller invariant) so `iter` is initialized.
-            let iter = unsafe { self.iter.assume_init_mut() };
-            match iter.next()? {
-                Err(err) => {
-                    bun_core::pretty_errorln!("Error: {}", err);
-                    continue;
-                }
-                Ok(path) => {
-                    return Ok(path);
-                }
-            }
-        }
-    }
-
-    fn init_walker(&mut self) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    fn start_walk(&self) -> Result<ActiveWalk, crate::Error> {
         // pattern_idx < patterns.len() checked by caller.
-        let pattern: &[u8] = &self.patterns.slice()[self.pattern_idx];
-        // PERF(port): Zig created an `ArenaAllocator` here and handed it to the walker (which takes
-        // ownership). bun_glob's Rust API copies `pattern`/`cwd` internally.
-        let cwd: &[u8] = self.root_dir.slice();
-        // `try (try ...).unwrap()`: outer `?` is the Zig `!`, inner converts `Maybe(Self)` to `!Self`.
-        let walker = GlobWalker::init_with_cwd(
+        let pattern: &[u8] = &self.patterns[self.pattern_idx];
+        // bun_glob copies `pattern`/`cwd` internally.
+        // outer `?` propagates the error, inner converts `Maybe(Self)` to a Result.
+        let walker = OwnedWalker(bun_core::heap::alloc_nn(GlobWalker::init_with_cwd(
             pattern,
-            cwd,
+            self.root_dir,
             true,
             true,
             false,
             true,
             true,
             Some(glob_ignore_fn),
-        )??;
-        self.walker.write(walker);
-        // TODO(port): self-referential — `iter.walker` borrows `self.walker`. This is unsound
-        // if `PackageFilterIterator` moves after `init_walker`. TODO(refactor): Pin<Box<Self>> or
-        // fold walker+iter into a single bun_glob type. Erase the lifetime to `'static` for now.
-        // SAFETY: `init_with_cwd` just initialized `self.walker` above; lifetime erased per TODO.
-        let walker_ref =
-            unsafe { &mut *std::ptr::from_mut::<GlobWalker>(self.walker.assume_init_mut()) };
-        self.iter.write(glob::walk::Iterator::new(walker_ref));
-        // SAFETY: just wrote `iter`.
-        unsafe { self.iter.assume_init_mut() }.init()??;
-        Ok(())
+        )??));
+        // SAFETY: `walker` does not touch the allocation until it frees it, and `iter` is dropped
+        // before that on every path (as the later local here, as the earlier field of `ActiveWalk`
+        // afterwards), so this is the only access to the walker while the erased borrow is live.
+        let mut iter: GlobWalkerIterator =
+            glob::walk::Iterator::new(unsafe { &mut *walker.0.as_ptr() });
+        iter.init()??;
+        Ok(ActiveWalk {
+            iter,
+            _walker: walker,
+        })
     }
 
-    fn deinit_walker(&mut self) {
-        // SAFETY: `valid == true` (caller invariant) so both are initialized.
-        // Drop iter first (it borrows walker).
-        unsafe {
-            self.iter.assume_init_drop();
-            self.walker.assume_init_drop();
-        }
-    }
-
-    pub(crate) fn next(&mut self) -> Result<Option<glob::walk::MatchedPath>, bun_core::Error> {
-        // TODO(port): narrow error set
+    fn next(&mut self) -> Result<Option<glob::walk::MatchedPath>, crate::Error> {
         loop {
-            if !self.valid {
-                // Raw slice pointer `len()` reads only metadata — no deref/autoref needed.
-                let patterns_len = self.patterns.len();
-                if self.pattern_idx < patterns_len {
-                    self.init_walker()?;
-                    self.valid = true;
-                } else {
+            let Some(active) = &mut self.active else {
+                if self.pattern_idx >= self.patterns.len() {
                     return Ok(None);
                 }
-            }
-            // PORT NOTE: reshaped for borrowck — Zig captured `path` from `walkerNext` then
-            // returned it; here we must end the `&mut self` borrow before re-borrowing on the
-            // else branch. We rely on NLL to make this work; if it doesn't, restructure.
-            if let Some(path) = self.walker_next()? {
-                return Ok(Some(path));
-            } else {
-                self.valid = false;
-                self.pattern_idx += 1;
-                self.deinit_walker();
+                self.active = Some(self.start_walk()?);
+                continue;
+            };
+            match active.iter.next()? {
+                Ok(Some(path)) => return Ok(Some(path)),
+                Ok(None) => {
+                    self.active = None;
+                    self.pattern_idx += 1;
+                }
+                Err(err) => bun_core::pretty_errorln!("Error: {}", err),
             }
         }
     }
 }
-
-impl Drop for PackageFilterIterator {
-    fn drop(&mut self) {
-        if self.valid {
-            self.deinit_walker();
-        }
-    }
-}
-
-// ported from: src/cli/filter_arg.zig

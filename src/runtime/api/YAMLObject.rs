@@ -4,12 +4,12 @@ use core::ffi::c_void;
 use bun_ast::{Expr, expr::Data as ExprData};
 use bun_collections::{HashMap, StringHashMap};
 use bun_core::StackCheck;
-use bun_core::{OwnedString, String as BunString};
+use bun_core::String as BunString;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
     JsError, JsResult, MarkedArgumentBuffer, wtf,
 };
-use bun_parsers::yaml::{YAML, YamlParseError};
+use bun_parsers::yaml::{CyclicAliases, YAML, YamlParseError};
 
 pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
     jsc::create_host_function_object(
@@ -22,7 +22,7 @@ pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
     let [value, replacer, space_value] = call_frame.arguments_as_array::<3>();
 
     value.ensure_still_alive();
@@ -39,28 +39,18 @@ pub(crate) fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsRe
 
     let mut stringifier = Stringifier::init(global, space_value)?;
 
-    if let Err(err) = stringifier.find_anchors_and_aliases(global, value, ValueOrigin::Root) {
-        return match err {
-            StringifyError::OutOfMemory => Err(JsError::OutOfMemory),
-            StringifyError::JsError => Err(JsError::Thrown),
-            StringifyError::JsTerminated => Err(JsError::Terminated),
-            StringifyError::StackOverflow => Err(global.throw_stack_overflow()),
-        };
-    }
+    stringifier
+        .find_anchors_and_aliases(global, value, ValueOrigin::Root)
+        .map_err(|err| err.to_js_error(global))?;
 
-    if let Err(err) = stringifier.stringify(global, value) {
-        return match err {
-            StringifyError::OutOfMemory => Err(JsError::OutOfMemory),
-            StringifyError::JsError => Err(JsError::Thrown),
-            StringifyError::JsTerminated => Err(JsError::Terminated),
-            StringifyError::StackOverflow => Err(global.throw_stack_overflow()),
-        };
-    }
+    stringifier
+        .stringify(global, value)
+        .map_err(|err| err.to_js_error(global))?;
 
     stringifier.builder.to_string(global)
 }
 
-pub(crate) struct Stringifier {
+struct Stringifier {
     stack_check: StackCheck,
     builder: wtf::StringBuilder,
     indent: usize,
@@ -72,16 +62,14 @@ pub(crate) struct Stringifier {
     space: Space,
 }
 
-pub(crate) enum Space {
+enum Space {
     Minified,
     Number(u32),
-    /// +1 WTF ref owned for the lifetime of the `Stringifier` (Zig:
-    /// `Space.deinit() → str.deref()`).
-    Str(OwnedString),
+    Str(bun_core::String),
 }
 
 impl Space {
-    pub(crate) fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
+    fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
         let space = space_value.unwrap_boxed_primitive(global)?;
         if space.is_number() {
             // Clamp on the float to match the spec's min(10, ToIntegerOrInfinity(space)).
@@ -95,7 +83,7 @@ impl Space {
         }
 
         if space.is_string() {
-            let str = OwnedString::new(space.to_bun_string(global)?);
+            let str = space.to_bun_string(global)?;
             if str.length() == 0 {
                 return Ok(Space::Minified);
             }
@@ -114,10 +102,9 @@ pub(crate) struct AnchorAlias {
 
 impl Default for AnchorAlias {
     fn default() -> Self {
-        // PORT NOTE: `HashMap::get_or_put` requires `V: Default` to fill the
-        // freshly-inserted slot before the caller overwrites `*value_ptr`. Zig
-        // left it `undefined`; this is the closest legal Rust equivalent and is
-        // immediately overwritten by the caller (see `find_anchors_and_aliases`).
+        // Exists only because `HashMap::get_or_put` requires `V: Default` to
+        // fill the freshly-inserted slot; the value is immediately overwritten
+        // by the caller (see `find_anchors_and_aliases`).
         AnchorAlias {
             anchored: false,
             used: false,
@@ -127,7 +114,7 @@ impl Default for AnchorAlias {
 }
 
 impl AnchorAlias {
-    pub(crate) fn init(origin: ValueOrigin) -> AnchorAlias {
+    fn init(origin: ValueOrigin<'_>) -> AnchorAlias {
         AnchorAlias {
             anchored: false,
             used: false,
@@ -135,7 +122,7 @@ impl AnchorAlias {
                 ValueOrigin::Root => AnchorAliasName::Root,
                 ValueOrigin::ArrayItem => AnchorAliasName::ArrayItem(0),
                 ValueOrigin::PropValue(prop_name) => AnchorAliasName::PropValue {
-                    prop_name,
+                    prop_name: (*prop_name).clone(),
                     counter: 0,
                 },
             },
@@ -155,10 +142,10 @@ pub(crate) enum AnchorAliasName {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum ValueOrigin {
+pub(crate) enum ValueOrigin<'a> {
     Root,
     ArrayItem,
-    PropValue(BunString),
+    PropValue(&'a BunString),
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
@@ -167,8 +154,6 @@ pub(crate) enum StringifyError {
     OutOfMemory,
     #[error("JSError")]
     JsError,
-    #[error("JSTerminated")]
-    JsTerminated,
     #[error("StackOverflow")]
     StackOverflow,
 }
@@ -177,8 +162,21 @@ impl From<JsError> for StringifyError {
     fn from(e: JsError) -> Self {
         match e {
             JsError::OutOfMemory => StringifyError::OutOfMemory,
-            JsError::Thrown => StringifyError::JsError,
-            JsError::Terminated => StringifyError::JsTerminated,
+            JsError::Thrown | JsError::Terminated => StringifyError::JsError,
+        }
+    }
+}
+
+impl StringifyError {
+    /// `OutOfMemory` and `JsError` are already JS-shaped (the host-fn wrapper
+    /// throws the former, the latter's exception is pending); only
+    /// `StackOverflow` still has to be thrown here.
+    #[cold]
+    fn to_js_error(self, global: &JSGlobalObject) -> JsError {
+        match self {
+            StringifyError::OutOfMemory => JsError::OutOfMemory,
+            StringifyError::JsError => JsError::Thrown,
+            StringifyError::StackOverflow => global.throw_stack_overflow(),
         }
     }
 }
@@ -186,7 +184,7 @@ impl From<JsError> for StringifyError {
 bun_core::oom_from_alloc!(StringifyError);
 
 impl Stringifier {
-    pub(crate) fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
+    fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
         let mut prop_names: StringHashMap<usize> = StringHashMap::default();
         // always rename anchors named "root" to avoid collision with
         // root anchor/alias
@@ -203,14 +201,11 @@ impl Stringifier {
         })
     }
 
-    // deinit: all fields have Drop (`space: Space::Str` holds an
-    // `OwnedString`); no explicit impl needed.
-
-    pub(crate) fn find_anchors_and_aliases(
+    fn find_anchors_and_aliases(
         &mut self,
         global: &JSGlobalObject,
         value: JSValue,
-        origin: ValueOrigin,
+        origin: ValueOrigin<'_>,
     ) -> Result<(), StringifyError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(StringifyError::StackOverflow);
@@ -240,7 +235,6 @@ impl Stringifier {
             return Ok(());
         }
 
-        // Zig: `bun.assertWithLocation(cond, @src())` gated on `bun.Environment.ci_assert`.
         debug_assert!(unwrapped.is_object());
 
         let object_entry = self.known_collections.get_or_put(unwrapped)?;
@@ -298,7 +292,7 @@ impl Stringifier {
         }
 
         // const generics: <SKIP_EMPTY_NAME, INCLUDE_VALUE>
-        let mut iter = JSPropertyIterator::init(
+        let iter = JSPropertyIterator::init(
             global,
             unwrapped.to_object(global)?,
             JSPropertyIteratorOptions {
@@ -308,26 +302,30 @@ impl Stringifier {
             },
         )?;
 
-        while let Some(prop_name) = iter.next()? {
-            if iter.value.is_undefined() || iter.value.is_symbol() || iter.value.is_function() {
+        while let Some((prop_name, value)) = iter.next()? {
+            if value.is_undefined() || value.is_symbol() || value.is_function() {
                 continue;
             }
-            self.find_anchors_and_aliases(global, iter.value, ValueOrigin::PropValue(prop_name))?;
+            self.find_anchors_and_aliases(global, value, ValueOrigin::PropValue(&prop_name))?;
         }
 
         Ok(())
     }
 
-    pub(crate) fn stringify(
+    fn stringify(&mut self, global: &JSGlobalObject, value: JSValue) -> Result<(), StringifyError> {
+        let unwrapped = value.unwrap_boxed_primitive(global)?;
+        self.stringify_unwrapped(global, unwrapped)
+    }
+
+    /// `unwrapped` has been through `unwrap_boxed_primitive`.
+    fn stringify_unwrapped(
         &mut self,
         global: &JSGlobalObject,
-        value: JSValue,
+        unwrapped: JSValue,
     ) -> Result<(), StringifyError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(StringifyError::StackOverflow);
         }
-
-        let unwrapped = value.unwrap_boxed_primitive(global)?;
 
         if unwrapped.is_null() {
             self.builder.append_latin1(b"null");
@@ -375,12 +373,11 @@ impl Stringifier {
         }
 
         if unwrapped.is_string() {
-            let value_str = OwnedString::new(unwrapped.to_bun_string(global)?);
+            let value_str = unwrapped.to_bun_string(global)?;
             self.append_string(&value_str);
             return Ok(());
         }
 
-        // Zig: `bun.assertWithLocation(cond, @src())` gated on `bun.Environment.ci_assert`.
         debug_assert!(unwrapped.is_object());
 
         let has_anchor: Option<&mut AnchorAlias> = 'has_anchor: {
@@ -412,7 +409,7 @@ impl Stringifier {
                         self.builder.append_latin1(b"value");
                         self.builder.append_usize(*counter);
                     } else {
-                        self.builder.append_string(*prop_name);
+                        self.builder.append_string(prop_name);
                         if *counter != 0 {
                             self.builder.append_usize(*counter);
                         }
@@ -424,7 +421,8 @@ impl Stringifier {
                 return Ok(());
             }
 
-            // PORT NOTE: reshaped for borrowck — set anchored before newline()
+            // `anchored` is set before `newline()` (the order is irrelevant to
+            // output; doing it here releases the `anchor` borrow first).
             anchor.anchored = true;
             match self.space {
                 Space::Minified => {
@@ -491,7 +489,7 @@ impl Stringifier {
         }
 
         // const generics: <SKIP_EMPTY_NAME, INCLUDE_VALUE>
-        let mut iter = JSPropertyIterator::init(
+        let iter = JSPropertyIterator::init(
             global,
             unwrapped.to_object(global)?,
             JSPropertyIteratorOptions {
@@ -510,11 +508,8 @@ impl Stringifier {
             Space::Minified => {
                 self.builder.append_lchar(b'{');
                 let mut first = true;
-                while let Some(prop_name) = iter.next()? {
-                    if iter.value.is_undefined()
-                        || iter.value.is_symbol()
-                        || iter.value.is_function()
-                    {
+                while let Some((prop_name, value)) = iter.next()? {
+                    if value.is_undefined() || value.is_symbol() || value.is_function() {
                         continue;
                     }
 
@@ -526,7 +521,7 @@ impl Stringifier {
                     self.append_string(&prop_name);
                     self.builder.append_latin1(b": ");
 
-                    self.stringify(global, iter.value)?;
+                    self.stringify(global, value)?;
                 }
                 self.builder.append_lchar(b'}');
             }
@@ -534,11 +529,8 @@ impl Stringifier {
                 self.builder.ensure_unused_capacity(iter.len * b": ".len());
 
                 let mut first = true;
-                while let Some(prop_name) = iter.next()? {
-                    if iter.value.is_undefined()
-                        || iter.value.is_symbol()
-                        || iter.value.is_function()
-                    {
+                while let Some((prop_name, value)) = iter.next()? {
+                    if value.is_undefined() || value.is_symbol() || value.is_function() {
                         continue;
                     }
 
@@ -552,11 +544,12 @@ impl Stringifier {
 
                     self.indent += 1;
 
-                    if prop_value_needs_newline(iter.value) {
+                    let prop_value = value.unwrap_boxed_primitive(global)?;
+                    if prop_value_needs_newline(prop_value) {
                         self.newline();
                     }
 
-                    self.stringify(global, iter.value)?;
+                    self.stringify_unwrapped(global, prop_value)?;
                     self.indent -= 1;
                 }
                 if first {
@@ -585,16 +578,12 @@ impl Stringifier {
             Space::Str(space_str) => {
                 self.builder.append_lchar(b'\n');
 
-                let clamped: BunString = if space_str.length() > 10 {
-                    space_str.substring_with_len(0, 10)
-                } else {
-                    **space_str
-                };
+                let clamped = space_str.trunc(10);
 
                 self.builder
                     .ensure_unused_capacity(indent_count * clamped.length());
                 for _ in 0..indent_count {
-                    self.builder.append_string(clamped);
+                    self.builder.append_string(&clamped);
                 }
             }
         }
@@ -644,16 +633,16 @@ impl Stringifier {
                 0x7f => self.builder.append_latin1(b"\\x7f"), // delete
                 0x85 => self.builder.append_latin1(b"\\N"),  // next line
                 0xa0 => self.builder.append_latin1(b"\\_"),  // non-breaking space
-                0xa8 => self.builder.append_latin1(b"\\L"),  // line separator
-                0xa9 => self.builder.append_latin1(b"\\P"),  // paragraph separator
+                0x2028 => self.builder.append_latin1(b"\\L"), // line separator
+                0x2029 => self.builder.append_latin1(b"\\P"), // paragraph separator
 
                 0x20..=0x21
                 | 0x23..=0x5b
                 | 0x5d..=0x7e
                 | 0x80..=0x84
                 | 0x86..=0x9f
-                | 0xa1..=0xa7
-                | 0xaa..=u16::MAX => self.builder.append_uchar(c),
+                | 0xa1..=0x2027
+                | 0x202a..=u16::MAX => self.builder.append_uchar(c),
             }
         }
 
@@ -665,11 +654,11 @@ impl Stringifier {
             self.append_double_quoted_string(str);
             return;
         }
-        self.builder.append_string(*str);
+        self.builder.append_string(str);
     }
 }
 
-/// Does this object property value need a newline? True for arrays and objects.
+/// Does this (unwrapped) object property value need a newline? True for arrays and objects.
 fn prop_value_needs_newline(value: JSValue) -> bool {
     !value.is_number() && !value.is_boolean() && !value.is_null() && !value.is_string()
 }
@@ -779,7 +768,7 @@ fn string_needs_quotes(str: &BunString) -> bool {
     ];
 
     for keyword in KEYWORDS {
-        if str.eql_comptime(keyword) {
+        if str.eq_ascii(keyword) {
             return true;
         }
     }
@@ -886,8 +875,8 @@ fn string_needs_quotes(str: &BunString) -> bool {
             | 0x7f
             | 0x85
             | 0xa0
-            | 0xa8
-            | 0xa9 => return true,
+            | 0x2028
+            | 0x2029 => return true,
 
             _ => {
                 i += 1;
@@ -900,16 +889,14 @@ fn string_needs_quotes(str: &BunString) -> bool {
 
 /// Returns true when `str` would be parsed back as a number by `YAML.parse`.
 ///
-/// This mirrors the rules in `src/interchange/yaml.zig`'s `tryResolveNumber`:
-/// - Optional leading sign, optionally followed by `.inf`/`.Inf`/`.INF` for signed infinity.
-/// - Otherwise a numeric mantissa: digits/`.`/`e`/`E`/hex letters, plus additional `+`/`-`
-///   (the parser accepts any number of `+` after the leading sign as long as no `x` was
-///   seen, and at most one additional `-`).
-/// - `0x` / `0X` → hex digits; `0o` / `0O` → octal digits.
-/// - Additionally, `wtf.parseDouble` is a prefix parser, so a leading numeric prefix is
-///   enough for `YAML.parse` to resolve a number — e.g. `"1+5"` round-trips to `1`.
-///   We err on the side of quoting when the parser's scanner would accept the full token
-///   as `valid`.
+/// This mirrors the rules in `src/parsers/yaml.rs`'s `try_resolve_number` /
+/// `is_core_schema_number`:
+/// - Optional leading sign, optionally followed by `.inf`/`.Inf`/`.INF`.
+/// - Otherwise either an integer (`[0-9]+` / `0x…` / `0o…`) or a float
+///   matching §10.2.1.4 `[-+]? ( . [0-9]+ | [0-9]+ ( . [0-9]* )? ) ([eE][-+]?[0-9]+)?`.
+///   The parser-side gate now rejects non-conforming float-like tokens
+///   (e.g. `"1+5"`, `"1e"`, `"."`) so this mirror should err on the side of
+///   *quoting* whenever a token *might* parse as a number.
 fn string_is_number(str: &BunString) -> bool {
     let len = str.length();
     if len == 0 {
@@ -1033,16 +1020,18 @@ fn is_inf_suffix(str: &BunString, i: usize) -> bool {
 }
 
 #[bun_jsc::host_fn]
-pub fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-    // reject_nullish=false preserves YAML's coerce-undefined-to-"undefined" behavior.
+pub(crate) fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    // `NullishInput::ToString` preserves YAML's coerce-undefined-to-"undefined" behavior.
     super::with_text_format_source(
         global,
         call_frame,
         b"input.yaml",
-        true,
-        false,
+        super::BlobOrBufferInput::Bytes,
+        super::NullishInput::ToString,
         |arena, log, source| {
-            let root = match YAML::parse(source, log, arena) {
+            // `ParserCtx::to_js` materializes each `E::Array`/`E::Object`
+            // once by pointer identity, so a cyclic graph is fine here.
+            let root = match YAML::parse(source, log, arena, CyclicAliases::Allow) {
                 Ok(root) => root,
                 Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
                 Err(YamlParseError::StackOverflow) => return Err(global.throw_stack_overflow()),
@@ -1075,7 +1064,7 @@ pub fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValu
     )
 }
 
-pub(crate) struct ParserCtx<'a> {
+struct ParserCtx<'a> {
     seen_objects: HashMap<*const c_void, JSValue>,
     stack_check: StackCheck,
 
@@ -1091,8 +1080,6 @@ pub(crate) enum ToJsError {
     OutOfMemory,
     #[error("JSError")]
     JsError,
-    #[error("JSTerminated")]
-    JsTerminated,
     #[error("StackOverflow")]
     StackOverflow,
 }
@@ -1101,8 +1088,7 @@ impl From<JsError> for ToJsError {
     fn from(e: JsError) -> Self {
         match e {
             JsError::OutOfMemory => ToJsError::OutOfMemory,
-            JsError::Thrown => ToJsError::JsError,
-            JsError::Terminated => ToJsError::JsTerminated,
+            JsError::Thrown | JsError::Terminated => ToJsError::JsError,
         }
     }
 }
@@ -1115,12 +1101,10 @@ impl From<bun_ast::ToJSError> for ToJsError {
         match e {
             Up::OutOfMemory => ToJsError::OutOfMemory,
             Up::JSError => ToJsError::JsError,
-            Up::JSTerminated => ToJsError::JsTerminated,
-            // `value_string_to_js` never yields the macro/identifier variants
-            // (those come from the full `data_to_js` walker); map defensively.
-            Up::CannotConvertArgumentTypeToJS
-            | Up::CannotConvertIdentifierToJS
-            | Up::MacroError => ToJsError::JsError,
+            // `value_string_to_js` never yields these; map defensively.
+            Up::CannotConvertArgumentTypeToJS | Up::CannotConvertIdentifierToJS => {
+                ToJsError::JsError
+            }
         }
     }
 }
@@ -1138,7 +1122,7 @@ impl<'a> ParserCtx<'a> {
                 ctx.result = ctx.global.throw_out_of_memory_value();
                 return;
             }
-            Err(ToJsError::JsError) | Err(ToJsError::JsTerminated) => {
+            Err(ToJsError::JsError) => {
                 ctx.result = JSValue::ZERO;
                 return;
             }
@@ -1150,18 +1134,14 @@ impl<'a> ParserCtx<'a> {
         };
     }
 
-    pub(crate) fn to_js(
-        &mut self,
-        args: &mut MarkedArgumentBuffer,
-        expr: Expr,
-    ) -> Result<JSValue, ToJsError> {
+    fn to_js(&mut self, args: &mut MarkedArgumentBuffer, expr: Expr) -> Result<JSValue, ToJsError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(ToJsError::StackOverflow);
         }
         match expr.data {
             ExprData::ENull(_) => Ok(JSValue::NULL),
             ExprData::EBoolean(boolean) => Ok(JSValue::from(boolean.value)),
-            ExprData::ENumber(number) => Ok(JSValue::js_number(number.value)),
+            ExprData::ENumber(number) => Ok(JSValue::js_number(number.value())),
             ExprData::EString(str) => Ok(bun_js_parser_jsc::value_string_to_js(
                 str.get(),
                 self.global,
@@ -1207,7 +1187,7 @@ impl<'a> ParserCtx<'a> {
                     let key = self.to_js(args, key_expr)?;
                     let value = self.to_js(args, value_expr)?;
 
-                    let key_str = OwnedString::new(key.to_bun_string(self.global)?);
+                    let key_str = key.to_bun_string(self.global)?;
                     obj.put_may_be_index(self.global, &key_str, value)?;
                 }
 
@@ -1220,5 +1200,3 @@ impl<'a> ParserCtx<'a> {
         }
     }
 }
-
-// ported from: src/runtime/api/YAMLObject.zig

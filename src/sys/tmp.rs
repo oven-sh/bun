@@ -1,6 +1,6 @@
 use bun_core::ZStr;
 
-use crate::{E, ErrorCase, Fd, FdExt, O, Tag};
+use crate::{E, ErrorCase, Fd, FdExt, Mode, O, Tag};
 
 // O_TMPFILE doesn't seem to work very well.
 const ALLOW_TMPFILE: bool = false;
@@ -8,17 +8,23 @@ const ALLOW_TMPFILE: bool = false;
 // To be used with files
 // not folders!
 pub struct Tmpfile<'a> {
-    pub destination_dir: Fd,
-    // BORROW_PARAM (Tmpfile.zig:5): caller-supplied tmp name, valid for the
-    // lifetime of the Tmpfile.
-    pub tmpfilename: &'a ZStr,
+    destination_dir: Fd,
+    // Caller-supplied tmp name, valid for the lifetime of the Tmpfile.
+    tmpfilename: &'a ZStr,
     pub fd: Fd,
     pub using_tmpfile: bool,
 }
 
 impl<'a> Tmpfile<'a> {
     pub fn create(destination_dir: Fd, tmpfilename: &'a ZStr) -> crate::Result<Tmpfile<'a>> {
-        let perm = 0o644;
+        Self::create_with_mode(destination_dir, tmpfilename, 0o644)
+    }
+
+    pub fn create_with_mode(
+        destination_dir: Fd,
+        tmpfilename: &'a ZStr,
+        perm: Mode,
+    ) -> crate::Result<Tmpfile<'a>> {
         let mut tmpfile = Tmpfile {
             destination_dir,
             tmpfilename,
@@ -27,9 +33,8 @@ impl<'a> Tmpfile<'a> {
         };
 
         'open: {
-            // ALLOW_TMPFILE = false (Zig comment: O_TMPFILE doesn't seem to work
-            // very well). Dead in Zig too, but Zig comptime drops it; Rust still
-            // type-checks `if false` bodies, so the body must resolve.
+            // ALLOW_TMPFILE = false: dead branch, but Rust still type-checks
+            // `if false` bodies, so the body must resolve.
             if ALLOW_TMPFILE {
                 // SAFETY: literal is NUL-terminated; len excludes the NUL.
                 let dot = ZStr::from_static(b".\0");
@@ -44,7 +49,6 @@ impl<'a> Tmpfile<'a> {
                             fd.make_lib_uv_owned_for_syscall(Tag::open, ErrorCase::CloseOnFail)?;
                         break 'open;
                     }
-                    // PORT NOTE: Zig matched .OPNOTSUPP; on Linux that aliases ENOTSUP.
                     Err(err) => match err.get_errno() {
                         E::EINVAL | E::ENOTSUP | E::ENOSYS => {
                             tmpfile.using_tmpfile = false;
@@ -66,8 +70,7 @@ impl<'a> Tmpfile<'a> {
         Ok(tmpfile)
     }
 
-    // TODO(port): narrow error set
-    pub fn finish(&mut self, destname: &ZStr) -> Result<(), bun_core::Error> {
+    pub fn finish(&mut self, destname: &ZStr) -> crate::Result<()> {
         // ALLOW_TMPFILE = false dead branch — see `create()` note above.
         if ALLOW_TMPFILE && self.using_tmpfile {
             let mut retry = true;
@@ -84,7 +87,7 @@ impl<'a> Tmpfile<'a> {
                         let _ = crate::unlinkat(self.destination_dir, basename);
                         retry = false;
                     }
-                    Err(err) => return Err(err.into()),
+                    Err(err) => return Err(err),
                 }
             }
         }
@@ -98,5 +101,3 @@ impl<'a> Tmpfile<'a> {
         )
     }
 }
-
-// ported from: src/sys/tmp.zig

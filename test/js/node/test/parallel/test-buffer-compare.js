@@ -1,6 +1,6 @@
 'use strict';
 
-const common = require('../common');
+require('../common');
 const assert = require('assert');
 
 const b = Buffer.alloc(1, 'a');
@@ -30,18 +30,18 @@ assert.strictEqual(Buffer.compare(Buffer.alloc(1), Buffer.alloc(0)), 1);
 
 assert.throws(() => Buffer.compare(Buffer.alloc(1), 'abc'), {
   code: 'ERR_INVALID_ARG_TYPE',
-  message: 'The "buf2" argument must be of type Buffer or Uint8Array.' +
-           common.invalidArgTypeHelper('abc')
+  message: 'The "buf2" argument must be an instance of Buffer or Uint8Array. ' +
+           "Received type string ('abc')"
 });
 assert.throws(() => Buffer.compare('abc', Buffer.alloc(1)), {
   code: 'ERR_INVALID_ARG_TYPE',
-  message: 'The "buf1" argument must be of type Buffer or Uint8Array.' +
-           common.invalidArgTypeHelper('abc')
+  message: 'The "buf1" argument must be an instance of Buffer or Uint8Array. ' +
+           "Received type string ('abc')"
 });
 
 assert.throws(() => Buffer.alloc(1).compare('abc'), {
   code: 'ERR_INVALID_ARG_TYPE',
   name: 'TypeError',
-  message: 'The "target" argument must be of type ' +
-           "Buffer or Uint8Array." + common.invalidArgTypeHelper('abc')
+  message: 'The "target" argument must be an instance of ' +
+           "Buffer or Uint8Array. Received type string ('abc')"
 });

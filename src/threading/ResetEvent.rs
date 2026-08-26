@@ -1,5 +1,3 @@
-//! Port of `std.Thread.ResetEvent` (Zig 0.14.1) on top of Bun's `Futex`.
-//!
 //! A `ResetEvent` is a thread-safe bool that threads can block on until it
 //! becomes "set". Statically initializable, at most `size_of::<u32>()` of
 //! state. Replaces the hand-rolled `Mutex<bool> + Condvar` shim in
@@ -28,18 +26,17 @@ const WAITING: u32 = 1;
 const IS_SET: u32 = 2;
 
 impl ResetEvent {
-    /// Const-init in the unset state (Zig: `.{}`).
-    pub const fn new() -> Self {
+    /// Const-init in the unset state.
+    pub(crate) const fn new() -> Self {
         Self {
             state: AtomicU32::new(UNSET),
         }
     }
 
-    /// Returns whether [`set`](Self::set) has been called (and not since
-    /// [`reset`](Self::reset)). Memory accesses before `set()` happen-before
-    /// this returning `true`.
+    /// Returns whether [`set`](Self::set) has been called. Memory accesses
+    /// before `set()` happen-before this returning `true`.
     #[inline]
-    pub fn is_set(&self) -> bool {
+    pub(crate) fn is_set(&self) -> bool {
         // Acquire barrier ensures memory accesses before set() happen before we return true.
         self.state.load(Ordering::Acquire) == IS_SET
     }
@@ -51,12 +48,6 @@ impl ResetEvent {
             Ok(()) => {}
             Err(TimeoutError::Timeout) => unreachable!(), // no timeout provided so we shouldn't have timed-out
         }
-    }
-
-    /// [`wait`](Self::wait) with a timeout in nanoseconds. Returns
-    /// `Err(Timeout)` if the event was not set in time.
-    pub fn timed_wait(&self, timeout_ns: u64) -> Result<(), TimeoutError> {
-        self.wait_inner(Some(timeout_ns))
     }
 
     #[inline]
@@ -107,8 +98,7 @@ impl ResetEvent {
     }
 
     /// Marks the event "set" and wakes all threads blocked in
-    /// [`wait`](Self::wait) / [`timed_wait`](Self::timed_wait). Idempotent
-    /// until [`reset`](Self::reset).
+    /// [`wait`](Self::wait).
     pub fn set(&self) {
         // Quick check if already set before the atomic swap below — set() may
         // be called often and multiple swap()s increase contention.
@@ -122,13 +112,4 @@ impl ResetEvent {
             Futex::wake(&self.state, u32::MAX);
         }
     }
-
-    /// Unmarks the event from its "set" state. Undefined behavior if called
-    /// while threads are blocked in `wait()`/`timed_wait()`. Concurrent
-    /// `set()`/`is_set()`/`reset()` calls are allowed.
-    pub fn reset(&self) {
-        self.state.store(UNSET, Ordering::Relaxed);
-    }
 }
-
-// ported from: vendor/zig/lib/std/Thread/ResetEvent.zig (FutexImpl)

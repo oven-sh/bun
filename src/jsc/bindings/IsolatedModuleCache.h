@@ -4,6 +4,7 @@
 #include "headers-handwritten.h"
 
 namespace Zig {
+class GlobalObject;
 class SourceProvider;
 }
 
@@ -18,7 +19,7 @@ namespace Bun {
 // Storage lives on JSVMClientData; this class is a stateless facade so the
 // gating, key, and tag-cacheability decisions live in exactly one place. The
 // map stores Zig::SourceProvider directly (not a wrapper struct) — everything
-// callers need to branch on (sourceType(), m_resolvedSource.tag, module_info)
+// callers need to branch on (sourceType(), m_tag, m_moduleInfo)
 // already lives on the provider.
 class IsolatedModuleCache {
 public:
@@ -50,7 +51,7 @@ public:
 
     static Zig::SourceProvider* lookup(JSC::VM&, const WTF::String& key);
 
-    // Inserts only when isTagCacheable(provider.m_resolvedSource.tag); no-op
+    // Inserts only when isTagCacheable(provider.m_tag); no-op
     // otherwise. Asserts isNewEntry — a duplicate insert means a lookup was
     // bypassed, which is exactly the gating bug this consolidation prevents.
     static void insert(JSC::VM&, const WTF::String& key, Zig::SourceProvider&);
@@ -58,5 +59,9 @@ public:
     static void evict(JSC::VM&, const WTF::String& key);
     static void clear(JSC::VM&);
 };
+
+// bun:internal-for-testing — returns the cached provider's sourceType name
+// for a resolved specifier, or null when not cached.
+JSC::JSValue createIsolatedModuleCacheSourceTypeForTesting(Zig::GlobalObject* globalObject);
 
 } // namespace Bun

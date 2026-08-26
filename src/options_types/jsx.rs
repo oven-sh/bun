@@ -1,5 +1,5 @@
-//! Port of `bundler/options.zig` `JSX` namespace (`Runtime`, `ImportSource`,
-//! `Pragma`, `RuntimeDevelopmentPair`, `RuntimeMap`, `Defaults`).
+//! JSX options (`Runtime`, `ImportSource`, `Pragma`, `RuntimeDevelopmentPair`,
+//! `RuntimeMap`, `Defaults`).
 //!
 //! Canonical home (D042): previously triplicated across
 //! `bundler/options.rs`, `js_parser/parser.rs`, and
@@ -12,11 +12,9 @@ use crate::schema::api;
 use bun_core::strings;
 use std::borrow::Cow;
 
-/// Port of `options.JSX.Runtime` (options.zig:1359 — `pub const Runtime =
-/// api.JsxRuntime;`). 4-state including `_None` so `Pragma.runtime` preserves
-/// the zero value when an `api.Jsx` arrives with `runtime == _none` (Zig
-/// options.zig:1344 assigns it directly). `#[default]` is `Automatic` (Zig:
-/// `runtime: api.Api.JsxRuntime = .automatic`).
+/// 4-state including `_None` so `Pragma.runtime` preserves the zero value
+/// when an `api.Jsx` arrives with `runtime == _none`. `#[default]` is
+/// `Automatic`.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Runtime {
@@ -45,40 +43,33 @@ pub struct RuntimeDevelopmentPair {
     pub development: Option<bool>,
 }
 
-/// Port of `options.JSX.RuntimeMap` (`bun.ComptimeStringMap`, options.zig:1179).
-pub static RUNTIME_MAP: phf::Map<&'static [u8], RuntimeDevelopmentPair> = phf::phf_map! {
-    b"classic" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
-    b"automatic" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
-    b"react" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
-    b"react-jsx" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
-    b"react-jsxdev" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
-};
+bun_core::comptime_string_map! {
+    pub static RUNTIME_MAP: RuntimeDevelopmentPair = {
+        b"classic" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
+        b"automatic" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: None },
+        b"react" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
+        // TypeScript: "react-jsx" selects jsx/jsxs (production), "react-jsxdev" selects jsxDEV.
+        b"react-jsx" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(false) },
+        b"react-jsxdev" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
+    };
+}
 
-/// Port of Zig `[]const string` for `Pragma.{factory,fragment}`.
+/// Member-expression list for `Pragma.{factory,fragment}`.
 ///
-/// In Zig (options.zig:1193) the field is a fat slice that, by default, points
-/// at the static `Defaults.Factory` array — copying the struct is a 16-byte
-/// pointer copy with **zero** allocations. The original Rust port boxed every
-/// element (`Box<[Box<[u8]>]>`), making `Pragma::default()` / `Clone` cost ~10
-/// heap allocations and dominating mimalloc samples in the resolver hot path.
+/// Boxing every element (`Box<[Box<[u8]>]>`) made `Pragma::default()` /
+/// `Clone` cost ~10 heap allocations and dominated mimalloc samples in the
+/// resolver hot path.
 ///
-/// `MemberList` restores Zig's cost model: the overwhelmingly-common case
+/// `MemberList` keeps default+clone cheap: the overwhelmingly-common case
 /// (`Static`) borrows a `&'static [&'static [u8]]` so default+clone are a
 /// pointer copy; only an explicit override (`/** @jsx foo */`, tsconfig
 /// `jsxFactory`, …) materialises an `Owned` boxed slice.
+///
+/// Never empty: the parser reads `factory[0]` without a check.
 #[derive(Debug, Clone)]
 pub enum MemberList {
     Static(&'static [&'static [u8]]),
     Owned(Box<[Box<[u8]>]>),
-}
-
-impl Default for MemberList {
-    /// Empty static slice — used by `core::mem::take`. `Pragma::default()`
-    /// sets the real `defaults::FACTORY`/`FRAGMENT` explicitly.
-    #[inline]
-    fn default() -> Self {
-        MemberList::Static(&[])
-    }
 }
 
 impl From<Box<[Box<[u8]>]>> for MemberList {
@@ -90,7 +81,7 @@ impl From<Box<[Box<[u8]>]>> for MemberList {
 
 impl MemberList {
     #[inline]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         match self {
             MemberList::Static(s) => s.len(),
             MemberList::Owned(o) => o.len(),
@@ -98,12 +89,7 @@ impl MemberList {
     }
 
     #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    #[inline]
-    pub fn get(&self, i: usize) -> Option<&[u8]> {
+    pub(crate) fn get(&self, i: usize) -> Option<&[u8]> {
         match self {
             MemberList::Static(s) => s.get(i).copied(),
             MemberList::Owned(o) => o.get(i).map(|b| &**b),
@@ -143,10 +129,8 @@ impl<'a> Iterator for MemberListIter<'a> {
 
 impl<'a> ExactSizeIterator for MemberListIter<'a> {}
 
-/// Port of `options.JSX.ImportSource` (options.zig:1208).
-///
-/// Zig stores `[]const u8` borrowing `Defaults.ImportSourceDev`/`ImportSource`;
-/// `Cow::Borrowed` matches that (zero-alloc default/clone), `Cow::Owned` covers
+/// `Cow::Borrowed` keeps the default/clone path zero-alloc (borrowing
+/// `defaults::IMPORT_SOURCE_DEV`/`IMPORT_SOURCE`); `Cow::Owned` covers
 /// the `set_import_source()` override path.
 #[derive(Debug, Clone)]
 pub struct ImportSource {
@@ -164,18 +148,14 @@ impl Default for ImportSource {
     }
 }
 
-/// Port of `options.JSX.Pragma` (options.zig:1192).
-///
-/// All string fields default to borrowed `'static` data (matching Zig's
-/// `Defaults.*` slice initialisers), so `Pragma::default()` and the derived
+/// All string fields default to borrowed `'static` data
+/// (the `defaults::*` slices), so `Pragma::default()` and the derived
 /// `Clone` perform **zero** heap allocations in the common case. Hot callers
 /// — `RuntimeTranspilerStore` (per transpiled module) and `Resolver`
 /// (per resolve) — clone this struct on every operation.
 #[derive(Debug, Clone)]
 pub struct Pragma {
     // these need to be arrays
-    // Zig: `[]const string` — either the static `Defaults.Factory` or a
-    // heap slice from `memberListToComponentsIfDifferent`.
     pub factory: MemberList,
     pub fragment: MemberList,
     pub runtime: Runtime,
@@ -215,9 +195,8 @@ impl Default for Pragma {
 
 impl Pragma {
     pub fn hash_for_runtime_transpiler(&self, hasher: &mut bun_wyhash::Wyhash) {
-        // PORT NOTE: spec options.zig:1213 takes `*std.hash.Wyhash`, which is the
-        // algorithm behind `bun.hash` — distinct from `bun.Wyhash11`. Using
-        // `Wyhash11` would yield a different cache key than the Zig path.
+        // Uses `bun_wyhash::Wyhash` (the algorithm behind `bun.hash`) — distinct
+        // from `Wyhash11`, which would yield a different cache key.
         for factory in self.factory.iter() {
             hasher.update(factory);
         }
@@ -228,6 +207,9 @@ impl Pragma {
         hasher.update(&self.import_source.production);
         hasher.update(&self.classic_import_source);
         hasher.update(&self.package_name);
+        // `runtime` selects classic vs automatic emission; `development`
+        // selects `jsx` vs `jsxDEV`. Both shape transpiled output.
+        hasher.update(&[self.runtime as u8, self.development as u8]);
     }
 
     pub fn import_source(&self) -> &[u8] {
@@ -238,39 +220,8 @@ impl Pragma {
         }
     }
 
-    pub fn parse_package_name(str: &[u8]) -> &[u8] {
-        if str.is_empty() {
-            return str;
-        }
-        if str[0] == b'@' {
-            if let Some(first_slash) = strings::index_of_char(&str[1..], b'/') {
-                let first_slash = first_slash as usize;
-                let remainder = &str[1 + first_slash + 1..];
-
-                if let Some(last_slash) = strings::index_of_char(remainder, b'/') {
-                    let last_slash = last_slash as usize;
-                    return &str[0..first_slash + 1 + last_slash + 1];
-                }
-            }
-        }
-
-        if let Some(first_slash) = strings::index_of_char(str, b'/') {
-            return &str[0..first_slash as usize];
-        }
-
-        str
-    }
-
-    pub fn is_react_like(&self) -> bool {
-        &*self.package_name == b"react"
-            || &*self.package_name == b"@emotion/jsx"
-            || &*self.package_name == b"@emotion/react"
-    }
-
-    /// Port of `options.JSX.Pragma.setImportSource` (Zig wraps
-    /// `strings.concatIfNeeded`). When `package_name` is the default
-    /// `"react"`, this borrows the interned `defaults::IMPORT_SOURCE*` —
-    /// matching Zig's interned-string fast path with zero allocations.
+    /// When `package_name` is the default `"react"`, this borrows the
+    /// interned `defaults::IMPORT_SOURCE*` with zero allocations.
     pub fn set_import_source(&mut self) {
         self.import_source.development = Self::concat_or_interned(
             &self.package_name,
@@ -299,63 +250,37 @@ impl Pragma {
         Cow::Owned(out)
     }
 
-    pub fn set_production(&mut self, is_production: bool) {
-        self.development = !is_production;
-    }
-
-    // "React.createElement" => ["React", "createElement"]
-    // ...unless new is "React.createElement" and original is ["React", "createElement"]
-    // saves an allocation for the majority case
+    /// `"React.createElement"` => `["React", "createElement"]`, or a copy of
+    /// `original` (no allocation for `Static`) when `new` names the same
+    /// members. `None` when `new` has no members, for example `"."`.
     pub fn member_list_to_components_if_different(
-        original: MemberList,
+        original: &MemberList,
         new: &[u8],
-    ) -> Result<MemberList, bun_core::Error> {
-        let count = strings::count_char(new, b'.') + 1;
+    ) -> Option<MemberList> {
+        strings::tokenize(new, b".").next()?;
 
-        let mut needs_alloc = false;
-        let mut current_i: usize = 0;
-        for str in new.split(|b| *b == b'.') {
-            if str.is_empty() {
-                continue;
-            }
-            match original.get(current_i) {
-                Some(part) if part == str => current_i += 1,
-                _ => {
-                    needs_alloc = true;
-                    break;
-                }
-            }
+        if strings::tokenize(new, b".").eq(original.iter()) {
+            return Some(original.clone());
         }
 
-        if !needs_alloc {
-            return Ok(original);
-        }
-
-        let mut out: Vec<Box<[u8]>> = Vec::with_capacity(count);
-        for str in new.split(|b| *b == b'.') {
-            if str.is_empty() {
-                continue;
-            }
-            out.push(Box::from(str));
-        }
-        Ok(MemberList::Owned(out.into_boxed_slice()))
+        Some(MemberList::Owned(
+            strings::tokenize(new, b".").map(Box::from).collect(),
+        ))
     }
 
-    pub fn from_api(jsx: api::Jsx) -> Result<Pragma, bun_core::Error> {
+    pub fn from_api(jsx: api::Jsx) -> Pragma {
         let mut pragma = Pragma::default();
 
-        if !jsx.fragment.is_empty() {
-            pragma.fragment = Self::member_list_to_components_if_different(
-                core::mem::take(&mut pragma.fragment),
-                &jsx.fragment,
-            )?;
+        if let Some(fragment) =
+            Self::member_list_to_components_if_different(&pragma.fragment, &jsx.fragment)
+        {
+            pragma.fragment = fragment;
         }
 
-        if !jsx.factory.is_empty() {
-            pragma.factory = Self::member_list_to_components_if_different(
-                core::mem::take(&mut pragma.factory),
-                &jsx.factory,
-            )?;
+        if let Some(factory) =
+            Self::member_list_to_components_if_different(&pragma.factory, &jsx.factory)
+        {
+            pragma.factory = factory;
         }
 
         pragma.runtime = Runtime::from(jsx.runtime);
@@ -369,11 +294,11 @@ impl Pragma {
 
         pragma.development = jsx.development;
         pragma.parse = true;
-        Ok(pragma)
+        pragma
     }
 }
 
-/// Port of `options.JSX.Defaults` (options.zig).
+/// Default JSX factory/fragment/import-source values.
 pub mod defaults {
     pub const FACTORY: &[&[u8]] = &[b"React", b"createElement"];
     pub const FRAGMENT: &[&[u8]] = &[b"React", b"Fragment"];

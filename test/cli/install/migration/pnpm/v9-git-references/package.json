@@ -1,0 +1,9 @@
+{
+  "name": "v9-git-references",
+  "version": "1.0.0",
+  "dependencies": {
+    "hue": "github:org/hue#ec3d1d1",
+    "pkg-a": "git+ssh://git@example.com/org/pkg-a.git#v1",
+    "priv": "https://token@tarballs.example.com/priv-1.0.0.tgz"
+  }
+}

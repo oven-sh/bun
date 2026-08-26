@@ -21,7 +21,6 @@
 #include "config.h"
 #include "JSAbortSignal.h"
 
-#include "ActiveDOMObject.h"
 #include "EventNames.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
@@ -78,7 +77,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSAbortSignalPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSAbortSignalPrototype* ptr = new (NotNull, JSC::allocateCell<JSAbortSignalPrototype>(vm)) JSAbortSignalPrototype(vm, globalObject, structure);
+        JSAbortSignalPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSAbortSignalPrototype))) JSAbortSignalPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -92,7 +91,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -124,24 +123,8 @@ template<> JSValue JSAbortSignalDOMConstructor::prototypeForStructure(JSC::VM& v
 
 template<> void JSAbortSignalDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "AbortSignal"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSAbortSignal::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
-    reifyStaticProperties(vm, JSAbortSignal::info(), JSAbortSignalConstructorTableValues, *this);
-    // if (!((&globalObject)->inherits<JSDOMWindowBase>() || (&globalObject)->inherits<JSWorkerGlobalScopeBase>())) {
-    //     auto propertyName = Identifier::fromString(vm, "timeout"_s);
-    //     VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-    //     DeletePropertySlot slot;
-    //     JSObject::deleteProperty(this, &globalObject, propertyName, slot);
-    // }
-    // if (!uncheckedDowncast<JSDOMGlobalObject>(&globalObject)->scriptExecutionContext()->settingsValues().abortSignalAnyOperationEnabled) {
-    //     auto propertyName = Identifier::fromString(vm, "any"_s);
-    //     VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-    //     DeletePropertySlot slot;
-    //     JSObject::deleteProperty(this, &globalObject, propertyName, slot);
-    // }
+    initializeBaseProperties(vm, 0, "AbortSignal"_s, JSAbortSignal::prototype(vm, globalObject));
+    Bun::reifyStaticPropertyTable(vm, JSAbortSignal::info(), JSAbortSignalConstructorTableValues, *this);
 }
 
 /* Hash table for prototype */
@@ -159,8 +142,8 @@ const ClassInfo JSAbortSignalPrototype::s_info = { "AbortSignal"_s, &Base::s_inf
 void JSAbortSignalPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSAbortSignal::info(), JSAbortSignalPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSAbortSignal::info(), JSAbortSignalPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSAbortSignal::s_info = { "AbortSignal"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSAbortSignal) };
@@ -273,7 +256,7 @@ static inline JSC::EncodedJSValue jsAbortSignalConstructorFunction_abortBody(JSC
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     auto reason = convert<IDLAny>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), throwScope, AbortSignal::abort(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), *context, WTF::move(reason)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), throwScope, AbortSignal::abort(*context, WTF::move(reason)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsAbortSignalConstructorFunction_abort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -330,6 +313,7 @@ static inline JSC::EncodedJSValue jsAbortSignalConstructorFunction_anyBody(JSC::
         }
         i++;
     });
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJSNewlyCreated<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), throwScope, AbortSignal::any(*context, WTF::move(signals)))));
 }
@@ -363,12 +347,7 @@ size_t JSAbortSignal::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
 
 JSC::GCClient::IsoSubspace* JSAbortSignal::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSAbortSignal, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForAbortSignal.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForAbortSignal = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForAbortSignal.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForAbortSignal = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSAbortSignal, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForAbortSignal, m_subspaceForAbortSignal));
 }
 
 template<typename Visitor>

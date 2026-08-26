@@ -1,12 +1,12 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_core::Output;
+use bun_core::strings;
 
 use crate as clap;
 use crate::args::ArgIter;
 
 // Disabled because not all CLI arguments are parsed with Clap.
-// TODO(port): Zig `pub var` — using AtomicBool for safe mutable global.
 pub static WARN_ON_UNRECOGNIZED_FLAG: AtomicBool = AtomicBool::new(false);
 
 /// The result returned from StreamingClap.next
@@ -17,8 +17,8 @@ pub(crate) struct Arg<'p, 'a, Id> {
 
 #[derive(Copy, Clone)]
 pub struct Chaining<'a> {
-    pub arg: &'a [u8],
-    pub index: usize,
+    pub(crate) arg: &'a [u8],
+    pub(crate) index: usize,
 }
 
 pub enum State<'a> {
@@ -36,8 +36,6 @@ pub(crate) enum ArgError {
     #[error("InvalidArgument")]
     InvalidArgument,
 }
-
-bun_core::named_error_set!(ArgError);
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum ArgKind {
@@ -60,14 +58,15 @@ struct ArgInfo<'a> {
 /// callers use a locally-borrowed param table with process-lifetime argv.
 pub struct StreamingClap<'p, 'a, Id, ArgIterator> {
     pub params: &'p [clap::Param<Id>],
-    pub iter: &'p mut ArgIterator,
-    pub state: State<'a>,
-    pub positional: Option<&'p clap::Param<Id>>,
-    pub diagnostic: Option<&'p mut clap::Diagnostic>,
+    pub(crate) iter: &'p mut ArgIterator,
+    pub(crate) state: State<'a>,
+    pub(crate) positional: Option<&'p clap::Param<Id>>,
+    pub(crate) diagnostic: Option<&'p mut clap::Diagnostic>,
+    pub(crate) short_aliases: &'static [(&'static [u8], &'static [u8])],
 }
 
-// PORT NOTE: ArgIterator was a comptime duck-typed param in Zig; expressed here as
-// the `args::ArgIter<'a>` trait so `next()`/`remain()` resolve.
+// ArgIterator is the
+// `args::ArgIter<'a>` trait so `next()`/`remain()` resolve.
 impl<'p, 'a, Id, ArgIterator> StreamingClap<'p, 'a, Id, ArgIterator>
 where
     ArgIterator: ArgIter<'a>,
@@ -98,7 +97,7 @@ where
 
         match arg_info.kind {
             ArgKind::Long => {
-                let eql_index = arg.iter().position(|&b| b == b'=');
+                let eql_index = strings::index_of_char_usize(arg, b'=');
                 let name: &[u8] = if let Some(i) = eql_index {
                     &arg[0..i]
                 } else {
@@ -111,7 +110,7 @@ where
                     None
                 };
 
-                // PORT NOTE: reshaped for borrowck — copy slice ref so &mut self is free inside loop.
+                // Copy the slice ref so `&mut self` is free inside the loop.
                 let params = self.params;
                 for param in params {
                     if !param.names.matches_long(name) {
@@ -159,7 +158,7 @@ where
                 // if flag else arg
                 if arg_info.kind == ArgKind::Long || arg_info.kind == ArgKind::Short {
                     if WARN_ON_UNRECOGNIZED_FLAG.load(Ordering::Relaxed) {
-                        Output::warn(format_args!(
+                        bun_core::warn!(
                             "unrecognized flag: {}{}\n",
                             if arg_info.kind == ArgKind::Long {
                                 "--"
@@ -167,7 +166,7 @@ where
                                 "-"
                             },
                             bstr::BStr::new(name),
-                        ));
+                        );
                         Output::flush();
                     }
 
@@ -176,10 +175,7 @@ where
                 }
 
                 if WARN_ON_UNRECOGNIZED_FLAG.load(Ordering::Relaxed) {
-                    Output::warn(format_args!(
-                        "unrecognized argument: {}\n",
-                        bstr::BStr::new(name)
-                    ));
+                    bun_core::warn!("unrecognized argument: {}\n", bstr::BStr::new(name));
                     Output::flush();
                 }
                 Ok(None)
@@ -218,7 +214,7 @@ where
         let index = state.index;
         let next_index = index + 1;
 
-        // PORT NOTE: reshaped for borrowck — copy slice ref so &mut self is free inside loop.
+        // Copy the slice ref so `&mut self` is free inside the loop.
         let params = self.params;
         for param in params {
             let Some(short) = param.names.short else {
@@ -228,9 +224,10 @@ where
                 continue;
             }
 
-            // Before we return, we have to set the new state of the clap
-            // PORT NOTE: Zig `defer` hoisted — every path below returns, and nothing
-            // between here and those returns reads `self.state`.
+            // Before we return, we have to set the new state of the clap.
+            // (Hoisting this above the returns is fine — every path
+            // below returns, and nothing between here and those returns reads
+            // `self.state`.)
             if arg.len() <= next_index || param.takes_value != clap::Values::None {
                 self.state = State::Normal;
             } else {
@@ -305,9 +302,20 @@ where
     }
 
     fn parse_next_arg(&mut self) -> Result<Option<ArgInfo<'a>>, ArgError> {
-        let Some(full_arg) = self.iter.next() else {
+        let Some(mut full_arg) = self.iter.next() else {
             return Ok(None);
         };
+        // Only flag-shaped tokens reach here (option values and `--` targets are pulled straight
+        // off `iter`); restrict rewrites so a mapping never touches `-`/`--` or a positional,
+        // per the contract on `ParseOptions::short_aliases`.
+        if full_arg.starts_with(b"-") && full_arg != b"-" && full_arg != b"--" {
+            for (from, to) in self.short_aliases {
+                if full_arg == *from {
+                    full_arg = to;
+                    break;
+                }
+            }
+        }
         if full_arg == b"--" || full_arg == b"-" {
             return Ok(Some(ArgInfo {
                 arg: full_arg,
@@ -335,8 +343,8 @@ where
 
     fn err(&mut self, arg: &[u8], short: Option<u8>, long: Option<&[u8]>, e: ArgError) -> ArgError {
         if let Some(d) = self.diagnostic.as_deref_mut() {
-            // PORT NOTE: Zig assigned borrowed `arg`/`name` slices; Rust `Diagnostic`
-            // owns its bytes (error path only) — see lib.rs.
+            // `Diagnostic` owns
+            // its bytes (error path only) — see lib.rs.
             d.arg = arg.to_vec();
             d.short = short;
             d.long = long.map(|l| l.to_vec());
@@ -359,6 +367,7 @@ mod tests {
             remain: args_strings,
         };
         let mut c = StreamingClap::<u8, args::SliceIterator> {
+            short_aliases: &[],
             params,
             iter: &mut iter,
             state: State::Normal,
@@ -391,6 +400,7 @@ mod tests {
             remain: args_strings,
         };
         let mut c = StreamingClap::<u8, args::SliceIterator> {
+            short_aliases: &[],
             params,
             iter: &mut iter,
             state: State::Normal,
@@ -402,10 +412,34 @@ mod tests {
                 Ok(Some(_)) => {}
                 Ok(None) => break,
                 Err(_err) => {
-                    // TODO(port): io.fixedBufferStream + diag.report — `Diagnostic::report`
-                    // currently routes through `bun_core::Output` (stderr) and ignores its
-                    // writer arg, so we cannot capture output to compare against `expected`.
-                    let _ = expected;
+                    // Bun's `Diagnostic::report` deliberately ignores its writer arg
+                    // and routes through `bun_core::Output` (stderr),
+                    // so the rendered message can't be captured here.
+                    // Instead, rebuild the flag name the
+                    // same way `report` does from the diagnostic fields and assert
+                    // the expected message names it in quotes.
+                    let mut name_buf = [0u8; 1024];
+                    let captured: &[u8] = if let Some(s) = diag.short {
+                        name_buf[0] = b'-';
+                        name_buf[1] = s;
+                        &name_buf[..2]
+                    } else if let Some(l) = diag.long.as_deref() {
+                        name_buf[0] = b'-';
+                        name_buf[1] = b'-';
+                        name_buf[2..2 + l.len()].copy_from_slice(l);
+                        &name_buf[..2 + l.len()]
+                    } else {
+                        &diag.arg
+                    };
+                    let quoted = [b"'".as_slice(), captured, b"'"].concat();
+                    // Naive search: `cargo test -p bun_clap` does not link the
+                    // highway kernels behind `bun_core::strings::contains`.
+                    assert!(
+                        (0..expected.len()).any(|i| expected[i..].starts_with(&quoted)),
+                        "expected message {:?} does not name captured arg {:?}",
+                        bstr::BStr::new(expected),
+                        bstr::BStr::new(captured),
+                    );
                     return;
                 }
             }
@@ -419,23 +453,35 @@ mod tests {
         let params: [clap::Param<u8>; 4] = [
             clap::Param {
                 id: 0,
-                names: clap::Names::short(b'a'),
+                names: clap::Names {
+                    short: Some(b'a'),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             clap::Param {
                 id: 1,
-                names: clap::Names::short(b'b'),
+                names: clap::Names {
+                    short: Some(b'b'),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             clap::Param {
                 id: 2,
-                names: clap::Names::short(b'c'),
+                names: clap::Names {
+                    short: Some(b'c'),
+                    ..Default::default()
+                },
                 takes_value: clap::Values::One,
                 ..Default::default()
             },
             clap::Param {
                 id: 3,
-                names: clap::Names::short(b'd'),
+                names: clap::Names {
+                    short: Some(b'd'),
+                    ..Default::default()
+                },
                 takes_value: clap::Values::Many,
                 ..Default::default()
             },
@@ -513,23 +559,35 @@ mod tests {
         let params: [clap::Param<u8>; 4] = [
             clap::Param {
                 id: 0,
-                names: clap::Names::long(b"aa"),
+                names: clap::Names {
+                    long: Some(b"aa"),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             clap::Param {
                 id: 1,
-                names: clap::Names::long(b"bb"),
+                names: clap::Names {
+                    long: Some(b"bb"),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             clap::Param {
                 id: 2,
-                names: clap::Names::long(b"cc"),
+                names: clap::Names {
+                    long: Some(b"cc"),
+                    ..Default::default()
+                },
                 takes_value: clap::Values::One,
                 ..Default::default()
             },
             clap::Param {
                 id: 3,
-                names: clap::Names::long(b"dd"),
+                names: clap::Names {
+                    long: Some(b"dd"),
+                    ..Default::default()
+                },
                 takes_value: clap::Values::Many,
                 ..Default::default()
             },
@@ -794,5 +852,3 @@ mod tests {
         );
     }
 }
-
-// ported from: src/clap/streaming.zig

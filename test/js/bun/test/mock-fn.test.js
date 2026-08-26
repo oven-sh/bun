@@ -335,6 +335,21 @@ describe("mock()", () => {
     const fn = jest.fn(baddie);
     expect(typeof fn.name).toBe("string");
   });
+  if (isBun) {
+    // bun exposes the live results array, so a full-length array makes the
+    // internal push throw; the call must surface that error, not continue
+    // with it pending.
+    test("throws cleanly when recording the result fails", () => {
+      let called = false;
+      const fn = jest.fn(() => {
+        called = true;
+        return 42;
+      });
+      fn.mock.results.length = 2 ** 32 - 1;
+      expect(() => fn(1)).toThrow(RangeError);
+      expect(called).toBe(false);
+    });
+  }
   test(".length works", () => {
     const fn = jest.fn(function hey(a, b, c) {
       return this;
@@ -500,6 +515,37 @@ describe("mock()", () => {
       value: 44,
     });
   });
+  test("this is undefined when called without a receiver from a closure", () => {
+    const fn = jest.fn().mockReturnThis();
+    // Referencing `fn` from an inner function moves it into the closure's
+    // scope, so the bare call below resolves it through that scope object.
+    function keep() {
+      return fn;
+    }
+    expect(fn()).toBeUndefined();
+    expect(fn.mock.contexts).toEqual([undefined]);
+    expect(fn.mock.results).toEqual([{ type: "return", value: undefined }]);
+    expect(keep()).toBe(fn);
+  });
+  if (isBun) {
+    test("mock.lastCall getter ignores the closure scope it is called through", () => {
+      const calls = [["from the enclosing scope"]];
+      const lastCall = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(jest.fn().mock), "lastCall").get;
+      function keep() {
+        return [calls, lastCall];
+      }
+      expect(lastCall()).toBeUndefined();
+      expect(keep()).toEqual([calls, lastCall]);
+    });
+    test("mock methods called without a receiver from a closure throw the invalid this error", () => {
+      const { mockName } = jest.fn();
+      function keep() {
+        return mockName;
+      }
+      expect(() => mockName("name")).toThrow(/^Expected this to be instanceof Mock$/);
+      expect(keep()).toBe(mockName);
+    });
+  }
   test("looks like a function", () => {
     const fn = jest.fn(function nameHere(a, b, c) {
       return [a, b, c];
@@ -679,6 +725,42 @@ describe("mock()", () => {
     );
     expect(fn()).toBe("1");
   });
+  test("withImplementation (callback throws)", () => {
+    const fn = jest.fn(() => "1");
+    expect(() =>
+      fn.withImplementation(
+        () => "2",
+        () => {
+          expect(fn()).toBe("2");
+          throw new Error("from callback");
+        },
+      ),
+    ).toThrow("from callback");
+  });
+  test("withImplementation restores a queued mockImplementationOnce chain", () => {
+    const fn = jest.fn(() => "base");
+    fn.mockImplementationOnce(() => "a").mockImplementationOnce(() => "b");
+    fn.withImplementation(
+      () => "temp",
+      () => {
+        expect(fn()).toBe("temp");
+      },
+    );
+    fn.mockImplementationOnce(() => "c");
+    expect([fn(), fn(), fn(), fn()]).toEqual(["a", "b", "c", "base"]);
+  });
+  test("copying name/length from the implementation propagates getter errors", () => {
+    const impl = function () {};
+    Object.defineProperty(impl, "length", {
+      get() {
+        throw new Error("length getter");
+      },
+    });
+    expect(() => jest.fn(impl)).toThrow("length getter");
+    const obj = { method: impl };
+    expect(() => jest.spyOn(obj, "method")).toThrow("length getter");
+    expect(obj.method).toBe(impl);
+  });
   test("withImplementation (async)", async () => {
     const fn = jest.fn(() => "1");
     expect(fn()).toBe("1");
@@ -780,6 +862,15 @@ describe("mock()", () => {
     expect(fn).not.toHaveBeenNthCalledWith(5, 1);
   });
 
+  test("toHaveBeenCalledTimes with calls.length > i32 max", () => {
+    const fn = jest.fn();
+    // Array length can be up to 2^32-1; the matcher must not panic on the narrowed count.
+    fn.mock.calls.length = 3_000_000_000;
+    expect(fn).not.toHaveBeenCalledTimes(5);
+    expect(fn).toHaveBeenCalledTimes(3_000_000_000);
+    expect(() => expect(fn).toHaveBeenCalledTimes(5)).toThrow();
+  });
+
   it("no segmentation fault when passing jest.fn into another jest.fn, issue#5900", () => {
     function foo() {
       return true;
@@ -794,6 +885,60 @@ describe("mock()", () => {
 
     expect(bar()()).toBe(true);
   });
+});
+
+describe("resetAllMocks", () => {
+  test("removes implementations, not just calls", () => {
+    const fn = jest.fn(() => 42);
+    expect(fn()).toBe(42);
+    expect(fn).toHaveBeenCalledTimes(1);
+
+    jest.resetAllMocks();
+
+    expect(fn).toHaveBeenCalledTimes(0);
+    expect(fn.mock.results).toEqual([]);
+    expect(fn.getMockImplementation()).toBeUndefined();
+    expect(fn()).toBeUndefined();
+  });
+
+  test("removes mockReturnValue", () => {
+    const fn = jest.fn();
+    fn.mockReturnValue("stubbed");
+    expect(fn()).toBe("stubbed");
+
+    jest.resetAllMocks();
+
+    expect(fn()).toBeUndefined();
+  });
+
+  test("removes a spy's implementation without restoring the original", () => {
+    const obj = {
+      original() {
+        return "original";
+      },
+    };
+    const spy = spyOn(obj, "original");
+    expect(obj.original()).toBe("original");
+
+    jest.resetAllMocks();
+
+    expect(obj.original()).toBeUndefined();
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    spy.mockRestore();
+    expect(obj.original()).toBe("original");
+  });
+
+  if (isBun) {
+    test("vi.resetAllMocks removes implementations too", () => {
+      const fn = vi.fn(() => 42);
+      expect(fn()).toBe(42);
+
+      vi.resetAllMocks();
+
+      expect(fn()).toBeUndefined();
+    });
+  }
 });
 
 describe("spyOn", () => {
@@ -1009,6 +1154,52 @@ describe("spyOn", () => {
       fn.mockRestore();
       expect(arr[14]).toBe(original);
       expect(arr[14]()).toBe(456);
+      expect(fn).not.toHaveBeenCalled();
+    });
+
+    // The engine serves a function's `prototype` property specially, so it cannot be
+    // replaced with a getter/setter spy; historically this crashed the process.
+    test("spyOn on a function's prototype property throws instead of crashing", () => {
+      function Foo() {}
+      const fooPrototype = Foo.prototype;
+      expect(() => spyOn(Foo, "prototype")).toThrow(
+        "Cannot spy on the `prototype` property because it is not a function",
+      );
+      // the function is left untouched
+      expect(Foo.prototype).toBe(fooPrototype);
+      expect(new Foo()).toBeInstanceOf(Foo);
+
+      class K {
+        m() {
+          return 42;
+        }
+      }
+      const kPrototype = K.prototype;
+      expect(() => spyOn(K, "prototype")).toThrow(
+        "Cannot spy on the `prototype` property because it is not a function",
+      );
+      expect(K.prototype).toBe(kPrototype);
+      expect(new K().m()).toBe(42);
+
+      // arrow functions have no prototype property at all
+      const arrow = () => {};
+      expect(() => spyOn(arrow, "prototype")).toThrow(
+        "Cannot spy on the `prototype` property because it is not a function",
+      );
+      expect(Object.hasOwn(arrow, "prototype")).toBe(false);
+    });
+
+    test("spyOn still works when a function's prototype is itself a function", () => {
+      function Bar() {}
+      Bar.prototype = function original() {
+        return 7;
+      };
+      const fn = spyOn(Bar, "prototype");
+      expect(Bar.prototype).toBe(fn);
+      expect(Bar.prototype()).toBe(7);
+      expect(fn).toHaveBeenCalledTimes(1);
+      fn.mockRestore();
+      expect(Bar.prototype()).toBe(7);
       expect(fn).not.toHaveBeenCalled();
     });
   }

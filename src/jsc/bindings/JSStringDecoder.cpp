@@ -282,6 +282,7 @@ JSC::JSString* JSStringDecoder::write(JSC::VM& vm, JSC::JSGlobalObject* globalOb
                 RELEASE_AND_RETURN(throwScope, firstHalf);
             offset = m_lastNeed;
             m_lastNeed = 0;
+            m_lastTotal = 0;
             if (offset == length)
                 RELEASE_AND_RETURN(throwScope, firstHalf);
 
@@ -317,9 +318,10 @@ ResetScope::ResetScope(JSStringDecoder* decoder)
 
 ResetScope::~ResetScope()
 {
+    // Node's FlushData only clears MissingBytes/BufferedBytes; it leaves the
+    // incomplete-character buffer (lastChar) intact, so m_lastChar stays as-is.
     m_decoder->m_lastTotal = 0;
     m_decoder->m_lastNeed = 0;
-    memset(m_decoder->m_lastChar, 0, 4);
 }
 
 JSC::JSString*
@@ -391,12 +393,7 @@ const JSC::ClassInfo JSStringDecoder::s_info = { "StringDecoder"_s, &Base::s_inf
 
 JSC::GCClient::IsoSubspace* JSStringDecoder::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSStringDecoder, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForStringDecoder.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForStringDecoder = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForStringDecoder.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForStringDecoder = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSStringDecoder, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForStringDecoder, m_subspaceForStringDecoder));
 }
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSStringDecoderPrototype, JSStringDecoderPrototype::Base);
@@ -459,7 +456,7 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_textBody(JSC:
     int32_t offset = callFrame->uncheckedArgument(1).toInt32(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
     uint32_t byteLength = view->byteLength();
-    if (offset > byteLength)
+    if (offset < 0 || static_cast<uint32_t>(offset) > byteLength)
         RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsEmptyString(vm)));
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, reinterpret_cast<uint8_t*>(view->vector()) + offset, byteLength - offset)));
 }
@@ -541,8 +538,8 @@ static const HashTableValue JSStringDecoderPrototypeTableValues[]
 void JSStringDecoderPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalThis)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSStringDecoder::info(), JSStringDecoderPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSStringDecoder::info(), JSStringDecoderPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSStringDecoderPrototype::s_info = { "StringDecoder"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSStringDecoderPrototype) };
@@ -569,18 +566,18 @@ JSC::EncodedJSValue JSStringDecoderConstructor::construct(JSC::JSGlobalObject* l
     auto jsEncoding = callFrame->argument(0);
     if (!jsEncoding.isUndefinedOrNull()) {
         std::optional<BufferEncodingType> opt = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, jsEncoding);
+        RETURN_IF_EXCEPTION(throwScope, {});
         if (opt.has_value()) {
             encoding = opt.value();
         } else {
             auto* encodingString = jsEncoding.toString(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(throwScope, {});
             const auto& view = encodingString->view(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
             return Bun::ERR::UNKNOWN_ENCODING(throwScope, lexicalGlobalObject, view);
         }
     }
-    JSValue thisValue = callFrame->newTarget();
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
-    JSObject* newTarget = asObject(thisValue);
     auto* constructor = globalObject->JSStringDecoder();
     Structure* structure = globalObject->JSStringDecoderStructure();
 
@@ -591,9 +588,10 @@ JSC::EncodedJSValue JSStringDecoderConstructor::construct(JSC::JSGlobalObject* l
     // This is a hack to make express' body-parser work
     // It does something weird with the prototype
     // Not exactly a subclass
-    if (constructor != newTarget && callFrame->thisValue().isObject()) {
+    JSValue thisValue = callFrame->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict());
+    if (thisValue.isObject() && thisValue != constructor) {
         auto clientData = WebCore::clientData(vm);
-        JSObject* thisObject = asObject(callFrame->thisValue());
+        JSObject* thisObject = asObject(thisValue);
 
         thisObject->putDirect(vm, clientData->builtinNames().decodePrivateName(), jsObject, JSC::PropertyAttribute::DontEnum | 0);
         thisObject->putDirect(vm, clientData->builtinNames().encodingPublicName(), convertEnumerationToJS<BufferEncodingType>(*lexicalGlobalObject, encoding), JSC::PropertyAttribute::DontEnum | 0);
@@ -601,15 +599,6 @@ JSC::EncodedJSValue JSStringDecoderConstructor::construct(JSC::JSGlobalObject* l
     }
 
     return JSC::JSValue::encode(jsObject);
-}
-
-void JSStringDecoderConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSStringDecoderPrototype* prototype)
-{
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "StringDecoder"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 }
 
 const ClassInfo JSStringDecoderConstructor::s_info = { "StringDecoder"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSStringDecoderConstructor) };

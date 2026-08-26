@@ -8,9 +8,7 @@ use crate::command::Context;
 pub(crate) struct UpdateCommand;
 
 impl UpdateCommand {
-    pub(crate) fn exec(ctx: Context) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        // PORT NOTE: dropped `ctx.allocator` arg — global mimalloc per §Allocators.
+    pub(crate) fn exec(ctx: Context) -> Result<(), crate::Error> {
         let cli = CommandLineArguments::parse(Subcommand::Update)?;
 
         if cli.interactive {
@@ -21,5 +19,3 @@ impl UpdateCommand {
         Ok(())
     }
 }
-
-// ported from: src/cli/update_command.zig

@@ -1,6 +1,7 @@
 #![feature(allocator_api)]
 #![feature(adt_const_params)]
 #![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
+#![feature(freeze)] // `impl_field_parent!`'s `shared` arm rejects `Freeze` children at compile time
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 // bun_core is the T0 foundation crate that bun_threading, bun_sys, and
 // bun_collections depend on; importing any of them to satisfy the disallowed-*
@@ -15,6 +16,8 @@
 
 pub mod Global;
 pub mod atomic_cell;
+pub mod comptime_string_map;
+pub mod error;
 pub mod hint;
 pub mod result;
 pub mod thread_id;
@@ -23,9 +26,7 @@ pub mod util;
 pub use atomic_cell::{Atom, AtomicCell, ThreadCell};
 
 /// Shared state-machine tag for the streaming (de)compressors in
-/// `bun_brotli` / `bun_zlib` / `bun_zstd`. Mirrors the identical
-/// `pub const State = enum { Uninitialized, Inflating, End, Error }`
-/// nested in each Zig reader/compressor struct.
+/// `bun_brotli` / `bun_zlib` / `bun_zstd`.
 pub mod compress {
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum State {
@@ -48,25 +49,19 @@ pub mod wtf;
 // `bun_core ↔ bun_string` dep cycle. The `bun_string` crate is now a
 // one-line re-export shim over this module.
 // ──────────────────────────────────────────────────────────────────────────
+pub mod ip_address;
 pub mod string;
 pub use ::bstr::{BStr, BString, ByteSlice};
-/// `bun.strings` (the full SIMD-backed `immutable` module). Distinct from the
-/// scalar-fallback `crate::strings` shim below — several names
-/// (`index_of_char`, `CodepointIterator`, `Encoding`) differ in signature.
-/// Callers that previously wrote `bun_core::strings::X` import this.
-pub use string::immutable;
 pub use string::string_joiner::StringJoiner;
 pub use string::{
-    ByteString, STRING_ALLOCATION_LIMIT, ZigStringGithubActionFormatter, cheap_prefix_normalizer,
-    escape_reg_exp, identifier, lexer, lexer_tables, parse_double, printer, quote_for_json,
-    string_joiner, write, zig_string,
+    EncodedSlice, HashedString, MutableString, NodeEncoding, SmolStr, String, StringBuilder,
+    StringView, Utf8Bytes, Utf8WithString, WTFStringImpl, WTFStringImplExt, WTFStringImplStruct,
 };
 pub use string::{
-    HashedString, MutableString, NodeEncoding, OwnedString, OwnedStringCell, PathString,
-    SliceWithUnderlyingString, SmolStr, String, StringBuilder, WTFStringImpl, WTFStringImplExt,
-    WTFStringImplStruct, ZigString, ZigStringSlice,
+    STRING_ALLOCATION_LIMIT, cheap_prefix_normalizer, escape_reg_exp, identifier, lexer,
+    lexer_tables, parse_double, printer, quote_for_json, string_joiner, write,
 };
-pub use string::{StringPointer, Tag, slice_to_nul, slice_to_nul_mut};
+pub use string::{StringPointer, Tag, slice_to_nul};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Low-tier homes for types the merged `string` module needs that previously
@@ -74,14 +69,12 @@ pub use string::{StringPointer, Tag, slice_to_nul, slice_to_nul_mut};
 // merge would otherwise cycle). The original crates re-export these.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod external_shared;
-pub use external_shared::{
-    ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional, WTFString,
-};
+pub use external_shared::{ExternalShared, ExternalSharedDescriptor, WTFString};
 pub mod bounded_array;
 pub use bounded_array::{BoundedArray, BoundedArrayAligned};
 
-/// Bit-cast between fn-pointer types. Replaces Zig `@ptrCast` on a function
-/// pointer when erasing only the *pointee type* of one or more thin-pointer
+/// Bit-cast between fn-pointer types — for erasing only the *pointee type*
+/// of one or more thin-pointer
 /// parameters (e.g. `extern "C" fn(*mut Ctx, …)` ↔ `extern "C" fn(*mut c_void,
 /// …)`). Const-generic `transmute` rejects fn types; an as-cast can't change
 /// arity. This stays one audited helper and rejects non-pointer-sized
@@ -105,8 +98,8 @@ pub const unsafe fn cast_fn_ptr<F: Copy, G: Copy>(f: F) -> G {
         assert!(core::mem::align_of::<G>() == core::mem::align_of::<fn()>());
     }
     // SAFETY: caller contract — `F` and `G` are ABI-identical fn pointers.
-    // `read` of a pointer-sized `Copy` value through a same-size cast is the
-    // bitwise reinterpretation `@ptrCast` performs.
+    // `read` of a pointer-sized `Copy` value through a same-size, same-align
+    // cast is a defined bitwise reinterpretation of the fn pointer.
     unsafe { (&raw const f).cast::<G>().read() }
 }
 
@@ -132,16 +125,6 @@ impl<T> RawSlice<T> {
     #[inline]
     pub const fn new(s: &[T]) -> Self {
         RawSlice(core::ptr::from_ref(s))
-    }
-    /// Wrap a raw slice pointer.
-    ///
-    /// # Safety
-    /// `p` must either be a (dangling, len 0) empty slice or point to `len`
-    /// initialized `T` that remain live and stable for the lifetime of every
-    /// `RawSlice` copied from the result.
-    #[inline]
-    pub const unsafe fn from_raw(p: *const [T]) -> Self {
-        RawSlice(p)
     }
     #[inline]
     pub const fn as_ptr(self) -> *const [T] {
@@ -215,23 +198,21 @@ unsafe impl<T: Sync> Send for RawSlice<T> {}
 // SAFETY: same reasoning as the `Send` impl above — `&[T]: Sync ⇔ T: Sync`.
 unsafe impl<T: Sync> Sync for RawSlice<T> {}
 
-/// Port of Zig's `std.os.environ` global (`[][*:0]u8`). On Windows the
+/// Process-global envp slice. On Windows the
 /// startup path `bun_sys::windows::env::convert_env_to_wtf8` overwrites this
-/// with a WTF-8-encoded envp slice; `getenvZ` and `bun_main` then read it via
-/// `os_environ_ptr()`. POSIX builds leave it empty and use libc's `environ`.
+/// with a WTF-8-encoded envp slice; `getenvZ` then reads it via
+/// `os::environ()`. POSIX builds leave it empty and use libc's `environ`.
 #[cfg(windows)]
 pub mod os {
     use core::ffi::c_char;
 
     // Stored as raw (ptr, len) — NOT `&'static mut [_]` — so `environ()` (which
-    // hands out a shared `&[_]`) never aliases a live `&mut`. Zig's
-    // `std.os.environ` is a plain slice global with no exclusivity guarantee;
-    // mirroring that with `&'static mut` would be UB the moment a reader
+    // hands out a shared `&[_]`) never aliases a live `&mut`. A `&'static mut`
+    // global would be UB the moment a reader
     // borrows while a writer holds the swapped-out `&mut`.
     static mut ENVIRON: (*mut *mut c_char, usize) = (core::ptr::null_mut(), 0);
 
-    /// Swap in a new envp slice; returns the previous (ptr, len) pair (Zig:
-    /// `orig_environ = std.os.environ; std.os.environ = new`).
+    /// Swap in a new envp slice; returns the previous (ptr, len) pair.
     /// SAFETY: single-threaded startup only.
     pub unsafe fn take_environ() -> (*mut *mut c_char, usize) {
         // `&raw mut` (no intermediate `&mut`) — `static_mut_refs` is hard-denied
@@ -245,7 +226,7 @@ pub mod os {
             core::ptr::write(&raw mut ENVIRON, (ptr, len));
         }
     }
-    /// Borrowed view of the current envp slice (read side of `std.os.environ`).
+    /// Borrowed view of the current envp slice (read side of the `ENVIRON` global).
     /// SAFETY: caller must not race with `set_environ`.
     pub unsafe fn environ() -> &'static [*mut c_char] {
         unsafe {
@@ -259,20 +240,6 @@ pub mod os {
     }
 }
 
-/// `bun.os_environ_ptr()` — pointer to the first element of `std.os.environ`
-/// (or null if empty). Windows-only; POSIX uses libc's `environ` symbol.
-#[cfg(windows)]
-#[inline]
-#[allow(dead_code)]
-pub(crate) fn os_environ_ptr() -> *const *mut core::ffi::c_char {
-    // SAFETY: read of a process-global written once at startup.
-    let e = unsafe { os::environ() };
-    if e.is_empty() {
-        core::ptr::null()
-    } else {
-        e.as_ptr()
-    }
-}
 pub mod deprecated;
 pub mod env_var;
 pub mod feature_flags;
@@ -281,12 +248,12 @@ pub mod feature_flags;
 /// (dirname, which) can use them without an upward dep. `bun_paths` re-exports
 /// these as the canonical `is_sep_*` set.
 pub mod path_sep {
-    use crate::strings::PathByte;
+    use crate::strings_impl::PathByte;
     pub use bun_alloc::{SEP, SEP_STR};
 
     // ─── u8 const fns (kept const for match-guard / const-eval callers) ─────
 
-    /// Zig: `bun.path.isSepAny` — `/` **or** `\` on every target.
+    /// `/` **or** `\` on every target.
     /// Use for parsing user-supplied / cross-platform path strings (tsconfig,
     /// archive entries, Windows drive prefixes).
     #[inline(always)]
@@ -310,11 +277,6 @@ pub mod path_sep {
     }
 
     #[inline(always)]
-    pub fn is_sep_win32_t<T: PathByte>(c: T) -> bool {
-        c == T::from_u8(b'\\')
-    }
-
-    #[inline(always)]
     pub fn is_sep_any_t<T: PathByte>(c: T) -> bool {
         c == T::from_u8(b'/') || c == T::from_u8(b'\\')
     }
@@ -328,9 +290,9 @@ pub mod path_sep {
         }
     }
 
-    /// Host-OS-native absolute-path predicate (Zig: `std.fs.path.isAbsolute`).
+    /// Host-OS-native absolute-path predicate.
     /// POSIX: leading `/`. Windows: leading `/` or `\`, or 3-byte `X:/`|`X:\`
-    /// — faithful to Zig std: **no** alphabetic gate on the drive byte, and a
+    /// — **no** alphabetic gate on the drive byte, and a
     /// bare `X:` with no trailing separator is **not** absolute.
     ///
     /// Sunk from `bun_paths::is_absolute` so tier-0 (`util::which`) and
@@ -355,8 +317,8 @@ pub mod path_sep {
 }
 
 // ─── libm shims ───────────────────────────────────────────────────────────────
-// Canonical extern for libm's `powf`/`pow` (Zig: `bun.zig` `pub extern "c" fn
-// powf`). Hot CSS color-space conversion paths (gam_srgb, lab, prophoto) call
+// Canonical extern for libm's `powf`/`pow`.
+// Hot CSS color-space conversion paths (gam_srgb, lab, prophoto) call
 // the safe wrapper below; keep `#[inline]` so cross-crate use stays a direct
 // libm call.
 unsafe extern "C" {
@@ -379,9 +341,7 @@ pub mod vec {
     ///
     /// Equivalent to `for i in 0..n { v.push(f(i)) }` but reserves once and
     /// writes through `spare_capacity_mut()` so no per-element capacity check
-    /// or length bump occurs in the hot loop. Replaces the Zig-ported
-    /// `reserve; ptr::write…; set_len` blocks where the fill is a pure
-    /// per-index function (constant, default, or `i`-derived).
+    /// or length bump occurs in the hot loop.
     ///
     /// Panic-safety: if `f` panics at index `k`, `v.len()` is left at its
     /// original value plus `k` — every exposed element is initialized, and the
@@ -409,30 +369,10 @@ pub mod vec {
         unsafe { v.set_len(prev + n) };
     }
 
-    /// Append `n` copies of `value` to `v`. Zig: `std.ArrayList.appendNTimes` —
-    /// `ensureUnusedCapacity(n); @memset(unusedCapacitySlice()[0..n], value); len += n`.
-    ///
-    /// Unlike `v.extend(repeat_n(value, n))` or a `for _ { v.push(value) }` loop,
-    /// this reserves once and fills via `[MaybeUninit<T>]::fill` (lowers to
-    /// `memset` for byte-sized `T`, vectorized stores for wider `Copy` types) —
-    /// no per-element `RawVec` capacity branch in the hot loop.
-    #[inline]
-    pub fn push_n<T: Copy>(v: &mut Vec<T>, value: T, n: usize) {
-        v.reserve(n);
-        let prev = v.len();
-        v.spare_capacity_mut()[..n].fill(core::mem::MaybeUninit::new(value));
-        // SAFETY: `reserve(n)` ⇒ `spare_capacity_mut().len() >= n`, so `[..n]`
-        // is in-bounds; every slot in it was just initialized via `fill`, and
-        // `T: Copy` means no drop obligations are skipped.
-        unsafe { v.set_len(prev + n) };
-    }
-
     /// Extend `v` by `n` `T::default()` elements and return a mutable slice
     /// of the newly-appended tail (`&mut v[prev_len .. prev_len + n]`).
     ///
-    /// Replaces the Zig-ported `reserve(n); set_len(len+n); &mut v[len..]`
-    /// pattern (S022) where the tail is immediately overwritten by a clone/
-    /// fill loop — the default-fill keeps every exposed `T` valid even if the
+    /// The default-fill keeps every exposed `T` valid even if the
     /// caller bails partway through writing.
     #[inline]
     pub fn grow_default<T: Default>(v: &mut Vec<T>, n: usize) -> &mut [T] {
@@ -442,7 +382,7 @@ pub mod vec {
     }
 
     /// Reserve `additional`, advance `len` by `additional`, and return the
-    /// newly-exposed (uninitialized) tail. Zig `ArrayList.addManyAsSlice`.
+    /// newly-exposed (uninitialized) tail.
     /// Generic free-fn form of `bun_collections::VecExt::writable_slice` so
     /// `bun_core::string` can call it without a `bun_collections` edge.
     ///
@@ -459,8 +399,7 @@ pub mod vec {
     }
 
     /// As [`writable_slice`] but skips `reserve`; caller must guarantee
-    /// `len + additional <= capacity` (debug-asserted). Zig:
-    /// `ArrayList.addManyAsSliceAssumeCapacity`.
+    /// `len + additional <= capacity` (debug-asserted).
     ///
     /// # Safety
     /// `v.len() + additional <= v.capacity()`, and the returned slice must be
@@ -483,9 +422,7 @@ pub mod vec {
     ///
     /// `n == 0` is a no-op; `n >= len` degenerates to `clear()` (capacity
     /// retained). All current callers are `Vec<u8>` ring/line buffers
-    /// shifting a consumed prefix down after a partial write/parse — the Zig
-    /// port open-coded `std.mem.copyForwards` + `items.len -= n` at every
-    /// site.
+    /// shifting a consumed prefix down after a partial write/parse.
     #[inline]
     pub fn drain_front<T: Copy, A: core::alloc::Allocator>(v: &mut Vec<T, A>, n: usize) {
         if n == 0 {
@@ -500,10 +437,9 @@ pub mod vec {
         v.truncate(len - n);
     }
 
-    // ── Zig `ArrayList(u8).unusedCapacitySlice()` family ──────────────────
-    // The Zig stdlib has ONE helper and ~30 call sites; the Rust port had
-    // grown 11 hand-rolled `spare_capacity_mut().as_mut_ptr().cast::<u8>()`
-    // + `set_len(len+n)` copies because `spare_capacity_mut` returns
+    // ── Spare-capacity fill helpers ────────────────────────────────────────
+    // Consolidates 11 hand-rolled `spare_capacity_mut().as_mut_ptr().cast::<u8>()`
+    // + `set_len(len+n)` copies: `spare_capacity_mut` returns
     // `MaybeUninit<u8>` and every C-ABI fill site (read/recv/pread, simdutf,
     // zlib, zstd, libdeflate, base64) needs `*mut u8` / `&mut [u8]`.
 
@@ -540,9 +476,8 @@ pub mod vec {
         unsafe { spare_bytes_mut(v) }
     }
 
-    /// View the **entire** allocation `v[0..capacity]` as `&mut [u8]` (Zig:
-    /// `ArrayList.allocatedSlice()`). For the spare-only `[len..capacity]`
-    /// view use [`spare_bytes_mut`].
+    /// View the **entire** allocation `v[0..capacity]` as `&mut [u8]`.
+    /// For the spare-only `[len..capacity]` view use [`spare_bytes_mut`].
     ///
     /// # Safety
     /// Bytes in `[len, capacity)` are uninitialized; treat that tail as
@@ -602,6 +537,38 @@ pub mod vec {
             r
         }
     }
+
+    /// The stack-array form of [`spare_bytes_mut`]: `N` uninitialized bytes for a producer that reports how many it wrote.
+    pub struct UninitBuf<const N: usize>(core::mem::MaybeUninit<[u8; N]>);
+
+    impl<const N: usize> UninitBuf<N> {
+        #[inline(always)]
+        pub const fn uninit() -> Self {
+            Self(core::mem::MaybeUninit::uninit())
+        }
+
+        #[inline(always)]
+        pub fn as_mut_ptr(&mut self) -> *mut u8 {
+            self.0.as_mut_ptr().cast::<u8>()
+        }
+
+        /// # Safety
+        /// Write-only view, same contract as [`spare_bytes_mut`]: only a producer may store into it, and only the prefix it reports may be read back.
+        #[inline(always)]
+        pub unsafe fn as_bytes_mut(&mut self) -> &mut [u8] {
+            // SAFETY: `MaybeUninit<[u8; N]>` has the layout of `[u8; N]`; the caller upholds the write-only contract.
+            unsafe { core::slice::from_raw_parts_mut(self.as_mut_ptr(), N) }
+        }
+
+        /// # Safety
+        /// A producer must have written every byte of `[0..len]` (`len <= N`).
+        #[inline(always)]
+        pub unsafe fn filled(&self, len: usize) -> &[u8] {
+            assert!(len <= N);
+            // SAFETY: `[0..len]` is inside the array (asserted above) and initialized (caller contract).
+            unsafe { core::slice::from_raw_parts(self.0.as_ptr().cast::<u8>(), len) }
+        }
+    }
 }
 
 #[path = "Progress.rs"]
@@ -629,7 +596,7 @@ bun_dispatch::link_interface! {
 }
 
 impl OutputSink {
-    pub const SYS: Self = Self {
+    pub(crate) const SYS: Self = Self {
         kind: OutputSinkKind::Sys,
         owner: core::ptr::null_mut(),
     };
@@ -642,11 +609,14 @@ bun_dispatch::link_interface! {
     pub ErrnoNames[Sys] {
         fn name(errno: i32) -> Option<&'static str>;
         fn max_dense() -> u32;
+        // Raw Win32 `GetLastError()` code → `SystemErrno` tag name.
+        // Always `None` on non-Windows.
+        fn win32_name(code: u32) -> Option<&'static str>;
     }
 }
 
 impl ErrnoNames {
-    pub const SYS: Self = Self {
+    pub(crate) const SYS: Self = Self {
         kind: ErrnoNamesKind::Sys,
         owner: core::ptr::null_mut(),
     };
@@ -656,7 +626,7 @@ impl ErrnoNames {
 /// so `$crate::pretty_fmt!` resolves from the wrapper macros in `output.rs`.
 pub use bun_core_macros::{EnumTag, pretty_fmt};
 
-/// Stand-in for Zig's `@import("build_options")`. Values are written at
+/// Build-time configuration values. Written at
 /// configure time by `scripts/build/buildOptionsRs.ts` from the resolved
 /// `Config` and `include!()`'d here; `build.rs` exports `BUN_CODEGEN_DIR`
 /// and fingerprints the file so a sha/version change recompiles this crate.
@@ -676,14 +646,15 @@ pub use bun_alloc::{
 // can write `bun_core::assert_ffi_layout!(...)` without naming `bun_opaque`.
 pub use Global::*;
 pub use bun_opaque::{FfiLayout, assert_ffi_discr, assert_ffi_layout};
+pub use error::{Error, Error as CrateError, Result as CrateResult};
 pub use ffi::{Zeroable, boxed_zeroed, boxed_zeroed_unchecked};
-pub use result::*;
+pub use result::coreutils_error_map;
 pub use tty::Winsize;
 pub use util::*;
 
 // ── intrusive-container parent recovery ───────────────────────────────────
 //
-// Port of Zig's parent-from-field intrinsic. Intrusive data structures (task
+// Intrusive data structures (task
 // queues, timer heaps, linked lists) hand callbacks a `*mut Field` and expect
 // the callee to walk back to the owning `*mut Parent`. Earlier ports open-coded
 // this at ~150 sites as `ptr.cast::<u8>().sub(offset_of!(P, f)).cast::<P>()`; the
@@ -699,23 +670,27 @@ pub use util::*;
 /// `core::mem::offset_of!` so the field name is type-checked.
 ///
 /// # Safety
-/// - `field` must have been derived from a live `P` via
-///   `addr_of!((*p).field)` / `addr_of_mut!` (or equivalent), so its
-///   provenance covers the entire `P` allocation — a `&mut field` reborrow
-///   does **not** suffice.
-/// - `offset` must equal `offset_of!(P, <that field>)`.
+/// - `field` must point at the `F` field of a live `P`, and
+///   `offset == offset_of!(P, <that field>)`.
+/// - What may be done with the result depends on where `field` came from:
+///   - a raw place projection of a whole-`P` pointer (`&raw mut (*p).field`,
+///     an intrusive node handed back by C): anything the original `p` allowed.
+///   - `ptr::from_mut(field_ref)` for a `&mut F`: reads and writes of `P` are
+///     fine (Tree Borrows initialises out-of-range locations lazily for a
+///     `&mut`-derived tag; LLVM sees the result as based on the argument), for
+///     as long as that `&mut F` could itself be used.
+///   - `ptr::from_ref(field_ref)` for a `&F`: reads of `P` are fine. Writes
+///     (including `Cell::set` on a `P` field) are only defined when `F` is
+///     **not** [`Freeze`](core::marker::Freeze): rustc passes a `&F` to a
+///     `Freeze` `F` as `noalias readonly`, so a store through anything derived
+///     from it is UB that release builds do exploit — the store is deleted.
+///     Use [`impl_field_parent!`]'s `shared` arm instead of open-coding this
+///     case; it rejects `Freeze` children at compile time.
 #[inline(always)]
 pub const unsafe fn container_of<P, F>(field: *const F, offset: usize) -> *mut P {
     // SAFETY: per fn contract — `field` is interior to a `P`; `byte_sub`
     // preserves provenance and yields the allocation base.
     unsafe { field.byte_sub(offset).cast::<P>().cast_mut() }
-}
-
-/// `*const`-out variant of [`container_of`]. Same safety contract.
-#[inline(always)]
-pub const unsafe fn container_of_const<P, F>(field: *const F, offset: usize) -> *const P {
-    // SAFETY: per fn contract.
-    unsafe { field.byte_sub(offset).cast::<P>() }
 }
 
 /// Recover a typed `&mut T` from a C-callback's opaque user-data pointer.
@@ -753,8 +728,9 @@ pub unsafe fn callback_ctx<'a, T>(ctx: *mut core::ffi::c_void) -> &'a mut T {
 ///
 /// Type-checked wrapper over [`container_of`]: expands to
 /// `container_of::<Parent, _>(ptr, offset_of!(Parent, field))`. The call is
-/// `unsafe` (caller asserts `ptr` points at `Parent.field` with whole-`Parent`
-/// provenance) and must appear inside an `unsafe` block.
+/// `unsafe` (caller asserts `ptr` points at `Parent.field`; see
+/// [`container_of`] for what the result may be used for depending on how
+/// `ptr` was derived) and must appear inside an `unsafe` block.
 #[macro_export]
 macro_rules! from_field_ptr {
     ($Parent:ty, $field:ident, $ptr:expr $(,)?) => {
@@ -762,116 +738,171 @@ macro_rules! from_field_ptr {
     };
 }
 
-/// Stamp `@fieldParentPtr`-style back-reference accessors on a child type that
-/// is **only ever constructed as the `$field` field of `$Parent`**.
+/// Stamp container-of-style back-reference accessors on a child type that
+/// is **only ever constructed as the `$field` field of `$Parent`** (a port of
+/// Zig's `@fieldParentPtr`).
 ///
-/// Five forms (mix-and-match is not supported; pick the one matching the call
-/// site's receiver/return contract):
 /// ```ignore
-/// // (1) ref + raw-mut pair         (&self -> &P ; &mut self -> *mut P)
-/// bun_core::impl_field_parent! { Assets => DevServer.assets; pub fn owner; fn owner_mut; }
-///
-/// // (2) ref-only                   (&self -> &P)
-/// bun_core::impl_field_parent! { SubscriptionCtx => JSValkeyClient._subscription_ctx; fn parent; }
-///
-/// // (3) mut-only                   (&mut self -> *mut P)
-/// bun_core::impl_field_parent! { DirectoryWatchStore => DevServer.directory_watchers; fn mut owner; }
-///
-/// // (4) nonnull                    (&mut self -> NonNull<P>)
-/// bun_core::impl_field_parent! { Execution => BunTest.execution; fn nonnull bun_test; }
-///
-/// // (5) raw                        (&self -> *mut P)
-/// bun_core::impl_field_parent! { FileReader => Source.context; pub fn raw parent; }
+/// bun_core::impl_field_parent! { ValkeyClient => JSValkeyClient.client;
+///     fn parent;             // (&mut self) -> &JSValkeyClient
+///     fn mut parent_ptr;     // (&mut self) -> *mut JSValkeyClient
+/// }
+/// bun_core::impl_field_parent! { FileReader => Source.context;
+///     pub fn shared parent_const; // (&self) -> &Source     — only compiles while FileReader: !Freeze
+///     pub fn raw parent;          // (&self) -> *mut Source — same check
+/// }
 /// ```
 ///
-/// The mut accessor returns `*mut $Parent` (NOT `&mut`) because `self` is a
-/// field of `$Parent` — materializing `&mut $Parent` while `&mut self` is live
-/// would alias. Callers dereference under `unsafe` and must only touch fields
-/// disjoint from `$field`.
+/// Any subset of the four arms, in any order.
+///
+/// ## Why the receivers are what they are
+///
+/// The parent pointer is computed from `self`, so it is only as capable as
+/// the reference it came from:
+///
+/// - From `&mut self` (the plain and `mut` arms) the whole parent may be read
+///   and written for as long as that `&mut self` is usable. Under Tree Borrows
+///   the locations outside `self` are initialised lazily for the `&mut`'s tag,
+///   and LLVM sees the parent pointer as *based on* the argument, so parent
+///   code that comes back and touches `self`'s bytes (through a `JsCell`, say)
+///   is correctly treated as aliasing. This is what makes the container-of
+///   form preferable to a stored back-pointer for `&mut self` methods: a
+///   pointer loaded from a field is *not* based on the argument, and `&mut
+///   self` is `noalias`.
+/// - From `&self` (the `shared` and `raw` arms) the parent may be read and
+///   written only because `$Child` is not [`Freeze`](core::marker::Freeze).
+///   For a `Freeze` child rustc passes `&self` as `noalias readonly` and LLVM
+///   deletes stores made through anything derived from it — refcount bumps,
+///   flag sets — depending purely on inlining. Both arms therefore fail to
+///   compile for a `Freeze` `$Child`. If that assertion fires, do not add a
+///   `Cell` to placate it: move the methods that need the parent onto
+///   `&$Parent`, or take `&mut self`. `shared` gives `&$Parent` (so only its
+///   interior-mutable fields are writable); `raw` gives the pointer for
+///   `&self` methods that must call `&mut $Parent` methods or set plain
+///   fields, under the usual no-other-live-reference rule.
+///
+/// No arm hands out `&mut $Parent`: `self` is inside it, so that would be two
+/// live `&mut` to the same bytes. The pointer-returning arms are dereferenced
+/// at the point of use.
+///
+/// None of this is defined under Stacked Borrows, which is why
+/// `scripts/rust-miri.ts` runs Tree Borrows; `bun_ptr`'s tests exercise both
+/// arms under Miri.
 ///
 /// # Safety
 /// Expanding this macro asserts that **every** `$Child` instance lives at
 /// `$Parent.$field` for its entire lifetime. If `$Child` can exist
 /// standalone, the generated accessors are unsound; keep a hand-rolled
-/// `pub unsafe fn` instead.
+/// `unsafe fn(*mut $Child) -> *mut $Parent` over [`from_field_ptr!`] instead.
 #[macro_export]
 macro_rules! impl_field_parent {
-    // ref + raw-mut pair
-    ($Child:ty => $Parent:ident . $field:ident ; $v:vis fn $ref_name:ident ; $vm:vis fn $mut_name:ident ;) => {
-        impl $Child {
-            #[inline]
-            $v fn $ref_name(&self) -> &$Parent {
-                // SAFETY: macro contract — `self` is the `$field` field of a
-                // live `$Parent`; recovering the parent and reborrowing as `&`
-                // for the lifetime of `&self` is sound.
-                unsafe { &*$crate::from_field_ptr!($Parent, $field, ::core::ptr::from_ref(self)) }
-            }
-            #[inline]
-            $vm fn $mut_name(&mut self) -> *mut $Parent {
-                // SAFETY: macro contract — pointer arithmetic only; no
-                // reference is formed here.
-                unsafe { $crate::from_field_ptr!($Parent, $field, ::core::ptr::from_mut(self)) }
-            }
-        }
+    ($Child:ty => $Parent:ident . $field:ident ; $($arms:tt)+) => {
+        $crate::impl_field_parent!(@arm [$Child] [$Parent] [$field] $($arms)+);
     };
-    // ref-only
-    ($Child:ty => $Parent:ident . $field:ident ; $v:vis fn $ref_name:ident ;) => {
-        impl $Child {
-            #[inline]
-            $v fn $ref_name(&self) -> &$Parent {
-                // SAFETY: macro contract — see two-arm form above.
-                unsafe { &*$crate::from_field_ptr!($Parent, $field, ::core::ptr::from_ref(self)) }
-            }
-        }
-    };
-    // mut-only:  (&mut self) -> *mut $Parent
-    ($Child:ty => $Parent:ident . $field:ident ; $v:vis fn mut $name:ident ;) => {
+    (@arm [$Child:ty] [$Parent:ident] [$field:ident]) => {};
+    // (&mut self) -> *mut $Parent
+    (@arm [$Child:ty] [$Parent:ident] [$field:ident] $v:vis fn mut $name:ident ; $($rest:tt)*) => {
         impl $Child {
             #[inline]
             $v fn $name(&mut self) -> *mut $Parent {
-                // SAFETY: macro contract — pointer arithmetic only.
+                // SAFETY: macro contract — `self` is `$Parent.$field`.
                 unsafe { $crate::from_field_ptr!($Parent, $field, ::core::ptr::from_mut(self)) }
             }
         }
+        $crate::impl_field_parent!(@arm [$Child] [$Parent] [$field] $($rest)*);
     };
-    // nonnull:  (&mut self) -> NonNull<$Parent>
-    ($Child:ty => $Parent:ident . $field:ident ; $v:vis fn nonnull $name:ident ;) => {
+    // (&self) -> &$Parent, `$Child: !Freeze` enforced
+    (@arm [$Child:ty] [$Parent:ident] [$field:ident] $v:vis fn shared $name:ident ; $($rest:tt)*) => {
+        $crate::assert_not_freeze!($Child, $Parent);
         impl $Child {
             #[inline]
-            $v fn $name(&mut self) -> ::core::ptr::NonNull<$Parent> {
-                // SAFETY: macro contract — `self` is non-null, so the
-                // recovered parent pointer is too.
-                unsafe {
-                    ::core::ptr::NonNull::new_unchecked(
-                        $crate::from_field_ptr!($Parent, $field, ::core::ptr::from_mut(self)),
-                    )
-                }
+            $v fn $name(&self) -> &$Parent {
+                // SAFETY: macro contract — `self` is `$Parent.$field`; the
+                // assertion above guarantees `&self` carries no `readonly`.
+                unsafe { &*$crate::from_field_ptr!($Parent, $field, ::core::ptr::from_ref(self)) }
             }
         }
+        $crate::impl_field_parent!(@arm [$Child] [$Parent] [$field] $($rest)*);
     };
-    // raw:  (&self) -> *mut $Parent  (read-only receiver, raw out — for FFI
-    // callback shapes that round-trip through `*const Self` but need a
-    // `*mut Parent` without forming an aliased `&mut`)
-    ($Child:ty => $Parent:ident . $field:ident ; $v:vis fn raw $name:ident ;) => {
+    // (&self) -> *mut $Parent, `$Child: !Freeze` enforced. For `&self`
+    // methods that must reach non-cell parent state (`&mut $Parent` methods,
+    // plain fields): going through the `shared` arm's `&$Parent` first would
+    // freeze those bytes, so this hands back the pointer underived.
+    (@arm [$Child:ty] [$Parent:ident] [$field:ident] $v:vis fn raw $name:ident ; $($rest:tt)*) => {
+        $crate::assert_not_freeze!($Child, $Parent);
         impl $Child {
             #[inline]
             $v fn $name(&self) -> *mut $Parent {
-                // SAFETY: macro contract — pointer arithmetic only; the
-                // returned pointer is not dereferenced here.
+                // SAFETY: macro contract — `self` is `$Parent.$field`.
                 unsafe {
                     $crate::from_field_ptr!($Parent, $field, ::core::ptr::from_ref(self).cast_mut())
                 }
             }
         }
+        $crate::impl_field_parent!(@arm [$Child] [$Parent] [$field] $($rest)*);
     };
+    // (&mut self) -> &$Parent
+    (@arm [$Child:ty] [$Parent:ident] [$field:ident] $v:vis fn $name:ident ; $($rest:tt)*) => {
+        impl $Child {
+            #[inline]
+            $v fn $name(&mut self) -> &$Parent {
+                // SAFETY: macro contract — `self` is `$Parent.$field`; the
+                // returned borrow keeps `self` mutably borrowed, so no `&mut`
+                // to any part of `$Parent` is usable while it lives.
+                unsafe { &*$crate::from_field_ptr!($Parent, $field, ::core::ptr::from_mut(self)) }
+            }
+        }
+        $crate::impl_field_parent!(@arm [$Child] [$Parent] [$field] $($rest)*);
+    };
+}
+
+/// Compile-time `assert!($Child: !Freeze)`, for code that reaches a parent
+/// through a pointer derived from `&$Child` (see [`container_of`]). rustc
+/// passes a `&T` to a [`Freeze`](core::marker::Freeze) `T` as `noalias
+/// readonly`, so any store through such a pointer is deleted in release
+/// builds; this turns "someone removed the last `Cell` from `$Child`" into a
+/// build error at the site that depends on it instead of a heap corruption.
+#[macro_export]
+macro_rules! assert_not_freeze {
+    ($Child:ty, $Parent:ty $(,)?) => {
+        const _: () = {
+            #[allow(unused_imports)]
+            use $crate::__NotFreeze as _;
+            ::core::assert!(
+                !<$crate::__IsFreeze<$Child>>::IS_FREEZE,
+                concat!(
+                    "`",
+                    stringify!($Child),
+                    "` is Freeze, so `&self` is passed `noalias readonly` ",
+                    "and writes to `",
+                    stringify!($Parent),
+                    "` through a pointer derived from it ",
+                    "would be miscompiled. Put the methods that need the parent on `&",
+                    stringify!($Parent),
+                    "` instead, or derive the pointer from `&mut self`."
+                ),
+            );
+        };
+    };
+}
+
+#[doc(hidden)]
+pub struct __IsFreeze<T: ?Sized>(core::marker::PhantomData<T>);
+#[doc(hidden)]
+pub trait __NotFreeze {
+    const IS_FREEZE: bool = false;
+}
+impl<T: ?Sized> __NotFreeze for __IsFreeze<T> {}
+impl<T: ?Sized + core::marker::Freeze> __IsFreeze<T> {
+    // Inherent consts shadow trait consts, so this wins exactly when `T: Freeze`.
+    pub const IS_FREEZE: bool = true;
 }
 
 // ─── IntrusiveField<F> ──────────────────────────────────────────────────────
 
 /// Declares that `Self` embeds exactly one intrusive `F` field at byte
-/// [`OFFSET`](IntrusiveField::OFFSET). This is the single Rust analogue of
-/// Zig's `@fieldParentPtr` builtin: every per-module `const X_OFFSET: usize`
-/// trait the port grew (`TASK_OFFSET`, `MIXIN_OFFSET`,
+/// [`OFFSET`](IntrusiveField::OFFSET). Every per-module `const X_OFFSET: usize`
+/// trait (`TASK_OFFSET`, `MIXIN_OFFSET`,
 /// `CHANNEL_OFFSET`, `LazyBool<_, const OFFSET>`, `from_task`, …) is the same
 /// `(Parent, Field, OFFSET)` triple plus [`container_of`] arithmetic — this
 /// trait is exactly that triple, with both directions provided.
@@ -892,7 +923,7 @@ pub unsafe trait IntrusiveField<F>: Sized {
         unsafe { &mut *core::ptr::from_mut(self).byte_add(Self::OFFSET).cast::<F>() }
     }
 
-    /// `*mut Self` → `*mut self.<field>` (Zig: `&self.<field>` from raw `*Self`).
+    /// `*mut Self` → `*mut self.<field>`.
     ///
     /// # Safety
     /// `this` must point at (or one-past) a valid `Self` allocation so the
@@ -903,8 +934,8 @@ pub unsafe trait IntrusiveField<F>: Sized {
         unsafe { this.byte_add(Self::OFFSET).cast::<F>() }
     }
 
-    /// Recover `*mut Self` from a pointer to its embedded `F` (Zig:
-    /// `@fieldParentPtr`). Thin wrapper over [`container_of`].
+    /// Recover `*mut Self` from a pointer to its embedded `F`. Thin
+    /// wrapper over [`container_of`].
     ///
     /// # Safety
     /// `field` must point at the `<field>` of a live `Self` with
@@ -942,57 +973,29 @@ macro_rules! intrusive_field {
 /// `bun_core::OOM` per PORTING.md type map (`OOM!T` → `Result<T, OOM>`).
 pub type OOM = AllocError;
 
-/// `bun.JSError` — the canonical JS error union (`error{JSError, OutOfMemory, JSTerminated}`
-/// in Zig). Tier-0 so every layer of the runtime can name it directly; `bun_jsc` re-exports
-/// it as `bun_jsc::JsError` and `bun_event_loop` re-exports it as `ErasedJsError` for
+/// `bun.JSError` — the canonical JS error union. Tier-0 so every layer of
+/// the runtime can name it directly; `bun_jsc` re-exports
+/// it as `bun_jsc::JsError` and `bun_event_loop` exposes it (tier-0) for
 /// historical call sites.
-///
-/// `#[repr(u8)]` with explicit discriminants: `AnyTask` stores
-/// `fn(*mut c_void) -> Result<(), JsError>` and the dispatcher relies on the 1-byte layout
-/// surviving the type-erased round-trip.
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum JsError {
-    /// A JavaScript exception is pending in the VM's exception scope.
+    /// A JavaScript exception is pending in the VM's exception scope: unwind to the native/JS boundary.
+    /// (Beneath script, the VM's TerminationException is carried this way too — JSC unwinds it.)
     Thrown = 0,
     /// Allocation failure; caller must throw an `OutOfMemoryError`.
     OutOfMemory = 1,
-    /// The VM is terminating (worker shutdown / `process.exit`).
+    /// The VM has been terminated (a worker's `terminate()` / `process.exit()`), and its
+    /// TerminationException was taken where it unwound past the outermost script frame: nothing is
+    /// pending. Stand down — no more script runs on this VM.
     Terminated = 2,
 }
 
 bun_alloc::oom_from_alloc!(JsError);
 
-impl From<crate::Error> for JsError {
-    fn from(_: crate::Error) -> Self {
-        // PORT NOTE: Zig coerces arbitrary `anyerror` into the JS error union by
-        // throwing a generic Error; the throw happens at the call site. Mapping
-        // to `Thrown` here lets `?` propagate while the actual throw is handled
-        // by the host-fn wrapper.
-        JsError::Thrown
-    }
-}
-
-impl From<JsError> for crate::Error {
-    /// Widen a `bun.JSError` value back into the `anyerror` newtype. Preserves
-    /// the exact Zig tag (`@errorName`) so call sites that round-trip through
-    /// `bun_core::Error` (e.g. the `bun_bundler::dispatch::DevServerVTable`
-    /// boundary) keep `error.OutOfMemory` distinguishable from `error.JSError`.
-    #[inline]
-    fn from(e: JsError) -> Self {
-        match e {
-            JsError::OutOfMemory => crate::err!("OutOfMemory"),
-            // `Terminated` is a Rust-port addition (worker shutdown); it has no
-            // distinct Zig `error.` tag, so collapse into `JSError` like every
-            // other thrown JS exception.
-            JsError::Thrown | JsError::Terminated => crate::err!("JSError"),
-        }
-    }
-}
-
-/// Zig `bun.concat(T, dest, &.{ a, b, ... })` — write `parts` consecutively
+/// Write `parts` consecutively
 /// into `dest` and return the written prefix as a mutable slice. Panics if
-/// `sum(parts.len()) > dest.len()` (matches Zig `@memcpy` length assert).
+/// `sum(parts.len()) > dest.len()`.
 #[inline]
 pub fn concat_into<'b, T: Copy>(dest: &'b mut [T], parts: &[&[T]]) -> &'b mut [T] {
     let mut off = 0;
@@ -1003,33 +1006,12 @@ pub fn concat_into<'b, T: Copy>(dest: &'b mut [T], parts: &[&[T]]) -> &'b mut [T
     &mut dest[..off]
 }
 
-/// Zig `std.mem.concat(allocator, T, &.{...})` / `bun.strings.concat` — allocate
-/// a fresh `Box<[T]>` holding all `parts` joined. No zero-init: `extend_from_slice`
-/// is `memcpy`-specialized for `T: Copy`, so no `Default` bound is required.
-#[inline]
-pub fn concat_boxed<T: Copy>(parts: &[&[T]]) -> Box<[T]> {
-    let len: usize = parts.iter().map(|p| p.len()).sum();
-    let mut v: Vec<T> = Vec::with_capacity(len);
-    for p in parts {
-        v.extend_from_slice(p);
-    }
-    v.into_boxed_slice()
-}
-
-/// Back-compat alias for the original `u8`-only buffer-concat. New code should
-/// call [`concat_into`] directly.
-#[inline]
-pub fn concat<'b>(buf: &'b mut [u8], parts: &[&[u8]]) -> &'b [u8] {
-    concat_into(buf, parts)
-}
-
-/// Zig `union(enum)` field projection — `data.file`, `chunk.content.javascript`.
+/// Tagged-union field projection — `data.file`, `chunk.content.javascript`.
 ///
-/// In safety-checked Zig builds, reading a tagged-union field on the wrong
-/// active variant panics at runtime. The Rust port hand-wrote ~20 identical
+/// Consolidates ~20 identical
 /// `match self { Self::V(x) => x, _ => unreachable!() }` accessors across
-/// `jsc` / `bundler` / `ini` / `resolver` / `ast` / `install`; this macro is
-/// the 1:1 analogue. Invoke it *inside* an `impl Enum { ... }` block:
+/// `jsc` / `bundler` / `ini` / `resolver` / `ast` / `install` into one
+/// macro. Invoke it *inside* an `impl Enum { ... }` block:
 ///
 /// ```ignore
 /// impl Data {
@@ -1089,12 +1071,9 @@ macro_rules! enum_unwrap {
     };
 }
 
-/// Zig: `bun.handleOom(expr)` — unwrap a `Result`, calling `outOfMemory()` on
-/// `Err`. The full multi-arm version (which narrows mixed error sets) lives in
-/// `bun_crash_handler::handle_oom`; that crate sits *above* `bun_core` in the
-/// dep graph, so this tier-0 alias is the OOM-only arm — sufficient for the
-/// `Result<T, AllocError>` / `Result<T, Error>` callers in `js_parser`,
-/// `bake/DevServer`, etc. that spell it `bun_core::handle_oom`.
+/// Unwrap a `Result`, calling `outOfMemory()` on **any** `Err`. The
+/// `AllocError`-only version lives in `bun_crash_handler::handle_oom` (that
+/// crate sits *above* `bun_core` in the dep graph).
 #[inline]
 #[track_caller]
 pub fn handle_oom<T, E>(r: core::result::Result<T, E>) -> T {
@@ -1105,16 +1084,8 @@ pub fn handle_oom<T, E>(r: core::result::Result<T, E>) -> T {
 }
 
 /// Extension-method form of [`handle_oom`]: `.unwrap_or_oom()` on any
-/// `Result<T, E>`. Zig: `expr catch bun.outOfMemory()` — the *loose* idiom
-/// that panics on **any** `Err`, not just OOM-only error sets. For the
-/// Zig-faithful narrowing version (`bun.handleOom` with comptime error-set
-/// reflection) see `bun_crash_handler::HandleOom`.
-///
-/// PORT NOTE: this is intentionally a blanket `impl<T, E>` — it matches the
-/// existing `bun_core::handle_oom` free fn and the two pre-existing local
-/// blanket impls in `run_command.rs` / `valkey.rs`. Callers that want a strict
-/// `error{OutOfMemory}`-only whitelist should use `bun_crash_handler::HandleOom`
-/// instead.
+/// `Result<T, E>`, treating **any** `Err` as OOM. For the `AllocError`-only
+/// version see `bun_crash_handler::handle_oom`.
 pub trait UnwrapOrOom {
     type Output;
     fn unwrap_or_oom(self) -> Self::Output;
@@ -1128,10 +1099,8 @@ impl<T, E> UnwrapOrOom for core::result::Result<T, E> {
     }
 }
 
-/// Zig: `bun.handleErrorReturnTrace(err, @errorReturnTrace())` — captures the
-/// Zig error-return trace for crash reporting. Rust has no `@errorReturnTrace()`
-/// builtin (panics already carry a backtrace), so this tier-0 shim is a no-op
-/// that keeps call-site shape; the real reporter lives above in
+/// No-op tier-0 shim that keeps call-site shape (panics already carry a
+/// backtrace); the real reporter lives above in
 /// `bun_crash_handler::handle_error_return_trace`.
 #[inline(always)]
 pub fn handle_error_return_trace<E>(_err: E) {}
@@ -1139,15 +1108,18 @@ pub fn handle_error_return_trace<E>(_err: E) {}
 // Real `declare_scope!`/`scoped_log!`/`pretty*!`/`warn!`/`note!` are
 // `#[macro_export]`ed from output.rs.
 
-/// Zig: `bun.todoPanic(@src(), fmt, args)`. Intentional *runtime* "feature not
-/// yet implemented" path that the Zig source ships with — distinct from a
-/// porting placeholder. Captures file/line via `file!()`/`line!()` (the
-/// `@src()` equivalent) and routes through `Output::panic`.
-// TODO(port): wire `bun_analytics::Features::todo_panic` once the analytics
-// crate is reachable from bun_core without a dep cycle.
+/// Intentional *runtime* "feature not yet implemented" path — distinct from a
+/// placeholder. Captures file/line via `file!()`/`line!()`
+/// and routes through `Output::panic`.
 #[macro_export]
 macro_rules! todo_panic {
     ($($arg:tt)*) => {{
+        // Recorded in the tier-0 `Global::features` counter.
+        // `bun_analytics::features::todo_panic` — the set the crash report
+        // serializes via `packed_features()` — is a re-export of this same
+        // static (see `define_features!`'s `core =` entries in
+        // src/analytics/lib.rs), so the bit reaches crash reports.
+        $crate::Global::features::TODO_PANIC.store(1, ::core::sync::atomic::Ordering::Relaxed);
         $crate::output::panic(::core::format_args!(
             "TODO: {} ({}:{})",
             ::core::format_args!($($arg)*),
@@ -1157,41 +1129,9 @@ macro_rules! todo_panic {
     }};
 }
 
-// `err!(Name)` / `err!("Name")` — Zig `error.Name` literal.
-//
-// Expands to a per-site `AtomicU16` slot that interns the stringified name on
-// first hit, then hands back the cached `NonZeroU16` forever after. Two
-// `err!(Foo)` at different sites resolve to the *same* code (the table is
-// process-global), so `e == err!(Foo)` is a plain u16 compare — the property
-// h2 `error_code_for`, install retry loops, etc. were blocked on.
-//
-// Layout: `AtomicU16::new(0)` is 2 bytes of all-zeros (vs `OnceLock<Error>` at
-// 8+), so the ~1.3k call-site statics shrink and land in `.bss` for free. On
-// ELF targets they're additionally clustered into a dedicated `.bun_err`
-// section so the whole set occupies one page. The cold miss path is a single
-// non-generic `#[cold]` function (`intern_cached`) — no per-closure
-// `get_or_init` monomorphization, one `.text` body instead of thousands.
-#[macro_export]
-macro_rules! err {
-    ($name:ident) => { $crate::err!(@__cached ::core::stringify!($name)) };
-    ($name:literal) => { $crate::err!(@__cached $name) };
-    // `err!(from e)` — convert a strum::IntoStaticStr enum error to bun_core::Error.
-    (from $e:expr) => { $crate::Error::intern(<&'static str>::from(&$e)) };
-    (@__cached $name:expr) => {{
-        #[cfg_attr(any(target_os = "linux", target_os = "android"), unsafe(link_section = ".bun_err"))]
-        static __E: ::core::sync::atomic::AtomicU16 = ::core::sync::atomic::AtomicU16::new(0);
-        let __v = __E.load(::core::sync::atomic::Ordering::Relaxed);
-        if __v != 0 {
-            $crate::Error::from_raw(__v)
-        } else {
-            $crate::intern_cached(&__E, $name)
-        }
-    }};
-}
 // `mark_binding!` and `zstr!` are defined in Global.rs / util.rs respectively.
 
 pub use env as Environment;
-/// Zig: `pub const FeatureFlags = @import("./bun_core/feature_flags.zig")`.
 pub use feature_flags as FeatureFlags;
 /// Process start time in nanoseconds. Written once during single-threaded
 /// startup (`main`/`Cli::start`) and read freely thereafter.
@@ -1205,15 +1145,15 @@ pub fn set_start_time(ns: i128) {
     let _ = START_TIME.set(ns);
 }
 
-/// `bun.Timer` / `std.time.Timer` — minimal monotonic stopwatch. Mirrors Zig's
-/// `std.time.Timer.{start,read}` so callers ported verbatim (e.g.
+/// `bun.Timer` — minimal monotonic stopwatch so callers (e.g.
 /// `Lockfile::clean_with_logger`, `LifecycleScriptSubprocess`) compile against
 /// the tier-0 surface without pulling in `bun_perf`.
 pub mod time {
-    // `std.time.*` — defined in `util::time`; re-exported so `bun_core::time::*` resolves uniformly.
+    // Defined in `util::time`; re-exported so `bun_core::time::*` resolves uniformly.
     pub use crate::util::time::{
         MS_PER_DAY, MS_PER_S, NS_PER_DAY, NS_PER_HOUR, NS_PER_MIN, NS_PER_MS, NS_PER_S, NS_PER_US,
-        NS_PER_WEEK, S_PER_DAY, US_PER_MS, US_PER_S, milli_timestamp, nano_timestamp, timestamp,
+        NS_PER_WEEK, S_PER_DAY, US_PER_MS, US_PER_S, milli_timestamp,
+        milli_timestamp_allow_mocked_time, nano_timestamp, timestamp,
     };
 
     #[derive(Clone, Copy)]
@@ -1222,25 +1162,15 @@ pub mod time {
     }
     impl Timer {
         #[inline]
-        pub fn start() -> core::result::Result<Self, crate::Error> {
-            Ok(Self {
+        pub fn start() -> Self {
+            Self {
                 started: std::time::Instant::now(),
-            })
+            }
         }
         #[inline]
         pub fn read(&self) -> u64 {
             self.started.elapsed().as_nanos() as u64
         }
-    }
-}
-
-/// `bun.schema` — `src/options_types/schema.zig`. The full generated API
-/// types live in `bun_api` (tier-2); tier-0 only needs the namespace to
-/// exist so `bun_core::schema::api::StringPointer` etc. resolve as re-exports
-/// once that crate un-gates. For now expose the one type tier-0 itself owns.
-pub mod schema {
-    pub mod api {
-        pub use crate::util::StringPointer;
     }
 }
 
@@ -1254,60 +1184,34 @@ pub use fmt::{
 // ──────────────────────────────────────────────────────────────────────────
 // Flattened top-level string/fmt API.
 //
-// `string_immutable` is the full ported `bun.strings` namespace (was the
-// `bun_core::immutable` module before the crate merge). The former
-// `pub mod strings { … }` cycle-breaker shim is now an internal
-// `strings_impl` module whose items are glob-re-exported at crate root, and
-// `pub mod strings { pub use super::*; }` keeps `bun_core::strings::X`
-// resolving for callers that haven't been rewritten yet.
+// `crate::string::immutable` (aliased as `bun_core::strings`, see below) is
+// the canonical `bun.strings` namespace. A subset is additionally flattened
+// to the crate root here for the `bun_core::X` spelling.
 // ──────────────────────────────────────────────────────────────────────────
-pub use crate::string::immutable as string_immutable;
-
 pub use crate::string::immutable::{
-    CodePoint, DecodeHexError, LineRange, OptionalUsize, PercentEncodeError,
-    QuoteEscapeFormatFlags, SplitIterator, StringOrTinyString, UNICODE_REPLACEMENT,
-    UNICODE_REPLACEMENT_STR, UUID_LEN, WHITESPACE_CHARS, append, cat, concat_alloc_t,
-    concat_with_length, contains_char, contains_scalar, copy, count_char, decode_hex_to_bytes,
+    CodePoint, DecodeHexError, LineRange, PercentEncodeError, QuoteEscapeFormatFlags,
+    SplitIterator, StringOrTinyString, UNICODE_REPLACEMENT, WHITESPACE_CHARS, append, cat,
+    concat_with_length, contains_char, copy, count_char, decode_hex_to_bytes,
     decode_hex_to_bytes_truncate, encode_bytes_to_hex, ends_with_any, ends_with_char,
-    ends_with_char_or_is_zero_length, ends_with_comptime, eql_any_comptime, eql_comptime,
-    eql_comptime_utf16, format_escapes, has_prefix, has_prefix_case_insensitive,
-    has_prefix_comptime, has_prefix_comptime_utf16, has_suffix_comptime, index_of, index_of_scalar,
-    index_of_t, is_all_whitespace, is_ip_address, is_npm_package_name,
-    is_npm_package_name_ignore_length, is_on_char_boundary, is_utf8_char_boundary, is_valid_utf8,
-    join, last_index_of, last_index_of_t, length_of_leading_whitespace_ascii, memmem, order,
-    order_t, percent_encode_write, sort_asc, sort_desc, split, starts_with_case_insensitive_ascii,
-    starts_with_char, str_utf8, to_ascii_hex_value, to_utf16_alloc, trim_leading_char, trim_prefix,
-    trim_prefix_comptime, trim_spaces, trim_suffix, trim_suffix_comptime,
-    utf8_byte_sequence_length, utf16_eql_string, without_prefix, without_prefix_comptime,
-    without_suffix_comptime, without_utf8_bom,
+    ends_with_char_or_is_zero_length, eql_any_comptime, eql_comptime, eql_comptime_utf16,
+    format_escapes, has_prefix, has_prefix_case_insensitive, has_prefix_comptime,
+    has_prefix_comptime_utf16, has_suffix_comptime, index_of, index_of_scalar, is_all_whitespace,
+    is_npm_package_name, is_npm_package_name_ignore_length, is_on_char_boundary,
+    is_utf8_char_boundary, is_valid_utf8, last_index_of, last_index_of_t,
+    length_of_leading_whitespace_ascii, memmem, order, order_t, percent_encode_write, sort_asc,
+    sort_desc, split, starts_with_case_insensitive_ascii, starts_with_char, str_utf8,
+    to_ascii_hex_value, to_utf16_alloc, trim_leading_char, trim_prefix, trim_prefix_comptime,
+    trim_suffix, utf8_byte_sequence_length, utf16_eql_string, without_prefix,
+    without_prefix_comptime, without_suffix_comptime, without_utf8_bom,
 };
 
-#[allow(deprecated)]
-pub use crate::fmt::{
-    DigitCount, DoubleFormatter, FormatDouble, FormatOSPath, FormatUTF8, FormatUTF16,
-    HEX_DECODE_TABLE, HEX_INVALID, LOWER_HEX_TABLE, PathFormatOptions, QuotedFormatter, Raw,
-    SizeFormatter, SizeFormatterOptions, SliceCursor, TruncatedHash32, UPPER_HEX_TABLE, VecWriter,
-    buf_print, buf_print_infallible, buf_print_len, buf_print_z, buf_print_z_infallible, bytes,
-    bytes_to_hex_lower, bytes_to_hex_lower_string, count, count_float, count_int, digit_count,
-    digit_count_i64, digit_count_u64, double, fast_digit_count, fmt_os_path, fmt_path, fmt_path_u8,
-    fmt_path_u16, format_ip, format_latin1, format_utf16_type, hex_byte_lower, hex_byte_upper,
-    hex_char_lower, hex_char_upper, hex_digit_value, hex_lower, hex_pair_value, hex_u8, hex_u16,
-    hex_upper, hex2_lower, hex2_upper, hex4_lower, hex4_upper, int_as_bytes, parse_ascii,
-    parse_f32, parse_f64, parse_hex_prefix, parse_hex_to_int, parse_hex4,
-    parse_int as parse_int_radix, parse_num, print_int, quote, raw, s, size, size_f64, size_i64,
-    truncated_hash32, truncated_hash32_bytes, utf16,
-};
-
-/// Surrogate/transcode primitives + scalar-fallback string helpers that
-/// predate the `string::immutable` merge. Glob-re-exported at crate root so
-/// `crate::strings::X` (via the alias module below) and `bun_core::X` both
-/// resolve. Do NOT add a `pub use string::immutable::*` glob here — several
-/// names (`first_non_ascii`, `index_of_char`, `Encoding`, `CodepointIterator`)
-/// have intentionally-different signatures in the two layers.
+/// Tier-0 surrogate/transcode primitives that [`crate::string::immutable`]
+/// (the public `bun.strings` namespace) wraps or re-exports. Nothing here
+/// duplicates an `immutable` scanner; when both layers need the same helper,
+/// the single implementation lives here and `immutable` re-exports it.
 pub(crate) mod strings_impl {
     // ─── UTF-16 surrogate-pair encoding (ICU U16_LEAD / U16_TRAIL) ─────────────
-    // Zig parity: src/string/immutable/unicode.zig:1480 `u16Lead`/`u16Trail`,
-    // re-exported as `strings.u16Lead`/`strings.u16Trail`. Defined here in
+    // Defined here in
     // bun_core (not bun_string) so the WTF-8 fallback transcoder below and any
     // other tier-0 caller can use it without a dep cycle.
     //
@@ -1345,51 +1249,25 @@ pub(crate) mod strings_impl {
         }
     }
 
-    #[inline]
-    pub fn includes(h: &[u8], n: &[u8]) -> bool {
-        ::bstr::ByteSlice::find(h, n).is_some()
-    }
-    #[inline]
-    pub fn contains(h: &[u8], n: &[u8]) -> bool {
-        includes(h, n)
-    }
-    #[inline]
-    pub fn index_of_char(h: &[u8], c: u8) -> Option<usize> {
-        h.iter().position(|&b| b == c)
-    }
-    #[inline]
-    pub fn starts_with(h: &[u8], p: &[u8]) -> bool {
-        h.starts_with(p)
-    }
-    #[inline]
-    pub fn ends_with(h: &[u8], p: &[u8]) -> bool {
-        h.ends_with(p)
-    }
-    #[inline]
-    pub fn eql(a: &[u8], b: &[u8]) -> bool {
-        a == b
-    }
-    pub use ::bun_alloc::{
-        ascii_lowercase_buf, copy_lowercase, copy_lowercase_if_needed, trim, trim_left, trim_right,
-    };
+    pub use ::bun_alloc::{ascii_lowercase_buf, copy_lowercase, trim, trim_left, trim_right};
 
-    /// `std.mem.replacementSize` — byte length of `input` after replacing every
+    /// Byte length of `input` after replacing every
     /// occurrence of `needle` with `replacement`. Empty `needle` ⇒ `input.len()`
-    /// (lenient vs Zig's assert; matches every existing Rust caller's expectation).
+    /// (matches every existing caller's expectation).
     pub fn replacement_size(input: &[u8], needle: &[u8], replacement: &[u8]) -> usize {
         if needle.is_empty() {
             return input.len();
         }
         let mut size = input.len();
         let mut i = 0usize;
-        while let Some(pos) = ::bstr::ByteSlice::find(&input[i..], needle) {
+        while let Some(pos) = ::bun_highway::memmem(&input[i..], needle) {
             size = size - needle.len() + replacement.len();
             i += pos + needle.len();
         }
         size
     }
 
-    /// `std.mem.replace` — write `input` into `output` replacing every `needle`
+    /// Write `input` into `output` replacing every `needle`
     /// with `replacement`; returns the number of replacements made. `output`
     /// must be at least [`replacement_size`]`(input, needle, replacement)` bytes.
     pub fn replace(input: &[u8], needle: &[u8], replacement: &[u8], output: &mut [u8]) -> usize {
@@ -1401,7 +1279,7 @@ pub(crate) mod strings_impl {
         let mut o = 0usize;
         let mut count = 0usize;
         loop {
-            match ::bstr::ByteSlice::find(&input[i..], needle) {
+            match ::bun_highway::memmem(&input[i..], needle) {
                 Some(pos) => {
                     output[o..o + pos].copy_from_slice(&input[i..i + pos]);
                     o += pos;
@@ -1418,7 +1296,7 @@ pub(crate) mod strings_impl {
         }
     }
 
-    /// Allocating replace-all — `std.mem.replacementSize` + `std.mem.replace`
+    /// Allocating replace-all — [`replacement_size`] + [`replace`]
     /// fused. Returns a fresh `Vec` (sized exactly to the result; no realloc).
     pub fn replace_owned(input: &[u8], needle: &[u8], replacement: &[u8]) -> Vec<u8> {
         if needle.is_empty() {
@@ -1426,7 +1304,7 @@ pub(crate) mod strings_impl {
         }
         let mut out = Vec::with_capacity(replacement_size(input, needle, replacement));
         let mut i = 0usize;
-        while let Some(pos) = ::bstr::ByteSlice::find(&input[i..], needle) {
+        while let Some(pos) = ::bun_highway::memmem(&input[i..], needle) {
             out.extend_from_slice(&input[i..i + pos]);
             out.extend_from_slice(replacement);
             i += pos + needle.len();
@@ -1434,10 +1312,8 @@ pub(crate) mod strings_impl {
         out.extend_from_slice(&input[i..]);
         out
     }
-    /// Zig: `strings.eqlCaseInsensitiveASCII` (src/string/immutable.zig).
-    /// Spec-faithful port: defers to libc `strncasecmp`/`_strnicmp` for the
-    /// hot path (CSS parser, HTTP header matching). Unlike Zig's NUL-terminated
-    /// literals, Rust slices have no terminator, so a `b` shorter than `a` is
+    /// Defers to libc `strncasecmp`/`_strnicmp` for the
+    /// hot path (CSS parser, HTTP header matching). A `b` shorter than `a` is
     /// rejected instead of read past.
     #[inline]
     pub fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], check_len: bool) -> bool {
@@ -1473,10 +1349,9 @@ pub(crate) mod strings_impl {
             _strnicmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) == 0
         }
     }
-    /// Zig: `strings.containsCaseInsensitiveASCII` — naive O(n·m) windowed
-    /// case-insensitive ASCII substring search (matches the Zig scalar impl;
-    /// callers are cold path-lookup on macOS/Windows where the FS is
-    /// case-insensitive).
+    /// Naive O(n·m) windowed
+    /// case-insensitive ASCII substring search (callers are cold path-lookup
+    /// on macOS/Windows where the FS is case-insensitive).
     #[inline]
     pub fn contains_case_insensitive_ascii(haystack: &[u8], needle: &[u8]) -> bool {
         if needle.len() > haystack.len() {
@@ -1491,15 +1366,13 @@ pub(crate) mod strings_impl {
         }
         false
     }
-    /// `bun.strings.isWindowsAbsolutePathMissingDriveLetter` (immutable/paths.zig)
+    /// `bun.strings.isWindowsAbsolutePathMissingDriveLetter`
     /// — true for `\foo`-style absolute paths that lack a `C:` / `\\?\` /
     /// `\\server\` prefix and therefore need the cwd's drive prepended.
-    /// Generic over `u8`/`u16` to mirror the Zig comptime `T: type` param.
-    pub fn is_windows_absolute_path_missing_drive_letter<T: crate::strings::PathByte>(
-        chars: &[T],
-    ) -> bool {
-        // Zig asserts non-empty + windows-absolute; release-mode callers may
-        // still pass `""`, so bail instead of indexing OOB.
+    /// Generic over `u8`/`u16`.
+    pub fn is_windows_absolute_path_missing_drive_letter<T: PathByte>(chars: &[T]) -> bool {
+        // Release-mode callers may still pass `""`, so bail instead of
+        // indexing OOB.
         debug_assert!(!chars.is_empty());
         if chars.is_empty() {
             return false;
@@ -1528,9 +1401,9 @@ pub(crate) mod strings_impl {
             }
         }
 
-        // Zig: `bun.path.windowsFilesystemRootT(T, chars).len == 1`. With
-        // `chars[0]` already known to be a separator, that fn returns len > 1
-        // only via its UNC/device branch (`len >= 5 && sep[0] && sep[1] &&
+        // With `chars[0]` already known to be a separator, the filesystem
+        // root is longer than one char
+        // only via the UNC/device branch (`len >= 5 && sep[0] && sep[1] &&
         // !sep[2]`); every other separator-led path resolves to a single-char
         // root. Inlined here because `bun_paths` would be a tier-0 cycle.
         //
@@ -1539,23 +1412,10 @@ pub(crate) mod strings_impl {
         // '\Server\Share'   -> true  (posix-style)
         !(chars.len() >= 5 && sep(chars[1]) && !sep(chars[2]))
     }
-    /// `strings.eqlComptimeIgnoreLen` — caller has already checked `a.len() ==
-    /// b.len()` (the "ignore len" means "don't re-check"). PERF(port): the Zig
-    /// version generates length-specialized SWAR loads at comptime; this scalar
-    /// fallback is fine for the only T0/T1 caller (ComptimeStringMap, where
-    /// `b` is a small static).
-    #[inline]
-    pub fn eql_comptime_ignore_len(a: &[u8], b: &'static [u8]) -> bool {
-        debug_assert_eq!(a.len(), b.len());
-        a == b
-    }
-
     /// `const fn` byte-slice equality — slice `==` is not `const` on stable, so
     /// const-context callers (clap param-name lookup, MultiArrayList field-name
     /// reflection, host-fn error-set parsing) need the manual len-check + while
-    /// loop. Zig precedent: a single `std.mem.eql(u8, a, b)`; the per-crate
-    /// duplication was a Rust-port artifact, not a design choice. Runtime
-    /// callers should prefer plain `==` (lowers to `memcmp`).
+    /// loop. Runtime callers should prefer plain `==` (lowers to `memcmp`).
     #[inline]
     pub const fn const_bytes_eq(a: &[u8], b: &[u8]) -> bool {
         if a.len() != b.len() {
@@ -1578,7 +1438,7 @@ pub(crate) mod strings_impl {
     }
 
     // ──────────────────────────────────────────────────────────────────────
-    // Transcoding (from src/string/immutable/unicode.zig). Lives in T0 so
+    // Transcoding. Lives in T0 so
     // collections::Vec<u8> can call it without depending on bun_string.
     // Allocator params dropped per PORTING.md §Allocators.
     // ──────────────────────────────────────────────────────────────────────
@@ -1598,9 +1458,12 @@ pub(crate) mod strings_impl {
         unsafe { simdutf::simdutf__validate_ascii(slice.as_ptr(), slice.len()) }
     }
 
-    /// Index of first non-ASCII byte, or None if all-ASCII. simdutf-backed.
+    /// Byte index of the first non-ASCII byte, or None if all-ASCII.
+    /// simdutf-backed. The canonical `bun.strings.firstNonASCII` is
+    /// [`crate::strings::first_non_ascii`] (`Option<u32>`), a thin view over
+    /// this; `_usize` is the raw form for callers that index with the result.
     #[inline]
-    pub fn first_non_ascii(slice: &[u8]) -> Option<usize> {
+    pub(crate) fn first_non_ascii_usize(slice: &[u8]) -> Option<usize> {
         // Short-string fast path: see is_all_ascii() above for the FFI-dispatch
         // cost rationale. position() autovectorizes; ≤32B beats the shim.
         if slice.len() <= 32 {
@@ -1667,12 +1530,6 @@ pub(crate) mod strings_impl {
         (c & 0xFC00) == 0xDC00
     }
 
-    /// ICU `U16_IS_SURROGATE` — either half, `0xD800..=0xDFFF`.
-    #[inline]
-    pub const fn u16_is_surrogate(c: u16) -> bool {
-        (c & 0xF800) == 0xD800
-    }
-
     /// ICU `U16_GET_SUPPLEMENTARY` — combine a *known-valid* lead+trail into a
     /// supplementary code point. Caller must have already checked
     /// [`u16_is_lead`]/[`u16_is_trail`].
@@ -1735,8 +1592,7 @@ pub(crate) mod strings_impl {
     }
 
     /// Port of `allocateLatin1IntoUTF8WithList`.
-    /// PERF(port): Zig hand-rolls a SWAR/@Vector ASCII-span scanner; here we use
-    /// `first_non_ascii` (simdutf SIMD) for the span scan — equivalent throughput.
+    /// Uses `first_non_ascii` (simdutf SIMD) for the ASCII-span scan.
     pub fn allocate_latin1_into_utf8_with_list(
         mut list: Vec<u8>,
         offset_into_list: usize,
@@ -1746,7 +1602,7 @@ pub(crate) mod strings_impl {
         list.reserve(latin1.len());
         let mut rest = latin1;
         while !rest.is_empty() {
-            match first_non_ascii(rest) {
+            match first_non_ascii_usize(rest) {
                 None => {
                     list.extend_from_slice(rest);
                     break;
@@ -1885,28 +1741,20 @@ pub(crate) mod strings_impl {
         pub written: u32,
     }
 
-    /// Port of `elementLengthUTF16IntoUTF8` — exact UTF-8 byte length of a UTF-16
-    /// (LE) input. simdutf-backed; falls back to scalar would be in unicode_draft.
+    /// Port of `elementLengthUTF16IntoUTF8`: the exact UTF-8 byte length of a
+    /// UTF-16 (LE) input, charging 3 bytes (U+FFFD) per unpaired surrogate,
+    /// which is exactly what `copy_utf16_into_utf8` / `to_utf8_alloc` write.
     #[inline]
     pub fn element_length_utf16_into_utf8(utf16: &[u16]) -> usize {
-        simdutf::length::utf8::from::utf16::le(utf16)
+        simdutf::length::utf8::from::utf16::le_with_replacement(utf16)
     }
 
     /// Port of `elementLengthLatin1IntoUTF8`.
     pub fn element_length_latin1_into_utf8(latin1: &[u8]) -> usize {
-        let mut len = latin1.len();
-        let mut rest = latin1;
-        while let Some(i) = first_non_ascii(rest) {
-            rest = &rest[i..];
-            while let Some(&c) = rest.first() {
-                if c < 0x80 {
-                    break;
-                }
-                len += 1; // each high-latin1 byte → 2 utf8 bytes
-                rest = &rest[1..];
-            }
+        if latin1.len() <= 32 {
+            return latin1.len() + latin1.iter().filter(|&&c| c >= 0x80).count();
         }
-        len
+        simdutf::length::utf8::from::latin1(latin1)
     }
 
     /// Port of `copyUTF16IntoUTF8` — encode UTF-16 into a fixed-size UTF-8 buffer.
@@ -1916,10 +1764,27 @@ pub(crate) mod strings_impl {
         if utf16.is_empty() || buf.is_empty() {
             return EncodeIntoResult::default();
         }
+        let worst_case = utf16.len().saturating_mul(3);
+        let utf8_len = if worst_case <= buf.len() {
+            worst_case
+        } else {
+            element_length_utf16_into_utf8(utf16)
+        };
+        copy_utf16_into_utf8_with_utf8_len(buf, utf16, utf8_len)
+    }
+
+    pub fn copy_utf16_into_utf8_with_utf8_len(
+        buf: &mut [u8],
+        utf16: &[u16],
+        utf8_len: usize,
+    ) -> EncodeIntoResult {
+        debug_assert!(utf8_len >= element_length_utf16_into_utf8(utf16));
+        if utf16.is_empty() || buf.is_empty() {
+            return EncodeIntoResult::default();
+        }
         // Fast path: if buf can definitely hold the whole conversion, try simdutf.
-        let need = simdutf::length::utf8::from::utf16::le(utf16);
-        if need > 0 && need <= buf.len() {
-            // SAFETY: buf has `need` writable bytes; simdutf reads exactly utf16.len() u16.
+        if utf8_len > 0 && utf8_len <= buf.len() {
+            // SAFETY: buf has `utf8_len` writable bytes; simdutf reads exactly utf16.len() u16.
             let r = unsafe {
                 simdutf::simdutf__convert_utf16le_to_utf8_with_errors(
                     utf16.as_ptr(),
@@ -1960,58 +1825,82 @@ pub(crate) mod strings_impl {
         copy_latin1_into_utf8_stop_on_non_ascii::<false>(buf, latin1)
     }
 
-    /// Port of `copyLatin1IntoUTF8StopOnNonASCII`. The Zig original hand-rolled a
-    /// `@Vector(16,u8)` max-reduce + two SWAR `u64` mask/ctz ladders to find each
-    /// non-ASCII byte; in Rust that work is exactly [`first_non_ascii`] (simdutf
-    /// `validate_ascii_with_errors`, with a ≤32B scalar fast path), so the body
-    /// reduces to "scan the next ASCII span, memcpy it, encode one high byte,
-    /// repeat". Speculative 8-byte over-write is dropped (callers only read
-    /// `buf[..written]`).
+    #[inline]
+    fn copy_ascii_prefix(dst: &mut [u8], src: &[u8]) -> usize {
+        debug_assert_eq!(dst.len(), src.len());
+
+        const HIGHWAY_MIN_LEN: usize = 64;
+        if src.len() >= HIGHWAY_MIN_LEN {
+            return bun_highway::copy_ascii_prefix(src, dst);
+        }
+
+        const HIGH_BITS: u64 = 0x8080_8080_8080_8080;
+        let mut copied = 0usize;
+        let (dst_chunks, _) = dst.as_chunks_mut::<8>();
+        let (src_chunks, _) = src.as_chunks::<8>();
+        for (d, s) in dst_chunks.iter_mut().zip(src_chunks) {
+            let word = u64::from_ne_bytes(*s);
+            let mask = word & HIGH_BITS;
+            if mask != 0 {
+                let ascii = (mask.trailing_zeros() / 8) as usize;
+                d[..ascii].copy_from_slice(&s[..ascii]);
+                return copied + ascii;
+            }
+            *d = word.to_ne_bytes();
+            copied += 8;
+        }
+        for (d, &s) in dst[copied..].iter_mut().zip(&src[copied..]) {
+            if s >= 0x80 {
+                return copied;
+            }
+            *d = s;
+            copied += 1;
+        }
+        copied
+    }
+
+    /// Port of `copyLatin1IntoUTF8StopOnNonASCII`.
     pub fn copy_latin1_into_utf8_stop_on_non_ascii<const STOP: bool>(
         buf_: &mut [u8],
         latin1_: &[u8],
     ) -> EncodeIntoResult {
-        let buf_total = buf_.len();
-        let latin1_total = latin1_.len();
-        let mut buf: &mut [u8] = buf_;
-        let mut latin1: &[u8] = latin1_;
+        let mut written = 0usize;
+        let mut read = 0usize;
 
-        while !buf.is_empty() && !latin1.is_empty() {
-            // Find the longest pure-ASCII prefix that fits in `buf` and copy it
-            // in one shot. simdutf provides the index; the subsequent
-            // `copy_from_slice` is a single memcpy.
-            let limit = buf.len().min(latin1.len());
-            let span = first_non_ascii(&latin1[..limit]).unwrap_or(limit);
-            buf[..span].copy_from_slice(&latin1[..span]);
-            buf = &mut buf[span..];
-            latin1 = &latin1[span..];
-
-            // Either we filled `buf`, drained `latin1`, or hit a non-ASCII byte.
-            if latin1.is_empty() || latin1[0] < 0x80 {
+        while written < buf_.len() && read < latin1_.len() {
+            let n = (buf_.len() - written).min(latin1_.len() - read);
+            let copied =
+                copy_ascii_prefix(&mut buf_[written..written + n], &latin1_[read..read + n]);
+            written += copied;
+            read += copied;
+            if copied == n {
                 break;
             }
+
+            debug_assert!(latin1_[read] >= 0x80);
             if STOP {
                 return EncodeIntoResult {
                     written: u32::MAX,
                     read: u32::MAX,
                 };
             }
-            if buf.len() < 2 {
+            if buf_.len() - written < 2 {
                 break;
             }
-            buf[..2].copy_from_slice(&latin1_to_codepoint_bytes_assume_not_ascii(latin1[0]));
-            latin1 = &latin1[1..];
-            buf = &mut buf[2..];
+            buf_[written..written + 2]
+                .copy_from_slice(&latin1_to_codepoint_bytes_assume_not_ascii(latin1_[read]));
+            written += 2;
+            read += 1;
         }
 
         EncodeIntoResult {
-            written: (buf_total - buf.len()) as u32,
-            read: (latin1_total - latin1.len()) as u32,
+            written: written as u32,
+            read: read as u32,
         }
     }
 
     /// Null-terminated variant of `to_utf8_from_latin1`. Returns `ZBox` so
-    /// `.len()` excludes the sentinel (Zig `[:0]u8` semantics).
+    /// `.len()` excludes the sentinel.
     pub fn to_utf8_from_latin1_z(latin1: &[u8]) -> Option<crate::ZBox> {
         let v = to_utf8_from_latin1(latin1)?;
         Some(crate::ZBox::from_vec_with_nul(v))
@@ -2023,21 +1912,10 @@ pub(crate) mod strings_impl {
         crate::ZBox::from_vec_with_nul(to_utf8_alloc(utf16))
     }
 
-    /// Port of `firstNonASCII16`: index of the first u16 codeunit `>= 0x80`, or
-    /// `None` if all-ASCII. Single SIMD-upgrade target — Zig uses `@Vector(8,u16)`
-    /// max-reduce + `@ctz` bitmask (immutable.zig:1720); simdutf exposes no
-    /// u16-ASCII-index fn and WTF's `charactersAreAllASCII<UChar>` is bool-only,
-    /// so scalar until portable_simd lands.
-    #[inline]
-    pub fn first_non_ascii16(utf16: &[u16]) -> Option<usize> {
-        utf16.iter().position(|&u| u >= 0x80)
-    }
-
     /// Narrow ASCII-only `src` into `dst`. Returns `Some(&mut dst[..src.len()])`
     /// iff every unit is `< 0x80` and `dst.len() >= src.len()`; otherwise `None`
     /// (partial writes to `dst` are not rolled back). Composes `firstNonASCII16`
-    /// + `copyU16IntoU8` — Zig has no single helper and open-codes this per site
-    /// (e.g. string.zig `inMapCaseInsensitive`).
+    /// + `copyU16IntoU8`.
     #[inline]
     pub fn narrow_ascii_u16<'a>(src: &[u16], dst: &'a mut [u8]) -> Option<&'a mut [u8]> {
         let dst = dst.get_mut(..src.len())?;
@@ -2050,22 +1928,10 @@ pub(crate) mod strings_impl {
         Some(dst)
     }
 
-    // ──────────────────────────────────────────────────────────────────────
-    // Generic-T helpers used by bun_paths (must live at T0).
-    // ──────────────────────────────────────────────────────────────────────
-
-    #[inline]
-    pub fn index_of_any_t<T: Copy + Eq>(s: &[T], chars: &[T]) -> Option<usize> {
-        s.iter().position(|c| chars.contains(c))
-    }
-
     // Bound relaxed Eq → PartialEq to match core::slice::<[T]>::starts_with /
     // ends_with exactly. Bodies are semantically identical to the stdlib
-    // methods; kept as named free fns so Zig-port call sites that read
-    // `strings::has_prefix_t(a, b)` stay 1:1 with `bun.strings.hasPrefixComptime`
-    // / `std.mem.startsWith`. Rust already lowers slice `==` on integer T to
-    // memcmp, so the `eql_long`/`reinterpret_to_u8` perf path from
-    // immutable.rs is unnecessary.
+    // methods; kept as named free fns so call sites that read
+    // `strings::has_prefix_t(a, b)` keep their shape.
     #[inline]
     pub fn has_prefix_t<T: PartialEq>(s: &[T], prefix: &[T]) -> bool {
         s.len() >= prefix.len() && s[..prefix.len()] == *prefix
@@ -2076,32 +1942,12 @@ pub(crate) mod strings_impl {
         s.len() >= suffix.len() && s[s.len() - suffix.len()..] == *suffix
     }
 
-    /// `std.mem.lastIndexOfScalar(T, slice, value)` — generic reverse scan.
-    /// For `T = u8` prefer `bun_core::strings::last_index_of_char` (glibc
-    /// `memrchr` on Linux).
-    #[inline]
-    pub fn last_index_of_char_t<T: Copy + Eq>(s: &[T], c: T) -> Option<usize> {
-        s.iter().rposition(|x| *x == c)
-    }
-    #[doc(hidden)]
-    #[inline]
-    pub fn last_index_of_char<T: Copy + Eq>(s: &[T], c: T) -> Option<usize> {
-        last_index_of_char_t(s, c)
-    }
-
-    #[inline]
-    pub fn eql_long(a: &[u8], b: &[u8]) -> bool {
-        a == b
-    }
-
     #[inline]
     pub fn eql_case_insensitive_ascii_check_length(a: &[u8], b: &[u8]) -> bool {
         eql_case_insensitive_ascii(a, b, true)
     }
 
-    /// Zig: open-coded `or`-chains over `eqlCaseInsensitiveASCII` at every site
-    /// (custom.zig:1526, ident.zig:278, WebSocketUpgradeClient.zig:1426 — the
-    /// `css.todo_stuff.match_ignore_ascii_case` markers). Haystacks are 6-12
+    /// Haystacks are 6-12
     /// const literals; `#[inline]` lets LLVM unroll back to the original
     /// short-circuit chain. For key→value dispatch use `in_map_case_insensitive`.
     #[inline]
@@ -2111,59 +1957,7 @@ pub(crate) mod strings_impl {
             .any(|h| eql_case_insensitive_ascii(needle, h, true))
     }
 
-    // ──────────────────────────────────────────────────────────────────────
-    // Scanners / sniffers used by fmt.rs (URL redaction, path quoting, etc.).
-    // Formerly a duplicate `mod strings` in fmt.rs; merged here so the crate
-    // has a single `bun_core::strings` and fmt.rs picks up the simdutf-backed
-    // `first_non_ascii`/`is_all_ascii` instead of scalar shims.
-    // ──────────────────────────────────────────────────────────────────────
-
-    #[inline]
-    pub fn index_of_any(s: &[u8], chars: &[u8]) -> Option<usize> {
-        s.iter().position(|b| chars.contains(b))
-    }
-
-    // ──────────────────────────────────────────────────────────────────────
-    // IP-literal predicates. Spec (immutable.zig:1984-2004) calls
-    // `bun.c_ares.ares_inet_pton`, the vendored c-ares implementation.
-    // Do NOT call the system `inet_pton` here: on Windows that resolves into
-    // ws2_32.dll and fails with WSANOTINITIALISED whenever it runs before
-    // `WSAStartup()`, which URL/host parsing can. c-ares' impl is pure C, no
-    // preconditions. bun_core sits below bun_cares_sys in the dep graph, so we
-    // re-declare the extern locally (zero new deps; `libc` is already here).
-    // ──────────────────────────────────────────────────────────────────────
-    unsafe extern "C" {
-        pub fn ares_inet_pton(
-            af: core::ffi::c_int,
-            src: *const core::ffi::c_char,
-            dst: *mut core::ffi::c_void,
-        ) -> core::ffi::c_int;
-    }
-    // dep-graph: bun_core < bun_sys, so cannot import the canonical
-    // `bun_sys::posix::AF`. Keep a thin libc/ws2def passthrough instead. The
-    // previous hand-rolled cfg ladder hardcoded `10` for the BSD fallback,
-    // which is wrong (FreeBSD AF_INET6 == 28); routing through `libc` fixes that.
-    #[cfg(not(windows))]
-    const AF_INET6: core::ffi::c_int = libc::AF_INET6 as core::ffi::c_int;
-    #[cfg(windows)]
-    const AF_INET6: core::ffi::c_int = 23; // ws2def.h
-
-    /// Zig: `bun.strings.isIPV6Address` — `ares_inet_pton(AF_INET6, …) > 0`.
-    /// Must be a strict parse, not a `contains(':')` heuristic: on Windows a
-    /// unix-socket path like `C:/Windows/Temp/…` contains a colon and the old
-    /// heuristic mis-bracketed it as `unix://[C:/…]`, which fails URL parsing.
-    pub fn is_ipv6_address(input: &[u8]) -> bool {
-        let mut buf = [0u8; 512];
-        if input.len() >= buf.len() {
-            return false;
-        }
-        buf[..input.len()].copy_from_slice(input);
-        let mut dst = [0u8; 28];
-        // SAFETY: buf is NUL-terminated; dst ≥ sizeof(in6_addr).
-        unsafe { ares_inet_pton(AF_INET6, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0 }
-    }
-
-    pub fn starts_with_uuid(s: &[u8]) -> bool {
+    pub(crate) fn starts_with_uuid(s: &[u8]) -> bool {
         // 8-4-4-4-12 hex with dashes
         if s.len() < 36 {
             return false;
@@ -2180,11 +1974,11 @@ pub(crate) mod strings_impl {
         true
     }
     #[inline]
-    pub fn is_uuid(s: &[u8]) -> bool {
+    pub(crate) fn is_uuid(s: &[u8]) -> bool {
         s.len() == 36 && starts_with_uuid(s)
     }
-    pub fn starts_with_npm_secret(s: &[u8]) -> usize {
-        // Port of bun.strings.startsWithNpmSecret (immutable.zig): case-insensitive
+    pub(crate) fn starts_with_npm_secret(s: &[u8]) -> usize {
+        // Case-insensitive
         // `npm`, then `_` or `s_`/`S_`, then 36..=48 alnum. Returns consumed length or 0.
         if s.len() < 3 {
             return 0;
@@ -2240,7 +2034,10 @@ pub(crate) mod strings_impl {
         // newline if anything is unexpected
         if cont {
             let rest = &text[offset..];
-            return Some((offset, index_of_char(rest, b'\n').unwrap_or(rest.len())));
+            return Some((
+                offset,
+                crate::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len()),
+            ));
         }
         offset += 1;
 
@@ -2274,17 +2071,23 @@ pub(crate) mod strings_impl {
                 }
 
                 let rest = &text[offset..];
-                Some((offset, index_of_char(rest, b'\n').unwrap_or(rest.len())))
+                Some((
+                    offset,
+                    crate::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len()),
+                ))
             }
             _ => {
                 let rest = &text[offset..];
-                Some((offset, index_of_char(rest, b'\n').unwrap_or(rest.len())))
+                Some((
+                    offset,
+                    crate::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len()),
+                ))
             }
         }
     }
 
     /// Returns offset and length of first secret found.
-    pub fn starts_with_secret(str: &[u8]) -> Option<(usize, usize)> {
+    pub(crate) fn starts_with_secret(str: &[u8]) -> Option<(usize, usize)> {
         if let Some(r) = starts_with_redacted_item(str, b"_auth") {
             return Some(r);
         }
@@ -2295,6 +2098,9 @@ pub(crate) mod strings_impl {
             return Some(r);
         }
         if let Some(r) = starts_with_redacted_item(str, b"_password") {
+            return Some(r);
+        }
+        if let Some(r) = starts_with_redacted_item(str, b"password") {
             return Some(r);
         }
         if let Some(r) = starts_with_redacted_item(str, b"token") {
@@ -2319,10 +2125,10 @@ pub(crate) mod strings_impl {
 
     /// Port of `bun.fmt.URLFormatter.findUrlPassword` — returns
     /// `(offset, len)` of the password segment, or None.
-    /// Zig only matches http:// and https:// schemes and rejects empty pw.
-    pub fn find_url_password(s: &[u8]) -> Option<(usize, usize)> {
-        // Zig uses case-sensitive `hasPrefixComptime` and truncates the search
-        // region at the first '\n' before scanning for '@'/':'.
+    /// Only matches http:// and https:// schemes and rejects empty pw.
+    pub(crate) fn find_url_password(s: &[u8]) -> Option<(usize, usize)> {
+        // Case-sensitive prefix match; the search region is truncated at the
+        // first '\n' and at the end of the authority before scanning for '@'/':'.
         let scheme_end = if s.starts_with(b"http://") {
             7
         } else if s.starts_with(b"https://") {
@@ -2331,12 +2137,15 @@ pub(crate) mod strings_impl {
             return None;
         };
         let mut rest = &s[scheme_end..];
-        if let Some(nl) = rest.iter().position(|&b| b == b'\n') {
+        if let Some(nl) = crate::strings::index_of_char_usize(rest, b'\n') {
             rest = &rest[..nl];
         }
-        let at = rest.iter().position(|&b| b == b'@')?;
+        if let Some(end) = crate::strings::index_of_any(rest, b"/?#") {
+            rest = &rest[..end];
+        }
+        let at = crate::strings::index_of_char_usize(rest, b'@')?;
         let userinfo = &rest[..at];
-        let colon = userinfo.iter().position(|&b| b == b':')?;
+        let colon = crate::strings::index_of_char_usize(userinfo, b':')?;
         // Reject empty password (`user:@host`).
         if colon == at - 1 {
             return None;
@@ -2344,15 +2153,6 @@ pub(crate) mod strings_impl {
         Some((scheme_end + colon + 1, at - colon - 1))
     }
 
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-    pub enum Encoding {
-        Ascii,
-        Latin1,
-        Utf8,
-        Utf16,
-    }
-
-    /// Port of `bun.strings.utf8ByteSequenceLength` (unicode.zig:1509).
     /// Returns the UTF-8/WTF-8 sequence length implied by a *leading* byte,
     /// or **0** if the byte is not a valid lead (continuation 0x80-0xBF, or 0xF8-0xFF).
     #[inline]
@@ -2366,7 +2166,6 @@ pub(crate) mod strings_impl {
         }
     }
 
-    /// Port of `bun.strings.wtf8ByteSequenceLength` (unicode.zig:1954).
     /// Same table as [`utf8_byte_sequence_length`] but returns **1** for an invalid
     /// lead byte, so callers can always advance ≥1 (replacement-char semantics).
     #[inline]
@@ -2380,80 +2179,19 @@ pub(crate) mod strings_impl {
         }
     }
 
-    /// Zig: `wtf8ByteSequenceLengthWithInvalid` — alias of
+    /// Alias of
     /// [`wtf8_byte_sequence_length`] (kept distinct for spec-faithful naming).
     #[inline]
     pub const fn wtf8_byte_sequence_length_with_invalid(first_byte: u8) -> u8 {
         wtf8_byte_sequence_length(first_byte)
     }
 
-    /// Port of `bun.strings.codepointSize` — UTF-8 byte length for an
-    /// already-decoded code point (NOT a lead byte). Returns 0 for >U+10FFFF.
-    #[inline]
-    pub fn codepoint_size<R: Into<u32> + Copy>(r: R) -> u8 {
-        match r.into() {
-            0x0000..=0x007F => 1,
-            0x0080..=0x07FF => 2,
-            0x0800..=0xFFFF => 3,
-            0x1_0000..=0x10_FFFF => 4,
-            _ => 0,
-        }
-    }
-
-    // ─── CodepointIterator (fmt.rs identifier formatter) ──────────────────
-    #[derive(Default, Clone, Copy)]
-    pub struct CodepointIteratorCursor {
-        pub i: usize,
-        pub c: i32,
-        pub width: u8,
-    }
-    pub struct CodepointIterator<'a> {
-        bytes: &'a [u8],
-    }
-    impl<'a> CodepointIterator<'a> {
-        #[inline]
-        pub fn init(bytes: &'a [u8]) -> Self {
-            Self { bytes }
-        }
-        pub fn next(&self, cursor: &mut CodepointIteratorCursor) -> bool {
-            let i = cursor.i + cursor.width as usize;
-            if i >= self.bytes.len() {
-                return false;
-            }
-            let tail = &self.bytes[i..];
-            let b = tail[0];
-            cursor.i = i;
-            if b < 0x80 {
-                cursor.c = b as i32;
-                cursor.width = 1;
-                return true;
-            }
-            // Multi-byte: defer to the canonical WTF-8 decoder so this stub
-            // stays in lockstep with `strings::CodepointIterator::next`.
-            let len = wtf8_byte_sequence_length(b);
-            let take = (len as usize).min(tail.len());
-            let mut buf = [0u8; 4];
-            buf[..take].copy_from_slice(&tail[..take]);
-            let cp = crate::string::immutable::decode_wtf8_rune_t::<i32>(buf, len, -1);
-            if cp == -1 {
-                cursor.c = crate::string::immutable::UNICODE_REPLACEMENT as i32;
-                cursor.width = 1;
-            } else {
-                cursor.c = cp;
-                cursor.width = len;
-            }
-            true
-        }
-    }
-
     /// `strings.convertUTF16ToUTF8InBuffer` — write UTF-8 into `out`, return
-    /// the written sub-slice. Infallible: Zig's `![]const u8` has an empty
-    /// inferred error set, so every `catch` at call sites is dead code. The
+    /// the written sub-slice. Infallible. The
     /// caller is responsible for sizing `out` for the worst case (≤ 3× input
     /// code units).
     ///
-    /// PORT NOTE: Zig passes `out` straight to simdutf with no bounds check
-    /// (UB if undersized). We assert in release too — one extra SIMD length
+    /// We assert the sizing in release too — one extra SIMD length
     /// scan is cheap, and a panic beats heap corruption if a future caller
     /// gets the sizing wrong. All current callers (~10, Windows wide-path
     /// code) size `out` at `3 * utf16.len()` or `MAX_PATH * 3`, so this never
@@ -2471,11 +2209,11 @@ pub(crate) mod strings_impl {
         let result = simdutf::convert::utf16::to::utf8::le(utf16, out);
         &mut out[..result]
     }
-    // ─── path basename (std.fs.path.basename{Posix,Windows}) ──────────────────
+    // ─── path basename ─────────────────────────────────────────────────────
     // Minimal code-unit trait so the generic basename impls can live at T0
     // without pulling `bun_paths::PathChar` (T1) down. `PathChar` and
     // `PathUnit` both add `: PathByte` as a supertrait and inherit `from_u8`.
-    pub trait PathByte: Copy + Eq + 'static {
+    pub trait PathByte: Copy + Eq + crate::NoUninit + 'static {
         fn from_u8(b: u8) -> Self;
     }
     impl PathByte for u8 {
@@ -2491,7 +2229,7 @@ pub(crate) mod strings_impl {
         }
     }
 
-    /// `std.fs.path.basenamePosix` — strip trailing `/` then return the final
+    /// Strip trailing `/` then return the final
     /// component. `\` is NOT a separator. Empty / all-`/` input → `&[]`.
     pub fn basename_posix<T: PathByte>(p: &[T]) -> &[T] {
         let mut end = p.len();
@@ -2508,7 +2246,7 @@ pub(crate) mod strings_impl {
         &p[start..end]
     }
 
-    /// `std.fs.path.basenameWindows` — strips trailing `/`/`\`, treats a drive
+    /// Strips trailing `/`/`\`, treats a drive
     /// designator `X:` at index 1 as a root delimiter (`"C:"` → `""`,
     /// `"C:foo"` → `"foo"`, `"C:\\"` → `""`), then returns the final component.
     pub fn basename_windows<T: PathByte>(p: &[T]) -> &[T] {
@@ -2541,8 +2279,8 @@ pub(crate) mod strings_impl {
         &p[start..end]
     }
 
-    /// `bun.strings.basename` — comptime-dispatches to `basenameWindows` on
-    /// Windows and `basenamePosix` elsewhere.
+    /// Dispatches to [`basename_windows`] on Windows and [`basename_posix`]
+    /// elsewhere.
     #[inline]
     pub fn basename(path: &[u8]) -> &[u8] {
         if cfg!(windows) {
@@ -2551,14 +2289,12 @@ pub(crate) mod strings_impl {
             basename_posix(path)
         }
     }
-    /// `bun.strings.removeLeadingDotSlash` (immutable/paths.zig). Hosted at T0
+    /// `bun.strings.removeLeadingDotSlash`. Hosted at T0
     /// so `crate::string` (and `bun_paths::string_paths`) can reach it
     /// without a `bun_paths` edge.
     #[inline(always)]
     pub fn remove_leading_dot_slash(slice: &[u8]) -> &[u8] {
         if slice.len() >= 2 {
-            // PERF(port): Zig bitcast slice[0..2] to u16; direct 2-byte slice
-            // comparison compiles to the same thing.
             if &slice[..2] == b"./" || (cfg!(windows) && &slice[..2] == b".\\") {
                 return &slice[2..];
             }
@@ -2577,46 +2313,16 @@ pub(crate) mod strings_impl {
 pub use crate::string::immutable::convert_utf8_to_utf16_in_buffer;
 pub use strings_impl::*;
 
-/// Back-compat alias: `bun_core::strings::X` → `bun_core::X`. The full
-/// `bun.strings` namespace is `bun_core::immutable` (formerly
-/// `bun_core::strings`); this alias keeps the ~200 existing
-/// `bun_core::strings::` / `crate::strings::` call sites compiling.
-///
-/// NOTE: a handful of names (`index_of_char`, `eql_long`, `first_non_ascii`,
-/// `Encoding`, `CodepointIterator`) have a different signature here than in
-/// `bun_core::immutable`. Callers that need the Zig-spec
-/// `bun.strings.*` form import `bun_core::immutable as strings` instead.
-pub mod strings {
-    // `bun_core::strings` is the union of the crate-root surface (`super::*`,
-    // which carries the scalar-fallback `strings_impl::*` glob plus every
-    // `bun_core::Foo`) and the full Zig-spec `bun.strings.*` namespace
-    // (`string::immutable::*`). Names that exist in BOTH layers — same
-    // identifier, different signature — are explicitly disambiguated below
-    // in favour of `immutable` (matches every former `bun_core::strings::X`
-    // caller). Internal `bun_core` code that needs the scalar form spells
-    // `crate::strings_impl::X` directly.
-    pub use super::*;
-    pub use crate::string::immutable::*;
-    pub use crate::string::immutable::{
-        CodepointIterator, Cursor, Encoding, codepoint_size, concat, contains,
-        contains_newline_or_non_ascii_or_quote, convert_utf8_to_utf16_in_buffer,
-        convert_utf16_to_utf8_in_buffer, ends_with, eql, eql_case_insensitive_ascii,
-        eql_comptime_ignore_len, eql_long, first_non_ascii, first_non_ascii16, includes,
-        index_of_char, index_of_newline_or_non_ascii_or_ansi, is_ipv6_address, last_index_of_char,
-        last_index_of_char_t, remove_leading_dot_slash, starts_with, without_trailing_slash,
-    };
-    // Disambiguate vs the scalar tier-0 versions in `crate::strings_impl` (now
-    // dedup-hoisted) — `immutable` is the Zig-spec impl callers expect.
-    pub use crate::string::immutable::{ares_inet_pton, copy_lowercase_if_needed};
-    // `index_of_any{,_t}` keep the scalar `Option<usize>` form (Zig-spec
-    // `immutable` returns `Option<OptionalUsize>` which no caller wants here).
-    pub use crate::strings_impl::{index_of_any, index_of_any_t};
-}
+/// `bun.strings` — the canonical SIMD-backed `&[u8]` namespace
+/// ([`crate::string::immutable`]). Tier-0 transcoding/scanning primitives that
+/// `immutable` itself depends on live in [`strings_impl`] and are re-exported
+/// from `immutable`, so this is the only public path.
+pub use crate::string::immutable as strings;
 
 // `true` when mimalloc is the `#[global_allocator]`; `false` under ASAN where
 // `std::alloc::System` is installed instead. Mirrors `bun_alloc::USE_MIMALLOC`.
 pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
-pub mod debug_allocator_data {
+pub(crate) mod debug_allocator_data {
     /// Only referenced from `debug_assert!` — dead in release builds.
     #[allow(dead_code)]
     #[inline]
@@ -2625,21 +2331,8 @@ pub mod debug_allocator_data {
     }
 }
 
-/// `bun.feature_flag.*` runtime env-var getters (real impl in env_var.rs, still gated).
-/// feature_flags.rs (compile-time consts) is now real; this stub provides the
-/// `.get()` accessor surface that env_var.rs will replace.
-pub mod feature_flag {
-    macro_rules! flag { ($($name:ident),* $(,)?) => { $(
-        #[allow(non_camel_case_types)] pub struct $name;
-        impl $name { #[inline] pub fn get(&self) -> bool { false } }
-    )* } }
-    flag!(
-        BUN_FEATURE_FLAG_NO_LIBDEFLATE,
-        BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE
-    );
-}
-/// Port of `bun.linuxKernelVersion()` (src/bun.zig) → `analytics.GeneratePlatform.kernelVersion()`.
-/// Lives in T1 because `bun_sys` calls it from feature probes (copy_file_range,
+pub use env_var::feature_flag;
+/// `bun.linuxKernelVersion()`. Lives in T1 because `bun_sys` calls it from feature probes (copy_file_range,
 /// ioctl_ficlone, RWF_NONBLOCK) and cannot depend on `bun_analytics`. Parses
 /// `uname(2).release` major.minor.patch directly; the full Semver parse with
 /// pre/build tags stays in `bun_analytics`.
@@ -2685,7 +2378,7 @@ pub fn linux_kernel_version() -> Version {
 /// `catch_unwind` always returns `Ok` and the wrapper was dead weight. JSC does
 /// not throw C++ exceptions across its public API, so there is no foreign
 /// unwind to catch either. Macro-generated `extern "C"` thunks now call the
-/// user body directly (same end state as Zig `@panic` → `bun.crash_handler`).
+/// user body directly.
 pub mod ffi {
     // `core`-only primitives shared with the freestanding `bun_shim_impl` PE
     // (which cannot link `bun_core`'s `#[no_mangle]` C-ABI surface). Single
@@ -2698,9 +2391,8 @@ pub mod ffi {
     ///
     /// Single audited wrapper over `CStr::from_ptr` so the ~180 raw call
     /// sites in the tree funnel through one `unsafe` block. Adds a
-    /// `debug_assert!(!p.is_null())` — `CStr::from_ptr(null)` is instant UB
-    /// and the Zig originals (`bun.span`, `std.mem.span`) likewise assume a
-    /// valid sentinel pointer, so a null here is always a caller bug.
+    /// `debug_assert!(!p.is_null())` — `CStr::from_ptr(null)` is instant UB,
+    /// so a null here is always a caller bug.
     ///
     /// # Safety
     /// `p` must be non-null, point to a valid NUL-terminated byte sequence,
@@ -2725,18 +2417,42 @@ pub mod ffi {
         UTSNAME.get_or_init(uname)
     }
 
-    /// Slice up to (excluding) the first NUL byte. Port of Zig `bun.sliceTo(b, 0)`;
+    /// A borrowed `&'a [T]` in C layout (`struct { const T* ptr; size_t len; }`)
+    /// for passing slices *into* `extern "C"` functions by value. Carries the
+    /// borrow's lifetime, so an import taking `FfiSlice<'_, T>` can be declared
+    /// `safe fn`: the callee may read `len` elements at `ptr` for the duration
+    /// of the call and nothing else.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct FfiSlice<'a, T = u8> {
+        ptr: *const T,
+        len: usize,
+        _borrow: core::marker::PhantomData<&'a [T]>,
+    }
+
+    impl<'a, T> FfiSlice<'a, T> {
+        #[inline]
+        pub const fn new(s: &'a [T]) -> Self {
+            Self {
+                ptr: s.as_ptr(),
+                len: s.len(),
+                _borrow: core::marker::PhantomData,
+            }
+        }
+    }
+
+    impl<'a, T> From<&'a [T]> for FfiSlice<'a, T> {
+        #[inline]
+        fn from(s: &'a [T]) -> Self {
+            Self::new(s)
+        }
+    }
+
+    /// Slice up to (excluding) the first NUL byte;
     /// re-exported as `bun_core::slice_to_nul`.
     #[inline]
     pub fn slice_to_nul(buf: &[u8]) -> &[u8] {
-        &buf[..buf.iter().position(|&b| b == 0).unwrap_or(buf.len())]
-    }
-
-    /// Mutable variant of [`slice_to_nul`].
-    #[inline]
-    pub fn slice_to_nul_mut(buf: &mut [u8]) -> &mut [u8] {
-        let n = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-        &mut buf[..n]
+        &buf[..crate::strings::index_of_char_usize(buf, 0).unwrap_or(buf.len())]
     }
 
     /// Heap-allocate a `T` filled with zero bytes. Safe by virtue of the
@@ -2762,19 +2478,15 @@ pub mod ffi {
     /// Safe `uname(2)` wrapper: zero-init a `utsname`, call `libc::uname`, return
     /// it by value. On the (theoretical) error path the struct stays all-zero,
     /// so every `c_char[]` field reads as an empty NUL-terminated string.
+    /// Goes through the `libc` crate rather than binding the symbol by name:
+    /// on FreeBSD the exported `uname` is a compat entry with 32-byte fields and
+    /// the real call is `__xuname(256, buf)`, which the crate already handles.
     #[cfg(unix)]
     #[inline]
     pub fn uname() -> libc::utsname {
-        // `&mut libc::utsname` is ABI-identical to libc's `struct utsname *`
-        // (thin non-null pointer to a `#[repr(C)]` struct); the type encodes
-        // the only pointer-validity precondition, so `safe fn` discharges the
-        // link-time proof and the call needs no `unsafe` block.
-        unsafe extern "C" {
-            #[link_name = "uname"]
-            safe fn libc_uname(buf: &mut libc::utsname) -> core::ffi::c_int;
-        }
         let mut u: libc::utsname = zeroed();
-        let _ = libc_uname(&mut u);
+        // SAFETY: `u` is a valid, writable utsname for the duration of the call.
+        let _ = unsafe { libc::uname(&raw mut u) };
         u
     }
 
@@ -2786,15 +2498,14 @@ pub mod ffi {
         // `c_char` is a type alias for `i8`/`u8`; both are `bytemuck::Pod`, so
         // the byte-sized reinterpretation is a safe `cast_slice`.
         let b: &[u8] = bytemuck::cast_slice(s);
-        &b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]
+        &b[..crate::strings::index_of_char_usize(b, 0).unwrap_or(b.len())]
     }
 
     /// All-bits-zero value of `T` for `#[repr(C)]` FFI structs.
     ///
     /// Single audited wrapper over `core::mem::zeroed()` so libc/uv/c-ares
     /// out-param init sites (`let mut x: libc::sigaction = zeroed();`) don't
-    /// each open-code an `unsafe` block. This is the Rust spelling of Zig's
-    /// `std.mem.zeroes(T)` / `= .{}` for `extern struct`.
+    /// each open-code an `unsafe` block.
     ///
     /// The `T: Zeroable` bound discharges the `mem::zeroed` safety obligation
     /// once per type (at the `unsafe impl`), so callers need no `unsafe`
@@ -2918,6 +2629,9 @@ pub mod ffi {
     unsafe impl Zeroable for libc::pollfd {}
     // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]
+    unsafe impl Zeroable for libc::tm {}
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
+    #[cfg(unix)]
     unsafe impl Zeroable for libc::Dl_info {}
     // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     #[cfg(unix)]
@@ -2975,9 +2689,17 @@ pub mod ffi {
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::FILE_BASIC_INFORMATION {}
     #[cfg(windows)]
+    unsafe impl Zeroable for bun_windows_sys::externs::FILE_ALL_INFORMATION {}
+    #[cfg(windows)]
+    unsafe impl Zeroable for bun_windows_sys::externs::FILE_FS_DEVICE_INFORMATION {}
+    #[cfg(windows)]
+    unsafe impl Zeroable for bun_windows_sys::externs::FILE_FS_VOLUME_INFORMATION {}
+    #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::BY_HANDLE_FILE_INFORMATION {}
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::WIN32_FILE_ATTRIBUTE_DATA {}
+    #[cfg(windows)]
+    unsafe impl Zeroable for bun_windows_sys::externs::WIN32_FIND_DATAW {}
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::OBJECT_ATTRIBUTES {}
     #[cfg(windows)]
@@ -2986,8 +2708,6 @@ pub mod ffi {
     unsafe impl Zeroable for bun_windows_sys::externs::SECURITY_ATTRIBUTES {}
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::FILETIME {}
-    #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::WSADATA {}
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::sockaddr_storage {}
     #[cfg(windows)]
@@ -3034,7 +2754,7 @@ pub mod ffi {
         unsafe { core::mem::zeroed() }
     }
 
-    /// Pointer to the calling thread's libc `errno` (Zig: `std.c._errno()`).
+    /// Pointer to the calling thread's libc `errno`.
     ///
     /// Single audited cfg-ladder over the per-libc TLS accessor symbol so the
     /// tree has ONE place that knows glibc/musl spell it `__errno_location()`,
@@ -3085,7 +2805,7 @@ pub mod ffi {
         errno_location()
     }
 
-    /// Read the calling thread's libc `errno` (Zig: `std.c._errno().*`).
+    /// Read the calling thread's libc `errno`.
     /// Safe wrapper over `*errno_ptr()`.
     #[inline(always)]
     pub fn errno() -> core::ffi::c_int {
@@ -3096,7 +2816,7 @@ pub mod ffi {
 }
 
 pub mod asan {
-    //! Low-tier mirror of `src/safety/asan.zig`. `bun_safety` depends on
+    //! ASAN/LSAN runtime hooks. `bun_safety` depends on
     //! `bun_core`, so the implementation lives here and `bun_safety::asan`
     //! re-uses the same `cfg(bun_asan)` gate. Callers in `bun_jsc`,
     //! `bun_runtime`, and `bun_collections` reach the real LSAN/ASAN runtime
@@ -3139,14 +2859,6 @@ pub mod asan {
         let _ = (ptr, size);
     }
     #[inline]
-    pub fn poison_slice<T>(s: &[T]) {
-        poison(s.as_ptr().cast(), core::mem::size_of_val(s))
-    }
-    #[inline]
-    pub fn unpoison_slice<T>(s: &[T]) {
-        unpoison(s.as_ptr().cast(), core::mem::size_of_val(s))
-    }
-    #[inline]
     pub fn assert_unpoisoned<T>(ptr: *const T) {
         #[cfg(bun_asan)]
         if __asan_address_is_poisoned(ptr.cast()) {
@@ -3178,17 +2890,17 @@ pub mod asan {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// glibc-compat / link wraps. Zig: src/workaround_missing_symbols.zig.
+// glibc-compat / link wraps.
 // build.ninja links with `-Wl,--wrap=gettid` so libc/std references land here.
 // ────────────────────────────────────────────────────────────────────────────
 #[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn __wrap_gettid() -> libc::pid_t {
+extern "C" fn __wrap_gettid() -> libc::pid_t {
     // SAFETY: SYS_gettid takes no arguments and never fails.
     unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t }
 }
 
-/// `bun.getTotalMemorySize()` (bun.zig:3498) — process-wide RAM budget,
+/// `bun.getTotalMemorySize()` — process-wide RAM budget,
 /// cgroup/jetsam-aware. Backed by the linked C++ `Bun__ramSize()`
 /// (src/jsc/bindings/c-bindings.cpp). Lives in `bun_core` so both
 /// `bun_runtime` (node:fs preallocation guard) and the binary root can
@@ -3209,13 +2921,26 @@ pub fn capture_stack_trace(begin: usize, addrs: &mut [usize]) -> usize {
     debug::capture_current(first, addrs)
 }
 
-/// Zig `@returnAddress()`: a PC inside the caller's caller. `#[inline(always)]`
+/// A PC inside the caller's caller. `#[inline(always)]`
 /// so this has no frame of its own — `frame_address()` reads the caller's fp,
 /// and `[fp + PC_OFFSET]` is the caller's saved return address. Used as the
 /// `first_address` trim point for `capture_current` (which falls back to the
 /// full trace if it doesn't match).
+///
+/// Always call this directly from the frame you want anchored. Passing it as
+/// a callback (e.g. `unwrap_or_else(return_address)`) inlines it into the
+/// closure instead, which reads the closure's frame — popped again before any
+/// capture runs — so the returned PC matches no captured frame and the trim
+/// silently degrades to the full untrimmed trace.
 #[inline(always)]
 pub fn return_address() -> usize {
+    // Miri cannot execute `frame_address`'s inline asm, and an address read out
+    // of a register is not a pointer it can dereference. 0 = "no trim", the
+    // same value the arches without an asm! mapping return. `cfg!` rather than
+    // `#[cfg]` so the read below stays compiled (and `PC_OFFSET` live).
+    if cfg!(miri) {
+        return 0;
+    }
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     {
         let fp = debug::frame_address();

@@ -21,6 +21,12 @@ test("An+B idents longer than the keyword literals parse deterministically", () 
   expect(() => minifyTest(":nth-child(NN) {width: 20px}", "")).toThrow("Unexpected token");
 });
 
+test("class and id selectors inside an of-list keep their escapes when printed", () => {
+  expect(minifyTest(":nth-child(2n of .a\\{b) {width: 20px}", "")).toBe(":nth-child(2n of .a\\{b){width:20px}");
+  expect(minifyTest(":nth-child(2n of .md\\:flex) {width: 20px}", "")).toBe(":nth-child(2n of .md\\:flex){width:20px}");
+  expect(minifyTest(":nth-last-child(1 of #a\\}b) {width: 20px}", "")).toBe(":nth-last-child(1 of #a\\}b){width:20px}");
+});
+
 test("fuzzer-minimized input: unterminated :nth-child( with an `Nn` ident", async () => {
   // Run in a child process so a crash doesn't take down the test runner.
   await using proc = Bun.spawn({

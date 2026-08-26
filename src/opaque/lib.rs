@@ -89,16 +89,6 @@ macro_rules! opaque_ffi {
             pub fn opaque_mut<'a>(p: *mut Self) -> &'a mut Self {
                 $crate::opaque_deref_mut(p)
             }
-            /// Unchecked `*mut Self → &mut Self`. See [`opaque_ref_nn`].
-            ///
-            /// # Safety
-            /// `p` must be non-null.
-            #[inline(always)]
-            #[allow(dead_code)]
-            pub unsafe fn opaque_mut_nn<'a>(p: *mut Self) -> &'a mut Self {
-                // SAFETY: forwarded to caller.
-                unsafe { $crate::opaque_deref_mut_nn(p) }
-            }
             /// `&self → *mut Self` for FFI calls that take a non-const handle.
             ///
             /// Sound because `_p: UnsafeCell<_>` sits at offset 0 of this
@@ -271,7 +261,7 @@ macro_rules! assert_ffi_discr {
 /// [`opaque_deref_nn`] instead to elide the release-mode `testq; je <panic>`.
 #[inline(always)]
 pub fn opaque_deref<'a, T>(p: *const T) -> &'a T {
-    let p = ::core::ptr::NonNull::new(p.cast_mut()).expect("opaque_deref: null FFI handle");
+    let p = ::core::ptr::NonNull::new(p.cast_mut()).unwrap_or_else(|| null_handle());
     // SAFETY: non-null established above.
     unsafe { opaque_deref_nn(p.as_ptr()) }
 }
@@ -314,7 +304,7 @@ pub unsafe fn opaque_deref_nn<'a, T>(p: *const T) -> &'a T {
 /// mutable borrow of zero bytes cannot overlap any other borrow).
 #[inline(always)]
 pub fn opaque_deref_mut<'a, T>(p: *mut T) -> &'a mut T {
-    let p = ::core::ptr::NonNull::new(p).expect("opaque_deref_mut: null FFI handle");
+    let p = ::core::ptr::NonNull::new(p).unwrap_or_else(|| null_handle());
     // SAFETY: non-null established above.
     unsafe { opaque_deref_mut_nn(p.as_ptr()) }
 }
@@ -345,17 +335,17 @@ pub unsafe fn opaque_deref_mut_nn<'a, T>(p: *mut T) -> &'a mut T {
 /// `core`-only FFI slice/string primitives shared between `bun_core::ffi` and
 /// the freestanding `bun_shim_impl` PE. Lives here (not `bun_core`) because
 /// `bun_core` carries `#[no_mangle]` C-ABI exports that become unsatisfiable
-/// link roots in a `#![no_std]`/`no_main` binary; this crate has none. Mirrors
-/// Zig `std.mem.{len,span}` / `bun.sliceTo`, which both consumers re-spelled
-/// verbatim before this single audited copy existed.
+/// link roots in a `#![no_std]`/`no_main` binary; this crate has none. Both
+/// consumers re-spelled these primitives verbatim before this single audited
+/// copy existed.
 pub mod ffi {
-    /// `std.mem.len` for `[*:0]const u16` — count u16 code units up to (and
+    /// Count u16 code units up to (and
     /// excluding) the first NUL. Single audited funnel for the hand-rolled
     /// `while *p.add(n) != 0 { n += 1 }` loop that appeared at every
     /// `LPCWSTR` / `char16_t*` ingestion point (Windows path APIs, N-API
     /// `napi_create_string_utf16`, libarchive `_w` accessors, env-block
     /// scan). Adds a `debug_assert!(!p.is_null())` — same precondition as
-    /// `CStr::from_ptr` and Zig `std.mem.len([*:0]const u16)`.
+    /// `CStr::from_ptr`.
     ///
     /// # Safety
     /// `p` must be non-null and point to a NUL-terminated u16 sequence
@@ -372,8 +362,7 @@ pub mod ffi {
     }
 
     /// UTF-16 analogue of `cstr_bytes`: scan to NUL and borrow the code units
-    /// as a `&[u16]`. Dominant shape at call sites (Zig
-    /// `std.mem.span([*:0]const u16)` port).
+    /// as a `&[u16]`. Dominant shape at call sites.
     ///
     /// # Safety
     /// Same contract as [`wcslen`]; the returned borrow must not outlive the
@@ -428,4 +417,13 @@ pub mod ffi {
             unsafe { core::slice::from_raw_parts_mut(ptr, len) }
         }
     }
+}
+
+/// One shared, argument-free panic for the null checks above: thousands of
+/// call sites inline `opaque_deref`, and a `#[track_caller]` `expect` would
+/// give each its own message/location setup.
+#[cold]
+#[inline(never)]
+fn null_handle() -> ! {
+    panic!("opaque_deref: null FFI handle");
 }

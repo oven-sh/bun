@@ -52,7 +52,13 @@ test("the install succeeds", async () => {
     throw new Error("Failed to install");
   }
 
-  subprocess = Bun.spawn([bunExe(), "install"], {
+  // On Windows CI, sharp's install script falls back to a node-gyp source
+  // build (no win32-arm64 prebuilt), which the system clang-cl-built Node 26
+  // breaks (its process.config leaks thin-LTO flags that MSVC's link.exe
+  // rejects). This test exercises lockfile migration, not lifecycle scripts,
+  // so skip them there.
+  const installArgs = process.platform === "win32" ? [bunExe(), "install", "--ignore-scripts"] : [bunExe(), "install"];
+  subprocess = Bun.spawn(installArgs, {
     env: bunEnv,
     cwd,
     stdio: ["inherit", "inherit", "inherit"],

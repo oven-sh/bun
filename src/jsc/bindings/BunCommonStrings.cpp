@@ -12,40 +12,60 @@
 namespace Bun {
 using namespace JSC;
 
-#define BUN_COMMON_STRINGS_LAZY_PROPERTY_DEFINITION(jsName)                        \
-    this->m_commonString_##jsName.initLater(                                       \
-        [](const JSC::LazyProperty<JSGlobalObject, JSString>::Initializer& init) { \
-            auto& names = WebCore::builtinNames(init.vm);                          \
-            auto name = names.jsName##PublicName();                                \
-            init.set(jsOwnedString(init.vm, name.string()));                       \
-        });
+#define BUN_COMMON_STRINGS_LITERAL_ENTRY(name) ASCIILiteral(),
+#define BUN_COMMON_STRINGS_LITERAL_ENTRY_NOT_BUILTIN_NAMES(name, literal) literal##_s,
+// clang-format off
+static constexpr ASCIILiteral commonStringLiterals[] = {
+    BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_LITERAL_ENTRY)
+    BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_LITERAL_ENTRY_NOT_BUILTIN_NAMES)
+};
+// clang-format on
+#undef BUN_COMMON_STRINGS_LITERAL_ENTRY
+#undef BUN_COMMON_STRINGS_LITERAL_ENTRY_NOT_BUILTIN_NAMES
+static_assert(std::size(commonStringLiterals) == static_cast<size_t>(CommonStrings::Index::Count));
 
-#define BUN_COMMON_STRINGS_LAZY_PROPERTY_DEFINITION_NOT_BUILTIN_NAMES(methodName, stringLiteral) \
-    this->m_commonString_##methodName.initLater(                                                 \
-        [](const JSC::LazyProperty<JSGlobalObject, JSString>::Initializer& init) {               \
-            init.set(jsString(init.vm, AtomString(stringLiteral##_s)));                          \
-        });
-
-#define BUN_COMMON_STRINGS_LAZY_PROPERTY_VISITOR(name) this->m_commonString_##name.visit(visitor);
-#define BUN_COMMON_STRINGS_LAZY_PROPERTY_VISITOR_NOT_BUILTIN_NAMES(name, literal) this->m_commonString_##name.visit(visitor);
+static const JSC::Identifier& builtinNameAt(VM& vm, CommonStrings::Index index)
+{
+    auto& names = WebCore::builtinNames(vm);
+    switch (index) {
+#define BUN_COMMON_STRINGS_BUILTIN_NAME_CASE(name) \
+    case CommonStrings::Index::name:               \
+        return names.name##PublicName();
+        BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_BUILTIN_NAME_CASE)
+#undef BUN_COMMON_STRINGS_BUILTIN_NAME_CASE
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
 
 void CommonStrings::initialize()
 {
-    BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_LAZY_PROPERTY_DEFINITION)
-    BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_LAZY_PROPERTY_DEFINITION_NOT_BUILTIN_NAMES)
+    for (auto& string : m_strings) {
+        string.initLater([](const JSC::LazyProperty<JSGlobalObject, JSString>::Initializer& init) {
+            auto& self = defaultGlobalObject(init.owner)->commonStrings();
+            size_t i = &init.property - self.m_strings;
+            ASSERT(i < std::size(self.m_strings));
+            auto literal = commonStringLiterals[i];
+            if (literal.isNull()) {
+                init.set(jsOwnedString(init.vm, builtinNameAt(init.vm, static_cast<Index>(i)).string()));
+                return;
+            }
+            init.set(jsString(init.vm, AtomString(literal)));
+        });
+    }
 }
 
 template<typename Visitor>
 void CommonStrings::visit(Visitor& visitor)
 {
-    BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_LAZY_PROPERTY_VISITOR)
-    BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_LAZY_PROPERTY_VISITOR_NOT_BUILTIN_NAMES)
+    for (auto& string : m_strings)
+        string.visit(visitor);
 }
 
 template void CommonStrings::visit(JSC::AbstractSlotVisitor&);
 template void CommonStrings::visit(JSC::SlotVisitor&);
 
-// Must be kept in sync with method.zig
+// Must be kept in sync with src/http_types/Method.rs
 enum class HTTPMethod : uint8_t {
     httpACL = 0,
     httpBIND = 1,
@@ -157,6 +177,7 @@ enum class CommonStringsForZig : uint8_t {
     binaryTypeArrayBuffer = 10,
     binaryTypeNodeBuffer = 11,
     binaryTypeUint8Array = 12,
+    binaryTypeBlob = 13,
 };
 
 static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForZig commonString)
@@ -189,6 +210,8 @@ static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForZig co
         return commonStrings.binaryTypeNodeBufferString(globalObject);
     case CommonStringsForZig::binaryTypeUint8Array:
         return commonStrings.binaryTypeUint8ArrayString(globalObject);
+    case CommonStringsForZig::binaryTypeBlob:
+        return commonStrings.binaryTypeBlobString(globalObject);
     default: {
         ASSERT_NOT_REACHED();
         return jsUndefined();
@@ -201,7 +224,7 @@ extern "C" JSC::EncodedJSValue Bun__CommonStringsForZig__toJS(CommonStringsForZi
     return JSValue::encode(toJS(globalObject, commonString));
 }
 
-// Must be kept in sync with src/http/FetchCacheMode.zig
+// Must be kept in sync with src/http_types/FetchCacheMode.rs
 enum class FetchCacheMode : uint8_t {
     Default = 0,
     NoStore = 1,
@@ -234,7 +257,7 @@ extern "C" JSC::EncodedJSValue Bun__FetchCacheMode__toJS(FetchCacheMode mode, Zi
     }
 }
 
-// Must be kept in sync with src/http/FetchRedirect.zig
+// Must be kept in sync with src/http_types/FetchRedirect.rs
 enum class FetchRedirect : uint8_t {
     Follow = 0,
     Manual = 1,
@@ -258,7 +281,7 @@ extern "C" JSC::EncodedJSValue Bun__FetchRedirect__toJS(FetchRedirect redirect, 
     }
 }
 
-// Must be kept in sync with src/http/FetchRequestMode.zig
+// Must be kept in sync with src/http_types/FetchRequestMode.rs
 enum class FetchRequestMode : uint8_t {
     SameOrigin = 0,
     NoCors = 1,

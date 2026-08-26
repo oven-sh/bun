@@ -1,0 +1,26 @@
+[package]
+name = "bun_react_compiler"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[features]
+# Fixture-harness support: test-only `// @pragma` parsing, the pragma-gated
+# passes (outline_jsx, name_anonymous_functions, lint-mode validators), and
+# BUN_REACT_COMPILER_TIMING. None of this is reachable from `Bun.build()`;
+# gating it lets LTO drop ~120 KB of .text from release binaries.
+fixtures = []
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_ast = { path = "../ast" }
+bun_alloc.workspace = true
+bun_core.workspace = true
+bun_collections.workspace = true
+rustc-hash = "2"
+enumset.workspace = true
+smallvec.workspace = true

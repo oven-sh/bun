@@ -8,7 +8,7 @@ use bun_core::{StringOrTinyString, ZStr};
 use bun_paths::WPathBuffer;
 use bun_paths::strings;
 use bun_paths::{self as path, PathBuffer};
-use bun_semver::{self as Semver, Version};
+use bun_semver::Version;
 use bun_sys::{self as sys, Dir, Fd};
 
 use bun_install::install::{self as Install, DependencyID, ExtractData};
@@ -21,41 +21,45 @@ use bun_libarchive::{ArchiveAppender, ExtractOptions};
 use bun_resolver::fs::FileSystem;
 #[cfg(windows)]
 use bun_sys::FdDirExt;
-
-// TODO(port): narrow error set
-type Error = bun_core::Error;
+type Error = crate::Error;
 
 pub struct ExtractTarball {
-    pub name: StringOrTinyString,
-    pub resolution: Resolution,
+    pub(crate) name: StringOrTinyString,
+    pub(crate) resolution: Resolution,
     /// Borrowed view of `PackageManager`'s cache directory fd; the manager
     /// owns and closes it, so this stays a non-owning raw `Fd`.
-    pub cache_dir: Fd,
+    pub(crate) cache_dir: Fd,
     /// Borrowed view of `PackageManager`'s temp directory fd (same ownership
     /// story as `cache_dir`).
-    pub temp_dir: Fd,
-    pub dependency_id: DependencyID,
-    pub skip_verify: bool,    // = false
-    pub integrity: Integrity, // = Integrity::default()
-    pub url: StringOrTinyString,
+    pub(crate) temp_dir: Fd,
+    pub(crate) dependency_id: DependencyID,
+    pub(crate) skip_verify: bool, // = false
+    pub(crate) in_trusted_dependencies: bool,
+    pub(crate) integrity: Integrity, // = Integrity::default()
+    pub(crate) url: StringOrTinyString,
+    /// The lockfile's bun-tag (`repository.resolved`) for a Github resolution,
+    /// copied out because extract workers must not read lockfile buffers. When
+    /// set it names the cache folder and `.bun-tag` (cache lookups are keyed by
+    /// it); empty on a fresh resolve, which uses the archive's root dir name.
+    pub(crate) github_resolved: StringOrTinyString,
     /// BACKREF: PackageManager owns the task pool that owns this struct.
-    pub package_manager: bun_ptr::BackRef<PackageManager>,
+    pub(crate) package_manager: bun_ptr::BackRef<PackageManager>,
 }
 
 impl ExtractTarball {
     #[inline]
-    pub fn run(&self, log: &mut bun_ast::Log, bytes: &[u8]) -> Result<ExtractData, Error> {
+    pub(crate) fn run(&self, log: &mut bun_ast::Log, bytes: &[u8]) -> Result<ExtractData, Error> {
         if !self.skip_verify && self.integrity.tag.is_supported() {
             if !self.integrity.verify(bytes) {
                 log.add_error_fmt(
                     None,
                     bun_ast::Loc::EMPTY,
                     format_args!(
-                        "Integrity check failed<r> for tarball: {}",
+                        "Integrity check failed for tarball: {}",
                         bun_fmt::s(self.name.slice()),
                     ),
                 );
-                return Err(bun_core::err!("IntegrityCheckFailed"));
+                return Err(crate::Error::IntegrityCheckFailed);
             }
         }
         let mut result = self.extract(log, bytes)?;
@@ -94,16 +98,13 @@ pub(crate) fn build_url(
         full_name_,
         version,
         string_buf,
-        // Zig: `FileSystem.DirnameStore.print(fmt, args)` — format directly into
-        // the store's tail; no intermediate `String`.
+        // Format directly into the store's tail; no intermediate `String`.
         |args| FileSystem::instance().dirname_store().print(args),
     )
 }
 
-/// Generic URL builder. The Zig version threads `comptime PrinterContext`,
-/// `comptime ReturnType`, `comptime ErrorType` and a comptime `print` fn; in
-/// Rust the closure carries its own context and the generics collapse to `R, E`.
-pub(crate) fn build_url_with_printer<R, E>(
+/// Generic URL builder; the closure carries its own context.
+pub fn build_url_with_printer<R, E>(
     registry_: &[u8],
     full_name_: &StringOrTinyString,
     version: Version,
@@ -123,7 +124,7 @@ pub(crate) fn build_url_with_printer<R, E>(
     // default_format = "{s}/{s}/-/"
     // `bun_fmt::s` writes bytes straight through — registry hosts, package names
     // and semver tags are pre-validated ASCII, so we don't need `bstr::BStr`'s
-    // Utf8Chunks scan (Zig `{s}` parity).
+    // Utf8Chunks scan.
     let registry = s(registry);
     let full_name = s(full_name);
     let name = s(name);
@@ -163,9 +164,6 @@ pub(crate) fn build_url_with_printer<R, E>(
     }
 }
 
-// TODO(port): `bun.ThreadlocalBuffers(struct{...})` returns a type with `.get()`
-// yielding a `*Bufs` into TLS. Model as a thread_local RefCell; callers borrow
-// for the duration of the function.
 struct TlBufs {
     final_path_buf: PathBuffer,
     folder_name_buf: PathBuffer,
@@ -193,15 +191,15 @@ impl ExtractTarball {
     /// package. Shared by the buffered `extract()` path below and the
     /// streaming extractor in `TarballStream.rs` so both pick identical
     /// temp-dir and cache-folder names.
-    pub fn name_and_basename(&self) -> (&[u8], &[u8]) {
+    pub(crate) fn name_and_basename(&self) -> (&[u8], &[u8]) {
         let name: &[u8] = if !self.name.slice().is_empty() {
             self.name.slice()
         } else {
             // Not sure where this case hits yet.
             // BUN-2WQ
-            Output::warn(format_args!(
+            bun_core::warn!(
                 "Extracting nameless packages is not supported yet. Please open an issue on GitHub with reproduction steps.",
-            ));
+            );
             debug_assert!(false);
             b"unnamed-package"
         };
@@ -236,18 +234,33 @@ impl ExtractTarball {
         let _tracer = bun_core::perf::trace("ExtractTarball.extract");
 
         let tmpdir = Dir::borrow(&self.temp_dir);
-        // Zig: `var tmpname_buf: [bun.MAX_PATH_BYTES]u8` — UTF-8 on every
-        // platform; the Windows tmpdir path is converted to wide at the
-        // `open_dir_at_windows_a` boundary, not here.
+        // UTF-8 on every platform; the Windows tmpdir path is converted to
+        // wide at the `open_dir_at_windows_a` boundary, not here.
         let mut tmpname_buf = PathBuffer::uninit();
         let (name, basename) = self.name_and_basename();
+        let truncated_basename = &basename[0..basename.len().min(32)];
+        let tmpname_suffix: &[u8] =
+            if bun_install::dependency::is_safe_install_folder_name(truncated_basename) {
+                truncated_basename
+            } else if self.resolution.tag.is_git()
+                || self.resolution.tag == ResolutionTag::LocalTarball
+            {
+                b"package"
+            } else {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "Refusing to install package with invalid name \"{}\"",
+                        bun_fmt::s(name),
+                    ),
+                );
+                return Err(crate::Error::InstallFailed);
+            };
 
         let mut resolved: &'static [u8] = b"";
-        let tmpname = FileSystem::tmpname(
-            &basename[0..basename.len().min(32)],
-            &mut tmpname_buf.0,
-            bun_core::fast_random(),
-        )?;
+        let tmpname =
+            FileSystem::tmpname(tmpname_suffix, &mut tmpname_buf.0, bun_core::fast_random())?;
         {
             let extract_destination = match bun_sys::make_path::make_open_path(
                 tmpdir,
@@ -261,22 +274,19 @@ impl ExtractTarball {
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "{} when create temporary directory named \"{}\" (while extracting \"{}\")",
-                            err.name(),
+                            bun_fmt::s(err.name()),
                             bun_fmt::s(tmpname.as_bytes()),
                             bun_fmt::s(name),
                         ),
                     );
-                    return Err(bun_core::err!("InstallFailed"));
+                    return Err(crate::Error::InstallFailed);
                 }
             };
 
             use bun_libarchive::Archiver;
-            use bun_zlib as Zlib;
             let mut zlib_pool = Npm::Registry::BodyPool::get();
             zlib_pool.reset();
             // `defer Npm.Registry.BodyPool.release(zlib_pool)` → PoolGuard's Drop releases.
-
-            let mut esimated_output_size: usize = 0;
 
             let time_started_for_verbose_logs: u64 = if PackageManager::verbose_install() {
                 bun_core::Timespec::now_allow_mocked_time().ns()
@@ -284,91 +294,54 @@ impl ExtractTarball {
                 0
             };
 
-            {
-                // Last 4 bytes of a gzip-compressed file are the uncompressed size.
-                if tgz_bytes.len() > 16 {
-                    // If the file claims to be larger than 16 bytes and smaller than 64 MB, we'll preallocate the buffer.
-                    // If it's larger than that, we'll do it incrementally. We want to avoid OOMing.
-                    let last_4_bytes: u32 = u32::from_ne_bytes(
-                        tgz_bytes[tgz_bytes.len() - 4..][..4]
-                            .try_into()
-                            .expect("infallible: size matches"),
-                    );
-                    if last_4_bytes > 16 && last_4_bytes < 64 * 1024 * 1024 {
-                        // It's okay if this fails. We will just allocate as we go and that will error if we run out of memory.
-                        esimated_output_size = last_4_bytes as usize;
-                        if zlib_pool.list.capacity() == 0 {
-                            let _ = zlib_pool.list.try_reserve_exact(last_4_bytes as usize);
-                        } else {
-                            let _ = zlib_pool.ensure_unused_capacity(last_4_bytes as usize);
+            // libarchive gunzips on the fly (`BufferReadStream::open_read`),
+            // so hand it the compressed bytes and never buffer the full tar.
+            // Small tarballs still try libdeflate first for speed; the gzip
+            // ISIZE trailer (size mod 2^32) is only trusted when small.
+            let mut decompressed_in_memory = false;
+            if bun_core::FeatureFlags::is_libdeflate_enabled() && tgz_bytes.len() > 16 {
+                let isize: u32 = u32::from_le_bytes(
+                    tgz_bytes[tgz_bytes.len() - 4..][..4]
+                        .try_into()
+                        .expect("infallible: size matches"),
+                );
+                if isize > 16 && isize < 64 * 1024 * 1024 {
+                    if zlib_pool.list.capacity() == 0 {
+                        let _ = zlib_pool.list.try_reserve_exact(isize as usize);
+                    } else {
+                        let _ = zlib_pool.ensure_unused_capacity(isize as usize);
+                    }
+                    if zlib_pool.list.capacity() > 16 {
+                        use bun_libdeflate_sys::libdeflate;
+                        if let Some(mut decompressor) = libdeflate::OwnedDecompressor::new() {
+                            zlib_pool.list.clear();
+                            let result = decompressor.decompress_to_vec(
+                                tgz_bytes,
+                                &mut zlib_pool.list,
+                                libdeflate::Encoding::Gzip,
+                            );
+                            if result.status == libdeflate::Status::Success {
+                                decompressed_in_memory = true;
+                            }
                         }
                     }
                 }
             }
 
-            let mut needs_to_decompress = true;
-            if bun_core::FeatureFlags::is_libdeflate_enabled()
-                && zlib_pool.list.capacity() > 16
-                && esimated_output_size > 0
-            {
-                'use_libdeflate: {
-                    use bun_libdeflate_sys::libdeflate;
-                    let decompressor_ptr = libdeflate::Decompressor::alloc();
-                    if decompressor_ptr.is_null() {
-                        break 'use_libdeflate;
-                    }
-                    // `defer decompressor.deinit()` — RAII guard frees on scope exit.
-                    let _guard = scopeguard::guard(decompressor_ptr, |p| {
-                        // SAFETY: `p` was returned by libdeflate_alloc_decompressor and is
-                        // not used after this guard fires.
-                        unsafe { libdeflate::Decompressor::destroy(p) }
-                    });
-                    // SAFETY: alloc returned non-null; valid until destroy.
-                    let decompressor = unsafe { &mut *decompressor_ptr };
-
-                    zlib_pool.list.clear();
-                    let result = decompressor.decompress_to_vec(
-                        tgz_bytes,
-                        &mut zlib_pool.list,
-                        libdeflate::Encoding::Gzip,
-                    );
-                    if result.status == libdeflate::Status::Success {
-                        needs_to_decompress = false;
-                    }
-
-                    // If libdeflate fails for any reason, fallback to zlib.
-                }
-            }
-
-            if needs_to_decompress {
+            let tar_input: &[u8] = if decompressed_in_memory {
+                &zlib_pool.list
+            } else {
                 zlib_pool.list.clear();
-                let mut zlib_entry =
-                    Zlib::ZlibReaderArrayList::init(tgz_bytes, &mut zlib_pool.list)?;
-                if let Err(err) = zlib_entry.read_all(true) {
-                    log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "{} decompressing \"{}\" to \"{}\"",
-                            err,
-                            bun_fmt::s(name),
-                            bun_core::fmt::fmt_path_u8(tmpname.as_bytes(), Default::default()),
-                        ),
-                    );
-                    return Err(bun_core::err!("InstallFailed"));
-                }
-            }
+                tgz_bytes
+            };
 
             if PackageManager::verbose_install() {
-                let decompressing_ended_at: u64 = bun_core::Timespec::now_allow_mocked_time().ns();
-                let elapsed = decompressing_ended_at - time_started_for_verbose_logs;
-                Output::pretty_errorln(format_args!(
-                    "[{}] Extract {}<r> (decompressed {} tgz file in {})",
+                bun_core::pretty_errorln!(
+                    "[{}] Extract {}<r> ({} tgz file)",
                     bun_fmt::s(name),
                     bun_fmt::s(tmpname.as_bytes()),
                     bun_core::fmt::size(tgz_bytes.len(), Default::default()),
-                    bun_core::fmt::fmt_duration_one_decimal(elapsed),
-                ));
+                );
             }
 
             match self.resolution.tag {
@@ -397,10 +370,8 @@ impl ExtractTarball {
                         outdirname: &mut resolved,
                     };
 
-                    // PERF(port): was comptime bool dispatch on verbose_install — folded into
-                    // `ExtractOptions::log` (runtime) — profile if hot.
                     let _ = Archiver::extract_to_dir(
-                        &zlib_pool.list,
+                        tar_input,
                         extract_destination.fd(),
                         None,
                         &mut dirname_reader,
@@ -412,16 +383,29 @@ impl ExtractTarball {
                         },
                     )?;
 
+                    let lockfile_tag = self.github_resolved.slice();
+                    if !lockfile_tag.is_empty() {
+                        resolved = FileSystem::instance()
+                            .dirname_store()
+                            .append(lockfile_tag)
+                            .expect("unreachable");
+                    }
+
                     // This tag is used to know which version of the package was
                     // installed from GitHub. package.json version becomes sort of
                     // meaningless in cases like this.
                     if !resolved.is_empty() {
-                        // `std.fs.Dir.createFileZ(".bun-tag", .{ .truncate = true })` + write
-                        if sys::File::write_file(
+                        // Create/truncate `.bun-tag`, then write the resolved tag.
+                        if sys::File::openat(
                             extract_destination.fd(),
                             ZStr::from_static(b".bun-tag\0"),
-                            resolved,
+                            sys::O::WRONLY
+                                | sys::O::CREAT
+                                | sys::O::TRUNC
+                                | if cfg!(windows) { 0 } else { sys::O::NOFOLLOW },
+                            0o664,
                         )
+                        .and_then(|f| f.write_all(resolved))
                         .is_err()
                         {
                             let _ = sys::unlinkat(
@@ -432,10 +416,8 @@ impl ExtractTarball {
                     }
                 }
                 _ => {
-                    // PERF(port): was comptime bool dispatch on verbose_install — folded into
-                    // `ExtractOptions::log` (runtime) — profile if hot.
                     let _ = Archiver::extract_to_dir(
-                        &zlib_pool.list,
+                        tar_input,
                         extract_destination.fd(),
                         None,
                         &mut (),
@@ -460,12 +442,12 @@ impl ExtractTarball {
             if PackageManager::verbose_install() {
                 let elapsed = bun_core::Timespec::now_allow_mocked_time().ns()
                     - time_started_for_verbose_logs;
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "[{}] Extracted to {} ({})<r>",
                     bun_fmt::s(name),
                     bun_fmt::s(tmpname.as_bytes()),
                     bun_core::fmt::fmt_duration_one_decimal(elapsed),
-                ));
+                );
                 Output::flush();
             }
         }
@@ -476,7 +458,7 @@ impl ExtractTarball {
     /// Rename the freshly-extracted temp directory into the cache, read
     /// `package.json` if required, and build the `ExtractData` result. Shared
     /// between the buffered and streaming extraction paths.
-    pub fn move_to_cache_directory(
+    pub(crate) fn move_to_cache_directory(
         &self,
         log: &mut bun_ast::Log,
         tmpname: &ZStr,
@@ -488,23 +470,49 @@ impl ExtractTarball {
 
         let tmpdir = Dir::borrow(&self.temp_dir);
         TL_BUFS.with_borrow_mut(|bufs| {
-            // PORT NOTE: reshaped for borrowck — Zig grabbed a raw `*TlBufs` from TLS;
-            // here the entire body lives inside the thread_local borrow closure.
+            // The entire body lives inside the thread_local borrow closure.
             let folder_name: &[u8] = match self.resolution.tag {
-                ResolutionTag::Npm => directories::cached_npm_package_folder_name_print(
-                    package_manager,
-                    &mut bufs.folder_name_buf,
-                    name,
-                    self.resolution.npm().version,
-                    None,
-                )
-                .as_bytes(),
-                ResolutionTag::Github => directories::cached_github_folder_name_print(
-                    &mut bufs.folder_name_buf,
-                    resolved,
-                    None,
-                )
-                .as_bytes(),
+                ResolutionTag::Npm => {
+                    if !bun_install::dependency::is_safe_install_folder_name(name) {
+                        log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "Refusing to install package with invalid name \"{}\"",
+                                bun_fmt::s(name),
+                            ),
+                        );
+                        return Err(crate::Error::InstallFailed);
+                    }
+                    directories::cached_npm_package_folder_name_print(
+                        package_manager,
+                        &mut bufs.folder_name_buf,
+                        name,
+                        self.resolution.npm().version,
+                        None,
+                    )
+                    .as_bytes()
+                }
+                ResolutionTag::Github => {
+                    if !bun_install::repository::is_safe_resolved_tag(resolved) {
+                        log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "Refusing to install \"{}\": tarball root directory \"{}\" is not a valid folder name",
+                                bun_fmt::s(name),
+                                bun_fmt::s(resolved),
+                            ),
+                        );
+                        return Err(crate::Error::InstallFailed);
+                    }
+                    directories::cached_github_folder_name_print(
+                        &mut bufs.folder_name_buf,
+                        resolved,
+                        None,
+                    )
+                    .as_bytes()
+                }
                 ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                     directories::cached_tarball_folder_name_print(
                         &mut bufs.folder_name_buf,
@@ -550,7 +558,6 @@ impl ExtractTarball {
                         sys::WindowsOpenDirOptions {
                             can_rename_or_delete: true,
                             iterable: false,
-                            read_only: true,
                             ..Default::default()
                         },
                     ) {
@@ -568,7 +575,7 @@ impl ExtractTarball {
                                     bun_fmt::s(folder_name),
                                 ),
                             );
-                            return Err(bun_core::err!("InstallFailed"));
+                            return Err(crate::Error::InstallFailed);
                         }
                     };
 
@@ -643,7 +650,7 @@ impl ExtractTarball {
                                     bun_fmt::s(folder_name),
                                 ),
                             );
-                            return Err(bun_core::err!("InstallFailed"));
+                            return Err(crate::Error::InstallFailed);
                         }
                         bun_sys::Result::Ok(_) => {
                             let _ = sys::close(dir_to_move);
@@ -690,7 +697,7 @@ impl ExtractTarball {
                             bun_fmt::s(folder_name),
                         ),
                     );
-                    return Err(bun_core::err!("InstallFailed"));
+                    return Err(crate::Error::InstallFailed);
                 }
             }
 
@@ -698,7 +705,7 @@ impl ExtractTarball {
             // To get that directory, we open the directory again.
             let final_dir = match cache_dir
                 .open_at(folder_name)
-                .map_err(bun_core::Error::from)
+                .map_err(crate::Error::from)
             {
                 Ok(d) => d,
                 Err(err) => {
@@ -711,7 +718,7 @@ impl ExtractTarball {
                             err.name(),
                         ),
                     );
-                    return Err(bun_core::err!("InstallFailed"));
+                    return Err(crate::Error::InstallFailed);
                 }
             };
             let final_path = match sys::get_fd_path_z(final_dir.fd(), &mut bufs.final_path_buf) {
@@ -726,7 +733,7 @@ impl ExtractTarball {
                             bun_fmt::s(err.name()),
                         ),
                     );
-                    return Err(bun_core::err!("InstallFailed"));
+                    return Err(crate::Error::InstallFailed);
                 }
             };
 
@@ -741,15 +748,7 @@ impl ExtractTarball {
                 ResolutionTag::Github
                 | ResolutionTag::LocalTarball
                 | ResolutionTag::RemoteTarball => true,
-                _ => {
-                    package_manager.lockfile.trusted_dependencies.is_some()
-                        && package_manager
-                            .lockfile
-                            .trusted_dependencies
-                            .as_ref()
-                            .unwrap()
-                            .contains(&(Semver::semver_string::Builder::string_hash(name) as u32))
-                }
+                _ => self.in_trusted_dependencies,
             };
             if needs_json {
                 let read_result = sys::File::read_file_from(
@@ -764,7 +763,7 @@ impl ExtractTarball {
                     Ok(pair) => pair,
                     Err(err) => {
                         if self.resolution.tag == ResolutionTag::Github
-                            && err == bun_core::err!("ENOENT")
+                            && err.get_errno() == sys::E::ENOENT
                         {
                             // allow git dependencies without package.json
                             return Ok(ExtractData {
@@ -780,10 +779,10 @@ impl ExtractTarball {
                             format_args!(
                                 "\"package.json\" for \"{}\" failed to open: {}",
                                 bun_fmt::s(name),
-                                err.name(),
+                                bun_fmt::s(err.name()),
                             ),
                         );
-                        return Err(bun_core::err!("InstallFailed"));
+                        return Err(crate::Error::InstallFailed);
                     }
                 };
                 json_buf = buf;
@@ -798,10 +797,10 @@ impl ExtractTarball {
                             format_args!(
                                 "\"package.json\" for \"{}\" failed to resolve: {}",
                                 bun_fmt::s(name),
-                                err.name(),
+                                bun_fmt::s(err.name()),
                             ),
                         );
-                        return Err(bun_core::err!("InstallFailed"));
+                        return Err(crate::Error::InstallFailed);
                     }
                 };
                 let _ = json_file.close();
@@ -812,7 +811,9 @@ impl ExtractTarball {
                 .unwrap_or(false)
             {
                 // create an index storing each version of a package installed
-                if strings::index_of_char(basename, b'/').is_none() {
+                if strings::index_of_char(basename, b'/').is_none()
+                    && bun_install::dependency::is_safe_install_folder_name(name)
+                {
                     'create_index: {
                         let dest_name: &[u8] = match self.resolution.tag {
                             ResolutionTag::Github => &folder_name[b"@GH@".len()..],
@@ -884,5 +885,3 @@ impl ExtractTarball {
         })
     }
 }
-
-// ported from: src/install/extract_tarball.zig

@@ -1,4 +1,4 @@
-//! Port of Zig's `std.ArrayHashMap` family + Bun's string-keyed wrappers
+//! Insertion-ordered hash maps (`ArrayHashMap`) + Bun's string-keyed wrappers
 //! (`bun.StringArrayHashMap`, `bun.StringHashMap`,
 //! `bun.CaseInsensitiveASCIIStringArrayHashMap`, `bun.StringHashMapUnowned`).
 //!
@@ -10,12 +10,11 @@
 //!   * `getOrPut` hands back a stable `key_ptr` / `value_ptr` / `index` triple
 //!     so callers can fill the slot in-place after the lookup.
 //!
-//! Zig builds a separate `index_header` (open-addressed `hash → entry_index`
-//! table) once `len > 8` so lookups stay O(1). This port mirrors that with a
-//! lazily-built `hashbrown::HashTable<u32>` keyed by the cached u32 hash:
+//! A separate index — a lazily-built `hashbrown::HashTable<u32>` keyed by the
+//! cached u32 hash — is built once `len > 8` so lookups stay O(1):
 //! linear scan below the threshold, indexed lookup above it. Point removals
-//! (`pop`, `swap_remove`) patch the index in place (O(1), matching Zig's
-//! `removeFromIndexByIndex`); wholesale permutations (`sort`,
+//! (`pop`, `swap_remove`) patch the index in place (O(1));
+//! wholesale permutations (`sort`,
 //! `ordered_remove`) drop and immediately rebuild it so lookups never
 //! silently degrade to O(n).
 
@@ -32,38 +31,36 @@ use core::ops::{Deref, DerefMut};
 use bun_alloc::AllocError;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Free functions (Zig: `std.array_hash_map.hashString` / `std.hash_map.hashString`)
+// Free functions
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `std.array_hash_map.hashString` — wyhash(seed=0) truncated to u32.
+/// wyhash(seed=0) truncated to u32.
 #[inline]
 pub fn hash_string(s: &[u8]) -> u32 {
-    bun_wyhash::hash(s) as u32 // @truncate
+    bun_wyhash::hash(s) as u32
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Context traits (Zig: `Context` / `Adapter` duck types)
+// Context traits
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Hash/eql strategy for an `ArrayHashMap<K, _>`.
-/// Zig passes these as `anytype`; here it's a trait so the map can be generic
-/// over the strategy without each method taking a `ctx` argument.
+/// Hash/eql strategy for an `ArrayHashMap<K, _>`. A trait so the map can be
+/// generic over the strategy without each method taking a `ctx` argument.
 pub trait ArrayHashContext<K: ?Sized>: Default {
     fn hash(&self, key: &K) -> u32;
-    /// `b_index` is the index of `b` in the entry array (Zig passes it so
-    /// adapted contexts can look at sibling storage).
+    /// `b_index` is the index of `b` in the entry array (so adapted contexts
+    /// can look at sibling storage).
     fn eql(&self, a: &K, b: &K, b_index: usize) -> bool;
 }
 
 /// Adapted lookup: hash a `Q` and compare it against the stored `K`s without
-/// constructing a `K` first (Zig: `getOrPutAdapted` / `getOrPutContextAdapted`).
+/// constructing a `K` first.
 pub trait ArrayHashAdapter<Q: ?Sized, K> {
     fn hash(&self, key: &Q) -> u32;
     fn eql(&self, a: &Q, b: &K, b_index: usize) -> bool;
 }
 
-/// Default context: `Hash` + `Eq` driven through wyhash, mirroring Zig's
-/// `AutoContext` / `getAutoHashFn`.
+/// Default context: driven through `Hash` + `Eq`.
 #[derive(Default, Clone, Copy)]
 pub struct AutoContext;
 
@@ -72,9 +69,8 @@ impl<K: Hash + Eq + ?Sized> ArrayHashContext<K> for AutoContext {
     fn hash(&self, key: &K) -> u32 {
         // Keys here are small POD (`Ref`, `u32`, indices). FxHash is a single
         // mul+rotate per word — measurably cheaper than wyhash's `mum` fold for
-        // 8-byte keys, and what rustc uses for the same workload shape. The Zig
-        // port used wyhash only because that's what `std.array_hash_map` defaults
-        // to; nothing persists these hashes across runs.
+        // 8-byte keys, and what rustc uses for the same workload shape;
+        // nothing persists these hashes across runs.
         use core::hash::Hasher;
         let mut h = rustc_hash::FxHasher::default();
         key.hash(&mut h);
@@ -86,7 +82,7 @@ impl<K: Hash + Eq + ?Sized> ArrayHashContext<K> for AutoContext {
     }
 }
 
-/// `std.array_hash_map.StringContext` — byte-slice keys hashed with wyhash.
+/// Byte-slice keys hashed with wyhash.
 #[derive(Default, Clone, Copy)]
 pub struct StringContext;
 
@@ -101,45 +97,14 @@ impl ArrayHashContext<[u8]> for StringContext {
     }
 }
 
-/// `bun.CaseInsensitiveASCIIStringContext` (src/bun.zig) — ASCII-lowercased
-/// wyhash + ASCII-case-insensitive equality. Used for env-var maps on Windows.
+/// ASCII-lowercased wyhash + ASCII-case-insensitive equality. Used for
+/// env-var maps on Windows.
 #[derive(Default, Clone, Copy)]
 pub struct CaseInsensitiveAsciiStringContext;
 
 impl CaseInsensitiveAsciiStringContext {
-    pub fn hash_bytes(s: &[u8]) -> u32 {
+    pub(crate) fn hash_bytes(s: &[u8]) -> u32 {
         bun_wyhash::hash_ascii_lowercase(0, s) as u32 // @truncate
-    }
-
-    /// `bun.CaseInsensitiveASCIIStringContext.pre` (src/bun.zig:1031).
-    #[inline]
-    pub fn pre(input: &[u8]) -> CaseInsensitiveAsciiPrehashed<'_> {
-        CaseInsensitiveAsciiPrehashed {
-            value: Self::hash_bytes(input),
-            input,
-        }
-    }
-}
-
-/// `bun.CaseInsensitiveASCIIStringContext.Prehashed` (src/bun.zig:1035) —
-/// caches the case-folded hash for `input` so repeated probes against the same
-/// key skip the lowercasing pass.
-pub struct CaseInsensitiveAsciiPrehashed<'a> {
-    pub value: u32,
-    pub input: &'a [u8],
-}
-
-impl<'a> CaseInsensitiveAsciiPrehashed<'a> {
-    #[inline]
-    pub fn hash(&self, s: &[u8]) -> u32 {
-        if core::ptr::eq(s.as_ptr(), self.input.as_ptr()) && s.len() == self.input.len() {
-            return self.value;
-        }
-        CaseInsensitiveAsciiStringContext::hash_bytes(s)
-    }
-    #[inline]
-    pub fn eql(&self, a: &[u8], b: &[u8]) -> bool {
-        bun_core::strings::eql_case_insensitive_ascii_check_length(a, b)
     }
 }
 
@@ -187,9 +152,8 @@ impl ArrayHashContext<[u8]> for CaseInsensitiveAsciiStringContext {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Result of `get_or_put*`. When `found_existing == false`, `*value_ptr` is a
-/// freshly-defaulted slot the caller is expected to overwrite (Zig leaves it
-/// `undefined`; Rust cannot, so the value type carries a `Default` bound on the
-/// inserting paths).
+/// freshly-defaulted slot the caller is expected to overwrite (the value type
+/// carries a `Default` bound on the inserting paths).
 pub struct GetOrPutResult<'a, K, V> {
     pub found_existing: bool,
     pub index: usize,
@@ -197,35 +161,25 @@ pub struct GetOrPutResult<'a, K, V> {
     pub value_ptr: &'a mut V,
 }
 
-/// Zig: `std.ArrayHashMap.KV` — owned key/value pair returned by
-/// `fetchSwapRemove` / `fetchOrderedRemove`.
+/// Owned key/value pair returned by the `fetch_*_remove` methods.
 pub struct KV<K, V> {
     pub key: K,
     pub value: V,
 }
 
-/// Iterator entry — both halves mutable, matching Zig's `Entry { key_ptr: *K,
-/// value_ptr: *V }`.
+/// Iterator entry — both halves mutable.
 pub struct Entry<'a, K, V> {
     pub key_ptr: &'a mut K,
     pub value_ptr: &'a mut V,
 }
 
-/// Insertion-order iterator yielding `Entry`. Resettable (Zig callers do
-/// `it.reset()` to rewind; here `index = 0`).
+/// Insertion-order iterator yielding `Entry`.
 pub struct Iter<'a, K, V> {
     keys: *mut K,
     values: *mut V,
     len: usize,
     index: usize,
     _marker: PhantomData<&'a mut [(K, V)]>,
-}
-
-impl<'a, K, V> Iter<'a, K, V> {
-    #[inline]
-    pub fn reset(&mut self) {
-        self.index = 0;
-    }
 }
 
 impl<'a, K, V> Iterator for Iter<'a, K, V> {
@@ -263,10 +217,9 @@ pub trait ArrayHashMapExt {
 // ArrayHashMap<K, V, C>
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Zig `index_header` threshold: at or below this many entries the
-/// hash-prefiltered linear scan over `hashes` wins (the whole `Vec<u32>` fits
-/// in one cache line); above it we build/maintain the SwissTable index. Same
-/// `linear_scan_max` cut-off as `std/array_hash_map.zig`.
+/// At or below this many entries the hash-prefiltered linear scan over
+/// `hashes` wins (the whole `Vec<u32>` fits in one cache line); above it we
+/// build/maintain the SwissTable index.
 const INDEX_THRESHOLD: usize = 8;
 
 /// Widen the cached `u32` entry hash to the `u64` hashbrown probes with. The
@@ -328,8 +281,7 @@ fn index_insert_unique<A: MapAllocator>(
 /// [`index_insert_unique`] — keep the `reserve_rehash` monomorph in this crate
 /// rather than re-emitting it per `<K,V,C,A>` instantiation. Called from the
 /// `reserve` / `ensure_*_capacity` paths so a caller that pre-sizes the map
-/// (the Zig originals' `ensureTotalCapacityContext`, which also sizes the index
-/// header) pays the SwissTable grow once instead of `O(log n)` times across the
+/// pays the SwissTable grow once instead of `O(log n)` times across the
 /// following `push_entry` loop.
 #[inline(never)]
 fn index_reserve<A: MapAllocator>(
@@ -448,8 +400,8 @@ pub struct ArrayHashMap<K, V, C = AutoContext, A: MapAllocator = Global> {
     /// `INDEX_THRESHOLD` crossover.
     index: Option<Box<hashbrown::HashTable<u32, IndexAlloc<A>>, A>>,
     ctx: C,
-    // Zig `pointer_stability: std.debug.SafetyLock` — debug-only re-entrancy
-    // guard around operations that may invalidate entry pointers. `AtomicBool`
+    // Debug-only re-entrancy guard around operations that may invalidate
+    // entry pointers. `AtomicBool`
     // (not `Cell<bool>`) so the field doesn't strip `Sync` off the map in
     // debug builds — a debug-only diagnostic must not change the type's
     // auto-trait surface vs release (callers store maps in `static LazyLock`,
@@ -465,7 +417,7 @@ impl<K, V, C: Default, A: MapAllocator> Default for ArrayHashMap<K, V, C, A> {
 }
 
 impl<K: Clone, V: Clone, C: Default, A: MapAllocator> ArrayHashMap<K, V, C, A> {
-    /// Zig `clone()` is fallible (OOM); kept as `Result` for API parity.
+    /// Fallible (OOM) clone; kept as `Result` for API stability.
     pub fn clone(&self) -> Result<Self, AllocError> {
         Ok(Self {
             keys: self.keys.clone(),
@@ -517,16 +469,49 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         self.keys.is_empty()
     }
 
-    /// Zig: `capacity()` — number of entries the backing storage can hold
-    /// without reallocating.
+    /// Number of entries the backing storage can hold without reallocating.
     #[inline]
     pub fn capacity(&self) -> usize {
         self.keys.capacity()
     }
 
-    /// Zig: `pop()` — remove and return the last entry in insertion order, or
-    /// `None` when empty. O(1); patches the index in place (Zig
-    /// `removeFromIndexByIndex`) so subsequent lookups stay O(1).
+    /// Consume the map and return its key/value columns in insertion order.
+    /// The cached-hash column and index accelerator are dropped.
+    #[inline]
+    pub fn into_entries(self) -> (Vec<K, A>, Vec<V, A>) {
+        (self.keys, self.values)
+    }
+
+    /// Order-preserving in-place filter (`indexmap::IndexMap::retain` parity).
+    /// Entries for which `keep` returns `false` are dropped; survivors keep
+    /// their relative insertion order. O(n); rebuilds the index accelerator.
+    pub fn retain<F: FnMut(&K, &mut V) -> bool>(&mut self, mut keep: F) {
+        let len = self.keys.len();
+        let mut write = 0usize;
+        for read in 0..len {
+            if keep(&self.keys[read], &mut self.values[read]) {
+                if read != write {
+                    self.keys.swap(read, write);
+                    self.values.swap(read, write);
+                    self.hashes.swap(read, write);
+                }
+                write += 1;
+            }
+        }
+        if write == len {
+            return;
+        }
+        self.keys.truncate(write);
+        self.values.truncate(write);
+        self.hashes.truncate(write);
+        self.drop_index();
+        if write > INDEX_THRESHOLD {
+            self.rebuild_index();
+        }
+    }
+
+    /// Remove and return the last entry in insertion order, or `None` when
+    /// empty. O(1); patches the index in place so subsequent lookups stay O(1).
     pub fn pop(&mut self) -> Option<KV<K, V>> {
         let key = self.keys.pop()?;
         // SAFETY: keys/values/hashes always share the same length.
@@ -536,8 +521,8 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         Some(KV { key, value })
     }
 
-    /// Zig: `clearAndFree(allocator)` — drop every entry and release the
-    /// backing allocations (capacity goes to zero).
+    /// Drop every entry and release the backing allocations (capacity goes to
+    /// zero).
     pub fn clear_and_free(&mut self) {
         self.keys = Vec::new_in(A::default());
         self.values = Vec::new_in(A::default());
@@ -554,10 +539,9 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         Ok(())
     }
 
-    /// Zig: `map.entries.len = n` after `ensureTotalCapacity(n)` — bulk-resize
-    /// the backing columns so callers can `keys_mut().copy_from_slice(...)` /
-    /// `values_mut().copy_from_slice(...)` and then `re_index()`. Mirrors the
-    /// pattern in `lockfile/bun.lockb.zig`'s `Serializer.load`.
+    /// Bulk-resize the backing columns so callers can
+    /// `keys_mut().copy_from_slice(...)` / `values_mut().copy_from_slice(...)`
+    /// and then `re_index()`.
     ///
     /// # Safety
     /// `n` must not exceed reserved capacity, and every element in
@@ -569,7 +553,8 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         debug_assert!(n <= self.keys.capacity());
         debug_assert!(n <= self.values.capacity());
         debug_assert!(n <= self.hashes.capacity());
-        // SAFETY: caller contract above; matches Zig `.entries.len = n`.
+        // SAFETY: caller contract above — `n` is within reserved capacity and
+        // the uninit window is filled before any read.
         unsafe {
             self.keys.set_len(n);
             self.values.set_len(n);
@@ -579,21 +564,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         self.drop_index();
     }
 
-    /// Zig `ensureTotalCapacityContext`: same as `ensure_total_capacity` but
-    /// takes an explicit `ctx` for the stored key type. This port maintains no
-    /// separate index header (lookup scans the cached `hashes` vec), so the
-    /// context is accepted and ignored — capacity reservation is purely a Vec
-    /// operation here.
-    #[inline]
-    pub fn ensure_total_capacity_context<Ctx>(
-        &mut self,
-        n: usize,
-        _ctx: Ctx,
-    ) -> Result<(), AllocError> {
-        self.ensure_total_capacity(n)
-    }
-
-    /// Zig `putAssumeCapacityContext`: insert/replace using an externally-supplied
+    /// Insert/replace using an externally-supplied
     /// hash/eql context instead of the stored `C`. Used when `C = AutoContext`
     /// can't satisfy `K: Hash` (e.g. `bun_semver::String`, whose hash needs the
     /// owning `arg_buf`/`existing_buf`). Takes closures rather than an
@@ -612,7 +583,6 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
             self.values[i] = value;
             return;
         }
-        // PERF(port): was assume_capacity — Vec::push is amortized O(1) regardless.
         self.push_entry(key, value, h);
     }
 
@@ -647,12 +617,12 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         }
     }
 
-    /// Zig: `shrinkAndFree(new_len)` — truncate to `new_len` entries (dropping
-    /// any tail) and release excess capacity. Insertion order is preserved, so
-    /// no rehash of the surviving prefix is needed.
+    /// Truncate to `new_len` entries (dropping any tail) and release excess
+    /// capacity. Insertion order is preserved, so no rehash of the surviving
+    /// prefix is needed.
     pub fn shrink_and_free(&mut self, new_len: usize) {
-        // Drop tail index slots first (Zig: removeFromIndexByIndex loop), so
-        // the surviving accelerator stays valid for O(1) lookups.
+        // Drop tail index slots first, so the surviving accelerator stays
+        // valid for O(1) lookups.
         if self.index.is_some() {
             for i in new_len..self.hashes.len() {
                 let h = self.hashes[i];
@@ -688,6 +658,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         }
     }
 
+    /// See [`lock_pointers`](Self::lock_pointers). No-op in release.
     #[inline]
     pub fn unlock_pointers(&self) {
         #[cfg(debug_assertions)]
@@ -739,9 +710,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         self.index = None;
     }
 
-    /// std-HashMap-compat alias for `clear_retaining_capacity`. Zig callers
-    /// frequently spell this `clearRetainingCapacity()`; ported call sites that
-    /// went through the std-alias path expect bare `clear()`.
+    /// std-HashMap-compat alias for `clear_retaining_capacity`.
     #[inline]
     pub fn clear(&mut self) {
         self.clear_retaining_capacity();
@@ -749,14 +718,13 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
 
     /// std-HashMap-compat: shared iteration over `(key, value)` pairs in
     /// insertion order. Distinct from [`iterator`](Self::iterator) which yields
-    /// mutable `Entry { key_ptr, value_ptr }` (Zig shape) and requires
-    /// `&mut self`.
+    /// mutable `Entry { key_ptr, value_ptr }` and requires `&mut self`.
     #[inline]
     pub fn iter(&self) -> core::iter::Zip<core::slice::Iter<'_, K>, core::slice::Iter<'_, V>> {
         self.keys.iter().zip(self.values.iter())
     }
 
-    /// Zig `getIndexContext` for callers whose context is an inherent-method
+    /// Index lookup for callers whose context is an inherent-method
     /// struct (no `ArrayHashAdapter` impl). Takes the precomputed `u32` hash
     /// plus an `eql` closure so e.g. `bun_semver::String::ArrayHashContext`
     /// (which needs `arg_buf`/`existing_buf`) can drive a `&self` lookup.
@@ -848,7 +816,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     }
 
     /// Remove the index slot pointing at `tail` (the just-popped last entry).
-    /// O(1); mirrors Zig `removeFromIndexByIndex` for the `pop`/`shrink` path.
+    /// O(1); used for the `pop`/`shrink` path.
     #[inline]
     fn index_remove_tail(&mut self, tail: usize, tail_hash: u32) {
         let Some(index) = self.index.as_deref_mut() else {
@@ -862,7 +830,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     /// Patch the index after a `Vec::swap_remove(removed)`: drop the slot for
     /// `removed`, then retarget the slot that still says `old_last` (the
     /// pre-swap tail index, == `self.keys.len()` post-swap) to `removed`.
-    /// O(1); mirrors Zig `removeFromIndexByIndex` + `updateEntryIndex`.
+    /// O(1).
     #[inline]
     fn index_swap_remove(&mut self, removed: usize, removed_hash: u32) {
         let Some(index) = self.index.as_deref_mut() else {
@@ -882,7 +850,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         }
     }
 
-    /// Zig `ArrayHashMap.sort` — stable in-place sort of keys/values/hashes by
+    /// Stable in-place sort of keys/values/hashes by
     /// a caller-supplied index comparator. The closure receives borrows of the
     /// key and value slices so it can compare on either without re-borrowing
     /// `self`.
@@ -891,11 +859,12 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         if len < 2 {
             return;
         }
-        let mut perm: Vec<usize> = (0..len).collect();
+        let mut perm: Vec<u32> = crate::index_sort::identity(len);
         {
             let keys = &self.keys[..];
             let values = &self.values[..];
-            perm.sort_by(|&a, &b| {
+            crate::index_sort::sort_indices(&mut perm, &mut |a, b| {
+                let (a, b) = (a as usize, b as usize);
                 if less_than(keys, values, a, b) {
                     core::cmp::Ordering::Less
                 } else if less_than(keys, values, b, a) {
@@ -910,13 +879,13 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         self.drop_index();
         let mut visited = vec![false; len];
         for start in 0..len {
-            if visited[start] || perm[start] == start {
+            if visited[start] || perm[start] as usize == start {
                 continue;
             }
             let mut i = start;
             while !visited[i] {
                 visited[i] = true;
-                let j = perm[i];
+                let j = perm[i] as usize;
                 if j == start {
                     break;
                 }
@@ -935,7 +904,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         // SAFETY: `keys` and `values` are distinct allocations; producing one
         // `&mut` into each is sound even though both derive from `&mut self`.
         // `index < self.keys.len() == self.values.len()` — every caller
-        // (`get_or_put*`/`put_index`) passes the index just returned by
+        // (`get_or_put*`) passes the index just returned by
         // `push_entry` or `find_hash`.
         let (key_ptr, value_ptr) = unsafe {
             (
@@ -951,18 +920,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         }
     }
 
-    /// Mutable access to the entry at `index` (key + value). Returns `None` if
-    /// `index >= len`. Mirrors `indexmap::IndexMap::get_index_mut`.
-    pub fn get_index_mut(&mut self, index: usize) -> Option<(&mut K, &mut V)> {
-        if index >= self.keys.len() {
-            return None;
-        }
-        // `keys` and `values` are distinct struct fields; borrowck permits one
-        // `&mut` into each simultaneously. Bound proven above.
-        Some((&mut self.keys[index], &mut self.values[index]))
-    }
-
-    /// Zig `swapRemoveAt` — remove the entry at `index` by swapping in the last
+    /// Remove the entry at `index` by swapping in the last
     /// entry. O(1); does not preserve insertion order. Returns the removed pair.
     pub fn swap_remove_at(&mut self, index: usize) -> (K, V) {
         let k = self.keys.swap_remove(index);
@@ -972,7 +930,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         (k, v)
     }
 
-    // ── adapted lookup (Zig: getAdapted / getIndexAdapted) ─────────────────
+    // ── adapted lookup ──────────────────────────────────────────────────────
 
     /// Look up by `key` using `adapter` for hash/eql, without constructing a `K`.
     #[inline]
@@ -982,26 +940,6 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     {
         let h = adapter.hash(key);
         self.find_hash(h, |k, idx| adapter.eql(key, k, idx))
-    }
-
-    #[inline]
-    pub fn get_adapted<Q: ?Sized, Ad>(&self, key: &Q, adapter: &Ad) -> Option<&V>
-    where
-        Ad: ArrayHashAdapter<Q, K>,
-    {
-        self.get_index_adapted(key, adapter)
-            .map(|i| &self.values[i])
-    }
-
-    /// Zig `getPtrContext` / `getPtrAdapted` — mutable value lookup using an
-    /// externally-supplied hash/eql adapter.
-    #[inline]
-    pub fn get_ptr_adapted<Q: ?Sized, Ad>(&mut self, key: &Q, adapter: &Ad) -> Option<&mut V>
-    where
-        Ad: ArrayHashAdapter<Q, K>,
-    {
-        let i = self.get_index_adapted(key, adapter)?;
-        Some(&mut self.values[i])
     }
 
     #[inline]
@@ -1035,7 +973,7 @@ impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         self.get_index(key).map(|i| &self.values[i])
     }
 
-    /// Zig `getPtr` — mutable value lookup.
+    /// Mutable value lookup.
     pub fn get_ptr_mut(&mut self, key: &K) -> Option<&mut V> {
         let i = self.get_index(key)?;
         Some(&mut self.values[i])
@@ -1057,8 +995,7 @@ impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     pub fn put(&mut self, key: K, value: V) -> Result<(), AllocError> {
         let h = self.ctx.hash(&key);
         if let Some(i) = self.find_hash(h, |k, idx| self.ctx.eql(&key, k, idx)) {
-            // Zig putContext (std/array_hash_map.zig:941): only assigns
-            // `result.value_ptr.*`; the original key is preserved.
+            // Only the value is assigned on hit; the original key is preserved.
             self.values[i] = value;
         } else {
             self.push_entry(key, value, h);
@@ -1077,8 +1014,8 @@ impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         Ok(())
     }
 
-    /// PERF(port): Zig skips the grow check; this port does too but `Vec::push`
-    /// will still reallocate if the caller lied about capacity.
+    /// PERF: skips the grow check, but `Vec::push` will still reallocate if
+    /// the caller lied about capacity.
     pub fn put_assume_capacity(&mut self, key: K, value: V) {
         let _ = self.put(key, value);
     }
@@ -1087,7 +1024,7 @@ impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
         let h = self.ctx.hash(&key);
         if let Some(i) = self.find_hash(h, |k, idx| self.ctx.eql(&key, k, idx)) {
-            // std::HashMap::insert and Zig put: keep the original key on hit.
+            // Like std::HashMap::insert: keep the original key on hit.
             Some(core::mem::replace(&mut self.values[i], value))
         } else {
             self.push_entry(key, value, h);
@@ -1103,15 +1040,15 @@ impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         true
     }
 
-    /// Zig: `fetchSwapRemove` — swap-remove returning the removed `(K, V)` pair,
-    /// or `None` if `key` was not present.
+    /// Swap-remove returning the removed `(K, V)` pair, or `None` if `key`
+    /// was not present.
     pub fn fetch_swap_remove(&mut self, key: &K) -> Option<(K, V)> {
         let i = self.get_index(key)?;
         Some(self.swap_remove_at(i))
     }
 
-    /// Zig: `orderedRemove` — preserves insertion order of remaining entries.
-    /// Returns `true` if the key was present (matching Zig's `bool` return).
+    /// Preserves insertion order of remaining entries.
+    /// Returns `true` if the key was present.
     #[inline]
     pub fn ordered_remove(&mut self, key: &K) -> bool {
         self.remove(key).is_some()
@@ -1124,9 +1061,8 @@ impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         self.keys.remove(i);
         self.hashes.remove(i);
         // Ordered remove shifts every index ≥ i; rebuild rather than patching
-        // each slot. Immediate rebuild keeps subsequent lookups O(1) (Zig
-        // patches in place; this is the simpler-correct equivalent for the
-        // rare ordered path).
+        // each slot. Immediate rebuild keeps subsequent lookups O(1) on this
+        // rare path.
         self.drop_index();
         if self.keys.len() > INDEX_THRESHOLD {
             self.rebuild_index();
@@ -1174,6 +1110,11 @@ pub struct OccupiedEntry<'a, K, V, C, A: MapAllocator = Global> {
 }
 
 impl<'a, K, V, C, A: MapAllocator> OccupiedEntry<'a, K, V, C, A> {
+    /// Position of the entry in `keys()` / `values()` (indexmap parity).
+    #[inline]
+    pub fn index(&self) -> usize {
+        self.idx
+    }
     #[inline]
     pub fn get(&self) -> &V {
         &self.map.values[self.idx]
@@ -1186,20 +1127,6 @@ impl<'a, K, V, C, A: MapAllocator> OccupiedEntry<'a, K, V, C, A> {
     pub fn into_mut(self) -> &'a mut V {
         &mut self.map.values[self.idx]
     }
-    #[inline]
-    pub fn key(&self) -> &K {
-        &self.map.keys[self.idx]
-    }
-    #[inline]
-    pub fn index(&self) -> usize {
-        self.idx
-    }
-    pub fn insert(&mut self, value: V) -> V {
-        core::mem::replace(&mut self.map.values[self.idx], value)
-    }
-    pub fn swap_remove(self) -> V {
-        self.map.swap_remove_at(self.idx).1
-    }
 }
 
 pub struct VacantEntry<'a, K, V, C, A: MapAllocator = Global> {
@@ -1209,9 +1136,10 @@ pub struct VacantEntry<'a, K, V, C, A: MapAllocator = Global> {
 }
 
 impl<'a, K, V, C, A: MapAllocator> VacantEntry<'a, K, V, C, A> {
+    /// Position [`insert`](Self::insert) will append the entry at (indexmap parity).
     #[inline]
-    pub fn key(&self) -> &K {
-        &self.key
+    pub fn index(&self) -> usize {
+        self.map.keys.len()
     }
     pub fn insert(self, value: V) -> &'a mut V {
         let i = self.map.push_entry(self.key, value, self.hash);
@@ -1232,10 +1160,16 @@ impl<'a, K, V, C, A: MapAllocator> MapEntry<'a, K, V, C, A> {
             MapEntry::Vacant(v) => v.insert(f()),
         }
     }
+    pub fn or_default(self) -> &'a mut V
+    where
+        V: Default,
+    {
+        self.or_insert_with(V::default)
+    }
 }
 
 impl<K, V: Default, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
-    /// Zig `getOrPut`: look up `key`; if absent, append it with a defaulted
+    /// Look up `key`; if absent, append it with a defaulted
     /// value slot and return `found_existing = false`.
     pub fn get_or_put(&mut self, key: K) -> Result<GetOrPutResult<'_, K, V>, AllocError> {
         let h = self.ctx.hash(&key);
@@ -1246,20 +1180,20 @@ impl<K, V: Default, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, 
         Ok(self.gop_at(i, false))
     }
 
-    /// Zig `getOrPutAssumeCapacity`: like [`get_or_put`] but skips the grow
+    /// Like [`get_or_put`] but skips the grow
     /// check. Caller must have called `ensure_unused_capacity` first.
     pub fn get_or_put_assume_capacity(&mut self, key: K) -> GetOrPutResult<'_, K, V> {
         let h = self.ctx.hash(&key);
         if let Some(i) = self.find_hash(h, |k, idx| self.ctx.eql(&key, k, idx)) {
             return self.gop_at(i, true);
         }
-        // PERF(port): `push_within_capacity` is unstable; `push` is a no-grow
+        // PERF: `push_within_capacity` is unstable; `push` is a no-grow
         // when the prior `ensure_unused_capacity` reserved the slot.
         let i = self.push_entry(key, V::default(), h);
         self.gop_at(i, false)
     }
 
-    /// Zig `getOrPutValue`: like `get_or_put` but writes `value` when absent.
+    /// Like `get_or_put` but writes `value` when absent.
     pub fn get_or_put_value(
         &mut self,
         key: K,
@@ -1271,8 +1205,8 @@ impl<K, V: Default, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, 
             // through the slot it already points at.
             *gop.value_ptr = value;
         }
-        // PORT NOTE: reshaped — can't return `gop` while it borrows in the
-        // branch above without NLL gymnastics; recompute via index.
+        // Can't return `gop` while it borrows in the branch above without
+        // NLL gymnastics; recompute via index.
         let i = gop.index;
         let found = gop.found_existing;
         Ok(self.gop_at(i, found))
@@ -1280,7 +1214,7 @@ impl<K, V: Default, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, 
 }
 
 impl<K: Default, V: Default, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
-    /// Zig `getOrPutAdapted`: look up by `key` using `adapter` for hash/eql;
+    /// Look up by `key` using `adapter` for hash/eql;
     /// on miss, append a *defaulted* `K`/`V` pair — caller fills both via
     /// `key_ptr` / `value_ptr`.
     pub fn get_or_put_adapted<Q: ?Sized, Ad>(
@@ -1297,22 +1231,6 @@ impl<K: Default, V: Default, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         }
         let i = self.push_entry(K::default(), V::default(), h);
         Ok(self.gop_at(i, false))
-    }
-
-    /// Zig `getOrPutContextAdapted`: same as `get_or_put_adapted` but takes an
-    /// explicit `ctx` for the *stored* key type. This port does not need `ctx`
-    /// for the index header (none yet), so it is accepted and ignored.
-    #[inline]
-    pub fn get_or_put_context_adapted<Q: ?Sized, Ad>(
-        &mut self,
-        key: &Q,
-        adapter: &Ad,
-        _ctx: C,
-    ) -> Result<GetOrPutResult<'_, K, V>, AllocError>
-    where
-        Ad: ArrayHashAdapter<Q, K>,
-    {
-        self.get_or_put_adapted(key, adapter)
     }
 }
 
@@ -1335,9 +1253,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMapExt for ArrayHashMap<K, V, C, A> {
 /// `std.StringArrayHashMap(V)` / `bun.CaseInsensitiveASCIIStringArrayHashMap(V)`.
 ///
 /// Newtype (not an alias) so `get_or_put` / `get` / `put` can take `&[u8]`
-/// borrows — the Zig API stores `[]const u8` keys and lets the caller decide
-/// whether to dupe them; here keys are `Box<[u8]>` and the borrowing methods
-/// box on insert.
+/// borrows — keys are `Box<[u8]>` and the borrowing methods box on insert.
 pub struct StringArrayHashMap<V, C = StringContext, A: MapAllocator = Global> {
     inner: ArrayHashMap<Box<[u8], A>, V, BoxedSliceContext<C>, A>,
     // The string context is consulted for hash/eql on `[u8]` borrows. The inner
@@ -1346,7 +1262,7 @@ pub struct StringArrayHashMap<V, C = StringContext, A: MapAllocator = Global> {
     ctx: C,
 }
 
-/// Windows env-var map (`src/bun.zig` `CaseInsensitiveASCIIStringArrayHashMap`).
+/// Windows env-var map.
 pub type CaseInsensitiveAsciiStringArrayHashMap<V> =
     StringArrayHashMap<V, CaseInsensitiveAsciiStringContext>;
 
@@ -1360,7 +1276,7 @@ impl<V, C: Default, A: MapAllocator> Default for StringArrayHashMap<V, C, A> {
 }
 
 impl<V: Clone, C: Default, A: MapAllocator> StringArrayHashMap<V, C, A> {
-    /// Zig `clone()` is fallible (OOM); kept as `Result` for API parity.
+    /// Fallible (OOM) clone; kept as `Result` for API stability.
     pub fn clone(&self) -> Result<Self, AllocError> {
         Ok(Self {
             inner: self.inner.clone()?,
@@ -1461,30 +1377,19 @@ impl<V, C: ArrayHashContext<[u8]> + Default, A: MapAllocator> StringArrayHashMap
         true
     }
 
-    /// Zig: `StringArrayHashMap.fetchSwapRemove` — removes the entry (swapping
-    /// the last element into its slot) and returns the owned key/value pair.
+    /// Removes the entry (swapping the last element into its slot) and
+    /// returns the owned key/value pair.
     pub fn fetch_swap_remove(&mut self, key: &[u8]) -> Option<KV<Box<[u8], A>, V>> {
         let i = self.find(key)?;
         let (k, v) = self.inner.swap_remove_at(i);
         Some(KV { key: k, value: v })
-    }
-
-    pub fn re_index(&mut self) -> Result<(), AllocError> {
-        for (i, k) in self.inner.keys.iter().enumerate() {
-            self.inner.hashes[i] = self.ctx.hash(k);
-        }
-        self.inner.drop_index();
-        if self.inner.keys.len() > INDEX_THRESHOLD {
-            self.inner.rebuild_index();
-        }
-        Ok(())
     }
 }
 
 impl<V: Default, C: ArrayHashContext<[u8]> + Default, A: MapAllocator> StringArrayHashMap<V, C, A> {
     /// See `ArrayHashMap::get_or_put`. The key is boxed on insert; callers that
     /// then write `*gop.key_ptr = Box::from(key)` are doing a redundant alloc —
-    /// harmless, and lets the Zig-shaped call sites compile unchanged.
+    /// harmless.
     pub fn get_or_put(
         &mut self,
         key: &[u8],
@@ -1527,21 +1432,21 @@ impl<V, C, A: MapAllocator> ArrayHashMapExt for StringArrayHashMap<V, C, A> {
 // StringHashMap<V, A> — unordered `[]const u8`-keyed map
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `std.StringHashMap(V)`. Thin newtype over `hashbrown::HashMap` that adds
-/// the Zig `getOrPut` / `getOrPutValue` entry points while keeping the
+/// Thin newtype over `hashbrown::HashMap` that adds
+/// the `get_or_put` / `get_or_put_value` entry points while keeping the
 /// `hashbrown` surface (`.get`, `.contains_key`, `.reserve`, `.insert`, …)
 /// reachable via `Deref`.
 ///
 /// Allocator-generic so AST containers (`Scope::members` &c.) can route both
 /// the table *and* the owned-key boxes through `bun_alloc::AstAlloc`,
-/// matching Zig's `Unmanaged` semantics where the map's backing store lives
+/// so the map's backing store lives
 /// in the same arena as the AST nodes that hold it. The `A = Global` default
 /// keeps every existing `StringHashMap<V>` site source-compatible.
-// Hashed with seed-0 wyhash (matches Zig's `std.hash_map.StringContext`) —
+// Hashed with seed-0 wyhash —
 // deterministic across runs and ~3-5× faster than `RandomState`/SipHash on
 // the short identifier keys the parser/printer/renamer churn.
 //
-// The `A: Default` bound is the substitute for Zig's per-call `Allocator`
+// The `A: Default` bound replaces a per-call allocator
 // parameter: hashbrown's `HashMap<_, _, _, A>` stores the allocator by value,
 // and every key `Box<[u8], A>` needs its own `A` too. For zero-sized
 // allocators (`Global`, `AstAlloc`) `A::default()` is a no-op constant; if a
@@ -1552,23 +1457,21 @@ pub struct StringHashMap<V, A: Allocator + HashbrownAllocator + Clone + Default 
     inner: hashbrown::HashMap<StringHashMapKey<A>, V, bun_wyhash::BuildHasher, A>,
 }
 
-/// Public alias for the underlying `hashbrown` map so downstream signatures
+/// Alias for the underlying `hashbrown` map so in-crate signatures
 /// (and `Deref::Target`) don't repeat the four-argument spelling.
-pub type StringHashMapInner<V, A = DefaultAlloc> =
+type StringHashMapInner<V, A = DefaultAlloc> =
     hashbrown::HashMap<StringHashMapKey<A>, V, bun_wyhash::BuildHasher, A>;
 
 /// Key stored in `StringHashMap`. Either an owned heap copy (`Owned`, the
 /// default produced by `put`/`get_or_put`) or a borrowed `&'static [u8]`
 /// (`Static`, produced by `put_static_key`).
 ///
-/// Zig's `std.StringHashMap` always *borrows* the caller's `[]const u8` key —
-/// the map never copies it. The Rust port originally heap-boxed every key on
-/// `put` for safety, which profiling showed as the dominant cost of
+/// Heap-boxing every key on `put` profiled as the dominant cost of
 /// `DirEntry::add_entry` (the resolver's per-file hot path): the key bytes
 /// there already live in the process-static `FilenameStore`/`EntryStore`, so
 /// the `Box<[u8]>` was a redundant second copy. The `Static` variant lets such
-/// callers store the existing slice directly, matching Zig's zero-copy
-/// behaviour without giving up owned-key safety for everyone else.
+/// callers store the existing slice directly — zero-copy without giving up
+/// owned-key safety for everyone else.
 ///
 /// `Deref<Target = [u8]>` + `Borrow<[u8]>` keep `.get(&[u8])`,
 /// `.contains_key(&[u8])`, and `&**key` working unchanged at every call site,
@@ -1578,7 +1481,7 @@ pub type StringHashMapInner<V, A = DefaultAlloc> =
 /// Packed `(ptr, len | OWNED_BIT)` instead of a 2-variant enum. The enum had
 /// no usable niche (both `Box<[u8]>` and `&[u8]` start with a non-null
 /// pointer), so it was 24 B; folding the owned/borrowed discriminant into the
-/// top bit of `len` brings it to 16 B — same as Zig's `[]const u8`. For
+/// top bit of `len` brings it to 16 B. For
 /// `Scope::members` (`hashbrown::RawTable<(StringHashMapKey, Member)>`) that
 /// shrinks the stored tuple 40 B → 32 B, cutting the module-scope table's
 /// page footprint (and `reserve_rehash` `memcpy` traffic) by ~20 %.
@@ -1625,7 +1528,7 @@ impl<A: Allocator + Default> StringHashMapKey<A> {
     /// Borrowed-key constructor (previously the `Static` variant). Stores the
     /// slice by reference; never freed on drop.
     #[inline]
-    pub const fn borrowed(s: &'static [u8]) -> Self {
+    pub(crate) const fn borrowed(s: &'static [u8]) -> Self {
         // `&[u8]`'s pointer is always non-null (dangling for `len == 0`).
         // SAFETY: `as_ptr()` on a slice reference is never null.
         let ptr = unsafe { core::ptr::NonNull::new_unchecked(s.as_ptr().cast_mut()) };
@@ -1639,7 +1542,7 @@ impl<A: Allocator + Default> StringHashMapKey<A> {
     /// Owned-key constructor (previously the `Owned` variant). Takes ownership
     /// of `b`'s allocation; freed via `A::default()` on drop.
     #[inline]
-    pub fn owned(b: Box<[u8], A>) -> Self {
+    pub(crate) fn owned(b: Box<[u8], A>) -> Self {
         let len = b.len();
         debug_assert!(
             len & SHMK_OWNED_BIT == 0,
@@ -1820,22 +1723,12 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
         Self::default()
     }
 
-    pub fn with_capacity(n: usize) -> Self {
-        Self {
-            inner: hashbrown::HashMap::with_capacity_and_hasher_in(
-                n,
-                bun_wyhash::BuildHasher::default(),
-                A::default(),
-            ),
-        }
-    }
-
     #[inline]
     pub fn count(&self) -> usize {
         self.inner.len()
     }
 
-    /// Zig `valueIterator()`. Inherent forwarder so callers can name
+    /// Inherent forwarder so callers can name
     /// `StringHashMap::values` without relying on `Deref` resolution.
     #[inline]
     pub fn values(&self) -> hashbrown::hash_map::Values<'_, StringHashMapKey<A>, V> {
@@ -1853,19 +1746,26 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
         Ok(())
     }
 
-    pub fn ensure_unused_capacity(&mut self, additional: usize) -> Result<(), AllocError> {
-        self.inner.reserve(additional);
-        Ok(())
-    }
-
     pub fn put(&mut self, key: &[u8], value: V) -> Result<(), AllocError> {
-        self.inner.insert(owned_key::<A>(key), value);
+        use hashbrown::hash_map::RawEntryMut;
+        let hash = self.hash_key(key);
+        match self
+            .inner
+            .raw_entry_mut()
+            .from_key_hashed_nocheck(hash, key)
+        {
+            RawEntryMut::Occupied(mut e) => {
+                e.insert(value);
+            }
+            RawEntryMut::Vacant(e) => {
+                e.insert_hashed_nocheck(hash, owned_key::<A>(key), value);
+            }
+        }
         Ok(())
     }
 
     /// Insert `value` under `key` **without copying the key bytes**. This is
-    /// the zero-copy path that matches Zig's `StringHashMap.put` (which always
-    /// borrows). `key` is stored as `StringHashMapKey::Static`, so the caller
+    /// the zero-copy path: `key` is stored as `StringHashMapKey::Static`, so the caller
     /// must guarantee the bytes genuinely live for `'static` — in practice
     /// that means slices into a process-lifetime arena (`FilenameStore`,
     /// `EntryStore`, AST heap) where the `'static` was minted via an explicit
@@ -1928,12 +1828,11 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
     }
 
     /// Insert `value` under `key` **without copying the key bytes** — the
-    /// arena-lifetime twin of [`put_static_key`]. Zig's
-    /// `StringHashMapUnmanaged.put` stores the caller's `[]const u8` slice by
-    /// value; the safe Rust [`put`] heap-boxes it instead, which profiling
+    /// arena-lifetime twin of [`put_static_key`]. The safe [`put`] heap-boxes
+    /// the key, which profiling
     /// flagged as the dominant `_mi_malloc_generic` caller in the parser
     /// (`Scope::members` takes one box per declared identifier per scope).
-    /// This entry point restores the Zig zero-copy behaviour for callers whose
+    /// This entry point provides zero-copy insertion for callers whose
     /// key bytes already live in an arena that outlives the map.
     ///
     /// # Safety
@@ -1952,45 +1851,11 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
         Ok(())
     }
 
-    /// Insert a pre-boxed key without re-allocating it. Uses `try_reserve` so
-    /// OOM surfaces as `Err` instead of aborting (matches Zig `put` returning
-    /// `error.OutOfMemory`); callers can roll back side effects on failure.
-    pub fn put_owned(&mut self, key: Box<[u8], A>, value: V) -> Result<(), AllocError> {
-        self.inner.try_reserve(1).map_err(|_| AllocError)?;
-        self.inner.insert(StringHashMapKey::owned(key), value);
-        Ok(())
-    }
-
-    /// PERF(port): Zig skips the grow check; std::HashMap cannot, so this is
+    /// PERF: std::HashMap cannot skip the grow check, so this is
     /// just `put` without the `Result`.
     #[inline]
     pub fn put_assume_capacity(&mut self, key: &[u8], value: V) {
-        self.inner.insert(owned_key::<A>(key), value);
-    }
-
-    /// Zig `putNoClobber` — asserts the key was not already present.
-    pub fn put_no_clobber(&mut self, key: &[u8], value: V) -> Result<(), AllocError> {
-        let prev = self.inner.insert(owned_key::<A>(key), value);
-        debug_assert!(prev.is_none(), "put_no_clobber: key already present");
-        Ok(())
-    }
-
-    /// Zig `getAdapted` — look up by `key` using `adapter` for hash/eql.
-    ///
-    /// The adapter's precomputed hash is ignored; the lookup falls back to the
-    /// normal `get(key)` path (correctness is preserved — `adapter.eql` is byte
-    /// equality for all current adapters). Callers that already hold a hash
-    /// computed with [`hash_key`] should use [`get_hashed`] instead to skip the
-    /// rehash.
-    #[inline]
-    pub fn get_adapted<C>(&self, key: &[u8], _adapter: &C) -> Option<&V> {
-        self.inner.get(key)
-    }
-
-    /// See [`get_adapted`] — same precomputed-hash caveat applies.
-    #[inline]
-    pub fn contains_adapted<C>(&self, key: &[u8], _adapter: &C) -> bool {
-        self.inner.contains_key(key)
+        let _ = self.put(key, value);
     }
 }
 
@@ -2001,53 +1866,59 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
 pub use crate::hash_map::GetOrPutResult as StringHashMapGetOrPut;
 
 impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A> {
-    /// PERF(port): the previous shape (`contains_key` + `entry(Box::from(key))`)
-    /// hashed `key` twice and unconditionally heap-allocated the `Box` even on
-    /// hit. `Scope::members` calls this once per declared identifier during
-    /// parse, so on three.js that was ~thousands of redundant `Box`
-    /// allocations + double-hashes per file. Route through a single `entry()`
-    /// match; the `Box` is still allocated upfront (std `HashMap::entry`
-    /// requires the owned key) but on hit it is dropped without a second
-    /// probe. Full prehash reuse needs a `raw_entry`-style API; see
-    /// [`get_hashed`] / [`put_static_key_hashed`] for the existing single-hash
-    /// entry points.
+    /// Single hash + single probe via `raw_entry_mut`; the key `Box` is only
+    /// allocated on miss. Callers whose key bytes already outlive the map
+    /// should prefer [`get_or_put_borrowed`] which also skips the miss-path
+    /// box.
     pub fn get_or_put(&mut self, key: &[u8]) -> Result<StringHashMapGetOrPut<'_, V>, AllocError> {
-        Ok(self.get_or_put_context_adapted(key, ()))
+        use hashbrown::hash_map::RawEntryMut;
+        let hash = self.hash_key(key);
+        Ok(
+            match self
+                .inner
+                .raw_entry_mut()
+                .from_key_hashed_nocheck(hash, key)
+            {
+                RawEntryMut::Occupied(o) => StringHashMapGetOrPut {
+                    found_existing: true,
+                    value_ptr: o.into_mut(),
+                },
+                RawEntryMut::Vacant(v) => StringHashMapGetOrPut {
+                    found_existing: false,
+                    value_ptr: v
+                        .insert_hashed_nocheck(hash, owned_key::<A>(key), V::default())
+                        .1,
+                },
+            },
+        )
     }
 
     pub fn get_or_put_value(&mut self, key: &[u8], value: V) -> Result<&mut V, AllocError> {
-        Ok(self.inner.entry(owned_key::<A>(key)).or_insert(value))
-    }
-
-    /// Zig `getOrPutContextAdapted` on `StringHashMap` — see `get_adapted` for
-    /// why the adapter's precomputed hash is currently ignored.
-    pub fn get_or_put_context_adapted<C>(
-        &mut self,
-        key: &[u8],
-        _adapter: C,
-    ) -> StringHashMapGetOrPut<'_, V> {
-        use hashbrown::hash_map::Entry as HbEntry;
-        match self.inner.entry(owned_key::<A>(key)) {
-            HbEntry::Occupied(o) => StringHashMapGetOrPut {
-                found_existing: true,
-                value_ptr: o.into_mut(),
+        use hashbrown::hash_map::RawEntryMut;
+        let hash = self.hash_key(key);
+        Ok(
+            match self
+                .inner
+                .raw_entry_mut()
+                .from_key_hashed_nocheck(hash, key)
+            {
+                RawEntryMut::Occupied(e) => e.into_mut(),
+                RawEntryMut::Vacant(e) => {
+                    e.insert_hashed_nocheck(hash, owned_key::<A>(key), value).1
+                }
             },
-            HbEntry::Vacant(v) => StringHashMapGetOrPut {
-                found_existing: false,
-                value_ptr: v.insert(V::default()),
-            },
-        }
+        )
     }
 
     /// Zero-allocation `getOrPut` — the arena-lifetime twin of
-    /// [`get_or_put`]/[`get_or_put_context_adapted`]. Looks up `key` and on
+    /// [`get_or_put`]. Looks up `key` and on
     /// miss inserts `V::default()` keyed by the **borrowed slice itself** (no
     /// `box_key`). Single hash + single probe via `hashbrown`'s `entry_ref`;
     /// the `From<&'static [u8]>` impl above is what `VacantEntryRef::insert`
     /// uses to turn the lifetime-erased slice into a `Static` key.
     ///
     /// This is the hot path for `Scope::members` (one call per declared
-    /// identifier in `declare_symbol_maybe_generated` / scope hoisting), where
+    /// identifier in `declare_symbol` / scope hoisting), where
     /// the previous owning shape was the parser's single largest
     /// `mi_heap_malloc` source.
     ///
@@ -2073,79 +1944,24 @@ impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHash
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// StringHashMapContext + Prehashed adapters (src/bun.zig)
+// StringHashMapContext + PrehashedCaseInsensitive
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `bun.StringHashMapContext` — wyhash(seed=0) over byte slices, full 64-bit.
-/// This is the *unordered* map context (vs. `StringContext` above which
-/// truncates to u32 for `ArrayHashMap`).
-///
-/// PORT NOTE: spelled as a module rather than a unit struct so callers can
-/// path-access the nested `Prehashed` / `PrehashedCaseInsensitive` types
-/// (`StringHashMapContext::Prehashed::…`) on stable Rust, which forbids
-/// inherent associated types.
+/// `bun.StringHashMapContext` — spelled as a module rather than a unit
+/// struct so callers can path-access the nested `PrehashedCaseInsensitive`
+/// type (`StringHashMapContext::PrehashedCaseInsensitive`) on stable Rust,
+/// which forbids inherent associated types.
 #[allow(non_snake_case)]
 pub mod StringHashMapContext {
-    #[inline]
-    pub fn eql(a: &[u8], b: &[u8]) -> bool {
-        a == b
-    }
-    /// Precompute the hash of `input` so repeated lookups across many maps
-    /// can skip rehashing. Returns a `Prehashed` adapter.
-    #[inline]
-    pub fn pre(input: &[u8]) -> super::string_hash_map::Prehashed<'_> {
-        super::string_hash_map::Prehashed {
-            value: bun_wyhash::hash(input),
-            input,
-        }
-    }
-
-    pub use super::string_hash_map::{Prehashed, PrehashedCaseInsensitive, hash};
+    pub use super::string_hash_map::PrehashedCaseInsensitive;
 }
 
-/// Namespace mirroring `std.hash_map` so call sites can write
-/// `bun_collections::string_hash_map::{hash, Prehashed, GetOrPutResult}`.
+/// String-hash helpers, namespaced so call sites can write
+/// `bun_collections::string_hash_map::{PrehashedCaseInsensitive, GetOrPutResult}`.
 pub mod string_hash_map {
-    /// `std.hash_map.hashString` — wyhash(seed=0), full u64.
-    #[inline]
-    pub fn hash(s: &[u8]) -> u64 {
-        bun_wyhash::hash(s)
-    }
-
-    /// `bun.StringHashMapContext.Prehashed` — caches the hash of one borrowed
-    /// slice; `hash()` returns the cached value when asked about that exact
-    /// slice (pointer + len identity), otherwise rehashes.
-    #[derive(Clone, Copy)]
-    pub struct Prehashed<'a> {
-        pub value: u64,
-        pub input: &'a [u8],
-    }
-
-    impl<'a> Prehashed<'a> {
-        #[inline]
-        pub fn new(input: &'a [u8]) -> Self {
-            Self {
-                value: hash(input),
-                input,
-            }
-        }
-        #[inline]
-        pub fn hash(&self, s: &[u8]) -> u64 {
-            if core::ptr::eq(s.as_ptr(), self.input.as_ptr()) && s.len() == self.input.len() {
-                return self.value;
-            }
-            hash(s)
-        }
-        #[inline]
-        pub fn eql(&self, a: &[u8], b: &[u8]) -> bool {
-            a == b
-        }
-    }
-
     /// `bun.StringHashMapContext.PrehashedCaseInsensitive` — owns a lowercased
     /// copy of the input. Dropped via `Box`.
     pub struct PrehashedCaseInsensitive {
-        pub value: u64,
         pub input: Box<[u8]>,
     }
 
@@ -2153,21 +1969,7 @@ pub mod string_hash_map {
         pub fn init(input: &[u8]) -> Self {
             let mut out = vec![0u8; input.len()].into_boxed_slice();
             bun_core::strings::copy_lowercase(input, &mut out);
-            Self {
-                value: hash(&out),
-                input: out,
-            }
-        }
-        #[inline]
-        pub fn hash(&self, s: &[u8]) -> u64 {
-            if core::ptr::eq(s.as_ptr(), self.input.as_ptr()) && s.len() == self.input.len() {
-                return self.value;
-            }
-            hash(s)
-        }
-        #[inline]
-        pub fn eql(&self, a: &[u8], b: &[u8]) -> bool {
-            bun_core::strings::eql_case_insensitive_ascii_check_length(a, b)
+            Self { input: out }
         }
     }
 
@@ -2177,7 +1979,7 @@ pub mod string_hash_map {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// StringSet (src/bun.zig) — `StringArrayHashMap<()>` with key-duping insert
+// StringSet — `StringArrayHashMap<()>` with key-duping insert
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `bun.StringSet` — insertion-ordered set of owned byte-string keys.
@@ -2192,7 +1994,7 @@ impl StringSet {
         Self::default()
     }
 
-    /// Zig `init(allocator)` — allocator dropped (global mimalloc).
+    /// Alias for `new()` (the global allocator is implicit).
     #[inline]
     pub fn init() -> Self {
         Self::default()
@@ -2220,10 +2022,9 @@ impl StringSet {
     }
 
     /// Insert `key`, duping it on miss. Returns `Ok(())` whether or not the key
-    /// was already present (Zig signature).
+    /// was already present.
     pub fn insert(&mut self, key: &[u8]) -> Result<(), AllocError> {
-        // get_or_put already boxes `key` on miss; the Zig second-dupe is
-        // redundant under owned `Box<[u8]>` keys.
+        // get_or_put already boxes `key` on miss.
         let _ = self.map.get_or_put(key)?;
         Ok(())
     }
@@ -2241,7 +2042,7 @@ impl StringSet {
     pub fn clear_and_free(&mut self) {
         // Keys are `Box<[u8]>`; `clear` drops them.
         self.map.clear_retaining_capacity();
-        // PORT NOTE: Zig also freed the backing arrays; Vec keeps capacity here
+        // This does not free the backing arrays; Vec keeps capacity here
         // (callers wanting that can drop the whole `StringSet`).
     }
 
@@ -2249,16 +2050,16 @@ impl StringSet {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// StringHashMapUnowned (src/bun.zig) — pre-hashed string key
+// StringHashMapUnowned — pre-hashed string key
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `bun.StringHashMapUnowned.Key` — a string identity reduced to `(hash, len)`
 /// so the map never stores the string bytes. Collisions on both fields are
-/// treated as equal (matches the Zig — used for side-effects globs where a
-/// false positive is acceptable).
+/// treated as equal (used for side-effects globs where a false positive is
+/// acceptable).
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StringHashMapUnownedKey {
-    pub hash: u64,
+    pub(crate) hash: u64,
     pub len: usize,
 }
 
@@ -2271,29 +2072,6 @@ impl StringHashMapUnownedKey {
         }
     }
 }
-
-/// `bun.StringHashMapUnowned` namespace.
-pub mod string_hash_map_unowned {
-    pub use super::StringHashMapUnownedKey as Key;
-
-    /// Adapter feeding `Key.hash` straight through (Zig
-    /// `bun.StringHashMapUnowned.Adapter`).
-    #[derive(Default, Clone, Copy)]
-    pub struct Adapter;
-
-    impl Adapter {
-        #[inline]
-        pub fn hash(self, key: &Key) -> u64 {
-            key.hash
-        }
-        #[inline]
-        pub fn eql(self, a: &Key, b: &Key) -> bool {
-            a.hash == b.hash && a.len == b.len
-        }
-    }
-}
-
-// ported from: vendor/zig/lib/std/array_hash_map.zig
 
 #[cfg(test)]
 mod index_tests {
@@ -2325,6 +2103,28 @@ mod index_tests {
     }
 
     #[test]
+    fn entry_index_matches_entry_position() {
+        let mut m: ArrayHashMap<u64, u64> = ArrayHashMap::new();
+        // Past INDEX_THRESHOLD so both the linear and the indexed lookup run.
+        for i in 0..32u64 {
+            let MapEntry::Vacant(v) = m.entry(i * 7) else {
+                panic!("fresh key must be vacant");
+            };
+            assert_eq!(v.index(), i as usize);
+            v.insert(i);
+            assert_eq!(m.keys()[i as usize], i * 7);
+        }
+        for i in 0..32u64 {
+            let MapEntry::Occupied(o) = m.entry(i * 7) else {
+                panic!("inserted key must be occupied");
+            };
+            assert_eq!(o.index(), i as usize);
+            assert_eq!(m.values()[i as usize], i);
+        }
+        assert!(matches!(m.entry(1), MapEntry::Vacant(v) if v.index() == 32));
+    }
+
+    #[test]
     fn string_map_indexed() {
         let mut m: StringArrayHashMap<usize> = StringArrayHashMap::new();
         let keys: Vec<String> = (0..200).map(|i| format!("key{i}")).collect();
@@ -2335,5 +2135,72 @@ mod index_tests {
             assert_eq!(m.get(k.as_bytes()), Some(&i));
         }
         assert_eq!(m.get(b"missing"), None);
+    }
+
+    use core::alloc::Layout;
+    use core::ptr::NonNull;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    static COUNTING_ALLOCS: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Clone, Copy, Default)]
+    struct CountingAlloc;
+
+    // SAFETY: thin forwarder to `std::alloc::Global`.
+    unsafe impl core::alloc::Allocator for CountingAlloc {
+        fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, core::alloc::AllocError> {
+            COUNTING_ALLOCS.fetch_add(1, Ordering::Relaxed);
+            std::alloc::Global.allocate(layout)
+        }
+        unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+            // SAFETY: forwarded; caller guarantees `ptr` came from `allocate`.
+            unsafe { std::alloc::Global.deallocate(ptr, layout) }
+        }
+    }
+
+    // SAFETY: delegates to the `core::alloc::Allocator` impl above.
+    unsafe impl allocator_api2::alloc::Allocator for CountingAlloc {
+        fn allocate(
+            &self,
+            layout: Layout,
+        ) -> Result<NonNull<[u8]>, allocator_api2::alloc::AllocError> {
+            core::alloc::Allocator::allocate(self, layout)
+                .map_err(|_| allocator_api2::alloc::AllocError)
+        }
+        unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+            // SAFETY: forwarded; caller guarantees `ptr` came from `allocate`.
+            unsafe { core::alloc::Allocator::deallocate(self, ptr, layout) }
+        }
+    }
+
+    #[test]
+    fn string_hash_map_no_alloc_on_hit() {
+        let mut m: StringHashMap<u32, CountingAlloc> = StringHashMap::new();
+        // Pre-size so the table itself does not reallocate during the test.
+        m.ensure_total_capacity(4).unwrap();
+        let base = COUNTING_ALLOCS.load(Ordering::Relaxed);
+
+        m.put(b"aa", 1).unwrap();
+        m.put(b"bb", 2).unwrap();
+        let after_miss = COUNTING_ALLOCS.load(Ordering::Relaxed);
+        assert_eq!(after_miss - base, 2, "one key Box per distinct key on miss");
+
+        // Hits via every safe owning entry point must not box the key again.
+        m.put(b"aa", 10).unwrap();
+        m.put_assume_capacity(b"bb", 20);
+        assert!(m.get_or_put(b"aa").unwrap().found_existing);
+        assert_eq!(*m.get_or_put_value(b"bb", 0).unwrap(), 20);
+        let after_hit = COUNTING_ALLOCS.load(Ordering::Relaxed);
+        assert_eq!(after_hit, after_miss, "hits must not allocate a key Box");
+
+        // A fresh key via get_or_put boxes exactly once.
+        let g = m.get_or_put(b"cc").unwrap();
+        assert!(!g.found_existing);
+        *g.value_ptr = 30;
+        assert_eq!(COUNTING_ALLOCS.load(Ordering::Relaxed), after_hit + 1);
+
+        assert_eq!(*m.get(b"aa".as_slice()).unwrap(), 10);
+        assert_eq!(*m.get(b"bb".as_slice()).unwrap(), 20);
+        assert_eq!(*m.get(b"cc".as_slice()).unwrap(), 30);
     }
 }

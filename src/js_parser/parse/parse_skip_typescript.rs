@@ -1,4 +1,5 @@
 #![warn(unused_must_use)]
+use crate::Error;
 use crate::lexer::T;
 use crate::p::P;
 use crate::parser::{ParseStatementOptions, Ref, SkipTypeParameterResult, TypeParameterFlag};
@@ -7,20 +8,14 @@ use crate::typescript::SkipTypeOptions;
 use crate::typescript::identifier::{Kind as TsIdentKind, kind_for_identifier};
 use bun_ast::op::Level;
 use bun_ast::ts::Metadata;
-use bun_core::{self, Error, err};
 
-// Zig: `fn SkipTypescript(comptime ts, comptime jsx, comptime scan_only) type { return struct {...} }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
-// a direct `impl P` block.
-
-// PORT NOTE: Zig nested `Bitset` inside `SkipTypeOptions`; Rust hoists it to a module-level
-// alias. Re-export here so the parser-side type alias used in this file matches the
+// Re-export so the parser-side type alias used in this file matches the
 // canonical definition in `TypeScript.rs`.
 pub(crate) type SkipTypeOptionsBitset = typescript::SkipTypeOptionsBitset;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     #[inline]
-    pub fn skip_typescript_return_type(&mut self) -> Result<(), Error> {
+    pub(crate) fn skip_typescript_return_type(&mut self) -> Result<(), Error> {
         self.skip_type_script_type_with_opts::<false>(
             Level::Lowest,
             SkipTypeOptionsBitset::only(SkipTypeOptions::IsReturnType),
@@ -29,7 +24,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline]
-    pub fn skip_typescript_return_type_with_metadata(&mut self) -> Result<Metadata, Error> {
+    pub(crate) fn skip_typescript_return_type_with_metadata(&mut self) -> Result<Metadata, Error> {
         let mut result = Metadata::DEFAULT;
         self.skip_type_script_type_with_opts::<true>(
             Level::Lowest,
@@ -40,13 +35,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline]
-    pub fn skip_type_script_type(&mut self, level: Level) -> Result<(), Error> {
+    pub(crate) fn skip_type_script_type(&mut self, level: Level) -> Result<(), Error> {
         self.mark_type_script_only();
         self.skip_type_script_type_with_opts::<false>(level, SkipTypeOptionsBitset::empty(), None)
     }
 
     #[inline]
-    pub fn skip_type_script_type_with_metadata(&mut self, level: Level) -> Result<Metadata, Error> {
+    pub(crate) fn skip_type_script_type_with_metadata(
+        &mut self,
+        level: Level,
+    ) -> Result<Metadata, Error> {
         self.mark_type_script_only();
         let mut result = Metadata::DEFAULT;
         self.skip_type_script_type_with_opts::<true>(
@@ -57,12 +55,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(result)
     }
 
-    pub fn skip_type_script_binding(&mut self) -> Result<(), Error> {
+    pub(crate) fn skip_type_script_binding(&mut self) -> Result<(), Error> {
         self.mark_type_script_only();
         // Nested destructuring patterns in skipped type positions recurse through
         // this function; bound it like `parse_binding` does.
         if !self.stack_check.is_safe_to_recurse() {
-            return Err(err!("StackOverflow"));
+            return Err(crate::Error::StackOverflow);
         }
         match self.lexer.token {
             T::TIdentifier | T::TThis => {
@@ -148,13 +146,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             _ => {
                 // try p.lexer.unexpected();
-                return Err(err!("Backtrack"));
+                return Err(crate::Error::Backtrack);
             }
         }
         Ok(())
     }
 
-    pub fn skip_typescript_fn_args(&mut self) -> Result<(), Error> {
+    pub(crate) fn skip_typescript_fn_args(&mut self) -> Result<(), Error> {
         self.mark_type_script_only();
 
         self.lexer.expect(T::TOpenParen)?;
@@ -193,19 +191,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// This is a spot where the TypeScript grammar is highly ambiguous. Here are
     /// some cases that are valid:
     ///
-    ///     let x = (y: any): (() => {}) => { };
-    ///     let x = (y: any): () => {} => { };
-    ///     let x = (y: any): (y) => {} => { };
-    ///     let x = (y: any): (y[]) => {};
-    ///     let x = (y: any): (a | b) => {};
+    /// ```ts
+    /// let x = (y: any): (() => {}) => { };
+    /// let x = (y: any): () => {} => { };
+    /// let x = (y: any): (y) => {} => { };
+    /// let x = (y: any): (y[]) => {};
+    /// let x = (y: any): (a | b) => {};
+    /// ```
     ///
     /// Here are some cases that aren't valid:
     ///
-    ///     let x = (y: any): (y) => {};
-    ///     let x = (y: any): (y) => {return 0};
-    ///     let x = (y: any): asserts y is (y) => {};
+    /// ```ts
+    /// let x = (y: any): (y) => {};
+    /// let x = (y: any): (y) => {return 0};
+    /// let x = (y: any): asserts y is (y) => {};
+    /// ```
     ///
-    pub fn skip_type_script_paren_or_fn_type<const GET_METADATA: bool>(
+    pub(crate) fn skip_type_script_paren_or_fn_type<const GET_METADATA: bool>(
         &mut self,
         result: Option<&mut Metadata>,
     ) -> Result<(), Error> {
@@ -229,11 +231,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    // PORT NOTE: Zig signature is `result: if (get_metadata) *TypeScript.Metadata else void`.
     // Rust cannot express a const-generic-dependent param type on stable; we use
     // `Option<&mut Metadata>` and require callers to pass `Some` iff `GET_METADATA == true`.
     // The const generic is kept so `if GET_METADATA { ... }` branches monomorphize away.
-    pub fn skip_type_script_type_with_opts<const GET_METADATA: bool>(
+    pub(crate) fn skip_type_script_type_with_opts<const GET_METADATA: bool>(
         &mut self,
         level: Level,
         opts: SkipTypeOptionsBitset,
@@ -245,7 +246,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // function, so bound it the same way `parse_expr_common` bounds expression
         // recursion instead of overflowing the stack.
         if !self.stack_check.is_safe_to_recurse() {
-            return Err(err!("StackOverflow"));
+            return Err(crate::Error::StackOverflow);
         }
 
         loop {
@@ -360,8 +361,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.lexer.next()?;
 
                     // "[import: number]"
+                    // "[import?: number]"
                     if opts.contains(SkipTypeOptions::AllowTupleLabels)
-                        && self.lexer.token == T::TColon
+                        && (self.lexer.token == T::TColon || self.lexer.token == T::TQuestion)
                     {
                         return Ok(());
                     }
@@ -390,8 +392,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.lexer.next()?;
 
                     // "[new: number]"
+                    // "[new?: number]"
                     if opts.contains(SkipTypeOptions::AllowTupleLabels)
-                        && self.lexer.token == T::TColon
+                        && (self.lexer.token == T::TColon || self.lexer.token == T::TQuestion)
                     {
                         return Ok(());
                     }
@@ -424,13 +427,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             // Valid:
                             //   "[keyof: string]"
+                            //   "[keyof?: string]"
                             //   "{[keyof: string]: number}"
                             //   "{[keyof in string]: number}"
                             //
                             // Invalid:
                             //   "A extends B ? keyof : string"
                             //
-                            if (self.lexer.token != T::TColon && self.lexer.token != T::TIn)
+                            if (self.lexer.token != T::TColon
+                                && self.lexer.token != T::TQuestion
+                                && self.lexer.token != T::TIn)
                                 || (!opts.contains(SkipTypeOptions::IsIndexSignature)
                                     && !opts.contains(SkipTypeOptions::AllowTupleLabels))
                             {
@@ -449,7 +455,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         TsIdentKind::PrefixReadonly => {
                             self.lexer.next()?;
 
-                            if (self.lexer.token != T::TColon && self.lexer.token != T::TIn)
+                            if (self.lexer.token != T::TColon
+                                && self.lexer.token != T::TQuestion
+                                && self.lexer.token != T::TIn)
                                 || (!opts.contains(SkipTypeOptions::IsIndexSignature)
                                     && !opts.contains(SkipTypeOptions::AllowTupleLabels))
                             {
@@ -473,7 +481,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // "type Foo = Bar extends [infer T extends string] ? T : null"
                             // "type Foo = Bar extends [infer T extends string ? infer T : never] ? T : null"
                             // "type Foo = { [infer in Bar]: number }"
-                            if (self.lexer.token != T::TColon && self.lexer.token != T::TIn)
+                            // "type Foo = [infer?: number]"
+                            if (self.lexer.token != T::TColon
+                                && self.lexer.token != T::TQuestion
+                                && self.lexer.token != T::TIn)
                                 || (!opts.contains(SkipTypeOptions::IsIndexSignature)
                                     && !opts.contains(SkipTypeOptions::AllowTupleLabels))
                             {
@@ -641,15 +652,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     // "let foo: any \n <number>foo" must not become a single type
                     if check_type_parameters && !self.lexer.has_newline_before {
-                        let _ = self.skip_type_script_type_arguments::<false>()?;
+                        let _ = self.skip_type_script_type_arguments::<false, false>()?;
                     }
                 }
                 T::TTypeof => {
                     self.lexer.next()?;
 
                     // "[typeof: number]"
+                    // "[typeof?: number]"
                     if opts.contains(SkipTypeOptions::AllowTupleLabels)
-                        && self.lexer.token == T::TColon
+                        && (self.lexer.token == T::TColon || self.lexer.token == T::TQuestion)
                     {
                         return Ok(());
                     }
@@ -685,7 +697,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         if !self.lexer.has_newline_before {
-                            let _ = self.skip_type_script_type_arguments::<false>()?;
+                            let _ = self.skip_type_script_type_arguments::<false, false>()?;
                         }
                     }
                 }
@@ -760,7 +772,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         self.lexer.next()?;
 
-                        if self.lexer.token != T::TColon {
+                        if self.lexer.token != T::TColon && self.lexer.token != T::TQuestion {
                             self.lexer.expect(T::TColon)?;
                         }
 
@@ -884,8 +896,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     if GET_METADATA {
-                        // PORT NOTE: reshaped for borrowck — `find_symbol` borrows `&mut self`;
-                        // `result` is a disjoint fn parameter so the borrows do not conflict.
+                        // `find_symbol` borrows `&mut self`; `result` is a disjoint fn
+                        // parameter so the borrows do not conflict.
                         let ident = self.lexer.identifier;
                         let r = result
                             .as_deref_mut()
@@ -914,7 +926,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     // "{ <A extends B>(): c.d \n <E extends F>(): g.h }" must not become a single type
                     if !self.lexer.has_newline_before {
-                        let _ = self.skip_type_script_type_arguments::<false>()?;
+                        let _ = self.skip_type_script_type_arguments::<false, false>()?;
                     }
                 }
                 T::TOpenBracket => {
@@ -1007,7 +1019,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn skip_type_script_object_type(&mut self) -> Result<(), Error> {
+    pub(crate) fn skip_type_script_object_type(&mut self) -> Result<(), Error> {
         self.mark_type_script_only();
 
         self.lexer.expect(T::TOpenBrace)?;
@@ -1105,7 +1117,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 _ => {
                     if !found_key {
                         self.lexer.unexpected()?;
-                        return Err(err!("SyntaxError"));
+                        return Err(crate::Error::SyntaxError);
                     }
                 }
             }
@@ -1117,7 +1129,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 _ => {
                     if !self.lexer.has_newline_before {
                         self.lexer.unexpected()?;
-                        return Err(err!("SyntaxError"));
+                        return Err(crate::Error::SyntaxError);
                     }
                 }
             }
@@ -1128,7 +1140,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // This is the type parameter declarations that go with other symbol
     // declarations (class, function, type, etc.)
-    pub fn skip_type_script_type_parameters(
+    pub(crate) fn skip_type_script_type_parameters(
         &mut self,
         flags: TypeParameterFlag,
     ) -> Result<SkipTypeParameterResult, Error> {
@@ -1280,7 +1292,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(result)
     }
 
-    pub fn skip_type_script_type_stmt(
+    pub(crate) fn skip_type_script_type_stmt(
         &mut self,
         opts: &mut ParseStatementOptions,
     ) -> Result<(), Error> {
@@ -1320,7 +1332,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let name = self.lexer.identifier;
         self.lexer.expect(T::TIdentifier)?;
 
-        if opts.is_module_scope {
+        if opts.scope.is_module() {
             self.local_type_names.put(name, true)?;
         }
 
@@ -1335,14 +1347,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    pub fn skip_type_script_interface_stmt(
+    pub(crate) fn skip_type_script_interface_stmt(
         &mut self,
         opts: &mut ParseStatementOptions,
     ) -> Result<(), Error> {
         let name = self.lexer.identifier;
         self.lexer.expect(T::TIdentifier)?;
 
-        if opts.is_module_scope {
+        if opts.scope.is_module() {
             self.local_type_names.put(name, true)?;
         }
 
@@ -1378,7 +1390,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    pub fn skip_type_script_type_arguments<const IS_INSIDE_JSX_ELEMENT: bool>(
+    pub(crate) fn skip_type_script_type_arguments<
+        const IS_INSIDE_JSX_ELEMENT: bool,
+        const IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION: bool,
+    >(
         &mut self,
     ) -> Result<bool, Error> {
         self.mark_type_script_only();
@@ -1403,15 +1418,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // This type argument list must end with a ">"
-        self.lexer.expect_greater_than::<IS_INSIDE_JSX_ELEMENT>()?;
+        if !IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION {
+            // Normally TypeScript allows any token starting with ">". For example,
+            // "Array<Array<number>>()" is a type argument list even though there's
+            // a ">>" token, because ">>" starts with ">".
+            self.lexer.expect_greater_than::<IS_INSIDE_JSX_ELEMENT>()?;
+        } else {
+            // However, when emulating the TypeScript compiler's
+            // "parseTypeArgumentsInExpression" function, only the ">" token
+            // itself is allowed. For example, "x < y >= z" is not a type argument
+            // list. Nested type arguments ("Array<Array<number>>()") still work
+            // because the inner list is in a type context and already stripped one
+            // ">" from the ">>" before we see the outer closer here.
+            if IS_INSIDE_JSX_ELEMENT {
+                self.lexer.expect_inside_jsx_element(T::TGreaterThan)?;
+            } else {
+                self.lexer.expect(T::TGreaterThan)?;
+            }
+        }
         Ok(true)
     }
 
     // ───────────────────────── Backtracking ─────────────────────────
-    // Zig defines `pub const Backtracking = struct { ... }` with comptime-reflective
-    // `lexerBacktracker` / `lexerBacktrackerWithArgs` that branch on `bun.meta.ReturnOf(func)`.
-    // Rust cannot inspect a closure's return type at compile time, so we split into two
-    // concrete helpers covering the actual call patterns:
+    // Two concrete helpers covering the actual call patterns:
     //   - `lexer_backtracker_bool`   — fn returns Result<()>/Result<bool>, helper returns bool
     //   - `lexer_backtracker_result` — fn returns Result<SkipTypeParameterResult>
 
@@ -1421,8 +1450,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         F: FnOnce(&mut Self) -> Result<R, Error>,
     {
         self.mark_type_script_only();
-        // PORT NOTE: Zig copies the lexer by value; Rust Lexer holds `&mut Log` so we use a
-        // POD `LexerSnapshot` and `restore()`.
+        // The Lexer
+        // holds `&mut Log`, so backtracking goes through a POD `LexerSnapshot` + `restore()`.
         let old_lexer = self.lexer.snapshot();
         let old_log_disabled = self.lexer.is_log_disabled;
         self.lexer.is_log_disabled = true;
@@ -1439,9 +1468,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         self.lexer.is_log_disabled = old_log_disabled;
 
-        // Covers both Zig branches:
-        //   FnReturnType == anyerror!bool  → !backtrack
-        //   ReturnType == bool/void        → !backtrack
         !backtrack
     }
 
@@ -1471,19 +1497,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         result
     }
 
-    pub fn skip_type_script_type_parameters_then_open_paren_with_backtracking(
+    pub(crate) fn skip_type_script_type_parameters_then_open_paren_with_backtracking(
         &mut self,
     ) -> Result<SkipTypeParameterResult, Error> {
         let result =
             self.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
         if self.lexer.token != T::TOpenParen {
-            return Err(err!("Backtrack"));
+            return Err(crate::Error::Backtrack);
         }
 
         Ok(result)
     }
 
-    pub fn skip_type_script_constraint_of_infer_type_with_backtracking(
+    pub(crate) fn skip_type_script_constraint_of_infer_type_with_backtracking(
         &mut self,
         flags: SkipTypeOptionsBitset,
     ) -> Result<bool, Error> {
@@ -1497,46 +1523,50 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !flags.contains(SkipTypeOptions::DisallowConditionalTypes)
             && self.lexer.token == T::TQuestion
         {
-            return Err(err!("Backtrack"));
+            return Err(crate::Error::Backtrack);
         }
 
         Ok(true)
     }
 
-    pub fn skip_type_script_arrow_args_with_backtracking(&mut self) -> Result<bool, Error> {
+    pub(crate) fn skip_type_script_arrow_args_with_backtracking(&mut self) -> Result<bool, Error> {
         self.skip_typescript_fn_args()?;
         if self.lexer.expect(T::TEqualsGreaterThan).is_err() {
-            return Err(err!("Backtrack"));
+            return Err(crate::Error::Backtrack);
         }
 
         Ok(true)
     }
 
-    pub fn skip_type_script_type_arguments_with_backtracking(&mut self) -> Result<bool, Error> {
-        if self.skip_type_script_type_arguments::<false>()? {
+    pub(crate) fn skip_type_script_type_arguments_with_backtracking(
+        &mut self,
+    ) -> Result<bool, Error> {
+        if self.skip_type_script_type_arguments::<false, true>()? {
             // Check the token after this and backtrack if it's the wrong one
             if !self.can_follow_type_arguments_in_expression() {
-                return Err(err!("Backtrack"));
+                return Err(crate::Error::Backtrack);
             }
         }
 
         Ok(true)
     }
 
-    pub fn skip_type_script_arrow_return_type_with_backtracking(&mut self) -> Result<(), Error> {
+    pub(crate) fn skip_type_script_arrow_return_type_with_backtracking(
+        &mut self,
+    ) -> Result<(), Error> {
         self.lexer.expect(T::TColon)?;
 
         self.skip_typescript_return_type()?;
         // Check the token after this and backtrack if it's the wrong one
         if self.lexer.token != T::TEqualsGreaterThan {
-            return Err(err!("Backtrack"));
+            return Err(crate::Error::Backtrack);
         }
         Ok(())
     }
 
     // ─────────────────────── try_* wrappers ───────────────────────
 
-    pub fn try_skip_type_script_type_parameters_then_open_paren_with_backtracking(
+    pub(crate) fn try_skip_type_script_type_parameters_then_open_paren_with_backtracking(
         &mut self,
     ) -> SkipTypeParameterResult {
         self.lexer_backtracker_result(
@@ -1544,19 +1574,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    pub fn try_skip_type_script_type_arguments_with_backtracking(&mut self) -> bool {
+    pub(crate) fn try_skip_type_script_type_arguments_with_backtracking(&mut self) -> bool {
         self.lexer_backtracker_bool(Self::skip_type_script_type_arguments_with_backtracking)
     }
 
-    pub fn try_skip_type_script_arrow_return_type_with_backtracking(&mut self) -> bool {
+    pub(crate) fn try_skip_type_script_arrow_return_type_with_backtracking(&mut self) -> bool {
         self.lexer_backtracker_bool(Self::skip_type_script_arrow_return_type_with_backtracking)
     }
 
-    pub fn try_skip_type_script_arrow_args_with_backtracking(&mut self) -> bool {
+    pub(crate) fn try_skip_type_script_arrow_args_with_backtracking(&mut self) -> bool {
         self.lexer_backtracker_bool(Self::skip_type_script_arrow_args_with_backtracking)
     }
 
-    pub fn try_skip_type_script_constraint_of_infer_type_with_backtracking(
+    pub(crate) fn try_skip_type_script_constraint_of_infer_type_with_backtracking(
         &mut self,
         flags: SkipTypeOptionsBitset,
     ) -> bool {
@@ -1595,5 +1625,3 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         skipped
     }
 }
-
-// ported from: src/js_parser/ast/skipTypescript.zig

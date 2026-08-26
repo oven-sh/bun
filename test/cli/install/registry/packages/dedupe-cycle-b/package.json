@@ -1,0 +1,23 @@
+{
+  "_id": "dedupe-cycle-b",
+  "name": "dedupe-cycle-b",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "dedupe-cycle-b",
+      "version": "1.0.0",
+      "dependencies": {
+        "dedupe-cycle-a": "1.0.0",
+        "dedupe-cycle-peer": "1.0.0"
+      },
+      "_id": "dedupe-cycle-b@1.0.0",
+      "dist": {
+        "integrity": "sha512-QJYp5lUbsjhQlM7wUCGbgdOqlPeYsmSagNKL2jflU2+tDepuGXJId2dADG0oVwwa89wM0wMICgP3vsz57hgcsw==",
+        "shasum": "9d415b56c69711ff75571a8f91b11dc85c56360d",
+        "tarball": "http://localhost:4873/dedupe-cycle-b/-/dedupe-cycle-b-1.0.0.tgz"
+      }
+    }
+  }
+}

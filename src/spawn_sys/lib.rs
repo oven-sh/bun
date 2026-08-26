@@ -25,8 +25,10 @@ use core::ffi::c_char;
 // Module layout
 // ──────────────────────────────────────────────────────────────────────────
 
+pub mod error;
+pub use error::{Error, Result};
+
 /// posix_spawn(2) FFI wrappers (Actions / Attr / spawn_z / wait4).
-/// Port of `src/runtime/api/bun/spawn.zig`.
 #[path = "posix_spawn.rs"]
 pub mod posix_spawn;
 
@@ -36,7 +38,7 @@ pub mod posix_spawn;
 pub mod spawn_process;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Canonical FFI type aliases — Zig `?[*:0]const u8` ↔ Rust `*const c_char`
+// Canonical FFI type aliases for nullable C-string pointers (`*const c_char`)
 //
 // **Never** spell these as `Option<*const c_char>`: raw pointers are already
 // nullable, and `Option<*const T>` does *not* enjoy the null-pointer-niche
@@ -119,8 +121,12 @@ pub mod waiter_thread_flag {
 
     static SHOULD_USE_WAITER_THREAD: AtomicBool = AtomicBool::new(false);
 
+    /// The waiter thread is the fallback for Linux without pidfd. kqueue
+    /// platforms always have EVFILT_PROC, and the thread's loop has no wakeup
+    /// for newly appended processes there, so the flag is not honoured on them.
     #[inline]
     pub fn set() {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         SHOULD_USE_WAITER_THREAD.store(true, Ordering::Relaxed);
     }
 
@@ -148,8 +154,7 @@ pub mod pdeathsig {
     static INSTALL_THREAD: OnceLock<ThreadId> = OnceLock::new();
 
     /// Arm the default. Records the calling thread so `should_default` only
-    /// returns `true` for spawns issued from that thread (matches Zig
-    /// `ParentDeathWatchdog` semantics). Idempotent.
+    /// returns `true` for spawns issued from that thread. Idempotent.
     pub fn set_default(enabled: bool) {
         if enabled {
             let _ = INSTALL_THREAD.set(std::thread::current().id());

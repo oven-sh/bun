@@ -12,8 +12,8 @@ use core::ptr::NonNull;
 
 #[derive(Default)]
 pub struct Mkdir {
-    pub opts: Opts,
-    pub state: State,
+    pub(crate) opts: Opts,
+    pub(crate) state: State,
 }
 
 #[derive(Default)]
@@ -26,23 +26,23 @@ pub enum State {
 }
 
 pub struct Exec {
-    pub started: bool,
-    pub tasks_count: usize,
-    pub tasks_done: usize,
-    pub output_waiting: u16,
-    pub output_done: u16,
-    /// Index into `Builtin::args` where filepath args start (replaces Zig's
-    /// borrowed `args: []const [*:0]const u8` slice — storing the index keeps
-    /// the lifetime tied to the Cmd's argv without a self-reference).
-    pub args_start: usize,
-    pub err: Option<bun_sys::Error>,
+    pub(crate) started: bool,
+    pub(crate) tasks_count: usize,
+    pub(crate) tasks_done: usize,
+    pub(crate) output_waiting: u16,
+    pub(crate) output_done: u16,
+    /// Index into `Builtin::args` where filepath args start (storing the
+    /// index keeps the lifetime tied to the Cmd's argv without a
+    /// self-reference).
+    pub(crate) args_start: usize,
+    pub(crate) err: Option<bun_sys::Error>,
     /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
     /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
     /// directly (IOWriter.rs is out of scope here): `write_err`/`write_out`
     /// push, `on_io_writer_chunk` pops and forwards to
     /// `OutputTask::on_io_writer_chunk` so the box is reclaimed and the
-    /// writeErr→writeOut→onDone state machine runs (spec mkdir.zig:134/150).
-    pub output_queue: std::collections::VecDeque<*mut OutputTask<Mkdir>>,
+    /// writeErr→writeOut→onDone state machine runs.
+    pub(crate) output_queue: std::collections::VecDeque<*mut OutputTask<Mkdir>>,
 }
 
 impl Mkdir {
@@ -86,8 +86,8 @@ impl Mkdir {
         Builtin::write_failing_error(interp, cmd, Kind::Mkdir.usage_string(), 1)
     }
 
-    pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
-        // PORT NOTE: reshaped for borrowck — read scalars, drop the borrow,
+    fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+        // NOTE: reshaped for borrowck — read scalars, drop the borrow,
         // then act.
         let action = match &mut Self::state_mut(interp, cmd).state {
             State::Idle => panic!("Invalid state"),
@@ -156,14 +156,9 @@ impl Mkdir {
         Self::next(interp, cmd)
     }
 
-    /// Spec: mkdir.zig `onShellMkdirTaskDone`. The caller
-    /// ([`ShellMkdirTask::run_from_main_thread`]) owns the heap allocation and
-    /// drops it after this returns.
-    pub(crate) fn on_shell_mkdir_task_done(
-        interp: &Interpreter,
-        cmd: NodeId,
-        task: &mut ShellMkdirTask,
-    ) {
+    /// The caller ([`ShellMkdirTask::run_from_main_thread`]) owns the heap
+    /// allocation and drops it after this returns.
+    fn on_shell_mkdir_task_done(interp: &Interpreter, cmd: NodeId, task: &mut ShellMkdirTask) {
         let output = core::mem::take(&mut task.created_directories);
         let err = task.err.take();
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -198,11 +193,11 @@ impl OutputTaskVTable for Mkdir {
             exec.output_waiting += 1;
         }
         if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-            // TODO(port): IOWriter ChildPtr for OutputTask — needs a
-            // dedicated WriterTag once OutputTask is dispatchable. Until then
-            // stash `child` on `output_queue` so `on_io_writer_chunk` can
-            // route the completion back to the OutputTask state machine and
-            // reclaim the box (spec mkdir.zig:134 enqueues with childptr).
+            // OutputTask has no `WriterTag` of its own (it is not directly
+            // dispatchable as an IOWriter child), so the enqueue is tagged
+            // `WriterTag::Builtin` and `child` is stashed on `output_queue`;
+            // `on_io_writer_chunk` pops it to route the completion back to
+            // the OutputTask state machine and reclaim the box.
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 exec.output_queue.push_back(child);
             }
@@ -234,7 +229,7 @@ impl OutputTaskVTable for Mkdir {
         }
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
             // See write_err — stash `child` so the chunk callback routes to
-            // OutputTask::on_io_writer_chunk (spec mkdir.zig:150).
+            // OutputTask::on_io_writer_chunk.
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 exec.output_queue.push_back(child);
             }
@@ -262,14 +257,14 @@ impl OutputTaskVTable for Mkdir {
     }
 }
 
-/// Spec: mkdir.zig `ShellMkdirTask`. Runs `mkdir`/`mkdir -p` on a worker
+/// Runs `mkdir`/`mkdir -p` on a worker
 /// thread, then bounces back to the main thread.
 pub(crate) struct ShellMkdirTask {
     /// Owning Cmd node (the mkdir builtin's id).
     pub cmd: NodeId,
     pub opts: Opts,
-    /// Owned copy of the target path (Zig borrowed from argv; we own to avoid
-    /// threading a lifetime through the WorkPool).
+    /// Owned copy of the target path (owned to avoid threading a lifetime
+    /// through the WorkPool).
     pub filepath: Vec<u8>,
     pub cwd_path: Vec<u8>,
     pub created_directories: Vec<u8>,
@@ -278,7 +273,7 @@ pub(crate) struct ShellMkdirTask {
 }
 
 impl ShellMkdirTask {
-    pub(crate) fn create(
+    fn create(
         cmd: NodeId,
         opts: Opts,
         filepath: Vec<u8>,
@@ -299,11 +294,11 @@ impl ShellMkdirTask {
         bun_core::heap::into_raw(task)
     }
 
-    /// Spec: mkdir.zig `runFromThreadPool`.
-    pub(crate) fn run_from_thread_pool(this: &mut ShellMkdirTask) {
+    fn run_from_thread_pool(this: &mut ShellMkdirTask) {
         use bun_paths::{Platform, platform, resolve_path};
         // We have to give an absolute path to our mkdir implementation for it
         // to work with cwd.
+        let mut spill = Vec::new();
         let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
             // Owned `Vec<u8>`; ensure NUL-terminated.
             if this.filepath.last() != Some(&0) {
@@ -311,12 +306,25 @@ impl ShellMkdirTask {
             }
             bun_core::ZStr::from_buf(&this.filepath, this.filepath.len() - 1)
         } else {
-            resolve_path::join_z::<platform::Auto>(&[&this.cwd_path, &this.filepath])
+            resolve_path::join_z_spill::<platform::Auto>(
+                &mut spill,
+                &[&this.cwd_path, &this.filepath],
+            )
         };
+
+        // `NodeFS` expects the `Valid::path_too_long` bound its JS callers
+        // enforce; past it, `PathLike::slice_z` yields "" and mkdir reports ENOENT.
+        if filepath.len() >= bun_paths::MAX_PATH_BYTES {
+            this.err = Some(
+                bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::mkdir)
+                    .with_path(filepath.as_bytes()),
+            );
+            return;
+        }
 
         let mut node_fs = NodeFS::default();
         let args = fs_args::Mkdir {
-            path: PathLike::String(bun_core::PathString::init(filepath.as_bytes())),
+            path: PathLike::borrowed(filepath.as_bytes()),
             recursive: this.opts.parents,
             mode: fs_args::Mkdir::DEFAULT_MODE,
             always_return_none: true,
@@ -353,7 +361,7 @@ impl ShellMkdirTask {
 
     /// Reclaims ownership of the heap allocation produced by [`Self::create`]
     /// and forwards it to [`Mkdir::on_shell_mkdir_task_done`].
-    pub(crate) fn run_from_main_thread(this: NonNull<ShellMkdirTask>, interp: &Interpreter) {
+    fn run_from_main_thread(this: NonNull<ShellMkdirTask>, interp: &Interpreter) {
         // SAFETY: `this` is a live heap allocation produced by `Self::create`;
         // the dispatch contract guarantees it is not yet freed.
         let mut task = unsafe { bun_core::heap::take(this.as_ptr()) };
@@ -364,12 +372,21 @@ impl ShellMkdirTask {
 
 impl bun_event_loop::Taskable for ShellMkdirTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMkdirTask;
+    /// A pool completion that will not run: drop the keep-alive and the box
+    /// (nothing else frees an unrun one).
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box the builtin scheduled.
+        unsafe {
+            (*this).task.unref_unrun();
+            drop(bun_core::heap::take(this));
+        }
+    }
 }
 
-/// Spec: mkdir.zig `MkdirVerboseVTable` — collects each created directory into
+/// Collects each created directory into
 /// `created_directories` (newline-separated) when `-v` is set. Passed by value
 /// to `NodeFS::mkdir_recursive_impl`; `on_create_dir` writes through the raw
-/// back-ref because the trait method takes `&self` (Zig: `*@This()`).
+/// back-ref because the trait method takes `&self`.
 struct MkdirVerboseVTable {
     inner: *mut Vec<u8>,
     active: bool,
@@ -413,13 +430,11 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMkdirTask {
 
 #[derive(Default, Clone, Copy)]
 pub struct Opts {
-    /// `-m`, `--mode` — set file mode (as in chmod), not a=rwx - umask
-    pub mode: Option<u32>,
     /// `-p`, `--parents` — no error if existing, make parent directories as
     /// needed, with their file modes unaffected by any -m option.
-    pub parents: bool,
+    pub(crate) parents: bool,
     /// `-v`, `--verbose` — print a message for each created directory
-    pub verbose: bool,
+    pub(crate) verbose: bool,
 }
 
 impl FlagParser for Opts {
@@ -431,7 +446,7 @@ impl FlagParser for Opts {
             self.parents = true;
             return Some(ParseFlagResult::ContinueParsing);
         }
-        // Note: Zig has the same `--vebose` typo (mkdir.zig:497).
+        // Note: the `--vebose` typo is intentional (kept for compatibility).
         if flag == b"--vebose" {
             self.verbose = true;
             return Some(ParseFlagResult::ContinueParsing);
@@ -456,5 +471,3 @@ impl FlagParser for Opts {
         }
     }
 }
-
-// ported from: src/shell/builtin/mkdir.zig

@@ -1,5 +1,5 @@
 use crate::mal_prelude::*;
-use bun_collections::VecExt;
+use bun_collections::{VecExt, index_sort};
 use core::cmp::Ordering;
 
 use crate::bundled_ast::Flags as AstFlags;
@@ -10,16 +10,11 @@ use bun_ast::{Part, SlotCounts};
 use crate::bun_renamer as renamer;
 use crate::bun_renamer::{ChunkRenamer, MinifyRenamer, NumberRenamer, StableSymbolCount};
 use crate::chunk::Content;
-use crate::ungate_support::js_meta;
+use crate::js_meta;
 use crate::{Chunk, LinkerContext, StableRef, WrapKind};
 
 /// TODO: investigate if we need to parallelize this function
 /// esbuild does parallelize it.
-// TODO(port): narrow error set
-// TODO(port): bundler is an AST crate (PORTING.md §Allocators) — verify whether caller passes
-// an arena vs default_allocator for the dropped `arena: std.mem.Allocator` param; if arena,
-// thread `bump: &'bump Bump` and switch working Vecs to bun_alloc::ArenaVec<'bump, T>.
-//
 // CONCURRENCY: called from `LinkerContext::generate_js_renamer` (`each_ptr`
 // callback) — runs on worker threads, one task per chunk. Writes go to
 // `chunk.renamer` (per-chunk disjoint) plus per-`source_index` rows of
@@ -27,9 +22,9 @@ use crate::{Chunk, LinkerContext, StableRef, WrapKind};
 // symbol scope assignment). `files_in_order` is the chunk's own file list;
 // without code-splitting, files are partitioned across chunks so per-row
 // writes are disjoint. With code-splitting a `source_index` may appear in
-// multiple chunks — the Zig original has the same overlap; the writes are
+// multiple chunks; the writes are
 // idempotent (`declared_symbols` flag set, scope-member sort) so the race is
-// benign there but is still a Stacked Borrows hazard here. Mitigation: never
+// benign but is still a Stacked Borrows hazard. Mitigation: never
 // materialize `&mut LinkerContext` (would assert whole-context exclusivity
 // across N tasks); take `*mut LinkerContext` raw, deref to `&LinkerContext`
 // for reads, and access SoA columns via `split_raw()` root-provenance
@@ -40,11 +35,11 @@ use crate::{Chunk, LinkerContext, StableRef, WrapKind};
 /// `c` must point to a live `LinkerContext` for the duration of the call;
 /// caller (the `each_ptr` dispatch) guarantees the link step outlives all
 /// renamer tasks.
-pub unsafe fn rename_symbols_in_chunk(
+pub(crate) unsafe fn rename_symbols_in_chunk(
     c: *mut LinkerContext,
     chunk: &mut Chunk,
     files_in_order: &[u32],
-) -> Result<ChunkRenamer, bun_core::Error> {
+) -> Result<ChunkRenamer, crate::Error> {
     let _trace = bun_core::perf::trace("Bundler.renameSymbolsInChunk");
 
     // Derive the `symbols` pointer from the raw `*mut LinkerContext` *before*
@@ -105,8 +100,7 @@ pub unsafe fn rename_symbols_in_chunk(
         )
     };
 
-    // PORT NOTE: `symbol::Map` is not `Clone`/`Copy`; Zig passed the struct
-    // (slice header) by value. Build a non-owning shallow view via
+    // `symbol::Map` is not `Clone`/`Copy`. Build a non-owning shallow view via
     // `from_bump_slice` so the renamer's `Map` does not free graph storage on
     // drop.
     // SAFETY: `c.graph.symbols` outlives the returned `ChunkRenamer` (both are
@@ -152,7 +146,6 @@ pub unsafe fn rename_symbols_in_chunk(
             count += item.len() as u32;
         }
 
-        // PERF(port): Zig pre-set len and filled via slice writes; using push() here
         let mut list: Vec<StableRef> = Vec::with_capacity(count as usize);
         let stable_source_indices = c.graph.stable_source_indices.slice();
         for item in imports_from_other_chunks {
@@ -164,7 +157,7 @@ pub unsafe fn rename_symbols_in_chunk(
             }
         }
 
-        list.sort_unstable_by(|a, b| {
+        index_sort::sort_slice_unstable_by(&mut list, |a, b| {
             if StableRef::is_less_than((), *a, *b) {
                 Ordering::Less
             } else if StableRef::is_less_than((), *b, *a) {
@@ -197,7 +190,6 @@ pub unsafe fn rename_symbols_in_chunk(
         let stable_source_indices = c.graph.stable_source_indices.slice();
         let mut freq = bun_ast::CharFreq { freqs: [0i32; 64] };
 
-        let mut capacity = sorted_imports_from_other_chunks.len();
         for &source_index in files_in_order {
             if ast_flags_col[source_index as usize].contains(AstFlags::HAS_CHAR_FREQ) {
                 freq.include(&char_freq_col[source_index as usize]);
@@ -254,13 +246,12 @@ pub unsafe fn rename_symbols_in_chunk(
             }
 
             top_level_symbols.sort_unstable_by(StableSymbolCount::less_than);
-            capacity += top_level_symbols.len();
             top_level_symbols_all.extend_from_slice(&top_level_symbols);
         }
 
         top_level_symbols.clear();
         for stable_ref in &sorted_imports_from_other_chunks {
-            // PORT NOTE: `StableRef` is `repr(packed)`; copy the field to avoid an unaligned ref.
+            // `StableRef` is `repr(packed)`; copy the field to avoid an unaligned ref.
             let ref_ = { stable_ref.r#ref };
             minify_renamer.accumulate_symbol_use_count(
                 &mut top_level_symbols,
@@ -272,25 +263,42 @@ pub unsafe fn rename_symbols_in_chunk(
         top_level_symbols_all.extend_from_slice(&top_level_symbols);
         minify_renamer.allocate_top_level_symbol_slots(&top_level_symbols_all)?;
 
-        let minifier = freq.compile();
-        minify_renamer.assign_names_by_frequency(&minifier)?;
-
-        let _ = capacity;
+        minify_renamer.name_minifier = Some(freq.compile());
+        // With code splitting, names are assigned (`MinifyRenamer::finish`)
+        // after `assign_cross_chunk_names` has seen every chunk's counts and
+        // pinned the bindings that cross chunks.
+        if !c.graph.code_splitting {
+            minify_renamer.finish()?;
+        }
         return Ok(ChunkRenamer::Minify(minify_renamer));
     }
 
     let mut r = NumberRenamer::init(make_symbols_view(symbols), &reserved_names)?;
+    // Bindings that cross chunks carry one bundle-wide name
+    // (`assign_cross_chunk_names`); everything else is numbered around them.
+    if let Content::Javascript(js) = &chunk.content {
+        for &ref_ in js.exports_to_other_chunks.keys() {
+            if let Some(name) = c.cross_chunk_names.get(&ref_) {
+                r.pin_top_level_symbol(ref_, name);
+            }
+        }
+    }
     for stable_ref in &sorted_imports_from_other_chunks {
-        // PORT NOTE: `StableRef` is `repr(packed)`; copy the field to avoid an unaligned ref.
+        let ref_ = { stable_ref.r#ref };
+        if let Some(name) = c.cross_chunk_names.get(&ref_) {
+            r.pin_top_level_symbol(ref_, name);
+        }
+    }
+    for stable_ref in &sorted_imports_from_other_chunks {
+        // `StableRef` is `repr(packed)`; copy the field to avoid an unaligned ref.
         r.add_top_level_symbol(stable_ref.r#ref);
     }
 
-    // PORT NOTE: Zig used `r.temp_arena` for this list; arena param dropped
     let mut sorted: Vec<u32> = Vec::new();
 
     for &source_index in files_in_order {
         let wrap = all_flags[source_index as usize].wrap;
-        // PORT NOTE: need `&mut [Part]` for `add_top_level_declared_symbols`.
+        // Need `&mut [Part]` for `add_top_level_declared_symbols`.
         let parts: &mut [Part] = all_parts[source_index as usize].as_mut_slice();
 
         match wrap {
@@ -327,13 +335,13 @@ pub unsafe fn rename_symbols_in_chunk(
                                     {
                                         r.add_top_level_symbol(import.namespace_ref);
                                         if let Some(default_name) = &import.default_name {
-                                            if let Some(ref_) = default_name.ref_ {
+                                            if let Some(ref_) = default_name.ref_.to_nullable() {
                                                 r.add_top_level_symbol(ref_);
                                             }
                                         }
 
                                         for item in import.items.slice() {
-                                            if let Some(ref_) = item.name.ref_ {
+                                            if let Some(ref_) = item.name.ref_.to_nullable() {
                                                 r.add_top_level_symbol(ref_);
                                             }
                                         }
@@ -355,7 +363,7 @@ pub unsafe fn rename_symbols_in_chunk(
                                         r.add_top_level_symbol(export_.namespace_ref);
 
                                         for item in export_.items.slice() {
-                                            if let Some(ref_) = item.name.ref_ {
+                                            if let Some(ref_) = item.name.ref_.to_nullable() {
                                                 r.add_top_level_symbol(ref_);
                                             }
                                         }
@@ -366,7 +374,7 @@ pub unsafe fn rename_symbols_in_chunk(
                         }
                     }
                 }
-                // PORT NOTE: reshaped for borrowck — `&mut r.root` while `r` is the
+                // Reshaped for borrowck — `&mut r.root` while `r` is the
                 // `&mut self` receiver. Take a raw pointer; `assign_names_*` does
                 // not touch `self.root` through `self`.
                 let root: *mut renamer::NumberScope = core::ptr::addr_of_mut!(r.root);
@@ -418,16 +426,9 @@ pub unsafe fn rename_symbols_in_chunk(
                     &mut sorted,
                 );
             }
-            // Zig: `@TypeOf(r.number_scope_pool.hive.used).initEmpty()`.
             r.number_scope_pool.hive.used = bun_collections::hive_array::HiveBitSet::init_empty();
         }
     }
 
     Ok(ChunkRenamer::Number(r))
 }
-
-pub use crate::DeferredBatchTask;
-pub use crate::ParseTask;
-pub use crate::ThreadPool;
-
-// ported from: src/bundler/linker_context/renameSymbolsInChunk.zig

@@ -1,7 +1,7 @@
 use bun_collections::VecExt;
 use core::mem;
 
-use bun_collections::{ArrayHashMap, ArrayIdentityContext, MultiArrayList, StringSet};
+use bun_collections::{ArrayHashMap, ArrayIdentityContext, MultiArrayList, StringSet, index_sort};
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_paths::{self as path, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, resolve_path};
@@ -10,19 +10,19 @@ use bun_semver::semver_query::Wildcard;
 use bun_semver::version::VersionInt;
 use bun_semver::{self as semver, ExternalString, String, Version as SemverVersion};
 
-use crate::bun_json::{Expr, ExprData};
+use crate::bun_json::{E, Expr, ExprData};
 use crate::dependency::{Behavior, DependencyExt as _, TagExt as _};
 use crate::repository::RepositoryExt as _;
 use crate::{
     self as install, Aligner, Bin, Dependency, ExternalStringList, ExternalStringMap, Features,
-    Npm, PackageID, PackageJSON, PackageManager, PackageNameHash, Repository,
-    TruncatedPackageNameHash, UpdateRequest, bin, default_trusted_dependencies, dependency,
-    initialize_store, invalid_package_id,
+    Npm, PackageID, PackageManager, PackageNameHash, Repository, TruncatedPackageNameHash,
+    UpdateRequest, bin, default_trusted_dependencies, dependency, initialize_store,
+    invalid_package_id,
 };
 // `Package.rs` is mounted as `crate::lockfile_real::package`; the parent module
 // (`super`) is the real `lockfile.rs`, distinct from the `crate::lockfile`
 // stub that lib.rs exposes for downstream crates during the staged port.
-// PORT NOTE: bare `use super as lockfile;` fails when this file is reached via
+// bare `use super as lockfile;` fails when this file is reached via
 // `#[path]` from a non-module context (rust-lang/rust#48067). Name the parent
 // module by its absolute crate path instead.
 use crate::lockfile_real as lockfile;
@@ -50,10 +50,6 @@ trait ExprStr {
     fn as_utf8<'b>(&self, bump: &'b bun_alloc::Arena) -> Option<&'b [u8]>;
 }
 impl ExprStr for Expr {
-    // Zig `Expr.asString` (expr.zig:477) — transparently transcodes UTF-16
-    // `EString`s. The earlier `is_utf8()` guard returned `None` for keys the
-    // lexer stored as UTF-16 (e.g. `\u`-escaped non-ASCII), tripping the
-    // `expect("unreachable")` callers below.
     #[inline]
     fn as_utf8<'b>(&self, bump: &'b bun_alloc::Arena) -> Option<&'b [u8]> {
         if let ExprData::EString(s) = &self.data {
@@ -63,21 +59,86 @@ impl ExprStr for Expr {
     }
 }
 
-// Zig: `pub fn Package(comptime SemverIntType: type) type { return extern struct { ... } }`
-// Defaulted to `u64` so bare `Package` matches Zig's primary `Package(u64)`
-// instantiation (the only one the lockfile/PM call sites name unqualified).
+enum JsonObjectStringRows<'a> {
+    Classic(
+        core::slice::Iter<'a, bun_ast::G::Property>,
+        &'a bun_alloc::Arena,
+    ),
+    Json(core::slice::Iter<'a, E::PropertyJSON>),
+}
+
+impl<'a> JsonObjectStringRows<'a> {
+    fn new(expr: &'a Expr, bump: &'a bun_alloc::Arena) -> Option<Self> {
+        match &expr.data {
+            ExprData::EObject(obj) => Some(Self::Classic(obj.properties.slice().iter(), bump)),
+            ExprData::EObjectJSON(obj) => Some(Self::Json(obj.get().properties().iter())),
+            _ => None,
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Classic(iter, _) => iter.len(),
+            Self::Json(iter) => iter.len(),
+        }
+    }
+}
+
+impl<'a> Iterator for JsonObjectStringRows<'a> {
+    type Item = (&'a [u8], Option<&'a [u8]>, bun_ast::Loc);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Classic(iter, bump) => {
+                let prop = iter.next()?;
+                let key = prop.key?;
+                let key_bytes = key.as_utf8(*bump)?;
+                Some((
+                    key_bytes,
+                    prop.value.as_ref().and_then(|v| v.as_utf8(*bump)),
+                    key.loc,
+                ))
+            }
+            Self::Json(iter) => {
+                let row = iter.next()?;
+                Some((row.key.slice(), row.value.as_str(), row.key_loc))
+            }
+        }
+    }
+}
+
+pub(crate) fn value_loc_of(source: &bun_ast::Source, key_loc: bun_ast::Loc) -> bun_ast::Loc {
+    crate::bun_json::property_value_loc(&source.contents, key_loc).unwrap_or(key_loc)
+}
+
+#[cold]
+fn invalid_trusted_dependencies(
+    log: &mut bun_ast::Log,
+    source: &bun_ast::Source,
+    loc: bun_ast::Loc,
+) -> crate::Error {
+    let _ = bun_ast::add_error_pretty!(
+        log,
+        source,
+        loc,
+        "trustedDependencies expects an array of strings, e.g.\n  <r><green>\"trustedDependencies\"<r>: [\n    <green>\"package_name\"<r>\n  ]"
+    );
+    crate::Error::InvalidPackageJSON
+}
+
+// `SemverIntType` defaults to `u64`, the only instantiation the lockfile/PM
+// call sites name unqualified.
 //
-// PORT NOTE: `` cannot be used here — the derive
+// `#[derive(MultiArrayElement)]` cannot be used here — the derive
 // emits a `PackageField` enum with snake_case variants and an inherent
 // `__MAL_SIZES` const that fail to const-eval through the defaulted
 // `SemverIntType` param. The trait impl, field enum, and `PackageColumns` /
-// `PackageColumns` accessor traits are therefore expanded by hand below
-// (mirroring Zig's `MultiArrayList(Package).items(.field)`).
+// `PackageColumns` accessor traits are therefore expanded by hand below.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Package<SemverIntType: VersionInt = u64> {
     pub name: String,
-    pub name_hash: PackageNameHash,
+    pub(crate) name_hash: PackageNameHash,
 
     /// How this package has been resolved
     /// When .tag is uninitialized, that means the package is not resolved yet.
@@ -99,9 +160,9 @@ pub struct Package<SemverIntType: VersionInt = u64> {
     ///
     /// By default, the underlying buffer is filled with "invalid_id" to indicate this package ID
     /// was not resolved
-    pub resolutions: PackageIDSlice,
+    pub(crate) resolutions: PackageIDSlice,
 
-    pub meta: Meta,
+    pub(crate) meta: Meta,
     pub bin: Bin,
 
     /// If any of these scripts run, they will run in order:
@@ -111,54 +172,43 @@ pub struct Package<SemverIntType: VersionInt = u64> {
     /// 4. preprepare
     /// 5. prepare
     /// 6. postprepare
-    pub scripts: Scripts,
+    pub(crate) scripts: Scripts,
 }
 
-pub type Resolution<SemverIntType> = ResolutionType<SemverIntType>;
+pub(crate) type Resolution<SemverIntType> = ResolutionType<SemverIntType>;
 
 // ─── ResolverContext ─────────────────────────────────────────────────────────
 //
-// Zig used `comptime ResolverContext: type` for `parse`/`parseWithJSON` and
-// branched on `ResolverContext == void` / `== PackageManager.GitResolver` at
-// comptime. Rust models this as a trait with associated consts; concrete
-// resolvers (folder/cache/git) override what they need. The `()` impl gives
-// the `void` semantics.
+// Trait with associated consts; concrete resolvers (folder/cache/git)
+// override what they need. The `()` impl is the no-op resolver.
 pub trait ResolverContext {
-    /// Zig: `comptime ResolverContext == void`.
     const IS_VOID: bool = false;
-    /// Zig: `comptime ResolverContext == PackageManager.GitResolver`.
     const IS_GIT_RESOLVER: bool = false;
 
-    /// Zig: `ResolverContext.checkBundledDependencies()`.
     fn check_bundled_dependencies() -> bool {
         false
     }
 
-    /// Zig: `resolver.count(builder, json)` — counts strings to be appended by
-    /// `resolve`. Default no-op for void/folder resolvers that don't need it.
+    /// Counts strings to be appended by `resolve`. Default no-op for
+    /// void/folder resolvers that don't need it.
     fn count(&mut self, _builder: &mut StringBuilder<'_>, _json: &Expr) {}
 
-    /// Zig: `resolver.resolve(builder, json)` — produces the package's
-    /// `Resolution`. Only called when `!IS_VOID`.
+    /// Produces the package's `Resolution`. Only called when `!IS_VOID`.
     ///
-    /// No default body: Zig enforced this at comptime (a non-void resolver
-    /// without `resolve` failed to compile). Each concrete resolver supplies
-    /// its own body; `()` returns the zero-value `Resolution` to mirror Zig's
-    /// "void leaves `package.resolution` uninitialized" path.
+    /// No default body: each concrete resolver supplies its own; `()` returns
+    /// the zero-value `Resolution`.
     ///
-    /// Zig threaded `comptime IntType` through `parseWithJSON`, but the only
-    /// instantiation is `u64` (`Package.resolution: ResolutionType<u64>`), so
-    /// the trait method is monomorphic — keeps `CacheFolderResolver::resolve`
+    /// The only instantiation is `u64` (`Package.resolution: ResolutionType<u64>`),
+    /// so the trait method is monomorphic — keeps `CacheFolderResolver::resolve`
     /// free of an identity `transmute`.
     fn resolve(
         &mut self,
         builder: &mut StringBuilder<'_>,
         json: &Expr,
-    ) -> Result<ResolutionType<u64>, bun_core::Error>;
+    ) -> crate::Result<ResolutionType<u64>>;
 
     // ── GitResolver-only surface ────────────────────────────────────────────
-    // Zig accessed `resolver.resolved`, `resolver.new_name`, `resolver.dep_id`
-    // directly when `ResolverContext == GitResolver`. Trait methods so non-git
+    // Trait methods so non-git
     // resolvers don't need the fields; default impls are dead code (gated on
     // `IS_GIT_RESOLVER`). The bodies here are never executed — calls are
     // statically guarded by `if R::IS_GIT_RESOLVER` — so a debug assertion
@@ -195,11 +245,9 @@ impl ResolverContext for () {
         &mut self,
         _builder: &mut StringBuilder<'_>,
         _json: &Expr,
-    ) -> Result<ResolutionType<u64>, bun_core::Error> {
-        // Zig: `if (comptime ResolverContext != void) { … }` — the void
-        // resolver never assigned `package.resolution`, so it kept its
-        // zero-initialized value. The call site still gates on `!IS_VOID`,
-        // but provide the equivalent behavior for trait completeness.
+    ) -> crate::Result<ResolutionType<u64>> {
+        // The call site gates on `!IS_VOID`; return the zero value for
+        // trait completeness.
         Ok(ResolutionType::default())
     }
 }
@@ -216,7 +264,7 @@ impl ResolverContext for () {
 //
 // `count`/`resolve` keep their `StringBuilder<'_>` borrow — lifetimes are
 // permitted on object-safe trait methods, only type generics are not.
-pub(crate) trait ResolverContextDyn {
+trait ResolverContextDyn {
     fn is_void(&self) -> bool;
     fn is_git(&self) -> bool;
     fn check_bundled_dependencies(&self) -> bool;
@@ -226,7 +274,7 @@ pub(crate) trait ResolverContextDyn {
         &mut self,
         builder: &mut StringBuilder<'_>,
         json: &Expr,
-    ) -> Result<ResolutionType<u64>, bun_core::Error>;
+    ) -> crate::Result<ResolutionType<u64>>;
 
     fn resolution(&self) -> &ResolutionType<u64>;
     fn dep_id(&self) -> install::DependencyID;
@@ -258,7 +306,7 @@ impl<R: ResolverContext> ResolverContextDyn for R {
         &mut self,
         builder: &mut StringBuilder<'_>,
         json: &Expr,
-    ) -> Result<ResolutionType<u64>, bun_core::Error> {
+    ) -> crate::Result<ResolutionType<u64>> {
         ResolverContext::resolve(self, builder, json)
     }
 
@@ -291,7 +339,7 @@ impl<R: ResolverContext> ResolverContextDyn for R {
 /// once instead of per-`R`).
 #[inline]
 fn dep_sort_cmp(buf: &[u8], a: &Dependency, b: &Dependency) -> core::cmp::Ordering {
-    // Zig used `std.sort.pdq` with a `<` predicate. `slice::sort_by` requires
+    // `slice::sort_by` requires
     // a total order (and panics since 1.81 when violated), so derive
     // `Ordering::Equal` from the predicate symmetrically.
     if Dependency::is_less_than(buf, a, b) {
@@ -320,7 +368,7 @@ pub(crate) enum PackageField {
 }
 
 impl PackageField {
-    pub(crate) const ALL: [PackageField; 8] = [
+    const ALL: [PackageField; 8] = [
         PackageField::Name,
         PackageField::NameHash,
         PackageField::Resolution,
@@ -400,25 +448,22 @@ impl<SemverIntType: VersionInt> Alphabetizer<SemverIntType> {
 
 impl<SemverIntType: VersionInt> Package<SemverIntType> {
     #[inline]
-    pub fn is_disabled(&self, cpu: Npm::Architecture, os: Npm::OperatingSystem) -> bool {
+    pub(crate) fn is_disabled(&self, cpu: Npm::Architecture, os: Npm::OperatingSystem) -> bool {
         self.meta.is_disabled(cpu, os)
     }
 }
 
-// PORT NOTE: `clone` / `from_package_json` / `from_npm` / `parse*` all interact
+// `clone` / `from_package_json` / `from_npm` / `parse*` all interact
 // with `Lockfile`, whose package list is concretely `MultiArrayList<Package<u64>>`.
-// Zig's `Package(SemverIntType)` is only ever instantiated at `u64` for these
+// `Package<SemverIntType>` is only ever instantiated at `u64` for these
 // paths (the `u32` instantiation is migration-only and routed through
 // `Serializer::load`). Binding the impl to `u64` avoids spurious
 // `Package<SemverIntType>` ≠ `Package<u64>` mismatches at every Lockfile call
 // site.
 impl Package<u64> {
-    pub fn clone(&self, cloner: &mut Cloner) -> Result<PackageID, bun_core::Error> {
-        // TODO(port): narrow error set
-        // PORT NOTE: Zig passes (`pm`, `old`, `new`, `package_id_mapping`,
-        // `cloner`) separately, but `cloner` already owns `&mut` to all four.
-        // Rust borrowck rejects the redundant aliasing at the call site, so
-        // route everything through `cloner`'s disjoint fields here instead.
+    pub(crate) fn clone(&self, cloner: &mut Cloner) -> crate::Result<PackageID> {
+        // `cloner` already owns `&mut` to `pm`, `old`, `new`, and
+        // `package_id_mapping`; route everything through its disjoint fields.
         // `old`/`new`/`mapping` are reborrowed for the whole body (disjoint
         // from `cloner.clone_queue` / `.trees_count` / `.old_preinstall_state`);
         // `manager` is accessed via `cloner.manager` at each use so the borrow
@@ -428,7 +473,7 @@ impl Package<u64> {
         let package_id_mapping = &mut *cloner.mapping;
         let old_string_buf = old.buffers.string_bytes.as_slice();
         let old_extern_string_buf = old.buffers.extern_strings.as_slice();
-        // PORT NOTE: `string_builder!` split-borrows only `new.buffers
+        // `string_builder!` split-borrows only `new.buffers
         // .string_bytes` + `new.string_pool`, leaving sibling buffer fields
         // (`dependencies`, `resolutions`, `extern_strings`, `packages`) free
         // for the disjoint borrows below.
@@ -493,17 +538,14 @@ impl Package<u64> {
         // Default-fill the tail so it is valid before `bin.clone` overwrites
         // it (replaces `reserve` + raw `set_len`).
         bun_core::vec::grow_default(&mut new.buffers.extern_strings, new_extern_string_count);
-        // PORT NOTE: Zig passes both `new.buffers.extern_strings.items` (full slice) and a
-        // tail subslice into `bin.clone`; the full slice is only used to compute the tail's
-        // offset for `ExternalStringList::init`. In Rust those two views would alias, so
-        // `Bin::clone_with_buffers` takes the precomputed offset directly.
+        // Passing both the full `extern_strings` slice and a tail subslice into
+        // `bin.clone` would alias, so `Bin::clone_with_buffers` takes the
+        // precomputed tail offset directly.
         let new_extern_strings_start = new.buffers.extern_strings.len() - new_extern_string_count;
 
         let id = new.packages.len() as PackageID;
 
-        // PORT NOTE: Zig calls `appendPackageWithID` mid-body while still
-        // holding live slices into `new.buffers` and the `builder`. Rust can't
-        // express that (the method borrows `&mut Lockfile` whole), so build the
+        // `appendPackageWithID` borrows `&mut Lockfile` whole, so build the
         // `Package` value and clone the dependency strings *first* (only needs
         // disjoint buffer fields), drop the builder, then append, then write
         // resolutions. `appendPackageWithID` touches `packages` /
@@ -544,7 +586,7 @@ impl Package<u64> {
         // defend here as well since an error returned from `clean_with_logger`
         // is not recoverable — it aborts the install instead of re-resolving.
         if self.meta.id as usize >= package_id_mapping.len() {
-            return Err(bun_core::err!("InvalidLockfile"));
+            return Err(crate::Error::InvalidLockfile);
         }
         package_id_mapping[self.meta.id as usize] = new_package.meta.id;
 
@@ -558,6 +600,7 @@ impl Package<u64> {
         let resolutions: &mut [PackageID] =
             &mut new.buffers.resolutions[prev_len as usize..end as usize];
         debug_assert_eq!(old_resolutions.len(), resolutions.len());
+        debug_assert_eq!(old_dependencies.len(), resolutions.len());
         for (i, (old_resolution, resolution)) in old_resolutions
             .iter()
             .zip(resolutions.iter_mut())
@@ -568,137 +611,30 @@ impl Package<u64> {
                 continue;
             }
 
+            let pending = PendingResolution {
+                old_resolution: *old_resolution,
+                resolve_id: new_package.resolutions.off + PackageID::try_from(i).expect("int cast"),
+            };
+
+            // Peer slots must not keep their target alive; bound in `Cloner::flush`.
+            if old_dependencies[i].behavior.is_optional_peer() && !cloner.keep_optional_peer_targets
+            {
+                cloner.optional_peers.push(pending);
+                continue;
+            }
+
             let mapped = package_id_mapping[*old_resolution as usize];
             if mapped < max_package_id {
                 *resolution = mapped;
             } else {
-                cloner.clone_queue.push(PendingResolution {
-                    old_resolution: *old_resolution,
-                    parent: new_package.meta.id,
-                    resolve_id: new_package.resolutions.off
-                        + PackageID::try_from(i).expect("int cast"),
-                });
+                cloner.clone_queue.push(pending);
             }
         }
 
         Ok(new_package.meta.id)
     }
 
-    pub fn from_package_json(
-        lockfile: &mut Lockfile,
-        pm: &mut PackageManager,
-        package_json: &mut PackageJSON,
-        features: Features,
-    ) -> Result<Self, bun_core::Error> {
-        #[allow(non_snake_case)]
-        let FEATURES = features;
-        // TODO(port): narrow error set
-        let mut package = Self::default();
-
-        // var string_buf = package_json;
-
-        // PORT NOTE: split-borrow `string_bytes`/`string_pool` so the disjoint
-        // `lockfile.buffers.dependencies/resolutions` borrows below pass.
-        let mut string_builder = crate::string_builder!(lockfile);
-
-        let mut total_dependencies_count: u32 = 0;
-        // var bin_extern_strings_count: u32 = 0;
-
-        // --- Counting
-        {
-            string_builder.count(&package_json.name);
-            string_builder.count(&package_json.version);
-            let dependencies = package_json.dependencies.map.values();
-            for dep in dependencies {
-                if dep.behavior.is_enabled(FEATURES) {
-                    dep.count(package_json.dependencies.source_buf, &mut string_builder);
-                    total_dependencies_count += 1;
-                }
-            }
-        }
-
-        // string_builder.count(manifest.str(&package_version_ptr.tarball_url));
-
-        string_builder.allocate()?;
-        // defer string_builder.clamp(); — handled at end of scope below
-        // var extern_strings_list = &lockfile.buffers.extern_strings;
-        let dependencies_list = &mut lockfile.buffers.dependencies;
-        let resolutions_list = &mut lockfile.buffers.resolutions;
-        dependencies_list.reserve(total_dependencies_count as usize);
-        resolutions_list.reserve(total_dependencies_count as usize);
-        // try extern_strings_list.ensureUnusedCapacity(lockfile.allocator, bin_extern_strings_count);
-        // extern_strings_list.items.len += bin_extern_strings_count;
-
-        // -- Cloning
-        {
-            let package_name: ExternalString =
-                string_builder.append::<ExternalString>(&package_json.name);
-            package.name_hash = package_name.hash;
-            package.name = package_name.value;
-
-            package.resolution = Resolution::<u64>::init(TaggedValue::Root);
-
-            let total_len = dependencies_list.len() + total_dependencies_count as usize;
-            if cfg!(debug_assertions) {
-                debug_assert!(dependencies_list.len() == resolutions_list.len());
-            }
-
-            let dep_start = dependencies_list.len();
-            // Zig: `@memset(items.ptr[len..total_len], .{})` then bump `.items.len`.
-            bun_core::vec::extend_from_fn(
-                dependencies_list,
-                total_dependencies_count as usize,
-                |_| Dependency::default(),
-            );
-            debug_assert_eq!(dependencies_list.len(), total_len);
-            let mut dependencies: &mut [Dependency] = &mut dependencies_list[dep_start..total_len];
-
-            let package_dependencies = package_json.dependencies.map.values();
-            let source_buf = package_json.dependencies.source_buf;
-            for dep in package_dependencies {
-                if !dep.behavior.is_enabled(FEATURES) {
-                    continue;
-                }
-
-                dependencies[0] = dep.clone_in(pm, source_buf, &mut string_builder)?;
-                dependencies = &mut dependencies[1..];
-                if dependencies.is_empty() {
-                    break;
-                }
-            }
-
-            // We lose the bin info here
-            // package.bin = package_version.bin.clone(string_buf, manifest.extern_strings_bin_entries, extern_strings_list.items, extern_strings_slice, @TypeOf(&string_builder), &string_builder);
-            // and the integriy hash
-            // package.meta.integrity = package_version.integrity;
-
-            package.meta.arch = package_json.arch;
-            package.meta.os = package_json.os;
-
-            package.dependencies.off = dep_start as u32;
-            package.dependencies.len = total_dependencies_count - (dependencies.len() as u32);
-            package.resolutions.off = package.dependencies.off;
-            package.resolutions.len = package.dependencies.len;
-
-            let new_length = package.dependencies.len as usize + dep_start;
-
-            debug_assert_eq!(resolutions_list.len(), dep_start);
-            bun_core::vec::extend_from_fn(
-                resolutions_list,
-                package.dependencies.len as usize,
-                |_| invalid_package_id,
-            );
-            debug_assert_eq!(resolutions_list.len(), new_length);
-
-            // Shrink off the unused default-initialized tail (`new_length <= total_len`).
-            dependencies_list.truncate(new_length);
-
-            string_builder.clamp();
-            return Ok(package);
-        }
-    }
-
-    pub fn from_npm(
+    pub(crate) fn from_npm(
         pm: &mut PackageManager,
         lockfile: &mut Lockfile,
         log: &mut bun_ast::Log,
@@ -706,15 +642,13 @@ impl Package<u64> {
         version: SemverVersion,
         package_version_ptr: &Npm::PackageVersion,
         features: Features,
-    ) -> Result<Self, bun_core::Error> {
+    ) -> crate::Result<Self> {
         #[allow(non_snake_case)]
         let FEATURES = features;
-        // TODO(port): narrow error set
         let mut package = Self::default();
 
         let package_version = *package_version_ptr;
 
-        // PERF(port): was comptime-computed array — profile if hot.
         let dependency_groups: &[DependencyGroup] = &{
             let mut out: Vec<DependencyGroup> = Vec::with_capacity(4);
             if FEATURES.dependencies {
@@ -732,7 +666,7 @@ impl Package<u64> {
             out
         };
 
-        // PORT NOTE: split-borrow so `lockfile.buffers.dependencies/resolutions
+        // split-borrow so `lockfile.buffers.dependencies/resolutions
         // /extern_strings` below are disjoint from the builder's `string_bytes`.
         let mut string_builder = crate::string_builder!(lockfile);
 
@@ -744,18 +678,13 @@ impl Package<u64> {
             string_builder.count(manifest.name());
             version.count(&manifest.string_buf, &mut string_builder);
 
-            // PERF(port): was `inline for` — profile if hot.
             for group in dependency_groups {
-                // Zig uses `@field(package_version, group.field)` reflection;
-                // ported as `PackageVersion::dep_group(field) -> ExternalStringMap`.
                 let map: ExternalStringMap = package_version.dep_group(group.field);
                 let keys = map.name.get(&manifest.external_strings);
                 let version_strings = map.value.get(&manifest.external_strings_for_versions);
                 total_dependencies_count += map.value.len;
 
-                if cfg!(debug_assertions) {
-                    debug_assert!(keys.len() == version_strings.len());
-                }
+                debug_assert!(keys.len() == version_strings.len());
 
                 debug_assert_eq!(keys.len(), version_strings.len());
                 for (key, ver) in keys.iter().zip(version_strings.iter()) {
@@ -774,7 +703,6 @@ impl Package<u64> {
         string_builder.count(manifest.str(&package_version_ptr.tarball_url));
 
         string_builder.allocate()?;
-        // defer string_builder.clamp(); — handled at end of scope
         let extern_strings_list = &mut lockfile.buffers.extern_strings;
         let dependencies_list = &mut lockfile.buffers.dependencies;
         let resolutions_list = &mut lockfile.buffers.resolutions;
@@ -800,12 +728,9 @@ impl Package<u64> {
                 }));
 
             let total_len = dependencies_list.len() + total_dependencies_count as usize;
-            if cfg!(debug_assertions) {
-                debug_assert!(dependencies_list.len() == resolutions_list.len());
-            }
+            debug_assert!(dependencies_list.len() == resolutions_list.len());
 
             let dep_start = dependencies_list.len();
-            // Zig: `@memset(items.ptr[len..total_len], .{})` then bump `.items.len`.
             bun_core::vec::extend_from_fn(
                 dependencies_list,
                 total_dependencies_count as usize,
@@ -815,16 +740,12 @@ impl Package<u64> {
             let dependencies = &mut dependencies_list[dep_start..total_len];
 
             total_dependencies_count = 0;
-            // PERF(port): was `inline for` — profile if hot.
             for group in dependency_groups {
-                // TODO(port): @field reflection — see note above
                 let map: ExternalStringMap = package_version.dep_group(group.field);
                 let keys = map.name.get(&manifest.external_strings);
                 let version_strings = map.value.get(&manifest.external_strings_for_versions);
 
-                if cfg!(debug_assertions) {
-                    debug_assert!(keys.len() == version_strings.len());
-                }
+                debug_assert!(keys.len() == version_strings.len());
                 let is_peer = group.field == b"peer_dependencies";
 
                 debug_assert_eq!(keys.len(), version_strings.len());
@@ -886,7 +807,7 @@ impl Package<u64> {
                         }
                     }
 
-                    let dependency = Dependency {
+                    let mut dependency = Dependency {
                         name: name.value,
                         name_hash: name.hash,
                         behavior,
@@ -900,6 +821,7 @@ impl Package<u64> {
                         )
                         .unwrap_or_default(),
                     };
+                    lockfile::CatalogMap::strip_reference(&mut dependency);
 
                     // If a dependency appears in both "dependencies" and "optionalDependencies", it is considered optional!
                     if group.behavior.is_optional() {
@@ -980,41 +902,58 @@ pub struct AddedTrustedDependency {
     /// Whether this dependency should be added to lockfile trusted
     /// dependencies. It is false when the new trusted dependency is coming
     /// from the default list.
-    pub add_to_lockfile: bool,
-    pub name: Box<[u8]>,
+    pub(crate) add_to_lockfile: bool,
+    pub(crate) name: Box<[u8]>,
 }
 
 #[derive(Default)]
 pub struct DiffSummary {
-    pub add: u32,
-    pub remove: u32,
-    pub update: u32,
-    pub overrides_changed: bool,
-    pub catalogs_changed: bool,
+    pub(crate) add: u32,
+    pub(crate) remove: u32,
+    pub(crate) update: u32,
+    pub(crate) script_only_updates: u32,
+    pub(crate) overrides_changed: bool,
+    pub(crate) catalogs_changed: bool,
 
-    pub added_trusted_dependencies:
+    pub(crate) added_trusted_dependencies:
         ArrayHashMap<TruncatedPackageNameHash, AddedTrustedDependency, ArrayIdentityContext>,
-    pub removed_trusted_dependencies: TrustedDependenciesSet,
+    pub(crate) removed_trusted_dependencies: TrustedDependenciesSet,
 
-    pub patched_dependencies_changed: bool,
+    pub(crate) patched_dependencies_changed: bool,
+
+    pub(crate) pruned_workspaces: Vec<PackageNameHash>,
 }
 
 impl DiffSummary {
     #[inline]
-    pub(crate) fn has_diffs(&self) -> bool {
+    pub(crate) fn changes_resolutions(&self) -> bool {
         self.add > 0
             || self.remove > 0
             || self.update > 0
             || self.overrides_changed
             || self.catalogs_changed
+    }
+
+    #[inline]
+    pub(crate) fn has_diffs(&self) -> bool {
+        self.changes_resolutions()
             || self.added_trusted_dependencies.count() > 0
             || self.removed_trusted_dependencies.count() > 0
             || self.patched_dependencies_changed
     }
+
+    #[inline]
+    pub(crate) fn changes_dependencies(&self) -> bool {
+        self.add > 0
+            || self.remove > 0
+            || self.overrides_changed
+            || self.catalogs_changed
+            || self.update > self.script_only_updates
+    }
 }
 
 impl Diff {
-    // PORT NOTE: Zig's `Package` here is the canonical `Package(u64)` (the only
+    // `Package` here is the canonical `Package<u64>` (the only
     // instantiation `Lockfile` ever holds). Dropping the generic avoids a
     // spurious `Package<I>` ≠ `Package<u64>` mismatch on the recursive call
     // through `from_lockfile.packages.get(...)`.
@@ -1026,14 +965,48 @@ impl Diff {
         from: &Package,
         to: &Package,
         update_requests: Option<&[UpdateRequest]>,
+        id_mapping: Option<&mut [PackageID]>,
+    ) -> crate::Result<DiffSummary> {
+        let mut removed_names: Vec<PackageNameHash> = Vec::new();
+        Self::generate_inner(
+            pm,
+            log,
+            from_lockfile,
+            to_lockfile,
+            from,
+            to,
+            update_requests,
+            id_mapping,
+            &mut removed_names,
+        )
+    }
+
+    // The root summary's `remove` is the count of distinct names removed across root + workspaces.
+    fn generate_inner(
+        pm: &mut PackageManager,
+        log: &mut bun_ast::Log,
+        from_lockfile: &mut Lockfile,
+        to_lockfile: &mut Lockfile,
+        from: &Package,
+        to: &Package,
+        update_requests: Option<&[UpdateRequest]>,
         mut id_mapping: Option<&mut [PackageID]>,
-    ) -> Result<DiffSummary, bun_core::Error> {
-        // TODO(port): narrow error set
+        removed_names: &mut Vec<PackageNameHash>,
+    ) -> crate::Result<DiffSummary> {
         let mut summary = DiffSummary::default();
         let is_root = id_mapping.is_some();
-        // PORT NOTE: Zig held `to_deps` as a mutable slice binding and reassigned
-        // it after `parseWithJSON` (which may grow `to_lockfile.buffers
-        // .dependencies` and invalidate the old slice). Mirror that with raw fat
+        let named_update_here = match update_requests {
+            Some(updates) if !updates.is_empty() => crate::update_scope::UpdateScope::of(&*pm)
+                .contains_workspace(
+                    from.resolution.tag == ResolutionTag::Root,
+                    from.name_hash,
+                    from.name
+                        .slice(from_lockfile.buffers.string_bytes.as_slice()),
+                ),
+            _ => true,
+        };
+        // `parseWithJSON` may grow `to_lockfile.buffers.dependencies` and
+        // invalidate the old slice, so `to_deps` is re-derived after it. Held as raw fat
         // pointers so the `&mut to_lockfile`/`&mut from_lockfile` reborrows below
         // (sort, recursive `generate`) don't conflict with these read views; the
         // recursive call only sorts `overrides`/`catalogs` and never reallocates
@@ -1056,76 +1029,62 @@ impl Diff {
             .resolutions
             .get(from_lockfile.buffers.resolutions.as_slice())
             .into();
-        // See PORT NOTE above — `from_lockfile.buffers` is not reallocated for
+        // See note above — `from_lockfile.buffers` is not reallocated for
         // the lifetime of these references.
         let (from_deps, from_resolutions) = (from_deps.slice(), from_resolutions.slice());
         let mut to_i: usize = 0;
 
-        if from_lockfile.overrides.map.count() != to_lockfile.overrides.map.count() {
+        if lockfile::OverrideMap::changed(
+            &mut from_lockfile.overrides,
+            from_lockfile.buffers.string_bytes.as_slice(),
+            &mut to_lockfile.overrides,
+            to_lockfile.buffers.string_bytes.as_slice(),
+        ) {
             summary.overrides_changed = true;
 
             if PackageManager::verbose_install() {
-                Output::pretty_errorln(format_args!("Overrides changed since last install"));
-            }
-        } else {
-            // PORT NOTE: reshaped for borrowck — Zig passed `from_lockfile`
-            // twice (once as `&mut self` via `.overrides`, once as `lockfile`).
-            // `OverrideMap::sort` only reads `lockfile.buffers.string_bytes`,
-            // so split the borrow at the field.
-            lockfile::OverrideMap::sort(
-                &mut from_lockfile.overrides,
-                from_lockfile.buffers.string_bytes.as_slice(),
-            );
-            lockfile::OverrideMap::sort(
-                &mut to_lockfile.overrides,
-                to_lockfile.buffers.string_bytes.as_slice(),
-            );
-            debug_assert_eq!(
-                from_lockfile.overrides.map.keys().len(),
-                to_lockfile.overrides.map.keys().len()
-            );
-            for (((from_k, from_override), to_k), to_override) in from_lockfile
-                .overrides
-                .map
-                .keys()
-                .iter()
-                .zip(from_lockfile.overrides.map.values())
-                .zip(to_lockfile.overrides.map.keys())
-                .zip(to_lockfile.overrides.map.values())
-            {
-                if (from_k != to_k)
-                    || (!Dependency::eql(
-                        from_override,
-                        to_override,
-                        from_lockfile.buffers.string_bytes.as_slice(),
-                        to_lockfile.buffers.string_bytes.as_slice(),
-                    ))
-                {
-                    summary.overrides_changed = true;
-                    if PackageManager::verbose_install() {
-                        Output::pretty_errorln(format_args!(
-                            "Overrides changed since last install"
-                        ));
-                    }
-                    break;
-                }
+                bun_core::pretty_errorln!("Overrides changed since last install");
             }
         }
 
+        let mut catalog_entries_skipped: Vec<Box<[u8]>> = Vec::new();
         if is_root {
+            let tolerate_catalog_subset = pm.options.enable.frozen_lockfile();
             'catalogs: {
                 // don't sort if lengths are different
                 if from_lockfile.catalogs.default.count() != to_lockfile.catalogs.default.count() {
-                    summary.catalogs_changed = true;
+                    match tolerate_catalog_subset
+                        .then(|| {
+                            lockfile::pruned_workspaces::catalog_entries_missing_from_lockfile(
+                                &*from_lockfile,
+                                &*to_lockfile,
+                            )
+                        })
+                        .flatten()
+                    {
+                        Some(skipped) => catalog_entries_skipped = skipped,
+                        None => summary.catalogs_changed = true,
+                    }
                     break 'catalogs;
                 }
 
                 if from_lockfile.catalogs.groups.count() != to_lockfile.catalogs.groups.count() {
-                    summary.catalogs_changed = true;
+                    match tolerate_catalog_subset
+                        .then(|| {
+                            lockfile::pruned_workspaces::catalog_entries_missing_from_lockfile(
+                                &*from_lockfile,
+                                &*to_lockfile,
+                            )
+                        })
+                        .flatten()
+                    {
+                        Some(skipped) => catalog_entries_skipped = skipped,
+                        None => summary.catalogs_changed = true,
+                    }
                     break 'catalogs;
                 }
 
-                // PORT NOTE: reshaped for borrowck — see `overrides.sort` note above.
+                // Reshaped for borrowck — see `overrides.sort` note above.
                 lockfile::CatalogMap::sort(&mut from_lockfile.catalogs, &from_lockfile.buffers);
                 lockfile::CatalogMap::sort(&mut to_lockfile.catalogs, &to_lockfile.buffers);
 
@@ -1180,7 +1139,18 @@ impl Diff {
                     }
 
                     if from_catalog_deps.count() != to_catalog_deps.count() {
-                        summary.catalogs_changed = true;
+                        match tolerate_catalog_subset
+                            .then(|| {
+                                lockfile::pruned_workspaces::catalog_entries_missing_from_lockfile(
+                                    &*from_lockfile,
+                                    &*to_lockfile,
+                                )
+                            })
+                            .flatten()
+                        {
+                            Some(skipped) => catalog_entries_skipped = skipped,
+                            None => summary.catalogs_changed = true,
+                        }
                         break 'catalogs;
                     }
 
@@ -1240,20 +1210,20 @@ impl Diff {
 
             // 2
             if let (Some(from_trusted_dependencies), Some(to_trusted_dependencies)) = (
-                from_lockfile.trusted_dependencies.as_ref(),
+                from_lockfile.trusted_dependencies.as_mut(),
                 to_lockfile.trusted_dependencies.as_ref(),
             ) {
                 // added
                 for (&to_trusted, to_name) in to_trusted_dependencies.iter() {
                     // Empty name = legacy bun.lockb hash-only sentinel.
-                    let already_trusted =
-                        from_trusted_dependencies
-                            .get(&to_trusted)
-                            .is_some_and(|from_name| {
-                                from_name.is_empty()
-                                    || to_name.is_empty()
-                                    || **from_name == **to_name
-                            });
+                    let already_trusted = from_trusted_dependencies
+                        .get_mut(&to_trusted)
+                        .is_some_and(|from_name| {
+                            if from_name.is_empty() && !to_name.is_empty() {
+                                from_name.clone_from(to_name);
+                            }
+                            from_name.is_empty() || to_name.is_empty() || **from_name == **to_name
+                        });
                     if !already_trusted {
                         summary.added_trusted_dependencies.put(
                             to_trusted,
@@ -1376,6 +1346,8 @@ impl Diff {
             false
         };
 
+        let mut missing_workspaces: Vec<PackageID> = Vec::new();
+        let mut survivors: Vec<(String, DependencySlice)> = Vec::new();
         for (i, from_dep) in from_deps.iter().enumerate() {
             let found = 'found: {
                 let prev_i = to_i;
@@ -1419,13 +1391,30 @@ impl Diff {
             };
 
             if !found {
-                // We found a removed dependency!
-                // We don't need to remove it
-                // It will be cleaned up later
+                if is_root
+                    && from_dep.behavior.is_workspace()
+                    && lockfile::pruned_workspaces::workspace_is_missing_on_disk(
+                        &*from_lockfile,
+                        from_dep.name_hash,
+                    )
+                {
+                    if (from_resolutions[i] as usize) < from_lockfile.packages.len() {
+                        missing_workspaces.push(from_resolutions[i]);
+                    }
+                    if pm.options.enable.frozen_lockfile()
+                        && !summary.overrides_changed
+                        && !summary.catalogs_changed
+                    {
+                        summary.pruned_workspaces.push(from_dep.name_hash);
+                        continue;
+                    }
+                }
                 summary.remove += 1;
+                if !removed_names.contains(&from_dep.name_hash) {
+                    removed_names.push(from_dep.name_hash);
+                }
                 continue;
             }
-            // defer to_i += 1; — applied at end of iteration body
             let cur_to_i = to_i;
             to_i += 1;
 
@@ -1437,14 +1426,13 @@ impl Diff {
             ) {
                 if let Some(updates) = update_requests {
                     if updates.is_empty()
-                        || 'brk: {
-                            for request in updates {
-                                if from_dep.name_hash == request.name_hash {
-                                    break 'brk true;
-                                }
-                            }
-                            false
-                        }
+                        || (named_update_here
+                            && pm.is_update_request(
+                                from_dep.name_hash,
+                                from_dep
+                                    .name
+                                    .slice(from_lockfile.buffers.string_bytes.as_slice()),
+                            ))
                     {
                         // Listed as to be updated
                         summary.update += 1;
@@ -1453,6 +1441,7 @@ impl Diff {
                 }
 
                 if let Some(mapping) = id_mapping.as_deref_mut() {
+                    let mut workspace_hooks_only = false;
                     let update_mapping = 'update_mapping: {
                         if !is_root || !from_dep.behavior.is_workspace() {
                             break 'update_mapping true;
@@ -1467,15 +1456,13 @@ impl Diff {
                         };
 
                         let mut package_json_path: AutoAbsPath = AutoAbsPath::init_top_level_dir();
-                        // defer package_json_path.deinit(); — Drop handles it
 
-                        // OOM/capacity: Zig aborts; port keeps fire-and-forget
                         let _ = package_json_path.append(
                             workspace_path.slice(to_lockfile.buffers.string_bytes.as_slice()),
                         );
-                        let _ = package_json_path.append(b"package.json"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                        let _ = package_json_path.append(b"package.json");
 
-                        // PORT NOTE: `bun.sys.File.toSource` was removed from
+                        // `bun.sys.File.toSource` was removed from
                         // T1 (`bun_sys`) because `bun_ast::Source` lives in T2.
                         // Route through the workspace cache's path-based getter
                         // instead, which both reads and parses.
@@ -1515,14 +1502,15 @@ impl Diff {
                         )?;
 
                         // `parse_with_json` may have grown `to_lockfile.buffers
-                        // .dependencies` — re-derive the slice (Zig did the same).
+                        // .dependencies` — re-derive the slice.
                         to_deps = to
                             .dependencies
                             .get(to_lockfile.buffers.dependencies.as_slice())
                             .into();
+                        survivors.push((workspace_pkg.name, workspace_pkg.dependencies));
 
                         let from_pkg = from_lockfile.packages.get(from_resolutions[i] as usize);
-                        let diff = Self::generate(
+                        let diff = Self::generate_inner(
                             pm,
                             log,
                             from_lockfile,
@@ -1531,12 +1519,13 @@ impl Diff {
                             &workspace_pkg,
                             update_requests,
                             None,
+                            removed_names,
                         )?;
 
                         if pm.options.log_level.is_verbose()
                             && (diff.add + diff.remove + diff.update) > 0
                         {
-                            Output::pretty_errorln(format_args!(
+                            bun_core::pretty_errorln!(
                                 "Workspace package \"{}\" has added <green>{}<r> dependencies, removed <red>{}<r> dependencies, and updated <cyan>{}<r> dependencies",
                                 bstr::BStr::new(
                                     workspace_path
@@ -1545,41 +1534,33 @@ impl Diff {
                                 diff.add,
                                 diff.remove,
                                 diff.update,
-                            ));
+                            );
                         }
 
-                        !diff.has_diffs()
+                        workspace_hooks_only = !diff.changes_dependencies();
+                        !diff.changes_resolutions()
                     };
 
                     if update_mapping {
                         mapping[cur_to_i] = i as PackageID;
                         continue;
                     }
+                    if workspace_hooks_only {
+                        summary.script_only_updates += 1;
+                    }
                 } else {
                     continue;
                 }
             }
 
-            // We found a changed dependency!
-            //
-            // If only the *version literal* changed and the previously-resolved
-            // package still satisfies the new range, keep the existing
-            // resolution. Otherwise widening a range (e.g. `"4.0.0"` → `"*"`)
-            // re-resolves to latest on the next `bun add <unrelated>`, which
-            // surprises migrations from npm/pnpm lockfiles whose package.json
-            // range diverged from the locked version. This matches npm's
-            // sticky-lockfile behaviour and lets `Lockfile::get_package_id`
-            // apply its order-independence guard without overriding a locked
-            // pin.
-            //
-            // Skipped when the dependency is an explicit update target
-            // (`bun update <pkg>` or bare `bun update`): the user is asking
-            // for a fresh resolve and the old resolution must not be
-            // preserved. Same gate as the `Dependency::eql == true` branch
-            // above.
+            // Changed literal: keep the locked resolution while it still satisfies the new range (npm's sticky rule), unless this row is being updated.
             let is_explicit_update_target = matches!(update_requests, Some(updates)
-                if updates.is_empty()
-                    || updates.iter().any(|r| r.name_hash == from_dep.name_hash));
+            if updates.is_empty()
+                || (named_update_here
+                    && pm.is_update_request(
+                        from_dep.name_hash,
+                        from_dep.name.slice(from_lockfile.buffers.string_bytes.as_slice()),
+                    )));
             if !is_explicit_update_target {
                 if let Some(mapping) = id_mapping.as_deref_mut() {
                     let from_res_id = from_resolutions[i];
@@ -1609,13 +1590,58 @@ impl Diff {
         // Use saturating arithmetic here because a migrated
         // package-lock.json could be out of sync with the package.json, so the
         // number of from_deps could be greater than to_deps.
-        summary.add = (to_deps!()
-            .len()
-            .saturating_sub(from_deps.len().saturating_sub(summary.remove as usize)))
-            as u32;
+        summary.add = (to_deps!().len().saturating_sub(
+            from_deps
+                .len()
+                .saturating_sub(summary.remove as usize + summary.pruned_workspaces.len()),
+        )) as u32;
+        if is_root {
+            summary.remove = removed_names.len() as u32;
+        }
+
+        if !missing_workspaces.is_empty() {
+            lockfile::pruned_workspaces::exit_if_survivor_depends_on_missing(
+                &*from_lockfile,
+                &missing_workspaces,
+                &*to_lockfile,
+                to.dependencies,
+                &survivors,
+                pm.options.log_level.is_silent(),
+            );
+        }
+
+        if !summary.pruned_workspaces.is_empty() && !pm.options.log_level.is_silent() {
+            let count = summary.pruned_workspaces.len();
+            let from_buf = from_lockfile.buffers.string_bytes.as_slice();
+            bun_core::note!(
+                "skipped {} workspace{} listed in bun.lock but not on disk: {}",
+                count,
+                if count == 1 { "" } else { "s" },
+                lockfile::pruned_workspaces::quoted_names(
+                    &mut from_deps
+                        .iter()
+                        .filter(|dep| {
+                            dep.behavior.is_workspace()
+                                && summary.pruned_workspaces.contains(&dep.name_hash)
+                        })
+                        .map(|dep| dep.name.slice(from_buf)),
+                ),
+            );
+        }
+
+        if !catalog_entries_skipped.is_empty() && !pm.options.log_level.is_silent() {
+            let count = catalog_entries_skipped.len();
+            bun_core::note!(
+                "skipped {} catalog entr{} not in bun.lock (unused by the workspaces on disk): {}",
+                count,
+                if count == 1 { "y" } else { "ies" },
+                lockfile::pruned_workspaces::quoted_names(
+                    &mut catalog_entries_skipped.iter().map(|name| &**name),
+                ),
+            );
+        }
 
         if from.resolution.tag != ResolutionTag::Root {
-            // PERF(port): was `inline for` over Lockfile.Scripts.names — profile if hot.
             for (to_hook, from_hook) in to.scripts.hooks().iter().zip(from.scripts.hooks().iter()) {
                 if !String::eql(
                     **to_hook,
@@ -1625,6 +1651,7 @@ impl Diff {
                 ) {
                     // We found a changed life-cycle script
                     summary.update += 1;
+                    summary.script_only_updates += 1;
                 }
             }
         }
@@ -1634,19 +1661,6 @@ impl Diff {
 }
 
 impl Package<u64> {
-    pub fn hash(name: &[u8], version: SemverVersion) -> u64 {
-        let mut hasher = bun_wyhash::Wyhash::init(0);
-        hasher.update(name);
-        // SAFETY: Semver.Version is POD; reading its raw bytes is sound.
-        hasher.update(unsafe {
-            bun_core::ffi::slice(
-                (&raw const version).cast::<u8>(),
-                mem::size_of::<SemverVersion>(),
-            )
-        });
-        hasher.final_()
-    }
-
     pub fn parse<R: ResolverContext>(
         &mut self,
         lockfile: &mut Lockfile,
@@ -1655,47 +1669,41 @@ impl Package<u64> {
         source: &bun_ast::Source,
         resolver: &mut R,
         features: Features,
-    ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> crate::Result<()> {
         initialize_store();
-        // Zig threaded `lockfile.allocator` for the JSON arena. The returned
-        // `Expr` tree only needs to live until `parse_with_json` finishes, so
-        // a function-local arena is sufficient (matches Scripts.rs / lockfile.rs
-        // call sites) and avoids leaking.
-        let bump = bun_alloc::Arena::new();
-        let json = match crate::bun_json::parse_package_json_utf8(source, log, &bump) {
-            Ok(j) => j,
+        let parsed = match crate::bun_json::ParsedJson::parse_package_json(source, log) {
+            Ok(p) => p,
             Err(err) => {
                 let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
                     err.name(),
                     bstr::BStr::new(source.path.pretty_dir()),
-                ));
+                );
                 Global::crash();
             }
         };
 
-        self.parse_with_json::<R>(lockfile, pm, log, source, json, resolver, features)
+        self.parse_with_json::<R>(lockfile, pm, log, source, parsed.root, resolver, features)
     }
 
     /// Borrow-splitting bridge for `PackageManager` callers
-    /// (`processDependencyList`, `folder_resolver`). Zig passes
-    /// `manager.lockfile`, `manager`, `manager.log` as three separate args;
-    /// Rust borrowck rejects the overlap on `&mut self`, so split via raw
+    /// (`processDependencyList`, `folder_resolver`). Borrowck rejects passing
+    /// `manager.lockfile`, `manager`, `manager.log` as three separate args
+    /// overlapping `&mut self`, so split via raw
     /// pointer here once instead of at every call site.
     ///
     /// # Safety
     /// `manager` must point to a live `PackageManager` for the duration of the
     /// call, and its `lockfile` / `log` fields must point to live allocations
     /// disjoint from `*manager` itself.
-    pub unsafe fn parse_from_real_manager<R: ResolverContext>(
+    pub(crate) unsafe fn parse_from_real_manager<R: ResolverContext>(
         &mut self,
         manager: *mut crate::package_manager_real::PackageManager,
         source: &bun_ast::Source,
         resolver: &mut R,
         features: Features,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         // SAFETY: `manager` points to a live `PackageManager` for the duration
         // of this call (caller passes `self as *mut _`); `lockfile` and `log`
         // are disjoint fields, and `parse_with_json` only reaches `manager`
@@ -1709,10 +1717,7 @@ impl Package<u64> {
         self.parse(lockfile, pm, log, source, resolver, features)
     }
 
-    // Zig: `comptime group: DependencyGroup`, `comptime features: Features`, `comptime tag: ?Dependency.Version.Tag`
-    // PERF(port): was comptime monomorphization on `group`/`tag` — profile if hot.
-    //
-    // PORT NOTE: Zig took `lockfile: *Lockfile`, but the live `StringBuilder`
+    // The live `StringBuilder`
     // (also passed) already holds `&mut lockfile.buffers.string_bytes`. The
     // body only otherwise touches `workspace_paths` / `workspace_versions`,
     // so accept those two maps directly and read `string_bytes` via the
@@ -1734,9 +1739,7 @@ impl Package<u64> {
         external_alias: ExternalString,
         version: &[u8],
         key_loc: bun_ast::Loc,
-        value_loc: bun_ast::Loc,
-    ) -> Result<Option<Dependency>, bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> crate::Result<Option<Dependency>> {
         #[cfg(windows)]
         let external_version = 'brk: {
             match tag.unwrap_or_else(|| dependency::version::Tag::infer(version)) {
@@ -1839,13 +1842,33 @@ impl Package<u64> {
         match dependency_version.tag {
             dependency::version::Tag::Folder => {
                 let folder = *dependency_version.folder();
-                let relative = resolve_path::relative(
+                let mut folder_buf = PathBuffer::uninit();
+                let Some(joined) = resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
                     FileSystem::instance().top_level_dir(),
-                    resolve_path::join_abs_string::<path::platform::Auto>(
-                        FileSystem::instance().top_level_dir(),
-                        &[source.path.name().dir, folder.slice(buf)],
-                    ),
-                );
+                    &mut folder_buf.0,
+                    &[source.path.name().dir, folder.slice(buf)],
+                ) else {
+                    log.add_error_fmt(
+                        source,
+                        value_loc_of(source, key_loc),
+                        format_args!(
+                            "Dependency \"{}\" has an unsafe folder path",
+                            bstr::BStr::new(external_alias.slice(buf)),
+                        ),
+                    );
+                    return Err(crate::Error::InstallFailed);
+                };
+                let relative: &[u8] =
+                    resolve_path::relative(FileSystem::instance().top_level_dir(), joined);
+                #[cfg(windows)]
+                let relative: &[u8] = {
+                    let len = relative.len();
+                    folder_buf.0[..len].copy_from_slice(relative);
+                    path::dangerously_convert_path_to_posix_in_place::<u8>(
+                        &mut folder_buf.0[..len],
+                    );
+                    &folder_buf.0[..len]
+                };
                 // if relative is empty, we are linking the package to itself
                 dependency_version.value.folder = string_builder
                     .append::<String>(if relative.is_empty() { b"." } else { relative });
@@ -1872,7 +1895,7 @@ impl Package<u64> {
                             Some(&mut *pm),
                         ) {
                             // Whole-struct move so `Drop` frees the old npm
-                            // chain; keep the existing `literal` (Zig parity).
+                            // chain; keep the existing `literal`.
                             dep.literal = dependency_version.literal;
                             dependency_version = dep;
                         }
@@ -1926,11 +1949,11 @@ impl Package<u64> {
                                 bstr::BStr::new(dependency_version.literal.slice(buf)),
                             ),
                         );
-                        return Err(bun_core::err!("InstallFailed"));
+                        return Err(crate::Error::InstallFailed);
                     }
 
                     dependency_version.value.workspace = path;
-                } else {
+                } else if features.is_main || features.is_workspace {
                     // SAFETY: tag == Workspace selects the `workspace` union member.
                     // Bind the (Copy) union field first so `slice()`'s `&self`
                     // borrow has a named place to point at.
@@ -1953,15 +1976,13 @@ impl Package<u64> {
                                     );
                                 #[cfg(windows)]
                                 {
-                                    // Zig spec (Package.zig:1175-1178) converts
-                                    // `relative_to_common_path_buf()[0..rel.len]` in place but then
-                                    // returns `rel`. With ALWAYS_COPY=false, `rel` may instead borrow
+                                    // With ALWAYS_COPY=false, `rel` may borrow
                                     // RELATIVE_TO_BUF (resolve_path.rs early returns at L450/457/500/
                                     // 522) or be `b""`. Re-deriving a slice of the common-path buf
                                     // would yield stale bytes in those cases. Copy `rel` into the
                                     // common-path scratch when it isn't already there, then convert
-                                    // and return that — preserving the spec's "return `rel`'s bytes"
-                                    // contract while avoiding aliasing UB.
+                                    // and return that — returning `rel`'s bytes
+                                    // while avoiding aliasing UB.
                                     let len = rel.len();
                                     let common_raw = path::relative_to_common_path_buf();
                                     // `PathBuffer` is `repr(transparent)` over `[u8; N]`, so the
@@ -1986,10 +2007,8 @@ impl Package<u64> {
                                 break 'brk rel;
                             }
                         });
-                    if cfg!(debug_assertions) {
-                        debug_assert!(path.len() > 0);
-                        debug_assert!(!bun_paths::is_absolute(path.slice(buf)));
-                    }
+                    debug_assert!(path.len() > 0);
+                    debug_assert!(!bun_paths::is_absolute(path.slice(buf)));
                     dependency_version.value.workspace = path;
 
                     let workspace_entry = workspace_paths.get_or_put(name_hash)?;
@@ -2041,7 +2060,7 @@ impl Package<u64> {
                                 return Ok(None);
                             }
                         }
-                        return Err(bun_core::err!("InstallFailed"));
+                        return Err(crate::Error::InstallFailed);
                     }
 
                     *workspace_entry.value_ptr = path;
@@ -2050,12 +2069,15 @@ impl Package<u64> {
             _ => {}
         }
 
-        let this_dep = Dependency {
+        let mut this_dep = Dependency {
             behavior: group.behavior,
             name: external_alias.value,
             name_hash: external_alias.hash,
             version: dependency_version,
         };
+        if !(FEATURES.is_main || FEATURES.is_workspace) {
+            lockfile::CatalogMap::strip_reference(&mut this_dep);
+        }
 
         // `peerDependencies` may be specified on existing dependencies. Packages in `workspaces` are deduplicated when
         // the array is processed
@@ -2063,7 +2085,6 @@ impl Package<u64> {
             && !group.behavior.is_peer()
             && !group.behavior.is_workspace()
         {
-            // PERF(port): was assume_capacity
             let entry = duplicate_checker_map.get_or_put(external_alias.hash)?;
             if entry.found_existing {
                 // duplicate dependencies are allowed in optionalDependencies
@@ -2091,7 +2112,7 @@ impl Package<u64> {
                         text: text.into(),
                         location: bun_ast::Location::init_or_null(
                             Some(source),
-                            source.range_of_string(*entry.value_ptr),
+                            source.range_of_string(value_loc_of(source, *entry.value_ptr)),
                         ),
                         ..Default::default()
                     });
@@ -2108,13 +2129,13 @@ impl Package<u64> {
                 }
             }
 
-            *entry.value_ptr = value_loc;
+            *entry.value_ptr = key_loc;
         }
 
         Ok(Some(this_dep))
     }
 
-    pub fn parse_with_json<R: ResolverContext>(
+    pub(crate) fn parse_with_json<R: ResolverContext>(
         &mut self,
         lockfile: &mut Lockfile,
         pm: &mut PackageManager,
@@ -2123,7 +2144,7 @@ impl Package<u64> {
         json: Expr,
         resolver: &mut R,
         features: Features,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         // Thin monomorphic shim: erase `R` to `dyn ResolverContextDyn` so the
         // ~960-line body below is codegen'd once. The half-dozen vtable calls
         // are noise next to the JSON walking / string-building this does.
@@ -2140,15 +2161,13 @@ impl Package<u64> {
         json: Expr,
         resolver: &mut dyn ResolverContextDyn,
         features: Features,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         #[allow(non_snake_case)]
         let FEATURES = features;
-        // TODO(port): narrow error set
-        // Zig threads `allocator` for `asString` transcoding; the Rust signature
-        // dropped it, so use a function-local arena (transcoded strings are only
-        // borrowed until `string_builder.append` copies them).
+        // Function-local arena for `asString` transcoding (transcoded strings
+        // are only borrowed until `string_builder.append` copies them).
         let bump = bun_alloc::Arena::new();
-        // PORT NOTE: split-borrow `string_bytes`/`string_pool` so the dozens of
+        // split-borrow `string_bytes`/`string_pool` so the dozens of
         // disjoint `lockfile.{buffers.*, overrides, catalogs, workspace_*, …}`
         // accesses below pass borrowck. Reads of `lockfile.buffers.string_bytes`
         // must go through `string_builder.string_bytes` while it's live.
@@ -2193,13 +2212,13 @@ impl Package<u64> {
             }
         }
 
-        if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
-            if let ExprData::EObject(obj) = &patched_deps.expr.data {
-                for prop in obj.properties.slice() {
-                    let key = prop.key.expect("infallible: prop has key");
-                    let value = prop.value.expect("infallible: prop has value");
-                    if key.is_string() && value.is_string() {
-                        string_builder.count(value.as_utf8(&bump).unwrap());
+        if FEATURES.patched_dependencies {
+            if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
+                if let Some(rows) = JsonObjectStringRows::new(&patched_deps.expr, &bump) {
+                    for (_, value, _) in rows {
+                        if let Some(value) = value {
+                            string_builder.count(value);
+                        }
                     }
                 }
             }
@@ -2214,35 +2233,21 @@ impl Package<u64> {
         }
         'bin: {
             if let Some(bin) = json.as_property(b"bin") {
-                match &bin.expr.data {
-                    ExprData::EObject(obj) => {
-                        for bin_prop in obj.properties.slice() {
-                            let Some(k) = bin_prop
-                                .key
-                                .expect("infallible: prop has key")
-                                .as_utf8(&bump)
-                            else {
-                                break 'bin;
-                            };
-                            string_builder.count(k);
-                            let Some(v) = bin_prop
-                                .value
-                                .expect("infallible: prop has value")
-                                .as_utf8(&bump)
-                            else {
-                                break 'bin;
-                            };
-                            string_builder.count(v);
-                        }
+                if let Some(rows) = JsonObjectStringRows::new(&bin.expr, &bump) {
+                    for (k, v, _) in rows {
+                        string_builder.count(k);
+                        let Some(v) = v else {
+                            break 'bin;
+                        };
+                        string_builder.count(v);
+                    }
+                    break 'bin;
+                }
+                if bin.expr.is_string() {
+                    if let Some(str_) = bin.expr.as_utf8(&bump) {
+                        string_builder.count(str_);
                         break 'bin;
                     }
-                    ExprData::EString(_) => {
-                        if let Some(str_) = bin.expr.as_utf8(&bump) {
-                            string_builder.count(str_);
-                            break 'bin;
-                        }
-                    }
-                    _ => {}
                 }
             }
 
@@ -2262,7 +2267,6 @@ impl Package<u64> {
             resolver.count(&mut string_builder, &json);
         }
 
-        // PERF(port): was comptime-computed array — profile if hot.
         let dependency_groups: Vec<DependencyGroup> = {
             let mut out: Vec<DependencyGroup> = Vec::with_capacity(5);
             if FEATURES.workspaces {
@@ -2284,7 +2288,6 @@ impl Package<u64> {
         };
 
         let mut workspace_names = workspace_map::WorkspaceMap::init();
-        // defer workspace_names.deinit(); — Drop handles it
 
         // pnpm/yarn synthesise an implicit `"*"` optional peer for entries
         // that appear in `peerDependenciesMeta` but not in
@@ -2296,224 +2299,246 @@ impl Package<u64> {
             &[u8],
             bun_collections::identity_context::U64,
         > = ArrayHashMap::default();
-        // defer optional_peer_dependencies.deinit(); — Drop handles it
 
         if FEATURES.peer_dependencies {
             if let Some(peer_dependencies_meta) = json.as_property(b"peerDependenciesMeta") {
-                if let ExprData::EObject(obj) = &peer_dependencies_meta.expr.data {
-                    let props = obj.properties.slice();
-                    optional_peer_dependencies.ensure_unused_capacity(props.len())?;
-                    for prop in props {
-                        if let Some(optional) = prop
-                            .value
-                            .expect("infallible: prop has value")
-                            .as_property(b"optional")
-                        {
-                            if !matches!(
-                                &optional.expr.data,
-                                ExprData::EBoolean(b) if b.value
-                            ) {
-                                continue;
-                            }
-
-                            let key = prop
-                                .key
-                                .expect("infallible: prop has key")
-                                .as_utf8(&bump)
-                                .expect("unreachable");
-                            // PERF(port): was assume_capacity
-                            optional_peer_dependencies.put_assume_capacity(
-                                semver::string::Builder::string_hash(key),
-                                key,
-                            );
-                            // Reserve space for a synthesised entry. If the
-                            // matching name later appears in `peerDependencies`
-                            // the slot just goes unused.
-                            string_builder.count(key);
-                            string_builder.count(b"*");
-                            total_dependencies_count += 1;
+                optional_peer_dependencies
+                    .ensure_unused_capacity(peer_dependencies_meta.expr.property_count())?;
+                peer_dependencies_meta
+                    .expr
+                    .for_each_property(|key, _key_loc, meta| {
+                        let Some(optional) = meta.as_property(b"optional") else {
+                            return;
+                        };
+                        if !matches!(
+                            &optional.expr.data,
+                            ExprData::EBoolean(b) if b.value
+                        ) {
+                            return;
                         }
-                    }
-                }
+
+                        let key: &[u8] = bump.alloc_slice_copy(key);
+                        optional_peer_dependencies
+                            .put_assume_capacity(semver::string::Builder::string_hash(key), key);
+                        string_builder.count(key);
+                        string_builder.count(b"*");
+                        total_dependencies_count += 1;
+                    });
             }
         }
 
-        // PERF(port): was `inline for` — profile if hot.
+        let missing_workspace = if pm.options.enable.frozen_lockfile() {
+            workspace_map::MissingWorkspace::SkipIfInLockfile(&pm.lockfile)
+        } else {
+            workspace_map::MissingWorkspace::Error
+        };
+
         for group in &dependency_groups {
             if let Some(dependencies_q) = json.as_property(group.prop) {
                 'brk: {
-                    match &dependencies_q.expr.data {
-                        ExprData::EArray(arr) => {
-                            if !group.behavior.is_workspace() {
-                                let _ = bun_ast::add_error_pretty!(
-                                    log,
-                                    source,
-                                    dependencies_q.loc,
-                                    "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    <green>\"bun\"<r>: <green>\"latest\"<r>\n  }}",
-                                    bstr::BStr::new(group.prop)
-                                );
-                                return Err(bun_core::err!("InvalidPackageJSON"));
-                            }
-                            total_dependencies_count += workspace_names.process_names_array(
-                                &mut pm.workspace_package_json_cache,
+                    if dependencies_q.expr.is_array() {
+                        if !group.behavior.is_workspace() {
+                            let _ = bun_ast::add_error_pretty!(
                                 log,
-                                &**arr,
                                 source,
                                 dependencies_q.loc,
-                                Some(&mut string_builder),
-                            )?;
+                                "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    <green>\"bun\"<r>: <green>\"latest\"<r>\n  }}",
+                                bstr::BStr::new(group.prop)
+                            );
+                            return Err(crate::Error::InvalidPackageJSON);
                         }
-                        ExprData::EObject(obj) => {
-                            if group.behavior.is_workspace() {
-                                // yarn workspaces expects a "workspaces" property shaped like this:
-                                //
-                                //    "workspaces": {
-                                //        "packages": [
-                                //           "path/to/package"
-                                //        ]
-                                //    }
-                                //
-                                if let Some(packages_query) = obj.as_property(b"packages") {
-                                    let packages_expr = packages_query.expr;
-                                    if !matches!(packages_expr.data, ExprData::EArray(_)) {
-                                        let _ = log.add_error_fmt(
-                                            source,
-                                            packages_expr.loc,
-                                            // TODO: what if we could comptime call the syntax highlighter
-                                            format_args!(
-                                                "\"workspaces.packages\" expects an array of strings, e.g.\n  \"workspaces\": {{\n    \"packages\": [\n      \"path/to/package\"\n    ]\n  }}"
-                                            ),
-                                        );
-                                        return Err(bun_core::err!("InvalidPackageJSON"));
-                                    }
-                                    let ExprData::EArray(packages_arr) = &packages_expr.data else {
-                                        unreachable!()
+                        let arr = workspace_map::NamesArray::from_expr(
+                            &dependencies_q.expr,
+                            value_loc_of(source, dependencies_q.loc),
+                        )
+                        .expect("is_array was checked above");
+                        total_dependencies_count += workspace_names.process_names_array(
+                            &mut pm.workspace_package_json_cache,
+                            log,
+                            arr,
+                            source,
+                            dependencies_q.loc,
+                            Some(&mut string_builder),
+                            missing_workspace,
+                        )?;
+                        break 'brk;
+                    }
+
+                    if let Some(rows) = JsonObjectStringRows::new(&dependencies_q.expr, &bump) {
+                        if group.behavior.is_workspace() {
+                            // yarn workspaces expects a "workspaces" property shaped like this:
+                            //
+                            //    "workspaces": {
+                            //        "packages": [
+                            //           "path/to/package"
+                            //        ]
+                            //    }
+                            //
+                            if let Some(packages_query) =
+                                dependencies_q.expr.as_property(b"packages")
+                            {
+                                let packages_expr = packages_query.expr;
+                                let packages_loc =
+                                    if matches!(dependencies_q.expr.data, ExprData::EObject(_)) {
+                                        packages_expr.loc
+                                    } else {
+                                        value_loc_of(source, packages_query.loc)
                                     };
-                                    total_dependencies_count += workspace_names
-                                        .process_names_array(
-                                            &mut pm.workspace_package_json_cache,
-                                            log,
-                                            &**packages_arr,
-                                            source,
-                                            packages_expr.loc,
-                                            Some(&mut string_builder),
-                                        )?;
-                                }
-
-                                break 'brk;
-                            }
-                            for item in obj.properties.slice() {
-                                let key = item
-                                    .key
-                                    .expect("infallible: prop has key")
-                                    .as_utf8(&bump)
-                                    .unwrap();
-                                let Some(value) = item
-                                    .value
-                                    .expect("infallible: prop has value")
-                                    .as_utf8(&bump)
-                                else {
-                                    let _ = bun_ast::add_error_pretty!(
-                                        log,
+                                if !packages_expr.is_array() {
+                                    let _ = log.add_error_fmt(
                                         source,
-                                        item.value.expect("infallible: prop has value").loc,
-                                        // TODO: what if we could comptime call the syntax highlighter
-                                        "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    <green>\"bun\"<r>: <green>\"latest\"<r>\n  }}",
-                                        bstr::BStr::new(group.prop)
+                                        packages_loc,
+                                        format_args!(
+                                            "\"workspaces.packages\" expects an array of strings, e.g.\n  \"workspaces\": {{\n    \"packages\": [\n      \"path/to/package\"\n    ]\n  }}"
+                                        ),
                                     );
-                                    return Err(bun_core::err!("InvalidPackageJSON"));
-                                };
-
-                                string_builder.count(key);
-                                string_builder.count(value);
-
-                                // If it's a folder or workspace, pessimistically assume we will need a maximum path
-                                match dependency::version::Tag::infer(value) {
-                                    dependency::version::Tag::Folder
-                                    | dependency::version::Tag::Workspace => {
-                                        string_builder.cap += MAX_PATH_BYTES;
+                                    return Err(crate::Error::InvalidPackageJSON);
+                                }
+                                let packages_arr = workspace_map::NamesArray::from_expr(
+                                    &packages_expr,
+                                    packages_loc,
+                                )
+                                .expect("is_array was checked above");
+                                total_dependencies_count += workspace_names.process_names_array(
+                                    &mut pm.workspace_package_json_cache,
+                                    log,
+                                    packages_arr,
+                                    source,
+                                    packages_loc,
+                                    Some(&mut string_builder),
+                                    missing_workspace,
+                                )?;
+                            }
+                            // "workspaces": { "selfContained": ["apps/desktop"] } — workspaces
+                            // (by path or name) whose node_modules must be complete and
+                            // physical; see docs/pm/workspaces.mdx.
+                            if let Some(q) = dependencies_q.expr.as_property(b"selfContained") {
+                                if !q.expr.is_array() {
+                                    let _ = log.add_error_fmt(
+                                        source,
+                                        q.expr.loc,
+                                        format_args!(
+                                            "\"workspaces.selfContained\" expects an array of workspace paths or names"
+                                        ),
+                                    );
+                                    return Err(crate::Error::InvalidPackageJSON);
+                                }
+                                let mut owned: Vec<Vec<u8>> = Vec::new();
+                                if let Some(mut items) = q.expr.as_array() {
+                                    while let Some(item) = items.next() {
+                                        let Some(s) = item.as_string(&bump) else {
+                                            let _ = log.add_error_fmt(
+                                                source,
+                                                item.loc,
+                                                format_args!(
+                                                    "\"workspaces.selfContained\" entries must be strings (workspace paths or names)"
+                                                ),
+                                            );
+                                            return Err(crate::Error::InvalidPackageJSON);
+                                        };
+                                        owned.push(s.to_vec());
                                     }
-                                    _ => {}
+                                }
+                                let list: Vec<&[u8]> = owned.iter().map(|v| v.as_slice()).collect();
+                                for unmatched in workspace_names.mark_self_contained(&list) {
+                                    log.add_warning_fmt(
+                                        Some(source),
+                                        q.expr.loc,
+                                        format_args!(
+                                            "\"workspaces.selfContained\": \"{}\" does not match any workspace path or name",
+                                            bstr::BStr::new(unmatched)
+                                        ),
+                                    );
                                 }
                             }
-                            total_dependencies_count += obj.properties.len_u32();
+
+                            break 'brk;
                         }
-                        _ => {
-                            if group.behavior.is_workspace() {
+                        let count = rows.len() as u32;
+                        for (key, value, key_loc) in rows {
+                            let Some(value) = value else {
                                 let _ = bun_ast::add_error_pretty!(
                                     log,
                                     source,
-                                    dependencies_q.loc,
-                                    // TODO: what if we could comptime call the syntax highlighter
-                                    "\"workspaces\" expects an array of strings, e.g.\n  <r><green>\"workspaces\"<r>: [\n    <green>\"path/to/package\"<r>\n  ]"
-                                );
-                            } else {
-                                let _ = bun_ast::add_error_pretty!(
-                                    log,
-                                    source,
-                                    dependencies_q.loc,
+                                    value_loc_of(source, key_loc),
                                     "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    <green>\"bun\"<r>: <green>\"latest\"<r>\n  }}",
                                     bstr::BStr::new(group.prop)
                                 );
+                                return Err(crate::Error::InvalidPackageJSON);
+                            };
+
+                            string_builder.count(key);
+                            string_builder.count(value);
+
+                            // If it's a folder or workspace, pessimistically assume we will need a maximum path
+                            match dependency::version::Tag::infer(value) {
+                                dependency::version::Tag::Folder
+                                | dependency::version::Tag::Workspace => {
+                                    string_builder.cap += MAX_PATH_BYTES;
+                                }
+                                _ => {}
                             }
-                            return Err(bun_core::err!("InvalidPackageJSON"));
                         }
+                        total_dependencies_count += count;
+                        break 'brk;
                     }
+
+                    if group.behavior.is_workspace() {
+                        let _ = bun_ast::add_error_pretty!(
+                            log,
+                            source,
+                            dependencies_q.loc,
+                            "\"workspaces\" expects an array of strings, e.g.\n  <r><green>\"workspaces\"<r>: [\n    <green>\"path/to/package\"<r>\n  ]"
+                        );
+                    } else {
+                        let _ = bun_ast::add_error_pretty!(
+                            log,
+                            source,
+                            dependencies_q.loc,
+                            "{0} expects a map of specifiers, e.g.\n  <r><green>\"{0}\"<r>: {{\n    <green>\"bun\"<r>: <green>\"latest\"<r>\n  }}",
+                            bstr::BStr::new(group.prop)
+                        );
+                    }
+                    return Err(crate::Error::InvalidPackageJSON);
                 }
             }
         }
 
         if FEATURES.trusted_dependencies {
             if let Some(q) = json.as_property(b"trustedDependencies") {
-                match &q.expr.data {
-                    ExprData::EArray(arr) => {
-                        if lockfile.trusted_dependencies.is_none() {
-                            lockfile.trusted_dependencies = Some(Default::default());
-                        }
-                        lockfile
-                            .trusted_dependencies
-                            .as_mut()
-                            .unwrap()
-                            .ensure_unused_capacity(arr.items.len_u32() as usize)?;
-                        for item in arr.slice() {
-                            let Some(name) = item.as_utf8(&bump) else {
-                                let _ = log.add_error_fmt(
-                                    source,
-                                    q.loc,
-                                    format_args!(
-                                        "trustedDependencies expects an array of strings, e.g.\n  <r><green>\"trustedDependencies\"<r>: [\n    <green>\"package_name\"<r>\n  ]"
-                                    ),
-                                );
-                                return Err(bun_core::err!("InvalidPackageJSON"));
-                            };
-                            // PERF(port): was assume_capacity
-                            lockfile
-                                .trusted_dependencies
-                                .as_mut()
-                                .unwrap()
-                                .put_assume_capacity(
-                                    semver::string::Builder::string_hash(name)
-                                        as TruncatedPackageNameHash,
-                                    Box::<[u8]>::from(name),
-                                );
-                        }
-                    }
-                    _ => {
-                        let _ = log.add_error_fmt(
-                            source,
-                            q.loc,
-                            format_args!(
-                                "trustedDependencies expects an array of strings, e.g.\n  <r><green>\"trustedDependencies\"<r>: [\n    <green>\"package_name\"<r>\n  ]"
-                            ),
+                let count = match &q.expr.data {
+                    ExprData::EArray(arr) => arr.items.len_u32() as usize,
+                    ExprData::EArrayJSON(arr) => arr.get().items().len(),
+                    _ => return Err(invalid_trusted_dependencies(log, source, q.loc)),
+                };
+                if lockfile.trusted_dependencies.is_none() {
+                    lockfile.trusted_dependencies = Some(Default::default());
+                }
+                let trusted = lockfile.trusted_dependencies.as_mut().unwrap();
+                trusted.ensure_unused_capacity(count)?;
+                if let Some(mut items) = q.expr.as_array() {
+                    while let Some(item) = items.next() {
+                        let Some(name) = item.as_string(&bump) else {
+                            return Err(invalid_trusted_dependencies(log, source, q.loc));
+                        };
+                        trusted.put_assume_capacity(
+                            semver::string::Builder::string_hash(name) as TruncatedPackageNameHash,
+                            Box::<[u8]>::from(name),
                         );
-                        return Err(bun_core::err!("InvalidPackageJSON"));
                     }
                 }
             }
         }
 
         if FEATURES.is_main {
-            lockfile.overrides.parse_count(json, &mut string_builder);
+            lockfile.overrides.parse_count(
+                pm,
+                log,
+                source,
+                &workspace_names,
+                json,
+                &mut string_builder,
+            );
 
             if let Some(workspaces_expr) = json.get(b"workspaces") {
                 lockfile
@@ -2543,15 +2568,9 @@ impl Package<u64> {
 
         let off = lockfile.buffers.dependencies.len();
         let total_len = off + total_dependencies_count as usize;
-        if cfg!(debug_assertions) {
-            debug_assert!(
-                lockfile.buffers.dependencies.len() == lockfile.buffers.resolutions.len()
-            );
-        }
+        debug_assert!(lockfile.buffers.dependencies.len() == lockfile.buffers.resolutions.len());
 
-        // PORT NOTE: Zig slices `lockfile.buffers.dependencies.items.ptr[off..total_len]`
-        // — i.e. into reserved-but-uncommitted capacity *without* bumping `items.len`.
-        // Mirroring that here matters: `parse_dependency` can return early with an error
+        // `parse_dependency` can return early with an error
         // (e.g. `InstallFailed` for a non-matching `workspace:` range), and the caller
         // may swallow it and re-enter for the next package. If we eagerly grow
         // `dependencies` and then bail, `dependencies.len() != resolutions.len()` on the
@@ -2562,8 +2581,8 @@ impl Package<u64> {
         // assignment would drop garbage), build into a local `Vec` and `append` into the
         // lockfile buffer once all `?`-points are past. On early error the local vec is
         // dropped and `lockfile.buffers.dependencies.len()` is left untouched, preserving
-        // the `== resolutions.len()` invariant exactly as the Zig spare-capacity write
-        // did. Capacity for the final `append` was reserved above so it does not realloc.
+        // the `== resolutions.len()` invariant. Capacity for the final `append`
+        // was reserved above so it does not realloc.
         let mut package_dependencies: Vec<Dependency> = Vec::with_capacity(total_len - off);
 
         'name: {
@@ -2598,21 +2617,19 @@ impl Package<u64> {
             self.resolution = Resolution::<u64>::init(TaggedValue::Root);
         }
 
-        if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
-            if let ExprData::EObject(obj) = &patched_deps.expr.data {
-                lockfile
-                    .patched_dependencies
-                    .ensure_total_capacity(obj.properties.len_u32() as usize)
-                    .expect("unreachable");
-                for prop in obj.properties.slice() {
-                    let key = prop.key.expect("infallible: prop has key");
-                    let value = prop.value.expect("infallible: prop has value");
-                    if key.is_string() && value.is_string() {
-                        // PERF(port): was stack-fallback
-                        let keyhash =
-                            semver::string::Builder::string_hash(key.as_utf8(&bump).unwrap());
-                        let patch_path =
-                            string_builder.append::<String>(value.as_utf8(&bump).unwrap());
+        if FEATURES.patched_dependencies {
+            if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
+                if let Some(rows) = JsonObjectStringRows::new(&patched_deps.expr, &bump) {
+                    lockfile
+                        .patched_dependencies
+                        .ensure_total_capacity(rows.len())
+                        .expect("unreachable");
+                    for (key, value, _) in rows {
+                        let Some(value) = value else {
+                            continue;
+                        };
+                        let keyhash = semver::string::Builder::string_hash(key);
+                        let patch_path = string_builder.append::<String>(value);
                         lockfile
                             .patched_dependencies
                             .put(
@@ -2630,98 +2647,70 @@ impl Package<u64> {
 
         'bin: {
             if let Some(bin) = json.as_property(b"bin") {
-                match &bin.expr.data {
-                    ExprData::EObject(obj) => {
-                        match obj.properties.len_u32() {
-                            0 => {}
-                            1 => {
-                                let first = &obj.properties.slice()[0];
-                                let Some(bin_name) = first.key.unwrap().as_utf8(&bump) else {
-                                    break 'bin;
-                                };
-                                let Some(value) = first.value.unwrap().as_utf8(&bump) else {
-                                    break 'bin;
-                                };
+                if let Some(mut rows) = JsonObjectStringRows::new(&bin.expr, &bump) {
+                    match rows.len() {
+                        0 => {}
+                        1 => {
+                            let (bin_name, value, _) = rows.next().expect("checked: one property");
+                            let Some(value) = value else {
+                                break 'bin;
+                            };
 
-                                self.bin = Bin {
-                                    tag: bin::Tag::NamedFile,
-                                    value: bin::Value::init_named_file([
-                                        string_builder.append::<String>(bin_name),
-                                        string_builder.append::<String>(value),
-                                    ]),
-                                    ..Default::default()
-                                };
-                            }
-                            _ => {
-                                let current_len = lockfile.buffers.extern_strings.len();
-                                let count = obj.properties.len_u32() as usize * 2;
-                                lockfile.buffers.extern_strings.reserve_exact(count);
-                                // Default-fill the tail; the loop below
-                                // overwrites each slot. Keeps every exposed
-                                // `ExternalString` valid even if `break 'bin`
-                                // fires partway through (replaces raw
-                                // `set_len`).
-                                let extern_strings = bun_core::vec::grow_default(
-                                    &mut lockfile.buffers.extern_strings,
-                                    count,
-                                );
-
-                                let mut i: usize = 0;
-                                for bin_prop in obj.properties.slice() {
-                                    let Some(k) = bin_prop
-                                        .key
-                                        .expect("infallible: prop has key")
-                                        .as_utf8(&bump)
-                                    else {
-                                        break 'bin;
-                                    };
-                                    extern_strings[i] = string_builder.append::<ExternalString>(k);
-                                    i += 1;
-                                    let Some(v) = bin_prop
-                                        .value
-                                        .expect("infallible: prop has value")
-                                        .as_utf8(&bump)
-                                    else {
-                                        break 'bin;
-                                    };
-                                    extern_strings[i] = string_builder.append::<ExternalString>(v);
-                                    i += 1;
-                                }
-                                if cfg!(debug_assertions) {
-                                    debug_assert!(i == extern_strings.len());
-                                }
-                                // PORT NOTE: Zig passed the full extern_strings
-                                // buffer + tail subslice; `init` only needs the
-                                // tail's offset, so construct directly to avoid
-                                // the aliasing borrow.
-                                self.bin = Bin {
-                                    tag: bin::Tag::Map,
-                                    value: bin::Value {
-                                        map: ExternalStringList::new(
-                                            current_len as u32,
-                                            extern_strings.len() as u32,
-                                        ),
-                                    },
-                                    ..Default::default()
-                                };
-                            }
-                        }
-
-                        break 'bin;
-                    }
-                    ExprData::EString(stri) => {
-                        if !stri.data.is_empty() {
                             self.bin = Bin {
-                                tag: bin::Tag::File,
+                                tag: bin::Tag::NamedFile,
+                                value: bin::Value::init_named_file([
+                                    string_builder.append::<String>(bin_name),
+                                    string_builder.append::<String>(value),
+                                ]),
+                                ..Default::default()
+                            };
+                        }
+                        n => {
+                            let current_len = lockfile.buffers.extern_strings.len();
+                            let count = n * 2;
+                            lockfile.buffers.extern_strings.reserve_exact(count);
+                            let extern_strings = bun_core::vec::grow_default(
+                                &mut lockfile.buffers.extern_strings,
+                                count,
+                            );
+
+                            let mut i: usize = 0;
+                            for (k, v, _) in rows {
+                                extern_strings[i] = string_builder.append::<ExternalString>(k);
+                                i += 1;
+                                let Some(v) = v else {
+                                    break 'bin;
+                                };
+                                extern_strings[i] = string_builder.append::<ExternalString>(v);
+                                i += 1;
+                            }
+                            debug_assert!(i == extern_strings.len());
+                            self.bin = Bin {
+                                tag: bin::Tag::Map,
                                 value: bin::Value {
-                                    file: string_builder.append::<String>(&stri.data),
+                                    map: ExternalStringList::new(
+                                        current_len as u32,
+                                        extern_strings.len() as u32,
+                                    ),
                                 },
                                 ..Default::default()
                             };
-                            break 'bin;
                         }
                     }
-                    _ => {}
+
+                    break 'bin;
+                }
+                if let ExprData::EString(stri) = &bin.expr.data {
+                    if !stri.data.is_empty() {
+                        self.bin = Bin {
+                            tag: bin::Tag::File,
+                            value: bin::Value {
+                                file: string_builder.append::<String>(&stri.data),
+                            },
+                            ..Default::default()
+                        };
+                        break 'bin;
+                    }
                 }
             }
 
@@ -2763,7 +2752,6 @@ impl Package<u64> {
         }
 
         let mut bundled_deps = StringSet::init();
-        // defer bundled_deps.deinit(); — Drop handles it
         let mut bundle_all_deps = false;
         if !resolver.is_void() && resolver.check_bundled_dependencies() {
             if let Some(bundled_deps_expr) = json
@@ -2774,22 +2762,22 @@ impl Package<u64> {
                     ExprData::EBoolean(boolean) => {
                         bundle_all_deps = boolean.value;
                     }
-                    ExprData::EArray(arr) => {
-                        for item in arr.slice() {
-                            let Some(s) = item.as_utf8(&bump) else {
-                                continue;
-                            };
-                            bundled_deps.insert(s)?;
+                    _ => {
+                        if let Some(mut items) = bundled_deps_expr.as_array() {
+                            while let Some(item) = items.next() {
+                                let Some(s) = item.as_string(&bump) else {
+                                    continue;
+                                };
+                                bundled_deps.insert(s)?;
+                            }
                         }
                     }
-                    _ => {}
                 }
             }
         }
 
         total_dependencies_count = 0;
 
-        // PERF(port): was `inline for` — profile if hot.
         for group in &dependency_groups {
             if group.behavior.is_workspace() {
                 let mut seen_workspace_names: ArrayHashMap<
@@ -2797,7 +2785,6 @@ impl Package<u64> {
                     (),
                     ArrayIdentityContext,
                 > = ArrayHashMap::default();
-                // defer seen_workspace_names.deinit(allocator); — Drop handles it
                 for (entry, path_) in workspace_names
                     .values()
                     .iter()
@@ -2812,8 +2799,8 @@ impl Package<u64> {
                         // but this is ok because the install is going to fail anyways, so this
                         // has zero effect on the happy path.
                         let mut cwd_buf = PathBuffer::uninit();
-                        // Zig `bun.getcwd` returned the slice; Rust port returns
-                        // the byte length — slice the buffer ourselves.
+                        // `bun_sys::getcwd` returns the byte length — slice
+                        // the buffer ourselves.
                         let cwd_len = bun_sys::getcwd(&mut cwd_buf.0[..])?;
                         let cwd: &[u8] = &cwd_buf.0[..cwd_len];
 
@@ -2860,8 +2847,7 @@ impl Package<u64> {
                                     // `note_src.path.text`, which itself borrows
                                     // `note_abs_path`; both drop before the log is
                                     // printed. `Location::clone` deep-copies `file`
-                                    // into a `Cow::Owned`, matching the Zig
-                                    // `allocator.dupeZ` lifetime.
+                                    // into a `Cow::Owned`.
                                     notes.push(bun_ast::Data {
                                         text: b"Package name is also declared here".to_vec().into(),
                                         location: bun_ast::Location::init_or_null(
@@ -2901,10 +2887,28 @@ impl Package<u64> {
                                 bstr::BStr::new(&entry.name),
                             ),
                         );
-                        return Err(bun_core::err!("InstallFailed"));
+                        return Err(crate::Error::InstallFailed);
                     }
 
                     let external_name = string_builder.append::<ExternalString>(&entry.name);
+                    // a property of the manifest, recorded whether or not the dependency
+                    // edge below turns out to be new
+                    if entry.hoisting_limits {
+                        lockfile
+                            .self_contained_workspaces
+                            .put(external_name.hash, ())?;
+                    }
+                    if let Some(v) = &entry.unsupported_hoisting_limits {
+                        log.add_warning_fmt(
+                            Some(source),
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "workspace \"{}\": installConfig.hoistingLimits \"{}\" is not supported (only \"workspaces\" is); ignoring",
+                                bstr::BStr::new(&entry.name),
+                                bstr::BStr::new(v),
+                            ),
+                        );
+                    }
 
                     let workspace_version = 'brk: {
                         if let Some(version_string) = &entry.version {
@@ -2940,7 +2944,6 @@ impl Package<u64> {
                         external_name,
                         path_,
                         bun_ast::Loc::EMPTY,
-                        bun_ast::Loc::EMPTY,
                     )? {
                         let mut dep = dep_;
                         if group.behavior.is_peer()
@@ -2965,61 +2968,48 @@ impl Package<u64> {
                 }
             } else {
                 if let Some(dependencies_q) = json.as_property(group.prop) {
-                    match &dependencies_q.expr.data {
-                        ExprData::EObject(obj) => {
-                            for item in obj.properties.slice() {
-                                let key = item.key.expect("infallible: prop has key");
-                                let value = item.value.expect("infallible: prop has value");
-                                let external_name = string_builder
-                                    .append::<ExternalString>(key.as_utf8(&bump).unwrap());
-                                let version = value.as_utf8(&bump).unwrap_or(b"");
+                    let rows = JsonObjectStringRows::new(&dependencies_q.expr, &bump)
+                        .expect("validated above: a dependency group is an object");
+                    for (key, version, key_loc) in rows {
+                        let external_name = string_builder.append::<ExternalString>(key);
+                        let version = version.unwrap_or(b"");
 
-                                if let Some(dep_) = Self::parse_dependency(
-                                    &mut lockfile.workspace_paths,
-                                    &mut lockfile.workspace_versions,
-                                    &mut lockfile.scratch.duplicate_checker_map,
-                                    pm,
-                                    log,
-                                    source,
-                                    group,
-                                    &mut string_builder,
-                                    FEATURES,
-                                    package_dependencies.as_mut_slice(),
-                                    total_dependencies_count,
-                                    None,
-                                    None,
-                                    external_name,
-                                    version,
-                                    key.loc,
-                                    value.loc,
-                                )? {
-                                    let mut dep = dep_;
-                                    // swapRemove (not contains): drain names that
-                                    // have a real `peerDependencies` entry so the
-                                    // meta-only synthesis pass below only sees
-                                    // names that appear *only* in
-                                    // `peerDependenciesMeta`.
-                                    if group.behavior.is_peer()
-                                        && optional_peer_dependencies
-                                            .swap_remove(&external_name.hash)
-                                    {
-                                        dep.behavior.insert(Behavior::OPTIONAL);
-                                    }
-
-                                    if bundle_all_deps
-                                        || bundled_deps.contains(
-                                            dep.name.slice(string_builder.string_bytes.as_slice()),
-                                        )
-                                    {
-                                        dep.behavior.insert(Behavior::BUNDLED);
-                                    }
-
-                                    package_dependencies.push(dep);
-                                    total_dependencies_count += 1;
-                                }
+                        if let Some(dep_) = Self::parse_dependency(
+                            &mut lockfile.workspace_paths,
+                            &mut lockfile.workspace_versions,
+                            &mut lockfile.scratch.duplicate_checker_map,
+                            pm,
+                            log,
+                            source,
+                            group,
+                            &mut string_builder,
+                            FEATURES,
+                            package_dependencies.as_mut_slice(),
+                            total_dependencies_count,
+                            None,
+                            None,
+                            external_name,
+                            version,
+                            key_loc,
+                        )? {
+                            let mut dep = dep_;
+                            if group.behavior.is_peer()
+                                && optional_peer_dependencies.swap_remove(&external_name.hash)
+                            {
+                                dep.behavior.insert(Behavior::OPTIONAL);
                             }
+
+                            if bundle_all_deps
+                                || bundled_deps.contains(
+                                    dep.name.slice(string_builder.string_bytes.as_slice()),
+                                )
+                            {
+                                dep.behavior.insert(Behavior::BUNDLED);
+                            }
+
+                            package_dependencies.push(dep);
+                            total_dependencies_count += 1;
                         }
-                        _ => unreachable!(),
                     }
                 }
             }
@@ -3051,7 +3041,6 @@ impl Package<u64> {
                 external_name,
                 b"*",
                 bun_ast::Loc::EMPTY,
-                bun_ast::Loc::EMPTY,
             )? {
                 let mut dep = dep_;
                 dep.behavior.insert(Behavior::OPTIONAL);
@@ -3066,7 +3055,7 @@ impl Package<u64> {
         );
         {
             let buf = string_builder.string_bytes.as_slice();
-            package_dependencies.sort_by(|a, b| dep_sort_cmp(buf, a, b));
+            index_sort::sort_slice_by(&mut package_dependencies, |a, b| dep_sort_cmp(buf, a, b));
         }
 
         self.dependencies.off = off as u32;
@@ -3105,6 +3094,7 @@ impl Package<u64> {
                 self,
                 log,
                 source,
+                &workspace_names,
                 json,
                 &mut string_builder,
             )?;
@@ -3146,38 +3136,24 @@ pub type List<SemverIntType> = MultiArrayList<Package<SemverIntType>>;
 pub mod serializer {
     use super::*;
 
-    /// Number of columns in the on-disk package table. Zig: `sizes.Types.len`.
-    pub(crate) const FIELD_COUNT: usize = PackageField::ALL.len();
+    /// Number of columns in the on-disk package table.
+    const FIELD_COUNT: usize = PackageField::ALL.len();
 
-    // which is unused on the load/save paths we port.)
-    pub struct Sizes {
-        pub bytes: [usize; FIELD_COUNT],
-        pub fields: [usize; FIELD_COUNT],
-    }
-
-    // Zig: `const FieldsEnum = @typeInfo(List.Field).@"enum";`
-    // → `PackageField::ALL` (declaration order, same as the MultiArrayList
-    //    field enum Zig reflects over).
-
-    // Zig: `const AlignmentType = sizes.Types[sizes.fields[0]];`
-    // Unused by save/load (the live aligner uses `@TypeOf(list.bytes)`), so
-    // it is intentionally not ported.
-
-    pub fn save<SemverIntType: VersionInt, S>(
+    pub(crate) fn save<SemverIntType: VersionInt, S>(
         list: &List<SemverIntType>,
         stream: &mut S,
-    ) -> Result<(), bun_core::Error>
+    ) -> crate::Result<()>
     where
-        // PORT NOTE: Zig threaded a separate `stream` (anytype) and `writer` over
-        // the same buffer. Two `&mut` to one object is UB in Rust regardless of
-        // access order, so the port collapses both roles onto one type —
-        // `Serializer::StreamType` impls both `PositionalStream` and
-        // `bun_io::Write`.
+        // A separate `stream` and `writer` over the same buffer would be two
+        // `&mut` to one object — UB regardless of access order — so both
+        // roles collapse onto one type: `Serializer::StreamType` impls both
+        // `PositionalStream` and `bun_io::Write`.
         S: PositionalStream + bun_io::Write,
     {
-        // TODO(port): narrow error set
         stream.write_int_le::<u64>(list.len() as u64)?;
-        // TODO(port): @alignOf(@TypeOf(list.bytes)) — needs concrete type from MultiArrayList.
+        // The on-disk format records the alignment of the MultiArrayList
+        // bytes *pointer* itself (not the pointee), which is exactly
+        // `align_of::<*mut u8>()` on every supported target.
         stream.write_int_le::<u64>(mem::align_of::<*mut u8>() as u64)?;
         stream.write_int_le::<u64>(FIELD_COUNT as u64)?;
         let begin_at = stream.get_pos()?;
@@ -3185,14 +3161,14 @@ pub mod serializer {
         let end_at = stream.get_pos()?;
         stream.write_int_le::<u64>(0)?;
 
-        // TODO(port): Aligner.write needs the bytes-pointer alignment type.
+        // `*mut u8` carries the pointer alignment, matching the
+        // `@alignOf(@TypeOf(list.bytes))` value serialized above.
         let pos = stream.get_pos()? as u64;
         let _ = Aligner::write::<*mut u8, _>(&mut *stream, pos)?;
 
         let really_begin_at = stream.get_pos()?;
         let mut sliced = list.slice();
 
-        // PERF(port): was `inline for (FieldsEnum.fields)` — profile if hot.
         for field in PackageField::ALL {
             // SAFETY: each `PackageField` discriminant corresponds to a column
             // whose element size matches `SIZES_BYTES[field as usize]`; we
@@ -3217,17 +3193,17 @@ pub mod serializer {
                     bytes.len(),
                 );
             }
-            // TODO(port): assert_no_uninitialized_padding once a typed accessor
-            // is exposed; for now `Package`'s field types are all `#[repr(C)]`
-            // with explicit padding zeroed by their `Default`/`init` paths.
+            // No uninitialized padding: `Package`'s field types are all
+            // `#[repr(C)]` with explicit padding zeroed by their
+            // `Default`/`init` paths.
             if matches!(field, PackageField::Resolution) {
                 // copy each resolution to make sure the union is zero initialized
                 let resolutions: &[Resolution<SemverIntType>] =
                     sliced.items::<"resolution", Resolution<SemverIntType>>();
                 for val in resolutions {
                     // `ResolutionType::copy` builds a fresh zero-initialised
-                    // `Resolution` and writes only the active union member,
-                    // matching Zig `val.copy()`. A bare `*val` would serialise
+                    // `Resolution` and writes only the active union member.
+                    // A bare `*val` would serialise
                     // garbage in the inactive union bytes (non-deterministic
                     // lockfile output).
                     let copy = val.copy();
@@ -3257,7 +3233,7 @@ pub mod serializer {
         pub needs_update: bool,
     }
 
-    // PORT NOTE: Zig parameterised on `SemverIntType`, but the v2-migration arm
+    // The v2-migration arm
     // below hard-codes `u32 → u64` (`VersionedURL.migrate()` returns `<u64>`).
     // The only caller (`bun.lockb.rs`) instantiates at `u64`, so bind concretely
     // instead of carrying a phantom generic that can't typecheck the migrate arm.
@@ -3265,28 +3241,24 @@ pub mod serializer {
         stream: &mut Stream,
         end: usize,
         migrate_from_v2: bool,
-    ) -> Result<PackagesLoadResult<u64>, bun_core::Error> {
+    ) -> crate::Result<PackagesLoadResult<u64>> {
         type SemverIntType = u64;
-        // TODO(port): narrow error set
         let reader = stream.reader();
 
         let list_len = reader.read_int_le::<u64>()?;
         if list_len > u32::MAX as u64 - 1 {
-            return Err(bun_core::err!(
-                "Lockfile validation failed: list is impossibly long"
-            ));
+            return Err(crate::Error::LockfileValidationFailedListIsImpossiblyLong);
         }
 
         let input_alignment = reader.read_int_le::<u64>()?;
 
         let mut list = List::<SemverIntType>::default();
 
-        // TODO(port): @alignOf(@TypeOf(list.bytes)) — needs MultiArrayList bytes ptr type.
+        // The recorded alignment is that of the MultiArrayList bytes
+        // *pointer* itself, i.e. pointer alignment.
         let expected_alignment = mem::align_of::<*mut u8>() as u64;
         if expected_alignment != input_alignment {
-            return Err(bun_core::err!(
-                "Lockfile validation failed: alignment mismatch"
-            ));
+            return Err(crate::Error::LockfileValidationFailedAlignmentMismatch);
         }
 
         let field_count = reader.read_int_le::<u64>()? as usize;
@@ -3296,18 +3268,14 @@ pub mod serializer {
             // we will back-fill from each package.json
             n if n == FIELD_COUNT - 1 => {}
             _ => {
-                return Err(bun_core::err!(
-                    "Lockfile validation failed: unexpected number of package fields"
-                ));
+                return Err(crate::Error::LockfileValidationFailedUnexpectedNumberOfPackageFields);
             }
         }
 
         let begin_at = reader.read_int_le::<u64>()? as usize;
         let end_at = reader.read_int_le::<u64>()? as usize;
         if begin_at > end || end_at > end || begin_at > end_at {
-            return Err(bun_core::err!(
-                "Lockfile validation failed: invalid package list range"
-            ));
+            return Err(crate::Error::LockfileValidationFailedInvalidPackageListRange);
         }
         stream.pos = begin_at;
         list.ensure_total_capacity(list_len as usize)?;
@@ -3316,7 +3284,6 @@ pub mod serializer {
         if migrate_from_v2 {
             type OldPackageV2 = Package<u32>;
             let mut list_for_migrating_from_v2 = <List<u32>>::default();
-            // defer list_for_migrating_from_v2.deinit(allocator); — Drop handles it
 
             list_for_migrating_from_v2.ensure_total_capacity(list_len as usize)?;
             // SAFETY: capacity reserved above; `load_fields` writes every column.
@@ -3377,7 +3344,6 @@ pub mod serializer {
                     },
                 };
 
-                // PERF(port): was assume_capacity
                 list.append(new)?;
             }
         } else {
@@ -3394,12 +3360,10 @@ pub mod serializer {
         end_at: u64,
         list: &mut List<SemverIntType>,
         needs_update: &mut bool,
-    ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> crate::Result<()> {
         let _n = list.len();
         let mut sliced = list.slice();
 
-        // PERF(port): was `inline for (FieldsEnum.fields)` — profile if hot.
         for field in PackageField::ALL {
             let sz = bun_collections::multi_array_list::Slice::<Package<SemverIntType>>::field_size(
                 field as usize,
@@ -3413,7 +3377,6 @@ pub mod serializer {
                     sliced.column_bytes_mut(field as usize)
                 }
             };
-            // TODO(port): assert_no_uninitialized_padding once a typed accessor lands.
             let end_pos = stream.pos + bytes.len();
             if end_pos as u64 <= end_at {
                 let src = &stream.buffer[stream.pos..stream.pos + bytes.len()];
@@ -3432,9 +3395,7 @@ pub mod serializer {
                     debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
                     for raw in src.chunks_exact(stride) {
                         if !matches!(raw[0], 0 | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 72 | 80 | 100) {
-                            return Err(bun_core::err!(
-                                "Lockfile validation failed: invalid resolution tag"
-                            ));
+                            return Err(crate::Error::LockfileValidationFailedInvalidResolutionTag);
                         }
                     }
                 }
@@ -3452,9 +3413,7 @@ pub mod serializer {
                         if !matches!(raw[origin_at], 0..=2)
                             || !matches!(raw[install_script_at], 0..=2)
                         {
-                            return Err(bun_core::err!(
-                                "Lockfile validation failed: invalid package meta"
-                            ));
+                            return Err(crate::Error::LockfileValidationFailedInvalidPackageMeta);
                         }
                     }
                 }
@@ -3466,9 +3425,21 @@ pub mod serializer {
                     debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
                     for raw in src.chunks_exact(stride) {
                         if !matches!(raw[tag_at], 0..=4) {
-                            return Err(bun_core::err!(
-                                "Lockfile validation failed: invalid bin tag"
-                            ));
+                            return Err(crate::Error::LockfileValidationFailedInvalidBinTag);
+                        }
+                    }
+                }
+                if matches!(field, PackageField::Scripts) {
+                    // `Scripts.filled` is a `bool`; validate the raw byte the
+                    // same way before the copy.
+                    let stride = mem::size_of::<Scripts>();
+                    let filled_at = mem::offset_of!(Scripts, filled);
+                    debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
+                    for raw in src.chunks_exact(stride) {
+                        if !matches!(raw[filled_at], 0 | 1) {
+                            return Err(
+                                crate::Error::LockfileValidationFailedInvalidPackageScripts,
+                            );
                         }
                     }
                 }
@@ -3489,9 +3460,7 @@ pub mod serializer {
             } else if matches!(field, PackageField::Scripts) {
                 bytes.fill(0);
             } else {
-                return Err(bun_core::err!(
-                    "Lockfile validation failed: invalid package list range"
-                ));
+                return Err(crate::Error::LockfileValidationFailedInvalidPackageListRange);
             }
         }
         Ok(())
@@ -3499,5 +3468,3 @@ pub mod serializer {
 }
 
 pub use serializer as Serializer;
-
-// ported from: src/install/lockfile/Package.zig

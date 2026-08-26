@@ -1,7 +1,6 @@
 // posix types live in `crate::posix` (moved from bun_sys).
 pub use crate::posix::E;
 pub use crate::posix::S;
-pub use crate::posix::mode_t as Mode;
 
 #[repr(u16)]
 #[derive(
@@ -152,5 +151,3 @@ pub use uv_e as UV_E;
 // `usize`); every kernel entry goes through libc, so all widths route to the
 // thread-local `__error()` slot.
 impl_get_errno_libc!(i32, u32, isize, usize, i64);
-
-// ported from: src/errno/freebsd_errno.zig

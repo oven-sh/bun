@@ -70,6 +70,11 @@ static std::optional<WTF::String> stripANSI(const std::span<const Char> input)
         start = newPos;
     }
 
+    // Only broad-mask false positives were seen (e.g. a trailing standalone C1
+    // ST): nothing was stripped, so the caller keeps the original string.
+    if (!foundANSI)
+        return std::nullopt;
+
     const size_t reserved = buffer.size();
     const size_t outputLen = static_cast<size_t>(cursor - buffer.begin());
     const size_t waste = reserved - outputLen;

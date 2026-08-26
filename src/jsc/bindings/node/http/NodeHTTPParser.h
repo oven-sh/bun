@@ -71,7 +71,9 @@ struct StringPtr {
     {
         auto& vm = globalObject->vm();
         if (m_size != 0) {
-            return JSC::jsString(vm, WTF::String::fromUTF8({ m_str, m_size }));
+            // Node.js decodes header names/values, status messages and URLs as
+            // latin1, not UTF-8 (see node_http_parser.cc). Keep the raw bytes.
+            return JSC::jsString(vm, WTF::String(std::span { reinterpret_cast<const Latin1Character*>(m_str), m_size }));
         }
         return jsEmptyString(vm);
     }
@@ -122,6 +124,8 @@ const uint32_t kLenientOptionalLFAfterCR = 1 << 6;
 const uint32_t kLenientOptionalCRLFAfterChunk = 1 << 7;
 const uint32_t kLenientOptionalCRBeforeLF = 1 << 8;
 const uint32_t kLenientSpacesAfterChunkSize = 1 << 9;
+// Node's httpValidation:'relaxed' maps to this alias (only header-value bytes are relaxed).
+const uint32_t kLenientHeaderValueRelaxed = kLenientHeaders;
 const uint32_t kLenientAll = kLenientHeaders | kLenientChunkedLength | kLenientKeepAlive | kLenientTransferEncoding | kLenientVersion | kLenientDataAfterClose | kLenientOptionalLFAfterCR | kLenientOptionalCRLFAfterChunk | kLenientOptionalCRBeforeLF | kLenientSpacesAfterChunkSize;
 
 struct HTTPParser {
@@ -146,8 +150,6 @@ public:
     JSC::JSValue getCurrentBuffer(JSC::JSGlobalObject*) const;
     JSC::JSValue duration() const;
 
-    bool lessThan(HTTPParser& other) const;
-
     // llhttp callbacks
     int onMessageBegin();
     int onUrl(const char* at, size_t length);
@@ -164,6 +166,8 @@ public:
 
     int trackHeader(size_t len);
     void flush();
+    // Return value for an llhttp callback whose JS threw: stops llhttp; execute() rethrows the exception.
+    int stopForPendingException();
 
     inline bool headersCompleted() const { return m_headersCompleted; }
     inline uint64_t lastMessageStart() const { return m_lastMessageStart; }
@@ -174,14 +178,17 @@ public:
     JSC::JSGlobalObject* m_globalObject;
     JSHTTPParser* m_thisParser = nullptr;
 
-    llhttp_t m_parserData;
+    // Zeroed until initialize(); `m_parserData.settings == nullptr` means uninitialised.
+    llhttp_t m_parserData {};
     StringPtr m_fields[kMaxHeaderFieldsCount];
     StringPtr m_values[kMaxHeaderFieldsCount];
     StringPtr m_url;
     StringPtr m_statusMessage;
-    size_t m_numFields;
-    size_t m_numValues;
-    bool m_haveFlushed;
+    size_t m_numFields = 0;
+    size_t m_numValues = 0;
+    bool m_haveFlushed = false;
+
+    inline bool isInitialized() const { return m_parserData.settings != nullptr; }
 
     // We don't use m_gotException. Instead, we use RETURN_IF_EXCEPTION
     // bool m_gotException;

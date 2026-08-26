@@ -1,12 +1,9 @@
-//! Port of `src/runtime/cli/Arguments.zig`.
-//!
 //! `parse()` runs `clap::parse()` against the per-tag table, handles
 //! `--help`/`-v`/`--revision`, and populates the full `api::TransformOptions`
 //! / `Context` from every recognised flag. All param tables — leaf and
 //! concatenated — are const `&'static [ParamType]` via the
 //! `bun_clap::parse_param!` proc-macro (compile-time spec parsing) plus a
-//! const-fn slice concat (`bun_clap::concat_params!`), matching Zig's comptime
-//! `clap.parseParam(...) ++ ...`.
+//! const-fn slice concat (`bun_clap::concat_params!`).
 
 use bun_options_types::LoaderExt as _;
 
@@ -14,7 +11,6 @@ use bstr::BStr;
 use bun_bundler::options;
 use bun_clap as clap;
 use bun_clap::parse_param;
-use bun_core::ZStr;
 use bun_core::env::OperatingSystem;
 use bun_core::strings;
 use bun_core::{self, FeatureFlags, Global, Output, env_var};
@@ -39,34 +35,12 @@ fn slice_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
     input.iter().map(|s| Box::<[u8]>::from(*s)).collect()
 }
 
-pub(crate) fn loader_resolver(input: &[u8]) -> Result<api::Loader, bun_core::Error> {
-    let option_loader =
-        bun_ast::Loader::from_string(input).ok_or_else(|| bun_core::err!("InvalidLoader"))?;
+pub(crate) fn loader_resolver(input: &[u8]) -> crate::Result<api::Loader> {
+    let option_loader = bun_ast::Loader::from_string(input).ok_or(crate::Error::InvalidLoader)?;
     Ok(option_loader.to_api())
 }
 
-/// Resolve `filename` against `cwd`, open it, read its full contents, close it,
-/// and return the buffer.
-///
-/// PORT NOTE: the Zig original (`std.fs.path.resolve` + `std.posix.toPosixPath`
-/// + `bun.openFileZ` + `readToEndAlloc`) is itself non-idiomatic for the Bun
-/// codebase. Reimplemented on top of `bun_paths::resolve_path` +
-/// `bun_sys::File::read_from`, which is the cross-platform path the rest of the
-/// runtime uses.
-pub fn read_file(cwd: &[u8], filename: &[u8]) -> Result<Vec<u8>, bun_core::Error> {
-    let mut buf = PathBuffer::uninit();
-    let outpath = resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut *buf, &[filename]);
-    let len = outpath.len();
-    buf[len] = 0;
-    // SAFETY: `buf[len] == 0` written above; `buf` outlives the call.
-    let path_z = ZStr::from_buf(&buf[..], len);
-    match bun_sys::File::read_from(bun_sys::Fd::cwd(), path_z) {
-        bun_sys::Result::Ok(bytes) => Ok(bytes),
-        bun_sys::Result::Err(err) => Err(err.into()),
-    }
-}
-
-pub(crate) fn resolve_jsx_runtime(s: &[u8]) -> Result<api::JsxRuntime, bun_core::Error> {
+fn resolve_jsx_runtime(s: &[u8]) -> crate::Result<api::JsxRuntime> {
     if s == b"automatic" {
         Ok(api::JsxRuntime::Automatic)
     } else if s == b"fallback" || s == b"classic" {
@@ -74,15 +48,14 @@ pub(crate) fn resolve_jsx_runtime(s: &[u8]) -> Result<api::JsxRuntime, bun_core:
     } else if s == b"solid" {
         Ok(api::JsxRuntime::Solid)
     } else {
-        Err(bun_core::err!("InvalidJSXRuntime"))
+        Err(crate::Error::InvalidJSXRuntime)
     }
 }
 
 pub(crate) type ParamType = clap::Param<clap::Help>;
 
 // ─── param tables ────────────────────────────────────────────────────────────
-// Zig built these at comptime via `clap.parseParam("...") catch unreachable`
-// concatenated with `++`. `bun_clap::parse_param!` expands to a const
+// `bun_clap::parse_param!` expands to a const
 // `Param<Help>` literal, and `concat_params!` is a const-fn slice concat, so
 // every table — leaf and combined — lands in rodata with zero runtime init.
 //
@@ -90,7 +63,6 @@ pub(crate) type ParamType = clap::Param<clap::Help>;
 // both `concat_params!` and `comptime_table!`. The single rodata copy of each
 // is the `static __CONV` / `static __TABLE` inside `comptime_table!` below.
 
-// Zig: `if (Environment.show_crash_trace) debug_params else [_]ParamType{}`.
 // `SHOW_CRASH_TRACE` is a `const bool`, so the dead branch is eliminated.
 macro_rules! maybe_debug_params {
     () => {
@@ -102,24 +74,7 @@ macro_rules! maybe_debug_params {
     };
 }
 
-// PORT NOTE: `builtin.have_error_return_tracing` is a Zig-only concept. Rust
-// has no error-return tracing, but `bun_crash_handler::VERBOSE_ERROR_TRACE`
-// still gates extra crash diagnostics. Expose the flag in crash-trace builds
-// (debug/test/asan), which is the closest analogue.
-const VERBOSE_ERROR_TRACE_PARAMS: &[ParamType] = &[parse_param!(
-    "--verbose-error-trace             Dump error return traces"
-)];
-macro_rules! maybe_verbose_error_trace {
-    () => {
-        if bun_core::env::SHOW_CRASH_TRACE {
-            VERBOSE_ERROR_TRACE_PARAMS
-        } else {
-            &[] as &[ParamType]
-        }
-    };
-}
-
-pub(crate) const BASE_PARAMS_: &[ParamType] = concat_params!(
+const BASE_PARAMS_: &[ParamType] = concat_params!(
     maybe_debug_params!(),
     &[
         parse_param!(
@@ -134,20 +89,14 @@ pub(crate) const BASE_PARAMS_: &[ParamType] = concat_params!(
         ),
         parse_param!("-h, --help                        Display this menu and exit"),
     ],
-    maybe_verbose_error_trace!(),
     &[parse_param!("<POS>...")],
 );
 
-const DEBUG_PARAMS: &[ParamType] = &[
-    parse_param!(
-        "--breakpoint-resolve <STR>...     DEBUG MODE: breakpoint when resolving something that includes this string"
-    ),
-    parse_param!(
-        "--breakpoint-print <STR>...       DEBUG MODE: breakpoint when printing something that includes this string"
-    ),
-];
+const DEBUG_PARAMS: &[ParamType] = &[parse_param!(
+    "--breakpoint-resolve <STR>...     DEBUG MODE: breakpoint when resolving something that includes this string"
+)];
 
-pub(crate) const TRANSPILER_PARAMS_: &[ParamType] = &[
+const TRANSPILER_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--main-fields <STR>...             Main fields to lookup in package.json. Defaults to --target dependent"
     ),
@@ -192,9 +141,12 @@ pub(crate) const TRANSPILER_PARAMS_: &[ParamType] = &[
     ),
 ];
 
-pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
+const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--watch                           Automatically restart the process on file change"
+    ),
+    parse_param!(
+        "--watch-kill-signal <STR>         Signal whose handlers run when --watch restarts the process (default: \"SIGTERM\")"
     ),
     parse_param!(
         "--hot                             Enable auto reload in the Bun runtime, test runner, or bundler"
@@ -204,6 +156,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     ),
     parse_param!(
         "--smol                            Use less memory, but run garbage collection more often"
+    ),
+    parse_param!(
+        "--interactive                     Start a Node.js-compatible REPL, like node --interactive"
     ),
     parse_param!(
         "-r, --preload <STR>...            Import a module before other modules are loaded"
@@ -231,7 +186,7 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
         "--cpu-prof-interval <STR>         Specify the sampling interval in microseconds for CPU profiling (default: 1000)"
     ),
     parse_param!(
-        "--heap-prof                       Generate V8 heap snapshot on exit (.heapsnapshot)"
+        "--heap-prof                       Write a heap profile to disk on exit (.heapprofile)"
     ),
     parse_param!("--heap-prof-name <STR>            Specify the name of the heap profile file"),
     parse_param!(
@@ -239,6 +194,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     ),
     parse_param!(
         "--heap-prof-md                    Generate markdown heap profile on exit (for CLI analysis)"
+    ),
+    parse_param!(
+        "--heap-prof-interval <STR>        Specify the average sampling interval in bytes for heap profiling (default: 524288)"
     ),
     parse_param!(
         "--if-present                      Exit without an error if the entrypoint does not exist"
@@ -274,7 +232,13 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
         "--max-http-header-size <INT>      Set the maximum size of HTTP headers in bytes. Default is 16KiB"
     ),
     parse_param!(
+        "--insecure-http-parser            Use an insecure HTTP parser that accepts invalid HTTP headers"
+    ),
+    parse_param!(
         "--dns-result-order <STR>          Set the default order of DNS lookup results. Valid orders: verbatim (default), ipv4first, ipv6first"
+    ),
+    parse_param!(
+        "--experimental-stream-iter        Enable the experimental stream/iter API (node:stream/iter, node:zlib/iter)."
     ),
     parse_param!(
         "--expose-gc                       Expose gc() on the global object. Has no effect on Bun.gc()."
@@ -285,6 +249,16 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--throw-deprecation               Determine whether or not deprecation warnings result in errors."
     ),
+    parse_param!("--no-warnings                     Silence all process warnings"),
+    parse_param!("--trace-warnings                  Show stack traces on process warnings"),
+    parse_param!("--trace-deprecation               Show stack traces on deprecations"),
+    parse_param!("--pending-deprecation             Emit pending deprecation warnings"),
+    parse_param!(
+        "--redirect-warnings <STR>         Write process warnings to the given file instead of printing to stderr"
+    ),
+    parse_param!(
+        "--disable-warning <STR>...        Silence specific process warnings by code or type"
+    ),
     parse_param!("--title <STR>                     Set the process title"),
     parse_param!(
         "--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled."
@@ -294,6 +268,12 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     ),
     parse_param!("--use-openssl-ca                  Use OpenSSL's default CA store"),
     parse_param!("--use-bundled-ca                  Use bundled CA store"),
+    parse_param!("--tls-min-v1.0                    Set the default TLS minimum to TLSv1.0"),
+    parse_param!("--tls-min-v1.1                    Set the default TLS minimum to TLSv1.1"),
+    parse_param!("--tls-min-v1.2                    Set the default TLS minimum to TLSv1.2"),
+    parse_param!("--tls-min-v1.3                    Set the default TLS minimum to TLSv1.3"),
+    parse_param!("--tls-max-v1.2                    Set the default TLS maximum to TLSv1.2"),
+    parse_param!("--tls-max-v1.3                    Set the default TLS maximum to TLSv1.3"),
     parse_param!("--redis-preconnect                Preconnect to $REDIS_URL at startup"),
     parse_param!("--sql-preconnect                  Preconnect to PostgreSQL at startup"),
     parse_param!(
@@ -310,9 +290,24 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     ),
     parse_param!("--cron-title <STR>               Title for cron execution mode"),
     parse_param!("--cron-period <STR>              Cron period for cron execution mode"),
+    // Node.js trace/diagnostics flags. Intentionally no help text: params with
+    // an empty description are hidden from `--help` (see `simple_help`).
+    // Declaring them (vs. relying on unknown-flag skipping) matters for the
+    // value-taking ones — otherwise the value argument is parsed as the
+    // entrypoint — and for `process.execArgv`'s re-parser, which derives its
+    // value-consuming set from `AUTO_PARAMS`.
+    parse_param!("--trace-events-enabled"),
+    parse_param!("--trace-event-categories <STR>"),
+    parse_param!("--trace-event-file-pattern <STR>"),
+    parse_param!("--trace-env"),
+    parse_param!("--trace-env-js-stack"),
+    parse_param!("--trace-env-native-stack"),
+    parse_param!("--trace-exit"),
+    parse_param!("--expose-internals"),
+    parse_param!("--stack-trace-limit <STR>"),
 ];
 
-pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
+const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
     parse_param!(
         "-F, --filter <STR>...             Run a script in all workspace packages matching the pattern"
     ),
@@ -320,7 +315,7 @@ pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
         "-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)"
     ),
     parse_param!(
-        "--no-orphans                      Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only."
+        "--no-orphans                      Exit when the parent process dies, and on exit kill every descendant."
     ),
     parse_param!(
         "--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'"
@@ -339,7 +334,7 @@ pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
     ),
 ];
 
-pub(crate) const AUTO_ONLY_PARAMS: &[ParamType] = concat_params!(
+const AUTO_ONLY_PARAMS: &[ParamType] = concat_params!(
     &[
         // parse_param!("--all"),
         parse_param!("--silent                          Don't print the script command"),
@@ -358,7 +353,7 @@ pub(crate) const AUTO_PARAMS: &[ParamType] = concat_params!(
     BASE_PARAMS_
 );
 
-pub(crate) const RUN_ONLY_PARAMS: &[ParamType] = concat_params!(
+const RUN_ONLY_PARAMS: &[ParamType] = concat_params!(
     &[
         parse_param!("--silent                          Don't print the script command"),
         parse_param!(
@@ -374,7 +369,6 @@ pub(crate) const RUN_PARAMS: &[ParamType] = concat_params!(
     BASE_PARAMS_
 );
 
-// Zig: `if (FeatureFlags.bake_debugging_features) [_]ParamType{...} else [_]ParamType{}`.
 const BAKE_DEBUG_PARAMS: &[ParamType] = &[
     parse_param!(
         "--debug-dump-server-files        When --app is set, dump all server files to disk even when building statically"
@@ -429,7 +423,13 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!(
             "--compile-executable-path <STR>  Path to a Bun executable to use for cross-compilation instead of downloading"
         ),
+        parse_param!(
+            "--asset <STR>...                 Embed a file or directory into the compiled executable, preserving its relative path (requires --compile)"
+        ),
         parse_param!("--bytecode                       Use a bytecode cache"),
+        parse_param!(
+            "--bytecode-depth <NUMBER>        How many levels of nested functions to compile to bytecode ahead of time. Defaults to all"
+        ),
         parse_param!(
             "--watch                          Automatically restart the process on file change"
         ),
@@ -464,13 +464,16 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!("--splitting                      Enable code splitting"),
         parse_param!(
+            "--min-chunk-size <INT>           With --splitting, also fold side-effect-free chunks smaller than this many source bytes into a chunk more entry points load"
+        ),
+        parse_param!(
             "--public-path <STR>              A prefix to be appended to any import paths in bundled code"
         ),
         parse_param!(
             "-e, --external <STR>...          Exclude module from transpilation (can use * wildcards). ex: -e react"
         ),
         parse_param!(
-            "--allow-unresolved <STR>...      Allow unresolved dynamic import()/require() specifiers matching these glob patterns. Use '<empty>' for opaque specifiers. Default is '*' (allow all)."
+            "--allow-unresolved <STR>...      Allow unresolved dynamic import()/require() specifiers matching these glob patterns. Use '\\<empty\\>' for opaque specifiers. Default is '*' (allow all)."
         ),
         parse_param!(
             "--reject-unresolved              Fail the build on any dynamic import()/require() specifier that cannot be resolved at build time."
@@ -489,6 +492,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!(
             "--react-fast-refresh             Enable React Fast Refresh transform (does not emit hot-module code, use this for testing)"
+        ),
+        parse_param!(
+            "--react-compiler                 Enable the React Compiler optimizing transform"
         ),
         parse_param!("--no-bundle                      Transpile file only, do not bundle"),
         parse_param!(
@@ -537,20 +543,20 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
     ],
     maybe_bake_debug_params!(),
 );
-pub(crate) const BUILD_PARAMS: &[ParamType] =
+const BUILD_PARAMS: &[ParamType] =
     concat_params!(BUILD_ONLY_PARAMS, TRANSPILER_PARAMS_, BASE_PARAMS_);
 
 // TODO: update test completions
 pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!(
-        "--no-orphans                     Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only."
+        "--no-orphans                     Exit when the parent process dies, and on exit kill every descendant."
     ),
     parse_param!(
         "--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000."
     ),
     parse_param!("-u, --update-snapshots           Update snapshot files"),
     parse_param!(
-        "--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs"
+        "--rerun-each <NUMBER>            Re-run each test file \\<NUMBER\\> times, helps catch certain bugs"
     ),
     parse_param!(
         "--retry <NUMBER>                 Default retry count for all tests, overridden by per-test { retry: N }"
@@ -573,7 +579,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'."
     ),
     parse_param!(
-        "--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1."
+        "--bail <NUMBER>?                 Exit the test suite after \\<NUMBER\\> failures. If you do not specify a number, it defaults to 1."
     ),
     parse_param!(
         "-t, --test-name-pattern/--grep <STR>    Run only tests with a name that matches the given regex."
@@ -601,6 +607,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--isolate                        Run each test file in a fresh global object. Leaked handles from one file cannot affect another."
     ),
     parse_param!(
+        "--no-isolate                     With --parallel: let each worker keep one global and module registry across the files it runs (faster; files can see each other's leftovers)."
+    ),
+    parse_param!(
         "--parallel <NUMBER>?             Run test files in parallel using N worker processes. Implies --isolate. Defaults to CPU core count."
     ),
     parse_param!(
@@ -612,21 +621,25 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!(
         "--shard <STR>                    Run a subset of test files, e.g. '--shard=1/3' runs the first of three shards. Useful for splitting tests across multiple CI jobs."
     ),
+    parse_param!(
+        "--timings <STR>...               JSON file(s) of per-file durations (ms); several are merged, e.g. one per CI shard. Balances --shard by total time and makes --parallel start the slowest files first."
+    ),
+    parse_param!(
+        "--update-timings                 After the run, write measured per-file durations to the first --timings file (only this shard's files under --shard; merged with what was read otherwise)."
+    ),
 ];
-pub(crate) const TEST_PARAMS: &[ParamType] = concat_params!(
+const TEST_PARAMS: &[ParamType] = concat_params!(
     TEST_ONLY_PARAMS,
     RUNTIME_PARAMS_,
     TRANSPILER_PARAMS_,
     BASE_PARAMS_
 );
 
-/// Fallback table for `Command::tag_params` (Zig: `base_params_ ++
-/// runtime_params_ ++ transpiler_params_`).
-pub(crate) const BASE_RUNTIME_TRANSPILER_PARAMS: &[ParamType] =
+/// Fallback table for `Command::tag_params`.
+const BASE_RUNTIME_TRANSPILER_PARAMS: &[ParamType] =
     concat_params!(BASE_PARAMS_, RUNTIME_PARAMS_, TRANSPILER_PARAMS_);
 
 // ─── pre-converted tables (rodata) ───────────────────────────────────────────
-// Zig built these at comptime as part of the `ComptimeClap(Id, params)` type.
 // `comptime_table!` converts `*_PARAMS` → `[Param<usize>; N]` + category counts
 // + short-index entirely at const-eval, so `parse_with_table` does zero runtime
 // conversion / allocation / sorting / locking. perf: `ConvertedTable::build` +
@@ -654,18 +667,18 @@ pub(crate) const BASE_RUNTIME_TRANSPILER_PARAMS: &[ParamType] =
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".rodata.startup")
 )]
-pub static AUTO_TABLE: &clap::ConvertedTable = clap::comptime_table!(AUTO_PARAMS);
-pub static RUN_TABLE: &clap::ConvertedTable = clap::comptime_table!(RUN_PARAMS, cold);
-pub static BUILD_TABLE: &clap::ConvertedTable = clap::comptime_table!(BUILD_PARAMS, cold);
-pub static TEST_TABLE: &clap::ConvertedTable = clap::comptime_table!(TEST_PARAMS, cold);
-pub(crate) static BASE_RUNTIME_TRANSPILER_TABLE: &clap::ConvertedTable =
+pub(crate) static AUTO_TABLE: &clap::ConvertedTable = clap::comptime_table!(AUTO_PARAMS);
+pub(crate) static RUN_TABLE: &clap::ConvertedTable = clap::comptime_table!(RUN_PARAMS, cold);
+pub(crate) static BUILD_TABLE: &clap::ConvertedTable = clap::comptime_table!(BUILD_PARAMS, cold);
+pub(crate) static TEST_TABLE: &clap::ConvertedTable = clap::comptime_table!(TEST_PARAMS, cold);
+static BASE_RUNTIME_TRANSPILER_TABLE: &clap::ConvertedTable =
     clap::comptime_table!(BASE_RUNTIME_TRANSPILER_PARAMS, cold);
 
 /// Per-tag pre-converted clap table (rodata, built at compile time via
 /// `comptime_table!`). This is what `parse` consumes so the startup path never
 /// hits `ConvertedTable::build`'s alloc/sort/lock.
 #[inline]
-pub(crate) fn tag_table(cmd: CommandTag) -> &'static clap::ConvertedTable {
+fn tag_table(cmd: CommandTag) -> &'static clap::ConvertedTable {
     match cmd {
         CommandTag::AutoCommand => AUTO_TABLE,
         CommandTag::RunCommand | CommandTag::RunAsNodeCommand => RUN_TABLE,
@@ -681,14 +694,46 @@ pub(crate) fn tag_table(cmd: CommandTag) -> &'static clap::ConvertedTable {
 // `#[no_mangle]` symbol layout is unchanged for the C++ side that reads these
 // as plain `bool`. Rust writes go through `.store(.., Relaxed)`.
 #[unsafe(no_mangle)]
-pub(crate) static Bun__Node__ZeroFillBuffers: core::sync::atomic::AtomicBool =
+static Bun__Node__ZeroFillBuffers: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 #[unsafe(no_mangle)]
-pub(crate) static Bun__Node__ProcessNoDeprecation: core::sync::atomic::AtomicBool =
+static Bun__Node__ProcessNoDeprecation: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 #[unsafe(no_mangle)]
-pub(crate) static Bun__Node__ProcessThrowDeprecation: core::sync::atomic::AtomicBool =
+static Bun__Node__ProcessThrowDeprecation: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
+#[unsafe(no_mangle)]
+pub(crate) static Bun__Node__ProcessNoWarnings: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+#[unsafe(no_mangle)]
+pub(crate) static Bun__Node__ProcessTraceWarnings: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+#[unsafe(no_mangle)]
+pub(crate) static Bun__Node__ProcessTraceDeprecation: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+#[unsafe(no_mangle)]
+pub(crate) static Bun__Node__ProcessPendingDeprecation: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Node parity: `--cpu-prof-name` supports a `${pid}` placeholder.
+fn replace_pid_placeholder(name: &[u8]) -> Box<[u8]> {
+    if !bun_core::strings::contains(name, b"${pid}") {
+        return name.into();
+    }
+    let pid = std::process::id().to_string();
+    let mut out = Vec::with_capacity(name.len() + pid.len());
+    let mut i = 0;
+    while i < name.len() {
+        if name[i..].starts_with(b"${pid}") {
+            out.extend_from_slice(pid.as_bytes());
+            i += 6;
+        } else {
+            out.push(name[i]);
+            i += 1;
+        }
+    }
+    out.into_boxed_slice()
+}
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -698,7 +743,7 @@ pub(crate) enum BunCAStore {
     System,
 }
 #[unsafe(no_mangle)]
-pub(crate) static Bun__Node__CAStore: core::sync::atomic::AtomicU8 =
+static Bun__Node__CAStore: core::sync::atomic::AtomicU8 =
     core::sync::atomic::AtomicU8::new(BunCAStore::Bundled as u8);
 #[unsafe(no_mangle)]
 pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
@@ -708,18 +753,19 @@ pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
 // their private helpers moved to `bun_bunfig::arguments` so `bun_install` can
 // call them without a tier-6 dependency. Re-export here so existing
 // `crate::cli::arguments::load_config*` callers are unaffected.
-pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_cmd_args};
+pub use bun_bunfig::arguments::{load_config_path, load_config_with_cmd_args};
+
+/// node aliases `-pe` to `--print --eval` as a whole token (node_options.cc):
+/// it can't be a short in either runtime, being ambiguous with `-p` carrying
+/// the attached value `e`. Bun's `-p` takes the code, so `-pe X` is `-p X`.
+pub const NODE_SHORT_ALIASES: &[(&[u8], &[u8])] = &[(b"-pe", b"-p")];
 
 /// Parse `argv` into `api::TransformOptions` for the given subcommand.
 ///
-/// PORT NOTE: `comptime cmd: Command.Tag` demoted to runtime arg (no
-/// `ConstParamTy` on `Tag`). The Zig original monomorphised over `cmd` so each
-/// subcommand got a dedicated param-table reference and dead-code-eliminated the
-/// other arms; here `command::tag_params(cmd)` does the runtime lookup, and the
-/// per-`cmd` blocks below are guarded by `if matches!(cmd, …)` instead of
-/// `if comptime cmd == …`.
-// PERF(port): was comptime monomorphization.
-pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions, bun_core::Error> {
+/// `command::tag_params(cmd)` does a runtime lookup of the per-subcommand
+/// param table, and the per-`cmd` blocks below are guarded by
+/// `if matches!(cmd, …)`.
+pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformOptions> {
     let mut diag = clap::Diagnostic::default();
     let table = tag_table(cmd);
 
@@ -731,6 +777,11 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
                 CommandTag::RunCommand => 2,
                 CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => 1,
                 _ => 0,
+            },
+            // Only the paths standing in for `node` get node's aliases.
+            short_aliases: match cmd {
+                CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,
+                _ => &[],
             },
         },
     ) {
@@ -758,22 +809,22 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         }
     }
 
-    // PORT NOTE: Zig gated on `builtin.have_error_return_tracing`; see
-    // `maybe_verbose_error_trace!` above for the Rust mapping.
-    if bun_core::env::SHOW_CRASH_TRACE && args.flag(b"--verbose-error-trace") {
-        bun_crash_handler::VERBOSE_ERROR_TRACE.store(true, core::sync::atomic::Ordering::Relaxed);
-    }
-
     // ── --cwd ────────────────────────────────────────────────────────────────
-    // PORT NOTE: Zig stored a `[:0]u8` (NUL-terminated, owned). The Rust
-    // `api::TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`
-    // (sentinel dropped per schema.rs), so we dupe into a plain `Box<[u8]>`.
+    // `api::TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`,
+    // so we dupe into a plain `Box<[u8]>`.
     let cwd: Box<[u8]> = if let Some(cwd_arg) = args.option(b"--cwd") {
         let mut outbuf = PathBuffer::uninit();
-        let cwd_len = bun_sys::getcwd(&mut *outbuf)?;
-        let out = resolve_path::join_abs::<platform::Loose>(&outbuf[..cwd_len], cwd_arg);
-        // `chdir` wants a NUL-terminated path; `join_abs` returns a borrowed
-        // slice into a threadlocal buffer, so dupe-Z once and reuse for both
+        // An absolute --cwd needs no base; a relative one still requires a
+        // live cwd (an exe-dir base would silently chdir somewhere else).
+        let base: &[u8] = if bun_paths::is_absolute(cwd_arg) {
+            b"/"
+        } else {
+            bun_core::getcwd(&mut outbuf)?.as_bytes()
+        };
+        let mut spill = Vec::new();
+        let out =
+            resolve_path::join_abs_string_spill::<platform::Loose>(base, &mut spill, &[cwd_arg]);
+        // `chdir` wants a NUL-terminated path, so dupe-Z once and reuse for both
         // the `chdir` arg and the stored `absolute_working_dir`.
         let out_z = bun_core::ZBox::from_bytes(out);
         if let bun_sys::Result::Err(err) = bun_sys::chdir(&out_z) {
@@ -784,11 +835,26 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
             );
             Global::exit(1);
         }
-        Box::<[u8]>::from(out_z.as_bytes())
-    } else {
+        // Store the post-chdir physical path (mirrors process.chdir) so
+        // process.cwd(), path.resolve, and the resolver agree on one form.
+        let mut phys = PathBuffer::uninit();
+        match bun_core::getcwd(&mut phys) {
+            Ok(p) => Box::<[u8]>::from(p.as_bytes()),
+            Err(_) => Box::<[u8]>::from(out_z.as_bytes()),
+        }
+    } else if matches!(
+        cmd,
+        CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
+    ) {
+        // A deleted cwd must not abort the runtime (Node boots and lets
+        // `process.cwd()` throw later); fall back to the executable's dir.
         let mut temp = PathBuffer::uninit();
-        let len = bun_sys::getcwd(&mut *temp)?;
-        Box::<[u8]>::from(&temp[..len])
+        Box::<[u8]>::from(bun_core::getcwd_or_exe_dir(&mut temp).as_bytes())
+    } else {
+        // Everything else (install/test/build/...) must not silently act on
+        // whatever project happens to live above the executable.
+        let mut temp = PathBuffer::uninit();
+        Box::<[u8]>::from(bun_core::getcwd(&mut temp)?.as_bytes())
     };
 
     // Not gated on .BunxCommand: bunx skips Arguments.parse entirely
@@ -817,10 +883,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
                 {
                     Ok(v) => Some(v),
                     Err(_) => {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error<r>: Invalid elide-lines: \"{}\"",
                             BStr::new(elide_lines)
-                        ));
+                        );
                         Global::exit(1);
                     }
                 };
@@ -883,17 +949,14 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         });
     }
 
-    opts.tsconfig_override = if let Some(ts) = args.option(b"--tsconfig-override") {
-        Some(
-            resolve_path::join_abs_string::<platform::Auto>(
-                ctx.args.absolute_working_dir.as_deref().unwrap(),
-                &[ts],
-            )
-            .into(),
-        )
-    } else {
-        None
-    };
+    opts.tsconfig_override = args.option(b"--tsconfig-override").map(|ts| {
+        let mut spill = Vec::new();
+        Box::from(resolve_path::join_abs_string_spill::<platform::Auto>(
+            ctx.args.absolute_working_dir.as_deref().unwrap(),
+            &mut spill,
+            &[ts],
+        ))
+    });
 
     opts.main_fields = slice_to_owned(args.options(b"--main-fields"));
     // we never actually supported inject.
@@ -950,7 +1013,6 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
                 if !ctx.preloads.is_empty() {
                     all.append(&mut ctx.preloads);
                 }
-                // PERF(port): was appendSliceAssumeCapacity
                 for p in preloads {
                     all.push(Box::<[u8]>::from(*p));
                 }
@@ -984,6 +1046,27 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
 
             if args.flag(b"--no-clear-screen") {
                 let _ = bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.set(true);
+            }
+        }
+
+        if let Some(kill_signal) = args.option(b"--watch-kill-signal") {
+            // Node reads --watch-kill-signal only in watch mode; elsewhere it is
+            // accepted and ignored. Matching is case-insensitive (node uppercases).
+            if ctx.debug.hot_reload == HotReload::Watch {
+                let upper = kill_signal.to_ascii_uppercase();
+                match bun_core::SignalCode::from_name(&upper)
+                    .filter(|s| s.platform_number().is_some())
+                {
+                    Some(sig) => ctx.debug.watch_kill_signal = sig,
+                    None => {
+                        Output::print_errorln(format_args!(
+                            "TypeError [ERR_UNKNOWN_SIGNAL]: Unknown signal: {}",
+                            bstr::BStr::new(kill_signal)
+                        ));
+                        Output::flush();
+                        Global::exit(1);
+                    }
+                }
             }
         }
 
@@ -1038,7 +1121,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
                                 msg: b"",
                             },
                         ));
-                        Output::note("To evaluate TypeScript here, use 'bun --print'");
+                        bun_core::note!("To evaluate TypeScript here, use 'bun --print'");
                         Global::exit(1);
                     }
                 };
@@ -1059,6 +1142,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
             bun_http::set_max_http_header_size(if size == 0 { 1024 * 1024 * 1024 } else { size });
         }
 
+        if args.flag(b"--insecure-http-parser") {
+            bun_http::set_insecure_http_parser(true);
+        }
+
         if let Some(user_agent) = args.option(b"--user-agent") {
             // argv slices returned by `clap::Args::option` borrow
             // process-lifetime `argv` storage.
@@ -1075,7 +1162,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
 
         if args.flag(b"--no-install") {
             ctx.debug.global_cache = options::GlobalCache::disable;
-        } else if args.flag(b"-i") {
+        } else if args.flag(b"-i") && cmd != CommandTag::RunAsNodeCommand {
+            // Under node emulation `-i` is node's --interactive alias, not
+            // --install=fallback (auto-install is meaningless there).
             ctx.debug.global_cache = options::GlobalCache::fallback;
         } else if let Some(enum_value) = args.option(b"--install") {
             // -i=auto --install=force, --install=disable
@@ -1101,10 +1190,22 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         }
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");
+        // node's `-i` is an alias for --interactive; elsewhere `-i` is --install=fallback.
+        ctx.runtime_options.interactive = args.flag(b"--interactive")
+            || (cmd == CommandTag::RunAsNodeCommand && args.flag(b"-i"));
         ctx.runtime_options.preconnect = slice_to_owned(args.options(b"--fetch-preconnect"));
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");
         ctx.runtime_options.experimental_http3_fetch = args.flag(b"--experimental-http3-fetch");
         ctx.runtime_options.expose_gc = args.flag(b"--expose-gc");
+        if args.flag(b"--expose-internals") {
+            // Same gate the env var `BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING`
+            // sets (VirtualMachine::configure_from_env): allows resolving
+            // `bun:internal-for-testing` / `internal/test/binding` in release
+            // builds. Debug builds always allow them.
+            bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
+                .store(true, core::sync::atomic::Ordering::Relaxed);
+            bun_resolve_builtins::set_expose_internals_enabled(true);
+        }
 
         if let Some(depth_str) = args.option(b"--console-depth") {
             let depth = match strings::parse_int::<u16>(depth_str, 10) {
@@ -1196,7 +1297,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         if cpu_prof_flag || cpu_prof_md_flag {
             ctx.runtime_options.cpu_prof.enabled = true;
             if let Some(name) = args.option(b"--cpu-prof-name") {
-                ctx.runtime_options.cpu_prof.name = name.into();
+                ctx.runtime_options.cpu_prof.name = replace_pid_placeholder(name);
             }
             if let Some(dir) = args.option(b"--cpu-prof-dir") {
                 ctx.runtime_options.cpu_prof.dir = dir.into();
@@ -1210,17 +1311,32 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
                     strings::parse_int::<u32>(interval_str, 10).unwrap_or(1000);
             }
         } else {
-            // Warn if --cpu-prof-name or --cpu-prof-dir is used without a profiler flag
+            // Node parity: profiler-scoped options without a profiler flag are a
+            // usage error printed as "<argv0>: <flag> must be used with --cpu-prof"
+            // and exit code 9. The default interval value is a noop, like node.
+            let mut bad_flags: [Option<&str>; 3] = [None, None, None];
             if args.option(b"--cpu-prof-name").is_some() {
-                Output::warn("--cpu-prof-name requires --cpu-prof or --cpu-prof-md to be enabled");
+                bad_flags[0] = Some("--cpu-prof-name");
             }
             if args.option(b"--cpu-prof-dir").is_some() {
-                Output::warn("--cpu-prof-dir requires --cpu-prof or --cpu-prof-md to be enabled");
+                bad_flags[1] = Some("--cpu-prof-dir");
             }
-            if args.option(b"--cpu-prof-interval").is_some() {
-                Output::warn(
-                    "--cpu-prof-interval requires --cpu-prof or --cpu-prof-md to be enabled",
-                );
+            if let Some(interval_str) = args.option(b"--cpu-prof-interval") {
+                if strings::parse_int::<u32>(interval_str, 10).unwrap_or(0) != 1000 {
+                    bad_flags[2] = Some("--cpu-prof-interval");
+                }
+            }
+            if bad_flags.iter().any(Option::is_some) {
+                let argv0 = bun_core::argv().get(0).unwrap_or(bun_core::zstr!("bun"));
+                for flag in bad_flags.into_iter().flatten() {
+                    bun_core::pretty_errorln!(
+                        "{}: {} must be used with --cpu-prof",
+                        BStr::new(argv0.as_bytes()),
+                        flag
+                    );
+                }
+                Output::flush();
+                Global::exit(9);
             }
         }
 
@@ -1229,7 +1345,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
 
         if heap_prof_v8 && heap_prof_md {
             // Both flags specified - warn and use markdown format
-            Output::warn(
+            bun_core::warn!(
                 "Both --heap-prof and --heap-prof-md specified; using --heap-prof-md (markdown format)",
             );
             ctx.runtime_options.heap_prof.enabled = true;
@@ -1241,6 +1357,8 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
                 ctx.runtime_options.heap_prof.dir = dir.into();
             }
         } else if heap_prof_v8 || heap_prof_md {
+            // --heap-prof-interval is accepted for node CLI parity but unused:
+            // JSC has no allocation-site sampler to configure.
             ctx.runtime_options.heap_prof.enabled = true;
             ctx.runtime_options.heap_prof.text_format = heap_prof_md;
             if let Some(name) = args.option(b"--heap-prof-name") {
@@ -1250,29 +1368,72 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
                 ctx.runtime_options.heap_prof.dir = dir.into();
             }
         } else {
-            // Warn if --heap-prof-name or --heap-prof-dir is used without --heap-prof or --heap-prof-md
+            // Node parity: heap-profiler-scoped options without a profiler flag
+            // exit 9, like the --cpu-prof block above. The default interval
+            // value (512 KiB) is a noop, like node.
+            let mut bad_flags: [Option<&str>; 3] = [None, None, None];
             if args.option(b"--heap-prof-name").is_some() {
-                Output::warn(
-                    "--heap-prof-name requires --heap-prof or --heap-prof-md to be enabled",
-                );
+                bad_flags[0] = Some("--heap-prof-name");
             }
             if args.option(b"--heap-prof-dir").is_some() {
-                Output::warn(
-                    "--heap-prof-dir requires --heap-prof or --heap-prof-md to be enabled",
-                );
+                bad_flags[1] = Some("--heap-prof-dir");
+            }
+            if let Some(interval_str) = args.option(b"--heap-prof-interval") {
+                if strings::parse_int::<u32>(interval_str, 10).unwrap_or(0) != 512 * 1024 {
+                    bad_flags[2] = Some("--heap-prof-interval");
+                }
+            }
+            if bad_flags.iter().any(Option::is_some) {
+                let argv0 = bun_core::argv().get(0).unwrap_or(bun_core::zstr!("bun"));
+                for flag in bad_flags.into_iter().flatten() {
+                    bun_core::pretty_errorln!(
+                        "{}: {} must be used with --heap-prof",
+                        BStr::new(argv0.as_bytes()),
+                        flag
+                    );
+                }
+                Output::flush();
+                Global::exit(9);
             }
         }
 
+        if args.flag(b"--experimental-stream-iter") {
+            bun_resolve_builtins::set_stream_iter_enabled(true);
+        }
         if args.flag(b"--no-deprecation") {
             Bun__Node__ProcessNoDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
         }
         if args.flag(b"--throw-deprecation") {
             Bun__Node__ProcessThrowDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
         }
+        if args.flag(b"--no-warnings") {
+            Bun__Node__ProcessNoWarnings.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if args.flag(b"--trace-warnings") {
+            Bun__Node__ProcessTraceWarnings.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if args.flag(b"--trace-deprecation") {
+            Bun__Node__ProcessTraceDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if args.flag(b"--pending-deprecation")
+            || env_var::NODE_PENDING_DEPRECATION.get() == Some(b"1" as &[u8])
+        {
+            Bun__Node__ProcessPendingDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if let Some(path) = args.option(b"--redirect-warnings") {
+            let _ = cli::Bun__Node__RedirectWarnings.set(path.into());
+        }
+        {
+            let disabled = args.options(b"--disable-warning");
+            if !disabled.is_empty() {
+                let _ = cli::Bun__Node__DisabledWarnings
+                    .set(disabled.iter().map(|e| Box::from(*e)).collect());
+            }
+        }
         if let Some(title) = args.option(b"--title") {
             // Static is `Mutex<Option<Box<[u8]>>>` so `process.title = "..."`
             // can drop the previous value; box the argv-borrowed slice up
-            // front (Zig: `CLI.Bun__Node__ProcessTitle = title;`).
+            // front.
             *cli::Bun__Node__ProcessTitle.lock() = Some(title.into());
         }
         if args.flag(b"--zero-fill-buffers") {
@@ -1284,9 +1445,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
 
         // Disallow any combination > 1
         if (use_system_ca as u8) + (use_openssl_ca as u8) + (use_bundled_ca as u8) > 1 {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><red>error<r>: choose exactly one of --use-system-ca, --use-openssl-ca, or --use-bundled-ca"
-            ));
+            );
             Global::exit(1);
         }
 
@@ -1311,10 +1472,16 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
                 core::sync::atomic::Ordering::Relaxed,
             );
         } else {
-            // Spec Arguments.zig: `Bun__Node__UseSystemCA = (Bun__Node__CAStore == .system)`
-            // is written unconditionally; preserve that always-write semantics
-            // even when no CA flag/env was supplied (default `.bundled` ⇒ false).
+            // `Bun__Node__UseSystemCA` is written unconditionally,
+            // even when no CA flag/env was supplied (default bundled ⇒ false).
             Bun__Node__UseSystemCA.store(false, core::sync::atomic::Ordering::Relaxed);
+        }
+
+        if args.flag(b"--tls-min-v1.3") && args.flag(b"--tls-max-v1.2") {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: --tls-min-v1.3 sets default TLS minimum to TLSv1.3 and is not compatible with --tls-max-v1.2, which sets default TLS maximum to TLSv1.2; use one or the other, not both"
+            );
+            Global::exit(1);
         }
     }
 
@@ -1383,10 +1550,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
                 {
                     Ok(v) => Some(v),
                     Err(_) => {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error<r>: Invalid elide-lines: \"{}\"",
                             BStr::new(elide_lines)
-                        ));
+                        );
                         Global::exit(1);
                     }
                 };
@@ -1410,8 +1577,6 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
             ctx.debug.run_in_bun = true;
         }
     }
-
-    opts.resolve = Some(api::ResolveMode::Lazy);
 
     if jsx_factory.is_some()
         || jsx_fragment.is_some()
@@ -1455,20 +1620,20 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
 
     if cmd == CommandTag::BuildCommand {
         if opts.entry_points.is_empty() && !ctx.bundler_options.bake {
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "<r><b>bun build <r><d>v{}<r>",
                 bun_core::Global::package_json_version_with_sha
-            ));
-            Output::pretty(format_args!(
+            );
+            bun_core::pretty!(
                 "<r><red>error: Missing entrypoints. What would you like to bundle?<r>\n\n"
-            ));
+            );
             Output::flush();
-            Output::pretty(format_args!(
+            bun_core::pretty!(
                 "Usage:\n  <d>$<r> <b><green>bun build<r> \\<entrypoint\\> [...\\<entrypoints\\>] <cyan>[...flags]<r>  \n"
-            ));
-            Output::pretty(format_args!(
+            );
+            bun_core::pretty!(
                 "\nTo see full documentation:\n  <d>$<r> <b><green>bun build<r> --help\n"
-            ));
+            );
             Output::flush();
             Global::exit(1);
         }
@@ -1527,10 +1692,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
 
     if bun_core::env::SHOW_CRASH_TRACE {
         // argv slices are process-lifetime.
-        let _ = cli::debug_flags::RESOLVE_BREAKPOINTS
-            .set(args.options(b"--breakpoint-resolve").to_vec());
-        let _ =
-            cli::debug_flags::PRINT_BREAKPOINTS.set(args.options(b"--breakpoint-print").to_vec());
+        bun_core::debug_flags::set_resolve_breakpoints(
+            args.options(b"--breakpoint-resolve").to_vec(),
+        );
     }
 
     Ok(opts)
@@ -1548,10 +1712,10 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
             ctx.test_options.default_timeout_ms = match strings::parse_int::<u32>(timeout_ms, 10) {
                 Ok(v) => v,
                 Err(_) => {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error<r>: Invalid timeout: \"{}\"",
                         BStr::new(timeout_ms)
-                    ));
+                    );
                     Output::flush();
                     Global::exit(1);
                 }
@@ -1565,10 +1729,10 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
             {
                 Ok(v) => v,
                 Err(_) => {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error<r>: Invalid max-concurrency: \"{}\"",
                         BStr::new(max_concurrency)
-                    ));
+                    );
                     Global::exit(1);
                 }
             };
@@ -1590,10 +1754,10 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
             } else if *reporter == b"lcov" {
                 ctx.test_options.coverage.reporters.lcov = true;
             } else {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: invalid coverage reporter '{}'. Available options: 'text' (console output), 'lcov' (code coverage file)",
                     BStr::new(reporter)
-                ));
+                );
                 Global::exit(1);
             }
         }
@@ -1649,19 +1813,16 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
             ctx.test_options.bail = match strings::parse_int::<u32>(bail, 10) {
                 Ok(v) => v,
                 Err(e) => {
-                    Output::pretty_errorln(format_args!(
-                        "<r><red>error<r>: --bail expects a number: {:?}",
-                        e
-                    ));
+                    bun_core::pretty_errorln!("<r><red>error<r>: --bail expects a number: {:?}", e);
                     Output::flush();
                     Global::exit(1);
                 }
             };
 
             if ctx.test_options.bail == 0 {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: --bail expects a number greater than 0"
-                ));
+                );
                 Output::flush();
                 Global::exit(1);
             }
@@ -1674,10 +1835,10 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
             ctx.test_options.repeat_count = match strings::parse_int::<u32>(repeat_count, 10) {
                 Ok(v) => v,
                 Err(e) => {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error<r>: --rerun-each expects a number: {:?}",
                         e
-                    ));
+                    );
                     Global::exit(1);
                 }
             };
@@ -1688,33 +1849,31 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
             ctx.test_options.retry = match strings::parse_int::<u32>(retry_count, 10) {
                 Ok(v) => v,
                 Err(e) => {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error<r>: --retry expects a number: {:?}",
                         e
-                    ));
+                    );
                     Global::exit(1);
                 }
             };
         }
     }
     if ctx.test_options.retry != 0 && ctx.test_options.repeat_count != 0 {
-        Output::pretty_errorln(format_args!(
-            "<r><red>error<r>: --retry cannot be used with --rerun-each"
-        ));
+        bun_core::pretty_errorln!("<r><red>error<r>: --retry cannot be used with --rerun-each");
         Global::exit(1);
     }
     if let Some(name_pattern) = args.option(b"--test-name-pattern") {
         ctx.test_options.test_filter_pattern = Some(name_pattern.into());
         let regex = match RegularExpression::init(
-            bun_core::String::from_bytes(name_pattern),
+            &bun_core::String::from_bytes(name_pattern),
             RegexFlags::None,
         ) {
             Ok(r) => r,
             Err(_) => {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: --test-name-pattern expects a valid regular expression but received {}",
                     bun_core::fmt::QuotedFormatter { text: name_pattern },
-                ));
+                );
                 Global::exit(1);
             }
         };
@@ -1728,9 +1887,9 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     }
     if let Some(shard) = args.option(b"--shard") {
         let Some(sep) = strings::index_of_char(shard, b'/') else {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><red>error<r>: --shard expects <d>'<r>index/count<d>'<r>, e.g. --shard=1/3"
-            ));
+            );
             Global::exit(1);
         };
         let sep = sep as usize;
@@ -1739,37 +1898,52 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         let index = match strings::parse_int::<u32>(index_str, 10) {
             Ok(v) => v,
             Err(_) => {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: --shard index must be a positive integer, got \"{}\"",
                     BStr::new(index_str)
-                ));
+                );
                 Global::exit(1);
             }
         };
         let count = match strings::parse_int::<u32>(count_str, 10) {
             Ok(v) => v,
             Err(_) => {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: --shard count must be a positive integer, got \"{}\"",
                     BStr::new(count_str)
-                ));
+                );
                 Global::exit(1);
             }
         };
         if count == 0 {
-            Output::pretty_errorln(format_args!(
-                "<r><red>error<r>: --shard count must be greater than 0"
-            ));
+            bun_core::pretty_errorln!("<r><red>error<r>: --shard count must be greater than 0");
             Global::exit(1);
         }
         if index == 0 || index > count {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><red>error<r>: --shard index must be between 1 and {}, got {}",
-                count, index
-            ));
+                count,
+                index
+            );
             Global::exit(1);
         }
         ctx.test_options.shard = Some(Shard { index, count });
+    }
+    for path in args.options(b"--timings") {
+        if path.is_empty() {
+            bun_core::pretty_errorln!("<r><red>error<r>: --timings expects a file path");
+            Global::exit(1);
+        }
+        if !ctx.test_options.timings_files.iter().any(|p| &**p == *path) {
+            ctx.test_options.timings_files.push((*path).into());
+        }
+    }
+    ctx.test_options.update_timings = args.flag(b"--update-timings");
+    if ctx.test_options.update_timings && ctx.test_options.timings_files.is_empty() {
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: --update-timings requires --timings, e.g. --timings=.bun-test-timings.json --update-timings"
+        );
+        Global::exit(1);
     }
     ctx.test_options.update_snapshots = args.flag(b"--update-snapshots");
     ctx.test_options.run_todo = args.flag(b"--todo");
@@ -1777,7 +1951,8 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     ctx.test_options.pass_with_no_tests = args.flag(b"--pass-with-no-tests");
     ctx.test_options.concurrent = args.flag(b"--concurrent");
     ctx.test_options.randomize = args.flag(b"--randomize");
-    ctx.test_options.isolate = args.flag(b"--isolate");
+    let no_isolate = args.flag(b"--no-isolate");
+    ctx.test_options.isolate = args.flag(b"--isolate") && !no_isolate;
     ctx.test_options.test_worker = args.flag(b"--test-worker");
 
     if let Some(parallel_str) = args.option(b"--parallel") {
@@ -1785,10 +1960,10 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
             match strings::parse_int::<u32>(parallel_str, 10) {
                 Ok(v) => v,
                 Err(_) => {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<red>error<r>: --parallel expects a positive integer, received \"{}\"",
                         BStr::new(parallel_str)
-                    ));
+                    );
                     Global::exit(1);
                 }
             }
@@ -1796,24 +1971,23 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
             u32::from(bun_core::get_thread_count().max(1))
         };
         if parsed == 0 {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<red>error<r>: --parallel expects a positive integer, received \"0\""
-            ));
+            );
             Global::exit(1);
         }
         ctx.test_options.parallel = parsed;
-        // --parallel implies --isolate inside each worker.
-        ctx.test_options.isolate = true;
+        ctx.test_options.isolate = !no_isolate;
     }
 
     if let Some(delay_str) = args.option(b"--parallel-delay") {
         ctx.test_options.parallel_delay_ms = match strings::parse_int::<u32>(delay_str, 10) {
             Ok(v) => Some(v),
             Err(_) => {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<red>error<r>: --parallel-delay expects a non-negative integer (milliseconds), received \"{}\"",
                     BStr::new(delay_str)
-                ));
+                );
                 Global::exit(1);
             }
         };
@@ -1824,10 +1998,10 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         ctx.test_options.seed = match strings::parse_int::<u32>(seed_str, 10) {
             Ok(v) => Some(v),
             Err(_) => {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<red>error<r>: Invalid seed value: {}",
                     BStr::new(seed_str)
-                ));
+                );
                 Global::exit(1);
             }
         };
@@ -1849,6 +2023,18 @@ fn parse_build_command_options(
 ) {
     ctx.bundler_options.transform_only = args.flag(b"--no-bundle");
     ctx.bundler_options.bytecode = args.flag(b"--bytecode");
+    if let Some(depth) = args.option(b"--bytecode-depth") {
+        ctx.bundler_options.bytecode_depth = match strings::parse_int::<u32>(depth, 10) {
+            Ok(v) => v,
+            Err(_) => {
+                Output::err_generic(
+                    "Invalid value for --bytecode-depth: \"{}\". Must be a non-negative integer\n",
+                    format_args!("{}", BStr::new(depth)),
+                );
+                Global::exit(1);
+            }
+        };
+    }
 
     let production = args.flag(b"--production");
 
@@ -1901,9 +2087,9 @@ fn parse_build_command_options(
     }
 
     if args.flag(b"--reject-unresolved") && !args.options(b"--allow-unresolved").is_empty() {
-        Output::pretty_errorln(format_args!(
+        bun_core::pretty_errorln!(
             "<r><red>error<r>: --reject-unresolved and --allow-unresolved cannot be used together"
-        ));
+        );
         Global::crash();
     } else if args.flag(b"--reject-unresolved") {
         ctx.bundler_options.allow_unresolved = Some(Vec::new());
@@ -1923,14 +2109,14 @@ fn parse_build_command_options(
 
     if let Some(packages) = args.option(b"--packages") {
         if packages == b"bundle" {
-            opts.packages = Some(api::Packages::Bundle);
+            opts.packages = Some(api::PackagesMode::Bundle);
         } else if packages == b"external" {
-            opts.packages = Some(api::Packages::External);
+            opts.packages = Some(api::PackagesMode::External);
         } else {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><red>error<r>: Invalid packages setting: \"{}\"",
                 BStr::new(packages)
-            ));
+            );
             Global::crash();
         }
     }
@@ -1948,9 +2134,9 @@ fn parse_build_command_options(
         } else if env == b"disable" || env == b"0" {
             ctx.bundler_options.env_behavior = options::EnvBehavior::LoadAllWithoutInlining;
         } else {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><red>error<r>: Expected 'env' to be 'inline', 'disable', or a prefix with a '*' character"
-            ));
+            );
             Global::crash();
         }
     }
@@ -2040,6 +2226,17 @@ fn parse_build_command_options(
             Global::crash();
         }
         ctx.bundler_options.compile_exec_argv = Some(compile_exec_argv.into());
+    }
+
+    {
+        let assets = args.options(b"--asset");
+        if !assets.is_empty() {
+            if !ctx.bundler_options.compile {
+                Output::err_generic("--asset requires --compile", ());
+                Global::crash();
+            }
+            ctx.bundler_options.compile_assets = slice_to_owned(assets);
+        }
     }
 
     // Handle --compile-autoload-dotenv flags
@@ -2135,15 +2332,6 @@ fn parse_build_command_options(
     }
 
     if args.flag(b"--windows-hide-console") {
-        // --windows-hide-console technically doesnt depend on WinAPI, but since since --windows-icon
-        // does, all of these customization options have been gated to windows-only
-        if !cfg!(windows) {
-            Output::err_generic(
-                "Using --windows-hide-console is only available when compiling on Windows",
-                (),
-            );
-            Global::crash();
-        }
         if ctx.bundler_options.compile_target.os != OperatingSystem::Windows {
             Output::err_generic(
                 "--windows-hide-console requires a Windows compile target",
@@ -2305,16 +2493,19 @@ fn parse_build_command_options(
 
     if let Some(format_str) = args.option(b"--format") {
         let Some(format) = options::Format::from_string(format_str) else {
-            Output::err_generic("Invalid format - must be esm, cjs, or iife", ());
+            Output::err_generic(
+                "Invalid value for --format: {}. Must be 'esm', 'cjs', or 'iife'.",
+                (bun_core::fmt::quote(format_str),),
+            );
             Global::crash();
         };
 
         match format {
             options::Format::InternalBakeDev => {
-                Output::warn(format_args!(
+                bun_core::warn!(
                     "--format={} is for debugging only, and may experience breaking changes at any moment",
                     BStr::new(format_str)
-                ));
+                );
                 Output::flush();
             }
             options::Format::Cjs => {
@@ -2348,19 +2539,48 @@ fn parse_build_command_options(
         ctx.bundler_options.code_splitting = true;
     }
 
-    if let Some(entry_naming) = args.option(b"--entry-naming") {
-        ctx.bundler_options.entry_naming =
-            strings::concat(&[b"./", strings::remove_leading_dot_slash(entry_naming)]);
+    if let Some(size_str) = args.option(b"--min-chunk-size") {
+        let min_chunk_size = match strings::parse_int::<u64>(size_str, 10) {
+            Ok(v) => v,
+            Err(_) => {
+                Output::err_generic(
+                    "Invalid value for --min-chunk-size: \"{}\". Must be a non-negative integer\n",
+                    format_args!("{}", BStr::new(size_str)),
+                );
+                Global::exit(1);
+            }
+        };
+        if min_chunk_size > 0 && !ctx.bundler_options.code_splitting {
+            Output::err_generic("--min-chunk-size requires --splitting", ());
+            Global::crash();
+        }
+        ctx.bundler_options.min_chunk_size = min_chunk_size;
     }
 
-    if let Some(chunk_naming) = args.option(b"--chunk-naming") {
-        ctx.bundler_options.chunk_naming =
-            strings::concat(&[b"./", strings::remove_leading_dot_slash(chunk_naming)]);
-    }
-
-    if let Some(asset_naming) = args.option(b"--asset-naming") {
-        ctx.bundler_options.asset_naming =
-            strings::concat(&[b"./", strings::remove_leading_dot_slash(asset_naming)]);
+    for (flag, slot) in [
+        (
+            b"--entry-naming".as_slice(),
+            &mut ctx.bundler_options.entry_naming,
+        ),
+        (
+            b"--chunk-naming".as_slice(),
+            &mut ctx.bundler_options.chunk_naming,
+        ),
+        (
+            b"--asset-naming".as_slice(),
+            &mut ctx.bundler_options.asset_naming,
+        ),
+    ] {
+        if let Some(value) = args.option(flag) {
+            if let Some((pos, tail)) = options::find_unterminated_placeholder(value) {
+                Output::err_generic(
+                    "{}: unterminated \"{}\" placeholder (missing \"]\") at position {}",
+                    (BStr::new(flag), BStr::new(tail), pos),
+                );
+                Global::exit(1);
+            }
+            *slot = strings::concat(&[b"./", strings::remove_leading_dot_slash(value)]);
+        }
     }
 
     if args.flag(b"--server-components") {
@@ -2387,31 +2607,34 @@ fn parse_build_command_options(
         ctx.bundler_options.react_fast_refresh = true;
     }
 
+    if args.flag(b"--react-compiler") {
+        ctx.bundler_options.react_compiler = true;
+    }
+
     if let Some(setting) = args.option(b"--sourcemap") {
         if setting.is_empty() {
             // In the future, Bun is going to make this default to .linked
-            opts.source_map = Some(api::SourceMap::Linked);
+            opts.source_map = Some(api::SourceMapMode::Linked);
         } else if setting == b"inline" {
-            opts.source_map = Some(api::SourceMap::Inline);
+            opts.source_map = Some(api::SourceMapMode::Inline);
         } else if setting == b"none" {
-            opts.source_map = Some(api::SourceMap::None);
+            opts.source_map = Some(api::SourceMapMode::None);
         } else if setting == b"external" {
-            opts.source_map = Some(api::SourceMap::External);
+            opts.source_map = Some(api::SourceMapMode::External);
         } else if setting == b"linked" {
-            opts.source_map = Some(api::SourceMap::Linked);
+            opts.source_map = Some(api::SourceMapMode::Linked);
         } else {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><red>error<r>: Invalid sourcemap setting: \"{}\"",
                 BStr::new(setting)
-            ));
+            );
             Global::crash();
         }
 
-        // when using --compile, only `external` works, as we do not
-        // look at the source map comment. so after we validate the
-        // user's choice was in the list, we secretly override it
-        if ctx.bundler_options.compile {
-            opts.source_map = Some(api::SourceMap::External);
-        }
+        // When using --compile, only `external` sourcemaps work, as the
+        // runtime does not look at the source map comment. That override
+        // happens in build_command.rs once it's known whether --compile
+        // produces an executable or a standalone HTML file (browsers do read
+        // the comment, so standalone HTML keeps the user's choice).
     }
 }

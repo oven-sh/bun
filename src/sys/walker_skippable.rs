@@ -1,6 +1,6 @@
 use core::ops::Range;
 
-use crate::{self as sys, Fd, FdExt, dir_iterator};
+use crate::{self as sys, Dir, Fd, FdExt, dir_iterator};
 use bun_alloc::AllocError;
 use bun_core::slice_as_bytes;
 use bun_paths::{OSPathChar, OSPathSlice, OSPathSliceZ, SEP};
@@ -11,23 +11,39 @@ fn hash_with_seed(seed: u64, bytes: &[u8]) -> u64 {
     Wyhash11::hash(seed, bytes)
 }
 
-// TODO(port): `DirIterator.NewWrappedIterator(if (Environment.isWindows) .u16 else .u8)` —
-// `dir_iterator::WrappedIterator` is parameterized on the native OS path char in Zig.
 type WrappedIterator = dir_iterator::WrappedIterator;
 
 type NameBufferList = Vec<OSPathChar>;
 
 pub struct Walker {
+    root: Root,
     stack: Vec<StackItem>,
     name_buffer: NameBufferList,
-    // PORT NOTE: reshaped for borrowck — Zig stored `skip_filenames`/`skip_dirnames` as
-    // sub-slices borrowed from `skip_all`. Rust stores index ranges into `skip_all` instead
-    // (self-referential slices are not expressible without raw pointers).
+    // `skip_filenames`/`skip_dirnames` are index ranges into `skip_all` rather
+    // than sub-slices: self-referential slices are not expressible without raw
+    // pointers.
     skip_filenames: Range<usize>,
     skip_dirnames: Range<usize>,
     skip_all: Box<[u64]>,
     seed: u64,
     pub resolve_unknown_entry_types: bool,
+}
+
+/// The directory a walk starts from. The walker never closes a borrowed
+/// root (callers share one across several walks); an owned one closes with
+/// the walker.
+enum Root {
+    Borrowed(Fd),
+    Owned(Dir),
+}
+
+impl Root {
+    fn fd(&self) -> Fd {
+        match self {
+            Root::Borrowed(fd) => *fd,
+            Root::Owned(dir) => dir.fd(),
+        }
+    }
 }
 
 pub struct WalkerEntry<'a> {
@@ -37,8 +53,6 @@ pub struct WalkerEntry<'a> {
     pub dir: Fd,
     pub basename: &'a OSPathSliceZ,
     pub path: &'a OSPathSliceZ,
-    // PORT NOTE: Zig used `std.fs.Dir.Entry.Kind`; mapped to `bun_core::FileKind`
-    // (re-exported as `crate::EntryKind`).
     pub kind: sys::EntryKind,
 }
 
@@ -48,13 +62,18 @@ struct StackItem {
 }
 
 impl Walker {
+    /// The directory the walk started from; open for as long as the walker is.
+    pub fn root(&self) -> Fd {
+        self.root.fd()
+    }
+
     /// After each call to this function, and on deinit(), the memory returned
     /// from this function becomes invalid. A copy must be made in order to keep
     /// a reference to the path.
     pub fn next(&mut self) -> sys::Result<Option<WalkerEntry<'_>>> {
         while !self.stack.is_empty() {
-            // `top` becomes invalid after appending to `self.stack`
-            // PORT NOTE: reshaped for borrowck — use index instead of holding `&mut` across push.
+            // Use an index instead of holding `&mut` to the top item: it would
+            // be invalidated by appending to `self.stack` below.
             let top_idx = self.stack.len() - 1;
             let mut dirname_len = self.stack[top_idx].dirname_len;
             match self.stack[top_idx].iter.next() {
@@ -70,7 +89,6 @@ impl Walker {
                             && self.resolve_unknown_entry_types
                         {
                             let dir_fd = self.stack[top_idx].iter.dir();
-                            // TODO(port): `base.name.sliceAssumeZ()` — assumed `.as_zstr()`
                             match sys::lstatat(dir_fd, base.name.as_zstr()) {
                                 Ok(stat_buf) => sys::kind_from_mode(stat_buf.st_mode as sys::Mode),
                                 Err(_) => continue, // skip entries we can't stat
@@ -153,8 +171,6 @@ impl Walker {
                             )?;
                             {
                                 self.stack.push(StackItem {
-                                    // TODO(port): Zig passed encoding `if windows .u16 else .u8`;
-                                    // assumed native-encoding overload.
                                     iter: dir_iterator::iterate(new_dir),
                                     dirname_len: cur_len,
                                 });
@@ -190,14 +206,13 @@ impl Drop for Walker {
     fn drop(&mut self) {
         if !self.stack.is_empty() {
             for item in &mut self.stack[1..] {
-                // Zig had `if (self.stack.items.len != 0)` here, which is always true inside
-                // this branch — preserved as-is.
                 item.iter.dir().close();
             }
             // `self.stack` Vec drops itself.
         }
 
-        // `self.skip_all` (Box<[u64]>) and `self.name_buffer` (Vec) drop themselves.
+        // `self.root` (closing an owned root), `self.skip_all` and `self.name_buffer`
+        // drop themselves.
     }
 }
 
@@ -205,9 +220,26 @@ impl Drop for Walker {
 /// `self` must have been opened with `OpenDirOptions{.iterate = true}`.
 /// Must call `Walker.deinit` when done.
 /// The order of returned file system entries is undefined.
-/// `self` will not be closed after walking it.
+/// Walk `self_`, which the caller keeps open for the walker's lifetime.
 pub fn walk(
     self_: Fd,
+    skip_filenames: &[&OSPathSlice],
+    skip_dirnames: &[&OSPathSlice],
+) -> Result<Walker, AllocError> {
+    walk_root(Root::Borrowed(self_), skip_filenames, skip_dirnames)
+}
+
+/// Walk `dir`, which the walker takes over and closes when it is dropped.
+pub fn walk_owned(
+    dir: Dir,
+    skip_filenames: &[&OSPathSlice],
+    skip_dirnames: &[&OSPathSlice],
+) -> Result<Walker, AllocError> {
+    walk_root(Root::Owned(dir), skip_filenames, skip_dirnames)
+}
+
+fn walk_root(
+    root: Root,
     skip_filenames: &[&OSPathSlice],
     skip_dirnames: &[&OSPathSlice],
 ) -> Result<Walker, AllocError> {
@@ -231,12 +263,12 @@ pub fn walk(
     }
 
     stack.push(StackItem {
-        // TODO(port): Zig passed encoding `if windows .u16 else .u8`; assumed native-encoding overload.
-        iter: dir_iterator::iterate(self_),
+        iter: dir_iterator::iterate(root.fd()),
         dirname_len: 0,
     });
 
     Ok(Walker {
+        root,
         stack,
         name_buffer,
         skip_all: skip_names,
@@ -246,5 +278,3 @@ pub fn walk(
         resolve_unknown_entry_types: false,
     })
 }
-
-// ported from: src/sys/walker_skippable.zig

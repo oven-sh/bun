@@ -1,24 +1,12 @@
 use core::fmt;
 
-use bun_core::ZigString;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
-
-pub(crate) fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> ZigString {
-    let js_type = value.js_type();
-    if js_type.is_array() {
-        return ZigString::static_("array");
-    }
-    value
-        .js_type_string(global_object)
-        .get_zig_string(global_object)
-}
 
 #[cold]
 pub(crate) fn throw_err_invalid_arg_value(
     global_this: &JSGlobalObject,
     args: fmt::Arguments<'_>,
 ) -> JsError {
-    // Zig: `global.ERR(.INVALID_ARG_VALUE, fmt, args).throw()` — TypeError with `.code = "ERR_INVALID_ARG_VALUE"`.
     global_this
         .err(jsc::ErrorCode::INVALID_ARG_VALUE, args)
         .throw()
@@ -29,16 +17,12 @@ pub(crate) fn throw_err_invalid_arg_type_with_message(
     global_this: &JSGlobalObject,
     args: fmt::Arguments<'_>,
 ) -> JsError {
-    // Zig: `global.ERR(.INVALID_ARG_TYPE, fmt, args).throw()` — TypeError with `.code = "ERR_INVALID_ARG_TYPE"`.
     global_this
         .err(jsc::ErrorCode::INVALID_ARG_TYPE, args)
         .throw()
 }
 
-// PORT NOTE: Zig took `comptime name_fmt: string, name_args: anytype` and did
-// comptime string concatenation (`"The \"" ++ name_fmt ++ "\" ..."`) plus tuple
-// concatenation (`name_args ++ .{expected_type, actual_type}`). Rust cannot
-// concat a caller-supplied format string at compile time, so callers pass the
+// Callers pass the
 // already-formatted name as anything `Display`-able (e.g. `&str` or
 // `format_args!(...)`) and we embed it via `{}`.
 #[cold]
@@ -48,7 +32,7 @@ pub(crate) fn throw_err_invalid_arg_type(
     expected_type: &str,
     value: JSValue,
 ) -> JsError {
-    let actual_type = get_type_name(global_this, value);
+    let actual_type = value.type_name(global_this);
     throw_err_invalid_arg_type_with_message(
         global_this,
         format_args!(
@@ -59,8 +43,7 @@ pub(crate) fn throw_err_invalid_arg_type(
 }
 
 #[cold]
-pub(crate) fn throw_range_error(global_this: &JSGlobalObject, args: fmt::Arguments<'_>) -> JsError {
-    // Zig: `global.ERR(.OUT_OF_RANGE, fmt, args).throw()` — RangeError with `.code = "ERR_OUT_OF_RANGE"`.
+fn throw_range_error(global_this: &JSGlobalObject, args: fmt::Arguments<'_>) -> JsError {
     global_this.err(jsc::ErrorCode::OUT_OF_RANGE, args).throw()
 }
 
@@ -81,29 +64,8 @@ fn throw_range_error_msg(
     )
 }
 
-#[inline]
-fn throw_range_error_min_max<V: bun_core::fmt::OutOfRangeValue>(
-    global_this: &JSGlobalObject,
-    value: V,
-    name: &str,
-    min: i64,
-    max: i64,
-) -> JsError {
-    global_this.throw_range_error(
-        value,
-        jsc::RangeErrorOptions {
-            field_name: name.as_bytes(),
-            min,
-            max,
-            ..Default::default()
-        },
-    )
-}
-
-// PORT NOTE: Zig had `comptime min_value: ?i64, comptime max_value: ?i64` with a
-// `comptime { @compileError }` bounds check. `Option<i64>` is not a valid const-
-// generic type on stable, so demoted to runtime params + debug_assert.
-// PERF(port): was comptime monomorphization.
+// `Option<i64>` is not a valid const-generic type on stable, so the bounds
+// are runtime params + debug_assert.
 pub(crate) fn validate_integer(
     global_this: &JSGlobalObject,
     value: JSValue,
@@ -143,12 +105,12 @@ pub(crate) fn validate_integer(
     let num = value.as_number();
 
     if num < min || num > max {
-        return Err(throw_range_error_min_max(
+        return Err(throw_range_error(
             global_this,
-            num,
-            name,
-            min as i64,
-            max as i64,
+            format_args!(
+                "The value of \"{}\" is out of range. It must be >= {} && <= {}. Received {}",
+                name, min, max, num
+            ),
         ));
     }
 
@@ -173,7 +135,10 @@ pub(crate) fn validate_int32(
             value,
         ));
     }
-    if !value.is_any_int() {
+    let num = value.as_number();
+    // Number.isInteger semantics like Node's validateInt32: -0 and integral doubles
+    // outside the int52 range are integers; the range check below rejects out-of-range.
+    if !num.is_finite() || num.fract() != 0.0 {
         let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
         return Err(throw_range_error(
             global_this,
@@ -184,14 +149,13 @@ pub(crate) fn validate_int32(
             ),
         ));
     }
-    let num = value.as_number();
     // Use floating point comparison here to ensure values out of i32 range get caught instead of clamp/truncated.
     if num < (min as f64) || num > (max as f64) {
         let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
         return Err(throw_range_error(
             global_this,
             format_args!(
-                "The value of \"{}\" is out of range. It must be >= {} and <= {}. Received {}",
+                "The value of \"{}\" is out of range. It must be >= {} && <= {}. Received {}",
                 name,
                 min,
                 max,
@@ -216,7 +180,8 @@ pub(crate) fn validate_uint32(
             value,
         ));
     }
-    if !value.is_any_int() {
+    let num = value.as_number();
+    if !num.is_finite() || num.fract() != 0.0 {
         let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
         return Err(throw_range_error(
             global_this,
@@ -227,15 +192,14 @@ pub(crate) fn validate_uint32(
             ),
         ));
     }
-    let num: i64 = value.as_int52();
-    let min: i64 = if greater_than_zero { 1 } else { 0 };
-    let max: i64 = i64::from(u32::MAX);
+    let min: f64 = if greater_than_zero { 1.0 } else { 0.0 };
+    let max: f64 = f64::from(u32::MAX);
     if num < min || num > max {
         let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
         return Err(throw_range_error(
             global_this,
             format_args!(
-                "The value of \"{}\" is out of range. It must be >= {} and <= {}. Received {}",
+                "The value of \"{}\" is out of range. It must be >= {} && <= {}. Received {}",
                 name,
                 min,
                 max,
@@ -243,7 +207,6 @@ pub(crate) fn validate_uint32(
             ),
         ));
     }
-    // Zig: @truncate(@as(u63, @intCast(num))) — bounds check above guarantees 0..=u32::MAX.
     Ok(num as u32)
 }
 
@@ -346,20 +309,19 @@ bitflags::bitflags! {
 
 impl ValidateObjectOptions {
     #[inline]
-    pub(crate) fn allow_nullable(self) -> bool {
+    fn allow_nullable(self) -> bool {
         self.contains(Self::ALLOW_NULLABLE)
     }
     #[inline]
-    pub(crate) fn allow_array(self) -> bool {
+    fn allow_array(self) -> bool {
         self.contains(Self::ALLOW_ARRAY)
     }
     #[inline]
-    pub(crate) fn allow_function(self) -> bool {
+    fn allow_function(self) -> bool {
         self.contains(Self::ALLOW_FUNCTION)
     }
 }
 
-// PERF(port): `options` was `comptime` in Zig (monomorphized per call site).
 pub(crate) fn validate_object(
     global_this: &JSGlobalObject,
     value: JSValue,
@@ -422,7 +384,7 @@ pub(crate) fn validate_array(
     min_length: Option<i32>,
 ) -> JsResult<()> {
     if !value.js_type().is_array() {
-        let actual_type = get_type_name(global_this, value);
+        let actual_type = value.type_name(global_this);
         return Err(throw_err_invalid_arg_type_with_message(
             global_this,
             format_args!(
@@ -432,7 +394,6 @@ pub(crate) fn validate_array(
         ));
     }
     if let Some(min_length) = min_length {
-        // PORT NOTE: Zig compared `usize < ?i32` (peer-type widened); cast to i64 to match.
         if (value.get_length(global_this)? as i64) < i64::from(min_length) {
             return Err(throw_err_invalid_arg_value(
                 global_this,
@@ -498,14 +459,13 @@ pub(crate) fn validate_function(
     Ok(value)
 }
 
-/// Zig used `@typeInfo(T).@"enum".fields` to iterate variants and match by
-/// `@tagName`. Rust has no field reflection; enums opt in via this trait.
+/// Rust has no field reflection; enums opt in via this trait.
 /// Implementors should typically `#[derive(strum::EnumString, strum::VariantNames)]`
 /// and provide `VALUES_INFO` as the `|`-joined variant names.
 pub(crate) trait StringEnum: Sized {
-    /// `|`-joined list of variant names (matches Zig's comptime-built `values_info`).
+    /// `|`-joined list of variant names.
     const VALUES_INFO: &'static str;
-    /// Match `s` against variant names exactly (Zig: `str.eqlComptime(field.name)`).
+    /// Match `s` against variant names exactly.
     fn from_bun_string(s: &bun_core::String) -> Option<Self>;
 }
 
@@ -514,9 +474,7 @@ pub(crate) fn validate_string_enum<T: StringEnum>(
     value: JSValue,
     name: impl fmt::Display,
 ) -> JsResult<T> {
-    // Zig: `defer str.deref()`. `bun_core::String` is `Copy` with no `Drop`;
-    // `OwnedString` is the RAII guard that releases the +1 ref on scope exit.
-    let str = bun_core::OwnedString::new(value.to_bun_string(global_this)?);
+    let str = value.to_bun_string(global_this)?;
     if let Some(v) = T::from_bun_string(&str) {
         return Ok(v);
     }
@@ -526,5 +484,3 @@ pub(crate) fn validate_string_enum<T: StringEnum>(
         format_args!("{} must be one of: {}", name, T::VALUES_INFO),
     ))
 }
-
-// ported from: src/runtime/node/util/validators.zig

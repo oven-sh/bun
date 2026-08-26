@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { request } from "undici";
+import { Readable } from "node:stream";
+import { request, fetch as undiciFetch } from "undici";
 
 import { createServer } from "../../../http-test-server";
 
@@ -50,6 +51,44 @@ describe("undici", () => {
       expect(json.data).toBe("Hello world");
     });
 
+    it("should stream a node:stream Readable body", async () => {
+      const firstChunkReceived = Promise.withResolvers<void>();
+      await using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const received: number[] = [];
+          for await (const chunk of req.body!) {
+            received.push(...chunk);
+            firstChunkReceived.resolve();
+          }
+          return Response.json({
+            received,
+            transferEncoding: req.headers.get("transfer-encoding"),
+            contentLength: req.headers.get("content-length"),
+          });
+        },
+      });
+
+      // The second chunk exists only after the server has the first one, so
+      // the body has to go out while the Readable is still open.
+      async function* chunks() {
+        yield Buffer.from([0x00, 0xff, 0xfe]); // not valid UTF-8
+        await firstChunkReceived.promise;
+        yield "h\u00e9llo"; // string chunks go out as UTF-8
+      }
+
+      const { statusCode, body } = await request(server.url.href, {
+        method: "POST",
+        body: Readable.from(chunks()),
+      });
+      expect(await body.json()).toEqual({
+        received: [0x00, 0xff, 0xfe, ...Buffer.from("h\u00e9llo")],
+        transferEncoding: "chunked",
+        contentLength: null,
+      });
+      expect(statusCode).toBe(200);
+    });
+
     it("should accept a URL class object", async () => {
       const { body } = await request(new URL(`${hostUrl}/get`));
       expect(body).toBeDefined();
@@ -85,6 +124,27 @@ describe("undici", () => {
       } catch (e) {
         expect((e as Error).message).toBe("Body not allowed for GET or HEAD requests");
       }
+    });
+
+    // undici's fetch() gives these responses a null body, as the Fetch spec
+    // says. undici's request() hands out a body object for every response,
+    // and this one is empty.
+    it.each([
+      ["a 204", "/status/204", 204, {}],
+      ["the response to a HEAD request", "/head", 200, { method: "HEAD" }],
+    ])("%s has no body", async (_, path, expectedStatus, init) => {
+      const response = await undiciFetch(`${hostUrl}${path}`, init);
+      expect({ status: response.status, body: response.body }).toEqual({ status: expectedStatus, body: null });
+
+      const { statusCode, body } = await request(`${hostUrl}${path}`, init);
+      expect(statusCode).toBe(expectedStatus);
+      expect(body.bodyUsed).toBe(false);
+      expect(await body.text()).toBe("");
+      expect(body.bodyUsed).toBe(true);
+
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of (await request(`${hostUrl}${path}`, init)).body) chunks.push(chunk);
+      expect(chunks).toEqual([]);
     });
 
     it("should allow a query string to be passed", async () => {
@@ -154,5 +214,56 @@ describe("undici", () => {
     //   const json = (await body.json()) as { form: { foo: string } };
     //   expect(json.form.foo).toBe("bar");
     // });
+  });
+});
+
+describe("undici.request maxRedirections", () => {
+  it("does not follow more redirects than maxRedirections allows", async () => {
+    const hits: string[] = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { pathname } = new URL(req.url);
+        hits.push(pathname);
+        if (pathname.startsWith("/redirect/")) {
+          const hop = Number(pathname.slice("/redirect/".length));
+          if (hop >= 5) {
+            return Response.json({ done: true, hop });
+          }
+          return new Response(null, {
+            status: 302,
+            headers: { location: `/redirect/${hop + 1}` },
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    try {
+      const origin = `http://localhost:${server.port}`;
+
+      // The caller's cap must be enforced: with maxRedirections: 1 only one
+      // redirect may be followed, so the client stops at /redirect/1 instead
+      // of chasing the chain to the end.
+      hits.length = 0;
+      await expect(request(`${origin}/redirect/0`, { maxRedirections: 1 })).rejects.toThrow(
+        "redirected too many times",
+      );
+      expect(hits).toEqual(["/redirect/0", "/redirect/1"]);
+
+      // A cap large enough for the whole chain still reaches the final response.
+      hits.length = 0;
+      const followed = await request(`${origin}/redirect/0`, { maxRedirections: 10 });
+      expect(hits).toEqual(["/redirect/0", "/redirect/1", "/redirect/2", "/redirect/3", "/redirect/4", "/redirect/5"]);
+      expect(followed.statusCode).toBe(200);
+      expect(((await followed.body!.json()) as { done: boolean; hop: number }).hop).toBe(5);
+
+      // Invalid caps are rejected up front instead of being silently ignored.
+      await expect(request(`${origin}/redirect/0`, { maxRedirections: -1 })).rejects.toThrow(
+        "maxRedirections must be a positive number",
+      );
+    } finally {
+      server.stop(true);
+    }
   });
 });

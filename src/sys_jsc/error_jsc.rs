@@ -3,10 +3,9 @@
 use bun_sys::Error;
 
 use crate::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, SystemErrorJsc};
+#[cfg(windows)]
+use bun_jsc::bun_string_jsc;
 
-// PORT NOTE: In Rust, `to_js`/`from_js` live as extension-trait methods in the
-// `*_jsc` crate (per PORTING.md). The Zig free fns `toJS`/`toJSWithAsyncStack`
-// become methods on this trait, impl'd for `bun_sys::Error`.
 pub trait ErrorJsc {
     fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
 
@@ -37,17 +36,16 @@ impl ErrorJsc for Error {
     }
 }
 
-// PORT NOTE: Zig `pub const TestingAPIs = struct { ... }` is a fieldless namespace
-// struct. Mapped to a module (not `struct + impl`) because `#[bun_jsc::host_fn]`'s
+// `TestingAPIs` is a module (not `struct + impl`) because `#[bun_jsc::host_fn]`'s
 // Free-kind shim emits `#fn_name(__g, __f)` without a `Self::` qualifier — the
 // wrapped fn must resolve unqualified at module scope (same constraint as
 // `install_jsc::install_binding::js_parse_lockfile`).
 pub mod TestingAPIs {
     use super::*;
 
-    /// Exercises Error.name() with from_libuv=true so tests can feed the
-    /// negated-UV-code errno values that node_fs.zig stores and verify the
-    /// integer overflow at translateUVErrorToE(-code) is fixed. Windows-only.
+    /// Exercises Error.name() with from_libuv=true so tests can feed
+    /// negated-UV-code errno values and verify the integer overflow at
+    /// translateUVErrorToE(-code) is fixed. Windows-only.
     #[bun_jsc::host_fn]
     pub fn sys_error_name_from_libuv(
         global: &JSGlobalObject,
@@ -66,7 +64,7 @@ pub mod TestingAPIs {
         #[cfg(windows)]
         {
             let err = Error {
-                // @intCast → checked narrowing; target is Error.errno's int type.
+                // Checked narrowing into Error.errno's int type.
                 errno: arguments[0]
                     .to_int32()
                     .try_into()
@@ -75,7 +73,38 @@ pub mod TestingAPIs {
                 from_libuv: true,
                 ..Default::default()
             };
-            return bun_jsc::bun_string_jsc::create_utf8_for_js(global, err.name());
+            return bun_string_jsc::create_utf8_for_js(global, err.name());
+        }
+    }
+
+    /// Exposes NTSTATUS -> `bun.sys.E` translation so tests can feed NTSTATUS
+    /// values that filter drivers and cloud-sync placeholders return in the
+    /// wild (STATUS_CANNOT_DELETE etc.) and verify they map to a sensible
+    /// errno rather than `UNKNOWN`. Windows-only; returns `undefined` elsewhere.
+    #[bun_jsc::host_fn]
+    pub fn translate_nt_status_to_e(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let arguments = frame.arguments();
+        if arguments.is_empty() || !arguments[0].is_number() {
+            return Err(global.throw(format_args!(
+                "translateNtStatusToE: expected 1 number argument"
+            )));
+        }
+        #[cfg(not(windows))]
+        {
+            return Ok(JSValue::UNDEFINED);
+        }
+        #[cfg(windows)]
+        {
+            let raw: u32 = arguments[0].to_u32();
+            let status = bun_sys::windows::NTSTATUS::from_raw(raw);
+            let result = bun_sys::windows::translate_nt_status_to_errno(status);
+            return bun_string_jsc::create_utf8_for_js(
+                global,
+                <&'static str>::from(result).as_bytes(),
+            );
         }
     }
 
@@ -101,7 +130,7 @@ pub mod TestingAPIs {
             let code: core::ffi::c_int = arguments[0].to_int32();
             let result = bun_sys::windows::translate_uv_error_to_e(code);
             // @tagName(result) → IntoStaticStr derive on the E enum.
-            return bun_jsc::bun_string_jsc::create_utf8_for_js(
+            return bun_string_jsc::create_utf8_for_js(
                 global,
                 <&'static str>::from(result).as_bytes(),
             );
@@ -114,7 +143,7 @@ pub mod TestingAPIs {
     /// (regression test for the bionic LP64 layout fix). The Rust port uses the
     /// `libc` crate's `sigaction`/`sigset_t` directly, which already has the
     /// correct per-target layout (bionic included), so this is a sanity check
-    /// rather than a fix-carrier — the layout bug was Zig-stdlib-specific.
+    /// rather than a fix-carrier.
     #[bun_jsc::host_fn]
     pub fn sigaction_layout(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         #[cfg(not(unix))]
@@ -187,5 +216,3 @@ pub mod TestingAPIs {
         }
     }
 }
-
-// ported from: src/sys_jsc/error_jsc.zig

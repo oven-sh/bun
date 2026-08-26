@@ -27,28 +27,16 @@ pub enum RedisError {
     InvalidVerbatimString,
     JSError,
     OutOfMemory,
-    JSTerminated,
     UnsupportedProtocol,
     ConnectionTimeout,
     IdleTimeout,
     NestingDepthExceeded,
+    LineTooLong,
+    /// The server answered with a `-` or `!` error reply.
+    ServerError,
 }
 
 bun_core::impl_tag_error!(RedisError);
-
-bun_core::named_error_set!(RedisError);
-
-impl From<bun_core::Error> for RedisError {
-    /// Reverse of the `RedisError → bun_core::Error` interning above so the
-    /// `JSValkeyClient::send` → `valkey_error_to_js` path round-trips through
-    /// `bun_core::Error` (Zig's open `!` set) without losing the variant.
-    /// Unknown names collapse to `ConnectionClosed` — the only non-`RedisError`
-    /// producer on the `send` path is the offline-queue OOM, which `OutOfMemory`
-    /// already covers.
-    fn from(e: bun_core::Error) -> Self {
-        e.name().parse().unwrap_or(RedisError::ConnectionClosed)
-    }
-}
 
 // `valkeyErrorToJS` alias deleted — lives in bun_runtime::valkey_jsc::protocol_jsc (extension trait).
 
@@ -77,7 +65,7 @@ pub(crate) enum RESPType {
 }
 
 impl RESPType {
-    pub(crate) fn from_byte(byte: u8) -> Option<RESPType> {
+    fn from_byte(byte: u8) -> Option<RESPType> {
         match byte {
             x if x == RESPType::SimpleString as u8 => Some(RESPType::SimpleString),
             x if x == RESPType::Error as u8 => Some(RESPType::Error),
@@ -102,6 +90,7 @@ impl RESPType {
 pub enum RESPValue {
     // RESP2 types
     SimpleString(Box<[u8]>),
+    /// A `-` simple error or a `!` blob error reply, holding the server's message.
     Error(Box<[u8]>),
     Integer(i64),
     BulkString(Option<Box<[u8]>>),
@@ -111,7 +100,6 @@ pub enum RESPValue {
     Null,
     Double(f64),
     Boolean(bool),
-    BlobError(Box<[u8]>),
     VerbatimString(VerbatimString),
     Map(Vec<MapEntry>),
     Set(Vec<RESPValue>),
@@ -148,7 +136,6 @@ impl fmt::Display for RESPValue {
             RESPValue::Null => writer.write_str("(nil)"),
             RESPValue::Double(d) => write!(writer, "{}", d),
             RESPValue::Boolean(b) => write!(writer, "{}", b),
-            RESPValue::BlobError(str) => write!(writer, "Error: {}", BStr::new(str)),
             RESPValue::VerbatimString(verbatim) => {
                 write!(
                     writer,
@@ -218,6 +205,7 @@ pub struct ValkeyReader<'a> {
     /// Bytes of aggregate `Vec` preallocation still allowed for the current
     /// `read_value` call. See `take_prealloc_budget`.
     prealloc_budget: usize,
+    crlf_skip: usize,
 }
 
 impl<'a> ValkeyReader<'a> {
@@ -226,19 +214,19 @@ impl<'a> ValkeyReader<'a> {
             buffer,
             pos: 0,
             prealloc_budget: buffer.len(),
+            crlf_skip: 0,
         }
     }
 
     /// Current read offset into the underlying buffer.
     ///
-    /// Mirrors the public `pos` field on the Zig `ValkeyReader` struct; callers
-    /// use this to compute how many bytes a `read_value` call consumed.
+    /// Callers use this to compute how many bytes a `read_value` call consumed.
     #[inline]
     pub fn pos(&self) -> usize {
         self.pos
     }
 
-    pub fn read_byte(&mut self) -> Result<u8, RedisError> {
+    pub(crate) fn read_byte(&mut self) -> Result<u8, RedisError> {
         if self.pos >= self.buffer.len() {
             return Err(RedisError::InvalidResponse);
         }
@@ -247,25 +235,30 @@ impl<'a> ValkeyReader<'a> {
         Ok(byte)
     }
 
-    pub fn read_until_crlf(&mut self) -> Result<&'a [u8], RedisError> {
+    pub(crate) fn read_until_crlf(&mut self) -> Result<&'a [u8], RedisError> {
         let buffer = &self.buffer[self.pos..];
-        for (i, &byte) in buffer.iter().enumerate() {
+        let limit = buffer.len().min(Self::MAX_LINE_LEN + 1);
+        let start = self.crlf_skip.min(limit);
+        self.crlf_skip = 0;
+        for (i, &byte) in buffer.iter().enumerate().take(limit).skip(start) {
             if byte == b'\r' && buffer.len() > i + 1 && buffer[i + 1] == b'\n' {
                 let result = &buffer[0..i];
                 self.pos += i + 2;
                 return Ok(result);
             }
         }
-
+        if buffer.len() > Self::MAX_LINE_LEN + 1 {
+            return Err(RedisError::LineTooLong);
+        }
         Err(RedisError::InvalidResponse)
     }
 
-    pub fn read_integer(&mut self) -> Result<i64, RedisError> {
+    pub(crate) fn read_integer(&mut self) -> Result<i64, RedisError> {
         let str = self.read_until_crlf()?;
         bun_core::fmt::parse_int::<i64>(str, 10).map_err(|_| RedisError::InvalidInteger)
     }
 
-    pub fn read_double(&mut self) -> Result<f64, RedisError> {
+    pub(crate) fn read_double(&mut self) -> Result<f64, RedisError> {
         let str = self.read_until_crlf()?;
 
         // Handle special values
@@ -283,7 +276,7 @@ impl<'a> ValkeyReader<'a> {
         bun_core::fmt::parse_f64(str).ok_or(RedisError::InvalidDouble)
     }
 
-    pub fn read_boolean(&mut self) -> Result<bool, RedisError> {
+    pub(crate) fn read_boolean(&mut self) -> Result<bool, RedisError> {
         let str = self.read_until_crlf()?;
         if str.len() != 1 {
             return Err(RedisError::InvalidBoolean);
@@ -296,14 +289,14 @@ impl<'a> ValkeyReader<'a> {
         }
     }
 
-    pub fn read_verbatim_string(&mut self) -> Result<VerbatimString, RedisError> {
+    pub(crate) fn read_verbatim_string(&mut self) -> Result<VerbatimString, RedisError> {
         let len = self.read_integer()?;
         if !(0..=Self::MAX_BULK_LEN).contains(&len) {
             return Err(RedisError::InvalidVerbatimString);
         }
         let len = usize::try_from(len).expect("int cast");
         if self.pos + len > self.buffer.len() {
-            return Err(RedisError::InvalidVerbatimString);
+            return Err(RedisError::InvalidResponse);
         }
 
         let content_with_format = &self.buffer[self.pos..self.pos + len];
@@ -337,6 +330,11 @@ impl<'a> ValkeyReader<'a> {
     /// machine stops buffering instead of growing the read buffer toward an
     /// attacker-chosen size.
     const MAX_BULK_LEN: i64 = 512 * 1024 * 1024;
+
+    /// Maximum accepted length for a CRLF-terminated RESP line (`+ - : _ , # (`).
+    /// Mirrors `MAX_BULK_LEN` so line-terminated replies get the same
+    /// buffer-growth bound as length-prefixed blobs; the spec places no limit.
+    const MAX_LINE_LEN: usize = Self::MAX_BULK_LEN as usize;
 
     /// Caps an aggregate's `Vec::with_capacity` so the total bytes reserved
     /// across the whole parse — every nesting level combined — never exceed
@@ -401,7 +399,8 @@ impl<'a> ValkeyReader<'a> {
                 }
                 let len = self.read_integer()?;
                 if len < 0 {
-                    return Ok(RESPValue::Array(Vec::new()));
+                    // RESP2 null array.
+                    return Ok(RESPValue::Null);
                 }
                 let len = usize::try_from(len).expect("int cast");
                 let mut array =
@@ -417,7 +416,9 @@ impl<'a> ValkeyReader<'a> {
 
             // RESP3 types
             RESPType::Null => {
-                let _ = self.read_until_crlf()?; // Read and discard CRLF
+                if !self.read_until_crlf()?.is_empty() {
+                    return Err(RedisError::InvalidNull);
+                }
                 Ok(RESPValue::Null)
             }
             RESPType::Double => {
@@ -435,7 +436,7 @@ impl<'a> ValkeyReader<'a> {
                 }
                 let len = usize::try_from(len).expect("int cast");
                 if self.pos + len > self.buffer.len() {
-                    return Err(RedisError::InvalidBlobError);
+                    return Err(RedisError::InvalidResponse);
                 }
                 let str = &self.buffer[self.pos..self.pos + len];
                 self.pos += len;
@@ -444,7 +445,7 @@ impl<'a> ValkeyReader<'a> {
                     return Err(RedisError::InvalidBlobError);
                 }
                 let owned = Box::<[u8]>::from(str);
-                Ok(RESPValue::BlobError(owned))
+                Ok(RESPValue::Error(owned))
             }
             RESPType::VerbatimString => Ok(RESPValue::VerbatimString(self.read_verbatim_string()?)),
             RESPType::Map => {
@@ -531,7 +532,6 @@ impl<'a> ValkeyReader<'a> {
 
                 // First element is the push type
                 let push_type = self.read_value_with_depth(depth + 1)?;
-                // defer push_type.deinit() — drops at scope end
                 let push_type_str: &[u8] = match &push_type {
                     RESPValue::SimpleString(str) => str,
                     RESPValue::BulkString(maybe_str) => {
@@ -601,6 +601,7 @@ pub struct ReplyScanner {
     /// Remaining child-value count for each in-progress aggregate, outermost
     /// first.
     stack: Vec<u64>,
+    crlf_skip: usize,
 }
 
 impl ReplyScanner {
@@ -609,6 +610,7 @@ impl ReplyScanner {
     pub fn reset(&mut self) {
         self.pos = 0;
         self.stack.clear();
+        self.crlf_skip = 0;
     }
 
     /// Resume scanning `buffer` (the connection's accumulated, unconsumed read
@@ -620,13 +622,22 @@ impl ReplyScanner {
                 buffer,
                 pos: self.pos,
                 prealloc_budget: 0,
+                crlf_skip: self.crlf_skip,
             };
             let children = match Self::scan_one(&mut reader, self.stack.len()) {
                 Ok(children) => children,
                 // `InvalidResponse` is the parser's "ran out of bytes" sentinel.
-                Err(RedisError::InvalidResponse) => return Ok(ScanResult::NeedMoreData),
+                Err(RedisError::InvalidResponse) => {
+                    self.crlf_skip = if reader.pos == self.pos + 1 {
+                        (buffer.len() - reader.pos).saturating_sub(1)
+                    } else {
+                        0
+                    };
+                    return Ok(ScanResult::NeedMoreData);
+                }
                 Err(err) => return Err(err),
             };
+            self.crlf_skip = 0;
             self.pos = reader.pos;
             if let Some(children) = children
                 && children > 0
@@ -660,11 +671,16 @@ impl ReplyScanner {
             RESPType::SimpleString
             | RESPType::Error
             | RESPType::Integer
-            | RESPType::Null
             | RESPType::Double
             | RESPType::Boolean
             | RESPType::BigNumber => {
                 let _ = reader.read_until_crlf()?;
+                Ok(None)
+            }
+            RESPType::Null => {
+                if !reader.read_until_crlf()?.is_empty() {
+                    return Err(RedisError::InvalidNull);
+                }
                 Ok(None)
             }
             RESPType::BulkString | RESPType::BlobError | RESPType::VerbatimString => {
@@ -752,7 +768,7 @@ pub struct MapEntry {
 // `MapEntry::deinit` deleted — fields drop automatically.
 
 pub struct VerbatimString {
-    pub format: Box<[u8]>, // e.g. "txt" or "mkd"
+    pub(crate) format: Box<[u8]>, // e.g. "txt" or "mkd"
     pub content: Box<[u8]>,
 }
 
@@ -766,7 +782,7 @@ pub struct Push {
 // `Push::deinit` deleted — Box/Vec fields drop automatically.
 
 pub struct Attribute {
-    pub attributes: Vec<MapEntry>,
+    pub(crate) attributes: Vec<MapEntry>,
     pub value: Box<RESPValue>,
 }
 
@@ -778,24 +794,45 @@ pub enum SubscriptionPushMessage {
     Message,
     Subscribe,
     Unsubscribe,
+    /// `pmessage` / `smessage` — delivered without a promise pair; no listener
+    /// API is exposed for pattern subscriptions, so the payload is dropped.
+    PatternMessage,
+}
+
+bun_core::comptime_string_map! {
+    static SUBSCRIPTION_PUSH_MESSAGES: SubscriptionPushMessage = {
+        b"message" => SubscriptionPushMessage::Message,
+        b"subscribe" => SubscriptionPushMessage::Subscribe,
+        b"unsubscribe" => SubscriptionPushMessage::Unsubscribe,
+    };
 }
 
 impl SubscriptionPushMessage {
-    // PERF(port): Zig's `bun.ComptimeStringMap` lowers this 3-entry table to a
-    // length-then-bytes switch at compile time. An earlier port used
-    // `phf::Map`, which pays a SipHash + indirect probe per lookup — overkill
-    // for three keys whose lengths are all distinct (7/9/11). A length-gated
-    // match rejects the miss case on a single `usize` compare and confirms the
-    // hit with one fixed-size byte compare, matching the Zig codegen.
     #[inline]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        match bytes.len() {
-            7 if bytes == b"message" => Some(Self::Message),
-            9 if bytes == b"subscribe" => Some(Self::Subscribe),
-            11 if bytes == b"unsubscribe" => Some(Self::Unsubscribe),
+        if let Some(kind) = SUBSCRIPTION_PUSH_MESSAGES.get(bytes).copied() {
+            return Some(kind);
+        }
+        match bytes.split_first() {
+            Some((b'p' | b's', base)) => match SUBSCRIPTION_PUSH_MESSAGES.get(base).copied() {
+                Some(kind @ (Self::Subscribe | Self::Unsubscribe)) => Some(kind),
+                Some(Self::Message) => Some(Self::PatternMessage),
+                _ => None,
+            },
             _ => None,
         }
     }
-}
 
-// ported from: src/valkey/valkey_protocol.zig
+    /// Pattern (`p`-prefixed) and sharded (`s`-prefixed) variants of the
+    /// `Subscribe`/`Unsubscribe` push kinds.
+    #[inline]
+    pub fn is_reply_kind(kind: &[u8]) -> bool {
+        match kind.split_first() {
+            Some((b'p' | b's', base)) => matches!(
+                Self::from_bytes(base),
+                Some(Self::Subscribe | Self::Unsubscribe)
+            ),
+            _ => false,
+        }
+    }
+}

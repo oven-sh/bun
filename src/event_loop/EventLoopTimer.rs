@@ -1,6 +1,3 @@
-use core::ffi::c_void;
-use core::ptr::NonNull;
-
 // LAYERING: re-export `bun_core::Timespec` so every embedder of
 // `EventLoopTimer.next` agrees on the type (was a local stub with the same
 // `{sec,nsec}` layout, which forced higher tiers — `bun_runtime`, `bun_sql_jsc`
@@ -21,12 +18,11 @@ const NS_PER_MS: i64 = bun_core::time::NS_PER_MS as i64;
 // intrusive heap node; the `match tag { … container_of … }` dispatch lives in
 // `bun_runtime::dispatch` because it names ~20 high-tier container types.
 //
-// LAYERING: Zig has no crate split here — `EventLoopTimer.fire` calls each
-// container directly. Rather than a runtime-registered fn-ptr (init-order
+// LAYERING: rather than a runtime-registered fn-ptr (init-order
 // hazard), the bodies are declared `extern "Rust"` and defined `#[no_mangle]`
 // in `bun_runtime`; the linker resolves them. No `AtomicPtr`, no registration.
 //
-// PERF(port): was inline switch — `__bun_js_timer_epoch` sits on the
+// PERF: `__bun_js_timer_epoch` sits on the
 // heap-compare path. Consider denormalizing `epoch` into `EventLoopTimer`
 // to drop the cross-crate call if profiling shows it matters.
 unsafe extern "Rust" {
@@ -37,7 +33,11 @@ unsafe extern "Rust" {
     /// derefs `t`/`now`, recovers the tier-6 container via `container_of`
     /// keyed on `(*t).tag`, and may free that container. Caller must pass a
     /// live timer just popped from `All.timers` and must not touch `t` after.
-    fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const timespec, vm: *mut ());
+    fn __bun_fire_timer(
+        t: *mut EventLoopTimer,
+        now: *const timespec,
+        vm: *mut (),
+    ) -> crate::JsResult<()>;
     /// Returns the JS-timer epoch (TimerObjectInternals.flags.epoch) for
     /// TimeoutObject/ImmediateObject/AbortSignalTimeout, else `None`.
     /// Defined in `bun_runtime::dispatch`.
@@ -121,9 +121,10 @@ impl EventLoopTimer {
                     // b. If the distance from a to b is large (greater than half the u25 range),
                     // it's more likely that b is older than a so the true distance is from b to a.
                     //
-                    // Zig epoch is `u25` so `-%` wraps mod 2^25. Rust stores it in a wider int,
-                    // so we mask the wrapping_sub result to 25 bits to preserve that semantics.
-                    // TODO(port): confirm Rust `epoch` field is masked to 25 bits on write too.
+                    // The epoch is logically a u25, stored in a wider int,
+                    // so we mask the wrapping_sub result to 25 bits to wrap mod 2^25.
+                    // (`TimerFlags::epoch`/`set_epoch` below mask to 25 bits on both read
+                    // and write, so both operands here are already < 2^25.)
                     const U25_MAX: u32 = (1 << 25) - 1;
                     return (b_epoch.wrapping_sub(a_epoch) & U25_MAX) < U25_MAX / 2;
                 }
@@ -135,13 +136,13 @@ impl EventLoopTimer {
     /// If self was created by set{Immediate,Timeout,Interval}, return its
     /// JS-timer epoch (used for stable ordering of equal-deadline timers).
     ///
-    /// PORT NOTE (b0): Zig `jsTimerInternalsFlags` did `@fieldParentPtr` into
+    /// The container_of dispatch into
     /// `TimeoutObject`/`ImmediateObject`/`AbortSignalTimeout` (all tier-6
-    /// runtime types). The container_of dispatch lives in
+    /// runtime types) lives in
     /// `bun_runtime::dispatch::__bun_js_timer_epoch` (link-time extern).
     /// Returns `None` for non-JS timer tags.
     #[inline]
-    pub fn js_timer_epoch(&self) -> Option<u32> {
+    pub(crate) fn js_timer_epoch(&self) -> Option<u32> {
         // SAFETY: `self` is a live timer; the extern impl reads `tag` and
         // recovers the container via `offset_of`.
         unsafe { __bun_js_timer_epoch(self.tag, self) }
@@ -149,13 +150,13 @@ impl EventLoopTimer {
 
     /// Fire the timer's callback.
     ///
-    /// PORT NOTE (b0): the `match self.tag { … container_of … }` body was
+    /// The `match self.tag { … container_of … }` body is
     /// hot-dispatch over ~20 tier-6 variant types (Subprocess, DevServer,
     /// PostgresSQLConnection, …). That match lives in
     /// `bun_runtime::dispatch::__bun_fire_timer` (link-time extern). `vm` is
     /// the erased `*mut VirtualMachine`.
     ///
-    /// PORT NOTE (noalias re-entrancy): takes `this: *mut Self`, NOT
+    /// Deliberately takes `this: *mut Self`, NOT
     /// `&mut self`. `__bun_fire_timer` dispatches via container_of into a
     /// tier-6 timer object whose JS callback can re-enter and re-derive a
     /// `&mut EventLoopTimer` to *this same node* (e.g. `clearTimeout()` →
@@ -163,6 +164,9 @@ impl EventLoopTimer {
     /// across that FFI call lets LLVM `noalias` dead-store the re-entrant
     /// write. Both callers (`drain_timers`, `get_timeout`) already hold a raw
     /// `*mut EventLoopTimer` popped from the heap — pass it directly.
+    ///
+    /// The owner returns the exception its handler left pending as `Err` and
+    /// never reports it itself; the drain loop that called `fire` folds it.
     ///
     /// # Safety
     /// `this` is a live timer just popped from `All.timers`; `now` is the
@@ -172,21 +176,21 @@ impl EventLoopTimer {
         this: *mut Self,
         now: &timespec,
         vm: *mut (), /* SAFETY: erased *mut VirtualMachine */
-    ) {
+    ) -> crate::JsResult<()> {
         // SAFETY: per fn contract.
-        unsafe { __bun_fire_timer(this, now, vm) };
+        unsafe { __bun_fire_timer(this, now, vm) }
     }
 }
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum Tag {
-    TimerCallback,
     TimeoutObject,
     ImmediateObject,
     StatWatcherScheduler,
     UpgradedDuplex,
     DNSResolver,
+    DnsSdConnection,
     WindowsNamedPipe,
     WTFTimer,
     PostgresSQLConnectionTimeout,
@@ -203,38 +207,28 @@ pub enum Tag {
     BunTest,
     EventLoopDelayMonitor,
     CronJob,
+    GcRepeating,
+    QuicEndpoint,
 }
 
 impl Tag {
-    // TODO(port): Zig `pub fn Type(comptime T: Tag) type` returns a type at comptime.
-    // Rust has no value→type mapping. All call sites (`jsTimerInternalsFlags`, `fire`)
-    // have been manually expanded above. If a generic mapping is ever needed,
-    // consider a trait `TagType<const T: Tag> { type Out; }` with per-variant impls.
-
+    /// Whether `jest.useFakeTimers()` captures this timer. Only timers a
+    /// program schedules itself are faked; runtime-internal timeouts stay on
+    /// the real clock, as in Jest. A fakeable owner arms with
+    /// `AllowMockedTime` and has a release arm in `FakeTimers::clear`; every
+    /// other owner arms with `ForceRealTime`, the clock the real heap is
+    /// drained against.
     pub fn allow_fake_timers(self) -> bool {
-        match self {
-            Tag::WTFTimer // internal
-            | Tag::BunTest // for test timeouts
-            | Tag::EventLoopDelayMonitor // probably important
-            | Tag::StatWatcherScheduler
-            | Tag::CronJob // calendar-anchored to real wall clock
-            => false,
-            _ => true,
-        }
+        matches!(
+            self,
+            Tag::TimeoutObject | Tag::AbortSignalTimeout | Tag::CronJob
+        )
     }
-}
-
-pub struct TimerCallback {
-    pub callback: fn(*mut TimerCallback),
-    // TODO(port): lifetime — opaque user ctx, no init/deinit found in src/event_loop/
-    pub ctx: Option<NonNull<c_void>>,
-    pub event_loop_timer: EventLoopTimer,
 }
 
 /// Stamp out one `unsafe fn $method(*const EventLoopTimer) -> *mut Self` per
 /// `(method => field)` pair: each recovers the embedding owner from a pointer
-/// to the named intrusive [`EventLoopTimer`] slot — Rust's typed analogue of
-/// Zig's inline `@fieldParentPtr("$field", t)`.
+/// to the named intrusive [`EventLoopTimer`] slot (typed container_of).
 ///
 /// The accessor layer exists only as a cross-crate visibility shim: the
 /// `__bun_fire_timer` tag-dispatch in `bun_runtime` cannot name private timer
@@ -272,8 +266,6 @@ macro_rules! impl_timer_owner {
     };
 }
 
-crate::impl_timer_owner!(TimerCallback; from_timer_ptr => event_loop_timer);
-
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Default)]
 pub enum State {
@@ -299,7 +291,7 @@ pub enum State {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `setTimeout` / `setInterval` / `setImmediate` discriminant stored in the
-/// `Flags` bitfield. Zig: `enum(u2)`.
+/// `Flags` bitfield (2 bits).
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Kind {
@@ -310,7 +302,7 @@ pub enum Kind {
 
 impl Kind {
     /// Widen to the `u32`-repr [`KindBig`] used in [`ID`](Timer::ID) so the
-    /// `{i32, u32}` pair `bitcast`s to a `u64` async-id. Zig: `Kind.big()`.
+    /// `{i32, u32}` pair `bitcast`s to a `u64` async-id.
     #[inline]
     pub fn big(self) -> KindBig {
         match self {
@@ -322,7 +314,7 @@ impl Kind {
 }
 
 /// Same variants as [`Kind`] but `#[repr(u32)]` so `ID { i32, KindBig }`
-/// is exactly one pointer / `u64`. Zig: `Kind.Big = enum(u32)`.
+/// is exactly one pointer / `u64`.
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum KindBig {
@@ -338,7 +330,7 @@ impl From<Kind> for KindBig {
     }
 }
 
-/// Packed per-JS-timer state. Zig: `packed struct(u32)`. Layout (LSB→MSB):
+/// Packed per-JS-timer state in a `u32`. Layout (LSB→MSB):
 ///   epoch:u25, kind:u2, has_cleared_timer:1, is_keeping_event_loop_alive:1,
 ///   has_accessed_primitive:1, has_js_ref:1, in_callback:1
 ///
@@ -458,5 +450,3 @@ impl TimerFlags {
         }
     }
 }
-
-// ported from: src/event_loop/EventLoopTimer.zig

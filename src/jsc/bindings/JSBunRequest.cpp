@@ -65,17 +65,12 @@ JSBunRequest* JSBunRequest::create(JSC::VM& vm, JSC::Structure* structure, void*
 
 JSC::Structure* JSBunRequest::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info());
 }
 
 JSC::GCClient::IsoSubspace* JSBunRequest::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSBunRequest, WebCore::UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForBunRequest.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBunRequest = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForBunRequest.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForBunRequest = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSBunRequest, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForBunRequest, m_subspaceForBunRequest));
 }
 
 JSObject* JSBunRequest::params() const
@@ -97,6 +92,7 @@ JSObject* JSBunRequest::cookies() const
 }
 
 extern "C" void* Request__clone(void* internalZigRequestPointer, JSGlobalObject* globalObject);
+extern "C" void Request__syncClonedBodyStreamCaches(void* self, JSGlobalObject* globalObject, EncodedJSValue thisValue, void* cloned, EncodedJSValue jsWrapper);
 
 JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
 {
@@ -107,6 +103,7 @@ JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
     EXCEPTION_ASSERT(!!raw == !throwScope.exception());
     RETURN_IF_EXCEPTION(throwScope, nullptr);
     auto* clone = this->create(vm, structure, raw, nullptr);
+    Request__syncClonedBodyStreamCaches(this->wrapped(), globalObject, JSValue::encode(this), clone->wrapped(), JSValue::encode(clone));
 
     // Cookies and params are deep copied as they can be changed between the clone and original
     if (auto* params = this->params()) {
@@ -181,14 +178,14 @@ public:
 
     static JSBunRequestPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        auto* ptr = new (NotNull, JSC::allocateCell<JSBunRequestPrototype>(vm)) JSBunRequestPrototype(vm, structure);
+        auto* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSBunRequestPrototype))) JSBunRequestPrototype(vm, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
     }
 
     static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        auto* structure = Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), NonArray);
+        auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), NonArray);
         structure->setMayBePrototype(true);
         return structure;
     }
@@ -211,8 +208,8 @@ private:
     void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     {
         Base::finishCreation(vm);
-        reifyStaticProperties(vm, JSBunRequest::info(), JSBunRequestPrototypeValues, *this);
-        JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+        Bun::reifyStaticPropertyTable(vm, JSBunRequest::info(), JSBunRequestPrototypeValues, *this);
+        Bun::putToStringTagWithoutTransition(vm, this, info());
     }
 };
 

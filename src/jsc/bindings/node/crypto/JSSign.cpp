@@ -66,6 +66,18 @@ void JSSign::finishCreation(JSC::VM& vm)
     Base::finishCreation(vm);
 }
 
+template<typename Visitor>
+void JSSign::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSSign* thisObject = uncheckedDowncast<JSSign>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    visitor.reportExtraMemoryVisited(thisObject->m_sizeForGC);
+}
+
+DEFINE_VISIT_CHILDREN(JSSign);
+
 JSSign* JSSign::create(JSC::VM& vm, JSC::Structure* structure)
 {
     JSSign* sign = new (NotNull, JSC::allocateCell<JSSign>(vm)) JSSign(vm, structure);
@@ -75,7 +87,7 @@ JSSign* JSSign::create(JSC::VM& vm, JSC::Structure* structure)
 
 JSC::Structure* JSSign::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
 }
 
 template<typename CellType, JSC::SubspaceAccess mode>
@@ -83,12 +95,7 @@ JSC::GCClient::IsoSubspace* JSSign::subspaceFor(JSC::VM& vm)
 {
     if constexpr (mode == JSC::SubspaceAccess::Concurrently)
         return nullptr;
-    return WebCore::subspaceForImpl<JSSign, WebCore::UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForJSSign.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSign = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForJSSign.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSign = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSSign, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSSign, m_subspaceForJSSign));
 }
 
 // JSSignPrototype implementation
@@ -101,8 +108,8 @@ JSSignPrototype::JSSignPrototype(JSC::VM& vm, JSC::Structure* structure)
 void JSSignPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSSign::info(), JSSignPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSSign::info(), JSSignPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 JSSignPrototype* JSSignPrototype::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
@@ -114,7 +121,7 @@ JSSignPrototype* JSSignPrototype::create(JSC::VM& vm, JSC::JSGlobalObject* globa
 
 JSC::Structure* JSSignPrototype::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    auto* structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     structure->setMayBePrototype(true);
     return structure;
 }
@@ -141,7 +148,7 @@ JSSignConstructor* JSSignConstructor::create(JSC::VM& vm, JSC::Structure* struct
 
 JSC::Structure* JSSignConstructor::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
 }
 
 // Prototype function implementations
@@ -196,17 +203,17 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncInit, (JSC::JSGlobalObject * globalObjec
     // Store the initialized context in the JSSign object
     thisObject->m_mdCtx = WTF::move(mdCtx);
 
+    if (!thisObject->m_sizeForGC) {
+        thisObject->m_sizeForGC = sizeof(EVP_MD_CTX);
+        vm.heap.reportExtraMemoryAllocated(thisObject, thisObject->m_sizeForGC);
+    }
+
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
 void updateWithBufferView(JSGlobalObject* globalObject, JSSign* sign, JSC::JSArrayBufferView* bufferView)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-
-    if (bufferView->isDetached()) {
-        throwTypeError(globalObject, scope, "Buffer is detached"_s);
-        return;
-    }
 
     size_t byteLength = bufferView->byteLength();
     if (byteLength > INT_MAX) {
@@ -275,20 +282,15 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         return JSValue::encode(wrappedSign);
     }
 
-    if (!data.isCell() || !JSC::isTypedArrayTypeIncludingDataView(data.asCell()->type())) {
+    auto* view = dynamicDowncast<JSC::JSArrayBufferView>(data);
+    if (!view) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "data"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, data);
     }
 
-    // Handle ArrayBufferView input
-    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(data)) {
+    updateWithBufferView(globalObject, thisObject, view);
+    RETURN_IF_EXCEPTION(scope, {});
 
-        updateWithBufferView(globalObject, thisObject, view);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        return JSValue::encode(wrappedSign);
-    }
-
-    return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "data"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, data);
+    return JSValue::encode(wrappedSign);
 }
 
 JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* thisObject, const ncrypto::EVPKeyPointer& pkey, DSASigEnc dsa_sig_enc, int padding, std::optional<int> salt_len)
@@ -304,6 +306,7 @@ JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* this
 
     // Move mdCtx out of JSSign object
     ncrypto::EVPMDCtxPointer mdCtx = WTF::move(thisObject->m_mdCtx);
+    thisObject->m_sizeForGC = 0;
 
     // Validate DSA parameters
     if (!pkey.validateDsaParameters()) {

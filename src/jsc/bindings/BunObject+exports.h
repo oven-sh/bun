@@ -23,18 +23,19 @@
     macro(SHA512) \
     macro(SHA512_256) \
     macro(TOML) \
+    macro(XML) \
     macro(YAML) \
     macro(Terminal) \
     macro(Transpiler) \
     macro(ValkeyClient) \
     macro(argv) \
-    macro(assetPrefix) \
     macro(cron) \
     macro(cwd) \
     macro(embeddedFiles) \
     macro(enableANSIColors) \
     macro(hash) \
     macro(inspect) \
+    macro(isStandaloneExecutable) \
     macro(origin) \
     macro(s3) \
     macro(semver) \
@@ -44,7 +45,6 @@
 // --- Callbacks ---
 #define FOR_EACH_CALLBACK(macro) \
     macro(allocUnsafe) \
-    macro(braces) \
     macro(build) \
     macro(color) \
     macro(connect) \
@@ -52,9 +52,6 @@
     macro(createShellInterpreter) \
     macro(deflateSync) \
     macro(file) \
-    macro(fs) \
-    macro(gc) \
-    macro(generateHeapSnapshot) \
     macro(gunzipSync) \
     macro(gzipSync) \
     macro(indexOfLine) \
@@ -62,7 +59,6 @@
     macro(jest) \
     macro(listen) \
     macro(mmap) \
-    macro(nanoseconds) \
     macro(openInEditor) \
     macro(registerMacro) \
     macro(resolve) \
@@ -86,12 +82,12 @@
 FOR_EACH_CALLBACK(DECLARE_ZIG_BUN_OBJECT_CALLBACK);
 #undef DECLARE_ZIG_BUN_OBJECT_CALLBACK
 
-// declaration for the exported function in BunObject.zig
+// declaration for the exported function in src/runtime/api/BunObject.rs
 #define DECLARE_ZIG_BUN_OBJECT_GETTER(name) extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_lazyPropCb_##name(JSC::JSGlobalObject*, JSC::JSObject*);
 FOR_EACH_GETTER(DECLARE_ZIG_BUN_OBJECT_GETTER);
 #undef DECLARE_ZIG_BUN_OBJECT_GETTER
 
-// definition of the C++ wrapper to call the Zig function
+// definition of the C++ wrapper to call the Rust function
 #define DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER(name) static JSC::JSValue BunObject_lazyPropCb_wrap_##name(JSC::VM &vm, JSC::JSObject *object) { \
     return JSC::JSValue::decode(BunObject_lazyPropCb_##name(object->globalObject(), object)); \
 } \

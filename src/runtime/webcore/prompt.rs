@@ -2,22 +2,20 @@
 
 use crate::webcore::jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_collections::VecExt as _;
+use bun_core::EncodedSlice;
 use bun_core::Output;
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::zig_string::ZigString;
+use bun_jsc::EncodedSliceJsc as _;
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
 #[bun_jsc::host_fn(export = "WebCore__alert")]
 fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old::<1>();
-    let arguments = arguments.slice();
+    let arguments = frame.arguments();
     let output = Output::writer();
     let has_message = !arguments.is_empty();
 
     // 2. If the method was invoked with no arguments, then let message be the empty string; otherwise, let message be the method's first argument.
     if has_message {
-        // PERF(port): was stack-fallback (2048 bytes) — profile if it shows up on a hot path.
-        let message = arguments[0].to_slice(global)?;
+        let message = arguments[0].to_utf8(global)?;
 
         if !message.slice().is_empty() {
             // 3. Set message to the result of normalizing newlines given message.
@@ -51,7 +49,6 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     Output::flush();
 
     // 7. Optionally, pause while waiting for the user to acknowledge the message.
-    // Zig: `std.fs.File.stdin().readerStreaming(&[1]u8)` — unbuffered byte reader.
     let mut reader = Output::stdin_reader();
     loop {
         let Ok(byte) = reader.take_byte() else { break };
@@ -68,19 +65,17 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
 #[bun_jsc::host_fn(export = "WebCore__confirm")]
 fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old::<1>();
-    let arguments = arguments.slice();
+    let arguments = frame.arguments();
     let output = Output::writer();
     let has_message = !arguments.is_empty();
 
     if has_message {
-        // PERF(port): was stack-fallback (1024 bytes) — profile if it shows up on a hot path.
         // 2. Set message to the result of normalizing newlines given message.
         // *  Not pertinent to a server runtime so we will just let the terminal handle this.
 
         // 3. Set message to the result of optionally truncating message.
         // *  Not necessary so we won't do it.
-        let message = arguments[0].to_slice(global)?;
+        let message = arguments[0].to_utf8(global)?;
 
         if output.write_all(message.slice()).is_err() {
             // 1. If we cannot show simple dialogs for this, then return false.
@@ -108,7 +103,6 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     Output::flush();
 
     // 6. Pause until the user responds either positively or negatively.
-    // Zig: `std.fs.File.stdin().readerStreaming(&[1024]u8)` — byte reader.
     let mut reader = Output::stdin_reader();
 
     let Ok(first_byte) = reader.take_byte() else {
@@ -177,8 +171,7 @@ pub mod prompt {
         Io,
     }
 
-    /// `reader: anytype` in the Zig — the only method called is `readByte()`.
-    /// Bound on a small trait exposing `read_byte() -> Result<u8, _>`; the only
+    /// Small trait exposing `read_byte() -> Result<u8, _>`; the only
     /// concrete impl is the process-global `BufferedStdin`.
     pub trait ReadByte {
         type Error;
@@ -193,9 +186,9 @@ pub mod prompt {
         }
     }
 
-    /// Adapted from `std.io.Reader.readUntilDelimiterArrayList` to only append
-    /// and assume capacity.
-    pub fn read_until_delimiter_array_list_append_assume_capacity<R: ReadByte>(
+    /// Reads bytes until `delimiter` (exclusive), erroring with `StreamTooLong`
+    /// once `max_size` bytes have been appended.
+    pub(crate) fn read_until_delimiter_array_list_append_assume_capacity<R: ReadByte>(
         reader: &mut R,
         array_list: &mut Vec<u8>,
         delimiter: u8,
@@ -212,13 +205,12 @@ pub mod prompt {
                 return Ok(());
             }
 
-            // PERF(port): was assume_capacity
             array_list.push(byte);
         }
     }
 
-    /// Adapted from `std.io.Reader.readUntilDelimiterArrayList` to always append
-    /// and not resize.
+    /// Reads bytes until `delimiter` (exclusive), appending to `array_list`
+    /// with no size limit.
     fn read_until_delimiter_array_list_infinity<R: ReadByte>(
         reader: &mut R,
         array_list: &mut Vec<u8>,
@@ -237,10 +229,8 @@ pub mod prompt {
 
     /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-prompt
     #[bun_jsc::host_fn(export = "WebCore__prompt")]
-    pub(crate) fn call(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let arguments = frame.arguments_old::<3>();
-        let arguments = arguments.slice();
-        // PERF(port): was stack-fallback (2048 bytes) — profile if it shows up on a hot path.
+    fn call(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        let arguments = frame.arguments();
         let output = Output::writer();
         let has_message = !arguments.is_empty();
         let has_default = arguments.len() >= 2;
@@ -258,7 +248,7 @@ pub mod prompt {
 
             // 3. Set message to the result of optionally truncating message.
             // *  Not necessary so we won't do it.
-            let message = arguments[0].to_slice(global)?;
+            let message = arguments[0].to_utf8(global)?;
 
             if output.write_all(message.slice()).is_err() {
                 // 1. If we cannot show simple dialogs for this, then return null.
@@ -285,7 +275,7 @@ pub mod prompt {
         }
 
         if has_default {
-            let default_string = arguments[1].to_slice(global)?;
+            let default_string = arguments[1].to_utf8(global)?;
 
             if output
                 .print(format_args!(
@@ -339,14 +329,10 @@ pub mod prompt {
             }
         }
 
-        // PERF(port): was stack-fallback allocator backing this Vec
         let mut input: Vec<u8> = Vec::with_capacity(2048);
-        // Note: Zig returned `.null` on OOM here; Rust `Vec::with_capacity` aborts on OOM.
 
-        // PERF(port): was assume_capacity
         input.push(first_byte);
         if let Some(second) = second_byte {
-            // PERF(port): was assume_capacity
             input.push(second);
         }
 
@@ -367,7 +353,6 @@ pub mod prompt {
             }
 
             input.ensure_total_capacity(4096);
-            // Note: Zig returned `.null` on OOM here; Rust `reserve` aborts on OOM.
 
             if let Err(e2) = read_until_delimiter_array_list_append_assume_capacity(
                 &mut *reader,
@@ -395,15 +380,12 @@ pub mod prompt {
             input.truncate(input.len() - 1);
         }
 
-        if cfg!(debug_assertions) {
-            debug_assert!(!input.is_empty());
-            debug_assert!(input[input.len() - 1] != b'\r');
-        }
+        debug_assert!(!input.is_empty());
+        debug_assert!(input[input.len() - 1] != b'\r');
 
         // 8. Let result be null if the user aborts, or otherwise the string
         //    that the user responded with.
-        let mut result = ZigString::init(&input);
-        result.mark_utf8();
+        let result = EncodedSlice::utf8(&input);
 
         // 9. Invoke WebDriver BiDi user prompt closed with this, false if
         //    result is null or true otherwise, and result.

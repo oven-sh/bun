@@ -56,16 +56,17 @@ describe.each([
 
     test("Should not crash when not returning a promise when stream is in progress", async () => {
       var called = false;
+      let controller;
+      const pulled = Promise.withResolvers();
       await runInServer(
         {
           async fetch() {
             var stream = new ReadableStream({
               type: "direct",
-              pull(controller) {
-                controller.write("hey");
-                setTimeout(() => {
-                  controller.end();
-                }, 100);
+              pull(c) {
+                c.write("hey");
+                controller = c;
+                pulled.resolve();
               },
             });
 
@@ -74,8 +75,11 @@ describe.each([
         },
         async url => {
           called = true;
-          // if we can flush it will be "hey" otherwise will be empty
-          expect(await fetch(url).then(res => res.text())).toBeOneOf(["hey", ""]);
+          const responsePromise = fetch(url);
+          await pulled.promise;
+          controller.end();
+          // the response stays open until controller.end() is called
+          expect(await responsePromise.then(res => res.text())).toBe("hey");
         },
       );
 
@@ -336,28 +340,39 @@ describe.each([
 
               if (bytes.length > 255) fillRepeating(bytes, 0, bytes.length);
 
+              // On the 1 MB / 2 MB rows, element-per-byte construction balloons
+              // the multi-byte-element bodies to 4-16 MB. View `bytes.buffer`
+              // instead (same element types, byteLength == inputLength).
+              const isLargeRow = inputLength >= 1024 * 1024;
+              const Float64 = isLargeRow ? new Float64Array(bytes.buffer) : new Float64Array(bytes);
+              const Uint16 = isLargeRow ? new Uint16Array(bytes.buffer) : new Uint16Array(bytes);
+              const Uint32 = isLargeRow ? new Uint32Array(bytes.buffer) : new Uint32Array(bytes);
+              const Int16 = () => (isLargeRow ? new Int16Array(bytes.buffer) : new Int16Array(bytes));
+              const Int32 = () => (isLargeRow ? new Int32Array(bytes.buffer) : new Int32Array(bytes));
+              const Float32 = () => (isLargeRow ? new Float32Array(bytes.buffer) : new Float32Array(bytes));
+
               for (const huge_ of [
                 bytes,
                 bytes.buffer,
                 new DataView(bytes.buffer),
                 new Int8Array(bytes),
                 new Blob([bytes]),
-                new Float64Array(bytes),
+                Float64,
 
-                new Uint16Array(bytes),
-                new Uint32Array(bytes),
-                new Int16Array(bytes),
-                new Int32Array(bytes),
+                Uint16,
+                Uint32,
+                Int16(),
+                Int32(),
 
                 // make sure we handle subarray() as expected when reading
                 // typed arrays from native code
-                new Int16Array(bytes).subarray(1),
-                new Int16Array(bytes).subarray(0, new Int16Array(bytes).byteLength - 1),
-                new Int32Array(bytes).subarray(1),
-                new Int32Array(bytes).subarray(0, new Int32Array(bytes).byteLength - 1),
-                new Int16Array(bytes).subarray(0, 1),
-                new Int32Array(bytes).subarray(0, 1),
-                new Float32Array(bytes).subarray(0, 1),
+                Int16().subarray(1),
+                Int16().subarray(0, Int16().byteLength - 1),
+                Int32().subarray(1),
+                Int32().subarray(0, Int32().byteLength - 1),
+                Int16().subarray(0, 1),
+                Int32().subarray(0, 1),
+                Float32().subarray(0, 1),
               ]) {
                 const thisArray = huge_;
                 if (Number(thisArray.byteLength ?? thisArray.size) === 0) continue;

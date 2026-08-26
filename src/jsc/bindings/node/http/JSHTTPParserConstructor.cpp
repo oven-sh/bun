@@ -53,6 +53,7 @@ void JSHTTPParserConstructor::finishCreation(VM& vm, JSObject* prototype)
     putDirect(vm, Identifier::fromString(vm, "kLenientOptionalCRLFAfterChunk"_s), jsNumber(kLenientOptionalCRLFAfterChunk));
     putDirect(vm, Identifier::fromString(vm, "kLenientOptionalCRBeforeLF"_s), jsNumber(kLenientOptionalCRBeforeLF));
     putDirect(vm, Identifier::fromString(vm, "kLenientSpacesAfterChunkSize"_s), jsNumber(kLenientSpacesAfterChunkSize));
+    putDirect(vm, Identifier::fromString(vm, "kLenientHeaderValueRelaxed"_s), jsNumber(kLenientHeaderValueRelaxed));
     putDirect(vm, Identifier::fromString(vm, "kLenientAll"_s), jsNumber(kLenientAll));
 }
 

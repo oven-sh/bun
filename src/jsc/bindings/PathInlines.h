@@ -29,7 +29,7 @@ ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
         const auto bytes = input.span8().data();
         if (IS_SLASH(bytes[0]))
             return true;
-        if (len < 2)
+        if (len < 3)
             return false;
         if (IS_LETTER(bytes[0]) && bytes[1] == ':' && IS_SLASH(bytes[2]))
             return true;
@@ -41,7 +41,7 @@ ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
         const auto bytes = input.span16().data();
         if (IS_SLASH(bytes[0]))
             return true;
-        if (len < 2)
+        if (len < 3)
             return false;
         if (IS_LETTER(bytes[0]) && bytes[1] == ':' && IS_SLASH(bytes[2]))
             return true;
@@ -55,7 +55,7 @@ ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
 #undef IS_LETTER
 #undef IS_SLASH
 
-extern "C" BunString ResolvePath__joinAbsStringBufCurrentPlatformBunString(JSC::JSGlobalObject*, BunString);
+extern "C" BunString ResolvePath__joinAbsStringBufCurrentPlatformBunString(JSC::JSGlobalObject*, const BunString*);
 
 /// CWD is determined by the global object's current cwd.
 ALWAYS_INLINE WTF::String pathResolveWTFString(JSC::JSGlobalObject* globalToGetCwdFrom, const WTF::String& input)
@@ -63,6 +63,6 @@ ALWAYS_INLINE WTF::String pathResolveWTFString(JSC::JSGlobalObject* globalToGetC
     if (isAbsolutePath(input))
         return input;
     BunString in = Bun::toString(input);
-    BunString out = ResolvePath__joinAbsStringBufCurrentPlatformBunString(globalToGetCwdFrom, in);
+    BunString out = ResolvePath__joinAbsStringBufCurrentPlatformBunString(globalToGetCwdFrom, &in);
     return out.transferToWTFString();
 }

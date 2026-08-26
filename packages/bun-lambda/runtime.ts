@@ -320,9 +320,10 @@ function formatHttpEventV1(event: HttpEventV1): Request {
       headers.append(name, value);
     }
   }
-  const hostname = headers.get("Host") ?? request.domainName;
+  const hostname = request.domainName ?? headers.get("Host");
   const proto = headers.get("X-Forwarded-Proto") ?? "http";
-  const url = new URL(request.path, `${proto}://${hostname}/`);
+  const url = new URL(`${proto}://${hostname}/`);
+  url.pathname = request.path;
   for (const [name, values] of Object.entries(event.multiValueQueryStringParameters ?? {})) {
     for (const value of values ?? []) {
       url.searchParams.append(name, value);
@@ -367,9 +368,10 @@ function formatHttpEventV2(event: HttpEventV2): Request {
   for (const cookie of event.cookies ?? []) {
     headers.append("Set-Cookie", cookie);
   }
-  const hostname = headers.get("Host") ?? request.domainName;
+  const hostname = request.domainName ?? headers.get("Host");
   const proto = headers.get("X-Forwarded-Proto") ?? "http";
-  const url = new URL(request.http.path, `${proto}://${hostname}/`);
+  const url = new URL(`${proto}://${hostname}/`);
+  url.pathname = request.http.path;
   for (const [name, values] of Object.entries(event.queryStringParameters ?? {})) {
     url.searchParams.append(name, values);
   }
@@ -431,7 +433,7 @@ function formatWebSocketUpgrade(event: WebSocketEvent): Request {
       headers.append(name, value);
     }
   }
-  const hostname = headers.get("Host") ?? request.domainName;
+  const hostname = request.domainName ?? headers.get("Host");
   const proto = headers.get("X-Forwarded-Proto") ?? "http";
   const url = new URL(`${proto}://${hostname}/${request.stage}`);
   return new Request(url.toString(), {
@@ -781,21 +783,26 @@ class LambdaWebSocket implements ServerWebSocket {
     this.readyState = 3; // WebSocket.CLOSED;
   }
 
-  subscribe(topic: string): void {
+  subscribe(topic: string): boolean {
+    if (this.readyState === 3) {
+      return false;
+    }
     if (this.#topics === null) {
       this.#topics = new Set();
     }
     this.#topics.add(topic);
+    return true;
   }
 
-  unsubscribe(topic: string): void {
-    if (this.#topics !== null) {
-      this.#topics.delete(topic);
+  unsubscribe(topic: string): boolean {
+    if (this.readyState === 3) {
+      return false;
     }
+    return this.#topics?.delete(topic) ?? false;
   }
 
   isSubscribed(topic: string): boolean {
-    return this.#topics !== null && this.#topics.has(topic);
+    return this.readyState !== 3 && this.#topics !== null && this.#topics.has(topic);
   }
 
   cork(callback: (ws: ServerWebSocket<undefined>) => any): void | Promise<void> {

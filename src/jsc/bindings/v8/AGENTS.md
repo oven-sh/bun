@@ -101,20 +101,31 @@ Local<NewClass> NewClass::New(Isolate* isolate, /* parameters */)
 
 For each new C++ method, you must add the mangled symbol names to multiple files:
 
-#### a. Add to `src/napi/napi.zig`
+#### a. Add to `src/runtime/napi/napi_body.rs`
 
-Find the `V8API` struct (around line 1801) and add entries for both GCC/Clang and MSVC:
+Find the `v8_api` module and add entries to both the `#[cfg(not(windows))]` (Itanium) and `#[cfg(windows)]` (MSVC) `extern "C"` blocks:
 
-```zig
-const V8API = if (!bun.Environment.isWindows) struct {
-    // ... existing functions ...
-    pub extern fn _ZN2v88NewClass3NewEPNS_7IsolateE/* parameters */() *anyopaque;
-    pub extern fn _ZNK2v88NewClass10SomeMethodEv() *anyopaque;
-} else struct {
-    // ... existing functions ...
-    pub extern fn @"?New@NewClass@v8@@SA?AV?$Local@VNewClass@v8@@@2@PEAVIsolate@2@/* parameters */@Z"() *anyopaque;
-    pub extern fn @"?SomeMethod@NewClass@v8@@QEBA/* return_type */XZ"() *anyopaque;
-};
+```rust
+#[cfg(not(windows))]
+mod v8_api {
+    use core::ffi::c_void;
+    unsafe extern "C" {
+        // ... existing functions ...
+        pub(super) fn _ZN2v88NewClass3NewEPNS_7IsolateE/* parameters */() -> *mut c_void;
+        pub(super) fn _ZNK2v88NewClass10SomeMethodEv() -> *mut c_void;
+    }
+}
+#[cfg(windows)]
+mod v8_api {
+    use core::ffi::c_void;
+    unsafe extern "C" {
+        // ... existing functions ...
+        #[link_name = "?New@NewClass@v8@@SA?AV?$Local@VNewClass@v8@@@2@PEAVIsolate@2@/* parameters */@Z"]
+        pub(super) fn NewClass_New() -> *mut c_void;
+        #[link_name = "?SomeMethod@NewClass@v8@@QEBA/* return_type */XZ"]
+        pub(super) fn NewClass_SomeMethod() -> *mut c_void;
+    }
+}
 ```
 
 **To get the correct mangled names:**
@@ -133,7 +144,7 @@ For **MSVC** (Windows):
 
 ```powershell
 # Use the provided PowerShell script in the comments:
-dumpbin .\build\CMakeFiles\bun-debug.dir\src\bun.js\bindings\v8\V8NewClass.cpp.obj /symbols | where-object { $_.Contains(' v8::') } | foreach-object { (($_ -split "\|")[1] -split " ")[1] } | ForEach-Object { "extern fn @`"${_}`"() *anyopaque;" }
+dumpbin .\build\CMakeFiles\bun-debug.dir\src\jsc\bindings\v8\V8NewClass.cpp.obj /symbols | where-object { $_.Contains(' v8::') } | foreach-object { (($_ -split "\|")[1] -split " ")[1] } | ForEach-Object { "#[link_name = `"${_}`"] pub(super) fn ___() -> *mut c_void;" }
 ```
 
 #### b. Add to Symbol Files
@@ -278,7 +289,7 @@ bun bd test test/v8/v8.test.ts -t "can create small integer"
 
 ### Common Issues
 
-**Symbol Not Found**: Ensure mangled names are correctly added to `napi.zig` and symbol files.
+**Symbol Not Found**: Ensure mangled names are correctly added to `napi_body.rs` and symbol files.
 
 **Segmentation Fault**: Usually indicates inline V8 functions are reading incorrect memory layouts. Check `Map` setup and `ObjectLayout` structure.
 

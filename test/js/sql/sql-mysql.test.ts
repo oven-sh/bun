@@ -1,8 +1,19 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { beforeAll, describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunRun, describeWithContainer, isDockerEnabled, tempDirWithFiles } from "harness";
-import net from "net";
+import { bunEnv, bunExe, bunRun, describeWithContainer, isDockerEnabled, tempDirWithFiles } from "harness";
 import path from "path";
+import {
+  listeningServer,
+  mysqlAckSessionSetup,
+  mysqlColumnDefinition,
+  mysqlHandshakeV10,
+  mysqlLenencInt,
+  mysqlLenencStr,
+  mysqlOkPacket,
+  mysqlRawPacket,
+  mysqlReadPackets,
+  mysqlStmtPrepareOk,
+} from "./wire-frames";
 const dir = tempDirWithFiles("sql-test", {
   "select-param.sql": `select ? as x`,
   "select.sql": `select CAST(1 AS SIGNED) as x`,
@@ -10,12 +21,56 @@ const dir = tempDirWithFiles("sql-test", {
 function rel(filename: string) {
   return path.join(dir, filename);
 }
+
+// Assertions for the NEWDECIMAL decoder against a real server, used by the
+// docker-backed suite below.
+//
+// MySQL reports computed/aggregate NEWDECIMAL columns (SUM/AVG/CAST/arithmetic/
+// ROUND/literals, and SUM of an INT column) with the BINARY flag and charset
+// 63. The binary-charset heuristic used for STRING/BLOB types wrongly returned
+// these as Buffers; NEWDECIMAL is always ASCII decimal text.
+async function assertComputedDecimalsAreStrings(sql: SQL) {
+  const t = "dec_" + randomUUIDv7("hex").replaceAll("-", "");
+  await sql`CREATE TEMPORARY TABLE ${sql(t)} (id INT, balance DECIMAL(12,2), qty INT)`;
+  await sql`INSERT INTO ${sql(t)} VALUES (1, 100.50, 3), (2, 250.25, 4)`;
+
+  // Aggregate decimals, plus a decimal literal and SUM of an INT column (which
+  // MySQL also returns as NEWDECIMAL). Kept separate from the per-row
+  // expressions below so the query has no non-aggregated columns and stays
+  // valid under ONLY_FULL_GROUP_BY (the MySQL 8+ default).
+  const aggExpected = { total: "350.75", avg_bal: "175.375000", sum_int: "7", lit: "1.23" };
+  // Binary protocol (prepared statement).
+  const [aggRow] = await sql`
+    SELECT SUM(balance) AS total, AVG(balance) AS avg_bal, SUM(qty) AS sum_int, 1.23 AS lit
+    FROM ${sql(t)}`;
+  expect(aggRow).toEqual(aggExpected);
+  // Text protocol (`.simple()`) must decode the same way.
+  const [aggSimple] = await sql`
+    SELECT SUM(balance) AS total, AVG(balance) AS avg_bal, SUM(qty) AS sum_int, 1.23 AS lit
+    FROM ${sql(t)}`.simple();
+  expect(aggSimple).toEqual(aggExpected);
+
+  // Per-row computed decimals: CAST, arithmetic, ROUND, and a plain stored
+  // column. A single row is selected so the result is deterministic.
+  const rowExpected = { casted: "100.5000", mul2: "201.00", rounded: "100.5", plain: "100.50" };
+  const [row] = await sql`
+    SELECT CAST(balance AS DECIMAL(20,4)) AS casted, balance*2 AS mul2, ROUND(balance,1) AS rounded, balance AS plain
+    FROM ${sql(t)} WHERE id = ${1}`;
+  expect(row).toEqual(rowExpected);
+  const [simpleRow] = await sql`
+    SELECT CAST(balance AS DECIMAL(20,4)) AS casted, balance*2 AS mul2, ROUND(balance,1) AS rounded, balance AS plain
+    FROM ${sql(t)} WHERE id = 1`.simple();
+  expect(simpleRow).toEqual(rowExpected);
+
+  // `.raw()` must still return raw bytes.
+  const [rawRow] = await sql`SELECT SUM(balance) AS total FROM ${sql(t)}`.raw();
+  expect(rawRow[0]).toEqual(new Uint8Array(Buffer.from("350.75")));
+}
 if (isDockerEnabled()) {
+  // Ordered so the suites whose containers become healthy quickly (mysql_plain,
+  // mysql:9) run first; the slow-to-start mysql_tls container warms up in the
+  // background instead of stalling the whole file up front.
   const images = [
-    {
-      name: "MySQL with TLS",
-      image: "mysql_tls",
-    },
     {
       name: "MySQL",
       image: "mysql_plain",
@@ -27,6 +82,10 @@ if (isDockerEnabled()) {
       env: {
         MYSQL_ROOT_PASSWORD: "bun",
       },
+    },
+    {
+      name: "MySQL with TLS",
+      image: "mysql_tls",
     },
   ].filter(Boolean);
 
@@ -59,6 +118,26 @@ if (isDockerEnabled()) {
           expect(err).toEqual({ code: "ERR_MYSQL_OVERFLOW" });
         });
 
+        test("returns column values that span more than one wire packet intact", async () => {
+          await using db = new SQL({ ...getOptions(), max: 1 });
+
+          for (const n of [0xffffff - 6, 2 * 0xffffff + 10]) {
+            const [row] = await db`select repeat('a', ${n}) as s`;
+            expect(typeof row.s).toBe("string");
+            expect(row.s.length).toBe(n);
+            expect(row.s === Buffer.alloc(n, "a").toString()).toBe(true);
+          }
+
+          for (const n of [0xffffff - 4, 0xffffff + 85]) {
+            const [row] = await db.unsafe("select repeat('a', " + n + ") as s");
+            expect(typeof row.s).toBe("string");
+            expect(row.s.length).toBe(n);
+            expect(row.s === Buffer.alloc(n, "a").toString()).toBe(true);
+          }
+
+          expect(await db`select 1 as x`).toEqual([{ x: 1 }]);
+        }, 60_000);
+
         let sql: SQL;
         const password = image.image === "mysql_plain" ? "" : "bun";
         const getOptions = (): Bun.SQL.Options => ({
@@ -77,12 +156,13 @@ if (isDockerEnabled()) {
         });
 
         test("process should exit when idle", async () => {
-          const { stderr } = bunRun(path.join(import.meta.dir, "sql-idle-exit-fixture.ts"), {
-            ...bunEnv,
-            MYSQL_URL: getOptions().url,
-            CA_PATH: image.name === "MySQL with TLS" ? path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem") : "",
-          });
-          expect(stderr).toBe("");
+          expect(
+            await bunRun(path.join(import.meta.dir, "sql-idle-exit-fixture.ts"), {
+              ...bunEnv,
+              MYSQL_URL: getOptions().url,
+              CA_PATH: image.name === "MySQL with TLS" ? path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem") : "",
+            }),
+          ).toSpawn();
         });
         test("should return lastInsertRowid and affectedRows", async () => {
           await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
@@ -115,6 +195,33 @@ if (isDockerEnabled()) {
           expect(rawRow).toHaveLength(6);
           expect(rawRow[2]).toEqual(new Uint8Array([0xce, 0xff, 0xff])); // -50 as i24 LE
           expect(Buffer.from(rawRow[5]).toString("utf-8")).toBe("alice");
+        });
+        test("YEAR not in the last column reads following columns correctly", async () => {
+          // MySQL's binary protocol sends MYSQL_TYPE_YEAR as a fixed 2-byte
+          // field, but the column definition reports column_length = 4 (display
+          // width). Reading column_length bytes left the cursor 2 bytes ahead,
+          // returning YEAR as a Buffer and corrupting every following column.
+          await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
+          using sql = await db.reserve();
+          const t = "yr_" + randomUUIDv7("hex").replaceAll("-", "");
+          await sql`CREATE TEMPORARY TABLE ${sql(t)} (id INT PRIMARY KEY, yr YEAR, followup INT, control SMALLINT, yr_last YEAR)`;
+          await sql`INSERT INTO ${sql(t)} VALUES (1, 2024, 12345, 42, 2001)`;
+          const [row] = await sql`SELECT id, yr, followup, control, yr_last FROM ${sql(t)} WHERE id = ${1}`;
+          expect(row).toEqual({ id: 1, yr: 2024, followup: 12345, control: 42, yr_last: 2001 });
+          // `.raw()` takes a separate branch that must also consume 2 bytes.
+          const [rawRow] = await sql`SELECT id, yr, followup, control, yr_last FROM ${sql(t)} WHERE id = ${1}`.raw();
+          expect(rawRow).toHaveLength(5);
+          expect(rawRow[1]).toEqual(new Uint8Array([0xe8, 0x07])); // 2024 as u16 LE
+          expect(rawRow[2]).toEqual(new Uint8Array([0x39, 0x30, 0x00, 0x00])); // 12345 as u32 LE
+          expect(rawRow[4]).toEqual(new Uint8Array([0xd1, 0x07])); // 2001 as u16 LE
+          // The text protocol (`.simple()`) must decode YEAR as the same number.
+          const [simpleRow] = await sql`SELECT id, yr, followup, control, yr_last FROM ${sql(t)} WHERE id = 1`.simple();
+          expect(simpleRow).toEqual({ id: 1, yr: 2024, followup: 12345, control: 42, yr_last: 2001 });
+        });
+        test("computed DECIMAL columns return strings, not Buffers", async () => {
+          await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
+          using sql = await db.reserve();
+          await assertComputedDecimalsAreStrings(sql);
         });
         describe("should work with more than the max inline capacity", () => {
           for (let size of [50, 60, 62, 64, 70, 100]) {
@@ -269,6 +376,43 @@ if (isDockerEnabled()) {
 
           expect().pass();
         }, 10_000);
+
+        test("rebuilds row object shape when a reused statement's result columns change", async () => {
+          // Result-set column metadata is re-read from the wire on every execution
+          // of a cached prepared statement. When the column count stays the same
+          // but the names change (e.g. ALTER TABLE between executions of the same
+          // query text), the cached row-object structure must be rebuilt so values
+          // are written under the current column names and never past the end of
+          // the previously-shaped object.
+          await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
+          using sql = await db.reserve();
+
+          // Same column count, different names across two executions of the same query text.
+          const t = "rs_" + randomUUIDv7("hex").replaceAll("-", "");
+          await sql`CREATE TEMPORARY TABLE ${sql(t)} (a INT, b INT)`;
+          await sql`INSERT INTO ${sql(t)} VALUES (1, 2)`;
+          const first = await sql`SELECT * FROM ${sql(t)}`;
+          expect(first[0]).toEqual({ a: 1, b: 2 });
+          await sql`ALTER TABLE ${sql(t)} CHANGE a c INT, CHANGE b d INT`;
+          const second = await sql`SELECT * FROM ${sql(t)}`;
+          expect(second[0]).toEqual({ c: 1, d: 2 });
+
+          // Duplicate column names collapse into a single property on the first
+          // execution; once a rename makes them distinct, the same cached
+          // statement must produce every property of the new column list.
+          const ta = "rsa_" + randomUUIDv7("hex").replaceAll("-", "");
+          const tb = "rsb_" + randomUUIDv7("hex").replaceAll("-", "");
+          await sql`CREATE TEMPORARY TABLE ${sql(ta)} (x INT, y INT)`;
+          await sql`CREATE TEMPORARY TABLE ${sql(tb)} (x INT, y INT)`;
+          await sql`INSERT INTO ${sql(ta)} VALUES (1, 2)`;
+          await sql`INSERT INTO ${sql(tb)} VALUES (3, 4)`;
+          const dupFirst = await sql`SELECT * FROM ${sql(ta)} CROSS JOIN ${sql(tb)}`;
+          // Last one wins for duplicate names, so only x and y exist.
+          expect(Object.keys(dupFirst[0]).sort()).toEqual(["x", "y"]);
+          await sql`ALTER TABLE ${sql(tb)} CHANGE x z INT, CHANGE y w INT`;
+          const dupSecond = await sql`SELECT * FROM ${sql(ta)} CROSS JOIN ${sql(tb)}`;
+          expect(dupSecond[0]).toEqual({ x: 1, y: 2, z: 3, w: 4 });
+        });
 
         test("Handles numeric column names", async () => {
           // deliberately out of order
@@ -981,7 +1125,7 @@ if (isDockerEnabled()) {
           } catch (err) {
             error = err;
           }
-          expect(error.code).toBe("ERR_MYSQL_CONNECTION_CLOSED");
+          expect(error.code).toBe("ERR_MYSQL_CONNECTION_REFUSED");
         });
 
         test("dynamic table name", async () => {
@@ -1048,13 +1192,16 @@ if (isDockerEnabled()) {
           sql.flush();
         });
 
+        // Fault-injection test: requires a server that refuses / drops / sends malformed
+        // frames, which a healthy container will not do on demand. DO NOT COPY THIS
+        // PATTERN — anything a real server can produce belongs in describeWithContainer.
+        // All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
+        // Buffer.alloc frame construction here.
         describe("timeouts", () => {
           test.each(["connect_timeout", "connectTimeout", "connectionTimeout", "connection_timeout"] as const)(
             "connection timeout key %p throws",
             async key => {
-              const server = net.createServer().listen();
-
-              const port = (server.address() as import("node:net").AddressInfo).port;
+              const { server, port } = await listeningServer(() => {});
 
               const sql = new SQL({ adapter: "mysql", port, host: "127.0.0.1", max: 1, [key]: 0.2 });
 
@@ -1082,3 +1229,159 @@ if (isDockerEnabled()) {
     );
   }
 }
+
+test("MySQL: binary TIME with a very large days field formats without integer wraparound", async () => {
+  const COM_STMT_PREPARE = 0x16;
+  const COM_STMT_EXECUTE = 0x17;
+  const MYSQL_TYPE_TIME = 0x0b;
+
+  const timeRow = mysqlRawPacket(
+    3,
+    Buffer.concat([Buffer.from([0x00, 0x00]), Buffer.from([0x08, 0x00, 0xff, 0xff, 0xff, 0xff, 0x00, 0x3b, 0x3a])]),
+  );
+
+  const { server, port } = await listeningServer(socket => {
+    let buffered = Buffer.alloc(0);
+    let authed = false;
+    socket.write(mysqlHandshakeV10());
+    socket.on("data", chunk => {
+      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
+        if (!authed) {
+          authed = true;
+          socket.write(mysqlOkPacket(seq + 1));
+          return;
+        }
+        if (mysqlAckSessionSetup(socket, payload)) return;
+        if (payload[0] === COM_STMT_PREPARE) {
+          socket.write(mysqlStmtPrepareOk(1, 1, 0, 0));
+        } else if (payload[0] === COM_STMT_EXECUTE) {
+          socket.write(
+            Buffer.concat([
+              mysqlRawPacket(1, mysqlLenencInt(1)),
+              mysqlColumnDefinition(2, { name: "t", type: MYSQL_TYPE_TIME }),
+              timeRow,
+              mysqlOkPacket(4, 0xfe),
+            ]),
+          );
+        } else {
+          socket.end();
+        }
+      });
+    });
+    socket.on("error", () => {});
+  });
+
+  try {
+    const fixture = /* js */ `
+      const { SQL } = require("bun");
+      const sql = new SQL({ url: "mysql://root@127.0.0.1:${port}/db", max: 1 });
+      const rows = await sql\`SELECT t\`;
+      console.log(JSON.stringify([...rows]));
+      await sql.close().catch(() => {});
+      process.exit(0);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stderr, stdout: stdout.trim() }).toEqual({
+      stderr: expect.any(String),
+      stdout: JSON.stringify([{ t: "4294967295:59:58" }]),
+    });
+    expect(exitCode).toBe(0);
+  } finally {
+    await new Promise<void>(r => server.close(() => r()));
+  }
+});
+
+test("MySQL: a row split across several maximum-size wire packets is reassembled into one value", async () => {
+  const COM_QUERY = 0x03;
+  const MYSQL_TYPE_VAR_STRING = 0xfd;
+  const MAX_PACKET_PAYLOAD = 0xffffff;
+  const lengths = [MAX_PACKET_PAYLOAD + 85, 2 * MAX_PACKET_PAYLOAD + 10, MAX_PACKET_PAYLOAD - 4, 300];
+
+  function framePayload(startSeq: number, payload: Buffer): { packets: Buffer[]; nextSeq: number } {
+    const packets: Buffer[] = [];
+    let seq = startSeq;
+    let offset = 0;
+    while (true) {
+      const chunk = payload.subarray(offset, offset + MAX_PACKET_PAYLOAD);
+      packets.push(mysqlRawPacket(seq++, chunk));
+      offset += chunk.length;
+      if (chunk.length < MAX_PACKET_PAYLOAD) break;
+    }
+    return { packets, nextSeq: seq };
+  }
+
+  const framing = lengths.map(n => framePayload(3, mysqlLenencStr(Buffer.alloc(n, "a"))).packets.length);
+  expect(framing).toEqual([2, 3, 2, 1]);
+
+  const { server, port } = await listeningServer(socket => {
+    let buffered = Buffer.alloc(0);
+    let authed = false;
+    let queryIndex = 0;
+    socket.write(mysqlHandshakeV10());
+    socket.on("data", chunk => {
+      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
+        if (!authed) {
+          authed = true;
+          socket.write(mysqlOkPacket(seq + 1));
+          return;
+        }
+        if (mysqlAckSessionSetup(socket, payload)) return;
+        if (payload[0] !== COM_QUERY || queryIndex >= lengths.length) {
+          socket.end();
+          return;
+        }
+        const { packets, nextSeq } = framePayload(3, mysqlLenencStr(Buffer.alloc(lengths[queryIndex++], "a")));
+        socket.write(
+          Buffer.concat([
+            mysqlRawPacket(1, mysqlLenencInt(1)),
+            mysqlColumnDefinition(2, { name: "s", type: MYSQL_TYPE_VAR_STRING }),
+            ...packets,
+            mysqlOkPacket(nextSeq, 0xfe),
+          ]),
+        );
+      });
+    });
+    socket.on("error", () => {});
+  });
+
+  try {
+    const fixture = /* js */ `
+      const { SQL } = require("bun");
+      const sql = new SQL({ url: "mysql://root@127.0.0.1:${port}/db", max: 1 });
+      const out = [];
+      for (let i = 0; i < ${lengths.length}; i++) {
+        const rows = await sql\`select s\`.simple();
+        out.push(rows.map(r => [typeof r.s, r.s.length, r.s === Buffer.alloc(r.s.length, "a").toString()]));
+      }
+      console.log(JSON.stringify(out));
+      await sql.close().catch(() => {});
+      process.exit(0);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stderr, stdout: stdout.trim() }).toEqual({
+      stderr: expect.any(String),
+      stdout: JSON.stringify(lengths.map(n => [["string", n, true]])),
+    });
+    expect(exitCode).toBe(0);
+  } finally {
+    await new Promise<void>(r => server.close(() => r()));
+  }
+}, 90_000);

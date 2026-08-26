@@ -17,21 +17,17 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // PERF(port): was ArenaAllocator + stackFallback(512) — profile if it shows up on a hot path.
-    // (allocator params dropped; to_slice() owns its buffer and Drops)
-
-    let arguments = frame.arguments_old::<2>();
-    let arguments = arguments.slice();
+fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let arguments = frame.arguments();
     if arguments.len() < 2 {
         return Err(global.throw(format_args!("Expected two arguments")));
     }
 
-    let left_string = arguments[0].to_js_string(global)?;
-    let right_string = arguments[1].to_js_string(global)?;
+    let left_view = arguments[0].to_js_string_view(global)?;
+    let right_view = arguments[1].to_js_string_view(global)?;
 
-    let left = left_string.to_slice(global);
-    let right = right_string.to_slice(global);
+    let left = left_view.to_utf8();
+    let right = right_view.to_utf8();
 
     if !strings::is_all_ascii(left.slice()) {
         return Ok(JSValue::js_number_from_int32(0));
@@ -70,20 +66,17 @@ pub(crate) fn order(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // PERF(port): was ArenaAllocator + stackFallback(512) — profile if it shows up on a hot path.
-
-    let arguments = frame.arguments_old::<2>();
-    let arguments = arguments.slice();
+fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let arguments = frame.arguments();
     if arguments.len() < 2 {
         return Err(global.throw(format_args!("Expected two arguments")));
     }
 
-    let left_string = arguments[0].to_js_string(global)?;
-    let right_string = arguments[1].to_js_string(global)?;
+    let left_view = arguments[0].to_js_string_view(global)?;
+    let right_view = arguments[1].to_js_string_view(global)?;
 
-    let left = left_string.to_slice(global);
-    let right = right_string.to_slice(global);
+    let left = left_view.to_utf8();
+    let right = right_view.to_utf8();
 
     if !strings::is_all_ascii(left.slice()) {
         return Ok(JSValue::FALSE);
@@ -99,7 +92,7 @@ pub(crate) fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
 
     let left_version = left_result.version.min();
 
-    // `Query::parse` can only fail with OOM (Zig: `try` propagates allocator error).
+    // `Query::parse` can only fail with OOM.
     let right_group = match query::parse(
         right.slice(),
         SlicedString::init(right.slice(), right.slice()),
@@ -118,5 +111,3 @@ pub(crate) fn satisfies(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
         left.slice(),
     )))
 }
-
-// ported from: src/semver_jsc/SemverObject.zig

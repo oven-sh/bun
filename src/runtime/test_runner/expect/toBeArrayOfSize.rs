@@ -1,20 +1,21 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
 use super::get_signature;
+use super::throw;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
+// Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
+// `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
 pub(crate) fn to_be_array_of_size(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // Zig: `defer this.postMatch(globalThis);`
-    // PORT NOTE: reshaped for borrowck — scopeguard::defer! would hold &mut *this for the whole fn.
+    // scopeguard::defer! would hold &mut *this for the whole fn, so use the
+    // post-match guard instead.
     let this = this.post_match_guard(global);
 
     let this_value = frame.this();
-    let _arguments = frame.arguments_old::<1>();
-    let arguments = &_arguments.ptr[0.._arguments.len];
+    let arguments = frame.arguments();
 
     if arguments.len() < 1 {
         return Err(global.throw_invalid_arguments(format_args!("toBeArrayOfSize() requires 1 argument")));
@@ -33,7 +34,7 @@ pub(crate) fn to_be_array_of_size(
 
     let not = this.flags.get().not();
     let mut pass = value.js_type().is_array()
-        && i32::try_from(value.get_length(global)?).unwrap() == size.to_int32();
+        && value.get_length(global)? as i64 == size.to_int64();
 
     if not {
         pass = !pass;
@@ -43,28 +44,26 @@ pub(crate) fn to_be_array_of_size(
     }
 
     let mut formatter = super::make_formatter(global);
-    // Zig: `defer formatter.deinit();` — handled by Drop.
     let received = value.to_fmt(&mut formatter);
 
     if not {
-        // PERF(port): was comptime getSignature.
         let signature = get_signature("toBeArrayOfSize", "", true);
-        return this.throw_fmt(
+        return throw!(
+            this,
             global,
             signature,
             concat!("\n\n", "Received: <red>{}<r>\n"),
-            format_args!("{}", received),
+            received,
         );
     }
 
-    // PERF(port): was comptime getSignature.
     let signature = get_signature("toBeArrayOfSize", "", false);
-    this.throw_fmt(
+    throw!(
+        this,
         global,
         signature,
         concat!("\n\n", "Received: <red>{}<r>\n"),
-        format_args!("{}", received),
+        received,
     )
 }
 
-// ported from: src/test_runner/expect/toBeArrayOfSize.zig

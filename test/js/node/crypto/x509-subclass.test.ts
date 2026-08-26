@@ -10,8 +10,13 @@ import path from "node:path";
 // Also, X509Certificate.prototype was undefined because finishCreation()
 // did not call putDirectWithoutTransition for the prototype property.
 
-const certPath = path.join(import.meta.dir, "..", "test", "fixtures", "keys", "agent1-cert.pem");
+const keysDir = path.join(import.meta.dir, "..", "test", "fixtures", "keys");
+const certPath = path.join(keysDir, "agent1-cert.pem");
 const certPem = readFileSync(certPath);
+// ca1 issued agent1-cert and is itself self-signed.
+const ca1Pem = readFileSync(path.join(keysDir, "ca1-cert.pem"));
+// ca2 is an unrelated self-signed CA.
+const ca2Pem = readFileSync(path.join(keysDir, "ca2-cert.pem"));
 
 describe("X509Certificate", () => {
   test("constructor has .prototype property", () => {
@@ -69,5 +74,58 @@ describe("X509Certificate", () => {
     expect(cert.issuer).toBeDefined();
     expect(cert.serialNumber).toBeDefined();
     expect(typeof cert.fingerprint).toBe("string");
+  });
+
+  test("serialNumber and modulus are uppercase hex (Node.js/OpenSSL compat)", () => {
+    // BoringSSL's BN_bn2hex/BN_print emit lowercase hex; Node.js uses OpenSSL which
+    // emits uppercase. Bun must normalize to uppercase so cert pinning by serial
+    // string works the same as in Node.js.
+    const cert = new X509Certificate(certPem);
+
+    expect(cert.serialNumber).toBe("147D36C1C2F74206DE9FAB5F2226D78ADB00A426");
+    expect(cert.serialNumber).toMatch(/^[0-9A-F]+$/);
+
+    const legacy = cert.toLegacyObject();
+    expect(legacy.serialNumber).toBe("147D36C1C2F74206DE9FAB5F2226D78ADB00A426");
+    expect(legacy.modulus).toMatch(/^[0-9A-F]+$/);
+    expect(legacy.modulus.startsWith("D456320AFB20D3827093DC2C4284ED04DFBABD56")).toBe(true);
+  });
+});
+
+// checkIssued() must return a boolean to match Node.js. Previously Bun
+// returned the issuer certificate object on success and undefined on failure.
+// https://github.com/oven-sh/bun/issues/31570
+describe("X509Certificate#checkIssued", () => {
+  const agent1 = new X509Certificate(certPem);
+  const ca1 = new X509Certificate(ca1Pem);
+  const ca2 = new X509Certificate(ca2Pem);
+
+  test("returns true when the certificate was issued by the other certificate", () => {
+    const result = agent1.checkIssued(ca1);
+    expect(typeof result).toBe("boolean");
+    expect(result).toBe(true);
+  });
+
+  test("returns true for a self-signed certificate checked against itself", () => {
+    const result = ca1.checkIssued(ca1);
+    expect(typeof result).toBe("boolean");
+    expect(result).toBe(true);
+  });
+
+  test("returns false for an unrelated issuer", () => {
+    const result = agent1.checkIssued(ca2);
+    expect(typeof result).toBe("boolean");
+    expect(result).toBe(false);
+  });
+
+  test("returns false for a non-self-signed certificate checked against itself", () => {
+    const result = agent1.checkIssued(agent1);
+    expect(typeof result).toBe("boolean");
+    expect(result).toBe(false);
+  });
+
+  test("throws ERR_INVALID_ARG_TYPE when the argument is not an X509Certificate", () => {
+    expect(() => agent1.checkIssued({} as any)).toThrow();
+    expect(() => agent1.checkIssued("" as any)).toThrow();
   });
 });

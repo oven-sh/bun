@@ -366,30 +366,44 @@ function findLlvmTool(
  * Call this once at configure time. All tool paths are absolute.
  * Throws BuildError if any required tool is missing.
  *
+ * `os`/`arch` are the HOST (where to search, executable suffixes, install
+ * hints). `targetOs` is what we're building FOR — it decides which tool
+ * *family* is needed: a windows target wants the MSVC-style drivers
+ * (clang-cl, llvm-lib, lld-link, llvm-rc) even when the host is linux/macOS,
+ * since those all ship in every LLVM distribution and are inherently
+ * cross-capable. Defaults to the host (native build).
+ *
  * zig/bun/esbuild are resolved separately (they come from cache/, not PATH)
  * so pass them in as placeholders for now; they'll be filled by downloaders.
  */
 export function resolveLlvmToolchain(
   os: OS,
   arch: Arch,
+  targetOs: OS = os,
 ): Pick<
   Toolchain,
   | "cc"
   | "cxx"
+  | "hostCc"
+  | "hostCxx"
   | "ar"
   | "ranlib"
   | "ld"
+  | "ld64Lld"
   | "rustLld"
   | "rustLlvmVersion"
   | "rustSysroot"
   | "rustHostTriple"
   | "strip"
+  | "llvmStrip"
+  | "nm"
   | "dsymutil"
   | "ccache"
   | "rc"
   | "mt"
   | "nasm"
   | "clangVersion"
+  | "clangResourceDir"
 > {
   // Compute search paths ONCE. Contains a brew spawn on macOS (~100ms)
   // so calling it per-tool would burn ~600ms. Every tool below gets
@@ -397,28 +411,63 @@ export function resolveLlvmToolchain(
   // install is highest-priority wins consistently.
   const paths = llvmSearchPaths(os, arch);
 
+  // The MSVC-style tool family is selected by the TARGET: building for
+  // windows needs clang-cl/llvm-lib/lld-link/llvm-rc regardless of host.
+  const msvcTarget = targetOs === "windows";
+
   // clang — version-checked. clang++ is the same binary (hardlink or
   // symlink) from the same install; a second version-check spawn would
   // just return the same answer. We still locate it separately so the
   // "not found" error names the right tool.
-  const ccResult = findLlvmTool(os === "windows" ? "clang-cl" : "clang", paths, os, {
+  const ccResult = findLlvmTool(msvcTarget ? "clang-cl" : "clang", paths, os, {
     checkVersion: true,
     required: true,
   });
-  const cxx = findLlvmTool(os === "windows" ? "clang-cl" : "clang++", paths, os, {
+  const cxx = findLlvmTool(msvcTarget ? "clang-cl" : "clang++", paths, os, {
     checkVersion: false,
     required: true,
   })?.path;
 
-  // ar: llvm-ar (or llvm-lib on Windows)
+  // Resource dir (builtin headers live at <resource-dir>/include). Needed by
+  // darwin cross-compiles, which rebuild the include search path explicitly
+  // (-nostdinc) so nothing from the build host can leak in. One ~10ms spawn;
+  // skipped for windows targets, where nothing consumes it (and cc is
+  // clang-cl, which takes MSVC-style flags).
+  let clangResourceDir: string | undefined;
+  if (!msvcTarget) {
+    const probe = spawnSync(ccResult!.path, ["-print-resource-dir"], {
+      encoding: "utf8",
+      timeout: 30_000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (!probe.error && probe.status === 0) {
+      const dir = (probe.stdout ?? "").trim();
+      if (dir.length > 0) clangResourceDir = dir;
+    }
+  }
+
+  // Host compiler for build-time codegen tools (dep_host_cc) and host-side
+  // cargo artifacts (.cargo/config.toml linker for the host triple). Normally
+  // the same as cc/cxx, but when cross-compiling for windows from a unix
+  // host, cc/cxx are clang-cl (which defaults to a *-windows-msvc triple,
+  // emits COFF, and can't drive an ELF link) — host tools must stay on plain
+  // clang/clang++.
+  let hostCc: string | undefined;
+  let hostCxx: string | undefined;
+  if (msvcTarget && os !== "windows") {
+    hostCc = findLlvmTool("clang", paths, os, { checkVersion: false, required: true })?.path;
+    hostCxx = findLlvmTool("clang++", paths, os, { checkVersion: false, required: true })?.path;
+  }
+
+  // ar: llvm-ar (or llvm-lib for windows targets)
   // No version check — ar doesn't always print a parseable version,
   // and any ar from the same LLVM install is fine.
-  const ar = findLlvmTool(os === "windows" ? "llvm-lib" : "llvm-ar", paths, os, {
+  const ar = findLlvmTool(msvcTarget ? "llvm-lib" : "llvm-ar", paths, os, {
     checkVersion: false,
     required: true,
   })?.path;
 
-  // ranlib: llvm-ranlib (unix only — Windows uses llvm-lib which doesn't need it)
+  // ranlib: llvm-ranlib (unix hosts only — llvm-lib targets don't need it).
   // Needed for nested cmake builds (CMAKE_RANLIB). llvm-ar's `s` flag does the
   // same thing for our direct archives, but deps may call ranlib explicitly.
   let ranlib: string | undefined;
@@ -429,10 +478,10 @@ export function resolveLlvmToolchain(
     })?.path;
   }
 
-  // ld: ld.lld on Linux (passed as --ld-path=), lld-link on Windows.
+  // ld: lld-link for windows targets, ld.lld on Linux (passed as --ld-path=).
   // On Darwin clang drives the system linker directly.
   let ld: string;
-  if (os === "windows") {
+  if (msvcTarget) {
     ld = findLlvmTool("lld-link", paths, os, { checkVersion: false, required: true })?.path ?? "";
   } else if (os === "linux") {
     ld = findLlvmTool("ld.lld", paths, os, { checkVersion: true, required: true })?.path ?? "";
@@ -440,49 +489,66 @@ export function resolveLlvmToolchain(
     ld = ""; // darwin: unused
   }
 
-  // strip: GNU strip on Linux (more features), llvm-strip elsewhere
-  let strip: string;
-  if (os === "linux") {
-    strip = findTool({ names: ["strip"], required: true, hint: "Install binutils for your distro" })?.path ?? "";
-  } else {
-    strip = findLlvmTool("llvm-strip", paths, os, { checkVersion: false, required: true })?.path ?? "";
+  // ld64.lld: lld's Mach-O port. Only used when a non-darwin host
+  // cross-compiles FOR darwin (resolveConfig swaps it in as cfg.ld); the
+  // target isn't known here, so resolve it opportunistically — it ships in
+  // the same LLVM install as ld.lld, and the lookup is a handful of stats.
+  let ld64Lld: string | undefined;
+  if (os !== "darwin" && os !== "windows") {
+    ld64Lld = findLlvmTool("ld64.lld", paths, os, { checkVersion: false, required: false })?.path;
   }
 
-  // dsymutil: darwin only
+  // strip: GNU strip on Linux (more features), llvm-strip elsewhere.
+  // llvm-strip is also resolved on Linux (optional) — GNU strip can't read
+  // Mach-O, so darwin cross-compiles need it (resolveConfig swaps it in).
+  let strip: string;
+  let llvmStrip: string | undefined;
+  if (os === "linux") {
+    strip = findTool({ names: ["strip"], required: true, hint: "Install binutils for your distro" })?.path ?? "";
+    llvmStrip = findLlvmTool("llvm-strip", paths, os, { checkVersion: false, required: false })?.path;
+  } else {
+    strip = findLlvmTool("llvm-strip", paths, os, { checkVersion: false, required: true })?.path ?? "";
+    llvmStrip = strip;
+  }
+
+  // llvm-nm: reads ELF, Mach-O, COFF and LTO bitcode objects alike, which is
+  // what the per-dep undefined-symbol checks need. Same package as llvm-ar,
+  // so it is only ever missing from a partial LLVM install; then the checks
+  // are skipped rather than the build refused.
+  const nm = findLlvmTool("llvm-nm", paths, os, { checkVersion: false, required: false })?.path;
+
+  // dsymutil: required on darwin; optional elsewhere (needed only when
+  // cross-compiling a darwin release from a non-darwin host).
   let dsymutil: string | undefined;
   if (os === "darwin") {
     dsymutil = findLlvmTool("dsymutil", paths, os, { checkVersion: false, required: true })?.path;
+  } else if (os !== "windows") {
+    dsymutil = findLlvmTool("dsymutil", paths, os, { checkVersion: false, required: false })?.path;
   }
 
-  // rc/mt: windows only. Passed to nested cmake — when CMAKE_C_COMPILER
-  // is an explicit path, cmake's find_program for these may not search
-  // the compiler's directory, so we resolve them here and pass
-  // explicitly. rc is required (cmake's try_compile on windows uses
-  // it); mt is optional (not all LLVM distros ship it — source.ts sets
+  // rc/mt: windows targets only. Passed to nested cmake — when
+  // CMAKE_C_COMPILER is an explicit path, cmake's find_program for these
+  // may not search the compiler's directory, so we resolve them here and
+  // pass explicitly. rc is required (cmake's try_compile on windows uses
+  // it, and the final link embeds windows-app-info.res); mt is optional
+  // (not all LLVM distros ship it — source.ts sets
   // CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY as fallback).
   let rc: string | undefined;
   let mt: string | undefined;
-  if (os === "windows") {
+  if (msvcTarget) {
     rc = findLlvmTool("llvm-rc", paths, os, { checkVersion: false, required: true })?.path;
     mt = findLlvmTool("llvm-mt", paths, os, { checkVersion: false, required: false })?.path;
   }
 
-  // nasm: windows-x64 only. BoringSSL's win-x64 assembly is NASM syntax
-  // (perlasm emits gas .S everywhere else, including win-aarch64). clang's
-  // integrated assembler can't read NASM, and OPENSSL_NO_ASM is a 5-10×
-  // crypto perf hit, so this is required when targeting win-x64.
-  let nasm: string | undefined;
-  if (os === "windows") {
-    nasm = findTool({
-      names: ["nasm"],
-      // boringssl's win-x64 .asm needs nasm; win-aarch64 uses gas .S.
-      // `arch` here is the HOST arch — the target isn't known yet inside
-      // resolveToolchain(). compile.ts:nasm() asserts at the use site
-      // with the same hint, so a missing nasm still fails clearly.
-      required: false,
-      hint: "Install from https://nasm.us or `winget install NASM.NASM`",
-    })?.path;
-  }
+  // nasm: BoringSSL win-x64 and libjpeg-turbo x86_64 SIMD; compile.ts:nasm() asserts at the use site.
+  const nasm = findTool({
+    names: ["nasm"],
+    required: false,
+    hint:
+      os === "windows"
+        ? "Install from https://nasm.us or `winget install NASM.NASM`"
+        : "Install nasm from your distro (apt/dnf/brew install nasm) or https://nasm.us",
+  })?.path;
 
   // rust-lld: optional alternative linker for cross-language LTO when
   // rustc's bundled LLVM is newer than clang's. See findRustLld().
@@ -503,15 +569,21 @@ export function resolveLlvmToolchain(
   return {
     cc: ccResult.path,
     clangVersion: ccResult.version,
+    clangResourceDir,
     cxx,
+    hostCc,
+    hostCxx,
     ar,
     ranlib,
     ld,
+    ld64Lld,
     rustLld,
     rustLlvmVersion,
     rustSysroot,
     rustHostTriple,
     strip,
+    llvmStrip,
+    nm,
     dsymutil,
     ccache,
     rc,
@@ -578,38 +650,65 @@ export function findRustLld(os: OS): {
   if (rustc === undefined) return none;
 
   // The link-only CI mode runs `findRustLld()` on an agent that downloads
-  // `libbun_rust.a` rather than building it, so the pinned nightly may not be
+  // `libbun_runtime.a` rather than building it, so the pinned nightly may not be
   // installed there yet. `rustc --print sysroot` (a rustup proxy invocation)
   // would auto-install — but the download blows past a short spawnSync timeout
   // and the silent failure leaves `rustLld` undefined, which falls back to the
   // system lld. With cross-language LTO that means lld 21 reading rust-emitted
   // LLVM 22 bitcode → `Invalid record`. Pre-flight a `rustup toolchain
-  // install` so the proxy resolves instantly: idempotent ~70ms when already
-  // installed, downloads on a stale agent. Skip when there's no pinned channel
-  // or no rustup — the `rustc` queries below will just use whatever's there.
+  // install` so the proxy resolves instantly: idempotent (~0.5s, it re-checks
+  // the channel manifest) when already installed, downloads on a stale agent.
+  // `-q` also hides the download progress, so say how long it took whenever
+  // it evidently did more than that check: every build job of CI build 91391
+  // spent 34-36s in here without a line of output. Skip when there's no
+  // pinned channel or no rustup — the `rustc` queries below will just use
+  // whatever's there.
   const rustup = findTool({ names: ["rustup"], paths: [join(cargoHome, "bin")], required: false })?.path;
   const channel = readRustToolchainChannel();
   if (rustup !== undefined && channel !== undefined) {
-    spawnSync(rustup, ["toolchain", "install", channel, "--force", "--profile", "minimal", "--component", "rust-src"], {
-      encoding: "utf8",
-      timeout: 300_000,
-      stdio: ["ignore", "ignore", "inherit"], // surface download/error output
-    });
+    const started = performance.now();
+    spawnSync(
+      rustup,
+      ["-q", "toolchain", "install", channel, "--no-self-update", "--profile", "minimal", "--component", "rust-src"],
+      {
+        encoding: "utf8",
+        timeout: 300_000,
+        stdio: ["ignore", "ignore", "inherit"], // surface error output; `-q` hides `info:` noise
+      },
+    );
+    const seconds = (performance.now() - started) / 1000;
+    if (seconds >= 5) {
+      console.log(
+        `rustup spent ${seconds.toFixed(0)}s installing the pinned toolchain (${channel}); it was missing or incomplete on this machine`,
+      );
+    }
   }
 
   // One spawn for both sysroot and host triple / LLVM version. `-vV` prints
   // `host: <triple>` and `LLVM version: X.Y.Z`; sysroot needs its own query.
-  // Generous timeout: if the toolchain install above was skipped (no rustup),
-  // this proxy invocation may still be the one that auto-installs.
+  //
+  // RUSTUP_TOOLCHAIN pins the proxy to the channel the pre-flight just
+  // ensured. Without it the proxy, running in the repo root, applies
+  // rust-toolchain.toml in full: besides selecting the channel it installs
+  // every entry of its `components` and `targets` lists that is missing
+  // (rustfmt, clippy, miri, llvm-tools and the std of 11 targets — ~2.4 GB),
+  // with its output piped into nowhere here. The build itself installs what
+  // it needs (rust-src above, the target's std in the rust_build_cross rule),
+  // and the toml still applies to anyone running cargo directly. Generous
+  // timeout: without rustup there is no pre-flight and this proxy invocation
+  // may still be the one that auto-installs the channel.
+  const env = channel !== undefined ? { ...process.env, RUSTUP_TOOLCHAIN: channel } : process.env;
   const sysroot = spawnSync(rustc, ["--print", "sysroot"], {
     encoding: "utf8",
     timeout: 300_000,
     stdio: ["ignore", "pipe", "pipe"],
+    env,
   }).stdout?.trim();
   const vv = spawnSync(rustc, ["-vV"], {
     encoding: "utf8",
     timeout: 30_000,
     stdio: ["ignore", "pipe", "pipe"],
+    env,
   }).stdout;
   if (!sysroot || !vv) return none;
 

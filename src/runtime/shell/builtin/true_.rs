@@ -18,5 +18,3 @@ impl True {
         Yield::done()
     }
 }
-
-// ported from: src/shell/builtin/true_.zig

@@ -1,4 +1,4 @@
-//! Spec PluginRunner.zig — the concrete JSC-aware plugin-resolve hook.
+//! The concrete JSC-aware plugin-resolve hook.
 //!
 //! LAYERING: the static byte helpers (`extract_namespace` / `could_be_plugin`)
 //! live in `bun_bundler::transpiler::PluginRunner` (JSC-free, lowest tier).
@@ -10,17 +10,14 @@
 use std::io::Write as _;
 
 use bun_bundler::transpiler::{BunPluginTarget, PluginResolver};
-use bun_core::{OwnedString, String as BunString};
+use bun_core::String as BunString;
 use bun_paths::fs::Path as FsPath;
 
 use crate::JSGlobalObject;
 use bun_ptr::BackRef;
 
-/// Spec PluginRunner.zig:7.
 pub struct PluginRunner {
-    pub global_object: BackRef<JSGlobalObject>,
-    // PORT NOTE: Zig stored `allocator: std.mem.Allocator`; dropped per
-    // PORTING.md (global mimalloc).
+    pub(crate) global_object: BackRef<JSGlobalObject>,
 }
 
 // Re-export the JSC-free static helpers so callers in this crate can keep
@@ -47,7 +44,6 @@ impl PluginRunner {
 }
 
 impl PluginResolver for PluginRunner {
-    /// Spec PluginRunner.zig:34 `onResolve`.
     fn on_resolve(
         &self,
         specifier: &[u8],
@@ -55,29 +51,32 @@ impl PluginResolver for PluginRunner {
         log: &mut bun_ast::Log,
         loc: bun_ast::Loc,
         target: BunPluginTarget,
-    ) -> Result<Option<FsPath<'static>>, bun_core::Error> {
+    ) -> bun_bundler::Result<Option<FsPath<'static>>> {
         let global = self.global();
+        let js_err = bun_bundler::Error::Js;
 
         let namespace_slice = Self::extract_namespace(specifier);
         let namespace = if !namespace_slice.is_empty() && namespace_slice != b"file" {
-            BunString::init(namespace_slice)
+            BunString::from_bytes(namespace_slice)
         } else {
-            BunString::empty()
+            BunString::EMPTY
         };
-        let Some(on_resolve_plugin) = global.run_on_resolve_plugins(
-            namespace,
-            BunString::init(specifier).substring(if namespace.length() > 0 {
-                namespace.length() + 1
-            } else {
-                0
-            }),
-            BunString::init(importer),
-            target,
-        )?
+        let Some(on_resolve_plugin) = global
+            .run_on_resolve_plugins(
+                &namespace,
+                &BunString::from_bytes(specifier).substring(if namespace.length() > 0 {
+                    namespace.length() + 1
+                } else {
+                    0
+                }),
+                &BunString::from_bytes(importer),
+                target,
+            )
+            .map_err(js_err)?
         else {
             return Ok(None);
         };
-        let Some(path_value) = on_resolve_plugin.get(global, "path")? else {
+        let Some(path_value) = on_resolve_plugin.get(global, "path").map_err(js_err)? else {
             return Ok(None);
         };
         if path_value.is_empty_or_undefined_or_null() {
@@ -88,10 +87,7 @@ impl PluginResolver for PluginRunner {
             return Ok(None);
         }
 
-        // Spec PluginRunner.zig:62 `defer file_path.deref()` — `bun_core::String`
-        // is `Copy` (no `Drop`), so RAII-wrap the +1 WTF ref across every
-        // remaining `?` / early-return.
-        let file_path = OwnedString::new(path_value.to_bun_string(global)?);
+        let file_path = path_value.to_bun_string(global).map_err(js_err)?;
 
         if file_path.length() == 0 {
             log.add_error(
@@ -102,41 +98,39 @@ impl PluginResolver for PluginRunner {
             return Ok(None);
         } else if
         // TODO: validate this better
-        file_path.eql_comptime(b".")
-            || file_path.eql_comptime(b"..")
-            || file_path.eql_comptime(b"...")
-            || file_path.eql_comptime(b" ")
+        file_path.eq_ascii(b".")
+            || file_path.eq_ascii(b"..")
+            || file_path.eq_ascii(b"...")
+            || file_path.eq_ascii(b" ")
         {
             log.add_error(None, loc, b"Invalid file path from onResolve plugin");
             return Ok(None);
         }
         let mut static_namespace = true;
         let user_namespace: BunString = 'brk: {
-            if let Some(namespace_value) = on_resolve_plugin.get(global, "namespace")? {
+            if let Some(namespace_value) =
+                on_resolve_plugin.get(global, "namespace").map_err(js_err)?
+            {
                 if !namespace_value.is_string() {
                     log.add_error(None, loc, b"Expected \"namespace\" to be a string");
                     return Ok(None);
                 }
 
-                let namespace_str = namespace_value.to_bun_string(global)?;
+                let namespace_str = namespace_value.to_bun_string(global).map_err(js_err)?;
                 if namespace_str.length() == 0 {
-                    namespace_str.deref();
-                    break 'brk BunString::init(b"file");
+                    break 'brk BunString::static_("file");
                 }
 
-                if namespace_str.eql_comptime(b"file") {
-                    namespace_str.deref();
-                    break 'brk BunString::init(b"file");
+                if namespace_str.eq_ascii(b"file") {
+                    break 'brk BunString::static_("file");
                 }
 
-                if namespace_str.eql_comptime(b"bun") {
-                    namespace_str.deref();
-                    break 'brk BunString::init(b"bun");
+                if namespace_str.eq_ascii(b"bun") {
+                    break 'brk BunString::static_("bun");
                 }
 
-                if namespace_str.eql_comptime(b"node") {
-                    namespace_str.deref();
-                    break 'brk BunString::init(b"node");
+                if namespace_str.eq_ascii(b"node") {
+                    break 'brk BunString::static_("node");
                 }
 
                 static_namespace = false;
@@ -144,17 +138,13 @@ impl PluginResolver for PluginRunner {
                 break 'brk namespace_str;
             }
 
-            break 'brk BunString::init(b"file");
+            break 'brk BunString::static_("file");
         };
-        // Spec PluginRunner.zig:121 `defer user_namespace.deref()`.
-        let user_namespace = OwnedString::new(user_namespace);
 
-        // PORT NOTE: Zig used `std.fmt.allocPrint(this.allocator, …)` and
-        // returned the allocator-owned slice by value inside `Fs.Path`.
         // `FsPath<'static>` borrows, so the formatted buffer is leaked to
-        // model the same caller-owns-forever contract (the Zig path also
-        // never frees these — the linker arena owns them for the build).
-        // PERF(port): was `std.fmt.allocPrint(this.allocator, …)` — profile if hot.
+        // model the caller-owns-forever contract (these are
+        // never freed — the linker arena owns them for the build).
+        // PERF: profile if hot.
         let mut path_buf: Vec<u8> = Vec::new();
         write!(&mut path_buf, "{}", file_path).expect("unreachable");
         let path_static: &'static [u8] = path_buf.leak();
@@ -163,9 +153,9 @@ impl PluginResolver for PluginRunner {
             // `byte_slice()` borrows `&self`; re-match to recover the
             // `'static` literal so the result typechecks as `FsPath<'static>`
             // without an extra alloc.
-            let ns: &'static [u8] = if user_namespace.eql_comptime(b"bun") {
+            let ns: &'static [u8] = if user_namespace.eq_ascii(b"bun") {
                 b"bun"
-            } else if user_namespace.eql_comptime(b"node") {
+            } else if user_namespace.eq_ascii(b"node") {
                 b"node"
             } else {
                 b"file"

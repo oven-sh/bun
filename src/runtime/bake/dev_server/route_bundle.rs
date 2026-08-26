@@ -1,8 +1,9 @@
 //! `DevServer.RouteBundle` — per-navigatable-route bundling state.
 
+use bun_ptr::RefPtr;
+
 use super::incremental_graph;
 use super::jsc;
-use super::serialized_failure::SerializedFailure;
 use super::source_map_store;
 use crate::bake::framework_router;
 use crate::server::{StaticRoute, html_bundle::HTMLBundleRoute};
@@ -10,7 +11,6 @@ use crate::server::{StaticRoute, html_bundle::HTMLBundleRoute};
 /// `bun.GenericIndex(u30, RouteBundle)`.
 pub enum RouteBundleMarker {}
 pub(crate) type Index = bun_core::GenericIndex<u32, RouteBundleMarker>;
-/// `Index.Optional` — packed sentinel in Zig; `Option` here (non-FFI).
 pub(crate) type IndexOptional = Option<Index>;
 
 /// `bun.GenericIndex(u32, u8)` — byte offset into `bundled_html_text`.
@@ -22,34 +22,26 @@ pub enum State {
     Bundling,
     DeferredToNextBundle,
     PossibleBundlingFailures,
-    EvaluationFailure,
     Loaded,
 }
 
 pub struct Framework {
-    pub route_index: framework_router::RouteIndex,
-    pub cached_module_list: jsc::StrongOptional,
-    pub cached_client_bundle_url: jsc::StrongOptional,
-    pub cached_css_file_array: jsc::StrongOptional,
-    pub evaluate_failure: Option<SerializedFailure>,
+    pub(crate) route_index: framework_router::RouteIndex,
+    pub(crate) cached_module_list: jsc::StrongOptional,
+    pub(crate) cached_client_bundle_url: jsc::StrongOptional,
+    pub(crate) cached_css_file_array: jsc::StrongOptional,
 }
 
 pub struct Html {
-    /// SHARED (LIFETIMES.tsv): DevServer increments the route's intrusive
-    /// refcount via `.initRef(html)` when storing; `.deref()` on drop.
-    /// Stored as raw ptr because `HTMLBundleRoute` does not yet impl
-    /// `bun_ptr::RefCounted` (gated server-side).
-    // TODO(port): bun_ptr::RefPtr<HTMLBundleRoute> once RefCounted impl is real.
-    pub html_bundle: *mut HTMLBundleRoute,
-    pub bundled_file: incremental_graph::ClientFileIndex,
-    pub script_injection_offset: Option<ByteOffset>,
-    pub bundled_html_text: Option<Box<[u8]>>,
-    /// SHARED (LIFETIMES.tsv): deinit calls `cached_response.deref()`.
-    /// Stored as [`BackRef`](bun_ptr::BackRef) — the slot holds an intrusive
-    /// ref (bumped at store time, released in `invalidate_client_bundle`/drop),
-    /// so while `Some` the pointee strictly outlives the field; readers go
-    /// through safe `Option::as_deref` (no raw `NonNull::as_ref`).
-    pub cached_response: Option<bun_ptr::BackRef<StaticRoute>>,
+    /// Ref taken in `get_or_put_route_bundle`.
+    pub(crate) html_bundle: RefPtr<HTMLBundleRoute>,
+    pub(crate) bundled_file: incremental_graph::ClientFileIndex,
+    pub(crate) script_injection_offset: Option<ByteOffset>,
+    pub(crate) bundled_html_text: Option<Box<[u8]>>,
+    /// The rendered page, built on first request. The `StaticRoute::on*`
+    /// handlers take their own ref per in-flight response, so the route may
+    /// outlive this handle.
+    pub(crate) cached_response: Option<RefPtr<StaticRoute>>,
 }
 
 pub enum Data {
@@ -58,14 +50,14 @@ pub enum Data {
 }
 
 impl Data {
-    /// Zig: `data.framework` payload accessor (asserts active tag).
+    /// `Framework` payload accessor (asserts active variant).
     pub(crate) fn framework(&self) -> &Framework {
         match self {
             Data::Framework(f) => f,
             Data::Html(_) => unreachable!("expected .framework"),
         }
     }
-    /// Zig: `data.html` payload accessor (asserts active tag).
+    /// `Html` payload accessor (asserts active variant).
     pub(crate) fn html(&self) -> &Html {
         match self {
             Data::Html(h) => h,
@@ -81,34 +73,25 @@ impl Data {
 }
 
 impl RouteBundle {
-    /// `RouteBundle.invalidateClientBundle` (RouteBundle.zig:122).
-    ///
-    /// PORT NOTE: takes `&mut SourceMapStore` rather than `&mut DevServer` —
-    /// the Zig body only touches `dev.source_maps`, and the two keystone
+    /// Note: takes `&mut SourceMapStore` rather than `&mut DevServer` —
+    /// only `dev.source_maps` is touched, and the two keystone
     /// `DevServer` structs (`dev_server::DevServer` / `dev_server_body::DevServer`)
     /// both expose that field but cannot be named here without a cycle.
-    pub fn invalidate_client_bundle(&mut self, source_maps: &mut source_map_store::SourceMapStore) {
-        if let Some(bundle) = self.client_bundle.take() {
+    pub(crate) fn invalidate_client_bundle(
+        &mut self,
+        source_maps: &mut source_map_store::SourceMapStore,
+    ) {
+        if self.client_bundle.take().is_some() {
             source_maps.unref(self.source_map_id());
-            // SAFETY: `client_bundle` was produced by `StaticRoute::init_*`
-            // (heap::alloc) and has its own ref held by this struct; no
-            // outstanding `&`/`&mut` borrow exists across this call.
-            unsafe { StaticRoute::deref_(bundle.as_ptr()) };
         }
-        // Zig: `std.crypto.random.int(u32)` — OS CSPRNG.
         self.client_script_generation = {
             let mut buf = [0u8; 4];
-            bun_core::csprng(&mut buf);
+            bun_boringssl_sys::rand_bytes(&mut buf);
             u32::from_ne_bytes(buf)
         };
         match &mut self.data {
             Data::Framework(fw) => fw.cached_client_bundle_url.clear_without_deallocation(),
-            Data::Html(html) => {
-                if let Some(cached) = html.cached_response.take() {
-                    // SAFETY: see `client_bundle` note above.
-                    unsafe { StaticRoute::deref_(cached.as_ptr()) };
-                }
-            }
+            Data::Html(html) => html.cached_response = None,
         }
     }
 }
@@ -116,35 +99,28 @@ impl RouteBundle {
 #[derive(Clone, Copy)]
 pub(crate) enum UnresolvedIndex {
     Framework(framework_router::RouteIndex),
-    /// BACKREF (Zig `*HTMLBundle.Route`): `getOrPutRouteBundle` writes
-    /// `dev_server_id` back through this pointer and `.initRef(html)` takes
-    /// its own ref when stored. Carried as a raw mutable pointer (not `&`/
-    /// `&mut`) so the writeback doesn't require a `&const → &mut` cast and
-    /// the borrow doesn't conflict with `&mut DevServer`.
-    Html(*mut HTMLBundleRoute),
+    /// `getOrPutRouteBundle` writes `dev_server_id` back through this and
+    /// takes its own ref when stored.
+    Html(bun_ptr::ThisPtr<HTMLBundleRoute>),
 }
 
 pub struct RouteBundle {
-    pub server_state: State,
-    pub data: Data,
-    /// SHARED (LIFETIMES.tsv): deinit calls `blob.deref()`.
-    /// Stored as [`BackRef`](bun_ptr::BackRef) — the slot holds an intrusive
-    /// ref (bumped at store time, released in `invalidate_client_bundle`/drop),
-    /// so while `Some` the pointee strictly outlives the field; readers go
-    /// through safe `Option::as_deref` (no raw `NonNull::as_ref`).
-    pub client_bundle: Option<bun_ptr::BackRef<StaticRoute>>,
-    pub client_script_generation: u32,
-    pub active_viewers: u32,
+    pub(crate) server_state: State,
+    pub(crate) data: Data,
+    /// The route's client-side script, built on first request.
+    pub(crate) client_bundle: Option<RefPtr<StaticRoute>>,
+    pub(crate) client_script_generation: u32,
+    pub(crate) active_viewers: u32,
 }
 
 impl RouteBundle {
     #[inline]
-    pub fn source_map_id(&self) -> source_map_store::Key {
+    pub(crate) fn source_map_id(&self) -> source_map_store::Key {
         source_map_store::Key(u64::from(self.client_script_generation) << 32)
     }
 
-    /// `RouteBundle.memoryCost` (RouteBundle.zig:137).
-    pub fn memory_cost(&self) -> usize {
+    /// Estimated heap bytes retained by this route bundle, for memory reporting.
+    pub(crate) fn memory_cost(&self) -> usize {
         let mut cost: usize = core::mem::size_of::<RouteBundle>();
         if let Some(bundle) = self.client_bundle.as_deref() {
             cost += bundle.memory_cost();
@@ -152,7 +128,6 @@ impl RouteBundle {
         match &self.data {
             Data::Framework(_) => {
                 // jsc.Strong.Optional children do not support memoryCost; not needed.
-                // .evaluate_failure is not owned.
             }
             Data::Html(html) => {
                 if let Some(text) = &html.bundled_html_text {
@@ -166,9 +141,3 @@ impl RouteBundle {
         cost
     }
 }
-
-// `deinit` is fully subsumed by Drop:
-//   - client_bundle / cached_response: Option<Arc<StaticRoute>> drop = .deref()
-//   - Framework: StrongOptional fields drop = .deinit()
-//   - Html: bundled_html_text Box<[u8]> drop = allocator.free()
-//           html_bundle RefPtr drop = .deref()

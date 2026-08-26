@@ -26,6 +26,8 @@ const setting = (id: number, value: number) => {
   return b;
 };
 const hpackStatus200 = Buffer.from([0x80 | 8]);
+// Literal field, indexed name (:status is static index 8), literal value.
+const hpackStatus = (code: string) => Buffer.concat([Buffer.from([0x08, code.length]), Buffer.from(code)]);
 const hpackLit = (name: string, value: string) =>
   Buffer.concat([Buffer.from([0x10, name.length]), Buffer.from(name), Buffer.from([value.length]), Buffer.from(value)]);
 
@@ -139,11 +141,12 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
       },
       async url => {
         await using proc = spawnFetch(`
-          const baseline = process.memoryUsage().rss;
+          const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+          const baseline = rss();
           let peak = baseline;
           const t = setInterval(() => {
-            const rss = process.memoryUsage().rss;
-            if (rss > peak) peak = rss;
+            const cur = rss();
+            if (cur > peak) peak = cur;
           }, 50);
           const r = await fetch(${JSON.stringify(url)}, {
             protocol: "http2",
@@ -158,9 +161,104 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
         // Connection should error well before the ~80 MB of CONTINUATION payload
         // accumulates. Allow generous slack for TLS/allocator overhead.
         // ASAN's quarantine retains freed allocations so widen the threshold there.
-        expect(out.result).toBe("HTTP2HeaderListTooLarge");
+        // The frame-count cap (8 frames x ~16 KB = ~128 KB) fires before the
+        // 256 KiB byte-size cap for this payload shape.
+        expect(out.result).toBe("HTTP2EnhanceYourCalm");
         expect(out.growth).toBeLessThan((isASAN ? 256 : 64) * 1024 * 1024);
         expect(exitCode).toBe(0);
+      },
+    );
+  });
+
+  // 1b. Zero-length CONTINUATION flood (CVE-2024-28182): empty payloads never
+  //     advance the byte-size cap above, so bound the frame count too.
+  test("zero-length CONTINUATION flood is rejected", async () => {
+    await withAdversarialServer(
+      {
+        onStream: (socket, id) => {
+          // HEADERS :status 200, no END_HEADERS, no END_STREAM.
+          socket.write(frame(1, 0, id, hpackStatus200));
+          // 10 000 empty CONTINUATION frames = 90 000 bytes of 9-byte headers
+          // with zero payload; header_block.len() stays at 1 forever.
+          const flood = Buffer.concat(Array.from({ length: 10_000 }, () => frame(9, 0, id)));
+          socket.write(flood);
+        },
+      },
+      async url => {
+        const code = await fetch(url, { ...h2, signal: AbortSignal.timeout(8000) }).then(r => r.status, errcode);
+        expect(code).toBe("HTTP2EnhanceYourCalm");
+      },
+    );
+  });
+
+  // 1c. Boundary: exactly the CONTINUATION budget (8 frames) is accepted.
+  test("header block split across the full CONTINUATION budget is accepted", async () => {
+    await withAdversarialServer(
+      {
+        onStream: (socket, id) => {
+          socket.write(
+            Buffer.concat([
+              frame(1, 0x1, id, hpackStatus200), // HEADERS, END_STREAM, no END_HEADERS
+              ...Array.from({ length: 7 }, () => frame(9, 0, id)),
+              frame(9, 0x4, id), // 8th CONTINUATION, END_HEADERS
+            ]),
+          );
+        },
+      },
+      async url => {
+        const r = await fetch(url, h2);
+        expect(r.status).toBe(200);
+        expect(await r.text()).toBe("");
+      },
+    );
+  });
+
+  // 1d. Boundary: the 9th CONTINUATION is rejected even when it carries
+  //     END_HEADERS and would have completed the block (nghttp2 / node agree).
+  test("9th CONTINUATION is rejected even if it ends the block", async () => {
+    await withAdversarialServer(
+      {
+        onStream: (socket, id) => {
+          socket.write(
+            Buffer.concat([
+              frame(1, 0x1, id, hpackStatus200), // HEADERS, END_STREAM, no END_HEADERS
+              ...Array.from({ length: 8 }, () => frame(9, 0, id)),
+              frame(9, 0x4, id), // 9th CONTINUATION, END_HEADERS
+            ]),
+          );
+        },
+      },
+      async url => {
+        const code = await fetch(url, h2).then(r => r.status, errcode);
+        expect(code).toBe("HTTP2EnhanceYourCalm");
+      },
+    );
+  });
+
+  // 1e. The budget is per header block, not per stream or per connection: a
+  //     103 block and the final 200 block on the same stream may each use all
+  //     8 frames (16 CONTINUATIONs total on one stream).
+  test("CONTINUATION budget resets for each header block on a stream", async () => {
+    await withAdversarialServer(
+      {
+        onStream: (socket, id) => {
+          const splitBlock = (headersFlags: number, block: Buffer) => [
+            frame(1, headersFlags, id, block), // no END_HEADERS
+            ...Array.from({ length: 7 }, () => frame(9, 0, id)),
+            frame(9, 0x4, id), // 8th CONTINUATION, END_HEADERS
+          ];
+          socket.write(
+            Buffer.concat([
+              ...splitBlock(0, hpackStatus("103")), // informational, stream stays open
+              ...splitBlock(0x1, hpackStatus200), // final response, END_STREAM
+            ]),
+          );
+        },
+      },
+      async url => {
+        const r = await fetch(url, h2);
+        expect(r.status).toBe(200);
+        expect(await r.text()).toBe("");
       },
     );
   });
@@ -325,6 +423,51 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
     );
   });
 
+  // 9. Zero-length response that still announces a body: HEADERS carries
+  //    content-length: 0 plus an SSE content-type, without END_STREAM, so the
+  //    stream stays open from the server's side while the response is already
+  //    complete at header time. Delivering that completion must detach the
+  //    stream first; the unfixed path freed the in-flight request while the
+  //    session still referenced it. Runs in a subprocess because the failure
+  //    mode is a crash.
+  test("content-length: 0 response without END_STREAM completes without touching the freed request", async () => {
+    await withAdversarialServer(
+      {
+        onStream: (socket, id) => {
+          // END_HEADERS only (0x4) — no END_STREAM.
+          socket.write(
+            frame(
+              1,
+              0x4,
+              id,
+              Buffer.concat([
+                hpackStatus200,
+                hpackLit("content-length", "0"),
+                hpackLit("content-type", "text/event-stream"),
+              ]),
+            ),
+          );
+        },
+      },
+      async url => {
+        await using proc = spawnFetch(`
+          const r = await fetch(${JSON.stringify(url)}, {
+            protocol: "http2",
+            signal: AbortSignal.timeout(8000),
+            tls: { rejectUnauthorized: false },
+          });
+          const body = await r.text();
+          console.log(JSON.stringify({ status: r.status, body }));
+        `);
+        const { stdout, stderr, exitCode } = await collect(proc);
+        // stderr first: on a crash it carries the panic/ASAN report.
+        expect(stderr).toBe("");
+        expect(stdout.trim()).toBe('{"status":200,"body":""}');
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
+
   // ───────────────────────────────────────────────────────────────────────────
   // Regressions for the H2Client.zig hardening pass.
   // ───────────────────────────────────────────────────────────────────────────
@@ -436,4 +579,86 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
       },
     );
   });
+});
+
+// ─── session-key regressions ─────────────────────────────────────────────────
+// The TLS handshake verifies the peer against the Host-header override when one
+// is present (get_tls_hostname), so the override must be part of the HTTP/2
+// session key — mirroring the HTTP/1.1 keep-alive pool's proxy_auth_hash.
+test("HTTP/2 session keyed by a Host header override is not reused for a request without one", async () => {
+  await withAdversarialServer(
+    {
+      onStream: (socket, id) => {
+        // 200 + END_STREAM|END_HEADERS for every request on every connection.
+        socket.write(frame(1, 5, id, hpackStatus200));
+      },
+    },
+    async (url, state) => {
+      const h2 = { protocol: "http2" as const, tls: { rejectUnauthorized: false } };
+      const errcode = (e: any) => e.code || e.name;
+
+      // 1. Request with a Host override: TLS verification (when enabled) runs
+      //    against "other.example", not the URL hostname.
+      const a = await fetch(url, { ...h2, headers: { Host: "other.example" } }).then(r => r.status, errcode);
+      expect(a).toBe(200);
+      expect(state.connections).toBe(1);
+
+      // 2. A request without an override expects verification against the URL
+      //    hostname. It must not multiplex onto the session that was verified
+      //    against the override — a fresh connection is required.
+      const b = await fetch(url, h2).then(r => r.status, errcode);
+      expect(b).toBe(200);
+      expect(state.connections).toBe(2);
+
+      // 3. Same override again → same session key → the first session is
+      //    reused and no third connection is opened.
+      const c = await fetch(url, { ...h2, headers: { Host: "other.example" } }).then(r => r.status, errcode);
+      expect(c).toBe(200);
+      expect(state.connections).toBe(2);
+    },
+  );
+});
+
+// HPACK is length-prefixed, so a header NAME can carry CR/LF/NUL/':'/space.
+// Such a name must never reach the JS-visible Response.headers (where the
+// standard proxy idiom `new Response(body, { headers })` would copy it onto a
+// downstream HTTP/1.1 wire); the stream must fail with a protocol error.
+test("rejects HTTP/2 response header names that are not RFC 9110 tokens", async () => {
+  let reqNum = 0;
+  await withAdversarialServer(
+    {
+      onStream: (socket, id) => {
+        reqNum++;
+        if (reqNum === 1) {
+          // Literal header whose NAME embeds CR LF and a colon.
+          socket.write(frame(1, 5, id, Buffer.concat([hpackStatus200, hpackLit("x-a\r\nset-cookie: pwn=1", "v")])));
+        } else {
+          // Control: an ordinary lowercase token name still goes through.
+          socket.write(frame(1, 5, id, Buffer.concat([hpackStatus200, hpackLit("x-ok", "yes")])));
+        }
+      },
+    },
+    async url => {
+      const h2 = { protocol: "http2" as const, tls: { rejectUnauthorized: false } };
+      const errcode = (e: any) => e.code || e.name;
+
+      const out = await fetch(url, h2).then(
+        r => ({ status: r.status, names: [...r.headers.keys()].join(",") }),
+        e => ({ err: errcode(e) }),
+      );
+      // The injected name must never surface in the Headers object…
+      if ("names" in out) {
+        expect(out.names).not.toContain("set-cookie");
+        expect(out.names).not.toContain("\r");
+        expect(out.names).not.toContain("\n");
+      }
+      // …and the stream must fail with a protocol error rather than deliver.
+      expect("err" in out && out.err).toBe("HTTP2ProtocolError");
+
+      // The legitimate case still works.
+      const ok = await fetch(url, h2);
+      expect(ok.headers.get("x-ok")).toBe("yes");
+      expect(ok.status).toBe(200);
+    },
+  );
 });

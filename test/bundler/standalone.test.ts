@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync } from "node:fs";
+import { SourceMapConsumer } from "source-map";
 
 describe("compile --target=browser", () => {
   test("inlines JS and CSS into HTML", async () => {
@@ -515,5 +516,220 @@ console.log(message);`,
     expect(html).toContain("</style>");
     expect(html).toContain('<script type="module">');
     expect(html).toContain("</script>");
+  });
+
+  // https://github.com/oven-sh/bun/issues/32114
+  describe.concurrent("sourcemaps", () => {
+    const fixture = {
+      "index.html": `<!DOCTYPE html>
+<html>
+<head><title>Test</title><link rel="stylesheet" href="./style.css"></head>
+<body><script src="./index.ts"></script></body>
+</html>`,
+      "index.ts": `function greet(name: string): string {
+  return \`Hello, \${name}!\`;
+}
+console.log(greet("world"));`,
+      "style.css": `body { color: red; }`,
+    };
+
+    async function buildWithSourcemap(dir: string, outdir: string, sourcemap: string) {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          "--compile",
+          "--target=browser",
+          `--sourcemap=${sourcemap}`,
+          `${dir}/index.html`,
+          "--outdir",
+          outdir,
+        ],
+        env: bunEnv,
+        cwd: dir,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return stdout;
+    }
+
+    test("CLI --sourcemap=linked writes a .map file and links it from the inline script", async () => {
+      using dir = tempDir("compile-browser-sourcemap-linked", fixture);
+      const outdir = `${dir}/dist`;
+      await buildWithSourcemap(String(dir), outdir, "linked");
+
+      const files = Array.from(new Bun.Glob("**/*").scanSync({ cwd: outdir })).sort();
+      expect(files).toHaveLength(2);
+      expect(files).toContain("index.html");
+      const mapFile = files.find(f => f.endsWith(".js.map"))!;
+      expect(mapFile).toMatch(/^index-[0-9a-z]+\.js\.map$/);
+
+      // The inline <script> must reference the .map file relative to the HTML document.
+      const html = await Bun.file(`${outdir}/index.html`).text();
+      expect(html).toContain(`//# sourceMappingURL=./${mapFile}\n</script>`);
+
+      const map = await Bun.file(`${outdir}/${mapFile}`).json();
+      expect(map.version).toBe(3);
+      expect(map.sources.some((s: string) => s.endsWith("index.ts"))).toBe(true);
+      expect(map.sourcesContent.join("\n")).toContain("function greet(name: string): string {");
+      expect(typeof map.mappings).toBe("string");
+      expect(map.mappings.length).toBeGreaterThan(0);
+    });
+
+    test("CLI --sourcemap=inline embeds a data: URL sourcemap in the inline script", async () => {
+      using dir = tempDir("compile-browser-sourcemap-inline", fixture);
+      const outdir = `${dir}/dist`;
+      await buildWithSourcemap(String(dir), outdir, "inline");
+
+      // Still a single self-contained file.
+      const files = Array.from(new Bun.Glob("**/*").scanSync({ cwd: outdir }));
+      expect(files).toEqual(["index.html"]);
+
+      const html = await Bun.file(`${outdir}/index.html`).text();
+      const match = html.match(/\/\/# sourceMappingURL=data:application\/json;base64,([A-Za-z0-9+/=]+)/);
+      expect(match).not.toBeNull();
+      const map = JSON.parse(Buffer.from(match![1], "base64").toString("utf8"));
+      expect(map.version).toBe(3);
+      expect(map.sources.some((s: string) => s.endsWith("index.ts"))).toBe(true);
+      expect(map.sourcesContent.join("\n")).toContain("function greet(name: string): string {");
+      expect(map.mappings.length).toBeGreaterThan(0);
+    });
+
+    test("CLI --sourcemap=external writes a .map file without a sourceMappingURL comment", async () => {
+      using dir = tempDir("compile-browser-sourcemap-external", fixture);
+      const outdir = `${dir}/dist`;
+      await buildWithSourcemap(String(dir), outdir, "external");
+
+      const files = Array.from(new Bun.Glob("**/*").scanSync({ cwd: outdir })).sort();
+      expect(files).toHaveLength(2);
+      expect(files).toContain("index.html");
+      const mapFile = files.find(f => f.endsWith(".js.map"))!;
+      expect(mapFile).toMatch(/^index-[0-9a-z]+\.js\.map$/);
+
+      const html = await Bun.file(`${outdir}/index.html`).text();
+      expect(html).not.toContain("sourceMappingURL");
+
+      const map = await Bun.file(`${outdir}/${mapFile}`).json();
+      expect(map.version).toBe(3);
+      expect(map.sourcesContent.join("\n")).toContain("function greet(name: string): string {");
+    });
+
+    test("Bun.build() with sourcemap: 'linked' returns the sourcemap artifact", async () => {
+      using dir = tempDir("compile-browser-sourcemap-api", fixture);
+
+      const result = await Bun.build({
+        entrypoints: [`${dir}/index.html`],
+        compile: true,
+        target: "browser",
+        sourcemap: "linked",
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.outputs.length).toBe(2);
+      const htmlOutput = result.outputs.find(o => o.loader === "html");
+      const mapOutput = result.outputs.find(o => o.kind === "sourcemap");
+      expect(htmlOutput).toBeDefined();
+      expect(mapOutput).toBeDefined();
+
+      const html = await htmlOutput!.text();
+      expect(html).toContain("//# sourceMappingURL=");
+
+      const map = JSON.parse(await mapOutput!.text());
+      expect(map.version).toBe(3);
+      expect(map.sourcesContent.join("\n")).toContain("function greet(name: string): string {");
+    });
+
+    test("Bun.build() with sourcemap: 'inline' keeps a single HTML output", async () => {
+      using dir = tempDir("compile-browser-sourcemap-api-inline", fixture);
+
+      const result = await Bun.build({
+        entrypoints: [`${dir}/index.html`],
+        compile: true,
+        target: "browser",
+        sourcemap: "inline",
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.outputs.length).toBe(1);
+      expect(result.outputs[0].loader).toBe("html");
+
+      const html = await result.outputs[0].text();
+      expect(html).toContain("//# sourceMappingURL=data:application/json;base64,");
+    });
+
+    // Standalone HTML is assembled in two passes: each script and stylesheet
+    // chunk is resolved on its own first (asset references become data: URIs,
+    // and when a source map is being emitted the chunk's map is corrected for
+    // them and the chunk gets a debugId), then the HTML chunk inlines the
+    // results. The document itself never has a source map, so nothing may be
+    // appended to it.
+    const assetFixture = {
+      "index.html": `<!DOCTYPE html>\n<html>\n<body>\n<script type="module" src="./app.js"></script>\n</body>\n</html>\n`,
+      "app.js": `import pic from "./pic.svg";\nexport function greet(name) {\n  return name + pic;\n}\nconsole.log(greet("x"));\n`,
+      "pic.svg": `<svg xmlns="http://www.w3.org/2000/svg"><rect width="2" height="2"/></svg>\n`,
+    };
+
+    async function buildWithAsset(dir: string, options: { sourcemap: "none" | "linked"; outdir?: string }) {
+      const result = await Bun.build({
+        entrypoints: [`${dir}/index.html`],
+        compile: true,
+        target: "browser",
+        // Puts the whole script on one line, so the data: URI written over the
+        // asset placeholder shifts the columns of everything after it.
+        minify: { whitespace: true },
+        ...options,
+      });
+      expect(result.logs).toBeEmpty();
+      const html = await result.outputs.find(o => o.loader === "html")!.text();
+      const map = result.outputs.find(o => o.kind === "sourcemap");
+      return { html, map: map && JSON.parse(await map.text()) };
+    }
+
+    async function expectInlinedScriptToBeMapped(html: string, map: object) {
+      const open = '<script type="module">';
+      const script = html.slice(html.indexOf(open) + open.length, html.indexOf("</script>"));
+      const [firstLine] = script.split("\n");
+      const column = firstLine.indexOf("function greet");
+      expect(column).toBeGreaterThan(firstLine.indexOf('"data:image/svg+xml'));
+      const original = await SourceMapConsumer.with(map, null, consumer =>
+        consumer.originalPositionFor({ line: 1, column }),
+      );
+      expect({ line: original.line, column: original.column }).toEqual({
+        line: 2,
+        column: assetFixture["app.js"].split("\n")[1].indexOf("function greet"),
+      });
+    }
+
+    test("without a sourcemap option, nothing source map related is written into the document", async () => {
+      using dir = tempDir("compile-browser-asset-no-sourcemap", assetFixture);
+      const { html, map } = await buildWithAsset(String(dir), { sourcemap: "none" });
+      expect(map).toBeUndefined();
+      expect(html).toContain('"data:image/svg+xml');
+      expect(html).not.toContain("debugId");
+      expect(html).not.toContain("sourceMappingURL");
+      expect(html).toEndWith("</html>\n");
+    });
+
+    test("the inlined script's map accounts for the data: URI written over its asset import", async () => {
+      using dir = tempDir("compile-browser-asset-sourcemap", assetFixture);
+      const { html, map } = await buildWithAsset(String(dir), { sourcemap: "linked" });
+      // The script carries the debugId; the document around it gets nothing appended.
+      expect(html.match(/\/\/# debugId=/g)).toHaveLength(1);
+      expect(html.indexOf("//# debugId=")).toBeLessThan(html.indexOf("</script>"));
+      expect(html).toEndWith("</html>\n");
+      await expectInlinedScriptToBeMapped(html, map);
+    });
+
+    test("writing to an outdir inlines and maps the script the same way as an in-memory build", async () => {
+      using dir = tempDir("compile-browser-asset-sourcemap-outdir", assetFixture);
+      const { html, map } = await buildWithAsset(String(dir), { sourcemap: "linked", outdir: `${dir}/dist` });
+      expect(await Bun.file(`${dir}/dist/index.html`).text()).toBe(html);
+      expect(html.match(/\/\/# debugId=/g)).toHaveLength(1);
+      expect(html).toEndWith("</html>\n");
+      await expectInlinedScriptToBeMapped(html, map);
+    });
   });
 });

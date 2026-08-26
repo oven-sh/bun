@@ -14,13 +14,9 @@ use bun_ast::g::{Arg, PropertyKind};
 use bun_ast::op::Level;
 use bun_ast::{self as js_ast, B, E, Expr, ExprData, ExprNodeList, G, OpCode, scope, symbol};
 
-// TODO(port): narrow error set — Zig used `anyerror!Expr` throughout
-type PResult<T> = core::result::Result<T, bun_core::Error>;
+type PResult<T> = crate::CrateResult<T>;
 
-// Zig: `fn ParsePrefix(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
-// a direct `impl P` block. The 30+ per-token `t_*` helpers are private; only `parse_prefix` is
-// surfaced. Round-G un-gates the per-token bodies (same JsxT pattern as parseStmt.rs); helper
+// The 30+ per-token `t_*` helpers are private; only `parse_prefix` is surfaced. Helper
 // names pfx_-prefixed to avoid colliding with parseStmt.rs / parseSuffix.rs mixins on the same `P`.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -108,7 +104,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let loc = p.lexer.loc();
         if !p.allow_private_identifiers || !p.allow_in || level.gte(Level::Compare) {
             p.lexer.unexpected()?;
-            return Err(bun_core::err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         let name = p.lexer.identifier;
@@ -119,7 +115,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.expected(T::TIn)?;
         }
 
-        let ref_ = p.store_name_in_ref(name)?;
+        let ref_ = p.store_name_in_ref(name);
         Ok(p.new_expr(E::PrivateIdentifier { ref_ }, loc))
     }
 
@@ -179,7 +175,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let value = p.parse_expr(Level::Prefix)?;
                         if p.lexer.token == T::TAsteriskAsterisk {
                             p.lexer.unexpected()?;
-                            return Err(bun_core::err!("SyntaxError"));
+                            return Err(crate::Error::SyntaxError);
                         }
 
                         return Ok(p.new_expr(E::Await { value }, loc));
@@ -187,7 +183,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 AwaitOrYield::AllowIdent => {
                     p.lexer.prev_token_was_await_keyword = true;
-                    p.lexer.await_keyword_loc = name_range.loc;
                     p.lexer.fn_or_arrow_start_loc = p.fn_or_arrow_data_parse.needs_async_loc;
                 }
             },
@@ -256,8 +251,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Handle the start of an arrow expression
         if p.lexer.token == T::TEqualsGreaterThan && level.lte(Level::Assign) {
-            let ref_ = p.store_name_in_ref(name).expect("unreachable");
-            // PORT NOTE: reshaped for borrowck — build binding before borrowing arena.
+            let ref_ = p.store_name_in_ref(name);
+            // reshaped for borrowck — build binding before borrowing arena.
             // `Arg` is non-Copy (owns Vec) → use fill_iter instead of alloc_slice_copy.
             let binding = p.b(B::Identifier { r#ref: ref_ }, loc);
             let args = p.arena.alloc_slice_fill_iter([Arg {
@@ -268,7 +263,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let _ = p
                 .push_scope_for_parse_pass(scope::Kind::FunctionArgs, loc)
                 .expect("unreachable");
-            // PORT NOTE: Zig `defer p.popScope()` — reshaped so pop_scope runs before `?` propagates
+            // pop_scope runs before `?` propagates
             let mut fn_or_arrow_data = FnOrArrowDataParse {
                 needs_async_loc: loc,
                 ..Default::default()
@@ -278,7 +273,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(p.new_expr(arrow_result?, loc));
         }
 
-        let ref_ = p.store_name_in_ref(name).expect("unreachable");
+        let ref_ = p.store_name_in_ref(name);
 
         Ok(Expr::init_identifier(ref_, loc))
     }
@@ -305,12 +300,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     fn pfx_t_numeric_literal(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
-        let value = p.new_expr(
-            E::Number {
-                value: p.lexer.number,
-            },
-            loc,
-        );
+        let value = p.new_expr(E::Number::new(p.lexer.number), loc);
         // p.checkForLegacyOctalLiteral()
         p.lexer.next()?;
         Ok(value)
@@ -329,8 +319,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let loc = p.lexer.loc();
         p.lexer.scan_reg_exp()?;
         // always set regex_flags_start to null to make sure we don't accidentally use the wrong value later
-        // PORT NOTE: Zig `defer p.lexer.regex_flags_start = null` — reset after both success and
-        // the `next()?` error path. Reshaped: capture, advance, then unconditionally reset before
+        // Reset after both success and
+        // the `next()?` error path: capture, advance, then unconditionally reset before
         // propagating any error from `next()`.
         let value = E::Str::new(p.lexer.raw());
         let next_result = p.lexer.next();
@@ -353,7 +343,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let value = p.parse_expr(Level::Prefix)?;
         if p.lexer.token == T::TAsteriskAsterisk {
             p.lexer.unexpected()?;
-            return Err(bun_core::err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         Ok(p.new_expr(
@@ -372,7 +362,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let value = p.parse_expr(Level::Prefix)?;
         if p.lexer.token == T::TAsteriskAsterisk {
             p.lexer.unexpected()?;
-            return Err(bun_core::err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         let mut flags = UnaryFlags::default();
@@ -395,7 +385,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let value = p.parse_expr(Level::Prefix)?;
         if p.lexer.token == T::TAsteriskAsterisk {
             p.lexer.unexpected()?;
-            return Err(bun_core::err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
         if let ExprData::EIndex(e_index) = &value.data {
             if let ExprData::EPrivateIdentifier(private) = &e_index.index.data {
@@ -416,7 +406,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let mut flags = UnaryFlags::default();
-        // Zig: `value.isPropertyAccess()` — `.e_dot, .e_index => true`.
         if matches!(
             value.data,
             ExprData::EIdentifier(_) | ExprData::EDot(_) | ExprData::EIndex(_)
@@ -439,7 +428,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let value = p.parse_expr(Level::Prefix)?;
         if p.lexer.token == T::TAsteriskAsterisk {
             p.lexer.unexpected()?;
-            return Err(bun_core::err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         Ok(p.new_expr(
@@ -458,7 +447,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let value = p.parse_expr(Level::Prefix)?;
         if p.lexer.token == T::TAsteriskAsterisk {
             p.lexer.unexpected()?;
-            return Err(bun_core::err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         Ok(p.new_expr(
@@ -477,7 +466,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let value = p.parse_expr(Level::Prefix)?;
         if p.lexer.token == T::TAsteriskAsterisk {
             p.lexer.unexpected()?;
-            return Err(bun_core::err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         Ok(p.new_expr(
@@ -496,7 +485,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let value = p.parse_expr(Level::Prefix)?;
         if p.lexer.token == T::TAsteriskAsterisk {
             p.lexer.unexpected()?;
-            return Err(bun_core::err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         Ok(p.new_expr(
@@ -540,7 +529,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     fn pfx_t_function(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
-        p.parse_fn_expr(loc, false, bun_ast::Range::NONE)
+        p.parse_fn_expr(loc, false)
     }
 
     fn pfx_t_class(p: &mut Self) -> PResult<Expr> {
@@ -570,10 +559,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 name = Some(js_ast::LocRef {
                     loc: p.lexer.loc(),
-                    ref_: Some(
-                        p.new_symbol(symbol::Kind::Other, name_text)
-                            .expect("unreachable"),
-                    ),
+                    ref_: p.new_symbol(symbol::Kind::Other, name_text),
                 });
                 p.lexer.next()?;
             }
@@ -608,7 +594,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Expect class keyword after decorators
         if p.lexer.token != T::TClass {
             p.lexer.expected(T::TClass)?;
-            return Err(bun_core::err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
 
         let loc = p.lexer.loc();
@@ -636,10 +622,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 name = Some(js_ast::LocRef {
                     loc: p.lexer.loc(),
-                    ref_: Some(
-                        p.new_symbol(symbol::Kind::Other, name_text)
-                            .expect("unreachable"),
-                    ),
+                    ref_: p.new_symbol(symbol::Kind::Other, name_text),
                 });
                 p.lexer.next()?;
             }
@@ -653,7 +636,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             )?;
         }
 
-        // PORT NOTE: spec passes the arena-backed `[]ExprNodeIndex` slice directly into
+        // spec passes the arena-backed `[]ExprNodeIndex` slice directly into
         // `ParseClassOptions{.ts_decorators = ts_decorators}`. `ParseClassOptions::ts_decorators`
         // is currently typed `&'a [Expr]` (parser.rs), so until that field is widened to
         // `ExprNodeList` we copy into the arena (Expr is `Copy`) and let `ts_decorators` drop
@@ -685,7 +668,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             if p.lexer.token != T::TIdentifier || p.lexer.raw() != b"target" {
                 p.lexer.unexpected()?;
-                return Err(bun_core::err!("SyntaxError"));
+                return Err(crate::Error::SyntaxError);
             }
             let range = bun_ast::Range {
                 loc,
@@ -697,8 +680,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // This will become the new expr
-        // PORT NOTE: Zig allocates E::New with undefined fields then fills via the arena
-        // pointer. Reshaped: parse target into a local, then construct E::New once.
+        // Parse target into a local, then construct E::New once.
         let mut target = Expr::EMPTY;
         p.parse_expr_with_flags(Level::Member, flags, &mut target)?;
 
@@ -727,7 +709,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    fn pfx_t_open_bracket(p: &mut Self, mut errors: Option<&mut DeferredErrors>) -> PResult<Expr> {
+    fn pfx_t_open_bracket(p: &mut Self, errors: Option<&mut DeferredErrors>) -> PResult<Expr> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
         let mut is_single_line = !p.lexer.has_newline_before;
@@ -746,17 +728,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         data: ExprData::EMissing(E::Missing {}),
                         loc: p.lexer.loc(),
                     });
-                    // PERF(port): was assume_capacity (catch unreachable on append)
                 }
                 T::TDotDotDot => {
-                    if let Some(e) = errors.as_deref_mut() {
-                        e.array_spread_feature = Some(p.lexer.range());
-                    }
-
                     let dots_loc = p.lexer.loc();
                     p.lexer.next()?;
-                    // PORT NOTE: reshaped for borrowck — Zig wrote into unusedCapacitySlice()[0]
-                    // then bumped len; here we parse into a local then push.
+                    // Parse into a local then push.
                     let mut value = Expr::EMPTY;
                     p.parse_expr_or_bindings(Level::Comma, Some(&mut self_errors), &mut value)?;
                     items.push(p.new_expr(E::Spread { value }, dots_loc));
@@ -767,7 +743,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 _ => {
-                    // PORT NOTE: reshaped for borrowck — Zig wrote into unusedCapacitySlice()[0]
                     let mut item = Expr::EMPTY;
                     p.parse_expr_or_bindings(Level::Comma, Some(&mut self_errors), &mut item)?;
                     items.push(item);
@@ -811,7 +786,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(
             E::Array {
                 items: items_list,
-                comma_after_spread: comma_after_spread.to_nullable(),
+                comma_after_spread,
                 is_single_line,
                 close_bracket_loc,
                 ..Default::default()
@@ -836,8 +811,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         while p.lexer.token != T::TCloseBrace {
             if p.lexer.token == T::TDotDotDot {
                 p.lexer.next()?;
-                // PORT NOTE: reshaped for borrowck — Zig wrote into unusedCapacitySlice()[0]
-                // with `value: Expr.empty` then parsed into &property.value.?
                 let mut value = Expr::EMPTY;
                 p.parse_expr_or_bindings(Level::Comma, Some(&mut self_errors), &mut value)?;
                 properties.push(G::Property {
@@ -858,11 +831,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     &mut property_opts,
                     Some(&mut self_errors),
                 )? {
-                    if cfg!(debug_assertions) {
-                        debug_assert!(prop.key.is_some() || prop.value.is_some());
-                    }
+                    debug_assert!(prop.key.is_some() || prop.value.is_some());
                     properties.push(prop);
-                    // PERF(port): was assume_capacity (catch unreachable on append)
                 }
             }
 
@@ -899,16 +869,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self_errors.merge_into(errors.unwrap());
         }
 
-        // PORT NOTE: BumpVec → Vec via arena slice; see pfx_t_open_bracket.
+        // BumpVec → Vec via arena slice; see pfx_t_open_bracket.
         let properties_list = G::PropertyList::from_bump_vec(properties);
         Ok(p.new_expr(
             E::Object {
                 properties: properties_list,
-                comma_after_spread: if comma_after_spread.start > 0 {
-                    Some(comma_after_spread)
-                } else {
-                    None
-                },
+                comma_after_spread,
                 is_single_line,
                 close_brace_loc,
                 ..Default::default()
@@ -956,7 +922,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         //     <A[]>(x)
         //     <A>(x) => {}
         //     <A = B>(x) => {}
-        // PERF(port): was comptime monomorphization
         if Self::IS_TYPESCRIPT_ENABLED && p.is_jsx_enabled() {
             if p.is_ts_arrow_fn_jsx()? {
                 let _ =
@@ -1015,7 +980,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         p.lexer.unexpected()?;
-        Err(bun_core::err!("SyntaxError"))
+        Err(crate::Error::SyntaxError)
     }
 
     #[inline]
@@ -1026,7 +991,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // Before splitting this up, this used 3 KB of stack space per call.
-    pub fn parse_prefix(
+    pub(crate) fn parse_prefix(
         &mut self,
         level: Level,
         errors: Option<&mut DeferredErrors>,
@@ -1065,12 +1030,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             T::TNew => Self::pfx_t_new(p, flags),
             T::TSuper => Self::pfx_t_super(p, level),
             _ => {
-                // PERF(port): @branchHint(.cold)
                 p.lexer.unexpected()?;
-                Err(bun_core::err!("SyntaxError"))
+                Err(crate::Error::SyntaxError)
             }
         }
     }
 }
-
-// ported from: src/js_parser/ast/parsePrefix.zig

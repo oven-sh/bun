@@ -1,6 +1,6 @@
 use std::io::Write as _;
 
-use bun_core::{Global, OrWriteFailed as _, Output};
+use bun_core::Global;
 use bun_core::{ZStr, strings};
 use bun_dotenv as dot_env;
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
@@ -12,17 +12,17 @@ use crate::api::bun::process::sync;
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
-pub(super) const OPENER: &[u8] = b"/usr/bin/open";
+const OPENER: &[u8] = b"/usr/bin/open";
 #[cfg(windows)]
-pub(super) const OPENER: &[u8] = b"start";
+const OPENER: &[u8] = b"start";
 #[cfg(not(any(target_os = "macos", windows)))]
-pub(super) const OPENER: &[u8] = b"xdg-open";
+const OPENER: &[u8] = b"xdg-open";
 
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Hash, strum::IntoStaticStr, enum_map::Enum)]
-#[strum(serialize_all = "snake_case")] // match Zig @tagName: .vscode → "vscode"
+#[strum(serialize_all = "snake_case")] // Vscode → "vscode"
 pub enum Editor {
     None,
     Sublime,
@@ -37,36 +37,37 @@ pub enum Editor {
     Other,
 }
 
-// PORT NOTE: Zig's `std.EnumMap(Editor, string)` / `std.EnumMap(Editor, []const [:0]const u8)`
-// were comptime-initialized sparse maps. `bin_name` ported per PORTING.md as
-// `enum_map::EnumMap<E, Option<V>>`; `bin_path` kept as a match-fn because of `#[cfg]` gating.
+// Note: `bin_name` is an `enum_map::EnumMap<E, Option<V>>` (sparse map);
+// `bin_path` is a match-fn because of `#[cfg]` gating.
 
-static NAME_MAP: phf::Map<&'static [u8], Editor> = phf::phf_map! {
-    b"sublime" => Editor::Sublime,
-    b"subl" => Editor::Sublime,
-    b"vscode" => Editor::Vscode,
-    b"code" => Editor::Vscode,
-    b"textmate" => Editor::Textmate,
-    b"mate" => Editor::Textmate,
-    b"atom" => Editor::Atom,
-    b"idea" => Editor::Intellij,
-    b"webstorm" => Editor::Webstorm,
-    b"nvim" => Editor::Neovim,
-    b"neovim" => Editor::Neovim,
-    b"vim" => Editor::Vim,
-    b"vi" => Editor::Vim,
-    b"emacs" => Editor::Emacs,
-};
+bun_core::comptime_string_map! {
+    static NAME_MAP: Editor = {
+        b"sublime" => Editor::Sublime,
+        b"subl" => Editor::Sublime,
+        b"vscode" => Editor::Vscode,
+        b"code" => Editor::Vscode,
+        b"textmate" => Editor::Textmate,
+        b"mate" => Editor::Textmate,
+        b"atom" => Editor::Atom,
+        b"idea" => Editor::Intellij,
+        b"webstorm" => Editor::Webstorm,
+        b"nvim" => Editor::Neovim,
+        b"neovim" => Editor::Neovim,
+        b"vim" => Editor::Vim,
+        b"vi" => Editor::Vim,
+        b"emacs" => Editor::Emacs,
+    };
+}
 
 impl Editor {
-    pub fn by_name(name: &[u8]) -> Option<Editor> {
+    pub(crate) fn by_name(name: &[u8]) -> Option<Editor> {
         if let Some(i) = strings::index_of_char(name, b' ') {
             return NAME_MAP.get(&name[0..i as usize]).copied();
         }
         NAME_MAP.get(name).copied()
     }
 
-    pub fn detect(env: &mut dot_env::Loader) -> Option<Editor> {
+    pub(crate) fn detect(env: &mut dot_env::Loader) -> Option<Editor> {
         const VARS: [&[u8]; 2] = [b"EDITOR", b"VISUAL"];
         for name in VARS {
             if let Some(value) = env.get(name) {
@@ -79,33 +80,7 @@ impl Editor {
         None
     }
 
-    pub fn by_path<'a>(
-        env: &mut dot_env::Loader,
-        buf: &'a mut PathBuffer,
-        cwd: &[u8],
-        out: &mut &'a [u8],
-    ) -> Option<Editor> {
-        let path_env = env.get(b"PATH")?;
-
-        // PORT NOTE: borrowck — `which` ties its return to `&'a mut *buf`; on a
-        // miss we need `buf` again next iteration but NLL conservatively keeps
-        // the borrow live (Polonius case). Re-borrow through a raw pointer; on
-        // a hit we return immediately so only one `&mut` is ever live.
-        let buf_ptr: *mut PathBuffer = buf;
-        for &editor in &DEFAULT_PREFERENCE_LIST {
-            if let Some(path) = BIN_NAME[editor] {
-                // SAFETY: see PORT NOTE above — exclusive per-iteration reborrow.
-                if let Some(bin) = which(unsafe { &mut *buf_ptr }, path_env, cwd, path) {
-                    *out = bin.as_bytes();
-                    return Some(editor);
-                }
-            }
-        }
-
-        None
-    }
-
-    pub fn by_path_for_editor<'a>(
+    pub(crate) fn by_path_for_editor<'a>(
         env: &mut dot_env::Loader,
         editor: Editor,
         buf: &'a mut PathBuffer,
@@ -116,9 +91,9 @@ impl Editor {
             return false;
         };
 
-        if let Some(path) = BIN_NAME[editor] {
-            if !path.is_empty() {
-                if let Some(bin) = which(buf, path_env, cwd, path) {
+        if let Some(bin_name) = BIN_NAME[editor] {
+            if !bin_name.is_empty() {
+                if let Some(bin) = which(buf, path_env, cwd, bin_name) {
                     *out = bin.as_bytes();
                     return true;
                 }
@@ -128,14 +103,15 @@ impl Editor {
         false
     }
 
-    pub fn by_fallback_path_for_editor(editor: Editor, out: Option<&mut &'static [u8]>) -> bool {
+    pub(crate) fn by_fallback_path_for_editor(
+        editor: Editor,
+        out: Option<&mut &'static [u8]>,
+    ) -> bool {
         if let Some(paths) = bin_path(editor) {
             for path in paths {
-                // TODO(port): replace std.fs.cwd().openFile with bun_sys equivalent
-                // (bun_sys::File::open / bun_sys::access). Zig used std.fs directly here.
                 match bun_sys::File::open_at(bun_sys::Fd::cwd(), path, bun_sys::O::RDONLY, 0) {
                     bun_sys::Result::Ok(opened) => {
-                        let _ = opened.close(); // close error is non-actionable (Zig parity: discarded)
+                        let _ = opened.close(); // close error is non-actionable
                         if let Some(out) = out {
                             *out = path.as_bytes();
                         }
@@ -149,13 +125,13 @@ impl Editor {
         false
     }
 
-    pub fn by_fallback<'a>(
+    pub(crate) fn by_fallback<'a>(
         env: &mut dot_env::Loader,
         buf: &'a mut PathBuffer,
         cwd: &[u8],
         out: &mut &'a [u8],
     ) -> Option<Editor> {
-        // PORT NOTE: borrowck — see `by_path` above; same Polonius-case reborrow.
+        // Note: borrowck — see `by_path` above; same Polonius-case reborrow.
         let buf_ptr: *mut PathBuffer = buf;
         for &editor in &DEFAULT_PREFERENCE_LIST {
             // SAFETY: exclusive per-iteration reborrow; we return immediately on hit.
@@ -163,9 +139,8 @@ impl Editor {
                 return Some(editor);
             }
 
-            // PORT NOTE: reshaped for borrowck — by_fallback_path_for_editor writes a
+            // Note: reshaped for borrowck — by_fallback_path_for_editor writes a
             // 'static slice; we widen `out` to accept it via a temporary.
-            // TODO(port): lifetime — `out` may need to be `&mut &[u8]` with caller-chosen lifetime.
             let mut static_out: &'static [u8] = b"";
             if Self::by_fallback_path_for_editor(editor, Some(&mut static_out)) {
                 *out = static_out;
@@ -176,23 +151,21 @@ impl Editor {
         None
     }
 
-    pub fn is_jet_brains(self) -> bool {
+    pub(crate) fn is_jet_brains(self) -> bool {
         matches!(self, Editor::Intellij | Editor::Webstorm)
     }
 
-    pub fn open(
+    pub(crate) fn open(
         self,
         binary: &[u8],
         file: &[u8],
         line: Option<&[u8]>,
         column: Option<&[u8]>,
-    ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> crate::Result<()> {
         let mut spawned = Box::new(SpawnedEditorContext::default());
-        // errdefer default_allocator.destroy(spawned) — handled by Box Drop on `?`.
 
         let mut cursor = std::io::Cursor::new(&mut spawned.file_path_buf[..]);
-        // PORT NOTE: `args_buf` entries borrow both static strings and `file_path_buf`
+        // Note: `args_buf` entries borrow both static strings and `file_path_buf`
         // (self-referential once boxed). Kept as raw byte-slice ptrs; reconstructed
         // as slices when handed to the child process.
         let mut i: usize = 0;
@@ -226,16 +199,19 @@ impl Editor {
             | Editor::Vscode
             | Editor::Webstorm
             | Editor::Intellij => {
-                cursor.write_all(file).or_write_failed()?;
+                cursor
+                    .write_all(file)
+                    .map_err(|_| crate::Error::WriteFailed)?;
                 if let Some(line_) = line {
                     if !line_.is_empty() {
-                        write!(cursor, ":{}", bstr::BStr::new(line_)).or_write_failed()?;
+                        write!(cursor, ":{}", bstr::BStr::new(line_))
+                            .map_err(|_| crate::Error::WriteFailed)?;
 
                         if !self.is_jet_brains() {
                             if let Some(col) = column {
                                 if !col.is_empty() {
                                     write!(cursor, ":{}", bstr::BStr::new(col))
-                                        .or_write_failed()?;
+                                        .map_err(|_| crate::Error::WriteFailed)?;
                                 }
                             }
                         }
@@ -248,10 +224,12 @@ impl Editor {
                 }
             }
             Editor::Textmate => {
-                cursor.write_all(file).or_write_failed()?;
+                cursor
+                    .write_all(file)
+                    .map_err(|_| crate::Error::WriteFailed)?;
                 let file_path_len = usize::try_from(cursor.position()).expect("int cast");
 
-                // PORT NOTE: borrowck — `cursor` holds `&mut spawned.file_path_buf`;
+                // Note: borrowck — `cursor` holds `&mut spawned.file_path_buf`;
                 // hoist all writes/position reads above the slice reads so NLL can
                 // end the cursor borrow before we re-borrow `file_path_buf` immutably.
                 let mut end_pos = file_path_len;
@@ -259,11 +237,13 @@ impl Editor {
                     if !line_.is_empty() {
                         push_arg!(b"--line");
 
-                        write!(cursor, "{}", bstr::BStr::new(line_)).or_write_failed()?;
+                        write!(cursor, "{}", bstr::BStr::new(line_))
+                            .map_err(|_| crate::Error::WriteFailed)?;
 
                         if let Some(col) = column {
                             if !col.is_empty() {
-                                write!(cursor, ":{}", bstr::BStr::new(col)).or_write_failed()?;
+                                write!(cursor, ":{}", bstr::BStr::new(col))
+                                    .map_err(|_| crate::Error::WriteFailed)?;
                             }
                         }
 
@@ -284,7 +264,9 @@ impl Editor {
             }
             _ => {
                 if !file.is_empty() {
-                    cursor.write_all(file).or_write_failed()?;
+                    cursor
+                        .write_all(file)
+                        .map_err(|_| crate::Error::WriteFailed)?;
                     let pos = usize::try_from(cursor.position()).expect("int cast");
                     let file_path = &spawned.file_path_buf[0..pos];
                     push_arg!(file_path);
@@ -293,15 +275,9 @@ impl Editor {
         }
 
         spawned.argc = i;
-        // TODO(port): std.process.Child is banned (PORTING.md: no std::process).
-        // Zig stored `std.process.Child.init(args_buf[0..i], default_allocator)` here and
-        // spawned a detached std.Thread to run it. TODO(port): replace with
-        // crate::process::spawn (async) or a bun_threading worker that owns
-        // SpawnedEditorContext and calls bun.spawnSync.
         let spawned_ptr = bun_core::heap::into_raw(spawned);
-        // PORT NOTE: Zig used `std.Thread.spawn(.{}, autoClose, .{spawned})` then `.detach()`.
-        // bun_threading has no detached-spawn helper; std::thread::spawn matches semantics
-        // (the JoinHandle is dropped, detaching the thread).
+        // bun_threading has no detached-spawn helper; std::thread::spawn is used
+        // and the JoinHandle is dropped, detaching the thread.
         // SAFETY: `spawned_ptr` is a uniquely-owned Box raw pointer; ownership is
         // transferred to the spawned thread which reconstitutes it via heap::take.
         // Smuggled across the thread boundary as `usize` (`*mut T: !Send`).
@@ -309,18 +285,17 @@ impl Editor {
         std::thread::Builder::new()
             .spawn(move || auto_close(spawned_addr as *mut SpawnedEditorContext))
             .map_err(|_| {
-                // Zig parity: `errdefer default_allocator.destroy(spawned)` (open.zig:234)
-                // covers `try std.Thread.spawn`. After `into_raw`, Box's Drop guard is gone,
+                // After `into_raw`, Box's Drop guard is gone,
                 // so reclaim explicitly on the spawn-failure path.
                 // SAFETY: closure never ran, so we are still the sole owner of `spawned_ptr`.
                 drop(unsafe { bun_core::heap::take(spawned_addr as *mut SpawnedEditorContext) });
-                bun_core::err!("ThreadSpawnFailed")
+                crate::Error::ThreadSpawnFailed
             })?;
         Ok(())
     }
 }
 
-pub(super) const DEFAULT_PREFERENCE_LIST: [Editor; 8] = [
+const DEFAULT_PREFERENCE_LIST: [Editor; 8] = [
     Editor::Vscode,
     Editor::Sublime,
     Editor::Atom,
@@ -331,8 +306,7 @@ pub(super) const DEFAULT_PREFERENCE_LIST: [Editor; 8] = [
     Editor::Vim,
 ];
 
-// PORT NOTE: was `pub const bin_name: std.EnumMap(Editor, string)` built in a comptime block.
-pub(super) static BIN_NAME: std::sync::LazyLock<enum_map::EnumMap<Editor, Option<&'static [u8]>>> =
+static BIN_NAME: std::sync::LazyLock<enum_map::EnumMap<Editor, Option<&'static [u8]>>> =
     std::sync::LazyLock::new(|| {
         enum_map::EnumMap::from_fn(|k| match k {
             Editor::Sublime => Some(&b"subl"[..]),
@@ -349,10 +323,7 @@ pub(super) static BIN_NAME: std::sync::LazyLock<enum_map::EnumMap<Editor, Option
         })
     });
 
-// PORT NOTE: was `pub const bin_path: std.EnumMap(Editor, []const [:0]const u8)`.
-// TODO(port): EnumMap — kept as match-fn because entries are `#[cfg(target_os)]`-gated
-// and `enum_map!{}` cannot host per-arm `#[cfg]` attrs cleanly.
-pub(super) fn bin_path(editor: Editor) -> Option<&'static [&'static ZStr]> {
+fn bin_path(editor: Editor) -> Option<&'static [&'static ZStr]> {
     #[cfg(target_os = "macos")]
     {
         // `const { &[...] }` forces const-promotion so the array lives in
@@ -395,14 +366,13 @@ pub(super) fn bin_path(editor: Editor) -> Option<&'static [&'static ZStr]> {
     }
 }
 
-// PORT NOTE: `buf` stores (ptr, len) pairs because entries point into `file_path_buf`
+// Note: `buf` stores (ptr, len) pairs because entries point into `file_path_buf`
 // (self-referential) as well as caller-provided/static slices. Reconstructed as slices
 // in `auto_close`.
 pub(super) struct SpawnedEditorContext {
     pub file_path_buf: [u8; 1024 + MAX_PATH_BYTES],
     pub buf: [(*const u8, usize); 10],
     pub argc: usize,
-    // TODO(port): was `std.process.Child` — replace with a bun spawn handle.
 }
 
 impl Default for SpawnedEditorContext {
@@ -431,10 +401,7 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
         argv[j] = unsafe { bun_core::ffi::slice(p, l) };
     }
 
-    // TODO(port): Zig called `child_process.spawn()` then `.wait()` via std.process.Child.
-    // Mapped to sync::spawn (bun.spawnSync) per src/CLAUDE.md guidance.
-    // FIXME(windows-leak): Zig's autoClose (open.zig:329-335) used std.process.Child
-    // directly (CreateProcessW) and never created a uv loop. The sync::spawn substitution
+    // FIXME(windows-leak): the sync::spawn path
     // requires a `WindowsOptions.loop_`; `MiniEventLoop::init_global` heap-allocates a
     // MiniEventLoop + uv_loop_t into a thread-local that is NEVER torn down. Because this
     // runs on a fresh detached std::thread per `Editor::open()` call, every editor-open on
@@ -466,8 +433,8 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct EditorContext {
-    pub editor: Option<Editor>,
-    // PORT NOTE: `name`/`path` are never freed in Zig; `path` is backed by
+    pub(crate) editor: Option<Editor>,
+    // Note: `name`/`path` are never freed; `path` is backed by
     // `Fs.FileSystem.instance.dirname_store` (process-lifetime arena) or aliases `name`.
     pub name: &'static [u8],
     pub path: &'static [u8],
@@ -484,72 +451,21 @@ impl Default for EditorContext {
 }
 
 impl EditorContext {
-    pub fn open_in_editor(
-        &mut self,
-        editor_: Editor,
-        blob: &[u8],
-        id: &[u8],
-        tmpdir: bun_sys::Fd,
-        line: &[u8],
-        column: &[u8],
-    ) {
-        if let Err(err) = Self::_open_in_editor(self.path, editor_, blob, id, tmpdir, line, column)
-        {
-            if editor_ != Editor::Other {
-                Output::pretty_errorln(format_args!(
-                    "Error {} opening in {}",
-                    err.name(),
-                    <&'static str>::from(editor_),
-                ));
-            }
-            self.editor = Some(Editor::None);
-        }
+    /// `detect_editor` records `Editor::None` when nothing was found so the
+    /// search is not repeated; to callers that means "no editor".
+    pub(crate) fn found(&self) -> Option<Editor> {
+        self.editor.filter(|e| *e != Editor::None)
     }
 
-    fn _open_in_editor(
-        path: &[u8],
-        editor_: Editor,
-        blob: &[u8],
-        id: &[u8],
-        tmpdir: bun_sys::Fd,
-        line: &[u8],
-        column: &[u8],
-    ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        let mut basename_buf = [0u8; 512];
-        let mut basename = bun_paths::basename(id);
-        if strings::ends_with(basename, b".bun") && basename.len() < 499 {
-            basename_buf[..basename.len()].copy_from_slice(basename);
-            basename_buf[basename.len()..basename.len() + 3].copy_from_slice(b".js");
-            basename = &basename_buf[0..basename.len() + 3];
-        }
-
-        // TODO(port): Zig used std.fs.Dir.writeFile / openFile. Map to bun_sys::File.
-        // `write_file` wants a `&ZStr`; NUL-terminate `basename` into a path buffer.
-        let mut basename_zbuf = PathBuffer::uninit();
-        let basename_z = bun_paths::resolve_path::z(basename, &mut basename_zbuf);
-        // `?` converts bun_sys::Error → bun_core::Error directly; explicit
-        // .map_err(Into::into) became ambiguous once node_os::OsError added
-        // its own From<bun_sys::Error>.
-        bun_sys::File::write_file(tmpdir, basename_z, blob)?;
-
-        let opened = bun_sys::File::open_at(tmpdir, basename, bun_sys::O::RDONLY, 0)?;
-
-        let mut path_buf = PathBuffer::uninit();
-        let resolved = bun_sys::get_fd_path(opened.handle(), &mut path_buf)?;
-
-        editor_.open(path, resolved, Some(line), Some(column))
-    }
-
-    pub fn auto_detect_editor(&mut self, env: &mut dot_env::Loader) {
+    pub(crate) fn auto_detect_editor(&mut self, env: &mut dot_env::Loader) {
         if self.editor.is_none() {
             self.detect_editor(env);
         }
     }
 
-    pub fn detect_editor(&mut self, env: &mut dot_env::Loader) {
+    pub(crate) fn detect_editor(&mut self, env: &mut dot_env::Loader) {
         let mut buf = PathBuffer::uninit();
-        // PORT NOTE: borrowck — `by_path_for_editor`/`by_fallback` tie `out`'s lifetime
+        // Note: borrowck — `by_path_for_editor`/`by_fallback` tie `out`'s lifetime
         // to `&'a mut buf`. On the `false` path NLL conservatively keeps `buf` borrowed
         // (Polonius case). Re-borrow through a raw pointer at each call site; on a hit
         // we return immediately so only one `&mut` is ever live.
@@ -571,7 +487,7 @@ impl EditorContext {
                 if Editor::by_path_for_editor(
                     env,
                     editor_,
-                    // SAFETY: see PORT NOTE above — exclusive per-call reborrow.
+                    // SAFETY: see note above — exclusive per-call reborrow.
                     unsafe { &mut *buf_ptr },
                     Fs::FileSystem::instance().top_level_dir,
                     &mut out,
@@ -602,7 +518,7 @@ impl EditorContext {
             if Editor::by_path_for_editor(
                 env,
                 editor_,
-                // SAFETY: see PORT NOTE above — exclusive per-call reborrow.
+                // SAFETY: see note above — exclusive per-call reborrow.
                 unsafe { &mut *buf_ptr },
                 Fs::FileSystem::instance().top_level_dir,
                 &mut out,
@@ -630,7 +546,7 @@ impl EditorContext {
         // Don't know, so we will just guess based on what exists
         if let Some(editor_) = Editor::by_fallback(
             env,
-            // SAFETY: see PORT NOTE above — exclusive per-call reborrow.
+            // SAFETY: see note above — exclusive per-call reborrow.
             unsafe { &mut *buf_ptr },
             Fs::FileSystem::instance().top_level_dir,
             &mut out,
@@ -646,5 +562,3 @@ impl EditorContext {
         self.editor = Some(Editor::None);
     }
 }
-
-// ported from: src/cli/open.zig

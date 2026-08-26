@@ -16,31 +16,35 @@ pub enum Kind {
     FileDone,
     /// 3 × str: failures, skips, todos (verbatim repeat-buffer bytes)
     RepeatBufs,
-    /// str path
-    JunitFile,
-    /// str path
-    CoverageFile,
     // coordinator → worker
     /// u32 file_idx, str path
     Run,
     /// (empty)
     Shutdown,
+    /// u32 file_idx, str xml — one file's completed <testsuite> element(s).
+    /// Workers never write reports to disk; the coordinator files chunks by
+    /// index and emits them in the run's canonical file order, so the merged
+    /// document is identical regardless of which worker finishes first.
+    JunitChunk,
+    /// str lcov — this worker's coverage data, sent at exit; the coordinator
+    /// merges every worker's into the one report it writes.
+    CoverageChunk,
 }
 
 impl TryFrom<u8> for Kind {
     type Error = ();
     fn try_from(v: u8) -> Result<Self, ()> {
-        // Mirrors Zig `enum(u8)` int → enum: valid only for declared discriminants.
+        // Int → enum: valid only for declared discriminants.
         Ok(match v {
             0 => Kind::Ready,
             1 => Kind::FileStart,
             2 => Kind::TestDone,
             3 => Kind::FileDone,
             4 => Kind::RepeatBufs,
-            5 => Kind::JunitFile,
-            6 => Kind::CoverageFile,
-            7 => Kind::Run,
-            8 => Kind::Shutdown,
+            5 => Kind::Run,
+            6 => Kind::Shutdown,
+            7 => Kind::JunitChunk,
+            8 => Kind::CoverageChunk,
             _ => return Err(()),
         })
     }
@@ -70,7 +74,7 @@ impl Frame {
         self.buf.push(kind as u8);
     }
 
-    pub(crate) fn u32_(&mut self, v: u32) {
+    pub(crate) fn u32(&mut self, v: u32) {
         self.buf.extend_from_slice(&v.to_le_bytes());
     }
 
@@ -88,7 +92,7 @@ impl Frame {
             0
         };
         if s.len() <= room {
-            self.u32_(u32::try_from(s.len()).unwrap());
+            self.u32(u32::try_from(s.len()).unwrap());
             self.buf.extend_from_slice(s);
             return;
         }
@@ -97,7 +101,7 @@ impl Frame {
         } else {
             0
         };
-        self.u32_(u32::try_from(keep + TRUNC.len()).unwrap());
+        self.u32(u32::try_from(keep + TRUNC.len()).unwrap());
         self.buf.extend_from_slice(&s[0..keep]);
         self.buf.extend_from_slice(TRUNC);
     }
@@ -116,12 +120,11 @@ impl Frame {
 
 /// Payload reader; bounds-checked, returns zero/empty on truncation.
 pub struct Reader<'a> {
-    // TODO(port): lifetime — borrowed cursor over caller-owned payload slice
     pub p: &'a [u8],
 }
 
 impl<'a> Reader<'a> {
-    pub(crate) fn u32_(&mut self) -> u32 {
+    pub(crate) fn u32(&mut self) -> u32 {
         if self.p.len() < 4 {
             return 0;
         }
@@ -131,7 +134,7 @@ impl<'a> Reader<'a> {
     }
 
     pub(crate) fn str(&mut self) -> &'a [u8] {
-        let n = self.u32_() as usize;
+        let n = self.u32() as usize;
         if self.p.len() < n {
             return b"";
         }
@@ -140,5 +143,3 @@ impl<'a> Reader<'a> {
         s
     }
 }
-
-// ported from: src/cli/test/parallel/Frame.zig

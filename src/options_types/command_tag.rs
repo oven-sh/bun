@@ -3,7 +3,7 @@
 //! switch on which command is running without importing `cli/`.
 //!
 //! Heavy methods that reference `Arguments`/`HelpCommand`/`clap` (`params()`,
-//! `printHelp()`) live in `src/cli/cli.zig` as free fns; only the pure enum,
+//! `printHelp()`) live in the CLI crate as free fns; only the pure enum,
 //! `char()`, classifier predicates, and the `EnumArray` flag tables are here.
 
 use enum_map::Enum;
@@ -42,6 +42,8 @@ pub enum Tag {
     PublishCommand,
     AuditCommand,
     WhyCommand,
+    DedupeCommand,
+    PruneCommand,
     FuzzilliCommand,
 }
 
@@ -49,7 +51,7 @@ impl Tag {
     /// Used by crash reports.
     ///
     /// This must be kept in sync with https://github.com/oven-sh/bun.report/blob/62601d8aafb9c0d29554dfc3f8854044ec04d367/backend/remap.ts#L10
-    pub fn char(self) -> u8 {
+    pub const fn char(self) -> u8 {
         match self {
             Tag::AddCommand => b'I',
             Tag::AutoCommand => b'a',
@@ -78,10 +80,12 @@ impl Tag {
             Tag::PatchCommand => b'x',
             Tag::PatchCommitCommand => b'z',
             Tag::OutdatedCommand => b'o',
-            Tag::UpdateInteractiveCommand => b'U',
+            Tag::UpdateInteractiveCommand => b'q',
             Tag::PublishCommand => b'k',
             Tag::AuditCommand => b'A',
             Tag::WhyCommand => b'W',
+            Tag::DedupeCommand => b'd',
+            Tag::PruneCommand => b'N',
             Tag::FuzzilliCommand => b'F',
         }
     }
@@ -100,6 +104,8 @@ impl Tag {
                 | Tag::OutdatedCommand
                 | Tag::PublishCommand
                 | Tag::AuditCommand
+                | Tag::DedupeCommand
+                | Tag::PruneCommand
         )
     }
 
@@ -119,27 +125,81 @@ impl Tag {
                 | Tag::OutdatedCommand
                 | Tag::PublishCommand
                 | Tag::AuditCommand
+                | Tag::DedupeCommand
+                | Tag::PruneCommand
         )
     }
 
     /// Number of variants. Mirrors `enum_map::Enum::LENGTH` so const-array
     /// tables below can size themselves without naming the trait at every use.
-    pub const COUNT: usize = <Self as Enum>::LENGTH;
+    pub(crate) const COUNT: usize = <Self as Enum>::LENGTH;
 
-    // Heavy methods that pull in `Arguments` / help text live in `cli/cli.zig`.
-    // In Zig these were aliased here (`params`, `printHelp`) relying on lazy
-    // decl resolution so `options_types/` did not compile-depend on `cli/`
-    // unless invoked. Rust has no lazy decl resolution; re-exporting
+    /// Every variant, for const iteration (enum_map's `from_usize` is not const).
+    /// The length check in the uniqueness assertion below fails to compile if a
+    /// variant is added here but not in this list.
+    const ALL: [Self; Self::COUNT] = [
+        Self::AddCommand,
+        Self::AutoCommand,
+        Self::BuildCommand,
+        Self::BunxCommand,
+        Self::CreateCommand,
+        Self::DiscordCommand,
+        Self::GetCompletionsCommand,
+        Self::HelpCommand,
+        Self::InitCommand,
+        Self::InfoCommand,
+        Self::InstallCommand,
+        Self::InstallCompletionsCommand,
+        Self::LinkCommand,
+        Self::PackageManagerCommand,
+        Self::RemoveCommand,
+        Self::RunCommand,
+        Self::RunAsNodeCommand,
+        Self::TestCommand,
+        Self::UnlinkCommand,
+        Self::UpdateCommand,
+        Self::UpgradeCommand,
+        Self::ReplCommand,
+        Self::ReservedCommand,
+        Self::ExecCommand,
+        Self::PatchCommand,
+        Self::PatchCommitCommand,
+        Self::OutdatedCommand,
+        Self::UpdateInteractiveCommand,
+        Self::PublishCommand,
+        Self::AuditCommand,
+        Self::WhyCommand,
+        Self::DedupeCommand,
+        Self::PruneCommand,
+        Self::FuzzilliCommand,
+    ];
+
+    // Heavy methods that pull in `Arguments` / help text live in the CLI crate.
+    // Re-exporting
     // `bun_runtime::cli::Command::{tag_params, tag_print_help}` here would create a
     // crate cycle (cli → options_types → cli).
-    // TODO(port): call sites of `cmd.params()` / `cmd.printHelp()` must call
-    // `bun_runtime::cli::Command::tag_params(cmd)` / `tag_print_help(cmd)` directly.
 }
 
+/// Compile-time proof that every [`Tag::char`] byte is distinct. A collision
+/// here means bun.report cannot tell the two subcommands apart.
+const _: () = {
+    let mut seen = [false; 256];
+    let mut i = 0;
+    while i < Tag::COUNT {
+        let c = Tag::ALL[i].char() as usize;
+        assert!(
+            !seen[c],
+            "Tag::char() collision: two subcommands share a byte"
+        );
+        seen[c] = true;
+        i += 1;
+    }
+};
+
 /// `.rodata` flag table indexed by [`Tag`] discriminant. These tables cost zero
-/// init code on the startup path (matches Zig `std.EnumArray.initDefault`).
+/// init code on the startup path.
 #[repr(transparent)]
-pub struct TagTable<V: 'static>(pub [V; Tag::COUNT]);
+pub struct TagTable<V: 'static>(pub(crate) [V; Tag::COUNT]);
 
 impl<V> core::ops::Index<Tag> for TagTable<V> {
     type Output = V;
@@ -168,6 +228,8 @@ pub static LOADS_CONFIG: TagTable<bool> = TagTable({
     a[Tag::UpdateInteractiveCommand as usize] = true;
     a[Tag::PublishCommand as usize] = true;
     a[Tag::AuditCommand as usize] = true;
+    a[Tag::DedupeCommand as usize] = true;
+    a[Tag::PruneCommand as usize] = true;
     a
 });
 
@@ -187,6 +249,8 @@ pub static ALWAYS_LOADS_CONFIG: TagTable<bool> = TagTable({
     a[Tag::UpdateInteractiveCommand as usize] = true;
     a[Tag::PublishCommand as usize] = true;
     a[Tag::AuditCommand as usize] = true;
+    a[Tag::DedupeCommand as usize] = true;
+    a[Tag::PruneCommand as usize] = true;
     a
 });
 
@@ -194,6 +258,8 @@ pub static USES_GLOBAL_OPTIONS: TagTable<bool> = TagTable({
     let mut a = [true; Tag::COUNT];
     a[Tag::AddCommand as usize] = false;
     a[Tag::AuditCommand as usize] = false;
+    a[Tag::DedupeCommand as usize] = false;
+    a[Tag::PruneCommand as usize] = false;
     a[Tag::BunxCommand as usize] = false;
     a[Tag::CreateCommand as usize] = false;
     a[Tag::InfoCommand as usize] = false;
@@ -210,5 +276,3 @@ pub static USES_GLOBAL_OPTIONS: TagTable<bool> = TagTable({
     a[Tag::UpdateCommand as usize] = false;
     a
 });
-
-// ported from: src/options_types/CommandTag.zig

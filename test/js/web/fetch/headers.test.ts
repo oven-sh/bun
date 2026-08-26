@@ -1,4 +1,7 @@
 import { beforeAll, describe, expect, test } from "bun:test";
+// Namespace import so a missing binding fails only the kernel tests below
+// (accessing an absent export is `undefined`), not the whole file.
+import * as internalForTesting from "bun:internal-for-testing";
 
 beforeAll(() => {
   // expect(Headers).toBeDefined();
@@ -35,6 +38,98 @@ describe("Headers", () => {
       const headers = new Headers(record);
       expect(headers.get("content-type")).toBeNull();
       expect(headers.get("user-agent")).toBe("bun");
+    });
+    // Web IDL record conversion interleaves Get with value conversion: mutations made by a
+    // value's toString() are observed by the keys that follow it.
+    test("constructing headers from an object interleaves Get with value conversion", () => {
+      const record: any = {
+        "x-first": {
+          toString() {
+            record["x-second"] = "replaced";
+            delete record["x-third"];
+            return "first";
+          },
+        },
+        "x-second": "second",
+        "x-third": "third",
+      };
+      const headers = new Headers(record);
+      expect(headers.get("x-first")).toBe("first");
+      expect(headers.get("x-second")).toBe("replaced");
+      expect(headers.get("x-third")).toBeNull();
+    });
+    test("constructing headers from an object with a getter interleaves Get with value conversion", () => {
+      const record: any = {
+        "x-first": {
+          toString() {
+            record["x-second"] = "replaced";
+            delete record["x-third"];
+            return "first";
+          },
+        },
+        "x-second": "second",
+        "x-third": "third",
+      };
+      Object.defineProperty(record, "x-fourth", { get: () => "fourth", enumerable: true });
+      const headers = new Headers(record);
+      expect(headers.get("x-first")).toBe("first");
+      expect(headers.get("x-second")).toBe("replaced");
+      expect(headers.get("x-third")).toBeNull();
+      expect(headers.get("x-fourth")).toBe("fourth");
+    });
+    // The literal takes the fast path; redefining "x-second" transitions the structure, so the
+    // remaining keys must be re-read through [[GetOwnProperty]], which invokes the new getter.
+    test("constructing headers from an object observes a getter installed by an earlier value's toString", () => {
+      const record: any = {
+        "x-first": {
+          toString() {
+            Object.defineProperty(record, "x-second", { get: () => "from-getter", enumerable: true });
+            return "first";
+          },
+        },
+        "x-second": "second",
+        "x-third": "third",
+      };
+      expect([...new Headers(record)]).toEqual([
+        ["x-first", "first"],
+        ["x-second", "from-getter"],
+        ["x-third", "third"],
+      ]);
+    });
+    test("constructing headers from an object propagates an exception from a getter installed by an earlier value's toString", () => {
+      const record: any = {
+        "x-first": {
+          toString() {
+            Object.defineProperty(record, "x-second", {
+              get: () => {
+                throw new Error("getter boom");
+              },
+              enumerable: true,
+            });
+            return "first";
+          },
+        },
+        "x-second": "second",
+      };
+      expect(() => new Headers(record)).toThrow("getter boom");
+    });
+    test("constructing headers from an object keeps own-property semantics after setPrototypeOf mid-conversion", () => {
+      const proto = { "x-second": "from-proto" };
+      const record: any = {
+        "x-first": {
+          toString() {
+            delete record["x-second"];
+            Object.setPrototypeOf(record, proto);
+            return "first";
+          },
+        },
+        "x-second": "second",
+        "x-third": "third",
+      };
+      expect([...new Headers(record)]).toEqual([
+        ["x-first", "first"],
+        ["x-third", "third"],
+      ]);
     });
     test("can create headers from object with duplicates", () => {
       const headers = new Headers({
@@ -501,6 +596,143 @@ describe("Headers", () => {
         ["Cache-Control", "no-transform"],
       ]);
       expect(headers.count).toBe(2);
+    });
+  });
+
+  // Header-name lowercasing on iteration (Object.fromEntries / spread / toJSON /
+  // keys()) runs through a SIMD kernel on the 8-bit path. Sweep name lengths
+  // across the vector-block boundaries and include every ASCII printable that is
+  // a valid HTTP token character, so a kernel that mishandles its scalar tail or
+  // touches a non-letter (e.g. blindly OR-ing 0x20 into '^', '_', '`', '|', '~')
+  // would diverge from this scalar reference.
+  describe("iteration lowercases uncommon header names", () => {
+    // Valid HTTP token characters, per RFC 7230, excluding letters/digits.
+    const tokenPunct = "!#$%&'*+-.^_`|~";
+    const lower = (s: string) => s.replace(/[A-Z]/g, c => c.toLowerCase());
+
+    // Names of increasing length that always contain an uppercase letter (so the
+    // kernel takes its allocate-and-lowercase slow path), built from a repeating
+    // alphabet of mixed-case letters, digits, and token punctuation.
+    const alphabet = "AzB0C-D_E^F`G|H~I.J9K";
+    function nameOfLength(n: number): string {
+      // Start with "X-" so it is never a known common header, keep an uppercase.
+      let s = "X-";
+      for (let i = 0; s.length < n; i++) s += alphabet[i % alphabet.length];
+      return s.slice(0, Math.max(n, 3));
+    }
+
+    // Cover lengths straddling 16/32/64-byte SIMD blocks, plus the tail remainders.
+    const lengths = [3, 4, 7, 8, 15, 16, 17, 31, 32, 33, 47, 48, 63, 64, 65, 95, 96, 127, 128, 129];
+
+    test.each(lengths)("length %d round-trips through all iteration APIs", len => {
+      const name = nameOfLength(len);
+      const h = new Headers();
+      h.append(name, "v");
+      const expectedKey = lower(name);
+
+      expect(Object.fromEntries(h)).toEqual({ [expectedKey]: "v" });
+      expect(Object.fromEntries(h.entries())).toEqual({ [expectedKey]: "v" });
+      expect([...h]).toEqual([[expectedKey, "v"]]);
+      expect([...h.keys()]).toEqual([expectedKey]);
+      expect(h.toJSON?.()).toEqual({ [expectedKey]: "v" });
+    });
+
+    test("preserves non-letter token characters while lowercasing letters", () => {
+      // One header name per token punctuation char, surrounded by mixed-case
+      // letters, so a naive OR-0x20 lowercase would corrupt '^' -> '~' etc.
+      const names = [...tokenPunct].map((c, i) => `X-Ab${c}Cd${i}`);
+      const h = new Headers();
+      for (const n of names) h.append(n, "v");
+
+      const expected: Record<string, string> = {};
+      for (const n of names) expected[lower(n)] = "v";
+
+      expect(Object.fromEntries(h)).toEqual(expected);
+      expect(h.toJSON?.()).toEqual(expected);
+    });
+
+    test("already-lowercase names are returned unchanged", () => {
+      const name = "x-already-lower-" + Buffer.alloc(80, "a").toString();
+      const h = new Headers();
+      h.append(name, "v");
+      expect(Object.fromEntries(h)).toEqual({ [name]: "v" });
+      expect([...h.keys()]).toEqual([name]);
+    });
+
+    test("lowercases a large set of mixed-case uncommon names with sorting", () => {
+      const h = new Headers();
+      const expected: Record<string, string> = {};
+      for (let i = 0; i < 64; i++) {
+        const name = `X-Custom-Header-${i}-AbCdEfGhIjKlMnOpQrStUvWxYz`;
+        h.append(name, String(i));
+        expected[name.toLowerCase()] = String(i);
+      }
+      expect(Object.fromEntries(h)).toEqual(expected);
+    });
+  });
+
+  // Direct coverage of the SIMD header-name lowercasing kernel
+  // (WebCore::lowercaseHeaderName, exposed via bun:internal-for-testing). This
+  // calls the kernel with no surrounding Headers machinery, so it is exercised
+  // even when the iterator's key cache or the common-header fast path would
+  // otherwise hide it, and pins the kernel's output to a scalar reference.
+  describe("lowercaseHeaderNameSIMD kernel", () => {
+    const lowercaseHeaderNameSIMD = internalForTesting.lowercaseHeaderNameSIMD as (name: string) => string;
+    // ASCII-lowercase only 'A'..'Z'; every other byte (digits, punctuation,
+    // characters adjacent to the letter ranges like '@', '[', '^', '_', '`',
+    // Latin-1 >= 0x80) must be left untouched.
+    const scalarLower = (s: string) => [...s].map(c => (c >= "A" && c <= "Z" ? c.toLowerCase() : c)).join("");
+
+    test("matches a scalar reference across lengths and alignments", () => {
+      // Repeating alphabet spanning the risky 0x40-0x7f neighbourhood of the
+      // uppercase range, so a kernel that over-lowercases (e.g. OR 0x20) or
+      // mishandles its vector tail diverges from the reference.
+      const alphabet = "AZaz09@[]^_`{|}~-.Mm";
+      for (let len = 0; len <= 160; len++) {
+        let s = "";
+        for (let i = 0; i < len; i++) s += alphabet[(i * 7 + len) % alphabet.length];
+        expect(lowercaseHeaderNameSIMD(s)).toBe(scalarLower(s));
+      }
+    });
+
+    test("leaves non-letter bytes adjacent to the uppercase range intact", () => {
+      // 0x40 '@', 0x5b..0x60 '[\]^_`' bracket 'A'..'Z'; none may change.
+      const s = "@ABYZ[\\]^_`az{|}~";
+      expect(lowercaseHeaderNameSIMD(s)).toBe("@abyz[\\]^_`az{|}~");
+    });
+
+    test("returns already-lowercase input unchanged", () => {
+      for (const s of ["", "a", "x-custom-header", Buffer.alloc(200, "a").toString()]) {
+        expect(lowercaseHeaderNameSIMD(s)).toBe(s);
+      }
+    });
+
+    test("preserves Latin-1 bytes >= 0x80", () => {
+      // 'À' (0xC0) is in the uppercase *Unicode* block but not ASCII A-Z, so the
+      // ASCII kernel must not touch it; 'A' right after it must still fold.
+      const s = "\u00c0A\u00e0Z\u00ff";
+      expect(lowercaseHeaderNameSIMD(s)).toBe("\u00c0a\u00e0z\u00ff");
+    });
+
+    // An all-ASCII WTF string can still be stored as 16-bit, which takes a
+    // separate kernel. Force 16-bit storage by appending a code unit > 0xFF and
+    // slicing it back off, then run the same checks on the 16-bit path.
+    const to16 = (s: string) => (s + "\u0100").slice(0, -1);
+
+    test("16-bit: matches a scalar reference across lengths and alignments", () => {
+      const alphabet = "AZaz09@[]^_`{|}~-.Mm";
+      for (let len = 0; len <= 160; len++) {
+        let s = "";
+        for (let i = 0; i < len; i++) s += alphabet[(i * 7 + len) % alphabet.length];
+        expect(lowercaseHeaderNameSIMD(to16(s))).toBe(scalarLower(s));
+      }
+    });
+
+    test("16-bit: lowercases letters and leaves code units >= 0x80 untouched", () => {
+      // Mixed-case ASCII interleaved with non-Latin-1 code units that must pass
+      // through unchanged while A-Z fold.
+      const s = "X-Ab\u0100Cd\u0101Ef\uffffGZ";
+      expect(lowercaseHeaderNameSIMD(s)).toBe("x-ab\u0100cd\u0101ef\uffffgz");
     });
   });
 });

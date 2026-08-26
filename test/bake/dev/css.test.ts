@@ -181,6 +181,12 @@ devTest("asset referenced in css", {
     let backgroundImage = await c.style("body").backgroundImage;
     assert(backgroundImage);
     await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
+    // The served stylesheet is the chunk with the asset reference resolved and
+    // nothing else: CSS never gets a source map, so no debugId trailer either.
+    const stylesheetHref = (await (await dev.fetch("/")).text()).match(/<link rel="stylesheet"[^>]*href="([^"]+)"/)![1];
+    const stylesheet = await (await dev.fetch(stylesheetHref)).text();
+    expect(stylesheet).toContain("background-image:");
+    expect(stylesheet).not.toContain("debugId");
     await dev.write("bun.png", imageFixtures.bun2);
     backgroundImage = await c.style("body").backgroundImage;
     assert(backgroundImage);
@@ -204,6 +210,53 @@ devTest("syntax error crash", {
     // previously: panic(main thread): Asset double unref: 0000000000000000
     await dev.patch("styles.css", { find: "url\n", replace: "url(\n" });
     expect((await dev.fetch("/")).status).toBe(500);
+  },
+});
+devTest("css url resolve error on hot reload is recoverable", {
+  files: {
+    "styles.css": `
+      body {
+        color: red;
+      }
+    `,
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      body: `hello world`,
+    }),
+  },
+  async test(dev) {
+    {
+      await using c = await dev.client("/");
+      await c.style("body").color.expect.toBe("red");
+      // A CSS file that parses but fails import resolution must fail the
+      // rebuild with an error instead of being treated as a valid CSS chunk.
+      // previously: panic: assertion failed: !chunk.content.is_css()
+      await dev.write(
+        "styles.css",
+        `
+          body {
+            background-image: url(./missing.png);
+          }
+        `,
+        {
+          errors: ['styles.css:2:21: error: Could not resolve: "./missing.png"'],
+        },
+      );
+    }
+    // The failing route is fetched and recovered without a connected client: a
+    // fetch re-bundles the route, and both that and the recovery ship the HTML
+    // route as a JS module without the route-reload flag, which trips a
+    // client-side debug assert (tracked in https://github.com/oven-sh/bun/issues/31908).
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write(
+      "styles.css",
+      `
+        body {
+          color: blue;
+        }
+      `,
+    );
+    expect((await dev.fetch("/")).status).toBe(200);
   },
 });
 devTest("circular css imports handle hot reload", {
@@ -303,6 +356,81 @@ devTest("asset index stays valid after another css root is freed", {
       `,
     );
     await c2.style(".second").color.expect.toBe("green");
+    {
+      await using c1 = await dev.client("/first");
+      await c1.style(".first").color.expect.toBe("#ff0");
+    }
+  },
+});
+devTest("css hot update carries the edited stylesheet when another root fails in the same rebuild", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./css-plugin.ts"]
+    `,
+    "css-plugin.ts": `
+      export default {
+        name: "css-plugin",
+        setup(build) {
+          build.onResolve({ filter: /missing\\.png$/ }, () => undefined);
+        },
+      };
+    `,
+    "first.html": emptyHtmlFile({
+      styles: ["first.css"],
+      body: `<div class="first">hello</div>`,
+    }),
+    "second.html": emptyHtmlFile({
+      styles: ["second.css"],
+      body: `<div class="second">hello</div>`,
+    }),
+    "first.css": `
+      .first { color: red; }
+    `,
+    "second.css": `
+      .second { color: blue; }
+    `,
+  },
+  async test(dev) {
+    {
+      await using c1 = await dev.client("/first");
+      await c1.style(".first").color.expect.toBe("red");
+      await c1.style(".second").notFound();
+
+      await using c2 = await dev.client("/second");
+      await c2.style(".second").color.expect.toBe("#00f");
+
+      {
+        await using batch = await dev.batchChanges({ errors: null });
+        await dev.write(
+          "first.css",
+          `
+            .first {
+              background-image: url(./missing.png);
+            }
+          `,
+        );
+        await dev.write(
+          "second.css",
+          `
+            .second { color: green; }
+          `,
+        );
+      }
+      await c2.style(".second").color.expect.toBe("green");
+      await c1.style(".second").notFound();
+    }
+
+    await dev.write(
+      "first.css",
+      `
+        .first { color: yellow; }
+      `,
+    );
+    {
+      await using c2 = await dev.client("/second");
+      await c2.style(".second").color.expect.toBe("green");
+    }
     {
       await using c1 = await dev.client("/first");
       await c1.style(".first").color.expect.toBe("#ff0");

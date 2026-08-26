@@ -1,7 +1,7 @@
 //! Timer subsystem JS-facing surface: setTimeout/setInterval/setImmediate/
 //! Bun.sleep/clear* host functions.
 //!
-//! PORT NOTE: this file is loaded as `pub mod timer;` from `mod.rs` (codegen
+//! this file is loaded as `pub mod timer;` from `mod.rs` (codegen
 //! path `crate::timer::timer::*`). The canonical struct definitions (`All`,
 //! `Kind`, `Maps`, `TimeoutObject`, `ImmediateObject`, `TimerObjectInternals`,
 //! `DateHeaderTimer`, …) live in `mod.rs`; this module only adds the JS-facing
@@ -27,7 +27,7 @@ use crate::jsc_hooks::{timer_all, timer_all_mut};
 
 impl All {
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__Timer__getNextID() -> i32 {
+    pub(crate) extern "C" fn Bun__Timer__getNextID() -> i32 {
         let all = timer_all();
         if all.is_null() {
             return 0;
@@ -46,13 +46,13 @@ impl All {
     // jsc/runtime crate cycle — see DateHeaderTimer.rs). Opaque-token
     // forwarding makes not_unsafe_ptr_arg_deref a false positive.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn update_date_header_timer_if_necessary(
+    pub(crate) fn update_date_header_timer_if_necessary(
         &mut self,
         loop_: &UwsLoop,
         vm: *mut VirtualMachine,
     ) {
         if loop_.should_enable_date_header_timer() {
-            // PORT NOTE: `is_date_timer_active()` is private to mod.rs; inline.
+            // `is_date_timer_active()` is private to mod.rs; inline.
             if self.date_header_timer.event_loop_timer.state != EventLoopTimerState::ACTIVE {
                 // SAFETY: caller contract guarantees `vm` is valid.
                 unsafe {
@@ -60,7 +60,7 @@ impl All {
                         vm,
                         // Be careful to avoid adding extra calls to bun.timespec.now()
                         // when it's not needed.
-                        &Timespec::now(TimespecMockMode::AllowMockedTime),
+                        &Timespec::now(TimespecMockMode::ForceRealTime),
                     );
                 }
             }
@@ -75,10 +75,10 @@ impl All {
         global_this: &JSGlobalObject,
         countdown: f64,
         warning_type: TimeoutWarning,
-    ) {
+    ) -> JsResult<()> {
         const SUFFIX: &str = ".\nTimeout duration was set to 1.";
 
-        let mut warning_string = match warning_type {
+        let warning_string = match warning_type {
             TimeoutWarning::TimeoutOverflowWarning => {
                 if countdown.is_finite() {
                     BunString::create_format(format_args!(
@@ -107,43 +107,22 @@ impl All {
                     )
                 }
             }
-            // std.fmt gives us "nan" but Node.js wants "NaN".
             TimeoutWarning::TimeoutNaNWarning => {
                 debug_assert!(countdown.is_nan());
                 BunString::ascii(const_format::concatcp!("NaN is not a number", SUFFIX).as_bytes())
             }
         };
-        let mut warning_type_string =
+        let warning_type_string =
             BunString::create_atom_if_possible(<&'static str>::from(warning_type).as_bytes());
-        // Emitting a warning should never interrupt execution, but the emit path calls
-        // into user-observable JS (process.nextTick, getters, etc.) which can throw.
-        // Swallowing error.JSError alone leaves the exception pending on the VM and
-        // trips assertExceptionPresenceMatches in the host-call wrapper, so clear it.
-        let warning_js = match warning_string.transfer_to_js(global_this) {
-            Ok(v) => v,
-            Err(_) => {
-                let _ = global_this.clear_exception_except_termination();
-                return;
-            }
-        };
-        let warning_type_js = match warning_type_string.transfer_to_js(global_this) {
-            Ok(v) => v,
-            Err(_) => {
-                let _ = global_this.clear_exception_except_termination();
-                return;
-            }
-        };
-        if global_this
-            .emit_warning(
-                warning_js,
-                warning_type_js,
-                JSValue::UNDEFINED,
-                JSValue::UNDEFINED,
-            )
-            .is_err()
-        {
-            let _ = global_this.clear_exception_except_termination();
-        }
+        let warning_js = warning_string.into_js(global_this)?;
+        let warning_type_js = warning_type_string.into_js(global_this)?;
+        global_this.emit_warning(
+            warning_js,
+            warning_type_js,
+            JSValue::UNDEFINED,
+            JSValue::UNDEFINED,
+        )?;
+        Ok(())
     }
 
     /// Convert an arbitrary JavaScript value to a number of milliseconds used to schedule a timer.
@@ -154,16 +133,19 @@ impl All {
         overflow_behavior: CountdownOverflowBehavior,
         warn: bool,
     ) -> JsResult<u32> {
-        // TODO(port): Zig return type is `u31`; using u32 here, callers must respect the [0, i32::MAX] range.
+        // Both match arms below enforce the [0, i32::MAX] range (Clamp
+        // saturates to i32::MAX; OneMs yields either 1 or a value already
+        // validated to be <= i32::MAX), so callers always receive a value
+        // in that range.
         // We don't deal with nesting levels directly
         // but we do set the minimum timeout to be 1ms for repeating timers
         let countdown_double = countdown.to_number(global_this)?;
         let countdown_int: u32 = match overflow_behavior {
             CountdownOverflowBehavior::Clamp => {
-                // std.math.lossyCast(u31, countdown_double): saturating cast to [0, i32::MAX]
-                // Rust `as` saturates float→int; clamp upper to u31 max.
+                // Saturating cast to [0, i32::MAX]: Rust `as` saturates
+                // float→int and maps NaN→0,
+                // so `setTimeout(fn, NaN)` behaves like `setTimeout(fn, 0)`.
                 (countdown_double as u32).min(i32::MAX as u32)
-                // TODO(port): verify NaN→0 behavior matches std.math.lossyCast
             }
             CountdownOverflowBehavior::OneMs => {
                 if !(countdown_double >= 1.0 && countdown_double <= i32::MAX as f64) {
@@ -173,14 +155,14 @@ impl All {
                                 global_this,
                                 countdown_double,
                                 TimeoutWarning::TimeoutOverflowWarning,
-                            );
+                            )?;
                         } else if countdown_double < 0.0 && !self.warned_negative_number {
                             self.warned_negative_number = true;
                             Self::warn_invalid_countdown(
                                 global_this,
                                 countdown_double,
                                 TimeoutWarning::TimeoutNegativeWarning,
-                            );
+                            )?;
                         } else if !countdown.is_undefined()
                             && countdown.is_number()
                             && countdown_double.is_nan()
@@ -191,7 +173,7 @@ impl All {
                                 global_this,
                                 countdown_double,
                                 TimeoutWarning::TimeoutNaNWarning,
-                            );
+                            )?;
                         }
                     }
                     1
@@ -207,7 +189,7 @@ impl All {
     /// Bun.sleep
     /// a setTimeout that uses a promise instead of a callback, and interprets the countdown
     /// slightly differently for historical reasons (see jsValueToCountdown)
-    pub fn sleep(
+    pub(crate) fn sleep(
         global: &JSGlobalObject,
         promise: JSValue,
         countdown: JSValue,
@@ -231,7 +213,7 @@ impl All {
         ))
     }
 
-    pub fn set_immediate(
+    pub(crate) fn set_immediate(
         global: &JSGlobalObject,
         callback: JSValue,
         arguments: JSValue,
@@ -251,7 +233,7 @@ impl All {
         ))
     }
 
-    pub fn set_timeout(
+    pub(crate) fn set_timeout(
         global: &JSGlobalObject,
         callback: JSValue,
         arguments: JSValue,
@@ -276,7 +258,7 @@ impl All {
         ))
     }
 
-    pub fn set_interval(
+    pub(crate) fn set_interval(
         global: &JSGlobalObject,
         callback: JSValue,
         arguments: JSValue,
@@ -301,9 +283,15 @@ impl All {
         ))
     }
 
+    /// The id a JS number names, whether JSC holds it as an int32 or as a double.
+    fn timer_id_from_number(value: JSValue) -> Option<i32> {
+        let number = value.as_number();
+        // `as` saturates and maps NaN to 0; the round trip rejects those and fractions.
+        let id = number as i32;
+        (f64::from(id) == number).then_some(id)
+    }
+
     fn remove_timer_by_id(&mut self, id: i32) -> Option<*mut TimeoutObject> {
-        // PORT NOTE: Zig `fetchSwapRemove` returns the entry; ArrayHashMap
-        // exposes `get_index` + `swap_remove_at`, so combine them.
         let value: *mut EventLoopTimer = if let Some(idx) = self.maps.set_timeout.get_index(&id) {
             self.maps.set_timeout.swap_remove_at(idx).1
         } else {
@@ -316,7 +304,7 @@ impl All {
         Some(unsafe { TimeoutObject::from_timer_ptr(value) })
     }
 
-    pub fn clear_timer(
+    pub(crate) fn clear_timer(
         timer_id_value: JSValue,
         global_this: &JSGlobalObject,
         kind: Kind,
@@ -327,9 +315,14 @@ impl All {
         let all = timer_all_mut();
 
         let timer: Option<*mut TimerObjectInternals> = 'brk: {
-            if timer_id_value.is_int32() {
+            if timer_id_value.is_number() {
+                // Node.js looks the id up by value (`knownTimersById[id]`): a double holding an
+                // integer names the same timer as the int32. Anything else clears nothing.
+                let Some(id) = Self::timer_id_from_number(timer_id_value) else {
+                    return Ok(());
+                };
                 // Immediates don't have numeric IDs in Node.js so we only have to look up timeouts and intervals
-                let Some(t) = all.remove_timer_by_id(timer_id_value.as_int32()) else {
+                let Some(t) = all.remove_timer_by_id(id) else {
                     return Ok(());
                 };
                 // SAFETY: t is a valid TimeoutObject pointer
@@ -338,9 +331,7 @@ impl All {
                 // Primitive string only (JSType::String) — boxed `new String(..)`
                 // must fall through to `from_js` below and be a no-op, matching
                 // Node.js array-index semantics.
-                // RAII for Zig's `defer string.deref()` — `to_bun_string` returns
-                // a +1 ref and there are several early `return Ok(())` exits below.
-                let string = bun_core::OwnedString::new(timer_id_value.to_bun_string(global_this)?);
+                let string = timer_id_value.to_bun_string(global_this)?;
                 // Custom parseInt logic. I've done this because Node.js is very strict about string
                 // parameters to this function: they can't have leading whitespace, trailing
                 // characters, signs, or even leading zeroes. None of the readily-available string
@@ -379,7 +370,7 @@ impl All {
                             }
                         }};
                     }
-                    // PORT NOTE: bun_core::String has no `encoding()` accessor;
+                    // bun_core::String has no `encoding()` accessor;
                     // dispatch on `is_utf16()` and treat the 8-bit case via
                     // `latin1()` (digit chars are in the ASCII range either way).
                     if string.is_utf16() {
@@ -423,19 +414,19 @@ impl All {
         Ok(())
     }
 
-    pub fn clear_immediate(global_this: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn clear_immediate(global_this: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         Self::clear_timer(id, global_this, Kind::SetImmediate)?;
         Ok(JSValue::UNDEFINED)
     }
 
-    pub fn clear_timeout(global_this: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn clear_timeout(global_this: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         Self::clear_timer(id, global_this, Kind::SetTimeout)?;
         Ok(JSValue::UNDEFINED)
     }
 
-    pub fn clear_interval(global_this: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn clear_interval(global_this: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         Self::clear_timer(id, global_this, Kind::SetInterval)?;
         Ok(JSValue::UNDEFINED)
@@ -444,13 +435,11 @@ impl All {
 
 // ════════════════════════════════════════════════════════════════════════════
 // Method bodies on canonical sibling types (`mod.rs` definitions).
-// Ported from DateHeaderTimer.zig.
 // ════════════════════════════════════════════════════════════════════════════
 
 // `TimeoutObject::{init, from_js}` and `ImmediateObject::{init, from_js}` now
-// live in `super::{timeout_object, immediate_object}` (canonical ports of
-// `TimeoutObject.zig` / `ImmediateObject.zig`); the inherent `init` constructor
-// and the `JsClass`-derived `from_js` are re-exported via
+// live in `super::{timeout_object, immediate_object}`; the inherent `init`
+// constructor and the `JsClass`-derived `from_js` are re-exported via
 // `super::{TimeoutObject, ImmediateObject}`.
 
 impl DateHeaderTimer {
@@ -464,10 +453,10 @@ impl DateHeaderTimer {
     /// # Safety
     /// `vm` must point to the live per-thread `VirtualMachine`; its `uws_loop()`
     /// must outlive this call.
-    pub(super) unsafe fn enable(&mut self, vm: *mut VirtualMachine, now: &Timespec) {
+    unsafe fn enable(&mut self, vm: *mut VirtualMachine, now: &Timespec) {
         debug_assert!(self.event_loop_timer.state != EventLoopTimerState::ACTIVE);
 
-        // PORT NOTE: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub
+        // `EventLoopTimer.next` is the lower-tier `ElTimespec` stub
         // (same `{sec,nsec}` layout) until bun_event_loop switches to bun_core::Timespec.
         let last_update = Timespec {
             sec: self.event_loop_timer.next.sec,
@@ -484,9 +473,9 @@ impl DateHeaderTimer {
             unsafe { (*(*vm).uws_loop()).update_date() };
 
             let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-            // SAFETY: single JS thread; `All::update` only touches `lock`/`timers`/
-            // `fake_timers`/`epoch`, disjoint from `date_header_timer` which `self`
-            // aliases (raw-ptr-per-field re-entry pattern, see jsc_hooks.rs).
+            // SAFETY: single JS thread; nothing `All::update` touches overlaps
+            // `date_header_timer`, which `self` aliases (raw-ptr-per-field
+            // re-entry pattern, see jsc_hooks.rs).
             unsafe { (*Self::timer_all()).update(elt, &now.add_ms(1000)) };
         } else {
             // The date was updated recently, just reschedule for the next second
@@ -501,21 +490,7 @@ impl DateHeaderTimer {
 // C-ABI export thunks
 // ════════════════════════════════════════════════════════════════════════════
 
-// HOST_EXPORT(Bun__internal_drainTimers, c)
-pub fn drain_timers_export(vm: *mut VirtualMachine) {
-    let all = timer_all();
-    if all.is_null() {
-        return;
-    }
-    // SAFETY: `all` is the live per-thread `All`; `vm` is the erased VM pointer
-    // (mod.rs::All::drain_timers takes `*mut ()`).
-    unsafe { (*all).drain_timers(vm.cast::<()>()) };
-}
-
-// Zig used `jsc.host_fn.wrapN(...)` + `@export` to generate these C-ABI shims.
-// `wrapN` reflects on the Zig fn signature and emits an `extern "C" fn` that
-// forwards through `toJSHostCall` (ExceptionValidationScope + JsResult→JSValue
-// normalization). Rust has no signature reflection; `generate-host-exports.ts`
+// `generate-host-exports.ts`
 // scrapes the `// HOST_EXPORT` markers below and emits the seven thunks into
 // `generated_host_exports.rs`, each routing through `host_fn::host_fn_result`.
 //
@@ -575,7 +550,7 @@ pub fn clear_interval_export(global: &JSGlobalObject, id: JSValue) -> JsResult<J
     All::clear_interval(global, id)
 }
 
-pub mod internal_bindings {
+pub(crate) mod internal_bindings {
     use super::*;
 
     /// Node.js has some tests that check whether timers fire at the right time. They check this
@@ -597,10 +572,8 @@ pub mod internal_bindings {
         let _ = global_this;
         let _ = call_frame;
         let now = Timespec::now(TimespecMockMode::AllowMockedTime).ms();
-        // PORT NOTE: bun_jsc::JSValue has no `js_number_from_int64`; route via
+        // bun_jsc::JSValue has no `js_number_from_int64`; route via
         // `js_number(f64)` (i64 → f64 is lossless for the millisecond range).
         Ok(JSValue::js_number(now as f64))
     }
 }
-
-// ported from: src/runtime/timer/Timer.zig

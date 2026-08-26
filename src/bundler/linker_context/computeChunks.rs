@@ -3,7 +3,7 @@ use bun_alloc::ArenaVecExt as _;
 use core::sync::atomic::AtomicUsize;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
-use bun_collections::{ArrayHashMap, AutoBitSet, VecExt};
+use bun_collections::{ArrayHashMap, AutoBitSet, VecExt, index_sort};
 use bun_core::strings;
 use bun_paths::{PathBuffer, resolve_path};
 use bun_sourcemap::SourceMapPieces;
@@ -18,6 +18,7 @@ use crate::{BundleV2, Chunk, Index, IndexInt, LinkerContext};
 use super::find_all_imported_parts_in_js_order::find_all_imported_parts_in_js_order;
 use super::find_imported_css_files_in_js_order::find_imported_css_files_in_js_order;
 use super::find_imported_files_in_css_order::find_imported_files_in_css_order;
+use super::merge_small_chunks::merge_small_chunks;
 
 #[inline(always)]
 fn make_flags(has_html_chunk: bool, is_browser_chunk_from_server_build: bool) -> chunk::Flags {
@@ -31,22 +32,19 @@ fn make_flags(has_html_chunk: bool, is_browser_chunk_from_server_build: bool) ->
     f
 }
 
-// TODO(port): narrow error set
 #[inline(never)]
-pub fn compute_chunks(
+pub(crate) fn compute_chunks(
     this: &mut LinkerContext,
     unique_key: u64,
-) -> Result<Box<[Chunk]>, bun_core::Error> {
+) -> crate::Result<Box<[Chunk]>> {
     let _trace = bun_core::perf::trace("Bundler.computeChunks");
 
     debug_assert!(this.dev_server.is_none()); // use
 
-    // PERF(port): was stack-fallback (std.heap.stackFallback(4096, ...)) — profile if hot.
-    // PERF(port): was arena bulk-free — temp allocations freed at end of fn
     let arena = Arena::new();
     let temp = &arena;
 
-    // TODO(port): StringArrayHashMap keyed by arena-allocated &[u8]; using ArrayHashMap<&[u8], Chunk> here.
+    // Keys borrow from `temp`; the map and the arena are both dropped at end of fn.
     let mut js_chunks: ArrayHashMap<&[u8], Chunk> = ArrayHashMap::new();
     js_chunks.reserve(this.graph.entry_points.len());
 
@@ -65,15 +63,15 @@ pub fn compute_chunks(
     let parse_graph = unsafe { &*this.parse_graph };
     // `bump` is a `BackRef` into `BundleV2.graph.arena`, valid for the link step.
     // Hoisted so the loop can hold disjoint &mut borrows into `this.graph`.
-    // PORT NOTE: `BundlerStyleSheet::empty()` no longer takes an arena in Rust; kept for
+    // `BundlerStyleSheet::empty()` no longer takes an arena in Rust; kept for
     // when arena threading lands.
     let _arena: &Arena = this.graph.arena();
 
-    // PORT NOTE: borrowck escape hatch — the SoA column slices below hold disjoint
+    // borrowck escape hatch — the SoA column slices below hold disjoint
     // immutable borrows into `this.graph` while several helpers (and the BundleV2
-    // back-pointer recovery) still want `&mut LinkerContext`. The Zig original
-    // freely aliases; TODO(refactor): thread split borrows through `LinkerGraph`
-    // instead of laundering through a raw pointer.
+    // back-pointer recovery) still want `&mut LinkerContext`. Split borrows
+    // could eventually be threaded through
+    // `LinkerGraph` instead of laundering through a raw pointer.
     let this_ptr: *mut LinkerContext = this;
 
     let entry_source_indices = this.graph.entry_points.items_source_index();
@@ -89,9 +87,18 @@ pub fn compute_chunks(
 
     // Create chunks for entry points
     for (entry_id_, &source_index) in entry_source_indices.iter().enumerate() {
-        let entry_bit = entry_id_ as chunk::EntryPointId; // @truncate
+        let entry_bit = entry_id_ as chunk::EntryPointId;
 
-        // PORT NOTE: reshaped for borrowck — set the bit through a scoped &mut, then keep an
+        // An `import()` target that no live code references gets no chunk.
+        if !this.graph.files_live.is_set(source_index as usize) {
+            debug_assert!(
+                this.graph.files.items_entry_point_kind()[source_index as usize]
+                    == crate::EntryPoint::Kind::DynamicImport
+            );
+            continue;
+        }
+
+        // reshaped for borrowck — set the bit through a scoped &mut, then keep an
         // owned clone so the `this.graph.files` borrow does not span the helper calls below
         // that need `&LinkerContext` / `&mut LinkerContext`.
         let entry_bits: AutoBitSet = {
@@ -116,7 +123,7 @@ pub fn compute_chunks(
                     .alloc_slice_copy(entry_point_chunk_bits.bytes(this.graph.entry_points.len()));
             } else {
                 // Force HTML chunks to always be generated, even if there's an identical JS file.
-                // PORT NOTE: Zig used a Formatter struct; build the byte key directly since
+                // Build the byte key directly since
                 // entry_bits is arbitrary bytes (not UTF-8) and cannot go through fmt::Display.
                 let mut v = bun_alloc::ArenaVec::new_in(temp);
                 v.push((!has_html_chunk) as u8);
@@ -130,7 +137,7 @@ pub fn compute_chunks(
             let html_chunk_entry = html_chunks.get_or_put(js_chunk_key)?;
             if !html_chunk_entry.found_existing {
                 *html_chunk_entry.value_ptr = Chunk {
-                    entry_point: chunk::EntryPoint::new(source_index, entry_bit, true, false),
+                    entry_point: chunk::EntryPoint::entry_point(source_index, entry_bit),
                     entry_bits: entry_point_chunk_bits.clone()?,
                     content: chunk::Content::Html,
                     output_source_map: SourceMapPieces::init(),
@@ -145,7 +152,7 @@ pub fn compute_chunks(
         }
 
         if css_asts[source_index as usize].is_some() {
-            // SAFETY: see `this_ptr` PORT NOTE above — the helper only reads from
+            // SAFETY: see `this_ptr` note above — the helper only reads from
             // `this.graph` columns disjoint from the slices we hold here.
             let order = find_imported_files_in_css_order(
                 unsafe { &mut *this_ptr },
@@ -171,7 +178,7 @@ pub fn compute_chunks(
                 // const css_chunk_entry = try js_chunks.getOrPut();
                 let order_len = order.len() as usize;
                 *css_chunk_entry.value_ptr = Chunk {
-                    entry_point: chunk::EntryPoint::new(source_index, entry_bit, true, false),
+                    entry_point: chunk::EntryPoint::entry_point(source_index, entry_bit),
                     entry_bits: entry_point_chunk_bits,
                     content: chunk::Content::Css(chunk::CssChunk {
                         imports_in_chunk_in_order: order,
@@ -199,7 +206,7 @@ pub fn compute_chunks(
         entry_point_to_js_chunk_idx[entry_id_] =
             u32::try_from(js_chunk_entry.index).expect("int cast");
         *js_chunk_entry.value_ptr = Chunk {
-            entry_point: chunk::EntryPoint::new(source_index, entry_bit, true, false),
+            entry_point: chunk::EntryPoint::entry_point(source_index, entry_bit),
             entry_bits: entry_point_chunk_bits,
             content: chunk::Content::Javascript(chunk::JavaScriptChunk::default()),
             output_source_map: SourceMapPieces::init(),
@@ -221,7 +228,7 @@ pub fn compute_chunks(
             let css_source_indices =
                 find_imported_css_files_in_js_order(this, temp, Index::init(source_index));
             if css_source_indices.len() > 0 {
-                // SAFETY: see `this_ptr` PORT NOTE above.
+                // SAFETY: see `this_ptr` note above.
                 let order = find_imported_files_in_css_order(
                     unsafe { &mut *this_ptr },
                     temp,
@@ -262,7 +269,7 @@ pub fn compute_chunks(
                         }
                     }
                     *css_chunk_entry.value_ptr = Chunk {
-                        entry_point: chunk::EntryPoint::new(source_index, entry_bit, true, false),
+                        entry_point: chunk::EntryPoint::entry_point(source_index, entry_bit),
                         entry_bits: entry_bits.clone()?,
                         content: chunk::Content::Css(chunk::CssChunk {
                             imports_in_chunk_in_order: order,
@@ -284,7 +291,14 @@ pub fn compute_chunks(
             }
         }
     }
-    // PORT NOTE: reshaped for borrowck — re-borrow file_entry_bits after the loop above mutated it
+    if code_splitting {
+        let min_chunk_size = this.options.min_chunk_size;
+        merge_small_chunks(this, temp, min_chunk_size)?;
+    }
+    let css_asts = this.graph.ast.items_css();
+    let ast_targets = this.graph.ast.items_target();
+
+    // reshaped for borrowck — re-borrow file_entry_bits after the loop above mutated it
     let file_entry_bits: &mut [AutoBitSet] = this.graph.files.items_entry_bits_mut();
 
     let css_reprs = this.graph.ast.items_css();
@@ -310,11 +324,9 @@ pub fn compute_chunks(
                                     && ast_targets[source_index.get() as usize] == Target::Browser;
                             *js_chunk_entry.value_ptr = Chunk {
                                 entry_bits: entry_bits.clone()?,
-                                entry_point: chunk::EntryPoint::new(
+                                entry_point: chunk::EntryPoint::non_entry_point(
                                     source_index.get(),
                                     0,
-                                    false,
-                                    false,
                                 ),
                                 content: chunk::Content::Javascript(
                                     chunk::JavaScriptChunk::default(),
@@ -350,8 +362,7 @@ pub fn compute_chunks(
                             *entry.value_ptr = AtomicUsize::new(0); // Initialize byte count to 0
                         }
                     } else {
-                        // PORT NOTE: Zig used a local `Handler` struct passed to entry_bits.forEach;
-                        // in Rust we pass a context struct + fn pointer.
+                        // Pass a context struct + fn pointer to entry_bits' forEach.
                         struct Handler<'a> {
                             chunks: &'a mut [Chunk],
                             source_id: u32,
@@ -394,7 +405,6 @@ pub fn compute_chunks(
 
         let mut sorted_keys = Vec::<&[u8]>::init_capacity(js_chunks.count());
 
-        // PERF(port): was assume_capacity
         sorted_keys.append_slice_assume_capacity(js_chunks.keys());
 
         // sort by entry_point_id to ensure the main entry point (id=0) comes first,
@@ -428,7 +438,7 @@ pub fn compute_chunks(
         }
 
         let ctx = ChunkSortContext { chunks: &js_chunks };
-        sorted_keys.sort_by(|a, b| {
+        index_sort::sort_slice_by(&mut sorted_keys, |a, b| {
             if ctx.less_than(a, b) {
                 core::cmp::Ordering::Less
             } else if ctx.less_than(b, a) {
@@ -443,13 +453,11 @@ pub fn compute_chunks(
 
             if let chunk::Content::Javascript(js) = &chunk.content {
                 if js.css_chunks.len() > 0 {
-                    // PERF(port): was assume_capacity
                     js_chunk_indices_with_css.append_assume_capacity(sorted_chunks.len() as u32);
                 }
             }
 
-            // PERF(port): was assume_capacity
-            // PORT NOTE: `Chunk` is not `Clone` (Zig is move-by-value); take by index.
+            // `Chunk` is not `Clone`; take by index.
             let idx = js_chunks.get_index(&key).expect("unreachable");
             let owned = core::mem::take(&mut js_chunks.values_mut()[idx]);
             let has_html = owned.flags.contains(chunk::Flags::HAS_HTML_CHUNK);
@@ -459,7 +467,6 @@ pub fn compute_chunks(
             if has_html {
                 if let Some(html_idx) = html_chunks.get_index(&key) {
                     let (_, html_chunk) = html_chunks.swap_remove_at(html_idx);
-                    // PERF(port): was assume_capacity
                     sorted_chunks.append_assume_capacity(html_chunk);
                 }
             }
@@ -467,7 +474,7 @@ pub fn compute_chunks(
 
         if css_chunks.count() > 0 {
             let sorted_css_keys: &mut [u64] = temp.alloc_slice_copy(css_chunks.keys());
-            sorted_css_keys.sort_unstable();
+            index_sort::sort_slice_unstable_by(sorted_css_keys, |a, b| a.cmp(b));
 
             // A map from the index in `css_chunks` to it's final index in `sorted_chunks`
             let remapped_css_indexes: &mut [u32] =
@@ -479,7 +486,6 @@ pub fn compute_chunks(
             for (sorted_index, &key) in (sorted_chunks.len() as usize..).zip(sorted_css_keys.iter())
             {
                 let index = css_chunks.get_index(&key).expect("unreachable");
-                // PERF(port): was assume_capacity
                 let owned = core::mem::take(&mut css_chunks.values_mut()[index]);
                 sorted_chunks.append_assume_capacity(owned);
                 remapped_css_indexes[index] = u32::try_from(sorted_index).expect("int cast");
@@ -503,8 +509,6 @@ pub fn compute_chunks(
         }
 
         break 'sort_chunks sorted_chunks;
-        // TODO(port): return type — Zig returns []Chunk allocated by this.arena(); here we return Box<[Chunk]>.
-        // Confirm ownership of `chunks` slice (sorted_chunks Vec backing storage).
     };
     let chunks: &mut [Chunk] = sorted_chunks.slice_mut();
 
@@ -540,8 +544,8 @@ pub fn compute_chunks(
     let unique_key_item_len = chunk::UNIQUE_KEY_LEN;
     let mut unique_key_builder =
         bun_core::StringBuilder::init_capacity(unique_key_item_len * chunks.len());
-    // PORT NOTE: in Zig `unique_key_buf` aliases the builder's backing buffer and
-    // every `chunk.unique_key` is a slice into it. Mirror that: the builder never
+    // `unique_key_buf` aliases the builder's backing buffer and
+    // every `chunk.unique_key` is a slice into it: the builder never
     // reallocates after `init_capacity`, so each `fmt()` returns a stable subslice
     // that we detach to `&'static [u8]` (BACKREF) and transfer ownership of the
     // single allocation into `this.unique_key_buf` afterwards.
@@ -553,7 +557,7 @@ pub fn compute_chunks(
     let bv2: &mut BundleV2 = unsafe { &mut *LinkerContext::bundle_v2_ptr(this_ptr) };
     let kinds = this.graph.files.items_entry_point_kind();
     let output_paths = this.graph.entry_points.items_output_path();
-    // PORT NOTE: re-borrow after `find_all_imported_parts_in_js_order` released `&mut this`.
+    // re-borrow after `find_all_imported_parts_in_js_order` released `&mut this`.
     let ast_targets = this.graph.ast.items_target();
     for (chunk_id, chunk) in chunks.iter_mut().enumerate() {
         // Assign a unique key to each chunk. This key encodes the index directly so
@@ -638,13 +642,7 @@ pub fn compute_chunks(
         if chunk.template.needs(PlaceholderField::Target) {
             // Determine the target from the AST of the entry point source
             let chunk_target = ast_targets[chunk.entry_point.source_index() as usize];
-            chunk.template.placeholder.target = match chunk_target {
-                Target::Browser => b"browser".to_vec().into_boxed_slice(),
-                Target::Bun => b"bun".to_vec().into_boxed_slice(),
-                Target::Node => b"node".to_vec().into_boxed_slice(),
-                Target::BunMacro => b"macro".to_vec().into_boxed_slice(),
-                Target::BakeServerComponentsSsr => b"ssr".to_vec().into_boxed_slice(),
-            };
+            chunk.template.placeholder.target = chunk_target.naming_placeholder().into();
         }
 
         if chunk.template.needs(PlaceholderField::Dir) {
@@ -681,7 +679,7 @@ pub fn compute_chunks(
                                 bstr::BStr::new(dir_path)
                             ),
                         );
-                        return Err(bun_core::err!("BuildFailed"));
+                        return Err(crate::Error::BuildFailed);
                     }
                 }
             };
@@ -692,22 +690,15 @@ pub fn compute_chunks(
     }
 
     // Transfer ownership of the single backing buffer; every `chunk.unique_key`
-    // above borrows into it. (Zig's `errdefer` freed the builder and cleared
-    // `unique_key_buf`; in Rust the builder `Drop`s on error and `unique_key_buf`
+    // above borrows into it. (The builder `Drop`s on error and `unique_key_buf`
     // is only assigned here on success, so no rollback guard is needed.)
     this.unique_key_buf = unique_key_builder.move_to_slice();
 
+    // The caller-owned
+    // `Box<[Chunk]>` transfers the `sorted_chunks` Vec backing storage.
     Ok(sorted_chunks.to_owned_slice())
-    // TODO(port): return type — Zig returns []Chunk allocated by this.arena(); here we return Box<[Chunk]>.
-    // Confirm ownership of `chunks` slice (sorted_chunks Vec backing storage).
 }
-
-pub use crate::DeferredBatchTask;
-pub use crate::ParseTask;
-pub use crate::ThreadPool;
 
 // Local type aliases referenced above.
 use crate::chunk;
 use crate::options::{Loader, Target};
-
-// ported from: src/bundler/linker_context/computeChunks.zig

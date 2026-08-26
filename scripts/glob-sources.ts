@@ -58,7 +58,9 @@ const patterns = {
   },
   /** server-rendering runtime bundled into binary */
   bakeRuntime: {
-    paths: ["src/runtime/bake/*.ts", "src/runtime/bake/*/*.{ts,css}"],
+    // dev_server/mod.rs is read by bake-codegen.ts to derive the
+    // MessageId/IncomingMessageId const-enums in generated.ts.
+    paths: ["src/runtime/bake/*.ts", "src/runtime/bake/*/*.{ts,css}", "src/runtime/bake/dev_server/mod.rs"],
     exclude: ["src/runtime/bake/generated.ts"],
   },
   /** legacy bindgen input */
@@ -74,25 +76,21 @@ const patterns = {
     paths: ["src/codegen/bindgenv2/**/*.ts"],
   },
   /**
-   * NOT filtered; includes codegen-written files (see bun.ts).
-   *
-   * `src/cli/**` is excluded: it is a committed symlink → `runtime/cli`
-   * which `node:fs.globSync` follows on POSIX (double-counts every file)
-   * but cannot traverse on Windows agents where git materialises the link
-   * as a text file. Excluding the alias keeps the file set platform-stable
-   * for ban-words count pinning.
-   */
-  zig: {
-    paths: ["src/**/*.zig"],
-    exclude: ["src/cli/**"],
-  },
-  /**
    * all `*.rs` + workspace manifests — implicit inputs to the cargo step.
    * `rust-toolchain.toml` is included so a nightly bump invalidates the
    * staticlib (cargo's own fingerprinting then forces a full rebuild).
+   * `.html` under `src/runtime/` is embedded with `include_bytes!` (e.g. the
+   * dev error page template), so edits to it must re-run cargo too.
    */
   rust: {
-    paths: ["src/**/*.rs", "src/**/Cargo.toml", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml"],
+    paths: [
+      "src/**/*.rs",
+      "src/**/Cargo.toml",
+      "src/runtime/**/*.html",
+      "Cargo.toml",
+      "Cargo.lock",
+      "rust-toolchain.toml",
+    ],
   },
   /** all `*.cpp` compiled into bun (bindings, webcore, v8 shim, usockets) */
   cxx: {
@@ -101,9 +99,9 @@ const patterns = {
       "src/jsc/modules/*.cpp",
       "src/jsc/bindings/*.cpp",
       "src/jsc/bindings/webcore/*.cpp",
+      "src/jsc/bindings/webcore/streams/*.cpp",
       "src/jsc/bindings/sqlite/*.cpp",
       "src/jsc/bindings/webcrypto/*.cpp",
-      "src/jsc/bindings/webcrypto/*/*.cpp",
       "src/jsc/bindings/node/*.cpp",
       "src/jsc/bindings/node/crypto/*.cpp",
       "src/jsc/bindings/node/http/*.cpp",
@@ -122,11 +120,9 @@ const patterns = {
     paths: [
       "packages/bun-usockets/src/*.c",
       "packages/bun-usockets/src/eventing/*.c",
-      "packages/bun-usockets/src/internal/*.c",
       "packages/bun-usockets/src/crypto/*.c",
       "src/jsc/bindings/uv-posix-polyfills.c",
       "src/jsc/bindings/uv-posix-stubs.c",
-      "src/*.c",
       "src/jsc/bindings/node/http/llhttp/*.c",
     ],
   },

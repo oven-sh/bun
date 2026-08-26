@@ -4,10 +4,9 @@ use bun_alloc::Arena;
 use bun_core::String as BunString;
 use bun_glob::BunGlobWalker as GlobWalker;
 use bun_jsc::bun_string_jsc;
-use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
 use bun_jsc::{
-    ArgumentsSlice, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, JsTerminated,
-    StringJsc as _, SysErrorJsc as _,
+    ArgumentsSlice, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, Job, JobContext, JsPtr,
+    JsResult, JsThread, StringJsc as _, SysErrorJsc as _,
 };
 use bun_paths::resolve_path::join_string_buf;
 use bun_paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, platform};
@@ -15,7 +14,6 @@ use bun_sys as syscall;
 
 // Codegen hooks (JSGlob): toJS / fromJS / fromJSDirect are provided by the
 // generated C++ wrapper. See PORTING.md §JSC ".classes.ts-backed types".
-// TODO(port): #[derive(bun_jsc::JsClass)] once codegen is wired for Rust.
 #[bun_jsc::JsClass]
 pub struct Glob {
     pattern: Box<[u8]>,
@@ -37,22 +35,29 @@ impl ScanOpts {
         _arena: &Arena,
         cwd_val: JSValue,
         absolute: bool,
-        fn_name: &'static str, // PERF(port): was comptime monomorphization
+        fn_name: &'static str,
     ) -> JsResult<Box<[u8]>> {
-        let cwd_string = bun_core::OwnedString::new(BunString::from_js(cwd_val, global_this)?);
+        let cwd_string = BunString::from_js(cwd_val, global_this)?;
         if cwd_string.is_empty() {
             return Ok(Box::default());
         }
 
         let cwd_str: Box<[u8]> = 'cwd_str: {
-            let cwd_utf8 = cwd_string.to_utf8_without_ref();
+            let cwd_utf8 = cwd_string.to_utf8();
+
+            if cwd_utf8.slice().len() > MAX_PATH_BYTES {
+                return Err(global_this.throw(format_args!(
+                    "{}: invalid `cwd`, longer than {} bytes",
+                    fn_name, MAX_PATH_BYTES
+                )));
+            }
 
             // If its absolute return as is
             if resolve_path::Platform::AUTO.is_absolute(cwd_utf8.slice()) {
                 break 'cwd_str Box::<[u8]>::from(cwd_utf8.slice());
             }
 
-            // `cwd_utf8` drops at scope exit (was `defer cwd_utf8.deinit()`).
+            // `cwd_utf8` drops at scope exit.
             let mut path_buf2 = [0u8; MAX_PATH_BYTES * 2];
 
             if !absolute {
@@ -91,7 +96,7 @@ impl ScanOpts {
     fn from_js(
         global_this: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
-        fn_name: &'static str, // PERF(port): was comptime monomorphization
+        fn_name: &'static str,
         arena: &mut Arena,
     ) -> JsResult<Option<ScanOpts>> {
         let Some(opts_obj) = arguments.next_eat() else {
@@ -186,22 +191,49 @@ impl ScanOpts {
     }
 }
 
-pub(crate) struct WalkTask<'a> {
-    // PORT NOTE: Zig `WalkTask.deinit` did `walker.deinit(true); destroy(walker)`.
-    // `Box<GlobWalker>` drop runs `GlobWalker::Drop` (≡ `deinit(true)`) then frees.
+/// `Glob.scan()` off the JS thread.
+pub(crate) struct WalkTask {
+    // `Box<GlobWalker>` drop runs `GlobWalker::Drop` then frees the box.
     walker: Box<GlobWalker>,
     err: Option<WalkTaskErr>,
-    global: &'a JSGlobalObject,
-    has_pending_activity: &'a AtomicUsize,
+}
+// SAFETY: the walker owns its pattern/arena; nothing in it is thread-affine.
+unsafe impl Send for WalkTask {}
+
+/// While a scan is pending the `Glob` wrapper reports `hasPendingActivity`
+/// (so it is not collected); released on the JS thread with the completion.
+pub(crate) struct PendingScan(JsPtr<AtomicUsize>);
+// SAFETY: a counter inside the Glob's native part, which its wrapper owns.
+unsafe impl bun_jsc::job::JsAffine for PendingScan {}
+impl PendingScan {
+    fn new(counter: &AtomicUsize) -> Self {
+        let _ = counter.fetch_add(1, Ordering::SeqCst);
+        // SAFETY: the Glob's m_ctx, kept alive by hasPendingActivity while > 0.
+        Self(unsafe { JsPtr::new(core::ptr::NonNull::from(counter)) })
+    }
+}
+impl Drop for PendingScan {
+    fn drop(&mut self) {
+        // Only ever dropped on the JS thread (a job's Js side); the pointer is
+        // live because the count we hold kept the wrapper alive.
+        // SAFETY: as above.
+        let _ = unsafe { &*self.0.as_ptr() }.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+#[derive(bun_jsc::JsAffine)]
+pub(crate) struct WalkJs {
+    promise: JSPromiseStrong,
+    _pending: PendingScan,
 }
 
 pub(crate) enum WalkTaskErr {
     Syscall(syscall::Error),
-    Unknown(bun_core::Error),
+    Unknown(crate::Error),
 }
 
 impl WalkTaskErr {
-    pub(crate) fn to_js(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    fn to_js(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             WalkTaskErr::Syscall(err) => Ok(err.to_js(global_this)),
             WalkTaskErr::Unknown(err) => {
@@ -211,70 +243,36 @@ impl WalkTaskErr {
     }
 }
 
-pub(crate) type AsyncGlobWalkTask<'a> = ConcurrentPromiseTask<'a, WalkTask<'a>>;
+impl JobContext for WalkTask {
+    type OffThread = Self;
+    type Js = WalkJs;
 
-impl<'a> WalkTask<'a> {
-    // PORT NOTE: Zig returned `!*AsyncGlobWalkTask` (the only `try` was the heap
-    // allocation). With the global mimalloc allocator `Box::new` is infallible
-    // (panics on OOM), so the Rust port returns the boxed task directly.
-    pub(crate) fn create(
-        global_this: &'a JSGlobalObject,
-        glob_walker: Box<GlobWalker>,
-        has_pending_activity: &'a AtomicUsize,
-    ) -> Box<AsyncGlobWalkTask<'a>> {
-        // PORT NOTE: Zig returned `!*AsyncGlobWalkTask` (alloc OOM); Rust `Box::new`
-        // is infallible (panics on OOM via mimalloc), so no error variant.
-        let walk_task = Box::new(WalkTask {
-            walker: glob_walker,
-            global: global_this,
-            err: None,
-            has_pending_activity,
-        });
-        AsyncGlobWalkTask::create_on_js_thread(global_this, walk_task)
-    }
-}
-
-impl<'a> ConcurrentPromiseTaskContext for WalkTask<'a> {
-    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncGlobWalkTask;
-    fn run(&mut self) {
-        // PORT NOTE: `defer decrPendingActivityFlag(...)` — runs on all paths.
-        let guard = scopeguard::guard(self.has_pending_activity, |hpa| {
-            decr_pending_activity_flag(hpa);
-        });
-        let result = match self.walker.walk() {
+    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
+        let result = match this.walker.walk() {
             Ok(r) => r,
             Err(err) => {
-                self.err = Some(WalkTaskErr::Unknown(err));
-                drop(guard);
-                return;
+                this.err = Some(WalkTaskErr::Unknown(err.into()));
+                return Some(done);
             }
         };
-        match result {
-            bun_sys::Result::Err(err) => {
-                self.err = Some(WalkTaskErr::Syscall(err));
-            }
-            bun_sys::Result::Ok(()) => {}
+        if let bun_sys::Result::Err(err) = result {
+            this.err = Some(WalkTaskErr::Syscall(err));
         }
-        drop(guard);
+        Some(done)
     }
 
-    fn then(&mut self, promise: &mut JSPromise) -> Result<(), JsTerminated> {
-        // PORT NOTE: Zig `defer this.deinit()` freed walker + self. Ownership of
-        // `Box<WalkTask>` is held by `ConcurrentPromiseTask.ctx`; the wrapper is
-        // freed via `ConcurrentPromiseTask::destroy` on the `.manual_deinit` path
-        // after `run_from_js` returns, which drops `ctx` (and thus `walker`).
-
-        if let Some(err) = &self.err {
-            promise.reject_with_async_stack(self.global, err.to_js(self.global))?;
+    fn then(mut this: Self, mut js: WalkJs, cx: &JsThread<'_>) -> JsResult<()> {
+        let global = cx.global();
+        let promise = js.promise.swap();
+        if let Some(err) = &this.err {
+            promise.reject_with_async_stack(global, err.to_js(global))?;
             return Ok(());
         }
-
-        let js_strings = match glob_walk_result_to_js(&mut self.walker, self.global) {
+        let js_strings = match glob_walk_result_to_js(&mut this.walker, global) {
             Ok(v) => v,
-            // PORT NOTE: `error.JSError` → pass the JsError through; reject() pulls the pending exception.
-            Err(e) => return promise.reject(self.global, Err(e)),
+            Err(e) => return promise.reject(global, Err(e)),
         };
-        promise.resolve(self.global, js_strings)
+        promise.resolve(global, js_strings)
     }
 }
 
@@ -287,9 +285,6 @@ fn glob_walk_result_to_js(
         return JSValue::create_empty_array(global_this, 0);
     }
 
-    // PORT NOTE: Zig keyed `MatchedMap` on `bun.String` so it could call
-    // `BunString.toJSArray(keys)` directly. The Rust `MatchedMap` is
-    // `StringArrayHashMap<()>` (Box<[u8]> keys), so rebuild the JS array here.
     JSValue::create_array_from_iter(global_this, keys.iter(), |key| {
         bun_string_jsc::create_utf8_for_js(global_this, key)
     })
@@ -303,7 +298,7 @@ impl Glob {
         &self,
         global_this: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
-        fn_name: &'static str, // PERF(port): was comptime monomorphization
+        fn_name: &'static str,
         arena: &mut Arena,
     ) -> JsResult<Option<Box<GlobWalker>>> {
         let Some(match_opts) = ScanOpts::from_js(global_this, arguments, fn_name, arena)? else {
@@ -316,11 +311,6 @@ impl Glob {
         let error_on_broken_symlinks = match_opts.error_on_broken_symlinks;
         let only_files = match_opts.only_files;
 
-        // PORT NOTE: Zig stack-inits `GlobWalker = .{}` then calls `.init()` /
-        // `.initWithCwd()` as out-param mutators. The Rust `GlobWalker` reshaped
-        // those into associated constructors returning `Result<Maybe<Self>>`, so
-        // there is no `Default` and no separate allocation step.
-        // `errdefer alloc.destroy(globWalker)` is handled by Box drop on `?` paths.
         let _ = arena; // arena ownership is no longer threaded through GlobWalker init.
 
         if let Some(cwd) = cwd {
@@ -333,7 +323,9 @@ impl Glob {
                 error_on_broken_symlinks,
                 only_files,
                 None,
-            )? {
+            )
+            .map_err(crate::Error::from)?
+            {
                 bun_sys::Result::Err(err) => {
                     return Err(global_this.throw_value(err.to_js(global_this)));
                 }
@@ -350,7 +342,9 @@ impl Glob {
             error_on_broken_symlinks,
             only_files,
             None,
-        )? {
+        )
+        .map_err(crate::Error::from)?
+        {
             bun_sys::Result::Err(err) => {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
@@ -359,15 +353,17 @@ impl Glob {
         Ok(Some(glob_walker))
     }
 
-    // PORT NOTE: no `#[bun_jsc::host_fn]` here — the `#[bun_jsc::JsClass]` derive on
+    // No `#[bun_jsc::host_fn]` here — the `#[bun_jsc::JsClass]` derive on
     // the struct already emits the `GlobClass__construct` shim that calls
     // `<Glob>::constructor(..)`. The free-fn `host_fn` expansion can't name an
     // associated fn without a receiver.
-    pub fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Box<Glob>> {
-        let arguments_ = callframe.arguments_old::<1>();
+    pub(crate) fn constructor(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<Box<Glob>> {
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
-        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
-        // `arguments` drops at scope exit (was `defer arguments.deinit()`).
+        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
+        // `arguments` drops at scope exit.
         let Some(pat_arg) = arguments.next_eat() else {
             return Err(global_this.throw(format_args!(
                 "Glob.constructor: expected 1 arguments, got 0"
@@ -381,8 +377,8 @@ impl Glob {
         }
 
         let pat_str: Box<[u8]> = pat_arg
-            .to_slice_clone(global_this)?
-            .into_vec()
+            .to_bun_string(global_this)?
+            .to_owned_slice()
             .into_boxed_slice();
 
         Ok(Box::new(Glob {
@@ -395,17 +391,9 @@ impl Glob {
     /// atomic counter; never allocates, locks, or touches JS. The codegen shim
     /// (`Glob__hasPendingActivity`) handles the `callconv(.c)` ABI and passes
     /// `&*this`.
-    pub fn has_pending_activity(&self) -> bool {
+    pub(crate) fn has_pending_activity(&self) -> bool {
         self.has_pending_activity.load(Ordering::SeqCst) > 0
     }
-}
-
-fn incr_pending_activity_flag(has_pending_activity: &AtomicUsize) {
-    let _ = has_pending_activity.fetch_add(1, Ordering::SeqCst);
-}
-
-fn decr_pending_activity_flag(has_pending_activity: &AtomicUsize) {
-    let _ = has_pending_activity.fetch_sub(1, Ordering::SeqCst);
 }
 
 impl Glob {
@@ -415,15 +403,18 @@ impl Glob {
     // `&mut self` receivers were vestigial. The codegen shim still emits
     // `this: &mut Glob`; `&mut T` auto-derefs to `&T`.
     #[bun_jsc::host_fn(method)]
-    pub fn __scan(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments_ = callframe.arguments_old::<1>();
+    pub(crate) fn __scan(
+        &self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
-        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
+        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
         // `arguments` drops at scope exit.
 
         let mut arena = Arena::new();
-        // PORT NOTE: GlobWalker::init/init_with_cwd own their allocations (Box) in
-        // the Rust port; the arena here is vestigial and only mirrors Zig structure.
+        // GlobWalker::init/init_with_cwd own their allocations (Box); the
+        // arena here is vestigial.
         let glob_walker =
             match self.make_glob_walker(global_this, &mut arguments, "scan", &mut arena) {
                 Err(err) => {
@@ -437,32 +428,31 @@ impl Glob {
                 Ok(Some(gw)) => gw,
             };
 
-        incr_pending_activity_flag(&self.has_pending_activity);
-        // PORT NOTE: Zig `catch { decr; deinit; throwOOM }` handled alloc failure.
-        // Rust `Box::new` is infallible (panics via mimalloc on OOM), so the error
-        // arm collapses; `glob_walker` is moved in and dropped on unwind.
-        let mut task = WalkTask::create(global_this, glob_walker, &self.has_pending_activity);
-        let promise = task.promise.value();
-        task.schedule();
-        // Ownership passes to the work pool / event loop; freed via
-        // `ConcurrentPromiseTask::destroy` on the `.manual_deinit` path.
-        // PORT NOTE: lifetime — WalkTask<'_> borrows `&self.has_pending_activity`
-        // and `global_this`. Both referents outlive the task: `Glob` is GC-rooted
-        // via `hasPendingActivity()`, and `JSGlobalObject` lives until VM teardown.
-        // `into_raw` erases the stack-tied `'_` once the heap allocation escapes.
-        let _ = bun_core::heap::into_raw(task);
-        Ok(promise)
+        let cx = global_this.js_thread();
+        let promise = JSPromiseStrong::init(global_this);
+        let value = promise.value();
+        Job::<WalkTask>::schedule(
+            &cx,
+            WalkTask {
+                walker: glob_walker,
+                err: None,
+            },
+            WalkJs {
+                promise,
+                _pending: PendingScan::new(&self.has_pending_activity),
+            },
+        );
+        Ok(value)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn __scan_sync(
+    pub(crate) fn __scan_sync(
         &self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments_ = callframe.arguments_old::<1>();
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
-        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
+        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
 
         let mut arena = Arena::new();
         let mut glob_walker =
@@ -477,10 +467,9 @@ impl Glob {
                 }
                 Ok(Some(gw)) => gw,
             };
-        // Zig: `defer { globWalker.deinit(true); alloc.destroy(globWalker); }` — Box<GlobWalker>
-        // drops at scope exit (`GlobWalker::Drop` ≡ `deinit(true)`).
+        // Box<GlobWalker> drops at scope exit.
 
-        match glob_walker.walk()? {
+        match glob_walker.walk().map_err(crate::Error::from)? {
             bun_sys::Result::Err(err) => {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
@@ -496,12 +485,8 @@ impl Glob {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // PERF(port): was arena bulk-free — Zig used a local ArenaAllocator for the
-        // toSlice() temp allocation. Dropped here; to_slice() owns its buffer.
-
-        let arguments_ = callframe.arguments_old::<1>();
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
-        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
+        let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
         let Some(str_arg) = arguments.next_eat() else {
             return Err(global_this.throw(format_args!(
                 "Glob.matchString: expected 1 arguments, got 0"
@@ -514,13 +499,10 @@ impl Glob {
             )));
         }
 
-        let str = str_arg.to_slice(global_this)?;
-        // `str` drops at scope exit (was `defer str.deinit()`).
+        let str = str_arg.to_utf8(global_this)?;
 
         Ok(JSValue::from(
             bun_glob::r#match(&self.pattern, str.slice()).matches(),
         ))
     }
 }
-
-// ported from: src/runtime/api/glob.zig

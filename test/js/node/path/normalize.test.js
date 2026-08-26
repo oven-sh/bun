@@ -52,6 +52,28 @@ describe("path.normalize", () => {
     assert.strictEqual(path.posix.normalize("foo/bar\\baz"), "foo/bar\\baz");
   });
 
+  test("first segment of exactly 4 chars ending in '..' followed by '..'", () => {
+    // normalizeString's lastSegmentLength for the FIRST segment must be `i`
+    // (Node's lastSlash starts at -1), not `i - 2`: a 4-char first segment
+    // ending in ".." was misrecorded as a literal ".." and never popped.
+    assert.strictEqual(path.posix.normalize("bb../../x"), "x");
+    assert.strictEqual(path.win32.normalize("bb..\\..\\x"), "x");
+    assert.strictEqual(path.win32.normalize("bb../../x"), "x");
+    assert.strictEqual(path.posix.normalize("..../../x"), "x");
+    assert.strictEqual(path.posix.normalize("bb../.."), ".");
+    assert.strictEqual(path.posix.normalize("bb../../"), "./");
+    assert.strictEqual(path.posix.join("bb..", "..", "x"), "x");
+    assert.strictEqual(path.win32.join("bb..", "..", "x"), "x");
+    // Other first-segment shapes are unaffected.
+    assert.strictEqual(path.posix.normalize("b../../x"), "x");
+    assert.strictEqual(path.posix.normalize("abc../../x"), "x");
+    assert.strictEqual(path.posix.normalize("abcd/../x"), "x");
+    // A real ".." first segment still can't be popped, and absolute paths
+    // never start a segment at lastSlash === -1.
+    assert.strictEqual(path.posix.normalize("../../x"), "../../x");
+    assert.strictEqual(path.posix.normalize("/bb../../x"), "/x");
+  });
+
   test("very long paths", () => {
     // Regression test: buffer overflow with paths longer than PATH_SIZE
     // This used to panic with "index out of bounds" because the buffer

@@ -8,7 +8,7 @@ pub struct Echo {
     /// The fully-rendered output (joined argv + optional trailing newline).
     /// Kept on the state so the async IOWriter path can borrow it across
     /// yields.
-    pub output: Vec<u8>,
+    pub(crate) output: Vec<u8>,
     state: State,
 }
 
@@ -69,7 +69,7 @@ impl Echo {
                     if thearg.last() == Some(&b'\n') {
                         has_leading_newline = true;
                     }
-                    // Collapse a trailing run of '\n'; matches Zig's trimSubsequentLeadingChars.
+                    // Collapse a trailing run of '\n'.
                     out.extend_from_slice(bun_core::strings::trim_subsequent_leading_chars(
                         thearg, b'\n',
                     ));

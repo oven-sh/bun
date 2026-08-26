@@ -238,3 +238,31 @@ test("ECDH.convertKey - throws on invalid input", () => {
     ECDH.convertKey("0102030405", "prime256v1", "hex", "hex", "invalid-format");
   }).toThrow("Invalid ECDH format: invalid-format");
 });
+
+// Test that computeSecret reports an error instead of returning a buffer when the
+// instance has a public key but no private key (ECDH_compute_key fails in that case).
+test("ECDH - computeSecret throws when only a public key is set (no private key)", () => {
+  const curve = "prime256v1";
+
+  // A legitimate peer with a full key pair
+  const alice = createECDH(curve);
+  alice.generateKeys();
+  const alicePubKey = alice.getPublicKey();
+
+  // bob only sets a public key (a documented API) and never generates/sets a private key,
+  // so the underlying key agreement cannot succeed.
+  const bob = createECDH(curve);
+  bob.setPublicKey(alicePubKey);
+
+  // Must throw a clean error, never hand back a "secret" buffer.
+  expect(() => bob.computeSecret(alicePubKey)).toThrow();
+
+  // The legitimate case in the same curve still works and both sides agree.
+  const carol = createECDH(curve);
+  carol.generateKeys();
+  const carolSecret = carol.computeSecret(alicePubKey);
+  const aliceSecret = alice.computeSecret(carol.getPublicKey());
+  expect(carolSecret).toBeInstanceOf(Buffer);
+  expect(carolSecret.length).toBeGreaterThan(0);
+  expect(carolSecret.toString("hex")).toBe(aliceSecret.toString("hex"));
+});

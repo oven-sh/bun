@@ -59,6 +59,16 @@ export const SSLConfig = b.dictionary(
       default: 0,
       internalName: "secure_options",
     },
+    minVersion: {
+      type: b.i32,
+      default: 0,
+      internalName: "ssl_min_version",
+    },
+    maxVersion: {
+      type: b.i32,
+      default: 0,
+      internalName: "ssl_max_version",
+    },
     keyFile: {
       type: b.String.nullable,
       internalName: "key_file",
@@ -85,6 +95,22 @@ export const SSLConfig = b.dictionary(
       type: b.u32,
       default: 0,
       internalName: "client_renegotiation_window",
+    },
+    crl: SSLConfigFile,
+    allowPartialTrustChain: {
+      type: b.bool,
+      default: false,
+      internalName: "allow_partial_trust_chain",
+    },
+    sessionTimeout: {
+      type: b.i32,
+      default: 0,
+      internalName: "session_timeout",
+    },
+    sigalgs: b.String.nullable,
+    ecdhCurve: {
+      type: b.String.nullable,
+      internalName: "ecdh_curve",
     },
   },
 );

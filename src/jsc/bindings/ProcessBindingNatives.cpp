@@ -106,16 +106,18 @@ static JSValue processBindingNativesReturnUndefined(VM& vm, JSObject* bindingObj
     internal/cluster/primary                    processBindingNativesGetter     PropertyCallback
     internal/cluster/RoundRobinHandle           processBindingNativesGetter     PropertyCallback
     internal/cluster/Worker                     processBindingNativesGetter     PropertyCallback
-    internal/crypto/x509                        processBindingNativesGetter     PropertyCallback
     internal/debugger                           processBindingNativesGetter     PropertyCallback
     internal/errors                             processBindingNativesGetter     PropertyCallback
     internal/fifo                               processBindingNativesGetter     PropertyCallback
     internal/fixed_queue                        processBindingNativesGetter     PropertyCallback
     internal/freelist                           processBindingNativesGetter     PropertyCallback
+    internal/fs/binding                         processBindingNativesGetter     PropertyCallback
     internal/fs/cp-sync                         processBindingNativesGetter     PropertyCallback
     internal/fs/cp                              processBindingNativesGetter     PropertyCallback
     internal/fs/glob                            processBindingNativesGetter     PropertyCallback
     internal/fs/streams                         processBindingNativesGetter     PropertyCallback
+    internal/fs/watch                           processBindingNativesGetter     PropertyCallback
+    internal/fs/watchfile                       processBindingNativesGetter     PropertyCallback
     internal/html                               processBindingNativesGetter     PropertyCallback
     internal/http                               processBindingNativesGetter     PropertyCallback
     internal/http/FakeSocket                    processBindingNativesGetter     PropertyCallback

@@ -8,9 +8,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Once;
 
 pub mod generated_perf_trace_events;
-pub mod hw_timer;
 pub mod system_timer;
-pub mod tracy;
 
 pub use crate::generated_perf_trace_events::PerfEvent;
 
@@ -31,11 +29,11 @@ pub struct Disabled;
 
 impl Disabled {
     #[inline]
-    pub(crate) fn end(&self) {}
+    fn end(&self) {}
 }
 
 impl Ctx {
-    pub fn end(&self) {
+    pub(crate) fn end(&self) {
         match self {
             Ctx::Disabled(ctx) => ctx.end(),
             Ctx::Enabled(ctx) => ctx.end(),
@@ -43,8 +41,7 @@ impl Ctx {
     }
 }
 
-// Zig callsites pair `bun.perf.trace(...)` with `defer tracer.end()`. Per
-// PORTING.md `defer <side effect>` → RAII: `Ctx` ends itself on drop so callers
+// `Ctx` ends itself on drop so callers
 // write `let _tracer = bun_perf::trace(...)` and forget about it.
 impl Drop for Ctx {
     #[inline]
@@ -94,7 +91,7 @@ fn is_enabled_once() {
     }
 }
 
-pub(crate) fn is_enabled() -> bool {
+fn is_enabled() -> bool {
     IS_ENABLED_ONCE.call_once(is_enabled_once);
     IS_ENABLED.load(Ordering::SeqCst)
 }
@@ -103,24 +100,17 @@ pub(crate) fn is_enabled() -> bool {
 ///
 /// When instruments is not connected, this is a no-op.
 ///
-/// When adding a new event, you must run `scripts/generate-perf-trace-events.sh` to update the list of trace events.
-///
-/// Tip: Make sure you write bun.perf.trace() with a string literal exactly instead of passing a variable.
-///
-/// It has to be compile-time known this way because they need to become string literals in C.
-// PORT NOTE: Zig took `comptime name: [:0]const u8` and used `@hasField(PerfEvent, name)` +
-// `@compileError` to validate membership at compile time, then `@field(PerfEvent, name)` to get
-// the enum value. In Rust, taking `PerfEvent` directly gives the same compile-time guarantee via
-// the type system — the @hasField/@compileError block is dropped.
+/// Pass a `PerfEvent` variant; the type system guarantees the event is a
+/// compile-time-known member of the generated set. Event names must become
+/// string literals in C, so when adding a new event you must run
+/// `scripts/generate-perf-trace-events.sh` to regenerate the list.
 pub fn trace(event: PerfEvent) -> Ctx {
     if !is_enabled() {
-        // PERF(port): @branchHint(.likely) — profile if it shows up on a hot path.
         return Ctx::Disabled(Disabled);
     }
 
     #[cfg(target_os = "macos")]
     {
-        // PERF(port): was comptime monomorphization (event id was comptime i32) — profile if it shows up on a hot path.
         return Ctx::Enabled(Darwin::init(event as i32));
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -141,22 +131,20 @@ pub use darwin_impl::Darwin;
 mod darwin_impl {
     use super::*;
     use bun_sys::darwin::OSLog;
-    use core::sync::atomic::AtomicPtr;
-    // TODO(port): verify Rust path for `OSLog.Signpost.Interval` and `.PointsOfInterest` category
     use bun_sys::darwin::os_log::signpost::{
         Category as SignpostCategory, Interval as SignpostInterval,
     };
+    use core::sync::atomic::AtomicPtr;
 
     pub struct Darwin {
         interval: SignpostInterval,
     }
 
     impl Darwin {
-        // PERF(port): was `comptime name: i32` — profile if it shows up on a hot path.
-        pub fn init(name: i32) -> Self {
+        pub(crate) fn init(name: i32) -> Self {
             Self {
                 // SAFETY: `is_enabled()` returned true, which implies `Darwin::get()` is Some
-                // (see `is_enabled_once`). Zig used `os_log.?` (unchecked unwrap).
+                // (see `is_enabled_once`).
                 interval: Self::get()
                     .expect("unreachable")
                     .signpost(name)
@@ -164,18 +152,17 @@ mod darwin_impl {
             }
         }
 
-        pub fn end(&self) {
+        pub(crate) fn end(&self) {
             self.interval.end();
         }
 
         fn get_once() {
-            // TODO(port): verify `OSLog::init()` signature; Zig returns `?*OSLog`
             if let Some(log) = OSLog::init() {
                 OS_LOG.store(log.as_ptr(), Ordering::Release);
             }
         }
 
-        pub fn get() -> Option<&'static OSLog> {
+        pub(crate) fn get() -> Option<&'static OSLog> {
             OS_LOG_ONCE.call_once(Self::get_once);
             let ptr = OS_LOG.load(Ordering::Acquire);
             if ptr.is_null() {
@@ -199,7 +186,7 @@ pub struct Linux {
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 impl Linux {
-    pub(crate) fn is_supported() -> bool {
+    fn is_supported() -> bool {
         INIT_ONCE.call_once(Self::init_once);
         IS_INITIALIZED.load(Ordering::Relaxed)
     }
@@ -209,14 +196,14 @@ impl Linux {
         IS_INITIALIZED.store(result != 0, Ordering::Relaxed);
     }
 
-    pub(crate) fn init(event: PerfEvent) -> Self {
+    fn init(event: PerfEvent) -> Self {
         Self {
             start_time: bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns(),
             event,
         }
     }
 
-    pub(crate) fn end(&self) {
+    fn end(&self) {
         if !Self::is_supported() {
             return;
         }
@@ -225,8 +212,7 @@ impl Linux {
             .ns()
             .saturating_sub(self.start_time);
 
-        // Zig's `@tagName(this.event).ptr` yields `[*:0]const u8` (NUL-terminated).
-        // `PerfEvent::as_cstr()` provides the equivalent `&'static CStr` so the C side's
+        // `PerfEvent::as_cstr()` provides a `&'static CStr` so the C side's
         // `snprintf("C|%d|%s|%lld", ...)` reads a properly terminated string.
         // SAFETY: FFI call; pointer is 'static and NUL-terminated.
         let _ = unsafe {
@@ -245,5 +231,3 @@ static INIT_ONCE: Once = Once::new();
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core::perf::sys::{Bun__linux_trace_emit, Bun__linux_trace_init};
-
-// ported from: src/perf/perf.zig

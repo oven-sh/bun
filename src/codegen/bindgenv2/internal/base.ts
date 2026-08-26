@@ -27,7 +27,7 @@ export abstract class Type {
     return this.bindgenType + ".ZigType";
   }
 
-  /** This must be overridden if bindgen.zig defines a custom `OptionalZigType`. */
+  /** This must be overridden if a custom `OptionalZigType` is defined. */
   optionalZigType(style?: CodeStyle): string {
     return `?${this.zigType(style)}`;
   }
@@ -56,17 +56,11 @@ export abstract class NamedType extends Type {
   get cppSource(): string | null {
     return null;
   }
-  get zigSource(): string | null {
-    return null;
-  }
   // These getters are faster than `.cppHeader != null` etc.
   get hasCppHeader(): boolean {
     return false;
   }
   get hasCppSource(): boolean {
-    return false;
-  }
-  get hasZigSource(): boolean {
     return false;
   }
   getHeaders(result: Set<string>): void {

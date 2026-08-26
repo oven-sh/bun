@@ -8,11 +8,10 @@ bun_core::declare_scope!(AutoKiller, hidden);
 #[derive(Default)]
 pub struct ProcessAutoKiller {
     /// Keys are intrusively-refcounted `*Process` (ref()'d on insert, deref()'d
-    /// on remove/drop). Stored as raw ptr to preserve identity-hash semantics
-    /// of Zig `AutoArrayHashMap(*Process, void)`.
-    pub processes: ArrayHashMap<*mut Process, ()>,
+    /// on remove/drop). Stored as raw ptr for identity-hash semantics.
+    pub(crate) processes: ArrayHashMap<*mut Process, ()>,
     pub enabled: bool,
-    pub ever_enabled: bool,
+    pub(crate) ever_enabled: bool,
 }
 
 impl ProcessAutoKiller {
@@ -63,12 +62,12 @@ impl ProcessAutoKiller {
         self.processes.clear();
     }
 
-    /// Spec: `onSubprocessSpawn(*ProcessAutoKiller, *bun.spawn.Process)`.
-    /// Takes a raw `*mut Process` (not `&Process`) to preserve Zig's pointer
+    /// Registers a freshly spawned subprocess for auto-kill tracking.
+    /// Takes a raw `*mut Process` (not `&Process`) to preserve pointer
     /// identity semantics for the map key without a const→mut provenance cast.
-    pub fn on_subprocess_spawn(&mut self, process: NonNull<Process>) {
+    pub(crate) fn on_subprocess_spawn(&mut self, process: NonNull<Process>) {
         if self.enabled {
-            // Zig: `put(...) catch return` — alloc failure means we never took
+            // Alloc failure means we never took
             // a ref, so just bail. `put` here is fallible only on OOM.
             if self.processes.put(process.as_ptr(), ()).is_err() {
                 return;
@@ -79,8 +78,9 @@ impl ProcessAutoKiller {
         }
     }
 
-    /// Spec: `onSubprocessExit(*ProcessAutoKiller, *bun.spawn.Process)`.
-    pub fn on_subprocess_exit(&mut self, process: NonNull<Process>) {
+    /// Removes an exited subprocess from auto-kill tracking, releasing the
+    /// ref taken at spawn.
+    pub(crate) fn on_subprocess_exit(&mut self, process: NonNull<Process>) {
         if self.ever_enabled {
             if self.processes.swap_remove(&process.as_ptr()) {
                 // SAFETY: we held a ref from on_subprocess_spawn; the pointee
@@ -105,5 +105,3 @@ impl Drop for ProcessAutoKiller {
         // `self.processes` storage freed by its own Drop.
     }
 }
-
-// ported from: src/jsc/ProcessAutoKiller.zig

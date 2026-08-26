@@ -898,33 +898,18 @@ pub(crate) trait PathOrFdExt {
         Self: Sized;
 }
 
-/// Join a plain relative Windows path onto the process cwd, writing the
-/// unnormalized `cwd ++ '\' ++ path` into `scratch` and returning it.
-///
-/// Relative paths must become drive-absolute before the `\\?\` prefix (which
-/// every drive-absolute path gets in `slice_z_with_force_copy` /
-/// `to_kernel32_path`, mirroring Node's `path.toNamespacedPath()` on every
-/// `fs` path) can apply. Without the prefix, Win32 normalization strips
-/// trailing dots/spaces from the final component, so a relative name can
-/// refer to a different file than the one the NT-based syscalls (`openat`,
-/// used by `writeFile`) created. https://github.com/oven-sh/bun/issues/8836
-///
-/// Returns `None`, keeping the caller on its existing handling, when the
-/// path is not plain relative (empty, absolute, or drive-relative `C:foo`),
-/// the cwd is unavailable or not drive-letter rooted (e.g. a UNC cwd), or
-/// the join would not fit `scratch`.
+/// `cwd ++ '\' ++ path` for a plain relative path, so it can take the `\\?\`
+/// branch like Node's `toNamespacedPath()`: without the prefix Win32 strips
+/// trailing dots and spaces (#8836). `None` keeps the caller's existing handling.
 #[cfg(windows)]
 fn join_cwd_windows<'a>(path: &[u8], scratch: &'a mut PathBuffer) -> Option<&'a [u8]> {
     if path.is_empty() || bun_paths::is_absolute(path) {
         return None;
     }
-    // `C:foo` is relative to drive `C`'s own current directory, which only
-    // the Win32 layer tracks; joining it onto the process cwd would be wrong.
+    // `C:foo` is relative to drive `C`'s own cwd, which only Win32 tracks.
     if path.len() >= 2 && path[1] == b':' && bun_paths::is_drive_letter(path[0]) {
         return None;
     }
-    // Reshaped for borrowck: `getcwd` returns a borrow of `scratch`; capture
-    // the length, drop the borrow, then write after it.
     let cwd_len = match bun_core::getcwd(scratch) {
         Ok(cwd) => cwd.len(),
         Err(_) => return None,
@@ -957,11 +942,9 @@ impl PathLikeExt for PathLike<'_> {
 
         #[cfg(windows)]
         {
-            // Plain relative paths are rebound to their cwd-joined spelling so
-            // the drive-absolute branch below gives them the same `\\?\`
-            // treatment; `join_cwd_windows` explains why. Declared before the
-            // shadowed `sliced` so the pooled buffer outlives the borrow. The
-            // original `sliced` still backs the fallthrough copy at the bottom.
+            // Relative paths take the drive-absolute `\\?\` branch below via
+            // their cwd-joined spelling; the fallthrough copy at the bottom
+            // still sees the original bytes when the join declines.
             let mut cwd_join_scratch;
             let sliced = if !bun_paths::is_absolute(sliced) {
                 cwd_join_scratch = bun_paths::path_buffer_pool::get();
@@ -1149,11 +1132,9 @@ impl PathLikeExt for PathLike<'_> {
                 let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
                 return Ok(strings::to_kernel32_path(buf_u16, b"."));
             }
-            // Plain relative paths: join onto the cwd so `to_kernel32_path`
-            // sees a drive-absolute path and adds the `\\?\` prefix, matching
-            // `slice_z_with_force_copy`; see `join_cwd_windows`. As in the
-            // rooted branch above, `buf` is the scratch for the cwd join and
-            // the final wide path lands back in `buf`.
+            // Relative paths join onto the cwd so `to_kernel32_path` adds the
+            // `\\?\` prefix, as `slice_z_with_force_copy` does; `buf` is the
+            // join scratch and then receives the final wide path.
             if let Some(joined) = join_cwd_windows(s, buf) {
                 if strings::fits_in_wide_path_buffer(joined) {
                     let normal = bun_paths::resolve_path::normalize_buf::<

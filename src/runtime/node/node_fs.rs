@@ -5177,11 +5177,6 @@ impl NodeFS {
 
         #[cfg(windows)]
         {
-            // `os_path_kernel32` (rather than `to_kernel32_path` on the raw
-            // argument) resolves relative paths against the cwd so they get
-            // the `\\?\` prefix like every other node:fs operation; see
-            // `join_cwd_windows`. It rejects paths whose UTF-16 form cannot
-            // exist on disk instead of overflowing the conversion.
             let name_too_long = |path: &PathLike| sys::Error {
                 errno: E::ENAMETOOLONG as _,
                 syscall: sys::Tag::copyfile,
@@ -6260,9 +6255,8 @@ impl NodeFS {
             };
 
             if T::IS_DIRENT && dirent_path.is_empty() {
-                // Use the caller's path, not the (possibly cwd-resolved and
-                // `\\?\`-prefixed) path handed to the syscall: Node reports
-                // `Dirent.parentPath` in terms of the argument it was given.
+                // `Dirent.parentPath` is the caller's argument, as in Node, not
+                // the cwd-resolved path the syscall saw.
                 dirent_path = webcore::encoding::to_bun_string(
                     without_nt_prefix::<u8>(args.path.slice()),
                     encoding_to_node(args.encoding),
@@ -6315,8 +6309,6 @@ impl NodeFS {
             };
 
             if T::IS_DIRENT && dirent_path.is_empty() {
-                // See `readdir_with_entries`: `Dirent.parentPath` reports the
-                // caller's path, not the resolved one handed to the syscall.
                 dirent_path = webcore::encoding::to_bun_string(
                     without_nt_prefix::<u8>(args.path.slice()),
                     encoding_to_node(args.encoding),
@@ -6669,9 +6661,8 @@ impl NodeFS {
                 }
 
                 if T::IS_DIRENT {
-                    // `Dirent.parentPath` is derived from the caller's path
-                    // (`root_basename` may be the cwd-resolved, `\\?\`-prefixed
-                    // form handed to the syscalls).
+                    // `args.path`, not `root_basename`: the latter may be the
+                    // cwd-resolved `\\?\` form the syscalls saw.
                     let joined = paths::resolve_path::join_spill::<paths::platform::Auto>(
                         &mut dirent_spill,
                         &[args.path.slice(), name_to_copy],

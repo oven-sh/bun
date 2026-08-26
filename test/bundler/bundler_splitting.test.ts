@@ -772,6 +772,28 @@ describe("bundler", () => {
     ],
   });
 
+  // Two chunks that import() each other reach the same set of chunks; their
+  // content hashes must still differ, or hash-only naming collides.
+  itBundled("splitting/ChunkImportCycleDistinctHashes", {
+    files: {
+      "/a.js": /* js */ `
+        export function a() { return 'a' }
+        import('./b.js').then(m => console.log(a(), m.b()))
+      `,
+      "/b.js": /* js */ `
+        export function b() { return 'b' }
+        export const again = () => import('./a.js')
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    entryNaming: "[hash].[ext]",
+    onAfterBundle(api) {
+      expect(readdirSync(api.outdir).filter(f => f.endsWith(".js"))).toHaveLength(2);
+    },
+  });
   // An entry point with exports of its own keeps its module namespace as
   // written: shared code is not folded into it (which would add exports),
   // but the chunks that are always loaded with it still fold into one.

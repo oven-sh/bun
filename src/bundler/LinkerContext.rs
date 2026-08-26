@@ -2448,7 +2448,9 @@ impl<'a> LinkerContext<'a> {
     /// asset paths its output pieces reference) and that of every chunk it
     /// transitively reaches through cross-chunk imports or output pieces, so a
     /// change anywhere below a chunk renames it. Cycles are fine: reachability
-    /// is a fixpoint over bitsets, and each closure is digested in chunk order.
+    /// is a fixpoint over bitsets, and each chunk digests its own hash first,
+    /// then the rest of its closure in chunk order (so two chunks that reach
+    /// each other still differ).
     pub(crate) fn final_chunk_hashes(&self, chunks: &[Chunk]) -> Result<Vec<u64>, AllocError> {
         let n = chunks.len();
         let mut own: Vec<u64> = Vec::with_capacity(n);
@@ -2529,11 +2531,15 @@ impl<'a> LinkerContext<'a> {
 
         Ok(reach
             .iter()
-            .map(|bits| {
+            .enumerate()
+            .map(|(i, bits)| {
                 let mut hash = ContentHasher::default();
+                hash.write(&own[i].to_ne_bytes());
                 let mut iter = bits.iterator::<true, true>();
                 while let Some(j) = iter.next() {
-                    hash.write(&own[j].to_ne_bytes());
+                    if j != i {
+                        hash.write(&own[j].to_ne_bytes());
+                    }
                 }
                 hash.digest()
             })

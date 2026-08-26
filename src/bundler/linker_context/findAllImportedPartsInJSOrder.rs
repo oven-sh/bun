@@ -37,16 +37,13 @@ pub(crate) fn find_all_imported_parts_in_js_order(
             }
             // SAFETY: shared for reading; see the note above on the one column written.
             let c: &LinkerContext = unsafe { &*ctx.c.as_mut_ptr() };
-            bun_core::handle_oom(
-                find_imported_parts_in_js_order(
-                    c,
-                    chunk,
-                    &mut Vec::new(),
-                    &mut Vec::new(),
-                    u32::try_from(index).expect("int cast"),
-                )
-                .map_err(|_| bun_alloc::AllocError),
-            );
+            bun_core::handle_oom(find_imported_parts_in_js_order(
+                c,
+                chunk,
+                &mut Vec::new(),
+                &mut Vec::new(),
+                u32::try_from(index).expect("int cast"),
+            ));
         },
         chunks,
     );
@@ -59,7 +56,7 @@ pub(crate) fn find_imported_parts_in_js_order(
     part_ranges_shared: &mut Vec<PartRange>,
     parts_prefix_shared: &mut Vec<PartRange>,
     chunk_index: u32,
-) -> Result<(), crate::Error> {
+) -> Result<(), bun_alloc::AllocError> {
     let mut chunk_order_array: Vec<Order> =
         Vec::with_capacity(chunk.files_with_parts_in_chunk.count());
     {

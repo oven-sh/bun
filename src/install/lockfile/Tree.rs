@@ -797,7 +797,12 @@ impl Tree {
                     continue 'dep;
                 }
 
-                if pkg_resolutions[pkg_id as usize].tag == crate::resolution::Tag::Folder {
+                // Peer edges are excluded: a peer resolved to a folder package was bound to an
+                // importer's existing edge, so it must dedupe against that placement instead of
+                // nesting a second copy of the folder.
+                if !dependency.behavior.is_peer()
+                    && pkg_resolutions[pkg_id as usize].tag == crate::resolution::Tag::Folder
+                {
                     // Folder packages never hoist, so a cycle between them would nest forever.
                     let mut tree_id = next_id;
                     while tree_id != INVALID_ID {

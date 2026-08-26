@@ -713,23 +713,24 @@ describe("bundler", () => {
     },
     run: { stdout: '["compiled",42] function' },
   });
-  // On macOS both names are builtins and stay external on their own. On any
-  // other host they are not builtins, so a bundle made there for a Mac marks
-  // them external; either way the `bun:` specifiers survive into the output.
+  // On macOS both names are builtins; on any other host they are unknown
+  // `bun:` modules, which `--target=bun` leaves external. Either way a bundle
+  // made on Linux for a Mac keeps the `bun:` specifiers in its output.
   itBundled("compile/BunObjCCrossTargetKeepsSpecifier", {
     target: "bun",
     outdir: "/out",
-    external: isMacOS ? [] : ["bun:objc", "bun:appkit"],
     files: {
       "/entry.ts": `
         import { objc } from "bun:objc";
         import { app } from "bun:appkit";
-        console.log(typeof objc, typeof app);
+        import future from "bun:not-in-this-build";
+        console.log(typeof objc, typeof app, typeof future);
       `,
     },
     onAfterBundle(api) {
       api.expectFile("/out/entry.js").toContain('"bun:objc"');
       api.expectFile("/out/entry.js").toContain('"bun:appkit"');
+      api.expectFile("/out/entry.js").toContain('"bun:not-in-this-build"');
     },
   });
 

@@ -231,7 +231,83 @@ describe("bun run: unsettled top-level await", () => {
     expect(r.exitCode).toBe(13);
   });
 
-  test("beforeExit fires first and can resolve the await", async () => {
+  test("a dynamic-import cycle that deadlocks on its own await exits 13", async () => {
+    using dir = tempDir("issue-19049-cycle", {
+      "a.mjs": `import "./b.mjs";`,
+      "b.mjs": `console.log("B_BEFORE");\nawait import("./a.mjs");\nconsole.log("B_AFTER");`,
+    });
+    const r = await run({ cmd: [bunExe(), "a.mjs"], cwd: String(dir) });
+    expect(r.signalCode).toBeNull();
+    expect(r.stdout).toBe("B_BEFORE\n");
+    expect(r.stderr).toContain("unsettled top-level await");
+    expect(r.exitCode).toBe(13);
+  });
+
+  test("process.on('exit') sees code 13", async () => {
+    using dir = tempDir("issue-19049-exit-listener", {
+      "entry.mjs": `
+process.on("exit", code => console.log("exit", code, process.exitCode));
+await new Promise(() => {});
+`,
+    });
+    const r = await run({ cmd: [bunExe(), "entry.mjs"], cwd: String(dir) });
+    expect(r.signalCode).toBeNull();
+    expect(r.stdout).toBe("exit 13 13\n");
+    expect(r.stderr).toContain("unsettled top-level await");
+    expect(r.exitCode).toBe(13);
+  });
+
+  test("an explicit process.exitCode wins and there is no warning", async () => {
+    // Node skips the unsettled-await check once the exit code is already decided.
+    using dir = tempDir("issue-19049-exitcode", {
+      "entry.mjs": `
+process.on("exit", code => console.log("exit", code, process.exitCode));
+process.exitCode = 42;
+await new Promise(() => {});
+`,
+    });
+    const r = await run({ cmd: [bunExe(), "entry.mjs"], cwd: String(dir) });
+    expect(r.signalCode).toBeNull();
+    expect({ stdout: r.stdout, stderr: r.stderr, exitCode: r.exitCode }).toEqual({
+      stdout: "exit 42 42\n",
+      stderr: "",
+      exitCode: 42,
+    });
+  });
+
+  test("an unhandled rejection next to a dead await exits 1 without the warning", async () => {
+    using dir = tempDir("issue-19049-rejection", {
+      "entry.mjs": `
+Promise.reject(new Error("boom"));
+await new Promise(() => {});
+`,
+    });
+    const r = await run({ cmd: [bunExe(), "entry.mjs"], cwd: String(dir) });
+    expect(r.signalCode).toBeNull();
+    expect(r.stderr).toContain("boom");
+    expect(r.stderr).not.toContain("unsettled top-level await");
+    expect(r.exitCode).toBe(1);
+  });
+
+  test("a worker's process.exit() does not settle the main thread's await", async () => {
+    using dir = tempDir("issue-19049-worker", {
+      "entry.mjs": `
+import { Worker, isMainThread } from "worker_threads";
+if (isMainThread) {
+  new Worker(new URL(import.meta.url));
+  await new Promise(() => {});
+} else {
+  process.exit();
+}
+`,
+    });
+    const r = await run({ cmd: [bunExe(), "entry.mjs"], cwd: String(dir) });
+    expect(r.signalCode).toBeNull();
+    expect(r.stderr).toContain("unsettled top-level await");
+    expect(r.exitCode).toBe(13);
+  });
+
+  test("beforeExit fires once when the resolved module finishes without new work", async () => {
     using dir = tempDir("issue-19049-beforeexit", {
       "entry.mjs": `
 let resolve;
@@ -243,9 +319,47 @@ console.log("after await");
     });
     const r = await run({ cmd: [bunExe(), "entry.mjs"], cwd: String(dir) });
     expect(r.signalCode).toBeNull();
-    expect(r.stdout).toContain("beforeExit");
-    expect(r.stdout).toContain("after await");
-    expect(r.exitCode).toBe(0);
+    expect({ stdout: r.stdout, stderr: r.stderr, exitCode: r.exitCode }).toEqual({
+      stdout: "beforeExit\nafter await\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("beforeExit fires again when the resolved module schedules more work", async () => {
+    using dir = tempDir("issue-19049-beforeexit-again", {
+      "entry.mjs": `
+let resolve;
+process.on("beforeExit", () => { console.log("beforeExit"); resolve(); });
+await new Promise(r => { resolve = r; });
+console.log("resumed");
+await new Promise(r => setTimeout(r, 20));
+console.log("done");
+`,
+    });
+    const r = await run({ cmd: [bunExe(), "entry.mjs"], cwd: String(dir) });
+    expect(r.signalCode).toBeNull();
+    expect({ stdout: r.stdout, stderr: r.stderr, exitCode: r.exitCode }).toEqual({
+      stdout: "beforeExit\nresumed\ndone\nbeforeExit\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("beforeExit can reject the await and the rejection is reported", async () => {
+    using dir = tempDir("issue-19049-beforeexit-reject", {
+      "entry.mjs": `
+let reject;
+process.on("beforeExit", () => reject(new Error("Xyz")));
+await new Promise((_, r) => { reject = r; });
+console.log("unreachable");
+`,
+    });
+    const r = await run({ cmd: [bunExe(), "entry.mjs"], cwd: String(dir) });
+    expect(r.signalCode).toBeNull();
+    expect(r.stdout).toBe("");
+    expect(r.stderr).toContain("Xyz");
+    expect(r.exitCode).toBe(1);
   });
 
   test("--print with unsettled TLA warns without printing the internal promise", async () => {

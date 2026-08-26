@@ -158,7 +158,7 @@ where
                     && eql_index.is_none_or(|eq| colon < eq)
                 {
                     let prefix = &arg[..colon];
-                    if self.colon_value_flags.iter().any(|f| *f == prefix) {
+                    if self.colon_value_flags.contains(&prefix) {
                         for param in params {
                             if param.names.matches_long(prefix)
                                 && param.takes_value != clap::Values::None
@@ -892,7 +892,7 @@ mod tests {
         };
 
         let arg = c.next().expect("parse").expect("arg");
-        assert!(core::ptr::eq(arg.param, &params[0]));
+        assert!(core::ptr::eq(arg.param, &raw const params[0]));
         assert_eq!(arg.value, Some(b"K=V".as_slice()));
         let arg = c.next().expect("parse").expect("arg");
         assert_eq!(arg.value, Some(b"a:b".as_slice()));

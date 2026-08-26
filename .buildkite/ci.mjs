@@ -795,6 +795,66 @@ function getTraceOrderStep(target, tracePlatform, options) {
 }
 
 /**
+ * test/js/bun/appkit takes one path with a logged-in desktop (windows
+ * composited, the application launched through `-[NSApplication run]`) and
+ * another without one, and only the bare macOS 26 minis of the `latest`
+ * tier provide a desktop. On main that tier is a test lane already; PR
+ * builds get the untiered darwin lanes any mac agent can take, so a PR that
+ * touches the bridge runs the file once more on that tier, alone, with the
+ * desktop asserted (BUN_APPKIT_EXPECT_DISPLAY): a mini that lost its session
+ * fails the file rather than silently running its headless branch.
+ * @param {PipelineOptions} options
+ * @param {string} [buildId]
+ * @returns {GroupStep}
+ */
+function getAppKitTestStep(options, buildId) {
+  const platform = { os: "darwin", arch: "aarch64", release: "26", tier: "latest" };
+  const step = getTestBunStep(platform, options, { buildId, testFiles: ["js/bun/appkit/appkit.test.ts"] });
+  return {
+    key: `${getPlatformKey(platform)}-appkit`,
+    group: `${getPlatformLabel(platform)} appkit`,
+    steps: [
+      {
+        ...step,
+        key: `${getPlatformKey(platform)}-test-appkit`,
+        label: `${getPlatformLabel(platform)} - test-appkit`,
+        parallelism: 1,
+        timeout_in_minutes: 15,
+        env: { ...step.env, BUN_APPKIT_EXPECT_DISPLAY: "1" },
+      },
+    ],
+  };
+}
+
+/**
+ * Whether the change can affect the Objective-C bridge or bun:appkit; true
+ * when the changed files are not known (a build that is not a pull request).
+ * @param {PipelineOptions} options
+ * @returns {boolean}
+ */
+function touchesAppKit(options) {
+  const { changedFiles } = options;
+  if (!changedFiles) {
+    return true;
+  }
+  return changedFiles.some(
+    file =>
+      file.startsWith("src/appkit/") ||
+      file.startsWith("src/runtime/api/appkit/") ||
+      file.startsWith("test/js/bun/appkit/") ||
+      file.startsWith("packages/bun-usockets/src/eventing/") ||
+      file.startsWith("src/mimalloc_sys/") ||
+      file.startsWith("vendor/mimalloc/") ||
+      file.startsWith("scripts/appkit-") ||
+      file === "scripts/build/macos-sdk.ts" ||
+      file === "src/jsc/bindings/ZigGlobalObject.cpp" ||
+      /^src\/js\/bun\/(appkit|objc)\.ts$/.test(file) ||
+      /^src\/js\/internal\/appkit_\w+\.ts$/.test(file) ||
+      /^packages\/bun-types\/(appkit|objc)[\w-]*\.d\.ts$/.test(file),
+  );
+}
+
+/**
  * @typedef {Object} TestOptions
  * @property {string} [buildId]
  * @property {string[]} [testFiles]
@@ -1719,6 +1779,9 @@ async function getPipeline(options = {}) {
           );
         }),
       );
+      if (!darwinTestsEnabled && !testFiles?.length && touchesAppKit(options)) {
+        steps.push(getAppKitTestStep(options, buildId));
+      }
     }
   }
 

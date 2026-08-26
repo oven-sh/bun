@@ -2772,12 +2772,49 @@ async function getExecPathFromBuildKite(target, buildId) {
   for (const entry of releaseFiles) {
     const execPath = join(releasePath, entry);
     if (/bun(?:-[a-z]+)?(?:\.exe)?$/i.test(entry) && statSync(execPath).isFile()) {
+      // Only a darwin test reads the stripped binary (test/js/bun/appkit).
+      if (isMacOS) {
+        await exposeStrippedExe(releasePath, zipPath);
+      }
       return execPath;
     }
   }
 
   console.warn(`Found ${releaseFiles.length} files in ${releasePath}:`, releaseFiles);
   throw new Error(`Could not find executable from BuildKite: ${releasePath}`);
+}
+
+/**
+ * The tests run bun-profile, but the artifact users get is the stripped
+ * `bun` from the other zip of the same step. Unzips that one into its own
+ * directory (so it is never mistaken for the test binary) and names it in
+ * BUN_STRIPPED_EXE for the tests that want to drive it too. A step that
+ * uploads only one zip (a debug or asan build) has nothing to expose; a
+ * plain release step (`<triplet>-profile.zip`) always uploads both.
+ * @param {string} releasePath
+ * @param {string} testedZip
+ */
+async function exposeStrippedExe(releasePath, testedZip) {
+  const strippedZip = readdirSync(releasePath, { recursive: true, encoding: "utf-8" })
+    .filter(filename => /^bun.*\.zip$/i.test(filename) && !filename.includes("profile"))
+    .map(filename => join(releasePath, filename))
+    .find(path => path !== testedZip);
+  if (!strippedZip) {
+    if (/-profile\.zip$/i.test(testedZip)) {
+      throw new Error(`Could not find the stripped zip beside ${testedZip} in ${releasePath}`);
+    }
+    return;
+  }
+  const strippedPath = join(releasePath, "stripped");
+  mkdirSync(strippedPath, { recursive: true });
+  await unzip(strippedZip, strippedPath);
+  for (const entry of readdirSync(strippedPath, { recursive: true, encoding: "utf-8" })) {
+    const execPath = join(strippedPath, entry);
+    if (/(?:^|[\\/])bun(?:\.exe)?$/i.test(entry) && statSync(execPath).isFile()) {
+      process.env.BUN_STRIPPED_EXE = execPath;
+      return;
+    }
+  }
 }
 
 /**

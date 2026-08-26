@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
@@ -692,6 +692,43 @@ describe("bundler", () => {
       `,
     },
     run: { stdout: "ok" },
+  });
+
+  // bun:objc and bun:appkit are builtins on macOS only; a compiled
+  // executable carries them like bun:sqlite, and the Objective-C bridge works
+  // from it without the application started.
+  itBundled("compile/BunObjC", {
+    todo: !isMacOS,
+    compile: true,
+    files: {
+      "/entry.ts": `
+        import { objc } from "bun:objc";
+        import { Window } from "bun:appkit";
+        const { NSString, NSMutableArray } = objc.classes;
+        const list = NSMutableArray.new();
+        list.addObject_(NSString.stringWithString_("compiled"));
+        list.addObject_(objc.ns(42));
+        console.log(JSON.stringify(objc.js(list)), typeof Window);
+      `,
+    },
+    run: { stdout: '["compiled",42] function' },
+  });
+  // Both names are in the builtin alias table on every host, so a bundle made
+  // on Linux for `--target=bun` still imports them by their `bun:` names.
+  itBundled("compile/BunObjCCrossTargetKeepsSpecifier", {
+    target: "bun",
+    outdir: "/out",
+    files: {
+      "/entry.ts": `
+        import { objc } from "bun:objc";
+        import { app } from "bun:appkit";
+        console.log(typeof objc, typeof app);
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain('"bun:objc"');
+      api.expectFile("/out/entry.js").toContain('"bun:appkit"');
+    },
   });
 
   const additionalOptionsIters: Array<{

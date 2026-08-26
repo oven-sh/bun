@@ -307,7 +307,7 @@ impl Route {
                     let pending = PendingResponse {
                         method,
                         resp,
-                        _route: RefPtr::from_this(this),
+                        route: RefPtr::from_this(this),
                         is_response_pending: Cell::new(true),
                         otel: Cell::new(otel),
                     };
@@ -746,7 +746,7 @@ pub struct PendingResponse {
     resp: AnyResponse,
     is_response_pending: Cell<bool>,
     /// Keeps the route alive while this response waits on it.
-    _route: RefPtr<Route>,
+    route: RefPtr<Route>,
     /// SERVER span for a request parked while the bundle builds; ends when
     /// it is answered (or aborted).
     otel: Cell<bun_telemetry::NativeSpan>,
@@ -756,7 +756,7 @@ impl PendingResponse {
     fn otel_end(&self, status: u16, aborted: bool) {
         let span = self.otel.replace(bun_telemetry::NativeSpan::NONE);
         if span.is_some() {
-            if let Some(server) = self._route.server.get() {
+            if let Some(server) = self.route.server.get() {
                 crate::telemetry::server::end(server.global_this(), span, status, aborted);
             }
         }

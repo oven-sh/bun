@@ -22,7 +22,6 @@ pub struct PendingConnect {
     /// it here lets the coalescing path apply the guard *before* the session
     /// exists, so a strict caller never waits on a connect started by a lax one.
     pub(crate) verification: PeerVerification,
-    pub(crate) host_header_hash: u64,
     // BACKREF: waiters are borrowed HTTP clients owned elsewhere; lifetime-erased.
     pub(crate) waiters: Vec<NonNull<HTTPClient<'static>>>,
 }
@@ -50,11 +49,9 @@ impl PendingConnect {
         hostname: &[u8],
         port: u16,
         ssl_config: Option<NonNull<SSLConfig>>,
-        host_header_hash: u64,
     ) -> bool {
         self.port == port
             && self.ssl_config == ssl_config
-            && self.host_header_hash == host_header_hash
             && strings::eql_long(&self.hostname, hostname, true)
     }
 

@@ -1499,7 +1499,7 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
       extend(value);
     }
     size_t blockLength = (size_t)(blockEnd - blockBegin);
-    size_t needed = sizeof(uint32_t) * (3 + 4 * (size_t)count) + blockLength;
+    size_t needed = sizeof(uint32_t) * (4 + 4 * (size_t)count) + blockLength;
     if (needed > capacity)
     {
       return needed;
@@ -1515,6 +1515,7 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
       putU32(view.data() ? (uint32_t)(view.data() - blockBegin) : 0);
       putU32((uint32_t)view.length());
     };
+    putU32((uint32_t)needed);
     putU32(count);
     putView(target);
     for (auto [key, value] : *uwsReq)

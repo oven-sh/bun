@@ -986,8 +986,7 @@ mod tests {
             payload: Box::new(5),
         });
 
-        // Four threads each take a ref through the shared `&RefPtr`
-        // (`RefPtr<Shared>: Sync`) and hand it back (`RefPtr<Shared>: Send`).
+        // Clone through a shared `&RefPtr` on other threads (`Sync`), hand back (`Send`).
         let clones: Vec<RefPtr<Shared>> = std::thread::scope(|scope| {
             let shared = &main_ref;
             let workers: Vec<_> = (0..4)
@@ -998,10 +997,8 @@ mod tests {
         assert_eq!(main_ref.ref_count.get(), 5);
         assert_eq!(drops(), before);
 
-        // Every ref, the original included, is read and released on its own
-        // thread with no join in between. Only the count's own ordering can put
-        // the destructor after the other threads' reads of `payload`, which is
-        // what Miri's data-race detector checks here.
+        // No join between the releases: only the count's ordering places the
+        // destructor after the other threads' reads, and Miri checks that.
         let workers: Vec<_> = clones
             .into_iter()
             .chain(core::iter::once(main_ref))

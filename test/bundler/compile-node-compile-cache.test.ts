@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 // Standalone executables ship their modules embedded, so NODE_COMPILE_CACHE in
 // the surrounding environment could only ever cache externally loaded JS —

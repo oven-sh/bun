@@ -315,7 +315,7 @@ test.concurrent("handles cyclic dependencies", async () => {
   });
 });
 
-test("a package reached through a dependency cycle dedupes into one store entry", async () => {
+test.concurrent("a package reached through a dependency cycle dedupes into one store entry", async () => {
   // Two workspaces with different dependency sets both pull in the
   // `dedupe-cycle-a` <-> `dedupe-cycle-b` cycle. `dedupe-cycle-peer` leaks a
   // peer (`no-deps`) that no ancestor provides, so the store builder cannot
@@ -326,7 +326,7 @@ test("a package reached through a dependency cycle dedupes into one store entry"
   // `dedupe-cycle-a` entry (identical contents under two store names) and
   // made `bun install` re-expand the shared subtree once per workspace
   // (#40445).
-  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+  const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await Promise.all([
     write(
@@ -360,7 +360,7 @@ test("a package reached through a dependency cycle dedupes into one store entry"
     ),
   ]);
 
-  await runBunInstall(bunEnv, packageDir);
+  await runBunInstall(env, packageDir);
 
   const storeEntries = await readdirSorted(join(packageDir, "node_modules", ".bun"));
   const aEntries = storeEntries.filter(e => e.startsWith("dedupe-cycle-a@1.0.0"));
@@ -402,7 +402,7 @@ test("a package reached through a dependency cycle dedupes into one store entry"
   );
 });
 
-test("early dedupe keeps declarer-specific resolutions of an unprovided peer", async () => {
+test.concurrent("early dedupe keeps declarer-specific resolutions of an unprovided peer", async () => {
   // `dedupe-divergent-peers` pulls in two declarers of the peer name
   // `no-deps` with divergent ranges: `dedupe-cycle-peer` wants 1.0.0 and
   // `dedupe-divergent-strict` wants ^2.0.0. Neither workspace chain provides
@@ -410,7 +410,7 @@ test("early dedupe keeps declarer-specific resolutions of an unprovided peer", a
   // declarer must still auto-install its own best version. `ws-three` seeds
   // both no-deps versions into the lockfile under aliases (a different
   // dependency name, so they provide nothing to the peer).
-  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+  const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await Promise.all([
     write(
@@ -456,7 +456,7 @@ test("early dedupe keeps declarer-specific resolutions of an unprovided peer", a
     ),
   ]);
 
-  await runBunInstall(bunEnv, packageDir);
+  await runBunInstall(env, packageDir);
 
   const bunDir = join(packageDir, "node_modules", ".bun");
   const storeEntries = await readdirSorted(bunDir);

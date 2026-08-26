@@ -5,9 +5,6 @@ use core::ptr::NonNull;
 
 use crate::JSValue;
 
-// Drop is the release for the `init()` protect. In debug builds it also
-// checks and frees the heap canary allocated by `init()`.
-
 #[cfg(debug_assertions)]
 type Safety = Option<SafetyData>;
 #[cfg(not(debug_assertions))]
@@ -23,6 +20,8 @@ struct SafetyData {
     ptr: NonNull<DeprecatedStrong>,
 }
 
+/// GC root over `JSValueProtect`/`JSValueUnprotect`. `Drop` releases the
+/// `init()` protect and, in debug builds, checks and frees the heap canary.
 pub struct DeprecatedStrong {
     // Bare JSValue field is intentional — this *is* the GC-root
     // wrapper (uses JSValueProtect/Unprotect), so the §JSC "never store bare

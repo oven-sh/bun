@@ -10,8 +10,7 @@ use std::fs;
 use std::path::PathBuf;
 
 fn main() {
-    // Without any `rerun-if-changed`, cargo reruns this script whenever any
-    // file in the crate changes. Nothing below reads crate sources.
+    // Keep an explicit rerun set; cargo otherwise reruns this on any crate change.
     println!("cargo:rerun-if-changed=build.rs");
 
     // ── Windows .bin/ shim PE ───────────────────────────────────────────────

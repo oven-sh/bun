@@ -1,5 +1,4 @@
-// Wrap `std::time::Instant` behind a small monotonic-timer surface
-// (`start`/`read`/`reset`, ns as u64).
+/// Monotonic timer over `std::time::Instant` (`start`/`read`/`reset`, ns as u64).
 pub struct Timer {
     started: std::time::Instant,
 }

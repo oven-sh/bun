@@ -87,43 +87,43 @@ const fixture = `
   process.exit(0);
 `;
 
-test.skipIf(!isWindows)(
-  "process exits while Wasm compiler threads are installing code",
-  async () => {
-    using dir = tempDir("exit-during-wasm-tier-up", { "fixture.mjs": fixture });
-    const procs = Array.from({ length: 8 }, () =>
-      Bun.spawn({
-        cmd: [bunExe(), "fixture.mjs"],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
+test.skipIf(!isWindows)("process exits while Wasm compiler threads are installing code", async () => {
+  using dir = tempDir("exit-during-wasm-tier-up", { "fixture.mjs": fixture });
+  const procs = Array.from({ length: 8 }, () =>
+    Bun.spawn({
+      cmd: [bunExe(), "fixture.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    }),
+  );
+
+  // The failure this test detects is a process that never exits, so the wait
+  // for `exited` needs a bound. A process stuck in termination cannot be killed
+  // and its pipes never close: on timeout, report it and leave it alone.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<"timeout">(resolve => {
+    timer = setTimeout(() => resolve("timeout"), 20_000);
+  });
+  try {
+    const results = await Promise.all(
+      procs.map(async proc => {
+        // Drain both pipes while the child runs so a large stderr cannot block it.
+        const stdout = proc.stdout.text();
+        const stderr = proc.stderr.text();
+        const exited = await Promise.race([proc.exited, timeout]);
+        if (exited === "timeout") {
+          try {
+            proc.kill();
+          } catch {}
+          return "did not exit";
+        }
+        return { exitCode: exited, stdout: await stdout, stderr: await stderr };
       }),
     );
-
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<"timeout">(resolve => {
-      timer = setTimeout(() => resolve("timeout"), 20_000);
-    });
-    try {
-      const results = await Promise.all(
-        procs.map(async proc => {
-          const exited = await Promise.race([proc.exited, timeout]);
-          if (exited === "timeout") {
-            // A process stuck in termination cannot be killed. Do not wait for it.
-            try {
-              proc.kill();
-            } catch {}
-            return "did not exit";
-          }
-          const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
-          return { exitCode: exited, stdout, stderr };
-        }),
-      );
-      expect(results).toEqual(procs.map(() => ({ exitCode: 0, stdout: `${expectedSum}\n`, stderr: "" })));
-    } finally {
-      clearTimeout(timer);
-    }
-  },
-  30_000,
-);
+    expect(results).toEqual(procs.map(() => ({ exitCode: 0, stdout: `${expectedSum}\n`, stderr: "" })));
+  } finally {
+    clearTimeout(timer);
+  }
+});

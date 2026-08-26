@@ -1216,6 +1216,36 @@ describe("spyOn", () => {
       expect(fn).not.toHaveBeenCalled();
     });
 
+    // An array filled after creation is not copy-on-write, so it takes a different
+    // storage path than an array literal when the index becomes an accessor.
+    test("spyOn installs a getter/setter on an indexed property that is not a function", () => {
+      const arr = [];
+      arr[0] = 42;
+
+      const fn = spyOn(arr, 0);
+      expect(Object.getOwnPropertyDescriptor(arr, 0)).toEqual({
+        get: fn,
+        set: fn,
+        enumerable: true,
+        configurable: true,
+      });
+      expect(arr[0]).toBe(42);
+      arr[0] = 7;
+      expect(arr[0]).toBe(42);
+      expect(fn.mock.calls).toEqual([[], [7], []]);
+
+      fn.mockRestore();
+      expect(Object.getOwnPropertyDescriptor(arr, 0)).toEqual({
+        value: 42,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+      arr[0] = 8;
+      expect(arr[0]).toBe(8);
+      expect(fn).not.toHaveBeenCalled();
+    });
+
     test("spyOn works with missing indexed properties", () => {
       const arr = [];
 

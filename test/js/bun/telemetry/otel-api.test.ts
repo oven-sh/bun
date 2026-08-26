@@ -986,6 +986,7 @@ describe("configuration", () => {
     expect(() => Bun.otel.start({ exporters: [{ export: 1 }] } as any)).toThrow(/must be a function/);
     expect(() => Bun.otel.start({ instrumentations: { nope: true } } as any)).toThrow(/unknown instrumentation/);
     expect(() => Bun.otel.start({ sampler: "sometimes" } as any)).toThrow(/unknown sampler/);
+    expect(() => Bun.otel.start({ sampler: { ratio: 0 } } as any)).toThrow(/sampler must be/);
     // pipeline still intact
   });
 });

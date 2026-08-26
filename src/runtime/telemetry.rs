@@ -964,7 +964,12 @@ fn sampler_from_js(global: &JSGlobalObject, v: JSValue, arg: Option<JSValue>) ->
         }
         return Err(global.throw_invalid_arguments(format_args!("unknown sampler \"{name}\"")));
     }
-    Ok(Sampler::default())
+    if v.is_undefined_or_null() {
+        return Ok(Sampler::default());
+    }
+    Err(global.throw_invalid_arguments(format_args!(
+        "sampler must be a ratio (number) or a sampler name (string)"
+    )))
 }
 
 #[optimize(size)]

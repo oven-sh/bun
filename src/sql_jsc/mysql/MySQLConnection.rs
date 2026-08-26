@@ -1,6 +1,7 @@
 use crate::jsc::{JSValue, VirtualMachineSqlExt as _};
+use bun_boringssl_sys::OwnedSslCtx;
 use bun_collections::{OffsetByteList, StringHashMap, VecExt};
-use bun_uws::{self as uws, AnySocket as Socket, SslCtx};
+use bun_uws::{self as uws, AnySocket as Socket};
 
 use bun_sql::mysql::Capabilities;
 use bun_sql::mysql::MySQLQueryResult;
@@ -80,7 +81,7 @@ pub struct MySQLConnection {
     database: Box<[u8]>,
     user: Box<[u8]>,
     password: Box<[u8]>,
-    secure: Option<*mut SslCtx>,
+    secure: Option<OwnedSslCtx>,
     tls_config: SSLConfig,
     tls_status: TLSStatus,
     ssl_mode: SSLMode,
@@ -132,7 +133,7 @@ impl MySQLConnection {
         username: Box<[u8]>,
         password: Box<[u8]>,
         tls_config: SSLConfig,
-        secure: Option<*mut SslCtx>,
+        secure: Option<OwnedSslCtx>,
         ssl_mode: SSLMode,
         allow_public_key_retrieval: bool,
     ) -> Self {
@@ -303,31 +304,6 @@ impl MySQLConnection {
         self.close();
     }
 
-    pub(crate) fn cleanup(&mut self) {
-        let _queue = core::mem::replace(&mut self.queue, MySQLRequestQueue::init());
-        // _queue dropped at scope exit
-        let _write_buffer = core::mem::take(&mut self.write_buffer);
-        let _read_buffer = core::mem::take(&mut self.read_buffer);
-        let statements = core::mem::take(&mut self.statements);
-        let _tls_config = core::mem::take(&mut self.tls_config);
-
-        for stmt in statements.values() {
-            // The map holds an intrusive ref on every cached prepared statement;
-            // release it here (mirrors PostgresSQLConnection::deinit). Silently
-            // dropping the `*mut` would leak every MySQLStatement.
-            // SAFETY: every value inserted into `statements` is a live boxed
-            // `MySQLStatement` with the map holding one ref.
-            unsafe { MySQLStatement::deref(*stmt) };
-        }
-        drop(statements);
-
-        self.auth_data = Vec::new();
-        if let Some(s) = self.secure.take() {
-            // SAFETY: FFI — secure is an owned SSL_CTX* freed exactly once here
-            unsafe { bun_boringssl_sys::SSL_CTX_free(s) };
-        }
-    }
-
     pub(crate) fn upgrade_to_tls(&mut self) -> Result<(), FlushQueueError> {
         // Only adopt if we're currently a plain TCP socket.
         let Socket::SocketTcp(tcp) = &self.socket else {
@@ -348,7 +324,9 @@ impl MySQLConnection {
         let ssl_ctx = unsafe {
             &mut *self
                 .secure
+                .as_ref()
                 .expect("secure SSL_CTX must be set before upgradeToTLS")
+                .as_ptr()
         };
         let server_name = self.tls_config.server_name();
         let sni = if server_name.is_null() {
@@ -1844,10 +1822,11 @@ impl ReaderContext for Reader {
     }
 }
 
-pub(crate) type PreparedStatementsMap = StringHashMap<*mut MySQLStatement>;
+/// `None` only transiently, inside `get_or_put` before the new statement is stored.
+pub(crate) type PreparedStatementsMap = StringHashMap<Option<RefPtr<MySQLStatement>>>;
 /// Result of `PreparedStatementsMap::get_or_put` — surfaced for
 /// `JSMySQLConnection::get_statement_from_signature_name`.
 pub(crate) type PreparedStatementsMapGetOrPutResult<'a> =
-    bun_collections::hash_map::GetOrPutResult<'a, *mut MySQLStatement>;
+    bun_collections::hash_map::GetOrPutResult<'a, Option<RefPtr<MySQLStatement>>>;
 
 const MAX_PIPELINE_SIZE: usize = u16::MAX as usize; // about 64KB per connection

@@ -11,6 +11,7 @@ use crate::jsc::{
     VirtualMachine, VirtualMachineSqlExt as _, bun_string_jsc,
 };
 use bun_boringssl as BoringSSL;
+use bun_boringssl_sys::OwnedSslCtx;
 use bun_collections::{OffsetByteList, StringHashMap, StringMap};
 use bun_core::strings;
 use bun_core::{self};
@@ -31,7 +32,7 @@ use crate::postgres::postgres_sql_query::{self, RequestCounter, Status as QueryS
 use crate::postgres::postgres_sql_statement::{Error as StatementError, Status as StatementStatus};
 use crate::postgres::sasl::SASLStatus;
 use crate::shared::CachedStructure as PostgresCachedStructure;
-use crate::shared::connection_ctor_args::{self, ConnectionCtorArgs};
+use crate::shared::connection_ctor_args::ConnectionCtorArgs;
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::PostgresErrorOptions;
 use bun_sql::postgres::PostgresProtocol as protocol;
@@ -91,7 +92,6 @@ use crate::jsc::verify_error_to_js;
 // emits `this: &mut PostgresSQLConnection`; `&mut T` reborrows to `&T` so the
 // impls below compile against either.
 #[derive(bun_ptr::CellRefCounted)]
-#[ref_count(destroy = Self::deinit)]
 pub struct PostgresSQLConnection {
     pub(crate) socket: JsCell<Socket>,
     pub(crate) status: Cell<Status>,
@@ -149,7 +149,7 @@ pub struct PostgresSQLConnection {
 
     /// `us_ssl_ctx_t` built from `tls_config` at construct time. Applied via
     /// `us_socket_adopt_tls` when the server replies `S` to the SSLRequest.
-    pub(crate) secure: Option<*mut uws::SslCtx>,
+    pub(crate) secure: Option<OwnedSslCtx>,
     pub(crate) tls_config: jsc::api::ServerConfig::SSLConfig,
     pub(crate) tls_status: Cell<TLSStatus>,
     pub(crate) ssl_mode: SSLMode,
@@ -188,6 +188,23 @@ bun_event_loop::impl_timer_owner!(PostgresSQLConnection;
     from_timer_ptr => timer,
     from_max_lifetime_timer_ptr => max_lifetime_timer,
 );
+
+impl Drop for PostgresSQLConnection {
+    fn drop(&mut self) {
+        self.disconnect();
+        self.stop_timers();
+        for stmt_ptr in self.statements.get().values() {
+            // statements map owns a ref to each statement.
+            // SAFETY: every map value is a live statement the map holds a ref on.
+            unsafe { PostgresSQLStatement::deref(*stmt_ptr) };
+        }
+        // `free_sensitive`: the connection options carry the password.
+        for b in self.options_buf.iter_mut() {
+            // SAFETY: plain byte write; volatile so it is not elided.
+            unsafe { core::ptr::write_volatile(b, 0) };
+        }
+    }
+}
 
 impl PostgresSQLConnection {
     // ─── R-2 interior-mutability helpers ─────────────────────────────────────
@@ -447,7 +464,9 @@ impl PostgresSQLConnection {
         let ssl_ctx = unsafe {
             &mut *self
                 .secure
+                .as_ref()
                 .expect("secure SSL_CTX must be set before setupTLS")
+                .as_ptr()
         };
         let server_name = self.tls_config.server_name();
         let sni = if server_name.is_null() {
@@ -1069,11 +1088,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     else {
         return Ok(JSValue::ZERO);
     };
-    // Covers `try arguments[7/8].toBunString()` and the null-byte rejection
-    // below. Ownership passes into `ptr.*` once allocated — `into_inner`
-    // recovers them just before the Box is built so the connect-fail path's
-    // `ptr.deinit()` is the sole cleanup.
-    let errdefer_guard = connection_ctor_args::guard_tls(args.secure, args.tls_config);
+    let (secure, tls_config) = (args.secure, args.tls_config);
 
     // `StringBuilder::append` takes `&mut self` and returns a borrow
     // of the backing buffer, so successive appends can't keep their `&[u8]`
@@ -1140,7 +1155,6 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
         let entry = entry.slice();
         if !entry.is_empty() && strings::contains_char(entry, 0) {
             drop(options_buf);
-            // tls_config / secure released by the errdefer above.
             return Err(global_object.throw_invalid_arguments(format_args!(
                 "{} must not contain null bytes",
                 bstr::BStr::new(name)
@@ -1154,10 +1168,6 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     let connection_timeout = arguments[12].to_int32();
     let max_lifetime = arguments[13].to_int32();
     let use_unnamed_prepared_statements = arguments[14].as_boolean();
-
-    // Ownership transferred into `ptr`; disarm the errdefer and recover the
-    // moved `secure`/`tls_config` for the struct literal below.
-    let (secure, tls_config) = scopeguard::ScopeGuard::into_inner(errdefer_guard);
 
     let ptr: *mut PostgresSQLConnection =
         bun_core::heap::into_raw(Box::new(PostgresSQLConnection {
@@ -1253,7 +1263,8 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
         this.socket.set(Socket::SocketTcp(match result {
             Ok(s) => s,
             Err(err) => {
-                PostgresSQLConnection::deinit(ptr);
+                // SAFETY: fresh allocation, sole ref.
+                drop(unsafe { bun_core::heap::take(ptr) });
                 return Err(global_object.throw_error(
                     bun_jsc::CrateError::from(err),
                     "failed to connect to postgresql",
@@ -1410,41 +1421,6 @@ impl PostgresSQLConnection {
                 self.vm_mut().timer().remove(t);
             }
         });
-    }
-
-    // Raw-pointer receiver: this function ends in `heap::take(this)`. A `&mut self`
-    // argument would carry a Stacked Borrows protector for the whole frame, and freeing
-    // the allocation while that protector is live is UB ("deallocating while item is
-    // protected"). Taking `*mut Self` and reborrowing per-call keeps each `&mut` scoped
-    // strictly before the dealloc.
-    fn deinit(this: *mut Self) {
-        // SAFETY: sole remaining owner; `this` is a live Box-allocated connection.
-        unsafe {
-            (*this).disconnect();
-            (*this).stop_timers();
-            for stmt_ptr in (*this).statements.get().values() {
-                // statements map owns a ref to each statement.
-                PostgresSQLStatement::deref(*stmt_ptr);
-            }
-            // statements/requests/write_buffer/read_buffer/backend_parameters dropped below.
-
-            // `free_sensitive` is the C-string variant; here we
-            // volatile-zero the Box<[u8]> in place and let Box::drop free it.
-            {
-                let buf = &mut *core::ptr::addr_of_mut!((*this).options_buf);
-                for b in buf.iter_mut() {
-                    core::ptr::write_volatile(b, 0);
-                }
-            }
-
-            // tls_config dropped by Box drop below.
-            if let Some(s) = (*this).secure {
-                // SSL_CTX_free on a valid SSL_CTX*.
-                BoringSSL::c::SSL_CTX_free(s);
-            }
-            // Box-allocated in `call()`; ref_count is 0; reclaim.
-            drop(bun_core::heap::take(this));
-        }
     }
 
     fn clean_up_requests(&self, js_reason: Option<JSValue>) {

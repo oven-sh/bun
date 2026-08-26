@@ -37,7 +37,6 @@ bun_core::define_scoped_log!(debug, MySQLQuery);
 // shim still emits `this: &mut JSMySQLQuery` — `&mut T` auto-derefs to `&T`
 // so the impls below compile against either.
 #[derive(bun_ptr::CellRefCounted)]
-#[ref_count(destroy = Self::deinit)]
 pub struct JSMySQLQuery {
     this_value: JsCell<JsRef>,
     // unfortunately we cannot use #ref_count here
@@ -47,10 +46,6 @@ pub struct JSMySQLQuery {
     global_object: BackRef<JSGlobalObject>,
     query: JsCell<MySQLQuery>,
 }
-
-// Intrusive refcount (bun.ptr.RefCount): `ref_()`/`deref()` provided by
-// `#[derive(CellRefCounted)]`; `destroy` routes to `Self::deinit` via the
-// struct-level `#[ref_count(destroy = …)]` attribute.
 
 impl JSMySQLQuery {
     /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
@@ -71,15 +66,6 @@ impl JSMySQLQuery {
     ) -> JsResult<*mut Self> {
         Err(global_this
             .throw_invalid_arguments(format_args!("MySQLQuery cannot be constructed directly")))
-    }
-
-    fn deinit(this: *mut Self) {
-        // SAFETY: routed only through `CellRefCounted::destroy` (refcount==0);
-        // `this` is the sole live owner of its `heap::alloc` allocation.
-        unsafe {
-            (*this).query.with_mut(|q| q.cleanup());
-            drop(bun_core::heap::take(this));
-        }
     }
 
     pub fn finalize(&self) {

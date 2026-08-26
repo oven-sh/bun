@@ -46,7 +46,6 @@ fn stat_to_js_stats(
 
 /// This is a singleton struct that contains the timer used to schedule re-stat calls.
 #[derive(bun_ptr::ThreadSafeRefCounted)]
-#[ref_count(destroy = Self::deinit)]
 pub struct StatWatcherScheduler {
     current_interval: AtomicI32,
     /// Set by `timer_callback` immediately before scheduling `work_pool_callback`
@@ -86,6 +85,15 @@ unsafe impl bun_threading::Linked for StatWatcher {
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
         unsafe { core::ptr::addr_of!((*item).next) }
+    }
+}
+
+impl Drop for StatWatcherScheduler {
+    fn drop(&mut self) {
+        assert!(
+            self.watchers.is_empty(),
+            "destroying StatWatcherScheduler while it still has watchers",
+        );
     }
 }
 
@@ -140,22 +148,6 @@ impl StatWatcherScheduler {
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::StatWatcherScheduler),
             ref_count: ThreadSafeRefCount::init(),
         })
-    }
-
-    // Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
-    // whose generated trait `destructor` upholds the sole-owner contract
-    // (called only when ref_count reaches zero; `this` was Box-allocated by RefPtr::new).
-    fn deinit(this: *mut StatWatcherScheduler) {
-        // BACKREF — `this` is the live ref-counted scheduler (last ref); wrap
-        // once so the field reads below go through safe `ParentRef` Deref.
-        let this_ref = ParentRef::from(NonNull::new(this).expect("deinit: scheduler"));
-        assert!(
-            this_ref.watchers.is_empty(),
-            "destroying StatWatcherScheduler while it still has watchers",
-        );
-        // SAFETY: refcount reached zero, so `this` is the sole remaining
-        // reference; heap::take reclaims and drops the allocation.
-        drop(unsafe { bun_core::heap::take(this) });
     }
 
     /// # Safety

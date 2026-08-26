@@ -143,8 +143,6 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       this.#hasRun = false;
       this.#resolve = resolve;
       this.#reject = reject;
-
-      // this.#immediate = setImmediate(autoStartShell, this).unref();
     }
 
     cwd(newCwd?: string): this {

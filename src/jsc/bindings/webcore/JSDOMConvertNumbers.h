@@ -270,63 +270,6 @@ template<typename T> struct JSConverter<IDLEnforceRangeAdaptor<T>> {
 // MARK: -
 // MARK: Floating point types
 
-template<> struct Converter<IDLFloat> : DefaultConverter<IDLFloat> {
-    static float convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-    {
-        auto& vm = JSC::getVM(&lexicalGlobalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        double number = value.toNumber(&lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, 0.0);
-        if (number < std::numeric_limits<float>::lowest() || number > std::numeric_limits<float>::max()) [[unlikely]] {
-            throwTypeError(&lexicalGlobalObject, scope, "The provided value is outside the range of a float"_s);
-            return 0.0;
-        }
-        if (!std::isfinite(number)) [[unlikely]]
-            throwNonFiniteTypeError(lexicalGlobalObject, scope);
-        return static_cast<float>(number);
-    }
-};
-
-template<> struct JSConverter<IDLFloat> {
-    using Type = typename IDLFloat::ImplementationType;
-
-    static constexpr bool needsState = false;
-    static constexpr bool needsGlobalObject = false;
-
-    static JSC::JSValue convert(Type value)
-    {
-        return JSC::jsNumber(value);
-    }
-};
-
-template<> struct Converter<IDLUnrestrictedFloat> : DefaultConverter<IDLUnrestrictedFloat> {
-    static float convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-    {
-        auto& vm = JSC::getVM(&lexicalGlobalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        double number = value.toNumber(&lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, 0.0);
-
-        if (number < std::numeric_limits<float>::lowest()) [[unlikely]]
-            return -std::numeric_limits<float>::infinity();
-        if (number > std::numeric_limits<float>::max()) [[unlikely]]
-            return std::numeric_limits<float>::infinity();
-        return static_cast<float>(number);
-    }
-};
-
-template<> struct JSConverter<IDLUnrestrictedFloat> {
-    using Type = typename IDLUnrestrictedFloat::ImplementationType;
-
-    static constexpr bool needsState = false;
-    static constexpr bool needsGlobalObject = false;
-
-    static JSC::JSValue convert(Type value)
-    {
-        return JSC::jsNumber(value);
-    }
-};
-
 template<> struct Converter<IDLDouble> : DefaultConverter<IDLDouble> {
     static double convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {

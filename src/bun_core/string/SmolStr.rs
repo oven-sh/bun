@@ -205,14 +205,6 @@ pub(crate) enum InlinedError {
     StringTooLong,
 }
 
-impl From<InlinedError> for crate::CrateError {
-    fn from(e: InlinedError) -> Self {
-        match e {
-            InlinedError::StringTooLong => crate::CrateError::StringTooLong,
-        }
-    }
-}
-
 impl Inlined {
     const MAX_LEN: usize = 120 / 8; // = 15
     const EMPTY: Inlined = Inlined(1u128 << 127); // data=0, __len=0, _tag=1

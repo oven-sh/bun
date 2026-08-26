@@ -139,13 +139,7 @@ impl UInt31WithReserved {
 // ─── packed wire structs ────────────────────────
 
 /// 5-byte PRIORITY payload: BE stream identifier + weight.
-#[repr(C, packed)]
-#[derive(Copy, Clone, Default)]
-pub struct StreamPriority {
-    pub(crate) stream_identifier: u32,
-    pub(crate) weight: u8,
-}
-const _: () = assert!(core::mem::size_of::<StreamPriority>() == StreamPriority::BYTE_SIZE);
+pub struct StreamPriority;
 
 impl StreamPriority {
     pub const BYTE_SIZE: usize = 5;
@@ -162,16 +156,6 @@ pub struct FrameHeader {
     pub type_: u8,
     pub flags: u8,
     pub stream_identifier: u32,
-}
-impl Default for FrameHeader {
-    fn default() -> Self {
-        Self {
-            length: 0,
-            type_: FrameType::HTTP_FRAME_SETTINGS as u8,
-            flags: 0,
-            stream_identifier: 0,
-        }
-    }
 }
 impl FrameHeader {
     pub const BYTE_SIZE: usize = 9;

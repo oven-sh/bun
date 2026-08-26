@@ -47,8 +47,6 @@ public:
     bool contains(const JSC::Identifier& eventType) const { return find(eventType); }
     bool containsActive(const JSC::Identifier& eventType) const;
 
-    const EntriesVector& entries() const { return m_entries; }
-
     void clear();
 
     bool add(const JSC::Identifier& eventType, Ref<EventListener>&&, bool once);
@@ -59,8 +57,6 @@ public:
     const SimpleEventListenerVector* find(const JSC::Identifier& eventType) const { return const_cast<IdentifierEventListenerMap*>(this)->find(eventType); }
     Vector<JSC::Identifier> eventTypes() const;
     template<typename Visitor> void visitJSEventListeners(Visitor&);
-
-    Lock& lock() { return m_lock; }
 
 private:
     EntriesVector m_entries;

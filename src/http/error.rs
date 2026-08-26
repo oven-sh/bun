@@ -98,13 +98,11 @@ pub enum Error {
     #[error("UnsupportedProxyProtocol")]
     UnsupportedProxyProtocol,
     #[error(transparent)]
-    Cert(#[from] CertError),
+    Cert(CertError),
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
     #[error(transparent)]
     Hpack(#[from] crate::lshpack::HpackError),
-    #[error(transparent)]
-    Core(#[from] bun_core::Error),
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
     #[error(transparent)]
@@ -311,7 +309,6 @@ impl Error {
             Self::Cert(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
             Self::Hpack(e) => <&'static str>::from(e),
-            Self::Core(e) => e.name(),
             Self::Sys(e) => <&'static str>::from(e),
             Self::Zlib(e) => <&'static str>::from(e),
             Self::Brotli(e) => e.name(),

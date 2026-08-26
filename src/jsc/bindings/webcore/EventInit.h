@@ -31,29 +31,6 @@ struct EventInit {
     bool bubbles { false };
     bool cancelable { false };
     bool composed { false };
-
-    template<class Encoder> void encode(Encoder&) const;
-    template<class Decoder> [[nodiscard]] static bool decode(Decoder&, EventInit&);
 };
-
-template<class Encoder>
-void EventInit::encode(Encoder& encoder) const
-{
-    encoder << bubbles;
-    encoder << cancelable;
-    encoder << composed;
-}
-
-template<class Decoder>
-bool EventInit::decode(Decoder& decoder, EventInit& eventInit)
-{
-    if (!decoder.decode(eventInit.bubbles))
-        return false;
-    if (!decoder.decode(eventInit.cancelable))
-        return false;
-    if (!decoder.decode(eventInit.composed))
-        return false;
-    return true;
-}
 
 }

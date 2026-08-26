@@ -915,7 +915,6 @@ dependencies = [
  "bun_jsc_macros",
  "bun_opaque",
  "bun_options_types",
- "bun_patch",
  "bun_paths",
  "bun_ptr",
  "bun_resolve_builtins",
@@ -1102,7 +1101,6 @@ dependencies = [
 name = "bun_paths"
 version = "0.0.0"
 dependencies = [
- "bitflags",
  "bstr",
  "bun_alloc",
  "bun_core",
@@ -1110,10 +1108,7 @@ dependencies = [
  "bun_simdutf_sys",
  "bytemuck",
  "const_format",
- "enum-map",
- "enumset",
  "libc",
- "scopeguard",
  "strum",
  "thiserror",
 ]

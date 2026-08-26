@@ -69,19 +69,9 @@ pub enum Error {
     #[error(transparent)]
     Bundler(#[from] bun_bundler::Error),
     #[error(transparent)]
-    Watcher(#[from] bun_watcher::Error),
-    #[error(transparent)]
     Install(#[from] bun_install::Error),
     #[error(transparent)]
-    Ast(#[from] bun_ast::Error),
-    #[error(transparent)]
-    Patch(#[from] bun_patch::Error),
-    #[error(transparent)]
     ToJS(#[from] bun_ast::ToJSError),
-    #[error(transparent)]
-    Url(#[from] bun_url::Error),
-    #[error(transparent)]
-    Paths(#[from] bun_paths::Error),
     #[error("{0}")]
     ErrorCode(crate::error_code::ErrorCode),
 }
@@ -124,13 +114,8 @@ impl Error {
             Self::MakeLibUvOwned(e) => <&'static str>::from(e),
             Self::Path(e) => <&'static str>::from(e),
             Self::Bundler(e) => e.name(),
-            Self::Watcher(e) => e.name(),
             Self::Install(e) => e.name(),
-            Self::Ast(e) => e.name(),
-            Self::Patch(e) => e.name(),
             Self::ToJS(e) => <&'static str>::from(e),
-            Self::Url(e) => e.name(),
-            Self::Paths(e) => e.name(),
             Self::ErrorCode(e) => <&'static str>::from(*e),
         }
     }

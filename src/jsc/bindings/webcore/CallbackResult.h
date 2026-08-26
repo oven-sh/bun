@@ -25,8 +25,6 @@
 
 #pragma once
 
-#include <wtf/Expected.h>
-
 namespace WebCore {
 
 enum class CallbackResultType {
@@ -35,17 +33,7 @@ enum class CallbackResultType {
     UnableToExecute
 };
 
-template<typename ReturnType> class CallbackResult {
-public:
-    CallbackResult(CallbackResultType);
-    CallbackResult(ReturnType&&);
-
-    CallbackResultType type() const;
-    ReturnType&& releaseReturnValue();
-
-private:
-    Expected<ReturnType, CallbackResultType> m_value;
-};
+template<typename ReturnType> class CallbackResult;
 
 template<> class CallbackResult<void> {
 public:
@@ -57,29 +45,6 @@ public:
 private:
     CallbackResultType m_type = CallbackResultType::Success;
 };
-
-template<typename ReturnType> inline CallbackResult<ReturnType>::CallbackResult(CallbackResultType type)
-    : m_value(makeUnexpected(type))
-{
-}
-
-template<typename ReturnType> inline CallbackResult<ReturnType>::CallbackResult(ReturnType&& returnValue)
-    : m_value(WTF::move(returnValue))
-{
-}
-
-template<typename ReturnType> inline CallbackResultType CallbackResult<ReturnType>::type() const
-{
-    return m_value.has_value() ? CallbackResultType::Success : m_value.error();
-}
-
-template<typename ReturnType> inline auto CallbackResult<ReturnType>::releaseReturnValue() -> ReturnType&&
-{
-    ASSERT(m_value.has_value());
-    return WTF::move(m_value.value());
-}
-
-// Void specialization
 
 inline CallbackResult<void>::CallbackResult(CallbackResultType type)
     : m_type(type)

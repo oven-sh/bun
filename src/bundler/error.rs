@@ -59,8 +59,6 @@ pub enum Error {
     #[error(transparent)]
     Url(#[from] bun_url::Error),
     #[error(transparent)]
-    OptionsTypes(#[from] bun_options_types::Error),
-    #[error(transparent)]
     OutputFileList(#[from] crate::linker_context::output_file_list_builder::OutputFileListError),
 }
 
@@ -132,7 +130,6 @@ impl Error {
             Self::Parsers(e) => e.name(),
             Self::Sourcemap(e) => e.name(),
             Self::Url(e) => e.name(),
-            Self::OptionsTypes(e) => e.name(),
             Self::OutputFileList(e) => <&'static str>::from(e),
         }
     }

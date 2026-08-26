@@ -171,25 +171,4 @@ template<typename T> struct JSConverter<IDLAtomStringAdaptor<T>> {
     }
 };
 
-template<typename T> struct Converter<IDLRequiresExistingAtomStringAdaptor<T>> : DefaultConverter<IDLRequiresExistingAtomStringAdaptor<T>> {
-    static AtomString convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-    {
-        static_assert(std::is_same<T, IDLDOMString>::value, "This adaptor is only supported for IDLDOMString at the moment.");
-
-        return value.toString(&lexicalGlobalObject)->toExistingAtomString(&lexicalGlobalObject).data;
-    }
-};
-
-template<typename T> struct JSConverter<IDLRequiresExistingAtomStringAdaptor<T>> {
-    static constexpr bool needsState = true;
-    static constexpr bool needsGlobalObject = false;
-
-    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, const AtomString& value)
-    {
-        static_assert(std::is_same<T, IDLDOMString>::value, "This adaptor is only supported for IDLDOMString at the moment.");
-
-        return JSConverter<T>::convert(lexicalGlobalObject, value);
-    }
-};
-
 } // namespace WebCore

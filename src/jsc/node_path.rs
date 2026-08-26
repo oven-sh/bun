@@ -160,17 +160,6 @@ impl PathOrFileDescriptor<'_> {
     }
 }
 
-impl core::fmt::Display for PathOrFileDescriptor<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Path(p) => write!(f, "{}", bstr::BStr::new(p.slice())),
-            // `bun.FD.format` semantics — bare number / `[invalid_fd]` — via
-            // `Display for Fd` (bun_core), not the derived `Debug`.
-            Self::Fd(fd) => write!(f, "{}", fd),
-        }
-    }
-}
-
 impl<'a> PathOrFileDescriptor<'a> {
     #[inline]
     pub fn is_path(&self) -> bool {

@@ -31,13 +31,6 @@ pub(crate) fn parse_es5_date_raw(s: &[u8]) -> f64 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InvalidDate;
 
-impl core::fmt::Display for InvalidDate {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str("InvalidDate")
-    }
-}
-impl core::error::Error for InvalidDate {}
-
 /// `bun.jsc.wtf.parseES5Date` shape — `Err` on empty input or non-finite result.
 /// `2000-01-01T00:00:00.000Z` → `Ok(946684800000.0)`.
 pub fn parse_es5_date(buf: &[u8]) -> Result<f64, InvalidDate> {

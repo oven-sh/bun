@@ -81,37 +81,4 @@ template<typename T> struct JSConverter<IDLCallbackFunction<T>> {
     }
 };
 
-template<typename T> struct Converter<IDLCallbackInterface<T>> : DefaultConverter<IDLCallbackInterface<T>> {
-    template<typename ExceptionThrower = DefaultExceptionThrower>
-    static RefPtr<T> convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSDOMGlobalObject& globalObject, ExceptionThrower&& exceptionThrower = ExceptionThrower())
-    {
-        auto& vm = JSC::getVM(&lexicalGlobalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-
-        if (!value.isObject()) {
-            exceptionThrower(lexicalGlobalObject, scope);
-            return nullptr;
-        }
-
-        return T::create(JSC::asObject(value), &globalObject);
-    }
-};
-
-template<typename T> struct JSConverter<IDLCallbackInterface<T>> {
-    static constexpr bool needsState = false;
-    static constexpr bool needsGlobalObject = false;
-
-    template<typename U>
-    static JSC::JSValue convert(const U& value)
-    {
-        return toJS(Detail::getPtrOrRef(value));
-    }
-
-    template<typename U>
-    static JSC::JSValue convertNewlyCreated(U&& value)
-    {
-        return toJSNewlyCreated(std::forward<U>(value));
-    }
-};
-
 } // namespace WebCore

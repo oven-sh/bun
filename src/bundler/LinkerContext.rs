@@ -2488,7 +2488,9 @@ impl<'a> LinkerContext<'a> {
                                 let mut spill = Vec::new();
                                 hash.write(bun_paths::resolve_path::relative_platform_spill::<
                                     bun_paths::resolve_path::platform::Posix,
-                                >(&mut spill, from_chunk_dir, path));
+                                >(
+                                    &mut spill, from_chunk_dir, path
+                                ));
                             }
                         }
                         crate::chunk::QueryKind::Chunk => out.push(piece.query.index()),

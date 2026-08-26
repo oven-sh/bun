@@ -43,3 +43,28 @@ test("require(esm) inside a require cycle returns the live namespace, not an emp
   });
   expect(exitCode).toBe(0);
 });
+
+// The CommonJS side reads `__esModule` / `"module.exports"` off that live
+// namespace; when the module happens to export a binding by that name that is
+// still in TDZ, require() itself must not throw (reading it afterwards does).
+test("require(esm) inside a require cycle tolerates a TDZ `__esModule` export", async () => {
+  using dir = tempDir("require-esm-evaluating-cycle-tdz", {
+    "a.mjs": `
+      const self = require("./a.mjs")
+      const read = (() => { try { return self.__esModule } catch (e) { return e.constructor.name } })()
+      console.log(typeof self, read)
+      export let __esModule = true
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "a.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("object ReferenceError");
+  expect(exitCode).toBe(0);
+});

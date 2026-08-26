@@ -115,6 +115,13 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
     }
 
     const namespace = out;
+    // In a require cycle the namespace is live while the module body is still
+    // running, so an export named `__esModule` / `module.exports` may be in TDZ.
+    let esModule, moduleExports;
+    try {
+      esModule = namespace.__esModule;
+      moduleExports = namespace["module.exports"];
+    } catch {}
     // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
     // Various libraries expect __esModule to be set when using ESM from require().
     // We don't want to always inject the __esModule export into every module,
@@ -122,7 +129,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
     // So instead of either of those, we make it so that the __esModule property can be set at runtime.
     // It only supports "true" and undefined. Anything non-truthy is treated as undefined.
     // https://github.com/oven-sh/bun/issues/14411
-    if (namespace.__esModule === undefined) {
+    if (esModule === undefined) {
       try {
         namespace.__esModule = true;
       } catch {
@@ -130,7 +137,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
       }
     }
 
-    return (mod.exports = namespace["module.exports"] ?? namespace);
+    return (mod.exports = moduleExports ?? namespace);
   }
 
   const c = $evaluateCommonJSModule(mod, this);
@@ -197,6 +204,12 @@ export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: stri
     throw exception;
   }
 
+  // See `overridableRequire`: TDZ-safe reads for the require-cycle case.
+  let esModule, moduleExports;
+  try {
+    esModule = namespace.__esModule;
+    moduleExports = namespace["module.exports"];
+  } catch {}
   // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
   // Various libraries expect __esModule to be set when using ESM from require().
   // We don't want to always inject the __esModule export into every module,
@@ -204,7 +217,7 @@ export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: stri
   // So instead of either of those, we make it so that the __esModule property can be set at runtime.
   // It only supports "true" and undefined. Anything non-truthy is treated as undefined.
   // https://github.com/oven-sh/bun/issues/14411
-  if (namespace.__esModule === undefined) {
+  if (esModule === undefined) {
     try {
       namespace.__esModule = true;
     } catch {
@@ -212,7 +225,7 @@ export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: stri
     }
   }
 
-  this.exports = namespace["module.exports"] ?? namespace;
+  this.exports = moduleExports ?? namespace;
 }
 
 $visibility = "Private";

@@ -7,6 +7,7 @@ import {
   bunRun,
   isASAN,
   isDebug,
+  isMacOS,
   isWindows,
   tempDir,
   tempDirWithFiles,
@@ -240,10 +241,11 @@ describe("Bun.build", () => {
         console.log(JSON.stringify({ base, after }));
       `,
     });
-    // Release, 20k functions: ~+65 MB without freeing the VM, about level with the baseline with it. Debug/ASAN parse far
-    // slower and hold freed pages in quarantine, so they get a smaller module and only guard against gross retention.
+    // Linux/Windows release, 20k functions: ~+65 MB without freeing the VM, about level with the baseline with it.
+    // Debug/ASAN parse far slower and hold freed pages in quarantine, so they get a smaller module and only guard against
+    // gross retention. macOS reports +230-280 MB here even with the VM freed (the pages leave RSS lazily), so same there.
     const slow = isASAN || isDebug;
-    const [functions, limit] = slow ? [3000, 400] : [20000, 40];
+    const [functions, limit] = slow ? [3000, 400] : [20000, isMacOS ? 400 : 40];
     await using proc = Bun.spawn({
       cmd: [bunExe(), "retained-fixture.ts", String(functions), String(limit)],
       env: bunEnv,

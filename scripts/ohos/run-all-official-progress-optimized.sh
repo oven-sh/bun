@@ -225,12 +225,6 @@ run_test() {
       WT=120
       BT="--expose-internals --smol --timeout 120000"
       ;;
-    # napi.test/uv_stub: dlopen 被 OHOS 沙箱拦截（平台问题），用例必超时，
-    # 120s 快速失败省 ~480s/文件 的白等（曾 601s×2 试）
-    */napi/napi.test.ts|*/napi/uv_stub.test.ts)
-      WT=120
-      BT="--expose-internals --smol --timeout 120000"
-      ;;
     # ── 慢测试单独调大超时 ──
     # spawn.test.ts 已连续超时（2402s 白等），降为 600s 快速失败（省 ~20m）
     */bundler/transpiler/jsx-production.test.ts|*/udp/udp_socket.test.ts|*/terminal/terminal-platform-gaps.test.ts|*/inspector/inspector.test.ts|*/run-extensionless.test.ts)
@@ -283,6 +277,16 @@ run_test() {
     # ── bun-audit：150 用例已改顺序执行，单跑实测 676s，需 3×TMOUT ──
     */cli/install/bun-audit.test.ts)
       WT=$((TMOUT * 3))       # 900s
+      BT="--expose-internals --smol --timeout ${BUN_TIMEOUT}"
+      ;;
+    # ── napi：harness expect import 修复后全绿，单跑实测 napi.test
+    # 529s / uv_stub 408s（曾 120s fast-fail）──
+    */napi/napi.test.ts)
+      WT=$((TMOUT * 3))       # 900s
+      BT="--expose-internals --smol --timeout ${BUN_TIMEOUT}"
+      ;;
+    */napi/uv_stub.test.ts)
+      WT=$((TMOUT * 2))       # 600s
       BT="--expose-internals --smol --timeout ${BUN_TIMEOUT}"
       ;;
     # ── 泄漏/长时间测试 ──

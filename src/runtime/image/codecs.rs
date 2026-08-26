@@ -700,8 +700,7 @@ fn unpremultiply(rgba: &mut [u8]) {
 }
 
 /// Resample through premultiplied alpha so transparent pixels don't bleed
-/// RGB into neighbours. `nearest` copies single source samples (no mixing),
-/// so it skips the lossy u8 round trip and stays bit-exact.
+/// RGB into neighbours.
 pub(crate) fn resize(
     src: &[u8],
     sw: u32,
@@ -710,6 +709,7 @@ pub(crate) fn resize(
     dh: u32,
     f: Filter,
 ) -> Result<Vec<u8>, Error> {
+    // `nearest` copies single samples; skip the lossy u8 round trip.
     let premul = if f == Filter::Nearest {
         None
     } else {

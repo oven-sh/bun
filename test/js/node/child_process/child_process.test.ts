@@ -742,7 +742,9 @@ describe("execFileSync()", () => {
     const custom = path.join(String(dir), "chcp-copy.bin");
     fs.copyFileSync(chcp, custom);
     const run = (file: string) => execFileSync(file, [], { encoding: "utf8" }).trim();
-    const codePage = expect.stringMatching(/^Active code page: \d+$/);
+    // The label is localized ("Active code page", "Aktive Codepage", ...).
+    // Only the number is stable.
+    const codePage = expect.stringMatching(/\d+$/);
     expect({
       absolute: run(chcp),
       bare: run("chcp"),

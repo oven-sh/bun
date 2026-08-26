@@ -74,25 +74,50 @@ pub fn which_for_spawn<'a>(
         // binary-planting opt-out; libuv gates its cwd search on it via
         // NeedCurrentDirectoryForExePathW (libuv/libuv#3895), so spawn must too.
         if !bin.is_empty()
+            && bin.len() < MAX_PATH_BYTES
             && !has_sep
             && !is_absolute(bin)
             && !cwd.is_empty()
             && std::env::var_os("NoDefaultCurrentDirectoryInExePath").is_none()
         {
-            let mut rel: Vec<u8> = Vec::with_capacity(bin.len() + 2);
-            rel.extend_from_slice(b"./");
-            rel.extend_from_slice(bin);
-            // PORT NOTE: NLL Polonius limitation — raw-ptr reborrow so the None
-            // branch can fall through without `buf` appearing borrowed.
-            // SAFETY: the borrow does not escape this block on the None path.
-            let buf_reborrow: &'a mut PathBuffer =
-                unsafe { &mut *std::ptr::from_mut::<PathBuffer>(buf) };
-            if let Some(found) = which(buf_reborrow, b"", cwd, &rel) {
-                return Some(found);
+            // The cwd is probed like one more `$PATH` directory: the same
+            // extensions, and no `.com` (see `which_win`).
+            let mut convert_buf = w_path_buffer_pool::get();
+            let mut path_buf = path_buffer_pool::get();
+            let spells_executable_extension = ends_with_extension(bin);
+            let extensions: &[&[u16]] = if spells_executable_extension {
+                &[]
+            } else {
+                &WIN_EXTENSIONS_W
+            };
+            if let Some(found) = search_bin_in_path(
+                &mut *convert_buf,
+                &mut *path_buf,
+                cwd,
+                bin,
+                spells_executable_extension,
+                extensions,
+            ) {
+                posix_to_platform_in_place(found);
+                return Some(utf16_result_into(buf, found));
             }
         }
     }
     which(buf, path, cwd, bin)
+}
+
+/// Writes the UTF-16 result of a Windows lookup into `buf` as NUL-terminated
+/// UTF-8.
+#[cfg(windows)]
+fn utf16_result_into<'a>(buf: &'a mut PathBuffer, result: &[u16]) -> &'a ZStr {
+    let result_converted = bun_core::strings::convert_utf16_to_utf8_in_buffer(&mut buf[..], result);
+    // Capture len/ptr before re-borrowing buf (borrowck).
+    let result_converted_len = result_converted.len();
+    let result_converted_ptr = result_converted.as_ptr();
+    buf[result_converted_len] = 0;
+    debug_assert!(result_converted_ptr == buf.as_ptr());
+    // SAFETY: buf[result_converted_len] == 0 written above
+    ZStr::from_buf(&buf[..], result_converted_len)
 }
 
 // Like /usr/bin/which but without needing to exec a child process
@@ -113,15 +138,7 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
     {
         let mut convert_buf = w_path_buffer_pool::get();
         let result = which_win(&mut *convert_buf, path, cwd, bin)?;
-        let result_converted =
-            bun_core::strings::convert_utf16_to_utf8_in_buffer(&mut buf[..], result);
-        // Capture len/ptr before re-borrowing buf (borrowck).
-        let result_converted_len = result_converted.len();
-        let result_converted_ptr = result_converted.as_ptr();
-        buf[result_converted_len] = 0;
-        debug_assert!(result_converted_ptr == buf.as_ptr());
-        // SAFETY: buf[result_converted_len] == 0 written above
-        return Some(ZStr::from_buf(&buf[..], result_converted_len));
+        return Some(utf16_result_into(buf, result));
     }
 
     #[cfg(not(windows))]
@@ -183,8 +200,19 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
     }
 }
 
+/// The extensions a bare name is completed with, in probe order.
 #[cfg(windows)]
-static WIN_EXTENSIONS_W: [&[u16]; 4] = [w!("exe"), w!("cmd"), w!("bat"), w!("com")];
+static WIN_EXTENSIONS_W: [&[u16]; 3] = [w!("exe"), w!("cmd"), w!("bat")];
+/// `.com` is probed on its own, after every `$PATH` directory failed the list
+/// above: the few `.com` programs left (`chcp`, `more`, `tree` in System32)
+/// do not pay for one more stat per directory on every spawn.
+#[cfg(windows)]
+static WIN_COM_EXTENSION_W: [&[u16]; 1] = [w!("com")];
+/// Every extension from the two lists above, for a name with a directory
+/// component (one directory, probed once).
+#[cfg(windows)]
+static WIN_ALL_EXTENSIONS_W: [&[u16]; 4] = [w!("exe"), w!("cmd"), w!("bat"), w!("com")];
+/// A name that ends in one of these is stat'd as spelled and never completed.
 #[cfg(windows)]
 const WIN_EXTENSIONS: [&[u8]; 4] = [b"exe", b"cmd", b"bat", b"com"];
 
@@ -208,7 +236,6 @@ pub(crate) fn ends_with_extension(str: &[u8]) -> bool {
 
 /// Whether the last component of `bin` carries an extension: a `.` followed
 /// by at least one character, the same test as libuv's `search_path`.
-#[cfg(windows)]
 fn has_extension(bin: &[u8]) -> bool {
     let name_start = strings::last_index_of_any(bin, b"/\\:").map_or(0, |i| i + 1);
     let name = &bin[name_start..];
@@ -216,6 +243,14 @@ fn has_extension(bin: &[u8]) -> bool {
         Some(dot) => dot + 1 < name.len(),
         None => false,
     }
+}
+
+/// Whether `bin` names a file by Windows path and spells its extension
+/// (`C:\Windows\System32\chcp.com`, `.\tool.exe`). Such a name needs no
+/// lookup before `uv_spawn`: there is no `.exe`/`.cmd`/`.bat` to complete,
+/// and libuv's `search_path` stats it as spelled before `CreateProcessW`.
+pub fn is_windows_path_with_extension(bin: &[u8]) -> bool {
+    strings::contains_any(bin, b"/\\") && has_extension(bin)
 }
 
 /// Returns true when `path` names a Windows batch script (`.cmd` / `.bat`).
@@ -250,14 +285,16 @@ pub fn batch_arg_has_cmd_metachars(arg: &[u8]) -> bool {
     strings::contains_any(arg, b"\"%&|<>^\r\n")
 }
 
-/// Check if the WPathBuffer holds a existing file path, checking also for windows extensions variants like .exe, .cmd, .bat and .com (internally used by which_win)
+/// Check if the WPathBuffer holds an existing file path: as spelled when
+/// `try_as_spelled`, then with each of `extensions` appended (internally used
+/// by which_win)
 #[cfg(windows)]
-fn search_bin(
-    buf: &mut WPathBuffer,
+fn search_bin<'a>(
+    buf: &'a mut WPathBuffer,
     path_size: usize,
     try_as_spelled: bool,
-    check_windows_extensions: bool,
-) -> Option<&mut [u16]> {
+    extensions: &[&[u16]],
+) -> Option<&'a mut [u16]> {
     {
         if try_as_spelled {
             // SAFETY: caller wrote NUL at buf[path_size]
@@ -266,17 +303,15 @@ fn search_bin(
             }
         }
 
-        if check_windows_extensions {
+        if !extensions.is_empty() {
             buf[path_size] = b'.' as u16;
-            buf[path_size + 1 + 3] = 0;
-            for ext in WIN_EXTENSIONS_W {
-                buf[path_size + 1..path_size + 1 + 3].copy_from_slice(ext);
-                // SAFETY: buf[path_size + 1 + ext.len()] == 0 written above
-                if bun_sys::exists_os_path(
-                    WStr::from_buf(&buf[..], path_size + 1 + ext.len()),
-                    true,
-                ) {
-                    return Some(&mut buf[..path_size + 1 + ext.len()]);
+            for ext in extensions {
+                let end = path_size + 1 + ext.len();
+                buf[path_size + 1..end].copy_from_slice(ext);
+                buf[end] = 0;
+                // SAFETY: buf[end] == 0 written above
+                if bun_sys::exists_os_path(WStr::from_buf(&buf[..], end), true) {
+                    return Some(&mut buf[..end]);
                 }
             }
         }
@@ -292,7 +327,7 @@ fn search_bin_in_path<'a>(
     path: &[u8],
     bin: &[u8],
     try_as_spelled: bool,
-    check_windows_extensions: bool,
+    extensions: &[&[u16]],
 ) -> Option<&'a mut [u16]> {
     if path.is_empty() {
         return None;
@@ -305,7 +340,7 @@ fn search_bin_in_path<'a>(
     } else {
         path
     };
-    let tail_units = if check_windows_extensions { 5 } else { 1 };
+    let tail_units = if extensions.is_empty() { 1 } else { 5 };
     if segment.len() + 1 + bin.len() + tail_units > buf.len()
         && bun_core::strings::element_length_utf8_into_utf16(segment)
             + 1
@@ -329,7 +364,7 @@ fn search_bin_in_path<'a>(
     let path_size = segment_utf16_len + 1 + bin_utf16.len();
     buf[path_size] = 0;
 
-    search_bin(buf, path_size, try_as_spelled, check_windows_extensions)
+    search_bin(buf, path_size, try_as_spelled, extensions)
 }
 
 /// This is the windows version of `which`.
@@ -357,7 +392,6 @@ pub(crate) fn which_win<'a>(
     let spells_executable_extension = ends_with_extension(bin);
     let has_dir = strings::contains_any(bin, b"/\\");
     let try_as_spelled = spells_executable_extension || (has_dir && has_extension(bin));
-    let check_windows_extensions = !spells_executable_extension;
 
     // handle absolute paths
     if is_absolute(bin) {
@@ -371,8 +405,12 @@ pub(crate) fn which_win<'a>(
         // Capture len before re-borrowing buf (borrowck).
         let bin_utf16_len = bin_utf16.len();
         buf[bin_utf16_len] = 0;
-        return search_bin(buf, bin_utf16_len, try_as_spelled, check_windows_extensions)
-            .map(|w| &*w);
+        let extensions: &[&[u16]] = if spells_executable_extension {
+            &[]
+        } else {
+            &WIN_ALL_EXTENSIONS_W
+        };
+        return search_bin(buf, bin_utf16_len, try_as_spelled, extensions).map(|w| &*w);
     }
 
     // check if bin is in cwd
@@ -382,13 +420,18 @@ pub(crate) fn which_win<'a>(
         // SAFETY: bin_path borrow does not escape this block on the None path.
         let buf_reborrow: &'a mut WPathBuffer =
             unsafe { &mut *std::ptr::from_mut::<WPathBuffer>(buf) };
+        let extensions: &[&[u16]] = if spells_executable_extension {
+            &[]
+        } else {
+            &WIN_ALL_EXTENSIONS_W
+        };
         if let Some(bin_path) = search_bin_in_path(
             buf_reborrow,
             &mut *path_buf,
             cwd,
             strings::without_prefix_comptime(bin, b"./"),
             try_as_spelled,
-            check_windows_extensions,
+            extensions,
         ) {
             posix_to_platform_in_place(bin_path);
             return Some(&*bin_path);
@@ -397,7 +440,41 @@ pub(crate) fn which_win<'a>(
         return None;
     }
 
-    // iterate over system path delimiter
+    // A spelled-out executable extension is stat'd as spelled in every `$PATH`
+    // directory. Otherwise `.exe`/`.cmd`/`.bat` are tried in every directory
+    // first, and `.com` only once all of those failed, so a lookup that
+    // succeeds today does not pay for it.
+    if spells_executable_extension {
+        return search_bin_in_path_list(buf, &mut *path_buf, path, bin, true, &[]).map(|w| &*w);
+    }
+    // NLL/Polonius limitation — raw-ptr reborrow so the None branch can fall
+    // through without `buf` appearing borrowed.
+    // SAFETY: bin_path borrow does not escape this block on the None path.
+    let buf_reborrow: &'a mut WPathBuffer = unsafe { &mut *std::ptr::from_mut::<WPathBuffer>(buf) };
+    if let Some(bin_path) = search_bin_in_path_list(
+        buf_reborrow,
+        &mut *path_buf,
+        path,
+        bin,
+        false,
+        &WIN_EXTENSIONS_W,
+    ) {
+        return Some(&*bin_path);
+    }
+    search_bin_in_path_list(buf, &mut *path_buf, path, bin, false, &WIN_COM_EXTENSION_W)
+        .map(|w| &*w)
+}
+
+/// `search_bin_in_path` over every `;`-separated directory of `path`.
+#[cfg(windows)]
+fn search_bin_in_path_list<'a>(
+    buf: &'a mut WPathBuffer,
+    path_buf: &mut PathBuffer,
+    path: &[u8],
+    bin: &[u8],
+    try_as_spelled: bool,
+    extensions: &[&[u16]],
+) -> Option<&'a mut [u16]> {
     for segment_part in strings::tokenize(path, b";") {
         // NLL/Polonius limitation — re-borrowing `buf` across loop iterations
         // when returning a reference tied to its lifetime.
@@ -406,15 +483,14 @@ pub(crate) fn which_win<'a>(
             unsafe { &mut *std::ptr::from_mut::<WPathBuffer>(buf) };
         if let Some(bin_path) = search_bin_in_path(
             buf_reborrow,
-            &mut *path_buf,
+            path_buf,
             segment_part,
             bin,
             try_as_spelled,
-            check_windows_extensions,
+            extensions,
         ) {
-            return Some(&*bin_path);
+            return Some(bin_path);
         }
     }
-
     None
 }

@@ -112,8 +112,14 @@ fn get_argv0(
     let argv0_to_use: &[u8] = arg0.slice();
 
     // This mimicks libuv's behavior, which mimicks execvpe
-    // Only resolve from $PATH when the command is not an absolute path
-    let path_to_use: &[u8] = if strings::index_of_char(argv0_to_use, b'/').is_some() {
+    // Only resolve from $PATH when the command is not an absolute path.
+    // On Windows a `\` path that spells its extension is handed over as is
+    // too: nothing is left to complete, and libuv stats it before
+    // CreateProcessW. A `\` path without one still gets `.exe`/`.cmd`/`.bat`
+    // completed here, which libuv does not do for `.cmd`/`.bat`.
+    let names_a_file = strings::index_of_char(argv0_to_use, b'/').is_some()
+        || (cfg!(windows) && bun_which::is_windows_path_with_extension(argv0_to_use));
+    let path_to_use: &[u8] = if names_a_file {
         b""
         // If no $PATH is provided, we fallback to the one from environ
         // This is already the behavior of the PATH passed in here.

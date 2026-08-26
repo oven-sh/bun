@@ -47,16 +47,21 @@ if (isWindows) {
   });
 
   // `chcp.com`, `tree.com` and `more.com` live in System32 with no `.exe`
-  // sibling, so `.com` has to be probed like libuv does. A path with a
-  // directory is stat'd as spelled whatever its extension (libuv again), a
-  // bare $PATH name only with an executable extension.
+  // sibling, so `.com` has to be probed like libuv does. It is probed after
+  // every $PATH directory failed `.exe`/`.cmd`/`.bat`, so a later `.exe` wins
+  // over an earlier `.com`. A path with a directory is stat'd as spelled
+  // whatever its extension (libuv again), a bare $PATH name only with an
+  // executable extension.
   test("which finds .com executables, bare or spelled, relative or absolute", () => {
     using dir = tempDir("which-com", {
       "tool.com": "",
       "dotted.name.exe": "",
       "custom.bin": "",
+      "both.com": "",
+      "later/both.exe": "",
     });
     const base = String(dir);
+    const later = join(base, "later");
     expect({
       bare: which("tool", { PATH: base }),
       spelled: which("tool.com", { PATH: base }),
@@ -67,6 +72,8 @@ if (isWindows) {
       custom_absolute: which(join(base, "custom.bin")),
       custom_bare: which("custom.bin", { PATH: base }),
       custom_no_ext: which("custom", { PATH: base }),
+      exe_in_later_dir_wins: which("both", { PATH: `${base};${later}` }),
+      com_alone: which("both", { PATH: base }),
       missing: which("tool.exe", { PATH: base }),
       system: which("chcp")?.toLowerCase(),
     }).toEqual({
@@ -79,6 +86,8 @@ if (isWindows) {
       custom_absolute: join(base, "custom.bin"),
       custom_bare: null,
       custom_no_ext: null,
+      exe_in_later_dir_wins: join(later, "both.exe"),
+      com_alone: join(base, "both.com"),
       missing: null,
       system: join(process.env.SystemRoot ?? "C:\\Windows", "System32", "chcp.com").toLowerCase(),
     });

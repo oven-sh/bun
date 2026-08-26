@@ -201,8 +201,8 @@ impl AbortSignal {
     /// Thread-safety: not thread-safe; call only on the owning thread/loop.
     ///
     /// Usage: if you need to operate on the Timeout (run/cancel/deinit), hold a ref
-    /// to `this` for the duration (e.g., `this.ref_(); defer this.unref();`) and avoid
-    /// caching the pointer across turns.
+    /// to `this` for the duration (`let _ref = this.ref_();`) and avoid caching the
+    /// pointer across turns.
     pub fn get_timeout(&self) -> Option<&Timeout> {
         let ptr = WebCore__AbortSignal__getTimeout(self);
         // SAFETY: returned Timeout is owned by `self` and valid while `self` is held

@@ -145,6 +145,19 @@ describe("encapsulate and decapsulate", () => {
       );
     });
 
+    test("an empty or detached ciphertext fails without crashing", () => {
+      const { privateKey } = generateKeyPairSync(type as any);
+      expect(() => decapsulate(privateKey, Buffer.alloc(0))).toThrow(
+        expect.objectContaining({ code: "ERR_CRYPTO_OPERATION_FAILED" }),
+      );
+
+      const detached = new Uint8Array(ciphertextLen);
+      structuredClone(detached.buffer, { transfer: [detached.buffer] });
+      expect(() => decapsulate(privateKey, detached)).toThrow(
+        expect.objectContaining({ code: "ERR_CRYPTO_OPERATION_FAILED" }),
+      );
+    });
+
     test("an async failure reports the Node error message", async () => {
       const { publicKey } = generateKeyPairSync(type as any);
       const wrongType = type === "ml-kem-768" ? "ml-kem-1024" : "ml-kem-768";

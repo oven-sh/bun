@@ -422,12 +422,13 @@ impl Blob {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
     }
 
-    /// The name a `File` reports: `name` if set, else [`store_path`].
+    /// A usable filename: a non-empty `name`, else [`store_path`]. (`file.name`
+    /// itself may be `""`; that is not a filename.)
     ///
     /// [`store_path`]: Self::store_path
     pub fn get_file_name(&self) -> Option<bun_core::Utf8Bytes<'_>> {
         let name = self.name.get();
-        if name.tag() != bun_core::Tag::Dead {
+        if !name.is_empty() {
             return Some(name.to_utf8());
         }
         self.store_path().map(bun_core::Utf8Bytes::Borrowed)

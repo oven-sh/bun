@@ -9,8 +9,7 @@ use bun_uws::Request as UwsRequest;
 use crate::webcore::FetchHeaders;
 use crate::webcore::response::HeadersRef;
 
-/// Owns one allocation written by `uws_req_copy_head` (libuwsockets.cpp): the `u32` index below,
-/// then the wire bytes. A thin pointer, so it fits the `AnyRequestContext` slot of a `Request`.
+/// One allocation written by `uws_req_copy_head` (libuwsockets.cpp): the `u32` index below, then the wire bytes.
 #[repr(transparent)]
 pub(crate) struct RequestHeadSnapshot(NonNull<u8>);
 
@@ -40,8 +39,7 @@ impl RequestHeadSnapshot {
         core::mem::ManuallyDrop::new(self).0
     }
 
-    /// # Safety
-    /// `ptr` must come from [`Self::into_raw`] and not have been taken back already.
+    /// Safety: `ptr` comes from [`Self::into_raw`] and is taken back only once.
     pub(crate) unsafe fn from_raw(ptr: NonNull<u8>) -> Self {
         Self(ptr)
     }

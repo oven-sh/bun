@@ -65,6 +65,7 @@ type Backend = {
   placeholder: string;
   // Number of statements this session has prepared on the server so far.
   prepares: (sql: SQL) => Promise<number>;
+  // The fields of a prepare-time syntax error, compared with `syntaxError`.
   describeError: (err: unknown) => Record<string, unknown>;
   syntaxError: Record<string, unknown>;
 };
@@ -95,30 +96,38 @@ async function expectDistinctStatements(sql: SQL, { placeholder, prepares }: Bac
 // The bad query's free word closes the string literal early, so the server
 // rejects it at prepare time. Its name collides with the good query's, which
 // is the input that made the old cache hand the good statement to the bad
-// query. The good statement must stay cached and usable, the failure is cached
-// under the bad query's own key, and the connection stays usable.
+// query. The drivers treat the failed entry differently: MySQL keeps it and
+// replays the stored error, Postgres drops it and parses again on the next
+// run. Under either policy the bad query must fail the same way every time,
+// the good statement must stay cached, and the connection must stay usable.
+// Returns the rejection of the second bad run for the caller's class check.
 async function expectFailedPrepareKeepsCachedStatement(
   sql: SQL,
   { placeholder, prepares, describeError, syntaxError }: Backend,
-) {
+): Promise<unknown> {
   const { queryA: good, rowA: goodRow, queryB: bad } = collidingQueries(placeholder, BAD_FREE);
   const control = `SELECT 'CONTROL' AS v, ${placeholder} AS p`;
   const run = (query: string) => sql.unsafe(query, [null]);
 
   expect(await run(good)).toEqual([goodRow]);
   // Before the fix this resolved with goodRow instead of rejecting.
-  const err = await rejection(run(bad));
-  expect(err).toBeInstanceOf(SQL.SQLError);
-  expect(describeError(err)).toEqual(syntaxError);
+  const first = await rejection(run(bad));
+  expect(first).toBeInstanceOf(SQL.SQLError);
+  expect(describeError(first)).toEqual(syntaxError);
+  const second = await rejection(run(bad));
+  expect(describeError(second)).toEqual(syntaxError);
+
+  // Taken after both bad runs, so the count does not depend on whether the
+  // driver prepared the bad query once or twice.
   const prepared = await prepares(sql);
 
   Bun.gc(true);
 
   expect(await run(good)).toEqual([goodRow]);
-  expect(describeError(await rejection(run(bad)))).toEqual(syntaxError);
   expect(await prepares(sql)).toBe(prepared);
   expect(await run(control)).toEqual([controlRow]);
   expect(await prepares(sql)).toBe(prepared + 1);
+  return second;
 }
 
 const mysql: Backend = {
@@ -127,6 +136,8 @@ const mysql: Backend = {
   // `.simple()` runs the status query over the text protocol, so it does not
   // count itself.
   prepares: async sql => Number((await sql.unsafe("SHOW SESSION STATUS LIKE 'Com_stmt_prepare'").simple())[0].Value),
+  // No `name`: the replayed error is a plain object, not a MySQLError. See the
+  // todo in the mysql block below.
   describeError: (err: any) => ({ code: err.code, errno: err.errno, sqlState: err.sqlState, message: err.message }),
   syntaxError: {
     code: "ERR_MYSQL_SYNTAX_ERROR",
@@ -169,6 +180,17 @@ describeWithContainer("mysql", { image: "mysql_plain", concurrent: true }, conta
     await using sql = connect();
     await expectFailedPrepareKeepsCachedStatement(sql, mysql);
   });
+
+  // The replayed error is thrown synchronously from the native run() and reaches
+  // query.reject() without wrapError (src/js/bun/sql.ts), so it is the raw
+  // options object. #33189 drops the replay and re-prepares instead.
+  test.todo("MySQL: a replayed prepare failure rejects with a MySQLError", async () => {
+    await container.ready;
+    await using sql = connect();
+    const { queryB: bad } = collidingQueries(mysql.placeholder, BAD_FREE);
+    expect(await rejection(sql.unsafe(bad, [null]))).toBeInstanceOf(SQL.MySQLError);
+    expect(await rejection(sql.unsafe(bad, [null]))).toBeInstanceOf(SQL.MySQLError);
+  });
 });
 
 describeWithContainer("postgres", { image: "postgres_plain", concurrent: true }, container => {
@@ -187,7 +209,9 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
   test("Postgres: a hash-colliding query that fails to parse does not evict or free the cached statement", async () => {
     await container.ready;
     await using sql = connect();
-    await expectFailedPrepareKeepsCachedStatement(sql, postgres);
+    // Postgres dropped the failed entry, so the second bad run was parsed again
+    // and rejected through the same path as the first.
+    expect(await expectFailedPrepareKeepsCachedStatement(sql, postgres)).toBeInstanceOf(SQL.PostgresError);
 
     // The server holds exactly one statement with the good query's text (it was
     // not re-prepared) and none with the bad query's text.

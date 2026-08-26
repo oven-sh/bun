@@ -12,7 +12,6 @@ use bun_threading::thread_pool as ThreadPoolLib;
 
 use crate::BundleV2;
 use crate::Chunk;
-use crate::ContentHasher;
 use crate::Index;
 use crate::analyze_transpiled_module;
 use crate::analyze_transpiled_module::StringIDExt as _;
@@ -60,6 +59,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     {
         // TODO: instead of running a renamer per chunk, run it per file
         debug!(" START {} renamers", chunks.len());
+        if c.graph.code_splitting && !c.options.minify_identifiers {
+            crate::linker_context::cross_chunk_names::assign_unminified(c, chunks)?;
+        }
         let ctx = GenerateChunkCtx {
             chunk: bun_ptr::BackRef::new_mut(&mut chunks[0]),
             // SAFETY: `c` is the live `&mut LinkerContext` for the link step;
@@ -71,6 +73,16 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // link step); `pool` is the arena-allocated bundler ThreadPool.
         c.worker_pool()
             .each_ptr(ctx, LinkerContext::generate_js_renamer, chunks);
+        if c.graph.code_splitting {
+            if c.options.minify_identifiers {
+                // Counts are in; name the cross-chunk bindings, pin them, then
+                // let every chunk name the rest.
+                crate::linker_context::cross_chunk_names::assign_minified(c, chunks)?;
+                c.worker_pool()
+                    .each_ptr(ctx, LinkerContext::finish_js_renamer, chunks);
+            }
+            crate::linker_context::cross_chunk_names::apply_to_clauses(c, chunks);
+        }
         debug!("  DONE {} renamers", chunks.len());
     }
 
@@ -363,24 +375,12 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
         let mut duplicates_map: StringArrayHashMap<DuplicateEntry> = StringArrayHashMap::default();
 
-        let mut chunk_visit_map = AutoBitSet::init_empty(chunks.len())?;
-
         // Compute the final hashes of each chunk, then use those to create the final
-        // paths of each chunk. This can technically be done in parallel but it
-        // probably doesn't matter so much because we're not hashing that much data.
-        // Reshaped for borrowck — index loop so `chunks` can be passed
-        // whole to `append_isolated_hashes_for_imported_chunks` and then indexed.
+        // paths of each chunk.
+        let hashes = c.final_chunk_hashes(chunks)?;
         for index in 0..chunks.len() {
-            let mut hash = ContentHasher::default();
-            c.append_isolated_hashes_for_imported_chunks(
-                &mut hash,
-                chunks,
-                u32::try_from(index).expect("int cast"),
-                &mut chunk_visit_map,
-            );
-            chunk_visit_map.set_all(false);
             let chunk = &mut chunks[index];
-            chunk.template.placeholder.hash = Some(hash.digest());
+            chunk.template.placeholder.hash = Some(hashes[index]);
 
             let mut rel_path: Vec<u8> = Vec::new();
             // Use the byte-writer (`PathTemplate::print`) directly —
@@ -502,6 +502,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     // cross-chunk import specifiers. During printing, cross-chunk imports use
     // unique_key placeholders as paths. Now that final paths are known, replace
     // those placeholders with the resolved paths and serialize.
+    let mut module_info_strings =
+        bun_js_printer::analyze_transpiled_module::ModuleInfoStringTable::default();
     if c.options.generates_module_info() {
         // Build map from unique_key -> final resolved path
         // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
@@ -531,7 +533,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             }
         }
 
-        // Fix up each chunk's module_info
+        // Fix up each chunk's module_info; every chunk's strings go into one
+        // table (`OutputKind::ModuleInfoStringTable`) their bodies index into.
+        let mut table_ids: Vec<Vec<u32>> = Vec::new();
         for chunk in chunks.iter_mut() {
             let crate::chunk::Content::Javascript(js) = &mut chunk.content else {
                 continue;
@@ -570,14 +574,25 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 mi.replace_string_id(rep.old_id, new_id);
             }
 
-            // Serialize the fixed-up module_info
-            js.module_info_bytes = bun_js_printer::serialize_module_info(Some(mi));
-
-            // Free the ModuleInfo now that it's been serialized to bytes.
-            // It was allocated with bun.default_allocator (not the arena),
-            // so it must be explicitly destroyed.
-            // In Rust, dropping the Option<Box<ModuleInfo>> frees it.
-            js.module_info = None;
+            if mi.finalize().is_err() {
+                js.module_info = None;
+                continue;
+            }
+            table_ids.push(module_info_strings.intern_all(mi));
+        }
+        let mut table_ids = table_ids.iter();
+        for chunk in chunks.iter_mut() {
+            let crate::chunk::Content::Javascript(js) = &mut chunk.content else {
+                continue;
+            };
+            let Some(mi) = js.module_info.take() else {
+                continue;
+            };
+            js.module_info_bytes = Some(bun_js_printer::serialize_module_info_body(
+                &mi,
+                module_info_strings.count(),
+                table_ids.next().expect("one per chunk with module_info"),
+            ));
         }
     }
 
@@ -1302,7 +1317,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
     // Only `StandaloneModuleGraph::to_bytes` reads these.
     if is_compile {
-        let (order, startup_count) = chunk_load_order(chunks, &output_files.output_files);
+        let (order, startup_count) = chunk_load_order(
+            chunks,
+            &output_files.output_files,
+            c.options.target.is_bun(),
+        );
         for (chunk_index, &position) in order.iter().enumerate() {
             let file = &mut output_files.output_files[chunk_index];
             file.load_order = position;
@@ -1337,6 +1356,34 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             &mut result,
             external_string_table.as_ref().and_then(|t| t.get()),
         );
+    }
+    if c.options.generates_module_info() {
+        let mut bytes = Vec::new();
+        module_info_strings
+            .serialize(&mut bytes)
+            .expect("Vec<u8> write");
+        debug!(
+            "module_info string table: {} strings, {} bytes",
+            module_info_strings.count(),
+            bytes.len()
+        );
+        result.push(options::OutputFile::init(options::OutputFileInit {
+            output_path: b".module-info-strings".to_vec().into_boxed_slice(),
+            input_path: Box::default(),
+            input_loader: Loader::File,
+            hash: None,
+            output_kind: options::OutputKind::ModuleInfoStringTable,
+            loader: Loader::File,
+            size: Some(bytes.len()),
+            display_size: bytes.len() as u32,
+            data: options::OutputFileData::Buffer {
+                data: bytes.into_boxed_slice(),
+            },
+            side: None,
+            entry_point_index: None,
+            is_executable: false,
+            ..Default::default()
+        }));
     }
     if let Some(table) = external_string_table {
         let bytes = table.take();
@@ -1421,13 +1468,18 @@ fn append_internal_module_bytecode(
 
 /// Position of each chunk in the order a `--compile` executable is expected to
 /// load it: the entry point's static cross-chunk imports in evaluation order,
-/// then the closures of its dynamic imports, breadth-first. The standalone
+/// then the closures of its dynamic imports (`import()` and split `require()`
+/// chunks), breadth-first. The standalone
 /// module graph lays modules out by this so booting faults in one run of pages
 /// rather than one page per chunk scattered across the payload. Also returns
 /// how many of the positions make up the static closure of the entry point
 /// the executable runs: the first server-side one, as `to_bytes` picks it.
 /// `output_files[i]` is chunk `i`'s output file.
-fn chunk_load_order(chunks: &[Chunk], output_files: &[options::OutputFile]) -> (Vec<u32>, u32) {
+fn chunk_load_order(
+    chunks: &[Chunk],
+    output_files: &[options::OutputFile],
+    target_is_bun: bool,
+) -> (Vec<u32>, u32) {
     let mut visited = AutoBitSet::init_empty(chunks.len()).expect("oom");
     let mut order: Vec<u32> = Vec::with_capacity(chunks.len());
     let entry_points = |side_is_client: bool| {
@@ -1460,7 +1512,11 @@ fn chunk_load_order(chunks: &[Chunk], output_files: &[options::OutputFile]) -> (
                 Some(import) => {
                     stack.last_mut().unwrap().1 += 1;
                     let dep = import.chunk_index;
-                    if import.import_kind == bun_ast::ImportKind::Dynamic {
+                    // An HTML import puts browser-side chunks in a server build;
+                    // those never load anything through `import.meta.require`.
+                    let importer_is_bun = target_is_bun
+                        && output_files[chunk_index as usize].side != Some(options::Side::Client);
+                    if import.import_kind.can_be_lazy_chunk(importer_is_bun) {
                         dynamic_frontier.push_back(dep);
                     } else if !visited.is_set(dep as usize) {
                         visited.set(dep as usize);

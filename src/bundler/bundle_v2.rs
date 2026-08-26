@@ -338,7 +338,7 @@ pub mod bv2_impl {
     use crate::Error;
     use bun_ast::server_component_boundary;
     use bun_ast::{Binding, E, Expr, G, S};
-    use bun_ast::{ImportKind, ImportRecord};
+    use bun_ast::{ExportsKind, ImportKind, ImportRecord};
     use bun_collections::{ArrayHashMap, DynamicBitSet, DynamicBitSetUnmanaged, VecExt};
     use bun_core::strings;
     use bun_core::{FeatureFlags, Output};
@@ -1425,6 +1425,7 @@ pub mod bv2_impl {
             ) -> Vec<(u32, Box<[u8]>)>;
 
             safe fn __bun_jsc_encoder_string_table_new() -> core::ptr::NonNull<EncoderStringTable>;
+            pub(crate) safe fn __bun_jsc_destroy_bytecode_cache_vm();
             safe fn __bun_jsc_encoder_string_table_take(
                 table: core::ptr::NonNull<EncoderStringTable>,
             ) -> Box<[u8]>;
@@ -1770,6 +1771,9 @@ pub mod bv2_impl {
         pub(crate) all_urls_for_css: &'a [&'a [u8]],
         pub(crate) redirects: &'a [u32],
         pub(crate) dynamic_import_entry_points: &'a mut ArrayHashMap<IndexInt, ()>,
+        pub(crate) split_require: bool,
+        pub(crate) all_exports_kinds: &'a [ExportsKind],
+        pub(crate) all_targets: &'a [Target],
         /// Files which are Server Component Boundaries
         pub(crate) scb_bitset: Option<DynamicBitSetUnmanaged>,
         pub(crate) scb_list: server_component_boundary::Slice<'a>,
@@ -1924,9 +1928,9 @@ pub mod bv2_impl {
                                 redirect_count += 1;
                             }
 
-                            let import_record = &self.all_import_records
+                            let import_record = &mut self.all_import_records
                                 [import_record_list_id.get() as usize]
-                                .as_slice()[ir_idx];
+                                .as_mut_slice()[ir_idx];
                             // Mark if the file is imported by JS and its URL is inlined for CSS
                             let is_inlined = import_record.source_index.is_valid()
                                 && !self.all_urls_for_css
@@ -1941,10 +1945,28 @@ pub mod bv2_impl {
                             }
 
                             let next_source = import_record.source_index;
-                            let kind_is_dynamic = import_record.kind == ImportKind::Dynamic;
+                            // The importing file's own target decides: a server
+                            // build's browser-side files cannot call `import.meta.require`.
+                            let target_is_bun = self.split_require
+                                && self.all_targets[source_index.get() as usize].is_bun();
+                            let mut was_dynamic_import = CHECK_DYNAMIC_IMPORTS
+                                && import_record.kind.can_be_lazy_chunk(target_is_bun);
+                            // A `require()` splits only when it targets another ES
+                            // module; the flag is the linker's and printer's signal.
+                            if was_dynamic_import && import_record.kind == ImportKind::Require {
+                                was_dynamic_import = next_source.is_valid()
+                                    && next_source != import_record_list_id
+                                    && self.all_exports_kinds[next_source.get() as usize]
+                                        == ExportsKind::Esm;
+                                if was_dynamic_import {
+                                    import_record
+                                        .flags
+                                        .insert(bun_ast::ImportRecordFlags::CROSS_CHUNK_REQUIRE);
+                                }
+                            }
                             self.stack.push(ReachFrame::Enter {
                                 source_index: next_source,
-                                was_dynamic_import: CHECK_DYNAMIC_IMPORTS && kind_is_dynamic,
+                                was_dynamic_import,
                             });
                         }
                     }
@@ -2038,6 +2060,8 @@ pub mod bv2_impl {
             let all_import_records: &mut [import_record::List<'_>] =
                 ast_slice.split_mut().import_records;
             let all_urls_for_css = self.graph.ast.items_url_for_css();
+            let all_exports_kinds = self.graph.ast.items_exports_kind();
+            let all_targets = self.graph.ast.items_target();
 
             let mut visitor = ReachableFileVisitor {
                 reachable: Vec::with_capacity(self.graph.entry_points.len() + 1),
@@ -2047,6 +2071,9 @@ pub mod bv2_impl {
                 all_loaders: self.graph.input_files.items_loader(),
                 all_urls_for_css,
                 dynamic_import_entry_points: &mut self.dynamic_import_entry_points,
+                split_require: self.transpiler.options.split_require,
+                all_exports_kinds,
+                all_targets,
                 scb_bitset,
                 scb_list,
                 additional_files_imported_by_js_and_inlined_in_css:

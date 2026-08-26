@@ -319,11 +319,11 @@ it("process.hrtime()", async () => {
   const end = process.hrtime(start);
   expect(end[0]).toBe(0);
 
-  // Flaky on Ubuntu & Windows.
   await Bun.sleep(16);
-  const end2 = process.hrtime();
-
-  expect(end2[1] > start[1]).toBe(true);
+  // Compare the whole duration: the nanoseconds field alone wraps to zero at
+  // every second boundary, so it is not ordered across the sleep.
+  const [seconds, nanoseconds] = process.hrtime(start);
+  expect(seconds * 1e9 + nanoseconds).toBeGreaterThan(0);
 });
 
 it("process.hrtime.bigint()", () => {
@@ -2041,10 +2041,15 @@ describe.concurrent("process.exit()", () => {
 });
 
 it("process.memoryUsage.arrayBuffers", () => {
+  // `arrayBuffers` is JSC's running total of ArrayBuffer bytes. Dead buffers
+  // stay in it until a full GC sweeps them, and `new ArrayBuffer` is a GC
+  // safepoint, so a baseline that includes dead buffers can shrink under the
+  // second read. Sweep first so the baseline holds only live buffers.
+  Bun.gc(true);
   const initial = process.memoryUsage().arrayBuffers;
   const array = new ArrayBuffer(1024 * 1024 * 16);
-  array.buffer;
-  expect(process.memoryUsage().arrayBuffers).toBeGreaterThanOrEqual(initial + 16 * 1024 * 1024);
+  // `array.byteLength` is read after `memoryUsage()`, which keeps the buffer live across the read.
+  expect(process.memoryUsage().arrayBuffers).toBeGreaterThanOrEqual(initial + array.byteLength);
 });
 
 it("should handle user assigned `default` properties", async () => {

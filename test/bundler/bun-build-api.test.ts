@@ -2069,7 +2069,15 @@ describe("Bun.build production option", () => {
       const { minify, minifyIdentifiers, minifyWhitespace, minifySyntax } = build.initialOptions;
       captured.push({ minify, minifyIdentifiers, minifyWhitespace, minifySyntax });
     };
-    for (const extra of [{ production: true }, { production: true, minify: false }] as const) {
+    const configs = [
+      { production: true },
+      { production: true, minify: false },
+      // Object-form minify never drives the aggregate flag. The per-field
+      // flags carry the effective configuration.
+      { production: true, minify: { whitespace: false, syntax: false, identifiers: false } },
+      { production: true, minify: { whitespace: false } },
+    ] as const;
+    for (const extra of configs) {
       const result = await Bun.build({
         entrypoints: [join(String(dir), "index.js")],
         ...extra,
@@ -2080,6 +2088,8 @@ describe("Bun.build production option", () => {
     expect(captured).toEqual([
       { minify: true, minifyIdentifiers: true, minifyWhitespace: true, minifySyntax: true },
       { minify: false, minifyIdentifiers: false, minifyWhitespace: false, minifySyntax: false },
+      { minify: false, minifyIdentifiers: false, minifyWhitespace: false, minifySyntax: false },
+      { minify: false, minifyIdentifiers: true, minifyWhitespace: false, minifySyntax: true },
     ]);
   });
 

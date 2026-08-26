@@ -365,7 +365,12 @@ export function runSetupFunction(
       entryPoints: config.entrypoints ?? config.entryPoints ?? [],
       // `production: true` defaults every minify pass on; an explicit
       // `minify` value wins per field, like the native config parser.
-      minify: typeof config.minify === "boolean" ? config.minify : config.production === true,
+      minify:
+        typeof config.minify === "boolean"
+          ? config.minify
+          : config.minify == null
+            ? config.production === true
+            : false,
       minifyIdentifiers:
         typeof config.minify === "boolean"
           ? config.minify

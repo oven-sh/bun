@@ -86,8 +86,6 @@ pub struct Request {
     pub(crate) url: JsCell<BunString>,
 
     headers: JsCell<Option<HeadersRef>>,
-    /// Source for the lazy `url`/`headers` getters once the uWS request is gone.
-    head: JsCell<Option<RequestHeadSnapshot>>,
     // AbortSignal is an opaque C++ handle with intrusive WebCore refcounting —
     // `Arc` of an opaque ZST is meaningless (its payload address is not the
     // C++ object). `AbortSignalRef` wraps `NonNull<AbortSignal>` and routes
@@ -245,16 +243,19 @@ impl Request {
         if let Some(req) = self.request_context.get_request() {
             return Some(RequestHead::Uws(bun_opaque::opaque_deref(req)));
         }
-        self.head.get().as_ref().map(RequestHead::Snapshot)
+        self.request_context.get_head().map(RequestHead::Snapshot)
     }
 
-    /// Keeps what the lazy `url`/`headers` getters still need from `req`. A no-op once JS read both.
-    pub(crate) fn snapshot_request_head(&self, req: &uws::Request) {
-        if self.head.get().is_some() || (!self.url.get().is_empty() && self.headers.get().is_some())
-        {
-            return;
-        }
-        self.head.set(Some(RequestHeadSnapshot::capture(req)));
+    /// Ends the link to the server context. When the uWS request is still live and JS has
+    /// not read both `url` and `headers`, a copy of its head takes the context's place.
+    pub(crate) fn detach_request_context(&mut self, req: Option<&uws::Request>) {
+        drop(self.request_context.take_head());
+        self.request_context = match req {
+            Some(req) if self.url.get().is_empty() || self.headers.get().is_none() => {
+                AnyRequestContext::head(RequestHeadSnapshot::capture(req))
+            }
+            _ => AnyRequestContext::NULL,
+        };
     }
 
     /// Returns the headers of the request. If the headers are not already cached, it will create a new FetchHeaders object.
@@ -419,11 +420,6 @@ impl Request {
         core::mem::size_of::<Request>()
             + self.request_context.memory_cost()
             + self.url.get().byte_slice().len()
-            + self
-                .head
-                .get()
-                .as_ref()
-                .map_or(0, RequestHeadSnapshot::memory_cost)
             + self.body_value().memory_cost()
     }
 
@@ -475,7 +471,6 @@ impl Request {
         Request {
             url: JsCell::new(url),
             headers: JsCell::new(headers),
-            head: JsCell::new(None),
             signal: JsCell::new(None),
             body: ManuallyDrop::new(body),
             js_ref: JsCell::new(JsRef::empty()),
@@ -761,7 +756,7 @@ impl Request {
     pub(crate) fn finalize_without_deinit(&mut self) {
         // headers.deref() → HeadersRef::Drop when set to None
         self.headers.set(None);
-        self.head.set(None);
+        drop(self.request_context.take_head());
 
         self.url.set(BunString::EMPTY);
 
@@ -778,6 +773,8 @@ impl Request {
         // hot-path `Box::from_raw().drop()` below cannot re-run this.
         // SAFETY: `this` is live and this is the sole release point for `body`.
         unsafe { ManuallyDrop::drop(&mut this.body) };
+        // `AnyRequestContext` is `Copy`, so the drop glue below cannot free the head copy.
+        drop(this.request_context.take_head());
         if this.weak_ptr_data.on_finalize() {
             // Hot path: no outstanding weak refs. Reclaim and drop the whole
             // allocation in one shot — `Box::from_raw`'s drop runs
@@ -1037,7 +1034,6 @@ impl Request {
         let mut req = Request {
             url: JsCell::new(BunString::EMPTY),
             headers: JsCell::new(None),
-            head: JsCell::new(None),
             signal: JsCell::new(None),
             body: ManuallyDrop::new(body),
             js_ref: JsCell::new(JsRef::init_weak(this_value)),
@@ -1545,7 +1541,6 @@ impl Request {
                 Request {
                     url: JsCell::new(url),
                     headers: JsCell::new(headers),
-                    head: JsCell::new(None),
                     signal: JsCell::new(None),
                     body: ManuallyDrop::new(body),
                     js_ref: JsCell::new(JsRef::empty()),
@@ -1572,7 +1567,6 @@ impl Request {
         let mut req = Box::new(Request {
             url: JsCell::new(BunString::EMPTY),
             headers: JsCell::new(None),
-            head: JsCell::new(None),
             signal: JsCell::new(None),
             // `clone_into` `ptr::write`s the whole struct without dropping the
             // sentinel; seed with a non-deref'd dangling handle. `ManuallyDrop`
@@ -1605,7 +1599,6 @@ impl Request {
         Request {
             url: JsCell::new(BunString::EMPTY),
             headers: JsCell::new(None),
-            head: JsCell::new(None),
             signal: JsCell::new(signal),
             body: ManuallyDrop::new(body),
             js_ref: JsCell::new(JsRef::empty()),

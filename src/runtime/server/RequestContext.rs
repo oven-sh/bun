@@ -1536,14 +1536,10 @@ where
 
         if let Some(request) = self.request_mut() {
             // `req` is live only while the dispatch is still on the stack.
-            if !HTTP3 {
-                if let Some(req) = self.req.get() {
-                    request.snapshot_request_head(bun_opaque::opaque_deref(
-                        req.cast::<uws::Request>(),
-                    ));
-                }
-            }
-            request.request_context = AnyRequestContext::NULL;
+            let req = if HTTP3 { None } else { self.req.get() };
+            request.detach_request_context(
+                req.map(|req| bun_opaque::opaque_deref(req.cast::<uws::Request>())),
+            );
             self.request_weakref.set(request::WeakRef::EMPTY);
         }
 

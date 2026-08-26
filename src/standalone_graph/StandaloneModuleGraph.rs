@@ -2540,12 +2540,10 @@ impl StandaloneModuleGraph {
         Ok(Some(graph))
     }
 
-    /// Reads the payload pages the entry point's static import closure needs
-    /// into the page cache before JSC touches them: its modules' bytecode (or
-    /// source text when there is none), the internal-module bytecode and the
-    /// string table, one run by construction (`to_bytes`). On a cold start that
-    /// is a few large reads instead of one page fault per page while the
-    /// bytecode decodes. Errors are ignored.
+    /// Reads the startup run into the page cache before JSC decodes it: the
+    /// first `startup_module_count` modules' bytecode (or source text), the
+    /// internal-module bytecode and the string table, contiguous by
+    /// construction (`to_bytes`). Errors are ignored.
     /// `BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1` skips it.
     fn prefetch_startup_pages(&self) {
         if self.startup_module_count == 0
@@ -2678,19 +2676,11 @@ fn address_span(regions: impl Iterator<Item = (*const u8, usize)>) -> Option<(us
     (lo < hi).then_some((lo, hi))
 }
 
-/// `MADV_WILLNEED` over the pages of `[lo, hi)`: the kernel reads the file
-/// bytes behind the mapping into the page cache.
-///
-/// Linux queues the readahead and returns. One call reads at most
-/// `max(bdi->io_pages, ra_pages)` (device dependent, 128 KiB by default), so
-/// it is issued in 128 KiB pieces.
-///
-/// Darwin (`vm_map_willneed`) pre-faults every page with reads of up to 1 MiB
-/// and returns once they are resident. It write-faults a writable mapping
-/// "to preclude subsequent soft-faults", which copies every page out of the
-/// page cache into private memory, so the range is read-only for the duration
-/// of the call. JSC's later writes to the bytecode copy one page at a time, as
-/// without the prefetch.
+/// `MADV_WILLNEED` over the pages of `[lo, hi)`. Linux queues readahead of at
+/// most `max(bdi->io_pages, ra_pages)` per call, hence the 128 KiB pieces.
+/// Darwin (`vm_map_willneed`) pre-faults the pages synchronously and
+/// write-faults a writable mapping, which copies every page out of the page
+/// cache, hence the read-only window around the call.
 #[cfg(not(windows))]
 fn read_ahead(lo: usize, hi: usize) {
     let start = lo & !(bun_alloc::page_size() - 1);

@@ -55,20 +55,21 @@ test("handleUpgrade works when socket is wrapped in a Proxy that hides symbol pr
   httpServer.listen(0, "127.0.0.1");
   await once(httpServer, "listening");
 
+  const { port } = httpServer.address() as AddressInfo;
+  const client = new WebSocket(`ws://127.0.0.1:${port}/chat`);
+  client.on("message", data => clientReceived.resolve(data.toString()));
+
   try {
-    const { port } = httpServer.address() as AddressInfo;
-    const client = new WebSocket(`ws://127.0.0.1:${port}/chat`);
-    client.on("message", data => clientReceived.resolve(data.toString()));
     await once(client, "open");
     client.send("hello from client");
 
     expect(await serverReceived.promise).toBe("hello from client");
     expect(await clientReceived.promise).toBe("hello from server");
-
-    client.close();
   } finally {
-    wss.close();
-    httpServer.close();
+    client.close();
+    const wssClosed = new Promise<void>(resolve => wss.close(() => resolve()));
+    const serverClosed = new Promise<void>(resolve => httpServer.close(() => resolve()));
     httpServer.closeAllConnections();
+    await Promise.all([wssClosed, serverClosed]);
   }
 });

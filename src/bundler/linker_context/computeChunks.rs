@@ -291,13 +291,12 @@ pub(crate) fn compute_chunks(
             }
         }
     }
-    let min_chunk_size = this.options.min_chunk_size;
-    if code_splitting && min_chunk_size > 0 {
-        // SAFETY: see `this_ptr` note above — the pass reads `graph.ast` /
-        // `graph.files` columns and writes only `files.entry_bits`, disjoint
-        // from the column slices held here.
-        merge_small_chunks(unsafe { &mut *this_ptr }, temp, min_chunk_size)?;
+    if code_splitting {
+        let min_chunk_size = this.options.min_chunk_size;
+        merge_small_chunks(this, temp, min_chunk_size)?;
     }
+    let css_asts = this.graph.ast.items_css();
+    let ast_targets = this.graph.ast.items_target();
 
     // reshaped for borrowck — re-borrow file_entry_bits after the loop above mutated it
     let file_entry_bits: &mut [AutoBitSet] = this.graph.files.items_entry_bits_mut();

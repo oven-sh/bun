@@ -464,7 +464,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!("--splitting                      Enable code splitting"),
         parse_param!(
-            "--min-chunk-size <INT>           With --splitting, fold chunks smaller than this many source bytes into a chunk that is always loaded together with them"
+            "--min-chunk-size <INT>           With --splitting, also fold side-effect-free chunks smaller than this many source bytes into a chunk more entry points load"
         ),
         parse_param!(
             "--public-path <STR>              A prefix to be appended to any import paths in bundled code"

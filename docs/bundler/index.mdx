@@ -559,7 +559,7 @@ Each `import()` of a bundled JavaScript module also becomes its own chunk. Tree 
 
 ### minChunkSize
 
-With `splitting`, fold small chunks into a chunk that is always loaded together with them.
+With `splitting`, also fold small side-effect-free chunks into a chunk that more entrypoints load.
 
 <Tabs>
   <Tab title="JavaScript">
@@ -579,18 +579,11 @@ With `splitting`, fold small chunks into a chunk that is always loaded together 
   </Tab>
 </Tabs>
 
-Code splitting gives each distinct set of importers its own chunk. A module that `index.tsx` imports and that a lazily `import()`ed module also imports ends up in a chunk of its own, even though that chunk is loaded every time `index.tsx` runs: the lazy module is only ever loaded after `index.tsx`. Large applications with many `import()` boundaries can produce hundreds of such chunks of a few kilobytes each, and every one of them costs a module record, a link step, and a file read at startup.
+Code splitting gives each distinct set of importers its own chunk, then folds chunks that are always loaded together: a module that `index.tsx` imports and that a lazily `import()`ed module also imports lives in `index.js`, and the lazy chunk imports it from there, because the lazy module can only load after `index.tsx` has run. That fold never makes an entrypoint load more code, so it is always on.
 
-`minChunkSize` folds a chunk whose source files add up to fewer than this many bytes into another chunk when doing so is unobservable:
+`minChunkSize` goes further for chunks whose source files add up to fewer than this many bytes and whose modules run nothing at the top level: only declarations, `"sideEffects": false` in their `package.json`, or a lazily initialized CommonJS/ESM wrapper. Such a chunk folds into a chunk loaded by a superset of its importers. Everything it imports must already be loaded whenever that target is, or be side-effect free as well. The extra entrypoints then carry some unused definitions, capped at about 1.5% of what each entrypoint loaded to begin with. No side effect runs earlier than before and nothing lazy becomes eager. Because these rules bound what an entrypoint can end up loading, a large `minChunkSize` is reasonable.
 
-- into a chunk that is loaded under exactly the same conditions — in the example above, into `index.js` itself, which the lazy module then imports those symbols from. No entrypoint loads more or less code than before.
-- when none of the chunk's modules run anything at the top level (only declarations, `"sideEffects": false` in their `package.json`, or a lazily initialized `__esm`/`__commonJS` wrapper), into a chunk loaded by a superset of its importers, provided everything the chunk imports is already loaded whenever that target is or is side-effect free as well. The extra entrypoints then carry some unused definitions — capped at about 1.5% of what each entrypoint loaded to begin with — but no side effect runs earlier than before and nothing lazy becomes eager.
-
-Because these rules, not the size, bound what an entrypoint can end up loading, a large `minChunkSize` is reasonable: it lets every chunk that can safely fold do so.
-
-Code with top-level side effects that is shared only between lazy modules stays in its own chunk, since folding it anywhere would run it earlier than before.
-
-A chunk that absorbs other chunks exports the symbols those chunks' importers need. For an entrypoint this adds named exports to its module namespace alongside its own exports. With `--compile`, nothing folds into the entrypoint's own chunk.
+A chunk that absorbs other chunks exports the symbols those chunks' importers need. An entrypoint that has exports of its own never absorbs one, so its module namespace stays as written; an entrypoint without exports can. With `--compile`, nothing folds into the entrypoint's own chunk.
 
 ### plugins
 
@@ -1719,7 +1712,7 @@ interface BuildConfig {
       };
   root?: string; // project root
   splitting?: boolean; // default false, enable code splitting
-  minChunkSize?: number; // default 0, fold chunks smaller than this many source bytes
+  minChunkSize?: number; // default 0, also fold side-effect-free chunks smaller than this many source bytes
   plugins?: BunPlugin[];
   external?: string[];
   packages?: "bundle" | "external";

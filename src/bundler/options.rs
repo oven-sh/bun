@@ -1281,8 +1281,9 @@ pub struct BundleOptions<'a> {
     /// captures the last expression in { value: expr } for result extraction.
     pub repl_mode: bool,
     pub css_chunking: bool,
-    /// Code splitting: fold chunks whose source is smaller than this many
-    /// bytes into a chunk with identical load conditions. 0 disables.
+    /// Code splitting: also fold side-effect-free chunks whose source is
+    /// smaller than this many bytes into a chunk more entry points load.
+    /// 0 disables that; chunks with identical load conditions always fold.
     pub min_chunk_size: u64,
 
     pub ignore_dce_annotations: bool,

@@ -3175,14 +3175,15 @@ declare module "bun" {
     splitting?: boolean;
 
     /**
-     * With `splitting`, fold chunks whose combined source size is below this
-     * many bytes into another chunk, so fewer modules are loaded at runtime:
-     * into a chunk that is always loaded together with them (for example an
-     * entry point's own chunk), or — when none of their modules have
-     * top-level side effects — into a chunk loaded by a superset of their
-     * importers. Nothing lazy becomes eager and no side effect runs earlier;
-     * the chunk that absorbs a folded chunk exports the symbols other chunks
-     * import from it.
+     * With `splitting`, chunks that are always loaded together are folded
+     * into one (for example, code shared by an entry point and a module it
+     * `import()`s lives in the entry point's chunk). This option additionally
+     * folds chunks whose combined source size is below this many bytes and
+     * whose modules have no top-level side effects into a chunk loaded by a
+     * superset of their importers, so fewer modules are loaded at runtime.
+     * Nothing lazy becomes eager and no side effect runs earlier; the chunk
+     * that absorbs a folded chunk exports the symbols other chunks import
+     * from it. Requires `splitting: true`. CLI: `--min-chunk-size`.
      *
      * @default 0 (disabled)
      */

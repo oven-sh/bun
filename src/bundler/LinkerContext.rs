@@ -1264,9 +1264,9 @@ pub struct LinkerOptions {
     pub(crate) banner: &'static [u8],
     pub(crate) footer: &'static [u8],
     pub(crate) css_chunking: bool,
-    /// Code splitting: chunks whose summed source size is below this are
-    /// folded into a chunk with identical load conditions (0 = off). See
-    /// `merge_small_chunks`.
+    /// Code splitting: side-effect-free chunks whose summed source size is
+    /// below this also fold into a chunk more entry points load (0 = off).
+    /// See `merge_small_chunks`.
     pub(crate) min_chunk_size: u64,
     pub(crate) source_maps: SourceMapOption,
     pub(crate) target: Target,

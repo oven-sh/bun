@@ -29,6 +29,62 @@ fn part_has_no_side_effects(part: &bun_ast::Part) -> bool {
         })
 }
 
+impl LinkerContext<'_> {
+    /// None of the file's live parts run anything at the top level:
+    /// declarations only, `"sideEffects": false`, or a lazily initialized
+    /// `__esm` / `__commonJS` wrapper. An entry point never qualifies (its
+    /// tail runs it), nor does top-level await. A static import of a wrapped module is printed as a
+    /// top-level `init_x()` / `require_x()` call in the importer, and one of
+    /// an external module loads it (hoisted out of a wrapper, too); either
+    /// counts as running something. An import of an unwrapped bundled file
+    /// does not: that file is judged on its own.
+    pub(crate) fn loading_file_has_no_side_effects(&self, source_index: u32) -> bool {
+        let flags = self.graph.meta.items_flags();
+        if self.graph.files.items_entry_point_kind()[source_index as usize].is_entry_point()
+            || flags[source_index as usize].is_async_or_has_async_dependency
+        {
+            return false;
+        }
+        // `"sideEffects": false` vouches for the file's own statements, not
+        // for what importing a wrapped or external module from it runs.
+        let declared_pure = self.file_has_no_side_effects(source_index);
+        let wrapped = flags[source_index as usize].wrap != WrapKind::None;
+        let records = &self.graph.ast.items_import_records()[source_index as usize];
+        let import_has_no_side_effects = |record: &bun_ast::ImportRecord| {
+            record.flags.contains(ImportRecordFlags::IS_UNUSED)
+                || match record.kind {
+                    ImportKind::Stmt => {
+                        if record.source_index.is_valid() {
+                            wrapped
+                                || flags[record.source_index.get() as usize].wrap == WrapKind::None
+                        } else {
+                            record
+                                .flags
+                                .contains(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS)
+                        }
+                    }
+                    // A top-level `require()` runs the module unless this
+                    // file's own wrapper defers it.
+                    ImportKind::Require => wrapped,
+                    _ => true,
+                }
+        };
+        let parts_live = &self.graph.parts_live[source_index as usize];
+        self.graph.ast.items_parts()[source_index as usize]
+            .as_slice()
+            .iter()
+            .enumerate()
+            .all(|(part_index, part)| {
+                !parts_live.is_set(part_index)
+                    || ((wrapped || declared_pure || part_has_no_side_effects(part))
+                        && part
+                            .import_record_indices
+                            .iter()
+                            .all(|&i| import_has_no_side_effects(&records[i as usize])))
+            })
+    }
+}
+
 /// The files sharing one chunk key (`File.entry_bits`).
 struct Group {
     /// Summed source bytes (plus those folded in).
@@ -138,12 +194,13 @@ fn collect_newly_loaded(
     true
 }
 
-/// Folds code-splitting chunks smaller than `min_chunk_size` (summed source
-/// bytes) into other chunks where that is unobservable, so fewer modules are
-/// loaded at runtime.
+/// Folds code-splitting chunks into other chunks where that is unobservable,
+/// so fewer modules are loaded at runtime.
 ///
 /// A chunk is keyed by the set of entry points that statically reach its files
-/// (`File.entry_bits`). Two rules:
+/// (`File.entry_bits`). Two rules; the first always runs (it never makes an
+/// entry load more code), the second only for chunks smaller than
+/// `min_chunk_size` (summed source bytes):
 ///
 /// 1. An `import()` entry point `D` is redundant in a key when some other entry
 ///    in that key is guaranteed to already be loaded whenever `D` is loaded
@@ -172,13 +229,17 @@ pub(crate) fn merge_small_chunks(
     debug_assert!(this.graph.code_splitting);
 
     let entry_points_len = this.graph.entry_points.len();
-    if entry_points_len == 0 {
-        return Ok(());
-    }
-
     let sources = this.parse_graph().input_files.items_source();
     let entry_source_indices = this.graph.entry_points.items_source_index();
     let kinds = this.graph.files.items_entry_point_kind();
+    let fold_pure = min_chunk_size > 0;
+    if !fold_pure
+        && !entry_source_indices
+            .iter()
+            .any(|&source_index| kinds[source_index as usize] == EntryPoint::Kind::DynamicImport)
+    {
+        return Ok(());
+    }
     let css_asts = this.graph.ast.items_css();
     let ast_targets = this.graph.ast.items_target();
     let import_records = this.graph.ast.items_import_records();
@@ -212,32 +273,52 @@ pub(crate) fn merge_small_chunks(
         if !is_live_js(source_index) {
             continue;
         }
-        for record in import_records[source_index as usize].iter() {
-            if !record.source_index.is_valid()
-                || !this.is_external_dynamic_import(record, source_index)
-            {
+        let records = &import_records[source_index as usize];
+        let parts_live = &this.graph.parts_live[source_index as usize];
+        for (part_index, part) in parts[source_index as usize].as_slice().iter().enumerate() {
+            if !parts_live.is_set(part_index) {
                 continue;
             }
-            let target_entry = entry_id_by_source[record.source_index.get() as usize];
-            if target_entry != u32::MAX {
-                importer_bits[target_entry as usize]
-                    .set_union(&file_entry_bits[source_index as usize]);
+            for &record_index in part.import_record_indices.iter() {
+                let record = &records[record_index as usize];
+                if !record.source_index.is_valid()
+                    || !this.is_external_dynamic_import(record, source_index)
+                {
+                    continue;
+                }
+                let target_entry = entry_id_by_source[record.source_index.get() as usize];
+                if target_entry != u32::MAX {
+                    importer_bits[target_entry as usize]
+                        .set_union(&file_entry_bits[source_index as usize]);
+                }
             }
         }
     }
 
-    // `guaranteed[D]`: entries that are already loaded whenever the dynamic
+    // An entry whose chunk (or a chunk it imports) uses top-level await can
+    // still be mid-evaluation when an `import()` it started links, so it
+    // guarantees nothing: a chunk that `import()` target then imported from
+    // it would wait on it forever.
+    let mut awaits = AutoBitSet::init_empty(entry_points_len)?;
+    for source_index in this.graph.reachable_files.iter() {
+        let source_index = source_index.get();
+        if is_live_js(source_index) && flags[source_index as usize].is_async_or_has_async_dependency
+        {
+            awaits.set_union(&file_entry_bits[source_index as usize]);
+        }
+    }
+
+    // `guaranteed[D]`: entries that are already evaluated whenever the dynamic
     // entry `D` is loaded, excluding `D` itself. Greatest fixpoint of
     //   guaranteed[D] = ∩ over importers E of D: ({E} ∪ guaranteed[E])
     // where an importer is an entry that statically reaches a file holding an
     // `import()` of D. User entries are process roots, even when something
-    // also `import()`s them: nothing precedes them. A dynamic entry nothing
-    // imports can never load; it keeps the full set, which makes it redundant
-    // everywhere (harmless, it never runs).
+    // also `import()`s them: nothing precedes them. A dynamic entry no live
+    // code imports is left alone (empty set).
     let mut guaranteed: Vec<AutoBitSet> = Vec::with_capacity(entry_points_len);
     for entry_id in 0..entry_points_len {
         let mut bits = AutoBitSet::init_empty(entry_points_len)?;
-        if is_dynamic_entry(entry_id) {
+        if is_dynamic_entry(entry_id) && importer_bits[entry_id].find_first_set().is_some() {
             bits.set_all(true);
             bits.unset(entry_id);
         }
@@ -253,6 +334,10 @@ pub(crate) fn merge_small_chunks(
             next.set_all(true);
             let mut iter = importers.iterator::<true, true>();
             while let Some(importer) = iter.next() {
+                if awaits.is_set(importer) {
+                    next.set_all(false);
+                    break;
+                }
                 let keep = next.is_set(importer);
                 next.set_intersection(&guaranteed[importer]);
                 if keep {
@@ -270,33 +355,28 @@ pub(crate) fn merge_small_chunks(
         }
     }
 
-    // A static import of a wrapped module is printed as a top-level
-    // `init_x()` / `require_x()` call in the importer, and one of an external
-    // module loads it; either runs when the importer's chunk does.
-    let import_has_no_side_effects = |record: &bun_ast::ImportRecord| {
-        record.kind != ImportKind::Stmt
-            || record.flags.contains(ImportRecordFlags::IS_UNUSED)
-            || if record.source_index.is_valid() {
-                flags[record.source_index.get() as usize].wrap == WrapKind::None
-            } else {
-                record
-                    .flags
-                    .contains(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS)
-            }
-    };
-
     // Group the live JS files by their chunk key, and the groups by their
     // load-condition class (the key with redundant dynamic entries removed).
     //
-    // `--compile` keys the user entry point's module at `/$bunfs/root/<outfile>`
-    // after linking (see `js_bundle_completion_task` / `build_command`), so a
-    // chunk importing from that chunk would name a path that no longer exists
-    // in the executable. Leave such chunks alone; their `import()` targets
-    // still fold among themselves.
-    let pin_user_entry_chunks = this.options.compile_mode.is_executable();
+    // An entry point's own chunk neither folds nor absorbs a fold when the
+    // entry point has exports: absorbing one adds the bindings other chunks
+    // need to its module namespace (Rollup's `preserveEntrySignatures:
+    // "exports-only"`). Chunks loaded together with it still fold into each
+    // other. `--compile` keys the user entry point's module at
+    // `/$bunfs/root/<outfile>` after linking (see `js_bundle_completion_task`
+    // / `build_command`), so a chunk importing from that chunk would name a
+    // path that no longer exists in the executable; leave those alone too.
+    let export_aliases = this.graph.meta.items_sorted_and_filtered_export_aliases();
+    let pin_entry_chunk = |entry_id: usize| {
+        let source_index = entry_source_indices[entry_id] as usize;
+        (this.options.compile_mode.is_executable() && !is_dynamic_entry(entry_id))
+            || flags[source_index].wrap == WrapKind::Cjs
+            || flags[source_index].needs_synthetic_default_export
+            || !export_aliases[source_index].is_empty()
+    };
     let group_of_file: &mut [usize] = temp.alloc_slice_fill_copy(files_len, usize::MAX);
     let mut groups: ArrayHashMap<&[u8], Group> = ArrayHashMap::new();
-    let mut classes: ArrayHashMap<&[u8], Vec<usize>> = ArrayHashMap::new();
+    let mut classes: ArrayHashMap<&[u8], (AutoBitSet, Vec<usize>)> = ArrayHashMap::new();
     for source_index in this.graph.reachable_files.iter() {
         let source_index = source_index.get();
         if !is_live_js(source_index) {
@@ -312,31 +392,10 @@ pub(crate) fn merge_small_chunks(
             sources[source_index as usize].contents().len() as u64
         };
         // Loading a file earlier than before is only unobservable when none
-        // of its live parts run anything at the top level. A wrapped file
-        // (`__esm` / `__commonJS`) only defines its `init_x` / `require_x`
-        // closure at the top level; its body runs when an importer calls
-        // that, which moving the definition does not change — unless the
-        // file is an entry point, whose export part calls it right away.
+        // of its live parts run anything at the top level.
         let wrapped = flags[source_index as usize].wrap != WrapKind::None;
-        let pure = this.file_has_no_side_effects(source_index)
-            || if wrapped {
-                !kinds[source_index as usize].is_entry_point()
-            } else {
-                let records = &import_records[source_index as usize];
-                parts[source_index as usize]
-                    .as_slice()
-                    .iter()
-                    .enumerate()
-                    .all(|(part_index, part)| {
-                        !this.graph.parts_live[source_index as usize].is_set(part_index)
-                            || (part_has_no_side_effects(part)
-                                && part
-                                    .import_record_indices
-                                    .iter()
-                                    .all(|&i| import_has_no_side_effects(&records[i as usize])))
-                    })
-            };
-        if !pure {
+        let pure = fold_pure && this.loading_file_has_no_side_effects(source_index);
+        if fold_pure && !pure {
             debug_merge!(
                 "not side-effect free: {}{}",
                 bstr::BStr::new(sources[source_index as usize].path.text),
@@ -372,13 +431,14 @@ pub(crate) fn merge_small_chunks(
                         class.unset(entry_id);
                     }
                 }
-                classes
-                    .entry(temp.alloc_slice_copy(class.bytes(entry_points_len)))
-                    .or_default()
-                    .push(group_index);
-                let pinned = pin_user_entry_chunks
-                    && bits.count() == 1
-                    && !is_dynamic_entry(bits.find_first_set().expect("one bit set"));
+                match classes.entry(temp.alloc_slice_copy(class.bytes(entry_points_len))) {
+                    MapEntry::Occupied(e) => e.into_mut().1.push(group_index),
+                    MapEntry::Vacant(e) => {
+                        e.insert((class, vec![group_index]));
+                    }
+                }
+                let pinned = bits.count() == 1
+                    && pin_entry_chunk(bits.find_first_set().expect("one bit set"));
                 entry.insert(Group {
                     size,
                     target: Some(target),
@@ -394,9 +454,41 @@ pub(crate) fn merge_small_chunks(
         }
     }
 
+    // An entry point's JS chunk exists even when no file is keyed by exactly
+    // its bit (its own file is also reached from an `import()` target that
+    // imports back from it); give its class that chunk to fold into.
+    for class_index in 0..classes.count() {
+        let key = classes.keys()[class_index];
+        let class = &classes.values()[class_index].0;
+        if class.count() != 1 || groups.contains(&key) {
+            continue;
+        }
+        let entry_id = class.find_first_set().expect("one bit set");
+        let source_index = entry_source_indices[entry_id];
+        if !is_live_js(source_index) {
+            continue;
+        }
+        let group = Group {
+            size: 0,
+            target: Some(ast_targets[source_index as usize]),
+            bits: class.clone()?,
+            loaded: class.clone()?,
+            loaded_count: 0,
+            pinned: pin_entry_chunk(entry_id),
+            pure: false,
+            deps: Vec::new(),
+            merged_into: None,
+        };
+        classes.values_mut()[class_index].1.push(groups.count());
+        groups.put(key, group)?;
+    }
+
     // Static dependencies between groups, from the live parts' import records
-    // and symbol dependencies.
+    // and symbol dependencies. Only rule 2 consults them.
     for (source_index, &group_index) in group_of_file.iter().enumerate() {
+        if !fold_pure {
+            break;
+        }
         if group_index == usize::MAX {
             continue;
         }
@@ -429,11 +521,11 @@ pub(crate) fn merge_small_chunks(
     // parent — the group keyed by exactly the reduced key (e.g. an entry
     // point's own chunk) if there is one, else the largest member. Ties break
     // on the key for determinism. A member folded into the largest-member
-    // parent loses bits its files had; it still loads before they run because
-    // every entry point imports every chunk carrying its bit
-    // (`compute_cross_chunk_dependencies`).
+    // parent loses bits its files had; it still runs before they do because
+    // an entry that remains in the key precedes them and imports every chunk
+    // with side effects carrying its bit (`compute_cross_chunk_dependencies`).
     let mut folded_same = 0usize;
-    for (class_key, members) in classes.keys().iter().zip(classes.values()) {
+    for (class_key, (_, members)) in classes.keys().iter().zip(classes.values()) {
         let unpinned = || {
             members
                 .iter()
@@ -451,17 +543,22 @@ pub(crate) fn merge_small_chunks(
         let Some(target_platform) = groups.values()[target_index].target else {
             continue;
         };
-        for member in unpinned().collect::<Vec<_>>() {
+        for &member in members {
             let group = &groups.values()[member];
-            if member == target_index
-                || group.size >= min_chunk_size
-                || group.target != Some(target_platform)
-            {
+            if member == target_index || group.pinned || group.target != Some(target_platform) {
                 continue;
             }
             fold(groups.values_mut(), member, target_index);
             folded_same += 1;
         }
+    }
+    if !fold_pure {
+        rekey_files(this, group_of_file, groups.values())?;
+        debug!(
+            "mergeSmallChunks: {} chunks folded into chunks with the same load conditions",
+            folded_same
+        );
+        return Ok(());
     }
 
     // A parent's extra entries now reach everything the folded members
@@ -612,6 +709,15 @@ pub(crate) fn merge_small_chunks(
                 for &g in &scratch.newly_loaded {
                     groups.values_mut()[g].loaded.set_union(&target_loaded);
                 }
+                // Keep a shared chunk's `bits` covering every entry that
+                // statically reaches its files (route manifests read
+                // `File.entry_bits` directly). A single bit is an entry
+                // point's own chunk, which must stay keyed by that bit; only
+                // `import()` entries it precedes can be missing there.
+                if groups.values()[target].bits.count() > 1 {
+                    let candidate_bits = groups.values()[candidate].bits.clone()?;
+                    groups.values_mut()[target].bits.set_union(&candidate_bits);
+                }
                 fold(groups.values_mut(), candidate, target);
                 folded_pure += 1;
                 progressed = true;
@@ -622,19 +728,28 @@ pub(crate) fn merge_small_chunks(
         }
     }
 
+    rekey_files(this, group_of_file, groups.values())?;
+    debug!(
+        "mergeSmallChunks: {} chunks folded into chunks with the same load conditions, {} side-effect-free chunks folded into a superset (min size {} bytes)",
+        folded_same, folded_pure, min_chunk_size
+    );
+    Ok(())
+}
+
+fn rekey_files(
+    this: &mut LinkerContext,
+    group_of_file: &[usize],
+    groups: &[Group],
+) -> crate::Result<()> {
     let file_entry_bits = this.graph.files.items_entry_bits_mut();
     for (source_index, &group_index) in group_of_file.iter().enumerate() {
         if group_index == usize::MAX {
             continue;
         }
-        let root = resolve(groups.values(), group_index);
-        if root != group_index {
-            file_entry_bits[source_index] = groups.values()[root].bits.clone()?;
+        let bits = &groups[resolve(groups, group_index)].bits;
+        if !file_entry_bits[source_index].eql(bits) {
+            file_entry_bits[source_index] = bits.clone()?;
         }
     }
-    debug!(
-        "mergeSmallChunks: {} chunks folded into chunks with the same load conditions, {} side-effect-free chunks folded into a superset (min size {} bytes)",
-        folded_same, folded_pure, min_chunk_size
-    );
     Ok(())
 }

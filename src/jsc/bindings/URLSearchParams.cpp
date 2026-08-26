@@ -53,18 +53,29 @@ static constexpr size_t maxURLEncodedFormUTF8Length = (std::numeric_limits<unsig
 static_assert(WTF::isValidCapacityForVector<char16_t>(maxURLEncodedFormUTF8Length));
 static_assert(!WTF::isValidCapacityForVector<char16_t>(maxURLEncodedFormUTF8Length + 1));
 
+static size_t utf8Length(StringView string)
+{
+    if (string.is8Bit())
+        return simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(string.span8().data()), string.length());
+    return simdutf::utf8_length_from_utf16le(string.span16().data(), string.length());
+}
+
 ExceptionOr<void> URLSearchParams::checkURLEncodedFormLength(StringView input)
 {
     size_t maxLength = std::min(maxURLEncodedFormUTF8Length, Bun__stringSyntheticAllocationLimit);
     // A UTF-16 code unit is at most 3 UTF-8 bytes and a Latin-1 character at most 2.
     if (static_cast<size_t>(input.length()) * 3 <= maxLength) [[likely]]
         return {};
-    size_t utf8Length = input.is8Bit()
-        ? simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(input.span8().data()), input.length())
-        : simdutf::utf8_length_from_utf16le(input.span16().data(), input.length());
-    if (utf8Length <= maxLength) [[likely]]
-        return {};
-    return Exception { RangeError, makeString("URL-encoded data must not be longer than "_s, maxLength, " bytes as UTF-8. Received "_s, utf8Length, " bytes."_s) };
+    // The parser decodes each name and value on its own: split the same way it does.
+    for (StringView pair : input.split('&')) {
+        size_t equalIndex = pair.find('=');
+        StringView name = equalIndex == notFound ? pair : pair.left(equalIndex);
+        StringView value = equalIndex == notFound ? StringView() : pair.substring(equalIndex + 1);
+        size_t length = std::max(utf8Length(name), utf8Length(value));
+        if (length > maxLength) [[unlikely]]
+            return Exception { RangeError, makeString("A URL-encoded name or value must not be longer than "_s, maxLength, " bytes as UTF-8. Received "_s, length, " bytes."_s) };
+    }
+    return {};
 }
 
 static ExceptionOr<WTF::URLParser::URLEncodedForm> parseURLEncodedForm(const String& init)

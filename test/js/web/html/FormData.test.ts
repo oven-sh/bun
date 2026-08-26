@@ -1013,7 +1013,7 @@ describe("USVString conversion of lone surrogates", () => {
 describe("URL-encoded bodies longer than the string limit", () => {
   const LIMIT = 1024 * 1024;
   const tooLong = (received: number) =>
-    `RangeError: URL-encoded data must not be longer than ${LIMIT} bytes as UTF-8. Received ${received} bytes.`;
+    `RangeError: A URL-encoded name or value must not be longer than ${LIMIT} bytes as UTF-8. Received ${received} bytes.`;
 
   it("rejects from every formData() entry point instead of crashing", async () => {
     await using proc = Bun.spawn({
@@ -1097,7 +1097,7 @@ describe("URL-encoded bodies longer than the string limit", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({
       stdout:
-        "RangeError: URL-encoded data must not be longer than 1073741823 bytes as UTF-8. Received 1073741826 bytes.\n",
+        "RangeError: A URL-encoded name or value must not be longer than 1073741823 bytes as UTF-8. Received 1073741826 bytes.\n",
       stderr: "",
       exitCode: 0,
     });

@@ -316,7 +316,7 @@ it(".has second argument", () => {
 describe("URL-encoded input longer than the string limit", () => {
   const LIMIT = 1024 * 1024;
   const tooLong = (received: number) =>
-    `RangeError: URL-encoded data must not be longer than ${LIMIT} bytes as UTF-8. Received ${received} bytes.`;
+    `RangeError: A URL-encoded name or value must not be longer than ${LIMIT} bytes as UTF-8. Received ${received} bytes.`;
 
   it("throws a RangeError from every parser entry point, at the UTF-8 byte limit", async () => {
     await using proc = Bun.spawn({
@@ -346,6 +346,10 @@ describe("URL-encoded input longer than the string limit", () => {
         attempt("latin1 past limit", () => new URLSearchParams(latin1(${LIMIT / 2} + 1)).size);
         attempt("utf16 at limit", () => new URLSearchParams(utf16(349525)).size);
         attempt("utf16 past limit", () => new URLSearchParams(utf16(349526)).size);
+        // The limit applies to one name or value, not to the whole input.
+        attempt("two names at limit", () => new URLSearchParams(ascii(${LIMIT}) + "&" + ascii(${LIMIT})).size);
+        attempt("name and value at limit", () => new URLSearchParams(ascii(${LIMIT}) + "=" + ascii(${LIMIT})).size);
+        attempt("one value past limit among pairs", () => new URLSearchParams("a=1&b=" + ascii(${LIMIT} + 1) + "&c=2").size);
         attempt("url.searchParams at limit", () => new URL("http://x/?" + ascii(${LIMIT})).searchParams.size);
         attempt("url.searchParams past limit", () => new URL("http://x/?" + ascii(${LIMIT} + 1)).searchParams.size);
 
@@ -377,6 +381,9 @@ describe("URL-encoded input longer than the string limit", () => {
         "latin1 past limit": tooLong(LIMIT + 2),
         "utf16 at limit": 1,
         "utf16 past limit": tooLong(LIMIT + 2),
+        "two names at limit": 2,
+        "name and value at limit": 1,
+        "one value past limit among pairs": tooLong(LIMIT + 1),
         "url.searchParams at limit": 1,
         "url.searchParams past limit": tooLong(LIMIT + 1),
         "url.href= past limit": tooLong(LIMIT + 1),
@@ -416,7 +423,7 @@ describe("URL-encoded input longer than the string limit", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({
       stdout:
-        "RangeError: URL-encoded data must not be longer than 1073741823 bytes as UTF-8. Received 1073741824 bytes.\n",
+        "RangeError: A URL-encoded name or value must not be longer than 1073741823 bytes as UTF-8. Received 1073741824 bytes.\n",
       stderr: "",
       exitCode: 0,
     });

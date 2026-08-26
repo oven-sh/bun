@@ -1303,9 +1303,6 @@ pub struct JavaScriptChunk {
     pub parts_in_chunk_in_order: Box<[PartRange]>,
 
     // for code splitting
-    // The map hashes via `Ref`'s `Hash` impl. Values
-    // are `&'static`-erased slices into bundler-owned storage (see the
-    // lifetime note on `Chunk`).
     /// Bindings declared in this chunk that another chunk imports; named by `cross_chunk_names`.
     pub(crate) exports_to_other_chunks: ArrayHashMap<Ref, ()>,
     pub(crate) imports_from_other_chunks: ImportsFromOtherChunks,

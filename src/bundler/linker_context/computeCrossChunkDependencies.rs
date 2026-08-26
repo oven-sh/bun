@@ -532,9 +532,9 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         }
     }
 
-    // Generate cross-chunk exports. These must be computed before cross-chunk
-    // imports because of export alias renaming, which must consider all export
-    // aliases simultaneously to avoid collisions.
+    // Generate cross-chunk export clauses. Aliases are left empty here and in
+    // the import clauses below; `cross_chunk_names` fills both in once every
+    // chunk's renamer has run.
     {
         debug_assert!(chunk_metas.len() == chunks.len());
         debug!("Generating cross-chunk exports");
@@ -598,9 +598,8 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         }
     }
 
-    // Generate cross-chunk imports. These must be computed after cross-chunk
-    // exports because the export aliases must already be finalized so they can
-    // be embedded in the generated import statements.
+    // Generate cross-chunk import clauses (needs `exports_to_other_chunks`
+    // from the loop above to know which chunk declares each binding).
     {
         debug!("Generating cross-chunk imports");
         let mut list: Vec<CrossChunkImport> = Vec::new();

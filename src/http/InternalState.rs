@@ -37,8 +37,7 @@ pub struct InternalState<'a> {
     // outlives-holder invariant (the backing `original_request_body` is a
     // sibling field, so it lives exactly as long as this struct).
     pub(crate) request_body: bun_ptr::RawSlice<u8>,
-    /// Send cursor for a `Sendfile` body (the `request_body` counterpart).
-    /// `original_request_body` stays untouched so a redirect can replay it.
+    /// Send cursor for a `Sendfile` body; `original_request_body` stays untouched for redirects.
     pub(crate) sendfile: Option<SendFile>,
     pub(crate) original_request_body: HTTPRequestBody<'a>,
     pub(crate) request_sent_len: usize,

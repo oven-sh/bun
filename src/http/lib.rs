@@ -879,9 +879,7 @@ pub struct HTTPClient<'a> {
     /// Compressed length for `Content-Length`; 0 when `compress` is None or
     /// the body hasn't been compressed yet.
     pub(crate) compressed_body_len: usize,
-    /// A `Sendfile` body read into memory for a TLS hop
-    /// (`buffer_sendfile_body_for_tls`). `state.original_request_body` borrows
-    /// it, so it must outlive `state`; clone-owned like `compressed_request_body`.
+    /// A `Sendfile` body read into memory for a TLS hop, borrowed by `state.original_request_body`.
     pub(crate) buffered_sendfile_body: Vec<u8>,
 }
 
@@ -2161,8 +2159,7 @@ impl<'a> HTTPClient<'a> {
         if in_progress
             && self.allow_retry
             && self.method.is_idempotent()
-            // Only an in-memory body is retried; a Stream body is consumed as it
-            // is written and cannot be replayed.
+            // Only an in-memory body is retried; a Stream body is consumed as it is written.
             && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
             && self.state.response_stage != ResponseStage::Body
             && self.state.response_stage != ResponseStage::BodyChunk
@@ -2692,10 +2689,7 @@ impl<'a> HTTPClient<'a> {
         self.start(request_body);
     }
 
-    /// The body for the next redirect hop. `Bytes` and `Sendfile` replay as-is
-    /// (the send cursors live in `state`, not in the body). A `Stream` only
-    /// reaches this on a 303, already downgraded to a bodiless GET.
-    /// Call before `state.reset()`.
+    /// The body for the next hop; a `Stream` only reaches this on a 303, already a bodiless GET.
     fn request_body_for_redirect(&self) -> HTTPRequestBody<'a> {
         if !self.state.flags.resend_request_body_on_redirect {
             return HTTPRequestBody::Bytes(b"");
@@ -2919,11 +2913,7 @@ impl<'a> HTTPClient<'a> {
         self.complete_connecting_process();
     }
 
-    /// `sendfile(2)` needs a plaintext socket with no CONNECT tunnel, but a
-    /// redirect to `https://` (or an `https://` proxy from the environment) can
-    /// route a `Sendfile` body onto TLS. Read the file into
-    /// `buffered_sendfile_body` and send it as `Bytes`, as a direct `https://`
-    /// fetch would.
+    /// A redirect or env `https://` proxy can put a `Sendfile` body on TLS; send it as `Bytes` there.
     fn buffer_sendfile_body_for_tls<const IS_SSL: bool>(&mut self) -> crate::Result<()> {
         let HTTPRequestBody::Sendfile(sendfile) = self.state.original_request_body else {
             return Ok(());

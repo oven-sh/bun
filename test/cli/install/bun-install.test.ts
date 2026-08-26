@@ -839,9 +839,14 @@ describe.concurrent("bun-install", () => {
 
     // The rightmost terminal marker is the one that is read; a second one to its left
     // is stripped but never recorded, so it cannot outrank the first.
-    it("reads the rightmost terminal marker, not the leftmost", async () => {
-      const seen = await probeEmbedded("/api/:_authToken=T:_auth=WDpZ", () => "");
-      expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Basic WDpZ" });
+    // The `_auth` values are ones a base64 round trip would change, so the header
+    // proves the value went out as written.
+    it.each([
+      ["an opaque value", "opaque-blob"],
+      ["a blank password", btoa("u:")],
+    ])("reads the rightmost terminal marker, not the leftmost (%s)", async (_name, value) => {
+      const seen = await probeEmbedded(`/api/:_authToken=T:_auth=${value}`, () => "");
+      expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: `Basic ${value}` });
     });
 
     it("reads the leftmost of two duplicate non-terminal markers", async () => {

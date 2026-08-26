@@ -300,7 +300,11 @@ impl Options {
         scope: &'a Npm::registry::Scope,
         tarball: &bun_url::URL,
     ) -> Option<&'a Npm::registry::Scope> {
-        if !Npm::registry::path_is_canonical(tarball.pathname) {
+        // `dist.tarball` is registry-controlled, and `.npmrc` keys carry no scheme: a
+        // token written for an https registry must not go out in plaintext.
+        if !Npm::registry::path_is_canonical(tarball.pathname)
+            || (scope.url.url().is_https() && !tarball.is_https())
+        {
             return None;
         }
         let own = Npm::registry::UrlAuth::find_entry(&self.url_auth, tarball);

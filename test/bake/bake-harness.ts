@@ -1553,8 +1553,10 @@ function stackTraceFileName(line: string): string {
   // Handle drive letters (e.g. C:) and line numbers
   let colon = result.indexOf(":");
 
-  // Check for drive letter (e.g. C:) by looking for single letter before colon
-  if (colon > 0 && /[a-zA-Z]/.test(result[colon - 1])) {
+  // Check for drive letter (e.g. C:): a single letter before the first colon.
+  // On posix the first colon ends the path (`.../x.test.ts:9:1`), so the
+  // letter before it is no drive letter.
+  if (colon === 1 && /[a-zA-Z]/.test(result[colon - 1])) {
     // On Windows, skip past drive letter colon to find line number colon
     colon = result.indexOf(":", colon + 1);
   }
@@ -1973,6 +1975,9 @@ export function indexHtmlScript(htmlFiles: string[]) {
 
 const skipTargets = [process.platform, isCI ? "ci" : null].filter(Boolean);
 
+/** Test files that have an `afterAll` hook to kill what their tests left behind. */
+const filesWithReaper = new Set<string>();
+
 function testImpl<T extends DevServerTest>(
   description: string,
   options: T,
@@ -2216,6 +2221,13 @@ function testImpl<T extends DevServerTest>(
   }
 
   try {
+    // `bun test` does not run exit listeners, and this module is evaluated once
+    // for every file in the run. So each file gets its own hook.
+    if (!filesWithReaper.has(caller)) {
+      jest.afterAll(killDanglingProcesses);
+      filesWithReaper.add(caller);
+    }
+
     if (options.skip && options.skip.some(x => skipTargets.includes(x))) {
       jest.test.todo(name, run);
       return options;
@@ -2312,18 +2324,14 @@ class TrailingLog {
   }
 }
 
+/** Kills every process the tests in this process spawned and did not see exit. */
 function killDanglingProcesses() {
   for (const proc of danglingProcesses) {
     proc.kill("SIGKILL");
   }
 }
+// For interactive use. `bun test` skips exit listeners: see the `afterAll` in `testImpl`.
 process.on("exit", killDanglingProcesses);
-// `bun test` does not run exit listeners. Reap what a test left behind when its file ends.
-try {
-  (Bun as any).jest(import.meta.path).afterAll(killDanglingProcesses);
-} catch {
-  // Not in bun test (interactive use).
-}
 
 export function devTest<T extends DevServerTest>(description: string, options: T): T {
   // Capture the caller name as part of the test tempdir

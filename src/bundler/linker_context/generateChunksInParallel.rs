@@ -12,7 +12,6 @@ use bun_threading::thread_pool as ThreadPoolLib;
 
 use crate::BundleV2;
 use crate::Chunk;
-use crate::ContentHasher;
 use crate::Index;
 use crate::analyze_transpiled_module;
 use crate::analyze_transpiled_module::StringIDExt as _;
@@ -60,6 +59,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     {
         // TODO: instead of running a renamer per chunk, run it per file
         debug!(" START {} renamers", chunks.len());
+        if c.graph.code_splitting && !c.options.minify_identifiers {
+            crate::linker_context::cross_chunk_names::assign_unminified(c, chunks)?;
+        }
         let ctx = GenerateChunkCtx {
             chunk: bun_ptr::BackRef::new_mut(&mut chunks[0]),
             // SAFETY: `c` is the live `&mut LinkerContext` for the link step;
@@ -71,6 +73,16 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // link step); `pool` is the arena-allocated bundler ThreadPool.
         c.worker_pool()
             .each_ptr(ctx, LinkerContext::generate_js_renamer, chunks);
+        if c.graph.code_splitting {
+            if c.options.minify_identifiers {
+                // Counts are in; name the cross-chunk bindings, pin them, then
+                // let every chunk name the rest.
+                crate::linker_context::cross_chunk_names::assign_minified(c, chunks)?;
+                c.worker_pool()
+                    .each_ptr(ctx, LinkerContext::finish_js_renamer, chunks);
+            }
+            crate::linker_context::cross_chunk_names::apply_to_clauses(c, chunks);
+        }
         debug!("  DONE {} renamers", chunks.len());
     }
 
@@ -363,24 +375,12 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
         let mut duplicates_map: StringArrayHashMap<DuplicateEntry> = StringArrayHashMap::default();
 
-        let mut chunk_visit_map = AutoBitSet::init_empty(chunks.len())?;
-
         // Compute the final hashes of each chunk, then use those to create the final
-        // paths of each chunk. This can technically be done in parallel but it
-        // probably doesn't matter so much because we're not hashing that much data.
-        // Reshaped for borrowck — index loop so `chunks` can be passed
-        // whole to `append_isolated_hashes_for_imported_chunks` and then indexed.
+        // paths of each chunk.
+        let hashes = c.final_chunk_hashes(chunks)?;
         for index in 0..chunks.len() {
-            let mut hash = ContentHasher::default();
-            c.append_isolated_hashes_for_imported_chunks(
-                &mut hash,
-                chunks,
-                u32::try_from(index).expect("int cast"),
-                &mut chunk_visit_map,
-            );
-            chunk_visit_map.set_all(false);
             let chunk = &mut chunks[index];
-            chunk.template.placeholder.hash = Some(hash.digest());
+            chunk.template.placeholder.hash = Some(hashes[index]);
 
             let mut rel_path: Vec<u8> = Vec::new();
             // Use the byte-writer (`PathTemplate::print`) directly —

@@ -7,10 +7,11 @@
 // output and never exited.
 //
 // The fixture queues thousands of background Wasm compiles and exits while they
-// are still running, through process.exit() (Global::exit) or process.abort()
-// (_exit, which also ends in ExitProcess). Without the fix about half of these
-// processes never exit on Windows arm64. The test cannot fail elsewhere; it runs
-// on every Windows lane so the exit paths are still exercised there.
+// are still running, through process.exit() or process.abort(). Both now go
+// through Bun__exitProcess, the one ExitProcess behind WTF's thread-suspend lock.
+// Without it about half of these processes never exit on Windows arm64. The test
+// cannot fail elsewhere; it runs on every Windows lane so both paths are still
+// exercised there.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 

@@ -502,6 +502,17 @@ export function windowsEnv(
     }
   }
 
+  // Node hands the name to the OS as a C string: it is cut at the first NUL,
+  // and a name that is empty or contains '=' is rejected, so the write is
+  // silently dropped (https://github.com/nodejs/node/issues/32920). Returns the
+  // original-case name and its canonical uppercase key, or null when dropped.
+  function envName(p: string): [string, string] | null {
+    const nul = p.indexOf("\0");
+    if (nul !== -1) p = p.slice(0, nul);
+    if (p === "" || p.includes("=")) return null;
+    return [p, p.toUpperCase()];
+  }
+
   return new Proxy(internalEnv, {
     get(_, p) {
       if (typeof p !== "string") {
@@ -525,15 +536,18 @@ export function windowsEnv(
       if (typeof p === "symbol" || typeof value === "symbol") {
         throw new TypeError("Cannot convert a Symbol value to a string");
       }
-      const k = p.toUpperCase();
-      // Node silently ignores assignments to an empty variable name
-      // (https://github.com/nodejs/node/issues/32920).
-      if (k === "") {
+      const name = envName(p);
+      if (name === null) {
         return true;
       }
       // If toString() throws, we want to avoid the key existing in envMapList.
-      writeEnvVar(p, k, value);
+      writeEnvVar(name[0], name[1], value);
       return true;
+    },
+    preventExtensions() {
+      // Node: Object.freeze / seal / preventExtensions on process.env throw a
+      // TypeError. Refusing here makes the Object builtins throw theirs.
+      return false;
     },
     has(_, p) {
       // Case-insensitive env-var query first, then ordinary lookup so own
@@ -549,7 +563,11 @@ export function windowsEnv(
       if (typeof p === "symbol") {
         return true;
       }
-      const k = String(p).toUpperCase();
+      const name = envName(p);
+      if (name === null) {
+        return true;
+      }
+      const k = name[1];
       const i = envMapList.findIndex(x => x.toUpperCase() === k);
       if (i !== -1) {
         envMapList.splice(i, 1);
@@ -588,14 +606,13 @@ export function windowsEnv(
       if (typeof attributes.value === "symbol") {
         throw new TypeError("Cannot convert a Symbol value to a string");
       }
-      const k = p.toUpperCase();
-      // Node silently ignores an empty variable name, like the set trap.
-      if (k === "") {
+      const name = envName(p);
+      if (name === null) {
         return true;
       }
       // Node's EnvDefiner delegates the validated value to EnvSetter, i.e.
       // plain assignment — never a real defineProperty on the target.
-      writeEnvVar(p, k, attributes.value);
+      writeEnvVar(name[0], name[1], attributes.value);
       return true;
     },
     getOwnPropertyDescriptor(target, p) {

@@ -2120,6 +2120,75 @@ pub(crate) mod environment_variables {
         let value = vm.env_loader().get(utf8.slice())?;
         Some(EncodedSlice::from_bytes(value))
     }
+
+    /// setenv(3) takes C strings, so Node stores a key or value only up to its
+    /// first NUL. The C++ setter already cuts both; this keeps every caller
+    /// (including the SHARE_ENV store's write-through) on the same contract.
+    #[inline]
+    fn truncate_at_nul(s: &[u8]) -> &[u8] {
+        match bun_core::strings::index_of_char_usize(s, 0) {
+            Some(i) => &s[..i],
+            None => s,
+        }
+    }
+
+    /// `process.env[name] = value`: update the env map, and on the main thread
+    /// also the OS environment so a native library's `getenv()` observes the
+    /// write. Workers only update their own map, like Node's `MapKVStore`.
+    #[unsafe(no_mangle)]
+    extern "C" fn Bun__ProcessEnv__put(
+        global_object: &JSGlobalObject,
+        name: &BunString,
+        value: &BunString,
+    ) {
+        let vm = global_object.bun_vm().as_mut();
+        let name_slice = name.to_utf8();
+        let key = truncate_at_nul(name_slice.slice());
+        if key.is_empty() || bun_core::strings::contains_char(key, b'=') {
+            return;
+        }
+        let value_slice = value.to_utf8();
+        let val = truncate_at_nul(value_slice.slice());
+
+        {
+            // Serialises against a spawning worker's `clone_with_allocator`
+            // of this map (web_worker.rs holds the same lock).
+            let _slots = vm.proxy_env_storage.lock();
+            bun_core::handle_oom(vm.transpiler.env_mut().map.put(key, val));
+        }
+
+        #[cfg(unix)]
+        if vm.is_main_thread {
+            bun_core::putenv_leaked(key, val);
+        }
+    }
+
+    /// `delete process.env[name]`: remove from the env map, and on the main
+    /// thread also from the OS environment.
+    #[unsafe(no_mangle)]
+    extern "C" fn Bun__ProcessEnv__delete(global_object: &JSGlobalObject, name: &BunString) {
+        let vm = global_object.bun_vm().as_mut();
+        let name_slice = name.to_utf8();
+        let key = truncate_at_nul(name_slice.slice());
+        if key.is_empty() {
+            return;
+        }
+
+        {
+            let mut slots = vm.proxy_env_storage.lock();
+            // A proxy var's slot would otherwise be re-inserted into the map
+            // of the next spawned worker by `sync_into`.
+            if let Some(slot) = slots.slot(key) {
+                *slot.ptr = None;
+            }
+            vm.transpiler.env_mut().map.remove(key);
+        }
+
+        #[cfg(unix)]
+        if vm.is_main_thread {
+            bun_core::unsetenv(key);
+        }
+    }
 }
 
 #[unsafe(no_mangle)]

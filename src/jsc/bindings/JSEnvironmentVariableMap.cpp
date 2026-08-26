@@ -41,9 +41,38 @@ extern "C" size_t Bun__getEnvKey(void* list, size_t index, unsigned char** out);
 extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, const EncodedSlice* name, EncodedSlice* value);
 extern "C" BunString Bun__getEnvValueBunString(JSGlobalObject* globalObject, const BunString* name);
 extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, const BunString* name, const BunString* value);
+extern "C" void Bun__ProcessEnv__put(JSGlobalObject* globalObject, const BunString* name, const BunString* value);
+extern "C" void Bun__ProcessEnv__delete(JSGlobalObject* globalObject, const BunString* name);
 extern "C" bool Bun__Node__ProcessPendingDeprecation;
 
 namespace Bun {
+
+// Node's RealEnvStore hands keys and values to setenv(3), so each is cut at its
+// first NUL and a name that is empty or contains '=' fails EINVAL and is dropped.
+static ALWAYS_INLINE String truncateAtNUL(const String& s)
+{
+    size_t nul = s.find('\0');
+    return nul == notFound ? s : s.left(nul);
+}
+
+static ALWAYS_INLINE bool isRejectedEnvName(const String& key)
+{
+    return key.isEmpty() || key.contains('=');
+}
+
+// Mirror a process.env write into Bun's env map (Bun.spawn's default env,
+// Bun.which, fetch proxy lookup) and, on the main thread, libc environ so a
+// native getenv() observes it. `value == nullptr` deletes.
+static void writeThroughEnv(JSGlobalObject* globalObject, const String& key, const String* value)
+{
+    BunString name = Bun::toString(key);
+    if (value) {
+        BunString val = Bun::toString(*value);
+        Bun__ProcessEnv__put(globalObject, &name, &val);
+    } else {
+        Bun__ProcessEnv__delete(globalObject, &name);
+    }
+}
 
 using namespace WebCore;
 
@@ -130,6 +159,20 @@ static void applyTLSRejectEnvValue(JSGlobalObject* globalObject, JSC::JSString* 
     applyTLSRejectFromString(globalObject, view->toString());
 }
 
+// coerceEnvValue plus the NUL cut. `stringValue` receives the stored text.
+static JSC::JSString* coerceEnvValueForStore(JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue value, String& stringValue)
+{
+    VM& vm = globalObject->vm();
+    JSC::JSString* string = coerceEnvValue(globalObject, scope, value);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    String full = string->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    stringValue = truncateAtNUL(full);
+    if (stringValue.length() != full.length())
+        string = jsString(vm, stringValue);
+    return string;
+}
+
 bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
     VM& vm = globalObject->vm();
@@ -140,24 +183,37 @@ bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, P
         throwTypeError(globalObject, scope, "Cannot convert a symbol to a string"_s);
         return false;
     }
+    if (!uid) [[unlikely]]
+        RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
 
     // Node silently ignores assignments to an empty variable name
-    // (https://github.com/nodejs/node/issues/32920).
-    if (propertyName.publicName() && propertyName.publicName()->isEmpty())
+    // (https://github.com/nodejs/node/issues/32920) or one containing '='.
+    String key = truncateAtNUL(String(uid));
+    if (isRejectedEnvName(key))
         return true;
 
-    JSString* string = coerceEnvValue(globalObject, scope, value);
+    // A NUL in the name: store under the name the OS environment will hold.
+    if (key.length() != uid->length()) [[unlikely]] {
+        slot.disableCaching();
+        PutPropertySlot truncatedSlot(cell, slot.isStrictMode());
+        RELEASE_AND_RETURN(scope, put(cell, globalObject, Identifier::fromString(vm, key), value, truncatedSlot));
+    }
+
+    String stringValue;
+    JSString* string = coerceEnvValueForStore(globalObject, scope, value, stringValue);
     RETURN_IF_EXCEPTION(scope, false);
+
+    writeThroughEnv(globalObject, key, &stringValue);
 
     // Node's RealEnvStore::Set name-matches TZ on every write, so delete-then-set still
     // updates Date caches. putDirect bypasses the accessor so the side effect fires once.
-    if (uid && WTF::equal(uid, "TZ"_s)) [[unlikely]] {
+    if (WTF::equal(uid, "TZ"_s)) [[unlikely]] {
         applyTimeZoneEnvValue(globalObject, string);
         RETURN_IF_EXCEPTION(scope, false);
         static_cast<JSEnvironmentVariableMap*>(cell)->putDirect(vm, propertyName, string, 0);
         return true;
     }
-    if (uid && WTF::equal(uid, "NODE_TLS_REJECT_UNAUTHORIZED"_s)) [[unlikely]] {
+    if (WTF::equal(uid, "NODE_TLS_REJECT_UNAUTHORIZED"_s)) [[unlikely]] {
         applyTLSRejectEnvValue(globalObject, string);
         RETURN_IF_EXCEPTION(scope, false);
         static_cast<JSEnvironmentVariableMap*>(cell)->putDirect(vm, propertyName, string, 0);
@@ -173,9 +229,18 @@ bool JSEnvironmentVariableMap::putByIndex(JSCell* cell, JSGlobalObject* globalOb
 
     // Numeric keys route through EnvSetter in Node too, so the same DEP0104
     // and coercion rules apply.
-    JSString* string = coerceEnvValue(globalObject, scope, value);
+    String stringValue;
+    JSString* string = coerceEnvValueForStore(globalObject, scope, value, stringValue);
     RETURN_IF_EXCEPTION(scope, false);
+    writeThroughEnv(globalObject, String::number(index), &stringValue);
     RELEASE_AND_RETURN(scope, Base::putByIndex(cell, globalObject, index, string, shouldThrow));
+}
+
+bool JSEnvironmentVariableMap::preventExtensions(JSObject*, JSGlobalObject*)
+{
+    // Node: Object.freeze / seal / preventExtensions on process.env throw a
+    // TypeError. Refusing here makes the Object builtins throw theirs.
+    return false;
 }
 
 bool JSEnvironmentVariableMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
@@ -275,8 +340,11 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterProxyEnvironmentVariable, (JSGlobalObject * glo
     unsigned attributes;
     JSValue existing = object->getDirect(vm, propertyName, attributes);
     if (existing && (attributes & JSC::PropertyAttribute::DontEnum)) {
-        // putDirectCustomAccessor asserts NewProperty, so delete first.
-        object->deleteProperty(globalObject, propertyName);
+        // putDirectCustomAccessor asserts NewProperty, so delete first. This is
+        // an attribute reset, not an env delete: bypass the method table so
+        // JSEnvironmentVariableMap::deleteProperty does not unset the var.
+        DeletePropertySlot deleteSlot;
+        JSC::JSObject::deleteProperty(object, globalObject, propertyName, deleteSlot);
         RETURN_IF_EXCEPTION(scope, false);
         object->putDirectCustomAccessor(vm, propertyName, existing,
             attributes & ~JSC::PropertyAttribute::DontEnum);
@@ -348,7 +416,24 @@ bool JSEnvironmentVariableMap::deleteProperty(JSCell* cell, JSGlobalObject* glob
         applyTLSRejectFromString(globalObject, String());
     }
 
+    if (uid) {
+        String key = truncateAtNUL(String(uid));
+        if (key.length() != uid->length()) [[unlikely]] {
+            slot.disableCaching();
+            DeletePropertySlot truncatedSlot;
+            RELEASE_AND_RETURN(scope, deleteProperty(cell, globalObject, Identifier::fromString(vm, key), truncatedSlot));
+        }
+        if (!key.isEmpty())
+            writeThroughEnv(globalObject, key, nullptr);
+    }
+
     RELEASE_AND_RETURN(scope, Base::deleteProperty(cell, globalObject, propertyName, slot));
+}
+
+bool JSEnvironmentVariableMap::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index)
+{
+    writeThroughEnv(globalObject, String::number(index), nullptr);
+    return Base::deletePropertyByIndex(cell, globalObject, index);
 }
 
 extern "C" int Bun__getTLSRejectUnauthorizedValue();
@@ -473,15 +558,17 @@ JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * global
 #if OS(WINDOWS)
 extern "C" void Bun__Process__editWindowsEnvVar(const BunString*, const BunString*);
 
-// Windows Proxy set/defineProperty write path: DEP0104 + ToString via coerceEnvValue,
-// plus the TZ side effect so it survives `delete process.env.TZ`. Returns the string.
+// Windows Proxy set/defineProperty write path: DEP0104 + ToString + NUL cut via
+// coerceEnvValueForStore, plus the TZ side effect so it survives
+// `delete process.env.TZ`. Returns the string.
 JSC_DEFINE_HOST_FUNCTION(jsProcessEnvCoerceForWrite, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue key = callFrame->argument(0);
     JSValue value = callFrame->argument(1);
-    JSC::JSString* string = coerceEnvValue(globalObject, scope, value);
+    String stringValue;
+    JSC::JSString* string = coerceEnvValueForStore(globalObject, scope, value, stringValue);
     RETURN_IF_EXCEPTION(scope, {});
     if (key.isString()) {
         auto keyView = asString(key)->view(globalObject);
@@ -543,23 +630,25 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
 }
 #endif
 
-// Founding a SHARE_ENV tree swaps main's process.env off the windowsEnv Proxy that
-// called SetEnvironmentVariableW, so every mutation of a main-rooted shared store has
-// to re-apply that write-through. Gated on the *store*, not the writing thread: node
-// roots a main-founded tree at its RealEnvStore, so a worker writing through that tree
-// reaches the OS env too. `value == nullptr` deletes.
-static ALWAYS_INLINE void syncWindowsEnv(SharedEnvStore* store, const String& key, const String* value)
+// Founding a SHARE_ENV tree swaps main's process.env off the object that wrote
+// through to the OS environment (the windowsEnv Proxy's SetEnvironmentVariableW,
+// JSEnvironmentVariableMap's setenv), so every mutation of a main-rooted shared
+// store has to re-apply that write-through. Gated on the *store*, not the
+// writing thread: node roots a main-founded tree at its RealEnvStore, so a
+// worker writing through that tree reaches the OS env too. On POSIX the
+// write-through itself only reaches environ from the main thread.
+// `value == nullptr` deletes.
+static ALWAYS_INLINE void syncOSEnv(JSGlobalObject* globalObject, SharedEnvStore* store, const String& key, const String* value)
 {
-#if OS(WINDOWS)
     if (!store || !store->isMainRooted())
         return;
+#if OS(WINDOWS)
+    UNUSED_PARAM(globalObject);
     BunString k = Bun::toString(key);
     BunString v = value ? Bun::toString(*value) : BunString { .tag = BunStringTag::Dead };
     Bun__Process__editWindowsEnvVar(&k, &v);
 #else
-    UNUSED_PARAM(store);
-    UNUSED_PARAM(key);
-    UNUSED_PARAM(value);
+    writeThroughEnv(globalObject, key, value);
 #endif
 }
 
@@ -778,7 +867,7 @@ bool JSSharedEnvMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNam
 
     String keyStr = String(uid);
     applySharedEnvSideEffects(globalObject, keyStr, stringValue);
-    syncWindowsEnv(store, keyStr, &stringValue);
+    syncOSEnv(globalObject, store, keyStr, &stringValue);
     store->set(keyStr, stringValue);
     return true;
 }
@@ -808,7 +897,7 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
         applyTLSRejectFromString(globalObject, String());
     }
 
-    syncWindowsEnv(store, key, nullptr);
+    syncOSEnv(globalObject, store, key, nullptr);
     store->remove(key);
     // Also drop any own property the Base fallback installed (accessor descriptors).
     return Base::deleteProperty(cell, globalObject, propertyName, slot);
@@ -846,7 +935,7 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
             if (auto* store = sharedEnvStoreFor(object)) {
                 String existing = store->get(String(uid));
                 if (!existing.isNull()) {
-                    syncWindowsEnv(store, String(uid), nullptr);
+                    syncOSEnv(globalObject, store, String(uid), nullptr);
                     store->remove(String(uid));
                     object->putDirect(vm, propertyName, jsString(vm, existing), 0);
                 }
@@ -868,7 +957,7 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
 
     String keyStr = String(uid);
     applySharedEnvSideEffects(globalObject, keyStr, stringValue);
-    syncWindowsEnv(store, keyStr, &stringValue);
+    syncOSEnv(globalObject, store, keyStr, &stringValue);
     store->set(keyStr, stringValue);
     return true;
 }
@@ -897,7 +986,7 @@ bool JSSharedEnvMap::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalO
     }
 
     String keyStr = String::number(index);
-    syncWindowsEnv(store, keyStr, nullptr);
+    syncOSEnv(globalObject, store, keyStr, nullptr);
     store->remove(keyStr);
     return Base::deletePropertyByIndex(cell, globalObject, index);
 }

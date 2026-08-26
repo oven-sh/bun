@@ -10,6 +10,9 @@ for (let key in process.env) {
 
 for (let key in harness.bunEnv) {
   if (key === "TZ") continue;
+  // process.env writes reach the OS environment. Forcing bunEnv's CI="1" here
+  // would override the CI=false a parent test passes to enable `.only()`.
+  if (key === "CI") continue;
   if (harness.bunEnv[key] === undefined) continue;
   process.env[key] = harness.bunEnv[key] + "";
 }

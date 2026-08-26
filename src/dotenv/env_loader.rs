@@ -600,22 +600,41 @@ impl Loader {
             return Ok(());
         }
 
+        // A worker's loader re-walks environ on its own thread while the main
+        // thread may be inside a `process.env` write.
+        #[cfg(unix)]
+        let _environ_guard = bun_core::environ_read_lock();
         let environ: &[*const c_char] = bun_sys::environ();
         self.map.map.ensure_total_capacity(environ.len())?;
+        // The kernel accepts duplicate `KEY=` entries in environ; libc getenv()
+        // and Node resolve to the first one, so later duplicates are skipped.
+        // Entries seeded before this scan (`bun test` pre-seeds NODE_ENV) lose
+        // to the process environment, but only to its first occurrence.
+        let preseeded_count = self.map.map.count();
+        let mut preseeded_written = bun_collections::AutoBitSet::init_empty(preseeded_count)?;
         for &_env in environ {
             // SAFETY: environ entries are NUL-terminated C strings from the OS
             let env = unsafe { bun_core::ffi::cstr(_env) }.to_bytes();
-            if let Some(i) = strings::index_of_char(env, b'=') {
-                let key = &env[..i as usize];
-                let value = &env[i as usize + 1..];
-                if !key.is_empty() {
-                    self.map.put(key, value)?;
-                }
-            } else {
-                if !env.is_empty() {
-                    self.map.put(env, b"")?;
-                }
+            // POSIX environ entries are `name=value`; getenv() and Node ignore
+            // an entry with no '='.
+            let Some(i) = strings::index_of_char_usize(env, b'=') else {
+                continue;
+            };
+            let key = &env[..i];
+            if key.is_empty() {
+                continue;
             }
+            let value = &env[i + 1..];
+            let gop = self.map.get_or_put_without_value(key)?;
+            if gop.found_existing {
+                if gop.index >= preseeded_count || preseeded_written.is_set(gop.index) {
+                    continue;
+                }
+                preseeded_written.set(gop.index);
+            }
+            *gop.value_ptr = HashTableValue {
+                value: Box::from(value),
+            };
         }
         self.did_load_process = true;
         Ok(())

@@ -846,6 +846,17 @@ it("spawnSync(does-not-exist) reports status: null and pid: 0 like Node", () => 
   expect(y.output).toEqual(null);
 });
 
+it.if(isWindows)("spawnSync(batch-file) reports the never-started result shape", () => {
+  const x = spawnSync("does-not-exist.cmd");
+  expect(x.error?.code).toBe("EINVAL");
+  expect(x.status).toBeNull();
+  expect(x.signal).toBeNull();
+  expect(x.output).toBeNull();
+  expect(x.pid).toBe(0);
+  expect(x.stdout).toBeUndefined();
+  expect(x.stderr).toBeUndefined();
+});
+
 // https://github.com/oven-sh/bun/issues/32067
 // Darwin's posix_spawn file actions reject any fd number >= OPEN_MAX (10240)
 // with EBADF at registration time, before checking whether the fd is open.

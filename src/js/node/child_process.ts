@@ -465,6 +465,18 @@ Object.defineProperty(execFile, kCustomPromisifySymbol, {
 
 execFile[kCustomPromisifySymbol][kCustomPromisifySymbol] = execFile[kCustomPromisifySymbol];
 
+function spawnSyncFailureResult(error) {
+  return {
+    signal: null,
+    status: null,
+    output: null,
+    pid: 0,
+    stdout: undefined,
+    stderr: undefined,
+    error,
+  };
+}
+
 /**
  * Spawns a new process synchronously using the given `file`.
  * @param {string} file
@@ -511,15 +523,7 @@ function spawnSync(file, args, options) {
       "EINVAL",
     );
     error.spawnargs = ArrayPrototypeSlice.$call(options.args, 1);
-    return {
-      signal: null,
-      status: null,
-      output: [null, null, null],
-      pid: 0,
-      stdout: null,
-      stderr: null,
-      error,
-    };
+    return spawnSyncFailureResult(error);
   }
 
   const maxBuffer = options.maxBuffer;
@@ -550,8 +554,6 @@ function spawnSync(file, args, options) {
     }
   }
 
-  var error;
-  var failedToSpawn = false;
   try {
     var {
       stdout = null,
@@ -584,56 +586,36 @@ function spawnSync(file, args, options) {
       maxBuffer: options.maxBuffer,
     });
   } catch (err) {
-    error = err;
-    failedToSpawn = true;
+    err.syscall = "spawnSync " + options.file;
+    err.spawnargs = ArrayPrototypeSlice.$call(options.args, 1);
+    return spawnSyncFailureResult(err);
   }
 
-  let result;
-  if (failedToSpawn) {
-    // Node's SyncProcessRunner::BuildResultObject (src/spawn_sync.cc) sets `status`
-    // and `output` to null when the process was never started, and always sets
-    // `pid` (uv_process_t is zero-initialized on a failed spawn). `stdout` and
-    // `stderr` stay undefined (`result.stdout = result.output?.[1]` in
-    // lib/internal/child_process.js).
-    result = {
-      signal: null,
-      status: null,
-      output: null,
-      pid: 0,
-      stdout: undefined,
-      stderr: undefined,
-    };
-  } else {
-    // When stdio is redirected to a file descriptor, Bun.spawnSync returns the fd number
-    // instead of the actual output. We should treat this as no output available.
-    const outputStdout = typeof stdout === "number" ? null : stdout;
-    const outputStderr = typeof stderr === "number" ? null : stderr;
+  // When stdio is redirected to a file descriptor, Bun.spawnSync returns the fd number
+  // instead of the actual output. We should treat this as no output available.
+  const outputStdout = typeof stdout === "number" ? null : stdout;
+  const outputStderr = typeof stderr === "number" ? null : stderr;
 
-    result = {
-      signal: signalCode ?? null,
-      status: exitCode,
-      // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
-      output: [null, outputStdout, outputStderr],
-      pid,
-    };
+  const result = {
+    signal: signalCode ?? null,
+    status: exitCode,
+    // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
+    output: [null, outputStdout, outputStderr],
+    pid,
+  };
 
-    if (outputStdout && encoding && encoding !== "buffer") {
-      result.output[1] = result.output[1]?.toString(encoding);
-    }
-
-    if (outputStderr && encoding && encoding !== "buffer") {
-      result.output[2] = result.output[2]?.toString(encoding);
-    }
-
-    result.stdout = result.output[1];
-    result.stderr = result.output[2];
+  if (outputStdout && encoding && encoding !== "buffer") {
+    result.output[1] = result.output[1]?.toString(encoding);
   }
 
-  if (error) {
-    result.error = error;
+  if (outputStderr && encoding && encoding !== "buffer") {
+    result.output[2] = result.output[2]?.toString(encoding);
   }
 
-  if (exitedDueToTimeout && error == null) {
+  result.stdout = result.output[1];
+  result.stderr = result.output[2];
+
+  if (exitedDueToTimeout) {
     result.error = new SystemError(
       "spawnSync " + options.file + " ETIMEDOUT",
       options.file,
@@ -642,7 +624,7 @@ function spawnSync(file, args, options) {
       "ETIMEDOUT",
     );
   }
-  if (exitedDueToMaxBuffer && error == null) {
+  if (exitedDueToMaxBuffer) {
     result.error = new SystemError(
       "spawnSync " + options.file + " ENOBUFS (stdout or stderr buffer reached maxBuffer size limit)",
       options.file,

@@ -2615,29 +2615,18 @@ impl StandaloneModuleGraph {
             return;
         };
 
-        // This is a best-effort hint, so call libc madvise directly and
-        // just log on failure rather than treating errors as fatal.
-        // SAFETY: start..end lies inside the mapped executable image, and
-        // MADV_DONTNEED neither reads nor writes through it.
-        let rc = unsafe {
-            libc::madvise(
-                start as *mut core::ffi::c_void,
-                end - start,
-                libc::MADV_DONTNEED,
-            )
-        };
-        if rc != 0 {
-            bun_core::scoped_log!(
-                StandaloneModuleGraph,
-                "hintSourcePagesDontNeed: madvise failed errno={}",
-                bun_sys::last_errno()
-            );
-        } else {
-            bun_core::scoped_log!(
+        // A best-effort hint: log a failure instead of treating it as fatal.
+        match bun_sys::madvise(start as *mut u8, end - start, bun_sys::MADV::DONTNEED) {
+            Ok(()) => bun_core::scoped_log!(
                 StandaloneModuleGraph,
                 "hintSourcePagesDontNeed: MADV_DONTNEED {} bytes",
                 end - start
-            );
+            ),
+            Err(err) => bun_core::scoped_log!(
+                StandaloneModuleGraph,
+                "hintSourcePagesDontNeed: madvise failed: {}",
+                err
+            ),
         }
     }
 
@@ -2686,39 +2675,18 @@ fn read_ahead(lo: usize, hi: usize) {
     let start = lo & !(bun_alloc::page_size() - 1);
     #[cfg(target_os = "macos")]
     {
-        let range = start as *mut core::ffi::c_void;
+        // The `__BUN` segment's maximum protection is read-write, and nothing
+        // else runs in this process yet, so no write lands while it is read-only.
+        let range = start as *mut u8;
         let len = hi - start;
-        // SAFETY: `[start, hi)` lies inside the `__BUN` segment, whose maximum
-        // protection is read-write; nothing else runs in this process yet, so
-        // no write lands while the range is read-only.
-        let rc = unsafe { libc::mprotect(range, len, libc::PROT_READ) };
-        if rc != 0 {
-            bun_core::scoped_log!(
-                StandaloneModuleGraph,
-                "prefetch: mprotect failed errno={}",
-                bun_sys::last_errno()
-            );
+        if let Err(err) = bun_sys::mprotect(range, len, bun_sys::PROT::READ) {
+            bun_core::scoped_log!(StandaloneModuleGraph, "prefetch: {}", err);
             return;
         }
-        // SAFETY: same range; `MADV_WILLNEED` neither reads nor writes through it.
-        let advised = unsafe { libc::madvise(range, len, libc::MADV_WILLNEED) };
-        let advise_errno = bun_sys::last_errno();
-        // SAFETY: restores the segment's own protection on the same range.
-        let restored = unsafe { libc::mprotect(range, len, libc::PROT_READ | libc::PROT_WRITE) };
-        if restored != 0 {
-            bun_core::scoped_log!(
-                StandaloneModuleGraph,
-                "prefetch: mprotect restore failed errno={}",
-                bun_sys::last_errno()
-            );
-            return;
-        }
-        if advised != 0 {
-            bun_core::scoped_log!(
-                StandaloneModuleGraph,
-                "prefetch: madvise failed errno={}",
-                advise_errno
-            );
+        let advised = bun_sys::madvise(range, len, bun_sys::MADV::WILLNEED);
+        let restored = bun_sys::mprotect(range, len, bun_sys::PROT::READ | bun_sys::PROT::WRITE);
+        if let Err(err) = restored.and(advised) {
+            bun_core::scoped_log!(StandaloneModuleGraph, "prefetch: {}", err);
             return;
         }
     }
@@ -2728,16 +2696,8 @@ fn read_ahead(lo: usize, hi: usize) {
         let mut at = start;
         while at < hi {
             let len = PIECE.min(hi - at);
-            // SAFETY: `[at, at + len)` lies inside the mapped executable image;
-            // `MADV_WILLNEED` neither reads nor writes through it.
-            let rc =
-                unsafe { libc::madvise(at as *mut core::ffi::c_void, len, libc::MADV_WILLNEED) };
-            if rc != 0 {
-                bun_core::scoped_log!(
-                    StandaloneModuleGraph,
-                    "prefetch: madvise failed errno={}",
-                    bun_sys::last_errno()
-                );
+            if let Err(err) = bun_sys::madvise(at as *mut u8, len, bun_sys::MADV::WILLNEED) {
+                bun_core::scoped_log!(StandaloneModuleGraph, "prefetch: {}", err);
                 return;
             }
             at += len;

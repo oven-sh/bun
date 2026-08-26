@@ -6021,8 +6021,8 @@ impl ClipboardBlobReadHandler {
                 }
             }
             ReadBytesResult::Err(e) => {
-                let code = e.code.get().to_utf8_bytes();
-                let message = e.message.get().to_utf8_bytes();
+                let code = e.code.to_owned_slice();
+                let message = e.message.to_owned_slice();
                 let text = match (code.is_empty(), message.is_empty()) {
                     // fs errors already read "ENOENT: no such file or directory, ...".
                     (false, false) if message.starts_with(&code) => message,
@@ -6082,7 +6082,7 @@ pub unsafe extern "C" fn Blob__implReadBytes(
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__implClearFile(blob: &mut Blob) {
     blob.is_jsdom_file.set(false);
-    blob.name.set(BunString::dead());
+    blob.name.set(BunString::DEAD);
 }
 
 /// Sets the Blob's content type verbatim.

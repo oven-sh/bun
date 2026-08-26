@@ -1004,29 +1004,18 @@ impl Writable {
                         // Ownership of the `Box<uv::Pipe>` transfers into the
                         // FileSink's writer.
                         let uv_pipe: *mut _ = bun_core::heap::into_raw(buf);
-                        let pipe_ptr = FileSink::create_with_pipe(event_loop, uv_pipe);
-
-                        // SAFETY: `create_with_pipe` returns a freshly-boxed
-                        // non-null FileSink with refcount 1; sole reference.
-                        match unsafe {
-                            (*pipe_ptr).writer.with_mut(|w| w.start_with_current_pipe())
-                        } {
-                            bun_sys::Result::Ok(()) => {}
-                            bun_sys::Result::Err(_err) => {
-                                // SAFETY: pipe_ptr is live with refcount 1;
-                                // deref frees it.
-                                unsafe { FileSink::deref(pipe_ptr) };
-                                return Err(WritableInitError::UnexpectedCreatingStdin);
-                            }
+                        let pipe = FileSink::create_with_pipe(event_loop, uv_pipe);
+                        if let bun_sys::Result::Err(_err) =
+                            pipe.writer.with_mut(|w| w.start_with_current_pipe())
+                        {
+                            return Err(WritableInitError::UnexpectedCreatingStdin);
                         }
 
                         // TODO: uncoment this when is ready, commented because was not compiling
                         // subprocess.weak_file_sink_stdin_ptr = pipe;
                         // subprocess.flags.has_stdin_destructor_called = false;
 
-                        // SAFETY: `create_with_pipe` returns non-null with one
-                        // owned ref, taken over here.
-                        return Ok(Writable::Pipe(unsafe { RefPtr::from_raw(pipe_ptr) }));
+                        return Ok(Writable::Pipe(pipe));
                     }
                     return Ok(Writable::Inherit);
                 }

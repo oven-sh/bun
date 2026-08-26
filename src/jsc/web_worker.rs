@@ -442,7 +442,8 @@ impl WebWorker {
         }
 
         // The thread's own ref, taken before it exists so it can never observe zero.
-        worker_ref.ref_();
+        // SAFETY: `worker` is live.
+        let thread_ref = unsafe { bun_ptr::RefPtr::init_ref(worker) };
         // The thread is something of this VM's on another thread for as long as
         // it runs: the parent joins it before its own teardown's wait, which
         // this ticket would otherwise hold.
@@ -451,7 +452,7 @@ impl WebWorker {
         /// taken above is the thread's), the parent's snapshot, and a ticket on
         /// the parent VM.
         struct ThreadStart {
-            worker: *mut WebWorker,
+            worker: bun_ptr::RefPtr<WebWorker>,
             init: WorkerVmInit,
             _parent_ticket: crate::Ticket,
         }
@@ -462,7 +463,7 @@ impl WebWorker {
         // itself is kept by `_parent_ticket`.
         unsafe impl Send for ThreadStart {}
         let start = ThreadStart {
-            worker,
+            worker: thread_ref,
             init,
             _parent_ticket: parent_ticket,
         };
@@ -470,10 +471,14 @@ impl WebWorker {
             .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
             .spawn(move || {
                 let start = start;
-                // SAFETY: `worker` is live (the thread's ref); `&WebWorker`, never `&mut`.
-                unsafe { (*start.worker).thread_main(start.init) };
-                // SAFETY: dropping the thread's ref; nothing below touches `worker`.
-                unsafe { WebWorker::deref(start.worker) };
+                let ThreadStart {
+                    worker,
+                    init,
+                    _parent_ticket,
+                } = start;
+                worker.thread_main(init);
+                // The thread's ref drops here.
+                drop(worker);
             });
         match spawn {
             Ok(handle) => {
@@ -484,20 +489,13 @@ impl WebWorker {
             }
             Err(_) => {
                 worker_ref.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
-                // SAFETY: never shared; drop both refs (the thread's and the caller's).
-                unsafe {
-                    WebWorker::deref(worker);
-                    WebWorker::deref(worker);
-                }
+                // The thread's ref went down with the closure; drop the caller's.
+                // SAFETY: never shared.
+                unsafe { WebWorker::deref(worker) };
                 *error_message = BunString::static_("Failed to spawn worker thread");
                 core::ptr::null_mut()
             }
         }
-    }
-
-    fn ref_(&self) {
-        // SAFETY: `self` is live; the count is atomic.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut()) };
     }
 
     /// Drop one ref; the last one frees the allocation (`Drop` below). Any thread.

@@ -1440,7 +1440,7 @@ impl BlobExt for Blob {
             );
         }
 
-        let file_sink: *mut webcore::FileSink = 'brk_sink: {
+        let file_sink: RefPtr<webcore::FileSink> = 'brk_sink: {
             #[cfg(windows)]
             {
                 let pathlike = &store.data.as_file().pathlike;
@@ -1510,37 +1510,25 @@ impl BlobExt for Blob {
                             .event_loop() as *mut (),
                     ),
                 );
-                // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink.
-                unsafe {
-                    (*sink)
-                        .writer
-                        .with_mut(|w| w.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)))
-                };
+                sink.writer
+                    .with_mut(|w| w.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)));
 
                 #[cfg(windows)]
                 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
-                if is_stdout_or_stderr {
-                    // SAFETY: sink is live; sole owner here.
-                    if let bun_sys::Result::Err(err) =
-                        unsafe { (*sink).writer.with_mut(|w| w.start_sync(fd, false)) }
-                    {
-                        unsafe { webcore::FileSink::deref(sink) };
-                        return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                let started = sink.writer.with_mut(|w| {
+                    if is_stdout_or_stderr {
+                        w.start_sync(fd, false)
+                    } else {
+                        w.start(fd, true)
+                    }
+                });
+                if let bun_sys::Result::Err(err) = started {
+                    return Ok(
+                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
                             err.to_js(global_this),
-                        ));
-                    }
-                } else {
-                    // SAFETY: sink is live; sole owner here.
-                    if let bun_sys::Result::Err(err) =
-                        unsafe { (*sink).writer.with_mut(|w| w.start(fd, true)) }
-                    {
-                        unsafe { webcore::FileSink::deref(sink) };
-                        return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                            global_this,
-                            err.to_js(global_this),
-                        ));
-                    }
+                        ),
+                    );
                 }
 
                 break 'brk_sink sink;
@@ -1576,10 +1564,7 @@ impl BlobExt for Blob {
                     ..Default::default()
                 });
 
-                // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink.
-                if let bun_sys::Result::Err(err) = unsafe { (*sink).start(&stream_start) } {
-                    // SAFETY: release the +1 strong ref taken by `init` on the error path.
-                    unsafe { webcore::FileSink::deref(sink) };
+                if let bun_sys::Result::Err(err) = sink.start(&stream_start) {
                     return Ok(
                         JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
@@ -1591,25 +1576,23 @@ impl BlobExt for Blob {
             }
         };
 
-        // SAFETY: file_sink is a live +1 *mut FileSink; `pipe_stream` takes its own refs.
-        if let Some(promise) = unsafe { (*file_sink).pipe_stream(&readable_stream, global_this) } {
-            // SAFETY: release our +1 ref on the sink.
-            unsafe { webcore::FileSink::deref(file_sink) };
+        // `pipe_stream` takes its own refs.
+        // SAFETY: sole owner so far; `&mut` scoped to the call.
+        if let Some(promise) =
+            unsafe { (*file_sink.as_ptr()).pipe_stream(&readable_stream, global_this) }
+        {
             return Ok(promise);
         }
 
         let assignment_result: JSValue = webcore::file_sink::JSSink::assign_to_stream(
             global_this,
             readable_stream.value,
-            // SAFETY: file_sink is a live +1 *mut FileSink.
-            unsafe { NonNull::new_unchecked(file_sink) },
+            file_sink.as_non_null(),
         );
 
         assignment_result.ensure_still_alive();
 
         if let Some(err) = assignment_result.to_error() {
-            // SAFETY: release our +1 ref on the sink.
-            unsafe { webcore::FileSink::deref(file_sink) };
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     global_this,
@@ -1646,10 +1629,7 @@ impl BlobExt for Blob {
                         return Ok(promise_value);
                     }
                     jsc::js_promise::Status::Fulfilled => {
-                        // SAFETY: live until the deref below.
-                        let written = unsafe { (*file_sink).stream_bytes.get().unwrap_or(0) };
-                        // SAFETY: release our +1 ref on the sink; not used after this.
-                        unsafe { webcore::FileSink::deref(file_sink) };
+                        let written = file_sink.stream_bytes.get().unwrap_or(0);
                         readable_stream.done();
                         return Ok(JSPromise::resolved_promise_value(
                             global_this,
@@ -1657,8 +1637,6 @@ impl BlobExt for Blob {
                         ));
                     }
                     jsc::js_promise::Status::Rejected => {
-                        // SAFETY: release our +1 ref on the sink.
-                        unsafe { webcore::FileSink::deref(file_sink) };
                         readable_stream.cancel(global_this)?;
                         promise.set_handled(global_this.vm());
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -1668,8 +1646,6 @@ impl BlobExt for Blob {
                     }
                 }
             } else {
-                // SAFETY: release our +1 ref on the sink.
-                unsafe { webcore::FileSink::deref(file_sink) };
                 readable_stream.cancel(global_this)?;
                 return Ok(
                     JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -1679,10 +1655,7 @@ impl BlobExt for Blob {
                 );
             }
         }
-        // SAFETY: live until the deref below.
-        let written = unsafe { (*file_sink).stream_bytes.get().unwrap_or(0) };
-        // SAFETY: release our +1 ref on the sink; not used after this.
-        unsafe { webcore::FileSink::deref(file_sink) };
+        let written = file_sink.stream_bytes.get().unwrap_or(0);
 
         Ok(JSPromise::resolved_promise_value(
             global_this,
@@ -1838,35 +1811,23 @@ impl BlobExt for Blob {
                         .event_loop() as *mut (),
                 ),
             );
-            // `init` returns a freshly-allocated +1 *mut FileSink; release it on
-            // every exit. `to_js` takes its own per-wrapper +1, so rc ≥ 1 after
-            // the guard runs on the success path.
-            // SAFETY: sole owner of init's ref; runs after every use of `sink`.
-            let _sink_guard =
-                scopeguard::guard(sink, |sink| unsafe { webcore::FileSink::deref(sink) });
-            // SAFETY: sink is live (guard holds init's ref); each access scoped.
-            unsafe {
-                (*sink)
-                    .writer
-                    .with_mut(|w| w.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)));
-            }
+            // `to_js` takes its own per-wrapper +1; init's ref drops at scope end.
+            sink.writer
+                .with_mut(|w| w.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)));
 
-            // SAFETY: as above.
-            let start_result = unsafe {
-                (*sink).writer.with_mut(|w| {
-                    if is_stdout_or_stderr {
-                        w.start_sync(fd, false)
-                    } else {
-                        w.start(fd, true)
-                    }
-                })
-            };
+            let start_result = sink.writer.with_mut(|w| {
+                if is_stdout_or_stderr {
+                    w.start_sync(fd, false)
+                } else {
+                    w.start(fd, true)
+                }
+            });
             if let bun_sys::Result::Err(err) = start_result {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
 
-            // SAFETY: sink is live; `to_js` takes its own per-wrapper +1.
-            let js = unsafe { (*sink).to_js(global_this) };
+            // SAFETY: `&mut` scoped to the call.
+            let js = unsafe { (*sink.as_ptr()).to_js(global_this) };
             return Ok(js);
         }
 
@@ -1883,13 +1844,7 @@ impl BlobExt for Blob {
                         .cast::<()>(),
                 ),
             );
-            // `init` returns a freshly-allocated +1 *mut FileSink; release it on
-            // every exit. `to_js` takes its own per-wrapper +1, so rc ≥ 1 after
-            // the guard runs on the success path.
-            // SAFETY: sole owner of init's ref; runs after every use of `sink`.
-            let _sink_guard =
-                scopeguard::guard(sink, |sink| unsafe { webcore::FileSink::deref(sink) });
-
+            // `to_js` takes its own per-wrapper +1; init's ref drops at scope end.
             let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike {
                 PathOrFileDescriptor::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),
                 PathOrFileDescriptor::Path(p) => webcore::PathOrFileDescriptor::Path(
@@ -1914,14 +1869,12 @@ impl BlobExt for Blob {
                 opts.input_path = input_path;
             }
 
-            // SAFETY: sink is live (guard holds init's ref); exclusive borrow
-            // scoped to the call.
-            if let bun_sys::Result::Err(err) = unsafe { (*sink).start(&stream_start) } {
+            if let bun_sys::Result::Err(err) = sink.start(&stream_start) {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
 
-            // SAFETY: sink is live; `to_js` takes its own per-wrapper +1.
-            let js = unsafe { (*sink).to_js(global_this) };
+            // SAFETY: `&mut` scoped to the call.
+            let js = unsafe { (*sink.as_ptr()).to_js(global_this) };
             Ok(js)
         }
     }
@@ -5837,17 +5790,7 @@ impl Drop for S3BlobDownloadTask {
 struct FileStreamWrapper {
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) readable_stream_ref: webcore::readable_stream::ReadableStreamStrong,
-    // LIFETIMES.tsv: SHARED — but FileSink uses an intrusive single-thread refcount
-    // (`ref_`/`deref`) and crosses FFI as a raw pointer, so this stays `*mut`
-    // rather than `Arc<T>`.
-    pub sink: *mut webcore::FileSink,
-}
-
-impl Drop for FileStreamWrapper {
-    fn drop(&mut self) {
-        // SAFETY: `sink` is the +1 ref handed over by `pipe_readable_stream_to_blob`.
-        unsafe { webcore::FileSink::deref(self.sink) };
-    }
+    pub sink: RefPtr<webcore::FileSink>,
 }
 
 pub(crate) fn on_file_stream_resolve_request_stream(
@@ -5863,8 +5806,7 @@ pub(crate) fn on_file_stream_resolve_request_stream(
     if let Some(stream) = strong.get() {
         stream.done();
     }
-    // SAFETY: the wrapper holds a ref on `sink` until it is dropped below.
-    let written = unsafe { (*this.sink).stream_bytes.get().unwrap_or(0) };
+    let written = this.sink.stream_bytes.get().unwrap_or(0);
     this.promise
         .resolve(global_this, JSValue::js_number(written as f64))?;
     Ok(JSValue::UNDEFINED)

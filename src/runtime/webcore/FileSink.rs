@@ -579,7 +579,7 @@ impl FileSink {
     pub(crate) fn create_with_pipe(
         event_loop_: impl Into<EventLoopHandle>,
         pipe: *mut uv::Pipe,
-    ) -> *mut FileSink {
+    ) -> RefPtr<FileSink> {
         let evtloop: EventLoopHandle = event_loop_.into();
 
         // SAFETY: `pipe` is a live `*mut uv::Pipe` provided by the caller.
@@ -590,24 +590,18 @@ impl FileSink {
             h if h == uv::INVALID_HANDLE_VALUE => Fd::INVALID,
             h => Fd::from_system(h),
         };
-        let this = bun_core::heap::into_raw(Box::new(FileSink::new(evtloop, fd)));
+        let this = RefPtr::new(FileSink::new(evtloop, fd));
         // SAFETY: `this` was just allocated above and is the sole reference.
         unsafe {
-            (*this).writer.get_mut().set_pipe(pipe);
-            (*this).writer.get_mut().set_parent(this);
+            (*this.as_ptr()).writer.get_mut().set_pipe(pipe);
+            (*this.as_ptr()).writer.get_mut().set_parent(this.as_ptr());
         }
         this
     }
 
     #[cfg(not(windows))]
-    pub(crate) fn create(event_loop_: impl Into<EventLoopHandle>, fd: Fd) -> *mut FileSink {
-        let evtloop: EventLoopHandle = event_loop_.into();
-        let this = bun_core::heap::into_raw(Box::new(FileSink::new(evtloop, fd)));
-        // SAFETY: `this` was just allocated above and is the sole reference.
-        unsafe {
-            (*this).writer.get_mut().set_parent(this);
-        }
-        this
+    pub(crate) fn create(event_loop_: impl Into<EventLoopHandle>, fd: Fd) -> RefPtr<FileSink> {
+        Self::init(fd, event_loop_)
     }
 
     pub(crate) fn setup(&self, options: &Options) -> sys::Result<()> {
@@ -1025,12 +1019,10 @@ impl FileSink {
             .with_mut(|r| r.set(global_this, js_wrapper));
     }
 
-    pub(crate) fn init(fd: Fd, event_loop_handle: impl Into<EventLoopHandle>) -> *mut FileSink {
-        let this = bun_core::heap::into_raw(Box::new(FileSink::new(event_loop_handle.into(), fd)));
+    pub(crate) fn init(fd: Fd, event_loop_handle: impl Into<EventLoopHandle>) -> RefPtr<FileSink> {
+        let this = RefPtr::new(FileSink::new(event_loop_handle.into(), fd));
         // SAFETY: `this` was just allocated above and is the sole reference.
-        unsafe {
-            (*this).writer.get_mut().set_parent(this);
-        }
+        unsafe { (*this.as_ptr()).writer.get_mut().set_parent(this.as_ptr()) };
         this
     }
 

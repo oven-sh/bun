@@ -47,7 +47,8 @@ pub struct HTTPContext<const SSL: bool> {
     /// concurrent attachment if `hasHeadroom()`.
     // Raw pointers; the intrusive refcount (bumped on insert, dropped on
     // removal) is what keeps each session alive while listed here.
-    pub(crate) active_h2_sessions: Vec<*mut h2::ClientSession>,
+    /// Each entry holds a ref on its session.
+    pub(crate) active_h2_sessions: Vec<RefPtr<h2::ClientSession>>,
     /// HTTPClients whose fresh TLS connect is in flight and whose request
     /// is h2-capable. Subsequent h2-capable requests to the same origin
     /// coalesce onto the first one's session once ALPN resolves rather
@@ -371,24 +372,23 @@ impl<const SSL: bool> HTTPContext<SSL> {
     /// taken in [`Self::register_h2`] through the pointer the registry held.
     /// `session` only identifies the entry being removed.
     fn h2_swap_remove_and_deref(
-        list: &mut Vec<*mut h2::ClientSession>,
+        list: &mut Vec<RefPtr<h2::ClientSession>>,
         idx: u32,
         session: *const h2::ClientSession,
     ) {
         debug_assert!(
-            (idx as usize) < list.len() && core::ptr::eq(list[idx as usize].cast_const(), session)
+            (idx as usize) < list.len()
+                && core::ptr::eq(list[idx as usize].as_ptr().cast_const(), session)
         );
-        let entry = list.swap_remove(idx as usize);
+        // A listed session always also has a socket-ext or pool holder, so
+        // this is never the last ref.
+        drop(list.swap_remove(idx as usize));
         if (idx as usize) < list.len() {
             // The swapped-in entry is a distinct allocation from `session`
             // (the entry at `idx` was just removed); `set_registry_index`
             // only touches a `Cell<u32>`.
-            Self::h2_session_ref(list[idx as usize]).set_registry_index(idx);
+            list[idx as usize].set_registry_index(idx);
         }
-        // SAFETY: `entry` is the pointer `register_h2` took the registry's ref
-        // through; the session is live because a listed session always also
-        // has a socket-ext or pool holder, so this is never the last ref.
-        unsafe { h2::ClientSession::deref(entry) };
     }
 
     pub(crate) fn register_h2(&mut self, session: *mut h2::ClientSession) {
@@ -399,10 +399,10 @@ impl<const SSL: bool> HTTPContext<SSL> {
         if s.registry_index() != u32::MAX {
             return;
         }
-        // Note: `session.ref()` — intrusive refcount bump.
-        s.ref_();
         s.set_registry_index(u32::try_from(self.active_h2_sessions.len()).expect("int cast"));
-        self.active_h2_sessions.push(session);
+        // SAFETY: `session` is live (caller contract).
+        self.active_h2_sessions
+            .push(unsafe { RefPtr::init_ref(session) });
     }
 
     /// Called from drainQueuedShutdowns when the abort-tracker lookup
@@ -868,11 +868,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 let reusable = self
                     .active_h2_sessions
                     .iter()
-                    .map(|&session| {
-                        h2::ClientSession::this_ptr(
-                            NonNull::new(session).expect("h2 registry entries are non-null"),
-                        )
-                    })
+                    .map(|session| session.this_ptr())
                     .find(|s| {
                         s.has_headroom()
                             && s.matches(hostname, port, cfg, host_header_hash)

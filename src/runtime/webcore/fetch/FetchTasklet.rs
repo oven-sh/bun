@@ -105,7 +105,8 @@ pub struct FetchTasklet {
     // ThreadSafeStreamBuffer is intrusively refcounted (`ref_count: AtomicU32`,
     // starts at 2) and shared with the HTTP thread via raw ptr; `Arc` can't be mutably
     // borrowed for `acquire/release`. Model as a raw pointer.
-    pub(crate) request_body_streaming_buffer: Option<core::ptr::NonNull<ThreadSafeStreamBuffer>>,
+    /// This side's ref; the HTTP thread holds the other of the two initial refs.
+    pub(crate) request_body_streaming_buffer: Option<RefPtr<ThreadSafeStreamBuffer>>,
 
     /// buffer used to stream response to JS
     pub(crate) scheduled_response_buffer: MutableString,
@@ -394,6 +395,7 @@ impl FetchTasklet {
         // mutex inside `ThreadSafeStreamBuffer` serialises every cross-thread
         // access (`buffer` and the drain callback alike).
         self.request_body_streaming_buffer
+            .as_ref()
             .map(|p| unsafe { &mut *p.as_ptr() })
     }
 
@@ -456,11 +458,10 @@ impl FetchTasklet {
             JSSink::<FetchRequestBodySink>::detach(&mut sink.source, &self.global_this);
         }
         if let Some(buffer) = self.request_body_streaming_buffer.take() {
-            // SAFETY: intrusive-refcounted heap allocation from `ThreadSafeStreamBuffer::new`; this
-            // side holds one of the two initial refs. The HTTP thread may still be using its ref;
-            // `clear_drain_callback` synchronises with it through the buffer's mutex.
+            // The HTTP thread may still be using its ref; `clear_drain_callback`
+            // synchronises with it through the buffer's mutex.
+            // SAFETY: kept live by `buffer`.
             unsafe { (*buffer.as_ptr()).clear_drain_callback() };
-            ThreadSafeStreamBuffer::deref(buffer);
         }
     }
 
@@ -2044,11 +2045,11 @@ impl FetchTasklet {
                     fetch_tasklet_ptr,
                 );
             }
-            let buffer_nn = core::ptr::NonNull::new(buffer);
-            fetch_tasklet.request_body_streaming_buffer = buffer_nn;
+            // SAFETY: adopts one of the two initial refs.
+            fetch_tasklet.request_body_streaming_buffer = Some(unsafe { RefPtr::from_raw(buffer) });
             fetch_tasklet.http.as_mut().unwrap().request_body =
                 http::HTTPRequestBody::Stream(http::http_request_body::Stream {
-                    buffer: buffer_nn,
+                    buffer: core::ptr::NonNull::new(buffer),
                     ended: false,
                 });
         }

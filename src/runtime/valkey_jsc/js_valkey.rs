@@ -1147,10 +1147,8 @@ impl JSValkeyClient {
     }
 
     fn enqueue_deferred_close(&self, what: DeferredClose) {
-        // Released by the task, whether it runs or the VM tears down first.
-        self.ref_();
         let task = jsc::Task::from_boxed(Box::new(ValkeyDeferredClose {
-            ctx: self.as_ctx_ptr(),
+            ctx: self.ref_guard(),
             what,
         }));
         // SAFETY: VM-owned event loop pointer; uniquely accessed on the JS thread.
@@ -1997,18 +1995,15 @@ enum DeferredClose {
 }
 
 pub(crate) struct ValkeyDeferredClose {
-    ctx: *mut JSValkeyClient,
+    /// Keeps the client alive until the task runs or is released.
+    ctx: RefPtr<JSValkeyClient>,
     what: DeferredClose,
 }
 
 impl ValkeyDeferredClose {
     #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
     pub(crate) fn run(self: Box<Self>) {
-        // SAFETY: adopts the ref `enqueue_deferred_close` took, which kept the
-        // client alive until now; released when this scope ends.
-        let _enqueue_ref = unsafe { RefPtr::from_raw(self.ctx) };
-        // SAFETY: live per the ref above; tasks run on the JS thread.
-        let this = unsafe { &*self.ctx };
+        let this: &JSValkeyClient = &self.ctx;
         match self.what {
             DeferredClose::Socket => {
                 crate::dispatch::fold(this.client_mut().close(uws::CloseCode::FastShutdown))
@@ -2039,10 +2034,7 @@ impl bun_event_loop::Taskable for ValkeyDeferredClose {
             // The VM is going away: `on_close()` would run `onclose`, so only
             // give back what `close_without_socket_next_tick` took.
             DeferredClose::WithoutSocket => {
-                // SAFETY: as in `run`.
-                let _enqueue_ref = unsafe { RefPtr::from_raw(task.ctx) };
-                // SAFETY: live per the ref above.
-                unsafe { &*task.ctx }.poll_ref.with_mut(|r| r.disable());
+                task.ctx.poll_ref.with_mut(|r| r.disable());
             }
         }
     }

@@ -1498,10 +1498,9 @@ impl Request {
     ) -> JsResult<()> {
         // allocator param dropped (global mimalloc)
         let _ = self.ensure_url();
-        // Headers first: a transfer leaves `self` `Used`, so nothing fallible
-        // may run after it. `headers` drops on the `?` error path below.
+        // Headers first: a transfer leaves `self` `Used`, so it must be the
+        // last fallible step.
         let headers = self.clone_headers(global_this)?;
-        // Last fallible call; an early return here leaves `req.url` untouched.
         let body_ = if transfer_body {
             self.transfer_body_value(global_this)?
         } else {

@@ -1704,11 +1704,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
     /// Fetch §Request ctor step 45: move this body out, leave this owner
     /// `Used`, and clear its `body`/`stream` cache. Null/Empty bodies pass
-    /// through unchanged.
-    ///
-    /// A moved stream comes back in a `Held` `Locked.readable`: this owner's
-    /// wrapper slot (cleared here) was what rooted it, and the new owner only
-    /// adopts it into its own slot in `check_body_stream_ref`.
+    /// through unchanged. The moved stream comes back strongly `Held`: the
+    /// slot cleared here was its root, and the new owner adopts it in
+    /// `check_body_stream_ref`.
     fn transfer_body_value(&self, global_this: &JSGlobalObject) -> JsResult<Value> {
         if matches!(self.get_body_value(), Value::Null | Value::Empty) {
             return Ok(Value::Null);

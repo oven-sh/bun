@@ -1578,14 +1578,18 @@ impl Utf8WithString {
         self.string = String::EMPTY;
     }
 
-    /// For a holder that any thread may read or drop (a `Blob` store): as
-    /// [`make_thread_isolated`], and a kept `string` is made shareable so JS
-    /// can no longer atomize it in place.
-    ///
-    /// [`make_thread_isolated`]: Self::make_thread_isolated
-    pub fn make_thread_shareable(&mut self) {
-        self.make_thread_isolated();
-        self.string.make_thread_shareable();
+    /// For a holder that may be dropped on any thread (a `Blob` store): the
+    /// bytes end up owned by this value alone — either the transcoded `utf8`
+    /// or a [`String::thread_isolated_copy`] that is never handed to JS.
+    pub fn thread_isolated_copy(mut self) -> Self {
+        if self.string.tag == Tag::WTFStringImpl {
+            self.string = if self.utf8.is_some() {
+                String::EMPTY
+            } else {
+                self.string.thread_isolated_copy()
+            };
+        }
+        self
     }
 }
 

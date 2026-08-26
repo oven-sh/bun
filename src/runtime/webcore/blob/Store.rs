@@ -127,8 +127,7 @@ impl StoreExt for Store {
         credentials: S3Credentials,
     ) -> Result<RefPtr<Store>, crate::Error> {
         let mut path = pathlike;
-        // this actually protects/refs the pathlike
-        path.make_thread_shareable();
+        path.make_thread_isolated_copy();
 
         // Compute the extension-derived fallback before moving `path` into the
         // Store so we don't need to clone the owned PathLike.

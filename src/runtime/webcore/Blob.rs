@@ -3567,7 +3567,7 @@ impl BlobExt for Blob {
                     return crate::api::standalone_graph_jsc::file_blob(file, global_this);
                 }
 
-                path_or_fd.make_thread_shareable();
+                path_or_fd.make_thread_isolated_copy();
                 core::mem::replace(path_or_fd, PathOrFileDescriptor::Path(PathLike::default()))
             }
             PathOrFileDescriptor::Fd(fd) => {

@@ -180,6 +180,12 @@ public:
 
     ExceptionOr<void> close(std::optional<unsigned short> code, const String& reason);
     ExceptionOr<void> terminate();
+    // Receive-side flow control (non-standard; mirrors Bun.Socket). pause()
+    // stops kernel reads so TCP backpressure reaches the peer; frames already
+    // decoded still dispatch. Before OPEN it latches and applies on connect.
+    bool pause();
+    bool resume();
+    bool isPaused() const { return m_paused; }
 
     void setProtocol(const String& protocol);
 
@@ -328,8 +334,10 @@ private:
     // Drop the in-flight upgrade / the connected client without a closing handshake. Neither
     // dispatches anything itself; the native side may call back synchronously.
     void cancelUpgradeClient();
+    bool applyPauseToConnectedClient();
     void cancelConnectedClient();
     bool m_rejectUnauthorized { false };
+    bool m_paused { false };
     // Default matches pre-existing behavior: advertise permessage-deflate in the upgrade
     // request. Set to false by ws.WebSocket callers passing `perMessageDeflate: false`.
     bool m_offerPerMessageDeflate { true };

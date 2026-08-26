@@ -42,7 +42,8 @@ test("deep nesting", () => {
       stdout: "pipe",
     });
 
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    // The diff goes to stderr. Drain stdout too so the child never blocks on it.
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
 
     // The diff header proves the formatter ran; the innermost property proves
     // it walked all 500 levels instead of dying part-way down.

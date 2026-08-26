@@ -244,17 +244,22 @@ run_test() {
     # 单跑实测 4-10 分钟（bun-install 386s / bun-add-filter 599s / bun-add
     # 226s），并行 5 worker 时资源竞争使耗时膨胀超过默认 TMOUT=300s。
     # 给足 2×TMOUT 让它们按单跑速度完成，而非超时误杀。
-    */cli/install/bun-install.test.ts|*/cli/install/bun-run.test.ts|\
+    */cli/install/bun-run.test.ts|\
     */cli/install/bun-update.test.ts|\
     */cli/install/bun-update-lockfile-sync.test.ts|*/cli/install/bun-dedupe.test.ts|\
     */cli/install/bun-prune.test.ts|\
     */cli/install/bun-pm-licenses.test.ts|*/cli/install/bun-add-catalog.test.ts|\
     */cli/install/bun-add.test.ts|*/cli/install/migration/migrate.test.ts|\
-    */cli/install/nested-overrides.test.ts|\
     */cli/install/bun-security-scanner-matrix-with-node-modules.test.ts|\
     */cli/install/bun-security-scanner-matrix-without-node-modules.test.ts|\
     */cli/install/bun-pack.test.ts)
       WT=$((TMOUT * 2))       # 600s
+      BT="--expose-internals --smol --timeout ${BUN_TIMEOUT}"
+      ;;
+    # bun-install / nested-overrides：单跑 373-528s，全量串行竞争下曾
+    # 1201s 超时；给 900s
+    */cli/install/bun-install.test.ts|*/cli/install/nested-overrides.test.ts)
+      WT=$((TMOUT * 3))       # 900s
       BT="--expose-internals --smol --timeout ${BUN_TIMEOUT}"
       ;;
     # ── verdaccio 大文件：并发改串行后单跑实测 ──

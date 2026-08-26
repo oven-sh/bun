@@ -384,31 +384,42 @@ describe("web worker", () => {
   // listener; until then (and whenever the last one is removed) messages stay
   // queued in order, as a MessagePort / node's parentPort does. #40141
   describe("messages to the worker global scope wait for a listener", () => {
-    // `early` is posted right after construction (worker still starting); `onOpen` from the
-    // worker's 'open' event; `onStarted` once the worker's entry has run far enough to post
-    // "started". The worker echoes what it receives.
+    // Batches: `early` right after construction (worker still starting), `onOpen` from the
+    // worker's 'open' event, `onStarted` when the worker posts "started". Once every batch is
+    // posted (and the worker is up) the parent signals `gate` over a BroadcastChannel; a worker
+    // body that installs its handler on `await gate` therefore does so strictly after the
+    // messages were queued — no timer racing the parent. The worker echoes what it receives.
     async function expectEchoed(
-      src: string,
+      body: string,
       {
         early = [],
         onOpen = [],
         onStarted = [],
+        transfer = false,
         expected,
-      }: { early?: unknown[]; onOpen?: unknown[]; onStarted?: unknown[]; expected: unknown[] },
+      }: { early?: unknown[]; onOpen?: unknown[]; onStarted?: unknown[]; transfer?: boolean; expected: unknown[] },
     ) {
+      const gateName = "worker-inbox-gate-" + crypto.randomUUID();
+      const src = `const gate = new Promise(go => { const c = new BroadcastChannel(${JSON.stringify(gateName)}); c.onmessage = () => { c.close(); go(); }; });\n${body}`;
+      const gate = new BroadcastChannel(gateName);
+      let opened = false;
+      let batchesLeft = [early, onOpen, onStarted].filter(b => b.length).length;
+      const post = (w: Worker, batch: unknown[]) => {
+        for (const m of batch) transfer ? w.postMessage(m, [m as ArrayBuffer]) : w.postMessage(m);
+        if (batch.length) batchesLeft--;
+        if (opened && batchesLeft === 0) gate.postMessage("go");
+      };
       const w = new Worker(URL.createObjectURL(new Blob([src])));
-      for (const m of early) w.postMessage(m);
+      post(w, early);
       w.addEventListener("open", () => {
-        for (const m of onOpen) w.postMessage(m);
+        opened = true;
+        post(w, onOpen);
       });
       const got: unknown[] = [];
       const done = Promise.withResolvers<void>();
       w.onerror = e => done.reject(e.error ?? e.message);
       w.onmessage = e => {
-        if (e.data === "started") {
-          for (const m of onStarted) w.postMessage(m);
-          return;
-        }
+        if (e.data === "started") return post(w, onStarted);
         got.push(e.data);
         if (got.length === expected.length) done.resolve();
       };
@@ -417,13 +428,14 @@ describe("web worker", () => {
         expect(got).toEqual(expected);
       } finally {
         w.terminate();
+        gate.close();
       }
     }
 
     test("handler installed after a top-level await", async () => {
       await expectEchoed(
         `postMessage("started");
-         await new Promise(r => setTimeout(r, 50));
+         await gate;
          self.onmessage = e => postMessage(e.data);`,
         { early: ["early"], onStarted: [0, 1, 2], expected: ["early", 0, 1, 2] },
       );
@@ -433,7 +445,7 @@ describe("web worker", () => {
     // the same window as `early` ones: waiting for 'open' is not what makes posting safe.
     test("posted after the 'open' event, handler installed after a top-level await", async () => {
       await expectEchoed(
-        `await new Promise(r => setTimeout(r, 50));
+        `await gate;
          self.onmessage = e => postMessage(e.data);`,
         { onOpen: [0, 1, 2], expected: [0, 1, 2] },
       );
@@ -442,34 +454,22 @@ describe("web worker", () => {
     // A transferred buffer is detached in the sender at postMessage(); its bytes exist only in the
     // queued message from then on, so a drop here destroys data instead of just losing a copy.
     test("transferred ArrayBuffers posted before a handler exists arrive intact", async () => {
-      const w = new Worker(
-        URL.createObjectURL(
-          new Blob([
-            `await new Promise(r => setTimeout(r, 50));
-             self.onmessage = e => postMessage(Array.from(new Uint8Array(e.data)));`,
-          ]),
-        ),
-      );
       const buffers = [1, 2, 3].map(n => new Uint8Array([n, n + 10, n + 20]).buffer);
-      for (const b of buffers) w.postMessage(b, [b]);
+      const echoed = expectEchoed(
+        `await gate;
+         self.onmessage = e => postMessage(Array.from(new Uint8Array(e.data)));`,
+        {
+          early: buffers,
+          transfer: true,
+          expected: [
+            [1, 11, 21],
+            [2, 12, 22],
+            [3, 13, 23],
+          ],
+        },
+      );
       expect(buffers.map(b => b.byteLength)).toEqual([0, 0, 0]);
-      const got: unknown[] = [];
-      const done = Promise.withResolvers<void>();
-      w.onerror = e => done.reject(e.error ?? e.message);
-      w.onmessage = e => {
-        got.push(e.data);
-        if (got.length === buffers.length) done.resolve();
-      };
-      try {
-        await done.promise;
-        expect(got).toEqual([
-          [1, 11, 21],
-          [2, 12, 22],
-          [3, 13, 23],
-        ]);
-      } finally {
-        w.terminate();
-      }
+      await echoed;
     });
 
     test("handler installed before a top-level await that never settles", async () => {
@@ -483,20 +483,23 @@ describe("web worker", () => {
 
     // Browsers drop these (the port queue is enabled once evaluation returns);
     // Bun keeps them until something listens.
-    test("handler installed a turn after the entry module has finished", async () => {
+    test("handler installed in a later task, after the entry module has finished", async () => {
       await expectEchoed(
         `postMessage("started");
-         setTimeout(() => self.addEventListener("message", e => postMessage(e.data)), 50);`,
+         gate.then(() => self.addEventListener("message", e => postMessage(e.data)));`,
         { early: ["early"], onStarted: [0, 1, 2], expected: ["early", 0, 1, 2] },
       );
     });
 
+    // All four are queued before the first listener exists, so one drain batch holds them; removing
+    // the listener after the first must put the other three back, in order, for the next listener.
     test("removing the last listener mid-batch pauses delivery, in order, until one is added again", async () => {
       await expectEchoed(
-        `const first = e => { postMessage("first:" + e.data); self.removeEventListener("message", first); setTimeout(resume, 20); };
+        `const first = e => { postMessage("first:" + e.data); self.removeEventListener("message", first); setTimeout(resume, 0); };
          const resume = () => self.onmessage = e => postMessage("second:" + e.data);
-         self.addEventListener("message", first);
-         postMessage("started");`,
+         postMessage("started");
+         await gate;
+         self.addEventListener("message", first);`,
         { onStarted: [0, 1, 2, 3], expected: ["first:0", "second:1", "second:2", "second:3"] },
       );
     });

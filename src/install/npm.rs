@@ -674,11 +674,8 @@ pub mod registry {
             &self.credentials
         }
 
-        /// Whether this key is on `url`'s own walk, so `url` itself resolves to it.
-        pub(crate) fn applies_to(&self, url: &URL) -> bool {
-            bun_ini::RegistryKey::from_url(url.href)
-                .walk()
-                .any(|key| *self.key == *key)
+        pub(crate) fn same_key(&self, other: &UrlAuth) -> bool {
+            self.key == other.key
         }
     }
 

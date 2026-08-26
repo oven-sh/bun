@@ -1913,6 +1913,34 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     });
   });
 
+  // A shallower line the registry never reached is the tarball's own line, as in npm:
+  // the registry stopped at its team key, the tarball outside that tree walks to root.
+  test("a same-origin tarball outside the registry's tree uses the host-root line", async () => {
+    const registryPath = "/npm/team-a";
+    const tarballPath = "/cdn/no-deps/-/no-deps-1.0.0.tgz";
+    using registry = mockRegistry("Bearer root-token", { registryPath, tarballPath, publicManifest: true });
+    using dir = tempDir("npmrc-url-auth-root-line", {
+      "package.json": packageJson,
+      ".npmrc": [
+        `registry=${registry.origin}${registryPath}/`,
+        `//${registry.host}${registryPath}/:_authToken=team-a-token`,
+        `//${registry.host}/:_authToken=root-token`,
+        "",
+      ].join("\n"),
+    });
+
+    const { stderr, exitCode } = await install(String(dir));
+
+    expect({ requests: registry.requests, exitCode, stderr }).toEqual({
+      requests: [
+        { path: `${registryPath}/no-deps`, auth: "Bearer team-a-token" },
+        { path: tarballPath, auth: "Bearer root-token" },
+      ],
+      exitCode: 0,
+      stderr: expect.not.stringContaining("401"),
+    });
+  });
+
   test.each(["/npm/team-a/../team-b/x.tgz", "/npm/team-a/%2e%2e/team-b/x.tgz", "/npm/team-a/..%2fteam-b/x.tgz"])(
     "a dist.tarball of %s carries no credentials",
     async tarballPath => {

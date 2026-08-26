@@ -2509,7 +2509,6 @@ fn parse_build_command_options(
                 Output::flush();
             }
             options::Format::Cjs => {
-                // `parse` returns `opts`, so a write to `ctx.args` here is lost.
                 if opts.target.is_none() {
                     opts.target = Some(api::Target::Node);
                 }

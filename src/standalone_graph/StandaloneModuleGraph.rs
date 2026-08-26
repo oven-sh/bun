@@ -774,7 +774,7 @@ bitflags::bitflags! {
         /// After the startup module count: one `StringPointer` to the string table every module's `module_info`
         /// body indexes.
         const HAS_MODULE_INFO_STRING_TABLE  = 1 << 9;
-        // _padding: u23
+        // _padding: u22
     }
 }
 

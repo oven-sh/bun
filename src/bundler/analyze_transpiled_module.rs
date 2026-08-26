@@ -135,316 +135,192 @@ pub enum ModuleInfoError {
     BadModuleInfo,
 }
 
-/// All slice fields are **self-referential** views into `owner`
-/// (`Owner::Decoded`'s boxed slices) or into the parent `ModuleInfo`'s `Vec`
-/// storage (`Owner::ModuleInfo`). They are stored as [`bun_ptr::RawSlice`] (raw fat
-/// pointers) because Rust references cannot express the self-borrow.
+/// A validated view over a serialized module record: the body bytes written
+/// by `bun_js_printer::analyze_transpiled_module::ModuleInfoDeserialized::serialize_body`
+/// plus the string table its ids index. `to_js_module_record` walks the body
+/// in place; nothing is widened or copied.
 ///
+/// `body` / `table` are lifetime-erased: they point either into the
+/// executable's mapped section (`'static`) or into `owned`, which lives as long
+/// as `self`.
 pub struct ModuleInfoDeserialized {
-    /// When the ids index the executable's shared module-info string table:
-    /// that table. Identifiers then come from the VM-wide slots
-    /// (`Bun__VM__moduleInfoIdentifiers`), filled on first use, and
-    /// `strings_buf` / `string_ranges` are empty.
-    pub(crate) shared_table: Option<ModuleInfoStringTable<'static>>,
-    /// Base the `string_ranges` offsets index: the decoded copy of a module's
-    /// own table, or the live `ModuleInfo`'s string buffer.
-    pub(crate) strings_buf: bun_ptr::RawSlice<u8>,
-    /// `(offset, len)` into `strings_buf` per local string id.
-    pub(crate) string_ranges: bun_ptr::RawSlice<[u32; 2]>,
-    pub(crate) requested_modules_keys: bun_ptr::RawSlice<StringID>,
-    pub(crate) requested_modules_values: bun_ptr::RawSlice<FetchParameters>,
-    pub(crate) requested_modules_phases: bun_ptr::RawSlice<u8>,
-    pub(crate) buffer: bun_ptr::RawSlice<StringID>,
-    pub(crate) record_kinds: bun_ptr::RawSlice<RecordKind>,
+    body: Body<'static>,
+    table: ModuleInfoStringTable<'static>,
+    /// The ids index the executable's shared string table, so identifiers
+    /// come from the VM-wide slots (`Bun__VM__sharedModuleInfoIdentifiers`)
+    /// rather than a per-record array.
+    shared: bool,
     pub flags: Flags,
-    pub(crate) owner: Owner,
+    /// Backing storage for `body`/`table` when they were not `'static`.
+    #[allow(dead_code)]
+    owned: Option<Box<[u8]>>,
 }
 
-pub enum Owner {
-    /// `Box<ModuleInfo>` whose internal vectors back the raw slice fields,
-    /// plus the `string_ranges` derived from its length list.
-    ModuleInfo(*mut ModuleInfo, Box<[[u32; 2]]>),
-    /// Decoded from the wire format by [`ModuleInfoDeserialized::create`].
-    Decoded(Box<Decoded>),
+/// The body split into its regions; every count has been bounds-checked
+/// against the byte length, but ids are validated as they are read.
+#[derive(Clone, Copy)]
+pub struct Body<'a> {
+    pub id_width: u8,
+    /// `kind | fetch-kind << 3 | same-name << 6` per record.
+    pub record_tags: &'a [u8],
+    /// `phase | fetch-kind << 1` per requested module.
+    pub requested_tags: &'a [u8],
+    /// Requested-module ids, then record ids, at `id_width` bytes each.
+    pub ids: &'a [u8],
 }
 
-/// The fixed-width in-memory layout the wire format decodes into: one `u32`
-/// arena (`[string ranges | requested keys | requested values | buffer]`) and
-/// one byte arena (`[record_kinds | requested phases | strings?]` — the string
-/// bytes only when the table they came from does not outlive the record).
-pub struct Decoded {
-    words: Box<[u32]>,
-    bytes: Box<[u8]>,
-}
-
-impl Drop for ModuleInfoDeserialized {
-    fn drop(&mut self) {
-        if let Owner::ModuleInfo(mi, _) = self.owner {
-            // SAFETY: `owner` is the unique owner of the leaked `Box<ModuleInfo>`.
-            drop(unsafe { bun_core::heap::take(mi) });
+impl<'a> Body<'a> {
+    fn parse(body: &'a [u8]) -> Result<(Flags, Self), ModuleInfoError> {
+        let mut r = Reader { rem: body };
+        let &[flags, id_width, 0, 0] = r.bytes(4)? else {
+            return Err(ModuleInfoError::BadModuleInfo);
+        };
+        width(id_width)?;
+        let requested_count = r.u32()? as usize;
+        let record_count = r.u32()? as usize;
+        if requested_count.saturating_add(record_count) > r.rem.len() {
+            return Err(ModuleInfoError::BadModuleInfo);
         }
+        let record_tags = r.bytes(record_count)?;
+        let requested_tags = r.bytes(requested_count)?;
+        Ok((
+            Flags::from_bits_retain(flags),
+            Body {
+                id_width,
+                record_tags,
+                requested_tags,
+                ids: r.rem,
+            },
+        ))
+    }
+}
+
+/// Reads ids off a [`Body`] in order, mapping the two sentinels back to
+/// `STAR_NAMESPACE` / `STAR_DEFAULT` and rejecting anything else out of range.
+pub struct IdCursor<'a> {
+    rem: &'a [u8],
+    width: usize,
+    count: u32,
+}
+impl IdCursor<'_> {
+    #[inline]
+    pub fn next_id(&mut self) -> Result<StringID, ModuleInfoError> {
+        if self.rem.len() < self.width {
+            return Err(ModuleInfoError::BadModuleInfo);
+        }
+        let v = read_uint(self.rem, self.width);
+        self.rem = &self.rem[self.width..];
+        match v.checked_sub(self.count) {
+            None => Ok(StringID(v)),
+            Some(0) => Ok(StringID::STAR_NAMESPACE),
+            Some(1) => Ok(StringID::STAR_DEFAULT),
+            Some(_) => Err(ModuleInfoError::BadModuleInfo),
+        }
+    }
+    /// A fetch-parameter slot: kinds 0..=3 are constants, 4 reads a string id.
+    #[inline]
+    pub fn next_fetch(&mut self, kind: u8) -> Result<FetchParameters, ModuleInfoError> {
+        Ok(match kind {
+            0 => FetchParameters::None,
+            1 => FetchParameters::Javascript,
+            2 => FetchParameters::Webassembly,
+            3 => FetchParameters::Json,
+            4 => match self.next_id()? {
+                id if id.0 < self.count => FetchParameters(id.0),
+                _ => return Err(ModuleInfoError::BadModuleInfo),
+            },
+            _ => return Err(ModuleInfoError::BadModuleInfo),
+        })
+    }
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.rem.is_empty()
     }
 }
 
 impl ModuleInfoDeserialized {
-    // ── safe accessors ───────────────────────────────────────────────────
-    // All slice fields are non-null self-referential views into `self.owner`
-    // (see struct docs). They are initialized in every constructor (`create` /
-    // `into_deserialized`), the backing allocation is immutable and outlives
-    // `&self`, and no `&mut` alias to that storage is ever handed out — so
-    // materialising `&[T]` for `'_ self` (via `RawSlice::slice`) is sound.
-    //
-    // Both constructors borrow from typed `Vec<T>` / `Box<[T]>` storage,
-    // which is naturally aligned.
-
+    #[inline]
+    pub fn body(&self) -> &Body<'_> {
+        &self.body
+    }
+    #[inline]
+    pub fn table(&self) -> &ModuleInfoStringTable<'_> {
+        &self.table
+    }
+    #[inline]
+    pub fn ids(&self) -> IdCursor<'_> {
+        IdCursor {
+            rem: self.body.ids,
+            width: self.body.id_width as usize,
+            count: self.table.count,
+        }
+    }
+    /// Whether identifiers come from the VM-wide shared slots.
+    #[inline]
+    pub fn shared(&self) -> bool {
+        self.shared
+    }
     /// Ids below this are strings; the rest are sentinels.
     #[inline]
     pub fn strings_count(&self) -> usize {
-        match &self.shared_table {
-            Some(table) => table.count as usize,
-            None => self.string_ranges.len(),
-        }
-    }
-    #[inline]
-    pub fn shared_table(&self) -> Option<&ModuleInfoStringTable<'static>> {
-        self.shared_table.as_ref()
+        self.table.count as usize
     }
     /// The WTF-8 bytes of string `id`, or `None` if out of bounds (corrupt input).
     #[inline]
-    pub fn string(&self, id: usize) -> Option<&[u8]> {
-        if let Some(table) = &self.shared_table {
-            return table.get(u32::try_from(id).ok()?);
-        }
-        let [offset, len] = *self.string_ranges.slice().get(id)?;
-        self.strings_buf
-            .slice()
-            .get(offset as usize..offset as usize + len as usize)
-    }
-    #[inline]
-    pub fn requested_modules_keys(&self) -> &[StringID] {
-        self.requested_modules_keys.slice()
-    }
-    #[inline]
-    pub fn requested_modules_values(&self) -> &[FetchParameters] {
-        self.requested_modules_values.slice()
-    }
-    #[inline]
-    pub fn requested_modules_phases(&self) -> &[u8] {
-        self.requested_modules_phases.slice()
-    }
-    #[inline]
-    pub fn buffer(&self) -> &[StringID] {
-        self.buffer.slice()
-    }
-    #[inline]
-    pub fn record_kinds(&self) -> &[RecordKind] {
-        self.record_kinds.slice()
+    pub fn string(&self, id: u32) -> Option<&[u8]> {
+        self.table.get(id)
     }
 
     /// Consumes the heap allocation containing `self`.
     ///
     /// # Safety
-    /// `this` must have been produced by [`Self::create`] (heap box) or by
-    /// [`ModuleInfoExt::into_deserialized`].
+    /// `this` must have been produced by one of the constructors below.
     pub(crate) unsafe fn deinit(this: *mut ModuleInfoDeserialized) {
         // SAFETY: caller contract — see fn doc above.
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    /// Decodes the self-contained form (a module's own string table followed
-    /// by its body, as the runtime transpiler cache stores it).
+    /// The self-contained form (a module's own string table followed by its
+    /// body, as the runtime transpiler cache stores it). The bytes are copied
+    /// once; the record views the copy.
     pub(crate) fn create(source: &[u8]) -> Result<Box<ModuleInfoDeserialized>, ModuleInfoError> {
-        let table = ModuleInfoStringTable::parse(source)?;
-        let body = &source[table.byte_len..];
-        Self::decode(&table, None, body)
-    }
-
-    /// Decodes a body whose ids index `table`, the string table an executable
-    /// shares between all its modules (`StandaloneModuleGraph`). The record
-    /// keeps the table's ids and references its bytes in place.
-    pub fn create_with_table(
-        table: &ModuleInfoStringTable<'static>,
-        body: &[u8],
-    ) -> Option<Box<ModuleInfoDeserialized>> {
-        Self::decode(table, Some(*table), body).ok()
-    }
-
-    /// Widens the body wire format written by
-    /// `bun_js_printer::analyze_transpiled_module::ModuleInfoDeserialized::serialize_body`
-    /// (layout documented there) into the fixed `u32` layout
-    /// `to_js_module_record` reads: one `u32` arena
-    /// `[string ranges? | requested keys | requested values | buffer]` and one
-    /// byte arena `[record_kinds | requested phases | strings?]` — the string
-    /// ranges and bytes only when the table is the module's own (it does not
-    /// outlive `body`); with a `shared_table` the ids are left as they are.
-    fn decode(
-        table: &ModuleInfoStringTable<'_>,
-        shared_table: Option<ModuleInfoStringTable<'static>>,
-        body: &[u8],
-    ) -> Result<Box<ModuleInfoDeserialized>, ModuleInfoError> {
-        use ModuleInfoError::BadModuleInfo;
-        let mut r = Reader { rem: body };
-        let &[flags, id_width, 0, 0] = r.bytes(4)? else {
-            return Err(BadModuleInfo);
-        };
-        let flags = Flags::from_bits_retain(flags);
-        let id_width = width(id_width)?;
-        let requested_count = r.u32()? as usize;
-        let record_count = r.u32()? as usize;
-        // Every counted item takes at least one byte below; reject headers
-        // that would over-allocate before reading anything.
-        if requested_count + record_count > r.rem.len() {
-            return Err(BadModuleInfo);
-        }
-        let record_tags = r.bytes(record_count)?;
-        let requested_tags = r.bytes(requested_count)?;
-        let mut buffer_len = 0usize;
-        for &tag in record_tags {
-            buffer_len += RecordKind(tag & 0b111).len().map_err(|_| BadModuleInfo)?;
-        }
-
-        struct Ids {
-            table_count: u32,
-            id_width: usize,
-        }
-        impl Ids {
-            fn id(&mut self, r: &mut Reader<'_>) -> Result<u32, ModuleInfoError> {
-                let v = r.uint(self.id_width)?;
-                Ok(match v.checked_sub(self.table_count) {
-                    None => v,
-                    Some(0) => StringID::STAR_NAMESPACE.0,
-                    Some(1) => StringID::STAR_DEFAULT.0,
-                    Some(_) => return Err(ModuleInfoError::BadModuleInfo),
-                })
-            }
-            fn fetch(&mut self, r: &mut Reader<'_>, kind: u8) -> Result<u32, ModuleInfoError> {
-                Ok(match kind {
-                    0 => FetchParameters::None.0,
-                    1 => FetchParameters::Javascript.0,
-                    2 => FetchParameters::Webassembly.0,
-                    3 => FetchParameters::Json.0,
-                    4 => self.id(r)?,
-                    _ => return Err(ModuleInfoError::BadModuleInfo),
-                })
-            }
-        }
-        let table_count = table.count;
-        let mut ids = Ids {
-            table_count,
-            id_width,
-        };
-        let mut words: Vec<u32> = Vec::with_capacity(2 * requested_count + buffer_len);
-        // requested keys, then values
-        words.resize(2 * requested_count, 0);
-        for (n, &tag) in requested_tags.iter().enumerate() {
-            if tag >> 1 > 4 {
-                return Err(BadModuleInfo);
-            }
-            words[n] = ids.id(&mut r)?;
-            words[requested_count + n] = ids.fetch(&mut r, tag >> 1)?;
-        }
-        for &tag in record_tags {
-            let kind = RecordKind(tag & 0b111);
-            let same_name = tag & (1 << 6) != 0;
-            match kind {
-                RecordKind::IMPORT_INFO_SINGLE | RecordKind::IMPORT_INFO_SINGLE_TYPE_SCRIPT => {
-                    let module_name = ids.id(&mut r)?;
-                    let import_name = ids.id(&mut r)?;
-                    let local_name = if same_name {
-                        import_name
-                    } else {
-                        ids.id(&mut r)?
-                    };
-                    words.extend([module_name, import_name, local_name]);
-                }
-                RecordKind::IMPORT_INFO_NAMESPACE | RecordKind::IMPORT_INFO_NAMESPACE_DEFER => {
-                    let module_name = ids.id(&mut r)?;
-                    words.extend([module_name, StringID::STAR_NAMESPACE.0, ids.id(&mut r)?]);
-                }
-                RecordKind::EXPORT_INFO_INDIRECT => {
-                    let export_name = ids.id(&mut r)?;
-                    let import_name = ids.id(&mut r)?;
-                    words.extend([export_name, import_name, ids.id(&mut r)?]);
-                }
-                RecordKind::EXPORT_INFO_LOCAL => {
-                    let export_name = ids.id(&mut r)?;
-                    words.extend([export_name, ids.id(&mut r)?, u32::MAX]);
-                }
-                RecordKind::EXPORT_INFO_NAMESPACE => {
-                    let export_name = ids.id(&mut r)?;
-                    words.extend([export_name, ids.id(&mut r)?]);
-                }
-                RecordKind::EXPORT_INFO_STAR => words.push(ids.id(&mut r)?),
-                _ => return Err(BadModuleInfo),
-            }
-            words.push(ids.fetch(&mut r, (tag >> 3) & 0b111)?);
-        }
-        if !r.rem.is_empty() {
-            return Err(BadModuleInfo);
-        }
-        debug_assert_eq!(words.len(), 2 * requested_count + buffer_len);
-
-        // A module's own table does not outlive `body`: copy its bytes and
-        // build `(offset, len)` ranges. A shared table is referenced as is.
-        let strings_count = if shared_table.is_some() {
-            0
-        } else {
-            table_count as usize
-        };
-        let mut all_words: Vec<u32> = Vec::with_capacity(2 * strings_count + words.len());
-        for id in 0..strings_count as u32 {
-            let [offset, len] = table.range(id).ok_or(BadModuleInfo)?;
-            all_words.extend([offset, len]);
-        }
-        all_words.extend_from_slice(&words);
-        drop(words);
-        let strings_bytes: &[u8] = if shared_table.is_some() {
-            &[]
-        } else {
-            table.buf
-        };
-        let mut bytes: Vec<u8> =
-            Vec::with_capacity(record_count + requested_count + strings_bytes.len());
-        bytes.extend(record_tags.iter().map(|&tag| tag & 0b111));
-        bytes.extend(requested_tags.iter().map(|&tag| tag & 1));
-        bytes.extend_from_slice(strings_bytes);
-
-        let decoded = Box::new(Decoded {
-            words: all_words.into(),
-            bytes: bytes.into(),
-        });
-        let (string_ranges, rest) = decoded.words.split_at(2 * strings_count);
-        let (requested_keys, rest) = rest.split_at(requested_count);
-        let (requested_values, buffer) = rest.split_at(requested_count);
-        let (record_kinds, rest) = decoded.bytes.split_at(record_count);
-        let (requested_phases, strings_buf) = rest.split_at(requested_count);
-        // All views borrow the boxed `Decoded` moved into `owner` below; its two
-        // heap slices stay at a stable address for the struct's lifetime.
-        // `StringID` / `FetchParameters` / `RecordKind` / `[u32; 2]` are
-        // plain-old-data over `u32` / `u8`, so `cast_slice` is a safe reinterpret.
+        let owned: Box<[u8]> = source.into();
+        // SAFETY: `owned` is moved into the returned struct and never
+        // reallocated, so views into its heap buffer stay valid for `self`'s
+        // lifetime; the `'static` is an erased self-borrow, not exposed.
+        let bytes: &'static [u8] = unsafe { &*core::ptr::from_ref::<[u8]>(&owned) };
+        let table = ModuleInfoStringTable::parse(bytes)?;
+        let (flags, body) = Body::parse(&bytes[table.byte_len..])?;
         Ok(Box::new(ModuleInfoDeserialized {
-            shared_table,
-            strings_buf: bun_ptr::RawSlice::new(strings_buf),
-            string_ranges: bun_ptr::RawSlice::new(bytemuck::cast_slice(string_ranges)),
-            requested_modules_keys: bun_ptr::RawSlice::new(bytemuck::cast_slice(requested_keys)),
-            requested_modules_values: bun_ptr::RawSlice::new(bytemuck::cast_slice(
-                requested_values,
-            )),
-            requested_modules_phases: bun_ptr::RawSlice::new(requested_phases),
-            buffer: bun_ptr::RawSlice::new(bytemuck::cast_slice(buffer)),
-            record_kinds: bun_ptr::RawSlice::new(bytemuck::cast_slice(record_kinds)),
+            body,
+            table,
+            shared: false,
             flags,
-            owner: Owner::Decoded(decoded),
+            owned: Some(owned),
         }))
     }
 
-    /// Wrapper around `create` for use when loading from a cache (transpiler
-    /// cache or standalone module graph). Returns `None` instead of panicking on
-    /// corrupt/truncated data.
+    /// Wrapper around `create` for use when loading from a cache. Returns
+    /// `None` on corrupt/truncated data.
     pub fn create_from_cached_record(source: &[u8]) -> Option<Box<ModuleInfoDeserialized>> {
-        // Allocation failure aborts via the global arena, so only
-        // BadModuleInfo remains.
         Self::create(source).ok()
+    }
+
+    /// A body inside the executable whose ids index the string table the
+    /// executable shares between all its modules (`StandaloneModuleGraph`).
+    /// Nothing is copied.
+    pub fn create_with_table(
+        table: &ModuleInfoStringTable<'static>,
+        body: &'static [u8],
+    ) -> Option<Box<ModuleInfoDeserialized>> {
+        let (flags, body) = Body::parse(body).ok()?;
+        Some(Box::new(ModuleInfoDeserialized {
+            body,
+            table: *table,
+            shared: true,
+            flags,
+            owned: None,
+        }))
     }
 }
 
@@ -462,9 +338,6 @@ impl<'a> Reader<'a> {
     }
     fn u32(&mut self) -> Result<u32, ModuleInfoError> {
         Ok(u32::from_le_bytes(self.bytes(4)?.try_into().unwrap()))
-    }
-    fn uint(&mut self, width: usize) -> Result<u32, ModuleInfoError> {
-        Ok(read_uint(self.bytes(width)?, width))
     }
 }
 #[inline]
@@ -565,8 +438,8 @@ impl StringIDExt for StringID {
     }
 }
 
-/// Bridges the printer-crate `ModuleInfo` to the raw-pointer FFI
-/// `ModuleInfoDeserialized` view kept in this crate.
+/// Bridges the printer-crate `ModuleInfo` builder to the serialized view
+/// JSC consumes.
 pub trait ModuleInfoExt {
     /// Finalize and box the raw-pointer `ModuleInfoDeserialized` view, taking
     /// ownership of `self`.
@@ -575,62 +448,9 @@ pub trait ModuleInfoExt {
 
 impl ModuleInfoExt for ModuleInfo {
     fn into_deserialized(mut self: Box<Self>) -> Box<ModuleInfoDeserialized> {
-        // The printer-crate `ModuleInfo`
-        // exposes a borrowed `as_deserialized()`; here we materialise the
-        // raw-pointer FFI shape and tie its lifetime to the leaked `Box<ModuleInfo>`.
-        if !self.finalized {
-            let _ = self.finalize();
-        }
-        // Reshaped for borrowck — capture lifetime-erased `RawSlice`
-        // views before `heap::into_raw(self)` consumes the box.
-        let (strings_buf, ranges, rm_keys, rm_values, rm_phases, buffer, record_kinds, flags);
-        {
-            let view = self.as_deserialized();
-            strings_buf = bun_ptr::RawSlice::new(view.strings_buf);
-            let mut offset = 0u32;
-            ranges = view
-                .strings_lens
-                .iter()
-                .map(|&len| {
-                    let range = [offset, len];
-                    offset += len;
-                    range
-                })
-                .collect::<Box<[[u32; 2]]>>();
-            rm_keys = bun_ptr::RawSlice::new(view.requested_modules_keys);
-            rm_values = bun_ptr::RawSlice::new(view.requested_modules_values);
-            // Printer's `ModulePhase` is `#[repr(u8)] NoUninit` — safe to view as `&[u8]`.
-            rm_phases = bun_ptr::RawSlice::new(bytemuck::cast_slice::<_, u8>(
-                view.requested_modules_phases,
-            ));
-            buffer = bun_ptr::RawSlice::new(view.buffer);
-            // Printer's `RecordKind` is `#[repr(u8)] NoUninit` with the same
-            // discriminant layout as this crate's `#[repr(transparent)] u8`
-            // `RecordKind` (Pod) — `bytemuck::cast_slice` is the safe reinterpret.
-            record_kinds =
-                bun_ptr::RawSlice::new(bytemuck::cast_slice::<_, RecordKind>(view.record_kinds));
-            let mut f = Flags::empty();
-            f.set(Flags::CONTAINS_IMPORT_META, view.flags.contains_import_meta);
-            f.set(Flags::IS_TYPESCRIPT, view.flags.is_typescript);
-            f.set(Flags::HAS_TLA, view.flags.has_tla);
-            flags = f;
-        }
-        // The views point into the `Box<ModuleInfo>`'s vectors (and `ranges`), moved into
-        // `owner` below; they stay valid and stable for the lifetime of every
-        // `RawSlice` copied from this struct.
-        Box::new(ModuleInfoDeserialized {
-            shared_table: None,
-            strings_buf,
-            // Boxed slice: its heap address is stable across the move into `owner`.
-            string_ranges: bun_ptr::RawSlice::new(&ranges),
-            requested_modules_keys: rm_keys,
-            requested_modules_values: rm_values,
-            requested_modules_phases: rm_phases,
-            buffer,
-            record_kinds,
-            flags,
-            owner: Owner::ModuleInfo(bun_core::heap::into_raw(self), ranges),
-        })
+        let bytes = bun_js_printer::serialize_module_info(Some(&mut self))
+            .expect("finalize cannot fail after printing");
+        ModuleInfoDeserialized::create(&bytes).expect("just serialized")
     }
 }
 

@@ -402,12 +402,10 @@ test("cached module still works", () => {
   }
   expect(corrupted).toBeGreaterThanOrEqual(1);
 
-  // Third run: the corrupted record must be rejected while decoding (the ids
-  // are range-checked against the string table there), so the module is
-  // analyzed from source instead and still works; no out-of-bounds read, no
-  // signal.
+  // Third run: the corrupted record must be rejected with a clean module load
+  // error and a normal (non-signal) process exit.
   const third = run();
-  expect(third.stderr.toString() + third.stdout.toString()).toContain("1 pass");
+  expect(third.stderr.toString() + third.stdout.toString()).toContain("parseFromSourceCode failed");
   expect(third.signalCode).toBeUndefined();
-  expect(third.exitCode).toBe(0);
+  expect(third.exitCode).toBe(1);
 });

@@ -24,97 +24,59 @@ extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     // The caller (BunAnalyzeTranspiledModule.cpp) decides whether to free
     // immediately or keep it alive on the SourceProvider for the isolation
     // SourceProvider cache.
+    to_js_module_record(global_object, vm, module_key, source_code, res)
+        .unwrap_or(core::ptr::null_mut())
+}
 
-    // Slice-field validity / alignment caveats are documented on the
-    // `ModuleInfoDeserialized` accessors. If a strict-alignment target is ever
-    // added, switch element reads to `read_unaligned` per the upstream note in
-    // `analyze_transpiled_module.rs`.
-    let requested_modules_keys: &[StringID] = res.requested_modules_keys();
-    let requested_modules_values: &[RequestedModuleValue] = res.requested_modules_values();
-    let requested_modules_phases: &[u8] = res.requested_modules_phases();
-    let buffer: &[StringID] = res.buffer();
-    let record_kinds: &[RecordKind] = res.record_kinds();
-
+/// Walks the serialized body in place (layout documented on the printer's
+/// `ModuleInfoDeserialized::serialize_body`) and feeds JSC's module record.
+/// Any out-of-range id or truncated region yields `Err` → null → a clean
+/// "parseFromSourceCode failed" rejection in the caller.
+fn to_js_module_record(
+    global_object: &JSGlobalObject,
+    vm: &VM,
+    module_key: &IdentifierArray,
+    source_code: &SourceCode,
+    res: &ModuleInfoDeserialized,
+) -> Result<*mut JSModuleRecord, analyze::ModuleInfoError> {
+    let body = *res.body();
     let identifier_count = res.strings_count();
-    let is_valid_string_id =
-        |id: StringID| (id.0 as usize) < identifier_count || id.0 >= StringID::STAR_NAMESPACE.0;
-    let is_valid_fetch_parameters =
-        |v: u32| (v as usize) < identifier_count || v >= RequestedModuleValue::Json.0;
-    if !requested_modules_keys
-        .iter()
-        .copied()
-        .all(is_valid_string_id)
-        || !requested_modules_values
-            .iter()
-            .all(|&v| is_valid_fetch_parameters(v.0))
-    {
-        return core::ptr::null_mut();
-    }
 
+    // Identifier slots the ids index. Shared: the VM-wide slots for the
+    // executable's string table, filled on first use below. Otherwise a
+    // throwaway array covering this record's own table, filled up front.
     let mut owned_identifiers: Option<OwnedIdentifierArray> = None;
-    let identifiers: *mut IdentifierArray = if res.shared_table().is_some() {
-        // Ids index the executable's shared table: fill only the slots this
-        // record touches that no earlier module filled.
-        let identifiers = IdentifierArray::shared(vm, identifier_count);
-        for id in requested_modules_keys
-            .iter()
-            .map(|k| k.0)
-            .chain(requested_modules_values.iter().map(|v| v.0))
-            .chain(buffer.iter().map(|s| s.0))
-        {
-            // Sentinels and non-host-defined fetch parameters sit above the count.
-            if (id as usize) >= identifier_count {
-                continue;
-            }
-            // SAFETY: `identifiers` has at least `identifier_count` slots.
-            if unsafe { IdentifierArray::is_null(identifiers, id as usize) } {
-                let Some(sub) = res.string(id as usize) else {
-                    return core::ptr::null_mut();
-                };
-                // SAFETY: as above.
-                unsafe { IdentifierArray::set_from_utf8(identifiers, id as usize, vm, sub) };
-            }
-        }
-        identifiers
+    let identifiers: *mut IdentifierArray = if res.shared() {
+        IdentifierArray::shared(vm, identifier_count)
     } else {
-        // The record carries its own strings: a throwaway array, freed when
-        // `owned_identifiers` drops at the end of this function.
         let identifiers = owned_identifiers
             .insert(OwnedIdentifierArray::new(identifier_count))
             .ptr;
         for index in 0..identifier_count {
-            let Some(sub) = res.string(index) else {
-                return core::ptr::null_mut();
-            };
+            let sub = res
+                .string(index as u32)
+                .ok_or(analyze::ModuleInfoError::BadModuleInfo)?;
             // SAFETY: `identifiers` has `identifier_count` slots.
             unsafe { IdentifierArray::set_from_utf8(identifiers, index, vm, sub) };
         }
         identifiers
     };
-
-    {
-        let mut i: usize = 0;
-        for &k in record_kinds.iter() {
-            let Ok(len) = k.len() else {
-                return core::ptr::null_mut();
-            };
-            if i + len > buffer.len() {
-                return core::ptr::null_mut();
+    // Every id handed to JSC goes through here: in range (or a sentinel, which
+    // `IdCursor` already vetted) and, for the shared slots, materialized.
+    let shared = res.shared();
+    let ready = |id: StringID| -> Result<StringID, analyze::ModuleInfoError> {
+        if shared && (id.0 as usize) < identifier_count {
+            // SAFETY: `identifiers` has at least `identifier_count` slots.
+            if unsafe { IdentifierArray::is_null(identifiers, id.0 as usize) } {
+                let sub = res
+                    .string(id.0)
+                    .ok_or(analyze::ModuleInfoError::BadModuleInfo)?;
+                // SAFETY: as above.
+                unsafe { IdentifierArray::set_from_utf8(identifiers, id.0 as usize, vm, sub) };
             }
-            let fp_slots = k.trailing_fetch_parameters_slots();
-            if !buffer[i..i + len - fp_slots]
-                .iter()
-                .copied()
-                .all(is_valid_string_id)
-                || !buffer[i + len - fp_slots..i + len]
-                    .iter()
-                    .all(|s| is_valid_fetch_parameters(s.0))
-            {
-                return core::ptr::null_mut();
-            }
-            i += len;
         }
-    }
+        Ok(id)
+    };
 
     let module_record = JSModuleRecord::create(
         global_object,
@@ -126,127 +88,143 @@ extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
         res.flags.has_tla(),
     );
 
-    if requested_modules_keys.len() != requested_modules_values.len()
-        || requested_modules_keys.len() != requested_modules_phases.len()
-    {
-        return core::ptr::null_mut();
-    }
-    for ((&reqk, &reqv), &reqp) in requested_modules_keys
-        .iter()
-        .zip(requested_modules_values.iter())
-        .zip(requested_modules_phases.iter())
-    {
-        // 0 = ModulePhase::Evaluation, 1 = ModulePhase::Defer. Reject anything
-        // else — the buffer may have come from an on-disk cache.
-        let phase_defer = match reqp {
-            0 => false,
-            1 => true,
-            _ => return core::ptr::null_mut(),
-        };
-        match reqv {
+    let mut ids = res.ids();
+    for &tag in body.requested_tags {
+        // bit 0: ModulePhase::Defer; bits 1..: fetch-parameter kind.
+        let phase_defer = tag & 1 != 0;
+        let key = ready(ids.next_id()?)?;
+        match ids.next_fetch(tag >> 1)? {
             RequestedModuleValue::None => module_record.add_requested_module_null_attributes_ptr(
                 identifiers,
-                reqk,
+                key,
                 phase_defer,
             ),
             RequestedModuleValue::Javascript => {
-                module_record.add_requested_module_java_script(identifiers, reqk, phase_defer)
+                module_record.add_requested_module_java_script(identifiers, key, phase_defer)
             }
             RequestedModuleValue::Webassembly => {
-                module_record.add_requested_module_web_assembly(identifiers, reqk, phase_defer)
+                module_record.add_requested_module_web_assembly(identifiers, key, phase_defer)
             }
             RequestedModuleValue::Json => {
-                module_record.add_requested_module_json(identifiers, reqk, phase_defer)
+                module_record.add_requested_module_json(identifiers, key, phase_defer)
             }
-            // FetchParameters and StringID are both `#[repr(transparent)] u32`, so this
-            // is a bitcast of the raw discriminant back into the interned-string index.
-            uv => module_record.add_requested_module_host_defined(
+            host => module_record.add_requested_module_host_defined(
                 identifiers,
-                reqk,
-                StringID(uv.0),
+                key,
+                ready(StringID(host.0))?,
                 phase_defer,
             ),
         }
     }
 
-    {
-        let mut i: usize = 0;
-        for &k in record_kinds.iter() {
-            if i + k.len().expect("unreachable") > buffer.len() {
-                unreachable!(); // handled above
-            }
-            match k {
-                RecordKind::ImportInfoSingle => module_record.add_import_entry_single(
-                    identifiers,
-                    buffer[i + 1],
-                    buffer[i + 2],
-                    buffer[i],
-                    analyze::FetchParameters(buffer[i + 3].0).to_script_fetch_parameters_type(),
-                ),
-                RecordKind::ImportInfoSingleTypeScript => module_record
-                    .add_import_entry_single_type_script(
+    for &tag in body.record_tags {
+        let kind = RecordKind(tag & 0b111);
+        let fetch_kind = (tag >> 3) & 0b111;
+        let same_name = tag & (1 << 6) != 0;
+        // Slot order on the wire matches the printer's in-memory record; the
+        // fetch parameter (when present) comes last.
+        match kind {
+            RecordKind::ImportInfoSingle | RecordKind::ImportInfoSingleTypeScript => {
+                let module_name = ready(ids.next_id()?)?;
+                let import_name = ready(ids.next_id()?)?;
+                let local_name = if same_name {
+                    import_name
+                } else {
+                    ready(ids.next_id()?)?
+                };
+                let ty = ids
+                    .next_fetch(fetch_kind)?
+                    .to_script_fetch_parameters_type();
+                if kind == RecordKind::ImportInfoSingle {
+                    module_record.add_import_entry_single(
                         identifiers,
-                        buffer[i + 1],
-                        buffer[i + 2],
-                        buffer[i],
-                        analyze::FetchParameters(buffer[i + 3].0).to_script_fetch_parameters_type(),
-                    ),
-                RecordKind::ImportInfoNamespace => module_record.add_import_entry_namespace(
-                    identifiers,
-                    buffer[i + 1],
-                    buffer[i + 2],
-                    buffer[i],
-                    analyze::FetchParameters(buffer[i + 3].0).to_script_fetch_parameters_type(),
-                ),
-                RecordKind::ImportInfoNamespaceDefer => module_record
-                    .add_import_entry_namespace_defer(
+                        import_name,
+                        local_name,
+                        module_name,
+                        ty,
+                    )
+                } else {
+                    module_record.add_import_entry_single_type_script(
                         identifiers,
-                        buffer[i + 1],
-                        buffer[i + 2],
-                        buffer[i],
-                        analyze::FetchParameters(buffer[i + 3].0).to_script_fetch_parameters_type(),
-                    ),
-                RecordKind::ExportInfoIndirect => {
-                    let ty =
-                        analyze::FetchParameters(buffer[i + 3].0).to_script_fetch_parameters_type();
-                    if buffer[i + 1] == StringID::STAR_NAMESPACE {
-                        module_record.add_namespace_export(
-                            identifiers,
-                            buffer[i],
-                            buffer[i + 2],
-                            ty,
-                        )
-                    } else {
-                        module_record.add_indirect_export(
-                            identifiers,
-                            buffer[i],
-                            buffer[i + 1],
-                            buffer[i + 2],
-                            ty,
-                        )
-                    }
+                        import_name,
+                        local_name,
+                        module_name,
+                        ty,
+                    )
                 }
-                RecordKind::ExportInfoLocal => {
-                    module_record.add_local_export(identifiers, buffer[i], buffer[i + 1])
-                }
-                RecordKind::ExportInfoNamespace => module_record.add_namespace_export(
-                    identifiers,
-                    buffer[i],
-                    buffer[i + 1],
-                    analyze::FetchParameters(buffer[i + 2].0).to_script_fetch_parameters_type(),
-                ),
-                RecordKind::ExportInfoStar => module_record.add_star_export(
-                    identifiers,
-                    buffer[i],
-                    analyze::FetchParameters(buffer[i + 1].0).to_script_fetch_parameters_type(),
-                ),
-                _ => unreachable!(), // handled above
             }
-            i += k.len().expect("unreachable"); // handled above
+            RecordKind::ImportInfoNamespace | RecordKind::ImportInfoNamespaceDefer => {
+                let module_name = ready(ids.next_id()?)?;
+                let local_name = ready(ids.next_id()?)?;
+                let ty = ids
+                    .next_fetch(fetch_kind)?
+                    .to_script_fetch_parameters_type();
+                if kind == RecordKind::ImportInfoNamespace {
+                    module_record.add_import_entry_namespace(
+                        identifiers,
+                        StringID::STAR_NAMESPACE,
+                        local_name,
+                        module_name,
+                        ty,
+                    )
+                } else {
+                    module_record.add_import_entry_namespace_defer(
+                        identifiers,
+                        StringID::STAR_NAMESPACE,
+                        local_name,
+                        module_name,
+                        ty,
+                    )
+                }
+            }
+            RecordKind::ExportInfoIndirect => {
+                let export_name = ready(ids.next_id()?)?;
+                let import_name = ready(ids.next_id()?)?;
+                let module_name = ready(ids.next_id()?)?;
+                let ty = ids
+                    .next_fetch(fetch_kind)?
+                    .to_script_fetch_parameters_type();
+                if import_name == StringID::STAR_NAMESPACE {
+                    module_record.add_namespace_export(identifiers, export_name, module_name, ty)
+                } else {
+                    module_record.add_indirect_export(
+                        identifiers,
+                        export_name,
+                        import_name,
+                        module_name,
+                        ty,
+                    )
+                }
+            }
+            RecordKind::ExportInfoLocal => {
+                let export_name = ready(ids.next_id()?)?;
+                let local_name = ready(ids.next_id()?)?;
+                ids.next_fetch(fetch_kind)?;
+                module_record.add_local_export(identifiers, export_name, local_name)
+            }
+            RecordKind::ExportInfoNamespace => {
+                let export_name = ready(ids.next_id()?)?;
+                let module_name = ready(ids.next_id()?)?;
+                let ty = ids
+                    .next_fetch(fetch_kind)?
+                    .to_script_fetch_parameters_type();
+                module_record.add_namespace_export(identifiers, export_name, module_name, ty)
+            }
+            RecordKind::ExportInfoStar => {
+                let module_name = ready(ids.next_id()?)?;
+                let ty = ids
+                    .next_fetch(fetch_kind)?
+                    .to_script_fetch_parameters_type();
+                module_record.add_star_export(identifiers, module_name, ty)
+            }
+            _ => return Err(analyze::ModuleInfoError::BadModuleInfo),
         }
     }
+    if !ids.is_empty() {
+        return Err(analyze::ModuleInfoError::BadModuleInfo);
+    }
 
-    module_record
+    Ok(module_record)
 }
 
 // ─── opaque FFI types ─────────────────────────────────────────────────────────

@@ -513,9 +513,14 @@ fn message_with_type_and_level_(
     }
 
     if message_type == MessageType::Dir {
-        // console.dir always uses inspect-style formatting: strings get quotes,
-        // unlike console.log which prints strings raw. Matches Node.js behavior.
-        print_options.quote_strings = true;
+        // console.dir always uses inspect-style formatting. For primitive strings,
+        // set quote_strings so they render as 'hello' like Node.js. StringObject
+        // values (new String(...)) take a separate code path in the Formatter that
+        // renders [String: 'hello'] regardless of this flag — don't set it there
+        // so the dedicated StringObject wrapper is preserved.
+        if print_length >= 1 && vals_slice[0].is_string() {
+            print_options.quote_strings = true;
+        }
         if len >= 2 {
             print_length = 1;
             let opts = vals_slice[1];

@@ -2890,7 +2890,7 @@ impl BlobExt for Blob {
                             // SAFETY: `Clone` arm reads only; `buf` is store-backed.
                             if bun::is_slice_in_buffer(unsafe { &*buf }, allocated) {
                                 if let Some(memfd) = LinuxMemFdAllocator::from(bytes.allocator()) {
-                                    // Hold a ref across the FFI call so a concurrent
+                                    // A ref across the FFI call so a concurrent
                                     // store-deref cannot close the fd mid-mmap.
                                     // SAFETY: `memfd` is the live Box-allocated ptr
                                     // smuggled through `StdAllocator.ptr` by
@@ -2907,7 +2907,6 @@ impl BlobExt for Blob {
                                             allocated.len(),
                                             TYPED_ARRAY_VIEW,
                                         );
-                                    drop(memfd);
                                     let result = result?;
                                     debug!(
                                         "toArrayBuffer COW clone({}, {}) = {}",

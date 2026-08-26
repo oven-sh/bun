@@ -508,7 +508,7 @@ impl HttpThread {
         while i < map.count() {
             let entry_last_used = map.values()[i].last_used_ns;
             if now.saturating_sub(entry_last_used) > SSL_CONTEXT_CACHE_TTL_NS {
-                drop(map.swap_remove_at(i));
+                map.swap_remove_at(i);
             } else {
                 i += 1;
             }
@@ -1061,7 +1061,7 @@ fn evict_oldest_ssl_context() {
             oldest_idx = i;
         }
     }
-    drop(map.swap_remove_at(oldest_idx));
+    map.swap_remove_at(oldest_idx);
 }
 
 fn start_queued_task(

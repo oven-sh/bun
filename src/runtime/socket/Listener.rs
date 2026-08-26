@@ -789,7 +789,6 @@ impl Listener {
         let ls_ref = bun_opaque::opaque_deref_mut(ls);
         ls_ref.remove_server_name(server_name);
         let ok = ls_ref.add_server_name(server_name, sni_ctx.as_ptr(), core::ptr::null_mut());
-        drop(sni_ctx);
         if !ok {
             // Old entry was already removed; failing silently would leave the
             // hostname with no SNI mapping at all. Surface it.

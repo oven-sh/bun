@@ -376,14 +376,13 @@ impl<const SSL: bool> HTTPContext<SSL> {
             (idx as usize) < list.len()
                 && core::ptr::eq(list[idx as usize].as_ptr().cast_const(), session)
         );
-        let removed = list.swap_remove(idx as usize);
+        let _removed = list.swap_remove(idx as usize);
         if (idx as usize) < list.len() {
             // The swapped-in entry is a distinct allocation from `session`
             // (the entry at `idx` was just removed); `set_registry_index`
             // only touches a `Cell<u32>`.
             list[idx as usize].set_registry_index(idx);
         }
-        drop(removed);
     }
 
     pub(crate) fn register_h2(&mut self, session: *mut h2::ClientSession) {

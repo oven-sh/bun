@@ -493,8 +493,8 @@ impl HTMLRewriter {
             // then release the wrapper's +1 ourselves. The pipe still holds its
             // own (`RewriterPipe.response`).
             js_Response::detach_ptr(out_response_value);
-            // SAFETY: adopts the wrapper's ref that `detach_ptr` orphaned.
-            drop(unsafe { RefPtr::from_raw(out_response.as_const_ptr().cast_mut()) });
+            // SAFETY: releases the wrapper's ref that `detach_ptr` orphaned.
+            unsafe { Response::deref(out_response.as_const_ptr().cast_mut()) };
 
             return match kind {
                 ResponseKind::String => blob.to_string(global, webcore::Lifetime::Transfer),

@@ -378,12 +378,8 @@ fn spawn_maybe_sync(
     let mut existing_terminal: Option<bun_ptr::BackRef<Terminal, bun_ptr::Mut>> = None; // Existing terminal passed by user
     let mut terminal_js_value: JSValue = JSValue::ZERO;
     let mut defer_guard = scopeguard::guard(
-        (&mut abort_signal, &mut terminal_info),
-        |(abort_signal, terminal_info): (
-            &mut Option<bun_jsc::AbortSignalRef>,
-            &mut Option<terminal_body::CreateResult>,
-        )| {
-            drop(abort_signal.take());
+        &mut terminal_info,
+        |terminal_info: &mut Option<terminal_body::CreateResult>| {
             // If we created a new terminal but spawn failed, close it. The
             // writer/reader/finalize deref paths release the remaining refs.
             // Downgrade the JSRef so the wrapper is GC-eligible, and mark
@@ -396,8 +392,8 @@ fn spawn_maybe_sync(
             }
         },
     );
-    // Note: reshaped for borrowck — re-borrow through the guard tuple.
-    let (abort_signal, terminal_info) = &mut *defer_guard;
+    // Note: reshaped for borrowck — re-borrow through the guard.
+    let terminal_info = &mut **defer_guard;
 
     // Owned ZBox for `cwd` held here so the `&[u8]` borrow stays valid until
     // `spawn_process` returns.
@@ -517,7 +513,7 @@ fn spawn_maybe_sync(
                     if let Some(abort_error) = sig.node_abort_error_if_aborted(global_this) {
                         return Err(global_this.throw_value(abort_error));
                     }
-                    **abort_signal = Some(sig.ref_());
+                    abort_signal = Some(sig.ref_());
                 } else {
                     return Err(global_this.throw_invalid_argument_type_value(
                         b"signal",
@@ -819,7 +815,7 @@ fn spawn_maybe_sync(
                         let term_options =
                             TerminalOptions::parse_from_js(global_this, terminal_val)?;
                         match Terminal::create_from_spawn(global_this, &term_options) {
-                            Ok(created) => **terminal_info = Some(created),
+                            Ok(created) => *terminal_info = Some(created),
                             Err(err) => {
                                 return Err(match err {
                                     TerminalInitError::OpenPtyFailed => {

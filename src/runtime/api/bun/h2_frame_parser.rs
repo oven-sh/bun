@@ -7823,7 +7823,7 @@ impl H2FrameParser {
         // socket; the process is exiting, so drop them and just release the slot's ref.
         if Self::corked() == Some(self.as_ctx_ptr()) {
             CORK_OFFSET.with(|c| c.set(0));
-            drop(Self::set_corked(None));
+            Self::set_corked(None);
         }
         // Removes the deferred task (its ctx is `self`) and releases the ref it holds.
         self.unregister_auto_flush();

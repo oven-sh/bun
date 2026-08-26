@@ -155,9 +155,11 @@ impl Drop for Process {
 pub struct ProcessHandle(RefPtr<Process>);
 
 impl ProcessHandle {
+    /// Call-scoped `&mut` to the process (event-loop thread only; see the
+    /// type-level note on re-entrancy).
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    fn process_mut(&self) -> &mut Process {
+    pub fn process_mut(&self) -> &mut Process {
         // SAFETY: we hold a ref, so the pointee is live; the borrow ends with
         // the forwarding call (see the type-level note on re-entrancy).
         unsafe { &mut *self.0.as_ptr() }
@@ -183,6 +185,22 @@ impl ProcessHandle {
 
     pub fn has_exited(&self) -> bool {
         self.0.has_exited()
+    }
+
+    pub fn kill(&self, signal: u8) -> Maybe<()> {
+        self.process_mut().kill(signal)
+    }
+
+    /// The process's address, for identity checks in exit callbacks.
+    pub fn as_ptr(&self) -> *mut Process {
+        self.0.as_ptr()
+    }
+
+    /// Give up the detach-on-drop, keeping only the ref.
+    pub fn into_ref(self) -> RefPtr<Process> {
+        let this = core::mem::ManuallyDrop::new(self);
+        // SAFETY: `this` is never dropped, so the field is moved out exactly once.
+        unsafe { core::ptr::read(&this.0) }
     }
 }
 

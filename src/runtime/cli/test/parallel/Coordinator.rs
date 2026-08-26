@@ -21,7 +21,7 @@ use crate::test_command::CommandLineReporter;
 
 // `Status` lives in `crate::api::bun::process`
 // (not the lower-tier `bun_spawn` crate). Worker.exit_status is this type.
-use crate::api::bun::process::Process;
+use crate::api::bun::process as spawn;
 use crate::api::bun::process::Status as SpawnStatus;
 
 pub struct Coordinator<'a> {
@@ -201,7 +201,7 @@ impl<'a> Coordinator<'a> {
             Output::flush();
         }
         for w in self.workers[..self.spawned_count as usize].iter_mut() {
-            if let Some(p) = w.process {
+            if let Some(p) = w.process.as_ref().map(spawn::ProcessHandle::as_ptr) {
                 #[cfg(unix)]
                 {
                     // SAFETY: `p` is the live intrusive-refcounted *mut Process;
@@ -622,13 +622,8 @@ impl<'a> Coordinator<'a> {
 
         // SAFETY: fresh derivation — `abort_on_worker_panic` above retags the slots.
         let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
-        if let Some(p) = w.process.take() {
-            // SAFETY: `p` is the live `*mut Process` from `to_process`; sole owner now.
-            unsafe {
-                (*p).detach();
-                Process::deref(p);
-            }
-        }
+        // Detaches and releases it.
+        w.process = None;
 
         let mut respawned = false;
         if self.stop_reason.is_none() && self.has_undispatched_files() {
@@ -735,7 +730,8 @@ impl<'a> Coordinator<'a> {
             }
             // SAFETY: `other` is in-bounds (see above); reading `.process`
             // through *mut forms no `&mut Worker` aliasing the caller's `w`.
-            if let Some(p) = unsafe { (*other).process } {
+            if let Some(p) = unsafe { (*other).process.as_ref().map(spawn::ProcessHandle::as_ptr) }
+            {
                 #[cfg(unix)]
                 {
                     // SAFETY: `p` is the live intrusive-refcounted *mut Process;

@@ -18,8 +18,9 @@
 //! and the write path can share it.
 //! Windows (no inheritable sockets): two uv_pipe()s driven here instead, see [`PipeEvent`] and `Bun__Chrome__writePipe`.
 
+use bun_ptr::RefPtr;
 use core::ffi::{CStr, c_char};
-use core::ptr::{self, NonNull};
+use core::ptr;
 #[cfg(windows)]
 use core::sync::atomic::AtomicU32;
 use core::sync::atomic::{AtomicPtr, Ordering};
@@ -51,7 +52,8 @@ declare_scope!(Chrome, hidden);
 pub(crate) struct ChromeProcess {
     // Intrusive refcount (`.deref()` called in on_process_exit); kept raw
     // because the refcount, not this struct, owns the allocation.
-    process: NonNull<Process>,
+    /// Our ref on the child; released when this box drops.
+    process: RefPtr<Process>,
     /// Set by [`Bun__Chrome__retire`]: the exit is reaped but not reported to C++.
     retired: bool,
     #[cfg(windows)]
@@ -93,7 +95,7 @@ extern "C" fn Bun__Chrome__kill() {
         if let Some(i) = INSTANCE.load(Ordering::Relaxed).as_mut() {
             // SAFETY: INSTANCE is set to a live heap-allocated pointer in
             // spawn() and cleared in on_process_exit before the box is dropped.
-            let _ = i.process.as_mut().kill(9);
+            let _ = (*i.process.as_ptr()).kill(9);
         }
     }
 }
@@ -115,7 +117,7 @@ extern "C" fn Bun__Chrome__retire() {
         chrome.pipes.close();
     }
     // SAFETY: `process` is live until `on_exit` derefs it.
-    let _ = unsafe { chrome.process.as_mut().kill(9) };
+    let _ = unsafe { (*chrome.process.as_ptr()).kill(9) };
 }
 
 /// Returns the parent's socketpair fd (POSIX, owned by usockets from then on), 0 (Windows), or -1 on failure.
@@ -192,8 +194,6 @@ impl ChromeProcess {
         let mut chrome = unsafe { bun_core::heap::take(this) };
         debug_assert_eq!(process, chrome.process.as_ptr());
         chrome.close_transport();
-        // SAFETY: caller contract; this drops the strong ref taken by to_process.
-        unsafe { Process::deref(process) };
         if chrome.retired {
             return;
         }
@@ -614,8 +614,7 @@ fn spawn(
         // Keeping our copies of the child's ends would mask Chrome's death (no EOF).
         endpoints.close_child_ends();
 
-        let process =
-            NonNull::new(spawned.to_process(event_loop)).expect("toProcess returned null");
+        let process = spawned.to_process_handle(event_loop).into_ref();
         endpoints.attach(process)
     }
 }
@@ -680,25 +679,22 @@ impl Endpoints {
     }
 
     /// Publishes the singleton and returns our fd for C++ to adopt.
-    fn attach(mut self, process: NonNull<Process>) -> crate::Result<i32> {
+    fn attach(mut self, process_ref: RefPtr<Process>) -> crate::Result<i32> {
+        let process: *mut Process = process_ref.as_ptr();
         let self_ptr = bun_core::heap::into_raw(Box::new(ChromeProcess {
-            process,
+            process: process_ref,
             retired: false,
         }));
         // SAFETY: `self_ptr` is a freshly-allocated, exclusively-owned Box that
         // owns `process` and outlives it.
         unsafe {
-            (*process.as_ptr())
-                .set_exit_handler(ProcessExit::new(ProcessExitKind::ChromeProcess, self_ptr));
+            (*process).set_exit_handler(ProcessExit::new(ProcessExitKind::ChromeProcess, self_ptr));
         }
         // SAFETY: process is live and exclusively owned here.
-        if let Err(e) = unsafe { (*process.as_ptr()).watch() } {
+        if let Err(e) = unsafe { (*process).watch() } {
             scoped_log!(Chrome, "watch failed: {}", e);
-            // SAFETY: drop the strong ref we hold, then reclaim the Box.
-            unsafe {
-                Process::deref(process.as_ptr());
-                drop(bun_core::heap::take(self_ptr));
-            }
+            // SAFETY: reclaim the Box (drops our process ref).
+            drop(unsafe { bun_core::heap::take(self_ptr) });
             self.close_all();
             return Err(crate::Error::WatchFailed);
         }
@@ -706,7 +702,7 @@ impl Endpoints {
         // fd 3 EOFs → DevToolsPipeHandler::Shutdown → exit. dispatchOnExit
         // also SIGKILLs via Bun__Chrome__kill.
         // SAFETY: process is live and exclusively owned here.
-        unsafe { (*process.as_ptr()).disable_keeping_event_loop_alive() };
+        unsafe { (*process).disable_keeping_event_loop_alive() };
         INSTANCE.store(self_ptr, Ordering::Relaxed);
 
         let fds = self.fds.take().expect("endpoints live");
@@ -817,7 +813,8 @@ impl Endpoints {
     }
 
     /// Moves our ends into a [`ChromeProcess`], starts reading replies, and publishes it.
-    fn attach(mut self, process: NonNull<Process>) -> crate::Result<i32> {
+    fn attach(mut self, process_ref: RefPtr<Process>) -> crate::Result<i32> {
+        let process: *mut Process = process_ref.as_ptr();
         let pipes = WindowsPipes {
             cmd: core::mem::replace(&mut self.cmd, ptr::null_mut()),
             reply: core::mem::replace(&mut self.reply, ptr::null_mut()),
@@ -826,7 +823,7 @@ impl Endpoints {
         let reply = pipes.reply;
         let generation = GENERATION.load(Ordering::Relaxed).wrapping_add(1);
         let self_ptr = bun_core::heap::into_raw(Box::new(ChromeProcess {
-            process,
+            process: process_ref,
             retired: false,
             pipes,
             generation,
@@ -840,7 +837,7 @@ impl Endpoints {
             (*reply)
                 .read_start_ctx::<ChromeProcess>(self_ptr)
                 .to_result(bun_sys::Tag::listen)
-                .and_then(|()| (*process.as_ptr()).watch())
+                .and_then(|()| (*process).watch())
         };
         if let Err(err) = started {
             scoped_log!(Chrome, "read_start/watch failed: {}", err);
@@ -849,17 +846,15 @@ impl Endpoints {
             unsafe {
                 let mut chrome = bun_core::heap::take(self_ptr);
                 chrome.pipes.close();
-                let p = process.as_ptr();
-                let _ = (*p).kill(9);
-                (*p).detach();
-                Process::deref(p);
+                let _ = (*process).kill(9);
+                (*process).detach();
             }
             return Err(err.into());
         }
 
         // SAFETY: `self_ptr` is live until `on_exit`.
         unsafe {
-            let p = process.as_ptr();
+            let p = process;
             (*p).set_exit_handler(ProcessExit::new(ProcessExitKind::ChromeProcess, self_ptr));
             (*p).disable_keeping_event_loop_alive();
         }

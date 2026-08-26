@@ -14,7 +14,8 @@
 //! This file owns process lifetime only. The usockets client lives in C++
 //! (WebKitBackend.cpp) — usockets is a C API and the frame protocol is C structs.
 
-use core::ptr::{self, NonNull};
+use bun_ptr::RefPtr;
+use core::ptr;
 
 use bun_jsc::JSGlobalObject;
 use bun_output::{declare_scope, scoped_log};
@@ -36,7 +37,8 @@ declare_scope!(WebViewHost, hidden);
 pub(crate) struct HostProcess {
     // Intrusive refcount (`.deref()` called in on_process_exit); kept raw
     // because the refcount, not this struct, owns the allocation.
-    process: NonNull<Process>,
+    /// Our ref on the child; released when this box drops.
+    process: RefPtr<Process>,
     /// Set by [`Bun__WebViewHost__retire`]: the exit is reaped but not reported to C++.
     retired: bool,
 }
@@ -62,7 +64,7 @@ extern "C" fn Bun__WebViewHost__kill() {
         {
             // SAFETY: INSTANCE is set to a live heap-allocated pointer in
             // spawn() and cleared in on_process_exit before the box is dropped.
-            let _ = i.process.as_mut().kill(9);
+            let _ = (*i.process.as_ptr()).kill(9);
         }
     }
 }
@@ -78,7 +80,7 @@ extern "C" fn Bun__WebViewHost__retire() {
     };
     host.retired = true;
     // SAFETY: `process` is live until on_process_exit derefs it.
-    let _ = unsafe { host.process.as_mut().kill(9) };
+    let _ = unsafe { (*host.process.as_ptr()).kill(9) };
 }
 
 /// Lazy: first `new Bun.WebView()` calls this via C++. Returns the parent
@@ -137,10 +139,8 @@ bun_spawn::link_impl_ProcessExit! {
                 let signo: i32 = status.signal_code().map_or(0, |s| s as i32);
                 Bun__WebViewHost__childDied(signo);
             }
-            // `this` was heap-allocated in spawn(); process is the
-            // intrusive-rc *mut Process whose strong ref we hold. `deref()`
-            // drops that ref, then drop the Box.
-            Process::deref((*this).process.as_ptr());
+            // `this` was heap-allocated in spawn(); dropping it releases our
+            // ref on the process.
             drop(bun_core::heap::take(this));
             let _ = INSTANCE.compare_exchange(
                 this,
@@ -219,20 +219,20 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
         // SAFETY: `vm` is the live thread-local VM; `event_loop()` is its
         // per-thread `jsc::EventLoop`.
         let event_loop = unsafe { EventLoopHandle::init((*vm).event_loop().cast()) };
-        let process =
-            NonNull::new(spawned.to_process(event_loop)).expect("toProcess returned null");
+        let process = spawned.to_process_handle(event_loop).into_ref();
+        let process_ref = process;
+        let process: *mut Process = process_ref.as_ptr();
         let self_ptr = bun_core::heap::into_raw(Box::new(HostProcess {
-            process,
+            process: process_ref,
             retired: false,
         }));
         // SAFETY: `self_ptr` is a freshly-allocated, exclusively-owned Box that
         // owns `process` and outlives it.
         unsafe {
-            (*process.as_ptr())
-                .set_exit_handler(ProcessExit::new(ProcessExitKind::HostProcess, self_ptr));
+            (*process).set_exit_handler(ProcessExit::new(ProcessExitKind::HostProcess, self_ptr));
         }
         // SAFETY: process is live and exclusively owned here.
-        match unsafe { (*process.as_ptr()).watch() } {
+        match unsafe { (*process).watch() } {
             Ok(()) => {
                 // Weak handle: parent exits when no views + nothing pending,
                 // child gets socket EOF and exits, EVFILT_PROC fires into a
@@ -240,15 +240,12 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
                 // stay alive forever waiting on a child that is waiting on us.
                 // dispatchOnExit also SIGKILLs via Bun__WebViewHost__kill.
                 // SAFETY: process is live and exclusively owned here.
-                unsafe { (*process.as_ptr()).disable_keeping_event_loop_alive() };
+                unsafe { (*process).disable_keeping_event_loop_alive() };
             }
             Err(e) => {
                 scoped_log!(WebViewHost, "watch failed: {}", e);
-                // SAFETY: drop the strong ref we hold, then reclaim the Box.
-                unsafe {
-                    Process::deref(process.as_ptr());
-                    drop(bun_core::heap::take(self_ptr));
-                }
+                // SAFETY: reclaim the Box (drops our process ref).
+                drop(unsafe { bun_core::heap::take(self_ptr) });
                 // fd0_guard (declared at the top) closes fds[0]; don't double-close here.
                 return Err(crate::Error::WatchFailed);
             }

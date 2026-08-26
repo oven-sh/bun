@@ -186,11 +186,8 @@ impl CmdHandle {
 pub struct ShellSubprocess {
     pub(crate) cmd_parent: CmdHandle,
 
-    /// Intrusively ref-counted process (`bun_ptr::ThreadSafeRefCount`).
-    /// Stored raw because `Process` methods take `&mut self` and `RefPtr`
-    /// only implements `Deref`; the shell is single-threaded so raw mutable
-    /// access is sound.
-    pub(crate) process: *mut Process,
+    /// `None` once closed.
+    pub(crate) process: Option<bun_process::ProcessHandle>,
 
     pub(crate) stdin: Writable,
     pub(crate) stdout: Readable,
@@ -241,14 +238,12 @@ bun_spawn::link_impl_ProcessExit! {
 }
 
 impl ShellSubprocess {
-    /// Borrow the intrusively ref-counted Process mutably.
-    /// SAFETY-internal: shell is single-threaded; `self.process` is non-null
-    /// for the lifetime of `ShellSubprocess` (set in `spawn_maybe_sync_impl`).
+    /// The shell is single-threaded; `process` is set for the lifetime of
+    /// `ShellSubprocess` until `close_process`.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn proc(&self) -> &mut Process {
-        // SAFETY: see doc comment.
-        unsafe { &mut *self.process }
+        self.process.as_ref().expect("process closed").process_mut()
     }
 
     pub(crate) fn on_static_pipe_writer_done(&mut self) {
@@ -299,19 +294,8 @@ impl ShellSubprocess {
     }
 
     fn close_process(&mut self) {
-        let process = core::mem::replace(&mut self.process, core::ptr::null_mut());
-        if process.is_null() {
-            return;
-        }
-        // SAFETY: `process` was produced by `to_process` (heap::alloc) and is
-        // live until the deref below drops the last strong ref.
-        unsafe {
-            (*process).set_exit_handler_default();
-            (*process).close();
-            // Release the intrusive ref taken by `to_process`. `*mut Process`
-            // has no Drop, so this must be explicit.
-            bun_ptr::ThreadSafeRefCount::<Process>::deref(process);
-        }
+        // `ProcessHandle::drop` detaches (clears the exit handler and closes).
+        self.process = None;
     }
 
     pub(crate) fn close_io(&mut self, io: StdioKind) {
@@ -788,7 +772,7 @@ impl ShellSubprocess {
         // dropping garbage.
         unsafe {
             subprocess.write(Subprocess {
-                process: spawn_result.to_process(event_loop),
+                process: Some(spawn_result.to_process_handle(event_loop)),
                 stdin,
                 stdout,
                 stderr,

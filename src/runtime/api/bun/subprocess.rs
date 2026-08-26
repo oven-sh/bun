@@ -5,7 +5,7 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_ptr::RefCount;
+use bun_ptr::{RefCount, RefPtr};
 
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult,
@@ -141,7 +141,7 @@ pub struct Subprocess<'a> {
     pub closed: Cell<EnumSet<StdioKind>>,
     pub this_value: JsCell<JsRef>,
 
-    pub(crate) ipc_data: Cell<Option<core::ptr::NonNull<IPC::SendQueue>>>,
+    pub(crate) ipc_data: JsCell<Option<RefPtr<IPC::SendQueue>>>,
     pub(crate) flags: Cell<Flags>,
 
     /// Weak observer of the stdin `FileSink` — holds no ownership/ref. `onStdinDestroyed`
@@ -1371,11 +1371,7 @@ impl Subprocess<'_> {
             // to false and let GC collect us). Detach and release our ref; any
             // still-queued close task holds its own ref and frees the SendQueue
             // when it runs.
-            // SAFETY: `ipc_data` is the owned ref stored at spawn time.
-            unsafe {
-                (*ipc_data.as_ptr()).detach();
-                <IPC::SendQueue as bun_ptr::CellRefCounted>::deref(ipc_data.as_ptr());
-            }
+            ipc_data.detach();
         }
 
         self.update_flags(|f| f.insert(Flags::FINALIZED));
@@ -1513,8 +1509,7 @@ impl Subprocess<'_> {
     }
 
     pub(crate) fn ipc(&self) -> Option<&IPC::SendQueue> {
-        // SAFETY: `ipc_data` is our owned ref; live until `finalize`.
-        self.ipc_data.get().map(|p| unsafe { &*p.as_ptr() })
+        self.ipc_data.get().as_deref()
     }
 }
 

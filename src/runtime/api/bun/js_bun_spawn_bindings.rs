@@ -1302,7 +1302,7 @@ fn spawn_maybe_sync(
         // (released in Subprocess::on_process_exit; stranded if child outlives VM teardown).
         ref_count: bun_ptr::RefCount::init_exact_refs(2),
         stdio_pipes: JsCell::new(core::mem::take(&mut spawned_extra_pipes)),
-        ipc_data: Cell::new(None),
+        ipc_data: JsCell::new(None),
         flags: Cell::new(if is_sync {
             Subprocess::Flags::IS_SYNC
         } else {
@@ -1354,13 +1354,11 @@ fn spawn_maybe_sync(
     #[cfg(windows)]
     if !is_sync {
         if let Some(ipc_mode) = maybe_ipc_mode {
-            subprocess
-                .ipc_data
-                .set(core::ptr::NonNull::new(IPC::SendQueue::new(
-                    ipc_mode,
-                    subprocess_ipc_owner(subprocess_ptr),
-                    IPC::SocketUnion::Uninitialized,
-                )));
+            subprocess.ipc_data.set(Some(IPC::SendQueue::new(
+                ipc_mode,
+                subprocess_ipc_owner(subprocess_ptr),
+                IPC::SocketUnion::Uninitialized,
+            )));
         }
     }
 
@@ -1418,12 +1416,8 @@ fn spawn_maybe_sync(
             subprocess.finalize_streams();
             subprocess.process_mut().detach();
             if let Some(ipc_data) = subprocess.ipc_data.take() {
-                // SAFETY: owned ref from `SendQueue::new` above; nothing else
-                // holds it yet (no socket wired, no task scheduled).
-                unsafe {
-                    (*ipc_data.as_ptr()).detach();
-                    <IPC::SendQueue as bun_ptr::CellRefCounted>::deref(ipc_data.as_ptr());
-                }
+                // Nothing else holds it yet (no socket wired, no task scheduled).
+                ipc_data.detach();
             }
             // Release the intrusive ref
             // (finalize() won't run on this error path).
@@ -1540,13 +1534,11 @@ fn spawn_maybe_sync(
             );
             if !raw_socket.is_null() {
                 let socket = raw_socket;
-                subprocess
-                    .ipc_data
-                    .set(core::ptr::NonNull::new(IPC::SendQueue::new(
-                        mode,
-                        subprocess_ipc_owner(subprocess_ptr),
-                        IPC::SocketUnion::Uninitialized,
-                    )));
+                subprocess.ipc_data.set(Some(IPC::SendQueue::new(
+                    mode,
+                    subprocess_ipc_owner(subprocess_ptr),
+                    IPC::SocketUnion::Uninitialized,
+                )));
                 posix_ipc_info = Some(IPC::Socket::from(socket));
             }
         }

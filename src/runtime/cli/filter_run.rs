@@ -40,9 +40,7 @@ struct ScriptConfig {
 }
 
 struct ProcessInfo {
-    // Intrusive ref-counted (`ThreadSafeRefCount<Process>`); raw `*mut` matches
-    // `to_process()` and `set_exit_handler` callers.
-    ptr: *mut Process,
+    ptr: spawn::ProcessHandle,
     status: Status,
     start_time: Instant,
     /// Set together with `status` when the exit arrives.
@@ -145,7 +143,7 @@ impl<'a> ProcessHandle<'a> {
         let mut spawned = spawned;
         #[cfg(windows)]
         let (stdout_pipe, stderr_pipe) = (spawned.stdout.take(), spawned.stderr.take());
-        let process = spawned.to_process(EventLoopHandle::init_mini(state.event_loop));
+        let process = spawned.to_process_handle(EventLoopHandle::init_mini(state.event_loop));
 
         let handle_ptr = std::ptr::from_mut::<ProcessHandle<'a>>(handle).cast::<c_void>();
         handle.stdout.set_parent(handle_ptr);
@@ -188,8 +186,8 @@ impl<'a> ProcessHandle<'a> {
             start_time,
             end_time: None,
         });
-        // SAFETY: `process` was just allocated by `to_process` (heap::alloc);
-        // sole owner until reaped, owner backref set before reap callback can fire.
+        let process: *mut Process = handle.process.as_ref().unwrap().ptr.as_ptr();
+        // SAFETY: just spawned; owner backref set before any reap callback can fire.
         let process = unsafe { &mut *process };
         // SAFETY: `handle` is the live `ProcessHandle` slot in `State.handles`;
         // it owns `process` and outlives it.
@@ -651,9 +649,7 @@ impl<'a> State<'a> {
             // SAFETY: points into `self.handles`, live for the whole run loop.
             if let Some(proc) = unsafe { (*handle).process.as_ref() } {
                 // if we get an error here we simply ignore it
-                // SAFETY: proc.ptr is a live `*mut Process` (set in start(); leaked
-                // until program exit per on_process_exit note).
-                let _ = unsafe { (*proc.ptr).kill(bun_sys::SignalCode::SIGINT.0) };
+                let _ = proc.ptr.kill(bun_sys::SignalCode::SIGINT.0);
             }
             // An already-exited handle may be waiting on pipes a grandchild
             // still holds; with `aborted` set this finishes it now. Killed

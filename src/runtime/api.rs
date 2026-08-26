@@ -286,7 +286,7 @@ fn with_text_format_source_encoded<R>(
             encoding = SourceEncoding::Utf16Text;
             break 'bytes bytemuck::cast_slice(_latin1_hold.utf16());
         }
-        _str_hold = StringOrBuffer::String(s.into_slice());
+        _str_hold = StringOrBuffer::String(s.into_utf8_with_string());
         _str_hold.slice()
     };
 

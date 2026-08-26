@@ -63,12 +63,12 @@
     "unsafe impl Send": [
       "Blob",
       "Bytes",
-      "StoreRef"
+      "Store"
     ],
     "unsafe impl Sync": [
       "Blob",
       "Bytes",
-      "StoreRef"
+      "Store"
     ]
   },
   "src/runtime/api/JSTranspiler.rs": {

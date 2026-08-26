@@ -201,7 +201,7 @@ fn construct_render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
             ..Default::default()
         },
         crate::webcore::Body::new(crate::webcore::BodyValue::Empty),
-        BunString::empty(),
+        BunString::EMPTY,
         false,
     ));
 

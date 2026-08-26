@@ -3,7 +3,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_ast::{Loc, Log};
 use bun_core::FeatureFlags;
-use bun_core::{MutableString, ZigStringSlice};
+use bun_core::{MutableString, Utf8Bytes};
 use bun_threading::IntrusiveWorkTask as _;
 use bun_threading::thread_pool::{self, Batch, Task};
 use bun_url::{PercentEncoding, URL};
@@ -191,7 +191,7 @@ fn make_client<'a>(
         signals,
         async_http_id,
         hostname,
-        unix_socket_path: ZigStringSlice::EMPTY,
+        unix_socket_path: Utf8Bytes::EMPTY,
         compress: None,
         compressed_request_body: Vec::new(),
         compressed_body_len: 0,
@@ -245,7 +245,7 @@ pub struct Options<'a> {
     pub proxy_headers: Option<Headers>,
     pub hostname: Option<&'a [u8]>,
     pub signals: Option<Signals>,
-    pub unix_socket_path: Option<ZigStringSlice>,
+    pub unix_socket_path: Option<Utf8Bytes<'static>>,
     pub disable_timeout: Option<bool>,
     /// Per-request idle timeout override in seconds; see
     /// `HTTPClient::idle_timeout_seconds`.
@@ -315,9 +315,7 @@ impl<'a> AsyncHTTP<'a> {
 
     pub fn clear_data(&mut self) {
         self.response = None;
-        // Note: `ZigStringSlice` Drop releases WTF/owned variants;
-        // assigning EMPTY runs Drop on the old value.
-        self.client.unix_socket_path = ZigStringSlice::EMPTY;
+        self.client.unix_socket_path = Utf8Bytes::EMPTY;
     }
 }
 
@@ -751,19 +749,9 @@ impl<'a> AsyncHTTP<'a> {
                     drop(core::mem::take(&mut client.prev_redirect));
                     drop(core::mem::take(&mut client.compressed_request_body));
                     drop(core::mem::take(&mut client.proxy_authorization));
-                    if let Some(tunnel) = client.proxy_tunnel.take() {
-                        // SAFETY: tunnel was created by ProxyTunnel::start
-                        // (heap::alloc) and is refcounted; detach the socket
-                        // (the first half of the old `detach_and_deref`)
-                        // before releasing the clone's strong ref below.
-                        (*tunnel.as_ptr()).detach_socket();
-                        tunnel.deref();
-                    }
+                    client.close_proxy_tunnel(false);
                     debug_assert!(client.h2.is_none());
-                    if let Some(ctx) = client.custom_ssl_ctx.take() {
-                        // Release the strong ref the clone took in set_custom_ssl_ctx.
-                        ctx.deref();
-                    }
+                    drop(core::mem::take(&mut client.custom_ssl_ctx));
                     // `state` was `Default` at `ptr::read` time and was
                     // populated by the clone (`on_start` → `client.start`); it
                     // owns the decompressor / compressed_body buffers.

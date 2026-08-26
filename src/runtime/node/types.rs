@@ -2,17 +2,15 @@ use bun_paths::strings;
 use core::ffi::c_int;
 
 use crate::jsc::{self, CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::zig_string::Slice as ZigStringSlice;
-use bun_core::{self, fmt as bun_fmt};
+use bun_core::{self, Utf8Bytes, Utf8WithString, fmt as bun_fmt};
 use bun_core::{WStr, ZStr};
-use bun_jsc::{SliceWithUnderlyingStringJsc as _, StringJsc as _, ZigStringJsc as _};
+use bun_jsc::bun_string_jsc;
+use bun_jsc::{StringJsc as _, Utf8WithStringJsc as _};
 use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer, WPathBuffer};
 use bun_sys::{self, Fd, Mode, O};
 
 use crate::node::util::validators;
 use crate::webcore::{Blob, Request, Response};
-
-pub use bun_core::SliceWithUnderlyingString;
 
 pub use jsc::MarkedArrayBuffer as Buffer;
 
@@ -97,7 +95,7 @@ pub enum FileBlobs {
 
 pub enum BlobOrStringOrBuffer {
     Blob(Box<Blob>),
-    StringOrBuffer(StringOrBuffer),
+    StringOrBuffer(StringOrBuffer<'static>),
 }
 
 impl Drop for BlobOrStringOrBuffer {
@@ -153,12 +151,11 @@ impl BlobOrStringOrBuffer {
                     // rather than referencing the store which isn't thread-safe
                     let blob_data = blob.shared_view();
                     let owned_data: Vec<u8> = blob_data.to_vec();
-                    return Ok(Some(Self::StringOrBuffer(StringOrBuffer::EncodedSlice(
-                        ZigStringSlice::init_owned(owned_data),
+                    return Ok(Some(Self::StringOrBuffer(StringOrBuffer::owned(
+                        owned_data,
                     ))));
                 }
 
-                // `Blob::dupe()` clones the StoreRef (bumps refcount) and bit-copies fields.
                 return Ok(Some(Self::Blob(Box::new(blob.dupe()))));
             }
         };
@@ -271,27 +268,39 @@ impl BlobOrStringOrBuffer {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub enum StringOrBuffer {
-    String(SliceWithUnderlyingString),
-    ThreadsafeString(SliceWithUnderlyingString),
-    EncodedSlice(ZigStringSlice),
+/// Parsed from JS it is `StringOrBuffer<'static>`; `Utf8` may instead borrow
+/// Rust-side bytes for a synchronous call ([`StringOrBuffer::borrowed`]).
+pub enum StringOrBuffer<'a> {
+    String(Utf8WithString),
+    ThreadsafeString(Utf8WithString),
+    Utf8(Utf8Bytes<'a>),
     Buffer(Buffer),
 }
 
-impl Default for StringOrBuffer {
+impl Default for StringOrBuffer<'_> {
     fn default() -> Self {
         Self::EMPTY
     }
 }
 
-impl StringOrBuffer {
-    pub(crate) const EMPTY: StringOrBuffer = StringOrBuffer::EncodedSlice(ZigStringSlice::EMPTY);
+impl<'a> StringOrBuffer<'a> {
+    pub(crate) const EMPTY: Self = StringOrBuffer::Utf8(Utf8Bytes::EMPTY);
+
+    #[inline]
+    pub(crate) fn borrowed(bytes: &'a [u8]) -> StringOrBuffer<'a> {
+        StringOrBuffer::Utf8(Utf8Bytes::Borrowed(bytes))
+    }
+
+    #[inline]
+    pub(crate) fn owned(bytes: Vec<u8>) -> StringOrBuffer<'static> {
+        StringOrBuffer::Utf8(Utf8Bytes::Owned(bytes))
+    }
 
     pub(crate) fn slice(&self) -> &[u8] {
         match self {
             Self::String(str) => str.slice(),
             Self::ThreadsafeString(str) => str.slice(),
-            Self::EncodedSlice(str) => str.slice(),
+            Self::Utf8(str) => str.slice(),
             Self::Buffer(str) => str.slice(),
         }
     }
@@ -309,7 +318,7 @@ impl bun_jsc::Unprotect for BlobOrStringOrBuffer {
     }
 }
 
-impl bun_jsc::Unprotect for StringOrBuffer {
+impl bun_jsc::Unprotect for StringOrBuffer<'static> {
     /// JS-side half of cleanup — undo the
     /// `protect()` taken by [`StringOrBuffer::to_thread_safe`] /
     /// `from_js_maybe_async(.., Flavor::Async, ..)`. Owned slices are released
@@ -326,7 +335,32 @@ impl bun_jsc::Unprotect for StringOrBuffer {
     }
 }
 
-impl StringOrBuffer {
+impl StringOrBuffer<'_> {
+    pub fn into_js(self, ctx: &JSGlobalObject) -> JsResult<JSValue> {
+        match self {
+            Self::ThreadsafeString(str) | Self::String(str) => str.into_js(ctx),
+            Self::Utf8(utf8) => bun_string_jsc::create_utf8_for_js(ctx, &utf8),
+            Self::Buffer(mut buffer) => {
+                if buffer.buffer.value != JSValue::ZERO {
+                    return Ok(buffer.buffer.value);
+                }
+                buffer.to_node_buffer(ctx)
+            }
+        }
+    }
+
+    /// Returns the buffer payload if this is `Self::Buffer`.
+    #[inline]
+    pub(crate) fn buffer(&self) -> Option<&Buffer> {
+        if let Self::Buffer(b) = self {
+            Some(b)
+        } else {
+            None
+        }
+    }
+}
+
+impl StringOrBuffer<'static> {
     pub(crate) fn to_thread_safe(&mut self) {
         match self {
             Self::String(s) => {
@@ -334,8 +368,7 @@ impl StringOrBuffer {
                 let str = core::mem::take(s);
                 *self = Self::ThreadsafeString(str);
             }
-            Self::ThreadsafeString(_) => {}
-            Self::EncodedSlice(_) => {}
+            Self::ThreadsafeString(_) | Self::Utf8(_) => {}
             Self::Buffer(buffer) => {
                 buffer.buffer.value.protect();
             }
@@ -361,33 +394,6 @@ impl StringOrBuffer {
         Ok(result)
     }
 
-    pub fn to_js(&mut self, ctx: &JSGlobalObject) -> JsResult<JSValue> {
-        match self {
-            Self::ThreadsafeString(str) | Self::String(str) => core::mem::take(str).into_js(ctx),
-            Self::EncodedSlice(encoded_slice) => {
-                let result = jsc::bun_string_jsc::create_utf8_for_js(ctx, encoded_slice.slice());
-                *encoded_slice = ZigStringSlice::default();
-                result
-            }
-            Self::Buffer(buffer) => {
-                if buffer.buffer.value != JSValue::ZERO {
-                    return Ok(buffer.buffer.value);
-                }
-                buffer.to_node_buffer(ctx)
-            }
-        }
-    }
-
-    /// Returns the buffer payload if this is `Self::Buffer`.
-    #[inline]
-    pub(crate) fn buffer(&self) -> Option<&Buffer> {
-        if let Self::Buffer(b) = self {
-            Some(b)
-        } else {
-            None
-        }
-    }
-
     /// Out-param core of [`from_js_maybe_async`]. Writes the decoded payload
     /// directly into `*out` and returns
     /// `Ok(true)` on success, `Ok(false)` if `value` is not a string/buffer
@@ -399,7 +405,7 @@ impl StringOrBuffer {
     /// `Option<>`-returning wrappers below cannot always NRVO away.
     #[inline]
     pub(crate) fn from_js_maybe_async_into(
-        out: &mut StringOrBuffer,
+        out: &mut Self,
         global: &JSGlobalObject,
         value: JSValue,
         flavor: Flavor,
@@ -412,19 +418,16 @@ impl StringOrBuffer {
                     return Ok(false);
                 }
                 let str = bun_core::String::from_js(value, global)?;
-                if flavor == Flavor::Async {
-                    let mut sliced = str.into_thread_safe_slice();
-                    sliced.report_extra_memory(global.vm());
-
-                    if sliced.underlying.is_empty() {
-                        *out = Self::EncodedSlice(core::mem::take(&mut sliced.utf8));
-                        return Ok(true);
-                    }
-
-                    *out = Self::ThreadsafeString(sliced);
+                *out = if flavor == Flavor::Async {
+                    shared_or_utf8(
+                        global,
+                        str.into_utf8_with_string_thread_safe(),
+                        Self::ThreadsafeString,
+                        Self::Utf8,
+                    )
                 } else {
-                    *out = Self::String(str.into_slice());
-                }
+                    Self::String(str.into_utf8_with_string())
+                };
                 Ok(true)
             }
 
@@ -466,7 +469,7 @@ impl StringOrBuffer {
         value: JSValue,
         flavor: Flavor,
         string_objects: StringObjects,
-    ) -> JsResult<Option<StringOrBuffer>> {
+    ) -> JsResult<Option<Self>> {
         let mut out = Self::EMPTY;
         if Self::from_js_maybe_async_into(&mut out, global, value, flavor, string_objects)? {
             Ok(Some(out))
@@ -476,7 +479,7 @@ impl StringOrBuffer {
     }
 
     #[inline]
-    pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<StringOrBuffer>> {
+    pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
         Self::from_js_maybe_async(global, value, Flavor::Sync, StringObjects::Allow)
     }
 
@@ -485,7 +488,7 @@ impl StringOrBuffer {
         global: &JSGlobalObject,
         value: JSValue,
         encoding: Encoding,
-    ) -> JsResult<Option<StringOrBuffer>> {
+    ) -> JsResult<Option<Self>> {
         Self::from_js_with_encoding_maybe_async(
             global,
             value,
@@ -498,7 +501,7 @@ impl StringOrBuffer {
     /// Out-param convenience wrapper — see [`from_js_with_encoding_maybe_async_into`].
     #[inline]
     pub(crate) fn from_js_with_encoding_into(
-        out: &mut StringOrBuffer,
+        out: &mut Self,
         global: &JSGlobalObject,
         value: JSValue,
         encoding: Encoding,
@@ -518,7 +521,7 @@ impl StringOrBuffer {
     /// string-or-buffer. See [`from_js_maybe_async_into`] for rationale.
     #[inline]
     pub(crate) fn from_js_with_encoding_maybe_async_into(
-        out: &mut StringOrBuffer,
+        out: &mut Self,
         global: &JSGlobalObject,
         value: JSValue,
         encoding: Encoding,
@@ -553,7 +556,7 @@ impl StringOrBuffer {
             let encoded = str.encode(encoding);
             global.vm().report_extra_memory(encoded.len());
 
-            *out = Self::EncodedSlice(ZigStringSlice::init_owned(encoded));
+            *out = Self::owned(encoded);
             return Ok(true);
         }
 
@@ -567,7 +570,7 @@ impl StringOrBuffer {
         encoding: Encoding,
         flavor: Flavor,
         string_objects: StringObjects,
-    ) -> JsResult<Option<StringOrBuffer>> {
+    ) -> JsResult<Option<Self>> {
         let mut out = Self::EMPTY;
         if Self::from_js_with_encoding_maybe_async_into(
             &mut out,
@@ -588,7 +591,7 @@ impl StringOrBuffer {
         value: JSValue,
         encoding_value: JSValue,
         string_objects: StringObjects,
-    ) -> JsResult<Option<StringOrBuffer>> {
+    ) -> JsResult<Option<Self>> {
         let encoding: Encoding = 'brk: {
             if !encoding_value.is_cell() {
                 break 'brk Encoding::Utf8;
@@ -777,38 +780,7 @@ impl Encoding {
             input.len(),
             max_size,
         );
-        // Stable Rust forbids const-generic arithmetic in array lengths, so
-        // we heap-allocate.
         match self {
-            Self::Base64 => {
-                let encoded_len = bun_core::base64::encode_len(input);
-                let (encoded, bytes) = bun_core::String::create_uninitialized_latin1(encoded_len);
-                if encoded.is_dead() {
-                    return encoded.into_js(global_object);
-                }
-                let n = bun_core::base64::encode(bytes, input);
-                debug_assert_eq!(n, encoded_len);
-                encoded.into_js(global_object)
-            }
-            Self::Base64url => {
-                let buf = bun_base64::simdutf_encode_url_safe_alloc(input);
-                Ok(jsc::zig_string::ZigString::init(&buf).to_js(global_object))
-            }
-            Self::Hex => {
-                // The byte-by-byte `write!` formatting machinery is pathologically
-                // slow in debug builds, so encode via LUT directly into the
-                // destination JS string buffer.
-                let (encoded, bytes) =
-                    bun_core::String::create_uninitialized_latin1(input.len() * 2);
-                if encoded.is_dead() {
-                    // WTF OOM — match webcore::encoding pattern; transfer the
-                    // Dead string (becomes JS empty) rather than indexing a
-                    // zero-length `bytes`.
-                    return encoded.into_js(global_object);
-                }
-                bun_core::fmt::bytes_to_hex_lower(input, bytes);
-                encoded.into_js(global_object)
-            }
             Self::Buffer => jsc::ArrayBuffer::create_buffer(global_object, input),
             enc => crate::webcore::encoding::to_string(input, global_object, enc),
         }
@@ -875,7 +847,10 @@ pub trait PathLikeExt {
     ) -> Result<&'a OSPathSliceZ, NameTooLong>
     where
         Self: Sized;
-    fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Option<PathLike>>
+    fn from_js(
+        ctx: &JSGlobalObject,
+        arguments: &mut ArgumentsSlice,
+    ) -> JsResult<Option<PathLike<'static>>>
     where
         Self: Sized;
 
@@ -888,7 +863,7 @@ pub trait PathLikeExt {
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
         name: &str,
-    ) -> JsResult<PathLike>
+    ) -> JsResult<PathLike<'static>>
     where
         Self: Sized,
     {
@@ -900,14 +875,15 @@ pub trait PathLikeExt {
     fn from_js_with_allocator(
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
-    ) -> JsResult<Option<PathLike>>
+    ) -> JsResult<Option<PathLike<'static>>>
     where
         Self: Sized;
+    /// Throws ENAMETOOLONG too; [`Self::from_js`] defers it for async bindings instead.
     fn from_bun_string(
         global: &JSGlobalObject,
         str: bun_core::String,
         will_be_async: bool,
-    ) -> JsResult<PathLike>
+    ) -> JsResult<PathLike<'static>>
     where
         Self: Sized;
 }
@@ -917,12 +893,12 @@ pub(crate) trait PathOrFdExt {
     fn from_js(
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
-    ) -> JsResult<Option<PathOrFileDescriptor>>
+    ) -> JsResult<Option<PathOrFileDescriptor<'static>>>
     where
         Self: Sized;
 }
 
-impl PathLikeExt for PathLike {
+impl PathLikeExt for PathLike<'_> {
     // Const-generics can't change return mutability, so this always returns
     // `&ZStr`. A future force=true caller that needs `&mut ZStr` will need a
     // separate method.
@@ -1133,19 +1109,22 @@ impl PathLikeExt for PathLike {
         }
     }
 
-    fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Option<PathLike>> {
+    fn from_js(
+        ctx: &JSGlobalObject,
+        arguments: &mut ArgumentsSlice,
+    ) -> JsResult<Option<PathLike<'static>>> {
         Self::from_js_with_allocator(ctx, arguments)
     }
 
     fn from_js_with_allocator(
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
-    ) -> JsResult<Option<PathLike>> {
+    ) -> JsResult<Option<PathLike<'static>>> {
         let Some(arg) = arguments.next() else {
             return Ok(None);
         };
         use jsc::JSType;
-        match arg.js_type() {
+        let path = match arg.js_type() {
             JSType::Uint8Array | JSType::DataView => {
                 let mut buffer = Buffer::from_js_pinned(ctx, arg)
                     .unwrap_or_else(|| Buffer::from_typed_array(ctx, arg));
@@ -1160,7 +1139,7 @@ impl PathLikeExt for PathLike {
                 }
 
                 arguments.protect_eat();
-                Ok(Some(Self::Buffer(buffer)))
+                PathLike::Buffer(buffer)
             }
 
             JSType::ArrayBuffer => {
@@ -1177,17 +1156,13 @@ impl PathLikeExt for PathLike {
                 }
 
                 arguments.protect_eat();
-                Ok(Some(Self::Buffer(buffer)))
+                PathLike::Buffer(buffer)
             }
 
             JSType::String | JSType::StringObject | JSType::DerivedStringObject => {
                 let str = arg.to_bun_string(ctx)?;
                 arguments.eat();
-                Ok(Some(Self::from_bun_string(
-                    ctx,
-                    str,
-                    arguments.will_be_async,
-                )?))
+                path_like_from_string(ctx, str, arguments.will_be_async)?
             }
             _ => {
                 if let Some(domurl) = jsc::DOMURL::cast(arg) {
@@ -1228,59 +1203,68 @@ impl PathLikeExt for PathLike {
                             .throw());
                     }
                     arguments.eat();
-
-                    return Ok(Some(Self::from_bun_string(
-                        ctx,
-                        str,
-                        arguments.will_be_async,
-                    )?));
+                    path_like_from_string(ctx, str, arguments.will_be_async)?
+                } else {
+                    return Ok(None);
                 }
-
-                Ok(None)
             }
-        }
+        };
+
+        Valid::path_length(path, ctx, arguments).map(Some)
     }
 
     fn from_bun_string(
         global: &JSGlobalObject,
         str: bun_core::String,
         will_be_async: bool,
-    ) -> JsResult<PathLike> {
-        if will_be_async {
-            let mut sliced = str.into_thread_safe_slice();
-
-            // Validate the UTF-8 byte length after conversion, since the path
-            // will be stored in a fixed-size PathBuffer.
-            Valid::path_string_length(sliced.slice().len(), global)?;
-            Valid::path_null_bytes(sliced.slice(), global)?;
-
-            sliced.report_extra_memory(global.vm());
-
-            if sliced.underlying.is_empty() {
-                return Ok(Self::EncodedSlice(core::mem::take(&mut sliced.utf8)));
-            }
-            Ok(Self::ThreadsafeString(sliced))
-        } else {
-            let mut sliced = str.into_slice();
-
-            // Validate the UTF-8 byte length after conversion, since the path
-            // will be stored in a fixed-size PathBuffer.
-            Valid::path_string_length(sliced.slice().len(), global)?;
-            Valid::path_null_bytes(sliced.slice(), global)?;
-
-            // Costs nothing to keep both around.
-            if sliced.is_wtf_allocated() {
-                return Ok(Self::SliceWithUnderlyingString(sliced));
-            }
-
-            sliced.report_extra_memory(global.vm());
-
-            // It is expensive to keep both around. `utf8` here is an Owned
-            // transcoded copy (UTF-16 or non-ASCII Latin-1 input), so the
-            // returned EncodedSlice is independent of `underlying`.
-            Ok(Self::EncodedSlice(core::mem::take(&mut sliced.utf8)))
+    ) -> JsResult<PathLike<'static>> {
+        let path = path_like_from_string(global, str, will_be_async)?;
+        match Valid::path_too_long(path.slice()) {
+            Some(err) => Err(global.throw_value(err.to_error_instance(global))),
+            None => Ok(path),
         }
     }
+}
+
+/// `str` as a `PathLike`, NUL-checked; the caller checks the length ([`Valid::path_length`]).
+fn path_like_from_string(
+    global: &JSGlobalObject,
+    str: bun_core::String,
+    will_be_async: bool,
+) -> JsResult<PathLike<'static>> {
+    let utf8 = if will_be_async {
+        str.into_utf8_with_string_thread_safe()
+    } else {
+        str.into_utf8_with_string()
+    };
+
+    Valid::path_null_bytes(utf8.slice(), global)?;
+
+    let shared = if will_be_async {
+        PathLike::ThreadsafeString
+    } else {
+        PathLike::String
+    };
+    Ok(shared_or_utf8(global, utf8, shared, PathLike::Utf8))
+}
+
+/// `shared(utf8)` when the UTF-8 bytes are read out of `utf8`'s WTF string
+/// (costs nothing to keep both); otherwise only the transcoded copy, reported
+/// to the GC, as `owned(..)`.
+fn shared_or_utf8<T>(
+    global: &JSGlobalObject,
+    utf8: Utf8WithString,
+    shared: impl FnOnce(Utf8WithString) -> T,
+    owned: impl FnOnce(Utf8Bytes<'static>) -> T,
+) -> T {
+    if utf8.is_shared() {
+        return shared(utf8);
+    }
+    let utf8 = utf8.into_utf8();
+    if let Utf8Bytes::Owned(transcoded) = &utf8 {
+        global.vm().report_extra_memory(transcoded.len());
+    }
+    owned(utf8)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1288,39 +1272,45 @@ impl PathLikeExt for PathLike {
 pub struct Valid;
 
 impl Valid {
-    pub(crate) fn path_string_length(len: usize, ctx: &JSGlobalObject) -> JsResult<()> {
-        match len {
-            // Exclusive: `PathBuffer` is `[u8; MAX_PATH_BYTES]` and
-            // `slice_z_with_force_copy` needs `len + NUL ≤ MAX_PATH_BYTES`.
-            0..MAX_PATH_BYTES => Ok(()),
-            _ => {
-                let mut system_error =
-                    bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
-                        .to_system_error();
-                system_error.syscall = bun_core::String::DEAD;
-                Err(ctx.throw_value(system_error.to_error_instance(ctx)))
-            }
+    /// The ENAMETOOLONG the syscall would return: no `PathBuffer` fits this path plus its NUL.
+    pub(crate) fn path_too_long(path: &[u8]) -> Option<bun_sys::SystemError> {
+        if path.len() < MAX_PATH_BYTES {
+            return None;
         }
+        let mut system_error =
+            bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
+                .with_path(path)
+                .to_system_error();
+        system_error.syscall = bun_core::String::DEAD;
+        Some(system_error)
+    }
+
+    /// Sync bindings throw; async ones get it as `arguments.deferred_error` and a placeholder path.
+    pub(crate) fn path_length(
+        path: PathLike<'static>,
+        ctx: &JSGlobalObject,
+        arguments: &mut ArgumentsSlice,
+    ) -> JsResult<PathLike<'static>> {
+        let Some(err) = Self::path_too_long(path.slice()) else {
+            return Ok(path);
+        };
+        drop(path);
+        if !arguments.will_be_async {
+            return Err(ctx.throw_value(err.to_error_instance(ctx)));
+        }
+        if arguments.deferred_error.is_none() {
+            arguments.deferred_error = Some(Box::new(err));
+        }
+        Ok(PathLike::default())
     }
 
     pub(crate) fn path_buffer(buffer: &Buffer, ctx: &JSGlobalObject) -> JsResult<()> {
-        let slice = buffer.slice();
-        match slice.len() {
-            0 => {
-                Err(ctx
-                    .throw_invalid_arguments(format_args!("Invalid path buffer: can't be empty")))
-            }
-            // Exclusive: `PathBuffer` is `[u8; MAX_PATH_BYTES]` and
-            // `slice_z_with_force_copy` needs `len + NUL ≤ MAX_PATH_BYTES`.
-            1..MAX_PATH_BYTES => Ok(()),
-            _ => {
-                let mut system_error =
-                    bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
-                        .to_system_error();
-                system_error.syscall = bun_core::String::DEAD;
-                Err(ctx.throw_value(system_error.to_error_instance(ctx)))
-            }
+        if buffer.slice().is_empty() {
+            return Err(
+                ctx.throw_invalid_arguments(format_args!("Invalid path buffer: can't be empty"))
+            );
         }
+        Ok(())
     }
 
     pub(crate) fn path_null_bytes(slice: &[u8], global: &JSGlobalObject) -> JsResult<()> {
@@ -1529,28 +1519,22 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
 // `crate::node::types::PathOrFileDescriptorSerializeTag` paths keep resolving.
 pub use bun_jsc::node_path::PathOrFileDescriptorSerializeTag;
 
-// The path-owning variants have
-// `Drop`, so an explicit `dupe()` is provided for
-// callers (Blob, Store::File) that need a fresh copy. Ref-counting variants are
-// bumped where the underlying type supports it; otherwise we bitwise-copy
-// and leave proper ref-counting to a later pass.
-
-impl PathOrFdExt for PathOrFileDescriptor {
+impl PathOrFdExt for PathOrFileDescriptor<'_> {
     fn from_js(
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
-    ) -> JsResult<Option<PathOrFileDescriptor>> {
+    ) -> JsResult<Option<PathOrFileDescriptor<'static>>> {
         let Some(first) = arguments.next() else {
             return Ok(None);
         };
 
         if let Some(fd) = Fd::from_js_validated(first, ctx)? {
             arguments.eat();
-            return Ok(Some(Self::Fd(fd)));
+            return Ok(Some(PathOrFileDescriptor::Fd(fd)));
         }
 
         match PathLike::from_js_with_allocator(ctx, arguments)? {
-            Some(path) => Ok(Some(Self::Path(path))),
+            Some(path) => Ok(Some(PathOrFileDescriptor::Path(path))),
             None => Ok(None),
         }
     }
@@ -1805,7 +1789,7 @@ impl Dirent {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub enum PathOrBlob {
-    Path(PathOrFileDescriptor),
+    Path(PathOrFileDescriptor<'static>),
     Blob(Box<Blob>),
 }
 

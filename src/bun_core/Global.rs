@@ -729,7 +729,18 @@ pub fn exit(code: u32) -> ! {
     }
     #[cfg(windows)]
     {
+        // Defined in src/jsc/bindings/c-bindings.cpp. Holds WTF's thread-suspension
+        // lock so no other thread (a Wasm compiler thread's instruction-cache
+        // barrier, the GC stack scan, the libpas scavenger) has this one suspended
+        // when ExitProcess kills them: a thread killed between its SuspendThread and
+        // ResumeThread would leave us suspended inside NtTerminateProcess and the
+        // process would never finish exiting. Takes no args and has no
+        // preconditions, so `safe fn`.
+        unsafe extern "C" {
+            safe fn Bun__lockThreadSuspensionForExit();
+        }
         Bun__onExit();
+        Bun__lockThreadSuspensionForExit();
         // `ExitProcess` is `safe fn` (no preconditions; never returns).
         crate::windows_sys::kernel32::ExitProcess(code)
     }

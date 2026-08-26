@@ -17,7 +17,8 @@ use bun_jsc::AbortSignal;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    EventLoopHandle, JSGlobalObject, JSValue, JsResult, StringJsc as _, ThreadIsolated, Unprotect,
+    ArrayBuffer, EventLoopHandle, JSGlobalObject, JSValue, JsResult, PinnedArrayBuffer,
+    StringJsc as _, ThreadIsolated,
 };
 use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
 use bun_sys::FdExt as _;
@@ -638,9 +639,8 @@ mod _async_tasks {
     pub type UVFSRequest<R, A, const F: NodeFSFunctionEnum> = AsyncFSTask<R, A, F>;
 
     #[cfg(windows)]
-    pub struct UVFSRequest<R, A: Unprotect, const F: NodeFSFunctionEnum> {
+    pub struct UVFSRequest<R, A, const F: NodeFSFunctionEnum> {
         pub(crate) promise: JSPromiseStrong,
-        /// Wrapped in [`ThreadIsolated`] so the paired `unprotect()` runs on drop.
         pub args: ThreadIsolated<A>,
         pub(crate) global_object: bun_ptr::BackRef<JSGlobalObject>,
         pub(crate) req: uv::fs_t,
@@ -766,7 +766,7 @@ mod _async_tasks {
                     let buf = &buf[..buf.len().min(args.length as usize)];
                     let bufs = [uv::uv_buf_t::init(buf)];
                     // SAFETY: libuv copies the iovec descriptor before return; the
-                    // backing Buffer is JS-protected via `make_thread_isolated`.
+                    // backing Buffer is pinned and rooted (`ReadBuffer::Pinned`).
                     let rc = unsafe {
                         uv::uv_fs_read(
                             loop_,
@@ -1000,7 +1000,7 @@ mod _async_tasks {
     /// any borrowed JS-backed slices so the work-pool callback may run off-thread).
     /// The trait methods are **required** so missing impls are a compile error rather
     /// than a silent UAF/leak.
-    pub trait FsArgument: Sized + Unprotect {
+    pub trait FsArgument: Sized {
         const HAVE_ABORT_SIGNAL: bool = false;
         /// `Arguments.fromJS(ctx, &slice)` — parse this argument set from a JS
         /// call frame. Every `args::*` struct already exposes an inherent
@@ -1008,10 +1008,8 @@ mod _async_tasks {
         /// `node_fs_binding.rs` can call it without per-type macro arms.
         fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self>;
         fn make_thread_isolated(&mut self);
-        /// Consume `self`, protect any JS-backed buffers, and return a guard that
-        /// unprotects on drop —
-        /// string/slice ownership is handled by each field's `Drop` (PathLike,
-        /// StringOrBuffer, Vec); only the JS-side `unprotect()` needs the guard.
+        /// Consume `self`, thread-isolate its strings, and mark it sendable; buffers
+        /// were already pinned and rooted by `from_js` under `will_be_async`.
         #[inline]
         fn into_thread_isolated(mut self) -> ThreadIsolated<Self> {
             self.make_thread_isolated();
@@ -1024,22 +1022,11 @@ mod _async_tasks {
 
     /// Forward [`FsArgument`] to the inherent `from_js` / `make_thread_isolated`
     /// methods each `args::*` struct already defines.
-    /// [`Unprotect`] is implemented per-type alongside.
     macro_rules! impl_fs_argument {
     ( $( $ty:ty ),+ $(,)? ) => {
         $( impl FsArgument for $ty {
             #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { <$ty>::from_js(ctx, arguments) }
             #[inline] fn make_thread_isolated(&mut self) { <$ty>::make_thread_isolated(self) }
-        } )+
-    };
-    // Fd-only types — `make_thread_isolated` is a no-op (these hold only `FD`/scalars).
-    ( @fd $( $ty:ty ),+ $(,)? ) => {
-        $( impl FsArgument for $ty {
-            #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { <$ty>::from_js(ctx, arguments) }
-            #[inline] fn make_thread_isolated(&mut self) { <$ty>::make_thread_isolated(self) }
-        }
-        impl Unprotect for $ty {
-            #[inline] fn unprotect(&mut self) {}
         } )+
     };
 }
@@ -1070,10 +1057,13 @@ mod _async_tasks {
         args::Access<'static>,
         args::CopyFile<'static>,
         args::Cp<'static>,
-    );
-    impl_fs_argument!(@fd
-        args::Fchown, args::FChmod, args::Fstat, args::Close, args::Futimes,
-        args::FdataSync, args::Fsync,
+        args::Fchown,
+        args::FChmod,
+        args::Fstat,
+        args::Close,
+        args::Futimes,
+        args::FdataSync,
+        args::Fsync,
     );
     // `ReadFile`/`WriteFile` carry an `AbortSignal` field — opt them in so the
     // `const _ = assert!(…::HAVE_ABORT_SIGNAL)` invariants in `async_` hold and
@@ -1227,14 +1217,14 @@ mod _async_tasks {
     }
 
     /// One `fs.promises.*` operation on the work pool. The arguments' JS-backed
-    /// buffers are protected (`ThreadIsolated`) and read under the job's ticket.
-    pub struct AsyncFSTask<R, A: Unprotect, const F: NodeFSFunctionEnum> {
+    /// buffers are pinned and rooted (`ThreadIsolated`) and read under the job's ticket.
+    pub struct AsyncFSTask<R, A, const F: NodeFSFunctionEnum> {
         pub args: ThreadIsolated<A>,
         pub(crate) result: Maybe<R>,
     }
     // SAFETY: results are plain data / owned buffers / WTF strings built off
     // thread for hand-off (`ret::*`); `ThreadIsolated<A>` is Send by its contract.
-    unsafe impl<R: FsReturn, A: Unprotect, const F: NodeFSFunctionEnum> Send for AsyncFSTask<R, A, F> {}
+    unsafe impl<R: FsReturn, A, const F: NodeFSFunctionEnum> Send for AsyncFSTask<R, A, F> {}
 
     /// The JS-thread half of an async fs operation.
     #[derive(bun_jsc::JsAffine)]
@@ -1356,7 +1346,6 @@ mod _async_tasks {
 
     pub struct NewAsyncCpTask<const IS_SHELL: bool> {
         pub(crate) promise: JSPromiseStrong,
-        /// Wrapped in [`ThreadIsolated`] so the paired `unprotect()` runs on drop.
         pub args: ThreadIsolated<args::Cp<'static>>,
         /// Owning-thread uses (global object, keep-alive context).
         pub(crate) evtloop: EventLoopHandle,
@@ -1768,8 +1757,6 @@ mod _async_tasks {
                 let ctx = event_loop_handle_to_ctx(task.evtloop);
                 task.r#ref.unref(ctx);
             }
-            // `Drop for ThreadIsolated<args::Cp>` releases the `protect()` taken by
-            // `make_thread_isolated()` when `src`/`dest` are Buffers, so nothing leaks here.
         }
 
         /// Directory scanning + clonefile will block this thread, then each individual file copy (what the sync version
@@ -2607,19 +2594,12 @@ pub use _async_tasks::{
 pub mod args {
     use super::*;
 
-    /// Derive the `Unprotect` impl + inherent `make_thread_isolated` for an `args::*`
-    /// struct whose only JS-backed state is one-or-more path-like fields. Each
-    /// listed `$field` must expose `.unprotect()` and `.make_thread_isolated()` (i.e.
-    /// `PathLike` or `PathOrFileDescriptor`); the expansion is byte-identical to
-    /// the hand-written boilerplate it replaces, so `impl_fs_argument!`'s
-    /// `<$ty>::make_thread_isolated(self)` forwarder and `ThreadIsolated<T>`'s drop-guard
-    /// keep working unchanged. Structs with non-path JS state (`Read`, `Write`,
+    /// Derive the inherent `make_thread_isolated` for an `args::*` struct whose only
+    /// JS-backed state is one-or-more path-like fields (`PathLike` or
+    /// `PathOrFileDescriptor`). Structs with non-path JS state (`Read`, `Write`,
     /// `Writev`, `Readv`, `Exists`, `ReadFile`, `WriteFile`) keep bespoke impls.
     macro_rules! fs_args_path_forwarders {
         ($ty:ident; $($field:ident),+ $(,)?) => {
-            impl Unprotect for $ty<'static> {
-                #[inline] fn unprotect(&mut self) { $( self.$field.unprotect(); )+ }
-            }
             impl $ty<'static> {
                 pub fn make_thread_isolated(&mut self) { $( self.$field.make_thread_isolated(); )+ }
             }
@@ -2690,19 +2670,8 @@ pub mod args {
         pub(crate) buffers: VectorArrayBuffer,
         pub(crate) position: Option<u64>, // u52
     }
-    impl Unprotect for FdVectorIo {
-        #[inline]
-        fn unprotect(&mut self) {
-            self.buffers.release();
-            self.buffers.value.unprotect();
-            // `self.buffers.buffers`: `Vec` frees on drop.
-        }
-    }
     impl FdVectorIo {
-        pub(crate) fn make_thread_isolated(&mut self) {
-            self.buffers.value.protect();
-            self.buffers.buffers = self.buffers.buffers.as_slice().to_vec();
-        }
+        pub(crate) fn make_thread_isolated(&self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let fd = FD::from_js_required(ctx, arguments)?;
             let buffers = VectorArrayBuffer::from_js(
@@ -2731,10 +2700,6 @@ pub mod args {
     pub struct FTruncate {
         pub(crate) fd: FD,
         pub(crate) len: Option<BlobSizeType>,
-    }
-    impl Unprotect for FTruncate {
-        #[inline]
-        fn unprotect(&mut self) {}
     }
     impl FTruncate {
         pub(crate) fn make_thread_isolated(&self) {}
@@ -3213,12 +3178,6 @@ pub mod args {
             &self.0
         }
     }
-    impl Unprotect for Rm<'static> {
-        #[inline]
-        fn unprotect(&mut self) {
-            self.0.unprotect();
-        }
-    }
     impl Rm<'static> {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             Ok(Rm(RmDir::from_js_impl(ctx, arguments, true)?))
@@ -3576,12 +3535,6 @@ pub mod args {
             }
         }
     }
-    impl Unprotect for Write<'static> {
-        #[inline]
-        fn unprotect(&mut self) {
-            self.buffer.unprotect();
-        }
-    }
     impl Write<'static> {
         pub(crate) fn make_thread_isolated(&mut self) {
             self.buffer.make_thread_isolated();
@@ -3636,7 +3589,7 @@ pub mod args {
                         arguments.eat();
                         // Node bounds `offset` by the buffer whether or not a
                         // `length` follows (`length` defaults to the rest).
-                        let buf_len = args.buffer.buffer().map(|b| b.slice().len()).unwrap_or(0);
+                        let buf_len = args.buffer.slice().len();
                         let max_offset = buf_len as i64;
                         if args.offset as i64 > max_offset {
                             return Err(ctx.throw_range_error(
@@ -3713,44 +3666,37 @@ pub mod args {
                 }
             }
             if arguments.will_be_async && matches!(args.buffer, StringOrBuffer::Buffer(_)) {
-                if let Some(pinned) = bv.as_pinned_arraybuffer(ctx) {
-                    args.buffer = StringOrBuffer::Buffer(Buffer {
-                        buffer: pinned,
-                        owns_buffer: false,
-                        pinned: true,
-                        protected: false,
-                    });
-                }
+                args.buffer = StringOrBuffer::buffer_from_js(ctx, bv, Flavor::Async)?;
             }
             Ok(args)
         }
     }
 
+    /// `fs.read`'s target: borrowed for a sync call, pinned and rooted for an async one.
+    pub(crate) enum ReadBuffer {
+        Borrowed(ArrayBuffer),
+        Pinned(PinnedArrayBuffer),
+    }
+    impl core::ops::Deref for ReadBuffer {
+        type Target = ArrayBuffer;
+        #[inline]
+        fn deref(&self) -> &ArrayBuffer {
+            match self {
+                Self::Borrowed(buffer) => buffer,
+                Self::Pinned(buffer) => buffer,
+            }
+        }
+    }
+
     pub struct Read {
         pub(crate) fd: FD,
-        pub(crate) buffer: Buffer,
+        pub(crate) buffer: ReadBuffer,
         pub offset: u64,
         pub(crate) length: u64,
         pub(crate) position: Option<ReadPosition>,
-        /// True when `from_js` pinned `buffer` for the async path; balanced in
-        /// `unprotect()` (the JS-thread release hook).
-        pub(crate) pinned: bool,
     }
     impl Read {
-        pub(crate) fn make_thread_isolated(&mut self) {
-            self.buffer.protect();
-        }
-    }
-    impl Unprotect for Read {
-        #[inline]
-        fn unprotect(&mut self) {
-            if self.pinned {
-                self.buffer.buffer.unpin();
-            }
-            self.buffer.unprotect();
-        }
-    }
-    impl Read {
+        pub(crate) fn make_thread_isolated(&self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Read> {
             // About half of the normalization has already been done. The second half is done in the native code.
             // fs_binding.read(fd, buffer, offset, length, position)
@@ -3788,7 +3734,7 @@ pub mod args {
             } else {
                 0.0
             };
-            let buffer = Buffer::from_js(ctx, buffer_value).ok_or_else(|| {
+            let buffer = buffer_value.as_array_buffer(ctx).ok_or_else(|| {
                 ctx.throw_invalid_argument_type_value(b"buffer", b"TypedArray", buffer_value)
             })?;
 
@@ -3800,11 +3746,10 @@ pub mod args {
             if length_float == 0.0 {
                 return Ok(Read {
                     fd,
-                    buffer,
+                    buffer: ReadBuffer::Borrowed(buffer),
                     length: 0,
                     offset: 0,
                     position: None,
-                    pinned: false,
                 });
             }
 
@@ -3914,21 +3859,13 @@ pub mod args {
                 None
             };
 
-            let (buffer, pinned) = if arguments.will_be_async {
-                match buffer_value.as_pinned_arraybuffer(ctx) {
-                    Some(pinned) => (
-                        Buffer {
-                            buffer: pinned,
-                            owns_buffer: false,
-                            pinned: true,
-                            protected: false,
-                        },
-                        true,
-                    ),
-                    None => (buffer, false),
+            let buffer = if arguments.will_be_async {
+                match PinnedArrayBuffer::root(ctx, buffer_value) {
+                    Some(buffer) => ReadBuffer::Pinned(buffer),
+                    None => return Err(ctx.throw_out_of_memory()),
                 }
             } else {
-                (buffer, false)
+                ReadBuffer::Borrowed(buffer)
             };
 
             Ok(Read {
@@ -3937,7 +3874,6 @@ pub mod args {
                 offset,
                 length,
                 position,
-                pinned,
             })
         }
     }
@@ -3975,13 +3911,6 @@ pub mod args {
             if let Some(signal) = self.signal.take() {
                 signal.pending_activity_unref();
             }
-        }
-    }
-    impl Unprotect for ReadFile<'static> {
-        #[inline]
-        fn unprotect(&mut self) {
-            self.path.unprotect();
-            // Signal unref handled by `Drop` (idempotent via `.take()`).
         }
     }
     impl ReadFile<'static> {
@@ -4062,14 +3991,6 @@ pub mod args {
             if let Some(signal) = self.signal.take() {
                 signal.pending_activity_unref();
             }
-        }
-    }
-    impl Unprotect for WriteFile<'static> {
-        #[inline]
-        fn unprotect(&mut self) {
-            self.file.unprotect();
-            self.data.unprotect();
-            // Signal unref handled by `Drop` (idempotent via `.take()`).
         }
     }
     impl WriteFile<'static> {
@@ -4175,23 +4096,9 @@ pub mod args {
     /// default `flag` to `a` (Node: `if (!options.flag) options.flag = 'a'`)
     /// while still honoring an explicit `flag` the caller passed.
     pub struct AppendFile<'a>(pub(crate) WriteFile<'a>);
-    impl Unprotect for AppendFile<'static> {
-        #[inline]
-        fn unprotect(&mut self) {
-            self.0.unprotect();
-        }
-    }
 
     pub struct Exists<'a> {
         pub path: Option<PathLike<'a>>,
-    }
-    impl Unprotect for Exists<'static> {
-        #[inline]
-        fn unprotect(&mut self) {
-            if let Some(p) = &mut self.path {
-                p.unprotect();
-            }
-        }
     }
     impl Exists<'static> {
         pub(crate) fn make_thread_isolated(&mut self) {
@@ -5921,7 +5828,7 @@ impl NodeFS {
         // `ArrayBuffer` is a `Copy` descriptor over JSC-owned heap bytes; copy the
         // descriptor locally and use the existing safe `byte_slice_mut` accessor
         // instead of rebuilding a `&mut [u8]` from a `&[u8]` borrow by hand.
-        let mut view = args.buffer.buffer;
+        let mut view = *args.buffer;
         let mut buf = view.byte_slice_mut();
         let off = (args.offset as usize).min(buf.len());
         buf = &mut buf[off..];
@@ -5937,7 +5844,7 @@ impl NodeFS {
 
     fn pread_inner(&mut self, args: &args::Read) -> Maybe<ret::Read> {
         // See `read_inner` — copy the `ArrayBuffer` descriptor and use its safe accessor.
-        let mut view = args.buffer.buffer;
+        let mut view = *args.buffer;
         let mut buf = view.byte_slice_mut();
         let off = (args.offset as usize).min(buf.len());
         buf = &mut buf[off..];
@@ -7052,8 +6959,6 @@ impl NodeFS {
                                     bun_jsc::MarkedArrayBuffer {
                                         buffer,
                                         owns_buffer: false,
-                                        pinned: false,
-                                        protected: false,
                                     },
                                 )),
                                 // This case shouldn't really happen.

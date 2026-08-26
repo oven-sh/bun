@@ -671,6 +671,74 @@ impl ArrayBufferStrong {
 // `impl Drop for ArrayBufferStrong` is needed.
 
 // ──────────────────────────────────────────────────────────────────────────
+// PinnedArrayBuffer
+// ──────────────────────────────────────────────────────────────────────────
+
+/// A JS ArrayBuffer/view whose backing store is pinned (cannot be detached or
+/// moved) for as long as this value lives; [`root`](Self::root) additionally
+/// GC-roots the cell. `Drop` releases what was taken. Construct and drop on
+/// the JS thread.
+pub struct PinnedArrayBuffer {
+    buffer: ArrayBuffer,
+    rooted: bool,
+}
+
+impl PinnedArrayBuffer {
+    /// Pin only — for a borrow the caller's own argument/stack keeps alive.
+    /// `None` if `value` is not an ArrayBuffer/view or its buffer could not be
+    /// materialized (see [`JSValue::as_pinned_arraybuffer`]); an already
+    /// detached view yields an empty buffer.
+    pub fn pin(global: &JSGlobalObject, value: JSValue) -> Option<Self> {
+        let buffer = match value.as_pinned_arraybuffer(global) {
+            Some(buffer) => buffer,
+            // A detached view has nothing to pin and reads as empty.
+            None => value
+                .as_array_buffer(global)
+                .filter(ArrayBuffer::is_detached)?,
+        };
+        Some(Self {
+            buffer,
+            rooted: false,
+        })
+    }
+
+    /// [`pin`](Self::pin) and GC-root — for a borrow that outlives the call (a work-pool job).
+    pub fn root(global: &JSGlobalObject, value: JSValue) -> Option<Self> {
+        let mut this = Self::pin(global, value)?;
+        this.buffer.value.protect();
+        this.rooted = true;
+        Some(this)
+    }
+}
+
+impl core::ops::Deref for PinnedArrayBuffer {
+    type Target = ArrayBuffer;
+    #[inline]
+    fn deref(&self) -> &ArrayBuffer {
+        &self.buffer
+    }
+}
+
+impl core::ops::DerefMut for PinnedArrayBuffer {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut ArrayBuffer {
+        &mut self.buffer
+    }
+}
+
+impl Drop for PinnedArrayBuffer {
+    fn drop(&mut self) {
+        self.buffer.unpin();
+        if self.rooted {
+            self.buffer.value.unprotect();
+        }
+    }
+}
+
+// SAFETY: a pin and GC protection on a heap cell; used and dropped on the JS thread.
+unsafe impl crate::job::JsAffine for PinnedArrayBuffer {}
+
+// ──────────────────────────────────────────────────────────────────────────
 // BinaryType
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -829,9 +897,6 @@ impl TypedArrayType {
 pub struct MarkedArrayBuffer {
     pub buffer: ArrayBuffer,
     pub owns_buffer: bool,
-    pub pinned: bool,
-    /// Set while the holder owns one `protect()` on `buffer.value` ([`MarkedArrayBuffer::protect`]).
-    pub protected: bool,
 }
 
 /// Bytes produced off-thread (`from_bytes`/`from_string`) are owned until they
@@ -847,8 +912,6 @@ impl MarkedArrayBuffer {
     pub fn from_typed_array(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
             owns_buffer: false,
-            pinned: false,
-            protected: false,
             buffer: ArrayBuffer::from_typed_array(ctx, value),
         }
     }
@@ -856,8 +919,6 @@ impl MarkedArrayBuffer {
     pub fn from_array_buffer(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
             owns_buffer: false,
-            pinned: false,
-            protected: false,
             buffer: ArrayBuffer::from_array_buffer(ctx, value),
         }
     }
@@ -879,18 +940,6 @@ impl MarkedArrayBuffer {
         Some(MarkedArrayBuffer {
             buffer: array_buffer,
             owns_buffer: false,
-            pinned: false,
-            protected: false,
-        })
-    }
-
-    pub fn from_js_pinned(global: &JSGlobalObject, value: JSValue) -> Option<MarkedArrayBuffer> {
-        let buffer = value.as_pinned_arraybuffer(global)?;
-        Some(MarkedArrayBuffer {
-            buffer,
-            owns_buffer: false,
-            pinned: true,
-            protected: false,
         })
     }
 
@@ -900,37 +949,17 @@ impl MarkedArrayBuffer {
             // An empty boxed slice has no backing allocation (dangling ptr):
             // nothing to own, so `destroy()` must not free it.
             owns_buffer: !bytes.is_empty(),
-            pinned: false,
-            protected: false,
         }
     }
 
     pub const EMPTY: MarkedArrayBuffer = MarkedArrayBuffer {
         owns_buffer: false,
-        pinned: false,
-        protected: false,
         buffer: ArrayBuffer::EMPTY,
     };
 
     #[inline]
     pub fn slice(&self) -> &[u8] {
         self.buffer.byte_slice()
-    }
-
-    /// Takes the one GC root on `buffer.value` this holder may own (JS thread); idempotent.
-    pub fn protect(&mut self) {
-        if !self.protected {
-            self.protected = true;
-            self.buffer.value.protect();
-        }
-    }
-
-    /// Releases the root taken by [`protect`](Self::protect), if still held (JS thread).
-    pub fn unprotect(&mut self) {
-        if self.protected {
-            self.protected = false;
-            self.buffer.value.unprotect();
-        }
     }
 
     /// Releases the owned byte buffer if this `MarkedArrayBuffer` was created with an

@@ -13,6 +13,7 @@ use crate::node::util::validators;
 use crate::webcore::{Blob, Request, Response};
 
 pub use jsc::MarkedArrayBuffer as Buffer;
+use jsc::PinnedArrayBuffer;
 
 // `jsc.ArgumentsSlice` — cursor over CallFrame args.
 pub use jsc::ArgumentsSlice;
@@ -62,7 +63,7 @@ pub use bun_sys::PlatformIoVec;
 /// path per flavor (`read_file`'s scratch buffer, recursive `readdir`), and
 /// the arguments parsed for an async call must outlive it off the JS thread:
 /// strings are copied or re-referenced thread-safely, buffers are pinned and
-/// `protect()`ed until the owner calls [`bun_jsc::Unprotect::unprotect`].
+/// GC-rooted until the parsed value drops ([`PinnedArrayBuffer`]).
 #[derive(Copy, Clone, PartialEq, Eq, core::marker::ConstParamTy)]
 pub enum Flavor {
     Sync,
@@ -274,7 +275,10 @@ pub enum StringOrBuffer<'a> {
     String(Utf8WithString),
     ThreadIsolatedString(Utf8WithString),
     Utf8(Utf8Bytes<'a>),
+    /// A JS buffer borrowed for a synchronous call, or owned result bytes not yet handed to JS.
     Buffer(Buffer),
+    /// A JS buffer parsed for an async call: pinned and GC-rooted until this drops.
+    PinnedBuffer(PinnedArrayBuffer),
 }
 
 impl Default for StringOrBuffer<'_> {
@@ -302,35 +306,7 @@ impl<'a> StringOrBuffer<'a> {
             Self::ThreadIsolatedString(str) => str.slice(),
             Self::Utf8(str) => str.slice(),
             Self::Buffer(str) => str.slice(),
-        }
-    }
-}
-
-impl bun_jsc::Unprotect for BlobOrStringOrBuffer {
-    /// JS-side half of cleanup — owned
-    /// payloads are released by `Drop` (which runs next when held in a
-    /// [`bun_jsc::ThreadIsolated`]).
-    #[inline]
-    fn unprotect(&mut self) {
-        if let Self::StringOrBuffer(sob) = self {
-            sob.unprotect();
-        }
-    }
-}
-
-impl bun_jsc::Unprotect for StringOrBuffer<'static> {
-    /// JS-side half of cleanup — undo the
-    /// `protect()` taken by [`StringOrBuffer::make_thread_isolated`] /
-    /// `from_js_maybe_async(.., Flavor::Async, ..)`. Owned slices are released
-    /// by `Drop`.
-    #[inline]
-    fn unprotect(&mut self) {
-        if let Self::Buffer(buffer) = self {
-            if buffer.pinned {
-                buffer.pinned = false;
-                buffer.buffer.unpin();
-            }
-            buffer.unprotect();
+            Self::PinnedBuffer(buffer) => buffer.slice(),
         }
     }
 }
@@ -346,30 +322,35 @@ impl StringOrBuffer<'_> {
                 }
                 buffer.to_node_buffer(ctx)
             }
-        }
-    }
-
-    /// Returns the buffer payload if this is `Self::Buffer`.
-    #[inline]
-    pub(crate) fn buffer(&self) -> Option<&Buffer> {
-        if let Self::Buffer(b) = self {
-            Some(b)
-        } else {
-            None
+            Self::PinnedBuffer(buffer) => Ok(buffer.value),
         }
     }
 }
 
 impl StringOrBuffer<'static> {
+    /// Promote a JS-backed string to its thread-isolated representation; a
+    /// buffer must already have been parsed with `Flavor::Async`.
     pub(crate) fn make_thread_isolated(&mut self) {
-        match self {
-            Self::String(s) => {
-                s.make_thread_isolated();
-                let str = core::mem::take(s);
-                *self = Self::ThreadIsolatedString(str);
-            }
-            Self::ThreadIsolatedString(_) | Self::Utf8(_) => {}
-            Self::Buffer(buffer) => buffer.protect(),
+        if let Self::String(s) = self {
+            s.make_thread_isolated();
+            let str = core::mem::take(s);
+            *self = Self::ThreadIsolatedString(str);
+        }
+    }
+
+    /// `value` is ArrayBuffer-like (the caller checked): borrowed for `Sync`,
+    /// pinned and GC-rooted for `Async`.
+    pub(crate) fn buffer_from_js(
+        global: &JSGlobalObject,
+        value: JSValue,
+        flavor: Flavor,
+    ) -> JsResult<Self> {
+        if flavor == Flavor::Sync {
+            return Ok(Self::Buffer(Buffer::from_array_buffer(global, value)));
+        }
+        match PinnedArrayBuffer::root(global, value) {
+            Some(buffer) => Ok(Self::PinnedBuffer(buffer)),
+            None => Err(global.throw_out_of_memory()),
         }
     }
 
@@ -443,18 +424,7 @@ impl StringOrBuffer<'static> {
             | JSType::BigInt64Array
             | JSType::BigUint64Array
             | JSType::DataView => {
-                let mut buffer = if flavor == Flavor::Async {
-                    Buffer::from_js_pinned(global, value)
-                        .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
-                } else {
-                    Buffer::from_array_buffer(global, value)
-                };
-
-                if flavor == Flavor::Async {
-                    buffer.protect();
-                }
-
-                *out = Self::Buffer(buffer);
+                *out = Self::buffer_from_js(global, value, flavor)?;
                 Ok(true)
             }
             _ => Ok(false),
@@ -527,16 +497,7 @@ impl StringOrBuffer<'static> {
         string_objects: StringObjects,
     ) -> JsResult<bool> {
         if value.is_cell() && value.js_type().is_array_buffer_like() {
-            let mut buffer = if flavor == Flavor::Async {
-                Buffer::from_js_pinned(global, value)
-                    .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
-            } else {
-                Buffer::from_array_buffer(global, value)
-            };
-            if flavor == Flavor::Async {
-                buffer.protect();
-            }
-            *out = Self::Buffer(buffer);
+            *out = Self::buffer_from_js(global, value, flavor)?;
             return Ok(true);
         }
 
@@ -1123,36 +1084,15 @@ impl PathLikeExt for PathLike<'_> {
         };
         use jsc::JSType;
         let path = match arg.js_type() {
-            JSType::Uint8Array | JSType::DataView => {
-                let mut buffer = Buffer::from_js_pinned(ctx, arg)
-                    .unwrap_or_else(|| Buffer::from_typed_array(ctx, arg));
-                if let Err(err) = Valid::path_buffer(&buffer, ctx)
-                    .and_then(|_| Valid::path_null_bytes(buffer.slice(), ctx))
-                {
-                    if buffer.pinned {
-                        buffer.pinned = false;
-                        buffer.buffer.unpin();
-                    }
-                    return Err(err);
+            JSType::Uint8Array | JSType::DataView | JSType::ArrayBuffer => {
+                let buffer = if arguments.will_be_async {
+                    PinnedArrayBuffer::root(ctx, arg)
+                } else {
+                    PinnedArrayBuffer::pin(ctx, arg)
                 }
-
-                arguments.eat();
-                PathLike::Buffer(buffer)
-            }
-
-            JSType::ArrayBuffer => {
-                let mut buffer = Buffer::from_js_pinned(ctx, arg)
-                    .unwrap_or_else(|| Buffer::from_array_buffer(ctx, arg));
-                if let Err(err) = Valid::path_buffer(&buffer, ctx)
-                    .and_then(|_| Valid::path_null_bytes(buffer.slice(), ctx))
-                {
-                    if buffer.pinned {
-                        buffer.pinned = false;
-                        buffer.buffer.unpin();
-                    }
-                    return Err(err);
-                }
-
+                .ok_or_else(|| ctx.throw_out_of_memory())?;
+                Valid::path_buffer(buffer.slice(), ctx)?;
+                Valid::path_null_bytes(buffer.slice(), ctx)?;
                 arguments.eat();
                 PathLike::Buffer(buffer)
             }
@@ -1302,8 +1242,8 @@ impl Valid {
         Ok(PathLike::default())
     }
 
-    pub(crate) fn path_buffer(buffer: &Buffer, ctx: &JSGlobalObject) -> JsResult<()> {
-        if buffer.slice().is_empty() {
+    pub(crate) fn path_buffer(slice: &[u8], ctx: &JSGlobalObject) -> JsResult<()> {
+        if slice.is_empty() {
             return Err(
                 ctx.throw_invalid_arguments(format_args!("Invalid path buffer: can't be empty"))
             );
@@ -1330,28 +1270,25 @@ impl Valid {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct VectorArrayBuffer {
-    // bare JSValue field — only sound while this lives on the stack.
-    // Stored in a stack-local during writev; never heap-allocated.
     pub value: JSValue,
     pub(crate) buffers: Vec<PlatformIoVec>,
     /// The collected elements, in order. Rooted (and their backing stores
-    /// pinned) for the lifetime of an async operation; see [`Self::release`].
+    /// pinned), along with `value`, from `from_js(.., pin: true)` until drop.
     pub(crate) views: Vec<JSValue>,
     pinned: bool,
 }
 
-impl VectorArrayBuffer {
-    /// Release the per-element roots and pins taken by `from_js(.., pin: true)`.
-    /// Must run on the JS thread, exactly once, after the I/O completes.
-    pub(crate) fn release(&mut self) {
+impl Drop for VectorArrayBuffer {
+    /// Releases the roots and pins taken by `from_js(.., pin: true)` (JS thread).
+    fn drop(&mut self) {
         if !self.pinned {
             return;
         }
-        self.pinned = false;
-        for view in self.views.drain(..) {
+        for view in &self.views {
             view.unpin_array_buffer();
             view.unprotect();
         }
+        self.value.unprotect();
     }
 }
 
@@ -1397,9 +1334,9 @@ impl VectorArrayBuffer {
     /// getter, a proxy trap) cannot free a backing store that has already been
     /// captured.
     ///
-    /// `pin` is required when the spans outlive this call (async I/O): each
-    /// element is rooted and its backing store is pinned against detach until
-    /// [`Self::release`] runs.
+    /// `pin` is required when the spans outlive this call (async I/O): `val` and
+    /// each element are rooted and each backing store is pinned against detach
+    /// until the value drops.
     pub fn from_js(
         global_object: &JSGlobalObject,
         val: JSValue,
@@ -1428,25 +1365,18 @@ impl VectorArrayBuffer {
             // The C++ side already pinned each backing store; root the views
             // themselves so a getter-returned element that is not reachable
             // from `value` survives until completion. Set `pinned` even on
-            // failure so `release()` balances the elements collected before
-            // the error.
+            // failure so `Drop` balances the elements collected before the error.
             out.pinned = true;
             for view in &out.views {
                 view.protect();
             }
+            val.protect();
         }
         match status {
             0 => Ok(out),
-            -1 => {
-                out.release();
-                Err(jsc::JsError::Thrown)
-            }
-            2 => {
-                out.release();
-                Err(global_object.throw_out_of_memory())
-            }
+            -1 => Err(jsc::JsError::Thrown),
+            2 => Err(global_object.throw_out_of_memory()),
             _ => {
-                out.release();
                 Err(global_object
                     .throw_invalid_arguments(format_args!("Expected ArrayBufferView[]")))
             }

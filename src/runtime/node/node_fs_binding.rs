@@ -99,8 +99,6 @@ fn parse_async_args<A: FsArgument>(
         return Ok(args);
     };
 
-    // Round-trips through the guard so buffers `from_js` protected for the async flavor are released exactly once.
-    drop(args.into_thread_isolated());
     Err(Ok(JSPromise::rejected_promise(global, rejection).to_js()))
 }
 

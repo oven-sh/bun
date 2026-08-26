@@ -77,13 +77,11 @@ pub mod js_bundler {
 
         while let Some((prop, property_value)) = files_iter.next()? {
             // Parse the value as BlobOrStringOrBuffer using async mode for thread safety.
-            // Async mode `protect()`s any JS-backed buffer; adopt into a
-            // `ThreadIsolated` so the guard unprotects + drops at end of iteration.
             let blob_or_string = match crate::node::BlobOrStringOrBuffer::from_js_async(
                 global_this,
                 property_value,
             )? {
-                Some(v) => bun_jsc::ThreadIsolated::adopt(v),
+                Some(v) => v,
                 None => {
                     return Err(global_this.throw_invalid_arguments(format_args!("Expected file content to be a string, Blob, File, TypedArray, or ArrayBuffer")));
                 }

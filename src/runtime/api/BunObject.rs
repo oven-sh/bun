@@ -2135,9 +2135,8 @@ extern "C" fn Bun__reportError(global_object: &JSGlobalObject, err: JSValue) {
 /// object nor `undefined`.
 ///
 /// Kept separate from [`parse_compress_buffer_and_options`] so async callers
-/// (e.g. `JSZstd::get_options_async`) can read `options` *before* GC-protecting
-/// the buffer — preserving error precedence and avoiding a protect leak on the
-/// early-throw path.
+/// (e.g. `JSZstd::get_options_async`) can read `options` *before* pinning and
+/// rooting the buffer, preserving error precedence.
 #[inline]
 pub(crate) fn parse_compress_args(
     global: &JSGlobalObject,
@@ -2764,8 +2763,7 @@ pub mod JSZstd {
 
     /// `Bun.zstdCompress` / `Bun.zstdDecompress` off the JS thread.
     pub(crate) struct ZstdJob {
-        /// Created with `Flavor::Async` (JS-backed buffer protected); the
-        /// [`bun_jsc::ThreadIsolated`] releases that with the job.
+        /// Parsed with `Flavor::Async`.
         pub buffer: bun_jsc::ThreadIsolated<node::StringOrBuffer<'static>>,
         pub is_compress: bool,
         pub level: i32,

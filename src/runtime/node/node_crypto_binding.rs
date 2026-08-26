@@ -755,10 +755,6 @@ pub mod random {
 // Scrypt
 // ───────────────────────────────────────────────────────────────────────────
 pub(crate) struct Scrypt {
-    // Plain `StringOrBuffer` — NOT `ThreadIsolated<_>`. The struct serves both
-    // `scryptSync` (no protect taken) and async `scrypt` (protect taken in
-    // `from_js_maybe_async(.., Flavor::Async, ..)`, adopted into a `ThreadIsolated`
-    // by the job).
     password: StringOrBuffer<'static>,
     salt: StringOrBuffer<'static>,
     n: u32,
@@ -840,15 +836,6 @@ mod _impl {
                 ));
             };
 
-            // On error: `Drop for StringOrBuffer` releases the data; only the async branch took a
-            // `protect()` (inside `from_js_maybe_async`), so only that branch may unprotect —
-            // an unconditional unprotect would steal a refcount on the sync path.
-            let password = scopeguard::guard(password, |mut p| {
-                if IS_ASYNC {
-                    bun_jsc::Unprotect::unprotect(&mut p);
-                }
-            });
-
             let Some(salt) = StringOrBuffer::from_js_maybe_async(
                 global,
                 salt_value,
@@ -862,12 +849,6 @@ mod _impl {
                     salt_value,
                 ));
             };
-
-            let salt = scopeguard::guard(salt, |mut s| {
-                if IS_ASYNC {
-                    bun_jsc::Unprotect::unprotect(&mut s);
-                }
-            });
 
             let keylen = validators::validate_int32(
                 global,
@@ -984,30 +965,20 @@ mod _impl {
                 maxmem = Some(MAXMEM_DEFAULT);
             }
 
-            let ctx = Scrypt {
-                password: scopeguard::ScopeGuard::into_inner(password),
-                salt: scopeguard::ScopeGuard::into_inner(salt),
+            let mut ctx = Scrypt {
+                password,
+                salt,
                 n: n.unwrap(),
                 r: r.unwrap(),
                 p: p.unwrap(),
                 maxmem: u64::try_from(maxmem.unwrap()).expect("int cast"),
                 keylen: u32::try_from(keylen).expect("int cast"),
             };
-            // Re-arm the error guard now that ownership moved into `ctx` — it
-            // covers the `validateFunction`/`checkScryptParams` calls below.
-            let ctx = scopeguard::guard(ctx, |mut c| {
-                if IS_ASYNC {
-                    bun_jsc::Unprotect::unprotect(&mut c);
-                }
-            });
-
             if IS_ASYNC {
                 let _ = validators::validate_function(global, "callback", callback)?;
             }
 
             ctx.check_scrypt_params(global)?;
-
-            let mut ctx = scopeguard::ScopeGuard::into_inner(ctx);
 
             if IS_ASYNC {
                 return Ok((ctx, callback));
@@ -1082,16 +1053,6 @@ mod _impl {
                 return Some(boringssl::c::ERR_peek_last_error());
             }
             None
-        }
-    }
-
-    impl bun_jsc::Unprotect for Scrypt {
-        /// Release the `protect()` taken by `from_js_maybe_async(.., Flavor::Async, ..)`
-        /// on the async path (via the job's `ThreadIsolated`). The sync path never calls this.
-        #[inline]
-        fn unprotect(&mut self) {
-            bun_jsc::Unprotect::unprotect(&mut self.password);
-            bun_jsc::Unprotect::unprotect(&mut self.salt);
         }
     }
 
@@ -1306,7 +1267,6 @@ mod _impl {
     #[bun_jsc::host_fn]
     fn scrypt(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (ctx, callback) = Scrypt::from_js::<true>(global, call_frame)?;
-        // Protected by `from_js::<true>`; released with the job wherever it ends.
         let params = bun_jsc::ThreadIsolated::adopt(ctx);
         if params.keylen as usize > jsc::virtual_machine::synthetic_allocation_limit() {
             return Err(global.throw_out_of_memory());

@@ -1375,17 +1375,14 @@ impl JSTranspiler {
                 "string or Uint8Array",
             ));
         };
-        let mut code = code;
-        if matches!(code, StringOrBuffer::Buffer(_)) {
-            let bytes = code.slice().to_vec();
-            global.vm().report_extra_memory(bytes.len());
-            bun_jsc::Unprotect::unprotect(&mut code);
-            code = StringOrBuffer::owned(bytes);
-        }
-        // `errdefer code.deinitAndUnprotect()` — `from_js_with_encoding_maybe_async`
-        // (`Flavor::Async`) already protected; adopt into a `ThreadIsolated` so any
-        // early-return drop unprotects. `TransformTask::create` takes the guard.
-        let code = bun_jsc::ThreadIsolated::adopt(code);
+        let code = bun_jsc::ThreadIsolated::adopt(match code {
+            StringOrBuffer::PinnedBuffer(buffer) => {
+                let bytes = buffer.slice().to_vec();
+                global.vm().report_extra_memory(bytes.len());
+                StringOrBuffer::owned(bytes)
+            }
+            code => code,
+        });
 
         args.eat();
         let loader: Option<Loader> = 'brk: {

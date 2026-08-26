@@ -2,7 +2,7 @@
 //!
 //! LAYERING: defined at the
 //! `bun_jsc` tier because every variant payload (`Buffer` =
-//! `MarkedArrayBuffer`, `Utf8WithString`, `Utf8Bytes`, `Fd`)
+//! `PinnedArrayBuffer`, `Utf8WithString`, `Utf8Bytes`, `Fd`)
 //! is already reachable from this crate. `bun_runtime::node::types`
 //! `pub use`s these and layers the JS-argument-parsing helpers (`from_js`,
 //! `from_js_with_allocator`) on top via inherent impls in that crate.
@@ -10,55 +10,32 @@
 use bun_core::{Utf8Bytes, Utf8WithString};
 use bun_sys::Fd;
 
-use crate::array_buffer::MarkedArrayBuffer;
+use crate::array_buffer::PinnedArrayBuffer;
 
-// ──────────────────────────────────────────────────────────────────────────
-// RAII for `protect()`/`unprotect()` pairs taken by `make_thread_isolated()`.
-//
-// The async-fs path calls `make_thread_isolated()` (which `JSValue::protect()`s
-// any borrowed JS-backed buffers so the work-pool thread may read them) and
-// must later release them. The "deinit" half is
-// already `Drop`; only the JS-side `unprotect()` needs an explicit hook, and
-// pairing it with the protect via a guard type removes the leak hazard on
-// every early return between `make_thread_isolated` and the manual cleanup.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Undo the `JSValue::protect()` calls taken by [`make_thread_isolated`](
-/// PathLike::make_thread_isolated) (or an `args::*` type's `make_thread_isolated`).
-///
-/// Implementations release **only** the JS-GC protect refcount — owned Rust
-/// payloads (Vec, `Utf8WithString`, …) are freed by the type's own
-/// `Drop`, which runs immediately after when the value is held in a
-/// [`ThreadIsolated<T>`].
-pub trait Unprotect {
-    fn unprotect(&mut self);
-}
-
-/// RAII guard returned by `into_thread_isolated()`: a `T` whose JS-backed buffers
-/// have been `protect()`ed. `Drop` calls [`Unprotect::unprotect`] then drops
-/// the inner `T` normally.
+/// A `T` parsed for the async flavor: every JS-backed payload inside it is
+/// pinned and GC-rooted ([`PinnedArrayBuffer::root`]) or thread-isolated
+/// (strings), so a work-pool job may read it and the value comes back to the
+/// JS thread to drop.
 ///
 /// `repr(transparent)` so identity-casts in the const-generic dispatch macros
 /// (see `node_fs.rs`'s `args_as!`) remain bit-exact.
 #[repr(transparent)]
-pub struct ThreadIsolated<T: Unprotect>(T);
+#[derive(Default)]
+pub struct ThreadIsolated<T>(T);
 
-impl<T: Unprotect> ThreadIsolated<T> {
-    /// Wrap an **already-protected** `T`. Use when the protect was taken
-    /// elsewhere (e.g. inside `from_js_maybe_async(.., Flavor::Async, ..)`).
+impl<T> ThreadIsolated<T> {
+    /// Wrap a `T` that already satisfies the invariant above (parsed with
+    /// `Flavor::Async` / `will_be_async`, or passed through `make_thread_isolated`).
     #[inline]
     pub fn adopt(value: T) -> Self {
         Self(value)
     }
 }
 
-// SAFETY: this is what the type asserts — the JS-backed views inside `T` are
-// GC-protected for as long as it is held, so a pool job may read them (under
-// its `Ticket`, which keeps the VM alive); the job comes back to the JS
-// thread, where this is dropped and the protection released.
-unsafe impl<T: Unprotect> Send for ThreadIsolated<T> {}
+// SAFETY: this is what the type asserts — see the struct doc.
+unsafe impl<T> Send for ThreadIsolated<T> {}
 
-impl<T: Unprotect> core::ops::Deref for ThreadIsolated<T> {
+impl<T> core::ops::Deref for ThreadIsolated<T> {
     type Target = T;
     #[inline]
     fn deref(&self) -> &T {
@@ -66,40 +43,18 @@ impl<T: Unprotect> core::ops::Deref for ThreadIsolated<T> {
     }
 }
 
-impl<T: Unprotect> core::ops::DerefMut for ThreadIsolated<T> {
+impl<T> core::ops::DerefMut for ThreadIsolated<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T {
         &mut self.0
     }
 }
 
-impl<T: Unprotect> Drop for ThreadIsolated<T> {
-    #[inline]
-    fn drop(&mut self) {
-        // The same argument types serve mini-loop threads (the shell's `cp` via
-        // `ShellAsyncCpTask`, `bun exec`), which have no VM and never protected
-        // anything; only a JS thread has a protection to release. A JS VM's job
-        // always comes back to its own thread to drop this (its VM waits for it).
-        if crate::virtual_machine::VirtualMachine::get_or_null().is_some() {
-            self.0.unprotect();
-        }
-        // `self.0: T` drops next (field drop after `Drop::drop`).
-    }
-}
-
-impl<T: Unprotect + Default> Default for ThreadIsolated<T> {
-    #[inline]
-    fn default() -> Self {
-        Self(T::default())
-    }
-}
-
-// `ThreadIsolated<T>` crosses to the work-pool thread; auto-`Send` iff `T: Send`.
-
 /// `node.PathLike`. Parsed from JS it is `PathLike<'static>`; `Utf8` may
 /// instead borrow Rust-side bytes for a synchronous call ([`PathLike::borrowed`]).
 pub enum PathLike<'a> {
-    Buffer(MarkedArrayBuffer),
+    /// Pinned for the call; also GC-rooted when parsed for an async call.
+    Buffer(PinnedArrayBuffer),
     /// Always shares its WTF string's bytes (built by `shared_or_utf8`);
     /// transcoded paths are `Utf8(Owned)`.
     String(Utf8WithString),
@@ -116,30 +71,17 @@ impl Default for PathLike<'_> {
 
 impl Clone for PathLike<'_> {
     /// `clone().slice()` returns the same bytes. String payloads bump their
-    /// ref; a `Buffer` clone *borrows* — it owns no allocation, pin or GC root
+    /// ref; a `Buffer` clone *borrows* its bytes — it owns no pin or GC root
     /// (clones are taken on work-pool threads too) and must not outlive `self`.
     fn clone(&self) -> Self {
         match self {
-            Self::Buffer(b) => Self::Buffer(MarkedArrayBuffer {
-                buffer: b.buffer,
-                owns_buffer: false,
-                pinned: false,
-                protected: false,
-            }),
+            // SAFETY: the pinned backing store cannot move or detach while `self` lives; see the doc above.
+            Self::Buffer(b) => Self::Utf8(Utf8Bytes::Borrowed(unsafe {
+                &*core::ptr::from_ref(b.slice())
+            })),
             Self::String(s) => Self::String(s.clone()),
             Self::ThreadIsolatedString(s) => Self::ThreadIsolatedString(s.clone()),
             Self::Utf8(s) => Self::Utf8(s.clone()),
-        }
-    }
-}
-
-impl Drop for PathLike<'_> {
-    fn drop(&mut self) {
-        if let Self::Buffer(b) = self {
-            if b.pinned {
-                b.pinned = false;
-                b.buffer.unpin();
-            }
         }
     }
 }
@@ -182,51 +124,32 @@ impl<'a> PathLike<'a> {
 }
 
 impl PathLike<'static> {
-    /// Promote any borrowed-JS
-    /// payload to a thread-isolated representation. For `Buffer` the variant is
-    /// kept and the backing JS value is `protect()`ed (paired with
-    /// [`Unprotect::unprotect`]); the discriminant is preserved so callers
-    /// matching on `Buffer` after this call see the same shape.
+    /// Promote a JS-backed string to its thread-isolated representation. A
+    /// `Buffer` parsed with `will_be_async` is already rooted.
     ///
     /// Called in place by the fs `args::*` types' `into_thread_isolated`, which
-    /// wrap the result in a [`ThreadIsolated`] guard.
+    /// wrap the result in a [`ThreadIsolated`].
     pub fn make_thread_isolated(&mut self) {
-        match self {
-            Self::String(s) => {
-                s.make_thread_isolated();
-                let owned = core::mem::take(s);
-                *self = Self::ThreadIsolatedString(owned);
-            }
-            Self::Buffer(b) => b.protect(),
-            Self::ThreadIsolatedString(_) | Self::Utf8(_) => {}
+        if let Self::String(s) = self {
+            s.make_thread_isolated();
+            let owned = core::mem::take(s);
+            *self = Self::ThreadIsolatedString(owned);
         }
     }
 
     /// For a path a `Blob` store keeps (dropped on any thread): a JS-backed
     /// string is replaced by a private copy never handed to JS; a `Buffer` is
-    /// protected as in [`make_thread_isolated`](Self::make_thread_isolated).
+    /// GC-rooted for good.
     pub fn thread_isolated_copy(mut self) -> Self {
         match &mut self {
             Self::String(s) | Self::ThreadIsolatedString(s) => {
                 let s = core::mem::take(s).thread_isolated_copy();
                 self = Self::ThreadIsolatedString(s);
             }
-            Self::Buffer(b) => b.buffer.value.protect(),
+            Self::Buffer(b) => b.value.protect(),
             Self::Utf8(_) => {}
         }
         self
-    }
-}
-
-impl Unprotect for PathLike<'_> {
-    /// JS-side half of cleanup — undo the `protect()` taken by
-    /// [`PathLike::make_thread_isolated`], if still held. Owned payloads are
-    /// released by `Drop`.
-    #[inline]
-    fn unprotect(&mut self) {
-        if let Self::Buffer(b) = self {
-            b.unprotect();
-        }
     }
 }
 
@@ -293,16 +216,6 @@ impl PathOrFileDescriptor<'_> {
         match self {
             Self::Fd(_) => 0,
             Self::Path(p) => p.estimated_size(),
-        }
-    }
-}
-
-impl Unprotect for PathOrFileDescriptor<'static> {
-    /// JS-side half of cleanup — see [`PathLike::unprotect`].
-    #[inline]
-    fn unprotect(&mut self) {
-        if let Self::Path(p) = self {
-            p.unprotect();
         }
     }
 }

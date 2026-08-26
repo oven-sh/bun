@@ -19,6 +19,7 @@ use super::find_all_imported_parts_in_js_order::find_all_imported_parts_in_js_or
 use super::find_imported_css_files_in_js_order::find_imported_css_files_in_js_order;
 use super::find_imported_files_in_css_order::find_imported_files_in_css_order;
 use super::merge_small_chunks::merge_small_chunks;
+use super::split_chunks_for_evaluation_order::split_chunks_for_evaluation_order;
 
 #[inline(always)]
 fn make_flags(has_html_chunk: bool, is_browser_chunk_from_server_build: bool) -> chunk::Flags {
@@ -291,9 +292,10 @@ pub(crate) fn compute_chunks(
             }
         }
     }
+    let mut guaranteed_loaded: Vec<AutoBitSet> = Vec::new();
     if code_splitting {
         let min_chunk_size = this.options.min_chunk_size;
-        merge_small_chunks(this, temp, min_chunk_size)?;
+        guaranteed_loaded = merge_small_chunks(this, temp, min_chunk_size)?;
     }
     let css_asts = this.graph.ast.items_css();
     let ast_targets = this.graph.ast.items_target();
@@ -394,6 +396,9 @@ pub(crate) fn compute_chunks(
                 }
             }
         }
+    }
+    if code_splitting {
+        split_chunks_for_evaluation_order(this, temp, &mut js_chunks, &guaranteed_loaded)?;
     }
 
     // Sort the chunks for determinism. This matters because we use chunk indices

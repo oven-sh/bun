@@ -743,6 +743,17 @@ The renamed symbols are then used during final code generation to produce output
 - Rewrites the entry bits of files to those of the class's parent chunk (the chunk keyed by the reduced set, else the largest member) before `computeChunks()` groups files
 - With `--min-chunk-size`, additionally folds small chunks with no top-level side effects into a chunk loaded by a superset of their entries when every dependency is already loaded wherever the target is
 
+#### `splitChunksForEvaluationOrder.rs`
+
+**Purpose**: Splits chunks so that the bundle runs top-level side effects in the order the unbundled modules would. ESM hoists every `import` above a module's own code, so whatever a chunk imports from other chunks runs before any of its own files.
+
+**Key functions**:
+
+- Walks the files each entry point loads in evaluation order (the walk `findAllImportedPartsInJSOrder` does from the entry file)
+- Cuts a chunk into a new chunk wherever a file with side effects from another chunk interrupts its run, and where two entry points run two of its files in opposite orders
+- Lets files that run nothing when loaded join a run as long as everything they import has run its side effects by the time the run is evaluated
+- Repeats until every entry point's order agrees; the new chunks keep their parent's `entry_bits` under a longer key
+
 #### `computeCrossChunkDependencies.rs`
 
 **Purpose**: Resolves dependencies between different chunks.
@@ -760,9 +771,9 @@ The renamed symbols are then used during final code generation to produce output
 
 **Key functions**:
 
-- Orders files by distance from entry point
+- Walks from the first entry point that loads the chunk (code splitting), then the chunk's files by distance from entry point
 - Handles part dependencies within chunks
-- Manages import precedence
+- Records the other chunks in the order the walk reaches their first file with side effects (`reached_chunks_in_order`), which orders the chunk's cross-chunk `import` statements
 - Ensures proper evaluation order
 
 #### `findImportedCSSFilesInJSOrder.rs`

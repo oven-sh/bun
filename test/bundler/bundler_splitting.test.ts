@@ -934,6 +934,48 @@ describe("bundler", () => {
   const chunkImportsIn = (api: BundlerTestBundleAPI, name: string) =>
     [...api.readFile("/out/" + name).matchAll(/^import\b[^;]*?"\.\/([^"]+)";$/gms)].map(m => m[1]);
 
+  // ESM hoists a module's imports above its own code, so with s1.js inlined
+  // into e1.js the shared s2.js chunk would run before s1.js. s1.js goes to a
+  // chunk of its own that e1.js imports first.
+  itBundled("splitting/EvaluationOrderInlinedModuleBeforeSharedChunk", {
+    files: {
+      "/e1.js": /* js */ `
+        import { one } from './s1.js'
+        import { two } from './s2.js'
+        console.log('e1', one + two, JSON.stringify(globalThis.log))
+      `,
+      "/e2.js": /* js */ `
+        import { two } from './s2.js'
+        console.log('e2', two, JSON.stringify(globalThis.log))
+      `,
+      "/s1.js": /* js */ `
+        (globalThis.log ||= []).push('s1')
+        export const one = 1
+      `,
+      "/s2.js": /* js */ `
+        (globalThis.log ||= []).push('s2')
+        export const two = 2
+      `,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      // e1.js, e2.js, the s1.js chunk and the s2.js chunk.
+      expect(jsFilesIn(api)).toHaveLength(4);
+      const imports = chunkImportsIn(api, "e1.js");
+      expect(imports).toHaveLength(2);
+      expect(api.readFile("/out/" + imports[0])).toContain('push("s1")');
+      expect(api.readFile("/out/" + imports[1])).toContain('push("s2")');
+      api.expectFile("/out/e1.js").not.toContain("push(");
+    },
+    run: [
+      { file: "/out/e1.js", stdout: 'e1 3 ["s1","s2"]' },
+      { file: "/out/e2.js", stdout: 'e2 2 ["s2"]' },
+    ],
+  });
+
   // Two shared chunks are imported in the order the entry first reaches
   // them, not in chunk index order.
   itBundled("splitting/EvaluationOrderOfSharedChunkImports", {
@@ -973,6 +1015,132 @@ describe("bundler", () => {
       expect(api.readFile("/out/" + imports[1])).toContain('push("a")');
     },
     run: { file: "/out/e1.js", stdout: 'e1 ab ["b","a"]' },
+  });
+
+  // An entry's own module between two modules of a shared chunk cuts the
+  // shared chunk too; every entry then imports the pieces in its own order.
+  itBundled("splitting/EvaluationOrderSplitsInterleavedSharedChunk", {
+    files: {
+      "/e1.js": /* js */ `
+        import './c1.js'
+        import './x.js'
+        import './c2.js'
+        console.log('e1', JSON.stringify(globalThis.log))
+      `,
+      "/e2.js": /* js */ `
+        import './c1.js'
+        import './c2.js'
+        console.log('e2', JSON.stringify(globalThis.log))
+      `,
+      "/c1.js": `(globalThis.log ||= []).push('c1')`,
+      "/c2.js": `(globalThis.log ||= []).push('c2')`,
+      "/x.js": `(globalThis.log ||= []).push('x')`,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      // e1.js, e2.js and a chunk each for c1.js, x.js and c2.js.
+      expect(jsFilesIn(api)).toHaveLength(5);
+      expect(chunkImportsIn(api, "e1.js")).toHaveLength(3);
+      expect(chunkImportsIn(api, "e2.js")).toHaveLength(2);
+    },
+    run: [
+      { file: "/out/e1.js", stdout: 'e1 ["c1","x","c2"]' },
+      { file: "/out/e2.js", stdout: 'e2 ["c1","c2"]' },
+    ],
+  });
+
+  // A module that runs nothing when loaded only has to run after its imports
+  // and before its importers, which the import statements already guarantee:
+  // it stays inlined wherever it falls in the order.
+  itBundled("splitting/EvaluationOrderKeepsSideEffectFreeModuleInline", {
+    files: {
+      "/e1.js": /* js */ `
+        import { double } from './double.js'
+        import { two } from './s2.js'
+        console.log('e1', double(two), JSON.stringify(globalThis.log))
+      `,
+      "/e2.js": /* js */ `
+        import { two } from './s2.js'
+        console.log('e2', two)
+      `,
+      "/double.js": /* js */ `
+        export function double(x) { return x * 2 }
+      `,
+      "/s2.js": /* js */ `
+        (globalThis.log ||= []).push('s2')
+        export const two = 2
+      `,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      // e1.js, e2.js and the s2.js chunk: double.js stays in e1.js.
+      expect(jsFilesIn(api)).toHaveLength(3);
+      api.expectFile("/out/e1.js").toContain("function double");
+    },
+    run: { file: "/out/e1.js", stdout: 'e1 4 ["s2"]' },
+  });
+
+  // A module the entry already ran does not count when an import() target
+  // loads it again: lazy.js keeps l1.js and l2.js together even though
+  // shared.js (kept out of entry.js by its exports) sits between them.
+  itBundled("splitting/EvaluationOrderIgnoresModulesTheImporterRan", {
+    files: {
+      "/entry.js": /* js */ `
+        import './shared.js'
+        export const x = 1
+        import('./lazy.js').then(m => console.log('lazy', m.lazy(), JSON.stringify(globalThis.log)))
+      `,
+      "/lazy.js": /* js */ `
+        import './l1.js'
+        import './shared.js'
+        import './l2.js'
+        export function lazy() { return 42 }
+      `,
+      "/shared.js": `(globalThis.log ||= []).push('shared')`,
+      "/l1.js": `(globalThis.log ||= []).push('l1')`,
+      "/l2.js": `(globalThis.log ||= []).push('l2')`,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      // entry.js, lazy.js and the shared.js chunk.
+      expect(jsFilesIn(api)).toHaveLength(3);
+    },
+    run: { file: "/out/entry.js", stdout: 'lazy 42 ["shared","l1","l2"]' },
+  });
+
+  // Top-level await in the shared module: the entry's earlier module still
+  // runs first.
+  itBundled("splitting/EvaluationOrderWithTopLevelAwaitInSharedChunk", {
+    files: {
+      "/e1.js": /* js */ `
+        import './start.js'
+        import { v } from './tla.js'
+        console.log('e1', v, JSON.stringify(globalThis.log))
+      `,
+      "/e2.js": /* js */ `
+        import { v } from './tla.js'
+        console.log('e2', v)
+      `,
+      "/start.js": `(globalThis.log ||= []).push('start')`,
+      "/tla.js": /* js */ `
+        (globalThis.log ||= []).push('tla')
+        export const v = await Promise.resolve(1)
+      `,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/e1.js", stdout: 'e1 1 ["start","tla"]' },
   });
 
   // import() of another chunk is printed as import(); it does not pull the

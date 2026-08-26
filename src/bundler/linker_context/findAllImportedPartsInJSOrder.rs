@@ -1,6 +1,7 @@
 use crate::mal_prelude::*;
 use bun_ast::{ImportKind, ImportRecord};
-use bun_collections::{AutoBitSet, HashMap, VecExt};
+use bun_collections::{ArrayHashMap, AutoBitSet, HashMap, VecExt};
+use core::sync::atomic::AtomicUsize;
 
 use crate::{
     Chunk, Index, IndexInt, LinkerContext, PartRange,
@@ -113,6 +114,22 @@ pub(crate) fn find_imported_parts_in_js_order(
     let with_code_splitting = this.graph.code_splitting;
     let with_scb = this.graph.is_scb_bitset.bit_length > 0;
 
+    // With code splitting, walk from the first entry point that loads this
+    // chunk before the chunk's own files, so that files of a shared chunk
+    // with no dependency between them come out in the order that entry
+    // evaluates them (an entry chunk's walk already starts at its entry).
+    // Files the walk never reaches (side-effect free code that
+    // `merge_small_chunks` moved here) follow in `chunk_order_array` order.
+    let first_entry_source_index = if with_code_splitting {
+        chunk
+            .entry_bits()
+            .find_first_set()
+            .map(|entry_id| this.graph.entry_points.items_source_index()[entry_id])
+            .filter(|&source_index| this.graph.ast.items_css()[source_index as usize].is_none())
+    } else {
+        None
+    };
+
     // The visitor holds a LinkerContext alongside SoA column slices
     // borrowed from it, and mutates one column (`entry_point_chunk_index`).
     // Borrowck forbids the latter through a shared `&LinkerContext`, so cache that
@@ -133,6 +150,7 @@ pub(crate) fn find_imported_parts_in_js_order(
             parts: this.graph.ast.items_parts(),
             import_records: this.graph.ast.items_import_records(),
             entry_bits: chunk.entry_bits(),
+            files_in_chunk: &chunk.files_with_parts_in_chunk,
             c: this,
             chunk_index,
             entry_point_chunk_indices,
@@ -142,11 +160,12 @@ pub(crate) fn find_imported_parts_in_js_order(
             reached_chunk_set: vec![false; chunks_len],
         };
 
+        let roots = (first_entry_source_index, &chunk_order_array[..]);
         match (with_code_splitting, with_scb) {
-            (true, true) => run_visits::<true, true>(&mut visitor, &chunk_order_array),
-            (true, false) => run_visits::<true, false>(&mut visitor, &chunk_order_array),
-            (false, true) => run_visits::<false, true>(&mut visitor, &chunk_order_array),
-            (false, false) => run_visits::<false, false>(&mut visitor, &chunk_order_array),
+            (true, true) => run_visits::<true, true>(&mut visitor, roots),
+            (true, false) => run_visits::<true, false>(&mut visitor, roots),
+            (false, true) => run_visits::<false, true>(&mut visitor, roots),
+            (false, false) => run_visits::<false, false>(&mut visitor, roots),
         }
 
         let mut parts_in_chunk_order: Vec<PartRange> =
@@ -179,9 +198,12 @@ pub(crate) fn find_imported_parts_in_js_order(
 #[inline]
 fn run_visits<const WITH_CODE_SPLITTING: bool, const WITH_SCB: bool>(
     visitor: &mut FindImportedPartsVisitor<'_, '_>,
-    chunk_order_array: &[Order],
+    (first_entry_source_index, chunk_order_array): (Option<IndexInt>, &[Order]),
 ) {
     visitor.visit::<WITH_CODE_SPLITTING, WITH_SCB>(Index::RUNTIME.value());
+    if let Some(source_index) = first_entry_source_index {
+        visitor.visit::<WITH_CODE_SPLITTING, WITH_SCB>(source_index);
+    }
     for order in chunk_order_array {
         visitor.visit::<WITH_CODE_SPLITTING, WITH_SCB>(order.source_index);
     }
@@ -189,6 +211,10 @@ fn run_visits<const WITH_CODE_SPLITTING: bool, const WITH_SCB: bool>(
 
 pub(crate) struct FindImportedPartsVisitor<'a, 'ctx> {
     pub(crate) entry_bits: &'a AutoBitSet,
+    /// The chunk's files. With code splitting this decides membership;
+    /// `entry_bits` alone cannot, as chunks split for evaluation order share
+    /// their entry bits (`compute_chunks`).
+    pub(crate) files_in_chunk: &'a ArrayHashMap<IndexInt, AtomicUsize>,
     pub(crate) flags: &'a [crate::js_meta::Flags],
     pub(crate) parts: &'a [bun_ast::PartList<'ctx>],
     pub(crate) import_records: &'a [bun_ast::import_record::List<'ctx>],
@@ -353,9 +379,8 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                     let is_file_in_chunk = if WITH_CODE_SPLITTING
                         && self.c.graph.ast.items_css()[source_index as usize].is_none()
                     {
-                        // when code splitting, include the file in the chunk if ALL of the entry points overlap
-                        self.entry_bits
-                            .eql(&self.c.graph.files.items_entry_bits()[source_index as usize])
+                        // when code splitting, `compute_chunks` put each live JS file in exactly one chunk
+                        self.files_in_chunk.contains(&source_index)
                     } else {
                         // when NOT code splitting, include the file in the chunk if ANY of the entry points overlap
                         self.entry_bits.has_intersection(
@@ -385,12 +410,19 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                     for part_index_ in 0..parts.len() {
                         let part = &parts[part_index_];
                         let part_index = part_index_ as u32;
-                        let is_part_in_this_chunk =
-                            is_file_in_chunk && parts_live.is_set(part_index_);
+                        let is_part_live = parts_live.is_set(part_index_);
+                        let is_part_in_this_chunk = is_file_in_chunk && is_part_live;
+                        // A live part's `require()` is followed whichever chunk
+                        // holds it, so that this walk, the one in
+                        // `split_chunks_for_evaluation_order` and the one for
+                        // every other chunk agree on where each file is reached.
+                        // It cannot reach a file of this chunk that a static
+                        // import does not: a file's importers all have a
+                        // subset of its entry bits.
                         for &record_id in part.import_record_indices.slice() {
                             let record: &ImportRecord = &records[record_id as usize];
                             if record.source_index.is_valid()
-                                && (record.kind == ImportKind::Stmt || is_part_in_this_chunk)
+                                && (record.kind == ImportKind::Stmt || is_part_live)
                             {
                                 if self.c.is_external_dynamic_import(record, source_index) {
                                     // Don't follow import() dependencies

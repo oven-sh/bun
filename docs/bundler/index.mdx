@@ -557,6 +557,8 @@ The generated `chunk-dqmx6gc8.js` file contains the shared code. To avoid collis
 
 Each `import()` of a bundled JavaScript module also becomes its own chunk. Tree shaking applies to these chunks too: if every `import()` of a module lives in code that tree shaking removes — for example inside a function that is only called behind a [`define`](#define) or [`features`](#features) gate that evaluates to `false` — and nothing else in the live output imports the module, its chunk is not written and the module is absent from the [metafile](#metafile)'s `inputs` and `outputs`. Setting `treeShaking: false` keeps every `import()` chunk. This differs from esbuild, which emits a chunk for every reachable `import()` target.
 
+Chunks run the modules in the same order as the unbundled code. An ESM `import` runs before the code of the module that contains it, so a module that an entrypoint runs before a shared chunk cannot stay in the entrypoint's own output: it becomes a chunk that the entrypoint imports first. Only modules with top-level side effects need this. When two entrypoints run two modules of one shared chunk in opposite orders, the modules get a chunk each, so each entrypoint keeps its order. esbuild keeps no order across chunks ([evanw/esbuild#399](https://github.com/evanw/esbuild/issues/399)).
+
 ### minChunkSize
 
 With `splitting`, also fold small side-effect-free chunks into a chunk that more entrypoints load.

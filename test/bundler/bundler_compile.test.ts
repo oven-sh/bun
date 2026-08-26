@@ -713,11 +713,13 @@ describe("bundler", () => {
     },
     run: { stdout: '["compiled",42] function' },
   });
-  // Both names are in the builtin alias table on every host, so a bundle made
-  // on Linux for `--target=bun` still imports them by their `bun:` names.
+  // On macOS both names are builtins and stay external on their own. On any
+  // other host they are not builtins, so a bundle made there for a Mac marks
+  // them external; either way the `bun:` specifiers survive into the output.
   itBundled("compile/BunObjCCrossTargetKeepsSpecifier", {
     target: "bun",
     outdir: "/out",
+    external: isMacOS ? [] : ["bun:objc", "bun:appkit"],
     files: {
       "/entry.ts": `
         import { objc } from "bun:objc";

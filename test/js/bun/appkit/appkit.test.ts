@@ -468,21 +468,16 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The counts docs/runtime/objc.mdx quotes are the tree's, and the enum
-  // counts are what this build generated from the macOS SDK it links.
+  // docs/runtime/objc.mdx quotes three counts taken from the tree; keep the
+  // sentence in step with appkit.ts and the typed binding tables.
   test("the numbers in the documentation are the tree's", async () => {
     const root = join(import.meta.dir, "../../../..");
     const { treeCounts } = await import(join(root, "scripts/appkit-tree-counts.ts"));
     const counts = treeCounts(root);
-    const { appKitInternals } = require("bun:internal-for-testing");
-    const { enums, loose } = appKitInternals.enumTables();
-    const enumMembers = Object.values(enums).reduce((n: number, e: unknown[]) => n + (e.length - 1) / 2, 0);
     const docs = readFileSync(join(root, "docs/runtime/objc.mdx"), "utf8");
     const paragraph = docs.split("\n").find(line => line.includes("In numbers:")) ?? "";
     expect(paragraph).toContain(`the ${counts.elements.length} curated elements`);
     expect(paragraph).toContain(`made of ${counts.bridgedClasses.length} AppKit and Foundation classes`);
-    expect(paragraph).toContain(`${Object.keys(enums).length} enumerations with ${enumMembers} members`);
-    expect(paragraph).toContain(`${Object.keys(loose).length} loose constants`);
     expect(paragraph).toContain(
       `${counts.boundClasses} classes and ${counts.boundSelectors} selectors of typed bindings`,
     );

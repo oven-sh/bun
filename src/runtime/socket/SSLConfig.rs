@@ -121,10 +121,8 @@ fn read_from_blob(
 /// JSC-dependent constructors for the canonical `bun_http::SSLConfig`.
 /// Import this trait to call `SSLConfig::from_js(..)` / `::from_generated(..)`.
 ///
-/// `is_server` selects the default for an unset `rejectUnauthorized`:
-/// servers always default to enforcing, while clients consult
-/// `NODE_TLS_REJECT_UNAUTHORIZED` — the env var never weakens a server,
-/// matching Node.
+/// `is_server` picks the default for an unset `rejectUnauthorized`: `true`
+/// for servers, `NODE_TLS_REJECT_UNAUTHORIZED` for clients (Node semantics).
 pub trait SSLConfigFromJs: Sized {
     fn from_js(
         vm: &VirtualMachine,

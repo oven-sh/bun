@@ -184,9 +184,9 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
 }
 
 #[cfg(windows)]
-static WIN_EXTENSIONS_W: [&[u16]; 3] = [w!("exe"), w!("cmd"), w!("bat")];
+static WIN_EXTENSIONS_W: [&[u16]; 4] = [w!("exe"), w!("cmd"), w!("bat"), w!("com")];
 #[cfg(windows)]
-const WIN_EXTENSIONS: [&[u8]; 3] = [b"exe", b"cmd", b"bat"];
+const WIN_EXTENSIONS: [&[u8]; 4] = [b"exe", b"cmd", b"bat", b"com"];
 
 #[cfg(windows)]
 pub(crate) fn ends_with_extension(str: &[u8]) -> bool {
@@ -204,6 +204,18 @@ pub(crate) fn ends_with_extension(str: &[u8]) -> bool {
         }
     }
     false
+}
+
+/// Whether the last component of `bin` carries an extension: a `.` followed
+/// by at least one character, the same test as libuv's `search_path`.
+#[cfg(windows)]
+fn has_extension(bin: &[u8]) -> bool {
+    let name_start = strings::last_index_of_any(bin, b"/\\:").map_or(0, |i| i + 1);
+    let name = &bin[name_start..];
+    match strings::index_of_char_usize(name, b'.') {
+        Some(dot) => dot + 1 < name.len(),
+        None => false,
+    }
 }
 
 /// Returns true when `path` names a Windows batch script (`.cmd` / `.bat`).
@@ -238,17 +250,16 @@ pub fn batch_arg_has_cmd_metachars(arg: &[u8]) -> bool {
     strings::contains_any(arg, b"\"%&|<>^\r\n")
 }
 
-/// Check if the WPathBuffer holds a existing file path, checking also for windows extensions variants like .exe, .cmd and .bat (internally used by which_win)
+/// Check if the WPathBuffer holds a existing file path, checking also for windows extensions variants like .exe, .cmd, .bat and .com (internally used by which_win)
 #[cfg(windows)]
 fn search_bin(
     buf: &mut WPathBuffer,
     path_size: usize,
+    try_as_spelled: bool,
     check_windows_extensions: bool,
 ) -> Option<&mut [u16]> {
     {
-        if !check_windows_extensions {
-            // On Windows, files without extensions are not executable
-            // Therefore, we should only care about this check when the file already has an extension.
+        if try_as_spelled {
             // SAFETY: caller wrote NUL at buf[path_size]
             if bun_sys::exists_os_path(WStr::from_buf(&buf[..], path_size), true) {
                 return Some(&mut buf[..path_size]);
@@ -280,6 +291,7 @@ fn search_bin_in_path<'a>(
     path_buf: &mut PathBuffer,
     path: &[u8],
     bin: &[u8],
+    try_as_spelled: bool,
     check_windows_extensions: bool,
 ) -> Option<&'a mut [u16]> {
     if path.is_empty() {
@@ -317,7 +329,7 @@ fn search_bin_in_path<'a>(
     let path_size = segment_utf16_len + 1 + bin_utf16.len();
     buf[path_size] = 0;
 
-    search_bin(buf, path_size, check_windows_extensions)
+    search_bin(buf, path_size, try_as_spelled, check_windows_extensions)
 }
 
 /// This is the windows version of `which`.
@@ -335,7 +347,17 @@ pub(crate) fn which_win<'a>(
     }
     let mut path_buf = path_buffer_pool::get();
 
-    let check_windows_extensions = !ends_with_extension(bin);
+    // Nothing but the file header tells an executable from a data file on
+    // Windows, so a name is only stat'd as spelled when its extension says it
+    // is executable. A name with a directory component is the exception: the
+    // caller named one file, and libuv's search_path stats it as spelled for
+    // any extension (`chcp.com`, a PE with a custom extension). A bare name
+    // keeps the extension allowlist so that a `$PATH` walk does not hand back
+    // a source file that one of its directories happens to hold.
+    let spells_executable_extension = ends_with_extension(bin);
+    let has_dir = strings::contains_any(bin, b"/\\");
+    let try_as_spelled = spells_executable_extension || (has_dir && has_extension(bin));
+    let check_windows_extensions = !spells_executable_extension;
 
     // handle absolute paths
     if is_absolute(bin) {
@@ -349,11 +371,12 @@ pub(crate) fn which_win<'a>(
         // Capture len before re-borrowing buf (borrowck).
         let bin_utf16_len = bin_utf16.len();
         buf[bin_utf16_len] = 0;
-        return search_bin(buf, bin_utf16_len, check_windows_extensions).map(|w| &*w);
+        return search_bin(buf, bin_utf16_len, try_as_spelled, check_windows_extensions)
+            .map(|w| &*w);
     }
 
     // check if bin is in cwd
-    if strings::index_of_char(bin, b'/').is_some() || strings::index_of_char(bin, b'\\').is_some() {
+    if has_dir {
         // NLL/Polonius limitation — raw-ptr reborrow so the None branch can
         // fall through without `buf` appearing borrowed.
         // SAFETY: bin_path borrow does not escape this block on the None path.
@@ -364,6 +387,7 @@ pub(crate) fn which_win<'a>(
             &mut *path_buf,
             cwd,
             strings::without_prefix_comptime(bin, b"./"),
+            try_as_spelled,
             check_windows_extensions,
         ) {
             posix_to_platform_in_place(bin_path);
@@ -385,6 +409,7 @@ pub(crate) fn which_win<'a>(
             &mut *path_buf,
             segment_part,
             bin,
+            try_as_spelled,
             check_windows_extensions,
         ) {
             return Some(&*bin_path);

@@ -3853,7 +3853,8 @@ fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) {
         let req = unsafe { (*node).data.assume_init_mut() };
         req.abort();
         req.deref_();
-    }}
+    }
+}
 
 /// Called at the end of BundleV2 to index bundle contents into the `IncrementalGraph`s
 /// This function does not recover DevServer state if it fails (allocation failure)

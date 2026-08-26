@@ -2934,7 +2934,7 @@ impl PostgresSQLConnection {
                             crate::postgres::postgres_sql_statement::Error::Protocol(err),
                         );
                         // The request still holds another ref; this cannot drop to 0.
-                        let stmt_ptr: *const PostgresSQLStatement = &*stmt;
+                        let stmt_ptr: *const PostgresSQLStatement = core::ptr::from_ref(&*stmt);
                         self.statements.with_mut(|m| {
                             let name = &stmt.signature.name[..];
                             if m.get(name).is_some_and(|p| {

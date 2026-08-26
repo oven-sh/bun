@@ -608,14 +608,14 @@ impl PendingSuspension {
     fn take_wrapper(self) -> SuspendedWrapper {
         let this = core::mem::ManuallyDrop::new(self);
         // SAFETY: `this` is never dropped, so the field moves out exactly once.
-        unsafe { core::ptr::read(&this.wrapper) }
+        unsafe { core::ptr::read(&raw const this.wrapper) }
     }
 }
 
 impl Drop for PendingSuspension {
     fn drop(&mut self) {
         // SAFETY: dropped exactly once here; the field is not touched again.
-        unsafe { core::ptr::read(&self.wrapper) }.release();
+        unsafe { core::ptr::read(&raw const self.wrapper) }.release();
     }
 }
 

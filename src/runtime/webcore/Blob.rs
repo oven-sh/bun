@@ -1575,8 +1575,8 @@ impl BlobExt for Blob {
         };
 
         // `pipe_stream` takes its own refs.
-        // SAFETY: sole owner so far; `&mut` scoped to the call.
         if let Some(promise) =
+            // SAFETY: sole owner so far; `&mut` scoped to the call.
             unsafe { (*file_sink.as_ptr()).pipe_stream(&readable_stream, global_this) }
         {
             return Ok(promise);

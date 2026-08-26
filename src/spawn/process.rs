@@ -200,7 +200,7 @@ impl ProcessHandle {
     pub fn into_ref(self) -> RefPtr<Process> {
         let this = core::mem::ManuallyDrop::new(self);
         // SAFETY: `this` is never dropped, so the field is moved out exactly once.
-        unsafe { core::ptr::read(&this.0) }
+        unsafe { core::ptr::read(&raw const this.0) }
     }
 }
 

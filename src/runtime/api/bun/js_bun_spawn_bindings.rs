@@ -1978,10 +1978,9 @@ fn spawn_maybe_sync(
     if global_this.has_exception() {
         // e.g. a termination exception.
         // SAFETY: same as below; `subprocess` is not used after this line.
-        {
-            let wrapper_ref = unsafe { bun_ptr::RefPtr::from_raw(subprocess_ptr) };
-            wrapper_ref.finalize();
-        }
+        let wrapper_ref = unsafe { bun_ptr::RefPtr::from_raw(subprocess_ptr) };
+        wrapper_ref.finalize();
+        drop(wrapper_ref);
         return Ok(JSValue::ZERO);
     }
 
@@ -2006,10 +2005,9 @@ fn spawn_maybe_sync(
     // SAFETY: `subprocess_ptr` was produced by `heap::into_raw(Box::new(...))`
     // above (spawnSync path: never handed to a JS wrapper); release the ref a
     // wrapper would have held. `subprocess` is not used after this line.
-    {
-        let wrapper_ref = unsafe { bun_ptr::RefPtr::from_raw(subprocess_ptr) };
-        wrapper_ref.finalize();
-    }
+    let wrapper_ref = unsafe { bun_ptr::RefPtr::from_raw(subprocess_ptr) };
+    wrapper_ref.finalize();
+    drop(wrapper_ref);
     let (stdout, stderr, resource_usage) = output?;
 
     let sync_value = JSValue::create_empty_object(global_this, 0);

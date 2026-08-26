@@ -120,6 +120,7 @@ impl FSWatcher {
     }
 
     /// Codegen `finalize: true` entry point. Runs on the mutator thread during lazy sweep.
+    #[allow(clippy::boxed_local)] // codegen's signature
     pub fn finalize(self: Box<Self>) {
         // stop all managers and signals
         self.detach();

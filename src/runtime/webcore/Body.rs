@@ -1703,12 +1703,12 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     }
 
     /// Fetch §Request ctor step 45: move this body out, leave this owner
-    /// `Used`, and clear its `body`/`stream` cache. Null/Empty bodies pass
-    /// through unchanged. The moved stream comes back strongly `Held`: the
-    /// slot cleared here was its root, and the new owner adopts it in
-    /// `check_body_stream_ref`.
+    /// `Used`, and clear its `body`/`stream` cache. A `Null` body passes
+    /// through unchanged (`Empty` is a non-null body per spec and transfers).
+    /// The moved stream comes back strongly `Held`: the slot cleared here was
+    /// its root, and the new owner adopts it in `check_body_stream_ref`.
     fn transfer_body_value(&self, global_this: &JSGlobalObject) -> JsResult<Value> {
-        if matches!(self.get_body_value(), Value::Null | Value::Empty) {
+        if matches!(self.get_body_value(), Value::Null) {
             return Ok(Value::Null);
         }
         // A Bun.serve body shares its slot with the RequestContext (= `task`):

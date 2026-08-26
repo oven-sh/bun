@@ -1146,7 +1146,7 @@ impl Request {
 
                     if !fields.contains(Fields::Body) {
                         match request.body_value() {
-                            BodyValue::Null | BodyValue::Empty => {}
+                            BodyValue::Null => {}
                             _ if is_input => {
                                 if let Err(e) = request.throw_if_body_unusable(global_this) {
                                     bail!(Err(e));

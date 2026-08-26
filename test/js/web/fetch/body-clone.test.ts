@@ -666,6 +666,40 @@ test("new Request(request) with a locked stream body throws a catchable TypeErro
   });
 });
 
+// A Request supplied as *init* (Bun extension) is not the spec input, so its
+// body is still teed. With a locked stream that reaches the readableStreamTee
+// C++ bridge, whose exception must surface as a single catchable TypeError.
+test("new Request(url, lockedRequestAsInit) throws a catchable TypeError from the tee and does not fail the process", async () => {
+  const script = `
+    const stream = new ReadableStream({ start() {} });
+    const source = new Request("http://example.com/", { method: "POST", body: stream, duplex: "half" });
+    source.body.getReader(); // lock the body stream
+    try {
+      new Request("http://example.com/other", source);
+      console.log("no throw");
+    } catch (e) {
+      console.log("caught " + e.constructor.name + ": " + e.message);
+    }
+    await new Promise(resolve => setImmediate(resolve));
+    console.log("done");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+    stdout: ["caught TypeError: Invalid state: ReadableStream is locked", "done"],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // https://fetch.spec.whatwg.org/#dom-request-clone (step 1)
 // https://fetch.spec.whatwg.org/#dom-response-clone (step 1)
 // clone() must throw a TypeError when "this is unusable": the body is non-null
@@ -1272,6 +1306,33 @@ describe("new Request(input) transfers the input body", () => {
     // and a second construction from the same null-body input still works
     expect(() => new Request(input)).not.toThrow();
   });
+
+  // An empty string / empty buffer extracts to a non-null (immediately closed)
+  // body per spec, so it transfers like any other body.
+  for (const [label, body] of [
+    ["empty string", ""],
+    ["empty Uint8Array", new Uint8Array(0)],
+  ] as const) {
+    for (const [variant, construct] of [
+      ["single-arg", (req: Request) => new Request(req)],
+      ["two-arg", (req: Request) => new Request(req, { headers: { "x-a": "1" } })],
+    ] as const) {
+      test(`${variant} new Request(input) with an ${label} body consumes the input and gives the copy a non-null body`, async () => {
+        const input = make(body);
+        const copy = construct(input);
+        expect({
+          inputUsed: input.bodyUsed,
+          copyBodyIsNull: copy.body === null,
+          copyText: await copy.text(),
+        }).toEqual({
+          inputUsed: true,
+          copyBodyIsNull: false,
+          copyText: "",
+        });
+        expect(() => new Request(input)).toThrow(TypeError);
+      });
+    }
+  }
 
   // The input wrapper's cached `stream` slot was what rooted a user-provided
   // ReadableStream. The transfer clears that slot, so the copy must hold the

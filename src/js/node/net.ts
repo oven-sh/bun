@@ -49,8 +49,6 @@ const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
 const MathMin = Math.min;
-// Captured at module load so user code clobbering globalThis.reportError cannot
-// defeat the uncaughtException routing below.
 const reportError = globalThis.reportError;
 
 let uvBinding;
@@ -404,13 +402,8 @@ function tlsHandshakeError(verifyError) {
   return new ConnResetException("socket hang up");
 }
 
-// Readable.push() synchronously runs user 'data' listeners. A throw escaping
-// this handler is caught by the native socket dispatch and routed to the
-// handler table's `error` entry, which is for transport failures (ECONNRESET
-// etc.), so a programming error in a 'data' listener would be reported as a
-// socket 'error' and the connection torn down. Node surfaces the throw as
-// uncaughtException and leaves the socket reading; the next chunk is still
-// delivered. Catching here keeps the socket alive and matches that.
+// Node reports a throwing 'data' listener as uncaughtException and keeps reading;
+// let through, the native dispatch would route it to `error` and destroy the socket.
 function pushDataToSocket(self, socket, buffer) {
   let full;
   try {
@@ -1261,10 +1254,7 @@ function onconnection(err, clientHandle) {
   }
   if (isTLS) initAcceptedTLSSocket(self, _socket);
 
-  // A 'connection' listener throw that reached the native open dispatch would
-  // be treated as an open failure and the accepted socket closed. Node reports
-  // it as uncaughtException and the connection stays established; match that
-  // and fall through so reading is still started.
+  // Node reports a throwing 'connection' listener as uncaughtException and keeps the socket.
   try {
     self.emit("connection", _socket);
   } catch (e) {

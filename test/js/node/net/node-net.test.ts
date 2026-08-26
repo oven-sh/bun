@@ -2821,7 +2821,6 @@ describe.concurrent("uncaughtException from socket listeners", () => {
         c.on("data", () => { ++acks === 1 ? c.write("B") : c.end(); });
         c.on("error", () => {});
       });
-      setTimeout(done, 5000).unref();
     `);
     expect(result).toEqual({
       stdout: JSON.stringify(["connection", "data:A", "uncaught:data-boom", "data:B", "close:false"]),
@@ -2848,7 +2847,6 @@ describe.concurrent("uncaughtException from socket listeners", () => {
         });
         c.on("close", had => { ev.push("close:" + had); srv.close(done); });
       });
-      setTimeout(done, 5000).unref();
     `);
     expect(result).toEqual({
       stdout: JSON.stringify(["data:A", "uncaught:data-boom", "data:B", "close:false"]),
@@ -2876,7 +2874,6 @@ describe.concurrent("uncaughtException from socket listeners", () => {
         c.on("data", () => { ++acks === 1 ? c.write("B") : c.end(); });
         c.on("error", () => {});
       });
-      setTimeout(done, 5000).unref();
     `);
     expect(result).toEqual({
       stdout: JSON.stringify(["connection", "uncaught:conn-boom", "data:A", "data:B", "close:false"]),
@@ -2901,7 +2898,6 @@ describe.concurrent("uncaughtException from socket listeners", () => {
         c.on("data", () => pool.emit("error", new Error("pool error")));
         c.on("close", had => { ev.push("close:" + had); srv.close(done); });
       });
-      setTimeout(done, 5000).unref();
     `);
     expect(result).toEqual({
       stdout: JSON.stringify(["uncaught:pool error", "close:false"]),
@@ -2932,7 +2928,6 @@ describe.concurrent("uncaughtException from socket listeners", () => {
         c.on("data", () => { ++acks === 1 ? c.write("B") : c.end(); });
         c.on("error", e => ev.push("client-error:" + e.message));
       });
-      setTimeout(done, 5000).unref();
     `);
     expect(result).toEqual({
       stdout: JSON.stringify(["secureConnection", "data:A", "uncaught:data-boom", "data:B", "close:false"]),
@@ -2960,7 +2955,6 @@ describe.concurrent("uncaughtException from socket listeners", () => {
         });
         c.on("close", had => { ev.push("close:" + had); srv.close(done); });
       });
-      setTimeout(done, 5000).unref();
     `);
     expect(result).toEqual({
       stdout: JSON.stringify(["data:A", "uncaught:data-boom", "data:B", "close:false"]),

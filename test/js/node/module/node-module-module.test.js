@@ -832,6 +832,17 @@ console.log("survived", require("./late.js"));`,
       delete require.cache["util/types"];
     }
   });
+  // https://github.com/oven-sh/bun/issues/40551
+  test("require.cache does not expose builtins from the ESM registry", () => {
+    // `fs` is ESM-imported at the top of this file, so the ESM registry holds
+    // "node:fs". Node.js never puts builtins in require.cache; serving the
+    // frozen module namespace object here breaks require-in-the-middle
+    // consumers (dd-trace, OpenTelemetry) that patch cached exports.
+    expect(require.cache["node:fs"]).toBeUndefined();
+    expect("node:fs" in require.cache).toBe(false);
+    expect(Object.getOwnPropertyDescriptor(require.cache, "node:fs")).toBeUndefined();
+    expect(Object.keys(require.cache).filter(k => k.startsWith("node:"))).toEqual([]);
+  });
   test("require a cjs file uses the 'module.exports' export", () => {
     expect(require("./esm_to_cjs_interop.mjs")).toEqual(Symbol.for("meow"));
   });

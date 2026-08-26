@@ -230,16 +230,24 @@ export function createRequireCache() {
       return { ...proxy };
     },
   };
+  // Node.js never adds builtin modules to require.cache. Serving them from
+  // the ESM registry would hand out the frozen module namespace object, which
+  // breaks CJS patchers like require-in-the-middle that read require.cache
+  // and expect a mutable exports object. Users can still write their own
+  // entries for builtins; those live in $requireMap.
+  const isBuiltinKey = (key: string | symbol) => typeof key === "string" && key.startsWith("node:");
   var proxy = new Proxy(inner, {
     get(_target, key: string) {
       const entry = $requireMap.$get(key);
       if (entry) return entry;
 
-      const namespace = $esmNamespaceForCjs(key);
-      if (namespace !== undefined) {
-        const mod = $createCommonJSModule(key, namespace, true, undefined);
-        $requireMap.$set(key, mod);
-        return mod;
+      if (!isBuiltinKey(key)) {
+        const namespace = $esmNamespaceForCjs(key);
+        if (namespace !== undefined) {
+          const mod = $createCommonJSModule(key, namespace, true, undefined);
+          $requireMap.$set(key, mod);
+          return mod;
+        }
       }
 
       return inner[key];
@@ -250,7 +258,7 @@ export function createRequireCache() {
     },
 
     has(_target, key: string) {
-      return $requireMap.$has(key) || $esmNamespaceForCjs(key) !== undefined;
+      return $requireMap.$has(key) || (!isBuiltinKey(key) && $esmNamespaceForCjs(key) !== undefined);
     },
 
     deleteProperty(_target, key: string) {
@@ -264,7 +272,7 @@ export function createRequireCache() {
     ownKeys(_target) {
       var array = [...$requireMap.$keys()];
       for (const key of $esmRegistryEvaluatedKeys()) {
-        if (!array.includes(key)) {
+        if (!isBuiltinKey(key) && !array.includes(key)) {
           $arrayPush(array, key);
         }
       }
@@ -277,7 +285,7 @@ export function createRequireCache() {
     },
 
     getOwnPropertyDescriptor(_target, key: string) {
-      if ($requireMap.$has(key) || $esmNamespaceForCjs(key) !== undefined) {
+      if ($requireMap.$has(key) || (!isBuiltinKey(key) && $esmNamespaceForCjs(key) !== undefined)) {
         return {
           configurable: true,
           enumerable: true,

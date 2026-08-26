@@ -221,7 +221,10 @@ run_test() {
     */js/web/streams/streams.test.js|*/js/bun/shell/shell-cmdsub-crash.test.ts|\
     */js/bun/import-attributes/import-attributes.test.ts|\
     */js/bun/test/snapshot-tests/snapshots/snapshot.test.ts|\
-    */js/bun/spawn/spawn.ipc.bun-node.test.ts|*/regression/issue/26286.test.ts)
+    */js/bun/spawn/spawn.ipc.bun-node.test.ts|*/regression/issue/26286.test.ts|\
+    # napi.test/uv_stub: dlopen 被 OHOS 沙箱拦截（平台问题），用例必超时，
+    # 120s 快速失败省 ~480s/文件 的白等（曾 601s×2 试）
+    */napi/napi.test.ts|*/napi/uv_stub.test.ts)
       WT=120
       BT="--expose-internals --smol --timeout 120000"
       ;;
@@ -286,8 +289,10 @@ run_test() {
       BT="--expose-internals --smol --timeout 600000"
       ;;
     *shell/leak.test.ts|*spawn-pipe-leak.test.ts)
-      WT=300
-      BT="--expose-internals --smol --timeout 300000"
+      # 泄漏检测在 OHOS 上必超时（单跑 400s+ 未完，用例 90-190s 超时），
+      # 120s 快速失败收敛超时上限（曾 300s×2 试=600s 白等）
+      WT=120
+      BT="--expose-internals --smol --timeout 120000"
       ;;
     # ── bundler ──
     */bundler/*)

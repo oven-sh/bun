@@ -171,8 +171,11 @@ test.concurrent.skipIf(isWindows || !isDebug)(
       if (prefetched) {
         expect(prefetch).not.toBeNull();
         const bytes = Number(prefetch![1]);
+        // The string table holds the literal; the module's bytecode and
+        // module info add under a kilobyte. The source text would add
+        // another copy of the literal.
         expect(bytes).toBeGreaterThan(literalBytes);
-        expect(bytes).toBeLessThan(2 * literalBytes);
+        expect(bytes).toBeLessThan(literalBytes + 16 * 1024);
       } else {
         expect(stdout).not.toContain("prefetch:");
       }

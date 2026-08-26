@@ -29,6 +29,11 @@ pub enum Kind {
     /// str lcov — this worker's coverage data, sent at exit; the coordinator
     /// merges every worker's into the one report it writes.
     CoverageChunk,
+    /// (empty) — sent at exit when the worker could not write the inline
+    /// snapshots or the `.snap` file of the files it ran. The worker prints
+    /// the error itself; the coordinator only has to fail the run, as the
+    /// serial runner does when its own write fails.
+    SnapshotWriteFailed,
 }
 
 impl TryFrom<u8> for Kind {
@@ -45,6 +50,7 @@ impl TryFrom<u8> for Kind {
             6 => Kind::Shutdown,
             7 => Kind::JunitChunk,
             8 => Kind::CoverageChunk,
+            9 => Kind::SnapshotWriteFailed,
             _ => return Err(()),
         })
     }

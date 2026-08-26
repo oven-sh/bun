@@ -59,13 +59,9 @@ pub struct StreamingClap<'p, 'a, Id, ArgIterator> {
     pub(crate) positional: Option<&'p clap::Param<Id>>,
     pub(crate) diagnostic: Option<&'p mut clap::Diagnostic>,
     pub(crate) short_aliases: &'static [(&'static [u8], &'static [u8])],
-    /// Unrecognized `--long` flags are skipped by default (node-mode and
-    /// `bun run` must pass unknown argv through in silence). Commands with no
-    /// passthrough semantics (`bun build`) set this to make them an error.
+    /// Error on unknown long flags instead of the default silent skip.
     pub(crate) reject_unrecognized_flags: bool,
-    /// Long names that also accept esbuild's `--name:VALUE` spelling. The `:`
-    /// makes the whole token an unknown name, so the rewrite runs on the
-    /// unmatched path and hands `VALUE` to the named param.
+    /// Long names that also accept esbuild's `--name:VALUE` spelling.
     pub(crate) colon_value_flags: &'static [&'static [u8]],
 }
 

@@ -500,9 +500,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--bundle                         Bundle dependencies into the output. This is the default behavior"
         ),
         parse_param!("--no-bundle                      Transpile file only, do not bundle"),
-        // Hidden: the old docs showed `bun build --entrypoints ./a.ts`, and the
-        // token only worked because the unknown flag was skipped and its value
-        // fell through as a positional. Keep it parsing as a real entry point.
+        // Hidden compat flag: old docs showed `bun build --entrypoints ./a.ts`.
         parse_param!("--entrypoints <STR>..."),
         parse_param!(
             "--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed."
@@ -790,12 +788,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,
                 _ => &[],
             },
-            // `bun build` has no argv passthrough, so a flag it does not know
-            // is a typo. Skipping it in silence ships the un-substituted
-            // output (#40558).
+            // `bun build` has no argv passthrough, so an unknown flag is a
+            // typo that would otherwise ship wrong output in silence (#40558).
             reject_unrecognized_flags: cmd == CommandTag::BuildCommand,
-            // esbuild's `--define:K=V` spelling. The react `bun init` template
-            // shipped it in its build script, so it must keep parsing.
+            // The react `bun init` template uses esbuild's `--define:K=V`.
             colon_value_flags: match cmd {
                 CommandTag::BuildCommand => &[b"define"],
                 _ => &[],

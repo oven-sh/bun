@@ -1211,6 +1211,9 @@ describe("spyOn", () => {
       expect(obj[213]).toBe(obj);
       expect(fn).toHaveBeenCalledTimes(2);
 
+      // Same as named keys: the index is an accessor now, so it cannot be spied again.
+      expect(() => spyOn(obj, 213)).toThrow("does not support accessor properties");
+
       fn.mockRestore();
       expect(obj[213]).toBe(obj);
       expect(fn).not.toHaveBeenCalled();

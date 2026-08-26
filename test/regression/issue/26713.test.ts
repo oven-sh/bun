@@ -14,10 +14,11 @@ const x: Foo = { bar: "hello from main.ts" };
 console.log(x.bar);
 `;
 
-async function makeFixture() {
+async function makeFixture(extraFiles: Record<string, string> = {}) {
   const dir = tempDir("26713", {
     "src/main.ts": originalSource,
     "index.html": `<!DOCTYPE html><html><body><script type="module" src="./main.js"></script></body></html>`,
+    ...extraFiles,
   });
   // Step 1: pre-build src/main.ts -> main.js + main.js.map (linked sourcemap).
   await using proc = Bun.spawn({
@@ -78,7 +79,9 @@ describe.concurrent("input sourcemap chaining for external .map references (#267
   });
 
   test("Bun.serve HTML route with development: false (prod bundler)", async () => {
-    using dir = await makeFixture();
+    // Production serves no sourcemaps by default; opt in so the chain is
+    // exercised on the prod bundler path too.
+    using dir = await makeFixture({ "bunfig.toml": `[serve.static]\nsourcemap = "linked"` });
     const fixture = `
       import index from "./index.html";
       const server = Bun.serve({ port: 0, routes: { "/": index }, development: false });

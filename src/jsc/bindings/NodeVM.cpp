@@ -451,6 +451,7 @@ RefPtr<JSC::CachedBytecode> getBytecode(JSGlobalObject* globalObject, JSC::Sourc
     JSC::BytecodeCacheError bytecodeCacheError;
     FileSystem::FileHandle fileHandle;
     if (type == JSC::SourceCodeType::ModuleType) {
+        lexicallyScopedFeatures |= StrictModeLexicallyScopedFeature;
         JSC::UnlinkedModuleProgramCodeBlock* unlinked = JSC::recursivelyGenerateUnlinkedCodeBlockForModuleProgram(vm, source, lexicallyScopedFeatures, JSParserScriptMode::Module, {}, parserError, EvalContextType::None);
         if (!unlinked || parserError.isValid())
             return nullptr;

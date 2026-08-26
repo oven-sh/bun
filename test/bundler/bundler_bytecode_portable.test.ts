@@ -36,6 +36,7 @@ import { gzipSync } from "zlib";
 // the "update the snapshot" case above.
 const corpusDir = join(import.meta.dir, "bytecode-portability");
 const featuresSource = readFileSync(join(corpusDir, "features.js"), "utf8");
+const recordsSource = readFileSync(join(corpusDir, "records.js"), "utf8");
 const moduleSource = readFileSync(join(corpusDir, "module.js"), "utf8");
 
 const featuresOutput = [
@@ -53,6 +54,28 @@ const featuresOutput = [
   `"function" "function/undefined" 17 1024 0.25 3 null 0.0010000000000000002 4 2`,
   `"hoisted" 3 [5,6,5] "twomany" "1,argumentCount,postfix,2"`,
   `["p1","p2",0,2,8,"p","q","r","s2","00","10","11","20","21","22",7,1,3,2,"undefined"]`,
+].join("\n");
+
+const recordsOutput = [
+  "strings: \"aababcabcd\" 46 48 47 49 13 1 \"zero\" \"one point five\" \"neg\" 19 12",
+  "constants: 1131776 \"0.5,-0.5,1,1e+21,1e-7,2147483648,-2147483649,4294967295,9007199254740991,9007199254740992,1.7976931348623157e+308,5e-324,-0,0.30000000000000004,3.141592653589793\" \"Infinity,-Infinity,undefined,null,true,false\" \"|s|st|str|string|ストリング\" true \"undefined\"",
+  "arrays: 12 1.5 2.5 true \"xyyzzzwwww\" \"number,string,number,boolean,object,undefined\" 4 6 false 2 3 0 64 32 11 8",
+  "regexps: \"|g|i|m|s|u|y|d|v|dgimsy||||u|u|||u|v|\" \"0,0,0,0,0,0,0,0,0,0,2,3,0,5,6,0,3,9,1,0\" true \"yy\" \"c\"",
+  "templates: [1,\"\",\"\",0] [1,\"one\",\"one\",0] [4,\"a|b|c|d\",\"a|b|c|d\",3] [2,2,\"\\n\\t\\\\|ABC\",1] [1,1,\"U\",0] [2,2,\"日本|テキスト\",1] [4,\"|||\",\"|||\",3] [1,1,\"\\nmulti\\nline\",0] \"one\" true",
+  "bigints: \"0,1,-1,127,128,255,256,65535,4294967295,4294967296,18446744073709551615,18446744073709551616,-18446744073709551616,31,15,5,1000000,123456789012345678901234567890123456789012345678901234567890\" 123456789012345678901234567890123456789030792422983535120448n 61",
+  "switches: \"b-daxy2B5snb\" \"-c--28?4m\" \"--b-0?5m\" \"---d27J5m\"",
+  "handlers: \"t1\" \"c2:1\" \"t3\" \"f3\" \"c4:d\" \"f4\" \"f5\" \"c5:3\" \"fi1\" \"i2\" \"fi2\" \"fi3\" \"fr\" \"r\" \"fg\" 3 \"ff\" \"TypeError:inner!\"",
+  "spread/rest: [2,3,3,9,6,3] [2,3,3,9,6,3] \"qrst日\" \"rst日\" \"pq\" 6 28 [6,7,7,6]",
+  "scopes: 6 10 3 104 5 3 190 15 10 \"0,1,10,11,20,21\" \"ib\"",
+  "tdz: 15 3 2 7 8",
+  "functions: \"|||||\" \"1|prop|arrowProp|computed\" \"[sym]\" true \"assigned\" [9,9,1,2,4,3,0] [0,1,8,0,1,2] 6 4 \"col\" 9 25 \"DerivedModes\" 4 4 2 1 6",
+  "rareData: \"U,1,2,3,U,4,U,5,U,6,7,8,11,12\" \"function\" 1 7 4 3 2 1 2 true \"Elements\"",
+  "objects: \"0,1,2,9,4,3,1,1,1,1,5,1,0,1,3,1,1\" 7 \"[object Object]\" null 2",
+  "control: \"b\" \"a\" 2 4 0 21 \"a\" \"b\" \"1m\" \"x\" \"y\" \"0\" \"1\" \"called\" \"idx\" undefined \"called\" \"d\" \"e\" \"f\" 3 \"f\" \"or\" 0 0 true false \"undefined\" \"undefined\" false true true true true true true \"comma\" undefined 3 4 7 \"t0e1mnested0p\" \"r\\\\n0\" true undefined \"|\" 2 4 0 21 \"a\" \"b\" \"1m\" \"x\" \"y\" \"0\" \"1\" \"called\" \"idx\" undefined \"called\" \"d\" \"e\" \"f\" 3 \"t\" 1 \"and\" 1 false true \"undefined\" \"undefined\" false true true true true true true \"comma\" undefined 3 4 7 \"t1e2mnested1p\" \"r\\\\n1\" \"elif\" true undefined",
+  "generators: 1 2 3 \"i\" 4 5 \"sent\"",
+  "expressionInfo: 177 178",
+  "sloppy: 2 \"w\" \"function\" 1 \"function\" \"function\" \"object\"",
+  "async: 12 2 1 3 6 \"1,2,3,4,2\"",
 ].join("\n");
 
 // One function large enough to need what small ones never do: >255 locals (wide16 operands), a metadata table past
@@ -83,11 +106,35 @@ function bigSource() {
   return lines.join("\n") + "\n";
 }
 const bigOutput = "160307 70000";
+// Sweeps of one parameter at a time across the boundaries the encodings have: string lengths (inline <= 3, alias >= 48)
+// in both widths, integers around each varint/int32 boundary, switch table sizes, parameter and field counts, closure
+// nesting depth, array literal lengths. Generated (same bytes every time) rather than checked in.
+const shapesOutput = "16257";
+function shapesSource() {
+  const lines = ["var acc = 0, s;"];
+  for (let n = 0; n <= 64; n++) lines.push(`s = "${"x".repeat(n)}"; acc += s.length; s = "${"é".repeat(n)}"; acc += s.length; s = "${"字".repeat(n)}"; acc += s.length;`);
+  for (const b of [7, 8, 14, 15, 16, 21, 22, 28, 29, 31, 32, 33, 52]) for (const d of [-1, 0, 1]) lines.push(`acc += ${2 ** b + d} % 7; acc -= ${-(2 ** b) + d} % 5;`);
+  for (let n = 1; n <= 24; n++) {
+    lines.push(`function sw${n}(v) { switch (v) { ${Array.from({ length: n }, (_, i) => `case ${i * (n % 3 + 1)}: return ${i};`).join(" ")} default: return -1; } } acc += sw${n}(${n - 1});`);
+    lines.push(`function ss${n}(v) { switch (v) { ${Array.from({ length: n }, (_, i) => `case "k${"q".repeat(i)}": return ${i};`).join(" ")} default: return -1; } } acc += ss${n}("k${"q".repeat(n - 1)}");`);
+    lines.push(`function p${n}(${Array.from({ length: n }, (_, i) => "a" + i).join(", ")}) { return arguments.length + a${n - 1}; } acc += p${n}(${Array.from({ length: n }, (_, i) => i).join(", ")});`);
+    lines.push(`class C${n} { ${Array.from({ length: n }, (_, i) => `f${i} = ${i}; #p${i} = ${i};`).join(" ")} sum() { return ${Array.from({ length: n }, (_, i) => `this.f${i} + this.#p${i}`).join(" + ")}; } } acc += new C${n}().sum();`);
+    lines.push(`acc += [${Array.from({ length: n }, (_, i) => i).join(", ")}].length + [${Array.from({ length: n }, (_, i) => i + 0.5).join(", ")}].length + [${Array.from({ length: n }, (_, i) => `"e${i}"`).join(", ")}].length;`);
+    lines.push(`acc += ${Array.from({ length: n }, (_, i) => i).reduceRight((inner, i) => `(v${i} => ${inner})(${i})`, Array.from({ length: n }, (_, i) => "v" + i).join(" + "))};`); // n nested arrows, the innermost capturing every parameter
+  }
+  for (let depth = 1; depth <= 12; depth++) lines.push(`acc += (function d${depth}_0() { let v0 = ${depth}; ${Array.from({ length: depth }, (_, i) => `return (function d${depth}_${i + 1}() { let v${i + 1} = v${i} + 1;`).join(" ")} return ${Array.from({ length: depth + 1 }, (_, i) => "v" + i).join(" + ")}; ${"})();".repeat(depth)} })();`);
+  lines.push("console.log(acc);");
+  return lines.join("\n") + "\n";
+}
+
 
 const corpusBuilds = [
-  { name: "bun build --bytecode features.js", entry: "./features.js", args: [] as string[] },
-  { name: "bun build --bytecode --minify features.js", entry: "./features.js", args: ["--minify"] },
-  { name: "bun build --bytecode big.js", entry: "./big.js", args: [] as string[] },
+  { name: "bun build --bytecode features.js", entry: "./features.js", args: [] as string[], output: featuresOutput },
+  { name: "bun build --bytecode --minify features.js", entry: "./features.js", args: ["--minify"], output: featuresOutput },
+  { name: "bun build --bytecode records.js", entry: "./records.js", args: [] as string[], output: recordsOutput },
+  { name: "bun build --bytecode --minify records.js", entry: "./records.js", args: ["--minify"], output: recordsOutput },
+  { name: "bun build --bytecode big.js", entry: "./big.js", args: [] as string[], output: bigOutput },
+  { name: "bun build --bytecode shapes.js", entry: "./shapes.js", args: [] as string[], output: shapesOutput },
 ];
 // Entries are relative to the corpus directory so the module paths the bundler writes into its output are the same on
 // every machine. (A library that uses __dirname / __filename cannot be here: the bundler inlines them as absolute paths.)
@@ -106,6 +153,7 @@ const bundlerBuilds = [...corpusBuilds, ...libraryBuilds];
 // big.js is generated next to the checked-in corpus once per run (same bytes every time).
 const bigPath = join(corpusDir, "big.js");
 writeFileSync(bigPath, bigSource());
+writeFileSync(join(corpusDir, "shapes.js"), shapesSource());
 
 async function bundle(
   outdir: string,
@@ -162,6 +210,11 @@ describe("bytecode cache portability", () => {
       "vm.Script features.js",
       new vm.Script(featuresSource, { filename: "features.js", produceCachedData: true }).cachedData!,
     );
+    outputs["vm.Script shapes.js"] = fingerprint("vm.Script shapes.js", new vm.Script(shapesSource(), { filename: "shapes.js", produceCachedData: true }).cachedData!);
+    outputs["vm.Script records.js"] = fingerprint(
+      "vm.Script records.js",
+      new vm.Script(recordsSource, { filename: "records.js", produceCachedData: true }).cachedData!,
+    );
     outputs["vm.SourceTextModule module.js"] = fingerprint(
       "vm.SourceTextModule module.js",
       new vm.SourceTextModule(moduleSource, { identifier: "module.js" }).createCachedData(),
@@ -198,10 +251,17 @@ describe("bytecode cache portability", () => {
     ).toMatchInlineSnapshot(`
       {
         "bun build --bytecode --minify features.js": {
-          "js": "39d8010f7ae727ce650a5c8f1d90f6e9054ec18de5f2efb7dde474becea3c74a",
+          "js": "9f5f15dbd326293b6805304febe9fb19f9d26531d2bb8c10e80d80e126f19a2d",
           "jsc": {
-            "bytes": 45744,
-            "sha256": "a967a089add68a9c257f8301c9a56e0e12d93a7a4191293e0c38dc062254d18f",
+            "bytes": 46280,
+            "sha256": "a8a9d6ba88e31eaaacee53b6a721cf7aeb02bca5ac2dd6e0be9b0d2586c79648",
+          },
+        },
+        "bun build --bytecode --minify records.js": {
+          "js": "475a38e69ac7da866c59406f5046d31af4835dd159ef36e03bc1fe4ed6b24f34",
+          "jsc": {
+            "bytes": 89200,
+            "sha256": "3d791c358b798bf013224fb8a26b8668a00a03c9db801c8b986d3346a8d0d95b",
           },
         },
         "bun build --bytecode acorn/dist/acorn.mjs": {
@@ -219,10 +279,10 @@ describe("bytecode cache portability", () => {
           },
         },
         "bun build --bytecode features.js": {
-          "js": "1e8a739b8e899b7191a2a53748d27b06c616ef821df85d00e0b64ff4a7b094e4",
+          "js": "119167da75fb91bb0c0cd490210afaa26cf138c3509333f335a7134eb1b6cfde",
           "jsc": {
-            "bytes": 48208,
-            "sha256": "3eaab66c513c7ebad6f7a966d281596a250cd758b5c9605dc5ec13f61a1a8034",
+            "bytes": 48184,
+            "sha256": "4033793fb658444392f16cb7e910be4656aae7876fc28334e7fbf3c2aaeeff6a",
           },
         },
         "bun build --bytecode happy-dom/lib/index.js": {
@@ -253,6 +313,20 @@ describe("bytecode cache portability", () => {
             "sha256": "3afdbd09ae9ee90215811d5ea0c0a08f19414383bb0fbe1cc0f7a7c929ac2446",
           },
         },
+        "bun build --bytecode records.js": {
+          "js": "41169a8eee0403a71e1ba5eaca3604b44e6947e83d0794abb7f7e639880641d2",
+          "jsc": {
+            "bytes": 91984,
+            "sha256": "f85b22e88bfca2ea1484d71c232ef7f57a53c4ed76cdd0dee1b23572aa208867",
+          },
+        },
+        "bun build --bytecode shapes.js": {
+          "js": "dfcf0136de2c98f6a29d2c41477637879ccae98385a1bf30c666b85002bcae07",
+          "jsc": {
+            "bytes": 249808,
+            "sha256": "faefe10b64458d7b978ee6d2339e95aee17e1114a878cd39a6d52860c6944d26",
+          },
+        },
         "bun build --bytecode svelte/compiler/index.js": {
           "js": "91d38e665639adcb4ec160c966e6d72161ee07083363c04670ee82e82c001414",
           "jsc": {
@@ -279,17 +353,25 @@ describe("bytecode cache portability", () => {
           "bytes": 354672,
           "sha256": "ff430fa41f4192baaeb922b03ff28b68609abc2e41e40016d15a078af984d042",
         },
+        "vm.Script records.js": {
+          "bytes": 93112,
+          "sha256": "593b71284b1e7fa24e74f702a28a2b986b01fe92f97a58af4d27141001b8b4ef",
+        },
+        "vm.Script shapes.js": {
+          "bytes": 289040,
+          "sha256": "5e9cae2030a97a0d122cbbe22c34461d871394253a03dc3ae1dede5eeab9cd5e",
+        },
         "vm.Script typescript.js": {
           "bytes": 12095328,
           "sha256": "6522583256b6d7f0485d895dcfcce4cb967139dc5ed93c08645ae1c818fb9758",
         },
         "vm.SourceTextModule acorn.mjs": {
           "bytes": 264064,
-          "sha256": "ff74b78ba0543c10860dca0a86e899cb20e147a5c15881abaf17f3d1048ac2de",
+          "sha256": "40753e7df6bc75e5c542aa436f94163a2dd473adf10ca2e77e452a67b8332290",
         },
         "vm.SourceTextModule module.js": {
-          "bytes": 2840,
-          "sha256": "595652c14c69e7601c1b9ef94d923db08aa9a20e7e2147565923cc3b7427ee37",
+          "bytes": 9736,
+          "sha256": "695d888a03c1b8257b89f01b5229009db9c38e065d53b98ed8f963ef399ce74d",
         },
       }
     `);
@@ -351,7 +433,7 @@ describe("bytecode cache portability", () => {
   });
 
   // Identical bytes only help if this platform also decodes what it encodes.
-  for (const { name, entry, args } of corpusBuilds) {
+  for (const { name, entry, args, output } of corpusBuilds) {
     test(`output of \`${name}\` loads from the cache`, async () => {
       using dir = tempDir("bytecode-portable-run", {});
       await bundle(String(dir), entry, args);
@@ -363,18 +445,22 @@ describe("bytecode cache portability", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toStartWith("[Disk Cache] Cache hit for sourceCode");
-      expect(stdout).toBe((entry === "./big.js" ? bigOutput : featuresOutput) + "\n");
+      expect(stdout).toBe(output + "\n");
       expect(exitCode).toBe(0);
     });
   }
 
-  test("vm.Script cachedData is accepted and runs", async () => {
-    const { cachedData } = new vm.Script(featuresSource, { filename: "features.js", produceCachedData: true });
-    const script = new vm.Script(featuresSource, { filename: "features.js", cachedData });
-    expect(script.cachedDataRejected).toBe(false);
-    const lines: string[] = [];
-    const context = vm.createContext({ console: { log: (...args: unknown[]) => lines.push(args.join(" ")) } });
-    await script.runInContext(context);
-    expect(lines.join("\n")).toBe(featuresOutput);
-  });
+  for (const [file, source, output] of [["features.js", featuresSource, featuresOutput], ["records.js", recordsSource, recordsOutput]] as const) {
+    test(`vm.Script cachedData for ${file} is accepted and runs`, async () => {
+      const { cachedData } = new vm.Script(source, { filename: file, produceCachedData: true });
+      const script = new vm.Script(source, { filename: file, cachedData });
+      expect(script.cachedDataRejected).toBe(false);
+      const lines: string[] = [];
+      const done = Promise.withResolvers<void>();
+      const context = vm.createContext({ console: { log: (...args: unknown[]) => { lines.push(args.join(" ")); done.resolve(); } } });
+      script.runInContext(context);
+      await done.promise; // both scripts print once, after their async parts settle
+      expect(lines.join("\n")).toBe(output);
+    });
+  }
 });

@@ -691,6 +691,42 @@ const cases: Case[] = [
     strict: false,
     loose: false,
   },
+  // `errors` is an own non-enumerable property of AggregateError, like `cause`.
+  {
+    name: "AggregateErrors with equal errors",
+    a: () => new AggregateError([new TypeError("a"), new RangeError("b")], "m"),
+    b: () => new AggregateError([new TypeError("a"), new RangeError("b")], "m"),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "AggregateErrors with different errors",
+    a: () => new AggregateError([new TypeError("a")], "m"),
+    b: () => new AggregateError([new TypeError("b")], "m"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "AggregateErrors with a different number of errors",
+    a: () => new AggregateError([new Error("a"), new Error("a")], "m"),
+    b: () => new AggregateError([new Error("a")], "m"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "AggregateErrors whose errors differ in a nested cause",
+    a: () => new AggregateError([new Error("a", { cause: 1 })], "m"),
+    b: () => new AggregateError([new Error("a", { cause: 2 })], "m"),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "an error with a non-enumerable errors property and one without",
+    a: () => withHiddenProperty(new Error("x"), "errors", [1]),
+    b: () => new Error("x"),
+    strict: false,
+    loose: false,
+  },
 
   // Map and Set.
   {

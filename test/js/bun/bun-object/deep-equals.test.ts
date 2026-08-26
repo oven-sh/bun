@@ -49,6 +49,21 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
     expect(deepEquals(b, a)).toBe(false);
   });
 
+  // Like `cause`, `errors` is a non-enumerable own property, so the property walk
+  // does not see it. Node and Jest both compare it.
+  it("compares the errors of an AggregateError", () => {
+    const make = (message: string) => new AggregateError([new TypeError(message)], "m");
+    expect(deepEquals(make("a"), make("a"))).toBe(true);
+    expect(deepEquals(make("a"), make("b"))).toBe(false);
+    expect(deepEquals(make("b"), make("a"))).toBe(false);
+    expect(deepEquals(new AggregateError([1, 2], "m"), new AggregateError([1], "m"))).toBe(false);
+
+    expect(make("a")).toEqual(make("a"));
+    expect(make("a")).toStrictEqual(make("a"));
+    expect(make("a")).not.toEqual(make("b"));
+    expect(make("a")).not.toStrictEqual(make("b"));
+  });
+
   // we may change this in the future
   it("functions that are not reference-equal are never equal", () => {
     function foo() {}

@@ -232,16 +232,30 @@ describe.skipIf(!isPosix)("process.env writes reach the OS environment", () => {
         process.env.ENVFIX_LAUNCH = "overwritten";
         process.env.ENVFIX_NUM = 42;
         delete process.env.ENVFIX_TODEL;
+        // Every execution of one assignment site must reach the OS, not only
+        // the first one before JSC caches the store.
+        const repeated = [];
+        for (let i = 0; i < 4; i++) {
+          process.env.ENVFIX_LOOP = i;
+          repeated.push(read("ENVFIX_LOOP"));
+        }
         process.stdout.write(JSON.stringify({
           set: read("ENVFIX_NEW"),
           overwrite: read("ENVFIX_LAUNCH"),
           coerced: read("ENVFIX_NUM"),
           deleted: read("ENVFIX_TODEL"),
+          repeated,
         }));
       `,
       { ENVFIX_LAUNCH: "launch", ENVFIX_TODEL: "present" },
     );
-    expect(out).toEqual({ set: "from-js", overwrite: "overwritten", coerced: "42", deleted: null });
+    expect(out).toEqual({
+      set: "from-js",
+      overwrite: "overwritten",
+      coerced: "42",
+      deleted: null,
+      repeated: ["0", "1", "2", "3"],
+    });
   });
 
   test.concurrent("a dropped name or a NUL-cut value never reaches the OS environment as written", async () => {

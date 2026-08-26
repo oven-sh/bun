@@ -243,6 +243,7 @@ JSC_DEFINE_HOST_FUNCTION(InternalModuleRegistry::jsCreateInternalModuleById, (JS
 
 namespace Zig {
 JSC::VM& vmForBytecodeCache();
+void ensureBuiltinNamesForBytecodeCache(JSC::VM&);
 }
 
 // bun build --compile: bytecode for internal JS module `id` (an index below BUN_NATIVE_MODULE_START_INDEX), generated the
@@ -256,10 +257,7 @@ extern "C" bool Bun__generateInternalModuleBytecode(uint32_t id, uint32_t depth,
     const InternalJSModule& m = internalJSModules[id];
     JSC::VM& vm = Zig::vmForBytecodeCache();
     JSC::JSLockHolder locker(vm);
-    // The builtins parse with private @names; register Bun's on this throwaway VM (its own VM gets them from JSVMClientData).
-    static thread_local std::unique_ptr<BunBuiltinNames> builtinNames;
-    if (!vm.clientData && !builtinNames)
-        builtinNames = BunBuiltinNames::createStandalone(vm);
+    Zig::ensureBuiltinNamesForBytecodeCache(vm);
     String text = INTERNAL_MODULE_SOURCE(m);
     SourceCode source = makeInternalModuleSource(text, m.moduleId, m.url);
     UnlinkedFunctionExecutable* executable = createInternalModuleExecutable(vm, source, m.moduleId);
@@ -267,7 +265,7 @@ extern "C" bool Bun__generateInternalModuleBytecode(uint32_t id, uint32_t depth,
     JSC::recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, executable, source, error, depth);
     if (error.isValid())
         return false;
-    RefPtr<JSC::CachedBytecode> result = JSC::encodeBuiltinFunction(vm, executable, source.length(), InternalModuleRegistryConstants::sourceStamp, externalStrings);
+    RefPtr<JSC::CachedBytecode> result = JSC::encodeBuiltinFunction(vm, executable, source.length(), InternalModuleRegistryConstants::sourceStamp, externalStrings, JSC::BytecodeCacheChecksums::No, JSC::BytecodeCacheUpdatable::No);
     if (!result)
         return false;
     result->ref();

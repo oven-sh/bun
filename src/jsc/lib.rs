@@ -966,11 +966,6 @@ pub use self::js_promise::Strong as JSPromiseStrong;
 /// it via `jsc::PromiseStatus::{Pending,Fulfilled,Rejected}`).
 pub use self::js_promise::Status as PromiseStatus;
 
-/// `bun_ptr::RefPtr` — intrusive refcounted smart pointer. Re-exported here so
-/// `crate::RefPtr<SourceProvider>` (ZigStackTrace.rs) resolves without every
-/// submodule taking a direct `bun_ptr` dep.
-pub use bun_ptr::RefPtr;
-
 /// `bun.String` — refcounted WTF-backed string. Re-exported at the crate root
 /// so submodules can write `crate::String`.
 pub use bun_core::String;
@@ -1256,9 +1251,9 @@ pub use self::array_buffer::JSTypedArrayBytesDeallocator;
 pub mod node_path;
 #[path = "webcore_types.rs"]
 pub mod webcore_types;
-// RAII pair for `to_thread_safe()`/`unprotect()` — re-exported at crate root
+// RAII pair for `make_thread_isolated()`/`unprotect()` — re-exported at crate root
 // so `bun_runtime` callers don't reach through `node_path`.
-pub use self::node_path::{ThreadSafe, Unprotect};
+pub use self::node_path::{ThreadIsolated, Unprotect};
 
 /// `jsc.WebCore` (deprecated alias) — only the data-shape subset
 /// that was hoisted to this tier. Reach for `bun_runtime::webcore` for the

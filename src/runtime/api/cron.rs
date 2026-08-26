@@ -75,7 +75,7 @@ use crate::jsc_hooks::timer_all_mut as timer_all;
 // in-flight dealloc UB) and touches nothing after the call that may free
 // `this`. Mutable state lives in `Cell`/`JsCell` fields so every access is a
 // short shared borrow.
-trait CronJobBase: Sized + bun_ptr::AnyRefCounted<DestructorCtx = ()> {
+trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
     /// The single owning ref; released by `finish`.
     fn owner(&self) -> &Cell<Option<RefPtr<Self>>>;
     fn promise(&self) -> &JsCell<jsc::JSPromiseStrong>;
@@ -149,7 +149,7 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted<DestructorCtx = ()> {
                 .promise()
                 .with_mut(|p| p.resolve(&global, JSValue::UNDEFINED));
         }
-        owner.deref();
+        drop(owner);
         ev.exit();
     }
 
@@ -1443,9 +1443,8 @@ impl CronJob {
 
     /// May free `this`.
     fn release_pending_ref(this: ThisPtr<Self>) {
-        if let Some(pending) = this.pending_ref.replace(None) {
+        if let Some(_pending) = this.pending_ref.replace(None) {
             this.maybe_downgrade();
-            pending.deref();
         }
     }
 
@@ -1494,7 +1493,7 @@ impl CronJob {
             return;
         };
         if let Some(i) = jobs.iter().position(|j| j.as_ptr() == this.as_ptr()) {
-            jobs.swap_remove(i).deref();
+            drop(jobs.swap_remove(i));
         }
     }
 
@@ -1514,7 +1513,6 @@ impl CronJob {
             if MODE == ClearMode::Teardown {
                 Self::release_pending_ref(this);
             }
-            job.deref();
         }
     }
 
@@ -1571,7 +1569,7 @@ impl CronJob {
         // scheduleNext → finishDeferredStop downgrades this_value and derefs the
         // list entry; bracket-ref so that path can't drop the last ref mid-function.
         // Timer heap holds the entry; `this` is live until the guard drops.
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
         // R-2: shared borrows only — `cb.call()` re-enters JS, which may call
         // `stop()`/`ref()`/`unref()` on this same wrapper; a `noalias`
         // `&mut Self` here would be Stacked-Borrows UB. All mutation is
@@ -1743,7 +1741,6 @@ impl CronJob {
         job.self_ref.set(BackRef::from(job.this_ptr()));
 
         let Some(next_time) = job.compute_next_timespec() else {
-            job.deref();
             return Err(global.throw_invalid_arguments(format_args!(
                 "Cron expression '{}' has no future occurrences",
                 bstr::BStr::new(schedule_slice.slice())
@@ -1755,12 +1752,12 @@ impl CronJob {
         // so skip the list ref + append entirely.
         if vm.hot_reload == HotReload::Hot || vm.worker.is_some() {
             if let Some(jobs) = crate::jsc_hooks::cron_jobs_mut() {
-                jobs.push(job.dupe_ref());
+                jobs.push(job.clone());
             }
         }
 
         // `job`'s ref moves to the JS wrapper (released via `finalize`).
-        let js_value = Self::to_js_nonnull(job.data, global);
+        let js_value = Self::to_js_nonnull(job.as_non_null(), global);
         let job = job.into_this_ptr();
         job.this_value.with_mut(|v| v.set_strong(js_value, global));
         js::cron_set_cached(js_value, global, schedule_arg);

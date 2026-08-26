@@ -117,7 +117,6 @@ impl StaticRoute {
     ) {
         let temp_route = StaticRoute::init_from_any_blob(blob, options);
         StaticRoute::on(temp_route.this_ptr(), resp);
-        temp_route.deref();
     }
 
     pub(crate) fn clone(&mut self, global_this: &JSGlobalObject) -> RefPtr<StaticRoute> {
@@ -363,10 +362,7 @@ impl StaticRoute {
         let n = this.pending_responses.get() - 1;
         this.pending_responses.set(n);
         if n == 0 {
-            let pending_ref = this.pending_ref.take();
-            if let Some(pending_ref) = pending_ref {
-                pending_ref.deref();
-            }
+            this.pending_ref.set(None);
         }
     }
 

@@ -106,7 +106,7 @@ describe("bundler", () => {
         const startupCount = u32(at);
 
         // `CompiledModuleGraphFile`: name, contents, sourcemap, bytecode, module_info, bytecode_origin_path
-        // (StringPointer each), then 4 bytes. Chunks are numbered, so identify them by their source text.
+        // (StringPointer each), then 4 bytes. Chunk names are hashed, so identify them by their source text.
         const index: Record<string, number> = {};
         const bytecodeEnd: number[] = [];
         for (let i = 0; i < count; i++) {
@@ -126,6 +126,49 @@ describe("bundler", () => {
         // The string table sits between the startup modules' bytecode and the lazy chunk's.
         expect(stringTable.offset).toBeGreaterThanOrEqual(Math.max(bytecodeEnd[0], bytecodeEnd[1]));
         expect(stringTable.offset + stringTable.length).toBeLessThanOrEqual(bytecodeEnd[2]);
+      },
+    });
+
+    itBundled("compile/splitting/ChunkNamesAreHashed", {
+      compile: true,
+      splitting: true,
+      files: {
+        "/entry.ts": /* js */ `
+          import "./shared";
+          console.log("mark:entry");
+          await import("./lazy");
+        `,
+        "/lazy.ts": /* js */ `
+          import "./shared";
+          console.log("mark:lazy");
+        `,
+        "/shared.ts": /* js */ `
+          console.log("mark:shared");
+        `,
+      },
+      run: {
+        stdout: "mark:shared\nmark:entry\nmark:lazy",
+      },
+      onAfterBundle(api) {
+        const file = readFileSync(api.outfile);
+        const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined, "latin1");
+        expect(trailer).toBeGreaterThan(0);
+        const offsets = trailer - 32;
+        const base = offsets - Number(file.readBigUInt64LE(offsets));
+        const modules = { offset: file.readUInt32LE(offsets + 8), length: file.readUInt32LE(offsets + 12) };
+        const count = modules.length / 52;
+        expect(count).toBe(3);
+        const names: string[] = [];
+        for (let i = 0; i < count; i++) {
+          const record = base + modules.offset + i * 52;
+          const name = { offset: file.readUInt32LE(record), length: file.readUInt32LE(record + 4) };
+          names.push(file.toString("latin1", base + name.offset, base + name.offset + name.length));
+        }
+        const chunks = names.filter(name => !name.endsWith("/root/out"));
+        expect(chunks).toHaveLength(2);
+        for (const name of chunks) {
+          expect(name).toMatch(/^(\/\$bunfs|B:\/~BUN)\/root\/chunk-[0-9a-z]+\.js$/);
+        }
       },
     });
 
@@ -275,5 +318,43 @@ describe("bundler", () => {
         },
       });
     }
+
+    // The executable keys the entry point's module at `/$bunfs/root/<outfile>`,
+    // so nothing may fold into the entry's own chunk; chunks shared between
+    // `import()` targets still fold into the first target's chunk.
+    itBundled("compile/splitting/MinChunkSizeKeepsEntryChunkImportable", {
+      compile: true,
+      splitting: true,
+      bytecode: true,
+      format: "esm",
+      minChunkSize: 1024 * 1024,
+      files: {
+        "/entry.ts": /* js */ `
+          import { shared } from "./shared";
+          console.log("entry", shared());
+          const a = await import("./a");
+          console.log("a", a.a());
+        `,
+        "/a.ts": /* js */ `
+          import { shared } from "./shared";
+          import { helper } from "./helper";
+          export function a() { return shared() + helper() }
+          export const b = import("./b").then(m => m.b());
+        `,
+        "/b.ts": /* js */ `
+          import { helper } from "./helper";
+          export function b() { return helper() * 2 }
+        `,
+        "/shared.ts": /* js */ `
+          export function shared() { return 40 }
+        `,
+        "/helper.ts": /* js */ `
+          export function helper() { return 1 }
+        `,
+      },
+      run: {
+        stdout: "entry 40\na 41",
+      },
+    });
   });
 });

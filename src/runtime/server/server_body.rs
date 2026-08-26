@@ -14,7 +14,7 @@ use crate::webcore::body::Value as BodyValue;
 use crate::webcore::fetch as Fetch;
 use crate::webcore::response::HeadersRef;
 use crate::webcore::{
-    self as WebCore, AbortSignal, AnyBlob, Blob, FetchHeaders, Request, Response,
+    self as WebCore, AbortSignal, AnyBlob, Blob, FetchHeaders, Request, Response, request,
 };
 use ::bstr::BStr;
 use bun_collections::HashMap;
@@ -282,6 +282,9 @@ where
 // actually needs is exposed.
 trait ReqLike {
     fn header(&mut self, name: &[u8]) -> Option<&[u8]>;
+    /// Whether the transport frames the body with a Transfer-Encoding header.
+    /// This is the parser's verdict, not a lookup of the first header field.
+    fn has_transfer_encoding(&mut self) -> bool;
     fn method(&mut self) -> &[u8];
     fn url(&mut self) -> &[u8];
     fn set_yield(&mut self, y: bool);
@@ -290,6 +293,10 @@ impl ReqLike for uws_sys::Request {
     #[inline]
     fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
         uws_sys::Request::header(self, name)
+    }
+    #[inline]
+    fn has_transfer_encoding(&mut self) -> bool {
+        uws_sys::Request::has_transfer_encoding(self)
     }
     #[inline]
     fn method(&mut self) -> &[u8] {
@@ -308,6 +315,13 @@ impl ReqLike for uws_sys::h3::Request {
     #[inline]
     fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
         uws_sys::h3::Request::header(self, name)
+    }
+    /// HTTP/3 has no transfer codings (RFC 9114 4.2): the body ends at the
+    /// QUIC stream FIN, and a request that carries the header is rejected
+    /// before this is consulted.
+    #[inline]
+    fn has_transfer_encoding(&mut self) -> bool {
+        false
     }
     #[inline]
     fn method(&mut self) -> &[u8] {
@@ -860,8 +874,6 @@ pub struct ServePlugins {
 }
 
 // Reference count is incremented while there are other objects waiting on plugin loads.
-// Maps to bun_ptr::IntrusiveRc<ServePlugins> — *ServePlugins crosses FFI as promise context ptr.
-
 pub(crate) enum ServePluginsState {
     Unqueued(Box<[Box<[u8]>]>),
     Pending {
@@ -1105,7 +1117,6 @@ impl ServePlugins {
                 route.this_ptr(),
                 Some(NonNull::from(plugin_ref)),
             ));
-            route.deref();
         }
         if let Some(mut server) = dev_server {
             // SAFETY: dev_server outlives plugin load (stored as a back-reference
@@ -1133,7 +1144,6 @@ impl ServePlugins {
 
         for route in html_bundle_routes {
             bun_core::handle_oom(route.on_plugins_rejected());
-            route.deref();
         }
         if let Some(mut server) = dev_server {
             // SAFETY: dev_server outlives plugin load
@@ -2039,7 +2049,7 @@ where
         // SAFETY: plain-field detach through the root pointer; the shared
         // borrow above is not used past this point.
         unsafe { (*request_ptr).request_context = AnyRequestContext::NULL };
-        upgrader.request_weakref.with_mut(|w| w.deref());
+        upgrader.request_weakref.set(request::WeakRef::EMPTY);
 
         data_value.ensure_still_alive();
         let ws = ServerWebSocket::init(
@@ -3130,7 +3140,7 @@ where
 
         if let Some(req_len) = request_body_length {
             ctx.set_request_body_content_len(req_len);
-            let is_te = ReqLike::header(req, b"transfer-encoding").is_some();
+            let is_te = ReqLike::has_transfer_encoding(req);
             ctx.set_is_transfer_encoding(is_te);
             // HTTP/3 (RFC 9114 §4.2.2): Content-Length is optional and
             // Transfer-Encoding is forbidden; the body is terminated by

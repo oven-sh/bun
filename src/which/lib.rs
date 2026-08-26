@@ -80,8 +80,7 @@ pub fn which_for_spawn<'a>(
             && !cwd.is_empty()
             && std::env::var_os("NoDefaultCurrentDirectoryInExePath").is_none()
         {
-            // The cwd is probed like one more `$PATH` directory: the same
-            // extensions, and no `.com` (see `which_win`).
+            // Probed like one more `$PATH` directory, without `.com`.
             let mut convert_buf = w_path_buffer_pool::get();
             let mut path_buf = path_buffer_pool::get();
             let spells_executable_extension = ends_with_extension(bin);
@@ -106,8 +105,7 @@ pub fn which_for_spawn<'a>(
     which(buf, path, cwd, bin)
 }
 
-/// Writes the UTF-16 result of a Windows lookup into `buf` as NUL-terminated
-/// UTF-8.
+/// Writes `result` into `buf` as NUL-terminated UTF-8.
 #[cfg(windows)]
 fn utf16_result_into<'a>(buf: &'a mut PathBuffer, result: &[u16]) -> &'a ZStr {
     let result_converted = bun_core::strings::convert_utf16_to_utf8_in_buffer(&mut buf[..], result);
@@ -200,19 +198,14 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
     }
 }
 
-/// The extensions a bare name is completed with, in probe order.
 #[cfg(windows)]
 static WIN_EXTENSIONS_W: [&[u16]; 3] = [w!("exe"), w!("cmd"), w!("bat")];
-/// `.com` is probed on its own, after every `$PATH` directory failed the list
-/// above: the few `.com` programs left (`chcp`, `more`, `tree` in System32)
-/// do not pay for one more stat per directory on every spawn.
+/// Probed in a separate last pass over `$PATH`, so the rare `.com` program
+/// does not cost one more stat per directory on every spawn.
 #[cfg(windows)]
 static WIN_COM_EXTENSION_W: [&[u16]; 1] = [w!("com")];
-/// Every extension from the two lists above, for a name with a directory
-/// component (one directory, probed once).
 #[cfg(windows)]
 static WIN_ALL_EXTENSIONS_W: [&[u16]; 4] = [w!("exe"), w!("cmd"), w!("bat"), w!("com")];
-/// A name that ends in one of these is stat'd as spelled and never completed.
 #[cfg(windows)]
 const WIN_EXTENSIONS: [&[u8]; 4] = [b"exe", b"cmd", b"bat", b"com"];
 
@@ -234,8 +227,7 @@ pub(crate) fn ends_with_extension(str: &[u8]) -> bool {
     false
 }
 
-/// Whether the last component of `bin` carries an extension: a `.` followed
-/// by at least one character, the same test as libuv's `search_path`.
+/// libuv's `name_has_ext`: a `.` in the last component with something after it.
 fn has_extension(bin: &[u8]) -> bool {
     let name_start = strings::last_index_of_any(bin, b"/\\:").map_or(0, |i| i + 1);
     let name = &bin[name_start..];
@@ -245,10 +237,8 @@ fn has_extension(bin: &[u8]) -> bool {
     }
 }
 
-/// Whether `bin` names a file by Windows path and spells its extension
-/// (`C:\Windows\System32\chcp.com`, `.\tool.exe`). Such a name needs no
-/// lookup before `uv_spawn`: there is no `.exe`/`.cmd`/`.bat` to complete,
-/// and libuv's `search_path` stats it as spelled before `CreateProcessW`.
+/// `C:\Windows\System32\chcp.com`, `.\tool.exe`: a path with nothing left to
+/// complete, which spawn hands to libuv without a lookup.
 pub fn is_windows_path_with_extension(bin: &[u8]) -> bool {
     strings::contains_any(bin, b"/\\") && has_extension(bin)
 }
@@ -285,9 +275,7 @@ pub fn batch_arg_has_cmd_metachars(arg: &[u8]) -> bool {
     strings::contains_any(arg, b"\"%&|<>^\r\n")
 }
 
-/// Check if the WPathBuffer holds an existing file path: as spelled when
-/// `try_as_spelled`, then with each of `extensions` appended (internally used
-/// by which_win)
+/// Stats `buf[..path_size]` as spelled, then with each of `extensions` appended.
 #[cfg(windows)]
 fn search_bin<'a>(
     buf: &'a mut WPathBuffer,
@@ -382,16 +370,17 @@ pub(crate) fn which_win<'a>(
     }
     let mut path_buf = path_buffer_pool::get();
 
-    // Nothing but the file header tells an executable from a data file on
-    // Windows, so a name is only stat'd as spelled when its extension says it
-    // is executable. A name with a directory component is the exception: the
-    // caller named one file, and libuv's search_path stats it as spelled for
-    // any extension (`chcp.com`, a PE with a custom extension). A bare name
-    // keeps the extension allowlist so that a `$PATH` walk does not hand back
-    // a source file that one of its directories happens to hold.
     let spells_executable_extension = ends_with_extension(bin);
     let has_dir = strings::contains_any(bin, b"/\\");
+    // A path names one file and is stat'd as spelled for any extension, like
+    // libuv does. A bare name only with an executable one: `bun run` puts the
+    // package directory on `$PATH`, and `x.ts` in it is not a program.
     let try_as_spelled = spells_executable_extension || (has_dir && has_extension(bin));
+    let extensions: &[&[u16]] = if spells_executable_extension {
+        &[]
+    } else {
+        &WIN_ALL_EXTENSIONS_W
+    };
 
     // handle absolute paths
     if is_absolute(bin) {
@@ -405,11 +394,6 @@ pub(crate) fn which_win<'a>(
         // Capture len before re-borrowing buf (borrowck).
         let bin_utf16_len = bin_utf16.len();
         buf[bin_utf16_len] = 0;
-        let extensions: &[&[u16]] = if spells_executable_extension {
-            &[]
-        } else {
-            &WIN_ALL_EXTENSIONS_W
-        };
         return search_bin(buf, bin_utf16_len, try_as_spelled, extensions).map(|w| &*w);
     }
 
@@ -420,11 +404,6 @@ pub(crate) fn which_win<'a>(
         // SAFETY: bin_path borrow does not escape this block on the None path.
         let buf_reborrow: &'a mut WPathBuffer =
             unsafe { &mut *std::ptr::from_mut::<WPathBuffer>(buf) };
-        let extensions: &[&[u16]] = if spells_executable_extension {
-            &[]
-        } else {
-            &WIN_ALL_EXTENSIONS_W
-        };
         if let Some(bin_path) = search_bin_in_path(
             buf_reborrow,
             &mut *path_buf,
@@ -440,10 +419,7 @@ pub(crate) fn which_win<'a>(
         return None;
     }
 
-    // A spelled-out executable extension is stat'd as spelled in every `$PATH`
-    // directory. Otherwise `.exe`/`.cmd`/`.bat` are tried in every directory
-    // first, and `.com` only once all of those failed, so a lookup that
-    // succeeds today does not pay for it.
+    // `.com` gets its own pass once every directory failed `.exe`/`.cmd`/`.bat`.
     if spells_executable_extension {
         return search_bin_in_path_list(buf, &mut *path_buf, path, bin, true, &[]).map(|w| &*w);
     }

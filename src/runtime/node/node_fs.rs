@@ -2634,17 +2634,17 @@ pub mod args {
     impl Rename<'static> {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let old_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_argument_type_value(
+                ctx.throw_invalid_argument_type_list(
                     b"oldPath",
-                    b"string or an instance of Buffer or URL",
+                    &[b"string", b"Buffer", b"URL"],
                     arguments.next().unwrap_or(JSValue::UNDEFINED),
                 )
             })?;
             // `Drop for PathLike` runs on early return.
             let new_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_argument_type_value(
+                ctx.throw_invalid_argument_type_list(
                     b"newPath",
-                    b"string or an instance of Buffer or URL",
+                    &[b"string", b"Buffer", b"URL"],
                     arguments.next().unwrap_or(JSValue::UNDEFINED),
                 )
             })?;
@@ -3383,9 +3383,9 @@ pub mod args {
     impl MkdirTemp<'static> {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let prefix = PathLike::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_argument_type_value(
+                ctx.throw_invalid_argument_type_list(
                     b"prefix",
-                    b"string, Buffer, or URL",
+                    &[b"string", b"Buffer", b"URL"],
                     arguments.next().unwrap_or(JSValue::UNDEFINED),
                 )
             })?;
@@ -3592,12 +3592,16 @@ pub mod args {
             let bv = buffer_value
                 .ok_or_else(|| ctx.throw_invalid_arguments(format_args!("data is required")))?;
             let buffer = StringOrBuffer::from_js(ctx, bv)?.ok_or_else(|| {
-                ctx.throw_invalid_argument_type_value(b"buffer", b"string or TypedArray", bv)
+                ctx.throw_invalid_argument_type_list(
+                    b"buffer",
+                    &[b"string", b"Buffer", b"TypedArray", b"DataView"],
+                    bv,
+                )
             })?;
             if bv.is_string() && !bv.is_string_literal() {
-                return Err(ctx.throw_invalid_argument_type_value(
+                return Err(ctx.throw_invalid_argument_type_list(
                     b"buffer",
-                    b"string or TypedArray",
+                    &[b"string", b"Buffer", b"TypedArray", b"DataView"],
                     bv,
                 ));
             }
@@ -3788,7 +3792,11 @@ pub mod args {
                 0.0
             };
             let buffer = Buffer::from_js(ctx, buffer_value).ok_or_else(|| {
-                ctx.throw_invalid_argument_type_value(b"buffer", b"TypedArray", buffer_value)
+                ctx.throw_invalid_argument_type_list(
+                    b"buffer",
+                    &[b"Buffer", b"TypedArray", b"DataView"],
+                    buffer_value,
+                )
             })?;
 
             //   if (length === 0) {
@@ -4015,9 +4023,9 @@ pub mod args {
                             signal.pending_activity_ref();
                             *abort_signal = Some(signal);
                         } else {
-                            return Err(ctx.throw_invalid_argument_type_value(
+                            return Err(ctx.throw_invalid_argument_type_list(
                                 b"signal",
-                                b"AbortSignal",
+                                &[b"AbortSignal"],
                                 value,
                             ));
                         }
@@ -4121,9 +4129,9 @@ pub mod args {
                             signal.pending_activity_ref();
                             *abort_signal = Some(signal);
                         } else {
-                            return Err(ctx.throw_invalid_argument_type_value(
+                            return Err(ctx.throw_invalid_argument_type_list(
                                 b"signal",
-                                b"AbortSignal",
+                                &[b"AbortSignal"],
                                 value,
                             ));
                         }

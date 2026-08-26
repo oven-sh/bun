@@ -728,8 +728,7 @@ impl RareData {
             .push(CleanupHook::from(global_this, ctx, func));
     }
 
-    /// `None` if the loop cannot be created (resource exhaustion). Nothing is
-    /// cached on failure, so a later call retries.
+    /// `None` if the loop cannot be created; nothing is cached, so a later call retries.
     pub fn spawn_sync_event_loop(
         &mut self,
         vm: &mut VirtualMachine,

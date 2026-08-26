@@ -142,9 +142,7 @@ impl SpawnSyncEventLoop {
     // In-place init: `self.event_loop` is captured by `setParentEventLoop`
     // below, so `Self` MUST NOT move after `init` returns (no-move invariant
     // upheld by the caller). The caller provides uninitialized storage, hence
-    // `MaybeUninit<Self>` (out-param ctor exception).
-    //
-    // Returns `false`, leaving `this` uninitialized, if the loop cannot be created.
+    // `MaybeUninit<Self>` (out-param ctor exception). `false` leaves it uninitialized.
     pub fn init(
         this: &mut core::mem::MaybeUninit<Self>,
         vm: *mut (), /* SAFETY: erased *mut VirtualMachine */
@@ -198,11 +196,10 @@ impl SpawnSyncEventLoop {
     /// Shared borrow of the isolated `uws::Loop`.
     ///
     /// # Safety (invariant)
-    /// `uws_loop` is set in `init` (which fails instead of constructing `Self`
-    /// with a null loop) and freed only in `Drop`, so it is valid for all of
-    /// `self`'s lifetime. The loop is only mutated through `&mut self` paths
-    /// (`uws_loop_mut`), so a shared borrow tied to `&self` cannot overlap a
-    /// unique borrow.
+    /// `uws_loop` is set in `init` and freed only in `Drop`, so it is valid for
+    /// all of `self`'s lifetime. The loop is only mutated through `&mut self`
+    /// paths (`uws_loop_mut`), so a shared borrow tied to `&self` cannot
+    /// overlap a unique borrow.
     #[inline]
     pub fn uws_loop(&self) -> &uws::Loop {
         // SAFETY: see doc invariant above — non-null, owned for `self`'s lifetime,

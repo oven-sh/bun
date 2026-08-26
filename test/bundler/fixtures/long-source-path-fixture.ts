@@ -17,6 +17,8 @@
 //                  (imports then reach the resolver through the plugin code path)
 //   html-import    server-target entry point on disk importing an HTML file on disk at
 //                  the long path (its path becomes a key in the HTML import manifest)
+//   no-bundle      `bun build --no-bundle` of an entry point on disk at the long path
+//                  (the transform-only path relativizes it for `pretty` and naming)
 //   resolve-plugin entry point on disk whose import an onResolve plugin resolves to the
 //                  long path; nothing exists there, so the build reports the failed read
 //   load-plugin    like `resolve-plugin`, with an onLoad plugin supplying the contents
@@ -51,6 +53,28 @@ let path: string;
 let options: BuildConfig;
 
 switch (mode) {
+  case "no-bundle": {
+    path = longPath(realpathSync(dir), "entry.js");
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, "console.log(1);");
+    const child = Bun.spawnSync({
+      cmd: [process.execPath, "build", "--no-bundle", path],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    console.log(
+      JSON.stringify({
+        success: child.exitCode === 0,
+        logs: child.exitCode === 0 ? [] : [child.stderr.toString()],
+        cwd: process.cwd(),
+        path,
+        inputs: null,
+        sources: null,
+        outputs: null,
+      }),
+    );
+    process.exit(0);
+  }
   case "entry": {
     path = longPath(root, "entry.js");
     options = { entrypoints: [path], files: { [path]: "console.log(1);" } };

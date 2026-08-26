@@ -2102,6 +2102,12 @@ describe.concurrent("source whose path is close to or beyond the path buffer siz
     expect(sources).toEqual([relativePath, "entry.js"]);
   });
 
+  test.skipIf(isWindows)("as a bun build --no-bundle entry point on disk", async () => {
+    // The transform-only path relativizes the entry for its display path and
+    // for the entry naming placeholders.
+    await bundle("no-bundle");
+  });
+
   test.skipIf(isWindows)("as an HTML file on disk imported by a server-target entry point", async () => {
     // The HTML import manifest embedded in the server chunk keys its entries
     // by the cwd-relative source path.

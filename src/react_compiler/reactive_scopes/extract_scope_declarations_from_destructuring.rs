@@ -11,9 +11,9 @@
 use std::collections::HashSet;
 
 use crate::hir::{
-    DeclarationId, IdentifierId, IdentifierName, InstructionKind, InstructionValue, LValue,
-    ParamPattern, Place, ReactiveFunction, ReactiveInstruction, ReactiveScopeBlock,
-    ReactiveStatement, ReactiveValue, environment::Environment, visitors,
+    DeclarationId, IdentifierId, IdentifierName, InstructionKind, InstructionValue, LValue, Place,
+    ReactiveFunction, ReactiveInstruction, ReactiveScopeBlock, ReactiveStatement, ReactiveValue,
+    environment::Environment, visitors,
 };
 
 use crate::reactive_scopes::visitors::{
@@ -27,16 +27,13 @@ use crate::reactive_scopes::visitors::{
 /// Extracts scope declarations from destructuring patterns where some bindings
 /// are scope declarations and others aren't.
 /// TS: `extractScopeDeclarationsFromDestructuring`
-pub fn extract_scope_declarations_from_destructuring(
+pub(crate) fn extract_scope_declarations_from_destructuring(
     func: &mut ReactiveFunction,
     env: &mut Environment,
 ) -> Result<(), crate::diagnostics::CompilerError> {
     let mut declared: HashSet<DeclarationId> = HashSet::new();
     for param in &func.params {
-        let place = match param {
-            ParamPattern::Place(p) => p,
-            ParamPattern::Spread(s) => &s.place,
-        };
+        let place = param.place();
         let identifier = &env.identifiers[place.identifier.0 as usize];
         declared.insert(identifier.declaration_id);
     }
@@ -132,16 +129,8 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
                     // (matches TS makeTemporaryIdentifier which receives place.loc)
                     env.identifiers[temp_id.0 as usize].loc = place.loc.clone();
                     // Promote the temporary
-                    let mut itoa = bun_core::fmt::ItoaBuf::new();
-                    let digits = itoa.format(decl_id.0).as_bytes();
-                    let mut buf = [0u8; 16];
-                    buf[0] = b'#';
-                    buf[1] = b't';
-                    buf[2..2 + digits.len()].copy_from_slice(digits);
                     env.identifiers[temp_id.0 as usize].name =
-                        Some(IdentifierName::Promoted(crate::hir::StoreStr::new(
-                            bun_ast::data_store_dupe_str(&buf[..2 + digits.len()]),
-                        )));
+                        Some(IdentifierName::promoted(b't', decl_id.0));
                     let temporary = Place {
                         identifier: temp_id,
                         effect: place.effect,

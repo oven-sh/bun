@@ -8,7 +8,8 @@
 
 #![allow(non_snake_case)]
 
-use crate::{JSGlobalObject, JSHostFn, JSValue, host_fn, zig_string};
+use crate::{JSGlobalObject, JSHostFn, JSValue, host_fn};
+use bun_core::EncodedSlice;
 
 /// Generated for "src/jsc/bindgen_test.rs"
 pub mod bindgen_test {
@@ -21,13 +22,13 @@ pub mod bindgen_test {
         fn jsRequiredAndOptionalArg(global: *mut JSGlobalObject, frame: *mut crate::CallFrame) -> JSValue;
     }
 
-    pub(crate) const JS_ADD: JSHostFn = jsAdd;
-    pub(crate) const JS_REQUIRED_AND_OPTIONAL_ARG: JSHostFn = jsRequiredAndOptionalArg;
+    const JS_ADD: JSHostFn = jsAdd;
+    const JS_REQUIRED_AND_OPTIONAL_ARG: JSHostFn = jsRequiredAndOptionalArg;
 
     pub(crate) fn create_add_callback(global: &JSGlobalObject) -> JSValue {
         host_fn::new_runtime_function(
             global,
-            Some(&zig_string::static_(b"add")),
+            Some(&EncodedSlice::latin1(b"add")),
             3,
             JS_ADD,
             false,
@@ -38,7 +39,7 @@ pub mod bindgen_test {
     pub(crate) fn create_required_and_optional_arg_callback(global: &JSGlobalObject) -> JSValue {
         host_fn::new_runtime_function(
             global,
-            Some(&zig_string::static_(b"requiredAndOptionalArg")),
+            Some(&EncodedSlice::latin1(b"requiredAndOptionalArg")),
             4,
             JS_REQUIRED_AND_OPTIONAL_ARG,
             false,

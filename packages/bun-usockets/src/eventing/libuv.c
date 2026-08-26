@@ -16,16 +16,12 @@
  */
 
 #include "internal/internal.h"
+#include "internal/fault_inject.h"
 #include "libusockets.h"
 #include <stdlib.h>
 
 #ifdef LIBUS_USE_LIBUV
 
-/* The shared dispatch follows socket adoption (a tunneled/upgraded socket
- * moves; the old allocation stays readable with flags.adopted set and prev
- * pointing at the live one) and skips closed sockets. The paused-probe below
- * must honor the same contract - dereferencing the raw poll cast crashed the
- * CONNECT-tunnel tests on the aarch64 agent. */
 /* Windows does not reliably latch a received RST in SO_ERROR (POSIX does);
  * the reset surfaces on the next I/O. A zero-byte send observes it without
  * touching the stream: 0 on a healthy socket, SOCKET_ERROR with a fatal
@@ -36,20 +32,19 @@ int us_internal_libuv_peer_reset_probe(LIBUS_SOCKET_DESCRIPTOR fd) {
   if (send(fd, "", 0, 0) != SOCKET_ERROR) {
     return 0;
   }
-  return WSAGetLastError() != WSAEWOULDBLOCK;
+  int err = WSAGetLastError();
+  /* WSAESHUTDOWN means our own shutdown(SD_SEND) ran; that is not a peer
+   * reset (us_socket_stalled_write_means_peer_gone can ask after one). */
+  return err != WSAEWOULDBLOCK && err != WSAESHUTDOWN;
 }
 
+/* The shared dispatch follows socket adoption (a tunneled/upgraded socket
+ * moves; the old allocation stays readable with flags.adopted set and prev
+ * pointing at the live one) and skips closed sockets. poll_cb's probes must
+ * honor the same contract - dereferencing the raw poll cast crashed the
+ * CONNECT-tunnel tests on the aarch64 agent. */
 static struct us_socket_t *us_internal_poll_cb_adopted_socket(struct us_poll_t *wp) {
-  struct us_socket_t *s = (struct us_socket_t *)wp;
-  if (s->flags.adopted && s->prev) {
-    s = s->prev;
-  }
-  return s;
-}
-
-static int us_internal_poll_cb_socket_is_probeable(struct us_poll_t *wp) {
-  struct us_socket_t *s = us_internal_poll_cb_adopted_socket(wp);
-  return !s->flags.is_closed && s->flags.is_paused;
+  return us_internal_socket_follow_adopted((struct us_socket_t *)wp);
 }
 
 /* uv_poll_t->data always (except for most times after calling us_poll_stop)
@@ -74,7 +69,7 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
    * signal). */
   int eof = status == UV_EOF;
   int error = status < 0 && status != UV_EOF;
-  if (events & UV_DISCONNECT) {
+  if (events & (UV_DISCONNECT | UV_PRIORITIZED)) {
     struct us_poll_t *wp = (struct us_poll_t *)p->data;
     uv_poll_start(p, us_poll_events(wp), poll_cb);
     int kind = us_internal_poll_type(wp) & POLL_TYPE_KIND_MASK;
@@ -87,48 +82,45 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
      * never cut at an EAGAIN. */
     if (kind == POLL_TYPE_SOCKET_SHUT_DOWN) {
       eof = 1;
-      events |= UV_READABLE;
-    } else if (kind == POLL_TYPE_SOCKET && us_internal_poll_cb_socket_is_probeable(wp)) {
-      /* A paused socket polls without READABLE, so the read loop cannot
-       * discover terminal states for it - and the pause contract forbids
-       * consuming deferred bytes. MSG_PEEK discriminates without consuming:
-       * an error is an abortive reset (our libuv patch reports AFD_POLL_ABORT
-       * as DISCONNECT so it reaches write-only polls at all) and must close
-       * now like epoll's unmaskable EPOLLERR; 0 is a graceful FIN with no
-       * data, deferred by the shared dispatch's existing paused-EOF contract
-       * until resume; pending data keeps the pause honored untouched. */
-      char probe;
-      ssize_t peeked = bsd_recv(us_poll_fd(wp), &probe, 1, MSG_PEEK);
-      if (peeked == 0) {
-        eof = 1;
-        events |= UV_READABLE;
-      } else if (peeked < 0 && !bsd_would_block()) {
+      /* A paused socket keeps the hint only; the dispatcher leaves it for
+       * resume(), whose poll change re-arms DISCONNECT and lands here again. */
+      events |= us_poll_events(wp) & LIBUS_SOCKET_READABLE;
+    } else if (kind == POLL_TYPE_SOCKET &&
+               !(us_poll_events(wp) & LIBUS_SOCKET_READABLE)) {
+      /* A data socket that is not reading: paused, or half-open with its end
+       * already delivered (the EOF path moved its poll to WRITABLE-only, and
+       * us_poll_change re-adds UV_DISCONNECT unconditionally, so AFD keeps
+       * reporting the FIN's level-triggered DISCONNECT). Re-adding READABLE
+       * here would pull bytes a paused caller asked to defer, or rediscover
+       * the same EOF and busy-loop on_end; keeping DISCONNECT armed would
+       * complete instantly forever. A dead peer surfaces via SO_ERROR or the
+       * zero-byte send probe and goes through the shared error path (which
+       * reads off whatever is still queued and closes); a FIN, fresh on a
+       * paused socket or re-reported on a half-open one, quiesces with only
+       * the ABORT-only subscription (UV_PRIORITIZED) kept armed so a later
+       * RST still has an event to ride, and a paused socket meets the FIN
+       * again through recv() once resume() re-arms READABLE. Non-SOCKET kinds
+       * keep the unconditional READABLE below: SEMI_SOCKET checks error/eof
+       * (set from status) and listen polls READABLE only. */
+      struct us_socket_t *sock = us_internal_poll_cb_adopted_socket(wp);
+      /* A reported UV_PRIORITIZED is AFD's own ABORT signal and needs no
+       * probe; the probe covers a reset that arrives while PRIORITIZED was
+       * not yet subscribed (reported as plain DISCONNECT, same as the FIN
+       * re-report) and a reset AFD has latched but only SO_ERROR shows. */
+      if (!sock->flags.is_closed &&
+          ((events & UV_PRIORITIZED) ||
+           us_socket_get_error(sock) != 0 ||
+           us_internal_libuv_peer_reset_probe(us_poll_fd(wp)))) {
         error = 1;
-        events |= UV_READABLE;
-      } else if (peeked > 0) {
-        struct us_socket_t *sock = us_internal_poll_cb_adopted_socket(wp);
-        if (us_socket_get_error(sock) != 0 || us_internal_libuv_peer_reset_probe(us_poll_fd(wp))) {
-          /* Data is buffered ahead of whatever ended the connection. If the
-           * peer ABORTED, the kernel already discarded the stream's tail and
-           * a paused socket that never resumes would otherwise never learn -
-           * node's paused sockets error immediately on a reset, buffered
-           * data included. SO_ERROR separates that from a graceful FIN
-           * behind data, which stays deferred until resume. */
-          error = 1;
-          events |= UV_READABLE;
-        } else if (!sock->fin_deferred) {
-          /* Graceful FIN deferred behind data. This one-shot DISCONNECT
-           * report is now consumed, so a LATER reset (an error-path peer
-           * ends, flushes, then destroys - FIN, then RST) has no event left
-           * to ride. Mark the socket; the sweep timer escalates via
-           * SO_ERROR. */
-          sock->fin_deferred = 1;
-          sock->group->loop->data.fin_deferred_count++;
-        }
+      } else {
+        uv_poll_start(p, us_poll_events(wp) | UV_PRIORITIZED, poll_cb);
       }
     } else {
       events |= UV_READABLE;
     }
+  }
+  if (!error && !eof && !(events & (UV_READABLE | UV_WRITABLE))) {
+    return;
   }
   us_internal_dispatch_ready_poll((struct us_poll_t *)p->data, error, eof, events);
 }
@@ -195,13 +187,48 @@ void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
   }
 }
 
-void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
-  if(!p->uv_p) return;
+int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+  if(!p->uv_p) return 0;
   p->poll_type = us_internal_poll_type(p) |
                  ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) |
                  ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
 
-  uv_poll_init_socket(loop->uv_loop, p->uv_p, p->fd);
+  /* uv_poll_init_socket (win/poll.c) can fail either before uv__handle_init
+   * (ioctlsocket FIONBIO) or after it (getsockopt SO_PROTOCOL_INFOW). The
+   * latter leaves the handle linked into loop->handle_queue with
+   * submitted_events_* still unset. Zero first so, on failure, ->type
+   * distinguishes the two states and the fields uv__poll_close reads are 0
+   * rather than garbage. */
+  memset(p->uv_p, 0, sizeof(uv_poll_t));
+  p->uv_p->data = p;
+
+  int rc;
+#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
+  ssize_t injected = 0;
+  int unused = 0;
+  if (US_FAULT_CHECK(US_FAULT_POLL_START, p->fd, injected, unused)) {
+    rc = (int) injected;
+  } else
+#endif
+  rc = uv_poll_init_socket(loop->uv_loop, p->uv_p, p->fd);
+  if (rc < 0) {
+    int saved = LIBUS_ERR;
+    if (p->uv_p->type == UV_POLL) {
+      /* uv__handle_init ran: the handle is in loop->handle_queue. Close it
+       * through libuv so it is unlinked; the caller's us_poll_free sees
+       * uv_is_closing and hands ownership to close_cb_free_poll. */
+      p->uv_p->data = 0;
+      uv_close((uv_handle_t *)p->uv_p, close_cb_free_poll);
+    } else {
+      /* Never reached uv__handle_init: uv_p is still our raw block. Free it
+       * here and null the pointer so the caller's us_poll_free takes the
+       * !uv_p fast path (its uv_is_closing check would read garbage). */
+      us_free(p->uv_p);
+      p->uv_p = NULL;
+    }
+    errno = saved ? saved : -rc;
+    return rc;
+  }
   // This unref is okay in the context of Bun's event loop, because sockets have
   // a `Async.KeepAlive` associated with them, which is used instead of the
   // usockets internals. usockets doesnt have a notion of ref-counted handles.
@@ -210,22 +237,26 @@ void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
    * writable-only at that moment (a half-closed connection whose reads are
    * paused is exactly the state that otherwise hangs; see poll_cb). */
   uv_poll_start(p->uv_p, events | UV_DISCONNECT, poll_cb);
-}
-
-int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
-  us_poll_start(p, loop, events);
   return 0;
 }
 
-void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
-  if(!p->uv_p) return;
+void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+  us_poll_start_rc(p, loop, events);
+}
+
+int us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+  if(!p->uv_p) return 0;
   if (us_poll_events(p) != events) {
     p->poll_type =
         us_internal_poll_type(p) |
         ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) |
         ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
+    /* The poll stays initialized across changes here (the dispatcher never
+     * parks a libuv poll), so this cannot hit the registration failure the
+     * epoll re-add can; uv_poll_start on a live poll only rejects bad args. */
     uv_poll_start(p->uv_p, events | UV_DISCONNECT, poll_cb);
   }
+  return 0;
 }
 
 void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
@@ -256,7 +287,16 @@ void us_internal_poll_set_type(struct us_poll_t *p, int poll_type) {
 LIBUS_SOCKET_DESCRIPTOR us_poll_fd(struct us_poll_t *p) { return p->fd; }
 
 void us_loop_pump(struct us_loop_t *loop) {
+  /* POSIX parity: us_loop_run_bun_tick polls epoll/kqueue and dispatches
+   * regardless of ref state (it only early-outs on num_polls == 0). libuv's
+   * uv_run() skips its body when uv__loop_alive() is 0, so IOCP completions
+   * for unref'd handles (subprocess exit packets, socket events) and due
+   * timers are never processed. Bun's outer drive loops (wait_for_promise,
+   * bun:test) supply their own keep-going predicate, so force exactly one
+   * non-blocking iteration; UV_RUN_NOWAIT keeps the poll timeout at 0. */
+  loop->uv_loop->active_handles++;
   uv_run(loop->uv_loop, UV_RUN_NOWAIT);
+  loop->uv_loop->active_handles--;
 }
 
 struct us_loop_t *us_create_loop(void *hint,
@@ -489,7 +529,7 @@ int us_socket_get_error(struct us_socket_t *s) {
   socklen_t len = sizeof(error);
   if (getsockopt(us_poll_fd((struct us_poll_t *)s), SOL_SOCKET, SO_ERROR,
                  (char *)&error, &len) == -1) {
-    return errno;
+    return LIBUS_ERR;
   }
   return error;
 }

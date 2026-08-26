@@ -175,7 +175,11 @@ fn is_valid_memory(address: usize) -> bool {
     }
     #[cfg(windows)]
     {
-        use bun_windows_sys::kernel32::{MEM_FREE, MEMORY_BASIC_INFORMATION, VirtualQuery};
+        use bun_windows_sys::kernel32::{
+            MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE,
+            PAGE_EXECUTE_WRITECOPY, PAGE_GUARD, PAGE_NOACCESS, PAGE_READONLY, PAGE_READWRITE,
+            PAGE_WRITECOPY, VirtualQuery,
+        };
         // SAFETY: MEMORY_BASIC_INFORMATION is a plain Win32 POD; all-zeros is
         // a valid representation.
         let mut mbi: MEMORY_BASIC_INFORMATION = unsafe { crate::ffi::zeroed_unchecked() };
@@ -188,7 +192,19 @@ fn is_valid_memory(address: usize) -> bool {
                 core::mem::size_of::<MEMORY_BASIC_INFORMATION>(),
             )
         };
-        rc != 0 && mbi.State != MEM_FREE
+        // "Not MEM_FREE" is not enough to make a read safe: MEM_RESERVE has no
+        // backing, and MEM_COMMIT pages can be PAGE_NOACCESS or PAGE_GUARD (the
+        // stack guard page after EXCEPTION_STACK_OVERFLOW is exactly this).
+        const READABLE: u32 = PAGE_READONLY
+            | PAGE_READWRITE
+            | PAGE_WRITECOPY
+            | PAGE_EXECUTE_READ
+            | PAGE_EXECUTE_READWRITE
+            | PAGE_EXECUTE_WRITECOPY;
+        rc != 0
+            && mbi.State == MEM_COMMIT
+            && mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD) == 0
+            && mbi.Protect & READABLE != 0
     }
     #[cfg(not(windows))]
     {
@@ -330,12 +346,12 @@ pub(crate) fn capture_current(first_address: Option<usize>, out: &mut [usize]) -
 /// No trimming is needed — the walk starts on the faulting stack, so the
 /// signal handler's own frames (on the altstack) are never in the chain.
 ///
-/// Windows: `rbp` is not a reliable frame pointer across all linked code (the
-/// prebuilt JavaScriptCore and LLInt assembly do not maintain it), so an
-/// fp-walk derails at the C++ boundary. Use the native `.pdata`-based
-/// `RtlCaptureStackBackTrace` instead — it works with or without unwind tables
-/// since `.pdata` is always emitted — and trim the handler's own frames by
-/// scanning for `pc`. `fp` is unused on Windows.
+/// Windows: `fp` is the `*const CONTEXT` the VEH received (`EXCEPTION_POINTERS
+/// ::ContextRecord`). The walk is `RtlLookupFunctionEntry` + `RtlVirtualUnwind`
+/// seeded from that context, so it starts at the fault frame and the handler's
+/// own frames are never in the chain. `rbp` is not a reliable frame pointer
+/// across the prebuilt JavaScriptCore/LLInt code, so an fp-walk would derail;
+/// `.pdata` is always emitted, so the Rtl unwinder works everywhere.
 pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
     if out.is_empty() {
         return 0;
@@ -344,34 +360,87 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
     let mut n = 1usize;
     #[cfg(windows)]
     {
-        let _ = fp;
-        let cap = (out.len() - 1).min(u16::MAX as usize) as u32;
-        // SAFETY: out[1..] is valid for `cap` writes; hash ptr may be null.
-        let got = unsafe {
-            bun_windows_sys::ntdll::RtlCaptureStackBackTrace(
-                0,
-                cap,
-                out[1..].as_mut_ptr().cast::<*mut core::ffi::c_void>(),
-                core::ptr::null_mut(),
-            )
-        } as usize;
-        // VEH runs on the faulting thread's stack, so the captured trace is
-        // [handler frames…][fault frame][callers…]. Trim everything above the
-        // first frame whose return address sits within a small tolerance of
-        // the fault `pc` (the call-site/return-address may be a few bytes
-        // off). If no match, keep the full trace rather than discard it.
-        const TOLERANCE: usize = 256;
-        let frames = &out[1..1 + got];
-        let skip = frames
-            .iter()
-            .take(12)
-            .position(|&a| a.abs_diff(pc) <= TOLERANCE)
-            .map(|i| i + 1)
-            .unwrap_or(0);
-        if skip > 0 {
-            out.copy_within(1 + skip..1 + got, 1);
+        use bun_windows_sys::{CONTEXT, UNW_FLAG_NHANDLER, ntdll};
+        if fp == 0 {
+            // No CONTEXT available (should not happen for a real VEH fault).
+            return n;
         }
-        n += got - skip;
+        // SAFETY: `fp` is `EXCEPTION_POINTERS::ContextRecord` from the kernel;
+        // valid for the duration of the handler. Copy so RtlVirtualUnwind can
+        // mutate freely without touching the kernel's record.
+        let mut ctx: CONTEXT = unsafe { *(fp as *const CONTEXT) };
+        // Termination: on x64 RtlVirtualUnwind sets Pc = 0 at the end of the
+        // chain; on ARM64 it can leave the CONTEXT entirely unchanged, so a
+        // step that changed neither Pc nor Sp is also terminal. An Sp-only or
+        // Pc-only check truncates legitimate stacks: an ARM64 fault at prolog
+        // offset 0 (or a .pdata-bearing zero-stack leaf) sets Pc = Lr while
+        // leaving Sp unchanged, and directly-recursive frames share a return
+        // Pc. The `n < out.len()` cap is the ultimate bound.
+        while n < out.len() {
+            #[cfg(target_arch = "x86_64")]
+            let (control_pc, control_sp) = (ctx.Rip, ctx.Rsp);
+            #[cfg(target_arch = "aarch64")]
+            let (control_pc, control_sp) = (ctx.Pc, ctx.Sp);
+            let mut image_base: u64 = 0;
+            // SAFETY: `control_pc` is a code address from the fault context;
+            // `image_base` is valid for write; history table may be null.
+            let rf = unsafe {
+                ntdll::RtlLookupFunctionEntry(control_pc, &mut image_base, core::ptr::null_mut())
+            };
+            if rf.is_null() {
+                // Leaf function with no `.pdata` entry: manually pop the
+                // return address. On x64 it is at `[Rsp]`; on ARM64 it is in
+                // `Lr`. An ARM64 leaf allocates no stack (bl does not push),
+                // so `Sp` is correctly left unchanged here.
+                #[cfg(target_arch = "x86_64")]
+                {
+                    if ctx.Rsp & 7 != 0 || !is_valid_memory(ctx.Rsp as usize) {
+                        break;
+                    }
+                    // SAFETY: is_valid_memory confirmed the page at `Rsp` is
+                    // committed and readable (not reserved/guard/noaccess),
+                    // and `Rsp` is 8-aligned.
+                    unsafe {
+                        ctx.Rip = *(ctx.Rsp as *const u64);
+                    }
+                    ctx.Rsp += 8;
+                }
+                #[cfg(target_arch = "aarch64")]
+                {
+                    if ctx.Lr == control_pc {
+                        break;
+                    }
+                    ctx.Pc = ctx.Lr;
+                }
+            } else {
+                let mut handler_data: *mut core::ffi::c_void = core::ptr::null_mut();
+                let mut establisher_frame: u64 = 0;
+                // SAFETY: `rf` and `image_base` came from RtlLookupFunctionEntry
+                // for `control_pc`; `ctx` is a valid local CONTEXT; out-params
+                // are valid for write; ContextPointers may be null.
+                unsafe {
+                    ntdll::RtlVirtualUnwind(
+                        UNW_FLAG_NHANDLER,
+                        image_base,
+                        control_pc,
+                        rf,
+                        &mut ctx,
+                        &mut handler_data,
+                        &mut establisher_frame,
+                        core::ptr::null_mut(),
+                    );
+                }
+            }
+            #[cfg(target_arch = "x86_64")]
+            let (next_pc, next_sp) = (ctx.Rip, ctx.Rsp);
+            #[cfg(target_arch = "aarch64")]
+            let (next_pc, next_sp) = (ctx.Pc, ctx.Sp);
+            if next_pc == 0 || (next_pc == control_pc && next_sp == control_sp) {
+                break;
+            }
+            out[n] = next_pc as usize;
+            n += 1;
+        }
     }
     #[cfg(not(windows))]
     {

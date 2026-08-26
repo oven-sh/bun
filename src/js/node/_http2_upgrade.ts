@@ -1,5 +1,6 @@
 const { Duplex } = require("node:stream");
 const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
+const kSharedCreds = Symbol.for("::buntlssharedcreds::");
 
 interface NativeHandle {
   resume(): void;
@@ -26,6 +27,7 @@ interface Http2SecureServer {
   _requestCert?: boolean;
   _rejectUnauthorized?: boolean;
   emit(event: string, ...args: any[]): boolean;
+  [key: symbol]: any;
 }
 
 interface TLSProxySocket {
@@ -238,8 +240,9 @@ function socketHandshake(
   // and is what normally fires on the 'secureConnection' event.
   ctx.connectionListener.$call(ctx.server, tlsSocket);
 
-  // Resume the Duplex so the H2 session can read frames from it.
-  // Mirrors net.ts ServerHandlers.handshake line 438: `self.resume()`.
+  // Resume the Duplex so the H2 session can read frames from it. The accept
+  // path in net.ts ServerHandlers.handshake only read(0)s (node's manualStart
+  // server socket); the H2 session is the consumer here, so it flows.
   tlsSocket.resume();
 }
 
@@ -342,10 +345,7 @@ function upgradeRawSocketToH2(
     [handle, events] = upgradeDuplexToTLS(rawSocket, {
       isServer: true,
       tls: {
-        key: server.key,
-        cert: server.cert,
-        ca: server.ca,
-        passphrase: server.passphrase,
+        secureContext: server[kSharedCreds]().context,
         requestCert: server._requestCert,
         rejectUnauthorized: server._rejectUnauthorized,
         ALPNProtocols: server.ALPNProtocols

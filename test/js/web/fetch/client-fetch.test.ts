@@ -448,7 +448,7 @@ test("unresolvable hostname rejects with the resolver error", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const notFound = (hostname: string) => ({
-    name: "Error",
+    name: "TypeError",
     code: "ENOTFOUND",
     syscall: "getaddrinfo",
     hostname,
@@ -675,4 +675,25 @@ test("a response with an obs-fold header continuation is rejected, not silently 
     e => ({ rejected: true as const, code: e.code }),
   );
   expect(outcome).toEqual({ rejected: true, code: "Malformed_HTTP_Response" });
+});
+
+test("a response Content-Length containing a digit separator is rejected instead of being parsed leniently", async () => {
+  await using server = net
+    .createServer(sock => {
+      sock.on("error", () => {});
+      sock.on("data", () => {
+        sock.end("HTTP/1.1 200 OK\r\nContent-Length: 1_0\r\nConnection: close\r\n\r\n0123456789");
+      });
+    })
+    .listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as net.AddressInfo;
+
+  const outcome = await fetch(`http://127.0.0.1:${port}/`)
+    .then(r => r.text())
+    .then(
+      body => ({ rejected: false as const, body }),
+      e => ({ rejected: true as const, code: e.code }),
+    );
+  expect(outcome).toEqual({ rejected: true, code: "InvalidContentLength" });
 });

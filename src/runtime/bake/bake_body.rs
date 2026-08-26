@@ -10,11 +10,9 @@ use core::ptr::NonNull;
 use bun_alloc::Arena; // = bumpalo::Bump
 use bun_collections::ArrayHashMap;
 use bun_core::Output;
-use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice};
-// peechy batch 2 landed: `bun_options_types::schema::api` now provides
-// {StringMap, LoaderMap, DotEnvBehavior, SourceMapMode, TransformOptions}.
-// Alias as `bun_schema` so existing field paths resolve unchanged.
+use bun_core::Utf8Bytes;
 use bun_core::{ZStr, strings};
+use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult};
 use bun_options_types::schema as bun_schema;
 use bun_paths::{self as paths, PathBuffer};
 
@@ -40,9 +38,9 @@ fn get_optional_slice(
     target: JSValue,
     global: &JSGlobalObject,
     property: &[u8],
-) -> JsResult<Option<ZigStringSlice>> {
+) -> JsResult<Option<Utf8Bytes<'static>>> {
     match target.get(global, property)? {
-        Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_slice(global)?)),
+        Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_utf8(global)?)),
         _ => Ok(None),
     }
 }
@@ -130,7 +128,7 @@ pub(crate) fn arena_dupe_z(arena: &Arena, bytes: &[u8]) -> &'static ZStr {
 }
 
 /// export default { app: ... };
-pub(crate) const API_NAME: &str = "app";
+const API_NAME: &str = "app";
 
 // TODO(lifetime): many `&'static [u8]` fields below are actually backed
 // by `UserOptions.arena` (bumpalo::Bump) or `UserOptions.allocations`
@@ -140,12 +138,12 @@ pub(crate) const API_NAME: &str = "app";
 /// Rust version of the TS definition 'Bake.Options' in 'bake.d.ts'
 pub struct UserOptions {
     /// This arena contains some miscellaneous allocations at startup
-    pub arena: Arena,
+    pub(crate) arena: Arena,
     pub allocations: StringRefList,
 
-    pub root: &'static ZStr, // TODO(lifetime): arena-owned, self-referential with .arena
-    pub framework: Framework,
-    pub bundler_options: SplitBundlerOptions,
+    pub(crate) root: &'static ZStr, // TODO(lifetime): arena-owned, self-referential with .arena
+    pub(crate) framework: Framework,
+    pub(crate) bundler_options: SplitBundlerOptions,
 }
 
 impl Drop for UserOptions {
@@ -175,7 +173,7 @@ impl UserOptions {
         if !config.is_object() {
             // Allow users to do `export default { app: 'react' }` for convenience
             if config.is_string() {
-                let bunstr = bun_core::OwnedString::new(config.to_bun_string(global)?);
+                let bunstr = config.to_bun_string(global)?;
                 let utf8_string = bunstr.to_utf8();
 
                 if strings::eql(utf8_string.slice(), b"react") {
@@ -266,26 +264,26 @@ impl UserOptions {
 /// Each string stores its allocator since some may hold reference counts to JSC
 #[derive(Default)]
 pub struct StringRefList {
-    pub strings: Vec<ZigStringSlice>,
+    pub(crate) strings: Vec<Utf8Bytes<'static>>,
 }
 
 impl StringRefList {
-    pub const EMPTY: StringRefList = StringRefList {
+    pub(crate) const EMPTY: StringRefList = StringRefList {
         strings: Vec::new(),
     };
 
     // Note: returned slice borrows JSC-owned storage kept alive by the
-    // `ZigStringSlice` now stored in `self.strings`; it is valid only for as
+    // `Utf8Bytes` now stored in `self.strings`; it is valid only for as
     // long as `self` is. Callers that store the result in `Framework` /
     // `FileSystemRouterType` / `ServerComponents` fields must thread a `'bump`
     // lifetime (or switch those fields to `Box<[u8]>` / `ArenaStr`) — see the
     // file-level TODO(lifetime) above. Do NOT paper over this with a `'static`
     // transmute (forbidden per PORTING.md §Forbidden — lifetime extension).
-    pub fn track(&mut self, str: ZigStringSlice) -> &'static [u8] {
+    pub(crate) fn track(&mut self, str: Utf8Bytes<'static>) -> &'static [u8] {
         self.strings.push(str);
         let slice = self.strings.last().unwrap().slice();
         // SAFETY: (`Interned::assume` — Population B, holder-backed) the
-        // `ZigStringSlice` is now owned by `self.strings` and lives exactly as
+        // `Utf8Bytes` is now owned by `self.strings` and lives exactly as
         // long as the `StringRefList`, which is owned by `UserOptions` and
         // dropped only when bake teardown runs (`UserOptions::deinit`). The
         // returned slice is stored only in `Framework` / `FileSystemRouterType`
@@ -310,7 +308,7 @@ impl SplitBundlerOptions {
     // `BuildConfigSubset`) is not `const fn`, so this is now a fn-backed
     // default. Callers updated to `SplitBundlerOptions::default()`.
 
-    pub(crate) fn parse_plugin_array(
+    fn parse_plugin_array(
         &mut self,
         plugin_array: JSValue,
         global: &JSGlobalObject,
@@ -375,9 +373,13 @@ impl SplitBundlerOptions {
                 // be resolved before the first bundle task can begin.
                 // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachineRef`
                 // live for the lifetime of the global object.
-                global.bun_vm().as_mut().wait_for_promise(promise);
+                global
+                    .bun_vm()
+                    .as_mut()
+                    .wait_for_promise(promise)
+                    .map_err(|stopped| stopped.throw(global))?;
                 match promise.unwrap(global.vm(), bun_jsc::PromiseUnwrapMode::MarkHandled) {
-                    bun_jsc::PromiseResult::Pending => unreachable!(),
+                    bun_jsc::PromiseResult::Pending => unreachable!("wait_for_promise returned Ok"),
                     bun_jsc::PromiseResult::Fulfilled(_val) => {}
                     bun_jsc::PromiseResult::Rejected(err) => {
                         return Err(global.throw_value(err));
@@ -390,7 +392,6 @@ impl SplitBundlerOptions {
 }
 
 pub struct BuildConfigSubset {
-    pub loader: Option<bun_schema::api::LoaderMap>,
     pub ignore_dce_annotations: Option<bool>,
     pub conditions: ArrayHashMap<&'static [u8], ()>,
     pub drop: ArrayHashMap<&'static [u8], ()>,
@@ -456,7 +457,6 @@ impl Default for BuildConfigSubset {
         // Note: was `pub const DEFAULT` — `ArrayHashMap::new()` is not
         // `const fn`, so this lives behind `Default` instead.
         BuildConfigSubset {
-            loader: None,
             ignore_dce_annotations: None,
             conditions: ArrayHashMap::new(),
             drop: ArrayHashMap::new(),
@@ -510,10 +510,10 @@ impl Framework {
     pub fn react(arena: &Arena) -> crate::Result<Framework> {
         // Cannot use .import because resolution must happen from the user's POV
         let built_in_values: &[BuiltInModule] = &[
-            BuiltInModule::Code(
-                bun_core::runtime_embed_file!(Src, "runtime/bake/bun-framework-react/client.tsx")
-                    .as_bytes(),
-            ),
+            // Browser-side source: compressed in release builds.
+            BuiltInModule::Code(bun_zstd::embed_compressed!(
+                src "runtime/bake/bun-framework-react/client.tsx"
+            )),
             BuiltInModule::Code(
                 bun_core::runtime_embed_file!(Src, "runtime/bake/bun-framework-react/server.tsx")
                     .as_bytes(),
@@ -590,8 +590,7 @@ impl Framework {
                 import_source: b"react-refresh/runtime/index.js",
             });
             let react_refresh_code = BuiltInModule::Code(
-                bun_core::runtime_embed_file!(Codegen, "node-fallbacks/react-refresh.js")
-                    .as_bytes(),
+                bun_zstd::embed_compressed!(codegen "node-fallbacks/react-refresh.js"),
             );
             let _ = arena;
             fw.built_in_modules.put(
@@ -626,8 +625,6 @@ impl Framework {
             built_in_modules: bun_core::handle_oom(self.built_in_modules.clone()),
         }
     }
-
-    pub const REACT_INSTALL_COMMAND: &'static str = "bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental";
 
     pub fn add_react_install_command_note(log: &mut bun_ast::Log) -> crate::Result<()> {
         let clone_line_text = log.clone_line_text;
@@ -758,10 +755,10 @@ impl Framework {
         arena: &Arena,
     ) -> JsResult<Framework> {
         if opts.is_string() {
-            let str = bun_core::OwnedString::new(opts.to_bun_string(global)?);
+            let str = opts.to_bun_string(global)?;
 
             // Deprecated
-            if str.eql_comptime("react-server-components") {
+            if str.eq_ascii(b"react-server-components") {
                 bun_core::warn!(
                     "deprecation notice: 'react-server-components' will be renamed to 'react'"
                 );
@@ -769,7 +766,7 @@ impl Framework {
                     .map_err(|e| throw_core_error(global, e, "Framework::react"));
             }
 
-            if str.eql_comptime("react") {
+            if str.eq_ascii(b"react") {
                 return Framework::react(arena)
                     .map_err(|e| throw_core_error(global, e, "Framework::react"));
             }
@@ -817,10 +814,10 @@ impl Framework {
                 }
             };
 
-            let str = bun_core::OwnedString::new(prop.to_bun_string(global)?);
+            let str = prop.to_bun_string(global)?;
 
             Some(ReactFastRefresh {
-                import_source: refs.track(str.to_utf8()),
+                import_source: refs.track(str.into_utf8()),
             })
         };
         let server_components: Option<ServerComponents> = 'sc: {
@@ -995,7 +992,7 @@ impl Framework {
                 {
                     'exts: {
                         if exts_js.is_string() {
-                            let str = exts_js.to_slice(global)?;
+                            let str = exts_js.to_utf8(global)?;
                             if str.slice() == b"*" {
                                 break 'exts &[] as &[&[u8]];
                             }
@@ -1007,7 +1004,7 @@ impl Framework {
                                     arena,
                                 );
                             while let Some(array_item) = it_2.next()? {
-                                let slice = refs.track(array_item.to_slice(global)?);
+                                let slice = refs.track(array_item.to_utf8(global)?);
                                 if slice == b"*" {
                                     return Err(global.throw_invalid_arguments(format_args!(
                                             "'extensions' cannot include \"*\" as an extension. Pass \"*\" instead of the array."
@@ -1057,7 +1054,7 @@ impl Framework {
                                 arena,
                             );
                             while let Some(array_item) = it_2.next()? {
-                                dirs.push(refs.track(array_item.to_slice(global)?));
+                                dirs.push(refs.track(array_item.to_utf8(global)?));
                             }
                             break 'exts arena_erase(dirs.into_bump_slice());
                         }
@@ -1139,38 +1136,6 @@ impl Framework {
             server_components,
             react_fast_refresh,
             self.is_built_in_react,
-        )
-    }
-
-    pub fn init_transpiler<'a>(
-        &mut self,
-        arena: &'a Arena,
-        log: &mut bun_ast::Log,
-        mode: Mode,
-        renderer: Graph,
-        out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
-        bundler_options: &BuildConfigSubset,
-    ) -> crate::Result<()> {
-        let source_map: bun_bundler::options::SourceMapOption = match mode {
-            // Source maps must always be external, as DevServer special cases
-            // the linking and part of the generation of these. It also relies
-            // on source maps always being enabled.
-            Mode::Development => bun_bundler::options::SourceMapOption::External,
-            // TODO: follow user configuration
-            _ => bun_bundler::options::SourceMapOption::None,
-        };
-
-        self.init_transpiler_with_options(
-            arena,
-            log,
-            mode,
-            renderer,
-            out,
-            bundler_options,
-            source_map,
-            None,
-            None,
-            None,
         )
     }
 
@@ -1420,8 +1385,7 @@ fn get_optional_string(
     if value.is_undefined_or_null() {
         return Ok(None);
     }
-    let str = bun_core::OwnedString::new(value.to_bun_string(global)?);
-    Ok(Some(allocations.track(str.to_utf8())))
+    Ok(Some(allocations.track(value.to_utf8(global)?)))
 }
 
 // Note: `HmrRuntime` is defined canonically in the parent `bake/mod.rs`
@@ -1432,12 +1396,12 @@ pub(crate) use super::HmrRuntime;
 fn hmr_runtime_init(code: &'static ZStr) -> HmrRuntime {
     HmrRuntime {
         code,
-        line_count: u32::try_from(code.as_bytes().iter().filter(|&&b| b == b'\n').count()).unwrap(),
+        line_count: u32::try_from(strings::count_char(code.as_bytes(), b'\n')).unwrap(),
     }
 }
 
 #[inline(always)]
-pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
+pub(crate) fn get_hmr_runtime(side: Side) -> HmrRuntime {
     // `runtime_embed_file!` returns `&'static str` (no NUL). Use a per-side
     // `OnceLock` holding the NUL-terminated copy — read once per process,
     // never freed. PORTING.md §Forbidden bans leaking for `&'static`; this is the
@@ -1446,26 +1410,26 @@ pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
     // costs one extra copy at first call; the cost is negligible vs. keeping
     // a per-call-site `#[cfg]` pair in sync.)
     use std::sync::OnceLock;
-    fn nul_terminate(s: &'static str, cell: &'static OnceLock<Box<[u8]>>) -> &'static ZStr {
+    fn nul_terminate(s: &'static [u8], cell: &'static OnceLock<Box<[u8]>>) -> &'static ZStr {
         let buf = cell.get_or_init(|| {
             let mut v = Vec::with_capacity(s.len() + 1);
-            v.extend_from_slice(s.as_bytes());
+            v.extend_from_slice(s);
             v.push(0);
             v.into_boxed_slice()
         });
         // SAFETY: buf is process-lifetime (`OnceLock` static), buf[len-1] == 0.
         ZStr::from_slice_with_nul(&buf[..])
     }
-    static CLIENT: OnceLock<Box<[u8]>> = OnceLock::new();
     static SERVER: OnceLock<Box<[u8]>> = OnceLock::new();
     hmr_runtime_init(match side {
-        Side::Client => nul_terminate(
-            bun_core::runtime_embed_file!(CodegenEager, "bake.client.js"),
-            &CLIENT,
-        ),
+        // Shipped to the browser, so release builds embed it compressed; the
+        // bundler owns the one inflated (NUL-terminated) copy.
+        Side::Client => {
+            ZStr::from_slice_with_nul(bun_bundler::bake_types::bake_client_js_with_nul())
+        }
         // server runtime is loaded once, so it is pointless to make this eager.
         Side::Server => nul_terminate(
-            bun_core::runtime_embed_file!(Codegen, "bake.server.js"),
+            bun_core::runtime_embed_file!(Codegen, "bake.server.js").as_bytes(),
             &SERVER,
         ),
     })
@@ -1529,26 +1493,26 @@ pub(crate) fn add_import_meta_defines(
 /// Stack-allocated structure that is written to from end to start.
 /// Used as a staging area for building pattern strings.
 pub struct PatternBuffer {
-    pub bytes: PathBuffer,
+    pub(crate) bytes: PathBuffer,
     // On Windows MAX_PATH_BYTES = 32767*3+1 = 98302
     // (> u16::MAX), so u32 is required; u16 would truncate the initial index
     // to 32766 and `slice()` would return ~64 KiB of trailing zero bytes.
-    pub i: u32,
+    pub(crate) i: u32,
 }
 
 impl PatternBuffer {
-    pub const EMPTY: PatternBuffer = PatternBuffer {
+    pub(crate) const EMPTY: PatternBuffer = PatternBuffer {
         bytes: PathBuffer::ZEROED,
         i: core::mem::size_of::<PathBuffer>() as u32,
     };
 
-    pub fn prepend(&mut self, chunk: &[u8]) {
+    pub(crate) fn prepend(&mut self, chunk: &[u8]) {
         debug_assert!(self.i as usize >= chunk.len());
         self.i -= u32::try_from(chunk.len()).expect("int cast");
         self.slice_mut()[..chunk.len()].copy_from_slice(chunk);
     }
 
-    pub fn prepend_part(&mut self, part: framework_router::Part) {
+    pub(crate) fn prepend_part(&mut self, part: framework_router::Part) {
         match part {
             framework_router::Part::Text(text) => {
                 debug_assert!(text.is_empty() || text[0] != b'/');
@@ -1565,7 +1529,7 @@ impl PatternBuffer {
         }
     }
 
-    pub fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> &[u8] {
         &self.bytes[self.i as usize..]
     }
 

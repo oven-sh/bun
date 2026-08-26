@@ -20,29 +20,16 @@ use bun_parsers::json_parser;
 // all install-tier value types are the canonical `bun_install_types` shapes.
 
 pub use ::bun_install_types::resolver_hooks::{
-    Architecture, AutoInstaller, Behavior as DepBehavior, Dependency, DependencyGroup,
-    DependencyVersion, DependencyVersionTag, OperatingSystem,
+    Architecture, Dependency, DependencyGroup, DependencyVersion, DependencyVersionTag,
+    OperatingSystem,
 };
 pub use ::bun_install_types::resolver_hooks::{INVALID_PACKAGE_ID, PackageID};
-
-/// Compat namespace: older callers spell `install_stubs::Version::Tag` etc.
-/// Everything re-exports `bun_install_types::resolver_hooks` — no local stubs.
-#[allow(non_snake_case)]
-pub mod install_stubs {
-    pub use ::bun_install_types::resolver_hooks::{
-        Architecture, AutoInstaller, Behavior as DepBehavior, Dependency, DependencyGroup,
-        DependencyVersion, OperatingSystem,
-    };
-    pub mod Version {
-        pub use ::bun_install_types::resolver_hooks::DependencyVersion as Version;
-        pub use ::bun_install_types::resolver_hooks::DependencyVersionTag as Tag;
-    }
-}
 // Deliberately a bare alias rather than `bun_collections::StringMap` (which
 // wraps the same `StringArrayHashMap<Box<[u8]>>` with a `dupe_keys` flag the
 // resolver never needs); callers here use the map API directly.
 pub type StringMap = StringArrayHashMap<Box<[u8]>>;
 pub use bun_collections::StringHashMapUnownedKey;
+use bun_collections::index_sort;
 use bun_glob as glob;
 
 // Assume they're not going to have hundreds of main fields or browser map
@@ -57,7 +44,7 @@ pub type MacroMap = StringArrayHashMap<MacroImportReplacementMap>;
 // borrow kept alive by `PackageJSON::source_contents` (the owning field).
 type ScriptsMap = StringArrayHashMap<&'static [u8]>;
 
-pub type MainFieldMap = StringMap;
+type MainFieldMap = StringMap;
 
 #[derive(Default)]
 pub struct DependencyMap {
@@ -67,19 +54,8 @@ pub struct DependencyMap {
     pub source_buf: &'static [u8],
 }
 
-impl Clone for DependencyMap {
-    /// Deep-clones the small key/value vecs; `SemverString`/`Dependency` are
-    /// POD over `source_buf`.
-    fn clone(&self) -> Self {
-        Self {
-            map: self.map.clone().expect("OOM"),
-            source_buf: self.source_buf,
-        }
-    }
-}
-
 // Inherent impls cannot carry associated type aliases (stable), so use a free alias.
-pub type DependencyHashMap =
+type DependencyHashMap =
     ArrayHashMap<SemverString, Dependency /* , SemverString::ArrayHashContext */>;
 
 pub struct PackageJSON {
@@ -91,9 +67,9 @@ pub struct PackageJSON {
     /// The `PackageJSON` itself is the owner so the bytes free if it ever drops.
     /// (`bun_ast::Source::contents` is `&'static [u8]`, so this separate owner
     /// field is what keeps that borrow — and the map values above — alive.)
-    pub source_contents: Box<[u8]>,
+    pub(crate) source_contents: Box<[u8]>,
     pub(crate) json_tape: Option<Box<js_ast::E::JsonTape>>,
-    pub main_fields: MainFieldMap,
+    pub(crate) main_fields: MainFieldMap,
     pub module_type: ModuleType,
     pub version: Box<[u8]>,
 
@@ -101,13 +77,13 @@ pub struct PackageJSON {
     // Values borrow the source buffer (lifetime-erased; owned by `source_contents`).
     pub config: Option<Box<StringArrayHashMap<&'static [u8]>>>,
 
-    pub arch: Architecture,
-    pub os: OperatingSystem,
+    pub(crate) arch: Architecture,
+    pub(crate) os: OperatingSystem,
 
-    pub package_manager_package_id: PackageID,
+    pub(crate) package_manager_package_id: PackageID,
     pub dependencies: DependencyMap,
 
-    pub side_effects: SideEffects,
+    pub(crate) side_effects: SideEffects,
 
     // Populated if the "browser" field is present. This field is intended to be
     // used by bundlers and lets you redirect the paths of certain 3rd-party
@@ -134,10 +110,10 @@ pub struct PackageJSON {
     // * Given the mapping "./ext.js": "./ext-browser.js" the query "./ext.js"
     //   should match and the query "./ext" should ALSO match.
     //
-    pub browser_map: BrowserMap,
+    pub(crate) browser_map: BrowserMap,
 
-    pub exports: Option<ExportsMap>,
-    pub imports: Option<ExportsMap>,
+    pub(crate) exports: Option<ExportsMap>,
+    pub(crate) imports: Option<ExportsMap>,
 }
 
 // hand-rolled `Default` because `#[derive(Default)]` would zero
@@ -240,17 +216,17 @@ pub enum SideEffects {
     Mixed(MixedPatterns),
 }
 
-pub type SideEffectsMap = bun_collections::HashMap<StringHashMapUnownedKey, ()>;
+type SideEffectsMap = bun_collections::HashMap<StringHashMapUnownedKey, ()>;
 
-pub type GlobList = Vec<Box<[u8]>>;
+type GlobList = Vec<Box<[u8]>>;
 
 pub struct MixedPatterns {
-    pub exact: SideEffectsMap,
-    pub globs: GlobList,
+    pub(crate) exact: SideEffectsMap,
+    pub(crate) globs: GlobList,
 }
 
 impl SideEffects {
-    pub fn has_side_effects(&self, path: &[u8]) -> bool {
+    pub(crate) fn has_side_effects(&self, path: &[u8]) -> bool {
         match self {
             SideEffects::Unspecified => true,
             SideEffects::False => false,
@@ -300,37 +276,13 @@ impl SideEffects {
 // exposes the inherent forwarder (tsconfig_json.rs).
 // `bun_bundler::cache::JSON_CACHE_VTABLE` wires it to `bun_parsers::json`.
 
-/// Thin extension trait that delegates to
-/// `bun_paths::resolve_path` and returns owned `Box<[u8]>` so no `'static`
-/// lifetime is fabricated from a threadlocal scratch buffer (forbidden per
-/// docs/PORTING.md §Forbidden patterns — "`unsafe { &*(p as *const _) }` to
-/// extend a lifetime"). `crate::fs::FileSystem` already has an inherent
-/// borrowing `abs(&self) -> &[u8]` (lib.rs); that wins method resolution at
-/// call-sites that only need a transient borrow.
-pub trait FileSystemPackageJsonExt {
-    fn abs_owned(&self, parts: &[&[u8]]) -> Box<[u8]>;
+/// Thin extension trait that delegates to `bun_paths::resolve_path`.
+trait FileSystemPackageJsonExt {
     fn join(&self, parts: &[&[u8]]) -> &'static [u8];
-    fn normalize(&self, str: &[u8]) -> Box<[u8]>;
 }
 impl FileSystemPackageJsonExt for crate::fs::FileSystem {
-    fn abs_owned(&self, parts: &[&[u8]]) -> Box<[u8]> {
-        // Joins against `top_level_dir`; return owned so no scratch-buffer
-        // borrow is laundered into `'static`.
-        let out = resolve_path::resolve_path::join_abs_string::<
-            resolve_path::resolve_path::platform::Loose,
-        >(self.top_level_dir, parts);
-        Box::from(out)
-    }
     fn join(&self, parts: &[&[u8]]) -> &'static [u8] {
         resolve_path::resolve_path::join::<resolve_path::resolve_path::platform::Loose>(parts)
-    }
-    fn normalize(&self, str: &[u8]) -> Box<[u8]> {
-        // Collapses `.`/`..`/dup-separators only; does NOT join against cwd.
-        let out = resolve_path::resolve_path::normalize_string::<
-            true,
-            resolve_path::resolve_path::platform::Auto,
-        >(str);
-        Box::from(&*out)
     }
 }
 
@@ -647,9 +599,8 @@ impl PackageJSON {
                     // The value is an object
 
                     // Remap all files in the browser field
+                    let mut key_spill: Vec<u8> = Vec::new();
                     for prop in obj.get().properties() {
-                        let _key_str = prop.key.slice();
-
                         // Normalize the path so we can compare against it without getting
                         // confused by "./". There is no distinction between package paths and
                         // relative paths for these values because some tools (i.e. Browserify)
@@ -659,21 +610,24 @@ impl PackageJSON {
                         // import of "foo", but that's actually not a bug. Or arguably it's a
                         // bug in Browserify but we have to replicate this bug because packages
                         // do this in the wild.
-                        let key: Box<[u8]> = FileSystemPackageJsonExt::normalize(r_fs, _key_str);
+                        let key: &[u8] = resolve_path::resolve_path::normalize_string_spill::<
+                            true,
+                            resolve_path::platform::Auto,
+                        >(&mut key_spill, prop.key.slice());
 
                         match &prop.value {
                             js_ast::E::JsonValue::String(str) => {
                                 // If this is a string, it's a replacement package
                                 package_json
                                     .browser_map
-                                    .put(&key, Box::from(str.slice()))
+                                    .put(key, Box::from(str.slice()))
                                     .expect("unreachable");
                             }
                             js_ast::E::JsonValue::Boolean(boolean) => {
                                 if !*boolean {
                                     package_json
                                         .browser_map
-                                        .put(&key, Box::default())
+                                        .put(key, Box::default())
                                         .expect("unreachable");
                                 }
                             }
@@ -888,7 +842,6 @@ impl PackageJSON {
                     }
                 }
 
-                type DependencyGroup = install_stubs::DependencyGroup;
                 let dev_deps = INCLUDE_DEPENDENCIES == IncludeDependencies::Main;
                 let dependency_groups: &[DependencyGroup] = if dev_deps {
                     &[
@@ -902,7 +855,7 @@ impl PackageJSON {
 
                 let mut total_dependency_count: usize = 0;
                 for group in dependency_groups {
-                    if let Some(group_json) = json.get(group.field) {
+                    if let Some(group_json) = json.get(group.prop) {
                         total_dependency_count += group_json.property_count();
                     }
                 }
@@ -922,7 +875,7 @@ impl PackageJSON {
                         .expect("unreachable");
 
                     for group in dependency_groups {
-                        if let Some(group_json) = json.get(group.field) {
+                        if let Some(group_json) = json.get(group.prop) {
                             if let js_ast::ExprData::EObjectJSON(group_obj) = &group_json.data {
                                 for prop in group_obj.get().properties() {
                                     let name_str = prop.key.slice();
@@ -1052,11 +1005,11 @@ impl PackageJSON {
 }
 
 pub struct ExportsMap {
-    pub root: Entry,
+    pub(crate) root: Entry,
 }
 
 impl ExportsMap {
-    pub fn parse(
+    pub(crate) fn parse(
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
         json: js_ast::Expr,
@@ -1073,13 +1026,13 @@ impl ExportsMap {
     }
 }
 
-pub struct Visitor<'a> {
-    pub source: &'a bun_ast::Source,
-    pub log: &'a mut bun_ast::Log,
+pub(crate) struct Visitor<'a> {
+    pub(crate) source: &'a bun_ast::Source,
+    pub(crate) log: &'a mut bun_ast::Log,
 }
 
 impl<'a> Visitor<'a> {
-    pub fn visit(&mut self, expr: js_ast::Expr) -> Entry {
+    pub(crate) fn visit(&mut self, expr: js_ast::Expr) -> Entry {
         let vloc = json_parser::ValueLocation::Property(expr.loc);
         match &expr.data {
             js_ast::ExprData::ENull(_) => Entry {
@@ -1183,7 +1136,9 @@ impl<'a> Visitor<'a> {
         // Let expansionKeys be the list of keys of matchObj either ending in "/"
         // or containing only a single "*", sorted by the sorting function
         // PATTERN_KEY_COMPARE which orders in descending order of specificity.
-        expansion_keys.sort_by(|a, b| strings::glob_length_compare(&a.key, &b.key));
+        index_sort::sort_slice_by(&mut expansion_keys, |a, b| {
+            strings::glob_length_compare(&a.key, &b.key)
+        });
 
         Entry {
             data: EntryData::Map(EntryDataMap {
@@ -1246,51 +1201,40 @@ impl<'a> Visitor<'a> {
 
 #[derive(Clone)]
 pub struct Entry {
-    pub data: EntryData,
+    pub(crate) data: EntryData,
 }
 
 #[derive(Clone)]
 pub enum EntryData {
     Invalid,
     Null,
-    Boolean(bool),
     String(Box<[u8]>), // owned copy
     Array(Box<[Entry]>),
     Map(EntryDataMap),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-pub enum EntryDataTag {
-    Invalid,
-    Null,
-    Boolean,
-    String,
-    Array,
-    Map,
-}
-
 #[derive(Clone)]
 pub struct EntryDataMap {
     // This is not a std.ArrayHashMap because we also store the key_range which is a little weird
-    pub expansion_keys: Box<[MapEntry]>,
-    pub list: EntryDataMapList,
+    pub(crate) expansion_keys: Box<[MapEntry]>,
+    pub(crate) list: EntryDataMapList,
 }
 
 pub type EntryDataMapList = Vec<MapEntry>;
 
 #[derive(Clone)]
 pub struct MapEntry {
-    pub key: Box<[u8]>, // owned copy
-    pub key_range: bun_ast::Range,
-    pub value: Entry,
+    pub(crate) key: Box<[u8]>, // owned copy
+    pub(crate) key_range: bun_ast::Range,
+    pub(crate) value: Entry,
 }
 
 impl Entry {
-    pub fn keys_start_with_dot(&self) -> bool {
+    pub(crate) fn keys_start_with_dot(&self) -> bool {
         matches!(&self.data, EntryData::Map(m) if !m.list.is_empty() && strings::starts_with_char(&m.list[0].key, b'.'))
     }
 
-    pub fn value_for_key(&self, key_: &[u8]) -> Option<&Entry> {
+    pub(crate) fn value_for_key(&self, key_: &[u8]) -> Option<&Entry> {
         match &self.data {
             EntryData::Map(m) => {
                 for entry in m.list.iter() {
@@ -1308,20 +1252,19 @@ impl Entry {
 
 pub type ConditionsMap = StringArrayHashMap<()>;
 
-pub struct ESModule<'a> {
-    pub debug_logs: Option<&'a mut resolver::DebugLogs>,
-    pub conditions: &'a ConditionsMap,
+pub(crate) struct ESModule<'a> {
+    pub(crate) debug_logs: Option<&'a mut resolver::DebugLogs>,
+    pub(crate) conditions: &'a ConditionsMap,
     // allocator dropped — global mimalloc
-    pub module_type: &'a mut ModuleType,
+    pub(crate) module_type: &'a mut ModuleType,
 }
 
 #[derive(Clone)]
 pub struct Resolution {
-    pub status: Status,
+    pub(crate) status: Status,
     // The source-buffer case (`EntryData::String(Box<[u8]>)`) is owned by a
     // possibly-temporary `Entry`, so borrowing would dangle. Copy out into an owned buffer.
-    pub path: Box<[u8]>,
-    pub debug: ResolutionDebug,
+    pub(crate) path: Box<[u8]>,
 }
 
 impl Default for Resolution {
@@ -1329,16 +1272,8 @@ impl Default for Resolution {
         Resolution {
             status: Status::Undefined,
             path: Box::default(),
-            debug: ResolutionDebug::default(),
         }
     }
-}
-
-#[derive(Clone, Default)]
-pub struct ResolutionDebug {
-    // If the status is "UndefinedNoConditionsMatch", this is the set of
-    // conditions that didn't match. This information is used for error messages.
-    pub unmatched_conditions: Box<[Box<[u8]>]>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
@@ -1365,14 +1300,8 @@ pub enum Status {
     /// The package or module requested does not exist.
     ModuleNotFound,
 
-    /// The user just needs to add the missing extension
-    ModuleNotFoundMissingExtension,
-
     /// The resolved path corresponds to a directory, which is not a supported target for module imports.
     UnsupportedDirectoryImport,
-
-    /// The user just needs to add the missing "/index.js" suffix
-    UnsupportedDirectoryImportMissingIndex,
 
     /// When a package path is explicitly set to null, that means it's not exported.
     PackagePathDisabled,
@@ -1385,7 +1314,7 @@ pub enum Status {
 
 impl Status {
     #[inline]
-    pub fn is_undefined(self) -> bool {
+    pub(crate) fn is_undefined(self) -> bool {
         matches!(self, Status::Undefined | Status::UndefinedNoConditionsMatch)
     }
 }
@@ -1393,59 +1322,34 @@ impl Status {
 #[derive(Clone, Copy)]
 pub struct Package<'a> {
     /// Borrows from the `specifier` argument to `Package::parse`.
-    pub name: &'a [u8],
+    pub(crate) name: &'a [u8],
     /// Borrows from the `specifier` argument to `Package::parse`.
-    pub version: &'a [u8],
+    pub(crate) version: &'a [u8],
     /// Borrows from the `subpath_buf` argument to `Package::parse`.
-    pub subpath: &'a [u8],
-}
-
-impl Default for Package<'_> {
-    fn default() -> Self {
-        Package {
-            name: b"",
-            version: b"",
-            subpath: b"",
-        }
-    }
+    pub(crate) subpath: &'a [u8],
 }
 
 #[derive(Clone, Copy, Default)]
 pub struct PackageExternal {
     pub name: Semver::String,
-    pub version: Semver::String,
-    pub subpath: Semver::String,
 }
 
 impl<'a> Package<'a> {
-    pub fn count(self, builder: &mut Semver::semver_string::Builder) {
+    pub(crate) fn count(self, builder: &mut Semver::semver_string::Builder) {
         builder.count(self.name);
-        builder.count(self.version);
-        builder.count(self.subpath);
     }
 
-    pub fn clone(self, builder: &mut Semver::semver_string::Builder) -> PackageExternal {
+    pub(crate) fn clone(self, builder: &mut Semver::semver_string::Builder) -> PackageExternal {
         PackageExternal {
-            name: builder.append_utf8_without_pool::<Semver::String>(self.name, 0),
-            version: builder.append_utf8_without_pool::<Semver::String>(self.version, 0),
-            subpath: builder.append_utf8_without_pool::<Semver::String>(self.subpath, 0),
-        }
-    }
-
-    pub fn to_external(self, buffer: &[u8]) -> PackageExternal {
-        PackageExternal {
-            name: Semver::String::init(buffer, self.name),
-            version: Semver::String::init(buffer, self.version),
-            subpath: Semver::String::init(buffer, self.subpath),
+            name: builder.append_without_pool::<Semver::String>(self.name, 0),
         }
     }
 
     /// Allocate a fresh string buffer and clone `name`/`version`/`subpath`
     /// into it as offset-encoded `Semver::String`s. Mirrors the inline
     /// `count` → `allocate` → `clone` Builder dance the resolver does at the
-    /// auto-install pending sites, exposed as the `esm.copy`
-    /// helper that `PendingResolution::init` expects.
-    pub fn copy(self) -> crate::CrateResult<(PackageExternal, Vec<u8>)> {
+    /// auto-install pending sites, exposed as the `esm.copy` helper.
+    pub(crate) fn copy(self) -> crate::CrateResult<(PackageExternal, Vec<u8>)> {
         let mut builder = Semver::semver_string::Builder::default();
         self.count(&mut builder);
         builder.allocate()?;
@@ -1454,7 +1358,7 @@ impl<'a> Package<'a> {
         Ok((cloned, string_buf))
     }
 
-    pub fn with_auto_version(self) -> Package<'a> {
+    pub(crate) fn with_auto_version(self) -> Package<'a> {
         if self.version.is_empty() {
             return Package {
                 name: self.name,
@@ -1465,7 +1369,7 @@ impl<'a> Package<'a> {
 
         self
     }
-    pub fn parse_name(specifier: &[u8]) -> Option<&[u8]> {
+    pub(crate) fn parse_name(specifier: &[u8]) -> Option<&[u8]> {
         let mut slash = strings::index_of_char_neg(specifier, b'/');
         if !strings::starts_with_char(specifier, b'@') {
             slash = if slash == -1 {
@@ -1489,7 +1393,7 @@ impl<'a> Package<'a> {
         }
     }
 
-    pub fn parse_version(specifier_after_name: &[u8]) -> Option<&[u8]> {
+    pub(crate) fn parse_version(specifier_after_name: &[u8]) -> Option<&[u8]> {
         if let Some(slash) = strings::index_of_char(specifier_after_name, b'/') {
             // "foo@/bar" is not a valid specifier\
             // "foo@/"   is not a valid specifier
@@ -1510,7 +1414,7 @@ impl<'a> Package<'a> {
         None
     }
 
-    pub fn parse(specifier: &'a [u8], subpath_buf: &'a mut [u8]) -> Option<Package<'a>> {
+    pub(crate) fn parse(specifier: &'a [u8], subpath_buf: &'a mut [u8]) -> Option<Package<'a>> {
         if specifier.is_empty() {
             return None;
         }
@@ -1521,7 +1425,7 @@ impl<'a> Package<'a> {
         };
 
         if strings::starts_with(package.name, b".")
-            || strings::index_any_comptime(package.name, b"\\%").is_some()
+            || strings::index_of_any(package.name, b"\\%").is_some()
         {
             return None;
         }
@@ -1565,7 +1469,11 @@ impl<'a> Package<'a> {
         Some(package)
     }
 
-    pub fn parse_subpath(subpath: &mut &'a [u8], specifier: &[u8], subpath_buf: &'a mut [u8]) {
+    pub(crate) fn parse_subpath(
+        subpath: &mut &'a [u8],
+        specifier: &[u8],
+        subpath_buf: &'a mut [u8],
+    ) {
         if specifier.len() + 1 > subpath_buf.len() {
             *subpath = b"";
             return;
@@ -1586,6 +1494,19 @@ struct ModuleBufs {
     resolve_target_buf2: PathBuffer,
 }
 
+/// Same shape as `resolver::BufsSlot`: the `Drop` reclaims the box when a worker thread exits.
+struct ModuleBufsSlot(core::cell::Cell<*mut ModuleBufs>);
+impl Drop for ModuleBufsSlot {
+    fn drop(&mut self) {
+        let p = self.0.get();
+        if !p.is_null() {
+            // SAFETY: produced by `into_raw` in `module_bufs`; this thread is exiting, so no
+            // resolution frame still points into the buffers.
+            unsafe { bun_core::heap::destroy(p) };
+        }
+    }
+}
+
 thread_local! {
     // Heap-allocate the buffer struct on first use and store only a pointer
     // in TLS so the static-TLS template stays small (PE/COFF has no
@@ -1594,21 +1515,21 @@ thread_local! {
     // RefCell + escaped `&mut PathBuffer` would create aliased `&mut` at the inner call → UB.
     // Use raw-pointer access; only form `&mut PathBuffer` inside the non-recursive `String` arms
     // where the buffers are actually written (no overlap with a live outer `&mut`).
-    static MODULE_BUFS: core::cell::Cell<*mut ModuleBufs> =
-        const { core::cell::Cell::new(core::ptr::null_mut()) };
+    static MODULE_BUFS: ModuleBufsSlot =
+        const { ModuleBufsSlot(core::cell::Cell::new(core::ptr::null_mut())) };
 }
 
 #[inline]
 fn module_bufs() -> *mut ModuleBufs {
-    MODULE_BUFS.with(|c| {
-        let mut p = c.get();
+    MODULE_BUFS.with(|slot| {
+        let mut p = slot.0.get();
         if p.is_null() {
             p = bun_core::heap::into_raw(Box::new(ModuleBufs {
                 resolved_path_buf_percent: PathBuffer::ZEROED,
                 resolve_target_buf: PathBuffer::ZEROED,
                 resolve_target_buf2: PathBuffer::ZEROED,
             }));
-            c.set(p);
+            slot.0.set(p);
         }
         p
     })
@@ -1617,12 +1538,17 @@ fn module_bufs() -> *mut ModuleBufs {
 // `module_type` / `debug_logs` are `&'a mut T`, so reading/writing them
 // requires `&mut self`. All resolution methods take `&mut self`.
 impl<'a> ESModule<'a> {
-    pub fn resolve(&mut self, package_url: &[u8], subpath: &[u8], exports: &Entry) -> Resolution {
+    pub(crate) fn resolve(
+        &mut self,
+        package_url: &[u8],
+        subpath: &[u8],
+        exports: &Entry,
+    ) -> Resolution {
         let r = self.resolve_exports(package_url, subpath, exports);
         Self::finalize(r)
     }
 
-    pub fn resolve_imports(&mut self, specifier: &[u8], imports: &Entry) -> Resolution {
+    pub(crate) fn resolve_imports(&mut self, specifier: &[u8], imports: &Entry) -> Resolution {
         if !matches!(imports.data, EntryData::Map(_)) {
             return Resolution {
                 status: Status::InvalidPackageConfiguration,
@@ -1641,7 +1567,7 @@ impl<'a> ESModule<'a> {
         }
     }
 
-    pub fn finalize(result_: Resolution) -> Resolution {
+    pub(crate) fn finalize(result_: Resolution) -> Resolution {
         let mut result = result_;
         if result.status != Status::Exact
             && result.status != Status::ExactEndsWithStar
@@ -1670,7 +1596,6 @@ impl<'a> ESModule<'a> {
             return Resolution {
                 status: Status::InvalidModuleSpecifier,
                 path: result.path,
-                debug: result.debug,
             };
         }
 
@@ -1687,7 +1612,6 @@ impl<'a> ESModule<'a> {
                 return Resolution {
                     status: Status::InvalidModuleSpecifier,
                     path: result.path,
-                    debug: result.debug,
                 };
             }
         };
@@ -1699,7 +1623,6 @@ impl<'a> ESModule<'a> {
             return Resolution {
                 status: Status::UnsupportedDirectoryImport,
                 path: result.path,
-                debug: result.debug,
             };
         }
 
@@ -1930,7 +1853,6 @@ impl<'a> ESModule<'a> {
                             return Resolution {
                                 path: Box::<[u8]>::from(subpath),
                                 status: Status::InvalidModuleSpecifier,
-                                debug: ResolutionDebug::default(),
                             };
                         }
                     };
@@ -1947,7 +1869,6 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path: Box::<[u8]>::from(str),
                         status: Status::InvalidPackageTarget,
-                        debug: ResolutionDebug::default(),
                     };
                 }
 
@@ -1966,7 +1887,6 @@ impl<'a> ESModule<'a> {
                         return Resolution {
                             path: Box::<[u8]>::from(str),
                             status: Status::InvalidModuleSpecifier,
-                            debug: ResolutionDebug::default(),
                         };
                     }
                 }
@@ -1990,7 +1910,6 @@ impl<'a> ESModule<'a> {
                         return Resolution {
                             path: Box::<[u8]>::from(subpath),
                             status: Status::InvalidModuleSpecifier,
-                            debug: ResolutionDebug::default(),
                         };
                     }
                 }
@@ -2026,7 +1945,6 @@ impl<'a> ESModule<'a> {
                             return Resolution {
                                 path: Box::<[u8]>::from(result),
                                 status: Status::PackageResolve,
-                                debug: ResolutionDebug::default(),
                             };
                         } else {
                             // Latent Windows bug (#30839): this branch runs when an
@@ -2054,7 +1972,6 @@ impl<'a> ESModule<'a> {
                             return Resolution {
                                 path,
                                 status: Status::PackageResolve,
-                                debug: ResolutionDebug::default(),
                             };
                         }
                     }
@@ -2062,7 +1979,6 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path: Box::<[u8]>::from(str),
                         status: Status::InvalidPackageTarget,
-                        debug: ResolutionDebug::default(),
                     };
                 }
 
@@ -2080,7 +1996,6 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path: Box::<[u8]>::from(str),
                         status: Status::InvalidPackageTarget,
-                        debug: ResolutionDebug::default(),
                     };
                 }
 
@@ -2104,7 +2019,6 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path: Box::<[u8]>::from(str),
                         status: Status::InvalidModuleSpecifier,
-                        debug: ResolutionDebug::default(),
                     };
                 }
 
@@ -2135,23 +2049,14 @@ impl<'a> ESModule<'a> {
                         return Resolution {
                             path: Box::<[u8]>::from(result),
                             status: Status::InvalidModuleSpecifier,
-                            debug: ResolutionDebug::default(),
                         };
                     }
 
-                    let status: Status = if strings::ends_with_char_or_is_zero_length(result, b'*')
-                        && strings::index_of_char(result, b'*').unwrap() as usize
-                            == result.len() - 1
-                    {
-                        Status::ExactEndsWithStar
-                    } else {
-                        Status::Exact
-                    };
+                    // Wildcard expansion: tag for `probe_wildcard_extensions` (oven-sh/bun#29679, #10001).
                     dedent!();
                     return Resolution {
                         path: Box::<[u8]>::from(result),
-                        status,
-                        debug: ResolutionDebug::default(),
+                        status: Status::ExactEndsWithStar,
                     };
                 } else {
                     let parts2 = [package_url, str, subpath];
@@ -2171,15 +2076,11 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path,
                         status: Status::Exact,
-                        debug: ResolutionDebug::default(),
                     };
                 }
             }
             EntryData::Map(object) => {
-                let mut did_find_map_entry = false;
-                let mut last_map_entry_i: usize = 0;
-
-                for (i, entry) in object.list.iter().enumerate() {
+                for entry in object.list.iter() {
                     let key: &[u8] = &entry.key;
                     if self.conditions.contains_key(key) {
                         if let Some(log) = self.debug_logs.as_deref_mut() {
@@ -2197,8 +2098,6 @@ impl<'a> ESModule<'a> {
                             internal,
                         );
                         if result.status.is_undefined() {
-                            did_find_map_entry = true;
-                            last_map_entry_i = i;
                             *self.module_type = prev_module_type;
                             continue;
                         }
@@ -2226,66 +2125,9 @@ impl<'a> ESModule<'a> {
                     log.add_note_fmt(format_args!("No keys matched"));
                 }
 
-                let mut return_target = target;
-                // ALGORITHM DEVIATION: Provide a friendly error message if no conditions matched
-                if !object.list.is_empty() && !target.keys_start_with_dot() {
-                    let last_map_entry_value = &object.list[last_map_entry_i].value;
-                    if did_find_map_entry
-                        && matches!(&last_map_entry_value.data, EntryData::Map(m) if !m.list.is_empty())
-                        && !last_map_entry_value.keys_start_with_dot()
-                    {
-                        // If a top-level condition did match but no sub-condition matched,
-                        // complain about the sub-condition instead of the top-level condition.
-                        // This leads to a less confusing error message. For example:
-                        //
-                        //   "exports": {
-                        //     "node": {
-                        //       "require": "./dist/bwip-js-node.js"
-                        //     }
-                        //   },
-                        //
-                        // We want the warning to say this:
-                        //
-                        //   note: None of the conditions provided ("require") match any of the
-                        //         currently active conditions ("default", "import", "node")
-                        //   14 |       "node": {
-                        //      |               ^
-                        //
-                        // We don't want the warning to say this:
-                        //
-                        //   note: None of the conditions provided ("browser", "electron", "node")
-                        //         match any of the currently active conditions ("default", "import", "node")
-                        //   7 |   "exports": {
-                        //     |              ^
-                        //
-                        // More information: https://github.com/evanw/esbuild/issues/1484
-                        // Reshaped for borrowck — return_target points into slice; clone keys below
-                        return_target = last_map_entry_value;
-                    }
-
-                    let unmatched: Box<[Box<[u8]>]> = match &return_target.data {
-                        EntryData::Map(m) => m
-                            .list
-                            .iter()
-                            .map(|e| e.key.clone())
-                            .collect::<Vec<_>>()
-                            .into_boxed_slice(),
-                        _ => Box::default(),
-                    };
-
-                    return Resolution {
-                        path: Box::default(),
-                        status: Status::UndefinedNoConditionsMatch,
-                        debug: ResolutionDebug {
-                            unmatched_conditions: unmatched,
-                        },
-                    };
-                }
-
                 return Resolution {
                     path: Box::default(),
                     status: Status::UndefinedNoConditionsMatch,
-                    debug: ResolutionDebug::default(),
                 };
             }
             EntryData::Array(array) => {
@@ -2300,12 +2142,10 @@ impl<'a> ESModule<'a> {
                     return Resolution {
                         path: Box::default(),
                         status: Status::Null,
-                        debug: ResolutionDebug::default(),
                     };
                 }
 
                 let mut last_exception = Status::Undefined;
-                let mut last_debug = ResolutionDebug::default();
 
                 for target_value in array.iter() {
                     // Let resolved be the result, continuing the loop on any Invalid Package Target error.
@@ -2319,7 +2159,6 @@ impl<'a> ESModule<'a> {
                     if result.status == Status::InvalidPackageTarget
                         || result.status == Status::Null
                     {
-                        last_debug = result.debug.clone();
                         last_exception = result.status;
                     }
 
@@ -2334,7 +2173,6 @@ impl<'a> ESModule<'a> {
                 return Resolution {
                     path: Box::default(),
                     status: last_exception,
-                    debug: last_debug,
                 };
             }
             EntryData::Null => {
@@ -2348,7 +2186,6 @@ impl<'a> ESModule<'a> {
                 return Resolution {
                     path: Box::default(),
                     status: Status::Null,
-                    debug: ResolutionDebug::default(),
                 };
             }
             _ => {}
@@ -2369,14 +2206,14 @@ impl<'a> ESModule<'a> {
 }
 
 fn find_invalid_segment(path_: &[u8]) -> Option<&[u8]> {
-    let Some(slash) = strings::index_any_comptime(path_, b"/\\") else {
+    let Some(slash) = strings::index_of_any(path_, b"/\\") else {
         return Some(b"");
     };
     let mut path = &path_[slash + 1..];
 
     while !path.is_empty() {
         let mut segment = path;
-        if let Some(new_slash) = strings::index_any_comptime(path, b"/\\") {
+        if let Some(new_slash) = strings::index_of_any(path, b"/\\") {
             segment = &path[0..new_slash];
             path = &path[new_slash + 1..];
         } else {
@@ -2399,7 +2236,7 @@ fn find_invalid_subpath_segment(path_: &[u8]) -> Option<&[u8]> {
     let mut path = path_;
     while !path.is_empty() {
         let mut segment = path;
-        if let Some(new_slash) = strings::index_any_comptime(path, b"/\\") {
+        if let Some(new_slash) = strings::index_of_any(path, b"/\\") {
             segment = &path[0..new_slash];
             path = &path[new_slash + 1..];
         } else {

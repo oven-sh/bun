@@ -18,6 +18,7 @@
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSMapIterator.h>
 #include <JavaScriptCore/IterationKind.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include "BunProcess.h"
 #include "headers.h"
 
@@ -30,11 +31,6 @@ extern "C" {
 
 void Bun__LifecycleAgentEnable(Inspector::InspectorLifecycleAgent* agent);
 void Bun__LifecycleAgentDisable(Inspector::InspectorLifecycleAgent* agent);
-
-void Bun__LifecycleAgentReportReload(Inspector::InspectorLifecycleAgent* agent)
-{
-    agent->reportReload();
-}
 
 void Bun__LifecycleAgentReportError(Inspector::InspectorLifecycleAgent* agent, ZigException* exception)
 {
@@ -89,14 +85,6 @@ Protocol::ErrorStringOr<void> InspectorLifecycleAgent::disable()
     return {};
 }
 
-void InspectorLifecycleAgent::reportReload()
-{
-    if (!m_enabled)
-        return;
-
-    m_frontendDispatcher->reload();
-}
-
 void InspectorLifecycleAgent::reportError(ZigException& exception)
 {
     if (!m_enabled)
@@ -141,7 +129,14 @@ using ModuleGraph = std::tuple<Ref<JSON::ArrayOf<String>> /* esm */, Ref<JSON::A
 Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
 {
     auto& vm = m_globalObject.vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    // The caller is the generated protocol dispatcher, which never does JSC
+    // exception checks, so exceptions must not escape this function: report
+    // them as a protocol error and clear them (keeping only termination).
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto fail = [&](WTF::ASCIILiteral message) {
+        (void)scope.tryClearException();
+        return makeUnexpected(ErrorString { message });
+    };
 
     auto* global = defaultGlobalObject(&m_globalObject);
     auto* cjsMap = global->requireMap();
@@ -162,13 +157,14 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
     Ref<JSON::ArrayOf<String>> cjs = JSON::ArrayOf<String>::create();
     {
         auto iter2 = JSC::JSMapIterator::create(vm, global->mapIteratorStructure(), cjsMap, JSC::IterationKind::Keys);
-        RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to create iterator"_s)));
+        RETURN_IF_EXCEPTION(scope, fail("Failed to create iterator"_s));
         JSC::JSValue value;
         while (iter2->next(global, value)) {
+            RETURN_IF_EXCEPTION(scope, fail("Failed to iterate over cjs map"_s));
             cjs->addItem(value.toWTFString(global));
-            RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to add item to cjs array"_s)));
+            RETURN_IF_EXCEPTION(scope, fail("Failed to add item to cjs array"_s));
         }
-        RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to iterate over cjs map"_s)));
+        RETURN_IF_EXCEPTION(scope, fail("Failed to iterate over cjs map"_s));
     }
 
     auto* process = global->processObject();
@@ -177,12 +173,12 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
     {
 
         auto* array = uncheckedDowncast<JSC::JSArray>(process->getArgv(global));
-        RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to get argv"_s)));
+        RETURN_IF_EXCEPTION(scope, fail("Failed to get argv"_s));
         for (size_t i = 0, length = array->length(); i < length; i++) {
             auto value = array->getIndex(global, i);
-            RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to get value at index"_s)));
+            RETURN_IF_EXCEPTION(scope, fail("Failed to get value at index"_s));
             auto string = value.toWTFString(global);
-            RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to convert value to string"_s)));
+            RETURN_IF_EXCEPTION(scope, fail("Failed to convert value to string"_s));
             argv->addItem(string);
         }
     }
@@ -191,17 +187,17 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
     {
         auto& builtinNames = Bun::builtinNames(vm);
         auto value = global->bunObject()->get(global, builtinNames.mainPublicName());
-        RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to get main"_s)));
+        RETURN_IF_EXCEPTION(scope, fail("Failed to get main"_s));
         main = value.toWTFString(global);
-        RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to convert value to string"_s)));
+        RETURN_IF_EXCEPTION(scope, fail("Failed to convert value to string"_s));
     }
 
     String cwd;
     {
         auto cwdValue = JSC::JSValue::decode(Bun__Process__getCwd(&m_globalObject));
-        RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to get cwd"_s)));
+        RETURN_IF_EXCEPTION(scope, fail("Failed to get cwd"_s));
         cwd = cwdValue.toWTFString(global);
-        RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to convert value to string"_s)));
+        RETURN_IF_EXCEPTION(scope, fail("Failed to convert value to string"_s));
     }
 
     return ModuleGraph { WTF::move(esm), WTF::move(cjs), WTF::move(cwd), WTF::move(main), WTF::move(argv) };

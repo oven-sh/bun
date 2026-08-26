@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use std::io::Write as _;
 
 use crate::Error;
-use bun_collections::{HashMap, StringHashMap};
+use bun_collections::{HashMap, StringHashMap, index_sort};
 use bun_install::bin::Bin;
 use bun_install::dependency::{self, Dependency, DependencyExt as _};
 use bun_install::install::{self, DependencyID, PackageID, PackageManager};
@@ -15,8 +15,9 @@ use bun_install::integrity::Integrity;
 // resolve against the ported types.
 use crate::Origin;
 use crate::lockfile_real::package::meta::HasInstallScript;
+use crate::lockfile_real::package::workspace_map::{MissingWorkspace, NamesArray, WorkspaceMap};
 use crate::lockfile_real::package::{
-    Meta as PackageMeta, Package as LockfilePackage, PackageColumns as _,
+    Meta as PackageMeta, Package as LockfilePackage, PackageColumns as _, value_loc_of,
 };
 use crate::lockfile_real::{self as lockfile, LoadResult, Lockfile, tree, tree::Tree};
 use bun_install::npm;
@@ -36,28 +37,28 @@ use bun_sys::Fd;
 // `resolved` may instead own a rewritten URL (see `Cow` below) and `git_repo_name` is
 // always owned.
 
-pub struct YarnLock<'a> {
-    pub entries: Vec<Entry<'a>>,
+pub(crate) struct YarnLock<'a> {
+    pub(crate) entries: Vec<Entry<'a>>,
 }
 
 pub struct Entry<'a> {
-    pub specs: Vec<&'a [u8]>,
-    pub version: &'a [u8],
+    pub(crate) specs: Vec<&'a [u8]>,
+    pub(crate) version: &'a [u8],
     // Usually borrows from the input; owned when `parse_git_url` rewrites a
     // `github:` spec to a `https://github.com/...` URL.
-    pub resolved: Option<Cow<'a, [u8]>>,
-    pub integrity: Option<&'a [u8]>,
-    pub dependencies: Option<StringHashMap<&'a [u8]>>,
-    pub optional_dependencies: Option<StringHashMap<&'a [u8]>>,
-    pub peer_dependencies: Option<StringHashMap<&'a [u8]>>,
-    pub dev_dependencies: Option<StringHashMap<&'a [u8]>>,
-    pub commit: Option<&'a [u8]>,
-    pub workspace: bool,
-    pub file: Option<&'a [u8]>,
-    pub os: Option<Vec<&'a [u8]>>,
-    pub cpu: Option<Vec<&'a [u8]>>,
+    pub(crate) resolved: Option<Cow<'a, [u8]>>,
+    pub(crate) integrity: Option<&'a [u8]>,
+    pub(crate) dependencies: Option<StringHashMap<&'a [u8]>>,
+    pub(crate) optional_dependencies: Option<StringHashMap<&'a [u8]>>,
+    pub(crate) peer_dependencies: Option<StringHashMap<&'a [u8]>>,
+    pub(crate) dev_dependencies: Option<StringHashMap<&'a [u8]>>,
+    pub(crate) commit: Option<&'a [u8]>,
+    pub(crate) workspace: bool,
+    pub(crate) file: Option<&'a [u8]>,
+    pub(crate) os: Option<Vec<&'a [u8]>>,
+    pub(crate) cpu: Option<Vec<&'a [u8]>>,
     // Owned heap allocation (unlike the borrowed fields above); created in parse()
-    pub git_repo_name: Option<Box<[u8]>>,
+    pub(crate) git_repo_name: Option<Box<[u8]>>,
 }
 
 impl<'a> Default for Entry<'a> {
@@ -81,24 +82,22 @@ impl<'a> Default for Entry<'a> {
     }
 }
 
-pub struct ParsedGitUrl<'a> {
-    pub url: &'a [u8],
-    pub commit: Option<&'a [u8]>,
-    pub owner: Option<&'a [u8]>,
-    pub repo: Option<&'a [u8]>,
+pub(crate) struct ParsedGitUrl<'a> {
+    pub(crate) url: &'a [u8],
+    pub(crate) commit: Option<&'a [u8]>,
+    pub(crate) repo: Option<&'a [u8]>,
     // Optional owned "https://github.com/{path}" buffer so the borrow
     // case stays zero-copy. Callers must check `owned_url` first: when it is `Some`,
     // it supersedes `url` (see `into_resolved`).
-    pub owned_url: Option<Vec<u8>>,
+    pub(crate) owned_url: Option<Vec<u8>>,
 }
 
-pub struct ParsedNpmAlias<'a> {
-    pub package: &'a [u8],
-    pub version: &'a [u8],
+pub(crate) struct ParsedNpmAlias<'a> {
+    pub(crate) version: &'a [u8],
 }
 
 impl<'a> Entry<'a> {
-    pub fn get_name_from_spec(spec: &[u8]) -> &[u8] {
+    pub(crate) fn get_name_from_spec(spec: &[u8]) -> &[u8] {
         let unquoted = if spec[0] == b'"' && spec[spec.len() - 1] == b'"' {
             &spec[1..spec.len() - 1]
         } else {
@@ -129,94 +128,43 @@ impl<'a> Entry<'a> {
         unquoted
     }
 
-    pub fn get_version_from_spec(spec: &[u8]) -> Option<&[u8]> {
-        let unquoted = if spec[0] == b'"' && spec[spec.len() - 1] == b'"' {
-            &spec[1..spec.len() - 1]
-        } else {
-            spec
-        };
-
-        if unquoted[0] == b'@' {
-            if let Some(second_at_pos) = strings::index_of_char(&unquoted[1..], b'@') {
-                let version_start = second_at_pos as usize + b"@".len() + 1;
-                let version_part = &unquoted[version_start..];
-
-                if version_part.starts_with(b"npm:") && version_part.len() > 4 {
-                    return Some(&version_part[b"npm:".len()..]);
-                }
-                return Some(version_part);
-            }
-            return None;
-        } else if let Some(npm_idx) = strings::index_of(unquoted, b"@npm:") {
-            let after_npm = npm_idx + b"npm:".len() + 1;
-            if after_npm < unquoted.len() {
-                return Some(&unquoted[after_npm..]);
-            }
-            return None;
-        } else if let Some(url_idx) = strings::index_of(unquoted, b"@https://") {
-            let after_at = url_idx + 1;
-            if after_at < unquoted.len() {
-                return Some(&unquoted[after_at..]);
-            }
-            return None;
-        } else if let Some(git_idx) = strings::index_of(unquoted, b"@git+") {
-            let after_at = git_idx + 1;
-            if after_at < unquoted.len() {
-                return Some(&unquoted[after_at..]);
-            }
-            return None;
-        } else if let Some(gh_idx) = strings::index_of(unquoted, b"@github:") {
-            let after_at = gh_idx + 1;
-            if after_at < unquoted.len() {
-                return Some(&unquoted[after_at..]);
-            }
-            return None;
-        } else if let Some(file_idx) = strings::index_of(unquoted, b"@file:") {
-            let after_at = file_idx + 1;
-            if after_at < unquoted.len() {
-                return Some(&unquoted[after_at..]);
-            }
-            return None;
-        } else if let Some(idx) = strings::index_of(unquoted, b"@") {
-            let after_at = idx + 1;
-            if after_at < unquoted.len() {
-                return Some(&unquoted[after_at..]);
-            }
-            return None;
-        }
-        None
-    }
-
-    pub fn is_git_dependency(version: &[u8]) -> bool {
+    pub(crate) fn is_git_dependency(version: &[u8]) -> bool {
         version.starts_with(b"git+")
             || version.starts_with(b"git://")
             || version.starts_with(b"github:")
             || version.starts_with(b"https://github.com/")
     }
 
-    pub fn is_npm_alias(version: &[u8]) -> bool {
+    pub(crate) fn is_npm_alias(version: &[u8]) -> bool {
         version.starts_with(b"npm:")
     }
 
-    pub fn is_remote_tarball(version: &[u8]) -> bool {
+    pub(crate) fn is_remote_tarball(version: &[u8]) -> bool {
         version.starts_with(b"https://") && version.ends_with(b".tgz")
     }
 
-    pub fn is_workspace_dependency(version: &[u8]) -> bool {
+    pub(crate) fn is_workspace_dependency(version: &[u8]) -> bool {
         version.starts_with(b"workspace:") || version == b"*"
     }
 
-    pub fn is_file_dependency(version: &[u8]) -> bool {
+    pub(crate) fn is_file_dependency(version: &[u8]) -> bool {
         version.starts_with(b"file:") || version.starts_with(b"./") || version.starts_with(b"../")
     }
 
-    pub fn parse_git_url(
+    pub(crate) fn file_path_from_spec(spec: &[u8]) -> &[u8] {
+        let mut path = spec.strip_prefix(b"file:").unwrap_or(spec);
+        while let Some(rest) = path.strip_prefix(b"./") {
+            path = rest;
+        }
+        strings::without_trailing_slash(path)
+    }
+
+    pub(crate) fn parse_git_url(
         _yarn_lock: &YarnLock<'a>,
         version: &'a [u8],
     ) -> Result<ParsedGitUrl<'a>, Error> {
         let mut url: &[u8] = version;
         let mut commit: Option<&[u8]> = None;
-        let mut owner: Option<&[u8]> = None;
         let mut repo: Option<&[u8]> = None;
         let mut owned_url: Option<Vec<u8>> = None;
 
@@ -238,7 +186,6 @@ impl<'a> Entry<'a> {
             };
 
             if let Some(slash_idx) = strings::index_of(path_without_commit, b"/") {
-                owner = Some(&path_without_commit[0..slash_idx]);
                 repo = Some(&path_without_commit[slash_idx + 1..]);
             }
             let mut buf =
@@ -254,7 +201,6 @@ impl<'a> Entry<'a> {
                 remaining = &remaining[idx + b"github.com/".len()..];
             }
             if let Some(slash_idx) = strings::index_of(remaining, b"/") {
-                owner = Some(&remaining[0..slash_idx]);
                 let after_owner = &remaining[slash_idx + 1..];
                 if after_owner.ends_with(b".git") {
                     repo = Some(&after_owner[0..after_owner.len() - b".git".len()]);
@@ -267,24 +213,19 @@ impl<'a> Entry<'a> {
         Ok(ParsedGitUrl {
             url,
             commit,
-            owner,
             repo,
             owned_url,
         })
     }
 
-    pub fn parse_npm_alias(version: &[u8]) -> ParsedNpmAlias<'_> {
+    pub(crate) fn parse_npm_alias(version: &[u8]) -> ParsedNpmAlias<'_> {
         if version.len() <= 4 {
-            return ParsedNpmAlias {
-                package: b"",
-                version: b"*",
-            };
+            return ParsedNpmAlias { version: b"*" };
         }
 
         let npm_part = &version[4..];
         if let Some(at_idx) = strings::index_of(npm_part, b"@") {
             return ParsedNpmAlias {
-                package: &npm_part[0..at_idx],
                 version: if at_idx + 1 < npm_part.len() {
                     &npm_part[at_idx + 1..]
                 } else {
@@ -292,51 +233,33 @@ impl<'a> Entry<'a> {
                 },
             };
         }
-        ParsedNpmAlias {
-            package: npm_part,
-            version: b"*",
-        }
+        ParsedNpmAlias { version: b"*" }
     }
 
-    pub fn get_package_name_from_resolved_url(url: &[u8]) -> Option<&[u8]> {
-        if let Some(dash_idx) = strings::index_of(url, b"/-/") {
-            let mut slash_count: usize = 0;
-            let mut last_slash: usize = 0;
-            let mut second_last_slash: usize = 0;
-
-            let mut i = dash_idx;
-            while i > 0 {
-                if url[i - 1] == b'/' {
-                    slash_count += 1;
-                    if slash_count == 1 {
-                        last_slash = i - 1;
-                    } else if slash_count == 2 {
-                        second_last_slash = i - 1;
-                        break;
-                    }
-                }
-                i -= 1;
-            }
-
-            if last_slash < dash_idx && url[last_slash + 1] == b'@' {
-                return Some(&url[second_last_slash + 1..dash_idx]);
-            } else if last_slash < dash_idx {
-                return Some(&url[last_slash + 1..dash_idx]);
-            }
+    /// Registry tarball URLs look like `<registry>/<name>/-/<basename>-<version>.tgz`,
+    /// where `<name>` spans two path segments (`@scope/name`) for scoped packages.
+    pub(crate) fn get_package_name_from_resolved_url(url: &[u8]) -> Option<&[u8]> {
+        let path = &url[..strings::index_of(url, b"/-/")?];
+        let (prefix, name) = strings::rsplit_once_char(path, b'/')?;
+        if name.is_empty() {
+            return None;
         }
-
-        None
+        let scope_start = strings::last_index_of_char(prefix, b'/').map_or(0, |slash| slash + 1);
+        if prefix[scope_start..].starts_with(b"@") {
+            return Some(&path[scope_start..]);
+        }
+        Some(name)
     }
 }
 
 impl<'a> YarnLock<'a> {
-    pub(crate) fn init() -> YarnLock<'a> {
+    fn init() -> YarnLock<'a> {
         YarnLock {
             entries: Vec::new(),
         }
     }
 
-    pub(crate) fn parse(&mut self, content: &'a [u8]) -> Result<(), Error> {
+    fn parse(&mut self, content: &'a [u8]) -> Result<(), Error> {
         let mut lines = strings::split(content, b"\n");
         let mut current_entry: Option<Entry<'a>> = None;
         let mut current_specs: Vec<&'a [u8]> = Vec::new();
@@ -391,8 +314,7 @@ impl<'a> YarnLock<'a> {
 
                 for spec in &current_specs {
                     if let Some(at_index) = strings::index_of(spec, b"@file:") {
-                        let file_path = &spec[at_index + 6..];
-                        new_entry.file = Some(file_path);
+                        new_entry.file = Some(Entry::file_path_from_spec(&spec[at_index + 1..]));
                         break;
                     }
                 }
@@ -461,13 +383,7 @@ impl<'a> YarnLock<'a> {
                         if Entry::is_workspace_dependency(value) {
                             entry.workspace = true;
                         } else if Entry::is_file_dependency(value) {
-                            entry.file = Some(
-                                if value.starts_with(b"file:") && value.len() > b"file:".len() {
-                                    &value[b"file:".len()..]
-                                } else {
-                                    value
-                                },
-                            );
+                            entry.file = Some(Entry::file_path_from_spec(value));
                         } else if Entry::is_git_dependency(value) {
                             let git_info = Entry::parse_git_url(self, value)?;
                             entry.commit = git_info.commit;
@@ -714,47 +630,44 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
     let mut root_dependencies: Vec<RootDep> = Vec::new();
 
-    {
-        // read package.json to get specified dependencies
-        let Ok(package_json_fd) =
-            bun_sys::File::openat(dir, b"package.json", bun_sys::O::RDONLY, 0)
+    // read package.json to get specified dependencies
+    let Ok(package_json_fd) = bun_sys::File::openat(dir, b"package.json", bun_sys::O::RDONLY, 0)
+    else {
+        return Err(crate::Error::InvalidPackageJSON);
+    };
+    let Ok(package_json_contents) = package_json_fd.read_to_end() else {
+        return Err(crate::Error::InvalidPackageJSON);
+    };
+
+    // `package_json_source.path` borrows this buffer (lifetime-erased); keep it alive until the overrides are parsed below.
+    let mut package_json_path_buf = PathBuffer::uninit();
+    let package_json_source = {
+        let Ok(package_json_path) =
+            bun_sys::get_fd_path(package_json_fd.handle(), &mut package_json_path_buf)
         else {
             return Err(crate::Error::InvalidPackageJSON);
         };
-        let Ok(package_json_contents) = package_json_fd.read_to_end() else {
-            return Err(crate::Error::InvalidPackageJSON);
-        };
+        bun_ast::Source::init_path_string(&*package_json_path, package_json_contents.as_slice())
+    };
+    drop(package_json_fd);
 
-        // The path buffer must outlive `package_json_source`: `Source.path.text`
-        // borrows into it (lifetime-erased) and is read when `parse_append`
-        // emits a warning (`Location::clone` deep-copies the file path).
-        let mut package_json_path_buf = PathBuffer::uninit();
-        let package_json_source = {
-            let Ok(package_json_path) =
-                bun_sys::get_fd_path(package_json_fd.handle(), &mut package_json_path_buf)
-            else {
-                return Err(crate::Error::InvalidPackageJSON);
-            };
-            bun_ast::Source::init_path_string(&*package_json_path, package_json_contents.as_slice())
-        };
-        drop(package_json_fd); // close now; fd no longer needed past path resolution
+    let json_bump = bun_alloc::Arena::new();
+    let Ok(package_json_expr) = bun_json::parse_package_json_utf8_with_opts(
+        bun_json::JSONOptions {
+            json_warn_duplicate_keys: false,
+            guess_indentation: true,
+            ..bun_json::PACKAGE_JSON_OPTS
+        },
+        &package_json_source,
+        log,
+        &json_bump,
+    ) else {
+        return Err(crate::Error::InvalidPackageJSON);
+    };
 
-        let json_bump = bun_alloc::Arena::new();
-        let Ok(package_json_expr) = bun_json::parse_package_json_utf8_with_opts(
-            bun_json::JSONOptions {
-                json_warn_duplicate_keys: false,
-                guess_indentation: true,
-                ..bun_json::PACKAGE_JSON_OPTS
-            },
-            &package_json_source,
-            log,
-            &json_bump,
-        ) else {
-            return Err(crate::Error::InvalidPackageJSON);
-        };
+    let package_json = package_json_expr.root;
 
-        let package_json = package_json_expr.root;
-
+    {
         let package_name: Option<Vec<u8>> = 'blk: {
             if let Some(name_prop) = package_json.as_property(b"name") {
                 if let bun_ast::ExprData::EString(e_string) = &name_prop.expr.data {
@@ -874,28 +787,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             bin: Bin::init(),
             scripts: Default::default(),
         })?;
-
-        if let Some(resolutions) = package_json.as_property(b"resolutions") {
-            let root_package = *this.packages.get(0);
-            let (mut string_builder, lf) = this.string_builder_split();
-
-            if let bun_ast::ExprData::EObject(e_object) = &resolutions.expr.data {
-                string_builder.cap += e_object.properties.len_u32() as usize * 128;
-            }
-            if string_builder.cap > 0 {
-                string_builder.allocate()?;
-            }
-            lf.overrides.parse_append(
-                manager,
-                lf.dependencies.as_slice(),
-                &root_package,
-                log,
-                &package_json_source,
-                package_json,
-                &mut string_builder,
-            )?;
-            this.packages.set(0, root_package);
-        }
     }
 
     // SAFETY: capacity reserved above to num_deps; we write past `len` through
@@ -1436,25 +1327,13 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 )
                 .expect("unreachable");
 
-                // reshaped for borrowck — find_entry_by_spec via index search
-                // instead of returning &mut to avoid overlapping borrow with the loop below.
-                let dep_entry_specs: Option<Vec<&[u8]>> = {
-                    let mut found: Option<Vec<&[u8]>> = None;
-                    for e in yarn_lock.entries.iter() {
-                        for entry_spec in e.specs.iter() {
-                            if *entry_spec == dep_spec.as_slice() {
-                                found = Some(e.specs.clone());
-                                break;
-                            }
-                        }
-                        if found.is_some() {
-                            break;
-                        }
-                    }
-                    found
-                };
+                let found_entry_idx: Option<usize> = yarn_lock
+                    .entries
+                    .iter()
+                    .position(|e| e.specs.contains(&dep_spec.as_slice()));
 
-                if let Some(dep_entry_specs) = dep_entry_specs {
+                if let Some(found_entry_idx) = found_entry_idx {
+                    let dep_entry_specs = &yarn_lock.entries[found_entry_idx].specs;
                     for (idx, e) in yarn_lock.entries.iter().enumerate() {
                         let mut found = false;
                         for spec in e.specs.iter() {
@@ -1504,7 +1383,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     for (base_name, versions) in scoped_packages.iter_mut() {
         let base_name: &[u8] = base_name.as_ref();
 
-        versions.sort_by_key(|a| a.package_id);
+        index_sort::sort_slice_by(versions, |a, b| a.package_id.cmp(&b.package_id));
 
         let original_name_hash = string_hash(base_name);
         // `remove` drops the value (and thus the `Ids` Vec) automatically.
@@ -1796,6 +1675,8 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         u32::try_from(root_dependencies.len()).expect("int cast"),
     );
 
+    parse_root_overrides(this, manager, log, &package_json_source, package_json)?;
+
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
         let package_id = yarn_entry_to_package_id[yarn_idx];
         if package_id == install::INVALID_PACKAGE_ID {
@@ -2037,12 +1918,81 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     let result = LoadResult::Ok(lockfile::LoadResultOk {
         lockfile: this,
         migrated: lockfile::Migrated::Yarn,
-        loaded_from_binary_lockfile: false,
         serializer_result: Default::default(),
         format: lockfile::LockfileFormat::Binary,
     });
 
     Ok(result)
+}
+
+/// Must run after the root package's dependencies are laid out: `$ref` values resolve through them, then through the workspaces.
+fn parse_root_overrides(
+    this: &mut Lockfile,
+    manager: &mut PackageManager,
+    log: &mut bun_ast::Log,
+    source: &bun_ast::Source,
+    package_json: bun_ast::Expr,
+) -> Result<(), Error> {
+    if package_json.as_property(b"overrides").is_none()
+        && package_json.as_property(b"resolutions").is_none()
+    {
+        return Ok(());
+    }
+
+    let mut workspace_names = WorkspaceMap::init();
+    let workspaces = package_json.as_property(b"workspaces");
+    let packages = workspaces
+        .as_ref()
+        .filter(|q| !q.expr.is_array())
+        .and_then(|q| q.expr.as_property(b"packages"));
+    let names: Option<(NamesArray<'_>, bun_ast::Loc)> = match (&workspaces, &packages) {
+        (Some(q), _) if q.expr.is_array() => Some((
+            NamesArray::from_expr(&q.expr, value_loc_of(source, q.loc))
+                .expect("is_array was checked above"),
+            q.loc,
+        )),
+        (Some(_), Some(p)) if p.expr.is_array() => Some((
+            NamesArray::from_expr(&p.expr, value_loc_of(source, p.loc))
+                .expect("is_array was checked above"),
+            p.loc,
+        )),
+        _ => None,
+    };
+    if let Some((arr, loc)) = names {
+        workspace_names.process_names_array(
+            &mut manager.workspace_package_json_cache,
+            log,
+            arr,
+            source,
+            loc,
+            None,
+            MissingWorkspace::Skip,
+        )?;
+    }
+
+    let root_package = *this.packages.get(0);
+    let (mut string_builder, lf) = this.string_builder_split();
+    lf.overrides.parse_count(
+        manager,
+        log,
+        source,
+        &workspace_names,
+        package_json,
+        &mut string_builder,
+    );
+    string_builder.allocate()?;
+    lf.overrides.parse_append(
+        manager,
+        lf.dependencies.as_slice(),
+        &root_package,
+        log,
+        source,
+        &workspace_names,
+        package_json,
+        &mut string_builder,
+    )?;
+    string_builder.clamp();
+    Ok(())
 }
 
 #[inline]

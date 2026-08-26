@@ -52,7 +52,7 @@ impl Decompressor {
     /// decompressed output to `body_out_str`. Creates the decoder on first
     /// call. Returns `ShortRead` when more input is needed and the stream is
     /// not yet done.
-    pub fn decompress_chunk(
+    pub(crate) fn decompress_chunk(
         &mut self,
         encoding: Encoding,
         buffer: &[u8],

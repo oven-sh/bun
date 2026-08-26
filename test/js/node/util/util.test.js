@@ -22,8 +22,9 @@
 // Tests adapted from https://github.com/nodejs/node/blob/main/test/parallel/test-util.js
 
 import assert from "assert";
+import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import "harness";
+import { bunEnv, bunExe } from "harness";
 import util from "util";
 // const context = require('vm').runInNewContext; // TODO: Use a vm polyfill
 
@@ -151,6 +152,55 @@ describe("util", () => {
       class Error3 extends Error2 {}
       let err8 = new Error3();
       strictEqual(util.isError(err8), true);
+    });
+
+    // These inputs used to segfault the process, so they run in a child.
+    it.concurrent("handles revoked proxies and getPrototypeOf traps", async () => {
+      const fixture = /* js */ `
+        const { isError } = require("node:util");
+        const attempt = fn => {
+          try {
+            return String(fn());
+          } catch (e) {
+            return "threw " + (e instanceof Error ? e.constructor.name + ": " + e.message : String(e));
+          }
+        };
+        const { proxy: revoked, revoke } = Proxy.revocable({}, {});
+        revoke();
+        console.log("revoked:", attempt(() => isError(revoked)));
+        console.log("throwing trap:", attempt(() => isError(new Proxy({}, { getPrototypeOf() { throw new Error("from trap"); } }))));
+        const thrown = { from: "trap" };
+        let caught;
+        try {
+          isError(new Proxy({}, { getPrototypeOf() { throw thrown; } }));
+        } catch (e) {
+          caught = e;
+        }
+        console.log("throwing trap rethrows the same value:", caught === thrown);
+        console.log("null trap:", attempt(() => isError(new Proxy({}, { getPrototypeOf: () => null }))));
+        console.log("Error.prototype trap:", attempt(() => isError(new Proxy({}, { getPrototypeOf: () => Error.prototype }))));
+        console.log("proxy of an Error:", attempt(() => isError(new Proxy(new Error("x"), {}))));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(
+        [
+          "revoked: threw TypeError: Proxy has already been revoked. No more operations are allowed to be performed on it",
+          "throwing trap: threw Error: from trap",
+          "throwing trap rethrows the same value: true",
+          "null trap: false",
+          "Error.prototype trap: true",
+          "proxy of an Error: true",
+          "",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(0);
     });
   });
 
@@ -334,6 +384,74 @@ describe("util", () => {
   it("format", () => {
     expect(util.format("%s:%s", "foo")).toBe("foo:%s");
   });
+  // Messages verified against the node v26.3.0 binary.
+  const invalidArgType = message =>
+    expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", name: "TypeError", message });
+  it("formatWithOptions and inspect.defaultOptions validate their options like Node", () => {
+    function opts() {}
+    // Arrays are allowed for formatWithOptions (kValidateObjectAllowArray), functions and null are not.
+    expect(util.formatWithOptions([], "%s", 1)).toBe("1");
+    expect(() => util.formatWithOptions(opts, "x")).toThrow(
+      invalidArgType('The "inspectOptions" argument must be of type object. Received function opts'),
+    );
+    expect(() => util.formatWithOptions(null, "x")).toThrow(
+      invalidArgType('The "inspectOptions" argument must be of type object. Received null'),
+    );
+    const saved = { ...util.inspect.defaultOptions };
+    try {
+      expect(() => (util.inspect.defaultOptions = opts)).toThrow(
+        invalidArgType('The "options" argument must be of type object. Received function opts'),
+      );
+      expect(() => (util.inspect.defaultOptions = [])).toThrow(
+        invalidArgType('The "options" argument must be of type object. Received an instance of Array'),
+      );
+      expect(() => (util.inspect.defaultOptions = { depth: 3 })).not.toThrow();
+    } finally {
+      util.inspect.defaultOptions = saved;
+    }
+    expect(() => util.stripVTControlCharacters(1)).toThrow(
+      invalidArgType('The "str" argument must be of type string. Received type number (1)'),
+    );
+  });
+  // Ported from the validateObject block of node's test/parallel/test-validators.js (v26.3.0).
+  it("validateObject honors the kValidateObject* flags like Node", () => {
+    const { validateObject, kValidateObjectAllowNullable, kValidateObjectAllowArray, kValidateObjectAllowFunction } =
+      exposedInternals["internal/validators"];
+    const err = expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", name: "TypeError" });
+    function fn() {}
+    const allFlags = kValidateObjectAllowNullable | kValidateObjectAllowArray | kValidateObjectAllowFunction;
+
+    validateObject({}, "foo");
+    validateObject({ a: 42, b: "foo" }, "foo");
+    for (const val of [undefined, null, true, false, 0, 0.0, 42, "", "string", [], fn]) {
+      expect(() => validateObject(val, "foo")).toThrow(err);
+    }
+
+    validateObject(null, "foo", kValidateObjectAllowNullable);
+    validateObject([], "foo", kValidateObjectAllowArray);
+    validateObject(fn, "foo", kValidateObjectAllowFunction);
+    for (const val of [{}, null, [], fn]) {
+      expect(() => validateObject(val, "foo", allFlags)).not.toThrow();
+    }
+
+    // Each flag only admits its own kind of value.
+    expect(() => validateObject(null, "foo", kValidateObjectAllowArray | kValidateObjectAllowFunction)).toThrow(
+      invalidArgType('The "foo" argument must be of type object. Received null'),
+    );
+    expect(() => validateObject([], "foo", kValidateObjectAllowNullable | kValidateObjectAllowFunction)).toThrow(
+      invalidArgType('The "foo" argument must be of type object. Received an instance of Array'),
+    );
+    expect(() => validateObject(fn, "foo", kValidateObjectAllowNullable | kValidateObjectAllowArray)).toThrow(
+      invalidArgType('The "foo" argument must be of type object. Received function fn'),
+    );
+    expect(() => validateObject(undefined, "foo", allFlags)).toThrow(
+      invalidArgType('The "foo" argument must be of type object. Received undefined'),
+    );
+    expect(() => validateObject("string", "foo", allFlags)).toThrow(
+      invalidArgType("The \"foo\" argument must be of type object. Received type string ('string')"),
+    );
+  });
+
   it("formatWithOptions", () => {
     expect(util.formatWithOptions({ colors: true }, "%s:%s", "foo")).toBe("foo:%s");
     expect(util.formatWithOptions({ colors: true }, "wow(%o)", { obj: true })).toBe(
@@ -341,10 +459,63 @@ describe("util", () => {
     );
   });
 
+  // styleText hex support, added in Node v26. Expectations verified against the
+  // node v26.3.0 binary.
+  describe("styleText hex colors", () => {
+    const noValidate = { validateStream: false };
+
+    it("parses 6-digit hex", () => {
+      expect(util.styleText("#ffcc00", "test", noValidate)).toBe("\u001b[38;2;255;204;0mtest\u001b[39m");
+      expect(util.styleText("#000000", "test", noValidate)).toBe("\u001b[38;2;0;0;0mtest\u001b[39m");
+      expect(util.styleText("#ffffff", "test", noValidate)).toBe("\u001b[38;2;255;255;255mtest\u001b[39m");
+    });
+
+    it("is case-insensitive", () => {
+      expect(util.styleText("#AABBCC", "test", noValidate)).toBe("\u001b[38;2;170;187;204mtest\u001b[39m");
+      expect(util.styleText("#aAbBcC", "test", noValidate)).toBe("\u001b[38;2;170;187;204mtest\u001b[39m");
+    });
+
+    it("expands 3-digit shorthand", () => {
+      expect(util.styleText("#fc0", "test", noValidate)).toBe("\u001b[38;2;255;204;0mtest\u001b[39m");
+      expect(util.styleText("#000", "test", noValidate)).toBe("\u001b[38;2;0;0;0mtest\u001b[39m");
+      expect(util.styleText("#FFF", "test", noValidate)).toBe("\u001b[38;2;255;255;255mtest\u001b[39m");
+      expect(util.styleText("#abc", "test", noValidate)).toBe("\u001b[38;2;170;187;204mtest\u001b[39m");
+    });
+
+    it("combines hex with named formats", () => {
+      expect(util.styleText(["bold", "#fc0"], "x", noValidate)).toBe(
+        "\u001b[1m\u001b[38;2;255;204;0mx\u001b[39m\u001b[22m",
+      );
+      expect(util.styleText(["#fc0", "underline"], "x", noValidate)).toBe(
+        "\u001b[38;2;255;204;0m\u001b[4mx\u001b[24m\u001b[39m",
+      );
+    });
+
+    it("nests hex colors by reopening the outer color", () => {
+      const inner = util.styleText("#0000ff", "inner", noValidate);
+      expect(util.styleText("#ff0000", `before${inner}after`, noValidate)).toBe(
+        "\u001b[38;2;255;0;0mbefore\u001b[38;2;0;0;255minner\u001b[38;2;255;0;0mafter\u001b[39m",
+      );
+    });
+
+    it("treats `none` as a passthrough", () => {
+      expect(util.styleText("none", "test", noValidate)).toBe("test");
+      expect(util.styleText(["none", "#fc0"], "x", noValidate)).toBe("\u001b[38;2;255;204;0mx\u001b[39m");
+    });
+
+    for (const invalid of ["#gggggg", "#ff", "#ffff", "#fffff", "#fffffff", "#", "ffcc00"]) {
+      it(`rejects ${invalid}`, () => {
+        expect(() => util.styleText(invalid, "t", noValidate)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+        expect(() => util.styleText([invalid], "t", noValidate)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+      });
+    }
+  });
+
   it("multiplecolors", () => {
-    expect(util.styleText(["bold", "red"], "test")).toBe("\u001b[1m\u001b[31mtest\u001b[39m\u001b[22m");
-    expect(util.styleText("bold", "test")).toBe("\u001b[1mtest\u001b[22m");
-    expect(util.styleText("red", "test")).toBe("\u001b[31mtest\u001b[39m");
+    const noValidate = { validateStream: false };
+    expect(util.styleText(["bold", "red"], "test", noValidate)).toBe("\u001b[1m\u001b[31mtest\u001b[39m\u001b[22m");
+    expect(util.styleText("bold", "test", noValidate)).toBe("\u001b[1mtest\u001b[22m");
+    expect(util.styleText("red", "test", noValidate)).toBe("\u001b[31mtest\u001b[39m");
   });
 
   it("styleText", () => {
@@ -376,7 +547,37 @@ describe("util", () => {
       },
     );
 
-    assert.strictEqual(util.styleText("red", "test"), "\u001b[31mtest\u001b[39m");
+    assert.strictEqual(util.styleText("red", "test", { validateStream: false }), "\u001b[31mtest\u001b[39m");
+  });
+
+  describe("getCallSites", () => {
+    it("restores Error state when stackTraceLimit is non-writable", () => {
+      const desc = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
+      const savedPrepare = Error.prepareStackTrace;
+      try {
+        Object.defineProperty(Error, "stackTraceLimit", { value: 10, writable: false, configurable: true });
+        const sites = util.getCallSites(5);
+        expect(Array.isArray(sites)).toBe(true);
+        // Critical invariant: a user-installed prepareStackTrace must not be leaked.
+        expect(Error.prepareStackTrace).toBe(savedPrepare);
+      } finally {
+        Object.defineProperty(Error, "stackTraceLimit", desc);
+        Error.prepareStackTrace = savedPrepare;
+      }
+    });
+
+    it("each frame has the node v26 shape", () => {
+      const sites = util.getCallSites(3);
+      expect(sites.length).toBeGreaterThan(0);
+      expect(sites[0]).toEqual({
+        functionName: expect.any(String),
+        scriptId: expect.any(String),
+        scriptName: expect.stringContaining("util.test.js"),
+        lineNumber: expect.any(Number),
+        columnNumber: expect.any(Number),
+        column: sites[0].columnNumber,
+      });
+    });
   });
 
   describe("getSystemErrorName", () => {

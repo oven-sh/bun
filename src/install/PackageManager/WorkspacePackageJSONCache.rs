@@ -24,6 +24,7 @@ pub struct MapEntry {
     pub root: Expr,
     pub source: Source,
     pub indentation: Indentation,
+    indentation_guessed: bool,
     /// Owns the path bytes that `source.path.{text,pretty,name.*}` borrow,
     /// so the source's path slices stay valid for the entry's lifetime.
     /// `StringHashMap` boxes its own key, so keep the duped copy alive here.
@@ -49,6 +50,7 @@ impl Default for MapEntry {
             root: Expr::default(),
             source: Source::default(),
             indentation: Indentation::default(),
+            indentation_guessed: false,
             _path_storage: bun_core::ZBox::default(),
             json_arena: bun_alloc::Arena::new(),
             stale_contents: Vec::new(),
@@ -62,7 +64,7 @@ impl MapEntry {
     /// `updatePackageJSONAndInstall` edits a copy of `root`, prints it, and
     /// writes the printed JSON back into `source.contents`. The caller then
     /// invokes this to restore the invariant `root == parse(source)`.
-    pub fn reparse_root(&mut self, log: &mut Log) -> Result<(), Error> {
+    pub(crate) fn reparse_root(&mut self, log: &mut Log) -> Result<(), Error> {
         let json_bump = bun_alloc::Arena::new();
         let parsed = parse_package_json(&self.source, log, &json_bump, false)?;
         self.root = bun_core::handle_oom(parsed.root.deep_clone(&json_bump));
@@ -113,7 +115,7 @@ pub enum GetResult<'a> {
 }
 
 impl<'a> GetResult<'a> {
-    pub fn unwrap(self) -> Result<&'a mut MapEntry, Error> {
+    pub(crate) fn unwrap(self) -> Result<&'a mut MapEntry, Error> {
         match self {
             GetResult::Entry(entry) => Ok(entry),
             GetResult::ReadErr(err) => Err(err),
@@ -157,6 +159,11 @@ impl WorkspacePackageJSONCache {
         // membership up front and only insert into the map after a successful
         // read+parse. Net map state is identical on every path.
         if self.map.contains_key(path) {
+            let entry = self.map.get_mut(path).unwrap();
+            if opts.guess_indentation && !entry.indentation_guessed {
+                entry.indentation = json::guess_indentation(&entry.source.contents);
+                entry.indentation_guessed = true;
+            }
             return GetResult::Entry(self.map.get_mut(path).unwrap());
         }
 
@@ -192,63 +199,10 @@ impl WorkspacePackageJSONCache {
             root: bun_core::handle_oom(parsed.root.deep_clone(&json_bump)),
             source,
             indentation: parsed.indentation,
+            indentation_guessed: opts.guess_indentation,
             // `source.path` borrows this allocation; the `Box<[u8]>` heap
             // address is stable across the move into the map.
             _path_storage: key,
-            json_arena: json_bump,
-            stale_contents: Vec::new(),
-        };
-
-        let entry = bun_core::handle_oom(self.map.get_or_put(path));
-        debug_assert!(!entry.found_existing);
-        *entry.value_ptr = value;
-
-        GetResult::Entry(entry.value_ptr)
-    }
-
-    /// source path is used as the key, needs to be absolute
-    pub fn get_with_source(
-        &mut self,
-        log: &mut Log,
-        source: &Source,
-        opts: GetJSONOptions,
-    ) -> GetResult<'_> {
-        debug_assert!(is_absolute(source.path.text()));
-
-        #[cfg(windows)]
-        let mut buf = PathBuffer::uninit();
-        #[cfg(not(windows))]
-        let path: &[u8] = source.path.text();
-        #[cfg(windows)]
-        let path: &[u8] = {
-            let text = source.path.text();
-            buf[..text.len()].copy_from_slice(text);
-            bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut buf[..text.len()]);
-            &buf[..text.len()]
-        };
-
-        // reshaped for borrowck — see `get_with_path` above.
-        if self.map.contains_key(path) {
-            return GetResult::Entry(self.map.get_mut(path).unwrap());
-        }
-
-        if opts.init_reset_store {
-            initialize_store();
-        }
-
-        let json_bump = bun_alloc::Arena::new();
-        let parsed = match parse_package_json(source, log, &json_bump, opts.guess_indentation) {
-            Ok(p) => p,
-            Err(err) => {
-                return GetResult::ParseErr(err);
-            }
-        };
-
-        let value = MapEntry {
-            root: bun_core::handle_oom(parsed.root.deep_clone(&json_bump)),
-            source: source.clone(),
-            indentation: parsed.indentation,
-            _path_storage: bun_core::ZBox::default(),
             json_arena: json_bump,
             stale_contents: Vec::new(),
         };

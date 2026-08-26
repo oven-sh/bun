@@ -96,12 +96,4 @@ impl RuntimeTranspilerCache {
             }
         }
     }
-
-    #[inline]
-    pub fn is_disabled(&self) -> bool {
-        match self.r#impl {
-            Some(k) => Self::handle(k, core::ptr::from_ref(self).cast_mut()).is_disabled(),
-            None => true,
-        }
-    }
 }

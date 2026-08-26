@@ -1,7 +1,18 @@
 import { spawn } from "bun";
 import { fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  emptyProcessMaxRSS,
+  expectMaxObjectTypeCount,
+  isASAN,
+  isDebug,
+  isWindows,
+  runFixtureMaxRSS,
+  tempDir,
+} from "harness";
+import path from "node:path";
 
 describe("spawn stdin ReadableStream", () => {
   test("basic ReadableStream as stdin", async () => {
@@ -205,7 +216,8 @@ describe("spawn stdin ReadableStream", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  test.todo("ReadableStream cancellation when process exits early", async () => {
+  test("ReadableStream cancellation when process exits early", async () => {
+    const { promise: cancelledPromise, resolve: onCancelled } = Promise.withResolvers<void>();
     let cancelled = false;
     let chunksEnqueued = 0;
 
@@ -218,6 +230,7 @@ describe("spawn stdin ReadableStream", () => {
       },
       cancel(_reason) {
         cancelled = true;
+        onCancelled();
       },
     });
 
@@ -246,8 +259,8 @@ describe("spawn stdin ReadableStream", () => {
     const text = await proc.stdout.text();
     await proc.exited;
 
-    // Give some time for cancellation to happen
-    await Bun.sleep(100);
+    // Wait for the sink to propagate cancellation back to the source.
+    await cancelledPromise;
 
     expect(cancelled).toBe(true);
     expect(chunksEnqueued).toBeGreaterThanOrEqual(2);
@@ -355,21 +368,20 @@ describe("spawn stdin ReadableStream", () => {
           });
         }
 
-        // The child never reads its stdin, so a 256 KiB write can never finish
-        // and the sink always holds an in-flight write. Once a few chunks have
-        // been handed to the sink, kill the child. How far the pump gets before
-        // the parent notices the death varies, so run several rounds.
+        // The child never reads its stdin, so a 256 KiB write can never
+        // finish and the sink always holds an in-flight write. The pump
+        // suspends on backpressure after the first chunk; kill the child
+        // once that write is in flight. Run several rounds to cover timing.
         function round() {
-          let produced = 0;
+          let firstProduced;
+          const onFirst = new Promise(r => { firstProduced = r; });
           const child = Bun.spawn({
             cmd: [process.execPath, "-e", "setTimeout(() => {}, 1e9)"],
-            stdin: (${useIterator} ? iterate : readable)(() => {
-              if (++produced === 4) child.kill();
-            }),
+            stdin: (${useIterator} ? iterate : readable)(firstProduced),
             stdout: "ignore",
             stderr: "ignore",
           });
-          return child.exited;
+          return onFirst.then(() => { child.kill(); return child.exited; });
         }
         await Promise.all(Array.from({ length: 8 }, round));
 
@@ -409,14 +421,12 @@ describe("spawn stdin ReadableStream", () => {
         "-e",
         `
         const chunk = Buffer.alloc(256 * 1024, "x");
-        let produced = 0;
-        function producedOne() {
-          if (++produced === 4) child.kill();
-        }
+        let firstProduced;
+        const onFirst = new Promise(r => { firstProduced = r; });
         async function* iterate() {
           while (true) {
             await Bun.sleep(1);
-            producedOne();
+            firstProduced();
             yield chunk;
           }
         }
@@ -424,14 +434,15 @@ describe("spawn stdin ReadableStream", () => {
           return new ReadableStream({
             async pull(controller) {
               await Bun.sleep(1);
-              producedOne();
+              firstProduced();
               controller.enqueue(chunk);
             },
           });
         }
 
-        // The child never reads its stdin, so a 256 KiB write can never finish
-        // and the sink holds an in-flight write when the child is killed.
+        // The child never reads its stdin, so a 256 KiB write can never
+        // finish and the sink holds an in-flight write when the child is
+        // killed (the pump suspends on backpressure after the first chunk).
         const child = Bun.spawn({
           cmd: [process.execPath, "-e", "setTimeout(() => {}, 1e9)"],
           stdin: (${useIterator} ? iterate : readable)(),
@@ -439,6 +450,8 @@ describe("spawn stdin ReadableStream", () => {
           stderr: "ignore",
         });
 
+        await onFirst;
+        child.kill();
         await child.exited;
         console.log("child exited");
         // No process.exit(): the point is that the event loop drains on its own.
@@ -831,18 +844,7 @@ describe("spawn stdin ReadableStream", () => {
     await expectMaxObjectTypeCount(expect, "Subprocess", 5);
   });
 
-  // Regression: src/runtime/api/bun/subprocess/Writable.zig:115/193
-  // (`pipe.assignToStream(...)`) — Zig's `FileSink.create` returns rc=1 which is
-  // *transferred* into `Writable{ .pipe = pipe }`; `assignToStream` itself is
-  // ref-neutral (`ref(); defer deref()`). A port that takes an extra +1 inside
-  // `assign_to_stream` (and/or in `to_js`) leaves the native FileSink at rc>=1
-  // even after the stream completes, the Subprocess is finalized, and all JS
-  // wrappers are GC'd — leaking the IOWriter buffers and fd for the life of the
-  // process. `heapStats()` only counts JS wrappers, so the test above does not
-  // catch this; we must check the native live counter directly.
-  // TODO(zig-rust-divergence): Rust port leaks one FileSink per spawn here;
-  // see docs/ZIG_RUST_DIVERGENCE_AUDIT.md.
-  test.todo("does not leak native FileSink when ReadableStream is used as stdin", async () => {
+  test("does not leak native FileSink when ReadableStream is used as stdin", async () => {
     async function once(i: number) {
       const stream = new ReadableStream({
         async pull(controller) {
@@ -877,9 +879,7 @@ describe("spawn stdin ReadableStream", () => {
     const baseline = fileSinkInternals.liveCount();
     const iterations = 8;
 
-    for (let i = 0; i < iterations; i++) {
-      await once(i);
-    }
+    await Promise.all(Array.from({ length: iterations }, (_, i) => once(i)));
 
     // Allow controller/sink JS wrappers to be collected so their finalizers
     // release the refs they legitimately hold.
@@ -894,5 +894,241 @@ describe("spawn stdin ReadableStream", () => {
     // iteration leaks one native FileSink (delta == iterations). Allow one
     // straggler whose wrapper has not yet been finalized.
     expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
+  });
+
+  // An HTMLRewriter body piped into a child's stdin is a native ByteStream →
+  // FileSink pump with a synchronous producer: the FileSink's drain callback
+  // resumes the ByteStream, which makes the rewriter feed the next file chunk
+  // and, at EOF, end the sink, all before the drain callback returns. The
+  // child reads slowly, so each chunk's output overfills the pipe and its
+  // tail stays buffered in the sink when the sink is ended from inside that
+  // callback. Every byte must still reach the child before its stdin closes:
+  // the buffered tail, and whatever the document-end handler emits after the
+  // last chunk's write reported backpressure.
+  describe("HTMLRewriter body as stdin while the child reads slowly", () => {
+    // Two file reads (256 KiB + the rest); each element's output grows by
+    // `appended`, so each chunk's output is about 1 MiB, more than a stdin
+    // pipe holds on any platform.
+    const piece = `<p>${Buffer.alloc(8192, "a").toString()}</p>`;
+    const count = 56;
+    const input = Buffer.alloc(piece.length * count, piece).toString();
+    const appended = Buffer.alloc(32 * 1024, "b").toString();
+    const footer = "<!-- end -->";
+
+    const slowChild = `
+      const fs = require("node:fs");
+      const buf = Buffer.allocUnsafe(4 * 1024 * 1024);
+      let total = 0;
+      for (;;) {
+        const n = fs.readSync(0, buf);
+        if (n === 0) break;
+        total += n;
+        Bun.sleepSync(10);
+      }
+      process.stdout.write(String(total));
+    `;
+
+    test.each([
+      ["no document-end output", false],
+      ["output appended at document end", true],
+    ])("every byte reaches the child: %s", async (_, appendAtEnd) => {
+      using dir = tempDir("hr-stdin-slow-child", { "in.html": input });
+      let rewriter = new HTMLRewriter().on("p", { element: e => void e.append(appended) });
+      if (appendAtEnd) rewriter = rewriter.onDocument({ end: e => void e.append(footer, { html: true }) });
+      const res = rewriter.transform(new Response(Bun.file(path.join(String(dir), "in.html"))));
+
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", slowChild],
+        env: bunEnv,
+        stdin: res,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(Number(stdout)).toBe(input.length + count * appended.length + (appendAtEnd ? footer.length : 0));
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // A fetch response body piped into a child's stdin is a native ByteStream →
+  // FileSink pump. While the child stalls before reading, the pipe fills and
+  // the FileSink backpressures; that must pause the upstream response socket
+  // instead of buffering the payload in-process. The child then drains all
+  // of it, so the awaited condition is completion of the whole transfer.
+  test("fetch response.body as stdin bounds memory while the child stalls", async () => {
+    const fixture = `
+      const net = require("node:net");
+      const CHUNK = Buffer.alloc(64 * 1024, 0x47), COUNT = 2048; // 128 MB
+      const source = net.createServer(sock => {
+        sock.write("HTTP/1.1 200 OK\\r\\ncontent-length: " + CHUNK.length * COUNT + "\\r\\nconnection: close\\r\\n\\r\\n");
+        let n = 0;
+        const pump = () => { while (n < COUNT) { n++; if (!sock.write(CHUNK)) return sock.once("drain", pump); } sock.end(); };
+        pump();
+      });
+      await new Promise(r => source.listen(0, "127.0.0.1", r));
+
+      const up = await fetch(\`http://127.0.0.1:\${source.address().port}/\`);
+      // Child stalls before reading, then drains stdin to EOF.
+      const child = Bun.spawn({
+        cmd: [
+          ${JSON.stringify(bunExe())},
+          "-e",
+          "await Bun.sleep(500); let total = 0; for await (const c of process.stdin) total += c.length; console.log(total);",
+        ],
+        env: process.env,
+        stdin: up.body,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [received, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+      source.close();
+      console.log(JSON.stringify({ received: Number(received), exitCode }));
+      process.exit(0);
+    `;
+    const [fixtureMaxRSS, baselineMaxRSS] = await Promise.all([
+      runFixtureMaxRSS(fixture, { received: 128 * 1024 * 1024, exitCode: 0 }),
+      emptyProcessMaxRSS(),
+    ]);
+    // Without source-side backpressure the whole payload lands in the
+    // pumping process while the child stalls.
+    expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 256 : 96);
+  }, 20_000);
+
+  // Same stalled-then-draining child, but the source is a JS pull() stream.
+  // The readStreamIntoSink pump must suspend on the sink's backpressure
+  // instead of pulling every chunk into memory while the child stalls.
+  test("JS pull() source as stdin bounds memory while the child stalls", async () => {
+    const fixture = `
+      const CHUNK = Buffer.alloc(64 * 1024, 0x47), COUNT = 2048; // 128 MB
+      let n = 0;
+      const stdin = new ReadableStream({ pull(c) { if (n < COUNT) { n++; c.enqueue(CHUNK); } else c.close(); } });
+
+      const child = Bun.spawn({
+        cmd: [
+          ${JSON.stringify(bunExe())},
+          "-e",
+          "await Bun.sleep(500); let total = 0; for await (const c of process.stdin) total += c.length; console.log(total);",
+        ],
+        env: process.env,
+        stdin,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [received, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+      console.log(JSON.stringify({ received: Number(received), exitCode }));
+      process.exit(0);
+    `;
+    const [fixtureMaxRSS, baselineMaxRSS] = await Promise.all([
+      runFixtureMaxRSS(fixture, { received: 128 * 1024 * 1024, exitCode: 0 }),
+      emptyProcessMaxRSS(),
+    ]);
+    expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 256 : 96);
+  }, 20_000);
+
+  // Handing a ReadableStream to a native sink (spawn stdin) must mark it
+  // locked + disturbed so a second consumer errors instead of hanging.
+  test("using a fetch response.body as stdin locks the stream", async () => {
+    await using source = Bun.serve({
+      port: 0,
+      fetch: () => new Response(new ReadableStream({ pull: c => c.enqueue(new Uint8Array(64 * 1024)) })),
+    });
+    const res = await fetch(source.url);
+    await using child = spawn({
+      cmd: [bunExe(), "-e", "await Bun.sleep(60000)"],
+      env: bunEnv,
+      stdin: res.body!,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+
+    expect(res.body!.locked).toBe(true);
+    expect(res.bodyUsed).toBe(true);
+    expect(() => res.body!.getReader()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+
+    child.kill();
+    await child.exited;
+  });
+
+  // for-await over a subprocess stderr pipe is pull-driven: when the consumer
+  // stalls, the OS pipe fills and the child's write() blocks on drain, so the
+  // child cannot race to completion while the reader is slow. The child reports
+  // each stderr write's index on stdout (tiny, never fills its pipe); the parent
+  // drains stdout concurrently and samples the child's progress while the
+  // stderr reader is deliberately stalled.
+  //
+  // Windows: WindowsBufferedReader::on_read discards the on_read_chunk return
+  // value, so FileReader's highwater mark never propagates to uv_read_stop and
+  // the pipe drains at socket speed regardless of JS demand. Same limitation as
+  // the process-stdin.test.ts "pipe backpressure" suite; skipped there too.
+  test.skipIf(isWindows)("spawn stderr for-await applies backpressure to the writer", async () => {
+    const chunkSize = 64 * 1024;
+    const chunkCount = 128; // 8 MB — well above the OS pipe + ByteStream buffers
+    const totalBytes = chunkSize * chunkCount;
+
+    const writer = `
+      const chunk = Buffer.alloc(${chunkSize}, 66);
+      function write(i) {
+        if (i >= ${chunkCount}) {
+          process.stdout.write("done\\n");
+          return;
+        }
+        process.stdout.write(i + "\\n");
+        if (!process.stderr.write(chunk)) {
+          process.stderr.once("drain", () => write(i + 1));
+        } else {
+          setImmediate(() => write(i + 1));
+        }
+      }
+      write(0);
+    `;
+
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", writer],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    let writerProgress = 0;
+    let writerDone = false;
+    const stdoutDrain = (async () => {
+      let buf = "";
+      for await (const c of proc.stdout) {
+        buf += Buffer.from(c).toString();
+        const lines = buf.split("\n");
+        buf = lines.pop()!;
+        for (const line of lines) {
+          if (line === "done") writerDone = true;
+          else if (line) writerProgress = parseInt(line) + 1;
+        }
+      }
+    })();
+
+    let received = 0;
+    let progressWhileStalled = -1;
+    let doneWhileStalled: boolean | null = null;
+    for await (const chunk of proc.stderr) {
+      received += chunk.length;
+      // Once a quarter of the payload has arrived, stall the reader and sample
+      // the writer's progress. With backpressure the writer is parked on drain;
+      // without it, 8 MB of writes complete in well under 50 ms.
+      if (progressWhileStalled < 0 && received >= totalBytes / 4) {
+        await Bun.sleep(50);
+        progressWhileStalled = writerProgress;
+        doneWhileStalled = writerDone;
+      }
+      if (progressWhileStalled < 0) await Bun.sleep(10);
+    }
+
+    await stdoutDrain;
+    const exitCode = await proc.exited;
+
+    expect(received).toBe(totalBytes);
+    expect(progressWhileStalled).toBeGreaterThan(0);
+    expect(progressWhileStalled).toBeLessThan(chunkCount);
+    expect(doneWhileStalled).toBe(false);
+    expect(writerDone).toBe(true);
+    expect(exitCode).toBe(0);
   });
 });

@@ -9,8 +9,6 @@
 //! resume the parent state via NodeId).
 
 use crate::shell::interpreter::{Interpreter, NodeId, ShellTask};
-use bun_jsc::ConcurrentTask::ConcurrentTask;
-
 /// Task payload for [`ShellAsync`](crate::shell::states::r#async::Async)'s
 /// bounce back to the main thread. The state lives in `interp.nodes`, so
 /// the enqueued payload is `(interp, node)`.
@@ -18,97 +16,6 @@ use bun_jsc::ConcurrentTask::ConcurrentTask;
 pub(crate) struct ShellAsyncTask {
     pub interp: *mut Interpreter,
     pub node: NodeId,
-    pub concurrent_task: ConcurrentTask,
-}
-
-/// Posted from the
-/// subprocess exit handler back to the JS thread to resume the owning `Cmd`.
-#[repr(C)]
-pub(crate) struct ShellAsyncSubprocessDone {
-    pub interp: *mut Interpreter,
-    pub cmd: NodeId,
-    pub exit_code: crate::shell::ExitCode,
-    pub concurrent_task: ConcurrentTask,
-}
-
-impl ShellAsyncSubprocessDone {
-    /// Reached only via `runtime::dispatch::run_task` for
-    /// `task_tag::ShellAsyncSubprocessDone`, which always passes the
-    /// `heap::alloc` payload enqueued by `ShellSubprocess::on_process_exit`.
-    ///
-    /// # Safety
-    /// `this` must be the live `heap::alloc` payload enqueued by
-    /// `ShellSubprocess::on_process_exit`, and `(*this).interp` must outlive
-    /// the call. Ownership of `*this` is consumed.
-    // Dispatch trampoline: `this` validity is guaranteed by the `run_task`
-    // contract; signature is fixed by `dispatch.rs`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn run_from_main_thread(this: *mut Self) {
-        // SAFETY: dispatch contract — `this` is the live `heap::alloc` payload
-        // enqueued by `ShellSubprocess::on_process_exit`; `interp` outlives
-        // every spawned subprocess.
-        let (owned, interp) = unsafe {
-            let owned = bun_core::heap::take(this);
-            let interp = &*owned.interp;
-            (owned, interp)
-        };
-        crate::shell::states::cmd::Cmd::on_subprocess_done(interp, owned.cmd, owned.exit_code);
-    }
-}
-
-/// Defers
-/// dropping an [`IOWriter`](crate::shell::io_writer::IOWriter) to the main
-/// thread so its `Drop` doesn't race the writer thread.
-#[repr(C)]
-pub(crate) struct AsyncDeinitWriter {
-    pub writer: *mut crate::shell::io_writer::IOWriter,
-    pub concurrent_task: ConcurrentTask,
-}
-
-impl AsyncDeinitWriter {
-    /// Reached only via `runtime::dispatch::run_task` for
-    /// `task_tag::ShellIOWriterAsyncDeinit`, which always passes the
-    /// `heap::alloc` payload enqueued by `IOWriter::async_deinit`.
-    ///
-    /// # Safety
-    /// `this` must be the live `heap::alloc` payload enqueued by
-    /// `IOWriter::async_deinit`. Ownership of `*this` is consumed.
-    // Dispatch trampoline: `this` validity is guaranteed by the `run_task`
-    // contract; signature is fixed by `dispatch.rs`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn run_from_main_thread(this: *mut Self) {
-        // SAFETY: dispatch contract — `this` is the live `heap::alloc` payload
-        // enqueued by `IOWriter::async_deinit`.
-        let owned = unsafe { bun_core::heap::take(this) };
-        crate::shell::io_writer::IOWriter::deinit_on_main_thread(owned.writer);
-    }
-}
-
-/// Defers dropping an [`IOReader`](crate::shell::io_reader::IOReader) to the
-/// main thread so its `Drop` doesn't race the reader thread.
-#[repr(C)]
-pub(crate) struct AsyncDeinitReader {
-    pub reader: *mut crate::shell::io_reader::IOReader,
-    pub concurrent_task: ConcurrentTask,
-}
-
-impl AsyncDeinitReader {
-    /// Reached only via `runtime::dispatch::run_task` for
-    /// `task_tag::ShellIOReaderAsyncDeinit`, which always passes the
-    /// `heap::alloc` payload enqueued by `IOReader::async_deinit`.
-    ///
-    /// # Safety
-    /// `this` must be the live `heap::alloc` payload enqueued by
-    /// `IOReader::async_deinit`. Ownership of `*this` is consumed.
-    // Dispatch trampoline: `this` validity is guaranteed by the `run_task`
-    // contract; signature is fixed by `dispatch.rs`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn run_from_main_thread(this: *mut Self) {
-        // SAFETY: dispatch contract — `this` is the live `heap::alloc` payload
-        // enqueued by `IOReader::async_deinit`.
-        let owned = unsafe { bun_core::heap::take(this) };
-        crate::shell::io_reader::IOReader::deinit_on_main_thread(owned.reader);
-    }
 }
 
 /// Stat task backing shell conditional expressions (`[ -f x ]` etc.). Wraps an
@@ -167,6 +74,15 @@ pub(crate) struct ShellGlobTask {
 
 impl bun_event_loop::Taskable for ShellGlobTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellGlobTask;
+    /// A pool completion that will not run: drop the keep-alive and the box
+    /// (nothing else frees an unrun one).
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box the builtin scheduled.
+        unsafe {
+            (*this).task.unref_unrun();
+            drop(bun_core::heap::take(this));
+        }
+    }
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellGlobTask {
@@ -247,4 +163,4 @@ impl ShellGlobTask {
 /// Re-export: the real DirTask lives in `builtins::rm` (full recursive
 /// tree-walk node). `dispatch.rs` calls `ShellRmDirTask::run_from_main_thread`
 /// for the verbose-write bounce-back.
-pub use crate::shell::builtins::rm::DirTask as ShellRmDirTask;
+pub(crate) use crate::shell::builtins::rm::DirTask as ShellRmDirTask;

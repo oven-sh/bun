@@ -6,5 +6,4 @@
 // `bun_transpiler` name so install/CLI tiers don't have to depend on
 // `bun_bundler` directly.
 pub use bun_bundler::Error;
-pub use bun_bundler::transpiler;
 pub use bun_bundler::transpiler::Transpiler;

@@ -54,6 +54,10 @@ new!(pub BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: unsigned, "BUN_CONFIG_DNS_TIME_TO_
 // if it fires the request fails with `error.Timeout`. Covers the TLS
 // handshake through the response body. 0 disables. See `src/http/lib.rs`.
 new!(pub BUN_CONFIG_HTTP_IDLE_TIMEOUT: unsigned, "BUN_CONFIG_HTTP_IDLE_TIMEOUT", { default: 300 });
+// Opening-handshake timeout for the `new WebSocket()` client, in seconds.
+// A peer that accepts the TCP connection but never answers the upgrade fails
+// with error + close(1006). 0 disables; uSockets' 4 s sweep rounds small values up.
+new!(pub BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: unsigned, "BUN_CONFIG_WS_HANDSHAKE_TIMEOUT", { default: 120 });
 new!(pub BUN_CRASH_REPORT_URL: string, "BUN_CRASH_REPORT_URL", {});
 new!(pub BUN_DEBUG: string, "BUN_DEBUG", {});
 new!(pub BUN_DEBUG_ALL: boolean, "BUN_DEBUG_ALL", {});
@@ -63,6 +67,8 @@ new!(pub BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: boolean, "BUN_DEBUG_ENA
 // to return true without mutating `/etc/NIXOS` on the shared rootfs. Used by
 // `test/regression/issue/29290.test.ts` to exercise the Nix-host branch.
 new!(pub BUN_DEBUG_FORCE_NIX_HOST: boolean, "BUN_DEBUG_FORCE_NIX_HOST", { default: false });
+// Testing hook for #15753: enable the glibc-addon pre-dlopen check on glibc hosts.
+new!(pub BUN_INTERNAL_NAPI_FORCE_MUSL_CHECK: boolean, "BUN_INTERNAL_NAPI_FORCE_MUSL_CHECK", { default: false });
 new!(pub BUN_DEBUG_HASH_RANDOM_SEED: unsigned, "BUN_DEBUG_HASH_RANDOM_SEED", { deser: { error_handling: NotSet } });
 new!(pub BUN_DEBUG_QUIET_LOGS: boolean, "BUN_DEBUG_QUIET_LOGS", {});
 new!(pub BUN_DEBUG_TEST_TEXT_LOCKFILE: boolean, "BUN_DEBUG_TEST_TEXT_LOCKFILE", { default: false });
@@ -77,6 +83,10 @@ new!(pub BUN_ENABLE_CRASH_REPORTING: boolean, "BUN_ENABLE_CRASH_REPORTING", {});
 // so nothing it spawned outlives it. See `src/io/ParentDeathWatchdog.rs`.
 new!(pub BUN_FEATURE_FLAG_NO_ORPHANS: boolean, "BUN_FEATURE_FLAG_NO_ORPHANS", { default: false });
 new!(pub BUN_FEATURE_FLAG_DUMP_CODE: string, "BUN_FEATURE_FLAG_DUMP_CODE", {});
+// Counted down on each idle event-loop poll; while >0 the poll runs `heap.stopIfNecessary()` so pending finalizers get a turn (see `Bun__JSC_onBeforeWait`).
+new!(pub BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS: unsigned, "BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS", {});
+new!(pub BUN_GC_TIMER_DISABLE: boolean, "BUN_GC_TIMER_DISABLE", {});
+new!(pub BUN_GC_TIMER_INTERVAL: unsigned, "BUN_GC_TIMER_INTERVAL", {});
 // TODO(markovejnovic): It's unclear why the default here is 100_000, but this was legacy behavior
 // so we'll keep it for now.
 new!(pub BUN_INOTIFY_COALESCE_INTERVAL: unsigned, "BUN_INOTIFY_COALESCE_INTERVAL", { default: 100_000 });
@@ -91,6 +101,10 @@ new!(pub BUN_INSTALL_GLOBAL_DIR: string, "BUN_INSTALL_GLOBAL_DIR", {});
 // whole body first. Smaller tarballs stay on the buffered path where
 // the fixed overhead of the resumable state machine isn't worth it.
 new!(pub BUN_INSTALL_STREAMING_MIN_SIZE: unsigned, "BUN_INSTALL_STREAMING_MIN_SIZE", { default: 2 * 1024 * 1024 });
+// Compressed bytes to buffer in `TarballStream.pending` before the HTTP
+// thread schedules a drain; collapses the per-chunk thread-pool futex wake
+// into roughly one per `threshold` bytes.
+new!(pub BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: unsigned, "BUN_INSTALL_STREAMING_DRAIN_THRESHOLD", { default: 256 * 1024 });
 new!(pub BUN_NEEDS_PROC_SELF_WORKAROUND: boolean, "BUN_NEEDS_PROC_SELF_WORKAROUND", { default: false });
 new!(pub BUN_OPTIONS: string, "BUN_OPTIONS", {});
 new!(pub BUN_POSTGRES_SOCKET_MONITOR: string, "BUN_POSTGRES_SOCKET_MONITOR", {});
@@ -104,8 +118,11 @@ platform_specific_new!(pub C_INCLUDE_PATH: string, posix = "C_INCLUDE_PATH", win
 // Standard C compiler environment variable for library paths (colon-separated).
 // Used by bun:ffi's TinyCC integration for systems like NixOS.
 platform_specific_new!(pub LIBRARY_PATH: string, posix = "LIBRARY_PATH", windows = None, {});
+// Drain the event loop after a file's tests finish so node-style
+// `process.on('exit')` checks (e.g. common.mustCall) see completed async work.
+// Opt-in for the vendored node:test suite and run() children.
+new!(pub BUN_TEST_DRAIN_EVENT_LOOP: boolean, "BUN_TEST_DRAIN_EVENT_LOOP", { default: false });
 new!(pub BUN_TMPDIR: string, "BUN_TMPDIR", {});
-new!(pub BUN_TRACY_PATH: string, "BUN_TRACY_PATH", {});
 new!(pub BUN_WATCHER_TRACE: string, "BUN_WATCHER_TRACE", {});
 new!(pub CI: boolean, "CI", {});
 new!(pub CI_COMMIT_SHA: string, "CI_COMMIT_SHA", {});
@@ -113,6 +130,7 @@ new!(pub CI_JOB_URL: string, "CI_JOB_URL", {});
 new!(pub CLAUDE_CODE_AGENT_RULE_DISABLED: boolean, "CLAUDE_CODE_AGENT_RULE_DISABLED", { default: false });
 new!(pub CLAUDECODE: boolean, "CLAUDECODE", { default: false });
 new!(pub COLORTERM: string, "COLORTERM", {});
+new!(pub COLUMNS: unsigned, "COLUMNS", {});
 new!(pub CURSOR_AGENT_RULE_DISABLED: boolean, "CURSOR_AGENT_RULE_DISABLED", { default: false });
 new!(pub CURSOR_TRACE_ID: boolean, "CURSOR_TRACE_ID", { default: false });
 new!(pub DO_NOT_TRACK: boolean, "DO_NOT_TRACK", { default: false });
@@ -137,10 +155,18 @@ new!(pub JENKINS_URL: string, "JENKINS_URL", {});
 new!(pub MI_VERBOSE: boolean, "MI_VERBOSE", { default: false });
 new!(pub NO_COLOR: boolean, "NO_COLOR", { default: false });
 new!(pub NODE_CHANNEL_FD: string, "NODE_CHANNEL_FD", {});
+// A string, not a boolean: node suppresses warnings only when the value is
+// exactly "1" (lib/internal/process/pre_execution.js).
+new!(pub NODE_NO_WARNINGS: string, "NODE_NO_WARNINGS", {});
+new!(pub NODE_COMPILE_CACHE: string, "NODE_COMPILE_CACHE", {});
+new!(pub NODE_COMPILE_CACHE_PORTABLE: string, "NODE_COMPILE_CACHE_PORTABLE", {});
+new!(pub NODE_DEBUG_NATIVE: string, "NODE_DEBUG_NATIVE", {});
+new!(pub NODE_DISABLE_COMPILE_CACHE: string, "NODE_DISABLE_COMPILE_CACHE", {});
 // Set by HostProcess.rs when spawning the WebView host subprocess. The
 // child's CLI entrypoint checks this before anything else and hands off to
 // C++ Bun__WebView__hostMain. Never returns — no JSC, no VM.
 new!(pub BUN_INTERNAL_WEBVIEW_HOST: string, "BUN_INTERNAL_WEBVIEW_HOST", {});
+new!(pub NODE_PENDING_DEPRECATION: string, "NODE_PENDING_DEPRECATION", {});
 new!(pub NODE_PRESERVE_SYMLINKS_MAIN: boolean, "NODE_PRESERVE_SYMLINKS_MAIN", { default: false });
 new!(pub NODE_USE_SYSTEM_CA: boolean, "NODE_USE_SYSTEM_CA", { default: false });
 new!(pub npm_lifecycle_event: string, "npm_lifecycle_event", {});
@@ -178,7 +204,13 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_ASSUME_PERFECT_INCREMENTAL, "BUN_ASSUME_PERFECT_INCREMENTAL", { default: None });
     new_feature_flag!(pub BUN_BE_BUN, "BUN_BE_BUN", {});
     new_feature_flag!(pub BUN_DEBUG_NO_DUMP, "BUN_DEBUG_NO_DUMP", {});
+    // Run the full VM teardown when the main thread exits (workers always do).
+    // The CI runner turns it on for LeakSanitizer-validated files on ASAN.
     new_feature_flag!(pub BUN_DESTRUCT_VM_ON_EXIT, "BUN_DESTRUCT_VM_ON_EXIT", {});
+    // Test suite only, builds with debug assertions: a worker VM holds every
+    // cross-thread completion until its teardown is waiting, so the "arrived
+    // during teardown" paths run deterministically (bun_jsc::vm_handle::test_gate).
+    new_feature_flag!(pub BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE, "BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE", {});
 
     // Disable "nativeDependencies"
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER, "BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER", {});
@@ -190,6 +222,7 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER, "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE, "BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_DNS_CACHE, "BUN_FEATURE_FLAG_DISABLE_DNS_CACHE", {});
+    new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE, "BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO, "BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO", {});
     // Force the event loop to use epoll_pwait(2) instead of epoll_pwait2(2).
     // Escape hatch for seccomp policies that block syscall 441 without
@@ -213,11 +246,14 @@ pub mod feature_flag {
     // Fall back to the scalar byte-at-a-time VLQ decode in
     // bun_sourcemap::mapping::parse (skips the Highway-dispatched path).
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP, "BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP", {});
+    // Set by the test harness so stderr assertions don't flake on slow CI filesystems.
+    new_feature_flag!(pub BUN_DISABLE_SLOW_FILESYSTEM_WARNING, "BUN_DISABLE_SLOW_FILESYSTEM_WARNING", {});
     new_feature_flag!(pub BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING, "BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING", {});
     new_feature_flag!(pub BUN_DISABLE_SOURCE_CODE_PREVIEW, "BUN_DISABLE_SOURCE_CODE_PREVIEW", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS, "BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH, "BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING, "BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING", {});
+    new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE, "BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE", {});
     new_feature_flag!(pub BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW, "BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE, "BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE", {});
     new_feature_flag!(pub BUN_DUMP_STATE_ON_CRASH, "BUN_DUMP_STATE_ON_CRASH", {});
@@ -236,14 +272,17 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS, "BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS", {});
     new_feature_flag!(pub BUN_INSTRUMENTS, "BUN_INSTRUMENTS", {});
     new_feature_flag!(pub BUN_INTERNAL_BUNX_INSTALL, "BUN_INTERNAL_BUNX_INSTALL", {});
+    // Debug-only fault injection for test/js/bun/spawn/spawn-pipe-start-error.test.ts.
+    new_feature_flag!(pub BUN_INTERNAL_FAIL_PIPE_READER_START, "BUN_INTERNAL_FAIL_PIPE_READER_START", {});
+    // Test-only: bypass the stdin isatty gate in `bun update --interactive` so
+    // tests can drive the multi-select by writing keystrokes to a pipe.
+    new_feature_flag!(pub BUN_INTERNAL_INTERACTIVE_ASSUME_TTY, "BUN_INTERNAL_INTERACTIVE_ASSUME_TTY", {});
     new_feature_flag!(pub BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN, "BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN", {});
     new_feature_flag!(pub BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT, "BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT", {});
-    new_feature_flag!(pub BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF, "BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF", {});
     new_feature_flag!(pub BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB, "BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304, "BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304", {});
     new_feature_flag!(pub BUN_NO_CODESIGN_MACHO_BINARY, "BUN_NO_CODESIGN_MACHO_BINARY", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_NO_LIBDEFLATE, "BUN_FEATURE_FLAG_NO_LIBDEFLATE", {});
-    new_feature_flag!(pub NODE_NO_WARNINGS, "NODE_NO_WARNINGS", {});
     new_feature_flag!(pub BUN_TRACE, "BUN_TRACE", {});
 }
 
@@ -449,11 +488,6 @@ pub(crate) mod kind {
                 deser: DeserOpts::DEFAULT,
             };
         }
-        impl Default for CtorOptions {
-            fn default() -> Self {
-                Self::DEFAULT
-            }
-        }
 
         /// Control how deserializing and deserialization errors are handled.
         ///
@@ -490,15 +524,10 @@ pub(crate) mod kind {
             pub empty_string_as: EmptyStringAs,
         }
         impl DeserOpts {
-            pub(crate) const DEFAULT: Self = Self {
+            const DEFAULT: Self = Self {
                 error_handling: ErrorHandling::DebugWarn,
                 empty_string_as: EmptyStringAs::Erroneous,
             };
-        }
-        impl Default for DeserOpts {
-            fn default() -> Self {
-                Self::DEFAULT
-            }
         }
 
         // `ip` (var_name + opts) lives on the struct so handle_error can read it; it is

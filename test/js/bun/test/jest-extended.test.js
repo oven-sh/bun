@@ -181,13 +181,13 @@ describe("jest-extended", () => {
       expect(1).toSatisfy(() => {
         throw new Error("Bun!");
       }),
-    ).toThrow("predicate threw an exception");
+    ).toThrow("Bun!");
     // @ts-expect-error
     expect(() =>
       expect(1).not.toSatisfy(() => {
         throw new Error("Bun!");
       }),
-    ).toThrow("predicate threw an exception");
+    ).toThrow("Bun!");
   });
 
   // Array
@@ -267,7 +267,7 @@ describe("jest-extended", () => {
     expect(null).not.toBeDate();
   });
 
-  test.todo("toBeValidDate()", () => {
+  test("toBeValidDate()", () => {
     expect(new Date()).toBeValidDate();
     expect(new Date(-1)).toBeValidDate();
     expect("2021-01-01").not.toBeValidDate();

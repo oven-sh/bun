@@ -4,20 +4,15 @@ use std::ffi::CString;
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
-use crate::webcore::blob::{Store as BlobStore, StoreRef};
-use bun_core::zig_string::Slice as ZigStringSlice;
-use bun_core::{self, Output, ZBox};
-use bun_event_loop::{TaskTag, Taskable, task_tag};
+use crate::webcore::blob::Store;
+use bun_core::{self, EncodedSlice, Output, Utf8Bytes, ZBox, strings};
 use bun_glob as glob;
-use bun_io::KeepAlive;
-use bun_jsc::ConcurrentTask::{AutoDeinit, ConcurrentTask};
-use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue, JsResult,
-    WorkPool, WorkPoolTask,
 };
-use bun_jsc::{StringJsc as _, SysErrorJsc as _};
+use bun_jsc::{EncodedSliceJsc as _, StringJsc as _, SysErrorJsc as _};
 use bun_libarchive as libarchive;
+use bun_ptr::RefPtr;
 use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
 
 /// libarchive `AE_IFREG` (== `S_IFREG`). The Rust `bun_libarchive::lib` port
@@ -38,27 +33,20 @@ pub(crate) struct GzipOptions {
     pub level: u8,
 }
 
-impl Default for GzipOptions {
-    fn default() -> Self {
-        Self { level: 6 }
-    }
-}
-
 // Hand-written JS class glue (not the `#[bun_jsc::JsClass]` derive): Archive
-// needs a custom `finalize` and no constructor, which the proc-macro does not
-// expose.
+// has no constructor, which the proc-macro does not expose.
 #[repr(C)]
 pub struct Archive {
     /// The underlying data for the archive - uses Blob.Store for thread-safe ref counting
-    store: StoreRef,
+    store: RefPtr<Store>,
     /// Compression settings for this archive
     compress: Compression,
 }
 
 impl Archive {
-    /// Borrow the backing `StoreRef`.
+    /// Borrow the backing `RefPtr<Store>`.
     #[inline]
-    pub fn store_ref(&self) -> &StoreRef {
+    pub(crate) fn store_ref(&self) -> &RefPtr<Store> {
         &self.store
     }
 }
@@ -77,14 +65,8 @@ impl Archive {
         self::write(global, callframe)
     }
 
-    pub fn finalize(self: Box<Self>) {
-        jsc::mark_binding();
-        drop(self);
-        // store.deref() happens via Arc<BlobStore>::drop
-    }
-
     /// Pretty-print for console.log
-    pub fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
+    pub(crate) fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
         &self,
         formatter: &mut F,
         writer: &mut W,
@@ -177,7 +159,10 @@ impl Archive {
     /// When no options are provided, no compression is applied
     // NOTE: `#[bun_jsc::host_fn]` has no `constructor` kind yet; the
     // `JsClass` derive emits a `constructor` shim that calls this directly.
-    pub fn constructor(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Box<Archive>> {
+    pub(crate) fn constructor(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<Box<Archive>> {
         let [data_arg, options_arg] = callframe.arguments_as_array::<2>();
         if data_arg.is_empty() {
             return Err(
@@ -191,7 +176,6 @@ impl Archive {
         // For Blob/Archive, ref the existing store (zero-copy)
         if let Some(blob) = blob_from_js(data_arg) {
             if let Some(store) = blob.store.get().as_ref() {
-                // StoreRef::clone == store.ref()
                 return Ok(Box::new(Archive {
                     store: store.clone(),
                     compress,
@@ -243,8 +227,7 @@ fn parse_compression_options(
             )));
         }
 
-        let compress_str = compress_val.to_slice(global)?;
-        // Drop handles compress_str.deinit()
+        let compress_str = compress_val.to_utf8(global)?;
 
         if compress_str.slice() != b"gzip" {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -277,7 +260,7 @@ fn parse_compression_options(
 }
 
 fn create_archive(data: Vec<u8>, compress: Compression) -> Box<Archive> {
-    let store = BlobStore::init(data);
+    let store = Store::init(data);
     Box::new(Archive { store, compress })
 }
 
@@ -332,7 +315,7 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
     let now_secs: isize = isize::try_from(bun_core::time::milli_timestamp() / 1000).unwrap_or(0);
 
     // Iterate over object properties and write directly to archive
-    let mut iter = jsc::JSPropertyIterator::init(
+    let iter = jsc::JSPropertyIterator::init(
         global,
         js_obj,
         jsc::PropertyIteratorOptions {
@@ -340,10 +323,8 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
             include_value: true,
         },
     )?;
-    // defer iter.deinit() — handled by Drop
 
-    while let Some(key) = iter.next()? {
-        let value = iter.value;
+    while let Some((key, value)) = iter.next()? {
         if value == JSValue::ZERO {
             continue;
         }
@@ -351,11 +332,10 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
         // Get the key as a null-terminated string
         let key_slice = key.to_utf8();
         let key_str = ZBox::from_vec_with_nul(key_slice.slice().to_vec());
-        // defer free(key_str)/key_slice.deinit() — handled by Drop
 
         // Get data - use view for Blob/ArrayBuffer, convert for strings
-        let data_slice = get_entry_data(global, value)?;
-        // defer data_slice.deinit() — handled by Drop
+        let mut array_buffer = None;
+        let data_slice = get_entry_data(global, value, &mut array_buffer)?;
 
         // Write entry to archive
         let data = data_slice.slice();
@@ -406,21 +386,24 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
     }
 }
 
-/// Returns data as a ZigString.Slice (handles ownership automatically via deinit)
-fn get_entry_data(global: &JSGlobalObject, value: JSValue) -> JsResult<ZigStringSlice> {
+fn get_entry_data<'a>(
+    global: &JSGlobalObject,
+    value: JSValue,
+    array_buffer: &'a mut Option<bun_jsc::ArrayBuffer>,
+) -> JsResult<Utf8Bytes<'a>> {
     // For Blob, use sharedView (no copy needed). The backing store outlives
     // the returned slice for the duration of the caller's tarball build.
     if let Some(blob) = blob_from_js(value) {
-        return Ok(ZigStringSlice::from_utf8_never_free(blob.shared_view()));
+        return Ok(Utf8Bytes::Borrowed(blob.shared_view()));
     }
 
     // For ArrayBuffer/TypedArray, use view (no copy needed)
-    if let Some(array_buffer) = value.as_array_buffer(global) {
-        return Ok(ZigStringSlice::from_utf8_never_free(array_buffer.slice()));
+    if let Some(buffer) = value.as_array_buffer(global) {
+        return Ok(Utf8Bytes::Borrowed(array_buffer.insert(buffer).slice()));
     }
 
     // For strings, convert (allocates)
-    value.to_slice(global)
+    value.to_utf8(global)
 }
 
 /// Static method: Archive.write(path, data, options?)
@@ -444,7 +427,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
         )));
     }
 
-    let path_slice = path_arg.to_slice(global)?;
+    let path_slice = path_arg.to_utf8(global)?;
 
     // Parse options for compression override
     let options_compress = parse_compression_options(global, options_arg)?;
@@ -510,7 +493,11 @@ impl Archive {
     ///   - glob: string | string[] - Only extract files matching the glob pattern(s). Supports negative patterns with "!".
     /// Returns Promise<number> with count of extracted files
     #[bun_jsc::host_fn(method)]
-    pub fn extract(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn extract(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let [path_arg, options_arg] = callframe.arguments_as_array::<2>();
         if path_arg.is_empty() || !path_arg.is_string() {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -518,7 +505,7 @@ impl Archive {
             )));
         }
 
-        let path_slice = path_arg.to_slice(global)?;
+        let path_slice = path_arg.to_utf8(global)?;
 
         // Parse options
         let mut glob_patterns: Option<Vec<Box<[u8]>>> = None;
@@ -551,7 +538,7 @@ fn parse_pattern_arg(
 ) -> JsResult<Option<Vec<Box<[u8]>>>> {
     // Single string
     if arg.is_string() {
-        let str_slice = arg.to_slice(global)?;
+        let str_slice = arg.to_utf8(global)?;
         // Empty string = no filter
         if str_slice.slice().is_empty() {
             return Ok(None);
@@ -584,7 +571,7 @@ fn parse_pattern_arg(
                     bstr::BStr::new(name),
                 )));
             }
-            let str_slice = item.to_slice(global)?;
+            let str_slice = item.to_utf8(global)?;
             // Skip empty strings in array
             if str_slice.slice().is_empty() {
                 i += 1;
@@ -616,21 +603,25 @@ impl Archive {
     /// Instance method: archive.blob()
     /// Returns Promise<Blob> with the archive data (compressed if gzip was set in options)
     #[bun_jsc::host_fn(method)]
-    pub fn blob(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn blob(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         start_blob_task(global, &self.store, self.compress, BlobOutputType::Blob)
     }
 
     /// Instance method: archive.bytes()
     /// Returns Promise<Uint8Array> with the archive data (compressed if gzip was set in options)
     #[bun_jsc::host_fn(method)]
-    pub fn bytes(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn bytes(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         start_blob_task(global, &self.store, self.compress, BlobOutputType::Bytes)
     }
 
     /// Instance method: archive.files(glob?)
     /// Returns Promise<Map<string, File>> with archive file contents
     #[bun_jsc::host_fn(method)]
-    pub fn files(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn files(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let glob_arg = callframe.argument(0);
 
         let mut glob_patterns: Option<Vec<Box<[u8]>>> = None;
@@ -654,11 +645,7 @@ pub enum PromiseResult {
 }
 
 impl PromiseResult {
-    fn fulfill(
-        self,
-        global: &JSGlobalObject,
-        promise: &mut JSPromise,
-    ) -> Result<(), bun_jsc::JsTerminated> {
+    fn fulfill(self, global: &JSGlobalObject, promise: &mut JSPromise) -> JsResult<()> {
         match self {
             PromiseResult::Resolve(v) => promise.resolve(global, v),
             PromiseResult::Reject(v) => promise.reject_with_async_stack(global, Ok(v)),
@@ -666,125 +653,46 @@ impl PromiseResult {
     }
 }
 
-/// Context must provide:
-///   - `run` — runs on thread pool, stores result in `self`
-///   - `run_from_js` — returns value to resolve/reject
-///   - `Drop` — cleanup
-pub trait TaskContext: Send {
-    /// Dispatch tag for this context's `AsyncTask<Self>` variant.
-    const TAG: TaskTag;
+/// One `Bun.Archive` operation's pool-side work: `run` on the thread pool
+/// stores its result on `self`; `run_from_js` turns it into the promise's
+/// value. It is the off-thread part of an `AsyncTask<C>` job.
+pub trait TaskContext: Send + 'static {
     /// Runs on thread pool. Stores its result on `self`.
     fn run(&mut self);
     fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult>;
 }
 
-/// Generic async task that handles all the boilerplate for thread pool tasks.
-pub struct AsyncTask<C: TaskContext> {
-    ctx: C,
-    promise: JSPromiseStrong,
-    vm: *mut VirtualMachine,
-    task: WorkPoolTask,
-    concurrent_task: ConcurrentTask,
-    keep_alive: KeepAlive,
-}
+/// The job for a `TaskContext`: the context off-thread, its promise on the JS side.
+pub struct AsyncTask<C: TaskContext>(core::marker::PhantomData<C>);
 
-impl<C: TaskContext> Taskable for AsyncTask<C> {
-    const TAG: TaskTag = C::TAG;
-}
-
-impl<C: TaskContext> AsyncTask<C> {
-    fn create(global: &JSGlobalObject, ctx: C) -> Result<*mut Self, bun_alloc::AllocError> {
-        // `bun_vm_ptr()` returns `*mut VirtualMachine` with write provenance; valid for
-        // process lifetime. Do NOT launder `bun_vm()` (a `&VirtualMachine`) through
-        // `*const _ as *mut _` — that derives a writeable pointer from a shared
-        // reference and is UB under Stacked Borrows.
-        let vm: *mut VirtualMachine = global.bun_vm_ptr();
-        let this = Box::new(AsyncTask {
-            ctx,
-            promise: JSPromiseStrong::init(global),
-            vm,
-            task: WorkPoolTask {
-                callback: Self::run_callback,
-                node: Default::default(),
-            },
-            concurrent_task: ConcurrentTask::default(),
-            keep_alive: KeepAlive::default(),
-        });
-        let raw = bun_core::heap::into_raw(this);
-        // SAFETY: raw was just produced by heap::alloc; not yet shared. Keep the event
-        // loop alive until `run_from_js` unrefs after the threadpool work completes.
-        unsafe { (*raw).keep_alive.ref_(bun_io::js_vm_ctx()) };
-        Ok(raw)
+impl<C: TaskContext> bun_jsc::JobContext for AsyncTask<C> {
+    type OffThread = C;
+    type Js = JSPromiseStrong;
+    fn run(ctx: &mut C, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
+        ctx.run();
+        Some(done)
     }
-
-    fn schedule(this: *mut Self) {
-        // SAFETY: `this` is alive (owned by the task system) until run_from_js drops it;
-        // task field is intrusive and stable since `this` is heap-allocated.
-        WorkPool::schedule(unsafe { &raw mut (*this).task });
-    }
-
-    /// Read the pending promise's `JSValue` from a freshly-`create`d task.
-    ///
-    /// Centralises the `*mut Self → field` deref so the four
-    /// `start_*_task` callers stay safe. Sound because every caller passes the
-    /// pointer returned by [`create`](Self::create) (heap-allocated, sole owner
-    /// on the JS thread) and reads the promise *before* [`schedule`] hands the
-    /// allocation to the thread pool — i.e. `this` is live and unaliased.
-    #[inline]
-    fn promise_value(this: *mut Self) -> JSValue {
-        // SAFETY: see fn doc — `this` is the live, unscheduled `heap::into_raw`
-        // allocation from `create()`.
-        unsafe { (*this).promise.value() }
-    }
-
-    /// Thread-pool callback (safe fn — coerces to the `WorkPoolTask.callback`
-    /// field type at the struct-init site in `create`).
-    fn run_callback(work_task: *mut WorkPoolTask) {
-        // SAFETY: `work_task` points to the `task` field of an `AsyncTask<C>`
-        // allocated by `create` — only ever invoked by the thread pool against
-        // a task it scheduled, so provenance covers the full allocation.
-        let this: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, work_task) };
-        // SAFETY: thread-pool has exclusive access to ctx until it enqueues the concurrent task.
-        unsafe { (*this).ctx.run() };
-        // SAFETY: vm points to the live owning VM; concurrent_task is intrusive on the same allocation.
-        unsafe {
-            let ct = core::ptr::NonNull::from(
-                (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
-            );
-            (*(*this).vm).enqueue_task_concurrent(ct);
-        }
-    }
-
-    /// # Safety
-    /// `this` must be the live `heap::into_raw` allocation produced by
-    /// [`create`](Self::create), called exactly once on the JS thread after
-    /// `run_callback` enqueues it. Takes ownership of the allocation.
-    // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn run_from_js(this: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
-        // SAFETY: see fn-level safety contract.
-        let mut owned = unsafe { bun_core::heap::take(this) };
-        owned.keep_alive.unref(bun_io::js_vm_ctx());
-
-        // `defer { ctx.deinit; destroy(this) }` — handled by `owned: Box<Self>` dropping at scope
-        // exit (ctx implements Drop).
-
-        let vm = VirtualMachine::get();
-        if vm.is_shutting_down() {
-            return Ok(());
-        }
-
-        let global = vm.global();
-        let promise = owned.promise.swap();
-        let result = match owned.ctx.run_from_js(global) {
+    fn then(mut ctx: C, mut promise: JSPromiseStrong, cx: &bun_jsc::JsThread<'_>) -> JsResult<()> {
+        let global = cx.global();
+        let promise = promise.swap();
+        let result = match ctx.run_from_js(global) {
             Ok(r) => r,
             Err(e) => {
                 // JSError means exception is already pending
-                return promise.reject(global, Ok(global.take_exception(e)));
+                return promise.reject(global, Err(e));
             }
         };
         result.fulfill(global, promise)
+    }
+}
+
+impl<C: TaskContext> AsyncTask<C> {
+    /// Schedule `ctx` on the work pool; returns the promise it settles.
+    fn start(global: &JSGlobalObject, ctx: C) -> JSValue {
+        let promise = JSPromiseStrong::init(global);
+        let value = promise.value();
+        bun_jsc::Job::<Self>::schedule(&global.js_thread(), ctx, promise);
+        value
     }
 }
 
@@ -804,15 +712,13 @@ pub enum ExtractResult {
 }
 
 pub struct ExtractContext {
-    store: StoreRef,
+    store: RefPtr<Store>,
     path: Box<[u8]>,
     glob_patterns: Option<Vec<Box<[u8]>>>,
     result: ExtractResult,
 }
 
 impl TaskContext for ExtractContext {
-    const TAG: TaskTag = task_tag::ArchiveExtractTask;
-
     fn run(&mut self) {
         self.result = self.do_run();
     }
@@ -864,11 +770,11 @@ impl ExtractContext {
     }
 }
 
-pub type ExtractTask = AsyncTask<ExtractContext>;
+pub(crate) type ExtractTask = AsyncTask<ExtractContext>;
 
 fn start_extract_task(
     global: &JSGlobalObject,
-    store: &StoreRef,
+    store: &RefPtr<Store>,
     path: &[u8],
     glob_patterns: Option<Vec<Box<[u8]>>>,
 ) -> JsResult<JSValue> {
@@ -878,7 +784,7 @@ fn start_extract_task(
     let store = store.clone();
     // errdefer store.deref() — Drop handles it
 
-    let task = ExtractTask::create(
+    Ok(ExtractTask::start(
         global,
         ExtractContext {
             store,
@@ -886,11 +792,7 @@ fn start_extract_task(
             glob_patterns,
             result: ExtractResult::Err(ExtractError::ReadError),
         },
-    )?;
-
-    let promise_js = ExtractTask::promise_value(task);
-    ExtractTask::schedule(task);
-    Ok(promise_js)
+    ))
 }
 
 #[derive(Clone, Copy)]
@@ -899,35 +801,25 @@ enum BlobOutputType {
     Bytes,
 }
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-enum BlobError {
-    #[error("GzipInitFailed")]
-    GzipInitFailed,
-    #[error("GzipCompressFailed")]
-    GzipCompressFailed,
-}
-
 enum BlobResult {
     Compressed(Vec<u8>),
     Uncompressed,
-    Err(BlobError),
+    Err(CompressError),
 }
 
 pub struct BlobContext {
-    store: StoreRef,
+    store: RefPtr<Store>,
     compress: Compression,
     output_type: BlobOutputType,
     result: BlobResult,
 }
 
 impl TaskContext for BlobContext {
-    const TAG: TaskTag = task_tag::ArchiveBlobTask;
-
     fn run(&mut self) {
         self.result = match &self.compress {
             Compression::Gzip(opts) => match compress_gzip(self.store.shared_view(), opts.level) {
                 Ok(data) => BlobResult::Compressed(data),
-                Err(e) => BlobResult::Err(e.into()),
+                Err(e) => BlobResult::Err(e),
             },
             Compression::None => BlobResult::Uncompressed,
         };
@@ -935,9 +827,7 @@ impl TaskContext for BlobContext {
 
     fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult> {
         match core::mem::replace(&mut self.result, BlobResult::Uncompressed) {
-            BlobResult::Err(e) => Ok(PromiseResult::Reject(
-                global.create_error_instance(format_args!("{}", <&'static str>::from(&e))),
-            )),
+            BlobResult::Err(e) => Ok(PromiseResult::Reject(e.to_js(global))),
             BlobResult::Compressed(data) => {
                 // self.result already replaced with Uncompressed above — ownership transferred
                 Ok(PromiseResult::Resolve(match self.output_type {
@@ -949,7 +839,7 @@ impl TaskContext for BlobContext {
                     }
                     BlobOutputType::Bytes => {
                         // Ownership transfers to JSC's `MarkedArrayBuffer_deallocator`.
-                        JSValue::create_buffer_from_box(global, data.into_boxed_slice())
+                        JSValue::create_buffer_from_box(global, data.into_boxed_slice())?
                     }
                 }))
             }
@@ -973,25 +863,25 @@ impl TaskContext for BlobContext {
                     PromiseResult::Resolve(JSValue::create_buffer_from_box(
                         global,
                         dup.into_boxed_slice(),
-                    ))
+                    )?)
                 }
             }),
         }
     }
 }
 
-pub type BlobTask = AsyncTask<BlobContext>;
+pub(crate) type BlobTask = AsyncTask<BlobContext>;
 
 fn start_blob_task(
     global: &JSGlobalObject,
-    store: &StoreRef,
+    store: &RefPtr<Store>,
     compress: Compression,
     output_type: BlobOutputType,
 ) -> JsResult<JSValue> {
     let store = store.clone();
     // errdefer store.deref() — Drop handles it
 
-    let task = BlobTask::create(
+    Ok(BlobTask::start(
         global,
         BlobContext {
             store,
@@ -999,30 +889,18 @@ fn start_blob_task(
             output_type,
             result: BlobResult::Uncompressed,
         },
-    )?;
-
-    let promise_js = BlobTask::promise_value(task);
-    BlobTask::schedule(task);
-    Ok(promise_js)
-}
-
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-enum WriteError {
-    #[error("GzipInitFailed")]
-    GzipInitFailed,
-    #[error("GzipCompressFailed")]
-    GzipCompressFailed,
+    ))
 }
 
 enum WriteResult {
     Success,
-    Err(WriteError),
+    Err(CompressError),
     SysErr(bun_sys::Error),
 }
 
 enum WriteData {
     Owned(Vec<u8>),
-    Store(StoreRef),
+    Store(RefPtr<Store>),
 }
 
 pub struct WriteContext {
@@ -1033,8 +911,6 @@ pub struct WriteContext {
 }
 
 impl TaskContext for WriteContext {
-    const TAG: TaskTag = task_tag::ArchiveWriteTask;
-
     fn run(&mut self) {
         self.result = self.do_run();
     }
@@ -1042,9 +918,7 @@ impl TaskContext for WriteContext {
     fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult> {
         Ok(match &self.result {
             WriteResult::Success => PromiseResult::Resolve(JSValue::UNDEFINED),
-            WriteResult::Err(e) => PromiseResult::Reject(
-                global.create_error_instance(format_args!("{}", <&'static str>::from(e))),
-            ),
+            WriteResult::Err(e) => PromiseResult::Reject(e.to_js(global)),
             WriteResult::SysErr(sys_err) => PromiseResult::Reject(sys_err.to_js(global)),
         })
     }
@@ -1061,7 +935,7 @@ impl WriteContext {
             Compression::Gzip(opts) => {
                 compressed_buf = match compress_gzip(source_data, opts.level) {
                     Ok(v) => v,
-                    Err(e) => return WriteResult::Err(e.into()),
+                    Err(e) => return WriteResult::Err(e),
                 };
                 &compressed_buf
             }
@@ -1086,7 +960,7 @@ impl WriteContext {
     }
 }
 
-pub type WriteTask = AsyncTask<WriteContext>;
+pub(crate) type WriteTask = AsyncTask<WriteContext>;
 
 fn start_write_task(
     global: &JSGlobalObject,
@@ -1099,7 +973,7 @@ fn start_write_task(
     // Ref store if using store reference — already done by caller via Arc::clone into WriteData::Store.
     // errdefer store.deref / free(data.owned) — handled by WriteData Drop on early return.
 
-    let task = WriteTask::create(
+    Ok(WriteTask::start(
         global,
         WriteContext {
             data,
@@ -1107,11 +981,7 @@ fn start_write_task(
             compress,
             result: WriteResult::Success,
         },
-    )?;
-
-    let promise_js = WriteTask::promise_value(task);
-    WriteTask::schedule(task);
-    Ok(promise_js)
+    ))
 }
 
 struct FileEntry {
@@ -1139,7 +1009,7 @@ enum FilesResult {
 // freeEntries deleted — Vec<FileEntry> drops each entry; FileEntry fields drop their boxes.
 
 pub struct FilesContext {
-    store: StoreRef,
+    store: RefPtr<Store>,
     glob_patterns: Option<Vec<Box<[u8]>>>,
     result: FilesResult,
 }
@@ -1198,31 +1068,29 @@ impl FilesContext {
 
             // Read data incrementally so untrusted entry sizes don't drive allocation.
             let mut data: Vec<u8> = Vec::new();
-            if size > 0 {
-                let mut total_read: usize = 0;
-                let mut buf = [0u8; 64 * 1024];
-                while total_read < size {
-                    let to_read = (size - total_read).min(buf.len());
-                    let read = archive.read_data(&mut buf[..to_read]);
-                    if read < 0 {
-                        // Read error.
-                        // NOTE: both `data` and `entries` drop automatically here.
-                        // SAFETY: `archive` is the live `read_new()` handle opened above.
-                        return Ok(if let Some(err) = Self::clone_error_string(&archive) {
-                            FilesResult::LibarchiveErr(err)
-                        } else {
-                            FilesResult::Err(FilesError::ReadError)
-                        });
-                    }
-                    if read == 0 {
-                        break;
-                    }
-                    let bytes_read = usize::try_from(read).expect("int cast");
-                    data.try_reserve(bytes_read)
-                        .map_err(|_| bun_alloc::AllocError)?;
-                    data.extend_from_slice(&buf[..bytes_read]);
-                    total_read += bytes_read;
+            while data.len() < size {
+                let to_read = (size - data.len()).min(64 * 1024);
+                data.try_reserve(to_read)
+                    .map_err(|_| bun_alloc::AllocError)?;
+                // SAFETY: `archive_read_data` only stores into the slice; the written prefix is committed below.
+                let dest = unsafe { &mut bun_core::vec::spare_bytes_mut(&mut data)[..to_read] };
+                let read = archive.read_data(dest);
+                if read < 0 {
+                    // Read error.
+                    // NOTE: both `data` and `entries` drop automatically here.
+                    // SAFETY: `archive` is the live `read_new()` handle opened above.
+                    return Ok(if let Some(err) = Self::clone_error_string(&archive) {
+                        FilesResult::LibarchiveErr(err)
+                    } else {
+                        FilesResult::Err(FilesError::ReadError)
+                    });
                 }
+                if read == 0 {
+                    break;
+                }
+                let bytes_read = usize::try_from(read).expect("int cast");
+                // SAFETY: `archive_read_data` returns exactly the byte count it wrote (`<= to_read`).
+                unsafe { bun_core::vec::commit_spare(&mut data, bytes_read) };
             }
             // errdefer free(data) — handled by Drop
 
@@ -1241,8 +1109,6 @@ impl FilesContext {
 }
 
 impl TaskContext for FilesContext {
-    const TAG: TaskTag = task_tag::ArchiveFilesTask;
-
     fn run(&mut self) {
         self.result = match self.do_run() {
             Ok(r) => r,
@@ -1279,8 +1145,7 @@ impl TaskContext for FilesContext {
                 Ok(PromiseResult::Resolve(map))
             }
             FilesResult::LibarchiveErr(err_msg) => Ok(PromiseResult::Reject(
-                global
-                    .create_error_instance(format_args!("{}", bstr::BStr::new(err_msg.to_bytes()))),
+                EncodedSlice::utf8(err_msg.to_bytes()).to_error_instance(global),
             )),
             FilesResult::Err(e) => Ok(PromiseResult::Reject(
                 global.create_error_instance(format_args!("{}", <&'static str>::from(&*e))),
@@ -1289,11 +1154,11 @@ impl TaskContext for FilesContext {
     }
 }
 
-pub type FilesTask = AsyncTask<FilesContext>;
+pub(crate) type FilesTask = AsyncTask<FilesContext>;
 
 fn start_files_task(
     global: &JSGlobalObject,
-    store: &StoreRef,
+    store: &RefPtr<Store>,
     glob_patterns: Option<Vec<Box<[u8]>>>,
 ) -> JsResult<JSValue> {
     let store = store.clone();
@@ -1301,18 +1166,14 @@ fn start_files_task(
     // Ownership: On error, caller's errdefer frees glob_patterns.
     // On success, ownership transfers to FilesContext, which frees them in deinit().
 
-    let task = FilesTask::create(
+    Ok(FilesTask::start(
         global,
         FilesContext {
             store,
             glob_patterns,
             result: FilesResult::Err(FilesError::ReadError),
         },
-    )?;
-
-    let promise_js = FilesTask::promise_value(task);
-    FilesTask::schedule(task);
-    Ok(promise_js)
+    ))
 }
 
 // ============================================================================
@@ -1325,22 +1186,16 @@ enum CompressError {
     GzipInitFailed,
     #[error("GzipCompressFailed")]
     GzipCompressFailed,
+    /// The output buffer (sized by the data being compressed) could not be allocated.
+    #[error("OutOfMemory")]
+    OutOfMemory,
 }
 
-impl From<CompressError> for BlobError {
-    fn from(e: CompressError) -> Self {
-        match e {
-            CompressError::GzipInitFailed => BlobError::GzipInitFailed,
-            CompressError::GzipCompressFailed => BlobError::GzipCompressFailed,
-        }
-    }
-}
-
-impl From<CompressError> for WriteError {
-    fn from(e: CompressError) -> Self {
-        match e {
-            CompressError::GzipInitFailed => WriteError::GzipInitFailed,
-            CompressError::GzipCompressFailed => WriteError::GzipCompressFailed,
+impl CompressError {
+    fn to_js(&self, global: &JSGlobalObject) -> JSValue {
+        match self {
+            CompressError::OutOfMemory => global.create_out_of_memory_error(),
+            other => global.create_error_instance(format_args!("{}", <&'static str>::from(other))),
         }
     }
 }
@@ -1352,12 +1207,10 @@ fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
     let mut compressor =
         libdeflate::OwnedCompressor::new(i32::from(level)).ok_or(CompressError::GzipInitFailed)?;
 
-    let max_size = compressor.max_bytes_needed(data, libdeflate::Encoding::Gzip);
-
-    // The scratch is heap-allocated either way, so a small-input threshold is
-    // dead weight — just size the Vec to `max_size` once.
-    let mut output = Vec::with_capacity(max_size);
-    let result = compressor.compress_to_vec(data, &mut output, libdeflate::Encoding::Gzip);
+    let mut output = Vec::new();
+    let result = compressor
+        .compress_to_vec(data, &mut output, libdeflate::Encoding::Gzip)
+        .map_err(|_| CompressError::OutOfMemory)?;
     if result.status != libdeflate::Status::Success {
         return Err(CompressError::GzipCompressFailed);
     }
@@ -1365,7 +1218,7 @@ fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
 }
 
 /// Check if a path is safe (no absolute paths or path traversal)
-pub fn is_safe_path(pathname: &[u8]) -> bool {
+pub(crate) fn is_safe_path(pathname: &[u8]) -> bool {
     // Reject empty paths
     if pathname.is_empty() {
         return false;
@@ -1382,12 +1235,12 @@ pub fn is_safe_path(pathname: &[u8]) -> bool {
     }
 
     // Reject paths with ".." components
-    for component in pathname.split(|b| *b == b'/') {
+    for component in strings::split(pathname, b"/") {
         if component == b".." {
             return false;
         }
         // Also check Windows-style separators
-        for win_component in component.split(|b| *b == b'\\') {
+        for win_component in strings::split(component, b"\\") {
             if win_component == b".." {
                 return false;
             }
@@ -1401,7 +1254,7 @@ pub fn is_safe_path(pathname: &[u8]) -> bool {
 /// Positive patterns: at least one must match for the path to be included.
 /// Negative patterns (starting with "!"): if any matches, the path is excluded.
 /// Returns true if the path should be included, false if excluded.
-pub fn match_glob_patterns(patterns: &[Box<[u8]>], pathname: &[u8]) -> bool {
+pub(crate) fn match_glob_patterns(patterns: &[Box<[u8]>], pathname: &[u8]) -> bool {
     let mut has_positive_patterns = false;
     let mut matches_positive = false;
 
@@ -1467,23 +1320,35 @@ fn extract_to_disk_filtered(
 
     let mut count: u32 = 0;
     let mut entry: *mut lib::Entry = core::ptr::null_mut();
+    let mut stack_buf = bun_core::vec::UninitBuf::<{ 64 * 1024 }>::uninit();
+    // SAFETY: `archive_read_data` is the only writer of `buf`; each chunk reads back only `buf[..bytes_read]`.
+    let buf = unsafe { stack_buf.as_bytes_mut() };
 
     while archive.read_next_header(&mut entry).succeeded() {
         let entry_ref = lib::Entry::opaque_ref(entry);
         // Same platform split as `FilesContext::do_run`; see `entry_pathname_utf8`.
         #[cfg(not(windows))]
-        let pathname_z = entry_ref.pathname();
+        let raw_pathname_z = entry_ref.pathname();
         #[cfg(windows)]
-        let pathname_zbox = ZBox::from_vec_with_nul(
+        let raw_pathname_zbox = ZBox::from_vec_with_nul(
             entry_pathname_utf8(entry_ref)
                 .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?,
         );
         #[cfg(windows)]
-        let pathname_z = pathname_zbox.as_zstr();
+        let raw_pathname_z = raw_pathname_zbox.as_zstr();
+        let raw_pathname = raw_pathname_z.as_bytes();
+
+        let mut normalized_buf = bun_paths::PathBuffer::uninit();
+        if raw_pathname.len() >= normalized_buf.len() {
+            continue;
+        }
+        let pathname_z: &bun_core::ZStr = bun_paths::resolve_path::normalize_buf_z::<
+            bun_paths::platform::Posix,
+        >(raw_pathname, &mut normalized_buf[..]);
         let pathname = pathname_z.as_bytes();
 
         // Validate path safety (reject absolute paths, path traversal)
-        if !is_safe_path(pathname) {
+        if pathname == b"." || !is_safe_path(pathname) {
             continue;
         }
 
@@ -1547,7 +1412,6 @@ fn extract_to_disk_filtered(
                 if size > 0 {
                     // Read archive data and write to file
                     let mut remaining = size;
-                    let mut buf = [0u8; 64 * 1024];
                     while remaining > 0 {
                         let to_read = remaining.min(buf.len());
                         let read = archive.read_data(&mut buf[..to_read]);

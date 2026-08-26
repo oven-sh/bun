@@ -48,7 +48,7 @@ static const uint8_t ValidTagLengths[] = { 32, 64, 96, 104, 112, 120, 128 };
 
 static inline bool usagesAreInvalidForCryptoAlgorithmAES_GCM(CryptoKeyUsageBitmap usages)
 {
-    return usages & (CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits);
+    return usages & (CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits | CryptoKeyUsageKemMask);
 }
 
 static inline bool tagLengthIsValid(uint8_t tagLength)
@@ -116,7 +116,7 @@ void CryptoAlgorithmAES_GCM::decrypt(const CryptoAlgorithmParameters& parameters
         return;
     }
     if (cipherText.size() < *(aesParameters.tagLength) / 8) {
-        exceptionCallback(OperationError, "The provided data is too small"_s);
+        exceptionCallback(OperationError, ""_s);
         return;
     }
 
@@ -142,7 +142,7 @@ void CryptoAlgorithmAES_GCM::generateKey(const CryptoAlgorithmParameters& parame
     const auto& aesParameters = downcast<CryptoAlgorithmAesKeyParams>(parameters);
 
     if (usagesAreInvalidForCryptoAlgorithmAES_GCM(usages)) {
-        exceptionCallback(SyntaxError, ""_s);
+        exceptionCallback(SyntaxError, "Unsupported key usage for an AES key"_s);
         return;
     }
 
@@ -160,12 +160,13 @@ void CryptoAlgorithmAES_GCM::importKey(CryptoKeyFormat format, KeyData&& data, c
     using namespace CryptoAlgorithmAES_GCMInternal;
 
     if (usagesAreInvalidForCryptoAlgorithmAES_GCM(usages)) {
-        exceptionCallback(SyntaxError, ""_s);
+        exceptionCallback(SyntaxError, "Unsupported key usage for an AES key"_s);
         return;
     }
 
     RefPtr<CryptoKeyAES> result;
     switch (format) {
+    case CryptoKeyFormat::RawSecret:
     case CryptoKeyFormat::Raw:
         result = CryptoKeyAES::importRaw(parameters.identifier, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
         break;
@@ -208,6 +209,7 @@ void CryptoAlgorithmAES_GCM::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& 
 
     KeyData result;
     switch (format) {
+    case CryptoKeyFormat::RawSecret:
     case CryptoKeyFormat::Raw:
         result = Vector<uint8_t>(aesKey.key());
         break;

@@ -27,10 +27,8 @@ use bun_options_types::schema::api;
 use bun_options_types::command_tag::Tag as CommandTag;
 use bun_options_types::context::ContextData;
 
-pub use bun_options_types::offline_mode::OfflineMode;
-
 // TODO: replace api.TransformOptions with Bunfig
-pub struct Bunfig;
+pub(crate) struct Bunfig;
 
 /// Owned clone of an `EString` payload (transcoding UTF-16 → UTF-8 if needed).
 #[inline]
@@ -141,7 +139,7 @@ fn num_to_u32(n: f64) -> u32 {
 // Parser
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct Parser<'a> {
+struct Parser<'a> {
     json: Expr,
     source: &'a bun_ast::Source,
     log: &'a mut bun_ast::Log,
@@ -185,7 +183,7 @@ impl<'a> Parser<'a> {
         Err(crate::Error::InvalidBunfig)
     }
 
-    pub(crate) fn expect_string(&mut self, expr: &Expr) -> crate::Result<()> {
+    fn expect_string(&mut self, expr: &Expr) -> crate::Result<()> {
         match &expr.data {
             ExprData::EString(_) => Ok(()),
             _ => self.add_error_format(
@@ -213,7 +211,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    pub(crate) fn expect(&mut self, expr: &Expr, token: ExprTag) -> crate::Result<()> {
+    fn expect(&mut self, expr: &Expr, token: ExprTag) -> crate::Result<()> {
         if expr.data.tag() != token {
             return self.add_error_format(
                 expr.loc,
@@ -348,7 +346,7 @@ impl<'a> Parser<'a> {
     // already derives `enum_map::Enum`, which conflicts). Monomorphising over
     // `cmd` would only dead-code-eliminate untaken arms; the
     // runtime branches below are equivalent and the few hot fields are tiny.
-    pub(crate) fn parse(&mut self, cmd: CommandTag) -> crate::Result<()> {
+    fn parse(&mut self, cmd: CommandTag) -> crate::Result<()> {
         bun_analytics::features::bunfig.fetch_add(1, Ordering::Relaxed);
 
         let json = self.json;
@@ -411,34 +409,34 @@ impl<'a> Parser<'a> {
         }
 
         if cmd == CommandTag::TestCommand {
-            if let Some(test_) = json.get(b"test") {
-                if let Some(root) = test_.get(b"root") {
+            if let Some(test) = json.get(b"test") {
+                if let Some(root) = test.get(b"root") {
                     self.ctx.debug.test_directory = root.as_string(self.bump).unwrap_or(b"").into();
                 }
 
-                if let Some(expr) = test_.get(b"preload") {
+                if let Some(expr) = test.get(b"preload") {
                     self.load_preload(&expr)?;
                 }
 
-                if let Some(expr) = test_.get(b"smol") {
+                if let Some(expr) = test.get(b"smol") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.runtime_options.smol =
                         expr.as_bool().expect("infallible: type checked");
                 }
 
-                if let Some(expr) = test_.get(b"coverage") {
+                if let Some(expr) = test.get(b"coverage") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.test_options.coverage.enabled =
                         expr.as_bool().expect("infallible: type checked");
                 }
 
-                if let Some(expr) = test_.get(b"onlyFailures") {
+                if let Some(expr) = test.get(b"onlyFailures") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.test_options.reporters.only_failures =
                         expr.as_bool().expect("infallible: type checked");
                 }
 
-                if let Some(expr) = test_.get(b"reporter") {
+                if let Some(expr) = test.get(b"reporter") {
                     self.expect(&expr, ExprTag::EObject)?;
                     if let Some(junit_expr) = expr.get(b"junit") {
                         self.expect_string(&junit_expr)?;
@@ -457,7 +455,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(expr) = test_.get(b"coverageReporter") {
+                if let Some(expr) = test.get(b"coverageReporter") {
                     'brk: {
                         self.ctx.test_options.coverage.reporters = CoverageReporters {
                             text: false,
@@ -478,7 +476,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(expr) = test_.get(b"coverageDir") {
+                if let Some(expr) = test.get(b"coverageDir") {
                     self.expect_string(&expr)?;
                     self.ctx.test_options.coverage.reports_directory = estring_to_owned(
                         expr.data
@@ -489,7 +487,7 @@ impl<'a> Parser<'a> {
                     );
                 }
 
-                if let Some(expr) = test_.get(b"coverageThreshold") {
+                if let Some(expr) = test.get(b"coverageThreshold") {
                     'outer: {
                         if let ExprData::ENumber(n) = expr.data {
                             let v = n.value();
@@ -523,13 +521,13 @@ impl<'a> Parser<'a> {
                 }
 
                 // This mostly exists for debugging.
-                if let Some(expr) = test_.get(b"coverageIgnoreSourcemaps") {
+                if let Some(expr) = test.get(b"coverageIgnoreSourcemaps") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.test_options.coverage.ignore_sourcemap =
                         expr.as_bool().expect("infallible: type checked");
                 }
 
-                if let Some(expr) = test_.get(b"coverageSkipTestFiles") {
+                if let Some(expr) = test.get(b"coverageSkipTestFiles") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.test_options.coverage.skip_test_files =
                         expr.as_bool().expect("infallible: type checked");
@@ -537,14 +535,14 @@ impl<'a> Parser<'a> {
 
                 let mut randomize_from_config: Option<bool> = None;
 
-                if let Some(expr) = test_.get(b"randomize") {
+                if let Some(expr) = test.get(b"randomize") {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     randomize_from_config = expr.as_bool();
                     self.ctx.test_options.randomize =
                         expr.as_bool().expect("infallible: type checked");
                 }
 
-                if let Some(expr) = test_.get(b"seed") {
+                if let Some(expr) = test.get(b"seed") {
                     self.expect(&expr, ExprTag::ENumber)?;
                     let seed_value =
                         num_to_u32(expr.as_number().expect("infallible: type checked"));
@@ -562,7 +560,7 @@ impl<'a> Parser<'a> {
                     self.ctx.test_options.seed = Some(seed_value);
                 }
 
-                if let Some(expr) = test_.get(b"rerunEach") {
+                if let Some(expr) = test.get(b"rerunEach") {
                     self.expect(&expr, ExprTag::ENumber)?;
                     if self.ctx.test_options.retry != 0 {
                         self.add_error(expr.loc, b"\"rerunEach\" cannot be used with \"retry\"")?;
@@ -572,7 +570,7 @@ impl<'a> Parser<'a> {
                         num_to_u32(expr.as_number().expect("infallible: type checked"));
                 }
 
-                if let Some(expr) = test_.get(b"retry") {
+                if let Some(expr) = test.get(b"retry") {
                     self.expect(&expr, ExprTag::ENumber)?;
                     if self.ctx.test_options.repeat_count != 0 {
                         self.add_error(expr.loc, b"\"retry\" cannot be used with \"rerunEach\"")?;
@@ -582,7 +580,7 @@ impl<'a> Parser<'a> {
                         num_to_u32(expr.as_number().expect("infallible: type checked"));
                 }
 
-                if let Some(expr) = test_.get(b"concurrentTestGlob") {
+                if let Some(expr) = test.get(b"concurrentTestGlob") {
                     match &expr.data {
                         ExprData::EString(s) => {
                             if s.len() == 0 {
@@ -634,7 +632,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(expr) = test_.get(b"coveragePathIgnorePatterns") {
+                if let Some(expr) = test.get(b"coveragePathIgnorePatterns") {
                     'brk: {
                         match &expr.data {
                             ExprData::EString(s) => {
@@ -670,7 +668,7 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if let Some(expr) = test_.get(b"pathIgnorePatterns") {
+                if let Some(expr) = test.get(b"pathIgnorePatterns") {
                     'brk: {
                         // Only skip if --path-ignore-patterns was explicitly passed via CLI
                         if self.ctx.test_options.path_ignore_patterns_from_cli {
@@ -1097,7 +1095,7 @@ impl<'a> Parser<'a> {
 }
 
 impl Bunfig {
-    pub fn parse(
+    pub(crate) fn parse(
         cmd: CommandTag,
         source: &bun_ast::Source,
         ctx: &mut ContextData,
@@ -1183,43 +1181,55 @@ impl Bunfig {
 // ─────────────────────────────────────────────────────────────────────────────
 
 impl<'a> Parser<'a> {
-    fn parse_registry_url_string(&mut self, str: &E::EString) -> crate::Result<api::NpmRegistry> {
+    fn parse_registry_url(&mut self, url: &[u8]) -> crate::Result<api::NpmRegistry> {
         // Dedup D009: body is the canonical port in `bun_api::npm_registry`.
         // The api `Parser` is generic over log/source and never reads them for
         // this path, so we just hand it our reborrowed handles.
-        let bytes = str.string(self.bump)?;
         Ok(bun_api::npm_registry::Parser {
             log: &mut *self.log,
             source: self.source,
         }
-        .parse_registry_url_string_impl(bytes)?)
+        .parse_registry_url_string_impl(url)?)
     }
 
     fn parse_registry_object(&mut self, obj: &E::Object) -> crate::Result<api::NpmRegistry> {
-        let mut registry = api::NpmRegistry::default();
+        // `user:pass@` / `:token@` in the URL are credentials, as in the string form.
+        let mut registry = match obj.get(b"url") {
+            Some(url) => {
+                self.expect_string(&url)?;
+                let url = url.as_string(self.bump).expect("infallible: type checked");
+                self.parse_registry_url(url)?
+            }
+            None => api::NpmRegistry::default(),
+        };
 
-        if let Some(url) = obj.get(b"url") {
-            self.expect_string(&url)?;
-            registry.url = url
-                .as_string(self.bump)
-                .expect("infallible: type checked")
-                .into();
+        let username = obj.get(b"username");
+        let password = obj.get(b"password");
+        let token = obj.get(b"token");
+
+        // Keys replace the URL's credentials as a set: from_api would favor a URL token over keys.
+        if username.is_some() || password.is_some() || token.is_some() {
+            registry = api::NpmRegistry {
+                url: registry.url,
+                ..Default::default()
+            };
         }
-        if let Some(username) = obj.get(b"username") {
+
+        if let Some(username) = username {
             self.expect_string(&username)?;
             registry.username = username
                 .as_string(self.bump)
                 .expect("infallible: type checked")
                 .into();
         }
-        if let Some(password) = obj.get(b"password") {
+        if let Some(password) = password {
             self.expect_string(&password)?;
             registry.password = password
                 .as_string(self.bump)
                 .expect("infallible: type checked")
                 .into();
         }
-        if let Some(token) = obj.get(b"token") {
+        if let Some(token) = token {
             self.expect_string(&token)?;
             registry.token = token
                 .as_string(self.bump)
@@ -1232,7 +1242,10 @@ impl<'a> Parser<'a> {
 
     fn parse_registry(&mut self, expr: &Expr) -> crate::Result<api::NpmRegistry> {
         match &expr.data {
-            ExprData::EString(s) => self.parse_registry_url_string(s),
+            ExprData::EString(s) => {
+                let url = s.string(self.bump)?;
+                self.parse_registry_url(url)
+            }
             ExprData::EObject(o) => self.parse_registry_object(o),
             _ => {
                 self.add_error(
@@ -1531,9 +1544,7 @@ impl<'a> Parser<'a> {
         let remap = |e: FromExprError| -> crate::Error {
             match e {
                 FromExprError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
-                FromExprError::UnexpectedExpr | FromExprError::InvalidRegExp => {
-                    crate::Error::InvalidBunfig
-                }
+                FromExprError::UnexpectedExpr => crate::Error::InvalidBunfig,
             }
         };
         if let Some(public_hoist_pattern_expr) = install_obj.get(b"publicHoistPattern") {
@@ -1547,6 +1558,13 @@ impl<'a> Parser<'a> {
                 api::PnpmMatcher::from_expr(&hoist_pattern_expr, self.log, self.source)
                     .map_err(remap)?,
             );
+        }
+        if let Some(v) = install_obj.get(b"hoist").and_then(|e| e.as_bool()) {
+            install.hoist = Some(v);
+        }
+
+        if let Some(v) = install_obj.get(b"offline").and_then(|e| e.as_bool()) {
+            install.offline = Some(v);
         }
 
         Ok(())
@@ -1610,6 +1628,33 @@ impl<'a> Parser<'a> {
                 }
             } else {
                 self.add_error(minify.loc, b"Expected minify to be boolean or object")?;
+            }
+        }
+
+        if let Some(sourcemap) = serve_obj.get(b"sourcemap") {
+            if let Some(v) = sourcemap.as_bool() {
+                self.ctx.args.serve_sourcemap = Some(if v {
+                    api::SourceMapMode::Linked
+                } else {
+                    api::SourceMapMode::None
+                });
+            } else if let Some(s) = sourcemap.as_string(self.bump) {
+                match s {
+                    b"none" => self.ctx.args.serve_sourcemap = Some(api::SourceMapMode::None),
+                    b"linked" => self.ctx.args.serve_sourcemap = Some(api::SourceMapMode::Linked),
+                    b"inline" => self.ctx.args.serve_sourcemap = Some(api::SourceMapMode::Inline),
+                    b"external" => {
+                        self.ctx.args.serve_sourcemap = Some(api::SourceMapMode::External)
+                    }
+                    _ => {
+                        self.add_error(
+                            sourcemap.loc,
+                            b"Expected sourcemap to be one of 'none', 'linked', 'inline', or 'external'",
+                        )?;
+                    }
+                }
+            } else {
+                self.add_error(sourcemap.loc, b"Expected sourcemap to be boolean or string")?;
             }
         }
 

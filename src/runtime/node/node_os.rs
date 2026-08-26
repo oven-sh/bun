@@ -4,6 +4,7 @@ use core::ffi::{c_char, c_uint, c_void};
 
 use bun_core;
 use bun_core::String as BunString;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 unsafe extern "C" {
@@ -27,18 +28,11 @@ pub(crate) fn freemem() -> u64 {
     Bun__Os__getFreeMemory()
 }
 
-// ─── gated: JSC bindings + platform syscall bodies ────────────────────────
-// Every fn body builds JS objects (`JSValue::create_*`, `ZigString::*::to_js`,
-// `global.throw_value`) or reaches `bun_sys::posix::sysctlbyname` /
-// `bun_sys::c::sysinfo` / `crate::gen_::node_os` which are not yet exported.
-// CPUTimes struct + freemem() + trailing pure helpers hoisted above/below.
-
 mod _impl {
     use super::*;
-    use crate::node::ErrorCode;
+    use bun_core::EncodedSlice;
     #[cfg(any(target_os = "linux", target_os = "android"))]
     use bun_core::ZStr;
-    use bun_core::ZigString;
     #[cfg(not(windows))]
     use bun_core::strings;
     use bun_core::{env_var, fmt as bun_fmt};
@@ -78,49 +72,6 @@ mod _impl {
         }
     }
 
-    /// `bun_jsc::SystemError` has no `Default` (see src/jsc/SystemError.rs).
-    /// Local zero-value for the extern-struct fields.
-    #[inline]
-    fn system_error_default() -> SystemError {
-        SystemError {
-            errno: 0,
-            code: BunString::empty(),
-            message: BunString::empty(),
-            path: BunString::empty(),
-            syscall: BunString::empty(),
-            hostname: BunString::empty(),
-            fd: c_int::MIN,
-            dest: BunString::empty(),
-        }
-    }
-
-    /// `bun_core::ZigString` (the `bun_string` crate type) is `repr(C)`-identical
-    /// to the JSC-side `ZigString` but lacks `with_encoding`/`to_js`. Provide
-    /// them locally.
-    trait ZigStringJs {
-        fn with_encoding(self) -> ZigString;
-        fn to_js(&self, global: &JSGlobalObject) -> JSValue;
-    }
-    impl ZigStringJs for ZigString {
-        #[inline]
-        fn with_encoding(mut self) -> ZigString {
-            // If not already 16-bit, mark UTF-8.
-            if !self.is_16bit() {
-                self.mark_utf8();
-            }
-            self
-        }
-        #[inline]
-        fn to_js(&self, global: &JSGlobalObject) -> JSValue {
-            // Signature matches `bun_jsc`'s decl exactly (avoids
-            // `clashing_extern_declarations`); both params are non-null refs.
-            unsafe extern "C" {
-                safe fn ZigString__toValueGC(arg0: &ZigString, arg1: &JSGlobalObject) -> JSValue;
-            }
-            ZigString__toValueGC(self, global)
-        }
-    }
-
     // Neither `bun_core` nor `bun_sys` re-exports HOST_NAME_MAX yet; 256 is a
     // safe upper bound for the stack buffer on every platform.
     const HOST_NAME_MAX: usize = 256;
@@ -133,7 +84,7 @@ mod _impl {
     // public surface: `js*` extern pointers + `create*Callback` wrappers
     // + the `UserInfoOptions` dictionary.
     pub mod gen_ {
-        use super::{BunString, CallFrame, JSGlobalObject, JSValue, ZigString};
+        use super::{BunString, CallFrame, EncodedSlice, JSGlobalObject, JSValue};
         use bun_jsc::host_fn;
 
         // C++-side host fns (GeneratedBindings.cpp). `bindgen.ts` emits these as
@@ -164,7 +115,7 @@ mod _impl {
             pub fn $fn_name(global: &JSGlobalObject) -> JSValue {
                 host_fn::new_runtime_function(
                     global,
-                    Some(&ZigString::static_($js_name)),
+                    Some(&EncodedSlice::latin1($js_name.as_bytes())),
                     $argc,
                     $sym,
                     false,
@@ -195,14 +146,7 @@ mod _impl {
         /// `#[repr(C)]`.
         #[repr(C)]
         pub struct UserInfoOptions {
-            pub encoding: BunString,
-        }
-        impl Default for UserInfoOptions {
-            fn default() -> Self {
-                Self {
-                    encoding: BunString::empty(),
-                }
-            }
+            pub(crate) encoding: BunString,
         }
     }
 
@@ -243,7 +187,7 @@ mod _impl {
     }
 
     impl CPUTimes {
-        pub(crate) fn to_value(self, global_this: &JSGlobalObject) -> JSValue {
+        fn to_value(self, global_this: &JSGlobalObject) -> JSValue {
             let ret = JSValue::create_empty_object(global_this, 5);
             ret.put(
                 global_this,
@@ -289,8 +233,8 @@ mod _impl {
             Err(_) => {
                 let err = SystemError {
                     message: BunString::static_("Failed to get CPU information"),
-                    code: BunString::static_(<&'static str>::from(ErrorCode::ERR_SYSTEM_ERROR)),
-                    ..system_error_default()
+                    code: BunString::static_("ERR_SYSTEM_ERROR"),
+                    ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance(global)))
             }
@@ -329,9 +273,7 @@ mod _impl {
                             cpu.put(
                                 global_this,
                                 b"model",
-                                ZigString::static_("unknown")
-                                    .with_encoding()
-                                    .to_js(global_this),
+                                BunString::static_("unknown").to_js(global_this)?,
                             );
                             cpu.put(global_this, b"speed", JSValue::js_number(0.0));
                             stubs.put_index(global_this, i, cpu)?;
@@ -345,7 +287,7 @@ mod _impl {
             file.read_to_end_with_array_list(&mut file_buf, bun_sys::SizeHint::ProbablySmall)?;
             let contents = file_buf.as_slice();
 
-            let mut line_iter = contents.split(|b| *b == b'\n').filter(|s| !s.is_empty());
+            let mut line_iter = strings::tokenize(contents, b"\n");
 
             // Skip the first line (aggregate of all CPUs)
             let _ = line_iter.next();
@@ -353,9 +295,7 @@ mod _impl {
             // Read each CPU line
             while let Some(line) = line_iter.next() {
                 // CPU lines are formatted as `cpu0 user nice sys idle iowait irq softirq`
-                let mut toks = line
-                    .split(|b| *b == b' ' || *b == b'\t')
-                    .filter(|s| !s.is_empty());
+                let mut toks = strings::tokenize_any(line, b" \t");
                 let cpu_name = toks.next();
                 if cpu_name.is_none() || !cpu_name.unwrap().starts_with(b"cpu") {
                     break; // done with CPUs
@@ -395,7 +335,7 @@ mod _impl {
             file.read_to_end_with_array_list(&mut file_buf, bun_sys::SizeHint::ProbablySmall)?;
             let contents = file_buf.as_slice();
 
-            let mut line_iter = contents.split(|b| *b == b'\n').filter(|s| !s.is_empty());
+            let mut line_iter = strings::tokenize(contents, b"\n");
 
             const KEY_PROCESSOR: &[u8] = b"processor\t: ";
             const KEY_MODEL_NAME: &[u8] = b"model name\t: ";
@@ -409,9 +349,7 @@ mod _impl {
                         cpu.put(
                             global_this,
                             b"model",
-                            ZigString::static_("unknown")
-                                .with_encoding()
-                                .to_js(global_this),
+                            BunString::static_("unknown").to_js(global_this)?,
                         );
                     }
                     // If this line starts a new processor, parse the index from the line
@@ -428,9 +366,7 @@ mod _impl {
                     cpu.put(
                         global_this,
                         b"model",
-                        ZigString::init(model_name)
-                            .with_encoding()
-                            .to_js(global_this),
+                        bun_string_jsc::create_utf8_for_js(global_this, model_name)?,
                     );
                     has_model_name = true;
                 }
@@ -440,9 +376,7 @@ mod _impl {
                 cpu.put(
                     global_this,
                     b"model",
-                    ZigString::static_("unknown")
-                        .with_encoding()
-                        .to_js(global_this),
+                    BunString::static_("unknown").to_js(global_this)?,
                 );
             }
 
@@ -454,9 +388,7 @@ mod _impl {
                 cpu.put(
                     global_this,
                     b"model",
-                    ZigString::static_("unknown")
-                        .with_encoding()
-                        .to_js(global_this),
+                    BunString::static_("unknown").to_js(global_this)?,
                 );
             }
         }
@@ -510,13 +442,9 @@ mod _impl {
 
         let mut model_buf = [0u8; 512];
         let model = if bun_sys::posix::sysctl_read_slice(c"hw.model", &mut model_buf[..]).is_ok() {
-            ZigString::init(bun_core::slice_to_nul(&model_buf))
-                .with_encoding()
-                .to_js(global_this)
+            bun_string_jsc::create_utf8_for_js(global_this, bun_core::slice_to_nul(&model_buf))?
         } else {
-            ZigString::static_("unknown")
-                .with_encoding()
-                .to_js(global_this)
+            BunString::static_("unknown").to_js(global_this)?
         };
 
         let mut speed_mhz: c_uint = 0;
@@ -605,9 +533,10 @@ mod _impl {
         // NOTE: sysctlbyname doesn't update len if it was large enough, so we
         // still have to find the null terminator.  All cpus can share the same
         // model name.
-        let model_name = ZigString::init(bun_core::slice_to_nul(&model_name_buf))
-            .with_encoding()
-            .to_js(global_this);
+        let model_name = bun_string_jsc::create_utf8_for_js(
+            global_this,
+            bun_core::slice_to_nul(&model_name_buf),
+        )?;
 
         // Get CPU speed
         let mut speed: u64 = 0;
@@ -689,7 +618,7 @@ mod _impl {
             cpu.put(
                 global_this,
                 b"model",
-                ZigString::init(model).with_encoding().to_js(global_this),
+                bun_string_jsc::create_utf8_for_js(global_this, model)?,
             );
             cpu.put(
                 global_this,
@@ -719,7 +648,7 @@ mod _impl {
                 #[cfg(windows)]
                 errno: libuv::UV_ESRCH,
                 syscall: BunString::static_("uv_os_getpriority"),
-                ..system_error_default()
+                ..Default::default()
             };
             return Err(global.throw_value(err.to_error_instance_with_info_object(global)));
         }
@@ -746,7 +675,7 @@ mod _impl {
             // environment variable, then falls back to reading the passwd entry.
             if let Some(home) = env_var::HOME.get() {
                 if !home.is_empty() {
-                    return Ok(BunString::init(home));
+                    return Ok(BunString::from_bytes(home));
                 }
             }
 
@@ -825,7 +754,7 @@ mod _impl {
                 // SAFETY: pw_dir is a NUL-terminated C string from getpwuid_r
                 BunString::clone_utf8(unsafe { bun_core::ffi::cstr(pw.pw_dir) }.to_bytes())
             } else {
-                BunString::empty()
+                BunString::EMPTY
             });
         }
     }
@@ -834,27 +763,14 @@ mod _impl {
         #[cfg(windows)]
         {
             let mut name_buffer: [u16; 130] = [0; 130]; // [129:0]u16 → 130 u16s with NUL at [129]
+            // SAFETY: idempotent Winsock init (libuv defers it to first use).
+            unsafe { windows::libuv::uv__winsock_ensure() };
             // SAFETY: valid buffer
             if unsafe { windows::GetHostNameW(name_buffer.as_mut_ptr(), 129) } == 0 {
-                let str = BunString::clone_utf16(slice_to_nul_u16(&name_buffer));
-                let js = str.to_js(global);
-                str.deref();
-                return js;
+                return BunString::clone_utf16(slice_to_nul_u16(&name_buffer)).into_js(global);
             }
 
-            let mut result: windows::ws2_32::WSADATA = bun_core::ffi::zeroed();
-            // SAFETY: valid out-pointer
-            if unsafe { windows::ws2_32::WSAStartup(0x202, &mut result) } == 0 {
-                // SAFETY: valid buffer
-                if unsafe { windows::GetHostNameW(name_buffer.as_mut_ptr(), 129) } == 0 {
-                    let y = BunString::clone_utf16(slice_to_nul_u16(&name_buffer));
-                    let js = y.to_js(global);
-                    y.deref();
-                    return js;
-                }
-            }
-
-            return Ok(ZigString::init(b"unknown").with_encoding().to_js(global));
+            return BunString::static_("unknown").to_js(global);
         }
         #[cfg(not(windows))]
         {
@@ -864,7 +780,7 @@ mod _impl {
             } else {
                 b"unknown"
             };
-            return Ok(ZigString::init(s).with_encoding().to_js(global));
+            return bun_string_jsc::create_utf8_for_js(global, s);
         }
     }
 
@@ -959,7 +875,7 @@ mod _impl {
                 code: BunString::static_("ERR_SYSTEM_ERROR"),
                 errno: errno as c_int,
                 syscall: BunString::static_("getifaddrs"),
-                ..system_error_default()
+                ..Default::default()
             };
 
             return Err(global_this.throw_value(err.to_error_instance(global_this)));
@@ -1088,15 +1004,13 @@ mod _impl {
                     };
                     // The full cidr value is the address + the suffix
                     let cidr_str = &buf[start..start + addr_len + suffix_len];
-                    cidr = ZigString::init(cidr_str).with_encoding().to_js(global_this);
+                    cidr = bun_string_jsc::create_utf8_for_js(global_this, cidr_str)?;
                 }
 
                 interface.put(
                     global_this,
                     b"address",
-                    ZigString::init(&buf[start..start + addr_len])
-                        .with_encoding()
-                        .to_js(global_this),
+                    bun_string_jsc::create_utf8_for_js(global_this, &buf[start..start + addr_len])?,
                 );
                 interface.put(global_this, b"cidr", cidr);
             }
@@ -1108,7 +1022,7 @@ mod _impl {
                 interface.put(
                     global_this,
                     b"netmask",
-                    ZigString::init(str).with_encoding().to_js(global_this),
+                    bun_string_jsc::create_utf8_for_js(global_this, str)?,
                 );
             }
 
@@ -1119,7 +1033,7 @@ mod _impl {
                 match addr.family() as c_int {
                     libc::AF_INET => global_this.common_strings().ipv4(),
                     libc::AF_INET6 => global_this.common_strings().ipv6(),
-                    _ => ZigString::static_("unknown").to_js(global_this),
+                    _ => BunString::static_("unknown").to_js(global_this)?,
                 },
             );
 
@@ -1177,7 +1091,7 @@ mod _impl {
                         interface.put(
                             global_this,
                             b"mac",
-                            ZigString::init(mac).with_encoding().to_js(global_this),
+                            bun_string_jsc::create_utf8_for_js(global_this, mac)?,
                         );
                     } else {
                         let mac_buf = bun_fmt::mac_address_lower(
@@ -1186,7 +1100,7 @@ mod _impl {
                         interface.put(
                             global_this,
                             b"mac",
-                            ZigString::init(&mac_buf).with_encoding().to_js(global_this),
+                            bun_string_jsc::create_utf8_for_js(global_this, &mac_buf)?,
                         );
                     }
                 } else {
@@ -1194,7 +1108,7 @@ mod _impl {
                     interface.put(
                         global_this,
                         b"mac",
-                        ZigString::init(mac).with_encoding().to_js(global_this),
+                        bun_string_jsc::create_utf8_for_js(global_this, mac)?,
                     );
                 }
             }
@@ -1237,12 +1151,12 @@ mod _impl {
         let err = unsafe { libuv::uv_interface_addresses(&mut ifaces, &mut count) };
         if err != 0 {
             let sys_err = SystemError {
-                message: BunString::static_("uv_interface_addresses failed"),
-                code: BunString::static_("ERR_SYSTEM_ERROR"),
+                message: BunString::static_("uv_interface_addresses failed").into(),
+                code: BunString::static_("ERR_SYSTEM_ERROR").into(),
                 //.info = info,
                 errno: err,
-                syscall: BunString::static_("uv_interface_addresses"),
-                ..system_error_default()
+                syscall: BunString::static_("uv_interface_addresses").into(),
+                ..Default::default()
             };
             return Err(global_this.throw_value(sys_err.to_error_instance(global_this)));
         }
@@ -1310,15 +1224,16 @@ mod _impl {
                     };
                     // The full cidr value is the address + the suffix
                     let cidr_str = &ip_buf[start..start + addr_len + suffix_len];
-                    cidr = ZigString::init(cidr_str).with_encoding().to_js(global_this);
+                    cidr = bun_string_jsc::create_utf8_for_js(global_this, cidr_str)?;
                 }
 
                 interface.put(
                     global_this,
                     b"address",
-                    ZigString::init(&ip_buf[start..start + addr_len])
-                        .with_encoding()
-                        .to_js(global_this),
+                    bun_string_jsc::create_utf8_for_js(
+                        global_this,
+                        &ip_buf[start..start + addr_len],
+                    )?,
                 );
             }
 
@@ -1339,7 +1254,7 @@ mod _impl {
                 interface.put(
                     global_this,
                     b"netmask",
-                    ZigString::init(str).with_encoding().to_js(global_this),
+                    bun_string_jsc::create_utf8_for_js(global_this, str)?,
                 );
             }
             // family
@@ -1351,7 +1266,7 @@ mod _impl {
                 match family {
                     bun_sys::posix::AF::INET => global_this.common_strings().ipv4(),
                     bun_sys::posix::AF::INET6 => global_this.common_strings().ipv6(),
-                    _ => ZigString::static_("unknown").to_js(global_this),
+                    _ => BunString::static_("unknown").to_js(global_this)?,
                 },
             );
 
@@ -1361,7 +1276,7 @@ mod _impl {
                 interface.put(
                     global_this,
                     b"mac",
-                    ZigString::init(&mac_buf).with_encoding().to_js(global_this),
+                    bun_string_jsc::create_utf8_for_js(global_this, &mac_buf)?,
                 );
             }
 
@@ -1406,7 +1321,7 @@ mod _impl {
         Ok(ret)
     }
 
-    pub fn release() -> BunString {
+    pub(crate) fn release() -> BunString {
         let mut name_buffer = [0u8; HOST_NAME_MAX];
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -1445,7 +1360,7 @@ mod _impl {
         pub(crate) safe fn set_process_priority(pid: i32, priority: i32) -> i32;
     }
 
-    pub(crate) fn set_process_priority_impl(pid: i32, priority: i32) -> bun_sys::E {
+    fn set_process_priority_impl(pid: i32, priority: i32) -> bun_sys::E {
         if pid < 0 {
             return bun_sys::E::ESRCH;
         }
@@ -1475,7 +1390,7 @@ mod _impl {
                     #[cfg(windows)]
                     errno: libuv::UV_ESRCH,
                     syscall: BunString::static_("uv_os_getpriority"),
-                    ..system_error_default()
+                    ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance_with_info_object(global)))
             }
@@ -1488,7 +1403,7 @@ mod _impl {
                     #[cfg(windows)]
                     errno: libuv::UV_EACCES,
                     syscall: BunString::static_("uv_os_getpriority"),
-                    ..system_error_default()
+                    ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance_with_info_object(global)))
             }
@@ -1501,7 +1416,7 @@ mod _impl {
                     #[cfg(windows)]
                     errno: libuv::UV_ESRCH,
                     syscall: BunString::static_("uv_os_getpriority"),
-                    ..system_error_default()
+                    ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance_with_info_object(global)))
             }
@@ -1548,7 +1463,7 @@ mod _impl {
         }
     }
 
-    pub fn uptime(global: &JSGlobalObject) -> JsResult<f64> {
+    pub(crate) fn uptime(global: &JSGlobalObject) -> JsResult<f64> {
         #[cfg(windows)]
         {
             let mut uptime_value: f64 = 0.0;
@@ -1556,11 +1471,11 @@ mod _impl {
             let err = unsafe { libuv::uv_uptime(&mut uptime_value) };
             if err != 0 {
                 let sys_err = SystemError {
-                    message: BunString::static_("failed to get system uptime"),
-                    code: BunString::static_("ERR_SYSTEM_ERROR"),
+                    message: BunString::static_("failed to get system uptime").into(),
+                    code: BunString::static_("ERR_SYSTEM_ERROR").into(),
                     errno: err,
-                    syscall: BunString::static_("uv_uptime"),
-                    ..system_error_default()
+                    syscall: BunString::static_("uv_uptime").into(),
+                    ..Default::default()
                 };
                 return Err(global.throw_value(sys_err.to_error_instance(global)));
             }
@@ -1594,18 +1509,18 @@ mod _impl {
         let result = JSValue::create_empty_object(global_this, 5);
 
         let home = homedir(global_this)?;
-        let home = scopeguard::guard(home, |h| h.deref());
 
-        result.put(global_this, b"homedir", home.to_js(global_this)?);
+        result.put(global_this, b"homedir", home.into_js(global_this)?);
 
         #[cfg(windows)]
         {
             result.put(
                 global_this,
                 b"username",
-                ZigString::init(env_var::USER.get().unwrap_or(b"unknown"))
-                    .with_encoding()
-                    .to_js(global_this),
+                bun_string_jsc::create_utf8_for_js(
+                    global_this,
+                    env_var::USER.get().unwrap_or(b"unknown"),
+                )?,
             );
             result.put(global_this, b"uid", JSValue::js_number(-1.0));
             result.put(global_this, b"gid", JSValue::js_number(-1.0));
@@ -1618,14 +1533,15 @@ mod _impl {
             result.put(
                 global_this,
                 b"username",
-                ZigString::init(username).with_encoding().to_js(global_this),
+                bun_string_jsc::create_utf8_for_js(global_this, username)?,
             );
             result.put(
                 global_this,
                 b"shell",
-                ZigString::init(env_var::SHELL.get().unwrap_or(b"unknown"))
-                    .with_encoding()
-                    .to_js(global_this),
+                bun_string_jsc::create_utf8_for_js(
+                    global_this,
+                    env_var::SHELL.get().unwrap_or(b"unknown"),
+                )?,
             );
             // `bun_sys::c::{getuid,getgid}` are declared `safe fn` (no args, never
             // fail) — discharges the per-site proof the raw `libc` re-export needed.
@@ -1735,6 +1651,6 @@ fn parse_u32(s: &[u8]) -> crate::Result<u32> {
 #[cfg(windows)]
 #[inline]
 fn slice_to_nul_u16(buf: &[u16]) -> &[u16] {
-    let nul = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    let nul = bun_core::strings::index_of_scalar(buf, 0).unwrap_or(buf.len());
     &buf[..nul]
 }

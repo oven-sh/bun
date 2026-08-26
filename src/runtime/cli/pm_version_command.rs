@@ -1,6 +1,6 @@
 use std::io::Write as _;
 
-use bstr::{BStr, ByteSlice};
+use bstr::BStr;
 
 use crate::api::bun::process::Status as ProcStatus;
 use crate::api::bun::process::sync::{
@@ -37,7 +37,7 @@ enum VersionType {
 }
 
 impl VersionType {
-    pub(crate) fn from_string(str: &[u8]) -> Option<VersionType> {
+    fn from_string(str: &[u8]) -> Option<VersionType> {
         if str == b"patch" {
             return Some(VersionType::Patch);
         }
@@ -834,7 +834,7 @@ impl PmVersionCommand {
         }
 
         let commit_message: Vec<u8> = if let Some(msg) = custom_message {
-            msg.replace(b"%s", version)
+            strings::replace_owned(msg, b"%s", version)
         } else {
             fmt_bytes(format_args!("v{}", BStr::new(version)))
         };

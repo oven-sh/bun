@@ -30,15 +30,6 @@ pub struct ReadToEndResult {
     pub bytes: Vec<u8>,
     pub err: Option<Error>,
 }
-impl ReadToEndResult {
-    #[inline]
-    pub fn unwrap(self) -> core::result::Result<Vec<u8>, Error> {
-        match self.err {
-            Some(e) => Err(e),
-            None => Ok(self.bytes),
-        }
-    }
-}
 
 // `File` high-level helpers — wrap the syscall surface above.
 impl File {
@@ -83,12 +74,6 @@ impl File {
             handle: Fd::stdout(),
         }
     }
-    #[inline]
-    pub fn stderr() -> Self {
-        Self {
-            handle: Fd::stderr(),
-        }
-    }
 
     pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Self> {
         open(path, flags, mode).map(Self::from_fd)
@@ -115,7 +100,7 @@ impl File {
     /// `openat`; on failure, recursively create `dirname(path)` (errors from
     /// the mkdir are swallowed) then retry the open once. If `path` has no
     /// dirname, the original error is returned.
-    pub fn make_openat(dir: impl AsFd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
+    pub(crate) fn make_openat(dir: impl AsFd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
         let dir = dir.as_fd();
         match openat_a(dir, path, flags, mode) {
             Ok(fd) => Ok(Self::from_fd(fd)),
@@ -241,25 +226,6 @@ impl File {
                 read(self.handle, dst)
             }
         })
-    }
-    /// Reads until
-    /// `buf` is full or EOF; returns the filled prefix.
-    pub fn read_fill_buf<'b>(&self, buf: &'b mut [u8]) -> Maybe<&'b mut [u8]> {
-        let mut read_amount: usize = 0;
-        while read_amount < buf.len() {
-            // POSIX uses pread() from offset 0 so a pre-advanced cursor
-            // doesn't truncate; Windows falls back to read().
-            #[cfg(unix)]
-            let rc = pread(self.handle, &mut buf[read_amount..], read_amount as i64);
-            #[cfg(not(unix))]
-            let rc = read(self.handle, &mut buf[read_amount..]);
-            match rc {
-                Err(err) => return Err(err),
-                Ok(0) => break,
-                Ok(n) => read_amount += n,
-            }
-        }
-        Ok(&mut buf[..read_amount])
     }
     pub fn pwrite_all(&self, mut buf: &[u8], mut off: i64) -> Maybe<()> {
         while !buf.is_empty() {
@@ -432,16 +398,6 @@ impl File {
     }
 
     // ── std::io adapters ─────────────────────────────────────────────────
-    /// `File.writer()` — `std.Io.GenericWriter(File, anyerror, stdIoWrite)`.
-    #[inline]
-    pub fn writer(&self) -> FileWriter {
-        FileWriter(self.handle)
-    }
-    /// `File.reader()` — `std.Io.GenericReader(File, anyerror, stdIoRead)`.
-    #[inline]
-    pub fn reader(&self) -> FileReader {
-        FileReader(self.handle)
-    }
     /// Buffered writer (`std::io::BufWriter`) wrapping this fd.
     pub fn buffered_writer(&self) -> std::io::BufWriter<FileWriter> {
         std::io::BufWriter::new(FileWriter(self.handle))
@@ -511,13 +467,12 @@ pub(crate) mod tests {
     #[test]
     fn dropping_stdio_is_safe() {
         let _g = FD_TEST_LOCK.lock();
-        // `File::stdin()` / `stdout()` / `stderr()` wrap process-shared
-        // descriptors that the caller does not own. Dropping the wrapper must
-        // not tear down the test harness's output.
+        // `File::stdin()` / `stdout()` wrap process-shared descriptors that
+        // the caller does not own. Dropping the wrapper must not tear down the
+        // test harness's output.
         for _ in 0..16 {
             let _ = File::stdin();
             let _ = File::stdout();
-            let _ = File::stderr();
         }
         assert!(fstat(Fd::stdout()).is_ok());
     }

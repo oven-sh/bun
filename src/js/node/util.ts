@@ -1,17 +1,26 @@
 // Hardcoded module "node:util"
 const types = require("node:util/types");
-/** @type {import('node-inspect-extracted')} */
-const utl = require("internal/util/inspect");
 const { promisify } = require("internal/promisify");
-const { validateString, validateOneOf, validateBoolean } = require("internal/validators");
+const {
+  validateString,
+  validateOneOf,
+  validateBoolean,
+  validateObject,
+  validateInteger,
+} = require("internal/validators");
+const { resistStopPropagation, ErrnoException } = require("internal/shared");
 const { MIMEType, MIMEParams } = require("internal/util/mime");
 const { deprecate } = require("internal/util/deprecate");
 
 const internalErrorName = $newRustFunction("node_util_binding.rs", "internalErrorName", 1);
+const internalErrorEntries = $newRustFunction("node_util_binding.rs", "internalErrorEntries", 0);
 const parseEnv = $newRustFunction("node_util_binding.rs", "parseEnv", 1);
 
 const NumberIsSafeInteger = Number.isSafeInteger;
 const ObjectKeys = Object.keys;
+const ObjectGetOwnPropertyNames = Object.getOwnPropertyNames;
+const { uncurryThis, SafeMap } = require("internal/primordials");
+const RegExpPrototypeExec = uncurryThis(RegExp.prototype.exec);
 
 var cjs_exports;
 
@@ -22,15 +31,17 @@ function isFunction(value) {
   return typeof value === "function";
 }
 
-const deepEquals = Bun.deepEquals;
-const isDeepStrictEqual = (a, b) => deepEquals(a, b, true);
+// Node semantics (includes the [[Prototype]] identity check Bun.deepEquals omits) plus the
+// skipPrototype third argument, which is public API in node v26.3.0 (fn.length === 3).
+// https://github.com/nodejs/node/blob/main/lib/internal/util/comparisons.js
+const { isDeepStrictEqual } = require("internal/util/comparisons");
 
 const parseArgs = $newRustFunction("parse_args.rs", "parseArgs", 1);
 
-const inspect = utl.inspect;
-const formatWithOptions = utl.formatWithOptions;
-const format = utl.format;
-const stripVTControlCharacters = utl.stripVTControlCharacters;
+let utl;
+function lazyInspectModule() {
+  return (utl ??= require("internal/util/inspect"));
+}
 
 var debugs = {};
 var debugEnvRegex = /^$/;
@@ -67,7 +78,7 @@ function debuglog(set) {
       var pid = process.pid;
       emitWarningIfNeeded(set);
       debugs[set] = function () {
-        var msg = format.$apply(cjs_exports, arguments);
+        var msg = lazyInspectModule().format.$apply(cjs_exports, arguments);
         console.error("%s %d: %s", set, pid, msg);
       };
     } else {
@@ -129,7 +140,7 @@ function timestamp() {
   return [d.getDate(), months[d.getMonth()], time].join(" ");
 }
 var log = function log() {
-  console.log("%s - %s", timestamp(), format.$apply(cjs_exports, arguments));
+  console.log("%s - %s", timestamp(), lazyInspectModule().format.$apply(cjs_exports, arguments));
 };
 var inherits = function inherits(ctor, superCtor) {
   if (ctor === undefined || ctor === null) {
@@ -213,30 +224,181 @@ var toUSVString = input => {
   return (input + "").toWellFormed();
 };
 
-function styleText(format, text) {
-  validateString(text, "text");
+const kEscape = "\u001b[";
+const kEscapeEnd = "m";
+const kDimCode = 2;
+const kBoldCode = 1;
+const kHexCloseSeq = kEscape + "39" + kEscapeEnd;
+const kHexStyleCacheMax = 256;
 
-  if ($isJSArray(format)) {
-    let left = "";
-    let right = "";
-    for (const key of format) {
-      const formatCodes = inspect.colors[key];
-      if (formatCodes == null) {
-        validateOneOf(key, "format", ObjectKeys(inspect.colors));
+// Matches #RGB or #RRGGBB
+const hexColorRegExp = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+
+let styleCache;
+let hexStyleCache;
+let lazyStreamUtils;
+let lazyUtilColors;
+
+function getHexStyleCache() {
+  hexStyleCache ??= new SafeMap();
+  return hexStyleCache;
+}
+
+function getStyleCache() {
+  if (styleCache === undefined) {
+    styleCache = { __proto__: null };
+    const colors = lazyInspectModule().inspect.colors;
+    for (const key of ObjectGetOwnPropertyNames(colors)) {
+      const codes = colors[key];
+      if (codes) {
+        const openNum = codes[0];
+        const closeNum = codes[1];
+        styleCache[key] = {
+          __proto__: null,
+          openSeq: kEscape + openNum + kEscapeEnd,
+          closeSeq: kEscape + closeNum + kEscapeEnd,
+          keepClose: openNum === kDimCode || openNum === kBoldCode,
+        };
       }
-      left += `\u001b[${formatCodes[0]}m`;
-      right = `\u001b[${formatCodes[1]}m${right}`;
+    }
+  }
+  return styleCache;
+}
+
+function hexToRgb(hex) {
+  let hexStr;
+  if (hex.length === 4) {
+    hexStr = hex[1] + hex[1] + hex[2] + hex[2] + hex[3] + hex[3];
+  } else if (hex.length === 7) {
+    hexStr = hex.slice(1);
+  } else {
+    throw $ERR_OUT_OF_RANGE("hex", "#RGB or #RRGGBB", hex);
+  }
+
+  return Buffer.from(hexStr, "hex");
+}
+
+function getHexStyle(hex) {
+  const cache = getHexStyleCache();
+  const cached = cache.get(hex);
+  if (cached !== undefined) return cached;
+  const rgb = hexToRgb(hex);
+  const style = {
+    __proto__: null,
+    openSeq: kEscape + `38;2;${rgb[0]};${rgb[1]};${rgb[2]}` + kEscapeEnd,
+    closeSeq: kHexCloseSeq,
+  };
+  if (cache.size >= kHexStyleCacheMax) {
+    cache.delete(cache.keys().next().value);
+  }
+  cache.set(hex, style);
+  return style;
+}
+
+function replaceCloseCode(str, closeSeq, openSeq, keepClose) {
+  const closeLen = closeSeq.length;
+  let index = str.indexOf(closeSeq);
+  if (index === -1) return str;
+
+  let result = "";
+  let lastIndex = 0;
+  const replacement = keepClose ? closeSeq + openSeq : openSeq;
+
+  do {
+    const afterClose = index + closeLen;
+    if (afterClose < str.length) {
+      result += str.slice(lastIndex, index) + replacement;
+      lastIndex = afterClose;
+    } else {
+      break;
+    }
+    index = str.indexOf(closeSeq, lastIndex);
+  } while (index !== -1);
+
+  return result + str.slice(lastIndex);
+}
+
+function styleText(format, text, options) {
+  const validateStream = options?.validateStream ?? true;
+  const cache = getStyleCache();
+
+  // Fast path: single format string with validateStream=false
+  if (!validateStream && typeof format === "string" && typeof text === "string") {
+    if (format === "none") return text;
+    const style = cache[format];
+    if (style !== undefined) {
+      const processed = replaceCloseCode(text, style.closeSeq, style.openSeq, style.keepClose);
+      return style.openSeq + processed + style.closeSeq;
     }
 
-    return `${left}${text}${right}`;
+    if (format[0] === "#") {
+      let hexStyle = getHexStyleCache().get(format);
+      if (hexStyle === undefined && RegExpPrototypeExec(hexColorRegExp, format) !== null) {
+        hexStyle = getHexStyle(format);
+      }
+      if (hexStyle !== undefined) {
+        const processed = replaceCloseCode(text, hexStyle.closeSeq, hexStyle.openSeq, false);
+        return hexStyle.openSeq + processed + hexStyle.closeSeq;
+      }
+    }
   }
 
-  let formatCodes = inspect.colors[format];
-
-  if (formatCodes == null) {
-    validateOneOf(format, "format", ObjectKeys(inspect.colors));
+  validateString(text, "text");
+  if (options !== undefined) {
+    validateObject(options, "options");
   }
-  return `\u001b[${formatCodes[0]}m${text}\u001b[${formatCodes[1]}m`;
+  validateBoolean(validateStream, "options.validateStream");
+
+  let skipColorize;
+  if (validateStream) {
+    const stream = options?.stream ?? process.stdout;
+    lazyStreamUtils ??= require("internal/streams/utils");
+    const { isNodeStream, isReadableStream, isWritableStream } = lazyStreamUtils;
+    if (!isReadableStream(stream) && !isWritableStream(stream) && !isNodeStream(stream)) {
+      throw $ERR_INVALID_ARG_TYPE("stream", ["ReadableStream", "WritableStream", "Stream"], stream);
+    }
+    lazyUtilColors ??= require("internal/util/colors");
+    skipColorize = !lazyUtilColors.shouldColorize(stream);
+  }
+
+  const formatArray = $isJSArray(format) ? format : [format];
+
+  let openCodes = "";
+  let closeCodes = "";
+  let processedText = text;
+
+  for (const key of formatArray) {
+    if (key === "none") continue;
+
+    if (typeof key === "string" && key[0] === "#") {
+      let hexStyle = getHexStyleCache().get(key);
+      if (hexStyle === undefined) {
+        if (RegExpPrototypeExec(hexColorRegExp, key) === null) {
+          throw $ERR_INVALID_ARG_VALUE("format", key, "must be a valid hex color (#RGB or #RRGGBB)");
+        }
+        if (skipColorize) continue;
+        hexStyle = getHexStyle(key);
+      } else if (skipColorize) {
+        continue;
+      }
+      openCodes += hexStyle.openSeq;
+      closeCodes = hexStyle.closeSeq + closeCodes;
+      processedText = replaceCloseCode(processedText, hexStyle.closeSeq, hexStyle.openSeq, false);
+      continue;
+    }
+
+    const style = cache[key];
+    if (style === undefined) {
+      validateOneOf(key, "format", ObjectGetOwnPropertyNames(lazyInspectModule().inspect.colors));
+    }
+    openCodes += style.openSeq;
+    closeCodes = style.closeSeq + closeCodes;
+    processedText = replaceCloseCode(processedText, style.closeSeq, style.openSeq, style.keepClose);
+  }
+
+  if (skipColorize) return text;
+
+  return `${openCodes}${processedText}${closeCodes}`;
 }
 
 function getSystemErrorName(err: any) {
@@ -245,14 +407,225 @@ function getSystemErrorName(err: any) {
   return internalErrorName(err);
 }
 
+// libuv's uv_strerror() messages keyed by error name (target-independent).
+// The per-target codes come from the native uv_e table (internalErrorEntries).
+const uvErrorMessages = {
+  __proto__: null,
+  E2BIG: "argument list too long",
+  EACCES: "permission denied",
+  EADDRINUSE: "address already in use",
+  EADDRNOTAVAIL: "address not available",
+  EAFNOSUPPORT: "address family not supported",
+  EAGAIN: "resource temporarily unavailable",
+  EAI_ADDRFAMILY: "address family not supported",
+  EAI_AGAIN: "temporary failure",
+  EAI_BADFLAGS: "bad ai_flags value",
+  EAI_BADHINTS: "invalid value for hints",
+  EAI_CANCELED: "request canceled",
+  EAI_FAIL: "permanent failure",
+  EAI_FAMILY: "ai_family not supported",
+  EAI_MEMORY: "out of memory",
+  EAI_NODATA: "no address",
+  EAI_NONAME: "unknown node or service",
+  EAI_OVERFLOW: "argument buffer overflow",
+  EAI_PROTOCOL: "resolved protocol is unknown",
+  EAI_SERVICE: "service not available for socket type",
+  EAI_SOCKTYPE: "socket type not supported",
+  EALREADY: "connection already in progress",
+  EBADF: "bad file descriptor",
+  EBUSY: "resource busy or locked",
+  ECANCELED: "operation canceled",
+  ECHARSET: "invalid Unicode character",
+  ECONNABORTED: "software caused connection abort",
+  ECONNREFUSED: "connection refused",
+  ECONNRESET: "connection reset by peer",
+  EDESTADDRREQ: "destination address required",
+  EEXIST: "file already exists",
+  EFAULT: "bad address in system call argument",
+  EFBIG: "file too large",
+  EHOSTUNREACH: "host is unreachable",
+  EINTR: "interrupted system call",
+  EINVAL: "invalid argument",
+  EIO: "i/o error",
+  EISCONN: "socket is already connected",
+  EISDIR: "illegal operation on a directory",
+  ELOOP: "too many symbolic links encountered",
+  EMFILE: "too many open files",
+  EMSGSIZE: "message too long",
+  ENAMETOOLONG: "name too long",
+  ENETDOWN: "network is down",
+  ENETUNREACH: "network is unreachable",
+  ENFILE: "file table overflow",
+  ENOBUFS: "no buffer space available",
+  ENODEV: "no such device",
+  ENOENT: "no such file or directory",
+  ENOMEM: "not enough memory",
+  ENONET: "machine is not on the network",
+  ENOPROTOOPT: "protocol not available",
+  ENOSPC: "no space left on device",
+  ENOSYS: "function not implemented",
+  ENOTCONN: "socket is not connected",
+  ENOTDIR: "not a directory",
+  ENOTEMPTY: "directory not empty",
+  ENOTSOCK: "socket operation on non-socket",
+  ENOTSUP: "operation not supported on socket",
+  EOVERFLOW: "value too large for defined data type",
+  EPERM: "operation not permitted",
+  EPIPE: "broken pipe",
+  EPROTO: "protocol error",
+  EPROTONOSUPPORT: "protocol not supported",
+  EPROTOTYPE: "protocol wrong type for socket",
+  ERANGE: "result too large",
+  EROFS: "read-only file system",
+  ESHUTDOWN: "cannot send after transport endpoint shutdown",
+  ESPIPE: "invalid seek",
+  ESRCH: "no such process",
+  ETIMEDOUT: "connection timed out",
+  ETXTBSY: "text file is busy",
+  EXDEV: "cross-device link not permitted",
+  UNKNOWN: "unknown error",
+  EOF: "end of file",
+  ENXIO: "no such device or address",
+  EMLINK: "too many links",
+  EHOSTDOWN: "host is down",
+  EREMOTEIO: "remote I/O error",
+  ENOTTY: "inappropriate ioctl for device",
+  EFTYPE: "inappropriate file type or format",
+  EILSEQ: "illegal byte sequence",
+  ESOCKTNOSUPPORT: "socket type not supported",
+  ENODATA: "no data available",
+  EUNATCH: "protocol driver not attached",
+  ENOEXEC: "exec format error",
+};
+
+let uvErrmap: Map<number, [string, string]> | undefined;
+function getUvErrmap() {
+  if (uvErrmap === undefined) {
+    uvErrmap = new Map();
+    const flat = internalErrorEntries();
+    for (let i = 0; i < flat.length; i += 2) {
+      const code = flat[i];
+      const name = flat[i + 1];
+      if (!uvErrmap.has(code)) uvErrmap.set(code, [name, uvErrorMessages[name] ?? name]);
+    }
+  }
+  return uvErrmap;
+}
+
+function getSystemErrorMap() {
+  // Fresh Map with fresh entry arrays: node's binding materialises a new map
+  // per call, and callers may mutate the [name, message] pairs.
+  const copy = new Map();
+  for (const [code, entry] of getUvErrmap()) {
+    copy.set(code, [entry[0], entry[1]]);
+  }
+  return copy;
+}
+
+function getSystemErrorMessage(err: any) {
+  if (typeof err !== "number") throw $ERR_INVALID_ARG_TYPE("err", "number", err);
+  if (err >= 0 || !NumberIsSafeInteger(err)) throw $ERR_OUT_OF_RANGE("err", "a negative integer", err);
+  const entry = getUvErrmap().get(err);
+  return entry !== undefined ? entry[1] : `Unknown system error ${err}`;
+}
+
+function _errnoException(err: any, syscall: string, original?: string) {
+  // ErrnoException validates err via getSystemErrorName (type + range) and
+  // builds node's exact `${syscall} ${code}[ ${original}]` shape.
+  return new ErrnoException(err, syscall, original);
+}
+
+function prepareCallSites(_err, callSites) {
+  const result = [];
+  for (let i = 0; i < callSites.length; i++) {
+    const callSite = callSites[i];
+    // CallSite#getColumnNumber() is 0-based here but 1-based in V8, and node
+    // exposes the column under both names.
+    const columnNumber = (callSite.getColumnNumber() ?? 0) + 1;
+    result.push({
+      functionName: callSite.getFunctionName() ?? "",
+      scriptId: `${callSite.getScriptId()}`,
+      scriptName: callSite.getFileName() ?? "",
+      lineNumber: callSite.getLineNumber() ?? 0,
+      columnNumber,
+      column: columnNumber,
+    });
+  }
+  return result;
+}
+
+function validateSourceMapOption(options) {
+  const { sourceMap } = options;
+  if (sourceMap !== undefined) {
+    validateBoolean(sourceMap, "options.sourceMap");
+  }
+}
+
+function getCallSites(frameCount = 10, options) {
+  // If options is not provided check if frameCount is an object
+  if (options === undefined) {
+    if (typeof frameCount === "object" && frameCount !== null) {
+      // If frameCount is an object, it is the options object
+      options = frameCount;
+      validateObject(options, "options");
+      validateSourceMapOption(options);
+      frameCount = 10;
+    } else {
+      options = {};
+    }
+  } else {
+    validateObject(options, "options");
+    validateSourceMapOption(options);
+  }
+
+  // Using kDefaultMaxCallStackSizeToCapture as reference
+  validateInteger(frameCount, "frameCount", 1, 200);
+
+  // Capture with our own prepareStackTrace so a user-installed
+  // Error.prepareStackTrace is never invoked, and so Error.stackTraceLimit
+  // does not influence the number of frames returned.
+  const target = {};
+  const savedPrepareStackTrace = Error.prepareStackTrace;
+  const savedStackTraceLimit = Error.stackTraceLimit;
+  try {
+    Error.prepareStackTrace = prepareCallSites;
+    // User code may have made stackTraceLimit non-writable; best-effort so the
+    // capture still runs and prepareStackTrace is always restored.
+    try {
+      Error.stackTraceLimit = frameCount;
+    } catch {}
+    Error.captureStackTrace(target, getCallSites);
+    return target.stack;
+  } finally {
+    Error.prepareStackTrace = savedPrepareStackTrace;
+    try {
+      Error.stackTraceLimit = savedStackTraceLimit;
+    } catch {}
+  }
+}
+
+let lazySignals;
+function getSignals() {
+  lazySignals ??= require("node:os").constants.signals;
+  return lazySignals;
+}
+
+function convertProcessSignalToExitCode(signalCode) {
+  const signals = getSignals();
+  validateOneOf(signalCode, "signalCode", ObjectKeys(signals));
+
+  // POSIX standard: exit code for signal termination is 128 + signal number.
+  return 128 + signals[signalCode];
+}
+
 let lazyAbortedRegistry: FinalizationRegistry<{
   ref: WeakRef<AbortSignal>;
-  unregisterToken: (...args: any[]) => void;
+  listener: (...args: any[]) => void;
 }>;
-function onAbortedCallback(resolveFn: Function) {
-  lazyAbortedRegistry.unregister(resolveFn);
+function onAbortedCallback(promise: Promise<void>) {
+  lazyAbortedRegistry.unregister(promise);
 
-  resolveFn();
+  $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
 }
 
 function aborted(signal: AbortSignal, resource: object) {
@@ -268,20 +641,20 @@ function aborted(signal: AbortSignal, resource: object) {
     return Promise.$resolve();
   }
 
-  const { promise, resolve } = $newPromiseCapability(Promise);
-  const unregisterToken = onAbortedCallback.bind(undefined, resolve);
+  const promise = $newPromise();
+  const listener = onAbortedCallback.bind(undefined, promise);
   signal.addEventListener(
     "abort",
     // Do not leak the current scope into the listener.
     // Instead, create a new function.
-    unregisterToken,
-    { once: true },
+    listener,
+    resistStopPropagation({ __proto__: null, once: true }),
   );
 
   if (!lazyAbortedRegistry) {
-    lazyAbortedRegistry = new FinalizationRegistry(({ ref, unregisterToken }) => {
+    lazyAbortedRegistry = new FinalizationRegistry(({ ref, listener }) => {
       const signal = ref.deref();
-      if (signal) signal.removeEventListener("abort", unregisterToken);
+      if (signal) signal.removeEventListener("abort", listener);
     });
   }
 
@@ -292,9 +665,9 @@ function aborted(signal: AbortSignal, resource: object) {
     resource,
     {
       ref: new WeakRef(signal),
-      unregisterToken,
+      listener,
     },
-    unregisterToken,
+    promise,
   );
 
   return promise;
@@ -315,27 +688,57 @@ function setTraceSigInt(enable) {
 
 cjs_exports = {
   // This is in order of `node --print 'Object.keys(util)'`
-  // _errnoException,
+  _errnoException,
   // _exceptionWithHostPort,
   _extend,
   callbackify,
+  convertProcessSignalToExitCode,
   debug: debuglog,
   debuglog,
   deprecate,
-  format,
+  get format() {
+    return lazyInspectModule().format;
+  },
+  set format(value) {
+    Object.defineProperty(cjs_exports, "format", { value, writable: true, enumerable: true, configurable: true });
+  },
   styleText,
-  formatWithOptions,
-  // getCallSite,
-  // getCallSites,
-  // getSystemErrorMap,
+  get formatWithOptions() {
+    return lazyInspectModule().formatWithOptions;
+  },
+  set formatWithOptions(value) {
+    Object.defineProperty(cjs_exports, "formatWithOptions", {
+      value,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  },
+  getCallSites,
+  getSystemErrorMap,
   getSystemErrorName,
-  // getSystemErrorMessage,
+  getSystemErrorMessage,
   inherits,
-  inspect,
+  get inspect() {
+    return lazyInspectModule().inspect;
+  },
+  set inspect(value) {
+    Object.defineProperty(cjs_exports, "inspect", { value, writable: true, enumerable: true, configurable: true });
+  },
   isDeepStrictEqual,
   promisify,
   setTraceSigInt,
-  stripVTControlCharacters,
+  get stripVTControlCharacters() {
+    return lazyInspectModule().stripVTControlCharacters;
+  },
+  set stripVTControlCharacters(value) {
+    Object.defineProperty(cjs_exports, "stripVTControlCharacters", {
+      value,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  },
   toUSVString,
   // transferableAbortSignal,
   // transferableAbortController,

@@ -556,6 +556,13 @@ describe("zlib.zstd", () => {
     expect(roundtrip.toString()).toEqual(inputString);
   });
 
+  it.each([undefined, null])("zstdCompress accepts explicit %p options", async opts => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    zlib.zstdCompress(inputString, opts, (err, out) => (err ? reject(err) : resolve(out)));
+    const compressed = await promise;
+    expect(compressed.toString("base64")).toEqual(compressedString);
+  });
+
   it("zstdCompressSync", () => {
     const compressed = zlib.zstdCompressSync(inputString);
     expect(compressed.toString("base64")).toEqual(compressedString);
@@ -564,6 +571,12 @@ describe("zlib.zstd", () => {
   it("zstdDecompressSync", () => {
     const roundtrip = zlib.zstdDecompressSync(compressedBuffer);
     expect(roundtrip.toString()).toEqual(inputString);
+  });
+
+  it("zstdDecompressSync decodes concatenated frames", () => {
+    const f1 = zlib.zstdCompressSync(Buffer.from("first\n"));
+    const f2 = zlib.zstdCompressSync(Buffer.from("second\n"));
+    expect(zlib.zstdDecompressSync(Buffer.concat([f1, f2])).toString()).toBe("first\nsecond\n");
   });
 
   it("can compress streaming", async () => {
@@ -712,6 +725,35 @@ describe("async write buffer lifetime", () => {
   });
 });
 
+describe("async write pins are released", () => {
+  it("transfer() detaches once several async writes through the same buffers have completed", async () => {
+    const deflate = zlib.createDeflate();
+    try {
+      const handle = deflate._handle;
+      const input = new Uint8Array(new ArrayBuffer(64)).fill(97);
+      const out = new Uint8Array(new ArrayBuffer(4096));
+      for (let i = 0; i < 5; i++) {
+        const { promise, resolve } = Promise.withResolvers();
+        handle.buffer = input;
+        handle.cb = resolve;
+        handle.availOutBefore = out.byteLength;
+        handle.availInBefore = input.byteLength;
+        handle.inOff = 0;
+        handle.flushFlag = zlib.constants.Z_NO_FLUSH;
+        handle.write(zlib.constants.Z_NO_FLUSH, input, 0, input.byteLength, out, 0, out.byteLength);
+        await promise;
+      }
+      // Every write pinned both buffers; every completion must have unpinned them, or they stay undetachable.
+      out.buffer.transfer();
+      input.buffer.transfer();
+      expect(out.buffer.detached).toBe(true);
+      expect(input.buffer.detached).toBe(true);
+    } finally {
+      deflate.close();
+    }
+  });
+});
+
 describe("dictionary buffer lifetime", () => {
   it("decompresses correctly when the dictionary's ArrayBuffer is detached after stream creation", async () => {
     const dictText = "hello hello hello world world world ";
@@ -764,5 +806,14 @@ describe("crc32", () => {
     expect(() => zlib.crc32(new String("abc"))).toThrow(TypeError);
     expect(() => zlib.crc32(String.prototype)).toThrow(TypeError);
     expect(zlib.crc32("abc")).toBe(891568578);
+  });
+
+  it("handles missing and undefined arguments", () => {
+    // No data argument: ERR_INVALID_ARG_TYPE (not a crash, not a different error).
+    expect(() => zlib.crc32()).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    // Explicit undefined behaves the same as no argument.
+    expect(() => zlib.crc32(undefined)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    // Omitted second arg defaults to value=0.
+    expect(zlib.crc32("hello")).toBe(zlib.crc32("hello", 0));
   });
 });

@@ -15,12 +15,4 @@ workspace = true
 # tier-neutral re-export point so callers (`bun_install`, runtime CLI) can
 # `use bun_transpiler::Transpiler` without naming `bun_bundler` directly.
 bun_bundler.workspace = true
-strum.workspace = true
-bstr.workspace = true
-scopeguard.workspace = true
-const_format.workspace = true
-enum-map.workspace = true
-enumset.workspace = true
-libc.workspace = true
-bitflags.workspace = true
 

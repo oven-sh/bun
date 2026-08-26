@@ -8,28 +8,12 @@ pub enum Error {
     NotDir,
     #[error("NameTooLong")]
     NameTooLong,
-    #[error("FileTooBig")]
-    FileTooBig,
     #[error("SymLinkLoop")]
     SymLinkLoop,
-    #[error("ProcessFdQuotaExceeded")]
-    ProcessFdQuotaExceeded,
     #[error("SystemFdQuotaExceeded")]
     SystemFdQuotaExceeded,
     #[error("SystemResources")]
     SystemResources,
-    #[error("ReadOnlyFileSystem")]
-    ReadOnlyFileSystem,
-    #[error("FileSystem")]
-    FileSystem,
-    #[error("FileBusy")]
-    FileBusy,
-    #[error("DeviceBusy")]
-    DeviceBusy,
-    #[error("InvalidUtf8")]
-    InvalidUtf8,
-    #[error("InvalidWtf8")]
-    InvalidWtf8,
     #[error("TarballHTTP400")]
     TarballHTTP400,
     #[error("TarballHTTP401")]
@@ -170,8 +154,6 @@ pub enum Error {
     DebugTextLockfileRoundTrip,
     #[error("NoPackage")]
     NoPackage,
-    #[error("BrokenPipe")]
-    BrokenPipe,
     #[error("WriteFailed")]
     WriteFailed,
     #[error("InvalidCharacter")]
@@ -194,8 +176,6 @@ pub enum Error {
     MissingPackageName,
     #[error("GlobError")]
     GlobError,
-    #[error("Invalid")]
-    Invalid,
     #[error("Lockfile validation failed: list is impossibly long")]
     LockfileValidationFailedListIsImpossiblyLong,
     #[error("Lockfile validation failed: alignment mismatch")]
@@ -212,18 +192,8 @@ pub enum Error {
     LockfileValidationFailedInvalidBinTag,
     #[error("Lockfile validation failed: invalid package scripts")]
     LockfileValidationFailedInvalidPackageScripts,
-    #[error("NPMLockfileVersionMismatch")]
-    NPMLockfileVersionMismatch,
     #[error("InvalidNPMLockfile")]
     InvalidNPMLockfile,
-    #[error("PathTooLong")]
-    PathTooLong,
-    #[error("LockfileWorkspaceMissingResolved")]
-    LockfileWorkspaceMissingResolved,
-    #[error("NotAllPackagesGotResolved")]
-    NotAllPackagesGotResolved,
-    #[error("DependencyLoop")]
-    DependencyLoop,
     #[error("NotSupported")]
     NotSupported,
     #[error("Unexpected")]
@@ -260,8 +230,6 @@ pub enum Error {
     #[error(transparent)]
     Transpiler(#[from] bun_transpiler::Error),
     #[error(transparent)]
-    Zlib(#[from] bun_zlib::ZlibError),
-    #[error(transparent)]
     Paths(#[from] bun_paths::Error),
     #[error(transparent)]
     PathOptions(#[from] bun_paths::path_options::Error),
@@ -277,17 +245,9 @@ impl Error {
             Self::AccessDenied => "AccessDenied",
             Self::NotDir => "NotDir",
             Self::NameTooLong => "NameTooLong",
-            Self::FileTooBig => "FileTooBig",
             Self::SymLinkLoop => "SymLinkLoop",
-            Self::ProcessFdQuotaExceeded => "ProcessFdQuotaExceeded",
             Self::SystemFdQuotaExceeded => "SystemFdQuotaExceeded",
             Self::SystemResources => "SystemResources",
-            Self::ReadOnlyFileSystem => "ReadOnlyFileSystem",
-            Self::FileSystem => "FileSystem",
-            Self::FileBusy => "FileBusy",
-            Self::DeviceBusy => "DeviceBusy",
-            Self::InvalidUtf8 => "InvalidUtf8",
-            Self::InvalidWtf8 => "InvalidWtf8",
             Self::TarballHTTP400 => "TarballHTTP400",
             Self::TarballHTTP401 => "TarballHTTP401",
             Self::TarballHTTP402 => "TarballHTTP402",
@@ -362,7 +322,6 @@ impl Error {
             Self::RepositoryNotFound => "RepositoryNotFound",
             Self::DebugTextLockfileRoundTrip => "DebugTextLockfileRoundTrip",
             Self::NoPackage => "NoPackage",
-            Self::BrokenPipe => "BrokenPipe",
             Self::WriteFailed => "WriteFailed",
             Self::InvalidCharacter => "InvalidCharacter",
             Self::InvalidLockfile => "InvalidLockfile",
@@ -376,7 +335,6 @@ impl Error {
             Self::LockfileIsMissingResolutionData => "Lockfile is missing resolution data",
             Self::MissingPackageName => "MissingPackageName",
             Self::GlobError => "GlobError",
-            Self::Invalid => "Invalid",
             Self::LockfileValidationFailedListIsImpossiblyLong => {
                 "Lockfile validation failed: list is impossibly long"
             }
@@ -401,12 +359,7 @@ impl Error {
             Self::LockfileValidationFailedInvalidPackageScripts => {
                 "Lockfile validation failed: invalid package scripts"
             }
-            Self::NPMLockfileVersionMismatch => "NPMLockfileVersionMismatch",
             Self::InvalidNPMLockfile => "InvalidNPMLockfile",
-            Self::PathTooLong => "PathTooLong",
-            Self::LockfileWorkspaceMissingResolved => "LockfileWorkspaceMissingResolved",
-            Self::NotAllPackagesGotResolved => "NotAllPackagesGotResolved",
-            Self::DependencyLoop => "DependencyLoop",
             Self::NotSupported => "NotSupported",
             Self::Unexpected => "Unexpected",
             Self::NotSameFileSystem => "NotSameFileSystem",
@@ -424,7 +377,6 @@ impl Error {
             Self::Parsers(e) => e.name(),
             Self::Bunfig(e) => e.name(),
             Self::Transpiler(e) => e.name(),
-            Self::Zlib(e) => <&'static str>::from(e),
             Self::Paths(e) => e.name(),
             Self::PathOptions(e) => <&'static str>::from(e),
             Self::Fmt(_) => "FmtError",
@@ -467,7 +419,6 @@ impl From<crate::lockfile_real::tree::SubtreeError> for Error {
         use crate::lockfile_real::tree::SubtreeError as E;
         match e {
             E::OutOfMemory => Self::Alloc(bun_alloc::AllocError),
-            E::DependencyLoop => Self::DependencyLoop,
         }
     }
 }
@@ -488,7 +439,6 @@ impl From<crate::pnpm::MigratePnpmLockfileError> for Error {
         use crate::pnpm::MigratePnpmLockfileError as E;
         match e {
             E::OutOfMemory => Self::Alloc(bun_alloc::AllocError),
-            E::DependencyLoop => Self::DependencyLoop,
             _ => Self::InvalidLockfile,
         }
     }

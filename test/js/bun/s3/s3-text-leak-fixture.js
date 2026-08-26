@@ -3,6 +3,10 @@
 let MAX_ALLOWED_MEMORY_USAGE = 0;
 let MAX_ALLOWED_MEMORY_USAGE_INCREMENT = 15;
 const { randomUUID } = require("crypto");
+const rss =
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
 
 const s3Dest = randomUUID() + "-s3-stream-leak-fixture";
 
@@ -20,13 +24,13 @@ async function run(inputType) {
     await Bun.sleep(10);
     Bun.gc(true);
   }
-  MAX_ALLOWED_MEMORY_USAGE = ((process.memoryUsage.rss() / 1024 / 1024) | 0) + MAX_ALLOWED_MEMORY_USAGE_INCREMENT;
+  MAX_ALLOWED_MEMORY_USAGE = ((rss() / 1024 / 1024) | 0) + MAX_ALLOWED_MEMORY_USAGE_INCREMENT;
   {
     await Promise.all(new Array(100).fill(readLargeFile()));
     Bun.gc(true);
   }
-  const rss = (process.memoryUsage.rss() / 1024 / 1024) | 0;
-  if (rss > MAX_ALLOWED_MEMORY_USAGE) {
+  const rssMB = (rss() / 1024 / 1024) | 0;
+  if (rssMB > MAX_ALLOWED_MEMORY_USAGE) {
     await s3file.unlink();
     throw new Error("Memory usage is too high");
   }

@@ -12,6 +12,10 @@ if (mode !== "clear" && mode !== "refresh" && mode !== "repeat") {
 // ASAN's quarantine retains freed allocations (default 256 MB) so RSS deltas
 // run far higher under bun-asan; widen the threshold to avoid false positives.
 const isASAN = process.execPath.includes("bun-asan");
+const rss =
+  process.platform === "darwin" && typeof Bun !== "undefined" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
 
 const BATCH = 2_000;
 
@@ -60,11 +64,11 @@ async function runBatch() {
 // warmup
 for (let i = 0; i < 15; i++) await runBatch();
 gc();
-const initial = process.memoryUsage.rss();
+const initial = rss();
 
 for (let i = 0; i < 100; i++) await runBatch();
 gc();
-const final = process.memoryUsage.rss();
+const final = rss();
 const deltaMB = (final - initial) / 1024 / 1024;
 console.log("mode:", mode);
 console.log("initial RSS:", (initial / 1024 / 1024) | 0, "MB");

@@ -1,7 +1,7 @@
 import { pathToFileURL } from "bun";
-import { describe, expect, it } from "bun:test";
-import { chmodSync, chownSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isLinux, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
+import { describe, expect, it, test } from "bun:test";
+import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -88,7 +88,7 @@ function writePackageJSONImportsFixture() {
 }
 
 it("file url in import resolves", async () => {
-  const dir = tempDirWithFiles("fileurl", {
+  await using dir = tempDir("fileurl", {
     "index.js": "export const foo = 1;",
   });
   writeFileSync(`${dir}/test.js`, `import {foo} from '${pathToFileURL(dir)}/index.js';\nconsole.log(foo);`);
@@ -109,7 +109,7 @@ it("file url in import resolves", async () => {
 });
 
 it("invalid file url in import throws error", async () => {
-  const dir = tempDirWithFiles("fileurl", {});
+  await using dir = tempDir("fileurl", {});
   writeFileSync(`${dir}/test.js`, `import {foo} from 'file://\0invalid url';\nconsole.log(foo);`);
 
   const { exitCode, stdout, stderr } = Bun.spawnSync({
@@ -122,7 +122,7 @@ it("invalid file url in import throws error", async () => {
 });
 
 it("file url in await import resolves", async () => {
-  const dir = tempDirWithFiles("fileurl", {
+  await using dir = tempDir("fileurl", {
     "index.js": "export const foo = 1;",
   });
   writeFileSync(`${dir}/test.js`, `const {foo} = await import('${pathToFileURL(dir)}/index.js');\nconsole.log(foo);`);
@@ -138,7 +138,7 @@ it("file url in await import resolves", async () => {
 
 it("file url with special characters in await import resolves", async () => {
   const filename = "🅱️ndex.js";
-  const dir = tempDirWithFiles("file url", {
+  await using dir = tempDir("file url", {
     [filename]: "export const foo = 1;",
   });
   console.log(dir);
@@ -158,7 +158,7 @@ it("file url with special characters in await import resolves", async () => {
 
 it("file url with special characters not encoded in await import resolves", async () => {
   const filename = "🅱️ndex.js";
-  const dir = tempDirWithFiles("file url", {
+  await using dir = tempDir("file url", {
     [filename]: "export const foo = 1;",
   });
   writeFileSync(
@@ -177,7 +177,7 @@ it("file url with special characters not encoded in await import resolves", asyn
 
 it("file url with special characters in import statement resolves", async () => {
   const filename = "🅱️ndex.js";
-  const dir = tempDirWithFiles("file url", {
+  await using dir = tempDir("file url", {
     [filename]: "export const foo = 1;",
   });
   writeFileSync(
@@ -196,7 +196,7 @@ it("file url with special characters in import statement resolves", async () => 
 
 it("file url with special characters not encoded in import statement resolves", async () => {
   const filename = "🅱️ndex.js";
-  const dir = tempDirWithFiles("file url", {
+  await using dir = tempDir("file url", {
     [filename]: "export const foo = 1;",
   });
   writeFileSync(`${dir}/test.js`, `import {foo} from '${pathToFileURL(dir)}/${filename}';\nconsole.log(foo);`);
@@ -211,7 +211,7 @@ it("file url with special characters not encoded in import statement resolves", 
 });
 
 it("file url in require resolves", async () => {
-  const dir = tempDirWithFiles("fileurl", {
+  await using dir = tempDir("fileurl", {
     "index.js": "export const foo = 1;",
   });
   writeFileSync(`${dir}/test.js`, `const {foo} = require('${pathToFileURL(dir)}/index.js');\nconsole.log(foo);`);
@@ -227,7 +227,7 @@ it("file url in require resolves", async () => {
 
 it("file url with special characters in require resolves", async () => {
   const filename = "🅱️ndex.js";
-  const dir = tempDirWithFiles("file url", {
+  await using dir = tempDir("file url", {
     [filename]: "export const foo = 1;",
   });
   writeFileSync(
@@ -245,7 +245,7 @@ it("file url with special characters in require resolves", async () => {
 });
 
 it("file url in require.resolve resolves", async () => {
-  const dir = tempDirWithFiles("fileurl", {
+  await using dir = tempDir("fileurl", {
     "index.js": "export const foo = 1;",
   });
   writeFileSync(`${dir}/test.js`, `const to = require.resolve('${pathToFileURL(dir)}/index.js');\nconsole.log(to);`);
@@ -261,7 +261,7 @@ it("file url in require.resolve resolves", async () => {
 
 it("file url with special characters in require resolves", async () => {
   const filename = "🅱️ndex.js";
-  const dir = tempDirWithFiles("file url", {
+  await using dir = tempDir("file url", {
     [filename]: "export const foo = 1;",
   });
   writeFileSync(
@@ -309,7 +309,7 @@ it("import override to bun", async () => {
   expect(await import("#bun")).toBeDefined();
 });
 
-it.todo("import override to bun:test", async () => {
+it("import override to bun:test", async () => {
   // @ts-expect-error
   expect(await import("#bun_test")).toBeDefined();
 });
@@ -415,7 +415,7 @@ it("can resolve with source directories that do not exist", () => {
   // This seems to be a bug in their code, not using a concrete file path for
   // this virtual module, such as 'node_modules/@vue/server-renderer/index.js',
   // but the same exact resolution happens and succeeds in Node.js
-  const dir = tempDirWithFiles("resolve", {
+  using dir = tempDir("resolve", {
     "node_modules/vue/index.js": "export default 123;",
     "test.js": `
       const { createRequire } = require('module');
@@ -440,8 +440,7 @@ describe("When CJS and ESM are mixed", () => {
 
   // https://github.com/oven-sh/bun/issues/4677
   it("loads reflect-metadata before tsyringe", async () => {
-    const { stderr } = bunRun(fixturePath);
-    expect(stderr).toBeEmpty();
+    expect(await bunRun(fixturePath)).toSpawn();
   });
 });
 
@@ -483,6 +482,95 @@ it.skipIf(isWindows)("browser map resolution handles relative paths longer than 
   expect(stderr).toBe("");
   expect(stdout).toContain("42");
   expect(exitCode).toBe(0);
+});
+
+// Parsing a package.json normalized every key of the "browser" map into a fixed
+// 1024-byte threadlocal buffer without a bounds check, so a longer key aborted
+// the process (`panic: range end index 1103 out of range for slice of length
+// 1024`) as soon as the package.json was read, whatever the target.
+describe.concurrent("browser map with a key longer than 1024 bytes", () => {
+  const longKey = Buffer.alloc(1100, "k").toString();
+
+  it("does not crash reading the package.json of a dependency at runtime", async () => {
+    using dir = tempDir("resolver-browser-long-key-runtime", {
+      "node_modules/dep/package.json": JSON.stringify({
+        name: "dep",
+        main: "index.js",
+        browser: { [`./${longKey}.js`]: "./browser.js" },
+      }),
+      "node_modules/dep/index.js": "module.exports = 1;",
+      "index.js": `console.log(require("dep"));`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("1\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("still applies the other entries of the map to a browser build", async () => {
+    using dir = tempDir("resolver-browser-long-key-build", {
+      "package.json": JSON.stringify({
+        name: "pkg",
+        browser: {
+          [`./${longKey}.js`]: "./unused.js",
+          "./node-only.js": "./browser-only.js",
+        },
+      }),
+      "entry.js": `import { x } from "./node-only.js"; console.log(x);`,
+      "node-only.js": `export const x = "node-only";`,
+      "browser-only.js": `export const x = "browser-only";`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--target=browser", "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toContain('"browser-only"');
+    expect(stdout).not.toContain('"node-only"');
+    expect(exitCode).toBe(0);
+  });
+
+  // Looking a specifier up in the map goes through a PATH_MAX-sized buffer,
+  // which on macOS is itself 1024 bytes, so a key this long can only ever be
+  // matched on Linux and Windows.
+  it.skipIf(isMacOS)("remaps a package path that long in a browser build", async () => {
+    using dir = tempDir("resolver-browser-long-key-remap", {
+      "package.json": JSON.stringify({
+        name: "pkg",
+        browser: { [longKey]: "./shim.js" },
+      }),
+      "entry.js": `import { x } from ${JSON.stringify(longKey)}; console.log(x);`,
+      "shim.js": `export const x = "remapped";`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--target=browser", "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toContain('"remapped"');
+    expect(exitCode).toBe(0);
+  });
 });
 
 // ESModule.Package.parse scanned the entire specifier for an `@` to split off a
@@ -1043,7 +1131,7 @@ it("resolves through many directories without corrupting the dir cache", async (
   files[`${deep}/leaf.js`] = `module.exports = require("pkg-3") + require("pkg-77");`;
   files["index.js"] = `let total = 0;\n${imports}console.log(total);\nconsole.log(require("./${deep}/leaf.js"));`;
 
-  const dir = tempDirWithFiles("dir-cache-stress", files);
+  await using dir = tempDir("dir-cache-stress", files);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "index.js"],
     env: bunEnv,
@@ -1055,4 +1143,549 @@ it("resolves through many directories without corrupting the dir cache", async (
   expect(stderr).toBe("");
   expect(stdout).toBe(`${(N * (N - 1)) / 2}\n${3 + 77}\n`);
   expect(exitCode).toBe(0);
+}, 20_000);
+
+// ASAN builds print a warning on stderr that has nothing to do with resolution.
+function stripAsanWarning(stderr: string): string {
+  return stderr
+    .split("\n")
+    .filter(l => l.length > 0 && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+}
+
+async function runWildcardScript(dir: string, entry: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), entry],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: stdout.trim(), stderr: stripAsanWarning(stderr), exitCode };
+}
+
+// https://github.com/oven-sh/bun/issues/29679
+// Packages like @modelcontextprotocol/sdk ship a wildcard `exports` entry
+// whose target has no extension, e.g. `"./*": { "import": "./dist/esm/*" }`.
+// Node.js requires the caller to write `pkg/foo.js` (with the extension).
+// Bun probes configured extensions so `pkg/foo` resolves to `./dist/esm/foo.js`.
+describe("wildcard exports with extensionless target", () => {
+  function makeFixture(extra: Record<string, string> = {}) {
+    return tempDir("wildcard-exports", {
+      "node_modules/wildcard-pkg/package.json": JSON.stringify({
+        name: "wildcard-pkg",
+        type: "module",
+        exports: {
+          ".": "./dist/esm/index.js",
+          "./exact": "./dist/esm/exact/index.js",
+          "./*": {
+            types: "./dist/esm/*.d.ts",
+            import: "./dist/esm/*",
+            require: "./dist/cjs/*",
+          },
+        },
+      }),
+      "node_modules/wildcard-pkg/dist/esm/index.js": "export const root = 'root';",
+      "node_modules/wildcard-pkg/dist/esm/exact/index.js": "export const exact = 'exact';",
+      "node_modules/wildcard-pkg/dist/esm/server/stdio.js": "export const stdio = 'stdio';",
+      "node_modules/wildcard-pkg/dist/esm/server/http.mjs": "export const http = 'http';",
+      "node_modules/wildcard-pkg/dist/cjs/server/stdio.js": "module.exports = { stdio: 'cjs-stdio' };",
+      ...extra,
+    });
+  }
+
+  test.concurrent("resolves import without extension to `.js`", async () => {
+    using dir = makeFixture({
+      "index.ts": `
+        import { stdio } from "wildcard-pkg/server/stdio";
+        console.log(stdio);
+      `,
+    });
+
+    expect(await runWildcardScript(String(dir), "index.ts")).toEqual({
+      stdout: "stdio",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("resolves import without extension to `.mjs`", async () => {
+    using dir = makeFixture({
+      "index.ts": `
+        import { http } from "wildcard-pkg/server/http";
+        console.log(http);
+      `,
+    });
+
+    expect(await runWildcardScript(String(dir), "index.ts")).toEqual({
+      stdout: "http",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("explicit `.js` extension still works", async () => {
+    using dir = makeFixture({
+      "index.ts": `
+        import { stdio } from "wildcard-pkg/server/stdio.js";
+        console.log(stdio);
+      `,
+    });
+
+    expect(await runWildcardScript(String(dir), "index.ts")).toEqual({
+      stdout: "stdio",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("exact-key exports are not affected", async () => {
+    using dir = makeFixture({
+      "index.ts": `
+        import { exact } from "wildcard-pkg/exact";
+        console.log(exact);
+      `,
+    });
+
+    expect(await runWildcardScript(String(dir), "index.ts")).toEqual({
+      stdout: "exact",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("truly missing subpath still errors", async () => {
+    using dir = makeFixture({
+      "index.ts": `
+        import { nope } from "wildcard-pkg/server/does-not-exist";
+        console.log(nope);
+      `,
+    });
+
+    const result = await runWildcardScript(String(dir), "index.ts");
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("Cannot find module");
+  });
+
+  test.concurrent("CJS require of extensionless wildcard target also resolves", async () => {
+    using dir = makeFixture({
+      "index.cjs": `
+        const { stdio } = require("wildcard-pkg/server/stdio");
+        console.log(stdio);
+      `,
+    });
+
+    expect(await runWildcardScript(String(dir), "index.cjs")).toEqual({
+      stdout: "cjs-stdio",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Regression guard: when the wildcard target already has an extension
+  // like `"./*": "./dist/*.js"`, a missing `foo.js` must not silently
+  // double-append to `foo.js.ts` / `foo.js.mjs` / etc. — the literal
+  // `.js`→`.ts` TypeScript rewrite is the only fallback that should run.
+  test.concurrent("explicit-extension wildcard target does not double-probe extensions", async () => {
+    using dir = tempDir("wildcard-explicit-ext", {
+      "node_modules/explicit-pkg/package.json": JSON.stringify({
+        name: "explicit-pkg",
+        type: "module",
+        exports: { "./*": "./dist/*.js" },
+      }),
+      // A sibling that a naive extension probe would grab.
+      "node_modules/explicit-pkg/dist/missing.js.mjs": "export const oops = 'nope';",
+      "index.ts": `
+        import { oops } from "explicit-pkg/missing";
+        console.log(oops);
+      `,
+    });
+
+    const result = await runWildcardScript(String(dir), "index.ts");
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("Cannot find module");
+  });
+
+  test.concurrent("resolves sibling `.js` when a same-named directory exists", async () => {
+    using dir = tempDir("wildcard-dir-sibling", {
+      "node_modules/dir-pkg/package.json": JSON.stringify({
+        name: "dir-pkg",
+        type: "module",
+        exports: { "./*": "./dist/*" },
+      }),
+      "node_modules/dir-pkg/dist/utils/helper.js": "export const helper = 'helper';",
+      "node_modules/dir-pkg/dist/utils.js": "export const utils = 'utils';",
+      "index.ts": `
+        import { utils } from "dir-pkg/utils";
+        console.log(utils);
+      `,
+    });
+
+    expect(await runWildcardScript(String(dir), "index.ts")).toEqual({
+      stdout: "utils",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/6285
+  // typeorm ships `"./*.js": "./*.js"` ahead of `"./*": {"require": "./*.js",
+  // "import": "./*"}`. The ESM `import` condition maps `pkg/util/Foo` to
+  // `./util/Foo` with no extension, which must be probed to `.js` so
+  // `import "typeorm/util/StringUtils"` works the same as the CJS `require`.
+  test.concurrent("resolves typeorm-style `./*` with identity `import` target", async () => {
+    using dir = tempDir("wildcard-typeorm", {
+      "node_modules/typeorm-like/package.json": JSON.stringify({
+        name: "typeorm-like",
+        main: "./index.js",
+        exports: {
+          ".": "./index.js",
+          "./*.js": "./*.js",
+          "./*": { require: "./*.js", import: "./*" },
+        },
+      }),
+      "node_modules/typeorm-like/index.js": "module.exports = {};",
+      "node_modules/typeorm-like/util/StringUtils.js":
+        "module.exports.camelCase = s => s.replace(/_([a-z])/g, (_, c) => c.toUpperCase());",
+      "index.ts": `
+        import { camelCase } from "typeorm-like/util/StringUtils";
+        console.log(camelCase("correct_output"));
+      `,
+    });
+
+    expect(await runWildcardScript(String(dir), "index.ts")).toEqual({
+      stdout: "correctOutput",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/10001
+// Wildcard `imports`/`exports` that point at a `.js` target should also
+// pick up `.ts`/`.tsx`/`.mts` the same way Bun already does for plain
+// file loads (e.g. `import './foo.js'` finds `./foo.ts`). The rewrite
+// is gated on wildcard patterns only — users writing an explicit
+// `"./foo": "./foo.js"` target still get exactly what they asked for.
+describe("wildcard imports/exports with `.js` → `.ts` rewrite", () => {
+  test.concurrent("package.json `imports` wildcard with `.js` target resolves `.ts` file", async () => {
+    using dir = tempDir("wildcard-imports-ts", {
+      "package.json": JSON.stringify({
+        name: "imports-ts",
+        type: "module",
+        imports: {
+          "#app/*": "./app/*.js",
+        },
+      }),
+      "app/main.ts": `export const foo = "ts file";`,
+      "index.ts": `
+        import { foo } from "#app/main";
+        console.log(foo);
+      `,
+    });
+
+    expect(await runWildcardScript(String(dir), "index.ts")).toEqual({
+      stdout: "ts file",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("`.mjs` target resolves `.mts` file", async () => {
+    using dir = tempDir("wildcard-mjs-mts", {
+      "package.json": JSON.stringify({
+        name: "mjs-pkg",
+        type: "module",
+        imports: {
+          "#src/*": "./src/*.mjs",
+        },
+      }),
+      "src/thing.mts": `export const thing = "mts file";`,
+      "index.ts": `
+        import { thing } from "#src/thing";
+        console.log(thing);
+      `,
+    });
+
+    expect(await runWildcardScript(String(dir), "index.ts")).toEqual({
+      stdout: "mts file",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("`.jsx` target resolves `.tsx` file", async () => {
+    using dir = tempDir("wildcard-jsx-tsx", {
+      "package.json": JSON.stringify({
+        name: "jsx-pkg",
+        type: "module",
+        imports: {
+          "#components/*": "./components/*.jsx",
+        },
+      }),
+      "components/Button.tsx": `export const Button = "tsx file";`,
+      "index.ts": `
+        import { Button } from "#components/Button";
+        console.log(Button);
+      `,
+    });
+
+    expect(await runWildcardScript(String(dir), "index.ts")).toEqual({
+      stdout: "tsx file",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("self-referencing `exports` wildcard with `.js` target resolves `.ts` file", async () => {
+    using dir = tempDir("wildcard-exports-self-ts", {
+      "package.json": JSON.stringify({
+        name: "self-pkg",
+        type: "module",
+        exports: {
+          "./*": "./src/*.js",
+        },
+      }),
+      "src/feature.ts": `export const feature = "ts feature";`,
+      "index.ts": `
+        import { feature } from "self-pkg/feature";
+        console.log(feature);
+      `,
+    });
+
+    expect(await runWildcardScript(String(dir), "index.ts")).toEqual({
+      stdout: "ts feature",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("actual `.js` file takes precedence over `.ts`", async () => {
+    using dir = tempDir("wildcard-js-wins", {
+      "package.json": JSON.stringify({
+        name: "js-wins",
+        type: "module",
+        imports: {
+          "#app/*": "./app/*.js",
+        },
+      }),
+      "app/main.js": `export const src = "js file";`,
+      "app/main.ts": `export const src = "ts file";`,
+      "index.ts": `
+        import { src } from "#app/main";
+        console.log(src);
+      `,
+    });
+
+    expect(await runWildcardScript(String(dir), "index.ts")).toEqual({
+      stdout: "js file",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("exact (non-wildcard) `.js` target is not rewritten to `.ts`", async () => {
+    using dir = tempDir("exact-no-rewrite", {
+      "package.json": JSON.stringify({
+        name: "exact-pkg",
+        type: "module",
+        imports: { "#feature": "./src/feature.js" },
+      }),
+      "src/feature.ts": `export const feature = "ts feature";`,
+      "index.ts": `
+        import { feature } from "#feature";
+        console.log(feature);
+      `,
+    });
+
+    const result = await runWildcardScript(String(dir), "index.ts");
+    expect(result.stderr).toContain("Cannot find");
+    expect(result.exitCode).not.toBe(0);
+  });
+});
+
+it.skipIf(isWindows)("runs a script from a working directory nested 256 directories deep", async () => {
+  using dir = tempDir("resolver-deep-cwd", { ".keep": "" });
+  const base = realpathSync(String(dir));
+  const depth = 256 - base.split("/").filter(part => part.length > 0).length;
+  let leaf = base;
+  for (let d = 0; d < depth; d++) leaf = join(leaf, "d");
+  mkdirSync(leaf, { recursive: true });
+  writeFileSync(join(leaf, "index.js"), `console.log("deep-cwd-ok");`);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: leaf,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("deep-cwd-ok\n");
+  expect(exitCode).toBe(0);
+});
+
+it.skipIf(isWindows)("reports a resolution error for an absolute specifier of the maximum path length", async () => {
+  using dir = tempDir("resolver-max-length-specifier", {
+    "package.json": JSON.stringify({ name: "host" }),
+  });
+  const maxPathBytes = isMacOS ? 1024 : 4096;
+  const prefix = "/no-such-directory/";
+  const specifier = prefix + Buffer.alloc(maxPathBytes - prefix.length, "a").toString();
+  expect(specifier.length).toBe(maxPathBytes);
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `try { Bun.resolveSync(${JSON.stringify(specifier)}, process.cwd()); console.log("resolved"); } catch (e) { console.log(e.name, e.code); }`,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("ResolveMessage ERR_MODULE_NOT_FOUND\n");
+  expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/36968
+describe.concurrent("dot specifiers resolve to the directory index, not a sibling file", () => {
+  const conflictFixture = {
+    "lib.ts": `export const fromSibling = "sibling";`,
+    "lib/index.ts": `export const fromIndex = "index";`,
+  };
+
+  it.each([".", "./", "./."])("import %j from lib/run.ts ignores sibling lib.ts", async (specifier: string) => {
+    using dir = tempDir("resolve-dot-dir", {
+      ...conflictFixture,
+      "lib/run.ts": `import { fromIndex } from ${JSON.stringify(specifier)}; console.log(fromIndex);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "lib/run.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("index\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it('require(".") ignores sibling lib.cjs', async () => {
+    using dir = tempDir("resolve-dot-dir-cjs", {
+      "lib.cjs": `module.exports = { which: "sibling" };`,
+      "lib/index.cjs": `module.exports = { which: "index" };`,
+      "lib/run.cjs": `console.log(require(".").which);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "lib/run.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("index\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.each(["..", "./.."])("import %j ignores a sibling of the parent directory", async (specifier: string) => {
+    using dir = tempDir("resolve-dotdot-dir", {
+      ...conflictFixture,
+      "lib/sub/run.ts": `import { fromIndex } from ${JSON.stringify(specifier)}; console.log(fromIndex);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "lib/sub/run.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("index\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it('"." resolves via package.json main when there is no index', async () => {
+    using dir = tempDir("resolve-dot-pkg-main", {
+      "lib.ts": `export const fromSibling = "sibling";`,
+      "lib/package.json": JSON.stringify({ name: "lib", main: "./entry.ts" }),
+      "lib/entry.ts": `export const fromMain = "main";`,
+      "lib/run.ts": `import { fromMain } from "."; console.log(fromMain);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "lib/run.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("main\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it('"../lib" (no dot segment) still prefers the sibling file over the directory', async () => {
+    using dir = tempDir("resolve-trailing-dot-file", {
+      ...conflictFixture,
+      "lib/run.ts": `import { fromSibling } from "../lib"; console.log(fromSibling);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "lib/run.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("sibling\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it('"." marked external via an absolute --external path stays external', async () => {
+    using dir = tempDir("resolve-dot-external", {
+      ...conflictFixture,
+      "lib/run.ts": `import { fromIndex } from "."; console.log(fromIndex);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "lib/run.ts", "--external", join(String(dir), "lib")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain('from "."');
+    expect(exitCode).toBe(0);
+  });
+
+  it('absolute specifier containing ".." and ending in "/." resolves the directory index', async () => {
+    using dir = tempDir("resolve-abs-dot-dir", conflictFixture);
+    const specifier = `${String(dir)}/sub/../lib/.`;
+    writeFileSync(
+      join(String(dir), "lib", "run.ts"),
+      `import { fromIndex } from ${JSON.stringify(specifier)}; console.log(fromIndex);`,
+    );
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "lib/run.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("index\n");
+    expect(exitCode).toBe(0);
+  });
 });

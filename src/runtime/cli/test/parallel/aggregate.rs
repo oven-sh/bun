@@ -1,6 +1,5 @@
-//! Per-worker JUnit XML and LCOV coverage fragment merging. Workers write
-//! their own fragments to a shared temp dir; the coordinator stitches them
-//! into a single document/report after `drive()` completes.
+//! Merges the JUnit and LCOV chunks workers stream over IPC into the
+//! single report the coordinator writes after `drive()` completes.
 
 use std::io::Write as _;
 
@@ -19,6 +18,7 @@ use crate::node::PathLike;
 use crate::node::fs::{NodeFS, args as fs_args};
 use crate::test_command;
 use crate::test_runner::jest::Summary;
+use bun_collections::index_sort;
 
 fn attr_value(head: &[u8], name: &'static [u8]) -> u32 {
     let needle = [b" ", name, b"=\""].concat();
@@ -33,68 +33,57 @@ fn attr_value(head: &[u8], name: &'static [u8]) -> u32 {
     strings::parse_int::<u32>(&head[start..end], 10).unwrap_or(0)
 }
 
+#[derive(Default)]
+pub struct JunitTotals {
+    pub tests: u32,
+    pub failures: u32,
+    pub skipped: u32,
+}
+
+pub(crate) fn add_junit_chunk_totals(totals: &mut JunitTotals, chunk: &[u8]) {
+    let Some(open) = strings::index_of(chunk, b"<testsuite ") else {
+        return;
+    };
+    let Some(gt) = strings::index_of_char(&chunk[open..], b'>') else {
+        return;
+    };
+    let head = &chunk[open..open + gt as usize];
+    totals.tests += attr_value(head, b"tests");
+    totals.failures += attr_value(head, b"failures");
+    totals.skipped += attr_value(head, b"skipped");
+}
+
 pub(crate) fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &Summary) {
+    let mut totals = core::mem::take(&mut coord.junit_totals);
+    let chunks = core::mem::take(&mut coord.junit_chunks);
+    let crashed = core::mem::take(&mut coord.crashed_files);
     let mut body: Vec<u8> = Vec::new();
-    // Crashed workers never reach workerFlushAggregates, so any files they ran
-    // (including earlier passing ones) have no fragment. Compute the outer
-    // <testsuites> totals from what we actually emit so they always equal the
-    // sum of inner <testsuite> elements; CI tools schema-validate this.
-    #[derive(Default)]
-    struct Totals {
-        tests: u32,
-        failures: u32,
-        skipped: u32,
-    }
-    let mut totals = Totals::default();
-
-    for path in &coord.junit_fragments {
-        let file = match File::read_from(Fd::cwd(), path) {
-            bun_sys::Result::Ok(r) => r,
-            bun_sys::Result::Err(_) => continue,
-        };
-        // Each fragment is a full <testsuites> document; extract its header
-        // attributes for the merged totals and its body for the inner suites.
-        let Some(open_start) = strings::index_of(&file, b"<testsuites") else {
-            continue;
-        };
-        let Some(gt) = strings::index_of_char(&file[open_start..], b'>') else {
-            continue;
-        };
-        let head_end = open_start + gt as usize;
-        let head = &file[open_start..head_end];
-        totals.tests += attr_value(head, b"tests");
-        totals.failures += attr_value(head, b"failures");
-        totals.skipped += attr_value(head, b"skipped");
-        let body_start = head_end + 1;
-        let Some(body_end) = strings::last_index_of(&file, b"</testsuites>") else {
-            continue;
-        };
-        if body_start >= body_end {
-            continue;
+    for (idx, slot) in chunks.into_iter().enumerate() {
+        if let Some(chunk) = slot {
+            body.extend_from_slice(&chunk);
+            if !strings::ends_with_char(&chunk, b'\n') {
+                body.push(b'\n');
+            }
         }
-        let inner = strings::trim(&file[body_start..body_end], b"\n");
-        if inner.is_empty() {
-            continue;
+        if crashed.contains(&(idx as u32)) {
+            let rel = coord.rel_path(idx as u32);
+            body.extend_from_slice(b"  <testsuite name=\"");
+            let _ = test_command::escape_xml(rel, &mut body); // fmt::Result into Vec<u8> is infallible
+            body.extend_from_slice(b"\" file=\"");
+            let _ = test_command::escape_xml(rel, &mut body); // fmt::Result into Vec<u8> is infallible
+            body.extend_from_slice(b"\" tests=\"1\" assertions=\"0\" failures=\"1\" skipped=\"0\" time=\"0\">\n    <testcase name=\"(worker crashed)\" classname=\"");
+            let _ = test_command::escape_xml(rel, &mut body); // fmt::Result into Vec<u8> is infallible
+            body.extend_from_slice(
+                b"\">\n\
+                  \x20     <failure message=\"worker process crashed before reporting results\"></failure>\n\
+                  \x20   </testcase>\n\
+                  \x20 </testsuite>\n",
+            );
+            totals.tests += 1;
+            totals.failures += 1;
         }
-        body.extend_from_slice(inner);
-        body.push(b'\n');
     }
-
-    for &idx in &coord.crashed_files {
-        let rel = coord.rel_path(idx);
-        body.extend_from_slice(b"  <testsuite name=\"");
-        let _ = test_command::escape_xml(rel, &mut body); // fmt::Result into Vec<u8> is infallible
-        body.extend_from_slice(b"\" tests=\"1\" assertions=\"0\" failures=\"1\" skipped=\"0\" time=\"0\">\n    <testcase name=\"(worker crashed)\" classname=\"");
-        let _ = test_command::escape_xml(rel, &mut body); // fmt::Result into Vec<u8> is infallible
-        body.extend_from_slice(
-            b"\">\n\
-              \x20     <failure message=\"worker process crashed before reporting results\"></failure>\n\
-              \x20   </testcase>\n\
-              \x20 </testsuite>\n",
-        );
-        totals.tests += 1;
-        totals.failures += 1;
-    }
+    coord.crashed_files = crashed;
 
     let mut contents: Vec<u8> = Vec::new();
     let elapsed_time =
@@ -126,44 +115,62 @@ pub(crate) fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], sum
     }
 }
 
+#[derive(Default, Clone, Copy)]
+struct LineAgg {
+    /// Summed hit count across fragments.
+    hits: u32,
+    /// Number of fragments covering this file whose DA set contains this line.
+    fragments: u32,
+}
+
 #[derive(Default)]
 struct FileCoverage {
     path: Box<[u8]>,
     fnf: u32,
     fnh: u32,
-    /// 1-based line number → summed hit count.
-    da: ArrayHashMap<u32, u32>,
+    /// Number of fragments with an SF record for this file.
+    fragments: u32,
+    /// 1-based line number → aggregate.
+    da: ArrayHashMap<u32, LineAgg>,
 }
 
 impl FileCoverage {
-    fn lh(&self) -> u32 {
-        let mut n: u32 = 0;
-        for &c in self.da.values() {
-            n += (c > 0) as u32;
+    /// The `(line, hits)` pairs to report, sorted by line. A zero-hit line
+    /// counts only if every fragment that covers this file lists it. A worker
+    /// that never executes a function marks the function's whole line range
+    /// (blank lines included) as executable with zero hits, while a worker
+    /// that executed it has real per-line data and omits those lines. Keeping
+    /// a line the executed worker omits would report a fully executed
+    /// function as partially covered (#39930).
+    fn merged_lines(&self) -> Vec<(u32, u32)> {
+        let mut out: Vec<(u32, u32)> = Vec::new();
+        for (&ln, agg) in self.da.keys().iter().zip(self.da.values()) {
+            if agg.hits > 0 || agg.fragments == self.fragments {
+                out.push((ln, agg.hits));
+            }
         }
-        n
+        index_sort::sort_slice_unstable_by(&mut out, |a, b| a.0.cmp(&b.0));
+        out
     }
 }
 
 /// Merge per-worker LCOV fragments into a single report. Line-level (DA) merge
-/// is precise. FNF/FNH take the per-worker max since Bun's LCOV writer doesn't
+/// sums hits, and keeps a zero-hit line only when every fragment covering the
+/// file agrees it is executable (see `FileCoverage::merged_lines`). FNF/FNH
+/// take the per-worker max since Bun's LCOV writer doesn't
 /// emit per-function FN/FNDA records yet, so disjoint per-worker function hits
 /// can't be unioned; this under-reports % Funcs when workers cover different
 /// functions of the same file. The non-parallel path has the same FN/FNDA gap.
 pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
-    paths: &[&[u8]],
+    chunks: &[&[u8]],
     opts: &mut CodeCoverageOptions,
 ) {
     let mut by_file: StringArrayHashMap<FileCoverage> = StringArrayHashMap::default();
 
-    for &path in paths {
-        let data = match File::read_from(Fd::cwd(), path) {
-            bun_sys::Result::Ok(r) => r,
-            bun_sys::Result::Err(_) => continue,
-        };
+    for &data in chunks {
         let mut cur: Option<usize> = None; // index into by_file; raw &mut would alias across getOrPut
         // reshaped for borrowck — store index instead of *mut FileCoverage
-        for raw in data.split(|b| *b == b'\n') {
+        for raw in strings::split(data, b"\n") {
             let line = strings::trim_right(raw, b"\r");
             if line.starts_with(b"SF:") {
                 let name = &line[3..];
@@ -176,13 +183,15 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                         ..Default::default()
                     };
                 }
-                cur = Some(gop.index);
+                let idx = gop.index;
+                by_file.values_mut()[idx].fragments += 1;
+                cur = Some(idx);
             } else if line == b"end_of_record" {
                 cur = None;
             } else if let Some(i) = cur {
                 let fc = &mut by_file.values_mut()[i];
                 if line.starts_with(b"DA:") {
-                    let mut parts = line[3..].split(|b| *b == b',');
+                    let mut parts = strings::split(&line[3..], b",");
                     let Some(ln_s) = parts.next() else { continue };
                     let Ok(ln) = strings::parse_int::<u32>(ln_s, 10) else {
                         continue;
@@ -193,9 +202,15 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                     };
                     let gop = bun_core::handle_oom(fc.da.get_or_put(ln));
                     *gop.value_ptr = if gop.found_existing {
-                        gop.value_ptr.saturating_add(cnt)
+                        LineAgg {
+                            hits: gop.value_ptr.hits.saturating_add(cnt),
+                            fragments: gop.value_ptr.fragments + 1,
+                        }
                     } else {
-                        cnt
+                        LineAgg {
+                            hits: cnt,
+                            fragments: 1,
+                        }
                     };
                 } else if line.starts_with(b"FNF:") {
                     fc.fnf = fc
@@ -219,15 +234,20 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     let mut order: Vec<usize> = (0..by_file.count()).collect();
     {
         let keys = by_file.keys();
-        order.sort_by(|&a, &b| keys[a].as_ref().cmp(keys[b].as_ref()));
+        index_sort::sort_slice_by(&mut order, |&a, &b| keys[a].as_ref().cmp(keys[b].as_ref()));
     }
+
+    // Indexed like `by_file.values()`, not like `order`.
+    let merged: Vec<Vec<(u32, u32)>> = by_file
+        .values()
+        .iter()
+        .map(FileCoverage::merged_lines)
+        .collect();
 
     if opts.reporters.lcov {
         let mut fs = NodeFS::default();
         let _ = fs.mkdir_recursive(&fs_args::Mkdir {
-            path: PathLike::EncodedSlice(bun_core::zig_string::Slice::from_utf8_never_free(
-                &opts.reports_directory,
-            )),
+            path: PathLike::borrowed(&opts.reports_directory),
             always_return_none: true,
             ..Default::default()
         });
@@ -253,8 +273,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                 let mut w: Vec<u8> = Vec::with_capacity(64 * 1024);
                 for &i in &order {
                     let fc = &by_file.values()[i];
-                    let mut sorted: Vec<u32> = fc.da.keys().to_vec();
-                    sorted.sort_unstable();
+                    let lines = &merged[i];
                     let _ = write!(
                         &mut w,
                         "TN:\nSF:{}\nFNF:{}\nFNH:{}\n",
@@ -262,16 +281,12 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                         fc.fnf,
                         fc.fnh
                     );
-                    for &ln in &sorted {
-                        let _ =
-                            writeln!(&mut w, "DA:{},{}", ln, fc.da.get(&ln).expect("unreachable"));
+                    let mut lh: u32 = 0;
+                    for &(ln, hits) in lines {
+                        lh += (hits > 0) as u32;
+                        let _ = writeln!(&mut w, "DA:{},{}", ln, hits);
                     }
-                    let _ = write!(
-                        &mut w,
-                        "LF:{}\nLH:{}\nend_of_record\n",
-                        fc.da.count(),
-                        fc.lh()
-                    );
+                    let _ = write!(&mut w, "LF:{}\nLH:{}\nend_of_record\n", lines.len(), lh);
                 }
                 let _ = File::write_all(&f, &w);
             }
@@ -291,8 +306,8 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     debug_assert_eq!(order.len(), fracs.len());
     for (&i, frac) in order.iter().zip(fracs.iter_mut()) {
         let fc = &by_file.values()[i];
-        let lf: f64 = fc.da.count() as f64;
-        let lh_: f64 = fc.lh() as f64;
+        let lf: f64 = merged[i].len() as f64;
+        let lh_: f64 = merged[i].iter().filter(|&&(_, hits)| hits > 0).count() as f64;
         *frac = CoverageFraction {
             functions: if fc.fnf > 0 {
                 fc.fnh as f64 / fc.fnf as f64
@@ -362,13 +377,11 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             );
             let _ = body.write_all(Output::pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>").as_ref());
 
-            let mut sorted: Vec<u32> = fc.da.keys().to_vec();
-            sorted.sort_unstable();
             let mut first = true;
             let mut range_start: u32 = 0;
             let mut range_end: u32 = 0;
-            for &ln in &sorted {
-                if *fc.da.get(&ln).expect("unreachable") != 0 {
+            for &(ln, hits) in &merged[i] {
+                if hits != 0 {
                     continue;
                 }
                 if range_start == 0 {

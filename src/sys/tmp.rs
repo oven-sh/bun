@@ -1,6 +1,6 @@
 use bun_core::ZStr;
 
-use crate::{E, ErrorCase, Fd, FdExt, O, Tag};
+use crate::{E, ErrorCase, Fd, FdExt, Mode, O, Tag};
 
 // O_TMPFILE doesn't seem to work very well.
 const ALLOW_TMPFILE: bool = false;
@@ -8,16 +8,23 @@ const ALLOW_TMPFILE: bool = false;
 // To be used with files
 // not folders!
 pub struct Tmpfile<'a> {
-    pub destination_dir: Fd,
+    destination_dir: Fd,
     // Caller-supplied tmp name, valid for the lifetime of the Tmpfile.
-    pub tmpfilename: &'a ZStr,
+    tmpfilename: &'a ZStr,
     pub fd: Fd,
     pub using_tmpfile: bool,
 }
 
 impl<'a> Tmpfile<'a> {
     pub fn create(destination_dir: Fd, tmpfilename: &'a ZStr) -> crate::Result<Tmpfile<'a>> {
-        let perm = 0o644;
+        Self::create_with_mode(destination_dir, tmpfilename, 0o644)
+    }
+
+    pub fn create_with_mode(
+        destination_dir: Fd,
+        tmpfilename: &'a ZStr,
+        perm: Mode,
+    ) -> crate::Result<Tmpfile<'a>> {
         let mut tmpfile = Tmpfile {
             destination_dir,
             tmpfilename,

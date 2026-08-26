@@ -523,7 +523,8 @@ function bufferSize(self, size, buffer) {
 }
 
 Socket.prototype.bind = function (port_, address_ /* , callback */) {
-  let port = port_;
+  // bind(cb): a function first argument is the callback, not a port.
+  let port = typeof port_ === "function" ? null : port_;
 
   healthCheck(this);
   const state = this[kStateSymbol];
@@ -683,26 +684,34 @@ function bindServerHandle(self, options, errCb) {
     const closeWrap = handle.close;
     handle.close = function () {
       handle.close = closeWrap;
-      if (state.handle) {
+      if (state.sharedHandle === handle) {
         // Detach first so Socket#close() doesn't re-enter this handle and
         // invoke the original close twice.
         state.sharedHandle = undefined;
-        self.close();
+        if (state.handle) self.close();
       }
       return closeWrap.$apply(this, arguments);
     };
     state.sharedHandle = handle;
-    startBunSocket(self, state, { fd: handle.fd });
+    // Set before the async adoption so a close() racing it cannot free the fd; releaseSharedHandle() undoes it on failure.
+    handle.adopted = true;
+    startBunSocket(self, state, { fd: handle.sharedFd ?? handle.fd }, handle);
   });
+}
+
+function releaseSharedHandle(state, handle) {
+  if (state.sharedHandle === handle) state.sharedHandle = undefined;
+  handle.adopted = false;
+  handle.close();
 }
 
 // Creates the underlying Bun.udpSocket for `self` and completes the bind:
 // either from a resolved hostname/port or by adopting an existing descriptor
 // (`{ fd }`). Mirrors what Node's startListening() makes observable before
 // 'listening' fires.
-function startBunSocket(self, state, createOptions) {
+function startBunSocket(self, state, createOptions, sharedHandle?) {
   try {
-    Bun.udpSocket({
+    const udpOptions: any = {
       ...createOptions,
       socket: {
         data: (_socket, data, port, address, flags) => {
@@ -740,7 +749,10 @@ function startBunSocket(self, state, createOptions) {
           self.emit("error", error);
         },
       },
-    }).$then(
+    };
+    // Private name: a cluster-shared descriptor is read one datagram at a time so workers share the load.
+    if (sharedHandle) $putByIdDirectPrivate(udpOptions, "sharedFd", true);
+    Bun.udpSocket(udpOptions).$then(
       socket => {
         if (!state.handle) {
           // Closed while the bind was in flight.
@@ -769,11 +781,13 @@ function startBunSocket(self, state, createOptions) {
       },
       err => {
         state.bindState = BIND_STATE_UNBOUND;
+        if (sharedHandle) releaseSharedHandle(state, sharedHandle);
         self.emit("error", err);
       },
     );
   } catch (err) {
     state.bindState = BIND_STATE_UNBOUND;
+    if (sharedHandle) releaseSharedHandle(state, sharedHandle);
     self.emit("error", err);
   }
 }
@@ -1130,11 +1144,12 @@ Socket.prototype.close = function (callback) {
     handle.sendQueueHead = 0;
     for (let i = head; i < queue.length; i++) completeQueuedSend(handle, queue[i], UV_ECANCELED);
   }
-  if (state.sharedHandle) {
+  const sharedHandle = state.sharedHandle;
+  if (sharedHandle) {
     // Tells the cluster primary this worker no longer uses the shared
     // descriptor (the descriptor itself was owned and closed by the socket).
-    state.sharedHandle.close();
     state.sharedHandle = undefined;
+    sharedHandle.close();
   }
   defaultTriggerAsyncIdScope(this[async_id_symbol], process.nextTick, socketCloseNT, this);
 
@@ -1145,17 +1160,19 @@ Socket.prototype[SymbolAsyncDispose] = async function () {
   if (!this[kStateSymbol].handle) {
     return;
   }
-  const { promise, resolve, reject } = $newPromiseCapability(Promise);
-  this.close(err => {
-    if (err) {
-      reject(err);
-    } else {
-      resolve();
-    }
-  });
+  const promise = $newPromise();
+  this.close(FunctionPrototypeBind.$call(onAsyncDisposeClosed, undefined, promise));
 
   return promise;
 };
+
+function onAsyncDisposeClosed(promise, err) {
+  if (err) {
+    $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, err);
+  } else {
+    $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
+  }
+}
 
 function socketCloseNT(self) {
   self.emit("close");
@@ -1498,48 +1515,7 @@ Socket.prototype._stopReceiving = deprecate(
   "DEP0112",
 );
 
-/*
-function _createSocketHandle(address, port, addressType, fd, flags) {
-  const handle = newHandle(addressType);
-  let err;
-
-  if (isInt32(fd) && fd > 0) {
-    const type = guessHandleType(fd);
-    if (type !== 'UDP') {
-      err = UV_EINVAL;
-    } else {
-      err = handle.open(fd);
-    }
-  } else if (port || address) {
-    err = handle.bind(address, port || 0, flags);
-  }
-
-  if (err) {
-    handle.close();
-    return err;
-  }
-
-  return handle;
-}
-
-
-// Legacy alias on the C++ wrapper object. This is not public API, so we may
-// want to runtime-deprecate it at some point. There's no hurry, though.
-ObjectDefineProperty(UDP.prototype, 'owner', {
-  __proto__: null,
-  get() { return this[kOwnerSymbol]; },
-  set(v) { return this[kOwnerSymbol] = v; },
-});
-*/
-
 export default {
-  /*
-  _createSocketHandle: deprecate(
-    _createSocketHandle,
-    'dgram._createSocketHandle() is deprecated',
-    'DEP0112',
-  ),
-  */
   createSocket,
   Socket,
 };

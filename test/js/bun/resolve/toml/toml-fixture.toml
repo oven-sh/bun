@@ -40,3 +40,9 @@ entry_one = "three"
 
 [[array.nested]]
 entry_one = "four"
+
+[dates]
+odt = 1979-05-27T00:32:00-07:00
+ldt = 1979-05-27T07:32:00
+ld = 1979-05-27
+lt = 07:32:00

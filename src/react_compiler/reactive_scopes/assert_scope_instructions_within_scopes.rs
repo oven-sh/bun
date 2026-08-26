@@ -20,7 +20,7 @@ use crate::reactive_scopes::visitors::{ReactiveFunctionVisitor, visit_reactive_f
 /// Two-pass visitor:
 /// 1. Collect all scope IDs
 /// 2. Check that places referencing those scopes are within active scope blocks
-pub fn assert_scope_instructions_within_scopes(
+pub(crate) fn assert_scope_instructions_within_scopes(
     func: &ReactiveFunction,
     env: &Environment,
 ) -> Result<(), CompilerDiagnostic> {

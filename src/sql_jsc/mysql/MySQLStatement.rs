@@ -13,34 +13,30 @@ pub use bun_sql::mysql::mysql_param::Param;
 
 bun_core::declare_scope!(MySQLStatement, hidden);
 
-// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` → intrusive single-thread refcount.
-// Shared ownership is expressed as `bun_ptr::IntrusiveRc<MySQLStatement>`; the
-// `ref_count` field below is the embedded counter that `IntrusiveRc` manipulates.
-// `ref()`/`deref()` are methods on `IntrusiveRc`, not on this struct.
 #[derive(bun_ptr::CellRefCounted)]
 pub struct MySQLStatement {
-    pub cached_structure: CachedStructure,
+    pub(crate) cached_structure: CachedStructure,
     // Private — intrusive refcount invariant; reach via `ref_()`/`deref()` or
     // [`Self::init_exact_refs`] at construction time.
     ref_count: Cell<u32>,
-    pub statement_id: u32,
-    pub params: Vec<Param>,
-    pub params_received: u32,
+    pub(crate) statement_id: u32,
+    pub(crate) params: Vec<Param>,
+    pub(crate) params_received: u32,
 
-    pub columns: Vec<ColumnDefinition41>,
-    pub columns_received: u32,
+    pub(crate) columns: Vec<ColumnDefinition41>,
+    pub(crate) columns_received: u32,
 
-    pub signature: Signature,
-    pub status: Status,
-    pub error_response: ErrorPacket,
-    pub execution_flags: ExecutionFlags,
-    pub fields_flags: DataCellFlags,
-    pub result_count: u64,
+    pub(crate) signature: Signature,
+    pub(crate) status: Status,
+    pub(crate) error_response: ErrorPacket,
+    pub(crate) execution_flags: ExecutionFlags,
+    pub(crate) fields_flags: DataCellFlags,
+    pub(crate) result_count: u64,
 }
 
 impl MySQLStatement {
     /// Callers supply the signature and status; every other field takes its default.
-    pub fn new(signature: Signature, status: Status) -> Self {
+    pub(crate) fn new(signature: Signature, status: Status) -> Self {
         Self {
             cached_structure: CachedStructure::default(),
             ref_count: Cell::new(1),
@@ -56,12 +52,6 @@ impl MySQLStatement {
             fields_flags: DataCellFlags::default(),
             result_count: 0,
         }
-    }
-}
-
-impl Default for MySQLStatement {
-    fn default() -> Self {
-        Self::new(Signature::empty(), Status::Parsing)
     }
 }
 
@@ -106,7 +96,7 @@ impl MySQLStatement {
         self.execution_flags = ExecutionFlags::default();
     }
 
-    pub(crate) fn check_for_duplicate_fields(&mut self) {
+    fn check_for_duplicate_fields(&mut self) {
         if !self
             .execution_flags
             .contains(ExecutionFlags::NEEDS_DUPLICATE_CHECK)

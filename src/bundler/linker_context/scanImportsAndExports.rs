@@ -75,7 +75,7 @@ macro_rules! col_ref {
     };
 }
 
-pub fn scan_imports_and_exports(
+pub(crate) fn scan_imports_and_exports(
     this: &mut LinkerContext,
 ) -> Result<(), ScanImportsAndExportsError> {
     let _outer_trace = perf::trace("Bundler.scanImportsAndExports");
@@ -263,29 +263,6 @@ pub fn scan_imports_and_exports(
             {
                 col!(flags)[id].wrap = WrapKind::Cjs;
             }
-        }
-
-        if cfg!(feature = "debug_logs") {
-            let mut cjs_count: usize = 0;
-            let mut esm_count: usize = 0;
-            let mut wrap_cjs_count: usize = 0;
-            let mut wrap_esm_count: usize = 0;
-            for kind in col_ref!(exports_kind).iter() {
-                cjs_count += (*kind == ExportsKind::Cjs) as usize;
-                esm_count += (*kind == ExportsKind::Esm) as usize;
-            }
-            for flag in col_ref!(flags).iter() {
-                wrap_cjs_count += (flag.wrap == WrapKind::Cjs) as usize;
-                wrap_esm_count += (flag.wrap == WrapKind::Esm) as usize;
-            }
-            bun_core::scoped_log!(
-                LinkerCtx,
-                "Step 1: {} CommonJS modules (+ {} wrapped), {} ES modules (+ {} wrapped)",
-                cjs_count,
-                wrap_cjs_count,
-                esm_count,
-                wrap_esm_count,
-            );
         }
 
         // Step 2: Propagate dynamic export status for export star statements that
@@ -926,7 +903,10 @@ pub fn scan_imports_and_exports(
                             } else {
                                 // We should use "__require" instead of "require" if we're not
                                 // generating a CommonJS output file, since it won't exist otherwise.
-                                if should_call_runtime_require(output_format) {
+                                // An `import()` is printed as-is and never becomes `__require()`.
+                                if kind != ImportKind::Dynamic
+                                    && should_call_runtime_require(output_format)
+                                {
                                     runtime_require_uses += 1;
                                 }
 

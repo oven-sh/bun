@@ -197,10 +197,9 @@ export const profiles = {
   },
 
   /**
-   * CI: compile libbun_rust.a only. Target platform via --os/--arch
-   * overrides (cargo `--target <triple>`; linux/freebsd/darwin targets
-   * cross-compile from the shared linux box, windows from the amazonlinux
-   * fleet with a fetched winsysroot — see `rustCanCrossFromLinux()`).
+   * CI: compile libbun_runtime.a only. Target platform via --os/--arch
+   * overrides (cargo `--target <triple>`). Superseded in CI by
+   * `ci-rust-and-link`; kept for ad-hoc rust-only builds.
    */
   "ci-rust-only": {
     buildType: "Release",
@@ -214,6 +213,29 @@ export const profiles = {
   "ci-link-only": {
     buildType: "Release",
     mode: "link-only",
+    ci: true,
+    buildkite: true,
+    webkit: "prebuilt",
+  },
+
+  /**
+   * CI: cargo build + link on one machine. Polls the sibling build-cpp step
+   * for its archive/dep-lib artifacts, then links and packages. Saves an
+   * agent spawn vs rust-only → link-only. Resolves the full toolchain (link
+   * needs ld/strip/rc), unlike rust-only.
+   */
+  "ci-rust-and-link": {
+    buildType: "Release",
+    mode: "rust-and-link",
+    ci: true,
+    buildkite: true,
+    webkit: "prebuilt",
+  },
+
+  /** CI: deps + C++ + cargo + link on one agent; libbun-*.a, libbun_runtime.a and dep libs are uploaded as artifacts. */
+  "ci-build": {
+    buildType: "Release",
+    mode: "archive-link",
     ci: true,
     buildkite: true,
     webkit: "prebuilt",

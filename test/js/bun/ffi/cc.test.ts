@@ -1,6 +1,15 @@
 import { cc, CString, JSCallback, ptr, type FFIFunction, type Library } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { promises as fs } from "fs";
+import {
+  chmodSync,
+  existsSync,
+  promises as fs,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
 import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
@@ -917,9 +926,92 @@ describe("double <-> JSValue conversions", () => {
         huge_bigint: ["number", "Infinity"],
         negative_huge_bigint: ["number", "-Infinity"],
         fractional: ["number", "-2.5"],
-        string: ["number", "2.5"],
+        string: ["threw", "TypeError"],
         null_arg: ["number", "0"],
         undefined_arg: ["number", "NaN"],
+      },
+      exitCode: 0,
+    });
+  });
+
+  // JSVALUE_TO_INT32 must decode double-encoded JSValues: whether a JS number
+  // is int32-tagged or double-encoded is the engine's choice (JIT tier, double
+  // speculation, Math.* provenance), so an int-typed JSCallback return that
+  // truncates the raw encoded bits hands C 0 once the callback tiers up.
+  it("double-encoded JS numbers returned from an int-typed JSCallback reach C as the integer", async () => {
+    using dir = tempDir("bun-ffi-int32-cb-return", {
+      "cb.c": /* c */ `
+        typedef int (*cb_i32)(int);
+        int call_i32(cb_i32 f, int x) { return f(x); }
+        typedef unsigned int (*cb_u32)(int);
+        unsigned int call_u32(cb_u32 f, int x) { return f(x); }
+        typedef signed char (*cb_i8)(int);
+        int call_i8(cb_i8 f, int x) { return (int)f(x); }
+        typedef unsigned short (*cb_u16)(int);
+        int call_u16(cb_u16 f, int x) { return (int)f(x); }
+      `,
+      "fixture.js": /* js */ `
+        import { cc, JSCallback } from "bun:ffi";
+        import path from "path";
+
+        const { symbols } = cc({
+          source: path.join(import.meta.dir, "cb.c"),
+          symbols: {
+            call_i32: { args: ["function", "i32"], returns: "i32" },
+            call_u32: { args: ["function", "i32"], returns: "u32" },
+            call_i8: { args: ["function", "i32"], returns: "i32" },
+            call_u16: { args: ["function", "i32"], returns: "i32" },
+          },
+        });
+
+        // +0.5 then -0.5 on a runtime value: integer-valued, but the intermediate
+        // pins a double-represented result regardless of JIT tier or const-folding.
+        const asDouble = x => {
+          const v = x + 0.5;
+          return v - 0.5;
+        };
+        const echoDouble = new JSCallback(asDouble, { args: ["i32"], returns: "i32" });
+        // Plain int32-tagged return must keep working.
+        const echoInt = new JSCallback(x => x, { args: ["i32"], returns: "i32" });
+        const fractional = new JSCallback(() => 5.7, { args: ["i32"], returns: "i32" });
+        const negFractional = new JSCallback(() => -5.7, { args: ["i32"], returns: "i32" });
+        const u32Double = new JSCallback(x => asDouble(x) + 3000000000, { args: ["i32"], returns: "u32" });
+        const i8Double = new JSCallback(asDouble, { args: ["i32"], returns: "i8" });
+        const u16Double = new JSCallback(asDouble, { args: ["i32"], returns: "u16" });
+
+        const results = {
+          echo_double: symbols.call_i32(echoDouble.ptr, 938),
+          echo_int: symbols.call_i32(echoInt.ptr, 938),
+          fractional: symbols.call_i32(fractional.ptr, 0),
+          neg_fractional: symbols.call_i32(negFractional.ptr, 0),
+          u32_double: symbols.call_u32(u32Double.ptr, 0),
+          i8_double: symbols.call_i8(i8Double.ptr, -7),
+          u16_double: symbols.call_u16(u16Double.ptr, 40000),
+        };
+        for (const cb of [echoDouble, echoInt, fractional, negFractional, u32Double, i8Double, u16Double]) cb.close();
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ results, stderr, exitCode }).toMatchObject({
+      results: {
+        echo_double: 938,
+        echo_int: 938,
+        fractional: 5,
+        neg_fractional: -5,
+        u32_double: 3000000000,
+        i8_double: -7,
+        u16_double: 40000,
       },
       exitCode: 0,
     });
@@ -992,5 +1084,108 @@ describe("double <-> JSValue conversions", () => {
       },
       exitCode: 0,
     });
+  });
+});
+
+describe.skipIf(isASAN)("compiler runtime header directory under BUN_TMPDIR", () => {
+  const plantedHeader = "#define bool int\n#define true 100\n#define false 0\n";
+  const files = {
+    "sentinel.txt": "sentinel-unchanged\n",
+    "add.c": /* c */ `
+      #include <stdbool.h>
+      int add(int a, int b) {
+        return a + b + (int)true - 1;
+      }
+    `,
+    "fixture.js": /* js */ `
+      import { cc } from "bun:ffi";
+      import path from "path";
+
+      const { symbols } = cc({
+        source: path.join(import.meta.dir, "add.c"),
+        symbols: { add: { args: ["int", "int"], returns: "int" } },
+      });
+      console.log(symbols.add(1, 2));
+    `,
+  };
+
+  async function runFixture(dir: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: { ...bunEnv, BUN_TMPDIR: String(dir) },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  }
+
+  it.skipIf(isWindows)("compiles a source that includes a compiler runtime header", async () => {
+    using dir = tempDir("bun-ffi-cc-rt-dir", files);
+
+    const [stdout, stderr, exitCode] = await runFixture(String(dir));
+
+    expect(readFileSync(path.join(String(dir), `bun-cc-${process.getuid!()}`, "stdbool.h"), "utf8")).toContain(
+      "_STDBOOL_H",
+    );
+    expect(stdout).toBe("3\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(isWindows)("does not write compiler runtime headers through a symlinked entry", async () => {
+    using dir = tempDir("bun-ffi-cc-rt-dir-symlink", files);
+    for (const name of ["bun-cc", `bun-cc-${process.getuid!()}`]) {
+      const headerDir = path.join(String(dir), name);
+      mkdirSync(headerDir, { recursive: true });
+      chmodSync(headerDir, 0o755);
+      symlinkSync("../sentinel.txt", path.join(headerDir, "stdbool.h"));
+    }
+
+    const [stdout, stderr, exitCode] = await runFixture(String(dir));
+
+    expect(readFileSync(path.join(String(dir), "sentinel.txt"), "utf8")).toBe("sentinel-unchanged\n");
+    expect(stdout).toBe("3\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(isWindows)(
+    "does not place compiler runtime headers in a pre-existing group- and world-writable directory",
+    async () => {
+      using dir = tempDir("bun-ffi-cc-rt-dir-mode", files);
+      const sharedName = `bun-cc-${process.getuid!()}`;
+      for (const name of ["bun-cc", sharedName]) {
+        const headerDir = path.join(String(dir), name);
+        mkdirSync(headerDir, { recursive: true });
+        writeFileSync(path.join(headerDir, "stdbool.h"), plantedHeader);
+      }
+      chmodSync(path.join(String(dir), "bun-cc"), 0o755);
+      chmodSync(path.join(String(dir), sharedName), 0o777);
+
+      const [stdout, stderr, exitCode] = await runFixture(String(dir));
+
+      expect(readFileSync(path.join(String(dir), "bun-cc", "stdbool.h"), "utf8")).toBe(plantedHeader);
+      expect(readFileSync(path.join(String(dir), sharedName, "stdbool.h"), "utf8")).toBe(plantedHeader);
+      expect(stdout).toBe("3\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it("does not reuse a pre-existing fixed-name bun-cc directory for compiler runtime headers", async () => {
+    using dir = tempDir("bun-ffi-cc-rt-dir-fixed-name", files);
+    const fixedDir = path.join(String(dir), "bun-cc");
+    mkdirSync(fixedDir, { recursive: true });
+    writeFileSync(path.join(fixedDir, "stdbool.h"), plantedHeader);
+
+    const [stdout, stderr, exitCode] = await runFixture(String(dir));
+
+    const staged = readdirSync(String(dir)).filter(
+      name => name !== "bun-cc" && name.includes("bun-cc") && existsSync(path.join(String(dir), name, "stdbool.h")),
+    );
+    expect(staged.length).toBe(1);
+    expect(readFileSync(path.join(String(dir), staged[0], "stdbool.h"), "utf8")).toContain("_STDBOOL_H");
+    expect(readdirSync(fixedDir).sort()).toEqual(["stdbool.h"]);
+    expect(readFileSync(path.join(fixedDir, "stdbool.h"), "utf8")).toBe(plantedHeader);
+    expect(stdout).toBe("3\n");
+    expect(exitCode).toBe(0);
   });
 });

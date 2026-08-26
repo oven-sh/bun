@@ -1,5 +1,4 @@
 use bun_collections::{BoundedArray, VecExt};
-use bun_core::ZStr;
 use bun_ptr::RawSlice;
 
 pub(crate) type InlineStorage = BoundedArray<u8, 15>;
@@ -20,10 +19,10 @@ pub enum Data {
 }
 
 impl Data {
-    pub const EMPTY: Data = Data::Empty;
+    pub(crate) const EMPTY: Data = Data::Empty;
 
     #[inline]
-    pub const fn empty() -> Data {
+    pub(crate) const fn empty() -> Data {
         Data::Empty
     }
 
@@ -52,7 +51,7 @@ impl Data {
 
     /// Zero bytes before deinit
     /// Generally, for security reasons.
-    pub fn zdeinit(&mut self) {
+    pub(crate) fn zdeinit(&mut self) {
         match self {
             Data::Owned(owned) => {
                 // Zero bytes before freeing.
@@ -92,15 +91,6 @@ impl Data {
                 &inline_storage.as_slice()[start_index..end_index],
             )),
         }
-    }
-
-    pub fn slice_z(&self) -> &ZStr {
-        let s = self.slice();
-        if s.is_empty() {
-            return ZStr::EMPTY;
-        }
-        // SAFETY: caller invariant — bytes are NUL-terminated at `len`.
-        unsafe { ZStr::from_raw(s.as_ptr(), s.len()) }
     }
 }
 

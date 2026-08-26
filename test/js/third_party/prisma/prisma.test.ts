@@ -1,7 +1,7 @@
 import { createCanvas } from "@napi-rs/canvas";
 import { it as bunIt, test as bunTest, describe, expect } from "bun:test";
 import { appendFile } from "fs/promises";
-import { getSecret, isCI } from "harness";
+import { getSecret, isCI, rss } from "harness";
 import { generate, generateClient } from "./helper.ts";
 import type { PrismaClient } from "./prisma/types.d.ts";
 
@@ -112,7 +112,7 @@ for (const type of ["sqlite", "postgres" /*"mssql", "mongodb"*/]) {
             // GC occasionally to make memory usage more deterministic
             if (totalIters % gcPeriod == gcPeriod - 1) {
               Bun.gc(true);
-              const line = `${totalIters * batchSize},${(process.memoryUsage.rss() / 1024 / 1024) | 0}`;
+              const line = `${totalIters * batchSize},${(rss() / 1024 / 1024) | 0}`;
               console.log(line);
               if (!isCI) await appendFile("rss.csv", line + "\n");
             }
@@ -131,13 +131,13 @@ for (const type of ["sqlite", "postgres" /*"mssql", "mongodb"*/]) {
 
           console.time("Test x " + testIters + " x " + batchSize);
           // measure memory now
-          const before = process.memoryUsage.rss();
+          const before = rss();
           // run a bunch more iterations to see if memory usage increases
           for (let i = 0; i < testIters; i++) {
             await runQuery();
           }
           console.timeEnd("Test x " + testIters + " x " + batchSize);
-          const after = process.memoryUsage.rss();
+          const after = rss();
           const deltaMB = (after - before) / 1024 / 1024;
           expect(deltaMB).toBeLessThan(10);
         },
@@ -161,7 +161,7 @@ for (const type of ["sqlite", "postgres" /*"mssql", "mongodb"*/]) {
             // GC occasionally to make memory usage more deterministic
             if (totalIters % gcPeriod == gcPeriod - 1) {
               Bun.gc(true);
-              const line = `${totalIters},${(process.memoryUsage.rss() / 1024 / 1024) | 0}`;
+              const line = `${totalIters},${(rss() / 1024 / 1024) | 0}`;
               // console.log(line);
               // await appendFile("rss.csv", line + "\n");
             }
@@ -177,12 +177,12 @@ for (const type of ["sqlite", "postgres" /*"mssql", "mongodb"*/]) {
             await runQuery();
           }
           // measure memory now
-          const before = process.memoryUsage.rss();
+          const before = rss();
           // run a bunch more iterations to see if memory usage increases
           for (let i = 0; i < testIters; i++) {
             await runQuery();
           }
-          const after = process.memoryUsage.rss();
+          const after = rss();
           const deltaMB = (after - before) / 1024 / 1024;
           expect(deltaMB).toBeLessThan(10);
         },

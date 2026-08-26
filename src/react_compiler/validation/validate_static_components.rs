@@ -20,7 +20,7 @@ use crate::hir::{HirFunction, IdentifierId, InstructionValue, JsxTag};
 ///
 /// Returns a CompilerError containing all diagnostics found (may be empty).
 /// Called via `env.logErrors()` pattern in Pipeline.ts.
-pub fn validate_static_components(func: &HirFunction) -> CompilerError {
+pub(crate) fn validate_static_components(func: &HirFunction) -> CompilerError {
     let mut error = CompilerError::new();
     let mut known_dynamic_components: HashMap<IdentifierId, Option<SourceLocation>> =
         HashMap::new();

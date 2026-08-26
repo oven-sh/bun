@@ -12,18 +12,17 @@ use crate::shell::yield_::Yield;
 
 #[derive(Default)]
 pub struct Mv {
-    pub opts: Opts,
     pub args: MvArgs,
-    pub state: MvState,
+    pub(crate) state: MvState,
 }
 
 #[derive(Default)]
 pub struct MvArgs {
     /// Index into argv where source paths start.
-    pub sources_start: usize,
+    pub(crate) sources_start: usize,
     /// argv[sources_start..target_idx] are sources; argv[target_idx] is dest.
-    pub target_idx: usize,
-    pub target_fd: Option<bun_sys::Fd>,
+    pub(crate) target_idx: usize,
+    pub(crate) target_fd: Option<bun_sys::Fd>,
 }
 
 #[derive(Default)]
@@ -46,7 +45,7 @@ pub enum MvState {
 }
 
 /// mv uses its own simpler parser.
-pub(crate) enum MvParseError {
+enum MvParseError {
     IllegalOption(&'static [u8]),
     ShowUsage,
 }
@@ -73,7 +72,7 @@ impl Mv {
         Builtin::done(interp, cmd, exit_code)
     }
 
-    pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         // Read the tag, drop the borrow, then act.
         enum Tag {
             Idle,
@@ -286,8 +285,7 @@ impl Mv {
     ) -> Yield {
         match Self::state_mut(interp, cmd).state {
             MvState::WaitingWriteErr { exit_code } => {
-                if let Some(err) = e {
-                    err.deref();
+                if let Some(_err) = e {
                     Self::state_mut(interp, cmd).state = MvState::Err;
                     return Self::next(interp, cmd);
                 }
@@ -297,14 +295,14 @@ impl Mv {
         }
     }
 
-    pub(crate) fn check_target_task_done(interp: &Interpreter, cmd: NodeId) {
+    fn check_target_task_done(interp: &Interpreter, cmd: NodeId) {
         if let MvState::CheckTarget(t) = &mut Self::state_mut(interp, cmd).state {
             t.done = true;
         }
         Self::next(interp, cmd).run(interp);
     }
 
-    pub(crate) fn batched_move_task_done(interp: &Interpreter, cmd: NodeId, task_idx: usize) {
+    fn batched_move_task_done(interp: &Interpreter, cmd: NodeId, task_idx: usize) {
         let (all_done, had_err) = {
             let MvState::Executing {
                 task_count,
@@ -350,7 +348,7 @@ impl Mv {
         let mut idx = 0usize;
         while idx < argc {
             let flag = Builtin::of(interp, cmd).arg_bytes(idx);
-            match Self::parse_flag(&mut Self::state_mut(interp, cmd).opts, flag) {
+            match Self::parse_flag(flag) {
                 MvFlag::Done => {
                     let filepath_args = argc - idx;
                     if filepath_args < 2 {
@@ -369,29 +367,13 @@ impl Mv {
         Err(MvParseError::ShowUsage)
     }
 
-    fn parse_flag(opts: &mut Opts, flag: &[u8]) -> MvFlag {
+    fn parse_flag(flag: &[u8]) -> MvFlag {
         if flag.is_empty() || flag[0] != b'-' {
             return MvFlag::Done;
         }
         for &ch in &flag[1..] {
             match ch {
-                b'f' => {
-                    opts.force_overwrite = true;
-                    opts.interactive_mode = false;
-                    opts.no_overwrite = false;
-                }
-                b'h' => opts.no_dereference = true,
-                b'i' => {
-                    opts.interactive_mode = true;
-                    opts.force_overwrite = false;
-                    opts.no_overwrite = false;
-                }
-                b'n' => {
-                    opts.no_overwrite = true;
-                    opts.force_overwrite = false;
-                    opts.interactive_mode = false;
-                }
-                b'v' => opts.verbose_output = true,
+                b'f' | b'h' | b'i' | b'n' | b'v' => {}
                 _ => return MvFlag::IllegalOption(b"-"),
             }
         }
@@ -420,18 +402,18 @@ enum MvFlag {
 /// `openat(target, O_RDONLY|O_DIRECTORY)`
 /// on a worker thread to learn whether the destination is a directory.
 pub struct ShellMvCheckTargetTask {
-    pub cmd: NodeId,
-    pub cwd: bun_sys::Fd,
-    pub target: ZBox,
+    pub(crate) cmd: NodeId,
+    pub(crate) cwd: bun_sys::Fd,
+    pub(crate) target: ZBox,
     /// `Ok(Some(fd))` → directory; `Ok(None)` → not a directory; `Err(e)` →
     /// open error (e.g. ENOENT).
-    pub result: Option<Result<Option<bun_sys::Fd>, bun_sys::Error>>,
-    pub done: bool,
+    pub(crate) result: Option<Result<Option<bun_sys::Fd>, bun_sys::Error>>,
+    pub(crate) done: bool,
     pub task: ShellTask,
 }
 
 impl ShellMvCheckTargetTask {
-    pub(crate) fn run_from_thread_pool(this: &mut ShellMvCheckTargetTask) {
+    fn run_from_thread_pool(this: &mut ShellMvCheckTargetTask) {
         let flags = bun_sys::O::RDONLY | bun_sys::O::DIRECTORY;
         this.result = Some(match shell_openat(this.cwd, &this.target, flags, 0) {
             Ok(fd) => Ok(Some(fd)),
@@ -444,28 +426,28 @@ impl ShellMvCheckTargetTask {
 
 /// renameat() each source into the target.
 pub struct ShellMvBatchedTask {
-    pub cmd: NodeId,
+    pub(crate) cmd: NodeId,
     /// Index into `MvState::Executing::tasks` so the main-thread completion
     /// can route to `Mv::batched_move_task_done`.
-    pub idx: usize,
-    pub sources: Vec<ZBox>,
-    pub target: ZBox,
-    pub target_fd: Option<bun_sys::Fd>,
-    pub cwd: bun_sys::Fd,
+    pub(crate) idx: usize,
+    pub(crate) sources: Vec<ZBox>,
+    pub(crate) target: ZBox,
+    pub(crate) target_fd: Option<bun_sys::Fd>,
+    pub(crate) cwd: bun_sys::Fd,
     /// Back-reference into `MvState::Executing::error_signal`. The owning
     /// `MvState` outlives every batched task (tasks are joined / counted in
     /// `batched_move_task_done` before the state transitions), so the
     /// `BackRef` invariant holds. `None` only between construction and
     /// scheduling — never observed by `run_from_thread_pool`.
-    pub error_signal: Option<BackRef<AtomicBool>>,
-    pub err: Option<bun_sys::Error>,
+    pub(crate) error_signal: Option<BackRef<AtomicBool>>,
+    pub(crate) err: Option<bun_sys::Error>,
     pub task: ShellTask,
 }
 
 impl ShellMvBatchedTask {
-    pub(crate) const BATCH_SIZE: usize = 5;
+    const BATCH_SIZE: usize = 5;
 
-    pub(crate) fn run_from_thread_pool(this: &mut ShellMvBatchedTask) {
+    fn run_from_thread_pool(this: &mut ShellMvBatchedTask) {
         // Moving multiple entries into a directory.
         if this.sources.len() > 1 {
             return this.move_multiple_into_dir();
@@ -485,7 +467,7 @@ impl ShellMvBatchedTask {
             return;
         }
         // Rename single entry to a new path (target was not a directory).
-        if let Err(e) = bun_sys::renameat(this.cwd, &this.sources[0], this.cwd, &this.target) {
+        if let Err(e) = Self::do_rename(this.cwd, &this.sources[0], this.cwd, &this.target) {
             this.err = Some(if e.get_errno() == bun_sys::E::ENOTDIR {
                 e.with_path(this.target.as_bytes())
             } else {
@@ -493,6 +475,151 @@ impl ShellMvBatchedTask {
             });
         }
         // Bounce-back is posted by `shell_task_trampoline`.
+    }
+
+    /// `renameat()`, falling through to [`Self::move_across_devices`] on EXDEV.
+    fn do_rename(
+        src_dir: bun_sys::Fd,
+        src: &ZStr,
+        dst_dir: bun_sys::Fd,
+        dst: &ZStr,
+    ) -> Result<(), bun_sys::Error> {
+        match bun_sys::renameat(src_dir, src, dst_dir, dst) {
+            Err(e) if e.get_errno() == bun_sys::E::EXDEV => {
+                Self::move_across_devices(src_dir, src, dst_dir, dst).map_err(|e| {
+                    if e.path.is_empty() {
+                        e.with_path(src.as_bytes())
+                    } else {
+                        e
+                    }
+                })
+            }
+            r => r,
+        }
+    }
+
+    /// EXDEV fallback: copy `src` to `dst`, then (only on success) remove `src`.
+    fn move_across_devices(
+        src_dir: bun_sys::Fd,
+        src: &ZStr,
+        dst_dir: bun_sys::Fd,
+        dst: &ZStr,
+    ) -> Result<(), bun_sys::Error> {
+        use bun_sys::{Dir, E, File, O, S, Tag};
+
+        let st = bun_sys::lstatat(src_dir, src)?;
+        let mode = st.st_mode as bun_core::Mode;
+
+        // Bind mounts can alias one inode through two vfsmounts (renameat()
+        // still returns EXDEV); treat same-inode as the POSIX rename() no-op.
+        if let Ok(d) = bun_sys::lstatat(dst_dir, dst) {
+            if st.st_dev == d.st_dev && st.st_ino == d.st_ino {
+                return Ok(());
+            }
+        }
+
+        if S::ISLNK(mode) {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let n = bun_sys::readlinkat(src_dir, src, &mut buf[..])?;
+            if n >= bun_paths::MAX_PATH_BYTES {
+                return Err(bun_sys::Error::from_code(E::ENAMETOOLONG, Tag::readlink));
+            }
+            buf[n] = 0;
+            let _ = bun_sys::unlinkat(dst_dir, dst);
+            bun_sys::symlinkat(ZStr::from_buf(&buf[..], n), dst_dir, dst)?;
+            return bun_sys::unlinkat(src_dir, src);
+        }
+
+        // Windows `lstatat` never reports S_IFLNK; follow there so a reparse-point source fails the dev/ino compare.
+        let src_nofollow = if cfg!(windows) { 0 } else { O::NOFOLLOW };
+
+        if S::ISDIR(mode) {
+            let sd = Dir::from_fd(shell_openat(
+                src_dir,
+                src,
+                O::RDONLY | O::DIRECTORY | src_nofollow,
+                0,
+            )?);
+            let sst = bun_sys::fstat(sd.fd())?;
+            if sst.st_dev != st.st_dev || sst.st_ino != st.st_ino {
+                return Err(bun_sys::Error::from_code(E::ENOENT, Tag::rename));
+            }
+            let st = sst;
+            let mode = st.st_mode as bun_core::Mode;
+            // `| 0o700` so children can be written even when the source mode is read-only; restored via `fchmod` below.
+            if let Err(e) = bun_sys::mkdirat(dst_dir, dst, (mode & 0o7777) | 0o700) {
+                if e.get_errno() != E::EEXIST {
+                    return Err(e);
+                }
+                // Refuse to merge into a non-empty dest (matches same-device `ENOTEMPTY`).
+                bun_sys::rmdirat(dst_dir, dst)?;
+                bun_sys::mkdirat(dst_dir, dst, (mode & 0o7777) | 0o700)?;
+            }
+            let dd = Dir::from_fd(shell_openat(
+                dst_dir,
+                dst,
+                O::RDONLY | O::DIRECTORY | O::NOFOLLOW,
+                0,
+            )?);
+            // Boxed: `WrappedIterator` embeds an 8 KB inline readdir buffer.
+            let mut iter = Box::new(bun_sys::dir_iterator::iterate(sd.fd()));
+            let mut nbuf = bun_paths::path_buffer_pool::get();
+            while let Some(entry) = iter.next()? {
+                let name = entry.name.slice_u8();
+                if name.len() >= bun_paths::MAX_PATH_BYTES {
+                    return Err(bun_sys::Error::from_code(E::ENAMETOOLONG, Tag::rename));
+                }
+                nbuf[..name.len()].copy_from_slice(name);
+                nbuf[name.len()] = 0;
+                let name_z = ZStr::from_buf(&nbuf[..], name.len());
+                Self::move_across_devices(sd.fd(), name_z, dd.fd(), name_z)?;
+            }
+            #[cfg(unix)]
+            let _ = bun_sys::fchown(dd.fd(), st.st_uid as _, st.st_gid as _);
+            let _ = bun_sys::fchmod(dd.fd(), mode & 0o7777);
+            drop((sd, dd));
+            return bun_sys::rmdirat(src_dir, src);
+        }
+
+        if !S::ISREG(mode) {
+            // Opening a FIFO `O_RDONLY` without `O_NONBLOCK` would block forever.
+            return Err(bun_sys::Error::from_code(E::ENOTSUP, Tag::rename));
+        }
+
+        let in_ = File::openat(
+            src_dir,
+            src.as_bytes(),
+            O::RDONLY | O::CLOEXEC | src_nofollow,
+            0,
+        )?;
+        let fst = bun_sys::fstat(in_.fd())?;
+        if fst.st_dev != st.st_dev || fst.st_ino != st.st_ino {
+            return Err(bun_sys::Error::from_code(E::ENOENT, Tag::rename));
+        }
+        let st = fst;
+        let mode = st.st_mode as bun_core::Mode;
+        // Unlink first so a symlink-at-dest isn't followed by `O_TRUNC`; also avoids ETXTBUSY.
+        let _ = bun_sys::unlinkat(dst_dir, dst);
+        let out = File::openat(
+            dst_dir,
+            dst.as_bytes(),
+            O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC | O::NOFOLLOW,
+            mode & 0o7777,
+        )?;
+        let _ = bun_sys::preallocate_file(out.fd().native(), 0, st.st_size as _);
+        if let Err(e) = bun_sys::copy_file(in_.fd(), out.fd()) {
+            drop(out);
+            let _ = bun_sys::unlinkat(dst_dir, dst);
+            return Err(e);
+        }
+        #[cfg(unix)]
+        {
+            // `fchown` first: Linux clears S_ISUID/S_ISGID on chown.
+            let _ = bun_sys::fchown(out.fd(), st.st_uid as _, st.st_gid as _);
+            let _ = bun_sys::fchmod(out.fd(), mode & 0o7777);
+        }
+        drop((in_, out));
+        bun_sys::unlinkat(src_dir, src)
     }
 
     /// `renameat(cwd, src, target_fd, basename(src))`. A free fn over the
@@ -516,7 +643,7 @@ impl ShellMvBatchedTask {
         }
         buf[len] = 0;
         let path_in_dir = ZStr::from_buf(buf.as_slice(), len);
-        bun_sys::renameat(cwd, src, target_fd, path_in_dir).map_err(|e| {
+        Self::do_rename(cwd, src, target_fd, path_in_dir).map_err(|e| {
             // Surface `target/basename(src)` as the failing path.
             let joined = resolve_path::join_z::<bun_paths::platform::Auto>(&[target, base]);
             e.with_path(joined.as_bytes())
@@ -554,9 +681,20 @@ impl ShellMvBatchedTask {
 
 impl bun_event_loop::Taskable for ShellMvCheckTargetTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMvCheckTargetTask;
+    /// Owned by the builtin's `MvState`, which frees it with the interpreter;
+    /// only the keep-alive is this hop's to drop.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract; the Mv state outlives the queue entry.
+        unsafe { (*this).task.unref_unrun() }
+    }
 }
 impl bun_event_loop::Taskable for ShellMvBatchedTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMvBatchedTask;
+    /// An element of `MvState::Executing.tasks`; as `ShellMvCheckTargetTask`.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: as above.
+        unsafe { (*this).task.unref_unrun() }
+    }
 }
 
 // `*mut Self` sig is forced by the `ShellTaskCtx` trait contract; the body's
@@ -588,31 +726,5 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMvBatchedTask {
         // is a live `ShellMvBatchedTask` held in `MvState::Executing::tasks`.
         let this = unsafe { this.as_ref() }.unwrap();
         Mv::batched_move_task_done(interp, this.cmd, this.idx);
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct Opts {
-    /// `-f` — do not prompt before overwriting (default).
-    pub force_overwrite: bool,
-    /// `-h` — if target is a symlink to a directory, do not follow it.
-    pub no_dereference: bool,
-    /// `-i` — prompt before overwriting.
-    pub interactive_mode: bool,
-    /// `-n` — do not overwrite an existing file.
-    pub no_overwrite: bool,
-    /// `-v` — verbose.
-    pub verbose_output: bool,
-}
-
-impl Default for Opts {
-    fn default() -> Self {
-        Self {
-            force_overwrite: true,
-            no_dereference: false,
-            interactive_mode: false,
-            no_overwrite: false,
-            verbose_output: false,
-        }
     }
 }

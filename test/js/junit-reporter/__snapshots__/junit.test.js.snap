@@ -6,22 +6,22 @@ exports[`junit reporter more scenarios 1`] = `
   <testsuite name="comprehensive.test.js" file="comprehensive.test.js" tests="22" assertions="16" failures="1" skipped="6">
     <testsuite name="comprehensive test suite" file="comprehensive.test.js" line="4" tests="22" assertions="16" failures="1" skipped="6">
       <testsuite name="division suite 10 / 5" file="comprehensive.test.js" line="8" tests="1" assertions="1" failures="0" skipped="0">
-        <testcase name="should divide correctly" classname="division suite 10 / 5 &amp;gt; comprehensive test suite" file="comprehensive.test.js" line="9" assertions="1" />
+        <testcase name="should divide correctly" classname="division suite 10 / 5 &gt; comprehensive test suite" file="comprehensive.test.js" line="9" assertions="1" />
       </testsuite>
       <testsuite name="division suite 20 / 10" file="comprehensive.test.js" line="8" tests="1" assertions="1" failures="0" skipped="0">
-        <testcase name="should divide correctly" classname="division suite 20 / 10 &amp;gt; comprehensive test suite" file="comprehensive.test.js" line="9" assertions="1" />
+        <testcase name="should divide correctly" classname="division suite 20 / 10 &gt; comprehensive test suite" file="comprehensive.test.js" line="9" assertions="1" />
       </testsuite>
       <testsuite name="conditional describe that runs" file="comprehensive.test.js" line="14" tests="1" assertions="1" failures="0" skipped="0">
-        <testcase name="nested test in conditional describe" classname="conditional describe that runs &amp;gt; comprehensive test suite" file="comprehensive.test.js" line="15" assertions="1" />
+        <testcase name="nested test in conditional describe" classname="conditional describe that runs &gt; comprehensive test suite" file="comprehensive.test.js" line="15" assertions="1" />
       </testsuite>
       <testsuite name="conditional describe that skips" file="comprehensive.test.js" line="20" tests="1" assertions="0" failures="0" skipped="1">
-        <testcase name="nested test that gets skipped" classname="conditional describe that skips &amp;gt; comprehensive test suite" file="comprehensive.test.js" line="21" assertions="0">
+        <testcase name="nested test that gets skipped" classname="conditional describe that skips &gt; comprehensive test suite" file="comprehensive.test.js" line="21" assertions="0">
           <skipped />
         </testcase>
       </testsuite>
       <testcase name="basic passing test" classname="comprehensive test suite" file="comprehensive.test.js" line="26" assertions="1" />
       <testcase name="basic failing test" classname="comprehensive test suite" file="comprehensive.test.js" line="30" assertions="1">
-        <failure type="AssertionError" />
+        <failure type="AssertionError" message="expect(received).toBe(expected)&#10;&#10;Expected: 3&#10;Received: 2&#10;">AssertionError: expect(received).toBe(expected)&#10;&#10;Expected: 3&#10;Received: 2&#10;&#10;      at comprehensive.test.js:31:27&#10;</failure>
       </testcase>
       <testcase name="basic skipped test" classname="comprehensive test suite" file="comprehensive.test.js" line="34" assertions="0">
         <skipped />
@@ -61,22 +61,22 @@ exports[`junit reporter more scenarios 2`] = `
   <testsuite name="comprehensive.test.js" file="comprehensive.test.js" tests="22" assertions="1" failures="0" skipped="21">
     <testsuite name="comprehensive test suite" file="comprehensive.test.js" line="4" tests="22" assertions="1" failures="0" skipped="21">
       <testsuite name="division suite 10 / 5" file="comprehensive.test.js" line="8" tests="1" assertions="0" failures="0" skipped="1">
-        <testcase name="should divide correctly" classname="division suite 10 / 5 &amp;gt; comprehensive test suite" file="comprehensive.test.js" line="9" assertions="0">
+        <testcase name="should divide correctly" classname="division suite 10 / 5 &gt; comprehensive test suite" file="comprehensive.test.js" line="9" assertions="0">
           <skipped />
         </testcase>
       </testsuite>
       <testsuite name="division suite 20 / 10" file="comprehensive.test.js" line="8" tests="1" assertions="0" failures="0" skipped="1">
-        <testcase name="should divide correctly" classname="division suite 20 / 10 &amp;gt; comprehensive test suite" file="comprehensive.test.js" line="9" assertions="0">
+        <testcase name="should divide correctly" classname="division suite 20 / 10 &gt; comprehensive test suite" file="comprehensive.test.js" line="9" assertions="0">
           <skipped />
         </testcase>
       </testsuite>
       <testsuite name="conditional describe that runs" file="comprehensive.test.js" line="14" tests="1" assertions="0" failures="0" skipped="1">
-        <testcase name="nested test in conditional describe" classname="conditional describe that runs &amp;gt; comprehensive test suite" file="comprehensive.test.js" line="15" assertions="0">
+        <testcase name="nested test in conditional describe" classname="conditional describe that runs &gt; comprehensive test suite" file="comprehensive.test.js" line="15" assertions="0">
           <skipped />
         </testcase>
       </testsuite>
       <testsuite name="conditional describe that skips" file="comprehensive.test.js" line="20" tests="1" assertions="0" failures="0" skipped="1">
-        <testcase name="nested test that gets skipped" classname="conditional describe that skips &amp;gt; comprehensive test suite" file="comprehensive.test.js" line="21" assertions="0">
+        <testcase name="nested test that gets skipped" classname="conditional describe that skips &gt; comprehensive test suite" file="comprehensive.test.js" line="21" assertions="0">
           <skipped />
         </testcase>
       </testsuite>

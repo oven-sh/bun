@@ -22,6 +22,7 @@
 #include "JSWebSocket.h"
 
 #include "ActiveDOMObject.h"
+
 #include "EventNames.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
@@ -104,7 +105,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSWebSocketPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSWebSocketPrototype* ptr = new (NotNull, JSC::allocateCell<JSWebSocketPrototype>(vm)) JSWebSocketPrototype(vm, globalObject, structure);
+        JSWebSocketPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSWebSocketPrototype))) JSWebSocketPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -118,7 +119,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -260,12 +261,11 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
         RETURN_IF_EXCEPTION(throwScope, {});
         if (tlsOptionsValue && !tlsOptionsValue.isUndefinedOrNull() && tlsOptionsValue.isObject()) {
             // Also extract rejectUnauthorized for backwards compatibility
-            if (JSC::JSObject* tlsOptions = tlsOptionsValue.getObject()) {
-                auto rejectUnauthorizedValue = Bun::getOwnPropertyIfExists(globalObject, tlsOptions, PropertyName(Identifier::fromString(vm, "rejectUnauthorized"_s)));
-                RETURN_IF_EXCEPTION(throwScope, {});
-                if (rejectUnauthorizedValue && !rejectUnauthorizedValue.isUndefinedOrNull() && rejectUnauthorizedValue.isBoolean()) {
-                    rejectUnauthorized = rejectUnauthorizedValue.asBoolean() ? 1 : 0;
-                }
+            JSC::JSObject* tlsOptions = tlsOptionsValue.getObject();
+            auto rejectUnauthorizedValue = Bun::getOwnPropertyIfExists(globalObject, tlsOptions, PropertyName(Identifier::fromString(vm, "rejectUnauthorized"_s)));
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (rejectUnauthorizedValue && !rejectUnauthorizedValue.isUndefinedOrNull() && rejectUnauthorizedValue.isBoolean()) {
+                rejectUnauthorized = rejectUnauthorizedValue.asBoolean() ? 1 : 0;
             }
 
             // Parse full TLS options using the native SSLConfig parser
@@ -298,32 +298,31 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
                     proxyUrl = domUrl->wrapped().href().string();
                 } else if (proxyValue.isObject()) {
                     // proxy: { url: "http://proxy:8080", headers: {...} }
-                    if (JSC::JSObject* proxyOptions = proxyValue.getObject()) {
-                        auto proxyUrlValue = Bun::getOwnPropertyIfExists(globalObject, proxyOptions, PropertyName(Identifier::fromString(vm, "url"_s)));
+                    JSC::JSObject* proxyOptions = proxyValue.getObject();
+                    auto proxyUrlValue = Bun::getOwnPropertyIfExists(globalObject, proxyOptions, PropertyName(Identifier::fromString(vm, "url"_s)));
+                    RETURN_IF_EXCEPTION(throwScope, {});
+                    if (proxyUrlValue && !proxyUrlValue.isUndefinedOrNull()) {
+                        proxyUrl = convert<IDLUSVString>(*lexicalGlobalObject, proxyUrlValue);
                         RETURN_IF_EXCEPTION(throwScope, {});
-                        if (proxyUrlValue && !proxyUrlValue.isUndefinedOrNull()) {
-                            proxyUrl = convert<IDLUSVString>(*lexicalGlobalObject, proxyUrlValue);
-                            RETURN_IF_EXCEPTION(throwScope, {});
-                        }
+                    }
 
-                        auto proxyHeadersValue = Bun::getOwnPropertyIfExists(globalObject, proxyOptions, builtinnames.headersPublicName());
-                        RETURN_IF_EXCEPTION(throwScope, {});
-                        if (proxyHeadersValue && !proxyHeadersValue.isUndefinedOrNull()) {
-                            // Check if it's already a Headers instance (like fetch does)
-                            if (auto* jsHeaders = dynamicDowncast<JSFetchHeaders>(proxyHeadersValue)) {
-                                // Convert FetchHeaders to the Init variant
-                                auto& headers = jsHeaders->wrapped();
-                                Vector<KeyValuePair<String, String>> pairs;
-                                auto iterator = headers.createIterator(false);
-                                while (auto value = iterator.next()) {
-                                    pairs.append({ value->key, value->value });
-                                }
-                                proxyHeadersInit = WTF::move(pairs);
-                            } else {
-                                // Fall back to IDL conversion for plain objects/arrays
-                                proxyHeadersInit = convert<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>(*lexicalGlobalObject, proxyHeadersValue);
-                                RETURN_IF_EXCEPTION(throwScope, {});
+                    auto proxyHeadersValue = Bun::getOwnPropertyIfExists(globalObject, proxyOptions, builtinnames.headersPublicName());
+                    RETURN_IF_EXCEPTION(throwScope, {});
+                    if (proxyHeadersValue && !proxyHeadersValue.isUndefinedOrNull()) {
+                        // Check if it's already a Headers instance (like fetch does)
+                        if (auto* jsHeaders = dynamicDowncast<JSFetchHeaders>(proxyHeadersValue)) {
+                            // Convert FetchHeaders to the Init variant
+                            auto& headers = jsHeaders->wrapped();
+                            Vector<KeyValuePair<String, String>> pairs;
+                            auto iterator = headers.createIterator(false);
+                            while (auto value = iterator.next()) {
+                                pairs.append({ value->key, value->value });
                             }
+                            proxyHeadersInit = WTF::move(pairs);
+                        } else {
+                            // Fall back to IDL conversion for plain objects/arrays
+                            proxyHeadersInit = convert<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>(*lexicalGlobalObject, proxyHeadersValue);
+                            RETURN_IF_EXCEPTION(throwScope, {});
                         }
                     }
                 }
@@ -386,12 +385,8 @@ template<> JSValue JSWebSocketDOMConstructor::prototypeForStructure(JSC::VM& vm,
 
 template<> void JSWebSocketDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "WebSocket"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSWebSocket::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
-    reifyStaticProperties(vm, JSWebSocket::info(), JSWebSocketConstructorTableValues, *this);
+    initializeBaseProperties(vm, 1, "WebSocket"_s, JSWebSocket::prototype(vm, globalObject));
+    Bun::reifyStaticPropertyTable(vm, JSWebSocket::info(), JSWebSocketConstructorTableValues, *this);
 }
 
 /* Hash table for prototype */
@@ -425,8 +420,8 @@ const ClassInfo JSWebSocketPrototype::s_info = { "WebSocket"_s, &Base::s_info, n
 void JSWebSocketPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSWebSocket::info(), JSWebSocketPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSWebSocket::info(), JSWebSocketPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSWebSocket::s_info = { "WebSocket"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWebSocket) };
@@ -441,7 +436,7 @@ void JSWebSocket::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
-    // static_assert(std::is_base_of<ActiveDOMObject, WebSocket>::value, "Interface is marked as [ActiveDOMObject] but implementation class does not subclass ActiveDOMObject.");
+    static_assert(std::is_base_of<ActiveDOMObject, WebSocket>::value, "Interface is marked as [ActiveDOMObject] but implementation class does not subclass ActiveDOMObject.");
 }
 
 JSObject* JSWebSocket::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -946,12 +941,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebSocketPrototypeFunction_terminate, (JSGlobalObject
 
 JSC::GCClient::IsoSubspace* JSWebSocket::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSWebSocket, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForWebSocket.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWebSocket = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForWebSocket.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForWebSocket = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSWebSocket, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForWebSocket, m_subspaceForWebSocket));
 }
 
 size_t JSWebSocket::estimatedSize(JSCell* cell, JSC::VM& vm)
@@ -973,7 +963,7 @@ bool JSWebSocketOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> hand
 {
     auto* jsWebSocket = uncheckedDowncast<JSWebSocket>(handle.slot()->asCell());
     auto& wrapped = jsWebSocket->wrapped();
-    if (wrapped.hasPendingActivity()) {
+    if (!wrapped.isContextStopped() && wrapped.hasPendingActivity()) {
         if (reason) [[unlikely]]
             *reason = "ActiveDOMObject with pending activity"_s;
         return true;

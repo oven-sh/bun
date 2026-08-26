@@ -39,7 +39,7 @@ use bun_core::fmt::parse_hex_to_int;
 pub(crate) struct ErrorReportRequest {
     // BACKREF: heap-allocated request; DevServer owns the server lifecycle and
     // outlives every in-flight request (BackRef invariant).
-    dev: bun_ptr::BackRef<DevServer>,
+    dev: bun_ptr::BackRef<DevServer, bun_ptr::Mut>,
     // BodyReaderMixin is a generic helper that stores the buffered body and
     // dispatches to the two callbacks below.
     body: uws::BodyReaderMixin<ErrorReportRequest>,
@@ -78,7 +78,7 @@ impl ErrorReportRequest {
 
     /// `ctx` must be the pointer returned by `heap::alloc` in `run`; called
     /// exactly once (success path here, or via `on_error` on abort/error).
-    pub(crate) fn finalize(ctx: *mut ErrorReportRequest) {
+    fn finalize(ctx: *mut ErrorReportRequest) {
         // SAFETY: `ctx` is the original Box allocation produced by `run`; no
         // live borrow of `*ctx` exists (BodyReaderHandler hands us the raw
         // pointer, never `&mut self`). Only reachable via `on_body`/`on_error`,
@@ -99,7 +99,7 @@ impl ErrorReportRequest {
     /// with no live `&`/`&mut` into the allocation. On `Ok(())` return this
     /// consumes `ctx` via `finalize`; on `Err` the caller (BodyReaderMixin)
     /// retains ownership and will call `on_error`.
-    pub(crate) unsafe fn run_with_body(
+    unsafe fn run_with_body(
         ctx: *mut ErrorReportRequest,
         body: &[u8],
         r: AnyResponse,
@@ -130,8 +130,8 @@ impl ErrorReportRequest {
             let function_name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
             let file_name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
             frames.push(ZigStackFrame {
-                function_name: BunString::init(function_name),
-                source_url: BunString::init(file_name),
+                function_name: BunString::from_bytes(function_name),
+                source_url: BunString::from_bytes(file_name),
                 position: if line > 0 {
                     ZigStackFramePosition {
                         line: Ordinal::from_one_based(line),
@@ -176,8 +176,8 @@ impl ErrorReportRequest {
         let mut top_frame_position = ZigStackFramePosition::INVALID;
         let mut region_of_interest_line: u32 = 0;
         for frame in frames.iter_mut() {
-            // Every `source_url` here is `Tag::ZigString` (built via
-            // `String::init(&[u8])`), so `byte_slice()` is the right view.
+            // Every `source_url` here is `Tag::EncodedSlice` (built via
+            // `String::from_bytes`), so `byte_slice()` is the right view.
             let source_url: &[u8] = frame.source_url.byte_slice();
             // The browser code strips "http://localhost:3000" when the string
             // has /_bun/client. It's done because JS can refer to `location`
@@ -224,7 +224,7 @@ impl ErrorReportRequest {
             if generated_mappings.len() <= 1
                 || frame.position.line.zero_based() < generated_mappings[1].lines.zero_based()
             {
-                frame.source_url = BunString::init(RUNTIME_NAME); // matches value in source map
+                frame.source_url = BunString::static_(RUNTIME_NAME); // matches value in source map
                 frame.position = ZigStackFramePosition::INVALID;
                 continue;
             }
@@ -242,7 +242,7 @@ impl ErrorReportRequest {
                 let index = remapped_position.source_index;
                 if index >= 1 && (index as usize - 1) < result.file_paths.len() {
                     let abs_path: &[u8] = &result.file_paths[index as usize - 1];
-                    frame.source_url = BunString::init(abs_path);
+                    frame.source_url = BunString::from_bytes(abs_path);
                     let mut relative_path_buf = path_buffer_pool::get();
                     let rel_path = dev.relative_path(&mut relative_path_buf, abs_path);
                     if strings::eql(frame.function_name.byte_slice(), rel_path) {
@@ -268,7 +268,7 @@ impl ErrorReportRequest {
                     }
                 } else if index == 0 {
                     // Should be picked up by above but just in case.
-                    frame.source_url = BunString::init(RUNTIME_NAME);
+                    frame.source_url = BunString::static_(RUNTIME_NAME);
                     frame.position = ZigStackFramePosition::INVALID;
                 }
             }
@@ -301,12 +301,12 @@ impl ErrorReportRequest {
         let mut exception = ZigException {
             r#type: JSErrorCode::Error,
             runtime_type: JSRuntimeType::NOTHING,
-            name: BunString::init(name),
-            message: BunString::init(message),
+            name: BunString::from_bytes(name),
+            message: BunString::from_bytes(message),
             stack: ZigStackTrace::from_frames(&mut frames),
             exception: core::ptr::null_mut(),
             remapped: false,
-            browser_url: BunString::init(browser_url),
+            browser_url: BunString::from_bytes(browser_url),
             errno: 0,
             syscall: BunString::EMPTY,
             system_code: BunString::EMPTY,
@@ -402,7 +402,7 @@ impl ErrorReportRequest {
     }
 }
 
-pub(crate) fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<source_map_store::Key> {
+fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<source_map_store::Key> {
     if !source_url.starts_with(browser_url) {
         return None;
     }

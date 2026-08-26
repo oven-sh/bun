@@ -41,10 +41,21 @@ use crate::{JSCArrayBuffer, JSGlobalObject, JSValue, JsResult};
 #[derive(Debug, Default)]
 pub struct GenOpt<T>(Option<T>);
 
-impl<T: Clone> GenOpt<T> {
+impl<T> GenOpt<T> {
     #[inline]
-    pub fn get(&self) -> Option<T> {
-        self.0.clone()
+    pub fn get(&self) -> Option<T>
+    where
+        T: Copy,
+    {
+        self.0
+    }
+    #[inline]
+    pub fn as_ref(&self) -> Option<&T> {
+        self.0.as_ref()
+    }
+    #[inline]
+    pub fn into_inner(self) -> Option<T> {
+        self.0
     }
 }
 
@@ -52,10 +63,17 @@ impl<T: Clone> GenOpt<T> {
 #[derive(Debug)]
 pub struct GenVal<T>(T);
 
-impl<T: Clone> GenVal<T> {
+impl<T> GenVal<T> {
     #[inline]
-    pub fn get(&self) -> T {
-        self.0.clone()
+    pub fn get(&self) -> T
+    where
+        T: Copy,
+    {
+        self.0
+    }
+    #[inline]
+    pub fn as_ref(&self) -> &T {
+        &self.0
     }
 }
 
@@ -96,12 +114,7 @@ pub type GenString = bun_core::String;
 /// `release_gen_val_array_buffer` in the owning containers' `Drop` impls.
 pub type GenArrayBuffer = *mut JSCArrayBuffer;
 
-/// `bun.bun_js.webcore.Blob.Ref` — adopted `*mut Blob` (the codegen `m_ctx`
-/// payload). LAYERING: `webcore::Blob` lives in `bun_runtime` (a dependent of
-/// this crate); the bindgen extern struct only ever stores the raw pointer
-/// (filled by C++ `bindgenConvertJSTo*`), so it stays erased as `*mut c_void`
-/// here and is cast to `*mut bun_runtime::webcore::Blob` by the consumer in
-/// `bun_runtime::api::bun::spawn::stdio::convert_from_extern`.
+/// The codegen `m_ctx` `*mut webcore::Blob`, erased: `Blob` lives in `bun_runtime`.
 pub type GenBlob = *mut core::ffi::c_void;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -315,36 +328,21 @@ pub struct SSLConfig {
     pub ciphers: GenOpt<GenString>,
     pub client_renegotiation_limit: u32,
     pub client_renegotiation_window: u32,
+    pub crl: SSLConfigFile,
+    pub allow_partial_trust_chain: bool,
+    pub session_timeout: i32,
+    pub sigalgs: GenOpt<GenString>,
+    pub ecdh_curve: GenOpt<GenString>,
 }
 
 // ── refcount release on drop ──────────────────────────────────────────────
 //
 // `adopt_string` adopts a +1 `WTF::StringImpl` ref into a `GenString`
-// (= `bun_core::String`), which is `Copy` and has no `Drop`. So the
-// container's `Drop` deref's every owned string field to release those refs.
+// (= `bun_core::String`), which releases it on drop.
 //
-// `GenArrayBuffer` / `GenBlob` raw-pointer payloads likewise carry an adopted
-// +1 ref (C++ `ExternTraits<RefPtr<T>>::convertToExtern` calls `leakRef()`);
+// `GenArrayBuffer` / `GenBlob` raw-pointer payloads carry an adopted +1 ref
+// (C++ `ExternTraits<RefPtr<T>>::convertToExtern` calls `leakRef()`);
 // released here via the matching `ExternalSharedDescriptor::ext_deref`.
-//
-// `.get()` on `GenOpt` / `GenVal` returns a *bitwise* `Clone` of the
-// `bun_core::String` (the derived `Clone`, not the inherent `clone()` which
-// bumps), so it does not take an additional ref — the single adopted ref stays
-// owned by the field and is released exactly once below.
-
-#[inline]
-fn release_gen_opt_string(s: &GenOpt<GenString>) {
-    if let Some(string) = &s.0 {
-        // Releases the +1 ref adopted by `adopt_opt_string` / `adopt_string`.
-        string.deref();
-    }
-}
-
-#[inline]
-fn release_gen_val_string(s: &GenVal<GenString>) {
-    // Releases the +1 ref adopted by `adopt_string`.
-    s.0.deref();
-}
 
 #[inline]
 fn release_gen_val_array_buffer(b: &GenVal<GenArrayBuffer>) {
@@ -371,8 +369,7 @@ fn release_gen_val_blob(b: &GenVal<GenBlob>) {
 impl Drop for SSLConfigAlpnProtocols {
     fn drop(&mut self) {
         match self {
-            SSLConfigAlpnProtocols::None => {}
-            SSLConfigAlpnProtocols::String(v) => release_gen_val_string(v),
+            SSLConfigAlpnProtocols::None | SSLConfigAlpnProtocols::String(_) => {}
             SSLConfigAlpnProtocols::Buffer(v) => release_gen_val_array_buffer(v),
         }
     }
@@ -381,7 +378,7 @@ impl Drop for SSLConfigAlpnProtocols {
 impl Drop for SSLConfigSingleFile {
     fn drop(&mut self) {
         match self {
-            SSLConfigSingleFile::String(v) => release_gen_val_string(v),
+            SSLConfigSingleFile::String(_) => {}
             SSLConfigSingleFile::Buffer(v) => release_gen_val_array_buffer(v),
             SSLConfigSingleFile::File(v) => release_gen_val_blob(v),
         }
@@ -392,25 +389,10 @@ impl Drop for SSLConfigFile {
     fn drop(&mut self) {
         // `Array` recursively drops each `SSLConfigSingleFile`.
         match self {
-            SSLConfigFile::None | SSLConfigFile::Array(_) => {}
-            SSLConfigFile::String(v) => release_gen_val_string(v),
+            SSLConfigFile::None | SSLConfigFile::Array(_) | SSLConfigFile::String(_) => {}
             SSLConfigFile::Buffer(v) => release_gen_val_array_buffer(v),
             SSLConfigFile::File(v) => release_gen_val_blob(v),
         }
-    }
-}
-
-impl Drop for SSLConfig {
-    fn drop(&mut self) {
-        release_gen_opt_string(&self.passphrase);
-        release_gen_opt_string(&self.dh_params_file);
-        release_gen_opt_string(&self.server_name);
-        // `ca` / `cert` / `key`: `SSLConfigFile` — released by its own `Drop`.
-        release_gen_opt_string(&self.key_file);
-        release_gen_opt_string(&self.cert_file);
-        release_gen_opt_string(&self.ca_file);
-        // `alpn_protocols`: `SSLConfigAlpnProtocols` — released by its own `Drop`.
-        release_gen_opt_string(&self.ciphers);
     }
 }
 
@@ -560,6 +542,11 @@ struct ExternSSLConfig {
     ciphers: RawWTFStringImpl,
     client_renegotiation_limit: u32,
     client_renegotiation_window: u32,
+    crl: ExternSSLConfigFile,
+    allow_partial_trust_chain: bool,
+    session_timeout: i32,
+    sigalgs: RawWTFStringImpl,
+    ecdh_curve: RawWTFStringImpl,
 }
 
 // safe: same handle/out-param contract as
@@ -594,6 +581,11 @@ impl SSLConfig {
             ciphers: adopt_opt_string(ext.ciphers),
             client_renegotiation_limit: ext.client_renegotiation_limit,
             client_renegotiation_window: ext.client_renegotiation_window,
+            crl: SSLConfigFile::convert_from_extern(ext.crl),
+            allow_partial_trust_chain: ext.allow_partial_trust_chain,
+            session_timeout: ext.session_timeout,
+            sigalgs: adopt_opt_string(ext.sigalgs),
+            ecdh_curve: adopt_opt_string(ext.ecdh_curve),
         }
     }
 
@@ -629,15 +621,7 @@ pub struct SocketConfig {
     pub allow_half_open: bool,
     pub reuse_port: bool,
     pub ipv6_only: bool,
-}
-
-impl Drop for SocketConfig {
-    fn drop(&mut self) {
-        // `tls`: `SocketConfigTls::Object` holds `SSLConfig`, released by its
-        // own `Drop`. `handlers`: only `JSValue`s — no owned refs.
-        release_gen_opt_string(&self.unix_);
-        release_gen_opt_string(&self.hostname);
-    }
+    pub pause_on_connect: bool,
 }
 
 /// `BindgenSocketConfigTLS.ExternType` =
@@ -686,6 +670,7 @@ struct ExternSocketConfig {
     exclusive: bool,
     reuse_port: bool,
     ipv6_only: bool,
+    pause_on_connect: bool,
     unix_: RawWTFStringImpl,
     fd: ExternOptional<i32>,
 }
@@ -712,6 +697,7 @@ impl SocketConfig {
             exclusive: ext.exclusive,
             reuse_port: ext.reuse_port,
             ipv6_only: ext.ipv6_only,
+            pause_on_connect: ext.pause_on_connect,
             unix_: adopt_opt_string(ext.unix_),
             fd: ext.fd.get(),
         }
@@ -756,9 +742,8 @@ impl SocketConfig {
 // mapping. `lazy_array($get => $prop)` covers the `queries`-style getter that
 // lazily seeds the slot with an empty `JSArray` on first read.
 //
-// The emitted setter returns `()` — `host_fn_setter_this[_shared]` accepts
-// that via `IntoHostSetterReturn for ()` (≡ `true` at the ABI), so this is
-// drop-in for both `sharedThis` and `&mut`-receiver classes.
+// The emitted setter returns `()` — `host_fn_setter_this_shared` accepts
+// that via `IntoHostSetterReturn for ()` (≡ `true` at the ABI).
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Stamp out trivial cached-prop getter/setter host-fns inside an `impl` block.
@@ -961,7 +946,7 @@ macro_rules! impl_js_class_via_generated {
 
 /// Expands to a `pub mod $mod` containing the standard `.classes.ts` codegen
 /// surface for a JS wrapper class: `from_js` / `from_js_direct` / `from_js_ref`
-/// / `to_js` / `to_js_unchecked` / `dangerously_set_ptr` / `get_constructor`,
+/// / `to_js` / `to_js_unchecked` / `get_constructor`,
 /// plus a cached-accessor pair per listed property.
 ///
 /// One impl, generated once — see
@@ -1023,9 +1008,7 @@ macro_rules! js_class_module {
             // to a non-null `*mut`). `__from_js*` only type-check the encoded
             // value and return the stored `m_ctx` pointer (or null) — the C++
             // side never dereferences `Payload`, so there is no Rust-side
-            // precondition. `__dangerously_set_ptr` keeps `unsafe`
-            // because it installs `ptr` into a GC cell whose finalizer will
-            // later free it (deferred deref → ownership precondition).
+            // precondition.
             $crate::jsc_abi_extern! {
                 #[allow(improper_ctypes)]
                 {
@@ -1037,8 +1020,6 @@ macro_rules! js_class_module {
                     safe fn __create(global: *mut JSGlobalObject, ptr: *mut Payload) -> JSValue;
                     #[link_name = concat!($TypeName, "__getConstructor")]
                     safe fn __get_constructor(global: &JSGlobalObject) -> JSValue;
-                    #[link_name = concat!($TypeName, "__dangerouslySetPtr")]
-                    fn __dangerously_set_ptr(value: JSValue, ptr: *mut Payload) -> bool;
                 }
             }
 
@@ -1091,20 +1072,6 @@ macro_rules! js_class_module {
             pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
                 __get_constructor(global)
             }
-
-            /// Detach (`ptr = null`) or replace the wrapped native pointer on
-            /// an existing JS wrapper. Returns `false` if `value` is not (a
-            /// subclass of) the wrapper type.
-            ///
-            /// # Safety
-            /// Caller must ensure the previous `m_ctx` is finalized exactly
-            /// once elsewhere — the C++ side overwrites without freeing.
-            #[inline]
-            pub unsafe fn dangerously_set_ptr(value: JSValue, ptr: *mut Payload) -> bool {
-                // SAFETY: `value` is a valid encoded JSValue; the C++ side
-                // type-checks before writing `m_ctx`.
-                unsafe { __dangerously_set_ptr(value, ptr) }
-            }
         }
     };
 }
@@ -1116,9 +1083,6 @@ js_class_module!(JSImmediate = "Immediate" { callback, arguments });
 js_class_module!(JSBlob      = "Blob"      as crate::webcore_types::Blob { name, stream });
 js_class_module!(JSResponse  = "Response"  { body, headers, url, statusText, stream });
 js_class_module!(JSRequest   = "Request"   { body, headers, url, signal, stream });
-// `values: ["ondrain", "oncancel", "stream"]` in src/runtime/api/ResumableSink.classes.ts.
-js_class_module!(JSResumableFetchSink    = "ResumableFetchSink"    { ondrain, oncancel, stream });
-js_class_module!(JSResumableS3UploadSink = "ResumableS3UploadSink" { ondrain, oncancel, stream });
 // `values: ["resolve", "reject"]` in src/runtime/api/Shell.classes.ts.
 js_class_module!(JSShellInterpreter      = "ShellInterpreter"      { resolve, reject });
 // `src/runtime/crypto/crypto.classes.ts` — one entry per `StaticCryptoHasher`

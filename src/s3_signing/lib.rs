@@ -5,11 +5,10 @@ pub mod crate_error;
 pub mod error;
 pub mod storage_class;
 
-pub use crate_error::{Error, Result};
+pub use crate_error::Error;
 
 pub mod credentials;
 
 pub use acl::ACL;
 pub use credentials::*;
-pub use error::{ErrorCodeAndMessage, S3Error};
 pub use storage_class::StorageClass;

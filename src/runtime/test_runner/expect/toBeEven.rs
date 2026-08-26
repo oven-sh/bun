@@ -3,7 +3,7 @@ use super::Expect;
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
-    pub fn to_be_even(&self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn to_be_even(&self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
         self.run_unary_predicate(g, f, "toBeEven", |v| {
             if v.is_any_int() {
                 let n = v.to_int64();

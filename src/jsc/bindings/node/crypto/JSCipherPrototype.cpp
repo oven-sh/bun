@@ -34,8 +34,8 @@ static const JSC::HashTableValue JSCipherPrototypeTableValues[] = {
 void JSCipherPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSCipherPrototype::info(), JSCipherPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSCipherPrototype::info(), JSCipherPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -234,10 +234,6 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherGetAuthTag, (JSC::JSGlobalObject * lexicalGloba
 
     JSC::JSUint8Array* buf = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), *cipher->m_authTagLen);
     RETURN_IF_EXCEPTION(scope, {});
-    if (!buf) {
-        throwOutOfMemoryError(lexicalGlobalObject, scope);
-        return {};
-    }
 
     memcpy(buf->vector(), cipher->m_authTag, *cipher->m_authTagLen);
 

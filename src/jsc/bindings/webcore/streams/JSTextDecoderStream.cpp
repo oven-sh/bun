@@ -13,17 +13,21 @@
 #include "JSTransformStreamDefaultController.h"
 #include "JSWritableStream.h"
 #include "WebCoreJSClientData.h"
-#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInspectCustom.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
+#include "headers-handwritten.h"
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
-#include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
-#include <JavaScriptCore/TopExceptionScope.h>
+
+// TextDecoder.rs
+extern "C" void* TextDecoder__createForStream(JSC::JSGlobalObject*, JSC::EncodedJSValue label, bool fatal, bool ignoreBOM, bool* outUtf8FastPath, BunString* outEncodingLabel);
+extern "C" void TextDecoder__destroyForStream(void*);
+extern "C" JSC::EncodedJSValue TextDecoder__decodeForStream(void*, JSC::JSGlobalObject*, const uint8_t* input, size_t inputLen, bool stream);
 
 namespace WebCore {
 
@@ -43,7 +47,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSTextDecoderStreamPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSTextDecoderStreamPrototype* ptr = new (NotNull, JSC::allocateCell<JSTextDecoderStreamPrototype>(vm)) JSTextDecoderStreamPrototype(vm, structure);
+        JSTextDecoderStreamPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSTextDecoderStreamPrototype))) JSTextDecoderStreamPrototype(vm, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -57,7 +61,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -102,23 +106,14 @@ DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<>, JSTextDecoderStreamConstructor);
 
 template<> GCClient::IsoSubspace* JSTextDecoderStreamConstructor::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSTextDecoderStreamConstructor, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForTextDecoderStreamConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTextDecoderStreamConstructor = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForTextDecoderStreamConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForTextDecoderStreamConstructor = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSTextDecoderStreamConstructor, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForTextDecoderStreamConstructor, m_subspaceForTextDecoderStreamConstructor));
 }
 
 template<> void JSTextDecoderStreamConstructor::finishCreation(VM& vm, JSDOMGlobalObject& globalObject)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "TextDecoderStream"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSTextDecoderStream::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "TextDecoderStream"_s, JSTextDecoderStream::prototype(vm, globalObject));
     m_instanceStructure.set(vm, this, getDOMStructure<JSTextDecoderStream>(vm, globalObject));
 }
 
@@ -129,15 +124,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextDecoderStreamConst
     auto* constructor = uncheckedDowncast<JSTextDecoderStreamConstructor>(callFrame->jsCallee());
     auto& names = builtinNames(vm);
 
-    auto* structure = structureForNewTarget(vm, constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
-    RETURN_IF_EXCEPTION(scope, {});
-    auto* stream = JSTextDecoderStream::create(vm, structure);
-
-    auto* transform = createTransformStream(lexicalGlobalObject, TransformerKind::TextDecoder, stream, 1, nullptr, 0, nullptr);
-    RETURN_IF_EXCEPTION(scope, {});
-    stream->m_transform.set(vm, stream, transform);
-
-    JSValue label = callFrame->argumentCount() >= 1 ? callFrame->uncheckedArgument(0) : jsNontrivialString(vm, "utf-8"_s);
+    JSValue label = callFrame->argument(0);
     bool fatal = false;
     bool ignoreBOM = false;
     JSValue options = callFrame->argument(1);
@@ -155,17 +142,33 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextDecoderStreamConst
         ignoreBOM = ignoreBOMValue.toBoolean(lexicalGlobalObject);
     }
 
-    // `new TextDecoder(label, { fatal, ignoreBOM })` owns the label validation.
-    auto* decoderOptions = constructEmptyObject(lexicalGlobalObject);
-    decoderOptions->putDirect(vm, names.fatalPublicName(), jsBoolean(fatal));
-    decoderOptions->putDirect(vm, names.ignoreBOMPublicName(), jsBoolean(ignoreBOM));
-    MarkedArgumentBuffer decoderArguments;
-    decoderArguments.append(label);
-    decoderArguments.append(decoderOptions);
-    ASSERT(!decoderArguments.hasOverflowed());
-    auto* decoder = JSC::construct(lexicalGlobalObject, defaultGlobalObject(lexicalGlobalObject)->JSTextDecoderConstructor(), decoderArguments, "TextDecoder is not constructible"_s);
+    // Validates label (WebIDL DOMString coercion — may run user JS). For utf-8 + !fatal no
+    // Rust decoder is allocated: the transform/flush arms use streamingUTF8Decode instead.
+    bool utf8FastPath = false;
+    BunString encodingLabel {};
+    void* decoder = TextDecoder__createForStream(lexicalGlobalObject, JSValue::encode(label), fatal, ignoreBOM, &utf8FastPath, &encodingLabel);
     RETURN_IF_EXCEPTION(scope, {});
-    stream->m_decoder.set(vm, stream, decoder);
+    ASSERT(utf8FastPath == !decoder);
+
+    auto* structure = structureForNewTarget(vm, constructor, lexicalGlobalObject, asObject(callFrame->newTarget()));
+    if (scope.exception()) [[unlikely]] {
+        TextDecoder__destroyForStream(decoder);
+        return {};
+    }
+    auto* stream = JSTextDecoderStream::create(vm, structure);
+    stream->m_decoder = decoder;
+    stream->m_encodingLabel = encodingLabel;
+    stream->m_fatal = fatal;
+    stream->m_ignoreBOM = ignoreBOM;
+    if (utf8FastPath)
+        stream->m_utf8State.bomSeen = ignoreBOM;
+    else
+        vm.heap.addFinalizer(stream, static_cast<JSC::Heap::CFinalizer>([](JSCell* cell) {
+            TextDecoder__destroyForStream(std::exchange(static_cast<JSTextDecoderStream*>(cell)->m_decoder, nullptr));
+        }));
+
+    setUpNativeTransformStream(lexicalGlobalObject, stream, TransformerKind::TextDecoder);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(stream);
 }
@@ -194,30 +197,23 @@ JSC_DEFINE_HOST_FUNCTION(jsTextDecoderStreamPrototype_inspectCustom, (JSGlobalOb
     // streams classes, whose inspect methods just fault on a bad `this`.
     if (!thisObject) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextDecoderStream"_s);
-    // encoding/fatal/ignoreBOM live on the TextDecoder held by m_decoder; read them via the
-    // public prototype getters this class already exposes so no extra coupling is introduced.
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
-    JSValue encoding = thisObject->get(lexicalGlobalObject, Identifier::fromString(vm, "encoding"_s));
+    auto* encoding = Bun::toJS(lexicalGlobalObject, thisObject->m_encodingLabel);
     RETURN_IF_EXCEPTION(scope, {});
-    data->putDirect(vm, Identifier::fromString(vm, "encoding"_s), encoding, 0);
-    JSValue fatal = thisObject->get(lexicalGlobalObject, Identifier::fromString(vm, "fatal"_s));
-    RETURN_IF_EXCEPTION(scope, {});
-    data->putDirect(vm, Identifier::fromString(vm, "fatal"_s), fatal, 0);
-    JSValue ignoreBOM = thisObject->get(lexicalGlobalObject, Identifier::fromString(vm, "ignoreBOM"_s));
-    RETURN_IF_EXCEPTION(scope, {});
-    data->putDirect(vm, Identifier::fromString(vm, "ignoreBOM"_s), ignoreBOM, 0);
-    auto* transform = thisObject->m_transform.get();
-    data->putDirect(vm, Identifier::fromString(vm, "readable"_s), transform && transform->m_readable.get() ? JSValue(transform->m_readable.get()) : jsUndefined(), 0);
-    data->putDirect(vm, Identifier::fromString(vm, "writable"_s), transform && transform->m_writable.get() ? JSValue(transform->m_writable.get()) : jsUndefined(), 0);
+    Bun::putDirectNamed(vm, data, "encoding"_s, encoding);
+    Bun::putDirectNamed(vm, data, "fatal"_s, jsBoolean(thisObject->m_fatal));
+    Bun::putDirectNamed(vm, data, "ignoreBOM"_s, jsBoolean(thisObject->m_ignoreBOM));
+    Bun::putDirectNamed(vm, data, "readable"_s, thisObject->m_readable.get() ? JSValue(thisObject->m_readable.get()) : jsUndefined());
+    Bun::putDirectNamed(vm, data, "writable"_s, thisObject->m_writable.get() ? JSValue(thisObject->m_writable.get()) : jsUndefined());
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "TextDecoderStream"_s, data));
 }
 
 void JSTextDecoderStreamPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSTextDecoderStream::info(), JSTextDecoderStreamPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSTextDecoderStream::info(), JSTextDecoderStreamPrototypeTableValues, *this);
     Bun::WebStreams::installInspectCustom(vm, this, jsTextDecoderStreamPrototype_inspectCustom);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 // JSTextDecoderStream
@@ -229,12 +225,6 @@ JSTextDecoderStream::JSTextDecoderStream(VM& vm, Structure* structure)
 {
 }
 
-void JSTextDecoderStream::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
-}
-
 JSTextDecoderStream* JSTextDecoderStream::create(VM& vm, Structure* structure)
 {
     auto* stream = new (NotNull, allocateCell<JSTextDecoderStream>(vm)) JSTextDecoderStream(vm, structure);
@@ -244,7 +234,7 @@ JSTextDecoderStream* JSTextDecoderStream::create(VM& vm, Structure* structure)
 
 Structure* JSTextDecoderStream::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSObject* JSTextDecoderStream::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -266,33 +256,7 @@ JSValue JSTextDecoderStream::getConstructor(VM& vm, const JSGlobalObject* global
 
 GCClient::IsoSubspace* JSTextDecoderStream::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSTextDecoderStream, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForTextDecoderStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTextDecoderStream = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForTextDecoderStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForTextDecoderStream = std::forward<decltype(space)>(space); });
-}
-
-DEFINE_VISIT_CHILDREN(JSTextDecoderStream);
-
-template<typename Visitor>
-void JSTextDecoderStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSTextDecoderStream>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    visitor.appendHidden(thisObject->m_transform);
-    visitor.appendHidden(thisObject->m_decoder);
-}
-
-void JSTextDecoderStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSTextDecoderStream>(cell);
-    auto& vm = cell->vm();
-    Base::analyzeHeap(cell, analyzer);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_transform, "transform"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_decoder, "decoder"_s);
+    return WebCore::subspaceForImpl<JSTextDecoderStream, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForTextDecoderStream, m_subspaceForTextDecoderStream));
 }
 
 // Prototype accessors
@@ -307,30 +271,34 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextDecoderStreamPrototypeGetter_constructor, (JSGlob
     return JSValue::encode(JSTextDecoderStream::getConstructor(vm, prototype->globalObject()));
 }
 
-// The `encoding` / `fatal` / `ignoreBOM` getters delegate to the wrapped TextDecoder.
-static EncodedJSValue textDecoderStreamDelegatedGetter(JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, const Identifier& property, ASCIILiteral attributeName)
+JSC_DEFINE_CUSTOM_GETTER(jsTextDecoderStreamPrototypeGetter_encoding, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     const auto* stream = dynamicDowncast<JSTextDecoderStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
-        return throwThisTypeError(*lexicalGlobalObject, scope, "TextDecoderStream"_s, attributeName);
-    RELEASE_AND_RETURN(scope, JSValue::encode(stream->m_decoder->get(lexicalGlobalObject, property)));
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsTextDecoderStreamPrototypeGetter_encoding, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    return textDecoderStreamDelegatedGetter(lexicalGlobalObject, thisValue, builtinNames(JSC::getVM(lexicalGlobalObject)).encodingPublicName(), "encoding"_s);
+        return throwThisTypeError(*lexicalGlobalObject, scope, "TextDecoderStream"_s, "encoding"_s);
+    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::toJS(lexicalGlobalObject, stream->m_encodingLabel)));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsTextDecoderStreamPrototypeGetter_fatal, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    return textDecoderStreamDelegatedGetter(lexicalGlobalObject, thisValue, builtinNames(JSC::getVM(lexicalGlobalObject)).fatalPublicName(), "fatal"_s);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const auto* stream = dynamicDowncast<JSTextDecoderStream>(JSValue::decode(thisValue));
+    if (!stream) [[unlikely]]
+        return throwThisTypeError(*lexicalGlobalObject, scope, "TextDecoderStream"_s, "fatal"_s);
+    return JSValue::encode(jsBoolean(stream->m_fatal));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsTextDecoderStreamPrototypeGetter_ignoreBOM, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    return textDecoderStreamDelegatedGetter(lexicalGlobalObject, thisValue, builtinNames(JSC::getVM(lexicalGlobalObject)).ignoreBOMPublicName(), "ignoreBOM"_s);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const auto* stream = dynamicDowncast<JSTextDecoderStream>(JSValue::decode(thisValue));
+    if (!stream) [[unlikely]]
+        return throwThisTypeError(*lexicalGlobalObject, scope, "TextDecoderStream"_s, "ignoreBOM"_s);
+    return JSValue::encode(jsBoolean(stream->m_ignoreBOM));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsTextDecoderStreamPrototypeGetter_readable, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
@@ -340,7 +308,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextDecoderStreamPrototypeGetter_readable, (JSGlobalO
     const auto* stream = dynamicDowncast<JSTextDecoderStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextDecoderStream"_s);
-    return JSValue::encode(stream->m_transform->m_readable.get());
+    return JSValue::encode(stream->m_readable.get());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsTextDecoderStreamPrototypeGetter_writable, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
@@ -350,7 +318,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextDecoderStreamPrototypeGetter_writable, (JSGlobalO
     const auto* stream = dynamicDowncast<JSTextDecoderStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextDecoderStream"_s);
-    return JSValue::encode(stream->m_transform->m_writable.get());
+    return JSValue::encode(stream->m_writable.get());
 }
 
 } // namespace WebCore
@@ -361,62 +329,64 @@ namespace WebStreams {
 using namespace JSC;
 using WebCore::JSTextDecoderStream;
 
-// `decoder.decode(input, { stream })` on the wrapped TextDecoder. Runs user JS: `decode`
-// is looked up on the public TextDecoder.prototype. Empty return = it threw.
-static JSValue invokeDecode(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* decoder, JSValue input, bool streaming)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto& names = WebCore::builtinNames(vm);
-
-    auto* decodeOptions = constructEmptyObject(globalObject);
-    decodeOptions->putDirect(vm, names.streamPublicName(), jsBoolean(streaming));
-
-    JSValue method = decoder->get(globalObject, names.decodePublicName());
-    RETURN_IF_EXCEPTION(scope, {});
-    auto callData = getCallData(method);
-    if (callData.type == CallData::Type::None) [[unlikely]] {
-        throwTypeError(globalObject, scope, "TextDecoder.prototype.decode is not callable"_s);
-        return {};
-    }
-    MarkedArgumentBuffer args;
-    args.append(input);
-    args.append(decodeOptions);
-    ASSERT(!args.hasOverflowed());
-    RELEASE_AND_RETURN(scope, call(globalObject, method, callData, decoder, args));
-}
-
-// Decodes, then enqueues the non-empty result; abrupt decode OR enqueue completions become
-// a rejected promise (a transform algorithm must never throw synchronously into
-// ProcessWrite — the in-flight write would never settle). Shared by transform and flush.
-static JSPromise* decodeAndEnqueue(JSGlobalObject* globalObject, JSTextDecoderStream* stream, JSTransformStreamDefaultController* controller, JSValue input, bool streaming)
+// [AllowShared] BufferSource → (ptr, len); a detached buffer yields the empty sequence.
+static std::optional<std::span<const uint8_t>> textDecoderStreamBytes(JSGlobalObject* globalObject, JSValue chunk)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSValue thrown;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        JSValue decoded = invokeDecode(vm, globalObject, stream->m_decoder.get(), input, streaming);
-        if (!catchScope.exception() && decoded.isString() && asString(decoded)->length())
-            transformStreamDefaultControllerEnqueue(globalObject, controller, decoded);
-        if (catchScope.exception()) [[unlikely]]
-            thrown = takeAbruptCompletion(globalObject, catchScope);
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(chunk)) {
+        if (view->isDetached()) [[unlikely]]
+            return std::span<const uint8_t>();
+        return std::span<const uint8_t>(static_cast<const uint8_t*>(view->vector()), view->byteLength());
     }
-    // takeAbruptCompletion leaves a VM termination pending and returns the empty value.
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    if (!thrown.isEmpty())
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+    if (auto* buffer = dynamicDowncast<JSArrayBuffer>(chunk)) {
+        auto* impl = buffer->impl();
+        if (!impl || impl->isDetached()) [[unlikely]]
+            return std::span<const uint8_t>();
+        return std::span<const uint8_t>(static_cast<const uint8_t*>(impl->data()), impl->byteLength());
+    }
+    Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "chunk"_s, "BufferSource"_s, chunk);
+    return std::nullopt;
+}
+
+// The transform/flush algorithms return a promise, so a throw from decode or enqueue is that
+// promise's rejection (promiseFromSteps), never a synchronous throw into ProcessWrite/ProcessClose.
+static void decodeAndEnqueue(JSGlobalObject* globalObject, JSTextDecoderStream* stream, JSTransformStreamDefaultController* controller, const uint8_t* input, size_t inputLen, bool streaming)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue decoded;
+    if (stream->m_decoder) {
+        decoded = JSValue::decode(TextDecoder__decodeForStream(stream->m_decoder, globalObject, input, inputLen, streaming));
+    } else {
+        auto* s = streamingUTF8Decode(globalObject, std::span<const uint8_t> { input, inputLen }, stream->m_utf8State, /* flush */ !streaming);
+        decoded = s ? JSValue(s) : jsUndefined();
+    }
+    RETURN_IF_EXCEPTION(scope, );
+    if (decoded.isString() && asString(decoded)->length())
+        RELEASE_AND_RETURN(scope, transformStreamDefaultControllerEnqueue(globalObject, controller, decoded));
 }
 
 JSPromise* textDecoderStreamTransform(JSGlobalObject* globalObject, JSTextDecoderStream* stream, JSTransformStreamDefaultController* controller, JSValue chunk)
 {
-    return decodeAndEnqueue(globalObject, stream, controller, chunk, /* streaming */ true);
+    return promiseFromSteps(globalObject, [&] -> JSPromise* {
+        auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+        std::optional<std::span<const uint8_t>> bytes = textDecoderStreamBytes(globalObject, chunk);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        decodeAndEnqueue(globalObject, stream, controller, bytes->data(), bytes->size(), true);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+    });
 }
 
 JSPromise* textDecoderStreamFlush(JSGlobalObject* globalObject, JSTextDecoderStream* stream, JSTransformStreamDefaultController* controller)
 {
-    return decodeAndEnqueue(globalObject, stream, controller, jsUndefined(), /* streaming */ false);
+    return promiseFromSteps(globalObject, [&] -> JSPromise* {
+        auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+        decodeAndEnqueue(globalObject, stream, controller, nullptr, 0, false);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+    });
 }
 
 } // namespace WebStreams

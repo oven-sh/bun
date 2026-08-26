@@ -6,14 +6,14 @@
 //! In the future, this type will exclude `zero`, encoding it as `error.JSError`
 //! instead.
 
-use core::ffi::{c_char, c_void};
+use core::ffi::c_void;
 use core::marker::PhantomData;
 
 use crate::array_buffer::MarkedArrayBuffer_deallocator;
 use crate::{
     AnyPromise, ArrayBuffer, BuiltinName, JSArrayIterator, JSGlobalObject, JSInternalPromise,
-    JSObject, JSPromise, JSString, JSType, JsClass, JsError, JsResult, ZigException,
-    bun_string_jsc, ffi, host_fn,
+    JSObject, JSPromise, JSString, JSStringView, JSType, JsClass, JsError, JsResult,
+    StringJsc as _, ZigException, bun_string_jsc, ffi, host_fn,
 };
 
 /// ABI-compatible with `EncodedJSValue` (`#[repr(transparent)]` over the
@@ -25,13 +25,10 @@ use crate::{
 // The spec encoding is `i64`; the inner field is `usize`
 // (same width on all supported 64-bit targets — see the size assert below)
 // because leaf modules pattern-match on `.0` with pointer/unsigned arithmetic.
-// `BackingInt`/`from_raw` are the signed views where sign-correct math matters.
+// `from_raw` is the signed view where sign-correct math matters.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct JSValue(pub usize, PhantomData<*const ()>);
-
-/// Backing integer type for the encoded value.
-pub type BackingInt = i64;
 
 const _: () = assert!(
     core::mem::size_of::<JSValue>() == core::mem::size_of::<i64>(),
@@ -53,11 +50,7 @@ impl JSValue {
     /// `getIfPropertyExistsImpl` / `fastGet` when the property does not exist.
     /// Deleted is a special encoding used in JSC hash-map internals for the
     /// null state; it is re-used here for "not present".
-    pub const PROPERTY_DOES_NOT_EXIST: JSValue = JSValue(0x4, PhantomData);
-    /// Alias of [`Self::PROPERTY_DOES_NOT_EXIST`], kept for binding-name compatibility.
-    pub const PROPERTY_DOES_NOT_EXIST_ON_OBJECT: JSValue = Self::PROPERTY_DOES_NOT_EXIST;
-
-    pub const IS_POINTER: bool = false;
+    pub(crate) const PROPERTY_DOES_NOT_EXIST: JSValue = JSValue(0x4, PhantomData);
 
     /// Construct a JSValue from an opaque encoded bit-pattern.
     #[inline]
@@ -69,13 +62,8 @@ impl JSValue {
     pub const fn encoded(self) -> usize {
         self.0
     }
-    /// Signed view of the encoded bit-pattern.
     #[inline]
-    pub const fn raw(self) -> i64 {
-        self.0 as i64
-    }
-    #[inline]
-    pub const fn from_raw(raw: i64) -> JSValue {
+    pub(crate) const fn from_raw(raw: i64) -> JSValue {
         JSValue(raw as usize, PhantomData)
     }
 
@@ -193,12 +181,6 @@ impl JSValue {
     ) {
         self.then2(global, ctx, resolve, reject)
     }
-
-    /// Reinterpret a raw pointer's address as a JSValue bit-pattern.
-    #[inline]
-    pub fn cast<T>(ptr: *const T) -> JSValue {
-        JSValue(ptr as usize, PhantomData)
-    }
 }
 
 // `pub fn format(...) !void { @compileError(...) }` — intentionally NOT
@@ -238,6 +220,14 @@ impl JSValue {
         // NotCellMask = NumberTag | OtherTag (0xfffe_0000_0000_0000 | 0x2).
         const NOT_CELL_MASK: usize = 0xfffe_0000_0000_0002;
         !self.is_empty() && (self.0 & NOT_CELL_MASK) == 0
+    }
+    /// False for a cell the last completed GC found dead but the sweeper has not destroyed yet.
+    #[inline]
+    pub fn is_live_cell(self) -> bool {
+        unsafe extern "C" {
+            safe fn JSC__JSValue__isLiveCell(this: JSValue) -> bool;
+        }
+        JSC__JSValue__isLiveCell(self)
     }
     #[inline]
     pub fn is_int32(self) -> bool {
@@ -283,7 +273,7 @@ impl JSValue {
     }
     /// `JSValue.isPrimitive` — true for non-cell or string/symbol/bigint cells.
     #[inline]
-    pub fn is_primitive(self) -> bool {
+    pub(crate) fn is_primitive(self) -> bool {
         JSC__JSValue__isPrimitive(self)
     }
     #[inline]
@@ -330,17 +320,17 @@ impl JSValue {
     #[inline]
     pub fn is_big_int_in_int64_range(self, min: i64, max: i64) -> bool {
         unsafe extern "C" {
-            safe fn JSC__isBigIntInInt64Range(this: JSValue, min: i64, max: i64) -> bool;
+            safe fn JSC__isBigIntInInt64Range(this: JSValue, max: i64, min: i64) -> bool;
         }
-        JSC__isBigIntInInt64Range(self, min, max)
+        JSC__isBigIntInInt64Range(self, max, min)
     }
     /// `JSValue.isBigIntInUInt64Range`.
     #[inline]
     pub fn is_big_int_in_uint64_range(self, min: u64, max: u64) -> bool {
         unsafe extern "C" {
-            safe fn JSC__isBigIntInUInt64Range(this: JSValue, min: u64, max: u64) -> bool;
+            safe fn JSC__isBigIntInUInt64Range(this: JSValue, max: u64, min: u64) -> bool;
         }
-        JSC__isBigIntInUInt64Range(self, min, max)
+        JSC__isBigIntInUInt64Range(self, max, min)
     }
     /// `JSValue.isCallable()`.
     #[inline]
@@ -384,19 +374,6 @@ impl JSValue {
             safe fn JSC__JSValue__isAggregateError(this: JSValue, global: &JSGlobalObject) -> bool;
         }
         JSC__JSValue__isAggregateError(self, global)
-    }
-    /// `JSValue.getErrorsProperty(globalObject)`. Returns the
-    /// own `errors` data property via `JSObject::getDirect` — no prototype
-    /// walk, no getters invoked, nothrow. Used for `AggregateError.errors`.
-    #[inline]
-    pub fn get_errors_property(self, global: &JSGlobalObject) -> JSValue {
-        unsafe extern "C" {
-            safe fn JSC__JSValue__getErrorsProperty(
-                this: JSValue,
-                global: &JSGlobalObject,
-            ) -> JSValue;
-        }
-        JSC__JSValue__getErrorsProperty(self, global)
     }
     /// `JSValue.isTerminationException()` — true if this
     /// value is the VM's termination-exception sentinel.
@@ -523,7 +500,7 @@ impl JSValue {
     /// when the consumer round-trips through `f64::to_bits` / `as_number` and
     /// must see the original bit pattern (e.g. [`from_ptr_address`]).
     #[inline]
-    pub fn js_double_number(n: f64) -> JSValue {
+    pub(crate) fn js_double_number(n: f64) -> JSValue {
         const DOUBLE_ENCODE_OFFSET: i64 = 1i64 << 49;
         JSValue::from_raw((n.to_bits() as i64).wrapping_add(DOUBLE_ENCODE_OFFSET))
     }
@@ -539,8 +516,8 @@ impl JSValue {
     /// `JSValue.createObject2` — `{ [key1]: value1, [key2]: value2 }`.
     pub fn create_object2(
         global: &JSGlobalObject,
-        key1: &bun_core::ZigString,
-        key2: &bun_core::ZigString,
+        key1: &bun_core::EncodedSlice,
+        key2: &bun_core::EncodedSlice,
         value1: JSValue,
         value2: JSValue,
     ) -> JsResult<JSValue> {
@@ -591,12 +568,13 @@ impl JSValue {
         crate::mark_binding!();
         host_fn::from_js_host_call(global, || JSBuffer__bufferFromLength(global, len as i64))
     }
-    pub fn create_buffer(global: &JSGlobalObject, slice: &mut [u8]) -> JSValue {
-        // Wraps `JSBuffer__bufferFromPointerAndLengthAndDeinit`
-        // with `MarkedArrayBuffer_deallocator` (or null for empty slices).
+    /// Wraps `slice` (mimalloc-owned; ownership moves to JSC, freed via
+    /// `MarkedArrayBuffer_deallocator`) in a Node `Buffer`. Fails like any JS
+    /// allocation: OOM, or a termination request landing in it.
+    pub fn create_buffer(global: &JSGlobalObject, slice: &mut [u8]) -> JsResult<JSValue> {
         // SAFETY: `global` is live; slice ptr/len describe a valid range whose
         // ownership is transferred to JSC (freed via the deallocator).
-        unsafe {
+        host_fn::from_js_host_call(global, || unsafe {
             JSBuffer__bufferFromPointerAndLengthAndDeinit(
                 global,
                 slice.as_mut_ptr(),
@@ -608,13 +586,13 @@ impl JSValue {
                     Some(MarkedArrayBuffer_deallocator)
                 },
             )
-        }
+        })
     }
     /// Take ownership of a mimalloc-backed `Box<[u8]>` and wrap it in a Node
     /// `Buffer` without copying. Ownership transfers to JSC; freed via
     /// `MarkedArrayBuffer_deallocator` on GC. Prefer this over `Box::leak` +
     /// [`JSValue::create_buffer`] so the FFI hand-off is explicit at call sites.
-    pub fn create_buffer_from_box(global: &JSGlobalObject, bytes: Box<[u8]>) -> JSValue {
+    pub fn create_buffer_from_box(global: &JSGlobalObject, bytes: Box<[u8]>) -> JsResult<JSValue> {
         let len = bytes.len();
         // `into_raw` (not `leak`) — this is an FFI ownership transfer, paired
         // with `mi_free` in `MarkedArrayBuffer_deallocator`. An empty
@@ -623,7 +601,7 @@ impl JSValue {
         let ptr = bun_core::heap::into_raw(bytes).cast::<u8>();
         // SAFETY: `global` is live; `ptr`/`len` describe the just-released
         // mimalloc allocation whose ownership is transferred to JSC.
-        unsafe {
+        host_fn::from_js_host_call(global, || unsafe {
             JSBuffer__bufferFromPointerAndLengthAndDeinit(
                 global,
                 ptr,
@@ -635,26 +613,26 @@ impl JSValue {
                     Some(MarkedArrayBuffer_deallocator)
                 },
             )
-        }
+        })
     }
     /// `JSValue.createBufferWithCtx` — wrap a foreign-owned byte
-    /// range in a Node `Buffer`, transferring ownership to JS. `free(ctx, ptr)`
-    /// runs when the Buffer's backing store is collected.
+    /// range in a Node `Buffer`, transferring ownership to JS. `free(ptr, ctx)`
+    /// runs exactly once: when the Buffer's backing store is collected, or
+    /// before this returns `Err`.
     ///
     /// # Safety
     /// `bytes` must describe a valid allocation whose ownership transfers to
-    /// JSC; `ctx` is forwarded to `free` on collection and must remain valid
-    /// until then.
+    /// JSC; `ctx` must remain valid until `free` runs.
     pub unsafe fn create_buffer_with_ctx(
         global: &JSGlobalObject,
         bytes: core::ptr::NonNull<[u8]>,
         ctx: *mut c_void,
         free: unsafe extern "C" fn(*mut c_void, *mut c_void),
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         let len = bytes.len();
         // SAFETY: `global` is live; `bytes` describes a valid range whose
         // ownership transfers to JSC and is released via `free` on collection.
-        unsafe {
+        host_fn::from_js_host_call(global, || unsafe {
             JSBuffer__bufferFromPointerAndLengthAndDeinit(
                 global,
                 bytes.as_ptr().cast::<u8>(),
@@ -662,20 +640,36 @@ impl JSValue {
                 ctx,
                 Some(free),
             )
-        }
-    }
-    pub fn from_date_string(global: &JSGlobalObject, s: &core::ffi::CStr) -> JSValue {
-        // SAFETY: `global` is live; `s` is a valid NUL-terminated C string.
-        unsafe { JSC__JSValue__dateInstanceFromNullTerminatedString(global, s.as_ptr()) }
+        })
     }
     pub fn from_date_number(global: &JSGlobalObject, value: f64) -> JSValue {
         JSC__JSValue__dateInstanceFromNumber(global, value)
     }
-    pub fn from_int64_no_truncate(global: &JSGlobalObject, i: i64) -> JSValue {
-        JSC__JSValue__fromInt64NoTruncate(global, i)
+    #[track_caller]
+    pub fn from_int64_no_truncate(global: &JSGlobalObject, i: i64) -> JsResult<JSValue> {
+        host_fn::from_js_host_call(global, || JSC__JSValue__fromInt64NoTruncate(global, i))
     }
-    pub fn from_uint64_no_truncate(global: &JSGlobalObject, i: u64) -> JSValue {
-        JSC__JSValue__fromUInt64NoTruncate(global, i)
+    #[track_caller]
+    pub fn from_uint64_no_truncate(global: &JSGlobalObject, i: u64) -> JsResult<JSValue> {
+        host_fn::from_js_host_call(global, || JSC__JSValue__fromUInt64NoTruncate(global, i))
+    }
+    /// A BigInt from a decimal integer literal (optional `-`, then digits).
+    /// Returns `Ok(None)` when `digits` is not such a literal.
+    #[track_caller]
+    pub fn big_int_from_decimal(
+        global: &JSGlobalObject,
+        digits: &[u8],
+    ) -> JsResult<Option<JSValue>> {
+        let unsigned = digits.strip_prefix(b"-").unwrap_or(digits);
+        if unsigned.is_empty() || !unsigned.iter().all(u8::is_ascii_digit) {
+            return Ok(None);
+        }
+        // Only text StringToBigInt accepts gets here, so empty means it threw (too large).
+        let value = host_fn::from_js_host_call(global, || {
+            // SAFETY: `digits` is a live slice for the duration of the call.
+            unsafe { JSC__JSValue__bigIntFromLatin1(global, digits.as_ptr(), digits.len()) }
+        })?;
+        Ok(Some(value))
     }
     /// `JSValue.fromTimevalNoTruncate` — encode a `struct timeval`
     /// as a BigInt (`sec * 1_000_000 + nsec`) without precision loss. May allocate
@@ -694,18 +688,18 @@ impl JSValue {
         JSC__JSValue__bigIntSum(global, a, b)
     }
     /// `JSValue.fromEntries` — build a plain object from
-    /// parallel `keys`/`values` `ZigString` arrays. When `clone` is true the
+    /// parallel `keys`/`values` `EncodedSlice` arrays. When `clone` is true the
     /// C++ side copies the string bytes (caller may free `keys`/`values`).
     pub fn from_entries(
         global: &JSGlobalObject,
-        keys: &mut [bun_core::ZigString],
-        values: &mut [bun_core::ZigString],
+        keys: &mut [bun_core::EncodedSlice],
+        values: &mut [bun_core::EncodedSlice],
         clone: bool,
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         debug_assert_eq!(keys.len(), values.len());
         // SAFETY: `global` is live; `keys`/`values` are valid for `keys.len()`
         // elements; the C++ binding only reads (and optionally clones) them.
-        unsafe {
+        crate::call_zero_is_throw(global, || unsafe {
             JSC__JSValue__fromEntries(
                 global,
                 keys.as_mut_ptr(),
@@ -713,7 +707,7 @@ impl JSValue {
                 keys.len(),
                 clone,
             )
-        }
+        })
     }
 }
 
@@ -789,26 +783,6 @@ impl JSValue {
         }
         JSC__JSValue__toInt64(self)
     }
-    /// `JSValue.asInt52()` — saturating-truncate
-    /// `as_number()` into i52 range, returned widened to i64. NaN → 0;
-    /// out-of-range / ±Inf saturate to i52 MIN/MAX.
-    #[inline]
-    pub fn as_int52(self) -> i64 {
-        debug_assert!(self.is_number());
-        const I52_MIN: i64 = -(1 << 51);
-        const I52_MAX: i64 = (1 << 51) - 1;
-        let num = self.as_number();
-        if num.is_nan() {
-            return 0;
-        }
-        if num <= I52_MIN as f64 {
-            return I52_MIN;
-        }
-        if num >= I52_MAX as f64 {
-            return I52_MAX;
-        }
-        num as i64
-    }
     /// `JSValue.toU32()` — clamp `toInt64()` into
     /// `[0, u32::MAX]`. Negative → 0, overflow → `u32::MAX`. Distinct from
     /// JS `ToUint32` (which wraps modulo 2³²); this is a Bun-side saturating
@@ -869,51 +843,29 @@ impl JSValue {
     }
     #[track_caller]
     pub fn to_js_string<'a>(self, global: &'a JSGlobalObject) -> JsResult<&'a JSString> {
-        // `[[ZIG_EXPORT(null_is_throw)]]` — null ⟺ threw.
-        // S008: `JSString` is an `opaque_ffi!` ZST, so the non-null pointer
-        // returned on the `Ok` path is safely reborrowed via `opaque_ref`
-        // (zero-byte deref; see `bun_opaque::opaque_deref`).
         crate::call_null_is_throw(global, || JSC__JSValue__toStringOrNull(self, global))
             .map(|p| JSString::opaque_ref(p.as_ptr()))
     }
+    /// [`to_js_string`] plus a borrowed view of its characters, in one FFI
+    /// call. The returned guard keeps the cell alive while in scope.
+    #[track_caller]
+    pub fn to_js_string_view<'a>(self, global: &'a JSGlobalObject) -> JsResult<JSStringView<'a>> {
+        let mut view = bun_core::StringView::EMPTY;
+        crate::call_null_is_throw(global, || {
+            JSC__JSValue__toJSStringView(self, global, &mut view)
+        })
+        .map(|p| JSStringView {
+            cell: JSString::opaque_ref(p.as_ptr()),
+            view,
+        })
+    }
     pub fn to_bun_string(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
-        bun_string_jsc::from_js(self, global)
+        bun_core::String::from_js(self, global)
     }
-    pub fn to_zig_string(
-        self,
-        out: &mut bun_core::ZigString,
-        global: &JSGlobalObject,
-    ) -> JsResult<()> {
-        host_fn::from_js_host_call_generic(global, || JSC__JSValue__toZigString(self, out, global))
-    }
-    pub fn to_slice(self, global: &JSGlobalObject) -> JsResult<bun_core::ZigStringSlice> {
-        // `to_bun_string` returns a +1 ref; `bun_core::String` is
-        // `Copy` (no `Drop`), so wrap in `OwnedString` for the scope-exit
-        // `deref()`. `to_utf8()` takes its own ref (or owned alloc) so the
-        // slice survives the drop.
-        let s = bun_core::OwnedString::new(self.to_bun_string(global)?);
-        Ok(s.to_utf8())
-    }
-    /// Call `toString()` on the JSValue and clone the result.
-    /// On exception or out of memory, this returns a `JsError`.
-    ///
-    /// Remember that `Symbol` throws an exception when you call `toString()`.
-    ///
-    /// The returned slice is *always* heap-owned and independent of the backing
-    /// `JSString` cell, so it outlives GC. Allocator param dropped per
-    /// PORTING.md (default_allocator only).
-    pub fn to_slice_clone(self, global: &JSGlobalObject) -> JsResult<bun_core::ZigStringSlice> {
-        self.to_js_string(global)?.to_slice_clone(global)
-    }
-    /// Call `toString()` on the JSValue and clone the result.
-    ///
-    /// `bun_core::String` is `Copy` and has NO `Drop`; `OwnedString` provides
-    /// the scope-exit `deref()`. `to_utf8()` refs the
-    /// underlying WTFStringImpl (or heap-clones) so the slice survives the
-    /// `OwnedString` drop.
-    pub fn to_slice_or_null(self, global: &JSGlobalObject) -> JsResult<bun_core::ZigStringSlice> {
-        let s = bun_core::OwnedString::new(self.to_bun_string(global)?);
-        Ok(s.to_utf8())
+    /// `toString()` then UTF-8. The slice holds its own ref/allocation, so it
+    /// is independent of the `JSString` cell.
+    pub fn to_utf8(self, global: &JSGlobalObject) -> JsResult<bun_core::Utf8Bytes<'static>> {
+        Ok(self.to_bun_string(global)?.into_utf8())
     }
     pub fn to_zig_exception(self, global: &JSGlobalObject, exception: &mut ZigException) {
         JSC__JSValue__toZigException(self, global, exception)
@@ -930,17 +882,26 @@ impl JSValue {
     ) -> JsResult<E> {
         E::from_js_value(self, global, property_name)
     }
-    pub fn as_string(self) -> *mut JSString {
+    pub fn as_string(self) -> &'static JSString {
         debug_assert!(self.is_string_literal());
-        JSC__JSValue__asString(self)
+        JSString::opaque_ref(JSC__JSValue__asString(self))
     }
-    /// `jsTypeString()` — calls `JSC::jsTypeStringForValue`, returning the
-    /// JS `typeof` result as a `JSString*` cell (e.g. `"object"`, `"number"`).
-    /// Never throws; lifetime tied to `global` (cell is GC-rooted by the VM's
-    /// SmallStrings table).
-    pub fn js_type_string<'a>(self, global: &'a JSGlobalObject) -> &'a JSString {
-        // FFI returns a non-null SmallStrings cell (opaque ZST handle).
-        JSString::opaque_ref(JSC__jsTypeStringForValue(global, self))
+    /// JS `typeof`, or `"array"` for arrays.
+    pub fn type_name<'a>(self, global: &'a JSGlobalObject) -> bun_core::StringView<'a> {
+        if self.js_type().is_array() {
+            return bun_core::StringView::static_("array");
+        }
+        self.js_type_string(global)
+    }
+    /// `jsTypeString()` — the JS `typeof` result (e.g. `"object"`, `"number"`).
+    /// Never throws; the backing cell is GC-rooted by the VM's SmallStrings
+    /// table.
+    pub fn js_type_string<'a>(self, global: &'a JSGlobalObject) -> bun_core::StringView<'a> {
+        let cell = JSString::opaque_ref::<'a>(JSC__jsTypeStringForValue(global, self));
+        crate::validation_scope!(scope, global);
+        let view = crate::js_string::JSC__JSString__view(cell, global);
+        scope.assert_no_exception();
+        view
     }
     pub fn as_array_buffer(self, global: &JSGlobalObject) -> Option<ArrayBuffer> {
         let mut out = ArrayBuffer::default();
@@ -959,10 +920,17 @@ impl JSValue {
     /// source attached rather than throwing. See `JSC__JSValue__pinArrayBuffer`
     /// in bindings.cpp for why. Release the pin with `ArrayBuffer::unpin`.
     pub fn as_pinned_arraybuffer(self, global: &JSGlobalObject) -> Option<ArrayBuffer> {
-        if !JSC__JSValue__pinArrayBuffer(self) {
+        let kind = JSC__JSValue__pinArrayBuffer(self);
+        if kind == 0 {
             return None;
         }
-        self.as_array_buffer(global)
+        let mut buffer = self.as_array_buffer(global);
+        match &mut buffer {
+            Some(buffer) => buffer.pinned = kind == 1,
+            None if kind == 1 => self.unpin_array_buffer(),
+            None => {}
+        }
+        buffer
     }
     /// Generic downcast. Dispatches via [`JsClass::from_js`].
     #[inline]
@@ -1011,6 +979,17 @@ impl JSValue {
         // so aliasing with other `as_class_ref` borrows is fine.
         self.as_::<T>().map(|p| unsafe { &*p })
     }
+
+    /// [`as_class_ref`](Self::as_class_ref) as a [`ThisPtr`](bun_ptr::ThisPtr),
+    /// for `m_ctx` payloads that are intrusively refcounted: lets the caller
+    /// take its own ref (`RefPtr::from_this`) or dispatch into a
+    /// `ThisPtr`-taking entry point. Same frame-scoped validity.
+    #[inline]
+    pub fn as_class_this_ptr<T: JsClass>(self) -> Option<bun_ptr::ThisPtr<T>> {
+        // SAFETY: as for `as_class_ref` — the pointer is the live payload of the
+        // cell `self` encodes, which the stack scan keeps alive for this frame.
+        self.as_::<T>().map(|p| unsafe { bun_ptr::ThisPtr::new(p) })
+    }
     /// `JSValue.asPromise()` — downcast to `JSPromise` (matches `JSInternalPromise` too).
     /// Returns a raw pointer; conjuring a
     /// `&'static mut` here would permit aliased `&mut` UB across two calls on
@@ -1025,7 +1004,7 @@ impl JSValue {
     /// `JSValue.asInternalPromise()` — downcast to `JSInternalPromise`.
     /// Returns a raw pointer; see
     /// [`as_promise`] for the aliasing rationale.
-    pub fn as_internal_promise(self) -> Option<*mut JSInternalPromise> {
+    pub(crate) fn as_internal_promise(self) -> Option<*mut JSInternalPromise> {
         if !self.is_cell() {
             return None;
         }
@@ -1087,14 +1066,6 @@ impl JSValue {
             None
         }
     }
-    /// `JSValue.getZigString` — read a JS string into a `ZigString` view.
-    /// Convenience wrapper over [`JSValue::to_zig_string`] that returns the
-    /// out-param by value.
-    pub fn get_zig_string(self, global: &JSGlobalObject) -> JsResult<bun_core::ZigString> {
-        let mut out = bun_core::ZigString::EMPTY;
-        self.to_zig_string(&mut out, global)?;
-        Ok(out)
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1141,7 +1112,7 @@ impl JSValue {
         property: impl AsRef<[u8]>,
     ) -> JsResult<Option<JSValue>> {
         let property = property.as_ref();
-        // Never route a runtime key to `fastGet`: a runtime byte-slice match
+        // Never route a runtime key to `fast_get`: a runtime byte-slice match
         // here is wrong because
         // C++ `builtinNameMap` maps e.g. `asyncIterator` → `Symbol.asyncIterator`
         // (and `inspectCustom` → `Symbol.for("nodejs.util.inspect.custom")`), so
@@ -1238,14 +1209,14 @@ impl JSValue {
         self,
         global: &JSGlobalObject,
         property: impl AsRef<[u8]>,
-    ) -> JsResult<Option<bun_core::ZigStringSlice>> {
+    ) -> JsResult<Option<bun_core::Utf8Bytes<'static>>> {
         let property = property.as_ref();
         match self.get(global, property)? {
             Some(v) if !v.is_undefined_or_null() => {
                 if !v.is_string() {
                     return Err(global.throw_invalid_property_type(property, "string", v));
                 }
-                Ok(Some(v.to_slice(global)?))
+                Ok(Some(v.to_utf8(global)?))
             }
             _ => Ok(None),
         }
@@ -1379,13 +1350,18 @@ impl JSValue {
         }
         Ok(Some(prop))
     }
+    /// Own property lookup by key value (index or `toPropertyKey`). `None` when
+    /// absent; the C++ side also returns empty when a getter or `toPropertyKey`
+    /// throws, so the exception state is what tells the two apart.
     pub fn get_own_by_value(
         self,
         global: &JSGlobalObject,
         property_value: JSValue,
-    ) -> Option<JSValue> {
-        let v = JSC__JSValue__getOwnByValue(self, global, property_value);
-        if v.is_empty() { None } else { Some(v) }
+    ) -> JsResult<Option<JSValue>> {
+        let v = crate::call_check_slow(global, || {
+            JSC__JSValue__getOwnByValue(self, global, property_value)
+        })?;
+        Ok(if v.is_empty() { None } else { Some(v) })
     }
     /// `Object.hasOwnProperty(key)`. `self` **must** be an object — the C++ side
     /// `uncheckedDowncast`s. `key.toPropertyKey()` and Proxy `ownKeys` traps
@@ -1446,10 +1422,19 @@ impl JSValue {
         Ok(len.clamp(0.0, I52_MAX as f64) as u64)
     }
     /// Set a property. Key dispatch goes through the [`PutKey`] trait so
-    /// callers may pass `&[u8]`, `ZigString`, `&ZigString`, `bun.String`, or
-    /// `&bun.String`.
+    /// callers may pass `&[u8]`, `EncodedSlice`, `String`, or `&String`.
     pub fn put<K: PutKey>(self, global: &JSGlobalObject, key: K, value: JSValue) {
         key.put(self, global, value)
+    }
+    /// [`put`] with `PropertyAttribute::DontEnum`.
+    pub fn put_non_enumerable(
+        self,
+        global: &JSGlobalObject,
+        key: impl AsRef<[u8]>,
+        value: JSValue,
+    ) {
+        let key = bun_core::EncodedSlice::latin1(key.as_ref());
+        JSC__JSValue__putNonEnumerable(self, global, &key, value)
     }
     /// [`put`] only when `val` is `Some`; the property is *omitted* (not set to
     /// `undefined`) when `None`. Collapses the open-coded
@@ -1487,14 +1472,12 @@ impl JSValue {
         }
         Ok(())
     }
-    /// `JSValue.deleteProperty` — delete an own property by name.
-    pub fn delete_property(self, global: &JSGlobalObject, key: impl AsRef<[u8]>) -> bool {
-        let zs = bun_core::ZigString::init(key.as_ref());
-        JSC__JSValue__deleteProperty(self, global, &zs)
-    }
-    /// `JSValue.putBunString`.
-    pub fn put_bun_string(self, global: &JSGlobalObject, key: &bun_core::String, value: JSValue) {
-        JSC__JSValue__putBunString(self, global, key, value)
+    /// `JSValue.deleteProperty` — delete an own property by name. `false` is
+    /// both "not deleted" and the C++ side's return on throw (a Proxy
+    /// `deleteProperty` trap), so the exception state is checked explicitly.
+    pub fn delete_property(self, global: &JSGlobalObject, key: impl AsRef<[u8]>) -> JsResult<bool> {
+        let key = bun_core::EncodedSlice::latin1(key.as_ref());
+        crate::call_check_slow(global, || JSC__JSValue__deleteProperty(self, global, &key))
     }
     /// `JSValue.putMayBeIndex` — same as [`put`] but accepts
     /// both non-numeric and numeric keys. Prefer [`put`] when the key is
@@ -1596,23 +1579,26 @@ impl JSValue {
         self,
         global: &JSGlobalObject,
         indent: u32,
-        out: &mut bun_core::String,
-    ) -> JsResult<()> {
+    ) -> JsResult<bun_core::String> {
+        let mut out = bun_core::String::EMPTY;
         host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__jsonStringify(self, global, indent, out)
-        })
+            JSC__JSValue__jsonStringify(self, global, indent, &mut out)
+        })?;
+        Ok(out)
     }
 
     /// `JSValue.jsonStringifyFast` — `JSON.stringify(this)`
     /// with no indent / no replacer (fast path used by SQL value binders).
-    pub fn json_stringify_fast(
-        self,
-        global: &JSGlobalObject,
-        out: &mut bun_core::String,
-    ) -> JsResult<()> {
+    pub fn json_stringify_fast(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
+        let mut out = bun_core::String::EMPTY;
         host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__jsonStringifyFast(self, global, out)
-        })
+            JSC__JSValue__jsonStringifyFast(self, global, &mut out)
+        })?;
+        Ok(out)
+    }
+
+    pub fn temporal_type(self) -> TemporalType {
+        crate::cpp::Bun__JSValue__temporalType(self)
     }
 }
 
@@ -1770,13 +1756,6 @@ impl From<usize> for JSValue {
 }
 
 impl JSValue {
-    /// `JSValue.asEncoded` — view the encoded word as the
-    /// `EncodedJSValue` C union (used by the FFI fast-paths in `bun:ffi`).
-    #[inline]
-    pub fn as_encoded(self) -> ffi::EncodedJSValue {
-        ffi::EncodedJSValue { as_js_value: self }
-    }
-
     /// Generic value→JSValue conversion. Dispatch is via [`FromAny`],
     /// implemented for each supported leaf type.
     #[inline]
@@ -1847,16 +1826,8 @@ impl FromAny for &str {
     }
 }
 impl FromAny for Box<[bun_core::String]> {
-    /// The boxed
-    /// slice is consumed: every element's WTF refcount is dropped and the
-    /// backing allocation freed via `Box` drop. `bun_core::String` is `Copy`
-    /// with no `Drop`, so the explicit `deref()` loop is required.
     fn into_js_value(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let result = bun_string_jsc::to_js_array(global, &self);
-        for out in self.iter() {
-            out.deref();
-        }
-        result
+        bun_string_jsc::to_js_array(global, &self)
     }
 }
 impl<T: FromAny> FromAny for Option<T> {
@@ -1871,20 +1842,14 @@ impl<T: FromAny> FromAny for Option<T> {
 }
 
 /// Dispatch trait for [`JSValue::put`]'s key parameter: routes
-/// `ZigString`/`bun.String`/byte-slice keys to the matching FFI.
+/// `EncodedSlice`/`String`/byte-slice keys to the matching FFI.
 pub trait PutKey {
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue);
 }
-impl PutKey for &bun_core::ZigString {
+impl PutKey for bun_core::EncodedSlice<'_> {
     #[inline]
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
-        JSC__JSValue__put(target, global, self, value)
-    }
-}
-impl PutKey for bun_core::ZigString {
-    #[inline]
-    fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
-        (&self).put(target, global, value)
+        JSC__JSValue__put(target, global, &self, value)
     }
 }
 impl PutKey for &bun_core::String {
@@ -1902,8 +1867,7 @@ impl PutKey for bun_core::String {
 impl PutKey for &[u8] {
     #[inline]
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
-        let zs = bun_core::ZigString::init(self);
-        (&zs).put(target, global, value)
+        bun_core::EncodedSlice::latin1(self).put(target, global, value)
     }
 }
 impl<const N: usize> PutKey for &[u8; N] {
@@ -1969,15 +1933,6 @@ pub trait FromJsEnum: Sized {
     ) -> JsResult<Self>;
 }
 
-pub type PropertyIteratorFn = unsafe extern "C" fn(
-    global_object: *mut JSGlobalObject,
-    ctx_ptr: *mut c_void,
-    key: *mut bun_core::ZigString,
-    value: JSValue,
-    is_symbol: bool,
-    is_private_symbol: bool,
-);
-
 // ──────────────────────────────────────────────────────────────────────────
 // extern "C" — JSC bindings (src/jsc/bindings/bindings.cpp). The .a/.o files
 // are linked already; we declare and call. NEVER re-implement in Rust.
@@ -1997,8 +1952,8 @@ unsafe extern "C" {
     safe fn JSC__JSValue__createEmptyObjectWithNullPrototype(global: &JSGlobalObject) -> JSValue;
     safe fn JSC__JSValue__createObject2(
         global: &JSGlobalObject,
-        key1: &bun_core::ZigString,
-        key2: &bun_core::ZigString,
+        key1: &bun_core::EncodedSlice,
+        key2: &bun_core::EncodedSlice,
         value1: JSValue,
         value2: JSValue,
     ) -> JSValue;
@@ -2011,13 +1966,14 @@ unsafe extern "C" {
         deallocator: Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>,
     ) -> JSValue;
     safe fn JSBuffer__bufferFromLength(global: &JSGlobalObject, len: i64) -> JSValue;
-    fn JSC__JSValue__dateInstanceFromNullTerminatedString(
-        global: *const JSGlobalObject,
-        s: *const c_char,
-    ) -> JSValue;
     safe fn JSC__JSValue__dateInstanceFromNumber(global: &JSGlobalObject, n: f64) -> JSValue;
     safe fn JSC__JSValue__fromInt64NoTruncate(global: &JSGlobalObject, i: i64) -> JSValue;
     safe fn JSC__JSValue__fromUInt64NoTruncate(global: &JSGlobalObject, i: u64) -> JSValue;
+    fn JSC__JSValue__bigIntFromLatin1(
+        global: &JSGlobalObject,
+        ptr: *const u8,
+        len: usize,
+    ) -> JSValue;
     safe fn JSC__JSValue__fromTimevalNoTruncate(
         global: &JSGlobalObject,
         nsec: i64,
@@ -2026,8 +1982,8 @@ unsafe extern "C" {
     safe fn JSC__JSValue__bigIntSum(global: &JSGlobalObject, a: JSValue, b: JSValue) -> JSValue;
     fn JSC__JSValue__fromEntries(
         global: *const JSGlobalObject,
-        keys: *mut bun_core::ZigString,
-        values: *mut bun_core::ZigString,
+        keys: *mut bun_core::EncodedSlice,
+        values: *mut bun_core::EncodedSlice,
         strings_count: usize,
         clone: bool,
     ) -> JSValue;
@@ -2080,7 +2036,7 @@ unsafe extern "C" {
         function: JSValue,
         global: *const JSGlobalObject,
         bind_this: JSValue,
-        name: *const bun_core::String,
+        name: &bun_core::String,
         length: f64,
         args: *const JSValue,
         args_len: usize,
@@ -2088,13 +2044,19 @@ unsafe extern "C" {
     safe fn JSC__JSValue__put(
         this: JSValue,
         global: &JSGlobalObject,
-        key: &bun_core::ZigString,
+        key: &bun_core::EncodedSlice,
+        value: JSValue,
+    );
+    safe fn JSC__JSValue__putNonEnumerable(
+        this: JSValue,
+        global: &JSGlobalObject,
+        key: &bun_core::EncodedSlice,
         value: JSValue,
     );
     safe fn JSC__JSValue__deleteProperty(
         this: JSValue,
         global: &JSGlobalObject,
-        key: &bun_core::ZigString,
+        key: &bun_core::EncodedSlice,
     ) -> bool;
     safe fn JSC__JSValue__putBunString(
         this: JSValue,
@@ -2123,6 +2085,11 @@ unsafe extern "C" {
         value: JSValue,
     );
     safe fn JSC__JSValue__toStringOrNull(this: JSValue, global: &JSGlobalObject) -> *mut JSString;
+    safe fn JSC__JSValue__toJSStringView<'a>(
+        this: JSValue,
+        global: &'a JSGlobalObject,
+        view: &mut bun_core::StringView<'a>,
+    ) -> *mut JSString;
     safe fn JSC__JSValue__asString(this: JSValue) -> *mut JSString;
     safe fn JSC__jsTypeStringForValue(global: &JSGlobalObject, value: JSValue) -> *mut JSString;
     safe fn JSC__JSValue__asArrayBuffer(
@@ -2130,7 +2097,8 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         out: &mut ArrayBuffer,
     ) -> bool;
-    safe fn JSC__JSValue__pinArrayBuffer(this: JSValue) -> bool;
+    /// 0 = nothing to pin, 1 = pinned an ArrayBuffer (unpin later), 2 = held a bufferless view (nothing to unpin).
+    safe fn JSC__JSValue__pinArrayBuffer(this: JSValue) -> u8;
     safe fn JSC__JSValue__asPromise(this: JSValue) -> *mut JSPromise;
     safe fn JSC__JSValue__asInternalPromise(this: JSValue) -> *mut JSInternalPromise;
     safe fn Bun__attachAsyncStackFromPromise(
@@ -2150,11 +2118,6 @@ unsafe extern "C" {
         this: JSValue,
         global: &JSGlobalObject,
     ) -> f64;
-    safe fn JSC__JSValue__toZigString(
-        this: JSValue,
-        out: &mut bun_core::ZigString,
-        global: &JSGlobalObject,
-    );
     safe fn JSC__JSValue__isTerminationException(this: JSValue) -> bool;
     safe fn JSC__JSValue__isException(this: JSValue, vm: &crate::VM) -> bool;
     fn Bun__JSValue__call(
@@ -2179,8 +2142,21 @@ pub enum ProxyField {
     Target = 0,
     Handler = 1,
 }
-/// Alias kept for binding-name compatibility.
-pub type ProxyInternalField = ProxyField;
+
+/// `JSC::TemporalType` (TemporalObject.h) — result of [`JSValue::temporal_type`].
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TemporalType {
+    None = 0,
+    Instant = 1,
+    PlainDateTime = 2,
+    PlainDate = 3,
+    PlainTime = 4,
+    ZonedDateTime = 5,
+    PlainYearMonth = 6,
+    PlainMonthDay = 7,
+    Duration = 8,
+}
 
 /// `JSValue.SerializedFlags`.
 #[derive(Debug, Default, Clone, Copy)]
@@ -2230,7 +2206,7 @@ pub type ForEachCallback =
 pub(crate) type ForEachPropertyCallback = extern "C" fn(
     global: &JSGlobalObject,
     ctx: *mut c_void,
-    key: *mut bun_core::ZigString,
+    key: *mut bun_core::EncodedSlice,
     value: JSValue,
     is_symbol: bool,
     is_private_symbol: bool,
@@ -2245,11 +2221,7 @@ pub struct StringFormatter<'a> {
 impl core::fmt::Display for StringFormatter<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self.value.to_bun_string(self.global) {
-            Ok(s) => {
-                let r = core::fmt::Display::fmt(&s, f);
-                s.deref();
-                r
-            }
+            Ok(s) => core::fmt::Display::fmt(&s, f),
             Err(_) => Err(core::fmt::Error),
         }
     }
@@ -2258,7 +2230,7 @@ impl core::fmt::Display for StringFormatter<'_> {
 impl JSValue {
     // ── Equality / identity. ────────────────
     #[inline]
-    pub fn eql_value(self, other: JSValue) -> bool {
+    pub(crate) fn eql_value(self, other: JSValue) -> bool {
         JSC__JSValue__eqlValue(self, other)
     }
     /// `JSValue.isSameValue` (Object.is semantics).
@@ -2317,11 +2289,6 @@ impl JSValue {
         }
         self.to_number(global)
     }
-    /// `JSValue.toU16` — truncating, clamped-at-zero.
-    #[inline]
-    pub fn to_u16(self) -> u16 {
-        (self.to_int32().max(0) as u32) as u16
-    }
 
     // ── Object / cell views. ───────────────
     /// Statically cast to a `JSCell*`; `None` for non-cells.
@@ -2335,21 +2302,16 @@ impl JSValue {
     }
     /// `JSValue.toObject` — ECMA `ToObject`; throws on null/undefined.
     pub fn to_object(self, global: &JSGlobalObject) -> JsResult<*mut JSObject> {
-        let p = JSC__JSValue__toObject(self, global);
-        if p.is_null() {
-            Err(JsError::Thrown)
-        } else {
-            Ok(p)
-        }
+        Ok(crate::call_null_is_throw(global, || JSC__JSValue__toObject(self, global))?.as_ptr())
     }
     /// `JSValue.unwrapBoxedPrimitive` — unwraps Number,
     /// Boolean, String, and BigInt objects to their primitive forms.
     pub fn unwrap_boxed_primitive(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         host_fn::from_js_host_call(global, || JSC__JSValue__unwrapBoxedPrimitive(global, self))
     }
-    /// `JSValue.getPrototype`.
-    pub fn get_prototype(self, global: &JSGlobalObject) -> JSValue {
-        JSC__JSValue__getPrototype(self, global)
+    /// `JSValue.getPrototype`; runs a Proxy's `getPrototypeOf` trap, so it may throw.
+    pub fn get_prototype(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        host_fn::from_js_host_call(global, || JSC__JSValue__getPrototype(self, global))
     }
 
     // ── Reflection / naming. ───────────────
@@ -2361,40 +2323,24 @@ impl JSValue {
         })?;
         Ok(ret)
     }
-    /// `JSValue.getClassName` — writes the class name into `ret`.
-    pub fn get_class_name(
-        self,
-        global: &JSGlobalObject,
-        ret: &mut bun_core::ZigString,
-    ) -> JsResult<()> {
+    /// `JSValue.getClassName`.
+    pub fn get_class_name(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
         if !self.is_cell() {
-            *ret = bun_core::ZigString::init(b"[not a class]");
-            return Ok(());
+            return Ok(bun_core::String::static_("[not a class]"));
         }
-        host_fn::from_js_host_call_generic(global, || JSC__JSValue__getClassName(self, global, ret))
+        host_fn::from_js_host_call_generic(global, || JSC__JSValue__getClassName(self, global))
     }
-    /// `JSValue.getDescription` — symbol description (empty if none).
-    pub fn get_description(self, global: &JSGlobalObject) -> bun_core::ZigString {
-        let mut zs = bun_core::ZigString::EMPTY;
-        JSC__JSValue__getSymbolDescription(self, global, &mut zs);
-        zs
+    /// `JSValue.getDescription` — symbol description (empty if none),
+    /// borrowed from the Symbol.
+    pub fn get_description<'a>(self, global: &'a JSGlobalObject) -> bun_core::StringView<'a> {
+        JSC__JSValue__getSymbolDescription(self, global)
     }
     /// `JSValue.symbolFor(global, key)` — `Symbol.for(key)`.
-    pub fn symbol_for(global: &JSGlobalObject, key: &mut bun_core::ZigString) -> JSValue {
-        JSC__JSValue__symbolFor(global, key)
+    pub fn symbol_for(global: &JSGlobalObject, key: &'static [u8]) -> JSValue {
+        JSC__JSValue__symbolFor(global, &bun_core::String::static_(key))
     }
 
     // ── Property access. ──────────────────────────
-    /// `JSValue.putZigString` — `JSC__JSValue__put` keyed by an existing
-    /// `ZigString` (avoids the temporary in [`JSValue::put`]).
-    pub fn put_zig_string(
-        self,
-        global: &JSGlobalObject,
-        key: &bun_core::ZigString,
-        value: JSValue,
-    ) {
-        JSC__JSValue__put(self, global, key, value)
-    }
     /// `JSValue.getOwn` — own-property lookup (no prototype walk).
     pub fn get_own(
         self,
@@ -2487,7 +2433,7 @@ impl JSValue {
     /// `JSValue.forEachWithContext` — typed-ctx wrapper (callers pass
     /// `*mut c_void` directly).
     #[inline]
-    pub fn for_each_with_context(
+    pub(crate) fn for_each_with_context(
         self,
         global: &JSGlobalObject,
         ctx: *mut c_void,
@@ -2501,7 +2447,7 @@ impl JSValue {
     /// Seats the exception scope and calls the FFI directly so the deep
     /// `print_as` recursion does not pay an extra closure frame per object level.
     #[inline(always)]
-    pub fn for_each_property(
+    pub(crate) fn for_each_property(
         self,
         global: &JSGlobalObject,
         ctx: *mut c_void,
@@ -2526,7 +2472,7 @@ impl JSValue {
     /// `JSValue.forEachPropertyNonIndexed` — like
     /// [`for_each_property`](Self::for_each_property) but skips array-index
     /// keys.
-    pub fn for_each_property_non_indexed(
+    pub(crate) fn for_each_property_non_indexed(
         self,
         global: &JSGlobalObject,
         ctx: *mut c_void,
@@ -2576,16 +2522,17 @@ impl JSValue {
     /// `JSValue.isBuffer` — `instanceof Buffer` check via
     /// the C++ `JSBuffer__isBuffer` shim. Accepts any JSValue; the C++ side
     /// handles non-cells (returns false), so no precondition is asserted.
-    pub fn is_buffer(self, global: &JSGlobalObject) -> bool {
+    pub(crate) fn is_buffer(self, global: &JSGlobalObject) -> bool {
         unsafe extern "C" {
             safe fn JSBuffer__isBuffer(global: &JSGlobalObject, value: JSValue) -> bool;
         }
         JSBuffer__isBuffer(global, self)
     }
-    /// `JSValue.getDirectIndex` — read the `i`th indexed
-    /// own-property slot directly (no prototype walk, no getters). Returns
-    /// the empty value for holes.
-    pub fn get_direct_index(self, global: &JSGlobalObject, i: u32) -> JSValue {
+    /// `JSValue.getDirectIndex` — read the `i`th indexed own-property slot
+    /// (no prototype walk). Returns the empty value for holes; an own
+    /// accessor or a Proxy trap runs (and may throw), so empty is not a
+    /// throw sentinel here.
+    pub fn get_direct_index(self, global: &JSGlobalObject, i: u32) -> JsResult<JSValue> {
         unsafe extern "C" {
             safe fn JSC__JSValue__getDirectIndex(
                 this: JSValue,
@@ -2593,14 +2540,14 @@ impl JSValue {
                 i: u32,
             ) -> JSValue;
         }
-        JSC__JSValue__getDirectIndex(self, global, i)
+        crate::call_check_slow(global, || JSC__JSValue__getDirectIndex(self, global, i))
     }
     /// Smallest own present index of a `JSArray` that is `>= start`, or
     /// `None` when every index from `start` to the end of the array is a
     /// hole. Walks the array's backing storage (and sparse map) so a run of
     /// holes is skipped in one call instead of probing each index.
     /// Asserts `self` is a `JSArray` (`Array` or `DerivedArray`).
-    pub fn next_present_index(self, start: u32) -> Option<u32> {
+    pub(crate) fn next_present_index(self, start: u32) -> Option<u32> {
         debug_assert!(self.is_cell() && self.js_type().is_array());
         unsafe extern "C" {
             safe fn Bun__JSArray__nextPresentIndex(this: JSValue, start: u32) -> u64;
@@ -2610,31 +2557,24 @@ impl JSValue {
             index => Some(index as u32),
         }
     }
-    /// `JSValue.getNameProperty` — write the value's
-    /// `.name` (function/class name) into `ret`. No-op for empty/`undefined`/`null`.
-    pub fn get_name_property(
-        self,
-        global: &JSGlobalObject,
-        ret: &mut bun_core::ZigString,
-    ) -> JsResult<()> {
+    /// `JSValue.getNameProperty` — the value's `.name` (function/class
+    /// name). Empty for empty/`undefined`/`null`.
+    pub fn get_name_property(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
         if self.is_empty_or_undefined_or_null() {
-            return Ok(());
+            return Ok(bun_core::String::EMPTY);
         }
         unsafe extern "C" {
             safe fn JSC__JSValue__getNameProperty(
                 this: JSValue,
                 global: &JSGlobalObject,
-                ret: &mut bun_core::ZigString,
-            );
+            ) -> bun_core::String;
         }
-        host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__getNameProperty(self, global, ret)
-        })
+        host_fn::from_js_host_call_generic(global, || JSC__JSValue__getNameProperty(self, global))
     }
 
     // ── Proxy internals. ───────────────────────────────
     /// Asserts `self` is a `Proxy`.
-    pub fn get_proxy_internal_field(self, field: ProxyField) -> JSValue {
+    pub(crate) fn get_proxy_internal_field(self, field: ProxyField) -> JSValue {
         debug_assert!(self.is_cell() && self.js_type() == JSType::ProxyObject);
         Bun__ProxyObject__getInternalField(self, field as u32)
     }
@@ -2655,6 +2595,14 @@ impl JSValue {
     /// `byteOffset` of a typed array or `DataView`, `0` otherwise.
     pub fn get_array_buffer_view_byte_offset(self) -> usize {
         Bun__JSValue__getArrayBufferViewByteOffset(self)
+    }
+
+    /// Force a typed array out of JSC's "fast" mode so its data pointer stays
+    /// stable for the view's lifetime (fast-mode storage is abandoned when the
+    /// backing buffer is materialized). Returns `false` only when `self` is a
+    /// view whose backing buffer could not be allocated; non-views are a no-op.
+    pub fn materialize_array_buffer_view_buffer(self) -> bool {
+        Bun__JSValue__materializeArrayBufferViewBuffer(self)
     }
 
     // ── Formatting. ────────────────────────────────────
@@ -2750,20 +2698,12 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         out: &mut bun_core::String,
     );
-    safe fn JSC__JSValue__getClassName(
+    safe fn JSC__JSValue__getClassName(this: JSValue, global: &JSGlobalObject) -> bun_core::String;
+    safe fn JSC__JSValue__getSymbolDescription<'a>(
         this: JSValue,
-        global: &JSGlobalObject,
-        out: &mut bun_core::ZigString,
-    );
-    safe fn JSC__JSValue__getSymbolDescription(
-        this: JSValue,
-        global: &JSGlobalObject,
-        out: &mut bun_core::ZigString,
-    );
-    safe fn JSC__JSValue__symbolFor(
-        global: &JSGlobalObject,
-        key: &mut bun_core::ZigString,
-    ) -> JSValue;
+        global: &'a JSGlobalObject,
+    ) -> bun_core::StringView<'a>;
+    safe fn JSC__JSValue__symbolFor(global: &JSGlobalObject, key: &bun_core::String) -> JSValue;
     safe fn JSC__JSValue__getOwn(
         this: JSValue,
         global: &JSGlobalObject,
@@ -2783,6 +2723,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
     ) -> JSValue;
     safe fn Bun__JSValue__getArrayBufferViewByteOffset(this: JSValue) -> usize;
+    safe fn Bun__JSValue__materializeArrayBufferViewBuffer(this: JSValue) -> bool;
     safe fn Bun__Process__queueNextTick1(global: &JSGlobalObject, func: JSValue, arg: JSValue);
     fn Bun__JSValue__deserialize(
         global: *const JSGlobalObject,

@@ -1,6 +1,5 @@
 use core::fmt;
 
-use bun_collections::{HashMap, IdentityContext};
 use bun_core::fmt::QuotedFormatter;
 use bun_core::{ZStr, strings};
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
@@ -27,7 +26,6 @@ pub enum FolderResolution {
 }
 
 // The enum discriminant serves as the tag; expose an alias for it.
-pub type Tag = core::mem::Discriminant<FolderResolution>;
 
 pub(crate) struct PackageWorkspaceSearchPathFormatter<'a> {
     pub manager: &'a PackageManager,
@@ -87,26 +85,25 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
 /// Lookups compare the path, since a different path whose hash collides must
 /// not reuse this resolution.
 pub struct Entry {
-    pub abs_path: Box<[u8]>,
-    pub resolution: FolderResolution,
+    pub(crate) abs_path: Box<[u8]>,
+    pub(crate) resolution: FolderResolution,
 }
 
 // bun_collections::HashMap currently ignores the context/load-factor
 // type params (backed by std HashMap); identity hashing is a TODO(perf).
-pub type Map = HashMap<u64, Entry, IdentityContext<u64>>;
 
-pub(crate) fn normalize(path: &[u8]) -> &[u8] {
+fn normalize(path: &[u8]) -> &[u8] {
     FileSystem::instance().normalize(path)
 }
 
-pub fn hash(normalized_path: &[u8]) -> u64 {
+pub(crate) fn hash(normalized_path: &[u8]) -> u64 {
     bun_wyhash::hash(normalized_path)
 }
 
 // ── NewResolver ───────────────────────────────────────────────────────────
 // The const-generic tag requires `#[derive(ConstParamTy)]` (already on `Tag`).
-pub struct NewResolver<'a, const TAG: ResolutionTag> {
-    pub folder_path: &'a [u8],
+struct NewResolver<'a, const TAG: ResolutionTag> {
+    pub(crate) folder_path: &'a [u8],
 }
 
 impl<'a, const TAG: ResolutionTag> ResolverContext for NewResolver<'a, TAG> {
@@ -165,7 +162,7 @@ impl ResolverContext for CacheFolderResolver {
 /// Unifies `NewResolver<TAG>` and `CacheFolderResolver` for
 /// `read_package_json_from_disk`; the associated const `IS_WORKSPACE`
 /// distinguishes the workspace resolver.
-pub(crate) trait FolderResolverImpl: ResolverContext {
+trait FolderResolverImpl: ResolverContext {
     const IS_WORKSPACE: bool;
 }
 impl<'a, const TAG: ResolutionTag> FolderResolverImpl for NewResolver<'a, TAG> {
@@ -186,7 +183,7 @@ fn normalize_package_json_path<'a>(
     non_normalized_path: &[u8],
 ) -> Paths<'a> {
     let abs: &[u8];
-    let rel: &[u8];
+
     // We consider it valid if there is a package.json in the folder
     let normalized: &[u8] = if non_normalized_path.len() == 1 && non_normalized_path[0] == b'.' {
         non_normalized_path
@@ -198,7 +195,7 @@ fn normalize_package_json_path<'a>(
 
     const PACKAGE_JSON_LEN: usize = "/package.json".len();
 
-    if strings::starts_with_char(normalized, b'.') {
+    let rel: &[u8] = if strings::starts_with_char(normalized, b'.') {
         let mut tempcat = PathBuffer::uninit();
 
         tempcat[..normalized.len()].copy_from_slice(normalized);
@@ -210,10 +207,10 @@ fn normalize_package_json_path<'a>(
             &tempcat[0..normalized.len() + PACKAGE_JSON_LEN],
         ];
         abs = FileSystem::instance().abs_buf(&parts, joined);
-        rel = FileSystem::instance().relative(
+        FileSystem::instance().relative(
             FileSystem::instance().top_level_dir(),
             &abs[0..abs.len() - PACKAGE_JSON_LEN],
-        );
+        )
     } else {
         let joined_len = joined.len();
         let mut remain: &mut [u8] = &mut joined[..];
@@ -246,11 +243,11 @@ fn normalize_package_json_path<'a>(
         let abs_len = joined_len - remain_after;
         abs = &joined[0..abs_len];
         // We store the folder name without package.json
-        rel = FileSystem::instance().relative(
+        FileSystem::instance().relative(
             FileSystem::instance().top_level_dir(),
             &abs[0..abs.len() - PACKAGE_JSON_LEN],
-        );
-    }
+        )
+    };
     let abs_len = abs.len();
     joined[abs_len] = 0;
 
@@ -268,7 +265,6 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
     resolver: &mut R,
 ) -> crate::Result<LockfilePackage> {
     let mut body = npm::Registry::BodyPool::get();
-    // defer Npm.Registry.BodyPool.release(body) — handled by PoolGuard Drop
 
     let mut package: LockfilePackage = Default::default();
 
@@ -324,7 +320,6 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
 
         let source = {
             let file = File::openat(Fd::cwd(), abs.as_bytes(), O::RDONLY, 0)?;
-            // defer file.close()
             body.reset();
             let read_result = file
                 .read_to_end_with_array_list(&mut body.list, bun_sys::SizeHint::ProbablySmall)
@@ -380,7 +375,7 @@ pub enum GlobalOrRelative<'a> {
     CacheFolder(&'a [u8]),
 }
 
-pub fn get_or_put(
+pub(crate) fn get_or_put(
     global_or_relative: GlobalOrRelative<'_>,
     version: &dependency::Version,
     non_normalized_path: &[u8],

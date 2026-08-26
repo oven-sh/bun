@@ -19,7 +19,7 @@ use bun_paths::resolve_path;
 use bun_sys::{self, Fd};
 
 // Generate project files based on the entry point and dependencies
-pub fn generate(
+pub(crate) fn generate(
     _ctx: &Command::Context,
     _example: ExampleTag,
     entry_point: &[u8],
@@ -232,7 +232,7 @@ fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), crate::Error> {
 }
 
 // Generate all project files from template
-pub fn generate_files(
+pub(crate) fn generate_files(
     entry_point: &[u8],
     dependencies: &[Box<[u8]>],
     dev_dependencies: &[&[u8]],
@@ -765,9 +765,9 @@ const ENABLE_SHADCN_UI: bool = true;
 
 pub struct TemplateFile {
     pub name: &'static [u8],
-    pub content: &'static [u8],
+    pub(crate) content: &'static [u8],
     pub reason: Reason,
-    pub overwrite: bool,
+    pub(crate) overwrite: bool,
 }
 
 impl TemplateFile {
@@ -802,7 +802,7 @@ pub enum Reason {
 }
 
 // Template for React + Tailwind project
-pub mod react_tailwind_spa {
+pub(crate) mod react_tailwind_spa {
     use super::*;
 
     pub(crate) const FILES: &[TemplateFile] = &[
@@ -841,7 +841,7 @@ const SHARED_PACKAGE_JSON: &[u8] = include_bytes!("projects/react-shadcn-spa/pac
 const SHARED_BUNFIG_TOML: &[u8] = include_bytes!("projects/react-shadcn-spa/bunfig.toml");
 
 // Template for basic React project
-pub mod react_spa {
+pub(crate) mod react_spa {
     use super::*;
 
     pub(crate) const FILES: &[TemplateFile] = &[
@@ -874,7 +874,7 @@ pub mod react_spa {
 }
 
 // Template for React + Shadcn project
-pub mod react_shadcn_spa {
+pub(crate) mod react_shadcn_spa {
     use super::*;
 
     pub(crate) const FILES: &[TemplateFile] = &[
@@ -945,14 +945,7 @@ pub enum Tag {
 }
 
 impl Tag {
-    pub fn logger(self) -> Logger {
-        Logger {
-            template: self,
-            has_written_initial_message: false,
-        }
-    }
-
-    pub fn label(self) -> &'static [u8] {
+    pub(crate) fn label(self) -> &'static [u8] {
         match self {
             Tag::ReactTailwindSpa => b"React + Tailwind",
             Tag::ReactSpa => b"React",
@@ -960,7 +953,7 @@ impl Tag {
         }
     }
 
-    pub fn files(self) -> &'static [TemplateFile] {
+    pub(crate) fn files(self) -> &'static [TemplateFile] {
         match self {
             Tag::ReactTailwindSpa => react_tailwind_spa::FILES,
             Tag::ReactSpa => react_spa::FILES,
@@ -970,7 +963,7 @@ impl Tag {
 }
 
 impl Template {
-    pub(crate) fn logger(&self) -> Logger {
+    fn logger(&self) -> Logger {
         Logger {
             template: self.tag(),
             has_written_initial_message: false,
@@ -979,12 +972,12 @@ impl Template {
 }
 
 pub struct Logger {
-    pub has_written_initial_message: bool,
-    pub template: Tag,
+    pub(crate) has_written_initial_message: bool,
+    pub(crate) template: Tag,
 }
 
 impl Logger {
-    pub fn file(&mut self, template_file: &TemplateFile, name: &[u8], max_name_len: usize) {
+    pub(crate) fn file(&mut self, template_file: &TemplateFile, name: &[u8], max_name_len: usize) {
         self.has_written_initial_message = true;
         bun_core::pretty!(" <green>create<r>  ");
         bun_core::pretty!("{}", bstr::BStr::new(name));
@@ -997,7 +990,7 @@ impl Logger {
         bun_core::prettyln!("   <d>{}<r>", <&'static str>::from(template_file.reason));
     }
 
-    pub fn if_new(&mut self) {
+    pub(crate) fn if_new(&mut self) {
         if !self.has_written_initial_message {
             return;
         }

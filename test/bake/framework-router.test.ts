@@ -1,6 +1,6 @@
 import { frameworkRouterInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { tempDir } from "harness";
 import path from "path";
 
 const { parseRoutePattern, FrameworkRouter } = frameworkRouterInternals;
@@ -79,7 +79,7 @@ describe("pattern parse", () => {
 });
 
 test("discovers from filesystem paths", () => {
-  const dir = tempDirWithFiles("fsr", {
+  using dir = tempDir("fsr", {
     "hello.tsx": "1",
     "meow/_layout.tsx": "1",
     "meow/bark/[param]/hello.tsx": "1",

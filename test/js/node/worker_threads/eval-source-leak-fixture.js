@@ -5,6 +5,10 @@ const { Worker } = require("node:worker_threads");
 
 const eachSizeMiB = 100;
 const iterations = 5;
+const rss =
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
 
 function test() {
   const code = " ".repeat(eachSizeMiB * 1024 * 1024);
@@ -26,12 +30,12 @@ async function reallyGC() {
 await test();
 await reallyGC();
 
-const before = process.memoryUsage.rss();
+const before = rss();
 for (let i = 0; i < iterations; i++) {
   await test();
   await reallyGC();
 }
-const after = process.memoryUsage.rss();
+const after = rss();
 // The bug is that the source code passed to `new Worker` would never be freed.
 // If this bug is present, then the memory growth likely won't be much more than the total amount
 // of source code, but it's impossible for the memory growth to be less than the source code size.

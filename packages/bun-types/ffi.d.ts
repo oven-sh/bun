@@ -9,9 +9,6 @@
  * });
  * ```
  *
- * Bun uses [tinycc](https://github.com/TinyCC/tinycc) to just-in-time compile
- * C wrappers that convert JavaScript types to C types and back.
- *
  * @category FFI
  */
 declare module "bun:ffi" {
@@ -306,9 +303,11 @@ declare module "bun:ffi" {
     void = 13,
 
     /**
-     * When used as a `returns`, the value becomes a {@link CString}.
+     * When used as a `returns`, the value becomes a `string` (a NULL pointer
+     * becomes `null`).
      *
-     * When used in `args`, it is equivalent to {@link FFIType.pointer}
+     * When used in `args`, it is equivalent to {@link FFIType.pointer} and
+     * additionally accepts a JavaScript string.
      */
     cstring = 14,
 
@@ -334,6 +333,14 @@ declare module "bun:ffi" {
     napi_env = 18,
     napi_value = 19,
     buffer = 20,
+    /**
+     * A TypedArray or DataView whose **byte length** is passed to the callee as an
+     * unsigned 64-bit integer. Pass the *same* view you passed for a `buffer` parameter;
+     * the engine reads pointer and length off the same object at call time, so the two
+     * always agree (an atomic snapshot -- unlike passing `view.byteLength` yourself).
+     * Engine-native only; not supported inside `cc()`.
+     */
+    buffer_length = 21,
   }
 
   type Pointer = number & { __pointer__: null };
@@ -357,15 +364,16 @@ declare module "bun:ffi" {
     [FFIType.double]: number;
     [FFIType.float]: number;
     [FFIType.bool]: boolean;
-    [FFIType.ptr]: NodeJS.TypedArray | Pointer | CString | null;
+    [FFIType.ptr]: NodeJS.TypedArray | Pointer | bigint | null;
     [FFIType.void]: undefined;
-    [FFIType.cstring]: NodeJS.TypedArray | Pointer | CString | null;
+    [FFIType.cstring]: string | NodeJS.TypedArray | Pointer | bigint | null;
     [FFIType.i64_fast]: number | bigint;
     [FFIType.u64_fast]: number | bigint;
     [FFIType.function]: Pointer | JSCallback; // cannot be null
     [FFIType.napi_env]: unknown;
     [FFIType.napi_value]: unknown;
     [FFIType.buffer]: NodeJS.TypedArray | DataView;
+    [FFIType.buffer_length]: NodeJS.TypedArray | DataView;
   }
   interface FFITypeToReturnsType {
     [FFIType.char]: number;
@@ -380,15 +388,16 @@ declare module "bun:ffi" {
     [FFIType.double]: number;
     [FFIType.float]: number;
     [FFIType.bool]: boolean;
-    [FFIType.ptr]: Pointer | null;
+    [FFIType.ptr]: Pointer | bigint | null;
     [FFIType.void]: undefined;
-    [FFIType.cstring]: CString;
+    [FFIType.cstring]: string | null;
     [FFIType.i64_fast]: number | bigint;
     [FFIType.u64_fast]: number | bigint;
-    [FFIType.function]: Pointer | null;
+    [FFIType.function]: Pointer | bigint | null;
     [FFIType.napi_env]: unknown;
     [FFIType.napi_value]: unknown;
     [FFIType.buffer]: NodeJS.TypedArray | DataView;
+    [FFIType.buffer_length]: NodeJS.TypedArray | DataView;
   }
   interface FFITypeStringToType {
     ["char"]: FFIType.char;
@@ -424,6 +433,8 @@ declare module "bun:ffi" {
     ["napi_env"]: FFIType.napi_env;
     ["napi_value"]: FFIType.napi_value;
     ["buffer"]: FFIType.buffer;
+    ["buffer_length"]: FFIType.buffer_length;
+    ["buffer_bytelength"]: FFIType.buffer_length;
   }
 
   type FFITypeOrString = FFIType | keyof FFITypeStringToType;
@@ -570,9 +581,6 @@ declare module "bun:ffi" {
    * // "1.0.0"
    * ```
    *
-   * Bun uses [tinycc](https://github.com/TinyCC/tinycc) to just-in-time
-   * compile C wrappers that convert JavaScript types to C types and back.
-   *
    * @category FFI
    */
   function dlopen<Fns extends Record<string, FFIFunction>>(
@@ -711,10 +719,8 @@ declare module "bun:ffi" {
    * getVersion.close();
    * ```
    *
-   * Bun uses [tinycc](https://github.com/TinyCC/tinycc) to just-in-time
-   * compile a C wrapper that converts JavaScript types to C types and back.
    */
-  function CFunction(fn: FFIFunction & { ptr: Pointer }): CallableFunction & {
+  function CFunction(fn: FFIFunction & { ptr: Pointer | number | bigint }): CallableFunction & {
     /**
      * Free the memory allocated by the wrapping function
      */
@@ -767,8 +773,6 @@ declare module "bun:ffi" {
    * ];
    * ```
    *
-   * Bun uses [tinycc](https://github.com/TinyCC/tinycc) to just-in-time
-   * compile C wrappers that convert JavaScript types to C types and back.
    */
   function linkSymbols<Fns extends Record<string, FFIFunction>>(symbols: Fns): Library<Fns>;
 
@@ -785,7 +789,7 @@ declare module "bun:ffi" {
    * @param byteOffset bytes to skip before reading
    * @param byteLength bytes to read
    */
-  function toBuffer(ptr: Pointer, byteOffset?: number, byteLength?: number): Buffer;
+  function toBuffer(ptr: Pointer | number | bigint, byteOffset?: number, byteLength?: number): Buffer;
 
   /**
    * Read a pointer as an {@link ArrayBuffer}
@@ -800,7 +804,7 @@ declare module "bun:ffi" {
    * @param byteOffset bytes to skip before reading
    * @param byteLength bytes to read
    */
-  function toArrayBuffer(ptr: Pointer, byteOffset?: number, byteLength?: number): ArrayBuffer;
+  function toArrayBuffer(ptr: Pointer | number | bigint, byteOffset?: number, byteLength?: number): ArrayBuffer;
 
   /**
    * Read a value directly from a memory address, without creating a
@@ -820,7 +824,7 @@ declare module "bun:ffi" {
      * @param ptr The memory address to read
      * @param byteOffset bytes to skip before reading
      */
-    function u8(ptr: Pointer, byteOffset?: number): number;
+    function u8(ptr: Pointer | number | bigint, byteOffset?: number): number;
     /**
      * Read a signed 8-bit integer at `ptr + byteOffset`
      *
@@ -834,7 +838,7 @@ declare module "bun:ffi" {
      * @param ptr The memory address to read
      * @param byteOffset bytes to skip before reading
      */
-    function i8(ptr: Pointer, byteOffset?: number): number;
+    function i8(ptr: Pointer | number | bigint, byteOffset?: number): number;
     /**
      * Read an unsigned 16-bit integer at `ptr + byteOffset`
      *
@@ -848,7 +852,7 @@ declare module "bun:ffi" {
      * @param ptr The memory address to read
      * @param byteOffset bytes to skip before reading
      */
-    function u16(ptr: Pointer, byteOffset?: number): number;
+    function u16(ptr: Pointer | number | bigint, byteOffset?: number): number;
     /**
      * Read a signed 16-bit integer at `ptr + byteOffset`
      *
@@ -862,7 +866,7 @@ declare module "bun:ffi" {
      * @param ptr The memory address to read
      * @param byteOffset bytes to skip before reading
      */
-    function i16(ptr: Pointer, byteOffset?: number): number;
+    function i16(ptr: Pointer | number | bigint, byteOffset?: number): number;
     /**
      * Read an unsigned 32-bit integer at `ptr + byteOffset`
      *
@@ -876,7 +880,7 @@ declare module "bun:ffi" {
      * @param ptr The memory address to read
      * @param byteOffset bytes to skip before reading
      */
-    function u32(ptr: Pointer, byteOffset?: number): number;
+    function u32(ptr: Pointer | number | bigint, byteOffset?: number): number;
     /**
      * Read a signed 32-bit integer at `ptr + byteOffset`
      *
@@ -890,7 +894,7 @@ declare module "bun:ffi" {
      * @param ptr The memory address to read
      * @param byteOffset bytes to skip before reading
      */
-    function i32(ptr: Pointer, byteOffset?: number): number;
+    function i32(ptr: Pointer | number | bigint, byteOffset?: number): number;
     /**
      * Read a 32-bit float at `ptr + byteOffset`
      *
@@ -904,7 +908,7 @@ declare module "bun:ffi" {
      * @param ptr The memory address to read
      * @param byteOffset bytes to skip before reading
      */
-    function f32(ptr: Pointer, byteOffset?: number): number;
+    function f32(ptr: Pointer | number | bigint, byteOffset?: number): number;
     /**
      * Read an unsigned 64-bit integer at `ptr + byteOffset`, as a `bigint`
      *
@@ -918,7 +922,7 @@ declare module "bun:ffi" {
      * @param ptr The memory address to read
      * @param byteOffset bytes to skip before reading
      */
-    function u64(ptr: Pointer, byteOffset?: number): bigint;
+    function u64(ptr: Pointer | number | bigint, byteOffset?: number): bigint;
     /**
      * Read a signed 64-bit integer at `ptr + byteOffset`, as a `bigint`
      *
@@ -932,7 +936,7 @@ declare module "bun:ffi" {
      * @param ptr The memory address to read
      * @param byteOffset bytes to skip before reading
      */
-    function i64(ptr: Pointer, byteOffset?: number): bigint;
+    function i64(ptr: Pointer | number | bigint, byteOffset?: number): bigint;
     /**
      * Read a 64-bit double at `ptr + byteOffset`
      *
@@ -946,7 +950,7 @@ declare module "bun:ffi" {
      * @param ptr The memory address to read
      * @param byteOffset bytes to skip before reading
      */
-    function f64(ptr: Pointer, byteOffset?: number): number;
+    function f64(ptr: Pointer | number | bigint, byteOffset?: number): number;
     /**
      * Read a pointer at `ptr + byteOffset`
      *
@@ -960,7 +964,7 @@ declare module "bun:ffi" {
      * @param ptr The memory address to read
      * @param byteOffset bytes to skip before reading
      */
-    function ptr(ptr: Pointer, byteOffset?: number): number;
+    function ptr(ptr: Pointer | number | bigint, byteOffset?: number): number;
     /**
      * Read a pointer-sized signed integer (`intptr_t`) at `ptr + byteOffset`
      *
@@ -974,7 +978,7 @@ declare module "bun:ffi" {
      * @param ptr The memory address to read
      * @param byteOffset bytes to skip before reading
      */
-    function intptr(ptr: Pointer, byteOffset?: number): number;
+    function intptr(ptr: Pointer | number | bigint, byteOffset?: number): number;
   }
 
   /**
@@ -1007,34 +1011,19 @@ declare module "bun:ffi" {
   function ptr(view: NodeJS.TypedArray | ArrayBufferLike | DataView, byteOffset?: number): Pointer;
 
   /**
-   * Get a string from a UTF-8 encoded C string.
-   *
-   * If `byteLength` is not provided, the string is assumed to be null-terminated.
-   *
-   * Bun catches some invalid pointers, but not all. Passing an invalid
-   * pointer, or reading past the end of the memory it points to, can crash
-   * the program or cause undefined behavior.
-   *
-   * @example
-   * ```js
-   * var ptr = lib.symbols.getVersion();
-   * console.log(new CString(ptr));
-   * ```
-   *
-   * @example
-   * ```js
-   * var ptr = lib.symbols.getVersion();
-   * // print the first 4 characters
-   * console.log(new CString(ptr, 0, 4));
-   * ```
+   * A JavaScript string decoded from a UTF-8 encoded C string.
    *
    * @category FFI
    */
-  class CString extends String {
+  type CString = string;
+
+  interface CStringConstructor {
     /**
-     * Get a string from a UTF-8 encoded C string.
+     * Read a UTF-8 encoded C string into a JavaScript string.
      *
      * If `byteLength` is not provided, the string is assumed to be null-terminated.
+     * The result is a clone of the C string, so it is safe to keep using it after
+     * the memory at `ptr` has been freed. A falsy `ptr` yields an empty string.
      *
      * Bun catches some invalid pointers, but not all. Passing an invalid
      * pointer, or reading past the end of the memory it points to, can crash
@@ -1057,25 +1046,16 @@ declare module "bun:ffi" {
      * @param byteOffset bytes to skip before reading
      * @param byteLength bytes to read
      */
-    constructor(ptr: Pointer, byteOffset?: number, byteLength?: number);
-
-    /**
-     * The pointer to the C string
-     *
-     * The `CString` is a clone of the string, so the instance stays safe to
-     * use after the memory at `ptr` has been freed.
-     */
-    ptr: Pointer;
-    byteOffset?: number;
-    byteLength?: number;
-
-    /**
-     * Get the {@link ptr} as an `ArrayBuffer`
-     *
-     * A `null` or empty `ptr` returns an `ArrayBuffer` with `byteLength` 0
-     */
-    get arrayBuffer(): ArrayBuffer;
+    new (ptr: Pointer | number | bigint | null, byteOffset?: number, byteLength?: number): string;
+    (ptr: Pointer | number | bigint | null, byteOffset?: number, byteLength?: number): string;
   }
+
+  /**
+   * Get a string from a UTF-8 encoded C string.
+   *
+   * @category FFI
+   */
+  const CString: CStringConstructor;
 
   /**
    * Pass a JavaScript function to FFI (Foreign Function Interface)

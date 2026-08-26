@@ -1,6 +1,5 @@
 // Hardcoded module "node:child_process"
 const EventEmitter = require("node:events");
-const OsModule = require("node:os");
 const { kHandle } = require("internal/shared");
 const {
   validateBoolean,
@@ -20,7 +19,10 @@ var BufferConcat = Buffer.concat;
 var BufferIsEncoding = Buffer.isEncoding;
 
 var kEmptyObject = ObjectCreate(null);
-var signals = OsModule.constants.signals;
+let signals;
+function getSignals() {
+  return (signals ??= require("node:os").constants.signals);
+}
 
 var ArrayPrototypeJoin = Array.prototype.join;
 var ArrayPrototypeIncludes = Array.prototype.includes;
@@ -36,7 +38,9 @@ const ArrayPrototypeSplice = Array.prototype.splice;
 var ArrayBufferIsView = ArrayBuffer.isView;
 
 var NumberIsInteger = Number.isInteger;
+var ObjectHasOwn = Object.hasOwn;
 var StringPrototypeIncludes = String.prototype.includes;
+var StringPrototypeStartsWith = String.prototype.startsWith;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 const MAX_BUFFER = 1024 * 1024;
@@ -153,12 +157,14 @@ function spawn(file, args, options) {
       }
     }, timeout).unref();
 
-    child.once("exit", () => {
+    const clear = () => {
       if (timeoutId) {
         clearTimeout(timeoutId);
         timeoutId = null;
       }
-    });
+    };
+    child.once("exit", clear);
+    child.once("close", clear);
   }
 
   const signal = options.signal;
@@ -167,7 +173,9 @@ function spawn(file, args, options) {
       process.nextTick(onAbortListener);
     } else {
       signal.addEventListener("abort", onAbortListener, { once: true });
-      child.once("exit", () => signal.removeEventListener("abort", onAbortListener));
+      const remove = () => signal.removeEventListener("abort", onAbortListener);
+      child.once("exit", remove);
+      child.once("close", remove);
     }
 
     function onAbortListener() {
@@ -234,6 +242,7 @@ function execFile(file, args, options, callback) {
     killSignal: options.killSignal,
     uid: options.uid,
     gid: options.gid,
+    cgroup: options.cgroup,
     windowsHide: options.windowsHide,
     windowsVerbatimArguments: options.windowsVerbatimArguments,
     shell: options.shell,
@@ -565,6 +574,7 @@ function spawnSync(file, args, options) {
       detached: options.detached,
       uid: options.uid,
       gid: options.gid,
+      cgroup: options.cgroup,
       windowsVerbatimArguments: options.windowsVerbatimArguments,
       windowsHide: options.windowsHide,
       argv0: options.args[0],
@@ -809,7 +819,7 @@ function convertToValidSignal(signal) {
   if (typeof signal === "number" && getSignalsToNamesMapping()[signal]) return signal;
 
   if (typeof signal === "string") {
-    const signalName = signals[StringPrototypeToUpperCase.$call(signal)];
+    const signalName = getSignals()[StringPrototypeToUpperCase.$call(signal)];
     if (signalName) return signalName;
   }
 
@@ -829,8 +839,9 @@ function getSignalsToNamesMapping() {
   if (signalsToNamesMapping !== undefined) return signalsToNamesMapping;
 
   signalsToNamesMapping = ObjectCreate(null);
-  for (const key in signals) {
-    signalsToNamesMapping[signals[key]] = key;
+  const names = getSignals();
+  for (const key in names) {
+    signalsToNamesMapping[names[key]] = key;
   }
 
   return signalsToNamesMapping;
@@ -1134,14 +1145,14 @@ class ChildProcess extends EventEmitter {
         stderr = this.#stderr;
 
       if (stdout === undefined) {
-        this.#stdout = this.#getBunSpawnIo(1, this.#encoding, true);
-      } else if (stdout && this.#stdioOptions[1] === "pipe" && !stdout?.destroyed) {
+        this.#stdout = this.#getBunSpawnIo(1, true);
+      } else if (stdout && this.#stdioOptions[1] === "pipe" && !stdout.destroyed && stdout.readable) {
         stdout.resume?.();
       }
 
       if (stderr === undefined) {
-        this.#stderr = this.#getBunSpawnIo(2, this.#encoding, true);
-      } else if (stderr && this.#stdioOptions[2] === "pipe" && !stderr?.destroyed) {
+        this.#stderr = this.#getBunSpawnIo(2, true);
+      } else if (stderr && this.#stdioOptions[2] === "pipe" && !stderr.destroyed && stderr.readable) {
         stderr.resume?.();
       }
     }
@@ -1173,7 +1184,7 @@ class ChildProcess extends EventEmitter {
     this.#maybeClose();
   }
 
-  #getBunSpawnIo(i, encoding, autoResume = false) {
+  #getBunSpawnIo(i, autoResume = false) {
     if ($debug && !this.#handle) {
       if (this.#handle === null) {
         $debug("ChildProcess: getBunSpawnIo: this.#handle is null. This means the subprocess already exited");
@@ -1243,7 +1254,7 @@ class ChildProcess extends EventEmitter {
               return stream;
             }
 
-            const pipe = require("internal/streams/native-readable").constructNativeReadable(value, { encoding });
+            const pipe = require("internal/streams/native-readable").constructNativeReadable(value, {});
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
             if (autoResume) pipe.resume();
@@ -1282,7 +1293,6 @@ class ChildProcess extends EventEmitter {
   #stdout;
   #stderr;
   #stdioObject;
-  #encoding;
   #stdioOptions;
 
   #createStdioObject() {
@@ -1310,7 +1320,7 @@ class ChildProcess extends EventEmitter {
           result[i] = this.stderr;
           continue;
         default:
-          result[i] = this.#getBunSpawnIo(i, this.#encoding, false);
+          result[i] = this.#getBunSpawnIo(i, false);
           continue;
       }
     }
@@ -1318,15 +1328,15 @@ class ChildProcess extends EventEmitter {
   }
 
   get stdin() {
-    return (this.#stdin ??= this.#getBunSpawnIo(0, this.#encoding, false));
+    return (this.#stdin ??= this.#getBunSpawnIo(0, false));
   }
 
   get stdout() {
-    return (this.#stdout ??= this.#getBunSpawnIo(1, this.#encoding, false));
+    return (this.#stdout ??= this.#getBunSpawnIo(1, false));
   }
 
   get stderr() {
-    return (this.#stderr ??= this.#getBunSpawnIo(2, this.#encoding, false));
+    return (this.#stderr ??= this.#getBunSpawnIo(2, false));
   }
 
   get stdio() {
@@ -1378,7 +1388,6 @@ class ChildProcess extends EventEmitter {
     var env = options[kBunEnv] || parseEnvPairs(envPairs) || process.env;
 
     const detachedOption = options.detached;
-    this.#encoding = options.encoding || undefined;
     this.#stdioOptions = bunStdio;
     const stdioCount = stdio.length;
     const hasSocketsToEagerlyLoad = stdioCount >= 3;
@@ -1408,6 +1417,7 @@ class ChildProcess extends EventEmitter {
         detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
         uid: options.uid,
         gid: options.gid,
+        cgroup: options.cgroup,
         onExit: (handle, exitCode, signalCode, err) => {
           this.#handle = handle;
           this.pid = this.#handle.pid;
@@ -1498,7 +1508,7 @@ class ChildProcess extends EventEmitter {
   }
 
   #emitIpcMessage(message, _, handle) {
-    this.emit("message", message, handle);
+    this.emit(isInternalIpcMessage(message) ? "internalMessage" : "message", message, handle);
   }
 
   #send(message, handle, options, callback) {
@@ -1600,7 +1610,7 @@ class ChildProcess extends EventEmitter {
     Object.defineProperties(this.prototype, {
       stdin: {
         get: function () {
-          const value = (this.#stdin ??= this.#getBunSpawnIo(0, this.#encoding, false));
+          const value = (this.#stdin ??= this.#getBunSpawnIo(0, false));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stdin", {
             value: value,
@@ -1615,7 +1625,7 @@ class ChildProcess extends EventEmitter {
       },
       stdout: {
         get: function () {
-          const value = (this.#stdout ??= this.#getBunSpawnIo(1, this.#encoding, false));
+          const value = (this.#stdout ??= this.#getBunSpawnIo(1, false));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stdout", {
             value: value,
@@ -1630,7 +1640,7 @@ class ChildProcess extends EventEmitter {
       },
       stderr: {
         get: function () {
-          const value = (this.#stderr ??= this.#getBunSpawnIo(2, this.#encoding, false));
+          const value = (this.#stderr ??= this.#getBunSpawnIo(2, false));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stderr", {
             value: value,
@@ -1673,6 +1683,35 @@ const nodeToBunLookup = {
   ipc: "ipc",
 };
 
+const INTERNAL_IPC_PREFIX = "NODE_";
+
+function isInternalIpcMessage(message) {
+  if (message === null || typeof message !== "object") return false;
+  if (!ObjectHasOwn(message, "cmd")) return false;
+  const cmd = message.cmd;
+  if (typeof cmd !== "string" || cmd.length <= INTERNAL_IPC_PREFIX.length) return false;
+  return StringPrototypeStartsWith.$call(cmd, INTERNAL_IPC_PREFIX);
+}
+
+function streamFdOf(item): number | undefined {
+  const itemFd = ObjectHasOwn(item, "fd") ? item.fd : undefined;
+  if (typeof itemFd === "number") return itemFd;
+
+  const handle = item._handle;
+  const handleFd = handle ? handle.fd : undefined;
+  if (typeof handleFd === "number") return handleFd;
+
+  if (item.destroyed) return undefined;
+
+  const sink = item[require("internal/fs/streams").kWriteStreamFastPath];
+  if (sink && sink !== true) {
+    const fd = sink._getFd();
+    if (typeof fd === "number" && fd >= 0) return fd;
+  }
+
+  return undefined;
+}
+
 function nodeToBun(item: string, index: number): string | number | null | NodeJS.TypedArray | ArrayBufferView {
   // If not defined, use the default.
   // For stdin/stdout/stderr, it's pipe. For others, it's ignore.
@@ -1684,21 +1723,13 @@ function nodeToBun(item: string, index: number): string | number | null | NodeJS
   if (typeof item === "number") {
     return item;
   }
-  if (isNodeStreamReadable(item)) {
-    const itemFd = Object.hasOwn(item, "fd") ? item.fd : undefined;
-    if (typeof itemFd === "number") return itemFd;
-    const handle = item._handle;
-    const handleFd = handle ? handle.fd : undefined;
-    if (typeof handleFd === "number") return handleFd;
-    throw new Error(`TODO: stream.Readable stdio @ ${index}`);
-  }
-  if (isNodeStreamWritable(item)) {
-    const itemFd = Object.hasOwn(item, "fd") ? item.fd : undefined;
-    if (typeof itemFd === "number") return itemFd;
-    const handle = item._handle;
-    const handleFd = handle ? handle.fd : undefined;
-    if (typeof handleFd === "number") return handleFd;
-    throw new Error(`TODO: stream.Writable stdio @ ${index}`);
+  if (isNodeStreamReadable(item) || isNodeStreamWritable(item)) {
+    const fd = streamFdOf(item);
+    if (fd !== undefined) return fd;
+    const kind = isNodeStreamReadable(item) ? "Readable" : "Writable";
+    throw new Error(
+      `Passing a stream.${kind} without an underlying file descriptor as stdio[${index}] is not yet implemented in Bun`,
+    );
   }
   const result = nodeToBunLookup[item];
   if (result === undefined) {
@@ -1784,6 +1815,8 @@ function normalizeStdio(stdio): string[] {
         return ["ignore", "ignore", "ignore"];
       case "pipe":
         return ["pipe", "pipe", "pipe"];
+      case "overlapped":
+        return ["overlapped", "overlapped", "overlapped"];
       case "inherit":
         return ["inherit", "inherit", "inherit"];
       default:
@@ -1921,137 +1954,6 @@ function genericNodeError(message, errorProperties) {
   ObjectAssign(err, errorProperties);
   return err;
 }
-
-// const messages = new Map();
-
-// Utility function for registering the error codes. Only used here. Exported
-// *only* to allow for testing.
-// function E(sym, val, def) {
-//   messages.set(sym, val);
-//   def = makeNodeErrorWithCode(def, sym);
-//   errorCodes[sym] = def;
-// }
-
-// function makeNodeErrorWithCode(Base, key) {
-//   return function NodeError(...args) {
-//     // const limit = Error.stackTraceLimit;
-//     // if (isErrorStackTraceLimitWritable()) Error.stackTraceLimit = 0;
-//     const error = new Base();
-//     // Reset the limit and setting the name property.
-//     // if (isErrorStackTraceLimitWritable()) Error.stackTraceLimit = limit;
-//     const message = getMessage(key, args);
-//     error.message = message;
-//     // captureLargerStackTrace(error);
-//     error.code = key;
-//     return error;
-//   };
-// }
-
-// function getMessage(key, args) {
-//   const msgFn = messages.get(key);
-//   if (args.length !== msgFn.length)
-//     throw new Error(
-//       `Invalid number of args for error message ${key}. Got ${args.length}, expected ${msgFn.length}.`
-//     );
-//   return msgFn(...args);
-// }
-
-// E(
-//   "ERR_INVALID_ARG_TYPE",
-//   (name, expected, actual) => {
-//     assert(typeof name === "string", "'name' must be a string");
-//     if (!$isJSArray(expected)) {
-//       expected = [expected];
-//     }
-
-//     let msg = "The ";
-//     if (StringPrototypeEndsWith(name, " argument")) {
-//       // For cases like 'first argument'
-//       msg += `${name} `;
-//     } else {
-//       const type = StringPrototypeIncludes(name, ".") ? "property" : "argument";
-//       msg += `"${name}" ${type} `;
-//     }
-//     msg += "must be ";
-
-//     const types = [];
-//     const instances = [];
-//     const other = [];
-
-//     for (const value of expected) {
-//       assert(
-//         typeof value === "string",
-//         "All expected entries have to be of type string"
-//       );
-//       if (ArrayPrototypeIncludes.$call(kTypes, value)) {
-//         ArrayPrototypePush(types, StringPrototypeToLowerCase(value));
-//       } else if (RegExpPrototypeExec(classRegExp, value) !== null) {
-//         ArrayPrototypePush(instances, value);
-//       } else {
-//         assert(
-//           value !== "object",
-//           'The value "object" should be written as "Object"'
-//         );
-//         ArrayPrototypePush(other, value);
-//       }
-//     }
-
-//     // Special handle `object` in case other instances are allowed to outline
-//     // the differences between each other.
-//     if (instances.length > 0) {
-//       const pos = ArrayPrototypeIndexOf(types, "object");
-//       if (pos !== -1) {
-//         ArrayPrototypeSplice.$call(types, pos, 1);
-//         $arrayPush(instances, "Object");
-//       }
-//     }
-
-//     if (types.length > 0) {
-//       if (types.length > 2) {
-//         const last = ArrayPrototypePop(types);
-//         msg += `one of type ${ArrayPrototypeJoin(types, ", ")}, or ${last}`;
-//       } else if (types.length === 2) {
-//         msg += `one of type ${types[0]} or ${types[1]}`;
-//       } else {
-//         msg += `of type ${types[0]}`;
-//       }
-//       if (instances.length > 0 || other.length > 0) msg += " or ";
-//     }
-
-//     if (instances.length > 0) {
-//       if (instances.length > 2) {
-//         const last = ArrayPrototypePop(instances);
-//         msg += `an instance of ${ArrayPrototypeJoin(
-//           instances,
-//           ", "
-//         )}, or ${last}`;
-//       } else {
-//         msg += `an instance of ${instances[0]}`;
-//         if (instances.length === 2) {
-//           msg += ` or ${instances[1]}`;
-//         }
-//       }
-//       if (other.length > 0) msg += " or ";
-//     }
-
-//     if (other.length > 0) {
-//       if (other.length > 2) {
-//         const last = ArrayPrototypePop(other);
-//         msg += `one of ${ArrayPrototypeJoin.$call(other, ", ")}, or ${last}`;
-//       } else if (other.length === 2) {
-//         msg += `one of ${other[0]} or ${other[1]}`;
-//       } else {
-//         if (StringPrototypeToLowerCase(other[0]) !== other[0]) msg += "an ";
-//         msg += `${other[0]}`;
-//       }
-//     }
-
-//     msg += `. Received ${determineSpecificType(actual)}`;
-
-//     return msg;
-//   },
-//   TypeError
-// );
 
 function ERR_UNKNOWN_SIGNAL(name) {
   const err = new TypeError(`Unknown signal: ${name}`);

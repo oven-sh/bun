@@ -141,17 +141,6 @@ impl T {
         (self as u8) >= (T::TBreak as u8) && (self as u8) <= (T::TWith as u8)
     }
 
-    pub fn is_string(self) -> bool {
-        matches!(
-            self,
-            T::TNoSubstitutionTemplateLiteral
-                | T::TStringLiteral
-                | T::TTemplateHead
-                | T::TTemplateMiddle
-                | T::TTemplateTail
-        )
-    }
-
     pub fn is_close_brace_or_eof(self) -> bool {
         (self as u8) <= (T::TCloseBrace as u8)
     }
@@ -280,20 +269,13 @@ pub fn is_type_script_accessibility_modifier(s: &[u8]) -> bool {
 /// earlier `LazyLock<EnumMap<T, _>>` so lookup is a plain array index with
 /// zero init code.
 #[repr(transparent)]
-pub struct TokenEnumType(pub [&'static [u8]; <T as Enum>::LENGTH]);
+pub struct TokenEnumType(pub(crate) [&'static [u8]; <T as Enum>::LENGTH]);
 
 impl core::ops::Index<T> for TokenEnumType {
     type Output = &'static [u8];
     #[inline]
     fn index(&self, t: T) -> &&'static [u8] {
         &self.0[t as usize]
-    }
-}
-
-impl TokenEnumType {
-    #[inline]
-    pub fn get(&self, t: T) -> &'static [u8] {
-        self.0[t as usize]
     }
 }
 

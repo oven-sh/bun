@@ -1,8 +1,8 @@
 import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
+import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDir } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 
@@ -184,10 +184,143 @@ describe("safeIntegers", () => {
             });
           }
         });
+
+        it("gap in ?N numbering reports the missing parameter instead of crashing", () => {
+          const db = Database.open(":memory:", { strict: true });
+
+          // "select ?2" makes sqlite implicitly allocate parameter 1, which has no name.
+          expect(() => db.query("select ?2 as x").all({})).toThrow('Missing parameter "?1"');
+          expect(() => db.query("select ?2 as x").all({ 1: "a", 2: "b" })).toThrow('Missing parameter "?1"');
+          expect(() => db.query("select ?1, ?3 as x").all({ 0: "a" })).toThrow('Missing parameter "?2"');
+          expect(db.query("select ?2 as x").all({ 0: "a", 1: "b" })).toEqual([{ x: "b" }]);
+        });
       }
     });
   }
 }
+
+describe("bind parameters object mutated by a getter during bind", () => {
+  // A getter that runs while binding can add/delete properties, changing the
+  // object's layout mid-bind. Lookups for later parameters must see the
+  // current layout; reading through the old one binds whatever property now
+  // occupies the stale slot, or crashes on an empty slot.
+
+  it("strict mode: throws missing parameter instead of binding a foreign value", () => {
+    const db = new Database(":memory:", { strict: true });
+    const q = db.query("select ?1 as a, $b as b, $c as c");
+    const t = {};
+    t[0] = "i";
+    Object.defineProperty(t, "b", {
+      enumerable: true,
+      get() {
+        delete t.c;
+        t.secret = "SECRET-NOT-A-PARAM";
+        return "two";
+      },
+    });
+    t.c = "three";
+    expect(() => q.all(t)).toThrow('Missing parameter "$c"');
+  });
+
+  it("strict mode: binds the value the parameter holds at bind time", () => {
+    const db = new Database(":memory:", { strict: true });
+    const q = db.query("select ?1 as a, $b as b, $c as c");
+    const t = {};
+    t[0] = "i";
+    Object.defineProperty(t, "b", {
+      enumerable: true,
+      get() {
+        delete t.c;
+        t.filler = "FILLER";
+        t.c = "three-new";
+        return "two";
+      },
+    });
+    t.c = "three-old";
+    expect(q.all(t)).toEqual([{ a: "i", b: "two", c: "three-new" }]);
+  });
+
+  it("strict mode: positional + named, index getter deletes a later parameter", () => {
+    const db = new Database(":memory:", { strict: true });
+    const q = db.query("select ? as a, $c as c");
+    const u = { c: "three" };
+    Object.defineProperty(u, 0, {
+      enumerable: true,
+      get() {
+        delete u.c;
+        u.secret = "SECRET-NOT-A-PARAM";
+        return 0;
+      },
+    });
+    expect(() => q.all(u)).toThrow('Missing parameter "c"');
+  });
+
+  it("default mode: treats a parameter deleted by an index getter as missing", () => {
+    const db = new Database(":memory:");
+    const q = db.query("select ? as a, $c as c");
+    const u = { $c: "three" };
+    Object.defineProperty(u, 0, {
+      enumerable: true,
+      get() {
+        delete u.$c;
+        u.secret = "S";
+        return 0;
+      },
+    });
+    expect(q.all(u)).toEqual([{ a: 0, c: null }]);
+  });
+
+  it("default mode: calls a getter installed for a later parameter mid-bind", () => {
+    const db = new Database(":memory:");
+    const q = db.query("select ? as a, $c as c");
+    const u = {};
+    Object.defineProperty(u, 0, {
+      enumerable: true,
+      get() {
+        delete u.$c;
+        Object.defineProperty(u, "$c", { enumerable: true, get: () => "via-getter" });
+        return 0;
+      },
+    });
+    u.$c = "three";
+    expect(q.all(u)).toEqual([{ a: 0, c: "via-getter" }]);
+  });
+
+  it("does not crash when a getter deletes a later parameter", async () => {
+    // Crashed before the fix: the stale layout said $c was present, and the
+    // bind read an empty slot.
+    const code = `
+      import { Database } from "bun:sqlite";
+      const db = new Database(":memory:", { strict: true });
+      const q = db.query("select ?1 as a, $b as b, $c as c");
+      const t = {};
+      t[0] = "i";
+      Object.defineProperty(t, "b", {
+        enumerable: true,
+        get() {
+          delete t.c;
+          return "two";
+        },
+      });
+      t.c = "three";
+      try {
+        q.all(t);
+        console.log("no-error");
+      } catch (e) {
+        console.log("error: " + e.message);
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe('error: Missing parameter "$c"');
+    expect(exitCode).toBe(0);
+  });
+});
 
 var encode = text => new TextEncoder().encode(text);
 
@@ -527,6 +660,58 @@ it("supports serialize/deserialize", () => {
 
   // https://github.com/oven-sh/bun/issues/3712#issuecomment-1725259824
   expect(Database.deserialize(input)).toBeInstanceOf(Database);
+});
+
+// Coercing the schema-name argument to serialize() can re-enter JavaScript
+// via toString(). If that JS closes the database, sqlite3_serialize must not
+// be called on the freed handle. Run in a subprocess because the unsafe
+// variant operates on freed memory.
+it("serialize(name) rejects a db closed during name toString()", async () => {
+  const src = `
+    const { Database } = require("bun:sqlite");
+    const out = {};
+
+    const db = new Database(":memory:");
+    db.run("CREATE TABLE t(a)");
+
+    let message = "did not throw";
+    try {
+      db.serialize({
+        toString() {
+          db.close();
+          return "main";
+        },
+      });
+    } catch (e) {
+      message = e.message;
+    }
+    out.closeDuringToString = message;
+
+    const db2 = new Database(":memory:");
+    db2.run("CREATE TABLE t(a)");
+    out.plain = Buffer.isBuffer(db2.serialize("main"));
+    db2.close();
+
+    console.log(JSON.stringify(out));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({
+      closeDuringToString: "Can't do this on a closed database",
+      plain: true,
+    }),
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 it("Database.deserialize should support strict mode", () => {
@@ -1337,6 +1522,114 @@ it("issue#6597 with many columns", () => {
   db.close();
 });
 
+describe("empty and duplicate column names", () => {
+  it('an empty alias (AS "") keeps its column and all preceding columns', () => {
+    using db = new Database(":memory:");
+    using stmt = db.prepare('select 1 as a, 2 as "", 3 as b');
+    expect(stmt.get()).toEqual({ a: 1, "": 2, b: 3 });
+    expect(stmt.all()).toEqual([{ a: 1, "": 2, b: 3 }]);
+    expect([...stmt.iterate()]).toEqual([{ a: 1, "": 2, b: 3 }]);
+    expect(stmt.values()).toEqual([[1, 2, 3]]);
+    expect(stmt.columnNames).toEqual(["a", "", "b"]);
+  });
+
+  it("a trailing empty alias does not wipe the whole row", () => {
+    using db = new Database(":memory:");
+    using stmt = db.prepare('select 10 as first_col, 20 as second_col, 30 as ""');
+    expect(stmt.get()).toEqual({ first_col: 10, second_col: 20, "": 30 });
+    expect(stmt.columnNames).toEqual(["first_col", "second_col", ""]);
+  });
+
+  it('a trailing AS "" SELECT is still row-returning (all/values/raw return arrays, not a number)', () => {
+    using db = new Database(":memory:");
+    db.run("create table t(v)");
+    db.run("insert into t values ('r1'),('r2')");
+    using stmt = db.prepare('select v as name, 1 as "" from t');
+
+    // Previously: .all() returned the stale sqlite3_changes() count (a number),
+    // .values()/.raw() returned the column count, and .get() returned {}.
+    expect(stmt.all()).toEqual([
+      { name: "r1", "": 1 },
+      { name: "r2", "": 1 },
+    ]);
+    expect(stmt.values()).toEqual([
+      ["r1", 1],
+      ["r2", 1],
+    ]);
+    expect(Array.isArray(stmt.raw())).toBe(true);
+    expect(stmt.get()).toEqual({ name: "r1", "": 1 });
+    expect([...stmt.iterate()]).toEqual([
+      { name: "r1", "": 1 },
+      { name: "r2", "": 1 },
+    ]);
+    expect(stmt.columnNames).toEqual(["name", ""]);
+
+    using lone = db.prepare('select 9 as ""');
+    expect(lone.all()).toEqual([{ "": 9 }]);
+    expect(lone.values()).toEqual([[9]]);
+  });
+
+  it('a trailing AS "" SELECT with zero rows returns [], not null', () => {
+    using db = new Database(":memory:");
+    db.run("create table t(v)");
+    using stmt = db.prepare('select v as name, 1 as "" from t');
+    expect(stmt.all()).toEqual([]);
+    expect(stmt.values()).toEqual([]);
+    expect(stmt.raw()).toEqual([]);
+  });
+
+  it("multiple empty aliases: last value wins on the row object, columnNames keeps all", () => {
+    using db = new Database(":memory:");
+    using stmt = db.prepare('select 1 as "", 2 as x, 3 as ""');
+    expect(stmt.get()).toEqual({ "": 3, x: 2 });
+    expect(stmt.columnNames).toEqual(["", "x", ""]);
+    expect(stmt.values()).toEqual([[1, 2, 3]]);
+  });
+
+  it("columnNames preserves duplicates and order, matching columnTypes / declaredTypes / values()", () => {
+    using db = new Database(":memory:");
+    using stmt = db.prepare("select 1 as a, 2 as b, 3 as a");
+    // row object: last duplicate wins (better-sqlite3/node:sqlite semantics)
+    expect(stmt.get()).toEqual({ a: 3, b: 2 });
+    expect(stmt.columnNames).toEqual(["a", "b", "a"]);
+    expect(stmt.columnNames.length).toBe(stmt.columnTypes.length);
+    expect(stmt.columnNames.length).toBe(stmt.declaredTypes.length);
+    expect(stmt.columnNames.length).toBe(stmt.values()[0].length);
+  });
+
+  it("columnNames preserves all columns on the >64-column slow path with an empty alias", () => {
+    using db = new Database(":memory:");
+    const cols = Array.from({ length: 70 }, (_, i) => `${i} as c${i}`);
+    cols[3] = `999 as ""`;
+    using stmt = db.prepare(`select ${cols.join(", ")}`);
+    const row = stmt.get();
+    const names = stmt.columnNames;
+    expect(names.length).toBe(70);
+    expect(names[0]).toBe("c0");
+    expect(names[3]).toBe("");
+    expect(names[69]).toBe("c69");
+    expect(row.c0).toBe(0);
+    expect(row[""]).toBe(999);
+    expect(row.c69).toBe(69);
+    expect(Object.keys(row).length).toBe(70);
+  });
+
+  it("columnNames preserves duplicates on the >64-column slow path", () => {
+    using db = new Database(":memory:");
+    const cols = Array.from({ length: 70 }, (_, i) => `${i} as c${i}`);
+    cols[50] = `777 as c0`;
+    using stmt = db.prepare(`select ${cols.join(", ")}`);
+    const names = stmt.columnNames;
+    expect(names.length).toBe(70);
+    expect(names[0]).toBe("c0");
+    expect(names[50]).toBe("c0");
+    const row = stmt.get();
+    expect(row.c0).toBe(777);
+    expect(row.c49).toBe(49);
+    expect(row.c51).toBe(51);
+  });
+});
+
 it("issue#7147", () => {
   const db = new Database(":memory:");
   db.exec("CREATE TABLE foos (foo_id INTEGER NOT NULL PRIMARY KEY, foo_a TEXT, foo_b TEXT)");
@@ -1370,7 +1663,7 @@ it("issue#7147", () => {
 });
 
 it("should close with WAL enabled", () => {
-  const dir = tempDirWithFiles("sqlite-wal-test", { "empty.txt": "" });
+  using dir = tempDir("sqlite-wal-test", { "empty.txt": "" });
   const file = path.join(dir, "my.db");
   const db = new Database(file);
   db.exec("PRAGMA journal_mode = WAL");
@@ -1383,13 +1676,218 @@ it("should close with WAL enabled", () => {
   expect(readdirSync(dir).sort()).toEqual(["empty.txt", "my.db"]);
 });
 
-it("close(true) should throw an error if the database is in use", () => {
+it("close(true) finalizes outstanding prepared statements instead of throwing", () => {
   const db = new Database(":memory:");
   db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
   db.exec("INSERT INTO foo (name) VALUES ('foo')");
   const prepared = db.prepare("SELECT * FROM foo");
-  expect(() => db.close(true)).toThrow("database is locked");
-  prepared.finalize();
+  expect(() => db.close(true)).not.toThrow();
+  expect(() => prepared.all()).toThrow("Database has closed");
+});
+
+it("close(false) leaves prepare() statements usable but finalizes query() statements", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE foo (a INTEGER)");
+  db.exec("INSERT INTO foo VALUES (1), (2), (3)");
+  const select = db.prepare("SELECT a FROM foo ORDER BY a");
+  const insert = db.prepare("INSERT INTO foo VALUES (?)");
+  const iter = select.iterate();
+  expect(iter.next().value).toEqual({ a: 1 });
+  const owned = [];
+  for (let i = 0; i <= Database.MAX_QUERY_CACHE_SIZE + 2; i++) {
+    owned.push(db.query(`SELECT a + ${i} AS v FROM foo`));
+  }
+
+  db.close(false);
+
+  expect([...iter]).toEqual([{ a: 2 }, { a: 3 }]);
+  expect(() => insert.run(4)).not.toThrow();
+  expect(select.all()).toEqual([{ a: 1 }, { a: 2 }, { a: 3 }, { a: 4 }]);
+  for (const stmt of owned) {
+    expect(() => stmt.all()).toThrow("Database has closed");
+  }
+  expect(() => db.prepare("SELECT 1")).toThrow("Cannot use a closed database");
+  expect(() => db.query("SELECT 1")).toThrow("Cannot use a closed database");
+  select.finalize();
+  insert.finalize();
+});
+
+it("prepare() statements kept past close(false) report changes and real errors, and survive schema changes", () => {
+  using dir = tempDir("sqlite-close-deferred", {});
+  const file = path.join(String(dir), "x.sqlite");
+  const db = new Database(file);
+  db.exec("CREATE TABLE t (b UNIQUE)");
+  const insert = db.prepare("INSERT INTO t VALUES (?)");
+  db.close(false);
+  expect(insert.run(1)).toEqual({ changes: 1, lastInsertRowid: 1 });
+  expect(() => insert.run(1)).toThrow("UNIQUE constraint failed: t.b");
+  {
+    using other = new Database(file);
+    other.exec("CREATE TABLE u (x)");
+  }
+  expect(insert.run(2)).toEqual({ changes: 1, lastInsertRowid: 2 });
+  // close(true) after close(false) force-finalizes what was kept and releases the file
+  db.close(true);
+  expect(() => insert.run(3)).toThrow("Database has closed");
+  rmSync(file);
+  expect(existsSync(file)).toBe(false);
+});
+
+it("close(false) releases the file once the last prepare() statement is finalized", () => {
+  using dir = tempDir("sqlite-close-drain", {});
+  const file = path.join(String(dir), "x.sqlite");
+  const db = new Database(file);
+  db.exec("CREATE TABLE t (a)");
+  const a = db.prepare("SELECT a FROM t");
+  const b = db.prepare("SELECT a + 1 FROM t");
+  db.close(false);
+  a.finalize();
+  expect(b.all()).toEqual([]);
+  b.finalize();
+  rmSync(file);
+  expect(existsSync(file)).toBe(false);
+});
+
+it("WAL is checkpointed at exit for a database closed with close(false) while a prepare() statement is live", async () => {
+  using dir = tempDir("sqlite-close-wal", {});
+  const file = path.join(String(dir), "x.sqlite");
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Database } = require("bun:sqlite");
+       const db = new Database(process.argv[1]);
+       db.exec("PRAGMA journal_mode=WAL; CREATE TABLE t (a); INSERT INTO t VALUES (1)");
+       const sel = db.prepare("SELECT * FROM t");
+       console.log(JSON.stringify(sel.get()));
+       db.close();
+       console.log(JSON.stringify(sel.get()));`,
+      file,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: '{"a":1}\n{"a":1}\n', stderr: "", exitCode: 0 });
+  expect(existsSync(file + "-wal") ? statSync(file + "-wal").size : 0).toBe(0);
+  {
+    using db = new Database(file, { readonly: true });
+    expect(db.query("SELECT * FROM t").all()).toEqual([{ a: 1 }]);
+  }
+});
+
+it("Statement.isFinalized reflects native state, including statements finalized by close()", () => {
+  const db = new Database(":memory:");
+  const prev = Database.MAX_QUERY_CACHE_SIZE;
+  Database.MAX_QUERY_CACHE_SIZE = 0;
+  try {
+    const uncached = db.query("SELECT 1");
+    const prepared = db.prepare("SELECT 2");
+    expect([uncached.isFinalized, prepared.isFinalized]).toEqual([false, false]);
+    db.close();
+    expect([uncached.isFinalized, prepared.isFinalized]).toEqual([true, false]);
+    prepared.finalize();
+    expect(prepared.isFinalized).toBe(true);
+  } finally {
+    Database.MAX_QUERY_CACHE_SIZE = prev;
+  }
+});
+
+it("`using` releases the connection even after an explicit close(false) left a prepare() statement live", () => {
+  using dir = tempDir("sqlite-using-after-close", {});
+  const file = path.join(String(dir), "x.sqlite");
+  let stmt;
+  {
+    using db = new Database(file);
+    db.exec("CREATE TABLE t (a)");
+    stmt = db.prepare("SELECT a FROM t");
+    stmt.get();
+    db.close();
+    expect(stmt.all()).toEqual([]);
+  }
+  expect(() => stmt.all()).toThrow("Database has closed");
+  rmSync(file);
+  expect(existsSync(file)).toBe(false);
+});
+
+it("a statement the user finalized still reports 'Statement has finalized' after close()", () => {
+  const db = new Database(":memory:");
+  const a = db.prepare("SELECT 1");
+  const b = db.prepare("SELECT 2");
+  a.finalize();
+  db.close();
+  expect(() => a.get()).toThrow("Statement has finalized");
+  b.finalize();
+  expect(() => b.get()).toThrow("Statement has finalized");
+});
+
+it("query() cache evicts least-recently-used statements past MAX_QUERY_CACHE_SIZE", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE foo (a INTEGER)");
+  const cachedCount = Symbol.for("Bun.Database.cache.count");
+  const first = db.query("SELECT a + 0 FROM foo");
+  const second = db.query("SELECT a + 1 FROM foo");
+  for (let i = 2; i < Database.MAX_QUERY_CACHE_SIZE; i++) db.query(`SELECT a + ${i} FROM foo`);
+  expect(db[cachedCount]).toBe(Database.MAX_QUERY_CACHE_SIZE);
+  // touch `first` so `second` becomes the LRU entry
+  expect(db.query("SELECT a + 0 FROM foo")).toBe(first);
+  const overflow = db.query(`SELECT a + ${Database.MAX_QUERY_CACHE_SIZE} FROM foo`);
+  expect(db[cachedCount]).toBe(Database.MAX_QUERY_CACHE_SIZE);
+  expect(db.query("SELECT a + 0 FROM foo")).toBe(first);
+  expect(db.query(`SELECT a + ${Database.MAX_QUERY_CACHE_SIZE} FROM foo`)).toBe(overflow);
+  expect(db.query("SELECT a + 1 FROM foo")).not.toBe(second);
+  // the evicted statement still works until close()
+  expect(second.all()).toEqual([]);
+  db.close();
+  expect(() => second.all()).toThrow("Database has closed");
+});
+
+it("close(true) finalizes query() statements created after the cache filled up (#36572)", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE foo (a INTEGER)");
+  // One more distinct query string than MAX_QUERY_CACHE_SIZE, so the last
+  // statement does not fit in the query cache.
+  for (let i = 0; i <= Database.MAX_QUERY_CACHE_SIZE; i++) {
+    db.query(`SELECT a + ${i} AS v FROM foo`).all();
+  }
+  expect(() => db.close(true)).not.toThrow();
+});
+
+it("close(true) finalizes query() statements past the cache limit that are still referenced (#36572)", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE foo (a INTEGER)");
+  const statements = [];
+  for (let i = 0; i <= Database.MAX_QUERY_CACHE_SIZE; i++) {
+    statements.push(db.query(`SELECT a + ${i} AS v FROM foo`));
+  }
+  expect(() => db.close(true)).not.toThrow();
+  for (const stmt of statements) {
+    expect(() => stmt.all()).toThrow("Database has closed");
+  }
+});
+
+it("close(true) succeeds after unreferenced query() statements were GC'd (#36572)", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE foo (a INTEGER)");
+  for (let i = 0; i <= Database.MAX_QUERY_CACHE_SIZE * 2; i++) {
+    db.query(`SELECT a + ${i} AS v FROM foo`).all();
+  }
+  // Collects the statement wrappers; close(true) must not fail over
+  // statements that are pending sweep.
+  Bun.gc(true);
+  expect(() => db.close(true)).not.toThrow();
+});
+
+it("close(true) works when query() statements past the cache limit were already finalized", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE foo (a INTEGER)");
+  const statements = [];
+  for (let i = 0; i <= Database.MAX_QUERY_CACHE_SIZE; i++) {
+    statements.push(db.query(`SELECT a + ${i} AS v FROM foo`));
+  }
+  for (const stmt of statements) {
+    stmt.finalize();
+  }
   expect(() => db.close(true)).not.toThrow();
 });
 
@@ -1401,16 +1899,85 @@ it("close() should NOT throw an error if the database is in use", () => {
   expect(() => db.close()).not.toThrow("database is locked");
 });
 
-it("should dispose AND throw an error if the database is in use", () => {
+it("close(true) releases the database file so it can be deleted immediately (#36572)", () => {
+  using dir = tempDir("sqlite-close-unlink", {});
+  const file = path.join(String(dir), "x.sqlite");
+  const db = new Database(file);
+  db.exec("CREATE TABLE t (a INTEGER)");
+  db.prepare("SELECT a FROM t").all();
+  db.close(true);
+  // On Windows rmSync throws EBUSY if the statement kept the file handle open past close(true).
+  rmSync(file);
+  expect(existsSync(file)).toBe(false);
+});
+
+it("close() releases the database file when only query() statements are outstanding (#36572)", () => {
+  using dir = tempDir("sqlite-close-unlink-query", {});
+  const file = path.join(String(dir), "x.sqlite");
+  const db = new Database(file);
+  db.exec("CREATE TABLE t (a INTEGER)");
+  for (let i = 0; i <= Database.MAX_QUERY_CACHE_SIZE; i++) db.query(`SELECT a + ${i} FROM t`).all();
+  db.close();
+  rmSync(file);
+  expect(existsSync(file)).toBe(false);
+});
+
+it("close() does not crash with FTS5 virtual tables (#37044)", async () => {
+  // close() must not finalize FTS5's internal prepared statements behind the
+  // vtab's back; doing so use-after-frees in sqlite3_close's vtab disconnect.
+  const src = `
+    import { Database } from "bun:sqlite";
+    for (let i = 0; i < 10; i++) {
+      const db = new Database(":memory:");
+      db.exec("CREATE VIRTUAL TABLE notes_fts USING fts5(body)");
+      db.exec("INSERT INTO notes_fts(body) VALUES ('hello world'), ('goodbye moon')");
+      db.query("SELECT rowid FROM notes_fts WHERE notes_fts MATCH 'hello'").all();
+      db.query("SELECT count(*) c FROM notes_fts").get();
+      db.close(i % 2 === 0);
+    }
+    console.log("survived");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("survived");
+  expect(exitCode).toBe(0);
+});
+
+it("close() releases an FTS5 database file once the last prepare() statement is finalized (#37044)", () => {
+  using dir = tempDir("sqlite-close-unlink-fts5", {});
+  const file = path.join(String(dir), "x.sqlite");
+  const db = new Database(file);
+  db.exec("CREATE VIRTUAL TABLE t USING fts5(a)");
+  // FTS5 caches internal prepared statements on the connection; they must not
+  // keep the deferred close from ever happening.
+  db.query("SELECT rowid FROM t WHERE t MATCH 'x'").all();
+  const stmt = db.prepare("SELECT 1");
+  db.close();
+  stmt.finalize();
+  // On Windows rmSync throws EBUSY if the handle stayed open past the last finalize.
+  rmSync(file);
+  expect(existsSync(file)).toBe(false);
+});
+
+it("should dispose even if a prepared statement is still live", () => {
+  let prepared;
   expect(() => {
-    let prepared;
     {
       using db = new Database(":memory:");
       db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
       db.exec("INSERT INTO foo (name) VALUES ('foo')");
       prepared = db.prepare("SELECT * FROM foo");
     }
-  }).toThrow("database is locked");
+  }).not.toThrow();
+  expect(() => prepared.get()).toThrow("Database has closed");
 });
 
 it("should dispose", () => {
@@ -1496,7 +2063,7 @@ it("reports changes in Statement#run", () => {
 });
 
 it("#13082", async () => {
-  async function run() {
+  async function run(op) {
     const stmt = (() => {
       const db = new Database(":memory:");
       let stmt = db.prepare("select 1");
@@ -1506,18 +2073,18 @@ it("#13082", async () => {
     Bun.gc(true);
     await Bun.sleep(100);
     Bun.gc(true);
-    stmt.all();
-    stmt.get();
-    stmt.run();
+    stmt[op]();
   }
 
-  const count = 100;
+  const ops = ["all", "get", "run"];
+  const count = 99;
   const runs = new Array(count);
   for (let i = 0; i < count; i++) {
-    runs[i] = run();
+    runs[i] = run(ops[i % ops.length]);
   }
 
-  await Promise.allSettled(runs);
+  // close(false) leaves prepare() statements usable even after the Database wrapper is collected
+  await Promise.all(runs);
 });
 
 // The internal SQL.run / SQL.prepare / SQL.isInTransaction helpers used to
@@ -1724,6 +2291,57 @@ it("all() reports an error when a result-row push finalizes the statement", asyn
   expect(exitCode).toBe(0);
 });
 
+// A result-row push can also close the whole database (which finalizes every
+// statement) and then throw; the raw() loop must not touch the freed stmt.
+// Run in a subprocess because the unsafe variant resets freed memory and the
+// Array.prototype accessor affects every array in the process.
+it("raw() does not touch the statement when a result-row push closes the database and throws", async () => {
+  const src = `
+    const { Database } = require("bun:sqlite");
+    const out = {};
+
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE t (a INTEGER)");
+    db.run("INSERT INTO t VALUES (1), (2), (3)");
+
+    const stmt = db.query("SELECT a FROM t ORDER BY a ASC");
+    Object.defineProperty(Array.prototype, 0, {
+      configurable: true,
+      get() {
+        return undefined;
+      },
+      set(_row) {
+        db.close();
+        throw new Error("boom");
+      },
+    });
+
+    let message = "did not throw";
+    try {
+      stmt.raw();
+    } catch (e) {
+      message = e.message;
+    }
+    delete Array.prototype[0];
+    out.closeDuringRaw = message;
+
+    console.log(JSON.stringify(out));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe(JSON.stringify({ closeDuringRaw: "boom" }));
+  expect(exitCode).toBe(0);
+});
+
 // Binding an ArrayStorage-backed sparse array whose public length exceeds the
 // number of slots in its backing vector must not read JSValues from beyond the
 // vector. Holes fall back to the slow indexed lookup and bind as NULL. Run in
@@ -1830,7 +2448,7 @@ it("run() reports a closed database when a bound parameter's getter closes it", 
 // must be at least 8 bytes. A 1-byte Uint8Array used to be passed through
 // as-is and overflowed.
 it("fileControl rejects result TypedArrays smaller than 8 bytes", () => {
-  const dir = tempDirWithFiles("sqlite-fcntl-bounds", { "empty.txt": "" });
+  using dir = tempDir("sqlite-fcntl-bounds", { "empty.txt": "" });
   const db = new Database(path.join(dir, "my.db"));
 
   expect(() => db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, new Uint8Array(1))).toThrow(
@@ -1970,7 +2588,7 @@ it("decodes declared types leniently and accepts single-character declared types
 // grows. Run in a subprocess so a crash shows up as a non-zero exit code
 // instead of taking down the test runner.
 it("keeps database handles working when many Workers open databases concurrently", async () => {
-  const dir = tempDirWithFiles("sqlite-worker-registry", {
+  await using dir = tempDir("sqlite-worker-registry", {
     "main.js": `
       import { Database } from "bun:sqlite";
 
@@ -2058,7 +2676,7 @@ it("exit-time WAL checkpoint runs even with a never-finalized prepared statement
   // zombifies the connection and defers the WAL checkpoint to a finalize
   // that never comes; Bun__closeAllSQLiteDatabasesForTermination now
   // checkpoints explicitly first.
-  const dir = tempDirWithFiles("bun-sqlite-exit-zombie", {});
+  await using dir = tempDir("bun-sqlite-exit-zombie", {});
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

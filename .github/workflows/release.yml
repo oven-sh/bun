@@ -6,7 +6,10 @@ concurrency: release
 
 env:
   BUN_VERSION: ${{ github.event.inputs.tag || github.event.release.tag_name || 'canary' }}
-  BUN_LATEST: ${{ (github.event.inputs.is-latest || github.event.release.tag_name) && 'true' || 'false' }}
+  BUN_LATEST: ${{ (inputs.is-latest || github.event.release.tag_name) && 'true' || 'false' }}
+
+permissions:
+  contents: read
 
 on:
   release:
@@ -61,21 +64,23 @@ jobs:
         working-directory: packages/bun-release
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Setup GPG
-        uses: crazy-max/ghaction-import-gpg@d6f3f49f3345e29369fe57596a3ca8f94c4d2ca7 # v5
+        uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd # v7.0.0
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.2.3"
+          bun-version: "1.3.14"
       - name: Install Dependencies
         run: bun install
       - name: Sign Release
         run: |
-          echo "$GPG_PASSPHRASE" | bun upload-assets -- "${{ env.BUN_VERSION }}"
+          echo "$GPG_PASSPHRASE" | bun upload-assets -- "$BUN_VERSION"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
@@ -91,18 +96,19 @@ jobs:
         working-directory: packages/bun-release
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           # To workaround issue
           ref: main
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.2.3"
+          bun-version: "1.3.14"
       - name: Install Dependencies
         run: bun install
       - name: Release
-        run: bun upload-npm -- "${{ env.BUN_VERSION }}" publish
+        run: bun upload-npm -- "$BUN_VERSION" publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -118,16 +124,18 @@ jobs:
         working-directory: packages/bun-types
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Setup Node.js
-        uses: actions/setup-node@3235b876344d2a9aa001b8d1453c930bba69e610 # v3
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: latest
       - name: Setup Bun
         if: ${{ env.BUN_VERSION != 'canary' }}
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.2.3"
+          bun-version: "1.3.14"
       - name: Setup Bun
         if: ${{ env.BUN_VERSION == 'canary' }}
         uses: ./.github/actions/setup-bun
@@ -146,19 +154,20 @@ jobs:
         run: bun run build
         env:
           BUN_VERSION: ${{ env.TAG || env.BUN_VERSION }}
-      - name: Release (canary)
-        if: ${{ env.BUN_VERSION == 'canary' }}
-        uses: JS-DevTools/npm-publish@0f451a94170d1699fd50710966d48fb26194d939 # v1
-        with:
-          package: packages/bun-types/package.json
-          token: ${{ secrets.NPM_TOKEN }}
-          tag: canary
-      - name: Release (latest)
-        if: ${{ env.BUN_LATEST == 'true' }}
-        uses: JS-DevTools/npm-publish@0f451a94170d1699fd50710966d48fb26194d939 # v1
-        with:
-          package: packages/bun-types/package.json
-          token: ${{ secrets.NPM_TOKEN }}
+      - name: Release
+        if: ${{ env.BUN_VERSION == 'canary' || env.BUN_LATEST == 'true' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/.npmrc
+          NPM_TAG: ${{ env.BUN_VERSION == 'canary' && 'canary' || 'latest' }}
+        run: |
+          echo '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}' > "$NPM_CONFIG_USERCONFIG"
+          VERSION=$(node -p 'require("./package.json").version')
+          if [ "$(npm view bun-types@"$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
+            echo "bun-types@$VERSION already published, skipping"
+            exit 0
+          fi
+          npm publish --access public --tag "$NPM_TAG"
   definitelytyped:
     name: Make pr to DefinitelyTyped to update `bun-types` version
     runs-on: ubuntu-latest
@@ -168,17 +177,19 @@ jobs:
       contents: read
     steps:
       - name: Checkout (DefinitelyTyped)
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           repository: DefinitelyTyped/DefinitelyTyped
       - name: Checkout (bun)
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           path: bun
       - name: Setup Bun
         uses: ./bun/.github/actions/setup-bun
         with:
-          bun-version: "1.2.0"
+          bun-version: "1.3.14"
       - id: bun-version
         run: echo "BUN_VERSION=${BUN_VERSION#bun-v}" >> "$GITHUB_OUTPUT"
       - name: Update bun-types version in package.json
@@ -186,13 +197,13 @@ jobs:
           bun -e '
           const file = Bun.file("./types/bun/package.json");
           const json = await file.json();
-          const version = "${{ steps.bun-version.outputs.BUN_VERSION }}"; 
+          const version = process.env.BUN_VERSION.replace(/^bun-v/, "");
           json.dependencies["bun-types"] = version;
           json.version = version.slice(0, version.lastIndexOf(".")) + ".9999";
           await file.write(JSON.stringify(json, null, 4) + "\n");
           '
       - name: Create Pull Request
-        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         if: ${{ env.BUN_LATEST == 'true' && env.BUN_VERSION != 'canary'}}
         with:
           token: ${{ secrets.ROBOBUN_TOKEN }}
@@ -229,17 +240,19 @@ jobs:
             suffix: -distroless
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Setup Docker emulator
-        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
       - id: buildx
         name: Setup Docker buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
         with:
           platforms: linux/amd64,linux/arm64
       - id: metadata
         name: Setup Docker metadata
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: oven/bun
           flavor: |
@@ -251,12 +264,12 @@ jobs:
             type=match,pattern=(bun-v)?(canary|\d+.\d+),group=2,value=${{ env.BUN_VERSION }},suffix=${{ matrix.suffix }}
             type=match,pattern=(bun-v)?(canary|\d+),group=2,value=${{ env.BUN_VERSION }},suffix=${{ matrix.suffix }}
       - name: Login to Docker
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        uses: docker/login-action@371161bbe7024a29a25c5e19bfcbc0804fe9ad2c # v4.5.2
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
       - name: Push to Docker
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: ./dockerhub/${{ matrix.dir || matrix.variant }}
           platforms: linux/amd64,linux/arm64
@@ -275,30 +288,33 @@ jobs:
     if: ${{ github.event_name == 'release' || github.event.inputs.use-homebrew == 'true' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: oven-sh/homebrew-bun
-          token: ${{ secrets.ROBOBUN_TOKEN }}
-      - id: gpg
-        name: Setup GPG
-        uses: crazy-max/ghaction-import-gpg@d6f3f49f3345e29369fe57596a3ca8f94c4d2ca7 # v5
+          persist-credentials: false
+      - name: Setup GPG
+        uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd # v7.0.0
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
+          git_user_signingkey: true
+          git_commit_gpgsign: true
+          git_committer_name: robobun
+          git_committer_email: robobun@oven.sh
       - name: Setup Ruby
-        uses: ruby/setup-ruby@6aaa311d81eba98ae12eaffbcb63296ace0efcde # v1
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
         with:
           ruby-version: "2.6"
       - name: Update Tap
-        run: ruby scripts/release.rb "${{ env.BUN_VERSION }}"
+        run: ruby scripts/release.rb "$BUN_VERSION"
       - name: Commit Tap
-        uses: stefanzweifel/git-auto-commit-action@3ea6ae190baf489ba007f7c92608f33ce20ef04a # v4
-        with:
-          commit_options: --gpg-sign=${{ steps.gpg.outputs.keyid }}
-          commit_message: Release ${{ env.BUN_VERSION }}
-          commit_user_name: robobun
-          commit_user_email: robobun@oven.sh
-          commit_author: robobun <robobun@oven.sh>
+        env:
+          ROBOBUN_TOKEN: ${{ secrets.ROBOBUN_TOKEN }}
+        run: |
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "Release $BUN_VERSION"
+          git push "https://x-access-token:${ROBOBUN_TOKEN}@github.com/oven-sh/homebrew-bun" HEAD:main
   s3:
     name: Upload to S3
     runs-on: ubuntu-latest
@@ -311,15 +327,17 @@ jobs:
         working-directory: packages/bun-release
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.2.0"
+          bun-version: "1.3.14"
       - name: Install Dependencies
         run: bun install
       - name: Release
-        run: bun upload-s3 -- "${{ env.BUN_VERSION }}"
+        run: bun upload-s3 -- "$BUN_VERSION"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -333,7 +351,7 @@ jobs:
     needs: s3
     steps:
       - name: Notify Sentry
-        uses: getsentry/action-release@e769183448303de84c5a06aaaddf9da7be26d6c7 # v1.7.0
+        uses: getsentry/action-release@ff07929a6537bac57790c3451cf4d364aca38528 # v3.7.0
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
@@ -344,25 +362,3 @@ jobs:
           version: ${{ env.BUN_VERSION }}
           environment: production
 
-  bump:
-    name: "Bump version"
-    runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'schedule' }}
-    permissions:
-      pull-requests: write
-      contents: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        if: ${{ env.BUN_LATEST == 'true' }}
-      - name: Setup Bun
-        uses: ./.github/actions/setup-bun
-        if: ${{ env.BUN_LATEST == 'true' }}
-        with:
-          bun-version: "1.2.0"
-      - name: Bump version
-        uses: ./.github/actions/bump
-        if: ${{ env.BUN_LATEST == 'true' }}
-        with:
-          version: ${{ env.BUN_VERSION }}
-          token: ${{ github.token }}

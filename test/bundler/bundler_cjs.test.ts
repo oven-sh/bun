@@ -125,7 +125,7 @@ describe("bundler", () => {
     },
     run: {
       // Namespace import only gets the CJS exports as-is, no default wrapper
-      stdout: '{"foo":"foo","bar":"bar"}',
+      stdout: '{"bar":"bar","foo":"foo"}',
     },
   });
 
@@ -465,7 +465,7 @@ describe("bundler", () => {
     },
     run: {
       // Star import gets the exports as-is, no wrapper
-      stdout: '{"named":"named","default":"default","__esModule":true}',
+      stdout: '{"__esModule":true,"default":"default","named":"named"}',
     },
   });
 

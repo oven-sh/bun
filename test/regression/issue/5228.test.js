@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 // Test for issue #5228: Implement xit, xtest, xdescribe aliases for test.skip
 test("xit, xtest, and xdescribe aliases should work as test.skip/describe.skip", async () => {
@@ -34,7 +34,7 @@ describe("normal describe block", () => {
 });
 `;
 
-  const dir = tempDirWithFiles("issue-5228-test-1", {
+  await using dir = tempDir("issue-5228-test-1", {
     "test.js": testFile,
   });
 
@@ -78,7 +78,7 @@ test("passing test", () => {
 });
 `;
 
-  const dir = tempDirWithFiles("issue-5228-test-2", {
+  await using dir = tempDir("issue-5228-test-2", {
     "test.js": testFile,
   });
 
@@ -129,7 +129,7 @@ describe("normal describe", () => {
 });
 `;
 
-  const dir = tempDirWithFiles("issue-5228-test-3", {
+  await using dir = tempDir("issue-5228-test-3", {
     "test.js": testFile,
   });
 
@@ -180,7 +180,7 @@ xdescribe("imported xdescribe should work", () => {
 });
 `;
 
-  const dir = tempDirWithFiles("issue-5228-test-4", {
+  await using dir = tempDir("issue-5228-test-4", {
     "test.js": testFile,
   });
 

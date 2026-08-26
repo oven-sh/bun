@@ -129,14 +129,14 @@ pub(crate) fn line_indentation(text: &[u8], total_indent: u32, off_start: OFF) -
     LineIndentation { indent, off }
 }
 
-pub struct Utf8DecodeResult {
-    pub codepoint: u32,
-    pub len: u8,
+pub(crate) struct Utf8DecodeResult {
+    pub(crate) codepoint: u32,
+    pub(crate) len: u8,
 }
 
 /// Decode a UTF-8 codepoint from the text at the given offset.
 /// Returns the codepoint and the number of bytes consumed.
-pub fn decode_utf8(text: &[u8], off: usize) -> Utf8DecodeResult {
+pub(crate) fn decode_utf8(text: &[u8], off: usize) -> Utf8DecodeResult {
     if off >= text.len() {
         return Utf8DecodeResult {
             codepoint: 0,
@@ -180,7 +180,7 @@ pub fn decode_utf8(text: &[u8], off: usize) -> Utf8DecodeResult {
 /// Decode the UTF-8 codepoint ending just before position `off` (i.e. the
 /// codepoint whose last byte is at `text[off - 1]`).
 /// Returns the codepoint and the number of bytes it occupies.
-pub fn decode_utf8_backward(text: &[u8], off: usize) -> Utf8DecodeResult {
+pub(crate) fn decode_utf8_backward(text: &[u8], off: usize) -> Utf8DecodeResult {
     if off == 0 || off > text.len() {
         return Utf8DecodeResult {
             codepoint: 0,
@@ -361,7 +361,7 @@ static UNICODE_PUNCTUATION_RANGES: &[[u32; 2]] = &[
 ];
 
 /// Parse a numeric character reference (&#DDD; or &#xHHH;) and return the codepoint.
-pub fn parse_entity_codepoint(entity_text: &[u8]) -> Option<u32> {
+pub(crate) fn parse_entity_codepoint(entity_text: &[u8]) -> Option<u32> {
     if entity_text.len() < 4 || entity_text[0] != b'&' || entity_text[1] != b'#' {
         return None;
     }
@@ -422,7 +422,7 @@ pub fn decode_entity_to_utf8<'a>(entity_text: &[u8], out: &'a mut [u8; 8]) -> Op
 
 /// Generate a GitHub-compatible slug from text content.
 /// Modifies text_buf in-place. Uses slug_counts for -N deduplication.
-pub fn generate_slug<'a>(
+pub(crate) fn generate_slug<'a>(
     text_buf: &'a mut Vec<u8>,
     slug_counts: &mut bun_collections::StringHashMap<u32>,
 ) -> &'a [u8] {
@@ -482,10 +482,10 @@ pub fn generate_slug<'a>(
 /// and deduplicates slugs via a count map.
 #[derive(Default)]
 pub struct HeadingIdTracker {
-    pub enabled: bool,
-    pub in_heading: bool,
-    pub text_buf: Vec<u8>,
-    pub slug_counts: bun_collections::StringHashMap<u32>,
+    pub(crate) enabled: bool,
+    pub(crate) in_heading: bool,
+    pub(crate) text_buf: Vec<u8>,
+    pub(crate) slug_counts: bun_collections::StringHashMap<u32>,
 }
 
 impl HeadingIdTracker {

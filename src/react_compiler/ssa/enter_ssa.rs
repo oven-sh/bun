@@ -240,12 +240,12 @@ impl SSABuilder {
     }
 
     fn fix_incomplete_phis(&mut self, block_id: BlockId, env: &mut Environment) {
-        let incomplete_phis: Vec<IncompletePhi> = self.states[block_id.0 as usize]
-            .as_mut()
-            .unwrap()
-            .incomplete_phis
-            .drain(..)
-            .collect();
+        let incomplete_phis: Vec<IncompletePhi> = core::mem::take(
+            &mut self.states[block_id.0 as usize]
+                .as_mut()
+                .unwrap()
+                .incomplete_phis,
+        );
         for phi in &incomplete_phis {
             self.add_phi(block_id, &phi.old_place, &phi.new_place, env);
         }
@@ -264,7 +264,10 @@ impl SSABuilder {
 // Public entry point
 // =============================================================================
 
-pub fn enter_ssa(func: &mut HirFunction, env: &mut Environment) -> Result<(), CompilerDiagnostic> {
+pub(crate) fn enter_ssa(
+    func: &mut HirFunction,
+    env: &mut Environment,
+) -> Result<(), CompilerDiagnostic> {
     let num_blocks = env.next_block_id_counter as usize;
     let mut builder = SSABuilder::new(&func.body.blocks, num_blocks);
     let root_entry = func.body.entry;
@@ -492,7 +495,7 @@ fn enter_ssa_impl(
 /// Create a placeholder HirFunction for temporarily swapping an inner function
 /// out of `env.functions` via `std::mem::replace`. The placeholder is never
 /// read — the real function is swapped back immediately after processing.
-pub fn placeholder_function() -> HirFunction {
+pub(crate) fn placeholder_function() -> HirFunction {
     HirFunction {
         loc: None,
         id: None,

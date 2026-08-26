@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 // Test for https://github.com/oven-sh/bun/issues/26039
 // When parsing a bun.lock file with an empty registry URL for a scoped package,
 // bun should use the scope-specific registry from bunfig.toml, not the default npm registry.
 test("frozen lockfile should use scope-specific registry for scoped packages", async () => {
-  const dir = tempDirWithFiles("scoped-registry-test", {
+  await using dir = tempDir("scoped-registry-test", {
     "package.json": JSON.stringify({
       name: "test-scoped-registry",
       version: "1.0.0",
@@ -57,7 +57,7 @@ example = { url = "https://npm.pkg.github.com" }
 
 // Test that non-scoped packages still use the default registry when registry URL is empty
 test("frozen lockfile should use default registry for non-scoped packages", async () => {
-  const dir = tempDirWithFiles("non-scoped-registry-test", {
+  await using dir = tempDir("non-scoped-registry-test", {
     "package.json": JSON.stringify({
       name: "test-non-scoped-registry",
       version: "1.0.0",

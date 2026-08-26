@@ -9,7 +9,7 @@ use super::throw;
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
-    pub fn to_contain(
+    pub(crate) fn to_contain(
         &self,
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -17,8 +17,7 @@ impl Expect {
         let (this, value, not) =
             self.matcher_prelude(global, frame.this(), "toContain", "<green>expected<r>")?;
 
-        let arguments_ = frame.arguments_old::<1>();
-        let arguments = arguments_.slice();
+        let arguments = frame.arguments();
 
         if arguments.len() < 1 {
             return Err(global.throw_invalid_arguments(format_args!("toContain() takes 1 argument")));
@@ -47,8 +46,8 @@ impl Expect {
                 }
             }
         } else if value.is_string_literal() && expected.is_string_literal() {
-            let value_string = value.to_slice(global)?;
-            let expected_string = expected.to_slice(global)?;
+            let value_string = value.to_utf8(global)?;
+            let expected_string = expected.to_utf8(global)?;
 
             if expected_string.slice().is_empty() {
                 // edge case empty string is always contained

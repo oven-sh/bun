@@ -13,8 +13,7 @@ use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::WindowsStdio as Stdio;
 use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
 use bun_core::{self, Output};
-use bun_io as r#async;
-use bun_io;
+#[cfg(windows)]
 use bun_jsc as jsc;
 use bun_sys;
 
@@ -37,45 +36,45 @@ pub struct Worker {
     // `Coordinator<'a>` carries borrowed slices; the lifetime is erased to
     // `'static` here because this is a raw backref pointer that is only ever
     // dereferenced unsafely.
-    pub coord: *const Coordinator<'static>,
-    pub idx: u32,
+    pub(crate) coord: *const Coordinator<'static>,
+    pub(crate) idx: u32,
     // Intrusive-refcounted (`ThreadSafeRefCount`); `to_process` returns a
     // `heap::alloc`ed `*mut Process`.
-    pub process: Option<*mut Process>,
+    pub(crate) process: Option<*mut Process>,
 
     /// Bidirectional IPC over fd 3. POSIX: usockets adopted from a socketpair.
     /// Windows: `uv.Pipe` (the parent end of `.buffer` extra-fd, full-duplex).
     /// Commands and results both flow through this channel; backpressure is
     /// handled by the loop, so a busy worker writing thousands of `test_done`
     /// frames never truncates and the coordinator never blocks.
-    pub ipc: Channel<Worker>,
+    pub(crate) ipc: Channel<Worker>,
     pub out: WorkerPipe,
-    pub err: WorkerPipe,
+    pub(crate) err: WorkerPipe,
 
     /// Index into `Coordinator.files` currently running on this worker.
-    pub inflight: Option<u32>,
+    pub(crate) inflight: Option<u32>,
     /// Contiguous slice of `Coordinator.files` owned by this worker. `files`
     /// is sorted lexicographically so adjacent indices share parent dirs (and
     /// likely imports); each worker walks its range front-to-back. When the
     /// range is empty the worker steals one file from the *end* of whichever
     /// range has the most remaining — the end is furthest from that worker's
     /// hot region.
-    pub range: FileRange,
+    pub(crate) range: FileRange,
     /// Millisecond timestamp at the most recent dispatch; drives lazy
     /// scale-up.
-    pub dispatched_at: i64,
+    pub(crate) dispatched_at: i64,
     /// Worker stdout+stderr since the last `test_done`. Flushed atomically
     /// under the right file header so concurrent files don't interleave.
-    pub captured: Vec<u8>,
-    pub alive: bool,
+    pub(crate) captured: Vec<u8>,
+    pub(crate) alive: bool,
     /// Set when the process-exit notification arrives. Reaping waits for both
     /// this and `ipc.done` so trailing IPC frames are decoded first.
-    pub exit_status: Option<Status>,
-    pub extra_fd_stdio: [Stdio; 1],
+    pub(crate) exit_status: Option<Status>,
+    pub(crate) reap_pending: bool,
 }
 
 impl Worker {
-    pub fn start(&mut self) -> crate::Result<()> {
+    pub(crate) fn start(&mut self) -> crate::Result<()> {
         debug_assert!(!self.alive);
         let coord_ptr = self.coord;
         // SAFETY: coord backref is valid for the worker's lifetime (Coordinator owns workers slice).
@@ -115,17 +114,14 @@ impl Worker {
             // (on_read_chunk mutates `captured` through it).
             let self_ptr: *const Worker = std::ptr::from_mut::<Worker>(this).cast_const();
             this.ipc = Channel::default();
-            this.out = WorkerPipe::new(PipeRole::Stdout, self_ptr);
-            this.err = WorkerPipe::new(PipeRole::Stderr, self_ptr);
+            this.out = WorkerPipe::new(self_ptr);
+            this.err = WorkerPipe::new(self_ptr);
         });
 
         #[cfg(unix)]
         {
             // `.buffer` extra_fd creates an AF_UNIX socketpair; the parent end is
             // adopted into a usockets `Channel`.
-            // SpawnOptions.extra_fds is `Box<[Stdio]>` (owned) in the
-            // Rust port, so the `extra_fd_stdio` field is no longer borrowed here.
-            this.extra_fd_stdio = [Stdio::Buffer];
             let options = SpawnOptions {
                 stdin: Stdio::Ignore,
                 stdout: Stdio::Buffer,
@@ -159,10 +155,9 @@ impl Worker {
             let stdout = spawned.stdout;
             let stderr = spawned.stderr;
             let extra_pipes = core::mem::take(&mut spawned.extra_pipes);
-            this.process = Some(spawned.to_process(
-                bun_event_loop::EventLoopHandle::init(coord.vm.event_loop().cast()),
-                false,
-            ));
+            this.process = Some(spawned.to_process(bun_event_loop::EventLoopHandle::init(
+                coord.vm.event_loop().cast(),
+            )));
             if let Some(fd) = stdout {
                 this.out
                     .reader
@@ -178,11 +173,11 @@ impl Worker {
             if !extra_pipes.is_empty() {
                 // coord.vm backref valid for worker lifetime; adopt() mutates the
                 // loop's socket context via interior mutability on the C side.
-                if !this.ipc.adopt(coord.vm, extra_pipes[0].fd()) {
+                if !Channel::adopt(&raw mut this.ipc, coord.vm, extra_pipes[0].fd()) {
                     return Err(crate::Error::ChannelAdoptFailed);
                 }
             } else {
-                this.ipc.done = true;
+                this.ipc.done.set(true);
             }
         }
         #[cfg(not(unix))]
@@ -208,9 +203,6 @@ impl Worker {
                 unsafe { uv::Pipe::close_and_destroy(p) };
             });
 
-            // SpawnOptions.extra_fds is `Box<[Stdio]>` (owned) in the
-            // Rust port, so the `extra_fd_stdio` field is no longer borrowed here.
-            this.extra_fd_stdio = [Stdio::Ipc(ipc_pipe)];
             let options = SpawnOptions {
                 stdin: Stdio::Ignore,
                 stdout: Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
@@ -255,7 +247,7 @@ impl Worker {
                     let _ = raw;
                 }
             }
-            this.process = Some(spawned.to_process(coord.vm.event_loop(), false));
+            this.process = Some(spawned.to_process(coord.vm.event_loop()));
 
             if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stdout.take() {
                 // SAFETY: `pipe` is a Box<uv::Pipe> just produced by spawn_process;
@@ -281,7 +273,7 @@ impl Worker {
             // to the Channel on success (it does the Box::from_raw internally).
             // On failure the caller still owns it (Channel.rs:294) and the
             // `ipc_pipe_guard` errdefer performs `close_and_destroy`.
-            if !this.ipc.adopt_pipe(coord.vm, ipc_pipe) {
+            if !Channel::adopt_pipe(&raw mut this.ipc, coord.vm, ipc_pipe) {
                 return Err(crate::Error::ChannelAdoptFailed);
             }
             // Channel now owns the Box; disarm the errdefer so end-of-block
@@ -340,71 +332,31 @@ impl Worker {
         Ok(())
     }
 
-    pub fn on_process_exit(&mut self, _: &Process, status: Status, _: &Rusage) {
+    pub(crate) fn on_process_exit(&mut self, _: &Process, status: Status, _: &Rusage) {
         self.alive = false;
         // SAFETY: coord backref valid for worker lifetime; mutation — see `coord` field doc (provenance caveats).
         unsafe { (*self.coord.cast_mut()).on_worker_exit(self, status) };
     }
 
-    /// Borrow the parent `Coordinator`.
-    ///
-    /// SAFETY (invariant): `coord` is a backref to the owning `Coordinator`,
-    /// set at construction and valid for the worker's entire lifetime (the
-    /// coordinator owns all workers). Never null.
-    #[inline]
-    fn coord(&self) -> &Coordinator<'static> {
-        // SAFETY: see doc comment — non-null backref valid for `'_`.
-        unsafe { &*self.coord }
-    }
-
-    pub fn event_loop(&self) -> *mut jsc::event_loop::EventLoop {
-        self.coord().vm.event_loop()
-    }
-    pub fn loop_(&self) -> *mut r#async::Loop {
-        self.coord().vm.uv_loop()
-    }
-
-    pub fn dispatch(&mut self, file_idx: u32, file: &[u8]) {
+    pub(crate) fn dispatch(&mut self, file_idx: u32, file: &[u8]) {
         // SAFETY: coord backref valid; frame mutation — see `coord` field doc (provenance caveats).
         let f = unsafe { &mut (*self.coord.cast_mut()).frame };
         f.begin(frame::Kind::Run);
-        f.u32_(file_idx);
+        f.u32(file_idx);
         f.str(file);
         self.ipc.send(f.finish());
         self.inflight = Some(file_idx);
         self.dispatched_at = bun_core::time::milli_timestamp();
     }
 
-    pub fn shutdown(&mut self) {
+    pub(crate) fn shutdown(&mut self) {
         // SAFETY: coord backref valid; frame mutation — see `coord` field doc (provenance caveats).
         let f = unsafe { &mut (*self.coord.cast_mut()).frame };
         f.begin(frame::Kind::Shutdown);
         self.ipc.send(f.finish());
         // Leave the channel open so the reader drains trailing
-        // repeat_bufs/junit_file/coverage_file frames; the worker exits on
+        // repeat_bufs / junit_chunk / coverage_chunk frames; the worker exits on
         // `.shutdown` and its exit closes the peer end.
-    }
-
-    /// `Channel` owner callback: a decoded frame arrived.
-    pub fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
-        // SAFETY: coord backref valid; mutation — see `coord` field doc (provenance caveats).
-        unsafe { (*self.coord.cast_mut()).on_frame(self, kind, rd) };
-    }
-
-    /// `Channel` owner callback: peer closed, errored, or sent a corrupt frame.
-    /// Gates `tryReap` so kernel-buffered frames written just before exit() are
-    /// decoded before the worker slot is torn down.
-    pub fn on_channel_done(&mut self) {
-        if self.ipc.is_attached() {
-            // Corrupt frame path — kill the worker so onWorkerExit accounts for
-            // the in-flight file and the slot can respawn.
-            if let Some(p) = self.process {
-                // SAFETY: `p` is the live intrusive-refcounted *mut Process.
-                let _ = unsafe { (*p).kill(9) };
-            }
-        }
-        // SAFETY: coord backref valid; mutation — see `coord` field doc (provenance caveats).
-        unsafe { (*self.coord.cast_mut()).try_reap(self) };
     }
 }
 
@@ -436,34 +388,26 @@ impl ChannelOwner for Worker {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum PipeRole {
-    Stdout,
-    Stderr,
-}
-
 /// Reads worker stdout/stderr. Accumulates into the worker's `captured` buffer
 /// and flushes atomically with the next test result so console output from
 /// concurrent files never interleaves.
 pub struct WorkerPipe {
-    pub reader: bun_io::BufferedReader,
-    pub worker: *const Worker,
-    pub role: PipeRole,
+    pub(crate) reader: bun_io::BufferedReader,
+    pub(crate) worker: *const Worker,
     /// EOF or error observed.
-    pub done: bool,
+    pub(crate) done: bool,
 }
 
 impl WorkerPipe {
-    pub fn new(role: PipeRole, worker: *const Worker) -> Self {
+    pub(crate) fn new(worker: *const Worker) -> Self {
         Self {
             reader: bun_io::BufferedReader::init::<WorkerPipe>(),
             worker,
-            role,
             done: false,
         }
     }
 
-    pub fn on_read_chunk(&mut self, chunk: &[u8], _: bun_io::ReadState) -> bool {
+    pub(crate) fn on_read_chunk(&mut self, chunk: &[u8], _: bun_io::ReadState) -> bool {
         // SAFETY: worker backref valid while WorkerPipe is embedded in Worker.
         // Mutating `captured` through cast_mut requires write provenance on
         // the stored pointer; all backref creation sites (the runner.rs
@@ -476,17 +420,11 @@ impl WorkerPipe {
         unsafe { (*self.worker.cast_mut()).captured.extend_from_slice(chunk) };
         true
     }
-    pub fn on_reader_done(&mut self) {
+    pub(crate) fn on_reader_done(&mut self) {
         self.done = true;
     }
-    pub fn on_reader_error(&mut self, _: bun_sys::Error) {
+    pub(crate) fn on_reader_error(&mut self, _: bun_sys::Error) {
         self.done = true;
-    }
-}
-
-impl Default for WorkerPipe {
-    fn default() -> Self {
-        Self::new(PipeRole::Stdout, core::ptr::null())
     }
 }
 
@@ -496,16 +434,10 @@ impl Default for WorkerPipe {
 bun_io::impl_buffered_reader_parent! {
     TestParallelWorkerPipe for WorkerPipe;
     has_on_read_chunk = true;
-    on_read_chunk   = |this, chunk, state| (*this).on_read_chunk(chunk, state);
+    on_read_chunk   = |this, chunk, state| (*this).on_read_chunk(&chunk, state);
     on_reader_done  = |this| (*this).on_reader_done();
     on_reader_error = |this, err| (*this).on_reader_error(err);
     // `vm.uv_loop()` is `*mut bun_io::Loop` on every target.
     loop_           = |this| (*(*(*this).worker).coord).vm.uv_loop();
     event_loop      = |this| (*(*(*this).worker).coord).event_loop_handle.as_event_loop_ctx();
-}
-
-impl Drop for WorkerPipe {
-    fn drop(&mut self) {
-        // Body intentionally empty: `BufferedReader: Drop` handles cleanup.
-    }
 }

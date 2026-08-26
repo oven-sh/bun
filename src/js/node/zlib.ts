@@ -17,8 +17,7 @@ const ArrayPrototypeForEach = Array.prototype.forEach;
 const NumberIsNaN = Number.isNaN;
 const MathMax = Math.max;
 
-const ArrayBufferIsView = ArrayBuffer.isView;
-const isArrayBufferView = ArrayBufferIsView;
+const isArrayBufferView = ArrayBuffer.isView;
 const isAnyArrayBuffer = b => b instanceof ArrayBuffer || b instanceof SharedArrayBuffer;
 const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
 
@@ -198,8 +197,6 @@ function ZlibBase(opts, mode, handle, { flush, finishFlush, fullFlush }) {
   this._defaultFullFlushFlag = fullFlush;
   this._info = opts && opts.info;
   this._maxOutputLength = maxOutputLength;
-
-  this._rejectGarbageAfterEnd = opts?.rejectGarbageAfterEnd === true;
 }
 $toClass(ZlibBase, "ZlibBase", Transform);
 
@@ -510,13 +507,6 @@ function processCallback() {
     // This applies to streams where we don't check data past the end of
     // what was consumed; that is, everything except Gunzip/Unzip.
 
-    if (self._rejectGarbageAfterEnd) {
-      const err = $ERR_TRAILING_JUNK_AFTER_STREAM_END();
-      self.destroy(err);
-      this.cb(err);
-      return;
-    }
-
     self.push(null);
   }
 
@@ -688,7 +678,7 @@ function createConvenienceMethod(ctor, sync, methodName, isZstd) {
           bufferSize = 0;
         }
         // Set pledgedSrcSize if not already set
-        if (!opts.pledgedSrcSize && bufferSize > 0) {
+        if (!opts?.pledgedSrcSize && bufferSize > 0) {
           opts = { ...opts, pledgedSrcSize: bufferSize };
         }
       }

@@ -14,7 +14,6 @@
 #[cfg(unix)]
 use core::ffi::c_int;
 use core::fmt::Arguments;
-use std::io::Write as _;
 
 use bstr::BStr;
 
@@ -22,7 +21,7 @@ use bun_collections::VecExt;
 use bun_core::strings;
 #[cfg(unix)]
 use bun_core::tty;
-use bun_core::{Environment, Output, env_var, fmt};
+use bun_core::{Environment, Output, env_var, fmt, identifier};
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
@@ -37,7 +36,7 @@ use bun_sys::{self as sys, Fd};
 // FFI handle (zero Rust-visible bytes). All mutation happens on the C++ side;
 // Rust only ever holds `&JSGlobalObject`, so deriving a `*mut` from that shared
 // reference would violate provenance. This matches the convention in
-// `src/jsc/lib.rs` / `src/jsc/ipc.rs`.
+// `src/jsc/lib.rs`.
 unsafe extern "C" {
     fn Bun__REPL__evaluate(
         globalObject: *const JSGlobalObject,
@@ -53,6 +52,13 @@ unsafe extern "C" {
         targetValue: JSValue,
         prefixPtr: *const u8,
         prefixLen: usize,
+    ) -> JSValue;
+
+    fn Bun__REPL__getProperty(
+        globalObject: *const JSGlobalObject,
+        baseValue: JSValue,
+        namePtr: *const u8,
+        nameLen: usize,
     ) -> JSValue;
 }
 
@@ -73,7 +79,8 @@ use bun_core::output::ansi as Color;
 struct Cursor;
 impl Cursor {
     const HOME: &'static str = concat!("\x1b", "[", "H");
-    const CLEAR_LINE: &'static str = concat!("\x1b", "[", "2K");
+    /// Erase from the cursor to the end of the screen.
+    const CLEAR_BELOW: &'static str = concat!("\x1b", "[", "J");
     const CLEAR_SCREEN: &'static str = concat!("\x1b", "[", "2J");
     const CLEAR_SCROLLBACK: &'static str = concat!("\x1b", "[", "3J");
 }
@@ -134,7 +141,7 @@ enum Key {
 }
 
 impl Key {
-    pub(crate) fn from_byte(byte: u8) -> Key {
+    fn from_byte(byte: u8) -> Key {
         match byte {
             1 => Key::CtrlA,
             2 => Key::CtrlB,
@@ -173,7 +180,7 @@ struct History {
 }
 
 impl History {
-    pub(crate) fn init() -> History {
+    fn init() -> History {
         History {
             entries: Vec::new(),
             position: 0,
@@ -183,7 +190,7 @@ impl History {
         }
     }
 
-    pub(crate) fn load(&mut self) -> Result<(), crate::Error> {
+    fn load(&mut self) -> Result<(), crate::Error> {
         let Some(home_path) = env_var::HOME.get() else {
             return Ok(());
         };
@@ -203,7 +210,7 @@ impl History {
             sys::Result::Err(_) => return Ok(()),
         };
 
-        for line in content.split(|b: &u8| *b == b'\n') {
+        for line in strings::split(&content, b"\n") {
             if !line.is_empty() {
                 self.entries.push(Box::<[u8]>::from(line));
             }
@@ -218,7 +225,7 @@ impl History {
         Ok(())
     }
 
-    pub(crate) fn save(&mut self) {
+    fn save(&mut self) {
         if !self.modified {
             return;
         }
@@ -253,7 +260,7 @@ impl History {
         self.modified = false;
     }
 
-    pub(crate) fn add(&mut self, line: &[u8]) -> Result<(), bun_alloc::AllocError> {
+    fn add(&mut self, line: &[u8]) -> Result<(), bun_alloc::AllocError> {
         if line.is_empty() {
             return Ok(());
         }
@@ -278,7 +285,7 @@ impl History {
         Ok(())
     }
 
-    pub(crate) fn prev(&mut self, current_line: &[u8]) -> Option<&[u8]> {
+    fn prev(&mut self, current_line: &[u8]) -> Option<&[u8]> {
         if self.entries.is_empty() {
             return None;
         }
@@ -296,7 +303,7 @@ impl History {
         None
     }
 
-    pub(crate) fn next(&mut self) -> Option<&[u8]> {
+    fn next(&mut self) -> Option<&[u8]> {
         if self.position < self.entries.len() {
             self.position += 1;
         }
@@ -314,7 +321,7 @@ impl History {
         None
     }
 
-    pub(crate) fn reset_position(&mut self) {
+    fn reset_position(&mut self) {
         self.position = self.entries.len();
         self.temp_line = None;
     }
@@ -330,26 +337,26 @@ struct LineEditor {
 }
 
 impl LineEditor {
-    pub(crate) fn init() -> LineEditor {
+    fn init() -> LineEditor {
         LineEditor {
             buffer: Vec::new(),
             cursor: 0,
         }
     }
 
-    pub(crate) fn clear(&mut self) {
+    fn clear(&mut self) {
         self.buffer.clear();
         self.cursor = 0;
     }
 
-    pub(crate) fn set(&mut self, text: &[u8]) -> Result<(), bun_alloc::AllocError> {
+    fn set(&mut self, text: &[u8]) -> Result<(), bun_alloc::AllocError> {
         self.buffer.clear();
         self.buffer.extend_from_slice(text);
         self.cursor = text.len();
         Ok(())
     }
 
-    pub(crate) fn insert(&mut self, ch: u8) -> Result<(), bun_alloc::AllocError> {
+    fn insert(&mut self, ch: u8) -> Result<(), bun_alloc::AllocError> {
         if self.cursor == self.buffer.len() {
             self.buffer.push(ch);
         } else {
@@ -359,7 +366,7 @@ impl LineEditor {
         Ok(())
     }
 
-    pub(crate) fn insert_slice(&mut self, slice: &[u8]) -> Result<(), bun_alloc::AllocError> {
+    fn insert_slice(&mut self, slice: &[u8]) -> Result<(), bun_alloc::AllocError> {
         if self.cursor == self.buffer.len() {
             self.buffer.extend_from_slice(slice);
         } else {
@@ -394,14 +401,14 @@ impl LineEditor {
         (pos + step).min(self.buffer.len())
     }
 
-    pub(crate) fn delete_char(&mut self) {
+    fn delete_char(&mut self) {
         if self.cursor < self.buffer.len() {
             let end = self.next_boundary(self.cursor);
             self.buffer.drain(self.cursor..end);
         }
     }
 
-    pub(crate) fn backspace(&mut self) {
+    fn backspace(&mut self) {
         if self.cursor > 0 {
             let start = self.prev_boundary(self.cursor);
             self.buffer.drain(start..self.cursor);
@@ -409,7 +416,7 @@ impl LineEditor {
         }
     }
 
-    pub(crate) fn delete_word(&mut self) {
+    fn delete_word(&mut self) {
         // Delete word forward
         while self.cursor < self.buffer.len() && self.buffer[self.cursor].is_ascii_whitespace() {
             self.buffer.remove(self.cursor);
@@ -419,7 +426,7 @@ impl LineEditor {
         }
     }
 
-    pub(crate) fn backspace_word(&mut self) {
+    fn backspace_word(&mut self) {
         // Delete word backward
         while self.cursor > 0 && self.buffer[self.cursor - 1].is_ascii_whitespace() {
             self.cursor -= 1;
@@ -431,28 +438,28 @@ impl LineEditor {
         }
     }
 
-    pub(crate) fn delete_to_end(&mut self) {
+    fn delete_to_end(&mut self) {
         self.buffer.truncate(self.cursor);
     }
 
-    pub(crate) fn delete_to_start(&mut self) {
+    fn delete_to_start(&mut self) {
         self.buffer.drain_front(self.cursor);
         self.cursor = 0;
     }
 
-    pub(crate) fn move_left(&mut self) {
+    fn move_left(&mut self) {
         if self.cursor > 0 {
             self.cursor = self.prev_boundary(self.cursor);
         }
     }
 
-    pub(crate) fn move_right(&mut self) {
+    fn move_right(&mut self) {
         if self.cursor < self.buffer.len() {
             self.cursor = self.next_boundary(self.cursor);
         }
     }
 
-    pub(crate) fn move_word_left(&mut self) {
+    fn move_word_left(&mut self) {
         while self.cursor > 0 && self.buffer[self.cursor - 1].is_ascii_whitespace() {
             self.cursor -= 1;
         }
@@ -461,7 +468,7 @@ impl LineEditor {
         }
     }
 
-    pub(crate) fn move_word_right(&mut self) {
+    fn move_word_right(&mut self) {
         while self.cursor < self.buffer.len() && !self.buffer[self.cursor].is_ascii_whitespace() {
             self.cursor += 1;
         }
@@ -470,15 +477,15 @@ impl LineEditor {
         }
     }
 
-    pub(crate) fn move_to_start(&mut self) {
+    fn move_to_start(&mut self) {
         self.cursor = 0;
     }
 
-    pub(crate) fn move_to_end(&mut self) {
+    fn move_to_end(&mut self) {
         self.cursor = self.buffer.len();
     }
 
-    pub(crate) fn swap(&mut self) {
+    fn swap(&mut self) {
         // Transpose two whole codepoints (not bytes), so multi-byte UTF-8 is
         // not split. Mid-line swaps the codepoint before the cursor with the
         // one at it and advances past both; at end-of-line it transposes the
@@ -501,7 +508,7 @@ impl LineEditor {
         self.cursor = right_end;
     }
 
-    pub(crate) fn get_line(&self) -> &[u8] {
+    fn get_line(&self) -> &[u8] {
         &self.buffer
     }
 }
@@ -518,7 +525,7 @@ struct ReplCommand {
 }
 
 impl ReplCommand {
-    pub(crate) const ALL: [ReplCommand; 9] = [
+    const ALL: [ReplCommand; 9] = [
         ReplCommand {
             name: b".help",
             help: "Print this help message",
@@ -566,7 +573,7 @@ impl ReplCommand {
         },
     ];
 
-    pub(crate) fn find(name: &[u8]) -> Option<&'static ReplCommand> {
+    fn find(name: &[u8]) -> Option<&'static ReplCommand> {
         Self::ALL.iter().find(|&cmd| {
             strings::eql_long(cmd.name, name, true)
                 || (name.len() > 1 && cmd.name.starts_with(name))
@@ -656,7 +663,12 @@ fn cmd_help(repl: &mut Repl, _: &[u8]) -> ReplResult {
         Color::RESET
     ));
     repl.print(format_args!(
-        "  {}Tab{}          Auto-complete\n",
+        "  {}Tab{}          Auto-complete / accept suggestion\n",
+        Color::CYAN,
+        Color::RESET
+    ));
+    repl.print(format_args!(
+        "  {}Right/End{}    Accept inline suggestion\n",
         Color::CYAN,
         Color::RESET
     ));
@@ -781,12 +793,15 @@ fn cmd_save(repl: &mut Repl, args: &[u8]) -> ReplResult {
 }
 
 fn cmd_editor(repl: &mut Repl, _: &[u8]) -> ReplResult {
+    if repl.input_mode == InputMode::Multiline {
+        return ReplResult::SkipEval;
+    }
     repl.print(format_args!(
         "{}// Entering editor mode (Ctrl+D to finish, Ctrl+C to cancel){}\n",
         Color::DIM,
         Color::RESET
     ));
-    repl.editor_mode = true;
+    repl.input_mode = InputMode::Editor;
     repl.editor_buffer.clear();
     ReplResult::SkipEval
 }
@@ -794,7 +809,8 @@ fn cmd_editor(repl: &mut Repl, _: &[u8]) -> ReplResult {
 fn cmd_break(repl: &mut Repl, _: &[u8]) -> ReplResult {
     repl.line_editor.clear();
     repl.multiline_buffer.clear();
-    repl.in_multiline = false;
+    repl.suggestion.clear();
+    repl.input_mode = InputMode::Normal;
     ReplResult::SkipEval
 }
 
@@ -827,20 +843,122 @@ fn cmd_history(repl: &mut Repl, _: &[u8]) -> ReplResult {
 // Main REPL Struct
 // ============================================================================
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InputMode {
+    Normal,
+    Multiline,
+    Editor,
+}
+
+/// A terminal cell, in rows below the row that holds the prompt.
+#[derive(Clone, Copy, Default)]
+struct ScreenPos {
+    row: usize,
+    col: usize,
+}
+
+impl ScreenPos {
+    fn next_row(self) -> ScreenPos {
+        ScreenPos {
+            row: self.row + 1,
+            col: 0,
+        }
+    }
+}
+
+/// Follows where the terminal puts text written after the prompt.
+struct Layout {
+    width: usize,
+    pos: ScreenPos,
+}
+
+impl Layout {
+    /// Lays out `text` and returns the cell its first glyph went to, or `next` for empty text.
+    fn advance(&mut self, mut text: &[u8]) -> ScreenPos {
+        let mut first: Option<ScreenPos> = None;
+        while !text.is_empty() {
+            let room = self.width.saturating_sub(self.pos.col);
+            let mut fits =
+                strings::visible::width::exclude_ansi_colors::utf8_index_at_width(text, room);
+            if fits == 0 {
+                // Like the terminal, a glyph that does not fit (a wide one) starts the next row.
+                if self.pos.col > 0 {
+                    self.pos = self.pos.next_row();
+                    continue;
+                }
+                // Wider than the whole terminal.
+                fits = text.len();
+            }
+            let (chunk, rest) = text.split_at(fits);
+            let columns = strings::visible::width::exclude_ansi_colors::utf8(chunk);
+            if columns > 0 {
+                first.get_or_insert(self.pos);
+            }
+            self.pos.col += columns;
+            text = rest;
+        }
+        first.unwrap_or_else(|| self.next())
+    }
+
+    /// The cell the next glyph goes to. A full row counts as wrapped; `refresh_line` makes that so.
+    fn next(&self) -> ScreenPos {
+        if self.pos.col >= self.width {
+            self.pos.next_row()
+        } else {
+            self.pos
+        }
+    }
+}
+
+/// What `refresh_line` last drew on the terminal. The REPL has one only when it is on a terminal.
+#[derive(Clone, Copy)]
+struct Drawing {
+    /// Last width the terminal reported.
+    width: u16,
+    /// Where the terminal cursor was left.
+    cursor: ScreenPos,
+    /// The cell after the last character of the line (the ghost text is not counted).
+    end: ScreenPos,
+}
+
+impl Drawing {
+    fn new() -> Drawing {
+        Drawing {
+            width: 80,
+            cursor: ScreenPos::default(),
+            end: ScreenPos::default(),
+        }
+    }
+
+    fn update_width(&mut self) {
+        if let Some(size) = bun_core::output::File::from(Fd::stdout()).winsize() {
+            if size.col > 0 {
+                self.width = size.col;
+            }
+        }
+    }
+
+    /// The input is gone from the screen; the next redraw starts where the cursor is.
+    fn erased(&mut self) {
+        self.cursor = ScreenPos::default();
+        self.end = ScreenPos::default();
+    }
+}
+
 pub(super) struct Repl<'a> {
     line_editor: LineEditor,
     history: History,
     multiline_buffer: Vec<u8>,
     editor_buffer: Vec<u8>,
+    /// Remainder of the current inline completion (not the full word); empty when none.
+    suggestion: Vec<u8>,
 
     // State
-    in_multiline: bool,
-    editor_mode: bool,
+    input_mode: InputMode,
     running: bool,
-    is_tty: bool,
     use_colors: bool,
-    terminal_width: u16,
-    terminal_height: u16,
+    /// `None` when stdin or stdout is not a terminal; the input is then never redrawn.
+    drawing: Option<Drawing>,
     ctrl_c_pressed: bool,
 
     // Buffered stdin
@@ -874,13 +992,11 @@ impl<'a> Repl<'a> {
             history: History::init(),
             multiline_buffer: Vec::new(),
             editor_buffer: Vec::new(),
-            in_multiline: false,
-            editor_mode: false,
+            suggestion: Vec::new(),
+            input_mode: InputMode::Normal,
             running: false,
-            is_tty: false,
             use_colors: false,
-            terminal_width: 80,
-            terminal_height: 24,
+            drawing: None,
             ctrl_c_pressed: false,
             stdin_buf: [0u8; 256],
             stdin_buf_start: 0,
@@ -913,27 +1029,21 @@ impl<'a> Repl<'a> {
     // ========================================================================
 
     fn setup_terminal(&mut self) {
-        self.is_tty = Output::is_stdout_tty() && Output::is_stdin_tty();
-
-        if !self.is_tty {
+        if !(Output::is_stdout_tty() && Output::is_stdin_tty()) {
             self.use_colors = false;
             return;
         }
+        self.drawing = Some(Drawing::new());
 
         // Check for NO_COLOR
         self.use_colors = !env_var::NO_COLOR.get().unwrap_or(false);
 
-        // Get terminal size
-        let ts = Output::TERMINAL_SIZE.load();
-        if ts.col > 0 {
-            self.terminal_width = ts.col;
-            self.terminal_height = ts.row;
-        }
-
         // Enable raw mode
         #[cfg(unix)]
         {
-            let _ = self.tty_state.set_mode(0, tty::Mode::Raw);
+            let _ = self
+                .tty_state
+                .set_mode(0, tty::Mode::Raw, tty::SetAttrWhen::Drain);
         }
         #[cfg(windows)]
         {
@@ -953,7 +1063,9 @@ impl<'a> Repl<'a> {
     fn restore_terminal(&mut self) {
         #[cfg(unix)]
         {
-            let _ = self.tty_state.set_mode(0, tty::Mode::Normal);
+            let _ = self
+                .tty_state
+                .set_mode(0, tty::Mode::Normal, tty::SetAttrWhen::Drain);
         }
         #[cfg(windows)]
         {
@@ -969,16 +1081,14 @@ impl<'a> Repl<'a> {
 
     /// Temporarily enable SIGINT delivery during blocking promise waits
     fn enable_signals_during_wait(&mut self) {
-        if let Some(vm) = self.vm {
-            // Cleared in disable_signals_during_wait; Release pairs with the
-            // Acquire load in `sigint_handler`.
-            SIGINT_VM.store(vm.jsc_vm, core::sync::atomic::Ordering::Release);
-        }
+        SIGINT_ARMED.store(true, core::sync::atomic::Ordering::Release);
 
         #[cfg(unix)]
         {
             // Switch to normal terminal mode (has ISIG) so Ctrl+C generates SIGINT
-            let _ = self.tty_state.set_mode(0, tty::Mode::Normal);
+            let _ = self
+                .tty_state
+                .set_mode(0, tty::Mode::Normal, tty::SetAttrWhen::Drain);
 
             // Install SIGINT handler
             // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; we set
@@ -993,14 +1103,34 @@ impl<'a> Repl<'a> {
         // On Windows, ENABLE_PROCESSED_INPUT is already set so Ctrl+C works
     }
 
+    /// Drive the loop until `promise` settles; `true` if a SIGINT (see `sigint_handler`) cut the wait short.
+    fn wait_for_promise_or_sigint(vm: &VirtualMachine, promise: *mut jsc::JSPromise) -> bool {
+        use core::sync::atomic::Ordering;
+        SIGINT_DURING_WAIT.store(false, Ordering::Release);
+        while jsc::JSPromise::opaque_mut(promise).status() == PromiseStatus::Pending {
+            if SIGINT_DURING_WAIT.swap(false, Ordering::AcqRel) {
+                return true;
+            }
+            vm.as_mut().event_loop_mut().tick();
+            if jsc::JSPromise::opaque_mut(promise).status() == PromiseStatus::Pending
+                && !SIGINT_DURING_WAIT.load(Ordering::Acquire)
+            {
+                vm.as_mut().event_loop_mut().auto_tick();
+            }
+        }
+        false
+    }
+
     /// Restore raw terminal mode after promise wait
     fn disable_signals_during_wait(&mut self) {
-        SIGINT_VM.store(core::ptr::null_mut(), core::sync::atomic::Ordering::Release);
+        SIGINT_ARMED.store(false, core::sync::atomic::Ordering::Release);
 
         #[cfg(unix)]
         {
             // Back to raw mode
-            let _ = self.tty_state.set_mode(0, tty::Mode::Raw);
+            let _ = self
+                .tty_state
+                .set_mode(0, tty::Mode::Raw, tty::SetAttrWhen::Drain);
 
             // Restore default SIGINT handling
             // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; SIG_DFL
@@ -1173,7 +1303,7 @@ impl<'a> Repl<'a> {
     // ========================================================================
 
     fn get_prompt(&self) -> &'static [u8] {
-        if self.in_multiline || self.editor_mode {
+        if self.input_mode != InputMode::Normal {
             if self.use_colors {
                 return concat!("\x1b[2m", "... ", "\x1b[0m").as_bytes();
             } else {
@@ -1189,23 +1319,50 @@ impl<'a> Repl<'a> {
     }
 
     fn get_prompt_length(&self) -> usize {
-        if self.in_multiline || self.editor_mode {
+        if self.input_mode != InputMode::Normal {
             return 4; // "... "
         }
         2 // "> " or "\u{276f} "
     }
 
-    fn refresh_line(&self) {
+    /// The ghost text is only drawn while the cursor is at the end of the line.
+    fn drawn_suggestion(&self) -> &[u8] {
+        if self.use_colors && self.line_editor.cursor == self.line_editor.buffer.len() {
+            &self.suggestion
+        } else {
+            b""
+        }
+    }
+
+    /// Call `leave_input` before printing anything below the input this draws.
+    fn refresh_line(&mut self) {
+        // Non-TTY never redraws (like node): per-key redraws wedge write(2) on a full socketpair.
+        let Some(mut drawing) = self.drawing else {
+            if self.line_editor.buffer.is_empty() && self.input_mode == InputMode::Normal {
+                Output::flush();
+                self.write(self.get_prompt());
+                Output::flush();
+            }
+            return;
+        };
+
         // Flush any buffered output (e.g., from console.log in JS) before drawing prompt
         Output::flush();
+
+        // Every redraw, so that a resize is picked up.
+        drawing.update_width();
+        let width = usize::from(drawing.width);
 
         let prompt = self.get_prompt();
         let prompt_len = self.get_prompt_length();
         let line = self.line_editor.get_line();
 
-        // Move to beginning of line
+        // Erase the previous drawing from the prompt's row down.
+        if drawing.cursor.row > 0 {
+            self.print(format_args!("{}{}A", CSI, drawing.cursor.row));
+        }
         self.write(b"\r");
-        self.write(Cursor::CLEAR_LINE.as_bytes());
+        self.write(Cursor::CLEAR_BELOW.as_bytes());
 
         // Write prompt
         self.write(prompt);
@@ -1217,25 +1374,219 @@ impl<'a> Repl<'a> {
             self.write(line);
         }
 
-        // Position cursor. The cursor is a byte offset, but the terminal column
-        // is the display width of the text before it, so multi-byte UTF-8 and
-        // wide (e.g. CJK) characters advance the column correctly.
-        let cursor_col =
-            strings::visible::width::exclude_ansi_colors::utf8(&line[..self.line_editor.cursor]);
-        let cursor_pos = prompt_len + cursor_col;
-        if cursor_pos < self.terminal_width as usize {
-            self.write(b"\r");
-            if cursor_pos > 0 {
-                let mut buf = [0u8; 16];
-                let mut w: &mut [u8] = &mut buf;
-                if write!(w, "{}{}C", CSI, cursor_pos).is_ok() {
-                    let written = 16 - w.len();
-                    self.write(&buf[..written]);
+        let ghost = self.drawn_suggestion();
+        if !ghost.is_empty() {
+            self.write(Color::DIM.as_bytes());
+            self.write(ghost);
+            self.write(Color::RESET.as_bytes());
+        }
+
+        let (before_cursor, after_cursor) = line.split_at(self.line_editor.cursor);
+        let mut layout = Layout {
+            width,
+            pos: ScreenPos {
+                row: 0,
+                col: prompt_len,
+            },
+        };
+        layout.advance(before_cursor);
+        let mut cursor = layout.advance(after_cursor);
+        let end = layout.next();
+        if !ghost.is_empty() {
+            // Only drawn with the cursor at the end of the line, so the cursor sits on the ghost.
+            cursor = layout.advance(ghost);
+        }
+
+        // Terminals defer the wrap after the last column; force it to match `layout`.
+        if layout.pos.col >= width {
+            self.write(b"\n");
+            layout.pos = layout.pos.next_row();
+        }
+        if layout.pos.row > cursor.row {
+            self.print(format_args!("{}{}A", CSI, layout.pos.row - cursor.row));
+        }
+        self.write(b"\r");
+        if cursor.col > 0 {
+            self.print(format_args!("{}{}C", CSI, cursor.col));
+        }
+
+        drawing.cursor = cursor;
+        drawing.end = end;
+        self.drawing = Some(drawing);
+
+        Output::flush();
+    }
+
+    /// Erases the ghost, writes `echo` after the line, and moves to the start of the row below it.
+    fn leave_input(&mut self, echo: &[u8]) {
+        // False once a line that ends exactly at the right edge has left the cursor on a fresh row.
+        let mut on_input_row = true;
+        if let Some(Drawing { cursor, end, .. }) = self.drawing {
+            if !self.drawn_suggestion().is_empty() {
+                // Nothing but the ghost follows the cursor.
+                self.write(Cursor::CLEAR_BELOW.as_bytes());
+                on_input_row = cursor.col > 0;
+            } else {
+                if end.row > cursor.row {
+                    self.print(format_args!("{}{}B", CSI, end.row - cursor.row));
+                }
+                self.write(b"\r");
+                if end.col > 0 {
+                    self.print(format_args!("{}{}C", CSI, end.col));
+                }
+                on_input_row = end.col > 0;
+            }
+        }
+        self.write(echo);
+        if on_input_row || !echo.is_empty() {
+            self.write(b"\n");
+        }
+        self.suggestion.clear();
+        if let Some(drawing) = &mut self.drawing {
+            drawing.erased();
+        }
+    }
+
+    // ========================================================================
+    // Inline Suggestions (ghost text)
+    // ========================================================================
+
+    /// Walks `a.b.c` via property gets, not the evaluator (so `_` is untouched).
+    fn resolve_object_expr(&self, expr: &[u8]) -> JSValue {
+        let Some(global) = self.global else {
+            return JSValue::UNDEFINED;
+        };
+        if expr.is_empty() {
+            return JSValue::UNDEFINED;
+        }
+
+        let mut current = global.to_js_value();
+        for (index, part) in strings::split(expr, b".").enumerate() {
+            // Top-level `this` evaluates to globalThis in the REPL, which is where the walk starts.
+            if index == 0 && part == b"this" {
+                continue;
+            }
+            if !identifier::is_identifier(part) || current.is_undefined_or_null() {
+                return JSValue::UNDEFINED;
+            }
+            // SAFETY: `global` is a live opaque `JSGlobalObject` handle; `part` borrows
+            // from `expr`, which outlives the call.
+            current = unsafe { Bun__REPL__getProperty(global, current, part.as_ptr(), part.len()) };
+        }
+        current
+    }
+
+    fn update_suggestion(&mut self) {
+        self.suggestion.clear();
+
+        if self.drawing.is_none() || !self.use_colors {
+            return;
+        }
+        if self.input_mode != InputMode::Normal {
+            return;
+        }
+
+        let line: Vec<u8> = self.line_editor.get_line().to_vec();
+        if self.line_editor.cursor != line.len() {
+            return;
+        }
+        if line.is_empty() || line[0] == b'.' {
+            return; // skip REPL dot-commands
+        }
+
+        let Some(ctx) = parse_completion_context(&line, self.line_editor.cursor) else {
+            return;
+        };
+        if (ctx.prefix.is_empty() && ctx.object_expr.is_empty()) || ends_inside_string(&[&line]) {
+            return;
+        }
+
+        let Some(global) = self.global else {
+            return;
+        };
+
+        let mut target = JSValue::UNDEFINED;
+        if !ctx.object_expr.is_empty() {
+            target = self.resolve_object_expr(ctx.object_expr);
+            if target.is_undefined_or_null() {
+                return;
+            }
+        }
+
+        // SAFETY: `global` is a live opaque `JSGlobalObject` handle; the prefix ptr/len
+        // pair is valid for the duration of the call.
+        let completions = unsafe {
+            Bun__REPL__getCompletions(global, target, ctx.prefix.as_ptr(), ctx.prefix.len())
+        };
+
+        let mut best_len: usize = usize::MAX;
+
+        if !completions.is_undefined_or_null() && completions.is_array() {
+            let len: u32 = match completions.get_length(global) {
+                Ok(n) => n as u32,
+                Err(_) => {
+                    global.clear_exception();
+                    0
+                }
+            };
+            for idx in 0..len {
+                let item = match completions.get_index(global, idx) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        global.clear_exception();
+                        continue;
+                    }
+                };
+                if !item.is_string() {
+                    continue;
+                }
+                let slice = match item.to_utf8(global) {
+                    Ok(s) => s,
+                    Err(_) => {
+                        global.clear_exception();
+                        continue;
+                    }
+                };
+                let name = slice.slice();
+                let Some(rest) = name.strip_prefix(ctx.prefix) else {
+                    continue;
+                };
+                // Skips keys like `"foo-bar"` or `"0"`, which can't follow a `.`.
+                if rest.is_empty() || !identifier::is_identifier(name) {
+                    continue;
+                }
+                if name.len() < best_len {
+                    best_len = name.len();
+                    self.suggestion.clear();
+                    self.suggestion.extend_from_slice(rest);
+                    if ctx.prefix.is_empty() {
+                        break;
+                    }
                 }
             }
         }
 
-        Output::flush();
+        if self.suggestion.is_empty() && ctx.object_expr.is_empty() && !ctx.prefix.is_empty() {
+            for &kw in JS_KEYWORDS {
+                if kw.len() > ctx.prefix.len() && kw.starts_with(ctx.prefix) && kw.len() < best_len
+                {
+                    best_len = kw.len();
+                    self.suggestion.clear();
+                    self.suggestion.extend_from_slice(&kw[ctx.prefix.len()..]);
+                }
+            }
+        }
+    }
+
+    fn accept_suggestion(&mut self) -> bool {
+        if self.suggestion.is_empty() {
+            return false;
+        }
+        let sugg = core::mem::take(&mut self.suggestion);
+        let ok = self.line_editor.insert_slice(&sugg).is_ok();
+        self.suggestion = sugg;
+        self.suggestion.clear();
+        ok
     }
 
     fn write_highlighted(&self, text: &[u8]) {
@@ -1309,14 +1660,8 @@ impl<'a> Repl<'a> {
             self.enable_signals_during_wait();
             // Note: reshaped for borrowck — call disable_signals_during_wait() explicitly on each return path below
 
-            // Wait for the promise to settle
-            vm.as_mut()
-                .wait_for_promise(jsc::AnyPromise::Normal(promise));
-
-            // If execution was forbidden by SIGINT, clear it and report
-            if vm.jsc_vm().execution_forbidden() {
-                vm.jsc_vm().set_execution_forbidden(false);
-                global.clear_termination_exception();
+            // Wait for the promise to settle, or for a SIGINT.
+            if Self::wait_for_promise_or_sigint(vm, promise) {
                 self.print(format_args!("\n"));
                 self.disable_signals_during_wait();
                 return;
@@ -1471,7 +1816,9 @@ impl<'a> Repl<'a> {
             // SAFETY: `promise` is a live JSC heap cell; `vm.jsc_vm` is the
             // owning JSC VM handle for this thread.
             jsc::JSPromise::opaque_mut(promise).set_handled();
-            vm.as_mut()
+            // Interrupted (SIGINT forbids execution) ⇒ handled just below.
+            let _ = vm
+                .as_mut()
                 .wait_for_promise(jsc::AnyPromise::Normal(promise));
             let jsc_vm_ref = vm.jsc_vm();
             match jsc::JSPromise::opaque_mut(promise).status() {
@@ -1610,12 +1957,8 @@ impl<'a> Repl<'a> {
             // owning JSC VM handle for this thread.
             jsc::JSPromise::opaque_mut(promise).set_handled();
             self.enable_signals_during_wait();
-            // Note: reshaped for borrowck — disable_signals_during_wait called on each path
-            vm.as_mut()
-                .wait_for_promise(jsc::AnyPromise::Normal(promise));
-            if vm.jsc_vm().execution_forbidden() {
-                vm.jsc_vm().set_execution_forbidden(false);
-                global.clear_termination_exception();
+            // Wait for the promise to settle, or for a SIGINT.
+            if Self::wait_for_promise_or_sigint(vm, promise) {
                 self.print(format_args!("\n"));
                 self.disable_signals_during_wait();
                 return;
@@ -1688,7 +2031,7 @@ impl<'a> Repl<'a> {
 
         // For strings, copy the raw string value (not quoted/JSON-ified)
         if value.is_string() {
-            let slice = value.to_slice(global)?;
+            let slice = value.to_utf8(global)?;
             return Ok(Some(Box::<[u8]>::from(slice.slice())));
         }
 
@@ -2002,7 +2345,7 @@ impl<'a> Repl<'a> {
         while self.running {
             let Some(key) = self.read_key() else {
                 // EOF
-                self.print(format_args!("\n"));
+                self.leave_input(b"");
                 break;
             };
 
@@ -2014,82 +2357,107 @@ impl<'a> Repl<'a> {
             match key {
                 Key::Enter => self.handle_enter()?,
                 Key::CtrlC => self.handle_ctrl_c(),
-                Key::CtrlD => {
-                    if self.editor_mode {
+                Key::CtrlD => match self.input_mode {
+                    InputMode::Editor => {
                         // Finish editor mode
-                        self.print(format_args!("\n"));
+                        self.leave_input(b"");
                         // Note: reshaped for borrowck — clone editor_buffer slice before evaluate
                         if !self.editor_buffer.is_empty() {
                             let code = core::mem::take(&mut self.editor_buffer);
                             self.evaluate_and_print(&code);
                             self.editor_buffer = code;
                         }
-                        self.editor_mode = false;
+                        self.input_mode = InputMode::Normal;
                         self.editor_buffer.clear();
                         self.refresh_line();
-                    } else if self.line_editor.buffer.is_empty() && !self.in_multiline {
+                    }
+                    InputMode::Normal if self.line_editor.buffer.is_empty() => {
                         self.print(format_args!("\n"));
                         self.running = false;
-                    } else {
+                    }
+                    _ => {
                         self.line_editor.delete_char();
+                        self.update_suggestion();
                         self.refresh_line();
                     }
-                }
+                },
                 Key::CtrlL => {
                     self.write(Cursor::CLEAR_SCREEN.as_bytes());
                     self.write(Cursor::HOME.as_bytes());
+                    if let Some(drawing) = &mut self.drawing {
+                        drawing.erased();
+                    }
                     self.refresh_line();
                 }
                 Key::CtrlA => {
                     self.line_editor.move_to_start();
+                    self.suggestion.clear();
                     self.refresh_line();
                 }
                 Key::CtrlE => {
-                    self.line_editor.move_to_end();
+                    if !self.accept_suggestion() {
+                        self.line_editor.move_to_end();
+                    }
+                    self.update_suggestion();
                     self.refresh_line();
                 }
                 Key::CtrlB | Key::ArrowLeft => {
                     self.line_editor.move_left();
+                    self.suggestion.clear();
                     self.refresh_line();
                 }
                 Key::CtrlF | Key::ArrowRight => {
-                    self.line_editor.move_right();
+                    if self.line_editor.cursor != self.line_editor.buffer.len()
+                        || !self.accept_suggestion()
+                    {
+                        self.line_editor.move_right();
+                    }
+                    self.update_suggestion();
                     self.refresh_line();
                 }
                 Key::AltB | Key::AltLeft => {
                     self.line_editor.move_word_left();
+                    self.suggestion.clear();
                     self.refresh_line();
                 }
                 Key::AltF | Key::AltRight => {
                     self.line_editor.move_word_right();
+                    self.update_suggestion();
                     self.refresh_line();
                 }
                 Key::CtrlU => {
                     self.line_editor.delete_to_start();
+                    self.update_suggestion();
                     self.refresh_line();
                 }
                 Key::CtrlK => {
                     self.line_editor.delete_to_end();
+                    self.update_suggestion();
                     self.refresh_line();
                 }
                 Key::CtrlW | Key::AltBackspace => {
                     self.line_editor.backspace_word();
+                    self.update_suggestion();
                     self.refresh_line();
                 }
                 Key::AltD => {
                     self.line_editor.delete_word();
+                    self.update_suggestion();
                     self.refresh_line();
                 }
                 Key::CtrlT => {
                     self.line_editor.swap();
+                    self.update_suggestion();
                     self.refresh_line();
                 }
                 Key::Backspace => {
                     self.line_editor.backspace();
+                    self.update_suggestion();
                     self.refresh_line();
                 }
                 Key::Delete => {
                     self.line_editor.delete_char();
+                    self.update_suggestion();
                     self.refresh_line();
                 }
                 Key::ArrowUp | Key::CtrlP => {
@@ -2098,6 +2466,7 @@ impl<'a> Repl<'a> {
                     if let Some(prev_line) = self.history.prev(&cur) {
                         let prev_line = prev_line.to_vec();
                         let _ = self.line_editor.set(&prev_line);
+                        self.suggestion.clear();
                         self.refresh_line();
                     }
                 }
@@ -2108,23 +2477,30 @@ impl<'a> Repl<'a> {
                     } else {
                         self.line_editor.clear();
                     }
+                    self.suggestion.clear();
                     self.refresh_line();
                 }
                 Key::Tab => self.handle_tab(),
                 Key::Home => {
                     self.line_editor.move_to_start();
+                    self.suggestion.clear();
                     self.refresh_line();
                 }
                 Key::End => {
-                    self.line_editor.move_to_end();
+                    if !self.accept_suggestion() {
+                        self.line_editor.move_to_end();
+                    }
+                    self.update_suggestion();
                     self.refresh_line();
                 }
                 Key::Char(c) => {
                     let _ = self.line_editor.insert(c);
+                    self.update_suggestion();
                     self.refresh_line();
                 }
                 Key::Text(bytes, len) => {
                     let _ = self.line_editor.insert_slice(&bytes[..len]);
+                    self.update_suggestion();
                     self.refresh_line();
                 }
                 _ => {}
@@ -2137,12 +2513,12 @@ impl<'a> Repl<'a> {
     }
 
     fn handle_enter(&mut self) -> Result<(), crate::Error> {
-        self.print(format_args!("\n"));
+        self.leave_input(b"");
 
         // Note: reshaped for borrowck — copy line out so we can call &mut self methods
         let line: Vec<u8> = self.line_editor.get_line().to_vec();
 
-        if self.editor_mode {
+        if self.input_mode == InputMode::Editor {
             if strings::trim(&line, b" \t").is_empty() {
                 self.editor_buffer.extend_from_slice(b"\n");
             } else {
@@ -2196,13 +2572,13 @@ impl<'a> Repl<'a> {
         }
 
         // Handle empty line
-        if line.is_empty() && !self.in_multiline {
+        if line.is_empty() && self.input_mode != InputMode::Multiline {
             self.refresh_line();
             return Ok(());
         }
 
         // Check for multi-line input
-        let full_code: &[u8] = if self.in_multiline {
+        let full_code: &[u8] = if self.input_mode == InputMode::Multiline {
             self.multiline_buffer.extend_from_slice(&line);
             self.multiline_buffer.push(b'\n');
             &self.multiline_buffer
@@ -2211,8 +2587,8 @@ impl<'a> Repl<'a> {
         };
 
         if is_incomplete_code(full_code) {
-            if !self.in_multiline {
-                self.in_multiline = true;
+            if self.input_mode != InputMode::Multiline {
+                self.input_mode = InputMode::Multiline;
                 self.multiline_buffer.extend_from_slice(&line);
                 self.multiline_buffer.push(b'\n');
             }
@@ -2222,7 +2598,7 @@ impl<'a> Repl<'a> {
         }
 
         // Complete code - evaluate it
-        let code_to_eval: Box<[u8]> = if self.in_multiline {
+        let code_to_eval: Box<[u8]> = if self.input_mode == InputMode::Multiline {
             Box::<[u8]>::from(self.multiline_buffer.as_slice())
         } else {
             Box::<[u8]>::from(line.as_slice())
@@ -2235,46 +2611,65 @@ impl<'a> Repl<'a> {
         // Reset state
         self.line_editor.clear();
         self.multiline_buffer.clear();
-        self.in_multiline = false;
+        self.input_mode = InputMode::Normal;
         self.history.reset_position();
         self.refresh_line();
         Ok(())
     }
 
     fn handle_ctrl_c(&mut self) {
-        if self.editor_mode {
-            self.print(format_args!(
-                "\n{}// Editor mode cancelled{}\n",
-                Color::DIM,
-                Color::RESET
-            ));
-            self.editor_mode = false;
-            self.editor_buffer.clear();
-        } else if self.in_multiline {
-            self.print(format_args!("\n"));
-            self.in_multiline = false;
-            self.multiline_buffer.clear();
-        } else if !self.line_editor.buffer.is_empty() {
-            self.print(format_args!("^C\n"));
-            self.line_editor.clear();
-        } else if self.ctrl_c_pressed {
-            // Second Ctrl+C on empty line - exit
-            self.print(format_args!("\n"));
-            self.running = false;
-            return;
-        } else {
-            self.ctrl_c_pressed = true;
-            self.print(format_args!(
-                "\n{}(press Ctrl+C again to exit, or Ctrl+D){}\n",
-                Color::DIM,
-                Color::RESET
-            ));
+        let cancels_line =
+            self.input_mode == InputMode::Normal && !self.line_editor.buffer.is_empty();
+        self.leave_input(if cancels_line { b"^C" } else { b"" });
+        match self.input_mode {
+            InputMode::Editor => {
+                self.print(format_args!(
+                    "{}// Editor mode cancelled{}\n",
+                    Color::DIM,
+                    Color::RESET
+                ));
+                self.input_mode = InputMode::Normal;
+                self.editor_buffer.clear();
+            }
+            InputMode::Multiline => {
+                self.input_mode = InputMode::Normal;
+                self.multiline_buffer.clear();
+            }
+            InputMode::Normal if cancels_line => {
+                self.line_editor.clear();
+            }
+            InputMode::Normal if self.ctrl_c_pressed => {
+                // Second Ctrl+C on empty line - exit
+                self.running = false;
+                return;
+            }
+            InputMode::Normal => {
+                self.ctrl_c_pressed = true;
+                self.print(format_args!(
+                    "{}(press Ctrl+C again to exit, or Ctrl+D){}\n",
+                    Color::DIM,
+                    Color::RESET
+                ));
+            }
         }
         self.history.reset_position();
         self.refresh_line();
     }
 
+    /// Tab with nothing to complete indents instead.
+    fn insert_tab_spaces(&mut self) {
+        let _ = self.line_editor.insert_slice(b"  ");
+        self.refresh_line();
+    }
+
     fn handle_tab(&mut self) {
+        if !self.suggestion.is_empty() && self.line_editor.cursor == self.line_editor.buffer.len() {
+            self.accept_suggestion();
+            self.update_suggestion();
+            self.refresh_line();
+            return;
+        }
+
         // Note: reshaped for borrowck — copy line out
         let line: Vec<u8> = self.line_editor.get_line().to_vec();
 
@@ -2293,7 +2688,7 @@ impl<'a> Repl<'a> {
                 let _ = self.line_editor.insert(b' ');
                 self.refresh_line();
             } else if matches.len() > 1 {
-                self.print(format_args!("\n"));
+                self.leave_input(b"");
                 for m in &matches {
                     self.print(format_args!(
                         "  {}{}{}\n",
@@ -2309,36 +2704,51 @@ impl<'a> Repl<'a> {
 
         // Property completion using JSC
         let Some(global) = self.global else {
-            // No VM, just insert spaces
-            let _ = self.line_editor.insert(b' ');
-            let _ = self.line_editor.insert(b' ');
-            self.refresh_line();
+            self.insert_tab_spaces();
             return;
         };
 
-        // Find the word being completed
-        let mut word_start: usize = line.len();
-        while word_start > 0 {
-            let c = line[word_start - 1];
-            if !c.is_ascii_alphanumeric() && c != b'_' && c != b'$' {
-                break;
-            }
-            word_start -= 1;
+        let cursor = self.line_editor.cursor;
+        // A template literal may have been opened on an earlier line of this input.
+        let earlier_lines: &[u8] = match self.input_mode {
+            InputMode::Normal => b"",
+            InputMode::Multiline => &self.multiline_buffer,
+            InputMode::Editor => &self.editor_buffer,
+        };
+        if ends_inside_string(&[earlier_lines, &line[..cursor]]) {
+            self.insert_tab_spaces();
+            return;
         }
 
-        let prefix = &line[word_start..];
+        // Mid-identifier (`con|sole`): completing would duplicate the suffix.
+        if cursor < line.len() && is_word_byte(line[cursor]) {
+            self.refresh_line();
+            return;
+        }
 
-        // Get completions from global object
+        let Some(ctx) = parse_completion_context(&line, cursor) else {
+            self.insert_tab_spaces();
+            return;
+        };
+        let word_start = ctx.prefix_start;
+        let prefix = ctx.prefix;
+
+        let mut target = JSValue::UNDEFINED;
+        if !ctx.object_expr.is_empty() {
+            target = self.resolve_object_expr(ctx.object_expr);
+            if target.is_undefined_or_null() {
+                self.insert_tab_spaces();
+                return;
+            }
+        }
+
         // SAFETY: `global` is a live opaque `JSGlobalObject` handle; `prefix` ptr/len
         // are valid for the duration of the call.
-        let completions = unsafe {
-            Bun__REPL__getCompletions(global, JSValue::UNDEFINED, prefix.as_ptr(), prefix.len())
-        };
+        let completions =
+            unsafe { Bun__REPL__getCompletions(global, target, prefix.as_ptr(), prefix.len()) };
 
         if completions.is_undefined() || !completions.is_array() {
-            let _ = self.line_editor.insert(b' ');
-            let _ = self.line_editor.insert(b' ');
-            self.refresh_line();
+            self.insert_tab_spaces();
             return;
         }
 
@@ -2351,9 +2761,7 @@ impl<'a> Repl<'a> {
             }
         };
         if len == 0 {
-            let _ = self.line_editor.insert(b' ');
-            let _ = self.line_editor.insert(b' ');
-            self.refresh_line();
+            self.insert_tab_spaces();
             return;
         }
 
@@ -2367,7 +2775,7 @@ impl<'a> Repl<'a> {
                 }
             };
             if item.is_string() {
-                let slice = match item.to_slice(global) {
+                let slice = match item.to_utf8(global) {
                     Ok(s) => s,
                     Err(_) => {
                         global.clear_exception();
@@ -2375,16 +2783,17 @@ impl<'a> Repl<'a> {
                     }
                 };
                 let completion = slice.slice();
-                // Replace the prefix with the completion
-                while self.line_editor.cursor > word_start {
-                    self.line_editor.backspace();
+                if identifier::is_identifier(completion) {
+                    while self.line_editor.cursor > word_start {
+                        self.line_editor.backspace();
+                    }
+                    let _ = self.line_editor.insert_slice(completion);
                 }
-                let _ = self.line_editor.insert_slice(completion);
                 self.refresh_line();
             }
         } else if len <= 50 {
             // Multiple completions - show them
-            self.print(format_args!("\n"));
+            self.leave_input(b"");
             let mut i: u32 = 0;
             while i < (len as u32) {
                 let item = match completions.get_index(global, i) {
@@ -2395,7 +2804,7 @@ impl<'a> Repl<'a> {
                     }
                 };
                 if item.is_string() {
-                    match item.to_slice(global) {
+                    match item.to_utf8(global) {
                         Ok(slice) => {
                             self.print(format_args!(
                                 "  {}{}{}\n",
@@ -2415,8 +2824,9 @@ impl<'a> Repl<'a> {
             }
             self.refresh_line();
         } else {
+            self.leave_input(b"");
             self.print(format_args!(
-                "\n{}{} completions{}\n",
+                "{}{} completions{}\n",
                 Color::DIM,
                 len,
                 Color::RESET
@@ -2435,21 +2845,166 @@ impl<'a> Drop for Repl<'a> {
     }
 }
 
-/// Global pointer for signal handler to access the VM.
-// PORTING.md §Global mutable state: read from a signal handler → AtomicPtr.
-// Atomics are async-signal-safe; the previous raw-global `Option<*mut>` was
-// not. `null` encodes `None`.
-static SIGINT_VM: core::sync::atomic::AtomicPtr<jsc::VM> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+/// The REPL is waiting on a promise and wants SIGINT to cut the wait short (async-signal-safe: atomics only).
+static SIGINT_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+/// A SIGINT arrived during such a wait: stop waiting (the signal itself interrupts the loop's poll). Not a
+/// VM stop — the VM stays usable.
+static SIGINT_DURING_WAIT: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 #[cfg(unix)]
 extern "C" fn sigint_handler(_: c_int) {
-    let vm = SIGINT_VM.load(core::sync::atomic::Ordering::Acquire);
-    if !vm.is_null() {
-        // `vm` was a valid `*mut jsc::VM` when stored (JS thread is
-        // blocked in wait while the handler runs, so it stays valid).
-        jsc::VM::opaque_ref(vm).set_execution_forbidden(true);
+    if SIGINT_ARMED.load(core::sync::atomic::Ordering::Acquire) {
+        SIGINT_DURING_WAIT.store(true, core::sync::atomic::Ordering::Release);
     }
+}
+
+// ============================================================================
+// Inline Suggestions (ghost text)
+// ============================================================================
+
+/// Word bytes for the prefix/chain scan; non-ASCII is taken wholesale (a junk prefix matches nothing).
+#[inline]
+fn is_word_byte(c: u8) -> bool {
+    c.is_ascii_alphanumeric() || c == b'_' || c == b'$' || c >= 0x80
+}
+
+/// Fallback suggestions when no global matches the prefix.
+const JS_KEYWORDS: &[&[u8]] = &[
+    b"async",
+    b"await",
+    b"break",
+    b"case",
+    b"catch",
+    b"class",
+    b"const",
+    b"continue",
+    b"debugger",
+    b"default",
+    b"delete",
+    b"else",
+    b"export",
+    b"extends",
+    b"false",
+    b"finally",
+    b"for",
+    b"function",
+    b"import",
+    b"instanceof",
+    b"let",
+    b"new",
+    b"null",
+    b"return",
+    b"static",
+    b"super",
+    b"switch",
+    b"this",
+    b"throw",
+    b"true",
+    b"try",
+    b"typeof",
+    b"undefined",
+    b"var",
+    b"void",
+    b"while",
+    b"yield",
+];
+
+/// Text ends inside string/template content, where completing is noise; `${…}` holes hold code.
+fn ends_inside_string(parts: &[&[u8]]) -> bool {
+    let mut quote = 0u8;
+    // Unclosed-brace count of each `${` hole being scanned, innermost last.
+    let mut holes: Vec<u32> = Vec::new();
+    for part in parts {
+        let mut i = 0;
+        while i < part.len() {
+            let c = part[i];
+            i += 1;
+            if quote != 0 {
+                match c {
+                    b'\\' => i += 1,
+                    b'$' if quote == b'`' && part.get(i) == Some(&b'{') => {
+                        i += 1;
+                        holes.push(1);
+                        quote = 0;
+                    }
+                    _ if c == quote => quote = 0,
+                    _ => {}
+                }
+            } else {
+                match c {
+                    b'"' | b'\'' | b'`' => quote = c,
+                    b'{' => {
+                        if let Some(depth) = holes.last_mut() {
+                            *depth += 1;
+                        }
+                    }
+                    b'}' => {
+                        if let Some(depth) = holes.last_mut() {
+                            *depth -= 1;
+                            if *depth == 0 {
+                                holes.pop();
+                                quote = b'`';
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    quote != 0
+}
+
+/// `console.lo|` → `object_expr = "console"`, `prefix = "lo"`; empty `object_expr` = globalThis.
+struct CompletionContext<'a> {
+    object_expr: &'a [u8],
+    prefix: &'a [u8],
+    prefix_start: usize,
+}
+
+/// `None` for e.g. `foo().th|`: a property name follows the `.`, so globals/keywords don't apply.
+fn parse_completion_context(line: &[u8], cursor: usize) -> Option<CompletionContext<'_>> {
+    let mut i = cursor;
+    while i > 0 && is_word_byte(line[i - 1]) {
+        i -= 1;
+    }
+    let prefix_start = i;
+    let prefix = &line[prefix_start..cursor];
+
+    // A `..` ending at `end` is the tail of a spread (`[...args`, `[...a.b`), not member access.
+    let member_dot_ends_at =
+        |end: usize| end >= 1 && line[end - 1] == b'.' && (end < 2 || line[end - 2] != b'.');
+
+    if !member_dot_ends_at(i) {
+        return Some(CompletionContext {
+            object_expr: b"",
+            prefix,
+            prefix_start,
+        });
+    }
+    i -= 1; // skip the `.`
+    let chain_end = i;
+
+    loop {
+        let ident_end = i;
+        while i > 0 && is_word_byte(line[i - 1]) {
+            i -= 1;
+        }
+        if i == ident_end {
+            return None;
+        }
+        if !member_dot_ends_at(i) {
+            break;
+        }
+        i -= 1;
+    }
+
+    Some(CompletionContext {
+        object_expr: &line[i..chain_end],
+        prefix,
+        prefix_start,
+    })
 }
 
 fn is_incomplete_code(code: &[u8]) -> bool {

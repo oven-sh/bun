@@ -538,6 +538,7 @@ it("MatchedRoute.params does not leak", async () => {
   // garbage-collected. Use long segment values so any leak is large enough to
   // dominate RSS noise.
   const code = /* ts */ `
+    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
     const router = new Bun.FileSystemRouter({
       dir: ${JSON.stringify(path.join(String(dir), "pages"))},
       style: "nextjs",
@@ -549,11 +550,11 @@ it("MatchedRoute.params does not leak", async () => {
     // warm up
     for (let i = 0; i < 1000; i++) router.match(url).params;
     Bun.gc(true);
-    const before = process.memoryUsage.rss();
+    const before = rss();
 
     for (let i = 0; i < 30000; i++) router.match(url).params;
     Bun.gc(true);
-    const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+    const growthMB = (rss() - before) / 1024 / 1024;
     console.error("RSS growth: " + growthMB.toFixed(2) + "MB");
     // ASAN's quarantine retains freed allocations (default 256 MB) so RSS
     // deltas run far higher under bun-asan; widen the threshold there.
@@ -917,3 +918,112 @@ it("loads routes from a directory already cached by Bun.build()", async () => {
     signalCode: proc.signalCode,
   }).toEqual({ stdout: "/a /b /sub/c /b", stderr: "", exitCode: 0, signalCode: null });
 });
+
+it(".query drops a pair with a malformed percent escape without shifting later parameters", () => {
+  const { dir } = make(["posts.tsx", "shows/[id].tsx"]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+  });
+
+  for (const [current, expected] of [
+    ["/posts?a=x%25zz&b=hello", { b: "hello" }],
+    ["/posts?a=xy%25zz&b=hello&c=3", { b: "hello", c: "3" }],
+    ["/posts?a=%25zz&b=hello", { b: "hello" }],
+    ["/shows/123?a=x%25zz&b=ok", { id: "123", b: "ok" }],
+    ["/shows/123?a=xy%25zz&b=ok&c=3", { id: "123", b: "ok", c: "3" }],
+  ] as const) {
+    expect({ input: current, query: router.match(current)!.query }).toEqual({ input: current, query: expected });
+  }
+});
+
+it(".query keeps the route parameter when a percent-encoded query name decodes to the same name", () => {
+  const { dir } = make(["posts/[id].tsx"]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+  });
+
+  for (const [current, expected] of [
+    ["/posts/123?id=999", { id: "123" }],
+    ["/posts/123?%2569d=999", { id: "123" }],
+    ["/posts/123?%2569d=999&other=1", { id: "123", other: "1" }],
+    ["/posts/123?other=1&%2569d=999", { id: "123", other: "1" }],
+  ] as const) {
+    expect({ input: current, query: router.match(current)!.query }).toEqual({ input: current, query: expected });
+  }
+});
+
+it("match() returns null when the URL has fewer segments than a dynamic route requires", () => {
+  {
+    const { dir } = make(["[org]/settings/[id].tsx"]);
+    const router = new Bun.FileSystemRouter({
+      dir,
+      style: "nextjs",
+    });
+
+    expect(router.match("/acme/settings/x")).toMatchObject({
+      name: "/[org]/settings/[id]",
+      params: { org: "acme", id: "x" },
+    });
+    expect(router.match("/acme")).toBeNull();
+  }
+
+  {
+    const { dir } = make(["[team]/[...rest].tsx"]);
+    const router = new Bun.FileSystemRouter({
+      dir,
+      style: "nextjs",
+    });
+
+    expect(router.match("/acme/a/b")).toMatchObject({
+      name: "/[team]/[...rest]",
+      params: { team: "acme", rest: "a/b" },
+    });
+    expect(router.match("/acme")).toBeNull();
+  }
+});
+
+it.skipIf(isWindows || isMacOS)(
+  "src is computed for a route whose path is longer than the fast-path buffer",
+  async () => {
+    using dir = tempDir("fsr-long-route-src", {
+      "pages/keep.tsx": "export default 1;\n",
+    });
+
+    const code = /* ts */ `
+    const fs = require("fs");
+    const path = require("path");
+    const pagesDir = ${JSON.stringify(path.join(String(dir), "pages"))};
+    const seg = Buffer.alloc(200, "a").toString();
+    const relDir = Array.from({ length: 11 }, (_, i) => seg + i).join("/");
+    fs.mkdirSync(path.join(pagesDir, relDir), { recursive: true });
+    fs.writeFileSync(path.join(pagesDir, relDir, "leaf.tsx"), "export default 1;\\n");
+    const router = new Bun.FileSystemRouter({
+      dir: pagesDir,
+      style: "nextjs",
+      fileExtensions: [".tsx"],
+      assetPrefix: "/_next/static/",
+      origin: "https://example.com",
+    });
+    const m = router.match("/" + relDir + "/leaf");
+    if (!m) throw new Error("expected the deep route to match");
+    const expected = "https://example.com/_next/static/" + relDir + "/leaf.tsx";
+    if (m.src !== expected) throw new Error("unexpected src: " + JSON.stringify(m.src));
+    console.log("ok " + m.src.length);
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ok 2264");
+    expect(exitCode).toBe(0);
+  },
+);

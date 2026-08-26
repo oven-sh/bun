@@ -196,7 +196,7 @@ pub enum Feature {
 }
 
 impl Feature {
-    pub fn prefixes_for(self, browsers: &Browsers) -> VendorPrefix {
+    pub(crate) fn prefixes_for(self, browsers: &Browsers) -> VendorPrefix {
         use Feature::*;
         let mut prefixes = VendorPrefix::NONE;
         match self {
@@ -2191,7 +2191,7 @@ impl Feature {
     }
 
     #[allow(non_snake_case)]
-    pub fn is_flex_2009(browsers: &Browsers) -> bool {
+    pub(crate) fn is_flex_2009(browsers: &Browsers) -> bool {
         if let Some(version) = browsers.android {
             if version >= 131328 && version <= 262656 {
                 return true;
@@ -2215,7 +2215,7 @@ impl Feature {
         false
     }
 
-    pub fn is_webkit_gradient(browsers: &Browsers) -> bool {
+    pub(crate) fn is_webkit_gradient(browsers: &Browsers) -> bool {
         if let Some(version) = browsers.android {
             if version >= 131328 && version <= 196608 {
                 return true;

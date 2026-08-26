@@ -67,15 +67,15 @@ pub enum DisplayKeyword {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DisplayPair {
     /// The outside display value.
-    pub outside: DisplayOutside,
+    pub(crate) outside: DisplayOutside,
     /// The inside display value.
-    pub inside: DisplayInside,
+    pub(crate) inside: DisplayInside,
     /// Whether this is a list item.
-    pub is_list_item: bool,
+    pub(crate) is_list_item: bool,
 }
 
 impl DisplayPair {
-    pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
+    fn parse(input: &mut Parser) -> css::Result<Self> {
         let mut list_item = false;
         let mut outside: Option<DisplayOutside> = None;
         let mut inside: Option<DisplayInside> = None;
@@ -159,7 +159,7 @@ impl DisplayPair {
         })
     }
 
-    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         match (self.outside, &self.inside, self.is_list_item) {
             (DisplayOutside::Inline, DisplayInside::FlowRoot, false) => {
                 return dest.write_str("inline-block");
@@ -237,7 +237,7 @@ pub enum DisplayInside {
 }
 
 impl DisplayInside {
-    pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
+    fn parse(input: &mut Parser) -> css::Result<Self> {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
 
@@ -268,7 +268,7 @@ impl DisplayInside {
         })
     }
 
-    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             DisplayInside::Flow => dest.write_str("flow"),
             DisplayInside::FlowRoot => dest.write_str("flow-root"),

@@ -8,8 +8,7 @@ pub(crate) fn to_have_been_called_times(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments_ = frame.arguments_old::<1>();
-    let arguments: &[JSValue] = arguments_.slice();
+    let arguments: &[JSValue] = frame.arguments();
     let (this, calls, _value) = this.mock_prologue(
         global,
         frame.this(),

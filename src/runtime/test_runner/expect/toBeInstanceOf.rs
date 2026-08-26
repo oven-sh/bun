@@ -16,8 +16,7 @@ pub(crate) fn to_be_instance_of(
     // then call `post_match` exactly once on every exit path (success or throw).
     let res = (|| -> JsResult<JSValue> {
     let this_value = frame.this();
-    // Collapsed `arguments_old(1)` + ptr/len slice into a single &[JSValue].
-    let arguments_ = frame.arguments_old::<1>(); let arguments: &[JSValue] = arguments_.slice();
+    let arguments: &[JSValue] = frame.arguments();
 
     if arguments.len() < 1 {
         return Err(global.throw_invalid_arguments(format_args!(

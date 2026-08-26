@@ -41,7 +41,7 @@ With `Uint8Array` input, Bun skips a UTF-8 BOM at the start of the buffer.
 
 ### Error handling
 
-If the input contains invalid JSON and no values were successfully parsed, `Bun.JSONL.parse()` throws a `SyntaxError`. If at least one value was parsed before the error, the parsed values are returned without throwing.
+If the input contains invalid JSON and no values were successfully parsed, `Bun.JSONL.parse()` throws a `SyntaxError`. If at least one value was parsed before the error, it returns the parsed values without throwing.
 
 ```ts
 try {
@@ -55,7 +55,7 @@ try {
 
 ## `Bun.JSONL.parseChunk()`
 
-For streaming, `parseChunk` parses as many complete values as it can from the input and reports how far it got, so you know where to resume when data arrives incrementally (for example, from a network stream).
+For streaming, `parseChunk` parses as many complete values as it can from the input and reports how far it got. That way you know where to resume when data arrives incrementally (for example, from a network stream).
 
 ```ts
 const chunk = '{"id":1}\n{"id":2}\n{"id":3';
@@ -148,7 +148,7 @@ async function processBinaryStream(stream: ReadableStream<Uint8Array>) {
     }
 
     // Keep unconsumed bytes
-    buf = buf.slice(result.read);
+    buf = buf.subarray(result.read);
   }
 }
 ```
@@ -182,7 +182,7 @@ const values = Bun.JSONL.parse(input);
 
 ## Performance notes
 
-- **ASCII fast path**: Pure ASCII input is parsed directly without copying, using a zero-allocation `StringView`.
-- **UTF-8 support**: Non-ASCII `Uint8Array` input is decoded to UTF-16 using SIMD-accelerated conversion.
-- **BOM handling**: UTF-8 BOM (`0xEF 0xBB 0xBF`) at the start of a `Uint8Array` is automatically skipped.
+- **ASCII fast path**: Bun parses pure ASCII input directly without copying, using a zero-allocation `StringView`.
+- **UTF-8 support**: Bun decodes non-ASCII `Uint8Array` input to UTF-16.
+- **BOM handling**: Bun automatically skips a UTF-8 BOM (`0xEF 0xBB 0xBF`) at the start of a `Uint8Array`.
 - **Pre-built object shape**: The result object from `parseChunk` uses a cached structure for fast property access.

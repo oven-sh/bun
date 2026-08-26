@@ -75,7 +75,7 @@ fn find_scopes_to_merge(func: &HirFunction, env: &Environment) -> DisjointSet<Sc
 /// ObjectExpression share the same scope.
 ///
 /// Corresponds to TS `alignObjectMethodScopes(fn: HIRFunction): void`.
-pub fn align_object_method_scopes(func: &mut HirFunction, env: &mut Environment) {
+pub(crate) fn align_object_method_scopes(func: &mut HirFunction, env: &mut Environment) {
     // Handle inner functions first (TS recurses before processing the outer function)
     for (_block_id, block) in &func.body.blocks {
         for &instr_id in &block.instructions {

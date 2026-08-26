@@ -47,24 +47,6 @@ impl LoggerSourceLocation {
             identifier_name: None,
         }
     }
-
-    /// Create from a diagnostics SourceLocation without index or filename.
-    pub fn from_loc_simple(loc: &SourceLocation) -> Self {
-        Self {
-            start: LoggerPosition {
-                line: loc.start.line,
-                column: loc.start.column,
-                index: None,
-            },
-            end: LoggerPosition {
-                line: loc.end.line,
-                column: loc.end.column,
-                index: None,
-            },
-            filename: None,
-            identifier_name: None,
-        }
-    }
 }
 
 /// A variable rename from lowering, serialized for the JS shim.
@@ -101,11 +83,7 @@ pub enum CompileOutput {
     },
 }
 
-pub struct CompileDiagnostic {
-    pub fn_name: Option<String>,
-    pub loc: bun_ast::Loc,
-    pub message: String,
-}
+pub struct CompileDiagnostic {}
 
 /// An item in the ordered log, which can be either a logger event or a debug entry.
 #[derive(Debug, Clone)]

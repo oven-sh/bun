@@ -21,7 +21,6 @@
 #include "config.h"
 #include "JSDOMFormData.h"
 
-#include "ActiveDOMObject.h"
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
 #include "IDLTypes.h"
@@ -125,7 +124,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSDOMFormDataPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSDOMFormDataPrototype* ptr = new (NotNull, JSC::allocateCell<JSDOMFormDataPrototype>(vm)) JSDOMFormDataPrototype(vm, globalObject, structure);
+        JSDOMFormDataPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSDOMFormDataPrototype))) JSDOMFormDataPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -139,7 +138,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -188,11 +187,7 @@ BUN_DECLARE_HOST_FUNCTION(FormData__jsFunctionFromMultipartData);
 
 template<> void JSDOMFormDataDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "FormData"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSDOMFormData::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "FormData"_s, JSDOMFormData::prototype(vm, globalObject));
     putDirectNativeFunction(vm, &globalObject, vm.propertyNames->from, 1, FormData__jsFunctionFromMultipartData, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
 }
 
@@ -219,9 +214,9 @@ const ClassInfo JSDOMFormDataPrototype::s_info = { "FormData"_s, &Base::s_info, 
 void JSDOMFormDataPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSDOMFormData::info(), JSDOMFormDataPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSDOMFormData::info(), JSDOMFormDataPrototypeTableValues, *this);
     putDirect(vm, vm.propertyNames->iteratorSymbol, getDirect(vm, vm.propertyNames->builtinNames().entriesPublicName()), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSDOMFormData::s_info = { "FormData"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDOMFormData) };
@@ -313,7 +308,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append2Body(JSC
     RETURN_IF_EXCEPTION(throwScope, {});
 
     EnsureStillAliveScope argument2 = callFrame->argument(2);
-    auto filename = argument2.value().isUndefined() ? Blob__getFileNameString(blobValue->impl()).toWTFString(BunString::ZeroCopy) : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
+    auto filename = argument2.value().isUndefined() ? Blob__getFileNameString(blobValue->impl()).transferToWTFString() : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(WTF::move(name), WTF::move(blobValue), WTF::move(filename)); })));
@@ -476,7 +471,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set2Body(JSC::J
     }
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto filename = argument2.value().isUndefined() ? Blob__getFileNameString(blobValue->impl()).toWTFString(BunString::ZeroCopy) : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
+    auto filename = argument2.value().isUndefined() ? Blob__getFileNameString(blobValue->impl()).transferToWTFString() : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.set(WTF::move(name), WTF::move(blobValue), WTF::move(filename)); })));
@@ -535,17 +530,12 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<DOMFormDataIterator, UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForDOMFormDataIterator.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDOMFormDataIterator = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForDOMFormDataIterator.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForDOMFormDataIterator = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<DOMFormDataIterator, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForDOMFormDataIterator, m_subspaceForDOMFormDataIterator));
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static DOMFormDataIterator* create(JSC::VM& vm, JSC::Structure* structure, JSDOMFormData& iteratedObject, IterationKind kind)
@@ -560,6 +550,9 @@ private:
         : Base(structure, iteratedObject, kind)
     {
     }
+};
+template<> struct DOMStructureSlotOf<DOMFormDataIterator> {
+    static constexpr DOMStructureSlot value = DOMStructureSlot::DOMFormDataIterator;
 };
 
 using DOMFormDataIteratorPrototype = JSDOMIteratorPrototype<JSDOMFormData, DOMFormDataIteratorTraits>;
@@ -697,12 +690,7 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
 
 JSC::GCClient::IsoSubspace* JSDOMFormData::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSDOMFormData, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForDOMFormData.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDOMFormData = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForDOMFormData.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForDOMFormData = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSDOMFormData, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForDOMFormData, m_subspaceForDOMFormData));
 }
 
 void JSDOMFormData::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -714,53 +702,8 @@ void JSDOMFormData::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSDOMFormDataOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    UNUSED_PARAM(handle);
-    UNUSED_PARAM(visitor);
-    UNUSED_PARAM(reason);
-    return false;
-}
-
-void JSDOMFormDataOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsDOMFormData = static_cast<JSDOMFormData*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsDOMFormData->wrapped(), jsDOMFormData);
-}
-
-#if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7DOMFormData@WebCore@@6B@")[])();
-}
-#else
-extern "C" {
-extern void* _ZTVN7WebCore11DOMFormDataE[];
-}
-#endif
-#endif
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<DOMFormData>&& impl)
 {
-
-    if constexpr (std::is_polymorphic_v<DOMFormData>) {
-#if ENABLE(BINDING_INTEGRITY)
-        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-#if PLATFORM(WIN)
-        void* expectedVTablePointer = __identifier("??_7DOMFormData@WebCore@@6B@");
-#else
-        // void* expectedVTablePointer = &_ZTVN7WebCore11DOMFormDataE[2];
-#endif
-
-        // If you hit this assertion you either have a use after free bug, or
-        // DOMFormData has subclasses. If DOMFormData has subclasses that get passed
-        // to toJS() we currently require DOMFormData you to opt out of binding hardening
-        // by adding the SkipVTableValidation attribute to the interface IDL definition
-        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-#endif
-    }
     return createWrapper<DOMFormData>(globalObject, WTF::move(impl));
 }
 

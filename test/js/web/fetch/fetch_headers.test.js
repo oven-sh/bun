@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { once } from "node:events";
+import net from "node:net";
 let url = `http://localhost:0`;
 let server;
 
@@ -30,6 +32,44 @@ describe("Headers", async () => {
   it("Header values must be valid", async () => {
     expect(() => fetch(url, { headers: { "x-test": "\0" } })).toThrow("Header 'x-test' has invalid value: '\0'");
     expect(() => fetch(url, { headers: { "x-test": "❤️" } })).toThrow("Header 'x-test' has invalid value: '❤️'");
+  });
+
+  it("isomorphic-encodes latin-1 (obs-text) request header values on the wire", async () => {
+    // https://fetch.spec.whatwg.org/#concept-header-value
+    // Values are ByteStrings: U+00E9 must go out as the single byte 0xE9, not UTF-8 0xC3 0xA9.
+    const { promise: gotHead, resolve, reject } = Promise.withResolvers();
+    const srv = net.createServer(s => {
+      let b = Buffer.alloc(0);
+      s.on("data", d => {
+        b = Buffer.concat([b, d]);
+        if (b.indexOf("\r\n\r\n") >= 0) {
+          resolve(b);
+          s.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        }
+      });
+      s.once("error", reject);
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    try {
+      const port = srv.address().port;
+      const [, head] = await Promise.all([
+        fetch(`http://127.0.0.1:${port}/`, {
+          headers: { "x-t": "caf\u00e9", "x-u": "\u0080\u00ff" },
+        }),
+        gotHead,
+      ]);
+      const lines = head.toString("latin1").split("\r\n");
+      const hex = name => {
+        const line = lines.find(l => l.toLowerCase().startsWith(name + ":"));
+        const raw = Buffer.from(line, "latin1").subarray(name.length + 2);
+        return [...raw].map(c => c.toString(16).padStart(2, "0")).join(" ");
+      };
+      expect(hex("x-t")).toBe("63 61 66 e9");
+      expect(hex("x-u")).toBe("80 ff");
+    } finally {
+      await new Promise(r => srv.close(r));
+    }
   });
 
   it("Invalid values for well-known headers name the header, not its index", () => {

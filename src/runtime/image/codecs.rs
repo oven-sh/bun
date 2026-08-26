@@ -29,7 +29,7 @@ pub use super::backend_coregraphics as system_backend;
 pub use super::backend_wic as system_backend;
 
 /// `true` on platforms where `system_backend` is present.
-pub(crate) const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
+const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
 
 /// Process-global selector exposed as `Bun.Image.backend`.
 ///
@@ -173,7 +173,7 @@ impl Format {
     /// final dotted segment is considered; case-insensitive. Returns `None`
     /// when there's no extension or it's not one we recognise.
     pub(crate) fn from_extension(path: &[u8]) -> Option<Format> {
-        let dot = path.iter().rposition(|&b| b == b'.')?;
+        let dot = bun_core::strings::last_index_of_char(path, b'.')?;
         let mut buf = [0u8; 5];
         let src = &path[dot + 1..];
         let n = src.len().min(buf.len());
@@ -209,9 +209,9 @@ bun_core::comptime_string_map! {
 
 #[derive(Default)]
 pub struct Decoded {
-    pub rgba: Vec<u8>, // global allocator (mimalloc)
-    pub width: u32,
-    pub height: u32,
+    pub(crate) rgba: Vec<u8>, // global allocator (mimalloc)
+    pub(crate) width: u32,
+    pub(crate) height: u32,
     /// ICC color profile bytes pulled from the source container (JPEG APP2,
     /// PNG iCCP, WebP ICCP), global-allocator-owned. `None` when the
     /// source didn't carry one or the decode path doesn't extract it —
@@ -223,7 +223,7 @@ pub struct Decoded {
     /// with them. Dropping it on a Display-P3 / Adobe RGB / XYB source
     /// would reinterpret the values as sRGB and visibly shift the
     /// colours. See issue #30197.
-    pub icc_profile: Option<Vec<u8>>,
+    pub(crate) icc_profile: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
@@ -261,11 +261,11 @@ pub(crate) const DEFAULT_MAX_PIXELS: u64 = 0x3FFF * 0x3FFF;
 #[derive(Copy, Clone, Default)]
 pub struct DecodeHint {
     /// Final output dims (after rotate). 0 = "no resize, full decode".
-    pub target_w: u32,
-    pub target_h: u32,
+    pub(crate) target_w: u32,
+    pub(crate) target_h: u32,
 }
 
-pub fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded, Error> {
+pub(crate) fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded, Error> {
     let fmt = Format::sniff(bytes).ok_or(Error::UnknownFormat)?;
     match fmt {
         Format::Jpeg => jpeg::decode(bytes, max_pixels, hint),
@@ -301,7 +301,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded
             // entry verbatim, leaving the original RGB with α=0. Normalise
             // here so
             // every backend yields identical bytes for the same GIF.
-            for px in d.rgba.chunks_exact_mut(4) {
+            for px in d.rgba.as_chunks_mut::<4>().0 {
                 if px[3] == 0 {
                     px[0] = 0;
                     px[1] = 0;
@@ -430,20 +430,20 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
 
 #[derive(Copy, Clone)]
 pub struct EncodeOptions {
-    pub format: Format,
+    pub(crate) format: Format,
     /// 0–100 for JPEG/WebP-lossy. Ignored for PNG.
-    pub quality: u8,
+    pub(crate) quality: u8,
     /// WebP only: emit lossless VP8L instead of lossy VP8.
-    pub lossless: bool,
+    pub(crate) lossless: bool,
     /// PNG only: zlib level 0–9. -1 = libspng default.
-    pub compression_level: i8,
+    pub(crate) compression_level: i8,
     /// PNG only: quantize to ≤ `colors` and emit an indexed PNG.
-    pub palette: bool,
-    pub colors: u16,
+    pub(crate) palette: bool,
+    pub(crate) colors: u16,
     /// PNG palette only: Floyd–Steinberg error-diffusion dither.
-    pub dither: bool,
+    pub(crate) dither: bool,
     /// JPEG only: emit a progressive scan script (coarse-to-fine render).
-    pub progressive: bool,
+    pub(crate) progressive: bool,
     /// ICC profile to embed in the output container (JPEG APP2, PNG iCCP,
     /// WebP ICCP). `None` ⇒ no profile chunk/marker is written. The
     /// pipeline forwards this from the decode step so a non-sRGB source
@@ -452,7 +452,7 @@ pub struct EncodeOptions {
     // SAFETY invariant: borrowed from the caller and only valid for the
     // duration of `encode()`; raw ptr instead of a lifetime param per the
     // repo rule against lifetime params on structs.
-    pub icc_profile: Option<NonNull<[u8]>>,
+    pub(crate) icc_profile: Option<NonNull<[u8]>>,
 }
 
 impl Default for EncodeOptions {
@@ -482,8 +482,8 @@ impl Default for EncodeOptions {
 pub struct Encoded {
     // SAFETY: fat pointer (ptr+len) owned by whichever C allocator produced
     // it; `free` is the matching deallocator. Not a Box — drop must call `free`.
-    pub bytes: NonNull<[u8]>,
-    pub free: unsafe extern "C" fn(*mut c_void, *mut c_void),
+    pub(crate) bytes: NonNull<[u8]>,
+    pub(crate) free: unsafe extern "C" fn(*mut c_void, *mut c_void),
 }
 
 impl Drop for Encoded {
@@ -688,8 +688,8 @@ pub(crate) fn resize(
             f as i32,
         )
     };
-    let mut block: Vec<u8> = vec![0u8; out_sz + scratch_sz];
-    // SAFETY: block has out_sz + scratch_sz bytes; dst at [0..out_sz), scratch at [out_sz..).
+    let mut block: Vec<u8> = Vec::with_capacity(out_sz + scratch_sz);
+    // SAFETY: capacity = dst [0..out_sz) + scratch; the kernel fills scratch before reading it.
     let rc = unsafe {
         bun_image_resize_rgba8(
             src.as_ptr(),
@@ -705,9 +705,10 @@ pub(crate) fn resize(
     if rc != 0 {
         return Err(Error::OutOfMemory);
     }
+    // SAFETY: rc 0 means the vertical pass stored all dst_w×dst_h pixels, i.e. out_sz bytes.
+    unsafe { bun_core::vec::commit_spare(&mut block, out_sz) };
     // Drop the scratch tail; mimalloc's shrink is in-place when the new size
     // fits the same block, so this is free.
-    block.truncate(out_sz);
     block.shrink_to_fit();
     // PERF: Vec::shrink_to_fit may not be in-place — profile if hot.
     Ok(block)
@@ -734,8 +735,9 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded
             Err(e) => return Err(e),
         }
     }
-    let mut out: Vec<u8> = vec![0u8; (dw as usize) * (dh as usize) * 4];
-    // SAFETY: src has w*h*4 bytes; out has dw*dh*4 bytes; degrees is multiple of 90.
+    let out_len = (dw as usize) * (dh as usize) * 4;
+    let mut out: Vec<u8> = Vec::with_capacity(out_len);
+    // SAFETY: src has w*h*4 bytes; out has dw*dh*4 bytes of capacity; degrees is multiple of 90.
     unsafe {
         bun_image_rotate_rgba8(
             src.as_ptr(),
@@ -745,6 +747,8 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded
             i32::try_from(degrees).expect("int cast"),
         )
     };
+    // SAFETY: the rotate kernel is a permutation that stores every one of the dw*dh dst pixels.
+    unsafe { bun_core::vec::commit_spare(&mut out, out_len) };
     Ok(Decoded {
         rgba: out,
         width: dw,
@@ -762,8 +766,9 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
             Err(e) => return Err(e),
         }
     }
-    let mut out: Vec<u8> = vec![0u8; (w as usize) * (h as usize) * 4];
-    // SAFETY: src and out both have w*h*4 bytes.
+    let out_len = (w as usize) * (h as usize) * 4;
+    let mut out: Vec<u8> = Vec::with_capacity(out_len);
+    // SAFETY: src has w*h*4 bytes; out has w*h*4 bytes of capacity.
     unsafe {
         bun_image_flip_rgba8(
             src.as_ptr(),
@@ -773,5 +778,7 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
             horizontal as i32,
         )
     };
+    // SAFETY: the flip kernel is a permutation that stores every one of the w*h dst pixels.
+    unsafe { bun_core::vec::commit_spare(&mut out, out_len) };
     Ok(out)
 }

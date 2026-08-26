@@ -305,7 +305,12 @@ pub(crate) fn compute_chunks(
     let contributes_code = {
         let mut bits = AutoBitSet::init_empty(this.graph.files.len())?;
         let parts = this.graph.ast.items_parts();
-        for source_index in this.graph.reachable_files.slice() {
+        let reachable: &[Index] = if this.graph.code_splitting {
+            this.graph.reachable_files.slice()
+        } else {
+            &[]
+        };
+        for source_index in reachable {
             let i = source_index.get() as usize;
             let parts_live = &this.graph.parts_live[i];
             if parts[i].as_slice().iter().enumerate().any(|(p, part)| {

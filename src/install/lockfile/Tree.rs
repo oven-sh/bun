@@ -798,9 +798,8 @@ impl Tree {
                 }
 
                 if pkg_resolutions[pkg_id as usize].tag == crate::resolution::Tag::Folder {
-                    // A peer resolved to a folder package may have been bound to an ancestor's
-                    // existing edge for the same package. Dedupe against that placement instead
-                    // of nesting a second copy. A peer no ancestor edge provides still nests.
+                    // A peer an ancestor edge already provides dedupes instead of nesting
+                    // a second copy of the folder (#40561).
                     if dependency.behavior.is_peer()
                         && matches!(
                             Tree::hoist_dependency::<true, METHOD>(

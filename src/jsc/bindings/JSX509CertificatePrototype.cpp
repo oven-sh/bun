@@ -110,7 +110,6 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncToString, (JSGlobalObject * g
 
     // Convert the certificate to PEM format and return it
     String pemString = thisObject->toPEMString();
-    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsString(vm, pemString));
 }
 
@@ -456,7 +455,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_fingerprint, (JSGlobalObject * 
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->fingerprint()));
+    JSString* fingerprint = thisObject->fingerprint(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(fingerprint);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_fingerprint256, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -470,7 +471,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_fingerprint256, (JSGlobalObject
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->fingerprint256()));
+    JSString* fingerprint256 = thisObject->fingerprint256(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(fingerprint256);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_fingerprint512, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -484,7 +487,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_fingerprint512, (JSGlobalObject
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->fingerprint512()));
+    JSString* fingerprint512 = thisObject->fingerprint512(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(fingerprint512);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_signatureAlgorithm, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -534,7 +539,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_subject, (JSGlobalObject * glob
         return {};
     }
 
-    JSString* subject = thisObject->subject();
+    JSString* subject = thisObject->subject(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(undefinedIfEmpty(subject));
 }
@@ -550,8 +555,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_subjectAltName, (JSGlobalObject
         return {};
     }
 
-    JSString* san = thisObject->subjectAltName();
-    RELEASE_AND_RETURN(scope, JSValue::encode(san ? JSValue(san) : jsUndefined()));
+    JSValue san = thisObject->subjectAltName(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(san.isString() ? san : jsUndefined());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_infoAccess, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -600,7 +606,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_issuer, (JSGlobalObject * globa
         return {};
     }
 
-    JSString* issuer = thisObject->issuer();
+    JSString* issuer = thisObject->issuer(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(undefinedIfEmpty(issuer));
 }
@@ -633,7 +639,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_publicKey, (JSGlobalObject * gl
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->publicKey()));
+    JSObject* publicKey = thisObject->publicKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(publicKey);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_raw, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -647,7 +655,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_raw, (JSGlobalObject * globalOb
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(undefinedIfEmpty(thisObject->raw())));
+    JSUint8Array* raw = thisObject->raw(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(undefinedIfEmpty(raw));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_serialNumber, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -661,7 +671,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_serialNumber, (JSGlobalObject *
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(undefinedIfEmpty(thisObject->serialNumber())));
+    JSString* serialNumber = thisObject->serialNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(undefinedIfEmpty(serialNumber));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validFrom, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -675,7 +687,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validFrom, (JSGlobalObject * gl
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(undefinedIfEmpty(thisObject->validFrom())));
+    JSString* validFrom = thisObject->validFrom(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(undefinedIfEmpty(validFrom));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validTo, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -689,7 +703,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validTo, (JSGlobalObject * glob
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(undefinedIfEmpty(thisObject->validTo())));
+    JSString* validTo = thisObject->validTo(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(undefinedIfEmpty(validTo));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validToDate, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -703,7 +719,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validToDate, (JSGlobalObject * 
         return {};
     }
 
-    auto* validToDate = thisObject->validTo();
+    auto* validToDate = thisObject->validTo(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto view = validToDate->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -726,7 +742,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_validFromDate, (JSGlobalObject 
         return {};
     }
 
-    auto* validFromDate = thisObject->validFrom();
+    auto* validFromDate = thisObject->validFrom(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto view = validFromDate->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});

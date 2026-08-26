@@ -312,7 +312,7 @@ impl ShellMkdirTask {
             )
         };
 
-        // `NodeFS` expects the `Valid::path_string_length` bound its JS callers
+        // `NodeFS` expects the `Valid::path_too_long` bound its JS callers
         // enforce; past it, `PathLike::slice_z` yields "" and mkdir reports ENOENT.
         if filepath.len() >= bun_paths::MAX_PATH_BYTES {
             this.err = Some(
@@ -324,10 +324,7 @@ impl ShellMkdirTask {
 
         let mut node_fs = NodeFS::default();
         let args = fs_args::Mkdir {
-            path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                filepath.as_bytes(),
-                false,
-            )),
+            path: PathLike::borrowed(filepath.as_bytes()),
             recursive: this.opts.parents,
             mode: fs_args::Mkdir::DEFAULT_MODE,
             always_return_none: true,

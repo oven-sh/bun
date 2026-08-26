@@ -164,7 +164,7 @@ pub struct RequestContext<
     pub(crate) response_body_readable_stream_ref: JsCell<readable_stream::Strong>,
 
     /// Used in errors
-    pub(crate) pathname: Cell<BunString>,
+    pub(crate) pathname: JsCell<bun_core::String>,
 
     /// Used either for temporary blob data or fallback
     /// When the response body is a temporary value
@@ -902,7 +902,7 @@ where
 
         self.request_body_buf.set(Vec::new());
         self.response_buf_owned.set(Vec::new());
-        self.response_weakref.with_mut(|w| w.deref());
+        self.response_weakref.set(response::WeakRef::EMPTY);
 
         self.request_body_take_unref();
 
@@ -1370,7 +1370,7 @@ where
                 sink: Cell::new(None),
                 byte_stream: Cell::new(None),
                 response_body_readable_stream_ref: JsCell::new(readable_stream::Strong::default()),
-                pathname: Cell::new(BunString::empty()),
+                pathname: JsCell::new(BunString::EMPTY),
                 response_buf_owned: JsCell::new(Vec::new()),
                 additional_on_abort: JsCell::new(None),
                 promise_cell: Cell::new(JSValue::ZERO),
@@ -1426,7 +1426,7 @@ where
 
         if let Some(request) = this.request_mut() {
             request.request_context = AnyRequestContext::NULL;
-            this.request_weakref.with_mut(|w| w.deref());
+            this.request_weakref.set(request::WeakRef::EMPTY);
         }
         // if signal is not aborted, abort the signal
         if let Some(signal) = this.signal.take() {
@@ -1524,7 +1524,7 @@ where
             }
             self.response_jsvalue.set(JSValue::ZERO);
         }
-        self.response_weakref.with_mut(|w| w.deref());
+        self.response_weakref.set(response::WeakRef::EMPTY);
 
         self.detach_request_body_producer();
         self.request_body_readable_stream_ref
@@ -1535,7 +1535,7 @@ where
 
         if let Some(request) = self.request_mut() {
             request.request_context = AnyRequestContext::NULL;
-            self.request_weakref.with_mut(|w| w.deref());
+            self.request_weakref.set(request::WeakRef::EMPTY);
         }
 
         // if signal is not aborted, abort the signal
@@ -1568,11 +1568,7 @@ where
         self.response_body_readable_stream_ref
             .with_mut(|s| s.deinit());
 
-        let pathname = self.pathname.get();
-        if !pathname.is_empty() {
-            pathname.deref();
-            self.pathname.set(BunString::empty());
-        }
+        self.pathname.set(BunString::EMPTY);
     }
 
     fn on_file_stream_complete(ctx: *mut c_void, _resp: uws::AnyResponse) {
@@ -1781,8 +1777,7 @@ where
                     }
                 };
                 let mut sys: jsc::SystemError = err.to_system_error().into();
-                sys.message =
-                    BunString::static_("Cannot stream a directory as a response body").into();
+                sys.message = BunString::static_("Cannot stream a directory as a response body");
                 return self.run_error_handler(sys.to_error_instance(global_this));
             }
             (bun_io::FileType::File, false)
@@ -2306,7 +2301,7 @@ where
         }
 
         if request_object.ensure_url().is_err() {
-            request_object.url.set(BunString::empty());
+            request_object.url.set(BunString::EMPTY);
         }
 
         // we have to clone the request headers here since they will soon belong to a different request
@@ -2519,7 +2514,7 @@ where
                         // doWriteHeaders() calls fastRemove(.TransferEncoding) and derefs the
                         // FetchHeaders, freeing that StringImpl before we write it. Clone so
                         // the bytes outlive renderMetadata().
-                        let transfer_encoding_str = transfer_encoding.to_slice_clone();
+                        let transfer_encoding_str = transfer_encoding.to_utf8().into_owned();
                         this.render_metadata();
                         resp.write_header(b"transfer-encoding", transfer_encoding_str.slice());
                         this.end_without_body(this.should_close_connection());
@@ -2529,7 +2524,7 @@ where
                 if let Some(content_length) = headers.fast_get(jsc::HTTPHeaderName::ContentLength) {
                     // Parse before renderMetadata(): doWriteHeaders() will fastRemove(.ContentLength)
                     // and deref the FetchHeaders, freeing the borrowed StringImpl.
-                    let content_length_str = content_length.to_slice();
+                    let content_length_str = content_length.to_utf8();
                     let len: usize = HTTP::parse_content_length(content_length_str.slice());
                     drop(content_length_str);
 
@@ -3150,12 +3145,10 @@ where
                         let err = jsc::SystemError {
                             code: BunString::static_(<&'static str>::from(
                                 jsc::ErrorCode::ERR_STREAM_CANNOT_PIPE,
-                            ))
-                            .into(),
+                            )),
                             message: BunString::static_(
                                 "Stream already used, please create a new one",
-                            )
-                            .into(),
+                            ),
                             ..Default::default()
                         };
                         stream.value.unprotect();
@@ -3456,7 +3449,7 @@ where
                     let s = response
                         .get_init_headers_mut()?
                         .fast_get(jsc::HTTPHeaderName::ContentLength)?
-                        .to_slice();
+                        .to_utf8();
                     bun_core::parse_int::<u64>(s.slice(), 10).ok()
                 })
                 .flatten();
@@ -3836,7 +3829,7 @@ where
         // 2. The content-disposition header is not present
         if !has_content_disposition && content_type.category.autoset_filename() {
             if let Some(filename) = blob.get_file_name() {
-                let basename = bun_paths::basename(filename);
+                let basename = bun_paths::basename(&filename);
                 if !basename.is_empty() {
                     let mut filename_buf = [0u8; 1024];
                     let truncated = &basename[..basename.len().min(1024 - 32)];
@@ -3951,14 +3944,16 @@ where
     /// [`as_response`]), carrying the allocation's provenance — `WeakPtr` keeps
     /// it past any reborrow.
     unsafe fn set_response(&self, response: *mut Response) {
-        self.response_weakref.with_mut(|weak| {
-            if weak.get().map(std::ptr::from_mut::<Response>) == Some(response) {
-                return;
-            }
-            weak.deref();
-            // SAFETY: caller contract — `response` is live and root-provenanced.
-            *weak = unsafe { response::WeakRef::init_ref(response) };
-        });
+        if self
+            .response_weakref
+            .with_mut(|weak| weak.get().map(std::ptr::from_mut::<Response>))
+            == Some(response)
+        {
+            return;
+        }
+        // SAFETY: caller contract — `response` is live and root-provenanced.
+        self.response_weakref
+            .set(unsafe { response::WeakRef::init_ref(response) });
     }
 
     /// # Safety
@@ -4776,9 +4771,9 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
             if let Some(content) = headers_.fast_get(jsc::HTTPHeaderName::ContentType) {
                 needs_content_type = false;
 
-                let content_slice = content.to_slice();
+                let content_slice = content.to_utf8();
                 // Dupe only when the latin1/utf16 slice was heap-converted.
-                let dupe = matches!(content_slice, bun_core::ZigStringSlice::Owned(_));
+                let dupe = content_slice.is_owned();
                 let mt = MimeType::init(
                     content_slice.slice(),
                     dupe,

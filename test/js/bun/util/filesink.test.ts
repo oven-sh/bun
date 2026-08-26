@@ -867,3 +867,59 @@ it("fs.promises.writeFile with iterables under GC pressure does not crash", asyn
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
 });
+
+it.skipIf(isWindows)("throws on invalid writer options instead of crashing", async () => {
+  const stderr = Bun.stderr;
+  const baseline = fileSinkInternals.liveCount();
+  const iterations = 8;
+  for (let i = 0; i < iterations; i++) {
+    expect(() => stderr.writer({ path: 123 } as any)).toThrow(
+      expect.objectContaining({
+        code: "EINVAL",
+        syscall: "write",
+      }),
+    );
+    expect(() => stderr.writer({ fd: "not a number" } as any)).toThrow(
+      expect.objectContaining({
+        code: "EBADF",
+        syscall: "write",
+      }),
+    );
+    expect(() =>
+      stderr.writer({
+        get path() {
+          throw new Error("boom");
+        },
+      } as any),
+    ).toThrow("boom");
+  }
+  for (let i = 0; i < 50; i++) {
+    Bun.gc(true);
+    if (fileSinkInternals.liveCount() <= baseline) break;
+    await Bun.sleep(10);
+  }
+  // Each early return in get_writer must release the sink's +1 ref; a missing
+  // deref leaks one native FileSink per failed call.
+  expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
+});
+
+it("start() with invalid options throws instead of silently ignoring them", async () => {
+  const dir = tmpdirSync();
+  const writer = Bun.file(join(dir, "start-invalid.txt")).writer();
+  expect(() => writer.start({ path: 123 } as any)).toThrow(
+    expect.objectContaining({
+      code: "EINVAL",
+      syscall: "write",
+    }),
+  );
+  expect(() => writer.start({ fd: "not a number" } as any)).toThrow(
+    expect.objectContaining({
+      code: "EBADF",
+      syscall: "write",
+    }),
+  );
+  // Valid usage on the same writer still works after the failed start calls.
+  writer.write("ok");
+  await writer.end();
+  expect(await Bun.file(join(dir, "start-invalid.txt")).text()).toBe("ok");
+});

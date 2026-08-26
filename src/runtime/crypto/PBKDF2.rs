@@ -10,8 +10,8 @@ use crate::node::{Flavor, StringObjects, StringOrBuffer};
 use crate::crypto::evp::{self, Algorithm};
 
 pub(crate) struct PBKDF2 {
-    pub password: StringOrBuffer,
-    pub salt: StringOrBuffer,
+    pub password: StringOrBuffer<'static>,
+    pub salt: StringOrBuffer<'static>,
     pub iteration_count: u32,
     pub length: usize,
     algorithm: Algorithm,
@@ -61,7 +61,7 @@ impl PBKDF2 {
     // `password`/`salt` are `StringOrBuffer` whose `Drop` releases the
     // slice/WTF ref, so no explicit cleanup hook is needed —
     // dropping `PBKDF2` is sufficient for the sync path. The async path holds
-    // `ThreadSafe<PBKDF2>`, whose `Drop` additionally unprotects JS-rooted
+    // `ThreadIsolated<PBKDF2>`, whose `Drop` additionally unprotects JS-rooted
     // buffers via the `Unprotect` impl below.
 
     /// The second element is the validated callback on the `Async` flavor and
@@ -153,7 +153,7 @@ impl PBKDF2 {
             }
 
             'invalid: {
-                let slice = arg4.to_slice(global_this)?;
+                let slice = arg4.to_utf8(global_this)?;
                 match evp::lookup_ignore_case(slice.slice()) {
                     Some(alg) => match alg {
                         Algorithm::Shake128 | Algorithm::Shake256 => break 'invalid,
@@ -164,18 +164,14 @@ impl PBKDF2 {
                 }
             }
 
-            if !global_this.has_exception() {
-                let slice = arg4.to_slice(global_this)?;
-                let name = slice.slice();
-                return Err(global_this
-                    .err(
-                        bun_jsc::ErrorCode::CRYPTO_INVALID_DIGEST,
-                        format_args!("Invalid digest: {}", bstr::BStr::new(name)),
-                    )
-                    .throw());
-                // `slice` drops here.
-            }
-            return Err(bun_jsc::JsError::Thrown);
+            let slice = arg4.to_utf8(global_this)?;
+            let name = slice.slice();
+            return Err(global_this
+                .err(
+                    bun_jsc::ErrorCode::CRYPTO_INVALID_DIGEST,
+                    format_args!("Invalid digest: {}", bstr::BStr::new(name)),
+                )
+                .throw());
         };
 
         let mut out = PBKDF2 {
@@ -185,9 +181,10 @@ impl PBKDF2 {
             length: keylen,
             algorithm,
         };
+        // Armed only on the error returns below (defused via `into_inner` on success).
         // Non-async path: `StringOrBuffer` fields drop with `out` on early return — no explicit call needed.
         let mut guard = scopeguard::guard(&mut out, |out| {
-            if global_this.has_exception() && flavor == Flavor::Async {
+            if flavor == Flavor::Async {
                 bun_jsc::Unprotect::unprotect(out);
             }
         });
@@ -270,8 +267,8 @@ impl bun_jsc::Unprotect for PBKDF2 {
 /// `crypto.pbkdf2` off the JS thread.
 pub(crate) struct Pbkdf2Job {
     /// `from_js(.., Flavor::Async)` protected the input buffers; the
-    /// [`bun_jsc::ThreadSafe`] releases that with the job.
-    pub pbkdf2: bun_jsc::ThreadSafe<PBKDF2>,
+    /// [`bun_jsc::ThreadIsolated`] releases that with the job.
+    pub pbkdf2: bun_jsc::ThreadIsolated<PBKDF2>,
     pub output: Vec<u8>,
     pub err: bool,
 }
@@ -346,7 +343,7 @@ pub(crate) fn create_job(global_this: &JSGlobalObject, data: PBKDF2, callback: J
         &cx,
         Pbkdf2Job {
             // `from_js(.., Flavor::Async)` already protected — adopt, don't re-protect.
-            pbkdf2: bun_jsc::ThreadSafe::adopt(data),
+            pbkdf2: bun_jsc::ThreadIsolated::adopt(data),
             output: Vec::new(),
             err: false,
         },

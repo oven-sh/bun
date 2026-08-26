@@ -508,6 +508,57 @@ test("--parallel --reporter=junit produces a merged report covering all files", 
   expect(exitCode).toBe(1);
 });
 
+test("--parallel --reporter=junit reports the same line numbers as a serial run", async () => {
+  // b.test.js is a.test.js shifted down one line, so every line= below is
+  // specific to the file that produced it.
+  const body = [
+    `import { describe, test } from "bun:test";`,
+    `describe("outer", () => {`,
+    `  test("nested", () => {});`,
+    `});`,
+    `test("top", () => {});`,
+    ``,
+  ].join("\n");
+  using dir = tempDir("parallel-junit-lines", {
+    "a.test.js": body,
+    "b.test.js": "\n" + body,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--reporter=junit", "--reporter-outfile=out.xml"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  expect(stderr).toContain("4 pass");
+
+  const xml = await Bun.file(String(dir) + "/out.xml").text();
+  const elements = [...xml.matchAll(/<(testsuite|testcase)\b([^>]*)>/g)].map(([, tag, attrs]) => ({
+    tag,
+    name: /\bname="([^"]*)"/.exec(attrs)?.[1],
+    file: /\bfile="([^"]*)"/.exec(attrs)?.[1],
+    line: /\bline="([^"]*)"/.exec(attrs)?.[1],
+  }));
+  // Files finish in either order, so compare per file; within a file the
+  // elements are in document order.
+  expect(elements.filter(e => e.file === "a.test.js")).toEqual([
+    { tag: "testsuite", name: "a.test.js", file: "a.test.js", line: undefined },
+    { tag: "testsuite", name: "outer", file: "a.test.js", line: "2" },
+    { tag: "testcase", name: "nested", file: "a.test.js", line: "3" },
+    { tag: "testcase", name: "top", file: "a.test.js", line: "5" },
+  ]);
+  expect(elements.filter(e => e.file === "b.test.js")).toEqual([
+    { tag: "testsuite", name: "b.test.js", file: "b.test.js", line: undefined },
+    { tag: "testsuite", name: "outer", file: "b.test.js", line: "3" },
+    { tag: "testcase", name: "nested", file: "b.test.js", line: "4" },
+    { tag: "testcase", name: "top", file: "b.test.js", line: "6" },
+  ]);
+  expect(elements).toHaveLength(8);
+  expect(exitCode).toBe(0);
+});
+
 test("--parallel --reporter=junit keeps the suites of files a worker finished before it crashed", async () => {
   using dir = tempDir("parallel-junit-crash", {
     "aslow.test.js": `import {test,expect} from "bun:test"; test("slow", async () => { await Bun.sleep(400); expect(1).toBe(1); });`,

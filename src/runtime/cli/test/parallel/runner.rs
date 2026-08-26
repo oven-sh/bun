@@ -68,7 +68,10 @@ pub(crate) fn run_as_coordinator(
         // Coordinator's own JunitReporter would otherwise produce an empty
         // document and overwrite the merged one in writeJUnitReportIfNeeded.
         if let Some(jr) = reporter.reporters.junit.take() {
-            let _ = env.map.put(b"BUN_TEST_WORKER_JUNIT", b"1");
+            let _ = env.map.put(
+                bun_core::env_var::BUN_TEST_WORKER_JUNIT.key().as_bytes(),
+                b"1",
+            );
             drop(jr);
         }
     }
@@ -649,13 +652,10 @@ pub(crate) fn run_as_worker(
     vm_ref.arena = Some(NonNull::from(&mut arena));
     // vm.allocator = arena.arena(); — allocator params dropped in Rust
 
-    let env = vm_ref.env_loader();
+    // Created by TestCommand::exec, from bunfig or BUN_TEST_WORKER_JUNIT; the
+    // coordinator wraps the merged elements in the document.
     if let Some(junit) = reporter.reporters.junit.as_mut() {
         junit.elements_only = true;
-    } else if env.get(b"BUN_TEST_WORKER_JUNIT").is_some() {
-        let mut junit = test_command::JunitReporter::init();
-        junit.elements_only = true;
-        reporter.reporters.junit = Some(junit);
     }
 
     let mut wloop = WorkerLoop {

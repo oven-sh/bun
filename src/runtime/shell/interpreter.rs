@@ -2082,8 +2082,7 @@ impl ShellExecEnv {
             })
     }
 
-    /// PATH for argv[0] resolution and `which`. `EnvMap` is case-insensitive
-    /// on Windows, so `export PATH=` is found under the process's `Path` key.
+    /// The PATH that resolves argv[0] and `which` operands.
     pub(crate) fn get_path(&self, event_loop: EventLoopHandle) -> Vec<u8> {
         use crate::shell::env_str::EnvStr;
         let key = EnvStr::init_slice(b"PATH");

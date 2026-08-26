@@ -36,7 +36,7 @@ test("keepalive", async () => {
   }
 });
 
-test("fetch does not reuse a pooled TLS connection for a request with a different Host header", async () => {
+test("fetch reuses a pooled TLS connection across requests with different Host headers", async () => {
   using server = Bun.serve({
     port: 0,
     tls,
@@ -58,19 +58,14 @@ test("fetch does not reuse a pooled TLS connection for a request with a differen
     return await res.text();
   };
 
-  // Two requests whose TLS handshake used the Host-header override
-  // "wrong.example" for SNI/certificate verification share one pooled
-  // connection (legitimate keep-alive still works).
-  const overrideA = await get({ Host: "wrong.example" });
-  const overrideB = await get({ Host: "wrong.example" });
-  expect(overrideB).toBe(overrideA);
-
-  // A request without the override expects the server identity to match
-  // url.hostname ("localhost"), so it must not be handed the connection
-  // that was only ever negotiated as "wrong.example". It has to open a new
-  // connection, which cannot have the same client port.
-  const plain = await get();
-  expect(plain).not.toBe(overrideA);
+  // The TLS handshake is keyed to the URL host (SNI and certificate
+  // verification both use url.hostname). A request-level Host header is only
+  // an HTTP field, so three requests with differing Host headers share one
+  // pooled connection.
+  const first = await get({ Host: "wrong.example" });
+  const second = await get({ Host: "another.example" });
+  const third = await get();
+  expect({ second, third }).toEqual({ second: first, third: first });
 });
 
 // Whether a completed response leaves its connection in the keep-alive pool is

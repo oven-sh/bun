@@ -6,10 +6,12 @@
 #include "JavaScriptCore/JSArrayBufferView.h"
 #include "headers-handwritten.h"
 #include "webcore/HTTPHeaderMap.h"
+#include <wtf/text/AtomStringImpl.h>
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/WTFString.h>
 
-extern "C" void BunString__toThreadSafe(BunString* str);
+extern "C" BunString BunString__threadIsolatedCopy(const BunString* str);
+extern "C" void BunString__makeThreadShareable(BunString* str);
 
 namespace Bun {
 
@@ -59,29 +61,37 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_isASANEnabled, (JSC::JSGlobalObject * global
 #endif
 }
 
-// Returns the net refcount change on the *original* StringImpl after a
-// BunString owning one ref to it is passed through BunString__toThreadSafe
-// and then released. A correct implementation must return 0; a positive
-// value means BunString__toThreadSafe leaked a reference to the original
-// StringImpl when it installed the isolated copy.
-JSC_DEFINE_HOST_FUNCTION(jsFunction_BunString_toThreadSafeRefCountDelta, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+// Net refcount change on the *original* StringImpl after a BunString owning
+// one ref to it goes through BunString__threadIsolatedCopy and both are
+// released. 0 is correct; positive means the original was leaked.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_BunString_threadIsolatedCopyRefCountDelta, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    // Create a fresh, non-static, non-atom StringImpl with exactly one ref
-    // held by `original`.
-    Ref<WTF::StringImpl> original = WTF::String::fromLatin1("BunString__toThreadSafe leak test").releaseImpl().releaseNonNull();
-
+    Ref<WTF::StringImpl> original = WTF::String::fromLatin1("BunString__threadIsolatedCopy leak test").releaseImpl().releaseNonNull();
     const unsigned before = original->refCount();
 
-    // Give the BunString its own ref, mirroring how a Rust-side bun.String
-    // owns one reference to the underlying StringImpl.
     original->ref();
     BunString str = { BunStringTag::WTFStringImpl, { .wtf = original.ptr() } };
+    BunString copy = BunString__threadIsolatedCopy(&str);
+    ASSERT(copy.tag == BunStringTag::WTFStringImpl && copy.impl.wtf != original.ptr());
+    copy.impl.wtf->deref();
+    str.impl.wtf->deref();
 
-    BunString__toThreadSafe(&str);
+    const unsigned after = original->refCount();
+    return JSValue::encode(jsNumber(static_cast<int32_t>(after) - static_cast<int32_t>(before)));
+}
 
-    // Drop whatever the BunString now owns (the isolated copy, or the
-    // original if the implementation ever decides no copy is needed).
-    ASSERT(str.tag == BunStringTag::WTFStringImpl);
+// Same for BunString__makeThreadShareable on an atom: it must swap in an
+// isolated copy and release exactly the one ref the BunString held on the atom.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_BunString_makeThreadShareableRefCountDelta, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    Ref<WTF::StringImpl> original = WTF::AtomStringImpl::add(WTF::String::fromLatin1("BunString__makeThreadShareable leak test").impl()).releaseNonNull();
+    ASSERT(original->isAtom());
+    const unsigned before = original->refCount();
+
+    original->ref();
+    BunString str = { BunStringTag::WTFStringImpl, { .wtf = original.ptr() } };
+    BunString__makeThreadShareable(&str);
+    ASSERT(str.tag == BunStringTag::WTFStringImpl && str.impl.wtf != original.ptr() && !str.impl.wtf->isAtom());
     str.impl.wtf->deref();
 
     const unsigned after = original->refCount();

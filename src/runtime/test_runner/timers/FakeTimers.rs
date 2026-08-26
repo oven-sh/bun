@@ -98,21 +98,26 @@ impl CurrentTime {
 /// the next `advanceTimersByTime` recomputes `Date.now` from the set time
 /// instead of the stale activation-time offset. `performance.now()` does not
 /// move, so `performance.timeOrigin` follows the rebased offset. No-op when
-/// fake timers are inactive or `ms` is NaN (the "clear override" sentinel).
+/// fake timers are inactive. A NaN `ms` is the "clear override" sentinel:
+/// `Date.now()` is real again until the next tick, so the mocked wall clock
+/// and `performance.timeOrigin` go back to real as well.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__FakeTimers__setSystemTime(global: &JSGlobalObject, ms: f64) {
-    if ms.is_nan() {
-        return;
-    }
     let Some(current) = CURRENT_TIME.get_timespec_now() else {
         return;
     };
+    let vm = global.bun_vm().as_mut();
+    if ms.is_nan() {
+        bun_core::mock_time::clear_wall();
+        vm.overridden_time_origin = None;
+        return;
+    }
     let date_now_offset = ms - current.ms() as f64;
     CURRENT_TIME
         .date_now_offset
         .store(date_now_offset.to_bits(), Ordering::Relaxed);
     bun_core::mock_time::set_wall_ms(ms);
-    global.bun_vm().as_mut().overridden_time_origin = Some(date_now_offset);
+    vm.overridden_time_origin = Some(date_now_offset);
 }
 
 use crate::jsc_hooks::timer_all;
@@ -370,6 +375,12 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
                     "'now' must be a number or Date"
                 )));
             }
+            // NaN is `JSGlobalObject::overridenDateNow`'s "no override" sentinel.
+            if !js_now.is_finite() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "'now' must be a finite number or a valid Date"
+                )));
+            }
         }
     }
 
@@ -411,7 +422,7 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     let arg = frame.arguments_as_array::<1>()[0];
     if !arg.is_number() {
         return Err(global.throw_invalid_arguments(format_args!(
-            "advanceTimersToNextTimer() expects a number of milliseconds"
+            "advanceTimersByTime() expects a number of milliseconds"
         )));
     }
     let Some(current) = CURRENT_TIME.get_timespec_now() else {
@@ -421,9 +432,9 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     };
     let arg_number = arg.as_number();
     let max_advance = u32::MAX;
-    if arg_number < 0.0 || arg_number > max_advance as f64 {
+    if arg_number.is_nan() || arg_number < 0.0 || arg_number > max_advance as f64 {
         return Err(global.throw_invalid_arguments(format_args!(
-            "advanceTimersToNextTimer() ms is out of range. It must be >= 0 and <= {}. Received {:.0}",
+            "advanceTimersByTime() ms is out of range. It must be >= 0 and <= {}. Received {:.0}",
             max_advance, arg_number
         )));
     }

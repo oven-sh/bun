@@ -2580,7 +2580,6 @@ impl NodeHTTPResponse {
 // `as_ctx_ptr()`-derived provenance; converting them to `unsafe deref(*mut)`
 // is a separate sweep.
 impl bun_ptr::AnyRefCounted for NodeHTTPResponse {
-    type DestructorCtx = ();
     #[inline]
     unsafe fn rc_ref(this: *mut Self) {
         // SAFETY: caller contract — `this` is live; touches only the
@@ -2588,7 +2587,7 @@ impl bun_ptr::AnyRefCounted for NodeHTTPResponse {
         unsafe { (*this).ref_() }
     }
     #[inline]
-    unsafe fn rc_deref_with_context(this: *mut Self, (): ()) {
+    unsafe fn rc_deref(this: *mut Self) {
         // SAFETY: caller contract — `this` is live; `deref()` touches only
         // `Cell`/`JsCell` fields and on zero frees via `heap::take`.
         unsafe { (*this).deref() }
@@ -2597,16 +2596,6 @@ impl bun_ptr::AnyRefCounted for NodeHTTPResponse {
     unsafe fn rc_has_one_ref(this: *const Self) -> bool {
         // SAFETY: caller contract — `this` is live.
         unsafe { (*this).ref_count.get() == 1 }
-    }
-    #[inline]
-    unsafe fn rc_assert_no_refs(this: *const Self) {
-        // SAFETY: caller contract — `this` is live.
-        debug_assert_eq!(unsafe { (*this).ref_count.get() }, 0);
-    }
-    #[cfg(debug_assertions)]
-    #[inline]
-    unsafe fn rc_debug_data(_this: *mut Self) -> *mut dyn bun_ptr::ref_count::DebugDataOps {
-        bun_ptr::ref_count::noop_debug_data()
     }
 }
 
@@ -2666,7 +2655,7 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
             break 'brk 0;
         };
 
-        *has_body = req_len > 0 || request_ref.header(b"transfer-encoding").is_some();
+        *has_body = req_len > 0 || request_ref.has_transfer_encoding();
     }
 
     let raw_response = if is_ssl != 0 {

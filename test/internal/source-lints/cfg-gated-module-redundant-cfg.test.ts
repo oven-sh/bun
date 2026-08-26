@@ -120,7 +120,10 @@ test("a module mounted only under #[cfg(P)] has no #[cfg(P)] or #[cfg(not(P))] i
     if (predicate === null || predicate === "<multiple>") continue;
     gatedModules++;
 
-    const negated = `not(${predicate})`;
+    // The dead arm is `not(P)`, or the inner predicate when `P` is itself a
+    // `not(..)`: inside a module mounted under `#[cfg(not(windows))]` the dead
+    // arm is `#[cfg(windows)]`, not `#[cfg(not(not(windows)))]`.
+    const negated = /^not\((.*)\)$/.exec(predicate)?.[1] ?? `not(${predicate})`;
     const source = stripLineComments(readFileSync(path.join(root, target), "utf8"));
     for (const attr of cfgAttributes(source)) {
       if (attr.inner) continue;

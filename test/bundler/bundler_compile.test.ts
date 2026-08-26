@@ -62,6 +62,9 @@ describe("bundler", () => {
       expect(exitCode).toBe(0);
     });
   }
+  // The fixture module evaluates to whatever --compile inlined for `process.versions.bun`.
+  // That must be the exact version the embedded runtime reports, "-debug" suffix and all
+  // on debug builds, so the two are compared without normalizing either side.
   itBundled("compile/HelloWorldWithProcessVersionsBun", {
     compile: true,
     files: {
@@ -69,9 +72,9 @@ describe("bundler", () => {
         process.exitCode = 1;
         process.versions.bun = "bun!";
         if (process.versions.bun === "bun!") throw new Error("fail");
-        if (require("./${process.platform}-${process.arch}.js") === "${Bun.version.replaceAll("-debug", "")}") {
-          process.exitCode = 0;
-        }
+        const inlined = require("./${process.platform}-${process.arch}.js");
+        if (inlined !== Bun.version) throw new Error("inlined " + inlined + ", runtime is " + Bun.version);
+        process.exitCode = 0;
       `,
       [`/${process.platform}-${process.arch}.js`]: "module.exports = process.versions.bun;",
     },
@@ -88,10 +91,9 @@ describe("bundler", () => {
         process.exitCode = 1;
         process.versions.bun = "bun!";
         if (process.versions.bun === "bun!") throw new Error("fail");
-        const another = require("./${process.platform}-${process.arch}.js").replaceAll("-debug", "");
-        if (another === "${Bun.version.replaceAll("-debug", "")}") {
-          process.exitCode = 0;
-        }
+        const inlined = require("./${process.platform}-${process.arch}.js");
+        if (inlined !== Bun.version) throw new Error("inlined " + inlined + ", runtime is " + Bun.version);
+        process.exitCode = 0;
       `,
       [`/${process.platform}-${process.arch}.js`]: "module.exports = process.versions.bun;",
     },

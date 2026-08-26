@@ -997,8 +997,7 @@ mod tests {
         assert_eq!(main_ref.ref_count.get(), 5);
         assert_eq!(drops(), before);
 
-        // No join between the releases: only the count's ordering places the
-        // destructor after the other threads' reads, and Miri checks that.
+        // Release all five refs on concurrent threads: only the count orders the destructor.
         let workers: Vec<_> = clones
             .into_iter()
             .chain(core::iter::once(main_ref))

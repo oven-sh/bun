@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "bun";
+import { expect } from "bun:test";
 import { existsSync, renameSync, statSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";

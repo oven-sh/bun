@@ -1945,32 +1945,25 @@ pub mod bv2_impl {
                             }
 
                             let next_source = import_record.source_index;
-                            let was_dynamic_import = CHECK_DYNAMIC_IMPORTS
-                                && match import_record.kind {
-                                    ImportKind::Dynamic => true,
-                                    // A `require()` of another ESM file is a chunk
-                                    // boundary like `import()`. The flag is the linker's
-                                    // and printer's only signal for it. The call is
-                                    // printed as `import.meta.require`, so the calling
-                                    // file must itself run in Bun (a server build's
-                                    // browser-side files do not).
-                                    ImportKind::Require => {
-                                        let splits = self.split_require
-                                            && self.all_targets[source_index.get() as usize]
-                                                .is_bun()
-                                            && next_source.is_valid()
-                                            && next_source != import_record_list_id
-                                            && self.all_exports_kinds[next_source.get() as usize]
-                                                == ExportsKind::Esm;
-                                        if splits {
-                                            import_record.flags.insert(
-                                                bun_ast::ImportRecordFlags::CROSS_CHUNK_REQUIRE,
-                                            );
-                                        }
-                                        splits
-                                    }
-                                    _ => false,
-                                };
+                            // The importing file's own target decides: a server
+                            // build's browser-side files cannot call `import.meta.require`.
+                            let target_is_bun = self.split_require
+                                && self.all_targets[source_index.get() as usize].is_bun();
+                            let mut was_dynamic_import = CHECK_DYNAMIC_IMPORTS
+                                && import_record.kind.can_be_lazy_chunk(target_is_bun);
+                            // A `require()` splits only when it targets another ES
+                            // module; the flag is the linker's and printer's signal.
+                            if was_dynamic_import && import_record.kind == ImportKind::Require {
+                                was_dynamic_import = next_source.is_valid()
+                                    && next_source != import_record_list_id
+                                    && self.all_exports_kinds[next_source.get() as usize]
+                                        == ExportsKind::Esm;
+                                if was_dynamic_import {
+                                    import_record
+                                        .flags
+                                        .insert(bun_ast::ImportRecordFlags::CROSS_CHUNK_REQUIRE);
+                                }
+                            }
                             self.stack.push(ReachFrame::Enter {
                                 source_index: next_source,
                                 was_dynamic_import,

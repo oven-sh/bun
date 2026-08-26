@@ -1317,7 +1317,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
     // Only `StandaloneModuleGraph::to_bytes` reads these.
     if is_compile {
-        let (order, startup_count) = chunk_load_order(chunks, &output_files.output_files);
+        let (order, startup_count) = chunk_load_order(
+            chunks,
+            &output_files.output_files,
+            c.options.target.is_bun(),
+        );
         for (chunk_index, &position) in order.iter().enumerate() {
             let file = &mut output_files.output_files[chunk_index];
             file.load_order = position;
@@ -1471,7 +1475,11 @@ fn append_internal_module_bytecode(
 /// how many of the positions make up the static closure of the entry point
 /// the executable runs: the first server-side one, as `to_bytes` picks it.
 /// `output_files[i]` is chunk `i`'s output file.
-fn chunk_load_order(chunks: &[Chunk], output_files: &[options::OutputFile]) -> (Vec<u32>, u32) {
+fn chunk_load_order(
+    chunks: &[Chunk],
+    output_files: &[options::OutputFile],
+    target_is_bun: bool,
+) -> (Vec<u32>, u32) {
     let mut visited = AutoBitSet::init_empty(chunks.len()).expect("oom");
     let mut order: Vec<u32> = Vec::with_capacity(chunks.len());
     let entry_points = |side_is_client: bool| {
@@ -1504,7 +1512,11 @@ fn chunk_load_order(chunks: &[Chunk], output_files: &[options::OutputFile]) -> (
                 Some(import) => {
                     stack.last_mut().unwrap().1 += 1;
                     let dep = import.chunk_index;
-                    if import.import_kind != bun_ast::ImportKind::Stmt {
+                    // An HTML import puts browser-side chunks in a server build;
+                    // those never load anything through `import.meta.require`.
+                    let importer_is_bun = target_is_bun
+                        && output_files[chunk_index as usize].side != Some(options::Side::Client);
+                    if import.import_kind.can_be_lazy_chunk(importer_is_bun) {
                         dynamic_frontier.push_back(dep);
                     } else if !visited.is_set(dep as usize) {
                         visited.set(dep as usize);

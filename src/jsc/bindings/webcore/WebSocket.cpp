@@ -753,7 +753,6 @@ void WebSocket::sendWebSocketData(const char* baseAddress, size_t length, const 
     case ConnectedWebSocketKind::Client: {
         Bun__WebSocketClient__writeBinaryData(this->m_connectedWebSocket.client, reinterpret_cast<const unsigned char*>(baseAddress), length, static_cast<uint8_t>(op));
         // this->m_connectedWebSocket.client->send({ baseAddress, length }, opCode);
-        // this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
@@ -773,7 +772,6 @@ void WebSocket::sendWebSocketString(const String& message, const Opcode op)
         auto slice = Zig::toEncodedSlice(message);
         Bun__WebSocketClient__writeString(this->m_connectedWebSocket.client, &slice, static_cast<uint8_t>(op));
         // this->m_connectedWebSocket.client->send({ baseAddress, length }, opCode);
-        // this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
@@ -853,13 +851,11 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
     case ConnectedWebSocketKind::Client: {
         EncodedSlice reasonSlice = Zig::toEncodedSlice(reason);
         Bun__WebSocketClient__close(this->m_connectedWebSocket.client, code, &reasonSlice);
-        // this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
         EncodedSlice reasonSlice = Zig::toEncodedSlice(reason);
         Bun__WebSocketClientTLS__close(this->m_connectedWebSocket.clientSSL, code, &reasonSlice);
-        // this->m_bufferedAmount = this->m_connectedWebSocket.clientSSL->getBufferedAmount();
         break;
     }
     default: {
@@ -1149,7 +1145,22 @@ WebSocket::State WebSocket::readyState() const
 
 unsigned WebSocket::bufferedAmount() const
 {
-    return saturateAdd(m_bufferedAmount, m_bufferedAmountAfterClose);
+    // Live: bytes queued in the native client (frames not yet written to the
+    // socket, plus the proxy tunnel's pending ciphertext). m_bufferedAmount
+    // only carries the leftover reported at close.
+    size_t live = 0;
+    switch (m_connectedWebSocketKind) {
+    case ConnectedWebSocketKind::Client:
+        live = Bun__WebSocketClient__bufferedAmount(m_connectedWebSocket.client);
+        break;
+    case ConnectedWebSocketKind::ClientSSL:
+        live = Bun__WebSocketClientTLS__bufferedAmount(m_connectedWebSocket.clientSSL);
+        break;
+    case ConnectedWebSocketKind::None:
+        break;
+    }
+    unsigned clamped = live > std::numeric_limits<unsigned>::max() ? std::numeric_limits<unsigned>::max() : static_cast<unsigned>(live);
+    return saturateAdd(saturateAdd(m_bufferedAmount, clamped), m_bufferedAmountAfterClose);
 }
 
 String WebSocket::protocol() const

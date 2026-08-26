@@ -488,6 +488,10 @@ impl WebSocketProxyTunnel {
         self.write_buffer.get().is_not_empty()
     }
 
+    pub(crate) fn buffered_amount(&self) -> usize {
+        self.write_buffer.get().size()
+    }
+
     pub(crate) fn pause_stream(&self) -> bool {
         match &self.socket {
             SocketUnion::Tcp(s) => s.pause_stream(),

@@ -614,6 +614,7 @@ ZIG_DECL void Bun__WebSocket__freeSSLConfig(void* sslConfig);
 #ifdef __cplusplus
 
 ZIG_DECL void Bun__WebSocketClient__cancel(WebSocketClient* arg0);
+ZIG_DECL size_t Bun__WebSocketClient__bufferedAmount(WebSocketClient* arg0);
 ZIG_DECL bool Bun__WebSocketClient__pause(WebSocketClient* arg0);
 ZIG_DECL bool Bun__WebSocketClient__resume(WebSocketClient* arg0);
 ZIG_DECL void Bun__WebSocketClient__close(WebSocketClient* arg0, uint16_t arg1, const EncodedSlice* arg2);
@@ -629,6 +630,7 @@ ZIG_DECL size_t Bun__WebSocketClient__memoryCost(WebSocketClient* arg0);
 #ifdef __cplusplus
 
 ZIG_DECL void Bun__WebSocketClientTLS__cancel(WebSocketClientTLS* arg0);
+ZIG_DECL size_t Bun__WebSocketClientTLS__bufferedAmount(WebSocketClientTLS* arg0);
 ZIG_DECL bool Bun__WebSocketClientTLS__pause(WebSocketClientTLS* arg0);
 ZIG_DECL bool Bun__WebSocketClientTLS__resume(WebSocketClientTLS* arg0);
 ZIG_DECL void Bun__WebSocketClientTLS__close(WebSocketClientTLS* arg0, uint16_t arg1, const EncodedSlice* arg2);

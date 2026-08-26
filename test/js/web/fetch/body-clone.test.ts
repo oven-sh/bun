@@ -1325,21 +1325,21 @@ describe("new Request(input) transfers the input body", () => {
     expect(await copy.text()).toBe("mine");
   });
 
-  test("cancelling the copy's body cancels the transferred source", async () => {
-    const { promise: cancelled, resolve } = Promise.withResolvers<void>();
+  test("cancelling the copy's body cancels the transferred source with the same reason", async () => {
+    const { promise: cancelled, resolve } = Promise.withResolvers<unknown>();
     const input = make(
       new ReadableStream({
         pull(c) {
           c.enqueue(new Uint8Array(16));
         },
-        cancel() {
-          resolve();
+        cancel(reason) {
+          resolve(reason);
         },
       }),
     );
     const copy = new Request(input);
     await copy.body!.cancel("done");
-    await cancelled;
+    expect(await cancelled).toBe("done");
   });
 
   test("constructing twice from the same input throws on the second call", () => {
@@ -1387,27 +1387,35 @@ describe("new Request(input) transfers the input body", () => {
   }
 
   // The input wrapper's cached `stream` slot was what rooted a user-provided
-  // ReadableStream. The transfer clears that slot, so the copy must hold the
-  // moved stream strongly itself, or a GC before the first read collects it
-  // and the read never settles.
-  test.each([
-    ["single-arg", (input: Request) => new Request(input)],
-    ["two-arg", (input: Request) => new Request(input, { headers: { "x-a": "1" } })],
-  ])("the moved stream survives a GC before the copy is read (%s)", async (_, construct) => {
-    const { copy, weak } = (() => {
-      const stream = new ReadableStream({
+  // ReadableStream. The transfer clears that slot, so the copy must root what
+  // it reads from itself, or a GC before the first read leaves the read hanging.
+  const gcSources = {
+    push: () =>
+      new ReadableStream({
         start(c) {
           c.enqueue(new TextEncoder().encode("hello"));
           c.close();
         },
+      }),
+    pull: () => {
+      let n = 0;
+      return new ReadableStream({
+        pull(c) {
+          if (n++ === 0) c.enqueue(new TextEncoder().encode("hello"));
+          else c.close();
+        },
       });
-      const weak = new WeakRef(stream);
-      return { copy: construct(make(stream)), weak };
-    })();
-    // `new WeakRef(target)` keeps the target alive until the current job ends.
+    },
+  };
+  test.each([
+    ["single-arg", "push", (input: Request) => new Request(input)],
+    ["single-arg", "pull", (input: Request) => new Request(input)],
+    ["two-arg", "push", (input: Request) => new Request(input, { headers: { "x-a": "1" } })],
+    ["two-arg", "pull", (input: Request) => new Request(input, { headers: { "x-a": "1" } })],
+  ] as const)("the copy still reads after a GC before the first read (%s, %s source)", async (_, kind, construct) => {
+    const copy = (() => construct(make(gcSources[kind]())))();
     await Bun.sleep(0);
     Bun.gc(true);
-    expect(weak.deref()).toBeDefined();
     expect(await copy.text()).toBe("hello");
   });
 

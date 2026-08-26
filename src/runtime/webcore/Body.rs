@@ -1714,7 +1714,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         // hand out a detached PendingValue instead of moving the Locked out.
         if matches!(self.get_body_value(), Value::Locked(l) if l.task.is_some()) {
             let readable = match self.get_body_readable_stream() {
-                Some(rs) => Self::proxy_transferred_stream(rs, global_this)?,
+                Some(rs) => rs.proxy(global_this)?,
                 None => {
                     let v = self.get_body_value().to_readable_stream(global_this)?;
                     ReadableStream::from_js_direct(v)
@@ -1735,13 +1735,13 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             .js_ref()
             .and_then(Self::stream_get_cached)
             .and_then(ReadableStream::from_js_direct);
-        // Proxy before the move so a tee failure leaves the input untouched.
+        // Proxy (step 45.2) before the move so a failure leaves the input untouched.
         let live_stream = match self.get_body_value() {
             Value::Locked(locked) => cached_stream.or_else(|| locked.readable.get()),
             _ => None,
         };
         let proxied = match live_stream {
-            Some(rs) => Self::proxy_transferred_stream(rs, global_this)?.or(Some(rs)),
+            Some(rs) => rs.proxy(global_this)?.or(Some(rs)),
             None => None,
         };
         let mut body = core::mem::replace(self.get_body_value(), Value::Used);
@@ -1750,19 +1750,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         }
         self.clear_body_cache(global_this);
         Ok(body)
-    }
-
-    /// Step 45.2 "create a proxy": tee `source` (locks it) and cancel the
-    /// branch nobody reads so it does not buffer.
-    fn proxy_transferred_stream(
-        source: ReadableStream,
-        global_this: &JSGlobalObject,
-    ) -> JsResult<Option<ReadableStream>> {
-        let Some((branch, unused)) = source.tee(global_this)? else {
-            return Ok(None);
-        };
-        unused.cancel_with_reason(global_this, JSValue::UNDEFINED)?;
-        Ok(Some(branch))
     }
 
     fn clear_body_cache(&self, global_this: &JSGlobalObject) {

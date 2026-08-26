@@ -689,8 +689,9 @@ describe.concurrent("Buffer accessor JIT", () => {
   });
 
   // The two large-view scenarios allocate 3GB and 4GB. The pages are never touched, so the cost is
-  // address space and the allocator's consent, not RSS; still, only ask on a machine that has it.
-  const enoughMemory = totalmem() >= 8 * 1024 ** 3;
+  // address space, not RSS, but the kernel refuses an allocation larger than physical memory up
+  // front. 6GB admits the 8GB-class CI runners and excludes machines where 4GB would not fit.
+  const enoughMemory = totalmem() >= 6 * 1024 ** 3;
 
   test.skipIf(!enoughMemory)("a >2GB receiver stays optimized: no exit storm, and OOB still throws", async () => {
     const result = await scenario(`

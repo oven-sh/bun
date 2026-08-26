@@ -183,8 +183,14 @@ describe("ClipboardItem", () => {
     // MIME type, parameters included, as in Chrome.
     const parameterized = new ClipboardItem({ "Text/Plain; charset=utf-8": "x" });
     expect(parameterized.types).toEqual(["text/plain;charset=utf-8"]);
-    const padded = new ClipboardItem({ " text/plain ": "y" });
+    const padded = new ClipboardItem({ " \ttext/plain\r\n": "y" });
     expect(padded.types).toEqual(["text/plain"]);
+    // Only HTTP whitespace is trimmed (mimesniff section 4.4): a form feed is
+    // not, so it stays in the type token and fails the token check. Inside
+    // the parameters it makes that name invalid, dropping the parameter.
+    expect(() => new ClipboardItem({ "\ftext/plain": "x" })).toThrow(TypeError);
+    expect(ClipboardItem.supports("\ftext/plain")).toBe(false);
+    expect(new ClipboardItem({ "text/plain;\fcharset=utf-8": "x" }).types).toEqual(["text/plain"]);
     // Distinct serializations are distinct representations.
     const twoReps = new ClipboardItem({ "text/plain": "a", "text/plain;charset=utf-8": "b" });
     expect(twoReps.types).toEqual(["text/plain", "text/plain;charset=utf-8"]);

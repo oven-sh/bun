@@ -100,10 +100,10 @@ bool ClipboardItem::supports(const String& type)
 
 String ClipboardItem::parseMIMETypeEssence(const String& type)
 {
-    auto view = StringView(type).trim(isASCIIWhitespace<char16_t>);
+    auto view = StringView(type).trim(isHTTPSpace);
     size_t semicolon = view.find(';');
     if (semicolon != notFound)
-        view = view.left(semicolon).trim(isASCIIWhitespace<char16_t>);
+        view = view.left(semicolon).trim(isHTTPSpace);
     size_t slash = view.find('/');
     if (slash == notFound)
         return {};
@@ -122,7 +122,7 @@ static void appendSerializedMIMEParameters(StringBuilder& result, StringView vie
     Vector<String, 2> seenNames;
     size_t length = view.length();
     while (position < length) {
-        while (position < length && isASCIIWhitespace(view[position]))
+        while (position < length && isHTTPSpace(view[position]))
             ++position;
         size_t nameStart = position;
         while (position < length && view[position] != ';' && view[position] != '=')
@@ -157,7 +157,7 @@ static void appendSerializedMIMEParameters(StringBuilder& result, StringView vie
                 ++position;
             auto raw = view.substring(valueStart, position - valueStart);
             size_t end = raw.length();
-            while (end && isASCIIWhitespace(raw[end - 1]))
+            while (end && isHTTPSpace(raw[end - 1]))
                 --end;
             value = raw.left(end).toString();
         }
@@ -197,7 +197,7 @@ String ClipboardItem::parseAndSerializeMIMEType(const String& type)
     String essence = parseMIMETypeEssence(type);
     if (essence.isEmpty())
         return {};
-    auto view = StringView(type).trim(isASCIIWhitespace<char16_t>);
+    auto view = StringView(type).trim(isHTTPSpace);
     size_t semicolon = view.find(';');
     if (semicolon == notFound)
         return essence;

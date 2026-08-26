@@ -1,9 +1,9 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
 
-use bun_collections::VecExt as _;
+use bun_alloc::AllocError;
 use bun_core::strings;
-use bun_jsc::{JSGlobalObject, JSUint8Array, JSValue};
+use bun_jsc::{JSGlobalObject, JSUint8Array, JSValue, JsResult};
 use bun_ptr::RawSlice;
 use bun_simdutf_sys::simdutf;
 
@@ -25,23 +25,25 @@ pub struct TextEncoderStreamEncoder {
 }
 
 impl TextEncoderStreamEncoder {
-    fn encode_latin1(&self, global: &JSGlobalObject, input: &[u8]) -> JSValue {
+    fn encode_latin1(&self, global: &JSGlobalObject, input: &[u8]) -> JsResult<JSValue> {
         if input.is_empty() {
             return JSUint8Array::create_empty(global);
         }
         let mut buffer = Vec::new();
-        self.encode_latin1_into(input, &mut buffer);
+        if self.encode_latin1_into(input, &mut buffer).is_err() {
+            return Err(global.throw_out_of_memory());
+        }
         JSUint8Array::from_bytes(global, buffer.into())
     }
 
-    fn encode_latin1_into(&self, input: &[u8], buffer: &mut Vec<u8>) {
+    fn encode_latin1_into(&self, input: &[u8], buffer: &mut Vec<u8>) -> Result<(), AllocError> {
         bun_output::scoped_log!(
             TextEncoderStreamEncoder,
             "encodeLatin1: \"{}\"",
             bstr::BStr::new(input)
         );
         if input.is_empty() {
-            return;
+            return Ok(());
         }
 
         let prepend_replacement_len: usize = if self.pending_lead_surrogate.take().is_some() {
@@ -57,7 +59,9 @@ impl TextEncoderStreamEncoder {
         // 278.00 ms   13.0%    278.00 ms           simdutf::arm64::implementation::utf8_length_from_latin1(char const*, unsigned long) const
         //
         //
-        buffer.reserve(input.len() + prepend_replacement_len);
+        buffer
+            .try_reserve(input.len() + prepend_replacement_len)
+            .map_err(|_| AllocError)?;
         if prepend_replacement_len > 0 {
             buffer.extend_from_slice(&[0xef, 0xbf, 0xbd]);
         }
@@ -75,23 +79,26 @@ impl TextEncoderStreamEncoder {
             remain = &remain[result.read as usize..];
 
             if result.written == 0 && result.read == 0 {
-                buffer.reserve(2);
+                buffer.try_reserve(2).map_err(|_| AllocError)?;
             } else if buffer.len() == buffer.capacity() && !remain.is_empty() {
-                buffer.ensure_total_capacity(buffer.len() + remain.len() + 1);
+                buffer
+                    .try_reserve(remain.len() + 1)
+                    .map_err(|_| AllocError)?;
             }
         }
         debug_assert!(
             buffer.len() == (simdutf::length::utf8::from::latin1(input) + prepend_replacement_len)
         );
+        Ok(())
     }
 
-    fn encode_utf16(&self, global: &JSGlobalObject, input: &[u16]) -> JSValue {
+    fn encode_utf16(&self, global: &JSGlobalObject, input: &[u16]) -> JsResult<JSValue> {
         if input.is_empty() {
             return JSUint8Array::create_empty(global);
         }
         let mut buf = Vec::new();
         if self.encode_utf16_into(input, &mut buf).is_err() {
-            return global.throw_out_of_memory_value();
+            return Err(global.throw_out_of_memory());
         }
         if buf.is_empty() {
             return JSUint8Array::create_empty(global);
@@ -99,7 +106,7 @@ impl TextEncoderStreamEncoder {
         JSUint8Array::from_bytes(global, buf.into())
     }
 
-    fn encode_utf16_into(&self, input: &[u16], buf: &mut Vec<u8>) -> Result<(), ()> {
+    fn encode_utf16_into(&self, input: &[u16], buf: &mut Vec<u8>) -> Result<(), AllocError> {
         bun_output::scoped_log!(
             TextEncoderStreamEncoder,
             "encodeUTF16: \"{}\"",
@@ -144,7 +151,9 @@ impl TextEncoderStreamEncoder {
 
                     remain = &remain[1..];
                     if remain.is_empty() {
-                        buf.extend_from_slice(&sequence[0..converted.utf8_width() as usize]);
+                        let width = converted.utf8_width() as usize;
+                        buf.try_reserve(width).map_err(|_| AllocError)?;
+                        buf.extend_from_slice(&sequence[0..width]);
                         return Ok(());
                     }
 
@@ -158,13 +167,14 @@ impl TextEncoderStreamEncoder {
 
         let length = simdutf::length::utf8::from::utf16::le(remain);
 
-        buf.reserve(
+        buf.try_reserve(
             length
                 + match prepend {
                     Some(pre) => pre.len as usize,
                     None => 0,
                 },
-        );
+        )
+        .map_err(|_| AllocError)?;
 
         if let Some(pre) = &prepend {
             buf.extend_from_slice(&pre.bytes[0..pre.len as usize]);
@@ -188,8 +198,7 @@ impl TextEncoderStreamEncoder {
 
         if result.status != simdutf::Status::SUCCESS {
             // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.
-            let lead_surrogate =
-                strings::to_utf8_list_with_type_bun::<true>(buf, remain).map_err(|_| ())?;
+            let lead_surrogate = strings::to_utf8_list_with_type_bun::<true>(buf, remain)?;
             if let Some(pending_lead) = lead_surrogate {
                 self.pending_lead_surrogate.set(Some(pending_lead));
             }
@@ -197,7 +206,7 @@ impl TextEncoderStreamEncoder {
         Ok(())
     }
 
-    fn flush_body(&self, global: &JSGlobalObject) -> JSValue {
+    fn flush_body(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         if self.pending_lead_surrogate.get().is_none() {
             JSUint8Array::create_empty(global)
         } else {
@@ -235,18 +244,19 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeForStream(
     global: &JSGlobalObject,
     chunk: JSValue,
 ) -> JSValue {
-    let Ok(str) = chunk.get_zig_string(global) else {
+    let Ok(str) = chunk.to_js_string_view(global) else {
         return JSValue::ZERO;
     };
     // SAFETY: `this` is the live encoder owned by the calling JS cell; driven
     // only from the JS thread, so `&*this` has no mutable alias. Taken after
     // the coercion so no user JS runs while the borrow is live.
     let this = unsafe { &*this };
-    if str.is_16bit() {
-        this.encode_utf16(global, str.utf16_slice_aligned())
+    let encoded = if str.is_utf16() {
+        this.encode_utf16(global, str.utf16())
     } else {
-        this.encode_latin1(global, str.slice())
-    }
+        this.encode_latin1(global, str.latin1())
+    };
+    bun_jsc::to_js_host_fn_result(global, encoded)
 }
 
 #[unsafe(no_mangle)]
@@ -256,7 +266,7 @@ pub extern "C" fn TextEncoderStreamEncoder__flushForStream(
     global: &JSGlobalObject,
 ) -> JSValue {
     // SAFETY: as in `TextEncoderStreamEncoder__encodeForStream`.
-    unsafe { &*this }.flush_body(global)
+    bun_jsc::to_js_host_fn_result(global, unsafe { &*this }.flush_body(global))
 }
 
 /// Cap on the reusable scratch buffer so a single huge chunk doesn't pin
@@ -279,7 +289,7 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
     sink_id: u8,
     sink_ptr: *mut core::ffi::c_void,
 ) -> JSValue {
-    let Ok(str) = chunk.get_zig_string(global) else {
+    let Ok(str) = chunk.to_js_string_view(global) else {
         return JSValue::ZERO;
     };
     // SAFETY: `this` is the live encoder owned by the calling JS cell; taken
@@ -289,15 +299,13 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
     // (theoretical) re-entrant encode-into-sink call cannot BorrowMut-panic.
     let mut buf = this.scratch.take();
     buf.clear();
-    if str.is_16bit() {
-        if this
-            .encode_utf16_into(str.utf16_slice_aligned(), &mut buf)
-            .is_err()
-        {
-            return global.throw_out_of_memory_value();
-        }
+    let encoded = if str.is_utf16() {
+        this.encode_utf16_into(str.utf16(), &mut buf)
     } else {
-        this.encode_latin1_into(str.slice(), &mut buf);
+        this.encode_latin1_into(str.latin1(), &mut buf)
+    };
+    if encoded.is_err() {
+        return global.throw_out_of_memory_value();
     }
     if buf.is_empty() {
         this.scratch.replace(buf);

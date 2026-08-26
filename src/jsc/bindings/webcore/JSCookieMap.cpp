@@ -105,10 +105,16 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
 
     std::variant<Vector<Vector<String>>, HashMap<String, String>, String> init;
 
-    if (initValue.isUndefinedOrNull() || (initValue.isString() && initValue.getString(lexicalGlobalObject).isEmpty())) {
+    String initString;
+    if (initValue.isString()) {
+        initString = initValue.getString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+
+    if (initValue.isUndefinedOrNull() || (initValue.isString() && initString.isEmpty())) {
         init = String();
     } else if (initValue.isString()) {
-        init = initValue.getString(lexicalGlobalObject);
+        init = WTF::move(initString);
     } else if (initValue.isObject()) {
         auto* object = initValue.getObject();
 
@@ -138,9 +144,13 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
                 auto second = subArray->getIndex(lexicalGlobalObject, 1);
                 RETURN_IF_EXCEPTION(throwScope, {});
 
-                auto firstStr = first.toString(lexicalGlobalObject)->value(lexicalGlobalObject);
+                auto* firstString = first.toString(lexicalGlobalObject);
                 RETURN_IF_EXCEPTION(throwScope, {});
-                auto secondStr = second.toString(lexicalGlobalObject)->value(lexicalGlobalObject);
+                auto firstStr = firstString->value(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                auto* secondString = second.toString(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                auto secondStr = secondString->value(lexicalGlobalObject);
                 RETURN_IF_EXCEPTION(throwScope, {});
 
                 Vector<String> pair;
@@ -164,7 +174,9 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
                 JSValue value = object->get(lexicalGlobalObject, propertyName);
                 RETURN_IF_EXCEPTION(throwScope, {});
 
-                auto valueStr = value.toString(lexicalGlobalObject)->value(lexicalGlobalObject);
+                auto* valueString = value.toString(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                auto valueStr = valueString->value(lexicalGlobalObject);
                 RETURN_IF_EXCEPTION(throwScope, {});
 
                 Vector<String> pair;
@@ -483,13 +495,10 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_deleteBody(JSC::J
     }
 
     if (nameValue && nameValue.isString()) {
-        RETURN_IF_EXCEPTION(throwScope, {});
-
         if (!nameValue.isUndefined() && !nameValue.isNull()) {
             deleteOptions.name = convert<IDLUSVString>(*lexicalGlobalObject, nameValue);
+            RETURN_IF_EXCEPTION(throwScope, {});
         }
-
-        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
         return throwVMError(lexicalGlobalObject, throwScope, createTypeError(lexicalGlobalObject, "Cookie name is required"_s));
     }

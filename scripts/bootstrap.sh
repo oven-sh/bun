@@ -1345,7 +1345,7 @@ install_rust() {
 		# x86_64-unknown-freebsd is Tier 2 (prebuilt std). aarch64 is Tier 3
 		# (no prebuilt) — lolhtml.ts uses -Zbuild-std for that.
 		execute_as_user "$rustup" target add x86_64-unknown-freebsd
-		# macOS cross-compile lanes build libbun_rust.a for darwin on the
+		# macOS cross-compile lanes build libbun_runtime.a for darwin on the
 		# shared Linux rust box (Tier 2, prebuilt std). The ninja rule
 		# self-heals with `rustup target add` if these are missing, but
 		# preinstalling keeps that step off the network.

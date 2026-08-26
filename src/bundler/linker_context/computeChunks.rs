@@ -18,6 +18,7 @@ use crate::{BundleV2, Chunk, Index, IndexInt, LinkerContext};
 use super::find_all_imported_parts_in_js_order::find_all_imported_parts_in_js_order;
 use super::find_imported_css_files_in_js_order::find_imported_css_files_in_js_order;
 use super::find_imported_files_in_css_order::find_imported_files_in_css_order;
+use super::merge_small_chunks::merge_small_chunks;
 
 #[inline(always)]
 fn make_flags(has_html_chunk: bool, is_browser_chunk_from_server_build: bool) -> chunk::Flags {
@@ -290,6 +291,13 @@ pub(crate) fn compute_chunks(
             }
         }
     }
+    if code_splitting {
+        let min_chunk_size = this.options.min_chunk_size;
+        merge_small_chunks(this, temp, min_chunk_size)?;
+    }
+    let css_asts = this.graph.ast.items_css();
+    let ast_targets = this.graph.ast.items_target();
+
     // reshaped for borrowck — re-borrow file_entry_bits after the loop above mutated it
     let file_entry_bits: &mut [AutoBitSet] = this.graph.files.items_entry_bits_mut();
 

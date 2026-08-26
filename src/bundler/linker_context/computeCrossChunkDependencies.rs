@@ -28,7 +28,6 @@ pub(crate) fn compute_cross_chunk_dependencies(
             dynamic_imports: ArrayHashMap::<IndexInt, ()>::default(),
         })
         .collect();
-    // defer { meta.*.deinit(); free(chunk_metas) } — handled by Drop
 
     {
         // Constructed on the stack and dropped at scope end.
@@ -320,11 +319,99 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
     }
 }
 
+/// Chunks an entry point need not import when it uses nothing from them:
+/// loading one runs nothing, and neither does anything its files statically
+/// import (which may live in a chunk the entry would otherwise only have
+/// reached, in order, through this one).
+fn inert_chunks(c: &LinkerContext, chunks: &[Chunk]) -> Vec<bool> {
+    let mut chunk_of_file = vec![u32::MAX; c.graph.files.len()];
+    let mut inert: Vec<bool> = chunks
+        .iter()
+        .map(|chunk| {
+            matches!(chunk.content, chunk::Content::Javascript(_))
+                && !chunk.entry_point.is_entry_point()
+        })
+        .collect();
+    for (chunk_index, chunk) in chunks.iter().enumerate() {
+        if !matches!(chunk.content, chunk::Content::Javascript(_)) {
+            continue;
+        }
+        for &source_index in chunk.files_with_parts_in_chunk.keys() {
+            chunk_of_file[source_index as usize] = chunk_index as u32;
+            if inert[chunk_index] && !c.loading_file_has_no_side_effects(source_index) {
+                inert[chunk_index] = false;
+            }
+        }
+    }
+    if !inert.iter().any(|&b| b) {
+        return inert;
+    }
+
+    // Other chunks each still-inert chunk's files statically import from.
+    let import_records = c.graph.ast.items_import_records();
+    let parts = c.graph.ast.items_parts();
+    let mut imported_chunks: Vec<Vec<u32>> = vec![Vec::new(); chunks.len()];
+    for (chunk_index, chunk) in chunks.iter().enumerate() {
+        if !inert[chunk_index] {
+            continue;
+        }
+        let imported = &mut imported_chunks[chunk_index];
+        let mut add = |source_index: u32| {
+            let other = chunk_of_file[source_index as usize];
+            if other != u32::MAX && other != chunk_index as u32 && imported.last() != Some(&other) {
+                imported.push(other);
+            }
+        };
+        for &source_index in chunk.files_with_parts_in_chunk.keys() {
+            let parts_live = &c.graph.parts_live[source_index as usize];
+            let records = import_records[source_index as usize].as_slice();
+            for (part_index, part) in parts[source_index as usize].as_slice().iter().enumerate() {
+                if !parts_live.is_set(part_index) {
+                    continue;
+                }
+                for &i in part.import_record_indices.iter() {
+                    let record = &records[i as usize];
+                    if record.source_index.is_valid()
+                        && !c.is_external_dynamic_import(record, source_index)
+                    {
+                        add(record.source_index.get());
+                    }
+                }
+                for dep in part.dependencies.iter() {
+                    add(dep.source_index.get());
+                }
+            }
+        }
+    }
+    for imported in imported_chunks.iter_mut() {
+        imported.sort_unstable();
+        imported.dedup();
+    }
+    loop {
+        let mut changed = false;
+        for chunk_index in 0..chunks.len() {
+            if inert[chunk_index]
+                && imported_chunks[chunk_index]
+                    .iter()
+                    .any(|&other| !inert[other as usize])
+            {
+                inert[chunk_index] = false;
+                changed = true;
+            }
+        }
+        if !changed {
+            return inert;
+        }
+    }
+}
+
 fn compute_cross_chunk_dependencies_with_chunk_metas(
     c: &mut LinkerContext,
     chunks: &mut [Chunk],
     chunk_metas: &mut [ChunkMeta],
 ) -> Result<(), bun_alloc::AllocError> {
+    let mut inert: Option<Vec<bool>> = None;
+
     // Mark imported symbols as exported in the chunk from which they are declared
     // The loop body also indexes chunk_metas[other_chunk_index] /
     // chunks[other_chunk_index], so iterate by index and re-borrow per access.
@@ -401,16 +488,26 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                     continue;
                 }
 
-                if chunks[other_chunk_index]
+                if !chunks[other_chunk_index]
                     .entry_bits
                     .is_set(entry_point_id as usize)
+                    || chunks[chunk_index]
+                        .content
+                        .javascript()
+                        .imports_from_other_chunks
+                        .contains(&(other_chunk_index as u32))
                 {
-                    let js = chunks[chunk_index].content.javascript_mut();
-                    let _ = js.imports_from_other_chunks.get_or_put_value(
-                        other_chunk_index as u32,
-                        CrossChunkImportItemList::default(),
-                    );
+                    continue;
                 }
+                // Nothing is used from it; skip it if loading it runs nothing.
+                if inert.get_or_insert_with(|| inert_chunks(c, chunks))[other_chunk_index] {
+                    continue;
+                }
+                let js = chunks[chunk_index].content.javascript_mut();
+                let _ = js.imports_from_other_chunks.get_or_put_value(
+                    other_chunk_index as u32,
+                    CrossChunkImportItemList::default(),
+                );
             }
         }
 
@@ -443,7 +540,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
     {
         debug_assert!(chunk_metas.len() == chunks.len());
         let mut r = renamer::ExportRenamer::init();
-        // defer r.deinit() — handled by Drop
         debug!("Generating cross-chunk exports");
 
         let mut stable_ref_list: Vec<StableRef> = Vec::new();
@@ -454,6 +550,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                 continue;
             }
 
+            let entry_point = chunk.entry_point;
             let repr = chunk.content.javascript_mut();
 
             match c.options.output_format {
@@ -466,6 +563,25 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         );
                     repr.exports_to_other_chunks.reserve(stable_ref_list.len());
                     r.clear_retaining_capacity();
+
+                    // An entry point chunk already exports its own names
+                    // (`generate_entry_point_tail_js`); a cross-chunk export
+                    // reusing one would be a duplicate export.
+                    if entry_point.is_entry_point() && !stable_ref_list.is_empty() {
+                        let entry_source = entry_point.source_index() as usize;
+                        let flags = &c.graph.meta.items_flags()[entry_source];
+                        if flags.wrap == WrapKind::Cjs || flags.needs_synthetic_default_export {
+                            r.reserve_name(b"default");
+                        }
+                        if flags.wrap != WrapKind::Cjs {
+                            for alias in c.graph.meta.items_sorted_and_filtered_export_aliases()
+                                [entry_source]
+                                .iter()
+                            {
+                                r.reserve_name(alias);
+                            }
+                        }
+                    }
 
                     for stable_ref in stable_ref_list.iter() {
                         let ref_ = stable_ref.r#ref;
@@ -536,7 +652,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
     {
         debug!("Generating cross-chunk imports");
         let mut list: Vec<CrossChunkImport> = Vec::new();
-        // defer list.deinit() — handled by Drop
         // We move the per-chunk fields we
         // mutate (`imports_from_other_chunks`, `cross_chunk_imports`) out via `take`, drop
         // the `chunk` borrow, hand the whole `chunks` slice to `sorted_cross_chunk_imports`

@@ -152,6 +152,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     if (!args.isEmpty() && args.at(0).isString()) {
         ParserError error;
         String code = args.at(0).toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, nullptr);
 
         SourceCode sourceCode(
             JSC::StringSourceProvider::create(code, sourceOrigin, options.filename, sourceTaintOrigin, position, SourceProviderSourceType::Program),
@@ -188,6 +189,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
                 // Node always attaches the arrow header to compile-time SyntaxErrors
                 // (node_contextify.cc DecorateErrorStack), independent of displayErrors.
                 decorateParseErrorStack(globalObject, vm, exception, code, options.filename, error, options.lineOffset);
+                RETURN_IF_EXCEPTION(throwScope, nullptr);
                 throwException(globalObject, throwScope, exception);
                 return nullptr;
             }
@@ -743,8 +745,7 @@ void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::Thr
                 return;
             }
 
-            outOptions.allowStrings = allowStringsValue.toBoolean(globalObject);
-            RETURN_IF_EXCEPTION(scope, );
+            outOptions.allowStrings = allowStringsValue.asBoolean();
         }
 
         auto allowWasmValue = codeGenerationObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "wasm"_s));
@@ -755,8 +756,7 @@ void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::Thr
                 return;
             }
 
-            outOptions.allowWasm = allowWasmValue.toBoolean(globalObject);
-            RETURN_IF_EXCEPTION(scope, );
+            outOptions.allowWasm = allowWasmValue.asBoolean();
         }
     }
 }
@@ -992,7 +992,9 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmWasmDisallowed, (JSC::JSGlobalObject * globalOb
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    scope.throwException(globalObject, JSC::createJSWebAssemblyCompileError(globalObject, vm, "Wasm code generation disallowed by embedder"_s));
+    JSObject* error = JSC::createJSWebAssemblyCompileError(globalObject, vm, "Wasm code generation disallowed by embedder"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    scope.throwException(globalObject, error);
     return {};
 }
 
@@ -1009,7 +1011,9 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmWasmCompileDisallowed, (JSC::JSGlobalObject * g
 
 void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
     Base::finishCreation(vm);
+    RETURN_IF_EXCEPTION(scope, );
 
     // microtaskMode: "afterEvaluate" — give this context its own microtask
     // queue, like Node's contextify own_microtask_queue. Microtasks enqueued
@@ -1042,7 +1046,6 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
         // CompileError, while introspection (Module.imports/exports/
         // customSections) and instantiating an already-compiled module stay
         // available.
-        auto scope = DECLARE_THROW_SCOPE(vm);
         JSValue webAssembly = get(this, Identifier::fromString(vm, "WebAssembly"_s));
         RETURN_IF_EXCEPTION(scope, );
         if (webAssembly.isObject()) {
@@ -1086,6 +1089,7 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
     // but it should not be visible in node:vm contexts.
     JSC::DeletePropertySlot slot;
     JSC::JSObject::deleteProperty(this, this, vm.propertyNames->Loader, slot);
+    RETURN_IF_EXCEPTION(scope, );
 
     vm.ensureTerminationException();
 
@@ -1258,7 +1262,9 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
 
             // If there is a `get` trap, we don't need to our special handling
             if (getHandler) {
-                if (contextifiedObject->methodTable()->getOwnPropertySlot(contextifiedObject, globalObject, propertyName, slot)) {
+                bool result = contextifiedObject->methodTable()->getOwnPropertySlot(contextifiedObject, globalObject, propertyName, slot);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (result) {
                     return true;
                 }
                 goto try_from_global;
@@ -1367,6 +1373,7 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
 
     PropertySlot slot(globalObject, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
     bool isDeclaredOnGlobalProxy = globalObject->JSC::JSGlobalObject::getOwnPropertySlot(globalObject, globalObject, propertyName, slot);
+    RETURN_IF_EXCEPTION(scope, false);
 
     // If the property is set on the global as neither writable nor
     // configurable, don't change it on the global or sandbox.
@@ -1428,7 +1435,9 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     MarkedArgumentBuffer parameters;
     JSValue paramsArg = callFrame->argument(1);
     if (paramsArg && !paramsArg.isUndefined()) {
-        if (!paramsArg.isObject() || !isArray(globalObject, paramsArg)) {
+        bool paramsIsArray = paramsArg.isObject() && isArray(globalObject, paramsArg);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!paramsIsArray) {
             return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "params"_s, "Array"_s, paramsArg);
         }
 
@@ -1483,7 +1492,9 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     // Process contextExtensions if they exist
     JSScope* functionScope = options.parsingContext ? options.parsingContext : globalObject;
 
-    if (!options.contextExtensions.isUndefinedOrNull() && !options.contextExtensions.isEmpty() && options.contextExtensions.isObject() && isArray(globalObject, options.contextExtensions)) {
+    bool hasContextExtensions = !options.contextExtensions.isUndefinedOrNull() && !options.contextExtensions.isEmpty() && options.contextExtensions.isObject() && isArray(globalObject, options.contextExtensions);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (hasContextExtensions) {
         auto* contextExtensionsArray = dynamicDowncast<JSArray>(options.contextExtensions);
         unsigned length = contextExtensionsArray ? contextExtensionsArray->length() : 0;
 
@@ -1621,12 +1632,13 @@ bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* sandbox = thisObject->m_sandbox.get();
-    if (!sandbox->deleteProperty(sandbox, globalObject, propertyName, slot)) {
+    bool deleted = sandbox->deleteProperty(sandbox, globalObject, propertyName, slot);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!deleted) {
         return false;
     }
 
-    RETURN_IF_EXCEPTION(scope, false);
-    return Base::deleteProperty(cell, globalObject, propertyName, slot);
+    RELEASE_AND_RETURN(scope, Base::deleteProperty(cell, globalObject, propertyName, slot));
 }
 
 static JSPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin& sourceOrigin)
@@ -1638,7 +1650,7 @@ static JSPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject
 
     if (sourceOrigin.fetcher() == nullptr && sourceOrigin.url().isEmpty()) {
         if (globalObject->dynamicImportCallback().isCallable()) {
-            return NodeVM::importModuleInner(globalObject, moduleName, WTF::move(parameters), sourceOrigin, globalObject->dynamicImportCallback(), JSValue {});
+            RELEASE_AND_RETURN(scope, NodeVM::importModuleInner(globalObject, moduleName, WTF::move(parameters), sourceOrigin, globalObject->dynamicImportCallback(), JSValue {}));
         }
 
         promise->reject(vm, createError(globalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));
@@ -1990,7 +2002,9 @@ bool CompileFunctionOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& 
                 return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);
 
             if (auto* contextExtensionsObject = asObject(contextExtensionsValue)) {
-                if (!isArray(globalObject, contextExtensionsObject))
+                bool contextExtensionsIsArray = isArray(globalObject, contextExtensionsObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!contextExtensionsIsArray)
                     return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);
 
                 // Validate that all items in the array are objects

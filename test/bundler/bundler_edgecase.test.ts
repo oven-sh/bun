@@ -3170,6 +3170,59 @@ describe("bundler", () => {
     },
     run: { stdout: "try:false" },
   });
+  // A sloppy-mode file may declare `arguments`/`eval`. ESM output is always
+  // strict, so bundling such a file to ESM is an error in the file, while the
+  // non-strict output formats keep the declaration as written.
+  itBundled("edgecase/SloppyArgumentsDeclarationESMOutputIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        var arguments = 1;
+        console.log(arguments);
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/entry.js": [
+        'Declarations with the name "arguments" cannot be used with the ESM output format due to strict mode',
+      ],
+    },
+  });
+  itBundled("edgecase/SloppyEvalFunctionDeclarationESMOutputIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        function eval() {}
+        console.log(typeof eval);
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/entry.js": ['Declarations with the name "eval" cannot be used with the ESM output format due to strict mode'],
+    },
+  });
+  itBundled("edgecase/SloppyArgumentsDeclarationCJSOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        var arguments = 1;
+        console.log(arguments);
+      `,
+    },
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("var arguments = 1;");
+    },
+  });
+  itBundled("edgecase/SloppyArgumentsDeclarationIIFEOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        var arguments = 1;
+        console.log(arguments);
+      `,
+    },
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("var arguments = 1;");
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

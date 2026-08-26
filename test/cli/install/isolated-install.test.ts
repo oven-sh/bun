@@ -1937,24 +1937,15 @@ test("runs lifecycle scripts correctly", async () => {
   expect(allLifecycleScriptsDir).toEqual(["all-lifecycle-scripts"]);
 });
 
-// When an auto-installed peer dependency has its OWN peer deps, those
-// transitive peers get re-queued during peer processing. If all manifest
-// loads are synchronous (cached with valid max-age) AND the transitive peer's
-// version constraint doesn't match what's already in the lockfile,
-// pendingTaskCount() stays at 0 and waitForPeers was skipped — leaving
-// the transitive peer's resolution unset (= invalid_package_id → filtered
-// from the install).
-test("transitive peer deps are resolved when resolution is fully synchronous", async () => {
+// Self-contained HTTP server that serves package manifests & tarballs
+// directly from the Verdaccio fixtures, with Cache-Control: max-age=300
+// to replicate npmjs.org behavior (fully synchronous on warm cache).
+function serveFixtures() {
   const packagesDir = join(import.meta.dir, "registry", "packages");
-
-  // Self-contained HTTP server that serves package manifests & tarballs
-  // directly from the Verdaccio fixtures, with Cache-Control: max-age=300
-  // to replicate npmjs.org behavior (fully synchronous on warm cache).
-  using server = Bun.serve({
+  const server = Bun.serve({
     port: 0,
     async fetch(req) {
-      const url = new URL(req.url);
-      const pathname = url.pathname;
+      const pathname = new URL(req.url).pathname;
 
       // Tarball: /<name>/-/<name>-<version>.tgz
       if (pathname.endsWith(".tgz")) {
@@ -1979,10 +1970,9 @@ test("transitive peer deps are resolved when resolution is fully synchronous", a
 
       // Rewrite tarball URLs to point at this server
       const meta = await metaFile.json();
-      const port = server.port;
       for (const [ver, info] of Object.entries(meta.versions ?? {}) as [string, any][]) {
         if (info?.dist?.tarball) {
-          info.dist.tarball = `http://localhost:${port}/${packageName}/-/${packageName}-${ver}.tgz`;
+          info.dist.tarball = `http://localhost:${server.port}/${packageName}/-/${packageName}-${ver}.tgz`;
         }
       }
 
@@ -1994,6 +1984,18 @@ test("transitive peer deps are resolved when resolution is fully synchronous", a
       });
     },
   });
+  return server;
+}
+
+// When an auto-installed peer dependency has its OWN peer deps, those
+// transitive peers get re-queued during peer processing. If all manifest
+// loads are synchronous (cached with valid max-age) AND the transitive peer's
+// version constraint doesn't match what's already in the lockfile,
+// pendingTaskCount() stays at 0 and waitForPeers was skipped — leaving
+// the transitive peer's resolution unset (= invalid_package_id → filtered
+// from the install).
+test("transitive peer deps are resolved when resolution is fully synchronous", async () => {
+  using server = serveFixtures();
 
   using packageDir = tempDir("transitive-peer-test-", {});
   const packageJson = join(String(packageDir), "package.json");
@@ -2047,6 +2049,55 @@ test("transitive peer deps are resolved when resolution is fully synchronous", a
   expect(existsSync(join(bunDir, strictPeerEntry!, "node_modules", "no-deps"))).toBe(true);
 
   // Verify the chain is intact
+  expect(withoutEntryHash(readlinkSync(join(bunDir, usesStrictEntry!, "node_modules", "strict-peer-dep")))).toBe(
+    join("..", "..", strictPeerEntry!, "node_modules", "strict-peer-dep"),
+  );
+});
+
+// https://github.com/oven-sh/bun/issues/40466
+// Two registry URLs sharing one install cache. The extracted-tarball cache key
+// has no port, so the warmup's strict-peer-dep tarball is reused by the second
+// registry, while the manifest cache is keyed by registry URL hash and is not.
+// The cold install then fetches strict-peer-dep's manifest as its last pending
+// task, resolves the package with no new task (tarball already extracted), and
+// defers its peer `no-deps@^2.0.0`. Without the fix nothing wakes the wait
+// loop again and `bun install` hangs in "Resolving dependencies" forever.
+test("transitive peer resolves when its tarball is cached from another registry", async () => {
+  using serverA = serveFixtures();
+  using serverB = serveFixtures();
+
+  using root = tempDir("transitive-peer-two-registries-", {
+    "warmup/package.json": JSON.stringify({
+      name: "warmup",
+      dependencies: { "strict-peer-dep": "1.0.0" },
+    }),
+    "cold/package.json": JSON.stringify({
+      name: "cold",
+      dependencies: { "no-deps": "1.0.0", "uses-strict-peer": "1.0.0" },
+    }),
+  });
+  const cacheDir = join(String(root), "cache").replaceAll("\\", "\\\\");
+  const bunfig = (port: number) =>
+    `[install]\ncache = "${cacheDir}"\nregistry = "http://localhost:${port}/"\nlinker = "isolated"\n`;
+  await write(join(String(root), "warmup", "bunfig.toml"), bunfig(serverA.port));
+  await write(join(String(root), "cold", "bunfig.toml"), bunfig(serverB.port));
+
+  // Caches strict-peer-dep's manifest (registry A's URL hash) and extracts its
+  // tarball (shared across registries).
+  await runBunInstall(bunEnv, join(String(root), "warmup"), { allowWarnings: true });
+
+  // Hangs forever without the fix.
+  await runBunInstall(bunEnv, join(String(root), "cold"), { allowWarnings: true });
+
+  const bunDir = join(String(root), "cold", "node_modules", ".bun");
+  const entries = await readdirSorted(bunDir);
+  const strictPeerEntry = entries.find(e => e.startsWith("strict-peer-dep@1.0.0"));
+  const usesStrictEntry = entries.find(e => e.startsWith("uses-strict-peer@1.0.0"));
+  expect(strictPeerEntry).toBeDefined();
+  expect(usesStrictEntry).toBeDefined();
+
+  // The deferred transitive peer must end up resolved and linked.
+  expect(existsSync(join(bunDir, strictPeerEntry!, "node_modules", "no-deps"))).toBe(true);
   expect(withoutEntryHash(readlinkSync(join(bunDir, usesStrictEntry!, "node_modules", "strict-peer-dep")))).toBe(
     join("..", "..", strictPeerEntry!, "node_modules", "strict-peer-dep"),
   );

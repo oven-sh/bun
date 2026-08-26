@@ -290,29 +290,26 @@ public:
 
     void copyNameAndLength(JSC::VM& vm, JSGlobalObject* global, JSC::JSValue value)
     {
-        auto catcher = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        auto scope = DECLARE_THROW_SCOPE(vm);
         WTF::String nameToUse;
         if (auto* fn = dynamicDowncast<JSFunction>(value)) {
             nameToUse = fn->name(vm);
             JSValue lengthJSValue = fn->get(global, vm.propertyNames->length);
+            RETURN_IF_EXCEPTION(scope, );
             if (lengthJSValue.isNumber()) {
                 this->putDirect(vm, vm.propertyNames->length, (lengthJSValue), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
             }
         } else if (auto* fn = dynamicDowncast<JSMockFunction>(value)) {
             JSValue nameValue = fn->get(global, vm.propertyNames->name);
-            if (!catcher.exception()) {
-                nameToUse = nameValue.toWTFString(global);
-            }
+            RETURN_IF_EXCEPTION(scope, );
+            nameToUse = nameValue.toWTFString(global);
+            RETURN_IF_EXCEPTION(scope, );
         } else if (auto* fn = dynamicDowncast<InternalFunction>(value)) {
             nameToUse = fn->name();
         } else {
             nameToUse = "mockConstructor"_s;
         }
         this->setName(nameToUse);
-
-        if (catcher.exception()) {
-            (void)catcher.tryClearException();
-        }
     }
 
     void initMock()
@@ -609,7 +606,7 @@ const ClassInfo JSMockFunctionPrototype::s_info = { "Mock"_s, &Base::s_info, nul
 
 // The sets are weak, so a mock that has been collected is simply not visited.
 template<typename Functor>
-static void forEachMockInSet(JSC::Strong<JSC::Unknown>& mockSet, const Functor& apply)
+static void forEachMockInSet(JSC::WriteBarrier<JSC::Unknown>& mockSet, const Functor& apply)
 {
     if (!mockSet) {
         return;
@@ -773,6 +770,8 @@ template<typename Visitor> void JSMockModule::visit(Visitor& visitor)
     name.visit(visitor);
     FOR_EACH_JSMOCKMODULE_GC_MEMBER(VISIT_JSMOCKMODULE_GC_MEMBER)
 #undef VISIT_JSMOCKMODULE_GC_MEMBER
+    visitor.append(activeSpies);
+    visitor.append(activeMocks);
 }
 
 template void JSMockModule::visit(JSC::AbstractSlotVisitor&);
@@ -1355,6 +1354,10 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementation, (JSC::JSGlobalObject 
     MarkedArgumentBuffer args;
     NakedPtr<JSC::Exception> exception;
     JSValue returnValue = JSC::call(globalObject, callback, callData, jsUndefined(), args, exception);
+    if (exception) [[unlikely]] {
+        throwException(globalObject, scope, exception.get());
+        return {};
+    }
 
     if (auto promise = tryJSDynamicCast<JSC::JSPromise*>(returnValue)) {
         auto capability = JSC::JSPromise::createNewPromiseCapability(globalObject, globalObject->promiseConstructor());
@@ -1377,7 +1380,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementation, (JSC::JSGlobalObject 
     }
 
     thisObject->implementation.set(vm, thisObject, lastImpl);
-    thisObject->tail.set(vm, thisObject, lastImpl);
+    thisObject->tail.set(vm, thisObject, lastTail);
     thisObject->fallbackImplmentation.set(vm, thisObject, lastFallback);
 
     return JSC::JSValue::encode(jsUndefined());
@@ -1404,7 +1407,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsNow, (JSC::JSGlobalObject * globalObject, JSC
     return JSValue::encode(jsNumber(globalObject->jsDateNow()));
 }
 
-extern "C" void Bun__FakeTimers__setSystemTime(double ms);
+extern "C" void Bun__FakeTimers__setSystemTime(JSC::JSGlobalObject* globalObject, double ms);
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
@@ -1422,7 +1425,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalO
     globalObject->overridenDateNow = ms;
     // Rebase the Rust-side fake-timers offset so advanceTimersByTime ticks
     // from this value instead of the activation-time clock.
-    Bun__FakeTimers__setSystemTime(ms);
+    Bun__FakeTimers__setSystemTime(globalObject, ms);
 
     return JSValue::encode(callframe->thisValue());
 }
@@ -1487,8 +1490,10 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
             if (slot.isTaintedByOpaqueObject()) [[unlikely]] {
                 // if it's a Proxy or JSModuleNamespaceObject
                 value = object->get(globalObject, propertyKey);
+                RETURN_IF_EXCEPTION(scope, {});
             } else {
                 value = slot.getValue(globalObject, propertyKey);
+                RETURN_IF_EXCEPTION(scope, {});
             }
 
             if (dynamicDowncast<JSMockFunction>(value)) {
@@ -1507,6 +1512,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
                 attributes = slot.attributes();
 
             mock->copyNameAndLength(vm, globalObject, value);
+            RETURN_IF_EXCEPTION(scope, {});
 
             if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
                 moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
@@ -1555,7 +1561,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
         {
             if (!globalObject->mockModule.activeSpies) {
                 ActiveSpySet* activeSpies = ActiveSpySet::create(vm, globalObject->mockModule.activeSpySetStructure.getInitializedOnMainThread(globalObject));
-                globalObject->mockModule.activeSpies.set(vm, activeSpies);
+                globalObject->mockModule.activeSpies.set(vm, globalObject, activeSpies);
             }
             ActiveSpySet* activeSpies = uncheckedDowncast<ActiveSpySet>(globalObject->mockModule.activeSpies.get());
             activeSpies->add(vm, mock, mock);
@@ -1564,7 +1570,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
         {
             if (!globalObject->mockModule.activeMocks) {
                 ActiveSpySet* activeMocks = ActiveSpySet::create(vm, globalObject->mockModule.activeSpySetStructure.getInitializedOnMainThread(globalObject));
-                globalObject->mockModule.activeMocks.set(vm, activeMocks);
+                globalObject->mockModule.activeMocks.set(vm, globalObject, activeMocks);
             }
             ActiveSpySet* activeMocks = uncheckedDowncast<ActiveSpySet>(globalObject->mockModule.activeMocks.get());
             activeMocks->add(vm, mock, mock);
@@ -1611,7 +1617,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsMockFn, (JSC::JSGlobalObject * lexicalGlobalO
 
     if (!globalObject->mockModule.activeMocks) {
         ActiveSpySet* activeMocks = ActiveSpySet::create(vm, globalObject->mockModule.activeSpySetStructure.getInitializedOnMainThread(globalObject));
-        globalObject->mockModule.activeMocks.set(vm, activeMocks);
+        globalObject->mockModule.activeMocks.set(vm, globalObject, activeMocks);
     }
 
     ActiveSpySet* activeMocks = uncheckedDowncast<ActiveSpySet>(globalObject->mockModule.activeMocks.get());

@@ -365,7 +365,6 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
-    s->fin_deferred = 0;
     s->next = 0;
     s->prev = 0;
     s->connect_state = NULL;
@@ -379,6 +378,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     ls->on_server_name = NULL;
     ls->socket_ext_size = socket_ext_size;
     ls->deferred_accept = 0;
+    ls->accept_paused = (options & LIBUS_SOCKET_OPEN_PAUSED) && !ssl_ctx;
 
     /* Link into the group so close_all() / test-isolation can find it. */
     ls->next = group->head_listen_sockets;
@@ -545,7 +545,6 @@ static inline void us_internal_init_connect_socket(struct us_socket_t *s,
     s->flags.last_write_failed = 0;
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
-    s->fin_deferred = 0;
     s->connect_state = NULL;
     s->connect_next = NULL;
 }

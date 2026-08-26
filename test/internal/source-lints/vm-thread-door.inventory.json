@@ -50,7 +50,7 @@
   },
   "src/jsc/node_path.rs": {
     "unsafe impl Send": [
-      "ThreadSafe<T>"
+      "ThreadIsolated<T>"
     ]
   },
   "src/jsc/web_worker.rs": {
@@ -63,12 +63,12 @@
     "unsafe impl Send": [
       "Blob",
       "Bytes",
-      "StoreRef"
+      "Store"
     ],
     "unsafe impl Sync": [
       "Blob",
       "Bytes",
-      "StoreRef"
+      "Store"
     ]
   },
   "src/runtime/api/JSTranspiler.rs": {

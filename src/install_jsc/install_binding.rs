@@ -1,4 +1,4 @@
-use bun_jsc::{JSGlobalObject, JSValue};
+use bun_jsc::{JSGlobalObject, JSValue, StringJsc as _};
 
 pub mod bun_install_js_bindings {
     use super::*;
@@ -11,7 +11,7 @@ pub mod bun_install_js_bindings {
             b"parseLockfile",
             JSFunction::create(
                 global,
-                bun_core::String::static_(b"parseLockfile"),
+                "parseLockfile",
                 // `#[bun_jsc::host_fn]` on the module-scope `js_parse_lockfile`
                 // emits this `JSHostFn`-ABI shim.
                 __jsc_host_js_parse_lockfile,
@@ -33,7 +33,7 @@ pub mod bun_install_js_bindings {
         use core::ptr::NonNull;
 
         use bstr::BStr;
-        use bun_core::{OwnedString, String as BunString};
+        use bun_core::String as BunString;
         use bun_install::lockfile::lockfile_json_stringify_for_debugging::{
             WriteStream, WriteStreamOptions, json_stringify,
         };
@@ -44,7 +44,7 @@ pub mod bun_install_js_bindings {
         let mut log = bun_ast::Log::init();
 
         let args = frame.arguments();
-        let cwd = args[0].to_slice_or_null(global)?;
+        let cwd = args[0].to_utf8(global)?;
 
         let dir = match bun_sys::open_dir_absolute_not_for_deleting_or_renaming(cwd.slice()) {
             Ok(d) => d,
@@ -111,11 +111,6 @@ pub mod bun_install_js_bindings {
         json_stringify(&lockfile_, &mut w).expect("Vec<u8> JSON writer is infallible");
         let stringified = w.into_bytes();
 
-        // `bun_core::String` is `Copy` (no `Drop`),
-        // so the +1 from `clone_utf8` must be released via `OwnedString`'s RAII
-        // — `to_js_by_parse_json` borrows, it does not consume.
-        let mut str = OwnedString::new(BunString::clone_utf8(&stringified));
-
-        bun_jsc::bun_string_jsc::to_js_by_parse_json(&mut str, global)
+        BunString::borrow_utf8(&stringified).to_js_by_parse_json(global)
     }
 }

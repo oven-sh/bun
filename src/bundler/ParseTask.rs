@@ -200,7 +200,6 @@ pub(crate) struct ResultError {
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Step {
     Pending,
-    ReadFile,
     Parse,
     Resolve,
 }
@@ -654,6 +653,56 @@ pub mod parse_worker {
         pub(crate) content_hash: u64,
     }
 
+    /// Returns the unique key the printer replaces with the asset's final path.
+    fn register_embedded_asset<'b>(
+        bump: &'b Bump,
+        source: &Source,
+        unique_key_prefix: u64,
+        unique_key_for_additional_file: &mut FileLoaderHash,
+    ) -> &'b [u8] {
+        use core::fmt::Write as _;
+        let mut buf = bun_alloc::ArenaString::new_in(bump);
+        write!(
+            &mut buf,
+            "{}",
+            crate::chunk::UniqueKey {
+                prefix: unique_key_prefix,
+                kind: crate::chunk::QueryKind::Asset,
+                index: source.index.0,
+            },
+        )
+        .expect("unreachable");
+        let unique_key = buf.into_bump_str().as_bytes();
+        *unique_key_for_additional_file = FileLoaderHash {
+            key: ast::StoreStr::new(unique_key),
+            content_hash: ContentHasher::run(&source.contents),
+        };
+        unique_key
+    }
+
+    /// `require("<unique key>")`. Unlike `import.meta.require`, the call target
+    /// prints per output format, so `--bytecode` (CommonJS) can compile it.
+    fn require_embedded_asset(unique_key: &[u8]) -> Expr {
+        let import_path = Expr::init(
+            E::String {
+                data: unique_key.into(),
+                ..Default::default()
+            },
+            Loc { start: 0 },
+        );
+        Expr::init(
+            E::Call {
+                target: Expr {
+                    data: ast::ExprData::ERequireCallTarget,
+                    loc: Loc { start: 0 },
+                },
+                args: bun_ast::ExprNodeList::from_arena_slice(&[import_path]),
+                ..Default::default()
+            },
+            Loc { start: 0 },
+        )
+    }
+
     // ───────────────────────────────────────────────────────────────────────────
     // CSS Symbol bridge — `bun_ast::Symbol` ↔ `bun_ast::Symbol`
     //
@@ -887,13 +936,26 @@ pub mod parse_worker {
                 return result;
             }
             Loader::Text => {
-                let root = Expr::init(
-                    E::String {
-                        data: source.contents().into(),
-                        ..Default::default()
-                    },
-                    Loc { start: 0 },
-                );
+                // A standalone executable embeds the text as a string body the
+                // runtime aliases without a copy (`encode_text_module`), so the
+                // module becomes `export default require("<bunfs path>")`.
+                // Browser chunks cannot reach the embedded graph.
+                let root = if topts.compile_mode.is_executable() && topts.target.is_bun() {
+                    require_embedded_asset(register_embedded_asset(
+                        bump,
+                        source,
+                        unique_key_prefix,
+                        unique_key_for_additional_file,
+                    ))
+                } else {
+                    Expr::init(
+                        E::String {
+                            data: source.contents().into(),
+                            ..Default::default()
+                        },
+                        Loc { start: 0 },
+                    )
+                };
                 let mut ast = JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump,
@@ -968,29 +1030,15 @@ pub mod parse_worker {
                     return Err(crate::Error::ParserError);
                 }
 
-                let path_to_use: &[u8] = 'brk: {
-                    // Implements embedded sqlite
-                    if loader == Loader::SqliteEmbedded {
-                        let mut buf = bun_alloc::ArenaString::new_in(bump);
-                        write!(
-                            &mut buf,
-                            "{}",
-                            crate::chunk::UniqueKey {
-                                prefix: unique_key_prefix,
-                                kind: crate::chunk::QueryKind::Asset,
-                                index: source.index.0,
-                            },
-                        )
-                        .expect("unreachable");
-                        let embedded_path = buf.into_bump_str().as_bytes();
-                        *unique_key_for_additional_file = FileLoaderHash {
-                            key: ast::StoreStr::new(embedded_path),
-                            content_hash: ContentHasher::run(&source.contents),
-                        };
-                        break 'brk embedded_path;
-                    }
-
-                    break 'brk source.path.text;
+                let path_to_use: &[u8] = if loader == Loader::SqliteEmbedded {
+                    register_embedded_asset(
+                        bump,
+                        source,
+                        unique_key_prefix,
+                        unique_key_for_additional_file,
+                    )
+                } else {
+                    source.path.text
                 };
 
                 // This injects the following code:
@@ -1089,50 +1137,16 @@ pub mod parse_worker {
                     return Err(crate::Error::ParserError);
                 }
 
-                let mut buf = bun_alloc::ArenaString::new_in(bump);
-                write!(
-                    &mut buf,
-                    "{}",
-                    crate::chunk::UniqueKey {
-                        prefix: unique_key_prefix,
-                        kind: crate::chunk::QueryKind::Asset,
-                        index: source.index.0,
-                    },
-                )
-                .expect("unreachable");
-                let unique_key = buf.into_bump_str().as_bytes();
                 // This injects the following code:
                 //
                 // require(unique_key)
                 //
-                let import_path = Expr::init(
-                    E::String {
-                        data: unique_key.into(),
-                        ..Default::default()
-                    },
-                    Loc { start: 0 },
-                );
-
-                let require_args = bump.alloc_slice_fill_default::<Expr>(1);
-                require_args[0] = import_path;
-
-                let root = Expr::init(
-                    E::Call {
-                        target: Expr {
-                            data: ast::ExprData::ERequireCallTarget,
-                            loc: Loc { start: 0 },
-                        },
-                        // SAFETY: bump-owned slice; never grown via this Vec.
-                        args: unsafe { bun_ast::ExprNodeList::from_bump_slice(require_args) },
-                        ..Default::default()
-                    },
-                    Loc { start: 0 },
-                );
-
-                *unique_key_for_additional_file = FileLoaderHash {
-                    key: ast::StoreStr::new(unique_key),
-                    content_hash: ContentHasher::run(&source.contents),
-                };
+                let root = require_embedded_asset(register_embedded_asset(
+                    bump,
+                    source,
+                    unique_key_prefix,
+                    unique_key_for_additional_file,
+                ));
                 return Ok(JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump,
@@ -1689,25 +1703,6 @@ pub mod parse_worker {
         pub(crate) column_end: i32,
     }
 
-    impl Default for BunLogOptions {
-        fn default() -> Self {
-            Self {
-                struct_size: core::mem::size_of::<BunLogOptions>(),
-                message_ptr: core::ptr::null(),
-                message_len: 0,
-                path_ptr: core::ptr::null(),
-                path_len: 0,
-                source_line_text_ptr: core::ptr::null(),
-                source_line_text_len: 0,
-                level: bun_ast::Level::Err,
-                line: 0,
-                line_end: 0,
-                column: 0,
-                column_end: 0,
-            }
-        }
-    }
-
     // These structs are passed by-pointer to **third-party** native plugins via
     // `packages/bun-native-bundler-plugin-api/bundler_plugin.h`, so layout drift
     // is a silent ABI break for every plugin in the wild. Literals are the 64-bit
@@ -2082,10 +2077,10 @@ pub mod parse_worker {
             let namespace = if self.file_path.namespace == b"file" {
                 &bun_core::String::EMPTY
             } else {
-                namespace_str = bun_core::String::init(self.file_path.namespace);
+                namespace_str = bun_core::String::from_bytes(self.file_path.namespace);
                 &namespace_str
             };
-            let path_str = bun_core::String::init(self.file_path.text);
+            let path_str = bun_core::String::from_bytes(self.file_path.text);
             // Copy the `&Cell<i32>` out so passing it to FFI doesn't go through
             // `&mut self` after `self_ptr` is derived.
             let should_continue_running = self.should_continue_running;
@@ -2697,11 +2692,7 @@ pub mod parse_worker {
             package_name: task.package_name,
 
             // Hash the files in here so that we do it in parallel.
-            content_hash_for_additional_file: if loader.should_copy_for_bundling() {
-                unique_key_for_additional_file.content_hash
-            } else {
-                0
-            },
+            content_hash_for_additional_file: unique_key_for_additional_file.content_hash,
         })
     }
 

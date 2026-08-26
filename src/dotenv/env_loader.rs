@@ -274,13 +274,13 @@ impl Loader {
 
             let mut endpoint: Box<[u8]> = Box::default();
             let mut insecure_http = false;
-            if let Some(endpoint_) = self
+            if let Some(parsed) = self
                 .get(b"S3_ENDPOINT")
                 .or_else(|| self.get(b"AWS_ENDPOINT"))
+                .and_then(URL::parse_s3_endpoint)
             {
-                let url = URL::parse(endpoint_);
-                endpoint = Box::from(url.host_with_path());
-                insecure_http = url.is_http();
+                endpoint = parsed.host_with_path;
+                insecure_http = parsed.is_http;
             }
 
             let bucket: Box<[u8]> = self
@@ -1289,12 +1289,6 @@ pub struct Map {
     pub map: HashTable,
 }
 
-impl Default for Map {
-    fn default() -> Self {
-        Self::init()
-    }
-}
-
 impl Map {
     /// Builds a NULL-terminated `K=V\0` envp array. Returns an owning struct so
     /// dropping it frees the joined buffers (PORTING.md §Forbidden: no Box::leak).
@@ -1507,6 +1501,12 @@ impl NullDelimitedEnvMap {
     #[inline]
     pub fn as_ptr(&self) -> *const *const c_char {
         self.envp.as_ptr()
+    }
+    /// The `KEY=VALUE` entries as C strings.
+    pub fn iter(&self) -> impl Iterator<Item = &core::ffi::CStr> {
+        self._storage.iter().map(|s| {
+            core::ffi::CStr::from_bytes_until_nul(s).expect("entries are built NUL-terminated")
+        })
     }
 }
 

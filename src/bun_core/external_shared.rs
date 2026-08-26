@@ -39,13 +39,6 @@ impl<T: ExternalSharedDescriptor> ExternalShared<T> {
         self.ptr.as_ptr()
     }
 
-    /// Alias of [`Self::get`] — provided so call sites that previously used a
-    /// hand-rolled `NonNull` wrapper (e.g. `AbortSignalRef`) keep compiling.
-    #[inline]
-    pub fn as_ptr(&self) -> *mut T {
-        self.ptr.as_ptr()
-    }
-
     /// # Safety
     /// `raw` must be a valid pointer managed by the external refcount.
     pub unsafe fn clone_from_raw(raw: *mut T) -> Self {
@@ -88,57 +81,6 @@ impl<T: ExternalSharedDescriptor> Drop for ExternalShared<T> {
     fn drop(&mut self) {
         // SAFETY: `self.ptr` is valid; we hold one ref which we now release.
         unsafe { T::ext_deref(self.ptr.as_ptr()) };
-    }
-}
-
-/// Optional variant of [`ExternalShared`].
-#[repr(transparent)]
-pub struct ExternalSharedOptional<T: ExternalSharedDescriptor> {
-    ptr: Option<NonNull<T>>,
-}
-
-impl<T: ExternalSharedDescriptor> ExternalSharedOptional<T> {
-    pub(crate) const fn init_null() -> Self {
-        Self { ptr: None }
-    }
-
-    /// `incremented_raw`, if non-null, should have already had its ref count incremented by 1.
-    ///
-    /// # Safety
-    /// If non-null, `incremented_raw` must be valid and carry one transferred ref.
-    pub unsafe fn adopt(incremented_raw: *mut T) -> Self {
-        Self {
-            ptr: NonNull::new(incremented_raw),
-        }
-    }
-
-    pub fn get(&self) -> Option<*mut T> {
-        self.ptr.map(|p| p.as_ptr())
-    }
-}
-
-impl<T: ExternalSharedDescriptor> Default for ExternalSharedOptional<T> {
-    fn default() -> Self {
-        Self::init_null()
-    }
-}
-
-impl<T: ExternalSharedDescriptor> Clone for ExternalSharedOptional<T> {
-    fn clone(&self) -> Self {
-        if let Some(ptr) = self.ptr {
-            // SAFETY: `ptr` is valid while `self` is alive.
-            unsafe { T::ext_ref(ptr.as_ptr()) };
-        }
-        Self { ptr: self.ptr }
-    }
-}
-
-impl<T: ExternalSharedDescriptor> Drop for ExternalSharedOptional<T> {
-    fn drop(&mut self) {
-        if let Some(ptr) = self.ptr {
-            // SAFETY: `ptr` is valid; we hold one ref which we now release.
-            unsafe { T::ext_deref(ptr.as_ptr()) };
-        }
     }
 }
 

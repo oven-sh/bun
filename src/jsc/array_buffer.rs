@@ -225,6 +225,10 @@ impl ArrayBuffer {
         Ok(buffer_value)
     }
 
+    /// `Ok(JSValue::ZERO)` means the C++ side declined (length above the
+    /// ArrayBuffer limit, `mmap` failed, or Windows) and the caller falls back
+    /// to copying; the typed-array allocation can also throw, so empty alone
+    /// does not mean "declined".
     #[inline]
     pub fn to_array_buffer_from_shared_memfd(
         fd: i64,
@@ -233,8 +237,10 @@ impl ArrayBuffer {
         byte_length: usize,
         total_size: usize,
         ty: JSType,
-    ) -> JSValue {
-        ArrayBuffer__fromSharedMemfd(fd, global, byte_offset, byte_length, total_size, ty)
+    ) -> JsResult<JSValue> {
+        crate::call_check_slow(global, || {
+            ArrayBuffer__fromSharedMemfd(fd, global, byte_offset, byte_length, total_size, ty)
+        })
     }
 
     pub fn to_js_buffer_from_memfd(fd: Fd, global: &JSGlobalObject) -> JsResult<JSValue> {
@@ -362,13 +368,13 @@ impl ArrayBuffer {
         global: &JSGlobalObject,
         typed_array_type: JSType,
         bytes: &mut [u8],
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         match typed_array_type {
             // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); `bytes` is
             // a mimalloc-backed buffer whose ownership transfers to JSC.
-            JSType::ArrayBuffer => unsafe {
+            JSType::ArrayBuffer => Ok(unsafe {
                 JSArrayBuffer__fromDefaultAllocator(global, bytes.as_mut_ptr(), bytes.len())
-            },
+            }),
             // `JSUint8Array::from_bytes` takes `Box<[u8]>`; reconstruct
             // ownership from the mimalloc-backed slice the caller hands us.
             JSType::Uint8Array => {

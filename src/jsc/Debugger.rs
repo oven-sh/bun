@@ -156,15 +156,15 @@ impl Default for Debugger {
 }
 
 // SAFETY (safe fn): `JSGlobalObject` is an opaque `UnsafeCell`-backed handle
-// (`&` is ABI-identical to non-null `*mut`); `BunString` is a `#[repr(C)]` POD
-// out-param. Remaining args are by-value scalars.
+// (`&` is ABI-identical to non-null `*mut`); `BunString` is a `#[repr(C)]`
+// in-param C++ only reads. Remaining args are by-value scalars.
 unsafe extern "C" {
     safe fn Bun__createJSDebugger(global: &JSGlobalObject) -> u32;
     safe fn Bun__ensureDebugger(ctx_id: u32, wait: bool);
     safe fn Bun__startJSDebuggerThread(
         global: &JSGlobalObject,
         ctx_id: u32,
-        url: &mut BunString,
+        url: &BunString,
         from_env: c_int,
         is_connect: bool,
         is_node_inspector: bool,
@@ -174,7 +174,8 @@ unsafe extern "C" {
 static FUTEX_ATOMIC: AtomicU32 = AtomicU32::new(0);
 static HAS_CREATED_DEBUGGER: AtomicBool = AtomicBool::new(false);
 
-/// What the debugger thread takes from the debuggee VM's thread.
+/// What [`Debugger::start`] takes from the debuggee VM's thread. The copy of
+/// the debuggee's environment travels next to it and is used up by the VM setup.
 struct DebuggerThreadInit {
     debuggee: crate::VmHandle,
     ctx_id: u32,
@@ -395,6 +396,9 @@ impl Debugger {
             this_ref.as_mut().has_started_debugger = true;
             // Everything the debugger thread needs from this VM, copied here;
             // it reaches back only through the (uncounted) handle to wake us.
+            // That includes the environment: the debugger VM builds its
+            // `process.env` from this copy, not from this thread's loader.
+            let env_map = this_ref.env_loader().map.clone_with_allocator()?;
             let init = DebuggerThreadInit {
                 debuggee: this_ref.handle(),
                 ctx_id: dbg.script_execution_context_id,
@@ -409,7 +413,7 @@ impl Debugger {
             std::thread::Builder::new()
                 .name("Debugger".to_string())
                 .stack_size(16 * 1024 * 1024)
-                .spawn(move || Debugger::start_js_debugger_thread(init))
+                .spawn(move || Debugger::start_js_debugger_thread(env_map, init))
                 .map_err(|_| crate::CrateError::ThreadSpawnFailed)?;
             // The `JoinHandle` is dropped here, detaching the thread.
         }
@@ -424,17 +428,24 @@ impl Debugger {
         Ok(())
     }
 
-    /// Debugger-thread entry: build a second `VirtualMachine`, hold the API
-    /// lock, and run [`Debugger::start`] inside it.
-    fn start_js_debugger_thread(init: DebuggerThreadInit) {
-        // The global allocator is mimalloc and `InitOptions` does not carry
-        // `allocator`/`env_loader` (those are wired by
-        // `RuntimeHooks::init_runtime_state`).
+    /// Debugger-thread entry: build a second `VirtualMachine` on the
+    /// debuggee's copied environment, hold the API lock, and run
+    /// [`Debugger::start`] inside it.
+    ///
+    /// The VM only evaluates built-in modules, so `env_map` is the whole of
+    /// its environment setup: `Transpiler::configure_defines` is not run here.
+    /// It would reload the `.env` files and JSON-parse `NODE_ENV`, and its
+    /// failure (say a stray `\r` in `NODE_ENV`) would abort the debuggee.
+    fn start_js_debugger_thread(env_map: bun_dotenv::Map, init: DebuggerThreadInit) {
         bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Debugger"));
         bun_core::scoped_log!(debugger, "startJSDebuggerThread");
         jsc::mark_binding();
 
         let vm_ptr = VirtualMachine::init(crate::virtual_machine::InitOptions {
+            // Lives as long as the VM, which this thread never tears down.
+            env_loader: Some(bun_core::heap::alloc_nn(bun_dotenv::Loader::init_with_map(
+                env_map,
+            ))),
             is_main_thread: false,
             ..Default::default()
         })
@@ -442,10 +453,6 @@ impl Debugger {
         let _ = vm_ptr;
         // `init` installs the freshly-boxed VM as this thread's singleton.
         let vm = VirtualMachine::get().as_mut();
-
-        vm.transpiler
-            .configure_defines()
-            .unwrap_or_else(|_| panic!("Failed to configure defines"));
         vm.is_main_thread = false;
         vm.event_loop_mut().ensure_waker();
 
@@ -480,15 +487,15 @@ impl Debugger {
         } = init;
 
         if !from_env.is_empty() {
-            let mut url = BunString::clone_utf8(from_env);
+            let url = BunString::borrow_utf8(from_env);
             let _scope = this.enter_event_loop_scope();
-            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 1, is_connect, false);
+            Bun__startJSDebuggerThread(global, ctx_id, &url, 1, is_connect, false);
         }
 
         if let Some(path_or_port) = path_or_port {
-            let mut url = BunString::clone_utf8(path_or_port);
+            let url = BunString::borrow_utf8(path_or_port);
             let _scope = this.enter_event_loop_scope();
-            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 0, is_connect, is_node_inspector);
+            Bun__startJSDebuggerThread(global, ctx_id, &url, 0, is_connect, is_node_inspector);
         }
 
         let _ = this.global().handle_rejected_promises();
@@ -547,7 +554,7 @@ pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: boo
 
     // The URL outlives the process: the debugger struct stores `'static` slices
     // (CLI-arena lifetimes), so leak the runtime-provided URL the same way.
-    let url_bytes: &'static [u8] = Box::leak(url.to_utf8_bytes().into_boxed_slice());
+    let url_bytes: &'static [u8] = Box::leak(url.to_owned_slice().into_boxed_slice());
     this.as_mut().debugger = Some(Box::new(Debugger {
         path_or_port: Some(url_bytes),
         wait_for_connection: if wait_for_connection {
@@ -801,17 +808,17 @@ unsafe extern "C" {
         agent: &mut TestReporterHandle,
         call_frame: &CallFrame,
         test_id: c_int,
-        name: &mut BunString,
+        name: &BunString,
         item_type: TestType,
         parent_id: c_int,
     );
     safe fn Bun__TestReporterAgentReportTestFoundWithLocation(
         agent: &mut TestReporterHandle,
         test_id: c_int,
-        name: &mut BunString,
+        name: &BunString,
         item_type: TestType,
         parent_id: c_int,
-        source_url: &mut BunString,
+        source_url: &BunString,
         line: c_int,
     );
     safe fn Bun__TestReporterAgentReportTestStart(agent: &mut TestReporterHandle, test_id: c_int);
@@ -828,7 +835,7 @@ impl TestReporterHandle {
         &mut self,
         call_frame: &CallFrame,
         test_id: i32,
-        name: &mut BunString,
+        name: &BunString,
         item_type: TestType,
         parent_id: i32,
     ) {
@@ -840,10 +847,10 @@ impl TestReporterHandle {
     pub fn report_test_found_with_location(
         &mut self,
         test_id: i32,
-        name: &mut BunString,
+        name: &BunString,
         item_type: TestType,
         parent_id: i32,
-        source_url: &mut BunString,
+        source_url: &BunString,
         line: i32,
     ) {
         Bun__TestReporterAgentReportTestFoundWithLocation(
@@ -922,7 +929,7 @@ impl TestReporterAgent {
         &self,
         call_frame: &CallFrame,
         test_id: i32,
-        name: &mut BunString,
+        name: &BunString,
         item_type: TestType,
         parent_id: i32,
     ) {

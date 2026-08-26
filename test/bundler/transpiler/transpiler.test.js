@@ -2530,6 +2530,61 @@ console.log(<div {...obj} key="after" />);`),
     });
   });
 
+  // A JSX attribute string keeps its whitespace verbatim and only has its
+  // entities decoded, as in esbuild and TypeScript. (Babel differs: it turns a
+  // newline plus indentation inside an attribute into one space. Bun follows
+  // esbuild here, and its fast path always has.) Only JSX children text gets
+  // its lines trimmed and joined with a single space. The lexer's slow path for
+  // attribute strings, taken when the string contains an `&`, a non-ASCII
+  // character or a `\u`, used to apply the children rules, so
+  // `title="a&amp;\n b"` became "a& b" while `title="a\n b"` was kept as is.
+  describe("JSX attribute strings keep their whitespace when they need decoding", () => {
+    const bun = new Bun.Transpiler({
+      loader: "jsx",
+      define: { "process.env.NODE_ENV": JSON.stringify("development") },
+    });
+
+    // Evaluates the transpiled element with a stand-in jsxDEV that returns the
+    // props, so the assertions are about the runtime string values and not
+    // about which quotes the printer picked.
+    function propsOf(element) {
+      const code = bun.transformSync(`export default ${element};`);
+      expect(code).toStartWith("export default jsxDEV_7x81h0kn(");
+      const expression = code.slice("export default ".length);
+      return new Function("jsxDEV_7x81h0kn", `return ${expression}`)((type, props) => props);
+    }
+
+    it.each([
+      ["plain ASCII (fast path)", `<p title="a\n   b  \n c"/>`, "a\n   b  \n c"],
+      ["entity", `<p title="a&amp;\n   b  \n c"/>`, "a&\n   b  \n c"],
+      ["non-ASCII", `<p title="é\n   b  \n c"/>`, "é\n   b  \n c"],
+      ["single quotes", `<p title='a&amp;\n   b  \n c'/>`, "a&\n   b  \n c"],
+      ["CRLF", `<p title="a&amp;\r\n  b"/>`, "a&\r\n  b"],
+      ["whitespace-only lines", `<p title="&amp;\n   \n"/>`, "&\n   \n"],
+      ["leading and trailing whitespace", `<p title="  &amp; \n "/>`, "  & \n "],
+      ["numeric entity", `<p title="&#65;\n\tb"/>`, "A\n\tb"],
+      // Any `&` takes the slow path, not only ones that turn out to be entities.
+      ["ampersand that is not an entity", `<a title="?a=1&b=2\n  x"/>`, "?a=1&b=2\n  x"],
+      ["ampersand with a `;` on a later line", `<p title="Tom &\n Jerry; friends"/>`, "Tom &\n Jerry; friends"],
+      // Non-ASCII characters that the children rules themselves treat as
+      // whitespace or as line breaks.
+      ["no-break spaces", `<p title="1\n\u00a0\u00a0z"/>`, "1\n\u00a0\u00a0z"],
+      ["U+2028", `<p title="p\u2028q"/>`, "p\u2028q"],
+      ["U+2029", `<p title="p\u2029q"/>`, "p\u2029q"],
+      // JSX strings have no escapes; a `\u` is kept literally, but it is the
+      // third thing (besides `&` and non-ASCII) that sends the lexer down the
+      // decoding path.
+      ["backslash u", `<p title="\\u0041\n   b"/>`, "\\u0041\n   b"],
+    ])("%s", (_, element, title) => {
+      expect(propsOf(element)).toEqual({ title });
+    });
+
+    it("children text still collapses whitespace", () => {
+      expect(propsOf(`<p>a&amp;\n   b  \n c</p>`)).toEqual({ children: "a& b c" });
+      expect(propsOf(`<p>é\n   b  \n c</p>`)).toEqual({ children: "é b c" });
+    });
+  });
+
   it("require with a dynamic non-string expression", () => {
     var nodeTranspiler = new Bun.Transpiler({ platform: "node" });
     expect(nodeTranspiler.transformSync("require('hi' + bar)")).toBe('require("hi" + bar);\n');

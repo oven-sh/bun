@@ -116,16 +116,12 @@ const TJPARAM_MAXPIXELS: c_int = 24;
 const TJPARAM_SAVEMARKERS: c_int = 25;
 const TJPF_RGBA: c_int = 7;
 const TJSAMP_420: c_int = 2;
-/// `tj3GetErrorCode` value for a -1 return where libjpeg only warned and
-/// kept going (`TJERR_FATAL` = 1 means it bailed out).
+/// `tj3GetErrorCode` after a -1 return: libjpeg warned but kept going.
 const TJERR_WARNING: c_int = 0;
 
 /// Parse the header (SOF dims, saved markers) without touching scan data.
-///
-/// A warning still yields valid SOF fields, so only a fatal error rejects.
-/// The case that matters is `JWRN_BOGUS_ICC`: an ICC marker sequence that
-/// does not reassemble leaves the pixels intact and the profile absent.
-/// `tj3Decompress8` re-parses the header and stays strict about warnings.
+/// A warning (`JWRN_BOGUS_ICC`: ICC markers that do not reassemble) leaves
+/// the SOF fields valid and the profile absent, so only a fatal error rejects.
 pub(crate) fn read_header(h: tjhandle, bytes: &[u8]) -> Result<(u32, u32), codecs::Error> {
     // SAFETY: `h` is a live tjhandle; ptr/len come from a valid `&[u8]`
     // borrowed for the call.
@@ -138,8 +134,7 @@ pub(crate) fn read_header(h: tjhandle, bytes: &[u8]) -> Result<(u32, u32), codec
     let rw = unsafe { tj3Get(h, TJPARAM_JPEGWIDTH) };
     // SAFETY: `h` is live; tj3Get only reads handle state.
     let rh = unsafe { tj3Get(h, TJPARAM_JPEGHEIGHT) };
-    // -1 on error, 0 when the header never reached SOF; either way reject
-    // instead of letting the cast trap on hostile input.
+    // -1 on error, 0 if SOF was never reached: reject before the cast.
     if rw <= 0 || rh <= 0 {
         return Err(codecs::Error::DecodeFailed);
     }

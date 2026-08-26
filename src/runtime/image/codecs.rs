@@ -253,10 +253,8 @@ bun_core::oom_from_alloc!(Error);
 /// cap is ~1 GiB, which is already past where you'd want to be.
 pub(crate) const DEFAULT_MAX_PIXELS: u64 = 0x3FFF * 0x3FFF;
 
-/// Largest ICC profile carried from decode to encode; bigger is "no
-/// profile", decided before the bytes leave the codec. Real profiles are
-/// under 4 MB. JPEG caps at 255 × 65519 bytes (one-byte APP2 sequence
-/// counter) and libjpeg-turbo cannot read back what it writes past that.
+/// Largest ICC profile carried from decode to encode; bigger is "no profile".
+/// Real profiles are under 4 MB, and JPEG cannot hold more than 255 × 65519.
 pub(crate) const MAX_ICC_PROFILE_BYTES: usize = 8 << 20;
 
 /// Hint from the pipeline about the eventual output size. JPEG can do M/8
@@ -385,8 +383,7 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             h = ih.height;
         }
         Format::Gif => {
-            // The decoder sizes its output from the first Image Descriptor,
-            // not the Logical Screen Descriptor; guard the same dims.
+            // The dims the decoder produces, not the Logical Screen Descriptor's.
             let hdr = gif::parse_header(bytes)?;
             w = hdr.width;
             h = hdr.height;

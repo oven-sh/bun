@@ -47,11 +47,8 @@ unsafe extern "C" {
     fn spng_set_chunk_limits(ctx: *mut spng_ctx, chunk_size: usize, cache_limit: usize) -> c_int;
 }
 
-/// libspng inflates ancillary chunks (iCCP, zTXt, iTXt) before the first
-/// IDAT, outside the reach of `max_pixels`. Cap one chunk's inflated size
-/// and the total it keeps; over either, the decode fails with
-/// `SPNG_ECHUNK_LIMITS`. The per-chunk cap is the ICC cap so any profile
-/// that decodes is one the encoders carry.
+/// libspng inflates iCCP/zTXt/iTXt before the first IDAT, where `max_pixels`
+/// cannot see it. Over either cap the decode fails with `SPNG_ECHUNK_LIMITS`.
 const MAX_CHUNK_BYTES: usize = codecs::MAX_ICC_PROFILE_BYTES;
 const MAX_CHUNK_CACHE_BYTES: usize = 4 * MAX_CHUNK_BYTES;
 

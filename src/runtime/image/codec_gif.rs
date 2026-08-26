@@ -129,9 +129,8 @@ impl Dict {
     }
 }
 
-/// Everything in front of the first frame's LZW data. `width`/`height` come
-/// from the Image Descriptor, not the Logical Screen Descriptor: that is the
-/// size the decoder produces, and `codecs::probe` must report the same.
+/// Everything in front of the first frame's LZW data. `width`/`height` are the
+/// Image Descriptor's (the decoded size), not the Logical Screen Descriptor's.
 pub(crate) struct Header {
     pub(crate) width: u32,
     pub(crate) height: u32,
@@ -145,8 +144,7 @@ pub(crate) struct Header {
     lzw_off: usize,
 }
 
-/// Walk to the first Image Descriptor, skipping extensions by sub-block
-/// length. No LZW is read.
+/// Walk to the first Image Descriptor, skipping extensions. No LZW is read.
 pub(crate) fn parse_header(bytes: &[u8]) -> Result<Header, codecs::Error> {
     // ── header + LSD ───────────────────────────────────────────────────────
     if bytes.len() < 13 || !(&bytes[0..6] == b"GIF89a" || &bytes[0..6] == b"GIF87a") {

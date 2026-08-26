@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { createPrivateKey, createPublicKey, decapsulate, encapsulate, generateKeyPairSync, sign, verify } from "crypto";
-import { promisify } from "util";
 import fs from "fs";
 import { bunEnv, bunExe } from "harness";
 import path from "path";
+import { promisify } from "util";
 
 const keysDir = path.join(import.meta.dir, "..", "test", "fixtures", "keys");
 const parallelDir = path.join(import.meta.dir, "..", "test", "parallel");

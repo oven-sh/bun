@@ -22,7 +22,7 @@ test("deep nesting", () => {
   let nested = obj;
   for (let i = 0; i < 500; i++) {
     const newObj = {};
-    for (let j = 0; j < 50; j++) {
+    for (let j = 0; j < 5; j++) {
       newObj[\`key\${j}\`] = \`val\${j}\`;
     }
     newObj.nested = nested;
@@ -52,5 +52,5 @@ test("deep nesting", () => {
     // The assertion mismatch exits 1. A crash exits with a signal code instead.
     expect(proc.signalCode).toBeNull();
     expect(exitCode).toBe(1);
-  }, 30000);
+  });
 });

@@ -483,7 +483,9 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
       return false;
     };
 
-    if (await tryNamespace(inputNamespace, inputPath)) {
+    // Peek before awaiting so a synchronous callback stays on the synchronous path.
+    var matched = tryNamespace(inputNamespace, inputPath);
+    if ($peekPromiseStatus(matched) === 1 ? $peekPromiseSettledValue(matched) : await matched) {
       return null;
     }
 
@@ -499,8 +501,11 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
           (inputPath.charCodeAt(0) | 0x20) >= 97 &&
           (inputPath.charCodeAt(0) | 0x20) <= 122 &&
           (inputPath.charCodeAt(2) === 47 || inputPath.charCodeAt(2) === 92);
-        if (!isDriveLetter && prefix !== "file" && (await tryNamespace(prefix, inputPath.slice(colon + 1)))) {
-          return null;
+        if (!isDriveLetter && prefix !== "file") {
+          matched = tryNamespace(prefix, inputPath.slice(colon + 1));
+          if ($peekPromiseStatus(matched) === 1 ? $peekPromiseSettledValue(matched) : await matched) {
+            return null;
+          }
         }
       }
     }

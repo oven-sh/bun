@@ -186,8 +186,10 @@ describe("bundler", () => {
     });
   }
   // ESM bytecode test matrix: each scenario × {default, minified} = 2 tests per scenario.
-  // With --compile, static imports are inlined into one chunk, but dynamic imports
-  // create separate modules in the standalone graph — each with its own bytecode + ModuleInfo.
+  // Without --splitting everything lands in one chunk with one bytecode blob and
+  // one ModuleInfo: dynamically imported files are inlined as async __esm
+  // wrappers, not emitted as separate modules (see bundler_compile_splitting for
+  // per-chunk records).
   const esmBytecodeScenarios: Array<{
     name: string;
     files: Record<string, string>;
@@ -398,43 +400,6 @@ describe("bundler", () => {
         `,
       },
       stdout: "sync module\narrow, expression, declaration, method, class method",
-    },
-    {
-      // The other spellings of a top-level await. Each lives in its own
-      // dynamically imported module, so each gets its own record: a module
-      // whose record misses its await is abandoned at that await and its
-      // output (or, for `await using`, its disposal) never happens.
-      name: "TopLevelAwaitForms",
-      files: {
-        "/entry.ts": `
-          await import("./for-await.ts");
-          await import("./await-using.ts");
-          await import("./for-await-using.ts");
-          console.log("entry done");
-        `,
-        "/for-await.ts": `
-          for await (const v of [Promise.resolve("a"), Promise.resolve("b")]) console.log("for await:", v);
-        `,
-        "/await-using.ts": `
-          await using res = { async [Symbol.asyncDispose]() { console.log("await using: disposed"); } };
-          console.log("await using: body");
-        `,
-        "/for-await-using.ts": `
-          const make = (n: string) => ({ async [Symbol.asyncDispose]() { console.log("for await using: disposed", n); } });
-          for (await using r of [make("x"), make("y")]) console.log("for await using: body");
-        `,
-      },
-      stdout: [
-        "for await: a",
-        "for await: b",
-        "await using: body",
-        "await using: disposed",
-        "for await using: body",
-        "for await using: disposed x",
-        "for await using: body",
-        "for await using: disposed y",
-        "entry done",
-      ].join("\n"),
     },
   ];
 

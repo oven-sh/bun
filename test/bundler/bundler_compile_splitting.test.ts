@@ -377,6 +377,54 @@ describe("bundler", () => {
       });
     }
 
+    // The other spellings of a top-level await. With splitting, each import()
+    // target is its own chunk with its own module record (without splitting
+    // they would be inlined as async __esm wrappers, so their awaits would not
+    // be at the chunk's top level), so each spelling is pinned by its own
+    // record: a chunk whose record misses its await is abandoned at that
+    // await and its output (or, for `await using`, its disposal) never happens.
+    for (const minify of [false, true]) {
+      itBundled(`compile/splitting/TopLevelAwaitForms${minify ? "+minify" : ""}`, {
+        compile: true,
+        splitting: true,
+        bytecode: true,
+        format: "esm",
+        ...(minify ? { minifySyntax: true, minifyIdentifiers: true, minifyWhitespace: true } : {}),
+        files: {
+          "/entry.ts": /* js */ `
+            await import("./for-await.ts");
+            await import("./await-using.ts");
+            await import("./for-await-using.ts");
+            console.log("entry done");
+          `,
+          "/for-await.ts": /* js */ `
+            for await (const v of [Promise.resolve("a"), Promise.resolve("b")]) console.log("for await:", v);
+          `,
+          "/await-using.ts": /* js */ `
+            await using res = { async [Symbol.asyncDispose]() { console.log("await using: disposed"); } };
+            console.log("await using: body");
+          `,
+          "/for-await-using.ts": /* js */ `
+            const make = (n: string) => ({ async [Symbol.asyncDispose]() { console.log("for await using: disposed", n); } });
+            for (await using r of [make("x"), make("y")]) console.log("for await using: body");
+          `,
+        },
+        run: {
+          stdout: [
+            "for await: a",
+            "for await: b",
+            "await using: body",
+            "await using: disposed",
+            "for await using: body",
+            "for await using: disposed x",
+            "for await using: body",
+            "for await using: disposed y",
+            "entry done",
+          ].join("\n"),
+        },
+      });
+    }
+
     // The shared chunk contains a require()d (so __esm-wrapped) module with an
     // unused import of a node builtin. Builtins are side-effect free, so that
     // import is tree-shaken out of the printed chunk, but the module record

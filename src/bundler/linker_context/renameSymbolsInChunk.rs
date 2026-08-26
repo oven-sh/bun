@@ -190,7 +190,6 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
         let stable_source_indices = c.graph.stable_source_indices.slice();
         let mut freq = bun_ast::CharFreq { freqs: [0i32; 64] };
 
-        let mut capacity = sorted_imports_from_other_chunks.len();
         for &source_index in files_in_order {
             if ast_flags_col[source_index as usize].contains(AstFlags::HAS_CHAR_FREQ) {
                 freq.include(&char_freq_col[source_index as usize]);
@@ -247,7 +246,6 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
             }
 
             top_level_symbols.sort_unstable_by(StableSymbolCount::less_than);
-            capacity += top_level_symbols.len();
             top_level_symbols_all.extend_from_slice(&top_level_symbols);
         }
 
@@ -272,8 +270,6 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
         if !c.graph.code_splitting {
             minify_renamer.finish()?;
         }
-
-        let _ = capacity;
         return Ok(ChunkRenamer::Minify(minify_renamer));
     }
 

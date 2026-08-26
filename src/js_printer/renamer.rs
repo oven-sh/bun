@@ -393,6 +393,11 @@ impl MinifyRenamer {
         &mut self,
         top_level_symbols: &[StableSymbolCount],
     ) -> Result<(), bun_alloc::AllocError> {
+        // Upper bound (a ref can repeat across files); sizes the map and the
+        // default namespace, where nearly all top-level symbols live, once.
+        self.top_level_symbol_to_slot
+            .ensure_total_capacity(top_level_symbols.len())?;
+        self.slots[SlotNamespace::Default].reserve(top_level_symbols.len());
         for stable in top_level_symbols {
             let symbol: &Symbol = self.symbols.get_const(stable.ref_).unwrap();
             // Reshaped for borrowck — capture symbol fields before mut-borrowing slots

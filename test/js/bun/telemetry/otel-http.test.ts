@@ -662,8 +662,10 @@ describe("node:http", () => {
         },
       },
     });
-    const sawErrorEvent = false;
-    const res: any = await new Promise(resolve => http.get(`http://127.0.0.1:${server.port}/`, resolve));
+    let sawErrorEvent = false;
+    const res: any = await new Promise(resolve =>
+      http.get(`http://127.0.0.1:${server.port}/`, resolve).on("error", () => (sawErrorEvent = true)),
+    );
     // no resume(): the app never reads the body, so 'end' does not fire before the socket closes
     await new Promise<void>(r => (res.socket?.destroyed ? r() : res.req.once("close", r)));
     const [client] = byName(await collect(), "bun.http.client");
@@ -679,13 +681,17 @@ describe("node:http", () => {
     const { WebSocketServer } = require("ws");
     const httpServer = http.createServer((req, res) => res.end("no"));
     const wss = new WebSocketServer({ server: httpServer });
-    wss.on("connection", ws => ws.close());
-    await new Promise<void>(r => httpServer.listen(0, "127.0.0.1", r));
-    const ws = new WebSocket("ws://127.0.0.1:" + (httpServer.address() as any).port);
-    await new Promise(r => (ws.onclose = r));
-    const [srv] = byName(await collect(), "bun.http.server");
-    httpServer.close();
-    expect(srv.attributes["http.response.status_code"]).toBe(101);
+    try {
+      wss.on("connection", ws => ws.close());
+      await new Promise<void>(r => httpServer.listen(0, "127.0.0.1", r));
+      const ws = new WebSocket("ws://127.0.0.1:" + (httpServer.address() as any).port);
+      await new Promise(r => (ws.onclose = r));
+      const [srv] = byName(await collect(), "bun.http.server");
+      expect(srv.attributes["http.response.status_code"]).toBe(101);
+    } finally {
+      wss.close();
+      httpServer.close();
+    }
   });
 
   test("node:http: an Upgrade / CONNECT response ends the CLIENT span with its status", async () => {
@@ -949,7 +955,11 @@ describe("request facts", () => {
         open(s) {
           s.write(
             Buffer.concat([
-              Buffer.from("GET /a HTTP/1.1\r\nHost: h\r\nUser-Agent: curl/"),
+              Buffer.from("GET /a"),
+              Buffer.from([0xfe]),
+              Buffer.from("b?q="),
+              Buffer.from([0xfd]),
+              Buffer.from(" HTTP/1.1\r\nHost: h\r\nUser-Agent: curl/"),
               Buffer.from([0xff]),
               Buffer.from("8\r\n\r\n"),
             ]),
@@ -959,7 +969,11 @@ describe("request facts", () => {
     });
     const [srv] = byName(await collect(1), "bun.http.server");
     sock.end();
-    expect(srv.attributes["user_agent.original"]).toBe("curl/\uFFFD8");
+    expect([srv.attributes["user_agent.original"], srv.attributes["url.path"], srv.attributes["url.query"]]).toEqual([
+      "curl/\uFFFD8",
+      "/a\uFFFDb",
+      "q=\uFFFD",
+    ]);
   });
 
   test('instrumentations: { http: "nested" } records only requests that carry a traceparent', async () => {

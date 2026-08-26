@@ -229,16 +229,21 @@ impl Facts {
             n => 1 + u8::from(n > PEER_TEXT_OFF + self.raw[PEER_TEXT_OFF - 1] as usize),
         };
         // Wire bytes may not be UTF-8 (obs-text); proto3 strings must be.
+        // The url goes in as path then query so `path_len` is measured on the
+        // sanitized bytes (a replacement is longer than the byte it replaces).
         let mut lens = [0u32; 5];
-        for (i, s) in [url, client, host, ua].into_iter().enumerate() {
+        let path_len = path_len.min(url.len());
+        let at = self.raw.len();
+        otlp::extend_utf8_lossy(&mut self.raw, &url[..path_len]);
+        self.path_len = (self.raw.len() - at) as u32;
+        otlp::extend_utf8_lossy(&mut self.raw, &url[path_len..]);
+        lens[0] = (self.raw.len() - at) as u32;
+        for (i, s) in [client, host, ua].into_iter().enumerate() {
             let at = self.raw.len();
             otlp::extend_utf8_lossy(&mut self.raw, s);
-            lens[i] = (self.raw.len() - at) as u32;
+            lens[i + 1] = (self.raw.len() - at) as u32;
         }
         self.lens = lens;
-        // (a lossy replacement can only lengthen bytes after the path, which
-        // is ASCII up to the first non-ASCII byte; clamp anyway)
-        self.path_len = path_len.min(lens[0] as usize) as u32;
         if (self.path_len as usize) + 1 < lens[0] as usize {
             self.flags |= FLAG_HAS_QUERY;
         }

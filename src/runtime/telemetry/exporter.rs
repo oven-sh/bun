@@ -69,14 +69,19 @@ fn check_response(res: &bun_picohttp::Response<'_>, body: &[u8]) -> Result<(), S
         // OTLP partial success: the server took the request but rejected some
         // spans; it says how many and why (ExportTraceServiceResponse field 1).
         if !body.is_empty() {
-            if let Some((rejected, message)) = bun_telemetry_cold::decode::partial_success(body) {
-                if rejected > 0 {
+            match bun_telemetry_cold::decode::partial_success(body) {
+                Some((rejected, message)) if rejected > 0 => {
                     bun_core::warn!(
                         "[otel] collector rejected {} span(s): {}",
                         rejected,
                         bstr::BStr::new(&message)
                     );
                 }
+                // OTLP: a message with nothing rejected is a warning to pass on.
+                Some((_, message)) if !message.is_empty() => {
+                    bun_core::warn!("[otel] collector: {}", bstr::BStr::new(&message));
+                }
+                _ => {}
             }
         }
         Ok(())

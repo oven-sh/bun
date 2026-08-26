@@ -131,13 +131,16 @@ test.concurrent.skipIf(isWindows || !isDebug)(
 
 // Before JSC decodes anything, the runtime reads the startup run ahead: the
 // entry point's bytecode and the bytecode string table, which holds the
-// literal below. The source text is a separate run and is not part of it.
+// literal below. The source text is a separate run and is not part of it;
+// the text import lives only there, so a run that covered the source text
+// would be at least twice the literal.
 test.concurrent.skipIf(isWindows || !isDebug)(
   "standalone prefetch covers the startup bytecode and not the source text",
   async () => {
     const literalBytes = 64 * 1024;
     using dir = tempDir("standalone-prefetch", {
-      "entry.ts": `const s = "${Buffer.alloc(literalBytes, "a").toString()}";\nconsole.log("len=" + s.length);\n`,
+      "entry.ts": `import pad from "./pad.txt" with { type: "text" };\nconst s = "${Buffer.alloc(literalBytes, "a").toString()}";\nconsole.log("len=" + s.length + " pad=" + pad.length);\n`,
+      "pad.txt": Buffer.alloc(literalBytes, "b").toString(),
     });
 
     const out = path.join(String(dir), "compiled");
@@ -166,14 +169,14 @@ test.concurrent.skipIf(isWindows || !isDebug)(
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stdout).toContain(`len=${literalBytes}`);
+      expect(stdout).toContain(`len=${literalBytes} pad=${literalBytes}`);
       const prefetch = stdout.match(/prefetch: MADV_WILLNEED (\d+) bytes/);
       if (prefetched) {
         expect(prefetch).not.toBeNull();
         const bytes = Number(prefetch![1]);
         // The string table holds the literal; the module's bytecode and
-        // module info add under a kilobyte. The source text would add
-        // another copy of the literal.
+        // module info add under a kilobyte. The source text (the entry's
+        // source plus the text import) would add two more copies.
         expect(bytes).toBeGreaterThan(literalBytes);
         expect(bytes).toBeLessThan(literalBytes + 16 * 1024);
       } else {

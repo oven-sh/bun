@@ -447,13 +447,6 @@ impl PostgresSQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
-    //
-    // Takes `*mut Self` (the JSCell m_ctx payload, i.e. the original `heap::alloc`
-    // pointer) rather than `&Self`: `connection.requests.write_item(this_ptr)` below
-    // stashes this pointer in a long-lived FIFO, and a `&self`-derived `*mut` would carry
-    // borrow-scoped provenance that is invalidated once codegen reuses m_ctx after this
-    // call returns (Stacked Borrows). Passing the raw payload pointer through preserves
-    // the allocation's root provenance for the queued entry.
     pub fn do_run(
         this: &Self,
         global_object: &JSGlobalObject,
@@ -461,11 +454,7 @@ impl PostgresSQLQuery {
     ) -> JsResult<JSValue> {
         // R-2: `this` is the live m_ctx payload for `callframe.this()`; the JS
         // wrapper is on-stack so GC cannot finalize it. Every mutated field is
-        // `Cell`/`JsCell`-backed, so `&Self` suffices. The pointer pushed into
-        // `connection.requests` is derived via `core::ptr::from_ref(this).cast_mut()`
-        // (write provenance is recovered from the JsCell-backed queue, never from
-        // this shared borrow).
-        let this_ptr: *mut Self = core::ptr::from_ref(this).cast_mut();
+        // `Cell`/`JsCell`-backed, so `&Self` suffices.
         let arguments = callframe.arguments();
         // `from_js_ref` wraps the m_ctx payload in a `ParentRef` — the JS wrapper
         // is on-stack (rooted by `arguments[0]`) so GC cannot finalize it for the
@@ -489,15 +478,9 @@ impl PostgresSQLQuery {
         let binding_value = js::binding_get_cached(this_value).unwrap_or_default();
         let query_str = this.query.to_utf8();
         let writer = connection.writer();
-        // We need a strong reference to the query so that it doesn't get GC'd
-        this.ref_();
-        // Shared cleanup for every error-return path below: drop any statement
-        // ref this query took plus the speculative `ref_()` above.
-        let release_query_ref = || {
-            this.release_statement();
-            // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-            unsafe { Self::deref(this_ptr) };
-        };
+        // The queue entry's ref: keeps the query alive until the server
+        // answers; dropped on every error return below.
+        let queued = this.ref_guard();
         // Shared error tail: throw `err` as a postgres error unless an exception
         // is already pending.
         let throw_write_error = |msg: &[u8], err: AnyPostgresError| -> JsError {
@@ -530,7 +513,7 @@ impl PostgresSQLQuery {
             let can_execute = !connection.has_query_running();
             if can_execute {
                 if let Err(err) = PostgresRequest::execute_query(query_str.slice(), writer) {
-                    release_query_ref();
+                    this.release_statement();
                     return Err(throw_write_error(b"failed to execute query", err));
                 }
                 {
@@ -546,14 +529,7 @@ impl PostgresSQLQuery {
             } else {
                 this.status.set(Status::Pending);
             }
-            if connection
-                .requests
-                .with_mut(|q| q.write_item(this_ptr))
-                .is_err()
-            {
-                release_query_ref();
-                return Err(global_object.throw_out_of_memory());
-            }
+            connection.requests.with_mut(|q| q.push_back(queued));
             if this.status.get() == Status::Pending {
                 connection.note_request_pending();
             }
@@ -594,8 +570,6 @@ impl PostgresSQLQuery {
         ) {
             Ok(s) => s,
             Err(err) => {
-                // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                unsafe { Self::deref(this_ptr) };
                 if !global_object.has_exception() {
                     return Err(global_object.throw_sql_error(err, "failed to generate signature"));
                 }
@@ -640,8 +614,6 @@ impl PostgresSQLQuery {
                                 stmt.error_response.as_ref().unwrap().to_js(global_object)?;
                             // SAFETY: drop the ref we took above.
                             unsafe { PostgresSQLStatement::deref(stmt_ptr) };
-                            // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                            unsafe { Self::deref(this_ptr) };
                             return Err(global_object.throw_value(error_response));
                         }
                         StatementStatus::Prepared => {
@@ -663,7 +635,7 @@ impl PostgresSQLQuery {
                                     columns_value,
                                     writer,
                                 ) {
-                                    release_query_ref();
+                                    this.release_statement();
                                     return Err(throw_write_error(
                                         b"failed to bind and execute query",
                                         err,
@@ -700,7 +672,7 @@ impl PostgresSQLQuery {
                     Ok(v) => v,
                     Err(err) => {
                         drop(signature);
-                        release_query_ref();
+                        this.release_statement();
                         return Err(global_object
                             .throw_error(crate::Error::from(err), "failed to allocate statement"));
                     }
@@ -727,7 +699,7 @@ impl PostgresSQLQuery {
                                 .with_mut(|m| m.remove(&signature.name[..]));
                         }
                         drop(signature);
-                        release_query_ref();
+                        this.release_statement();
                         return Err(throw_write_error(b"failed to prepare and query", err));
                     }
                     {
@@ -759,7 +731,7 @@ impl PostgresSQLQuery {
                                 .with_mut(|m| m.remove(&signature.name[..]));
                         }
                         drop(signature);
-                        release_query_ref();
+                        this.release_statement();
                         return Err(throw_write_error(b"failed to write query", err));
                     }
                     if let Err(err) = writer.write(&protocol::SYNC) {
@@ -769,7 +741,7 @@ impl PostgresSQLQuery {
                                 .with_mut(|m| m.remove(&signature.name[..]));
                         }
                         drop(signature);
-                        release_query_ref();
+                        this.release_statement();
                         return Err(throw_write_error(b"failed to flush", err));
                     }
                     {
@@ -826,14 +798,7 @@ impl PostgresSQLQuery {
             }
         }
 
-        if connection
-            .requests
-            .with_mut(|q| q.write_item(this_ptr))
-            .is_err()
-        {
-            release_query_ref();
-            return Err(global_object.throw_out_of_memory());
-        }
+        connection.requests.with_mut(|q| q.push_back(queued));
         if this.status.get() == Status::Pending {
             connection.note_request_pending();
         }

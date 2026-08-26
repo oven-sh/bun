@@ -40,6 +40,7 @@ use crate::mysql::js_mysql_connection::JSMySQLConnection;
 use crate::mysql::js_mysql_query::JSMySQLQuery;
 use crate::mysql::my_sql_request_queue::MySQLRequestQueue;
 use crate::mysql::my_sql_statement::{self as mysql_statement, MySQLStatement, Param};
+use bun_ptr::RefPtr;
 
 pub use bun_sql::mysql::protocol::error_packet::ErrorPacket;
 // Re-export so callers can write `my_sql_connection::Status::Connected`
@@ -219,7 +220,7 @@ impl MySQLConnection {
     }
 
     #[inline]
-    pub(crate) fn enqueue_request(&mut self, request: *mut JSMySQLQuery) {
+    pub(crate) fn enqueue_request(&mut self, request: RefPtr<JSMySQLQuery>) {
         self.queue.add(request);
     }
 

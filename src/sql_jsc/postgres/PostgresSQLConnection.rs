@@ -15,7 +15,7 @@ use bun_collections::{OffsetByteList, StringHashMap, StringMap};
 use bun_core::strings;
 use bun_core::{self};
 use bun_io::KeepAlive;
-use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
+use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
 use bun_uws as uws;
 use core::ptr::NonNull;
 
@@ -601,7 +601,7 @@ impl PostgresSQLConnection {
     }
 
     fn update_has_pending_activity(&self) {
-        let a: u32 = if self.requests.get().readable_length() > 0 {
+        let a: u32 = if !self.requests.get().is_empty() {
             1
         } else {
             0
@@ -1175,7 +1175,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             write_buffer: JsCell::new(OffsetByteList::default()),
             read_buffer: JsCell::new(OffsetByteList::default()),
             last_message_start: Cell::new(0),
-            requests: JsCell::new(PostgresRequest::Queue::init()),
+            requests: JsCell::new(PostgresRequest::Queue::new()),
             pipelined_requests: Cell::new(0),
             nonpipelinable_requests: Cell::new(0),
             pending_requests: Cell::new(0),
@@ -1461,12 +1461,10 @@ impl PostgresSQLConnection {
         // black_box launder (b818e70e1c57-style) is no longer needed.
         // The connection is kept alive by the caller's `ref_and_close` ref
         // bracket for the duration of this loop, so re-entry never frees `*self`.
-        while self.requests.get().readable_length() > 0 {
-            let request_ptr: *mut PostgresSQLQuery = self.requests.get().peek_item(0);
-            // Queue invariant: every stored pointer is non-null and live
-            // (refcount ≥ 1 held by the queue). R-2: `ParentRef` yields `&T`
-            // only — `PostgresSQLQuery` is Cell/JsCell-backed. Raw `*mut`
-            // retained for `discard_request` below.
+        while let Some(request_ptr) = self.requests.get().front().map(RefPtr::as_ptr) {
+            // The queue's `RefPtr` keeps the query live. R-2: `ParentRef`
+            // yields `&T` only — `PostgresSQLQuery` is Cell/JsCell-backed. Raw
+            // `*mut` retained for `discard_request` below.
             let request = ParentRef::from(NonNull::new(request_ptr).expect("queue item non-null"));
             match request.status.get() {
                 // pending we will fail the request and the stmt will be marked as error ConnectionClosed too
@@ -1535,42 +1533,24 @@ impl PostgresSQLConnection {
 
     /// Shared borrow of the queue's head request, if any.
     ///
-    /// The queue holds an intrusive ref on every `*mut PostgresSQLQuery` it
-    /// stores; `PostgresSQLQuery` is `Cell`/`JsCell`-backed (R-2), so a shared
-    /// `&` is sound even across re-entrant JS. Returned as a [`ParentRef`]
-    /// (lifetime-erased `&T` via safe `Deref`) — same shape as
-    /// `clean_up_requests`/`advance` already use for queue items, so the
-    /// dozen-plus callers in `on()` need no per-site `unsafe`.
+    /// The queue's `RefPtr` keeps every stored query live; `PostgresSQLQuery`
+    /// is `Cell`/`JsCell`-backed (R-2), so a shared `&` is sound even across
+    /// re-entrant JS. Returned as a [`ParentRef`] (lifetime-erased `&T` via
+    /// safe `Deref`) so it survives the queue being mutated underneath.
     fn current(&self) -> Option<ParentRef<PostgresSQLQuery>> {
-        let q = self.requests.get();
-        if q.readable_length() == 0 {
-            return None;
-        }
-        // Queue invariant: every stored pointer is a live, heap-allocated
-        // `PostgresSQLQuery` with refcount ≥ 1 held by the queue itself; it
-        // cannot be freed while still enqueued — satisfies the `ParentRef`
-        // liveness contract for the duration of every caller's use.
-        Some(ParentRef::from(
-            NonNull::new(q.peek_item(0)).expect("queue item non-null"),
-        ))
+        self.requests
+            .get()
+            .front()
+            .map(|req| ParentRef::from(req.as_non_null()))
     }
 
-    /// Drop the queue-held intrusive ref on `request` and pop one entry from
-    /// the FIFO head. One audited `unsafe` here replaces the per-site
-    /// `unsafe { PostgresSQLQuery::deref(ptr) }; self.requests.with_mut(|q| q.discard(1));`
-    /// pair (16 callers in `clean_up_requests` / `advance`).
+    /// Pop the FIFO head if it is still `request` (re-entrant JS may already
+    /// have removed it), dropping the queue's ref.
     #[inline]
     fn discard_request(&self, request: *mut PostgresSQLQuery) {
-        if self.requests.get().readable_length() == 0 || self.requests.get().peek_item(0) != request
-        {
-            return;
+        if self.requests.get().front().map(RefPtr::as_ptr) == Some(request) {
+            self.requests.with_mut(|q| q.pop_front());
         }
-        // SAFETY: `request` was obtained via `self.requests.get().peek_item(_)`
-        // (queue invariant: every stored pointer is a live, heap-allocated
-        // `PostgresSQLQuery` with refcount ≥ 1 held by the queue itself); this
-        // releases exactly that ref. May free if no other refs remain.
-        unsafe { PostgresSQLQuery::deref(request) };
-        self.requests.with_mut(|q| q.discard(1));
     }
 
     pub(crate) fn has_query_running(&self) -> bool {
@@ -1833,11 +1813,10 @@ impl PostgresSQLConnection {
         // expanded as a closure called at every return point below.
         macro_rules! defer_cleanup {
             ($self:ident) => {{
-                while $self.requests.get().readable_length() > 0 {
-                    let result_ptr = $self.requests.get().peek_item(0);
-                    // Queue invariant: every stored pointer is non-null and
-                    // live (refcount ≥ 1 held by the queue). R-2: `ParentRef`
-                    // yields `&T` only — `PostgresSQLQuery` is Cell/JsCell-backed.
+                while let Some(result_ptr) = $self.requests.get().front().map(RefPtr::as_ptr) {
+                    // The queue's `RefPtr` keeps the query live. R-2:
+                    // `ParentRef` yields `&T` only — `PostgresSQLQuery` is
+                    // Cell/JsCell-backed.
                     let result = ParentRef::from(NonNull::new(result_ptr).expect("queue item non-null"));
                     // An item may be in the success or failed state and still be inside the queue (see deinit later comments)
                     // so we do the cleanup here
@@ -1856,13 +1835,12 @@ impl PostgresSQLConnection {
             }};
         }
 
-        while self.requests.get().readable_length() > offset
+        while self.requests.get().len() > offset
             && !self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE)
         {
-            let req_ptr: *mut PostgresSQLQuery = self.requests.get().peek_item(offset);
-            // Queue invariant: every stored pointer is non-null and live
-            // (refcount ≥ 1 held by the queue). R-2: `ParentRef` yields `&T`
-            // only — `PostgresSQLQuery` is Cell/JsCell-backed.
+            let req_ptr: *mut PostgresSQLQuery = self.requests.get()[offset].as_ptr();
+            // The queue's `RefPtr` keeps the query live. R-2: `ParentRef`
+            // yields `&T` only — `PostgresSQLQuery` is Cell/JsCell-backed.
             let req = ParentRef::from(NonNull::new(req_ptr).expect("queue item non-null"));
             match req.status.get() {
                 QueryStatus::Pending => {
@@ -2970,7 +2948,7 @@ impl PostgresSQLConnection {
                     self.fail_with_js_value(v);
 
                     // it shouldn't enqueue any requests while connecting
-                    debug_assert!(self.requests.get().readable_length() == 0);
+                    debug_assert!(self.requests.get().is_empty());
                     return Ok(());
                 }
 

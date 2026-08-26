@@ -216,7 +216,7 @@ describe("Bun.build", () => {
         expect(exitCode).toBe(0);
       }),
     );
-  }, 60_000);
+  });
 
   test("bytecode: repeated builds don't retain the generated code", async () => {
     using dir = tempDir("bun-build-api-bytecode-retained", {
@@ -238,7 +238,6 @@ describe("Bun.build", () => {
         let after = rss();
         while ((Bun.gc(true), (after = rss())) - base > limit && Date.now() < deadline) await Bun.sleep(20);
         console.log(JSON.stringify({ base, after }));
-        if (after - base > limit) process.exit(1);
       `,
     });
     // Release, 20k functions: ~+65 MB without freeing the VM, about level with the baseline with it. Debug/ASAN parse far
@@ -253,10 +252,11 @@ describe("Bun.build", () => {
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    const { base, after } = JSON.parse(stdout.trim());
-    expect(after - base).toBeLessThanOrEqual(limit);
+    expect(stdout).toStartWith("{");
     expect(exitCode).toBe(0);
-  }, 60_000);
+    const { base, after } = JSON.parse(stdout);
+    expect(after - base).toBeLessThanOrEqual(limit);
+  });
 
   test("passing undefined doesnt segfault", () => {
     try {

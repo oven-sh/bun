@@ -15,8 +15,7 @@ use bun_jsc::js_value::Protected;
 #[cfg(windows)]
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, StringJsc as _,
-    StringViewJsc as _, Task,
+    JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, StrJsc as _, StringJsc as _, Task,
 };
 use bun_sys::Fd;
 use bun_sys::FdExt;

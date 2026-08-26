@@ -466,7 +466,7 @@ pub(crate) trait StringEnum: Sized {
     /// `|`-joined list of variant names.
     const VALUES_INFO: &'static str;
     /// Match `s` against variant names exactly.
-    fn from_bun_string(s: bun_core::StringView<'_>) -> Option<Self>;
+    fn from_bun_string(s: &bun_core::Str) -> Option<Self>;
 }
 
 pub(crate) fn validate_string_enum<T: StringEnum>(
@@ -475,7 +475,7 @@ pub(crate) fn validate_string_enum<T: StringEnum>(
     name: impl fmt::Display,
 ) -> JsResult<T> {
     let str = value.to_bun_string(global_this)?;
-    if let Some(v) = T::from_bun_string(str.as_view()) {
+    if let Some(v) = T::from_bun_string(&str) {
         return Ok(v);
     }
 

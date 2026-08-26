@@ -2091,8 +2091,8 @@ pub mod parse_worker {
             args.context = self_ptr;
             let count = plugin.call_on_before_parse_plugins(
                 self_ptr.cast(),
-                namespace,
-                path_str,
+                &namespace,
+                &path_str,
                 &raw mut args,
                 result_ptr,
                 should_continue_running,

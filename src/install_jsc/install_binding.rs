@@ -1,4 +1,4 @@
-use bun_jsc::{JSGlobalObject, JSValue, StringViewJsc as _};
+use bun_jsc::{JSGlobalObject, JSValue, StrJsc as _};
 
 pub mod bun_install_js_bindings {
     use super::*;

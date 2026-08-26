@@ -44,7 +44,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 
-use bun_core::{EncodedSlice, String as BunString, StringView, WTFStringImpl};
+use bun_core::{EncodedSlice, String as BunString, WTFStringImpl};
 use bun_io::KeepAlive;
 
 use crate::virtual_machine::{self, VirtualMachine, runtime_hooks};
@@ -282,8 +282,8 @@ impl WebWorker {
     pub(crate) unsafe extern "C" fn create(
         proxy: *mut c_void,
         parent: *mut VirtualMachine,
-        name_str: &StringView<'_>,
-        specifier_str: &StringView<'_>,
+        name_str: &bun_core::Str,
+        specifier_str: &bun_core::Str,
         error_message: &mut BunString,
         _parent_context_id: u32,
         this_context_id: u32,

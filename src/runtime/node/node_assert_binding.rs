@@ -101,7 +101,7 @@ fn run(
     debug_assert!(actual_str.tag() != bstring::Tag::Dead);
     debug_assert!(expected_str.tag() != bstring::Tag::Dead);
 
-    node_assert::myers_diff(global, actual_str.as_view(), expected_str.as_view(), output)
+    node_assert::myers_diff(global, &actual_str, &expected_str, output)
 }
 
 // =============================================================================

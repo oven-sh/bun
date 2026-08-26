@@ -8,7 +8,7 @@ use bstr::ByteSlice;
 use bun_boringssl::c as boring;
 use bun_collections::{HashMap, IdentityContext};
 use bun_core::String as BunString;
-use bun_core::{Mutex, StringView, ZStr, env_var};
+use bun_core::{Mutex, ZStr, env_var};
 use bun_options_types::Format;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_sys::{self as sys, Fd, O};
@@ -909,7 +909,7 @@ fn generate_bytecode(format: Format, code: &[u8], url: &[u8]) -> Option<Box<[u8]
                         let result = crate::cached_bytecode::__bun_jsc_generate_cached_bytecode(
                             job.format,
                             &job.code,
-                            url.as_view(),
+                            &url,
                             u32::MAX,
                             None,
                         );
@@ -1202,16 +1202,18 @@ pub fn persist_now() {
 // C++ API (NodeModuleModule.cpp)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// C++ initializes both out-params to `Empty`.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__NodeCompileCache__enable(
-    dir: Option<&StringView<'_>>,
+/// # Safety
+/// `dir` is null or a live `BunString`; both out-params are valid for write.
+pub unsafe extern "C" fn Bun__NodeCompileCache__enable(
+    dir: *const BunString,
     // -1 = not specified (fall back to NODE_COMPILE_CACHE_PORTABLE).
     portable: i32,
-    out_directory: &mut BunString,
-    out_message: &mut BunString,
+    out_directory: *mut BunString,
+    out_message: *mut BunString,
 ) -> i32 {
-    let dir_utf8 = dir.map(|d| d.to_utf8());
+    // SAFETY: C++ passes null or a live BunString plus valid out-params.
+    let dir_utf8 = unsafe { dir.as_ref() }.map(|d| d.to_utf8());
     let dir_slice = dir_utf8.as_ref().map(|d| d.slice());
     let result = enable(
         dir_slice,
@@ -1222,10 +1224,12 @@ pub extern "C" fn Bun__NodeCompileCache__enable(
         },
     );
     if let Some(directory) = result.directory {
-        *out_directory = BunString::clone_utf8(&directory);
+        // SAFETY: out-param is valid for write per fn contract.
+        unsafe { out_directory.write(BunString::clone_utf8(&directory)) };
     }
     if let Some(message) = result.message {
-        *out_message = BunString::clone_utf8(message.as_bytes());
+        // SAFETY: out-param is valid for write per fn contract.
+        unsafe { out_message.write(BunString::clone_utf8(message.as_bytes())) };
     }
     result.status
 }

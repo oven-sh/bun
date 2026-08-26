@@ -11,7 +11,7 @@ use crate as jsc;
 use crate::virtual_machine::VirtualMachine;
 use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult};
 use bun_collections::HashMap;
-use bun_core::{EncodedSlice, String as BunString, StringView, strings};
+use bun_core::{EncodedSlice, Str, String as BunString, strings};
 use bun_core::{Output, StackCheck};
 
 /// Thin facade over `bun_js_parser::lexer` / `bun_js_printer` so the call
@@ -598,7 +598,7 @@ enum RowKey {
 }
 
 impl RowKey {
-    fn str(name: StringView<'_>) -> Self {
+    fn str(name: &Str) -> Self {
         Self::Str {
             width: u32::try_from(name.visible_width_exclude_ansi_colors(false)).expect("int cast"),
             text: name.to_owned().into_utf8(),
@@ -743,9 +743,7 @@ impl<'a> TablePrinter<'a> {
             //    columns on-demand
             if !self.properties.is_undefined() {
                 for column in columns[1..].iter_mut() {
-                    if let Some(value) =
-                        row_value.get_own(self.global_object, column.name.as_view())?
-                    {
+                    if let Some(value) = row_value.get_own(self.global_object, &column.name)? {
                         let cell = self.format_cell::<ENABLE_ANSI_COLORS>(cell_text, value)?;
                         column.width = column.width.max(cell.width);
                         row.cells.push(Some(cell));
@@ -767,7 +765,8 @@ impl<'a> TablePrinter<'a> {
                     // find or create the column for the property
                     let col_idx: usize = 'brk: {
                         // reshaped for borrowck — split find/append.
-                        if let Some(idx) = columns[1..].iter().position(|col| col.name.eql(col_key))
+                        if let Some(idx) =
+                            columns[1..].iter().position(|col| col.name.eql(&col_key))
                         {
                             break 'brk 1 + idx;
                         }
@@ -964,7 +963,7 @@ impl<'a> TablePrinter<'a> {
                 )?;
 
                 while let Some((row_key, value)) = rows_iter.next()? {
-                    let key = RowKey::str(row_key);
+                    let key = RowKey::str(&row_key);
                     let row = self.collect_row::<ENABLE_ANSI_COLORS>(
                         &mut cell_text,
                         &mut columns,
@@ -1193,7 +1192,7 @@ pub enum Colon {
 }
 
 pub struct ErrorDisplayLevelFormatter<'a> {
-    pub name: StringView<'a>,
+    pub name: &'a Str,
     pub(crate) level: ErrorDisplayLevel,
     pub(crate) enable_colors: bool,
     pub(crate) colon: Colon,
@@ -1236,7 +1235,7 @@ impl core::fmt::Display for ErrorDisplayLevelFormatter<'_> {
 impl ErrorDisplayLevel {
     pub(crate) fn formatter(
         self,
-        error_name: StringView<'_>,
+        error_name: &Str,
         enable_colors: bool,
         colon: Colon,
     ) -> ErrorDisplayLevelFormatter<'_> {
@@ -2688,7 +2687,7 @@ pub mod formatter {
         }
 
         #[inline]
-        pub(crate) fn write_string(&mut self, str: StringView<'_>) {
+        pub(crate) fn write_string(&mut self, str: &Str) {
             self.print(format_args!("{str}"));
         }
 
@@ -3963,7 +3962,7 @@ pub mod formatter {
             // "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
             let func_name = proto.get_name(self.global_this)?;
 
-            if printable.is_empty() || func_name.eql(printable.as_view()) {
+            if printable.is_empty() || func_name.eql(&printable) {
                 if func_name.is_empty() {
                     writer.print(format_args!("{}[Function]{}", pf!("<cyan>"), pf!("<r>")));
                 } else {
@@ -5167,14 +5166,14 @@ pub mod formatter {
                                         }
                                         writer.write_all(b">");
                                         if children_string.len() < 128 {
-                                            writer.write_string(children_string.view());
+                                            writer.write_string(&children_string);
                                         } else {
                                             self.indent += 1;
                                             writer.write_all(b"\n");
                                             write_indent_n(self.indent, writer.ctx)
                                                 .expect("unreachable");
                                             self.indent = self.indent.saturating_sub(1);
-                                            writer.write_string(children_string.view());
+                                            writer.write_string(&children_string);
                                             writer.write_all(b"\n");
                                             write_indent_n(self.indent, writer.ctx)
                                                 .expect("unreachable");

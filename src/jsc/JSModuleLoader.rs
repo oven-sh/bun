@@ -1,5 +1,5 @@
 use crate::{JSGlobalObject, JSInternalPromise, JsError, JsResult};
-use bun_core::StringView;
+use bun_core::Str;
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for JSC's JSModuleLoader.
@@ -12,12 +12,9 @@ unsafe extern "C" {
     // The returned `*mut JSInternalPromise` is nullable; callers check before deref.
     safe fn JSC__JSModuleLoader__loadAndEvaluateModule(
         arg0: &JSGlobalObject,
-        arg1: &StringView<'_>,
+        arg1: &Str,
     ) -> *mut JSInternalPromise;
-    safe fn JSModuleLoader__import(
-        arg0: &JSGlobalObject,
-        arg1: &StringView<'_>,
-    ) -> *mut JSInternalPromise;
+    safe fn JSModuleLoader__import(arg0: &JSGlobalObject, arg1: &Str) -> *mut JSInternalPromise;
 }
 
 impl JSModuleLoader {
@@ -26,13 +23,13 @@ impl JSModuleLoader {
     /// a mutable cell pointer don't launder provenance through `&T -> *mut T`.
     pub fn load_and_evaluate_module_ptr(
         global_object: *mut JSGlobalObject,
-        module_name: StringView<'_>,
+        module_name: &Str,
     ) -> Option<core::ptr::NonNull<JSInternalPromise>> {
         // `JSGlobalObject` is an opaque ZST handle; `opaque_ref` is the
         // centralised zero-byte deref proof (panics on null).
         core::ptr::NonNull::new(JSC__JSModuleLoader__loadAndEvaluateModule(
             JSGlobalObject::opaque_ref(global_object),
-            &module_name,
+            module_name,
         ))
     }
 
@@ -43,13 +40,13 @@ impl JSModuleLoader {
     /// [`Self::load_and_evaluate_module_ptr`].
     pub fn import_ptr(
         global_object: *mut JSGlobalObject,
-        module_name: StringView<'_>,
+        module_name: &Str,
     ) -> JsResult<core::ptr::NonNull<JSInternalPromise>> {
         // `JSGlobalObject` is an opaque ZST handle; `opaque_ref` is the
         // centralised zero-byte deref proof (panics on null).
         core::ptr::NonNull::new(JSModuleLoader__import(
             JSGlobalObject::opaque_ref(global_object),
-            &module_name,
+            module_name,
         ))
         .ok_or(JsError::Thrown)
     }

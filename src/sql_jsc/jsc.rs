@@ -29,7 +29,7 @@ use core::ptr::NonNull;
 pub use bun_jsc::{
     CallFrame, ErrorBuilder, ErrorCode, ExternColumnIdentifier, GlobalRef, JSArrayIterator,
     JSGlobalObject, JSObject, JSType, JSValue, JsCell, JsError, JsRef, JsResult,
-    MarkedArgumentBuffer, StringJsc, Strong, StrongOptional, bun_string_jsc,
+    MarkedArgumentBuffer, StrJsc, StringJsc, Strong, StrongOptional, bun_string_jsc,
 };
 
 /// Re-export — `bun_jsc` now defines `IntegerRange` at its crate root and the
@@ -769,7 +769,7 @@ unsafe extern "C" {
     // preconditions remain → `safe fn`.
     safe fn JSFunction__createFromZig(
         global: &JSGlobalObject,
-        fn_name: &bun_core::StringView<'_>,
+        fn_name: &bun_core::Str,
         implementation: JSHostFn,
         arg_count: u32,
         implementation_visibility: ImplementationVisibility,

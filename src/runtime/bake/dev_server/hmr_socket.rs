@@ -167,7 +167,7 @@ impl HmrSocket {
                         agent.notify_client_navigated(
                             dev.inspector_server_id,
                             self.inspector_connection_id,
-                            pattern_str,
+                            &pattern_str,
                             maybe_rbi.map(|i| i.get() as i32).unwrap_or(-1),
                         );
                     }
@@ -258,7 +258,7 @@ impl HmrSocket {
 
                 if let Some(agent) = dev.inspector() {
                     let log_str = bun_core::StringView::from_bytes(data);
-                    agent.notify_console_log(dev.inspector_server_id, kind as u8, log_str);
+                    agent.notify_console_log(dev.inspector_server_id, kind as u8, &log_str);
                 }
 
                 if dev.broadcast_console_log_from_browser_to_server {

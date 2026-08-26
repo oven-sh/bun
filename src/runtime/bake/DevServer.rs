@@ -18,12 +18,12 @@ use bun_alloc::{AllocError, Arena};
 use bun_ast::Log;
 use bun_bundler::options_impl::TargetExt as _;
 use bun_collections::{ArrayHashMap, DynamicBitSet, HashMap, HiveArrayFallback, StringHashMap};
-use bun_core::{self as str, String as BunString, StringView, ZStr, strings};
+use bun_core::{self as str, Str, String as BunString, StringView, ZStr, strings};
 use bun_core::{Environment, Output};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_jsc::{LogJsc as _, StringJsc as _};
+use bun_jsc::{LogJsc as _, StrJsc as _, StringJsc as _};
 use bun_paths::{self as paths, PathBuffer};
 use bun_sys as sys;
 use bun_uws::{self as uws, AnyResponse, Opcode, Request, WebSocketUpgradeContext};
@@ -5333,8 +5333,10 @@ impl DevServer {
             debug_assert!(agent.is_enabled());
             let failures_encoded = &buf[failures_start_buf_pos..];
             // base64 output is pure ASCII so a UTF-8 borrow is safe.
-            agent
-                .notify_bundle_failed(self.inspector_server_id, StringView::utf8(failures_encoded));
+            agent.notify_bundle_failed(
+                self.inspector_server_id,
+                &StringView::utf8(failures_encoded),
+            );
         }
         Ok(())
     }
@@ -6492,16 +6494,16 @@ bun_jsc::jsc_host_abi! {
     pub unsafe fn Bake__bundleNewRouteJSFunctionImpl(
         global: &JSGlobalObject,
         request_ptr: *mut c_void,
-        url: &StringView<'_>,
+        url: &Str,
     ) -> JSValue {
-        jsc::to_js_host_call(global, || bundle_new_route_js_function_impl(global, request_ptr, *url))
+        jsc::to_js_host_call(global, || bundle_new_route_js_function_impl(global, request_ptr, url))
     }
 }
 
 fn bundle_new_route_js_function_impl(
     global: &JSGlobalObject,
     request_ptr: *mut c_void,
-    url_bunstr: StringView<'_>,
+    url_bunstr: &Str,
 ) -> JsResult<JSValue> {
     let url = url_bunstr.to_utf8();
 

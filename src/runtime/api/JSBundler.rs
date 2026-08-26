@@ -1,5 +1,6 @@
 //! `Bun.build()` plugin host + `BuildArtifact` JS wrapper.
 
+use bun_core::StringView;
 use bun_options_types::LoaderExt as _;
 use core::ffi::c_void;
 
@@ -14,7 +15,7 @@ use bun_core::Output;
 use bun_core::String as BunString;
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, StringJsc as _};
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, StrJsc as _};
 use bun_options_types::compile_target::CompileTarget;
 use bun_options_types::schema::api; // bun.schema.api
 use bun_standalone_graph::StandaloneModuleGraph;
@@ -25,7 +26,7 @@ use bun_bundler_jsc::options_jsc::{compile_target_from_js, compile_target_from_s
 
 pub mod js_bundler {
     use super::*;
-    use bun_core::StringView;
+
     use bun_core::Utf8Bytes;
 
     use bun_sys::FdExt;
@@ -302,7 +303,7 @@ pub mod js_bundler {
                 }
             };
 
-            if let Some(target) = object.get_own(global_this, StringView::static_("target"))? {
+            if let Some(target) = object.get_own(global_this, &StringView::static_("target"))? {
                 this.compile_target = compile_target_from_js(global_this, target)?;
             }
 
@@ -322,7 +323,7 @@ pub mod js_bundler {
             }
 
             if let Some(executable_path) =
-                object.get_own(global_this, StringView::static_("executablePath"))?
+                object.get_own(global_this, &StringView::static_("executablePath"))?
             {
                 let slice = executable_path.to_utf8(global_this)?;
                 let path_z = bun_core::ZBox::from_bytes(slice.slice());
@@ -345,13 +346,13 @@ pub mod js_bundler {
                 }
 
                 if let Some(hide_console) =
-                    windows.get_own(global_this, StringView::static_("hideConsole"))?
+                    windows.get_own(global_this, &StringView::static_("hideConsole"))?
                 {
                     this.windows_hide_console = hide_console.to_boolean();
                 }
 
                 if let Some(windows_icon_path) =
-                    windows.get_own(global_this, StringView::static_("icon"))?
+                    windows.get_own(global_this, &StringView::static_("icon"))?
                 {
                     let slice = windows_icon_path.to_utf8(global_this)?;
                     let path_z = bun_core::ZBox::from_bytes(slice.slice());
@@ -368,42 +369,42 @@ pub mod js_bundler {
                 }
 
                 if let Some(windows_title) =
-                    windows.get_own(global_this, StringView::static_("title"))?
+                    windows.get_own(global_this, &StringView::static_("title"))?
                 {
                     let slice = windows_title.to_utf8(global_this)?;
                     this.windows_title.append_slice_exact(slice.slice())?;
                 }
 
                 if let Some(windows_publisher) =
-                    windows.get_own(global_this, StringView::static_("publisher"))?
+                    windows.get_own(global_this, &StringView::static_("publisher"))?
                 {
                     let slice = windows_publisher.to_utf8(global_this)?;
                     this.windows_publisher.append_slice_exact(slice.slice())?;
                 }
 
                 if let Some(windows_version) =
-                    windows.get_own(global_this, StringView::static_("version"))?
+                    windows.get_own(global_this, &StringView::static_("version"))?
                 {
                     let slice = windows_version.to_utf8(global_this)?;
                     this.windows_version.append_slice_exact(slice.slice())?;
                 }
 
                 if let Some(windows_description) =
-                    windows.get_own(global_this, StringView::static_("description"))?
+                    windows.get_own(global_this, &StringView::static_("description"))?
                 {
                     let slice = windows_description.to_utf8(global_this)?;
                     this.windows_description.append_slice_exact(slice.slice())?;
                 }
 
                 if let Some(windows_copyright) =
-                    windows.get_own(global_this, StringView::static_("copyright"))?
+                    windows.get_own(global_this, &StringView::static_("copyright"))?
                 {
                     let slice = windows_copyright.to_utf8(global_this)?;
                     this.windows_copyright.append_slice_exact(slice.slice())?;
                 }
             }
 
-            if let Some(outfile) = object.get_own(global_this, StringView::static_("outfile"))? {
+            if let Some(outfile) = object.get_own(global_this, &StringView::static_("outfile"))? {
                 let slice = outfile.to_utf8(global_this)?;
                 this.outfile.append_slice_exact(slice.slice())?;
             }
@@ -971,7 +972,7 @@ pub mod js_bundler {
             }
 
             if let Some(allow_unresolved_val) =
-                config.get_own(global_this, StringView::static_("allowUnresolved"))?
+                config.get_own(global_this, &StringView::static_("allowUnresolved"))?
             {
                 if !allow_unresolved_val.is_undefined() && !allow_unresolved_val.is_null() {
                     if !(allow_unresolved_val.is_cell()
@@ -1175,7 +1176,7 @@ pub mod js_bundler {
 
             // Parse metafile option: boolean | string | { json?: string, markdown?: string }
             if let Some(metafile_value) =
-                config.get_own(global_this, StringView::static_("metafile"))?
+                config.get_own(global_this, &StringView::static_("metafile"))?
             {
                 if metafile_value.is_boolean() {
                     this.metafile = metafile_value == JSValue::TRUE;

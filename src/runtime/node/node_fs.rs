@@ -3258,7 +3258,7 @@ pub mod args {
                 if val.is_object() {
                     let get_option = |name: &'static str| -> JsResult<Option<JSValue>> {
                         if strict_booleans {
-                            val.get_own(ctx, bun_core::StringView::static_(name))
+                            val.get_own(ctx, &bun_core::StringView::static_(name))
                         } else {
                             val.get(ctx, name)
                         }

@@ -1,5 +1,3 @@
-use bun_core::StringView;
-
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for `JSC::Yarr::RegularExpression`.
     pub struct RegularExpression;
@@ -33,24 +31,24 @@ pub enum RegularExpressionError {
 // frees the allocation) keeps a raw `*mut` and stays `unsafe`.
 unsafe extern "C" {
     safe fn Yarr__RegularExpression__init(
-        pattern: &StringView<'_>,
+        pattern: &bun_core::Str,
         flags: u16,
     ) -> *mut RegularExpression;
     fn Yarr__RegularExpression__deinit(pattern: *mut RegularExpression);
     safe fn Yarr__RegularExpression__isValid(this: &RegularExpression) -> bool;
     safe fn Yarr__RegularExpression__matches(
         this: &RegularExpression,
-        string: &StringView<'_>,
+        string: &bun_core::Str,
     ) -> i32;
 }
 
 impl RegularExpression {
     #[inline]
     pub fn init(
-        pattern: StringView<'_>,
+        pattern: &bun_core::Str,
         flags: Flags,
     ) -> Result<*mut RegularExpression, RegularExpressionError> {
-        let regex = Yarr__RegularExpression__init(&pattern, flags as u16);
+        let regex = Yarr__RegularExpression__init(pattern, flags as u16);
         // `RegularExpression` is an `opaque_ffi!` ZST handle; `opaque_mut` is
         // the centralised non-null-ZST deref proof (panics on null, which
         // `Yarr__RegularExpression__init` never returns).
@@ -74,8 +72,8 @@ impl RegularExpression {
 
     /// Simple boolean matcher
     #[inline]
-    pub fn matches(&mut self, str: StringView<'_>) -> bool {
-        Yarr__RegularExpression__matches(self, &str) >= 0
+    pub fn matches(&mut self, str: &bun_core::Str) -> bool {
+        Yarr__RegularExpression__matches(self, str) >= 0
     }
 
     /// Destroys the FFI-allocated handle. Caller must not use `this` afterwards.
@@ -95,7 +93,7 @@ impl RegularExpression {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-fn __bun_regex_compile(pattern: StringView<'_>) -> Option<core::ptr::NonNull<()>> {
+fn __bun_regex_compile(pattern: &bun_core::Str) -> Option<core::ptr::NonNull<()>> {
     // Idempotent. Only the install commands reach this before initializing
     // JSC themselves, and the defaults are right for them; every other command
     // has already initialized JSC with its own options by the time a matcher
@@ -108,7 +106,7 @@ fn __bun_regex_compile(pattern: StringView<'_>) -> Option<core::ptr::NonNull<()>
 }
 
 #[unsafe(no_mangle)]
-fn __bun_regex_matches(regex: core::ptr::NonNull<()>, input: StringView<'_>) -> bool {
+fn __bun_regex_matches(regex: core::ptr::NonNull<()>, input: &bun_core::Str) -> bool {
     // `RegularExpression` is an `opaque_ffi!` ZST handle; `opaque_mut` is the
     // centralised non-null deref proof. `regex` was produced by
     // `__bun_regex_compile` and remains live until `__bun_regex_drop`.

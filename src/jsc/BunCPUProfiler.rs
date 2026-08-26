@@ -2,7 +2,7 @@ use core::ffi::c_int;
 use std::io::Write as _;
 
 use crate::VM;
-use bun_core::{String as BunString, StringView};
+use bun_core::String as BunString;
 #[cfg(windows)]
 use bun_paths::OSPathBuffer;
 use bun_paths::{AutoAbsPathChecked, PathBuffer};
@@ -69,19 +69,19 @@ pub(crate) fn stop_and_write_profile(
     );
     // Write JSON format if requested and not empty
     if config.json_format && !json_string.is_empty() {
-        write_profile_to_file(json_string.as_view(), config, false)?;
+        write_profile_to_file(&json_string, config, false)?;
     }
 
     // Write text format if requested and not empty
     if config.md_format && !text_string.is_empty() {
-        write_profile_to_file(text_string.as_view(), config, true)?;
+        write_profile_to_file(&text_string, config, true)?;
     }
 
     Ok(())
 }
 
 fn write_profile_to_file(
-    profile_string: StringView<'_>,
+    profile_string: &bun_core::Str,
     config: &CPUProfilerConfig,
     is_md_format: bool,
 ) -> Result<(), ProfilerError> {

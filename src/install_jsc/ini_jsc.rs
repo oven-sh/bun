@@ -1,7 +1,7 @@
 //! Test-only host fns for `bun.ini` (used by `internal-for-testing.ts`).
 //! Kept out of `ini/` so that directory has no JSC references.
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, LogJsc as _, StringViewJsc as _};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, LogJsc as _, StrJsc as _};
 
 /// Free-fn aliases of the [`IniTestingAPIs`] associated fns so
 /// `bun_runtime::dispatch::js2native` can `pub use` them (associated fns

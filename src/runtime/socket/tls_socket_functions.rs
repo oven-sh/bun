@@ -6,7 +6,7 @@ use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_jsc::JsClass as _;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    self as jsc, CallFrame, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult, StringJsc as _,
+    self as jsc, CallFrame, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult, StrJsc as _,
 };
 
 use crate::api::bun_x509 as X509;

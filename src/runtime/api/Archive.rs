@@ -10,7 +10,7 @@ use bun_glob as glob;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue, JsResult,
 };
-use bun_jsc::{EncodedSliceJsc as _, StringJsc as _, SysErrorJsc as _};
+use bun_jsc::{EncodedSliceJsc as _, StrJsc as _, SysErrorJsc as _};
 use bun_libarchive as libarchive;
 use bun_ptr::RefPtr;
 use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};

@@ -5,7 +5,7 @@ use bun_ast::ImportKind;
 use bun_core::strings;
 
 use crate::bun_string_jsc;
-use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StrJsc as _, StringJsc as _};
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. `msg` and
 // `referrer` are read-only after construction; only `logged` is mutated

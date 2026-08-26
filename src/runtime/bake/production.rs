@@ -21,14 +21,14 @@ use bun_bundler::output_file::Index as OutputFileIndex;
 
 use bun_collections::{AutoBitSet, StringArrayHashMap};
 use bun_core::{Global, Output};
-use bun_core::{String as BunString, StringView};
+use bun_core::{Str, String as BunString, StringView};
 use bun_dotenv as dotenv;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::js_promise::{UnwrapMode, Unwrapped};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, AnyPromise, JSGlobalObject, JSModuleLoader, JSPromise, JSValue, JsResult,
-    StringJsc as _, StringViewJsc as _,
+    StrJsc as _, StringJsc as _,
 };
 use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{self, platform};
@@ -335,7 +335,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     let config_entry_point_string = StringView::utf8(config_entry_point.path_const().unwrap().text);
 
     let Some(config_promise) =
-        JSModuleLoader::load_and_evaluate_module_ptr(vm.global, config_entry_point_string)
+        JSModuleLoader::load_and_evaluate_module_ptr(vm.global, &config_entry_point_string)
     else {
         debug_assert!(global.has_exception());
         return Err(crate::Error::JSError);
@@ -1273,7 +1273,7 @@ unsafe extern "C" {
     safe fn BakeRenderRoutesForProdStatic(
         global: &JSGlobalObject,
         // Output directory path (e.g., "./dist")
-        out_base: &StringView<'_>,
+        out_base: &Str,
         // Server module paths (e.g., ["bake://page.js", "bake://layout.js"])
         all_server_files: JSValue,
         // Framework prerender functions by router type
@@ -1298,7 +1298,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn BakeToWindowsPath(input: &StringView<'_>) -> BunString {
+extern "C" fn BakeToWindowsPath(input: &Str) -> BunString {
     #[cfg(unix)]
     {
         let _ = input;
@@ -1317,8 +1317,8 @@ extern "C" fn BakeToWindowsPath(input: &StringView<'_>) -> BunString {
 #[unsafe(no_mangle)]
 extern "C" fn BakeProdResolve(
     global: &JSGlobalObject,
-    a_str: &StringView<'_>,
-    specifier_str: &StringView<'_>,
+    a_str: &Str,
+    specifier_str: &Str,
 ) -> BunString {
     let specifier = specifier_str.to_utf8();
 
@@ -1589,7 +1589,7 @@ impl Drop for PerThread {
 
 /// Given a key, returns the source code to load.
 #[unsafe(no_mangle)]
-extern "C" fn BakeProdLoad(pt: *mut PerThread, key: &StringView<'_>) -> BunString {
+extern "C" fn BakeProdLoad(pt: *mut PerThread, key: &Str) -> BunString {
     // SAFETY: `pt` is the non-null pointer previously attached via
     // BakeGlobalObject__attachPerThreadData; C++ only calls this while attached.
     let pt = unsafe { &*pt };

@@ -11,7 +11,7 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use bun_core::{String as BunString, StringView};
+use bun_core::{Str, String as BunString, StringView};
 use bun_io::KeepAlive;
 use bun_io::posix_event_loop::{AllocatorType, get_vm_ctx};
 
@@ -164,7 +164,7 @@ unsafe extern "C" {
     safe fn Bun__startJSDebuggerThread(
         global: &JSGlobalObject,
         ctx_id: u32,
-        url: &StringView<'_>,
+        url: &Str,
         from_env: c_int,
         is_connect: bool,
         is_node_inspector: bool,
@@ -808,17 +808,17 @@ unsafe extern "C" {
         agent: &mut TestReporterHandle,
         call_frame: &CallFrame,
         test_id: c_int,
-        name: &StringView<'_>,
+        name: &Str,
         item_type: TestType,
         parent_id: c_int,
     );
     safe fn Bun__TestReporterAgentReportTestFoundWithLocation(
         agent: &mut TestReporterHandle,
         test_id: c_int,
-        name: &StringView<'_>,
+        name: &Str,
         item_type: TestType,
         parent_id: c_int,
-        source_url: &StringView<'_>,
+        source_url: &Str,
         line: c_int,
     );
     safe fn Bun__TestReporterAgentReportTestStart(agent: &mut TestReporterHandle, test_id: c_int);
@@ -835,32 +835,26 @@ impl TestReporterHandle {
         &mut self,
         call_frame: &CallFrame,
         test_id: i32,
-        name: StringView<'_>,
+        name: &Str,
         item_type: TestType,
         parent_id: i32,
     ) {
         Bun__TestReporterAgentReportTestFound(
-            self, call_frame, test_id, &name, item_type, parent_id,
+            self, call_frame, test_id, name, item_type, parent_id,
         );
     }
 
     pub fn report_test_found_with_location(
         &mut self,
         test_id: i32,
-        name: StringView<'_>,
+        name: &Str,
         item_type: TestType,
         parent_id: i32,
-        source_url: StringView<'_>,
+        source_url: &Str,
         line: i32,
     ) {
         Bun__TestReporterAgentReportTestFoundWithLocation(
-            self,
-            test_id,
-            &name,
-            item_type,
-            parent_id,
-            &source_url,
-            line,
+            self, test_id, name, item_type, parent_id, source_url, line,
         );
     }
 
@@ -935,7 +929,7 @@ impl TestReporterAgent {
         &self,
         call_frame: &CallFrame,
         test_id: i32,
-        name: StringView<'_>,
+        name: &Str,
         item_type: TestType,
         parent_id: i32,
     ) {

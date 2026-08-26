@@ -797,7 +797,7 @@ impl ServerConfig {
                     let mut has_head_route = false;
                     for method in METHODS {
                         let method_name = bun_core::StringView::static_(method.as_str());
-                        if let Some(function) = value.get_own(global, method_name)? {
+                        if let Some(function) = value.get_own(global, &method_name)? {
                             if !found {
                                 validate_route_name(global, &path)?;
                             }

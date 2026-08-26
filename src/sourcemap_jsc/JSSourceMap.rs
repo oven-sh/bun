@@ -6,7 +6,9 @@ use std::sync::Arc;
 use bstr::BStr;
 
 use bun_core::{self as bstring, strings};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSValue, JsResult, StrJsc as _, StringJsc as _, bun_string_jsc,
+};
 use bun_sourcemap::{Mapping, Ordinal, ParsedSourceMap, mapping};
 
 // generate-classes.ts does not emit Rust accessors yet, so the
@@ -53,7 +55,7 @@ fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
 
     if let Some(source_url_index) = strings::index_of(source_url_slice.slice(), b"://") {
         if &source_url_slice.slice()[..source_url_index] == b"file" {
-            let path = bun_url::path_from_file_url(source_url_string.as_view());
+            let path = bun_url::path_from_file_url(&source_url_string);
 
             if path.is_dead() {
                 return Err(global.throw_value(global.err_invalid_url(format_args!(

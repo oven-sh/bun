@@ -9,7 +9,7 @@ use crate::ipc::{
 use bun_core::String as BunString;
 #[cfg(windows)]
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StrJsc as _};
 
 use crate::api::bun::subprocess::Subprocess;
 use crate::socket::Listener;

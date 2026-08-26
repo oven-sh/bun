@@ -4,7 +4,7 @@ use bun_core::StackCheck;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer,
-    RangeErrorOptions, StringJsc as _,
+    RangeErrorOptions, StrJsc as _,
 };
 // Note: the `bun_md` crate's lib.rs is a
 // thin mod-decl shim, so alias the `root` module (which re-exports BlockType,

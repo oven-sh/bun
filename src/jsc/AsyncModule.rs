@@ -2,7 +2,7 @@ use core::ffi::c_void;
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_bundler::transpiler::ParseResult;
-use bun_core::{EncodedSlice, String as BunString, StringView};
+use bun_core::{EncodedSlice, Str, String as BunString, StringView};
 use bun_install::dependency::Dependency;
 use bun_install::{DependencyID, Resolution};
 use bun_io::KeepAlive;
@@ -12,7 +12,7 @@ use crate::bun_string_jsc;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
     self as jsc, EncodedSliceJsc as _, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise,
-    JSValue, JsError, JsResult, ResolvedSource, StringJsc as _, StrongOptional,
+    JSValue, JsError, JsResult, ResolvedSource, StrJsc as _, StrongOptional,
 };
 
 bun_core::declare_scope!(AsyncModule, hidden);
@@ -156,8 +156,8 @@ impl AsyncModule {
         global_this: &JSGlobalObject,
         promise: JSValue,
         result: Result<ResolvedSource, crate::CrateError>,
-        specifier: StringView<'_>,
-        referrer: StringView<'_>,
+        specifier: &Str,
+        referrer: &Str,
         log: &mut bun_ast::Log,
     ) -> JsResult<()> {
         jsc::mark_binding();
@@ -177,7 +177,7 @@ impl AsyncModule {
         bun_core::scoped_log!(AsyncModule, "fulfill: {}", specifier);
 
         jsc::from_js_host_call_generic(global_this, || {
-            Bun__onFulfillAsyncModule(global_this, promise, &mut errorable, &specifier, &referrer)
+            Bun__onFulfillAsyncModule(global_this, promise, &mut errorable, specifier, referrer)
         })
     }
 }
@@ -197,8 +197,8 @@ unsafe extern "C" {
         global_object: &JSGlobalObject,
         promise_value: JSValue,
         res: &mut ErrorableResolvedSource,
-        specifier: &StringView<'_>,
-        referrer: &StringView<'_>,
+        specifier: &Str,
+        referrer: &Str,
     );
 }
 
@@ -649,8 +649,8 @@ impl AsyncModule {
             global_this,
             this.promise.get().unwrap(),
             result,
-            spec,
-            referrer,
+            &spec,
+            &referrer,
             &mut log,
         )
     }
@@ -1196,7 +1196,7 @@ impl AsyncModule {
             let mut resolved_source = unsafe {
                 (*jsc_vm).ref_counted_resolved_source(
                     printer.ctx.get_written(),
-                    StringView::utf8(specifier),
+                    &StringView::utf8(specifier),
                     path.text,
                     None,
                 )

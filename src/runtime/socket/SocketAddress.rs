@@ -11,7 +11,9 @@ use core::mem;
 use bun_cares_sys::c_ares as ares;
 use bun_core::{String as BunString, ZStr, strings};
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult, StringJsc};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult, StrJsc as _, StringJsc,
+};
 use bun_ptr::JsCell;
 
 // The JsClass derive / codegen wires toJS/fromJS/fromJSDirect.
@@ -197,7 +199,7 @@ impl SocketAddress {
             str
         };
 
-        let Some(url) = bun_jsc::url::Parsed::from_string(url_str.as_view()) else {
+        let Some(url) = bun_jsc::url::Parsed::from_string(&url_str) else {
             return Ok(JSValue::UNDEFINED);
         };
         let host: BunString = url.host();

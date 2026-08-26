@@ -1,3 +1,4 @@
+
 use bun_core::StringView;
 use core::fmt;
 use crate::test_runner::expect::JSValueTestExt;
@@ -205,7 +206,7 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 };
 
                 let bound = if let Some(cb) = args.callback {
-                    Some(JSValueTestExt::bind(cb, global, item, StringView::static_("cb"), 0.0, args_list.as_slice())?)
+                    Some(JSValueTestExt::bind(cb, global, item, &StringView::static_("cb"), 0.0, args_list.as_slice())?)
                 } else {
                     None
                 };
@@ -336,7 +337,7 @@ impl ScopeFunctions {
                 debugger.test_reporter_agent.report_test_found(
                     frame,
                     id,
-                    name,
+                    &name,
                     match self.mode {
                         Mode::Describe => TestReporterKind::Describe,
                         Mode::Test => TestReporterKind::Test,
@@ -401,7 +402,7 @@ impl ScopeFunctions {
                         // SAFETY: `filter_regex` is the FFI-allocated Yarr handle stored in
                         // `TestRunner` for the process lifetime; single-threaded here so the
                         // exclusive borrow is unaliased.
-                        matches_filter = unsafe { &mut *filter_regex.as_ptr() }.matches(str);
+                        matches_filter = unsafe { &mut *filter_regex.as_ptr() }.matches(&str);
 
                         bun_test.collection.filter_buffer.clear();
                     }
@@ -774,7 +775,7 @@ fn bind(value: JSValue, global: &JSGlobalObject, name: &'static str) -> JsResult
     // `__jsc_host_call_as_function`; `JSFunction::create` wants the raw
     // `JSHostFn` shape, not the safe Rust signature.
     let call_fn = bun_jsc::JSFunction::create(global, name, __jsc_host_call_as_function, 1, Default::default());
-    let bound = JSValueTestExt::bind(call_fn, global, value, StringView::static_(name), 1.0, &[])?;
+    let bound = JSValueTestExt::bind(call_fn, global, value, &StringView::static_(name), 1.0, &[])?;
     set_prototype_direct(bound, value.get_prototype(global)?, global)?;
     Ok(bound)
 }

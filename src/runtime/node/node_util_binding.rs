@@ -1,6 +1,8 @@
 use bun_core::strings::EncodingNonAscii;
-use bun_core::{self as bstr, EncodedSlice, String as BunString, StringView, strings};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
+use bun_core::{self as bstr, EncodedSlice, Str, String as BunString, StringView, strings};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSValue, JsResult, StrJsc as _, StringJsc as _, bun_string_jsc,
+};
 use bun_sys::UV_E;
 
 use crate::node::types::Encoding;
@@ -118,11 +120,11 @@ pub(crate) fn extracted_split_new_lines_fast_path_strings_only(
     let str = value.to_bun_string(global)?;
 
     match str.encoding() {
-        EncodingNonAscii::Utf16 => split(EncodingNonAscii::Utf16, global, str.as_view()),
-        EncodingNonAscii::Latin1 => split(EncodingNonAscii::Latin1, global, str.as_view()),
+        EncodingNonAscii::Utf16 => split(EncodingNonAscii::Utf16, global, &str),
+        EncodingNonAscii::Latin1 => split(EncodingNonAscii::Latin1, global, &str),
         EncodingNonAscii::Utf8 => {
             if strings::is_all_ascii(str.byte_slice()) {
-                split(EncodingNonAscii::Utf8, global, str.as_view())
+                split(EncodingNonAscii::Utf8, global, &str)
             } else {
                 Ok(JSValue::UNDEFINED)
             }
@@ -133,11 +135,7 @@ pub(crate) fn extracted_split_new_lines_fast_path_strings_only(
 // PERF: `encoding` is a runtime parameter
 // because `EncodingNonAscii` doesn't derive `ConstParamTy` (would need nightly
 // `adt_const_params`). The hot u8/u16 split is still type-dispatched below.
-fn split(
-    encoding: EncodingNonAscii,
-    global: &JSGlobalObject,
-    str: StringView<'_>,
-) -> JsResult<JSValue> {
+fn split(encoding: EncodingNonAscii, global: &JSGlobalObject, str: &Str) -> JsResult<JSValue> {
     let mut lines: Vec<StringView<'_>> = Vec::new();
 
     // Split into two arms over the buffer's element type (u8 for
@@ -213,7 +211,7 @@ pub(crate) fn normalize_encoding(global: &JSGlobalObject, frame: &CallFrame) -> 
     if str.len() == 0 {
         return Ok(Encoding::Utf8.to_js(global));
     }
-    if let Some(enc) = Encoding::from_bun_string(str.as_view()) {
+    if let Some(enc) = Encoding::from_bun_string(&str) {
         return Ok(enc.to_js(global));
     }
     Ok(JSValue::UNDEFINED)

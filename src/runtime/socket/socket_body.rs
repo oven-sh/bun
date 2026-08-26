@@ -5187,7 +5187,7 @@ pub mod testing_apis {
                 Some(v) if v.is_number() => v.coerce_to_i32(global)?,
                 Some(v) => {
                     let name = v.to_bun_string(global)?;
-                    parse_errno_name(name.as_view()).ok_or_else(|| {
+                    parse_errno_name(&name).ok_or_else(|| {
                         global.throw(format_args!(
                             "rule.errno: unknown errno name (use a numeric value or one of: ECONNRESET, EPIPE, ETIMEDOUT, ECONNREFUSED, EAGAIN, EWOULDBLOCK, EINTR, ENOBUFS, ENOMEM, EBADF, EINVAL, ENETUNREACH, EHOSTUNREACH, EPROTOTYPE)"
                         ))
@@ -5243,7 +5243,7 @@ pub mod testing_apis {
     }
 
     #[cfg(socket_fault_injection)]
-    fn parse_errno_name(name: bun_core::StringView<'_>) -> Option<c_int> {
+    fn parse_errno_name(name: &bun_core::Str) -> Option<c_int> {
         macro_rules! map {
             ($($s:literal => $v:expr,)*) => {
                 $(if name.eq_ascii($s) { return Some($v as c_int); })*

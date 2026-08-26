@@ -838,7 +838,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         // `pending_internal_promise` keeps the FFI's mutable provenance instead
         // of being laundered through `&JSInternalPromise -> *const -> *mut`
         // (UB to write through under Stacked Borrows).
-        let promise: *mut JSInternalPromise = match JSModuleLoader::import_ptr(global, module_name)
+        let promise: *mut JSInternalPromise = match JSModuleLoader::import_ptr(global, &module_name)
         {
             Ok(p) => p.as_ptr(),
             Err(_) => {
@@ -1887,7 +1887,7 @@ unsafe fn retroactively_report_discovered_tests(
         &mut active_file.collection.root_scope,
         -1,
         &mut max_id,
-        source_url,
+        &source_url,
     );
 
     return max_id;
@@ -1897,7 +1897,7 @@ unsafe fn retroactively_report_discovered_tests(
         scope: &mut DescribeScope,
         parent_id: i32,
         max_id: &mut i32,
-        source_url: bun_core::StringView<'_>,
+        source_url: &bun_core::Str,
     ) {
         for entry in scope.entries.iter_mut() {
             match entry {
@@ -1914,7 +1914,7 @@ unsafe fn retroactively_report_discovered_tests(
                         // SAFETY: `agent` is a live C++ handle (fn contract).
                         unsafe { &mut *agent }.report_test_found_with_location(
                             test_id,
-                            name,
+                            &name,
                             TestType::Describe,
                             parent_id,
                             source_url,
@@ -1941,7 +1941,7 @@ unsafe fn retroactively_report_discovered_tests(
                         // SAFETY: `agent` is a live C++ handle (fn contract).
                         unsafe { &mut *agent }.report_test_found_with_location(
                             test_id,
-                            name,
+                            &name,
                             TestType::Test,
                             parent_id,
                             source_url,
@@ -3604,7 +3604,7 @@ fn js_synthetic_module(name: &'static [u8]) -> ResolvedSource {
 /// before `ServerEntryPoint::generate` has run, or `bun:internal-for-testing`
 /// without the opt-in flag).
 fn get_hardcoded_module(
-    specifier: bun_core::StringView<'_>,
+    specifier: &bun_core::Str,
     hardcoded: HardcodedModule,
 ) -> Option<ResolvedSource> {
     // The analytics-side set stores `&'static str` names
@@ -3708,7 +3708,7 @@ fn get_hardcoded_module(
 fn __bun_fetch_builtin_module(
     jsc_vm: &VirtualMachine,
     global: &JSGlobalObject,
-    specifier: bun_core::StringView<'_>,
+    specifier: &bun_core::Str,
 ) -> Option<ResolvedSource> {
     let spec_utf8 = specifier.to_utf8();
     let spec = spec_utf8.slice();
@@ -4163,8 +4163,8 @@ const ALWAYS_SYNC_MODULES: &[&[u8]] = &[b"reflect-metadata"];
 pub unsafe extern "C" fn Bun__transpileFile(
     jsc_vm: *mut VirtualMachine,
     global: &JSGlobalObject,
-    specifier: &bun_core::StringView<'_>,
-    referrer: &bun_core::StringView<'_>,
+    specifier: &bun_core::Str,
+    referrer: &bun_core::Str,
     type_attribute: Option<&bun_core::StringView<'_>>,
     ret: &mut ErrorableResolvedSource,
     allow_promise: bool,
@@ -4439,7 +4439,7 @@ pub unsafe extern "C" fn Bun__transpileFile(
     let args = TranspileArgs {
         specifier: lr.specifier,
         referrer: referrer_slice.slice(),
-        input_specifier: *specifier,
+        input_specifier: specifier,
         log: &raw mut *log,
         virtual_source: lr.virtual_source,
         global_object: global,
@@ -4457,8 +4457,7 @@ pub unsafe extern "C" fn Bun__transpileFile(
             promise.cast::<c_void>()
         }
         Err(err) => {
-            if let Some(value) = transpile_error_value(global, *specifier, *referrer, &mut log, err)
-            {
+            if let Some(value) = transpile_error_value(global, specifier, referrer, &mut log, err) {
                 *ret = ErrorableResolvedSource::err(value);
             }
             ptr::null_mut()
@@ -4470,8 +4469,8 @@ pub unsafe extern "C" fn Bun__transpileFile(
 /// error (the plugin already threw).
 fn transpile_error_value(
     global: &JSGlobalObject,
-    specifier: bun_core::StringView<'_>,
-    referrer: bun_core::StringView<'_>,
+    specifier: &bun_core::Str,
+    referrer: &bun_core::Str,
     log: &mut bun_ast::Log,
     err: crate::Error,
 ) -> Option<JSValue> {
@@ -4501,8 +4500,8 @@ fn transpile_error_value(
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__transpileVirtualModule(
     global: &JSGlobalObject,
-    specifier_str: &bun_core::StringView<'_>,
-    referrer_str: &bun_core::StringView<'_>,
+    specifier_str: &bun_core::Str,
+    referrer_str: &bun_core::Str,
     source_code: &bun_core::EncodedSlice,
     loader_: bun_options_types::schema::api::Loader,
     ret: &mut ErrorableResolvedSource,
@@ -4581,7 +4580,7 @@ pub extern "C" fn Bun__transpileVirtualModule(
     let args = TranspileArgs {
         specifier,
         referrer: referrer_slice.slice(),
-        input_specifier: *specifier_str,
+        input_specifier: specifier_str,
         log: &raw mut log,
         virtual_source: Some(&virtual_source),
         global_object: global,
@@ -4598,7 +4597,7 @@ pub extern "C" fn Bun__transpileVirtualModule(
         }
         Err(err) => {
             if let Some(value) =
-                transpile_error_value(global, *specifier_str, *referrer_str, &mut log, err)
+                transpile_error_value(global, specifier_str, referrer_str, &mut log, err)
             {
                 *ret = ErrorableResolvedSource::err(value);
             }
@@ -4718,9 +4717,7 @@ fn extract_owner_uid() -> u32 {
 
 /// Support embedded .node files. `Dead` when `path` is not an embedded file.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__resolveEmbeddedNodeFile(
-    path: &bun_core::StringView<'_>,
-) -> bun_core::String {
+pub extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::Str) -> bun_core::String {
     bun_jsc::mark_binding();
     if VirtualMachine::get().standalone_module_graph.is_none() {
         return bun_core::String::DEAD;
@@ -4737,7 +4734,7 @@ pub extern "C" fn Bun__resolveEmbeddedNodeFile(
 /// source into `ret` and returns `true`.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__resolveAndFetchBuiltinModule(
-    specifier: &bun_core::StringView<'_>,
+    specifier: &bun_core::Str,
     ret: &mut ErrorableResolvedSource,
 ) -> bool {
     bun_jsc::mark_binding();
@@ -4757,7 +4754,7 @@ pub extern "C" fn Bun__resolveAndFetchBuiltinModule(
         debug_assert!(false);
         return false;
     };
-    let Some(resolved) = get_hardcoded_module(*specifier, hardcoded) else {
+    let Some(resolved) = get_hardcoded_module(specifier, hardcoded) else {
         return false;
     };
     *ret = ErrorableResolvedSource::ok(resolved);
@@ -4812,7 +4809,7 @@ pub(crate) fn parse_http_date(value: &[u8]) -> Option<u64> {
     // The only callers — FileRoute / static
     // routes — treat a throw the same as "header absent / unparsable", so
     // swallow `JsError` here and surface `None`.
-    let Ok(date_f64) = bun_string_jsc::parse_date(string, global) else {
+    let Ok(date_f64) = bun_string_jsc::parse_date(&string, global) else {
         return None;
     };
     if !date_f64.is_nan() && date_f64.is_finite() && date_f64 >= 0.0 {

@@ -361,7 +361,7 @@ pub fn on_reject_entry_point_result(
 #[unsafe(no_mangle)]
 unsafe extern "C" fn bindgen_NodeModuleModule_dispatch_stat1(
     _global: *mut JSGlobalObject,
-    arg_str: &bun_core::StringView<'_>,
+    arg_str: &bun_core::Str,
     out: *mut i32,
 ) -> bool {
     let s = arg_str.to_utf8();
@@ -379,7 +379,7 @@ unsafe extern "C" fn bindgen_NodeModuleModule_dispatch_stat1(
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn bindgen_bunobject_dispatch_braces(
     global: &JSGlobalObject,
-    input: bun_core::StringView<'_>,
+    input: &bun_core::Str,
     arg_options: *const crate::api::bun_object::r#gen::BracesOptions,
 ) -> JSValue {
     // SAFETY: `arg_options` points to a `BracesOptions` on the C++ caller's stack.
@@ -420,7 +420,7 @@ pub fn bindgen_bunobject_dispatch_gc(
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn bindgen_fmt_jsc_dispatch_fmt_string(
     global: &JSGlobalObject,
-    arg_code: bun_core::StringView<'_>,
+    arg_code: &bun_core::Str,
     arg_formatter: *const bun_jsc::fmt_jsc::js_bindings::Formatter,
     out: *mut bun_core::String,
 ) -> bool {

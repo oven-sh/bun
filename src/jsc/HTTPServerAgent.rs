@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::VirtualMachineRef as VirtualMachine;
-use bun_core::{String as BunString, StringView};
+use bun_core::{Str, String as BunString};
 
 pub struct HTTPServerAgent {
     /// Underlying C++ agent. Set to null when not enabled.
@@ -93,7 +93,7 @@ impl InspectorHTTPServerAgent {
         agent: *mut InspectorHTTPServerAgent,
         server_id: ServerId,
         hot_reload_id: HotReloadId,
-        address: StringView<'_>,
+        address: &Str,
         start_time: f64,
         server_instance: *mut c_void,
     ) {
@@ -108,7 +108,7 @@ impl InspectorHTTPServerAgent {
                 core::ptr::from_mut(agent).cast(),
                 server_id.get() as _,
                 hot_reload_id as _,
-                &raw const address,
+                address,
                 start_time,
                 server_instance,
             );

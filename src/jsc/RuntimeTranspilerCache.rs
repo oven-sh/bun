@@ -5,7 +5,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_ast::ExportsKind;
 use bun_ast::Source;
-use bun_core::{FeatureFlags, StringView, env_var};
+use bun_core::{FeatureFlags, Str, StringView, env_var};
 use bun_core::{String as BunString, ZStr};
 use bun_js_parser::ParserOptions;
 use bun_paths::resolve_path::{self as path_handler, platform};
@@ -240,7 +240,7 @@ impl Entry {
         features_hash: u64,
         sourcemap: &[u8],
         esm_record: &[u8],
-        output_code: StringView<'_>,
+        output_code: &Str,
         exports_kind: ExportsKind,
     ) -> crate::CrateResult<()> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.save");
@@ -772,7 +772,7 @@ impl RuntimeTranspilerCache {
         features_hash: u64,
         sourcemap: &[u8],
         esm_record: &[u8],
-        source_code: StringView<'_>,
+        source_code: &Str,
         exports_kind: ExportsKind,
     ) -> crate::CrateResult<()> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.toFile");
@@ -967,7 +967,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
                 this.features_hash.unwrap(),
                 sourcemap,
                 esm_record,
-                output_code,
+                &output_code,
                 this.exports_kind,
             );
             if let Err(err) = result {

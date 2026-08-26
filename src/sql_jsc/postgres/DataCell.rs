@@ -40,7 +40,7 @@ fn parse_date_time_text(
     }
     // `date` (date-only ISO form), BC dates and 5+ digit years fall back to `Date.parse`.
     let str = StringView::from_bytes(bytes);
-    bun_string_jsc::parse_date(str, global_object).map_err(crate::jsc::js_error_to_postgres)
+    bun_string_jsc::parse_date(&str, global_object).map_err(crate::jsc::js_error_to_postgres)
 }
 
 fn parse_bytea(hex: &[u8]) -> Result<SQLDataCell> {
@@ -348,7 +348,7 @@ fn parse_array(
                             Some(inf) => inf,
                             None => {
                                 let str = StringView::from_bytes(element);
-                                bun_string_jsc::parse_date(str, global_object)
+                                bun_string_jsc::parse_date(&str, global_object)
                                     .map_err(crate::jsc::js_error_to_postgres)?
                             }
                         };

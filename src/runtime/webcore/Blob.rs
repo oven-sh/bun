@@ -16,11 +16,9 @@ use crate::webcore::jsc::{
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core as bun;
 use bun_core::Output;
-use bun_core::{
-    EncodedSlice, String as BunString, StringView, Utf8Bytes, WTFStringImplExt as _, strings,
-};
+use bun_core::{EncodedSlice, String as BunString, Utf8Bytes, WTFStringImplExt as _, strings};
 use bun_http_types::MimeType::MimeType;
-use bun_jsc::{EncodedSliceJsc as _, StringJsc as _, bun_string_jsc};
+use bun_jsc::{EncodedSliceJsc as _, StrJsc as _, StringJsc as _, bun_string_jsc};
 use bun_ptr::RefPtr;
 use bun_sys::{self, Fd};
 
@@ -4145,7 +4143,7 @@ pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &StringView<'_>) {
+pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &bun_core::Str) {
     this.is_jsdom_file.set(true);
     if !path_str.is_empty() && this.get_file_name().is_none() {
         this.name.set(path_str.to_owned());
@@ -4871,14 +4869,14 @@ pub(crate) fn write_file_internal(
                         write_string_to_file_fast::<true>(
                             global_this,
                             &pathlike,
-                            str.as_view(),
+                            &str,
                             &mut needs_async,
                         )
                     } else {
                         write_string_to_file_fast::<false>(
                             global_this,
                             &pathlike,
-                            str.as_view(),
+                            &str,
                             &mut needs_async,
                         )
                     };
@@ -5323,7 +5321,7 @@ const WRITE_PERMISSIONS: bun_sys::Mode = 0o664;
 fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     global_this: &JSGlobalObject,
     pathlike: &PathOrFileDescriptor,
-    str: StringView<'_>,
+    str: &bun_core::Str,
     needs_async: &mut bool,
 ) -> JSValue {
     let fd: Fd = if !NEEDS_OPEN {

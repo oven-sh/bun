@@ -36,7 +36,7 @@ mod _impl {
     #[cfg(not(windows))]
     use bun_core::strings;
     use bun_core::{env_var, fmt as bun_fmt};
-    use bun_jsc::{CallFrame, JSArray, StringJsc as _, SysErrorJsc as _, SystemError};
+    use bun_jsc::{CallFrame, JSArray, StrJsc as _, StringJsc as _, SysErrorJsc as _, SystemError};
     #[cfg(windows)]
     use bun_paths::PathBuffer;
     #[cfg(windows)]

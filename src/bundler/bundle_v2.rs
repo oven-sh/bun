@@ -727,8 +727,8 @@ pub mod bv2_impl {
                 #[link_name = "JSBundlerPlugin__anyMatches"]
                 safe fn JSBundlerPlugin__anyMatches(
                     this: &Plugin,
-                    namespace: &StringView<'_>,
-                    path: &StringView<'_>,
+                    namespace: &bun_core::Str,
+                    path: &bun_core::Str,
                     is_on_load: bool,
                 ) -> bool;
                 // `context` is an opaque cookie C++ round-trips back to a Rust
@@ -767,8 +767,8 @@ pub mod bv2_impl {
                 safe fn JSBundlerPlugin__callOnBeforeParsePlugins(
                     this: &Plugin,
                     ctx: *mut core::ffi::c_void,
-                    namespace: &StringView<'_>,
-                    path: &StringView<'_>,
+                    namespace: &bun_core::Str,
+                    path: &bun_core::Str,
                     args: *mut core::ffi::c_void,
                     result: *mut core::ffi::c_void,
                     should_continue_running: *mut i32,
@@ -793,8 +793,8 @@ pub mod bv2_impl {
                 pub(crate) fn call_on_before_parse_plugins(
                     &self,
                     ctx: *mut core::ffi::c_void,
-                    namespace: StringView<'_>,
-                    path: StringView<'_>,
+                    namespace: &bun_core::Str,
+                    path: &bun_core::Str,
                     args: *mut crate::parse_task::parse_worker::OnBeforeParseArguments,
                     result: *mut crate::parse_task::parse_worker::OnBeforeParseResult,
                     should_continue_running: &core::cell::Cell<i32>,
@@ -805,8 +805,8 @@ pub mod bv2_impl {
                     JSBundlerPlugin__callOnBeforeParsePlugins(
                         self,
                         ctx,
-                        &namespace,
-                        &path,
+                        namespace,
+                        path,
                         args.cast(),
                         result.cast(),
                         should_continue_running.as_ptr(),
@@ -1410,7 +1410,7 @@ pub mod bv2_impl {
             safe fn __bun_jsc_generate_cached_bytecode(
                 format: crate::options_impl::Format,
                 source: &[u8],
-                source_provider_url: bun_core::StringView<'_>,
+                source_provider_url: &bun_core::Str,
                 depth: u32,
                 external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
             ) -> Option<Box<[u8]>>;
@@ -1463,7 +1463,7 @@ pub mod bv2_impl {
         pub(crate) fn generate_cached_bytecode(
             format: crate::options_impl::Format,
             source: &[u8],
-            source_provider_url: bun_core::StringView<'_>,
+            source_provider_url: &bun_core::Str,
             depth: u32,
             external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
         ) -> Option<Box<[u8]>> {

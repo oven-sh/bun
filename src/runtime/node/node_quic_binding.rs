@@ -1,7 +1,7 @@
 //! The `node:quic` native binding object — Bun's equivalent of Node's
 //! `internalBinding('quic')` (reference: node/src/quic/*, v26.3.0).
 
-use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, StringJsc};
+use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, StrJsc as _};
 
 use super::quic::{callbacks, endpoint, session, stream};
 

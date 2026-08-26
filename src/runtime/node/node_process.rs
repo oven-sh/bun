@@ -162,7 +162,7 @@ static Bun__version_sha: CStrPtr = CStrPtr(
 
 mod _impl {
     use bun_core::env_var;
-    use bun_core::{EncodedSlice, String as BunString, StringView, strings};
+    use bun_core::{EncodedSlice, Str, String as BunString, StringView, strings};
     use bun_jsc::bun_string_jsc;
     use bun_jsc::{
         EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker,
@@ -204,7 +204,7 @@ mod _impl {
 
     // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
     #[unsafe(export_name = "Bun__Process__setTitle")]
-    extern "C" fn set_title(_global_object: *const JSGlobalObject, newvalue: &StringView<'_>) {
+    extern "C" fn set_title(_global_object: *const JSGlobalObject, newvalue: &Str) {
         // `to_owned_slice` is infallible (Vec<u8>).
         let new_title: Box<[u8]> = newvalue.to_owned_slice().into_boxed_slice();
 
@@ -262,7 +262,7 @@ mod _impl {
                     }
                 }
 
-                return bun_string_jsc::to_js_array(global_object, BunString::as_views(&args));
+                return bun_string_jsc::to_js_array(global_object, &args);
             }
             return JSValue::create_empty_array(global_object, 0);
         }
@@ -404,7 +404,7 @@ mod _impl {
             }
         }
 
-        let array = bun_string_jsc::to_js_array(global_object, BunString::as_views(&args_list));
+        let array = bun_string_jsc::to_js_array(global_object, &args_list);
         bun_jsc::HostReturn::or_pending_exception(array)
     }
 
@@ -530,7 +530,7 @@ mod _impl {
     // TODO: switch this to a WTF::String-backed type when one is added
     #[cfg(windows)]
     #[unsafe(export_name = "Bun__Process__editWindowsEnvVar")]
-    extern "C" fn bun_process_edit_windows_env_var(k: &StringView<'_>, v: &StringView<'_>) {
+    extern "C" fn bun_process_edit_windows_env_var(k: &Str, v: &Str) {
         const _: () = assert!(cfg!(windows));
         if k.tag() == bun_core::Tag::Empty {
             return;

@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue, JsResult, VM, host_fn};
-use bun_core::{EncodedSlice, StringPointer, StringView};
+use bun_core::{EncodedSlice, StringPointer};
 use bun_uws::ResponseKind;
 
 bun_opaque::opaque_ffi! {
@@ -86,7 +86,7 @@ unsafe extern "C" {
     safe fn WebCore__FetchHeaders__put(
         this: &FetchHeaders,
         name_: HTTPHeaderName,
-        value: &StringView<'_>,
+        value: &bun_core::Str,
         global: &JSGlobalObject,
     );
 }
@@ -123,7 +123,7 @@ impl FetchHeaders {
     pub fn put_default(
         &mut self,
         name_: HTTPHeaderName,
-        value: StringView<'_>,
+        value: &bun_core::Str,
         global: &JSGlobalObject,
     ) -> JsResult<()> {
         if self.fast_has(name_) {
@@ -205,11 +205,11 @@ impl FetchHeaders {
     pub fn put(
         &mut self,
         name_: HTTPHeaderName,
-        value: StringView<'_>,
+        value: &bun_core::Str,
         global: &JSGlobalObject,
     ) -> JsResult<()> {
         host_fn::from_js_host_call_generic(global, || {
-            WebCore__FetchHeaders__put(self, name_, &value, global)
+            WebCore__FetchHeaders__put(self, name_, value, global)
         })
     }
 

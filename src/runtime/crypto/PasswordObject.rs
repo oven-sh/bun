@@ -56,7 +56,7 @@ impl AlgorithmValue {
 
                 let algorithm_string = algorithm_value.to_js_string_view(global_object)?;
 
-                let Some(algo) = algorithm_from_string(algorithm_string.view()) else {
+                let Some(algo) = algorithm_from_string(&algorithm_string) else {
                     return Err(global_object.throw_invalid_argument_type(
                         "hash",
                         "algorithm",
@@ -161,7 +161,7 @@ impl AlgorithmValue {
         } else if value.is_string() {
             let algorithm_string = value.to_js_string_view(global_object)?;
 
-            let Some(algo) = algorithm_from_string(algorithm_string.view()) else {
+            let Some(algo) = algorithm_from_string(&algorithm_string) else {
                 return Err(global_object.throw_invalid_argument_type(
                     "hash",
                     "algorithm",
@@ -189,7 +189,7 @@ impl AlgorithmValue {
     }
 }
 
-fn algorithm_from_string(s: bun_core::StringView<'_>) -> Option<Algorithm> {
+fn algorithm_from_string(s: &bun_core::Str) -> Option<Algorithm> {
     if s.eq_ascii(b"argon2i") {
         Some(Algorithm::Argon2i)
     } else if s.eq_ascii(b"argon2d") {
@@ -749,7 +749,7 @@ fn js_password_object_verify(
 
         let algorithm_string = arguments[2].to_js_string_view(global_object)?;
 
-        let Some(a) = algorithm_from_string(algorithm_string.view()) else {
+        let Some(a) = algorithm_from_string(&algorithm_string) else {
             return Err(global_object.throw_invalid_argument_type(
                 "verify",
                 "algorithm",
@@ -824,7 +824,7 @@ fn js_password_object_verify_sync(
 
         let algorithm_string = arguments[2].to_js_string_view(global_object)?;
 
-        let Some(a) = algorithm_from_string(algorithm_string.view()) else {
+        let Some(a) = algorithm_from_string(&algorithm_string) else {
             return Err(global_object.throw_invalid_argument_type(
                 "verify",
                 "algorithm",

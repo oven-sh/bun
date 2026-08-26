@@ -341,7 +341,7 @@ impl CryptoHasher {
         _: JSValue,
         _: PropertyName,
     ) -> JsResult<JSValue> {
-        bun_string_jsc::to_js_array(global, bun_core::String::as_views(evp::Algorithm::names()))
+        bun_string_jsc::to_js_array(global, evp::Algorithm::names())
     }
 
     fn hash_to_encoding(

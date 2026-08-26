@@ -25,7 +25,7 @@ use bun_jsc::Debugger::DebuggerId;
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError,
-    JsResult, Node, StringJsc as _, VirtualMachine, host_fn,
+    JsResult, Node, StrJsc as _, StringJsc as _, VirtualMachine, host_fn,
 };
 use bun_paths as paths;
 use bun_ptr::RefPtr;
@@ -2586,7 +2586,7 @@ where
         let url = self
             .get_url_as_string()
             .map_err(|_| global.throw_out_of_memory())?;
-        bun_string_jsc::to_jsdomurl(url.as_view(), global)
+        bun_string_jsc::to_jsdomurl(&url, global)
     }
 
     #[bun_jsc::host_fn(getter)]

@@ -159,8 +159,7 @@ impl SSLConfigFromJs for SSLConfig {
             any = true;
         }
         if let Some(dh_params_file) = generated.dh_params_file.as_ref() {
-            result.dh_params_file_name =
-                handle_path(global, "dhParamsFile", dh_params_file.as_view())?;
+            result.dh_params_file_name = handle_path(global, "dhParamsFile", dh_params_file)?;
             any = true;
         }
         if let Some(server_name) = generated.server_name.as_ref() {
@@ -221,15 +220,15 @@ impl SSLConfigFromJs for SSLConfig {
             || result.allow_partial_trust_chain;
 
         if let Some(key_file) = generated.key_file.as_ref() {
-            result.key_file_name = handle_path(global, "keyFile", key_file.as_view())?;
+            result.key_file_name = handle_path(global, "keyFile", key_file)?;
             result.requires_custom_request_ctx = true;
         }
         if let Some(cert_file) = generated.cert_file.as_ref() {
-            result.cert_file_name = handle_path(global, "certFile", cert_file.as_view())?;
+            result.cert_file_name = handle_path(global, "certFile", cert_file)?;
             result.requires_custom_request_ctx = true;
         }
         if let Some(ca_file) = generated.ca_file.as_ref() {
-            result.ca_file_name = handle_path(global, "caFile", ca_file.as_view())?;
+            result.ca_file_name = handle_path(global, "caFile", ca_file)?;
             result.requires_custom_request_ctx = true;
         }
 
@@ -295,7 +294,7 @@ pub fn resolve_reject_unauthorized(
 fn handle_path(
     global: &JSGlobalObject,
     field: &'static str,
-    string: bun_core::StringView<'_>,
+    string: &bun_core::Str,
 ) -> JsResult<*const c_char> {
     let name = string.to_owned_slice_z();
     // `bun_sys::access` routes to `access(2)` on POSIX and
@@ -340,9 +339,7 @@ fn handle_file(
         global,
         match file {
             jsc::generated::SSLConfigFile::None => return Ok(None),
-            jsc::generated::SSLConfigFile::String(val) => {
-                SingleFile::String(val.as_ref().as_view())
-            }
+            jsc::generated::SSLConfigFile::String(val) => SingleFile::String(val.as_ref()),
             jsc::generated::SSLConfigFile::Buffer(val) => {
                 // SAFETY: GenVal::get() yields a non-null pointer valid for the
                 // lifetime of `generated`; we narrow it to `&mut` for the call.
@@ -384,7 +381,7 @@ fn handle_file_array(
             global,
             match elem {
                 jsc::generated::SSLConfigSingleFile::String(val) => {
-                    SingleFile::String(val.as_ref().as_view())
+                    SingleFile::String(val.as_ref())
                 }
                 jsc::generated::SSLConfigSingleFile::Buffer(val) => {
                     // SAFETY: see `handle_file` above — non-null GenVal pointers
@@ -404,7 +401,7 @@ fn handle_file_array(
 }
 
 enum SingleFile<'a> {
-    String(bun_core::StringView<'a>),
+    String(&'a bun_core::Str),
     Buffer(&'a mut jsc::JSCArrayBuffer),
     File(&'a mut crate::webcore::Blob),
 }

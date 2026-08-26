@@ -68,7 +68,7 @@ impl HasLength for &str {
 impl HasLength for &crate::String {
     #[inline]
     fn length(&self) -> usize {
-        crate::String::len(self)
+        self.len()
     }
 }
 

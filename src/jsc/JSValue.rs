@@ -1373,7 +1373,7 @@ impl JSValue {
         self,
         global: &JSGlobalObject,
         bind_this: JSValue,
-        name: bun_core::StringView<'_>,
+        name: &bun_core::Str,
         length: f64,
         args: &[JSValue],
     ) -> JsResult<JSValue> {
@@ -1383,7 +1383,7 @@ impl JSValue {
                 self,
                 global,
                 bind_this,
-                &name,
+                name,
                 length,
                 args.as_ptr().cast_mut(),
                 args.len(),
@@ -1475,10 +1475,10 @@ impl JSValue {
     pub fn put_may_be_index(
         self,
         global: &JSGlobalObject,
-        key: bun_core::StringView<'_>,
+        key: &bun_core::Str,
         value: JSValue,
     ) -> JsResult<()> {
-        crate::cpp::JSC__JSValue__putMayBeIndex(self, global, &key, value)
+        crate::cpp::JSC__JSValue__putMayBeIndex(self, global, key, value)
     }
     pub fn put_to_property_key(
         target: JSValue,
@@ -1500,11 +1500,11 @@ impl JSValue {
     pub fn put_bun_string_one_or_array(
         self,
         global: &JSGlobalObject,
-        key: bun_core::StringView<'_>,
+        key: &bun_core::Str,
         value: JSValue,
     ) -> JsResult<JSValue> {
         host_fn::from_js_host_call(global, || {
-            JSC__JSValue__upsertBunStringArray(self, global, &key, value)
+            JSC__JSValue__upsertBunStringArray(self, global, key, value)
         })
     }
 
@@ -1815,7 +1815,7 @@ impl FromAny for &str {
 }
 impl FromAny for Box<[bun_core::String]> {
     fn into_js_value(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::to_js_array(global, bun_core::String::as_views(&self))
+        bun_string_jsc::to_js_array(global, &self)
     }
 }
 impl<T: FromAny> FromAny for Option<T> {
@@ -1840,16 +1840,16 @@ impl PutKey for bun_core::EncodedSlice<'_> {
         JSC__JSValue__put(target, global, &self, value)
     }
 }
-impl PutKey for bun_core::StringView<'_> {
+impl PutKey for &bun_core::Str {
     #[inline]
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
-        JSC__JSValue__putBunString(target, global, &self, value)
+        JSC__JSValue__putBunString(target, global, self, value)
     }
 }
 impl PutKey for &bun_core::String {
     #[inline]
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
-        self.as_view().put(target, global, value)
+        (&**self).put(target, global, value)
     }
 }
 impl PutKey for &[u8] {
@@ -2039,14 +2039,14 @@ unsafe extern "C" {
     safe fn JSC__JSValue__putBunString(
         this: JSValue,
         global: &JSGlobalObject,
-        key: &bun_core::StringView<'_>,
+        key: &bun_core::Str,
         value: JSValue,
     );
     safe fn JSC__JSValue__putIndex(this: JSValue, global: &JSGlobalObject, i: u32, value: JSValue);
     safe fn JSC__JSValue__upsertBunStringArray(
         this: JSValue,
         global: &JSGlobalObject,
-        key: &bun_core::StringView<'_>,
+        key: &bun_core::Str,
         value: JSValue,
     ) -> JSValue;
     safe fn JSC__JSValue__push(this: JSValue, global: &JSGlobalObject, value: JSValue);
@@ -2315,10 +2315,10 @@ impl JSValue {
     pub fn get_own(
         self,
         global: &JSGlobalObject,
-        property_name: bun_core::StringView<'_>,
+        property_name: &bun_core::Str,
     ) -> JsResult<Option<JSValue>> {
         crate::top_scope!(scope, global);
-        let v = JSC__JSValue__getOwn(self, global, &property_name);
+        let v = JSC__JSValue__getOwn(self, global, property_name);
         scope.return_if_exception()?;
         if v.is_empty() { Ok(None) } else { Ok(Some(v)) }
     }
@@ -2329,7 +2329,7 @@ impl JSValue {
         property_name: impl AsRef<[u8]>,
     ) -> JsResult<Option<JSValue>> {
         let name = bun_core::StringView::utf8(property_name.as_ref());
-        match self.get_own(global, name)? {
+        match self.get_own(global, &name)? {
             Some(prop) if !prop.is_undefined() => Ok(Some(prop)),
             _ => Ok(None),
         }
@@ -2668,14 +2668,11 @@ unsafe extern "C" {
         this: JSValue,
         global: &'a JSGlobalObject,
     ) -> bun_core::StringView<'a>;
-    safe fn JSC__JSValue__symbolFor(
-        global: &JSGlobalObject,
-        key: &bun_core::StringView<'_>,
-    ) -> JSValue;
+    safe fn JSC__JSValue__symbolFor(global: &JSGlobalObject, key: &bun_core::Str) -> JSValue;
     safe fn JSC__JSValue__getOwn(
         this: JSValue,
         global: &JSGlobalObject,
-        name: &bun_core::StringView<'_>,
+        name: &bun_core::Str,
     ) -> JSValue;
     safe fn JSC__JSValue__isIterable(this: JSValue, global: &JSGlobalObject) -> bool;
     safe fn JSC__JSValue__forEach(

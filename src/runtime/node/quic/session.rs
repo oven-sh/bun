@@ -7,7 +7,8 @@ use std::collections::VecDeque;
 
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, StringJsc, Strong,
+    ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, StrJsc as _,
+    StringJsc, Strong,
 };
 
 use bun_lsquic_sys as lsquic;

@@ -7,7 +7,7 @@
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_bundler::transpiler::PluginRunner;
-use bun_core::StringView;
+use bun_core::{Str, StringView};
 use bun_options_types::LoaderExt as _;
 
 use crate::virtual_machine::VirtualMachine;
@@ -112,7 +112,7 @@ impl FetchFlags {
 pub struct TranspileArgs<'a> {
     pub specifier: &'a [u8],
     pub referrer: &'a [u8],
-    pub input_specifier: StringView<'a>,
+    pub input_specifier: &'a Str,
     pub log: *mut bun_ast::Log,
     pub virtual_source: Option<&'a bun_ast::Source>,
     pub global_object: &'a JSGlobalObject,
@@ -143,7 +143,7 @@ unsafe extern "Rust" {
     pub(crate) safe fn __bun_fetch_builtin_module(
         jsc_vm: &VirtualMachine,
         global: &JSGlobalObject,
-        specifier: StringView<'_>,
+        specifier: &Str,
     ) -> Option<ResolvedSource>;
 }
 
@@ -151,11 +151,11 @@ unsafe extern "Rust" {
 extern "C" fn Bun__fetchBuiltinModule(
     jsc_vm: &VirtualMachine,
     global_object: &JSGlobalObject,
-    specifier: &StringView<'_>,
+    specifier: &Str,
     ret: &mut ErrorableResolvedSource,
 ) -> bool {
     jsc::mark_binding();
-    match __bun_fetch_builtin_module(jsc_vm, global_object, *specifier) {
+    match __bun_fetch_builtin_module(jsc_vm, global_object, specifier) {
         Some(resolved) => {
             *ret = ErrorableResolvedSource::ok(resolved);
             true
@@ -210,7 +210,7 @@ unsafe extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> boo
 #[unsafe(no_mangle)]
 extern "C" fn Bun__getDefaultLoader(
     global: &JSGlobalObject,
-    str: &StringView<'_>,
+    str: &Str,
 ) -> bun_options_types::schema::api::Loader {
     use bun_options_types::schema::api;
     // SAFETY: C++ passed the live JS-thread global; `bun_vm()` is the
@@ -230,10 +230,7 @@ extern "C" fn Bun__getDefaultLoader(
 
 /// C++ entry point: runs the plugin for a virtual-module specifier, returning its exports (or zero when no plugin runner is set).
 #[unsafe(no_mangle)]
-extern "C" fn Bun__runVirtualModule(
-    global: &JSGlobalObject,
-    specifier: &StringView<'_>,
-) -> JSValue {
+extern "C" fn Bun__runVirtualModule(global: &JSGlobalObject, specifier: &Str) -> JSValue {
     jsc::mark_binding();
     if global.bun_vm().plugin_runner.is_none() {
         return JSValue::ZERO;
@@ -254,8 +251,8 @@ extern "C" fn Bun__runVirtualModule(
     };
 
     match global.run_on_load_plugins(
-        StringView::from_bytes(namespace),
-        StringView::from_bytes(after_namespace),
+        &StringView::from_bytes(namespace),
+        &StringView::from_bytes(after_namespace),
         crate::BunPluginTarget::Bun,
     ) {
         Ok(Some(v)) => v,

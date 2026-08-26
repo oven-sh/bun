@@ -24,7 +24,7 @@ use bun_core::{EncodedSlice, ZStr, strings};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, EncodedSliceJsc as _, JSGlobalObject, JSPromise, JSValue,
-    JsCell, JsClass as _, JsRef, JsResult, StringJsc as _, Strong, SysErrorJsc as _,
+    JsCell, JsClass as _, JsRef, JsResult, StrJsc as _, Strong, SysErrorJsc as _,
 };
 use bun_sys as sys;
 

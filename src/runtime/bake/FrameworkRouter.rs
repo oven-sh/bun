@@ -13,7 +13,8 @@ use bun_collections::{ArrayHashMap, BoundedArray, StringArrayHashMap};
 use bun_core::Output;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc, Strong, StrongOptional,
+    CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StrJsc as _, StringJsc, Strong,
+    StrongOptional,
 };
 use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer};
 use bun_resolver::{DirInfo, Resolver};
@@ -1235,7 +1236,7 @@ impl MatchedParams {
 
             obj.put_bun_string_one_or_array(
                 global,
-                bun_core::StringView::utf8(param.key.slice()),
+                &bun_core::StringView::utf8(param.key.slice()),
                 value_str.into_js(global).expect("unreachable"),
             )
             .expect("unreachable");

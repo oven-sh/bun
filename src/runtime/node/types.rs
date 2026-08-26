@@ -707,7 +707,7 @@ impl Encoding {
     /// (`bun.String.inMapCaseInsensitive`): UTF-16 code units are narrowed
     /// into a stack buffer (any non-ASCII unit ⇒ miss — no encoding name
     /// contains one) before the map lookup.
-    pub(crate) fn from_bun_string(s: bun_core::StringView<'_>) -> Option<Encoding> {
+    pub(crate) fn from_bun_string(s: &bun_core::Str) -> Option<Encoding> {
         s.in_map_case_insensitive(&ENCODING_MAP)
     }
 }
@@ -717,7 +717,7 @@ impl Encoding {
         // `from_bun_string` narrows into a stack buffer — no `to_utf8()`
         // allocation needed for a short ASCII key.
         let str = bun_core::String::from_js(value, global)?;
-        Ok(Self::from_bun_string(str.as_view()))
+        Ok(Self::from_bun_string(&str))
     }
 
     pub(crate) fn assert(

@@ -20,7 +20,7 @@ use bun_dns::{
 #[cfg(not(windows))]
 use bun_io::FilePoll;
 use bun_io::{self as Async, KeepAlive};
-use bun_jsc::StringViewJsc as _;
+use bun_jsc::StrJsc as _;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -3807,7 +3807,7 @@ trait OrderJscExt {
 
 impl OrderJscExt for Order {
     fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        use jsc::StringJsc as _;
+        use jsc::StrJsc as _;
         bun::String::static_(<&'static str>::from(self)).to_js(global_this)
     }
 }

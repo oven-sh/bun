@@ -8,7 +8,7 @@
 //! `Bun__InspectorBunFrontendDevServerAgent__setEnabled`, `slot.sequence` is
 //! `next_inspector_connection_id`.
 
-use bun_core::{String as BunString, StringView};
+use bun_core::{Str, String as BunString};
 use bun_jsc::debugger::{DebuggerId, ErasedAgentSlot};
 use bun_jsc::virtual_machine::VirtualMachine;
 
@@ -116,13 +116,13 @@ impl BunFrontendDevServerAgent {
     pub(crate) fn notify_bundle_failed(
         &self,
         dev_server_id: DebuggerId,
-        build_errors_payload_base64: StringView<'_>,
+        build_errors_payload_base64: &Str,
     ) {
         if let Some(handle) = self.handle_mut() {
             ffi::InspectorBunFrontendDevServerAgent__notifyBundleFailed(
                 handle,
                 dev_server_id.get(),
-                &build_errors_payload_base64,
+                build_errors_payload_base64,
             )
         }
     }
@@ -134,7 +134,7 @@ impl BunFrontendDevServerAgent {
         &self,
         dev_server_id: DebuggerId,
         connection_id: i32,
-        url: StringView<'_>,
+        url: &Str,
         route_bundle_id: i32,
     ) {
         if let Some(handle) = self.handle_mut() {
@@ -142,7 +142,7 @@ impl BunFrontendDevServerAgent {
                 handle,
                 dev_server_id.get(),
                 connection_id,
-                &url,
+                url,
                 route_bundle_id,
             )
         }
@@ -150,18 +150,13 @@ impl BunFrontendDevServerAgent {
 
     /// `notifyConsoleLog`. `kind` is `DevServer.ConsoleLogKind as u8` (`b'l'`
     /// / `b'e'`) — caller does `kind as u8`.
-    pub(crate) fn notify_console_log(
-        &self,
-        dev_server_id: DebuggerId,
-        kind: u8,
-        data: StringView<'_>,
-    ) {
+    pub(crate) fn notify_console_log(&self, dev_server_id: DebuggerId, kind: u8, data: &Str) {
         if let Some(handle) = self.handle_mut() {
             ffi::InspectorBunFrontendDevServerAgent__notifyConsoleLog(
                 handle,
                 dev_server_id.get(),
                 kind,
-                &data,
+                data,
             )
         }
     }
@@ -177,7 +172,7 @@ pub fn frontend_dev_server_agent_set_enabled(agent: *mut InspectorBunFrontendDev
 }
 
 mod ffi {
-    use super::{BunString, InspectorBunFrontendDevServerAgentHandle, StringView};
+    use super::{BunString, InspectorBunFrontendDevServerAgentHandle};
     // SAFETY (safe fn): `InspectorBunFrontendDevServerAgentHandle` is an
     // `opaque_ffi!` ZST handle (`!Freeze` via `UnsafeCell`); `BunString` is a
     // `#[repr(C)]` in-param the C++ side reads in-place (`&`) or consumes
@@ -208,20 +203,20 @@ mod ffi {
         pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyBundleFailed(
             agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
-            build_errors_payload_base64: &StringView<'_>,
+            build_errors_payload_base64: &bun_core::Str,
         );
         pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyClientNavigated(
             agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
             connection_id: i32,
-            url: &StringView<'_>,
+            url: &bun_core::Str,
             route_bundle_id: i32,
         );
         pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyConsoleLog(
             agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
             kind: u8,
-            data: &StringView<'_>,
+            data: &bun_core::Str,
         );
     }
 }

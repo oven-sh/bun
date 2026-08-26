@@ -1,7 +1,7 @@
 //! JSC host fns for `bun_install::npm`, kept here so that `install/` has
 //! no `JSValue`/`JSGlobalObject`/`CallFrame` references.
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringViewJsc as _};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StrJsc as _};
 
 pub fn operating_system_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_install::npm;

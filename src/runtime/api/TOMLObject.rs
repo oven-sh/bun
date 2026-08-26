@@ -1,6 +1,6 @@
 use bun_collections::HashMap;
 use bun_core::StackCheck;
-use bun_core::StringView;
+use bun_core::{Str, StringView};
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, TemporalType, wtf,
 };
@@ -233,7 +233,7 @@ impl Stringifier {
         while let Some((prop_name, prop_value)) = iter.next()? {
             let value = prop_value.unwrap_boxed_primitive(global)?;
             if value.is_null() {
-                return Err(self.err_null_value(global, prop_name));
+                return Err(self.err_null_value(global, &prop_name));
             }
             let known_temporal = match self.layout_of(global, value)? {
                 Layout::Keyval => None,
@@ -244,7 +244,7 @@ impl Stringifier {
                 header_pending = false;
                 self.append_header(path, false);
             }
-            self.append_key_segment(prop_name);
+            self.append_key_segment(&prop_name);
             self.builder.append_latin1(b" = ");
             self.stringify_inline_value(global, value, known_temporal)?;
             self.builder.append_lchar(b'\n');
@@ -339,7 +339,7 @@ impl Stringifier {
 
         if value.is_string() {
             let str = value.to_bun_string(global)?;
-            self.append_basic_quoted(str.as_view());
+            self.append_basic_quoted(&str);
             return Ok(());
         }
 
@@ -390,12 +390,12 @@ impl Stringifier {
                 continue;
             }
             if prop_value.is_null() {
-                return Err(self.err_null_value(global, prop_name));
+                return Err(self.err_null_value(global, &prop_name));
             }
             self.builder
                 .append_latin1(if first { b"{ " } else { b", " });
             first = false;
-            self.append_key_segment(prop_name);
+            self.append_key_segment(&prop_name);
             self.builder.append_latin1(b" = ");
             self.stringify_inline_value(global, prop_value, None)?;
         }
@@ -428,10 +428,10 @@ impl Stringifier {
             self.append_path(parent);
             self.builder.append_lchar(b'.');
         }
-        self.append_key_segment(path.key);
+        self.append_key_segment(&path.key);
     }
 
-    fn append_key_segment(&mut self, name: StringView<'_>) {
+    fn append_key_segment(&mut self, name: &Str) {
         if is_bare_key(name) {
             self.builder.append_string(name);
         } else {
@@ -439,7 +439,7 @@ impl Stringifier {
         }
     }
 
-    fn append_basic_quoted(&mut self, str: StringView<'_>) {
+    fn append_basic_quoted(&mut self, str: &Str) {
         append_basic_quoted_to(&mut self.builder, str);
     }
 
@@ -555,7 +555,7 @@ impl Stringifier {
 
     // ── errors ─────────────────────────────────────────────────────────────
 
-    fn err_null_value(&mut self, global: &JSGlobalObject, key: StringView<'_>) -> StringifyError {
+    fn err_null_value(&mut self, global: &JSGlobalObject, key: &Str) -> StringifyError {
         global
             .throw(format_args!(
                 "TOML cannot represent null (key '{key}'); remove the key or use a sentinel value",
@@ -623,7 +623,7 @@ fn temporal_name(t: TemporalType) -> &'static str {
     }
 }
 
-fn is_bare_key(name: StringView<'_>) -> bool {
+fn is_bare_key(name: &Str) -> bool {
     if name.len() == 0 {
         return false;
     }
@@ -642,7 +642,7 @@ fn is_bare_key(name: StringView<'_>) -> bool {
 
 /// TOML basic string with escapes. Unpaired surrogates become U+FFFD, the
 /// same USVString conversion `TOML.parse` applies to its string input.
-fn append_basic_quoted_to(builder: &mut wtf::StringBuilder, str: StringView<'_>) {
+fn append_basic_quoted_to(builder: &mut wtf::StringBuilder, str: &Str) {
     builder.append_lchar(b'"');
     let len = str.len();
     let mut i = 0;

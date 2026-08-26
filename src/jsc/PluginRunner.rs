@@ -63,13 +63,13 @@ impl PluginResolver for PluginRunner {
         };
         let Some(on_resolve_plugin) = global
             .run_on_resolve_plugins(
-                namespace,
-                bun_core::StringView::from_bytes(specifier).substring(if namespace.len() > 0 {
+                &namespace,
+                &bun_core::StringView::from_bytes(specifier).substring(if namespace.len() > 0 {
                     namespace.len() + 1
                 } else {
                     0
                 }),
-                bun_core::StringView::from_bytes(importer),
+                &bun_core::StringView::from_bytes(importer),
                 target,
             )
             .map_err(js_err)?

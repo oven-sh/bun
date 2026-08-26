@@ -1,6 +1,6 @@
 use crate::jsc::rare_data::PathBuf as RarePathBuf;
 use crate::jsc::{
-    JSGlobalObject, JSStringView, JSValue, JsResult, StringJsc as _, SysErrorJsc as _,
+    JSGlobalObject, JSStringView, JSValue, JsResult, StrJsc as _, StringJsc as _, SysErrorJsc as _,
     bun_string_jsc,
 };
 use crate::node::validators::{validate_object, validate_string};
@@ -1262,7 +1262,7 @@ fn format(global_object: &JSGlobalObject, is_windows: bool, args: &[JSValue]) ->
     )
 }
 
-fn is_absolute_posix_string(path: bun_core::StringView<'_>) -> bool {
+fn is_absolute_posix_string(path: &bun_core::Str) -> bool {
     let path_trunc = path.trunc(1);
     if path_trunc.is_utf16() {
         is_absolute_posix_t::<u16>(path_trunc.utf16_slice())
@@ -1271,7 +1271,7 @@ fn is_absolute_posix_string(path: bun_core::StringView<'_>) -> bool {
     }
 }
 
-fn is_absolute_windows_string(path: bun_core::StringView<'_>) -> bool {
+fn is_absolute_windows_string(path: &bun_core::Str) -> bool {
     if path.is_utf16() {
         is_absolute_windows_t::<u16>(path.utf16_slice())
     } else {
@@ -1297,9 +1297,9 @@ fn is_absolute(
         return Ok(JSValue::FALSE);
     }
     if is_windows {
-        return Ok(JSValue::from(is_absolute_windows_string(path_str.view())));
+        return Ok(JSValue::from(is_absolute_windows_string(&path_str)));
     }
-    Ok(JSValue::from(is_absolute_posix_string(path_str.view())))
+    Ok(JSValue::from(is_absolute_posix_string(&path_str)))
 }
 
 /// Based on Node v21.6.1 path.posix.join:
@@ -1353,7 +1353,7 @@ fn join_posix_t<'a, T: PathCharCwd>(
 /// `rhs_ptr[..rhs_len]` must be a valid readable slice. Called only from C++.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__Node__Path_joinWTF(
-    lhs: &bun_core::StringView<'_>,
+    lhs: &bun_core::Str,
     rhs_ptr: *const u8,
     rhs_len: usize,
 ) -> bun_core::String {
@@ -1549,7 +1549,7 @@ pub(crate) fn join(
         }
         views.push(path_str);
     }
-    let owned: SmallVec<[Utf8Bytes<'_>; 8]> = views.iter().map(JSStringView::to_utf8).collect();
+    let owned: SmallVec<[Utf8Bytes<'_>; 8]> = views.iter().map(|v| v.to_utf8()).collect();
     let paths: SmallVec<[&[u8]; 8]> = owned.iter().map(Utf8Bytes::slice).collect();
     let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
     join_js_t::<u8>(global_object, pool, is_windows, &paths)
@@ -3406,7 +3406,7 @@ fn resolve(
         views.push(path_str);
     }
 
-    let owned: SmallVec<[Utf8Bytes<'_>; 8]> = views.iter().map(JSStringView::to_utf8).collect();
+    let owned: SmallVec<[Utf8Bytes<'_>; 8]> = views.iter().map(|v| v.to_utf8()).collect();
     let paths: SmallVec<[&[u8]; 8]> = owned.iter().rev().map(Utf8Bytes::slice).collect();
 
     #[cfg(unix)]

@@ -8,8 +8,7 @@ use ::bstr::BStr;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::{self as bstr, strings};
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, StringViewJsc as _, SystemError,
-    bun_string_jsc,
+    CallFrame, JSGlobalObject, JSValue, JsResult, StrJsc as _, SystemError, bun_string_jsc,
 };
 
 use crate::dns_jsc::options_jsc::{address_to_js, result_to_js};
@@ -302,7 +301,7 @@ fn caa_reply_to_js(
 
     let property = bstr::StringView::utf8(this.property_bytes());
     let value = this.value_bytes();
-    obj.put_may_be_index(global_this, property, utf8_to_js(global_this, value)?)?;
+    obj.put_may_be_index(global_this, &property, utf8_to_js(global_this, value)?)?;
 
     Ok(obj)
 }

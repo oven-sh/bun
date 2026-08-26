@@ -28,8 +28,8 @@ use bun_http_types::FetchRequestMode::FetchRequestMode;
 use bun_http_types::Method::Method;
 use bun_jsc::AbortSignalRef;
 use bun_jsc::EncodedSliceJsc as _;
-use bun_jsc::StringJsc as _;
 use bun_jsc::generated::JSRequest as js_gen;
+use bun_jsc::{StrJsc as _, StringJsc as _};
 use bun_ptr::weak_ptr::WeakPtrData;
 use core::mem::ManuallyDrop;
 
@@ -285,7 +285,7 @@ impl Request {
                 if !content_type_.is_empty() {
                     self.headers_mut().as_mut().unwrap().put(
                         HTTPHeaderName::ContentType,
-                        bun_core::StringView::latin1(content_type_),
+                        &bun_core::StringView::latin1(content_type_),
                         global_this,
                     )?;
                 }
@@ -896,7 +896,8 @@ impl Request {
 
                         debug_assert!(self.size_of_url() == url.len());
 
-                        let href = bun_url::href_from_string(bun_core::StringView::from_bytes(url));
+                        let href =
+                            bun_url::href_from_string(&bun_core::StringView::from_bytes(url));
                         if !href.is_empty() {
                             if core::ptr::eq(href.byte_slice().as_ptr(), url.as_ptr()) {
                                 self.url.set(BunString::clone_latin1(&url[..href.len()]));
@@ -931,7 +932,7 @@ impl Request {
                         self.url.set(BunString::clone_utf8(&temp_url));
                     }
 
-                    let href = bun_url::href_from_string(self.url.get().as_view());
+                    let href = bun_url::href_from_string(self.url.get());
                     // TODO: what is the right thing to do for invalid URLS?
                     if !href.is_empty() {
                         self.url.set(href);
@@ -1379,7 +1380,7 @@ impl Request {
             ))));
         }
 
-        let href = bun_url::href_from_string(req.url.get().as_view());
+        let href = bun_url::href_from_string(req.url.get());
         if href.is_empty() {
             // globalThis.throw can cause GC, which could cause the above string to be freed.
             // so we must increment the reference count before calling it.
@@ -1413,7 +1414,7 @@ impl Request {
                     match req.headers_mut().as_mut().unwrap().put(
                         HTTPHeaderName::ContentType,
                         // SAFETY: ct_ptr borrows req.body which is not mutated here.
-                        bun_core::StringView::latin1(unsafe { &*ct_ptr }),
+                        &bun_core::StringView::latin1(unsafe { &*ct_ptr }),
                         global_this,
                     ) {
                         Ok(()) => {}

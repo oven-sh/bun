@@ -46,7 +46,7 @@ pub mod whatwg {
 
     use super::BunString as String;
     use super::strings;
-    use bun_core::StringView;
+    use bun_core::{Str, StringView};
 
     bun_opaque::opaque_ffi! {
         /// Opaque handle to a heap-allocated `WTF::URL` (C++); owned via
@@ -60,7 +60,7 @@ pub mod whatwg {
     // `unsafe fn`. `URL__fromJS` / `URL__getHrefFromJS` live in
     // `bun_jsc::URLJsc`.
     unsafe extern "C" {
-        safe fn URL__fromString(str: &StringView<'_>) -> Option<NonNull<URL>>;
+        safe fn URL__fromString(str: &Str) -> Option<NonNull<URL>>;
         safe fn URL__protocol(url: &URL) -> String;
         safe fn URL__href(url: &URL) -> String;
         safe fn URL__username(url: &URL) -> String;
@@ -71,26 +71,26 @@ pub mod whatwg {
         safe fn URL__pathname(url: &URL) -> String;
         safe fn URL__fragmentIdentifier(url: &URL) -> String;
         fn URL__deinit(url: *mut URL);
-        safe fn URL__getHref(input: &StringView<'_>) -> String;
-        safe fn URL__getFileURLString(input: &StringView<'_>) -> String;
-        safe fn URL__pathFromFileURL(input: &StringView<'_>) -> String;
-        safe fn URL__getHrefJoin(base: &StringView<'_>, relative: &StringView<'_>) -> String;
+        safe fn URL__getHref(input: &Str) -> String;
+        safe fn URL__getFileURLString(input: &Str) -> String;
+        safe fn URL__pathFromFileURL(input: &Str) -> String;
+        safe fn URL__getHrefJoin(base: &Str, relative: &Str) -> String;
         fn URL__originLength(latin1_slice: *const u8, len: usize) -> usize;
     }
 
     /// Percent-encodes the URL, punycode-encodes the hostname, and returns the normalized
     /// href. If parsing fails, the returned String's tag is `Dead`.
-    pub fn href_from_string(str: StringView<'_>) -> String {
-        URL__getHref(&str)
+    pub fn href_from_string(str: &Str) -> String {
+        URL__getHref(str)
     }
-    pub fn join(base: StringView<'_>, relative: StringView<'_>) -> String {
-        URL__getHrefJoin(&base, &relative)
+    pub fn join(base: &Str, relative: &Str) -> String {
+        URL__getHrefJoin(base, relative)
     }
-    pub fn file_url_from_string(str: StringView<'_>) -> String {
-        URL__getFileURLString(&str)
+    pub fn file_url_from_string(str: &Str) -> String {
+        URL__getFileURLString(str)
     }
-    pub fn path_from_file_url(str: StringView<'_>) -> String {
-        URL__pathFromFileURL(&str)
+    pub fn path_from_file_url(str: &Str) -> String {
+        URL__pathFromFileURL(str)
     }
     /// Returns the origin (`scheme://host[:port]`) prefix of `slice` as a borrowed
     /// subslice, or `None` if `slice` does not parse as a valid WHATWG URL.
@@ -155,11 +155,11 @@ pub mod whatwg {
     pub struct Parsed(NonNull<URL>);
 
     impl Parsed {
-        pub fn from_string(str: StringView<'_>) -> Option<Self> {
-            URL__fromString(&str).map(Self)
+        pub fn from_string(str: &Str) -> Option<Self> {
+            URL__fromString(str).map(Self)
         }
         pub fn from_utf8(input: &[u8]) -> Option<Self> {
-            Self::from_string(StringView::utf8(input))
+            Self::from_string(&StringView::utf8(input))
         }
         /// # Safety
         /// `url` is a heap `WTF::URL` nothing else frees.
@@ -359,7 +359,7 @@ impl<'a> URL<'a> {
 
     // Ownership: returns an `OwnedURL` that owns the buffer; callers borrow
     // via `.url()` and Drop frees it.
-    pub fn from_string(input: bun_core::StringView<'_>) -> crate::Result<OwnedURL> {
+    pub fn from_string(input: &bun_core::Str) -> crate::Result<OwnedURL> {
         let href = whatwg::href_from_string(input);
         if href.tag() == BunStringTag::Dead {
             return Err(crate::Error::InvalidURL);
@@ -1734,7 +1734,7 @@ impl<'a> Scanner<'a> {
                             });
                         }
 
-                        // &&&&&&&&&&&&&key=value
+                        // &&&&&&&&&&&&key=value
                         while relative_i < slice.len() && slice[relative_i] == b'&' {
                             relative_i += 1;
                         }

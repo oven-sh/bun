@@ -801,7 +801,7 @@ describe("bundler", () => {
   // with the same content hash ("Multiple files share the same output path").
   itBundled("splitting/NoChunkForFilesWithNoLiveParts", {
     files: {
-      "/entry.js": `import('./a.js'); import('./b.js'); import('./e.js')`,
+      "/entry.js": `await import('./a.js'); await import('./b.js'); await import('./e.js')`,
       "/a.js": `import './c.js'; import './d.js'; console.log('a')`,
       "/b.js": `import './c.js'; console.log('b')`,
       "/e.js": `import './d.js'; console.log('e')`,

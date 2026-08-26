@@ -325,8 +325,8 @@ pub mod analyze_transpiled_module {
         /// (`*` for a namespace import, `ExportInfoLocal`'s padding, the fetch
         /// parameter itself) are not written; `same-name` elides an import's
         /// local name when it equals the import name.
-        /// `bun_bundler::analyze_transpiled_module` widens this back into the
-        /// fixed u32 in-memory layout.
+        /// `bun_bundler::analyze_transpiled_module` (`Body` / `IdCursor`) reads
+        /// this in place when building the `JSModuleRecord`.
         pub fn serialize_body<W: std::io::Write>(
             &self,
             w: &mut W,

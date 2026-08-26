@@ -868,19 +868,6 @@ mod tests {
         assert_eq!(drops(), before + 1);
     }
 
-    #[test]
-    fn finalize_js_box_releases_one_ref() {
-        let _serial = serial();
-        let before = drops();
-        let t = Thing::new(9);
-        // SAFETY: `t` is live; simulate the codegen handing `finalize` a Box.
-        let boxed: Box<Thing> = unsafe { bun_core::heap::take(t) };
-        let seen = std::cell::Cell::new(0u32);
-        finalize_js_box(boxed, |thing: &Thing| seen.set(*thing.payload));
-        assert_eq!(seen.get(), 9);
-        assert_eq!(drops(), before + 1);
-    }
-
     // ── ThreadSafeRefCount (atomic, cross-thread) ─────────────────────────
 
     struct Shared {

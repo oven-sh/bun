@@ -38,6 +38,7 @@ unsafe extern "C" {
     fn tj3SetScalingFactor(h: tjhandle, sf: ScalingFactor) -> c_int;
     fn tj3SetCroppingRegion(h: tjhandle, r: CropRegion) -> c_int;
     fn tj3GetScalingFactors(n: *mut c_int) -> *const ScalingFactor;
+    fn tj3GetErrorCode(h: tjhandle) -> c_int;
     pub(crate) fn tj3Free(ptr: *mut c_void);
     // ICC profile transport: the APP2 ICC_PROFILE marker carries the source's
     // colour space (sRGB implicit when absent; Display-P3 / Adobe RGB / Jpegli
@@ -115,6 +116,44 @@ const TJPARAM_MAXPIXELS: c_int = 24;
 const TJPARAM_SAVEMARKERS: c_int = 25;
 const TJPF_RGBA: c_int = 7;
 const TJSAMP_420: c_int = 2;
+/// `tj3GetErrorCode` after a failed call: `TJERR_WARNING` means libjpeg
+/// emitted a warning and carried on, `TJERR_FATAL` (1) means it bailed out.
+const TJERR_WARNING: c_int = 0;
+
+/// Parse the header (SOF dims, saved markers) without touching scan data.
+///
+/// libjpeg reports a malformed ancillary marker as a *warning* and keeps
+/// going: an `ICC_PROFILE` APP2 sequence that does not reassemble (sequence
+/// number above the count, a duplicate, more than 255 segments) is
+/// `JWRN_BOGUS_ICC`, and `tj3DecompressHeader` still returns -1 for it. The
+/// SOF fields are valid in that case and the pixels are untouched, so a
+/// warning is accepted here and the profile is simply absent; only a fatal
+/// error rejects the file. Browsers and libvips decode such files the same
+/// way. The full decode stays strict: `tj3Decompress8` re-parses the header
+/// and any warning there (truncated scan data, extraneous bytes) still fails.
+pub(crate) fn read_header(h: tjhandle, bytes: &[u8]) -> Result<(u32, u32), codecs::Error> {
+    // SAFETY: `h` is a live tjhandle; ptr/len come from a valid `&[u8]`
+    // borrowed for the call.
+    let rc = unsafe { tj3DecompressHeader(h, bytes.as_ptr(), bytes.len()) };
+    // SAFETY: `h` is live; tj3GetErrorCode only reads handle state.
+    if rc != 0 && unsafe { tj3GetErrorCode(h) } != TJERR_WARNING {
+        return Err(codecs::Error::DecodeFailed);
+    }
+    // SAFETY: `h` is live; tj3Get only reads handle state.
+    let rw = unsafe { tj3Get(h, TJPARAM_JPEGWIDTH) };
+    // SAFETY: `h` is live; tj3Get only reads handle state.
+    let rh = unsafe { tj3Get(h, TJPARAM_JPEGHEIGHT) };
+    // tj3Get returns -1 on error (and 0 when the header never reached SOF);
+    // treat any non-positive dim as a decode failure rather than letting
+    // the cast trap on hostile input.
+    if rw <= 0 || rh <= 0 {
+        return Err(codecs::Error::DecodeFailed);
+    }
+    Ok((
+        u32::try_from(rw).expect("int cast"),
+        u32::try_from(rh).expect("int cast"),
+    ))
+}
 
 pub(crate) fn decode(
     bytes: &[u8],
@@ -134,21 +173,9 @@ pub(crate) fn decode(
     // marker buffer is discarded if we set this after.
     // SAFETY: `h` is a live tjhandle for the duration of `_h_guard`.
     unsafe { tj3Set(h, TJPARAM_SAVEMARKERS, 2) };
-    // SAFETY: `h` is live; ptr/len come from a valid `&[u8]` borrowed for the call.
-    if unsafe { tj3DecompressHeader(h, bytes.as_ptr(), bytes.len()) } != 0 {
-        return Err(codecs::Error::DecodeFailed);
-    }
-    // SAFETY: `h` is live; tj3Get only reads handle state.
-    let rw = unsafe { tj3Get(h, TJPARAM_JPEGWIDTH) };
-    // SAFETY: `h` is live; tj3Get only reads handle state.
-    let rh = unsafe { tj3Get(h, TJPARAM_JPEGHEIGHT) };
-    // tj3Get returns -1 on error; treat any non-positive dim as a decode
-    // failure rather than letting the cast trap on hostile input.
-    if rw <= 0 || rh <= 0 {
-        return Err(codecs::Error::DecodeFailed);
-    }
-    let src_w: u32 = u32::try_from(rw).expect("int cast");
-    let src_h: u32 = u32::try_from(rh).expect("int cast");
+    let (src_w, src_h) = read_header(h, bytes)?;
+    let rw = c_int::try_from(src_w).expect("int cast");
+    let rh = c_int::try_from(src_h).expect("int cast");
     codecs::guard(src_w, src_h, max_pixels)?;
 
     let mut w = src_w;
@@ -279,7 +306,7 @@ pub(crate) fn decode(
                 unsafe { tj3Free(p.cast()) };
             }
         });
-        if icc_ptr.is_null() {
+        if icc_ptr.is_null() || icc_size > codecs::MAX_ICC_PROFILE_BYTES {
             break 'blk None;
         }
         // SAFETY: tj3GetICCProfile wrote `icc_size` bytes at `icc_ptr`.

@@ -307,11 +307,8 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
         }
     };
 
-    // After any fallback, `tempdir` points at `<cache>/.tmp`, not
-    // `$TMPDIR`. `name` must describe the directory `handle` actually points
-    // at: the node-gyp shim is written through `handle` but advertised on
-    // `PATH` via `name`, and a mismatch makes lifecycle scripts fail to find
-    // `node-gyp` (exit 127).
+    // After a fallback `handle` is `<cache>/.tmp`, so paths built from `name`
+    // (the node-gyp shim's PATH entry) must say that too.
     let name: &'static [u8] = if tried_dot_tmp {
         let joined = path::resolve_path::join::<path::platform::Auto>(&[
             manager.cache_directory_path.as_bytes(),

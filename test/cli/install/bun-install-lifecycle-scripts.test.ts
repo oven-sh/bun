@@ -308,6 +308,9 @@ const canForceExdevTmpdir =
   isLinux &&
   (() => {
     try {
+      // also proves /dev/shm is writable, not just present
+      const probe = mkdtempSync("/dev/shm/bun-exdev-probe-");
+      rmSync(probe, { recursive: true, force: true });
       return statSync("/dev/shm").dev !== statSync(tmpdir()).dev;
     } catch {
       return false;
@@ -338,6 +341,9 @@ test.concurrent.skipIf(!canForceExdevTmpdir)(
 
     const shmTmp = mkdtempSync("/dev/shm/bun-exdev-");
     try {
+      // the repro requires renameat() from $TMPDIR into the cache to cross
+      // devices; otherwise this test passes without exercising the fallback
+      expect(statSync(shmTmp).dev).not.toBe(statSync(packageDir).dev);
       await using proc = Bun.spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,

@@ -330,7 +330,7 @@ impl bun_jsc::Unprotect for StringOrBuffer<'static> {
                 buffer.pinned = false;
                 buffer.buffer.unpin();
             }
-            buffer.buffer.value.unprotect();
+            buffer.unprotect();
         }
     }
 }
@@ -369,9 +369,7 @@ impl StringOrBuffer<'static> {
                 *self = Self::ThreadIsolatedString(str);
             }
             Self::ThreadIsolatedString(_) | Self::Utf8(_) => {}
-            Self::Buffer(buffer) => {
-                buffer.buffer.value.protect();
-            }
+            Self::Buffer(buffer) => buffer.protect(),
         }
     }
 
@@ -445,7 +443,7 @@ impl StringOrBuffer<'static> {
             | JSType::BigInt64Array
             | JSType::BigUint64Array
             | JSType::DataView => {
-                let buffer = if flavor == Flavor::Async {
+                let mut buffer = if flavor == Flavor::Async {
                     Buffer::from_js_pinned(global, value)
                         .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
                 } else {
@@ -453,7 +451,7 @@ impl StringOrBuffer<'static> {
                 };
 
                 if flavor == Flavor::Async {
-                    buffer.buffer.value.protect();
+                    buffer.protect();
                 }
 
                 *out = Self::Buffer(buffer);
@@ -529,14 +527,14 @@ impl StringOrBuffer<'static> {
         string_objects: StringObjects,
     ) -> JsResult<bool> {
         if value.is_cell() && value.js_type().is_array_buffer_like() {
-            let buffer = if flavor == Flavor::Async {
+            let mut buffer = if flavor == Flavor::Async {
                 Buffer::from_js_pinned(global, value)
                     .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
             } else {
                 Buffer::from_array_buffer(global, value)
             };
             if flavor == Flavor::Async {
-                buffer.buffer.value.protect();
+                buffer.protect();
             }
             *out = Self::Buffer(buffer);
             return Ok(true);
@@ -1138,7 +1136,7 @@ impl PathLikeExt for PathLike<'_> {
                     return Err(err);
                 }
 
-                arguments.protect_eat();
+                arguments.eat();
                 PathLike::Buffer(buffer)
             }
 
@@ -1155,7 +1153,7 @@ impl PathLikeExt for PathLike<'_> {
                     return Err(err);
                 }
 
-                arguments.protect_eat();
+                arguments.eat();
                 PathLike::Buffer(buffer)
             }
 

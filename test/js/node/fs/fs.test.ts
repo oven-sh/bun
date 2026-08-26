@@ -3303,6 +3303,25 @@ it("realpath async", async () => {
 }, 30_000);
 
 describe("stat", () => {
+  it("async call does not keep a Buffer path alive after it completes", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("fs");
+        const path = Buffer.from(process.execPath);
+        for (let i = 0; i < 400; i++) await fs.promises.stat(Buffer.from(path));
+        Bun.gc(true);
+        console.log(require("bun:jsc").heapStats().objectTypeCounts.Uint8Array ?? 0);`,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(Number(stdout)).toBeLessThan(200);
+    expect(exitCode).toBe(0);
+  });
+
   it("file metadata is correct", () => {
     const fileStats = statSync(join(import.meta.dir, "fs-stream.js"));
     expect(fileStats.isSymbolicLink()).toBe(false);

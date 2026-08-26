@@ -1,4 +1,3 @@
-use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
 use bun_jsc::call_frame::ArgumentsSlice;
@@ -81,25 +80,13 @@ fn parse_async_args<A: FsArgument>(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> Result<A, JsResult<JSValue>> {
-    // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
     let vm: &VirtualMachine = global.bun_vm();
-    let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
+    let mut slice = ArgumentsSlice::init(vm, frame.arguments());
     slice.will_be_async = true;
 
-    // `ManuallyDrop` keeps `slice` alive past return when ownership transfers
-    // to the Task: dropped only on the early-return
-    // error/abort branches; on the success path the Task owns `args` (whose
-    // protected JSValues are released by `Drop for ThreadIsolated<A>` when the
-    // Task completes), and `slice` is intentionally not dropped — its
-    // `Drop`-unprotect would race that.
-
-    let mut args = match <A as FsArgument>::from_js(global, &mut slice) {
+    let args = match <A as FsArgument>::from_js(global, &mut slice) {
         Ok(a) => a,
-        Err(err) => {
-            // SAFETY: not yet dropped; only drop site for this path.
-            unsafe { ManuallyDrop::drop(&mut slice) };
-            return Err(Err(err));
-        }
+        Err(err) => return Err(Err(err)),
     };
 
     let rejection = 'rejection: {
@@ -117,10 +104,8 @@ fn parse_async_args<A: FsArgument>(
         return Ok(args);
     };
 
-    args.unprotect();
-    drop(args);
-    // SAFETY: not yet dropped; only drop site for this path.
-    unsafe { ManuallyDrop::drop(&mut slice) };
+    // Round-trips through the guard so buffers `from_js` protected for the async flavor are released exactly once.
+    drop(args.into_thread_isolated());
     Err(Ok(JSPromise::rejected_promise(global, rejection).to_js()))
 }
 

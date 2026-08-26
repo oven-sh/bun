@@ -115,17 +115,16 @@ impl Default for PathLike<'_> {
 }
 
 impl Clone for PathLike<'_> {
-    /// Bumps any owning ref so
-    /// the clone is independently droppable *and* `clone().slice()` returns
-    /// the same bytes as the original.
+    /// `clone().slice()` returns the same bytes. String payloads bump their
+    /// ref; a `Buffer` clone *borrows* — it owns no allocation, pin or GC root
+    /// (clones are taken on work-pool threads too) and must not outlive `self`.
     fn clone(&self) -> Self {
         match self {
             Self::Buffer(b) => Self::Buffer(MarkedArrayBuffer {
                 buffer: b.buffer,
-                // The clone borrows the JS-owned backing store; only the
-                // original (if any) owns the allocation.
                 owns_buffer: false,
                 pinned: false,
+                protected: false,
             }),
             Self::String(s) => Self::String(s.clone()),
             Self::ThreadIsolatedString(s) => Self::ThreadIsolatedString(s.clone()),
@@ -136,14 +135,11 @@ impl Clone for PathLike<'_> {
 
 impl Drop for PathLike<'_> {
     fn drop(&mut self) {
-        match self {
-            Self::Buffer(b) => {
-                if b.pinned {
-                    b.pinned = false;
-                    b.buffer.unpin();
-                }
+        if let Self::Buffer(b) = self {
+            if b.pinned {
+                b.pinned = false;
+                b.buffer.unpin();
             }
-            Self::String(_) | Self::ThreadIsolatedString(_) | Self::Utf8(_) => {}
         }
     }
 }
@@ -201,9 +197,7 @@ impl PathLike<'static> {
                 let owned = core::mem::take(s);
                 *self = Self::ThreadIsolatedString(owned);
             }
-            Self::Buffer(b) => {
-                b.buffer.value.protect();
-            }
+            Self::Buffer(b) => b.protect(),
             Self::ThreadIsolatedString(_) | Self::Utf8(_) => {}
         }
     }
@@ -224,14 +218,14 @@ impl PathLike<'static> {
     }
 }
 
-impl Unprotect for PathLike<'static> {
-    /// JS-side half of cleanup — undo
-    /// the `protect()` taken by [`Self::make_thread_isolated`] /
-    /// `ArgumentsSlice::protect_eat`. Owned payloads are released by `Drop`.
+impl Unprotect for PathLike<'_> {
+    /// JS-side half of cleanup — undo the `protect()` taken by
+    /// [`PathLike::make_thread_isolated`], if still held. Owned payloads are
+    /// released by `Drop`.
     #[inline]
     fn unprotect(&mut self) {
         if let Self::Buffer(b) = self {
-            b.buffer.value.unprotect();
+            b.unprotect();
         }
     }
 }

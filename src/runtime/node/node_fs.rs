@@ -2707,7 +2707,7 @@ pub mod args {
             let fd = FD::from_js_required(ctx, arguments)?;
             let buffers = VectorArrayBuffer::from_js(
                 ctx,
-                arguments.protect_eat_next().ok_or_else(|| {
+                arguments.next_eat().ok_or_else(|| {
                     ctx.throw_invalid_arguments(format_args!("Expected an ArrayBufferView[]"))
                 })?,
                 // The iovec pointers outlive this call on the async path; root
@@ -3718,6 +3718,7 @@ pub mod args {
                         buffer: pinned,
                         owns_buffer: false,
                         pinned: true,
+                        protected: false,
                     });
                 }
             }
@@ -3736,8 +3737,8 @@ pub mod args {
         pub(crate) pinned: bool,
     }
     impl Read {
-        pub(crate) fn make_thread_isolated(&self) {
-            self.buffer.buffer.value.protect();
+        pub(crate) fn make_thread_isolated(&mut self) {
+            self.buffer.protect();
         }
     }
     impl Unprotect for Read {
@@ -3746,7 +3747,7 @@ pub mod args {
             if self.pinned {
                 self.buffer.buffer.unpin();
             }
-            self.buffer.buffer.value.unprotect();
+            self.buffer.unprotect();
         }
     }
     impl Read {
@@ -3920,6 +3921,7 @@ pub mod args {
                             buffer: pinned,
                             owns_buffer: false,
                             pinned: true,
+                            protected: false,
                         },
                         true,
                     ),
@@ -7051,6 +7053,7 @@ impl NodeFS {
                                         buffer,
                                         owns_buffer: false,
                                         pinned: false,
+                                        protected: false,
                                     },
                                 )),
                                 // This case shouldn't really happen.

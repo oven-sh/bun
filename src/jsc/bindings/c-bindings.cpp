@@ -610,10 +610,8 @@ extern "C" void Bun__setCTRLHandler(BOOL add)
     SetConsoleCtrlHandler(Ctrlhandler, add);
 }
 
-// The one ExitProcess for a thread that runs JS. It first takes, and never
-// releases, WTF's thread-suspend lock: a WTF suspender killed by ExitProcess
-// between SuspendThread and ResumeThread of this thread would leave it
-// suspended forever.
+// ExitProcess behind WTF's thread-suspend lock, held for good: a suspender killed
+// between SuspendThread and ResumeThread of this thread would leave it suspended forever.
 extern "C" [[noreturn]] void Bun__exitProcess(uint32_t code)
 {
     static std::atomic<DWORD> owner { 0 };

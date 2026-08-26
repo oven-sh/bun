@@ -194,7 +194,13 @@ pub(crate) fn run_as_coordinator(
         windows_job: Coordinator::create_windows_kill_on_close_job(),
     };
 
-    let _abort_guard = abort_handler::install();
+    // SAFETY: event_loop pointer is valid while vm lives.
+    let uws_loop = unsafe {
+        let event_loop = (*vm_ptr).event_loop();
+        (*event_loop).ensure_waker();
+        (*event_loop).usockets_loop()
+    };
+    let _abort_guard = abort_handler::install(uws_loop);
 
     // Patch the Worker→Coordinator backref now that `coord`'s address is fixed.
     // Access workers through `coord.workers` to avoid a second &mut on the Vec.
@@ -212,8 +218,6 @@ pub(crate) fn run_as_coordinator(
         }
     }
 
-    // SAFETY: event_loop pointer is valid while vm lives.
-    unsafe { (*(*vm_ptr).event_loop()).ensure_waker() };
     // SAFETY: see vm_ptr note above.
     unsafe { &*vm_ptr }.run_with_api_lock(|| coord.drive());
     coord.end_group();

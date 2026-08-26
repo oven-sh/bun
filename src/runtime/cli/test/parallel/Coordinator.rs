@@ -7,7 +7,7 @@
 use core::ffi::c_void;
 #[cfg(unix)]
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::io::Write as _;
 
 use bun_core::strings;
@@ -936,15 +936,28 @@ fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] 
     }
 }
 
-/// Coordinator-side SIGINT/SIGTERM handling. The signal handler only sets a
-/// flag; `Coordinator::drive` checks it and tears down workers itself so we
-/// don't do non-signal-safe work in the handler. Linux PDEATHSIG and the
-/// Windows Job Object are the safety net for when the coordinator can't run
-/// this (SIGKILL).
+/// Coordinator-side SIGINT/SIGTERM handling. The handler sets a flag and wakes
+/// the loop (the poll retries on EINTR, so the flag alone would wait for the
+/// next ~1s housekeeping timer); `Coordinator::drive` does the teardown. Linux
+/// PDEATHSIG and the Windows Job Object cover the case where it can't (SIGKILL).
 pub(crate) mod abort_handler {
     use super::*;
 
     pub(crate) static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
+
+    /// Set by `install`, cleared by `uninstall`. The uws loop is process-lifetime.
+    static LOOP: AtomicPtr<bun_uws::Loop> = AtomicPtr::new(core::ptr::null_mut());
+
+    /// Signal context on POSIX; the console control thread on Windows.
+    fn request_abort() {
+        SHOULD_ABORT.store(true, Ordering::Release);
+        let loop_ = LOOP.load(Ordering::Acquire);
+        if !loop_.is_null() {
+            // SAFETY: the loop is process-lifetime, and the raw extern is the
+            // thread-safe entry point (no `&mut Loop` formed off the main thread).
+            unsafe { bun_uws::us_wakeup_loop(loop_) };
+        }
+    }
 
     // PORTING.md §Global mutable state: written once in `install()` (single
     // call site), read once in `uninstall()`. RacyCell — `sigaction` is POD,
@@ -958,7 +971,7 @@ pub(crate) mod abort_handler {
 
     #[cfg(unix)]
     extern "C" fn posix_handler(_: i32, _: *const libc::siginfo_t, _: *const c_void) {
-        SHOULD_ABORT.store(true, Ordering::Release);
+        request_abort();
     }
 
     #[cfg(windows)]
@@ -968,7 +981,7 @@ pub(crate) mod abort_handler {
         use bun_sys::windows;
         match ctrl {
             windows::CTRL_C_EVENT | windows::CTRL_BREAK_EVENT | windows::CTRL_CLOSE_EVENT => {
-                SHOULD_ABORT.store(true, Ordering::Release);
+                request_abort();
                 windows::TRUE
             }
             _ => windows::FALSE,
@@ -986,7 +999,9 @@ pub(crate) mod abort_handler {
         }
     }
 
-    pub(crate) fn install() -> Guard {
+    /// `loop_` is the loop `Coordinator::drive` ticks (`ensure_waker` already run).
+    pub(crate) fn install(loop_: *mut bun_uws::Loop) -> Guard {
+        LOOP.store(loop_, Ordering::Release);
         #[cfg(unix)]
         {
             // SAFETY: signal handler installation; PREV_* are written before
@@ -1046,5 +1061,6 @@ pub(crate) mod abort_handler {
                 bun_sys::windows::FALSE,
             );
         }
+        LOOP.store(core::ptr::null_mut(), Ordering::Release);
     }
 }

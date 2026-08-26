@@ -246,8 +246,7 @@ impl Request {
         self.request_context.get_head().map(RequestHead::Snapshot)
     }
 
-    /// Ends the link to the server context. When the uWS request is still live and JS has
-    /// not read both `url` and `headers`, a copy of its head takes the context's place.
+    /// Ends the link to the server context; `req`, when still live, is copied for the lazy getters.
     pub(crate) fn detach_request_context(&mut self, req: Option<&uws::Request>) {
         drop(self.request_context.take_head());
         self.request_context = match req {

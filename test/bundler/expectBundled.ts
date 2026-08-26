@@ -256,6 +256,8 @@ export interface BundlerTestInput {
   targetFromAPI?: "TargetWasConfigured";
   minifyWhitespace?: boolean;
   splitting?: boolean;
+  /** `--split-require` / `splitRequire: true` (bun only). */
+  splitRequire?: boolean;
   /** `--min-chunk-size` / `minChunkSize`; requires `splitting` */
   minChunkSize?: number;
   serverComponents?: boolean;
@@ -531,6 +533,7 @@ function expectBundled(
     snapshotSourceMap,
     sourceMap,
     splitting,
+    splitRequire,
     minChunkSize,
     target,
     todo: notImplemented,
@@ -822,6 +825,7 @@ function expectBundled(
               chunkNaming && chunkNaming !== "[name]-[hash].[ext]" && [`--chunk-naming`, chunkNaming],
               assetNaming && assetNaming !== "[name]-[hash].[ext]" && [`--asset-naming`, assetNaming],
               splitting && `--splitting`,
+              splitRequire && `--split-require`,
               minChunkSize !== undefined && `--min-chunk-size=${minChunkSize}`,
               serverComponents && "--server-components",
               reactCompiler && "--react-compiler",
@@ -1192,6 +1196,7 @@ function expectBundled(
           outdir: generateOutput ? buildOutDir : undefined,
           sourcemap: sourceMap,
           splitting,
+          splitRequire,
           minChunkSize,
           target,
           reactCompiler,

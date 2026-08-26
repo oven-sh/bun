@@ -26,6 +26,7 @@ pub(crate) fn compute_cross_chunk_dependencies(
             imports: ChunkMetaMap::default(),
             exports: ChunkMetaMap::default(),
             dynamic_imports: ArrayHashMap::<IndexInt, ()>::default(),
+            require_imports: ArrayHashMap::<IndexInt, ()>::default(),
         })
         .collect();
 
@@ -180,7 +181,12 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                         // include its hash when we're calculating the hashes of all
                         // dependencies of this chunk.
                         if other_chunk_index as usize != chunk_index {
-                            let _ = chunk_meta.dynamic_imports.put(other_chunk_index, ()); // OOM-only Result
+                            let deps = if import_record.kind == bun_ast::ImportKind::Require {
+                                &mut chunk_meta.require_imports
+                            } else {
+                                &mut chunk_meta.dynamic_imports
+                            };
+                            let _ = deps.put(other_chunk_index, ()); // OOM-only Result
                         }
                     }
                 }
@@ -514,21 +520,26 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         // Make sure we also track dynamic cross-chunk imports. These need to be
         // tracked so we count them as dependencies of this chunk for the purpose
         // of hash calculation.
-        if chunk_metas[chunk_index].dynamic_imports.count() > 0 {
-            let dynamic_chunk_indices = chunk_metas[chunk_index].dynamic_imports.keys_mut();
-            index_sort::sort_slice_unstable_by(dynamic_chunk_indices, |a, b| a.cmp(b));
+        let chunk_meta = &mut chunk_metas[chunk_index];
+        for (lazy_imports, import_kind) in [
+            (&mut chunk_meta.dynamic_imports, bun_ast::ImportKind::Dynamic),
+            (&mut chunk_meta.require_imports, bun_ast::ImportKind::Require),
+        ] {
+            if lazy_imports.count() == 0 {
+                continue;
+            }
+            let lazy_chunk_indices = lazy_imports.keys_mut();
+            index_sort::sort_slice_unstable_by(lazy_chunk_indices, |a, b| a.cmp(b));
 
             let chunk = &mut chunks[chunk_index];
             // `ChunkImport.import_kind` is a `#[repr(u8)]` enum (validity
             // invariant), so `writable_slice` would form `&mut [T]` over
             // invalid bit patterns. Push into reserved capacity instead.
-            chunk
-                .cross_chunk_imports
-                .reserve(dynamic_chunk_indices.len());
-            for &dynamic_chunk_index in dynamic_chunk_indices.iter() {
+            chunk.cross_chunk_imports.reserve(lazy_chunk_indices.len());
+            for &lazy_chunk_index in lazy_chunk_indices.iter() {
                 chunk.cross_chunk_imports.push(chunk::ChunkImport {
-                    import_kind: bun_ast::ImportKind::Dynamic,
-                    chunk_index: dynamic_chunk_index,
+                    import_kind,
+                    chunk_index: lazy_chunk_index,
                 });
             }
         }

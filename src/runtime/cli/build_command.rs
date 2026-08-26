@@ -208,6 +208,7 @@ impl BuildCommand {
         this_transpiler.options.inline_entrypoint_import_meta_main =
             ctx.bundler_options.inline_entrypoint_import_meta_main;
         this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;
+        this_transpiler.options.split_require = ctx.bundler_options.split_require;
         this_transpiler.options.minify_syntax = ctx.bundler_options.minify_syntax;
         this_transpiler.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
         this_transpiler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
@@ -384,6 +385,21 @@ impl BuildCommand {
             if this_transpiler.options.code_splitting {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> Must use <b>--outdir<r> when code splitting is enabled"
+                );
+                Global::exit(1);
+            }
+        }
+
+        if ctx.bundler_options.split_require {
+            if !ctx.bundler_options.code_splitting {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r><d>:<r> <b>--split-require<r> requires <b>--splitting<r>"
+                );
+                Global::exit(1);
+            }
+            if !this_transpiler.options.target.is_bun() {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r><d>:<r> <b>--split-require<r> requires <b>--target bun<r> (chunks are loaded with import.meta.require)"
                 );
                 Global::exit(1);
             }

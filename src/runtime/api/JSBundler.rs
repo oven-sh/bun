@@ -126,6 +126,7 @@ pub mod js_bundler {
         pub(crate) jsx: api::Jsx,
         pub(crate) force_node_env: options::ForceNodeEnv,
         pub(crate) code_splitting: bool,
+        pub(crate) split_require: bool,
         pub(crate) minify: Minify,
         pub(crate) no_macros: bool,
         pub(crate) ignore_dce_annotations: bool,
@@ -191,6 +192,7 @@ pub mod js_bundler {
                 },
                 force_node_env: options::ForceNodeEnv::Unspecified,
                 code_splitting: false,
+                split_require: false,
                 minify: Minify::default(),
                 no_macros: false,
                 ignore_dce_annotations: false,
@@ -804,6 +806,10 @@ pub mod js_bundler {
                 this.code_splitting = hot;
             }
 
+            if let Some(split_require) = config.get_boolean_loose(global_this, "splitRequire")? {
+                this.split_require = split_require;
+            }
+
             if let Some(min_chunk_size) =
                 config.get_optional_int::<u64>(global_this, "minChunkSize")?
             {
@@ -1332,6 +1338,19 @@ pub mod js_bundler {
                 if has_all_html && this.compile.as_ref().is_some_and(|c| !c.assets.is_empty()) {
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "Cannot use compile.assets with target 'browser' for standalone HTML"
+                    )));
+                }
+            }
+
+            if this.split_require {
+                if !this.code_splitting {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "splitRequire requires splitting: true"
+                    )));
+                }
+                if !this.target.is_bun() {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "splitRequire requires target: 'bun' (chunks are loaded with import.meta.require)"
                     )));
                 }
             }

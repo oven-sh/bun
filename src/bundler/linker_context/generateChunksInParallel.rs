@@ -1421,7 +1421,8 @@ fn append_internal_module_bytecode(
 
 /// Position of each chunk in the order a `--compile` executable is expected to
 /// load it: the entry point's static cross-chunk imports in evaluation order,
-/// then the closures of its dynamic imports, breadth-first. The standalone
+/// then the closures of its dynamic imports (`import()` and `--split-require`
+/// `require()` chunks), breadth-first. The standalone
 /// module graph lays modules out by this so booting faults in one run of pages
 /// rather than one page per chunk scattered across the payload. Also returns
 /// how many of the positions make up the static closure of the entry point
@@ -1460,7 +1461,7 @@ fn chunk_load_order(chunks: &[Chunk], output_files: &[options::OutputFile]) -> (
                 Some(import) => {
                     stack.last_mut().unwrap().1 += 1;
                     let dep = import.chunk_index;
-                    if import.import_kind == bun_ast::ImportKind::Dynamic {
+                    if import.import_kind != bun_ast::ImportKind::Stmt {
                         dynamic_frontier.push_back(dep);
                     } else if !visited.is_set(dep as usize) {
                         visited.set(dep as usize);

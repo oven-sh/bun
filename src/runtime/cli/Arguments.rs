@@ -464,6 +464,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!("--splitting                      Enable code splitting"),
         parse_param!(
+            "--split-require                  With --splitting: emit a chunk per require()'d ESM file, loaded synchronously at the call (target bun)"
+        ),
+        parse_param!(
             "--min-chunk-size <INT>           With --splitting, also fold side-effect-free chunks smaller than this many source bytes into a chunk more entry points load"
         ),
         parse_param!(
@@ -2537,6 +2540,9 @@ fn parse_build_command_options(
 
     if args.flag(b"--splitting") {
         ctx.bundler_options.code_splitting = true;
+    }
+    if args.flag(b"--split-require") {
+        ctx.bundler_options.split_require = true;
     }
 
     if let Some(size_str) = args.option(b"--min-chunk-size") {

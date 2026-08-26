@@ -323,17 +323,28 @@ impl<'a> LinkerContext<'a> {
         self.pending_task_count.fetch_sub(1, Ordering::Relaxed);
     }
 
+    /// An `import()` — or a `--split-require` `require()` — whose target is a
+    /// chunk entry point: the record is resolved at runtime against the
+    /// target's chunk instead of binding to a wrapper.
     pub(crate) fn is_external_dynamic_import(
         &self,
         record: &ImportRecord,
         source_index: u32,
     ) -> bool {
         use crate::linker_graph::FileColumns as _;
-        self.graph.code_splitting
-            && record.kind == ImportKind::Dynamic
+        if !self.graph.code_splitting || record.source_index.get() == source_index {
+            return false;
+        }
+        let crosses_chunk = match record.kind {
+            ImportKind::Dynamic => true,
+            ImportKind::Require => record
+                .flags
+                .contains(bun_ast::ImportRecordFlags::CROSS_CHUNK_REQUIRE),
+            _ => false,
+        };
+        crosses_chunk
             && self.graph.files.items_entry_point_kind()[record.source_index.get() as usize]
                 .is_entry_point()
-            && record.source_index.get() != source_index
     }
 
     /// `"sideEffects": false` (or the resolver's equivalent), unless
@@ -1605,6 +1616,9 @@ pub struct ChunkMeta {
     pub(crate) imports: ChunkMetaMap,
     pub(crate) exports: ChunkMetaMap,
     pub(crate) dynamic_imports: ArrayHashMap<crate::IndexInt, ()>,
+    /// `--split-require` `require()` targets, kept apart from `dynamic_imports`
+    /// only so the metafile labels them `require-call`.
+    pub(crate) require_imports: ArrayHashMap<crate::IndexInt, ()>,
 }
 
 pub(crate) type ChunkMetaMap = ArrayHashMap<Ref, ()>;

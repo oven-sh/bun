@@ -355,13 +355,15 @@ describe("bundler", () => {
       .filter(f => f.endsWith(".js"))
       .sort();
 
-  // The chunk holding secret.ts, which must be separate from the entry point.
-  const secretChunk = (api: BundlerTestBundleAPI) => {
-    const chunk = jsFilesIn(api).find(f => api.readFile("/out/" + f).includes("internal only"));
+  // The non-entry chunk whose code contains `marker`.
+  const chunkContaining = (api: BundlerTestBundleAPI, marker: string) => {
+    const chunk = jsFilesIn(api).find(f => api.readFile("/out/" + f).includes(marker));
     expect(chunk).toBeDefined();
     expect(chunk).not.toBe("main.js");
     return chunk!;
   };
+  // The chunk holding secret.ts, which must be separate from the entry point.
+  const secretChunk = (api: BundlerTestBundleAPI) => chunkContaining(api, "internal only");
 
   for (const backend of ["cli", "api"] as const) {
     itBundled(`splitting/DeadDynamicImportTargetGetsNoChunk-${backend}`, {
@@ -1155,6 +1157,275 @@ describe("bundler", () => {
     },
     run: { file: "/out/main.js", stdout: "main 12000" },
   });
+
+  // --split-require: a require() of a bundled ES module becomes a chunk of its
+  // own, loaded synchronously with import.meta.require() when the call runs.
+  const splitRequireFiles = {
+    "/main.ts": /* ts */ `
+      import { getTool } from './registry.ts'
+      console.log("main")
+      console.log(getTool().name)
+    `,
+    "/registry.ts": /* ts */ `
+      export function getTool() {
+        return require('./tool.ts').Tool
+      }
+    `,
+    "/tool.ts": /* ts */ `
+      import { helper } from './helper.ts'
+      console.log("tool evaluated")
+      export const Tool = { name: "tool:" + helper() }
+    `,
+    "/helper.ts": /* ts */ `
+      export function helper() { return "helped" }
+    `,
+  };
+
+  const toolChunk = (api: BundlerTestBundleAPI) => chunkContaining(api, "tool evaluated");
+
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`splitting/SplitRequireEmitsChunk-${backend}`, {
+      files: splitRequireFiles,
+      entryPoints: ["/main.ts"],
+      splitting: true,
+      splitRequire: true,
+      target: "bun",
+      outdir: "/out",
+      format: "esm",
+      metafile: true,
+      backend,
+      assertNotPresent: { "/out/main.js": "tool evaluated" },
+      onAfterBundle(api) {
+        const chunk = toolChunk(api);
+        api.expectFile("/out/main.js").toContain(`import.meta.require("./${chunk}")`);
+        const metafile = JSON.parse(api.readFile("/metafile.json"));
+        const output = (name: string) =>
+          Object.entries<any>(metafile.outputs).find(([k]) => k.endsWith("/" + name))![1];
+        expect(output("main.js").imports.map((i: any) => i.kind)).toEqual(["require-call"]);
+        expect(output("main.js").imports[0].path.endsWith("/" + chunk)).toBe(true);
+        expect(Object.keys(output(chunk).inputs).some(k => k.endsWith("tool.ts"))).toBe(true);
+      },
+      run: { file: "/out/main.js", stdout: "main\ntool evaluated\ntool:helped" },
+    });
+  }
+
+  itBundled("splitting/SplitRequireOffKeepsWrapper", {
+    files: splitRequireFiles,
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsFilesIn(api)).toEqual(["main.js"]);
+      api.expectFile("/out/main.js").not.toContain("import.meta.require");
+    },
+    run: { file: "/out/main.js", stdout: "main\ntool evaluated\ntool:helped" },
+  });
+
+  // The require() is inside a function that tree shaking removes: no chunk,
+  // the same as a dead import().
+  itBundled("splitting/SplitRequireDeadTargetGetsNoChunk", {
+    files: {
+      ...splitRequireFiles,
+      "/main.ts": /* ts */ `
+        import { getTool } from './registry.ts'
+        if (FEATURE_TOOL) console.log(getTool().name)
+        console.log("main")
+      `,
+    },
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    splitRequire: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    define: { FEATURE_TOOL: "false" },
+    onAfterBundle(api) {
+      expect(jsFilesIn(api)).toEqual(["main.js"]);
+      api.expectFile("/out/main.js").not.toContain("tool evaluated");
+    },
+    run: { file: "/out/main.js", stdout: "main" },
+  });
+
+  // A CommonJS target keeps the in-chunk wrapper: require() must keep
+  // returning module.exports, not a namespace.
+  itBundled("splitting/SplitRequireLeavesCommonJSTargetInline", {
+    files: {
+      "/main.ts": /* ts */ `
+        console.log(require('./cjs.js').value, require('./cjs.js')())
+      `,
+      "/cjs.js": /* js */ `
+        module.exports = function () { return "called" }
+        module.exports.value = "cjs value"
+      `,
+    },
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    splitRequire: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsFilesIn(api)).toEqual(["main.js"]);
+    },
+    run: { file: "/out/main.js", stdout: "cjs value called" },
+  });
+
+  // A top-level require() in a module that the required chunk imports back
+  // (the registry ↔ tool shape): the chunk is evaluated while the entry is
+  // still evaluating and sees the entry's hoisted functions through live
+  // bindings, the same as the in-chunk wrapper did.
+  itBundled("splitting/SplitRequireCycleDuringEvaluation", {
+    files: {
+      "/main.ts": /* ts */ `
+        import { tools } from './registry.ts'
+        console.log(tools.map(t => t.name).join(","))
+      `,
+      "/registry.ts": /* ts */ `
+        export function buildTool(name: string) { return { name } }
+        export const tools = [require('./tool.ts').Tool, require('./tool2.ts').Tool]
+      `,
+      "/tool.ts": /* ts */ `
+        import { buildTool } from './registry.ts'
+        export const Tool = buildTool("tool")
+      `,
+      "/tool2.ts": /* ts */ `
+        import { buildTool } from './registry.ts'
+        import { Tool as Other } from './tool.ts'
+        export const Tool = buildTool("tool2-sees-" + Other.name)
+      `,
+    },
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    splitRequire: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsFilesIn(api).length).toBeGreaterThan(1);
+    },
+    run: { file: "/out/main.js", stdout: "tool,tool2-sees-tool" },
+  });
+
+  // A file shared by the entry and a require()d chunk must not fold into the
+  // entry chunk: the require() runs while the entry is still evaluating, so
+  // code placed after the call site would be uninitialized when the chunk
+  // reads it. An import() target, by contrast, only runs after the entry.
+  itBundled("splitting/SplitRequireKeepsSharedCodeOutOfRequirer", {
+    files: {
+      "/main.ts": /* ts */ `
+        import { tools } from './registry.ts'
+        import { shared } from './shared.ts'
+        console.log(tools[0].name, shared.name)
+      `,
+      "/registry.ts": /* ts */ `
+        export const tools = [require('./tool.ts').Tool]
+      `,
+      "/tool.ts": /* ts */ `
+        import { shared } from './shared.ts'
+        export const Tool = { name: "tool:" + shared.name }
+      `,
+      "/shared.ts": /* ts */ `
+        export const shared = { name: "shared" }
+      `,
+    },
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    splitRequire: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/main.js").not.toContain('name: "shared"');
+      api.expectFile("/out/" + chunkContaining(api, "tool:")).not.toContain('from "./main.js"');
+    },
+    run: { file: "/out/main.js", stdout: "tool:shared shared" },
+  });
+
+  // Browser-side files of a server build (an imported HTML page's scripts)
+  // cannot call import.meta.require; their require() keeps the wrapper.
+  itBundled("splitting/SplitRequireLeavesBrowserFilesOfServerBuildAlone", {
+    files: {
+      "/main.ts": /* ts */ `
+        import page from './index.html'
+        console.log(typeof page, require('./server-helper.ts').value)
+      `,
+      "/server-helper.ts": /* ts */ `export const value = "server"`,
+      "/index.html": /* html */ `<script src="./client.ts"></script>`,
+      "/client.ts": /* ts */ `console.log(require('./client-helper.ts').value)`,
+      "/client-helper.ts": /* ts */ `export const value = "client"`,
+    },
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    splitRequire: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/main.js").toContain("import.meta.require(");
+      const client = jsFilesIn(api).find(f => api.readFile("/out/" + f).includes('"client"'));
+      expect(client).toBeDefined();
+      api.expectFile("/out/" + client!).not.toContain("import.meta.require");
+    },
+  });
+
+  // require() and import() of the same file share one chunk and one namespace.
+  itBundled("splitting/SplitRequireSharesChunkWithDynamicImport", {
+    files: {
+      "/main.ts": /* ts */ `
+        const sync = require('./tool.ts')
+        import('./tool.ts').then(ns => console.log(ns === sync, ns.Tool === sync.Tool))
+      `,
+      "/tool.ts": /* ts */ `
+        console.log("tool evaluated")
+        export const Tool = { name: "tool" }
+      `,
+    },
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    splitRequire: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      const chunk = toolChunk(api);
+      api.expectFile("/out/main.js").toContain(`import.meta.require("./${chunk}")`);
+      api.expectFile("/out/main.js").toContain(`import("./${chunk}")`);
+    },
+    run: { file: "/out/main.js", stdout: "tool evaluated\ntrue true" },
+  });
+
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`splitting/SplitRequireRequiresSplitting-${backend}`, {
+      files: { "/main.ts": `console.log(require("./a.ts").a)`, "/a.ts": `export const a = 1` },
+      entryPoints: ["/main.ts"],
+      splitRequire: true,
+      target: "bun",
+      outdir: "/out",
+      backend,
+      bundleErrors: {
+        "<bun>": [backend === "cli" ? "--split-require requires --splitting" : "splitRequire requires splitting: true"],
+      },
+    });
+    itBundled(`splitting/SplitRequireRequiresBunTarget-${backend}`, {
+      files: { "/main.ts": `console.log(require("./a.ts").a)`, "/a.ts": `export const a = 1` },
+      entryPoints: ["/main.ts"],
+      splitting: true,
+      splitRequire: true,
+      target: "node",
+      outdir: "/out",
+      format: "esm",
+      backend,
+      bundleErrors: {
+        "<bun>": [
+          backend === "cli"
+            ? "--split-require requires --target bun (chunks are loaded with import.meta.require)"
+            : "splitRequire requires target: 'bun' (chunks are loaded with import.meta.require)",
+        ],
+      },
+    });
+  }
 
   // N same-named cross-chunk exports must get unique aliases in O(N) total
   // (ExportRenamer::next_renamed_name). Debug/ASAN builds blow past the 15s

@@ -356,5 +356,48 @@ describe("bundler", () => {
         stdout: "entry 40\na 41",
       },
     });
+
+    // --split-require in a compiled binary: the required chunk is embedded
+    // under /$bunfs/root and loaded synchronously from the call, including
+    // one made while the entry is still evaluating (a require cycle), with
+    // or without bytecode.
+    for (const bytecode of [false, true]) {
+      itBundled(`compile/splitting/SplitRequireLoadsChunkSynchronously-${bytecode ? "bytecode" : "source"}`, {
+        compile: true,
+        splitting: true,
+        splitRequire: true,
+        bytecode,
+        format: "esm",
+        files: {
+          "/entry.ts": /* js */ `
+            import { getTool, eager } from "./registry.ts";
+            console.log("mark:entry", eager.name);
+            console.log(getTool().name);
+            console.log(require("./lazy.ts") === (await import("./lazy.ts")));
+          `,
+          "/registry.ts": /* js */ `
+            export function buildTool(name) { return { name } }
+            export const eager = require("./eager.ts").Tool;
+            export function getTool() { return require("./lazy.ts").Tool }
+          `,
+          "/eager.ts": /* js */ `
+            import { buildTool } from "./registry.ts";
+            console.log("mark:eager");
+            export const Tool = buildTool("eager");
+          `,
+          "/lazy.ts": /* js */ `
+            console.log("mark:lazy");
+            export const Tool = { name: "lazy" };
+          `,
+        },
+        run: {
+          stdout: "mark:eager\nmark:entry eager\nmark:lazy\nlazy\ntrue",
+        },
+        onAfterBundle(api) {
+          const payload = readFileSync(api.outfile).toString("latin1");
+          expect(payload).toMatch(/import\.meta\.require\("(\/\$bunfs|B:\/~BUN)\/root\/chunk-/);
+        },
+      });
+    }
   });
 });

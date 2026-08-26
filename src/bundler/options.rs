@@ -1253,6 +1253,9 @@ pub struct BundleOptions<'a> {
     pub tree_shaking: bool,
     pub tree_shaking_override: Option<bool>,
     pub code_splitting: bool,
+    /// With `code_splitting`: `require()` of a bundled ESM file becomes a
+    /// chunk of its own, loaded synchronously at the call (`--split-require`).
+    pub split_require: bool,
     pub source_map: SourceMapOption,
     pub packages: PackagesOption,
 
@@ -1466,6 +1469,7 @@ impl<'a> BundleOptions<'a> {
             tree_shaking: self.tree_shaking,
             tree_shaking_override: self.tree_shaking_override,
             code_splitting: self.code_splitting,
+            split_require: self.split_require,
             source_map: self.source_map,
             packages: self.packages,
             disable_transpilation: self.disable_transpilation,
@@ -1715,6 +1719,7 @@ impl<'a> BundleOptions<'a> {
             tree_shaking: false,
             tree_shaking_override: None,
             code_splitting: false,
+            split_require: false,
             source_map: SourceMapOption::None,
             packages: PackagesOption::Bundle,
             disable_transpilation: false,

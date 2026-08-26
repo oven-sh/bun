@@ -330,12 +330,15 @@ describe.skipIf(!isPosix)("process.env writes reach the OS environment", () => {
       process.env.ENVFIX_SNUL = "ab\\x00cd";
       process.env["ENVFIX_SEQ=X"] = "v";
       delete process.env.ENVFIX_SWAPDEL;
+      process.env.ENVFIX_SKEY = "v";
+      delete process.env["ENVFIX_SKEY\\x00TAIL"];
       process.stdout.write(JSON.stringify({
         set: read("ENVFIX_POSTSWAP"),
         nul: read("ENVFIX_SNUL"),
         js: process.env.ENVFIX_SNUL,
         eq: "ENVFIX_SEQ=X" in process.env,
         deleted: read("ENVFIX_SWAPDEL"),
+        keyNulDeleted: [read("ENVFIX_SKEY"), "ENVFIX_SKEY" in process.env],
         freeze: probe(() => Object.freeze(process.env)),
         stillWritable: (process.env.ENVFIX_SAFTER = "x", process.env.ENVFIX_SAFTER),
       }));
@@ -349,6 +352,7 @@ describe.skipIf(!isPosix)("process.env writes reach the OS environment", () => {
         js: "ab",
         eq: false,
         deleted: null,
+        keyNulDeleted: [null, false],
         freeze: "TypeError",
         stillWritable: "x",
       },

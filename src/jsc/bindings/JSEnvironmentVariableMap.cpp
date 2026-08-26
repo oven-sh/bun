@@ -884,7 +884,7 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
     // Mirror JSEnvironmentVariableMap::deleteProperty: put() applies the TZ
     // side effect via applySharedEnvSideEffects, so delete has to undo it or
     // existing Date instances keep the deleted zone's offset.
-    String key(uid);
+    String key = truncateAtNUL(String(uid));
     String normalizedKey = SharedEnvStore::normalizeKey(key);
     if (normalizedKey == "TZ"_s && shouldApplyTZSideEffect(globalObject)) {
         WTF::setTimeZoneOverride(String());
@@ -929,10 +929,11 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
         // map does); tightening SHARE_ENV is a separate behavior change with its own tests.
         if (!propertyName.isSymbol() && uid) {
             if (auto* store = sharedEnvStoreFor(object)) {
-                String existing = store->get(String(uid));
+                String key = truncateAtNUL(String(uid));
+                String existing = store->get(key);
                 if (!existing.isNull()) {
-                    syncOSEnv(globalObject, store, String(uid), nullptr);
-                    store->remove(String(uid));
+                    syncOSEnv(globalObject, store, key, nullptr);
+                    store->remove(key);
                     object->putDirect(vm, propertyName, jsString(vm, existing), 0);
                 }
             }

@@ -1667,7 +1667,16 @@ impl PipelineTask {
         // can be over-shrunk and then upscaled, throwing away detail.
         // (flip/flop are pure mirrors that never change w/h, so the hint
         //  stays valid through them.)
-        let hint: codecs::DecodeHint = if let Some(r) = self.pipeline.resize {
+        //
+        // `colorspace: "linear"` disables the hint: the M/8 IDCT scale
+        // averages encoded DC coefficients — exactly the code-averaging the
+        // option opts out of — so a hinted JPEG decode would darken the
+        // result before `resize_linear` ever sees the pixels.
+        let hint: codecs::DecodeHint = if let Some(r) = self
+            .pipeline
+            .resize
+            .filter(|r| r.colorspace == Colorspace::Srgb)
+        {
             let mut tw = r.w;
             // r.h==0 means "preserve aspect" — constrain on width only.
             let mut th = if r.h != 0 { r.h } else { r.w };

@@ -482,7 +482,8 @@ constexpr size_t alignUp(size_t n, size_t a) { return (n + a - 1) & ~(a - 1); }
 // exact: |Σ pixel·w| ≤ 65535 · 32767 · 256 taps ≈ 5.5e11, past i32 in the
 // clipped-weight worst case. Scalar loops; this path is opt-in and the
 // sRGB⇄linear conversions around it dominate anyway.
-constexpr int64_t kFixRound16 = 1 << 13; // 1 << (kFixShift - 1)
+constexpr int kFixShift16 = 14; // = kFixShift; mirrored like kFixOne above
+constexpr int64_t kFixRound16 = int64_t { 1 } << (kFixShift16 - 1);
 
 uint16_t clamp16(int64_t v)
 {
@@ -512,10 +513,10 @@ void HorizPass16(const uint16_t* HWY_RESTRICT src, size_t src_w, size_t src_h,
                 acc2 += wk * sp[2];
                 acc3 += wk * sp[3];
             }
-            dp[0] = clamp16(acc0 >> 14);
-            dp[1] = clamp16(acc1 >> 14);
-            dp[2] = clamp16(acc2 >> 14);
-            dp[3] = clamp16(acc3 >> 14);
+            dp[0] = clamp16(acc0 >> kFixShift16);
+            dp[1] = clamp16(acc1 >> kFixShift16);
+            dp[2] = clamp16(acc2 >> kFixShift16);
+            dp[3] = clamp16(acc3 >> kFixShift16);
         }
     }
 }
@@ -535,7 +536,7 @@ void VertPass16(const uint16_t* HWY_RESTRICT src, size_t dst_w,
             const uint16_t* sp = col0 + i;
             for (int32_t k = 0; k < s.n; k++, sp += row)
                 acc += static_cast<int64_t>(w[k]) * *sp;
-            drow[i] = clamp16(acc >> 14);
+            drow[i] = clamp16(acc >> kFixShift16);
         }
     }
 }

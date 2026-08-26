@@ -316,9 +316,35 @@ describe("linear-light resize", () => {
     }
   });
 
+  // A JPEG source at 2x+ shrink normally decodes through the M/8 IDCT scale,
+  // which averages encoded DC coefficients per 8×8 block — the exact
+  // code-averaging `colorspace: "linear"` opts out of. The linear path must
+  // decode at full resolution, so the checkerboard still lands near 188.
+  test("linear resize of a JPEG source skips the IDCT downscale hint", async () => {
+    const checker = makePng(128, 128, (x, y) => ((x + y) & 1 ? [255, 255, 255, 255] : [0, 0, 0, 255]));
+    const jpeg = await new Bun.Image(checker).jpeg({ quality: 100 }).bytes();
+    const out = decodePng(
+      await new Bun.Image(jpeg).resize(16, 16, { filter: "box", colorspace: "linear" }).png().bytes(),
+    ).data;
+    let sum = 0;
+    let n = 0;
+    for (let y = 2; y < 14; y++) {
+      for (let x = 2; x < 14; x++) {
+        sum += out[(y * 16 + x) * 4];
+        n++;
+      }
+    }
+    // A hinted decode collapses every 8×8 block to its ~128 DC before the
+    // linear resize runs, so the mean reads ~128. Full decode + linear
+    // resize reads ~188 (JPEG quantization noise gives a wide margin).
+    expect(sum / n).toBeGreaterThan(165);
+  });
+
   test("invalid colorspace value throws", () => {
     const src = makePng(4, 4, () => [0, 0, 0, 255]);
-    expect(() => new Bun.Image(src).resize(2, 2, { colorspace: "rec2020" as any })).toThrow();
+    expect(() => new Bun.Image(src).resize(2, 2, { colorspace: "rec2020" as any })).toThrow(
+      TypeError("colorspace must be one of 'srgb' or 'linear'"),
+    );
   });
 });
 

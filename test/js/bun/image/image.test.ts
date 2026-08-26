@@ -896,8 +896,8 @@ describe("Bun.Image", () => {
     for (const v of [Infinity, -Infinity, NaN, 1e300, -1e300]) {
       expect(() => new Bun.Image(cornersPng).rotate(v)).toThrow(/only multiples of 90/);
     }
-    // resize/quality/maxPixels clamp; NaN→lo bound, ±Inf→matching bound.
-    const out = await new Bun.Image(cornersPng).resize(NaN, NaN).jpeg({ quality: NaN }).bytes();
+    // resize/maxPixels clamp; NaN→lo bound, ±Inf→matching bound.
+    const out = await new Bun.Image(cornersPng).resize(NaN, NaN).jpeg().bytes();
     expect(out[0]).toBe(0xff);
     expect((await new Bun.Image(gradientPng, { maxPixels: Infinity }).metadata()).width).toBe(16);
     // Infinity width clamps to the per-side cap; output then exceeds maxPixels
@@ -940,6 +940,42 @@ describe("Bun.Image", () => {
     const out = await img().jpeg({ quality: undefined }).bytes();
     const defaultOut = await img().jpeg().bytes();
     expect(out).toEqual(defaultOut);
+  });
+
+  // #40490: an out-of-range encoder option used to clamp in silence, so
+  // `.jpeg({ quality: 999 })` encoded at quality 100 and `{ quality: -5 }`
+  // at quality 1. The documented ranges are now enforced.
+  test("out-of-range encoder options throw ERR_OUT_OF_RANGE", async () => {
+    const img = () => new Bun.Image(cornersPng);
+    let caught: any;
+    try {
+      img().jpeg({ quality: 999 });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toMatchObject({
+      name: "RangeError",
+      code: "ERR_OUT_OF_RANGE",
+      message: 'The value of "quality" is out of range. It must be >= 1 and <= 100. Received 999',
+    });
+    for (const bad of [0, -5, 101, Infinity, -Infinity]) {
+      expect(() => img().jpeg({ quality: bad })).toThrow(RangeError);
+      expect(() => img().webp({ quality: bad })).toThrow(RangeError);
+    }
+    for (const bad of [-1, 10, 1e300]) {
+      expect(() => img().png({ compressionLevel: bad })).toThrow(/"compressionLevel".*>= 0 and <= 9/);
+    }
+    for (const bad of [1, 257, 1000]) {
+      expect(() => img().png({ palette: true, colors: bad })).toThrow(/"colors".*>= 2 and <= 256/);
+    }
+    // NaN and fractions are not valid integers either.
+    for (const bad of [NaN, 80.5]) {
+      expect(() => img().jpeg({ quality: bad })).toThrow(/"quality" property must be of type integer/);
+    }
+    // The bounds themselves are accepted.
+    img().jpeg({ quality: 1 }).jpeg({ quality: 100 });
+    img().png({ compressionLevel: 0 }).png({ compressionLevel: 9 });
+    img().png({ colors: 2 }).png({ colors: 256 });
   });
 
   test("constructor cleans up on throwing options getter", () => {

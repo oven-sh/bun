@@ -104,12 +104,14 @@ Calling a format method sets the encode target; without one, Bun reuses the sour
 ```ts
 img.jpeg({ quality: 85 }); // 1–100, default 80
 img.png({ compressionLevel: 6 }); // zlib level 0–9
-img.png({ palette: true, colors: 64, dither: true }); // indexed PNG
+img.png({ palette: true, colors: 64, dither: true }); // indexed PNG, 2–256 colors
 img.webp({ quality: 80 });
 img.webp({ lossless: true });
 img.heic({ quality: 80 }); // macOS / Windows only
 img.avif({ quality: 60 }); // macOS / Windows only
 ```
+
+`quality`, `compressionLevel`, and `colors` must be integers in the documented range. A value of the wrong type throws a `TypeError` (`ERR_INVALID_ARG_TYPE`), and a value outside the range throws a `RangeError` (`ERR_OUT_OF_RANGE`). Format methods run synchronously, so the error surfaces at the call, not at the terminal.
 
 `palette: true` quantizes to a ≤256-color palette and emits an indexed (color-type 3) PNG, optionally with Floyd–Steinberg `dither`. The indexed PNG is typically 3–5× smaller than truecolor for screenshots and UI assets.
 

@@ -63,10 +63,14 @@ async function runBun(cwd: string, env: Env, ...args: string[]) {
   return { stdout, stderr, exitCode };
 }
 
-/** Runs bun, asserts that it succeeded, and returns its stdout. */
+// The lines `bun install` and `bun patch --commit` print on stderr while they work. Anything else
+// on stderr is a warning or an error.
+const installProgress = /^(Resolving dependencies|Resolved, downloaded and extracted \[\d+\]|Saved lockfile)\r?\n/gm;
+
+/** Runs bun, asserts that it succeeded with nothing but install progress on stderr, and returns its stdout. */
 async function bunOk(cwd: string, env: Env, ...args: string[]) {
   const { stdout, stderr, exitCode } = await runBun(cwd, env, ...args);
-  expect(stderr).not.toContain("error");
+  expect(stderr.replace(installProgress, "")).toBe("");
   expect(exitCode, stderr).toBe(0);
   return stdout;
 }

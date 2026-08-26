@@ -57,19 +57,9 @@ extern "C" StrongRefImpl* Bun__StrongRef__new(JSC::JSGlobalObject* globalObject,
     return encodeStrongRef(block, index);
 }
 
-extern "C" JSC::EncodedJSValue Bun__StrongRef__get(StrongRefImpl* _Nonnull ref)
-{
-    return JSC::JSValue::encode(decodeStrongRefBlock(ref)->read(decodeStrongRefIndex(ref)));
-}
-
 extern "C" void Bun__StrongRef__set(StrongRefImpl* _Nonnull ref, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
 {
     decodeStrongRefBlock(ref)->write(JSC::getVM(globalObject), decodeStrongRefIndex(ref), JSC::JSValue::decode(encodedValue));
-}
-
-extern "C" void Bun__StrongRef__clear(StrongRefImpl* _Nonnull ref)
-{
-    decodeStrongRefBlock(ref)->clearValue(decodeStrongRefIndex(ref));
 }
 
 // The Rust caller (Strong.rs Impl::destroy) skips this call once

@@ -100,6 +100,7 @@ impl TimerObjectInternals {
     /// lives in exactly one place.
     #[inline]
     fn parent_ptr(&self) -> TimerParent {
+        bun_core::assert_not_freeze!(TimerObjectInternals, TimerParent);
         let this = std::ptr::from_ref::<Self>(self).cast_mut();
         match self.flags.get().kind() {
             // SAFETY: `kind == SetImmediate` ⇒ `self` is the `internals` field
@@ -309,7 +310,7 @@ impl TimerObjectInternals {
                 unreachable!()
             };
             // SAFETY: `vm` is the live per-thread VM. Low tier stores `*mut ()`
-            // (PORTING.md §Dispatch); `run_immediate_task_hook` casts it back
+            // (PORTING.md §Dispatch); `__bun_run_immediate_task` casts it back
             // to `*mut ImmediateObject`.
             unsafe { (*vm).enqueue_immediate_task(parent.cast()) };
             self.set_enable_keeping_event_loop_alive(vm, true);
@@ -366,7 +367,10 @@ impl TimerObjectInternals {
         // `s.deref()` below; `*this` may be freed only after that point.
         let s = unsafe { &*this };
         let cleared = s.flags.get().has_cleared_timer()
+            // The VM's stop was requested: nothing more enters script (as `fire`).
             // SAFETY: `vm` is the live per-thread VM (hook contract).
+            || unsafe { (*vm).script_execution_status() } != ScriptExecutionStatus::Running
+            // SAFETY: as above.
             || s.generation != unsafe { (*vm).test_isolation_generation }
             // unref'd setImmediate callbacks should only run if there are things
             // keeping the event loop alive other than setImmediates
@@ -835,7 +839,7 @@ impl TimerObjectInternals {
 
         // (c) `vm.timer.maps.get(kind).swapRemove(id)` if
         //     `has_accessed_primitive` — drops the i32→*mut EventLoopTimer
-        //     entry minted by `toPrimitive`. Swap-remove: the id map is only
+        //     entry minted by `to_primitive`. Swap-remove: the id map is only
         //     ever keyed into, never iterated in order, and `deinit` runs for
         //     every id-accessed timer a GC sweep collects, so the ordered
         //     remove's O(n) shift + index rebuild here was O(n²) across a
@@ -858,7 +862,7 @@ impl TimerObjectInternals {
             } else if kind == Kind::SetInterval {
                 // A `setTimeout` promoted to a `setInterval` by
                 // `convert_to_interval()` keeps the entry minted by
-                // `toPrimitive` in `maps.set_timeout`. Remove it from there
+                // `to_primitive` in `maps.set_timeout`. Remove it from there
                 // too, or `remove_timer_by_id` would hand out a dangling
                 // `*mut EventLoopTimer` after the parent is freed.
                 // SAFETY: as above.
@@ -938,6 +942,34 @@ impl TimerObjectInternals {
         }
 
         Ok(this_value)
+    }
+
+    /// Node's deadline is `_idleStart + _idleTimeout`; writing `_idleStart`
+    /// must move the heap entry so `t2._idleStart = t1._idleStart` works.
+    pub(crate) fn set_idle_start(&self, idle_start_ms: f64) {
+        if self.flags.get().kind() == Kind::SetImmediate
+            || self.flags.get().has_cleared_timer()
+            || self.event_loop_timer_state() != EventLoopTimerState::ACTIVE
+            || !idle_start_ms.is_finite()
+        {
+            return;
+        }
+
+        let state = crate::jsc_hooks::runtime_state();
+        debug_assert!(!state.is_null(), "RuntimeState not installed");
+
+        let ms = (idle_start_ms as i64)
+            .saturating_add(i64::from(self.interval.get()))
+            .max(0);
+        let scheduled_time = Timespec::EPOCH.add_ms(ms);
+        // SAFETY: `state` is the boxed per-thread `RuntimeState`; fresh
+        // `&mut` to `.timer` for this call only. The timer is ACTIVE so
+        // `update()` removes then re-inserts with no refcount change.
+        unsafe {
+            (*state)
+                .timer
+                .update(self.event_loop_timer(), &scheduled_time)
+        };
     }
 
     pub(crate) fn do_refresh(

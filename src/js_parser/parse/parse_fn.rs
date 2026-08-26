@@ -5,7 +5,7 @@ use crate::js_lexer;
 use crate::js_lexer::T;
 use crate::p::P;
 use crate::parser::{
-    ARGUMENTS_STR as arguments_str, AwaitOrYield, FnOrArrowDataParse, FunctionKind, LexicalDecl,
+    ARGUMENTS_STR as arguments_str, AwaitOrYield, FnOrArrowDataParse, LexicalDecl,
     ParseStatementOptions, TypeParameterFlag,
 };
 use bun_ast as js_ast;
@@ -117,7 +117,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.pop_and_discard_scope(if_stmt_scope_index);
                 }
 
-                if opts.is_typescript_declare && opts.is_namespace_scope && opts.is_export {
+                if opts.is_typescript_declare && opts.scope.is_namespace() && opts.is_export {
                     p.has_non_local_export_declare_inside_namespace = true;
                 }
 
@@ -479,7 +479,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )?;
         p.fn_or_arrow_data_parse.has_argument_decorators = false;
 
-        p.validate_function_name(&func, FunctionKind::Expr);
+        p.validate_function_name(&func);
         p.pop_scope();
 
         Ok(p.new_expr(E::Function { func }, loc))

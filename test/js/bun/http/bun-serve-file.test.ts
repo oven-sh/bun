@@ -2,7 +2,7 @@ import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
-import { unlinkSync } from "node:fs";
+import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -712,6 +712,22 @@ describe("Bun.file in serve routes", () => {
       expect(await res.text()).toBe("56789");
       expect(res.headers.get("Content-Length")).toBe("5");
     });
+
+    // The slice is shorter than the file, so the byte budget runs out before
+    // the reader reports EOF: the response completes inline while a deferred
+    // completion still hops through the event loop. Repeated requests must
+    // each deliver exactly the slice and recycle the request context cleanly.
+    it("truncated-length EOF path completes cleanly across repeated requests", async () => {
+      for (let i = 0; i < 32; i++) {
+        const res = await fetch(new URL(`/partial-slice.txt`, server.url));
+        expect(res.status).toBe(200);
+        expect(await res.text()).toBe("56789");
+        expect(res.headers.get("Content-Length")).toBe("5");
+      }
+      // The pool is still healthy afterwards: an unrelated route responds.
+      const check = await fetch(new URL(`/hello-blob.txt`, server.url));
+      expect(check.status).toBe(200);
+    });
   });
 
   describe.concurrent("Special status codes", () => {
@@ -1068,6 +1084,83 @@ process.exit(0);
   },
   30_000,
 );
+
+// A FIFO's stat size is 0, but the body length is unknown until EOF. Writing
+// Content-Length from the stat size and then streaming the pipe to EOF puts
+// body bytes on the wire past the declared length; on a keep-alive connection
+// those bytes land where the client parses the next response's status line
+// (RFC 9112 6.3). The response must be chunk-framed instead.
+test.skipIf(isWindows)("Response(Bun.file(FIFO)) frames the body as chunked, not Content-Length: 0", async () => {
+  using dir = tempDir("serve-fifo-framing", {});
+  const fifoPath = join(String(dir), "body.fifo");
+  mkfifo(fifoPath);
+
+  // Hold the FIFO open read+write so the server's O_RDONLY|O_NONBLOCK open
+  // always finds a writer (its reads EAGAIN instead of reporting EOF before we
+  // write). The fd is released in `finally`; we do not close it mid-test to
+  // signal EOF because the server's FIFO-EOF handling is platform-dependent
+  // and not what this test is about.
+  const writerFd = openSync(fifoPath, "r+");
+  try {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        return new Response(Bun.file(fifoPath));
+      },
+    });
+
+    const { promise: wireDone, resolve: resolveWire } = Promise.withResolvers<string>();
+    let wire = "";
+    const client = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        open(s) {
+          s.write("GET /fifo HTTP/1.1\r\nHost: x\r\n\r\n");
+        },
+        data(_s, d) {
+          wire += Buffer.from(d).toString("latin1");
+          if (wire.includes("PIPEBYTES!")) resolveWire(wire);
+        },
+        close() {
+          resolveWire(wire);
+        },
+        error() {
+          resolveWire(wire);
+        },
+      },
+    });
+
+    // The payload sits in the FIFO buffer (kept alive by writerFd) until the
+    // server opens its read end; the server's first body write then carries it
+    // to the wire together with whatever framing the head declared.
+    writeSync(writerFd, "PIPEBYTES!");
+    const captured = await wireDone;
+    client.end();
+
+    const head = captured.split("\r\n\r\n")[0];
+    // The broken build wrote `content-length: 0` from the FIFO's stat size and
+    // then emitted the pipe bytes raw after the head (body past the declared
+    // length). With the fix the head carries no Content-Length and the first
+    // body write enters chunked mode.
+    expect({
+      status: head.split("\r\n")[0],
+      hasContentLength: /^content-length:/im.test(head),
+      isChunked: /^transfer-encoding:\s*chunked/im.test(head),
+      bodyDelivered: captured.includes("PIPEBYTES!"),
+      bodyBytesPastContentLengthZero: /^content-length:\s*0$/im.test(head) && captured.includes("PIPEBYTES!"),
+    }).toEqual({
+      status: "HTTP/1.1 200 OK",
+      hasContentLength: false,
+      isChunked: true,
+      bodyDelivered: true,
+      bodyBytesPastContentLengthZero: false,
+    });
+  } finally {
+    closeSync(writerFd);
+  }
+});
 
 // A request that declares a body arms the request-body (onData) callback on
 // the uWS response before the fetch handler runs. uWS keeps a single shared

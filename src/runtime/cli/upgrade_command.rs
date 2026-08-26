@@ -197,7 +197,6 @@ impl UpgradeCommand {
             },
         };
         header_entries.append(accept).expect("oom");
-        // defer if SILENT header_entries.deinit() — Drop handles this
 
         // Incase they're using a GitHub proxy in e.g. China
         let mut github_api_domain: &[u8] = b"api.github.com";
@@ -264,7 +263,6 @@ impl UpgradeCommand {
             api_url,
             header_entries,
             headers_buf,
-            std::ptr::from_mut::<MutableString>(metadata_body),
             b"",
             http_proxy,
             None,
@@ -278,7 +276,7 @@ impl UpgradeCommand {
             // frame returns, so the pointee outlives every use.
             async_http.client.progress_node = Some(NonNull::from(progress.as_deref_mut().unwrap()));
         }
-        let response = async_http.send_sync()?;
+        let response = async_http.send_sync(metadata_body)?;
 
         match response.status_code() {
             404 => return Err(crate::Error::HTTP404),
@@ -657,7 +655,6 @@ impl UpgradeCommand {
                 zip_url,
                 headers::EntryList::default(),
                 b"",
-                std::ptr::from_mut::<MutableString>(zip_file_buffer),
                 b"",
                 http_proxy,
                 None,
@@ -669,7 +666,7 @@ impl UpgradeCommand {
                 Some(NonNull::new(progress).expect("leaked Box is non-null"));
             async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
-            let response = async_http.send_sync()?;
+            let response = async_http.send_sync(zip_file_buffer)?;
 
             match response.status_code() {
                 404 => {
@@ -1404,7 +1401,7 @@ pub(crate) mod upgrade_js_bindings {
             b"openTempDirWithoutSharingDelete",
             jsc::JSFunction::create(
                 global,
-                b"openTempDirWithoutSharingDelete",
+                "openTempDirWithoutSharingDelete",
                 // `#[bun_jsc::host_fn]` emits the C-ABI shim with a
                 // `__jsc_host_` prefix.
                 __jsc_host_js_open_temp_dir_without_sharing_delete,
@@ -1417,7 +1414,7 @@ pub(crate) mod upgrade_js_bindings {
             b"closeTempDirHandle",
             jsc::JSFunction::create(
                 global,
-                b"closeTempDirHandle",
+                "closeTempDirHandle",
                 __jsc_host_js_close_temp_dir_handle,
                 1,
                 Default::default(),

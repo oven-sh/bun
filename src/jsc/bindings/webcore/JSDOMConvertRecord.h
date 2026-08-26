@@ -251,35 +251,4 @@ private:
     }
 };
 
-template<typename K, typename V> struct JSConverter<IDLRecord<K, V>> {
-    static constexpr bool needsState = true;
-    static constexpr bool needsGlobalObject = true;
-
-    template<typename MapType>
-    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const MapType& map)
-    {
-        auto& vm = JSC::getVM(&lexicalGlobalObject);
-
-        // 1. Let result be ! ObjectCreate(%ObjectPrototype%).
-        auto result = constructEmptyObject(&lexicalGlobalObject, globalObject.objectPrototype());
-
-        // 2. Repeat, for each mapping (key, value) in D:
-        for (const auto& keyValuePair : map) {
-            // 1. Let esKey be key converted to an ECMAScript value.
-            // Note, this step is not required, as we need the key to be
-            // an Identifier, not a JSValue.
-
-            // 2. Let esValue be value converted to an ECMAScript value.
-            auto esValue = toJS<V>(lexicalGlobalObject, globalObject, keyValuePair.value);
-
-            // 3. Let created be ! CreateDataProperty(result, esKey, esValue).
-            // putDirect() crashes for numeric-index keys; use createDataProperty.
-            result->createDataProperty(&lexicalGlobalObject, JSC::Identifier::fromString(vm, keyValuePair.key), esValue, false);
-        }
-
-        // 3. Return result.
-        return result;
-    }
-};
-
 } // namespace WebCore

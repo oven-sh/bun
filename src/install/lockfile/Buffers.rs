@@ -236,10 +236,6 @@ where
             let mut clone: Vec<$elem> = Vec::with_capacity(buffers.$field.len());
             clone.extend_from_slice(buffers.$field.as_slice());
             write_array(stream, clone.as_slice(), $prefix)?;
-            #[cfg(debug_assertions)]
-            {
-                // Output::pretty_errorln(format_args!("Field {}: {} - {}", $name, pos, stream.get_pos()?));
-            }
         }};
     }
 
@@ -264,10 +260,6 @@ where
             // reader ignores this string; only the exact bytes matter.
             "\n<install.lockfile.Tree> 20 sizeof, 4 alignof\n",
         )?;
-        #[cfg(debug_assertions)]
-        {
-            // Output::pretty_errorln(format_args!("Field {}: {} - {}", "trees", pos, stream.get_pos()?));
-        }
     }
 
     // -- hoisted_dependencies --
@@ -349,11 +341,6 @@ where
             to_clone.as_slice(),
             "\n<[26]u8> 26 sizeof, 1 alignof\n",
         )?;
-
-        #[cfg(debug_assertions)]
-        {
-            // Output::pretty_errorln(format_args!("Field {}: {} - {}", "dependencies", pos, stream.get_pos()?));
-        }
     }
 
     // -- extern_strings --
@@ -418,25 +405,17 @@ pub(crate) fn load(
 
     macro_rules! load_generic_field {
         ($field:ident, $name:literal, $elem:ty) => {{
-            #[cfg(debug_assertions)]
-            let _pos: usize = stream.pos;
-
             this.$field = read_array::<$elem>(stream)?;
             if let Some(pm) = pm_.as_deref() {
                 if pm.options.log_level.is_verbose() {
                     bun_core::pretty_errorln!("Loaded {} {}", this.$field.len(), $name);
                 }
             }
-            // #[cfg(debug_assertions)]
-            // Output::pretty_errorln(format_args!("Field {}: {} - {}", $name, _pos, stream.get_pos()?));
         }};
     }
 
     // -- trees --
     {
-        #[cfg(debug_assertions)]
-        let _pos: usize = stream.pos;
-
         let tree_list: Vec<tree::External> = read_array(stream)?;
         // `set_len` then `iter_mut()` would form `&mut Tree` to uninitialized
         // memory (UB), so we push into the reserved capacity instead.
@@ -455,9 +434,6 @@ pub(crate) fn load(
 
     // -- dependencies --
     {
-        #[cfg(debug_assertions)]
-        let _pos: usize = stream.pos;
-
         external_dependency_list_ = read_array::<dependency::External>(stream)?;
         if let Some(pm) = pm_.as_deref() {
             if pm.options.log_level.is_verbose() {

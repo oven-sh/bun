@@ -126,8 +126,11 @@ public:
         return getLazyLoop().loop;
     }
 
-    static void clearLoopAtThreadExit() {
-        if (getLazyLoop().cleanMe) {
+    /* A thread that ran a loop is exiting: free this thread's loop whether uSockets created the
+     * native loop (cleanMe) or was handed one (Windows: the thread's libuv loop, which the caller
+     * closes afterwards; us_loop_free leaves a borrowed native loop alone). */
+    static void freeLoopAtThreadExit() {
+        if (getLazyLoop().loop) {
             getLazyLoop().loop->free();
         }
     }
@@ -191,16 +194,6 @@ public:
         us_loop_run((us_loop_t *) this);
     }
 
-    /* Passively integrate with the underlying default loop */
-    /* Used to seamlessly integrate with third parties such as Node.js */
-    void integrate() {
-        us_loop_integrate((us_loop_t *) this);
-    }
-
-    /* Dynamically change this */
-    void setSilent(bool silent) {
-        ((LoopData *) us_loop_ext((us_loop_t *) this))->noMark = silent;
-    }
 };
 
 /* Can be called from any thread to run the thread local loop */

@@ -37,7 +37,7 @@ pub struct Task<'a> {
     pub(crate) err: Option<crate::Error>,
     /// BACKREF — owned by `PackageManager.preallocated_resolve_tasks`.
     /// `None` only in `uninit()`; every scheduled task overwrites it.
-    pub(crate) package_manager: Option<bun_ptr::ParentRef<PackageManager>>,
+    pub(crate) package_manager: Option<bun_ptr::ParentRef<PackageManager, bun_ptr::Mut>>,
     /// default: `None`
     pub(crate) apply_patch_task: Option<Box<PatchTask>>,
     /// INTRUSIVE — `bun.UnboundedQueue(Task, .next)`
@@ -222,9 +222,18 @@ impl<'a> Task<'a> {
 
         // SAFETY: `task` points to the `threadpool_task` field of a `Task`
         // (this is the only place this `thread_pool::Task` callback is registered).
-        let this: *mut Task<'a> = unsafe { bun_core::from_field_ptr!(Task, threadpool_task, task) };
+        let this_raw: *mut Task<'a> =
+            unsafe { bun_core::from_field_ptr!(Task, threadpool_task, task) };
+        // The terminal `resolve_tasks.push` hands the task to the main thread
+        // (which may recycle it while this fn still runs `Output::flush()`),
+        // so the pushed pointer is derived from the raw receiver, not from the
+        // `&mut` below, and nothing touches `this` after the push.
+        // SAFETY: `Task<'a>` is layout-identical for all `'a` (the lifetime is
+        // a phantom on `&mut NetworkTask` borrows that the queue never reads
+        // through); erasing to `'static` is sound for the queue.
+        let task = unsafe { core::ptr::NonNull::new_unchecked(this_raw) }.cast::<Task<'static>>();
         // SAFETY: exclusive access — task runs on exactly one worker thread
-        let this: &mut Task<'a> = unsafe { &mut *this };
+        let this: &mut Task<'a> = unsafe { &mut *this_raw };
         // BACKREF (LIFETIMES.tsv:598) — `package_manager` outlives every task it
         // owns. The `ParentRef` is `Copy` and gives safe `Deref` for the
         // shared-read sites below; `manager` is kept as a raw `*mut` for the
@@ -315,7 +324,7 @@ impl<'a> Task<'a> {
                         loaded_manifest,
                         // SAFETY: see `manager` decl — short-lived `&mut` at call
                         // boundary only (callee touches `cache_directory` /
-                        // `temporary_directory` lazily).
+                        // `get_temporary_directory` lazily).
                         unsafe { &mut *manager },
                         is_extended_manifest,
                     ) {
@@ -460,6 +469,30 @@ impl<'a> Task<'a> {
                                         break 'body;
                                     }
                                 }
+                            } else if this.status != Status::Fail {
+                                // Neither matcher recognized the URL (`file://`,
+                                // `git://`, ...); clone with the URL as written
+                                // instead of finishing with zeroed task data.
+                                match Repository::download(
+                                    req.env,
+                                    &mut this.log,
+                                    // SAFETY: see `manager` decl — short-lived `&mut` at call boundary.
+                                    unsafe { &mut *manager }.get_cache_directory(),
+                                    this.id,
+                                    name,
+                                    url,
+                                    attempt,
+                                ) {
+                                    Ok(d) => d,
+                                    Err(err) => {
+                                        this.err = Some(err);
+                                        this.status = Status::Fail;
+                                        this.data = Data {
+                                            git_clone: ManuallyDrop::new(Fd::invalid()),
+                                        };
+                                        break 'body;
+                                    }
+                                }
                             } else {
                                 break 'body;
                             }
@@ -542,7 +575,7 @@ impl<'a> Task<'a> {
         if this.status == Status::Success {
             if let Some(mut pt) = this.apply_patch_task.take() {
                 // `defer pt.deinit()` → Box<PatchTask> drops at end of this block
-                pt.apply().expect("OOM"); // bun.handleOom → panic on OOM
+                bun_core::handle_oom(pt.apply());
                 // `apply_patch_task` is only ever populated with the Apply
                 // variant (see `new_apply_patch_hash`), so destructure it.
                 let crate::patch_install::Callback::Apply(apply) = &mut pt.callback else {
@@ -558,12 +591,8 @@ impl<'a> Task<'a> {
                 }
             }
         }
-        let task = core::ptr::NonNull::from(this).cast::<Task<'static>>();
-        // SAFETY: `Task<'a>` is layout-identical for all `'a` (the lifetime is
-        // a phantom on `&mut NetworkTask` borrows that the queue never reads
-        // through); erasing to `'static` is sound for the queue.
-        // `UnboundedQueue::push` takes `&self` (lock-free), so reach it via a
-        // shared raw deref — no `&mut PackageManager` is formed.
+        // SAFETY: `UnboundedQueue::push` takes `&self` (lock-free), so reach it
+        // via a shared raw deref — no `&mut PackageManager` is formed.
         unsafe {
             (*core::ptr::addr_of!((*manager).resolve_tasks)).push(task);
             PackageManager::wake_raw(manager);
@@ -654,7 +683,6 @@ pub struct GitCloneRequest {
     // `Map` owns its storage; store a
     // `&'static` into the global `Repository.shared_env` instead — see `SharedEnv::get`.
     pub(crate) env: &'static dot_env::Map,
-    pub(crate) dep_id: DependencyID,
     pub(crate) res: Resolution,
 }
 
@@ -671,12 +699,7 @@ pub struct GitCheckoutRequest {
 
 pub struct LocalTarballRequest {
     pub(crate) tarball: ExtractTarball,
-    /// Path to read the tarball from. May be the same as `tarball.url` (when
-    /// `normalize` is true) or an absolute path joined with a workspace
-    /// directory. Computed on the main thread in `enqueueLocalTarball` because
-    /// resolving it requires reading `lockfile.packages` / `string_bytes`,
-    /// which can be reallocated concurrently by the main thread while this
-    /// task runs on a ThreadPool worker.
+    /// Resolved by `enqueue_local_tarball` on the main thread; the worker must not read the lockfile.
     pub(crate) tarball_path: StringOrTinyString,
     /// When true, `tarball_path` is a user-provided path resolved relative to
     /// cwd. When false, it is already an absolute path.

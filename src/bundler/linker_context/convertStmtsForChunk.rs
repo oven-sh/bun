@@ -451,7 +451,7 @@ pub(crate) fn convert_stmts_for_chunk(
                         stmt = Stmt::alloc(copied, stmt.loc);
                         stmt.data.s_local_mut().unwrap().is_export = false;
                     } else if FeatureFlags::UNWRAP_COMMONJS_TO_ESM
-                        && s.was_commonjs_export
+                        && s.origin.is_commonjs_export()
                         && wrap == WrapKind::Cjs
                     {
                         debug_assert!(s.decls.len() == 1);

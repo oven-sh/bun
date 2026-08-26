@@ -77,9 +77,13 @@ bool URLPatternComponent::matchSpecialSchemeProtocol(JSC::JSGlobalObject* global
 {
     static constexpr std::array specialSchemeList { "ftp"_s, "file"_s, "http"_s, "https"_s, "ws"_s, "wss"_s };
 
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* regExp = m_regularExpression.get();
     for (auto scheme : specialSchemeList) {
-        if (regExp->match(globalObject, scheme, 0))
+        auto result = regExp->match(globalObject, scheme, 0);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (result)
             return true;
     }
     return false;

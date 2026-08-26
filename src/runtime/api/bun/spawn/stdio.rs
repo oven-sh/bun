@@ -56,7 +56,7 @@ pub enum Stdio {
     Ignore,
     Fd(Fd),
     Dup2(Dup2),
-    Path(PathLike),
+    Path(PathLike<'static>),
     Blob(webcore::blob::Any),
     ArrayBuffer(jsc::array_buffer::ArrayBufferStrong),
     Memfd(Fd),
@@ -428,14 +428,14 @@ impl Stdio {
         }
 
         if value.is_string() {
-            let str = value.get_zig_string(global)?;
-            if str.eql_comptime(b"inherit") {
+            let str = value.to_js_string_view(global)?;
+            if str.eq_ascii(b"inherit") {
                 *out_stdio = Stdio::Inherit;
-            } else if str.eql_comptime(b"ignore") {
+            } else if str.eq_ascii(b"ignore") {
                 *out_stdio = Stdio::Ignore;
-            } else if str.eql_comptime(b"pipe") || str.eql_comptime(b"overlapped") {
+            } else if str.eq_ascii(b"pipe") || str.eq_ascii(b"overlapped") {
                 *out_stdio = Stdio::Pipe;
-            } else if str.eql_comptime(b"socket-fd") {
+            } else if str.eq_ascii(b"socket-fd") {
                 if i < 3 {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "stdio: 'socket-fd' is only supported at indices >= 3"
@@ -449,7 +449,7 @@ impl Stdio {
                     )));
                 }
                 *out_stdio = Stdio::SocketFd;
-            } else if str.eql_comptime(b"ipc") {
+            } else if str.eq_ascii(b"ipc") {
                 *out_stdio = Stdio::Ipc;
             } else {
                 return Err(global.throw_invalid_arguments(format_args!(
@@ -662,6 +662,16 @@ impl Stdio {
 
         *self = Stdio::Blob(blob);
         Ok(())
+    }
+}
+
+impl Stdio {
+    /// Move the memfd out (ownership passes to the caller); `self` becomes `Ignore`.
+    pub fn take_memfd(&mut self) -> Option<Fd> {
+        let Stdio::Memfd(fd) = *self else { return None };
+        // Don't run Drop on the old value: it would close `fd`.
+        let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Stdio::Ignore));
+        Some(fd)
     }
 }
 

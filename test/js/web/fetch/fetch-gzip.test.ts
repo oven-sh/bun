@@ -153,6 +153,9 @@ describe("fetch() decodes Content-Encoding case-insensitively", () => {
     ["zstd", "zstd"],
     ["ZSTD", "zstd"],
     ["Zstd", "zstd"],
+    ["identity, gzip", "gzip"],
+    ["gzip , identity", "gzip"],
+    ["identity,br,identity", "br"],
   ];
 
   it.each(cases)("Content-Encoding: %s", async (enc, kind) => {
@@ -252,6 +255,58 @@ describe("fetch() decodes Content-Encoding case-insensitively", () => {
       const res = await fetch(`http://127.0.0.1:${port}/`);
       expect(res.status).toBe(200);
       expect(await res.text()).toBe("plain-text-body");
+    } finally {
+      server.close();
+    }
+  });
+
+  // We can only strip one coding; a stacked Content-Encoding is passed through raw with the header intact.
+  it.each(["gzip, br", "deflate, gzip"])("stacked Content-Encoding: %s passes through untouched", async enc => {
+    const body = brotliCompressSync(gzipSync(payload));
+    const server = createServer((req, res) => {
+      res.setHeader("Content-Encoding", enc);
+      res.end(body);
+    });
+    await once(server.listen(0), "listening");
+    try {
+      const { port } = server.address() as import("node:net").AddressInfo;
+      const res = await fetch(`http://127.0.0.1:${port}/`);
+      expect(res.headers.get("content-encoding")).toBe(enc);
+      expect(Buffer.from(await res.arrayBuffer())).toEqual(body);
+    } finally {
+      server.close();
+    }
+  });
+
+  // RFC 9112 §6.1: `Transfer-Encoding: gzip, chunked` is chunked framing.
+  it.each(["gzip, chunked", "identity,chunked", "Chunked"])("Transfer-Encoding: %s is chunked framing", async te => {
+    const server = createNetServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => {
+        socket.write(`HTTP/1.1 200 OK\r\nTransfer-Encoding: ${te}\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n`);
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const { port } = server.address() as import("node:net").AddressInfo;
+      const res = await fetch(`http://127.0.0.1:${port}/`);
+      expect(await res.text()).toBe("hello world");
+    } finally {
+      server.close();
+    }
+  });
+
+  it.each(["chunked, gzip", "foobar"])("Transfer-Encoding: %s is rejected", async te => {
+    const server = createNetServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => {
+        socket.end(`HTTP/1.1 200 OK\r\nTransfer-Encoding: ${te}\r\nConnection: close\r\n\r\n0\r\n\r\n`);
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const { port } = server.address() as import("node:net").AddressInfo;
+      expect(async () => await fetch(`http://127.0.0.1:${port}/`)).toThrow("UnsupportedTransferEncoding");
     } finally {
       server.close();
     }

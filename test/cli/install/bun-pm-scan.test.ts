@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 
 describe("bun pm scan", () => {
@@ -40,9 +40,12 @@ describe("bun pm scan", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+        "bun pm scan <version> (<revision>)
+        error: missing lockfile, nothing to scan
+        note: run 'bun install' first"
+      `);
       expect(exitCode).toBe(1);
-      expect(stderr).toContain("Lockfile not found");
-      expect(stderr).toContain("Run 'bun install' first");
     });
 
     test("shows error when package.json doesn't exist", async () => {

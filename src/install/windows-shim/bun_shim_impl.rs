@@ -150,6 +150,8 @@ mod k32 {
     pub(super) use w::kernel32::CreateProcessW;
     /// https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror
     pub(super) use w::kernel32::GetLastError;
+    /// https://learn.microsoft.com/en-us/windows/console/setconsolectrlhandler
+    pub(super) use w::kernel32::SetConsoleCtrlHandler;
 
     // SAFETY: kernel32 externs; signatures match SDK. Declared locally as
     // `safe fn` (vs. re-exporting `unsafe fn` from `w::kernel32`) because
@@ -217,7 +219,6 @@ pub enum FailReason {
     NoDirname,
     CouldNotOpenShim,
     CouldNotReadShim,
-    InvalidShimDataSize,
     ShimNotFound,
     CreateProcessFailed,
     /// When encountering this outside of standalone mode, you should fallback
@@ -239,7 +240,6 @@ impl FailReason {
             FailReason::ShimNotFound => "could not find bin metadata file",
             FailReason::CouldNotOpenShim => "could not open bin metadata file",
             FailReason::CouldNotReadShim => "could not read bin metadata",
-            FailReason::InvalidShimDataSize => "bin metadata is corrupt (size)",
             FailReason::InvalidShimValidation => "bin metadata is corrupt (validate)",
             FailReason::InvalidShimBounds => "bin metadata is corrupt (bounds)",
             // The difference between these two is that one is with a shebang (#!/usr/bin/env node) and
@@ -415,6 +415,18 @@ fn fail_and_exit_with_reason(reason: FailReason) -> ! {
     }
 
     nt::RtlExitUserProcess(255)
+}
+
+/// The child shares our console and gets Ctrl+C itself; outlive it to report its
+/// exit code. Every path after this exits the process, so it is never removed.
+fn ignore_ctrl_c() {
+    extern "system" fn handler(ctrl_type: DWORD) -> BOOL {
+        if ctrl_type == w::CTRL_C_EVENT {
+            return w::TRUE;
+        }
+        w::FALSE
+    }
+    let _ = k32::SetConsoleCtrlHandler(Some(handler), w::TRUE);
 }
 
 const NT_OBJECT_PREFIX: [u16; 4] = ['\\' as u16, '?' as u16, '?' as u16, '\\' as u16];
@@ -1347,6 +1359,8 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             }
         },
     };
+
+    ignore_ctrl_c();
 
     // PERF: the body is large enough that unrolling this two-iteration loop is
     // unlikely to matter — profile if it shows up on a hot path.

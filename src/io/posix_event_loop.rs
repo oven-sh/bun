@@ -27,8 +27,6 @@ fn loop_sub_active(loop_: &mut Loop, value: u32) {
     loop_.active = loop_.active.saturating_sub(value);
 }
 
-bun_core::declare_scope!(KeepAlive, visible);
-
 #[cfg(not(windows))]
 use bun_sys::syslog;
 
@@ -208,7 +206,6 @@ pub enum PollTag {
     BufferedReader,
     DnsResolver,
     GetAddrInfoRequest,
-    Request,
     Process,
     ShellBufferedWriter,
     TerminalPoll,
@@ -231,7 +228,6 @@ pub mod poll_tag {
     pub const BUFFERED_READER: PollTag = PollTag::BufferedReader;
     pub const DNS_RESOLVER: PollTag = PollTag::DnsResolver;
     pub const GET_ADDR_INFO_REQUEST: PollTag = PollTag::GetAddrInfoRequest;
-    pub const REQUEST: PollTag = PollTag::Request;
     pub const PROCESS: PollTag = PollTag::Process;
     pub const SHELL_BUFFERED_WRITER: PollTag = PollTag::ShellBufferedWriter;
     pub const TERMINAL_POLL: PollTag = PollTag::TerminalPoll;
@@ -303,20 +299,6 @@ pub struct FilePoll {
     pub(crate) next_to_free: *mut FilePoll,
 
     pub(crate) allocator_type: AllocatorType,
-}
-
-#[cfg(not(windows))]
-impl Default for FilePoll {
-    fn default() -> Self {
-        Self {
-            fd: INVALID_FD,
-            flags: FlagsSet::empty(),
-            owner: Owner::NULL,
-            generation_number: 0,
-            next_to_free: ptr::null_mut(),
-            allocator_type: AllocatorType::Js,
-        }
-    }
 }
 
 #[cfg(not(windows))]
@@ -442,7 +424,7 @@ impl FilePoll {
 
         debug_assert!(!self.owner.is_null());
 
-        // Hot-path hoisted-match: the per-tag `switch` lives in
+        // Hot-path hoisted-match: the per-tag `match` lives in
         // `bun_runtime::dispatch::__bun_run_file_poll` (link-time extern) so
         // this T3 crate names no variant types.
         // SAFETY: `self` is a live FilePoll for the duration of the call
@@ -556,15 +538,6 @@ impl FilePoll {
             fd
         );
         poll
-    }
-
-    /// Allow a poll to keep the process alive.
-    pub fn ref_(&mut self, event_loop_ctx: EventLoopCtx) {
-        if self.flags.contains(Flags::Closed) {
-            return;
-        }
-        syslog!("ref");
-        self.enable_keeping_process_alive(event_loop_ctx);
     }
 
     pub fn register(&mut self, loop_: &mut Loop, flag: Flags, one_shot: bool) -> sys::Result<()> {
@@ -1543,21 +1516,6 @@ pub enum OneShotFlag {
 
 #[cfg(not(windows))]
 const INVALID_FD: Fd = Fd::INVALID;
-
-// ──────────────────────────────────────────────────────────────────────────
-// Waker / Closer — canonical impls live in this crate's `mod waker` /
-// `mod closer` (lib.rs). Before the bun_io→bun_io merge each crate had its
-// own copy (this file was bun_io's, lib.rs was bun_io's, kept apart so
-// `Loop::load` had no aio→io edge). With the merge there is one definition;
-// re-export here so `posix_event_loop::Waker` / `::Closer` (and therefore
-// the `bun_io::*` shim) keep resolving for downstream callers.
-// ──────────────────────────────────────────────────────────────────────────
-
-pub use crate::closer::Closer;
-#[cfg(target_os = "macos")]
-pub use crate::waker::KEventWaker;
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-pub use crate::waker::Waker;
 
 #[cfg(all(test, not(windows)))]
 mod tests {

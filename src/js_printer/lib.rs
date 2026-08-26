@@ -51,8 +51,6 @@ use bun_ast::ImportRecordFlags;
 
 use bun_sourcemap as SourceMap;
 
-pub use bun_options_types::schema::api::CssInJsBehavior;
-
 // ──────────────────────────────────────────────────────────────────────────
 // renamer — defined in `renamer.rs`. The five former leak sites
 // have been replaced with `bumpalo::Bump`-backed allocation (PORTING.md §Forbidden);
@@ -73,26 +71,27 @@ pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
 /// only consume the serialized form.
 pub mod analyze_transpiled_module {
     use bun_collections::HashMap;
-    use bun_core::slice_as_bytes;
 
+    /// Every record kind carries one trailing bitcast-`FetchParameters` slot
+    /// after its `StringID` payload.
     #[repr(u8)]
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum RecordKind {
-        /// module_name, import_name, local_name
+        /// module_name, import_name, local_name, fetch_parameters
         ImportInfoSingle,
-        /// module_name, import_name, local_name
+        /// module_name, import_name, local_name, fetch_parameters
         ImportInfoSingleTypeScript,
-        /// module_name, import_name = '*', local_name
+        /// module_name, import_name = '*', local_name, fetch_parameters
         ImportInfoNamespace,
-        /// export_name, import_name, module_name
+        /// export_name, import_name, module_name, fetch_parameters
         ExportInfoIndirect,
-        /// export_name, local_name, padding (for local => indirect conversion)
+        /// export_name, local_name, padding, fetch_parameters (for local => indirect conversion)
         ExportInfoLocal,
-        /// export_name, module_name
+        /// export_name, module_name, fetch_parameters
         ExportInfoNamespace,
-        /// module_name
+        /// module_name, fetch_parameters
         ExportInfoStar,
-        /// module_name, import_name = '*', local_name
+        /// module_name, import_name = '*', local_name, fetch_parameters
         ///
         /// `import defer * as ns from "mod"` — same payload as
         /// `ImportInfoNamespace` but the resulting `ImportEntry` carries
@@ -102,14 +101,14 @@ pub mod analyze_transpiled_module {
     impl RecordKind {
         pub(crate) fn len(self) -> usize {
             match self {
-                Self::ImportInfoSingle => 3,
-                Self::ImportInfoSingleTypeScript => 3,
-                Self::ImportInfoNamespace => 3,
-                Self::ImportInfoNamespaceDefer => 3,
-                Self::ExportInfoIndirect => 3,
-                Self::ExportInfoLocal => 3,
-                Self::ExportInfoNamespace => 2,
-                Self::ExportInfoStar => 1,
+                Self::ImportInfoSingle => 4,
+                Self::ImportInfoSingleTypeScript => 4,
+                Self::ImportInfoNamespace => 4,
+                Self::ImportInfoNamespaceDefer => 4,
+                Self::ExportInfoIndirect => 4,
+                Self::ExportInfoLocal => 4,
+                Self::ExportInfoNamespace => 3,
+                Self::ExportInfoStar => 2,
             }
         }
     }
@@ -143,7 +142,7 @@ pub mod analyze_transpiled_module {
     // SAFETY: `#[repr(transparent)]` over `u32` (Pod).
     unsafe impl bytemuck::Pod for StringID {}
     impl StringID {
-        pub(crate) const STAR_DEFAULT: Self = Self(u32::MAX);
+        pub const STAR_DEFAULT: Self = Self(u32::MAX);
         pub const STAR_NAMESPACE: Self = Self(u32::MAX - 1);
     }
 
@@ -164,6 +163,20 @@ pub mod analyze_transpiled_module {
         #[inline]
         pub(crate) fn host_defined(value: StringID) -> Self {
             Self(value.0)
+        }
+        /// JSC `ScriptFetchParameters::Type` value. `None` maps to `JavaScript`
+        /// (NodesAnalyzeModule's no-attribute default). JSC's `Text` (4) is never
+        /// produced: with BUN_JSC_ADDITIONS `type: "text"` is host-defined like
+        /// every other non-json/wasm type. Pinned by the static_asserts in
+        /// BunAnalyzeTranspiledModule.cpp.
+        #[inline]
+        pub fn to_script_fetch_parameters_type(self) -> u8 {
+            match self {
+                Self::None | Self::Javascript => 1,
+                Self::Webassembly => 2,
+                Self::Json => 3,
+                _ => 5,
+            }
         }
     }
 
@@ -193,57 +206,242 @@ pub mod analyze_transpiled_module {
         pub record_kinds: &'a [RecordKind],
         pub flags: Flags,
     }
+    /// Width in bytes of a run of integers: the smallest of 1, 2, 4 that holds
+    /// the largest value.
+    #[inline]
+    pub fn int_width(max_value: u32) -> u8 {
+        if max_value <= u8::MAX as u32 {
+            1
+        } else if max_value <= u16::MAX as u32 {
+            2
+        } else {
+            4
+        }
+    }
+    #[inline]
+    fn put<W: std::io::Write>(w: &mut W, width: u8, v: u32) -> std::io::Result<()> {
+        match width {
+            1 => w.write_all(&[v as u8]),
+            2 => w.write_all(&(v as u16).to_le_bytes()),
+            _ => w.write_all(&v.to_le_bytes()),
+        }
+    }
+
+    /// Strings referenced by one or more serialized `ModuleInfo` bodies. A
+    /// `--compile` build shares one across every chunk (chunk specifiers and
+    /// export names repeat in most of them); the runtime transpiler cache
+    /// writes a module's own strings followed by its body.
+    ///
+    /// ```text
+    /// u8   offset width O ∈ {1,2,4}, sized for the total byte length
+    /// u8   0, 0, 0
+    /// u32  count
+    /// uO   × (count + 1): byte offset of each string, then the total
+    /// u8…  concatenated WTF-8
+    /// ```
+    #[derive(Default)]
+    pub struct ModuleInfoStringTable {
+        map: HashMap<Box<[u8]>, u32>,
+        offsets: Vec<u32>,
+        buf: Vec<u8>,
+    }
+    impl ModuleInfoStringTable {
+        pub fn intern(&mut self, s: &[u8]) -> u32 {
+            if let Some(&id) = self.map.get(s) {
+                return id;
+            }
+            let id = u32::try_from(self.offsets.len()).unwrap();
+            self.offsets.push(u32::try_from(self.buf.len()).unwrap());
+            self.buf.extend_from_slice(s);
+            self.map.insert(s.into(), id);
+            id
+        }
+        /// Interns every string of `mi`; the result maps its local ids to table ids.
+        pub fn intern_all(&mut self, mi: &ModuleInfo) -> Vec<u32> {
+            let mut ids = Vec::with_capacity(mi.strings_lens.len());
+            let mut offset = 0usize;
+            for &len in &mi.strings_lens {
+                ids.push(self.intern(&mi.strings_buf[offset..offset + len as usize]));
+                offset += len as usize;
+            }
+            ids
+        }
+        pub fn count(&self) -> u32 {
+            self.offsets.len() as u32
+        }
+        pub fn serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
+            Self::serialize_parts(w, self.offsets.iter().copied(), &self.buf)
+        }
+        fn serialize_parts<W: std::io::Write>(
+            w: &mut W,
+            offsets: impl ExactSizeIterator<Item = u32>,
+            buf: &[u8],
+        ) -> std::io::Result<()> {
+            let total = u32::try_from(buf.len()).unwrap();
+            let width = int_width(total);
+            w.write_all(&[width, 0, 0, 0])?;
+            w.write_all(&u32::try_from(offsets.len()).unwrap().to_le_bytes())?;
+            for offset in offsets {
+                put(w, width, offset)?;
+            }
+            put(w, width, total)?;
+            w.write_all(buf)
+        }
+    }
+
     impl<'a> ModuleInfoDeserialized<'a> {
+        /// Self-contained form: this module's own string table, then its body.
         pub(crate) fn serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
-            w.write_all(
-                &u32::try_from(self.record_kinds.len())
-                    .unwrap()
-                    .to_le_bytes(),
+            let mut offset = 0u32;
+            ModuleInfoStringTable::serialize_parts(
+                w,
+                self.strings_lens.iter().map(|&len| {
+                    let at = offset;
+                    offset += len;
+                    at
+                }),
+                self.strings_buf,
             )?;
-            // `RecordKind: NoUninit` (#[repr(u8)]) → safe byte view.
-            w.write_all(slice_as_bytes(self.record_kinds))?;
-            let pad = (4 - (self.record_kinds.len() % 4)) % 4;
-            w.write_all(&[0u8; 4][..pad])?; // alignment padding
+            self.serialize_body(w, self.strings_lens.len() as u32, |id| id)
+        }
 
-            w.write_all(&u32::try_from(self.buffer.len()).unwrap().to_le_bytes())?;
-            w.write_all(slice_as_bytes(self.buffer))?;
+        /// Body wire format (little-endian), ids index a `ModuleInfoStringTable`
+        /// of `table_count` strings through `table_id`:
+        ///
+        /// ```text
+        /// u8   flags
+        /// u8   id width W ∈ {1,2,4}, sized for table_count + 2 sentinels
+        /// u8   0, 0
+        /// u32  requested-module count, u32 record count
+        /// u8   × records:    kind | fetch-kind << 3 | same-name << 6
+        /// u8   × requested:  phase | fetch-kind << 1
+        /// uW…  per requested module: specifier [, host-defined type]
+        /// uW…  per record: its string ids [, host-defined type]
+        /// ```
+        ///
+        /// fetch-kind 0..=3 is None / JavaScript / WebAssembly / JSON and 4 means
+        /// a host-defined type id follows. `STAR_NAMESPACE` / `STAR_DEFAULT` are
+        /// written as `table_count` / `table_count + 1`. Slots the kind implies
+        /// (`*` for a namespace import, `ExportInfoLocal`'s padding, the fetch
+        /// parameter itself) are not written; `same-name` elides an import's
+        /// local name when it equals the import name.
+        /// `bun_bundler::analyze_transpiled_module` (`Body` / `IdCursor`) reads
+        /// this in place when building the `JSModuleRecord`.
+        pub fn serialize_body<W: std::io::Write>(
+            &self,
+            w: &mut W,
+            table_count: u32,
+            table_id: impl Fn(u32) -> u32,
+        ) -> std::io::Result<()> {
+            let id_width = int_width(table_count + 1);
+            let id = |w: &mut W, s: StringID| {
+                put(
+                    w,
+                    id_width,
+                    match s {
+                        StringID::STAR_NAMESPACE => table_count,
+                        StringID::STAR_DEFAULT => table_count + 1,
+                        s => table_id(s.0),
+                    },
+                )
+            };
+            let fetch_kind = |fp: FetchParameters| match fp {
+                FetchParameters::None => 0u8,
+                FetchParameters::Javascript => 1,
+                FetchParameters::Webassembly => 2,
+                FetchParameters::Json => 3,
+                _ => 4,
+            };
+            // (ids written, fetch parameters, elide slot 1, elide slot 2)
+            let shape = |kind: RecordKind, data: &'a [StringID]| match kind {
+                RecordKind::ImportInfoSingle | RecordKind::ImportInfoSingleTypeScript => (
+                    &data[..3],
+                    FetchParameters(data[3].0),
+                    false,
+                    data[1] == data[2],
+                ),
+                RecordKind::ImportInfoNamespace | RecordKind::ImportInfoNamespaceDefer => {
+                    debug_assert!(data[1] == StringID::STAR_NAMESPACE);
+                    (&data[..3], FetchParameters(data[3].0), true, false)
+                }
+                RecordKind::ExportInfoIndirect => {
+                    (&data[..3], FetchParameters(data[3].0), false, false)
+                }
+                RecordKind::ExportInfoLocal => (&data[..2], FetchParameters::None, false, false),
+                RecordKind::ExportInfoNamespace => {
+                    (&data[..2], FetchParameters(data[2].0), false, false)
+                }
+                RecordKind::ExportInfoStar => {
+                    (&data[..1], FetchParameters(data[1].0), false, false)
+                }
+            };
+            let records = || {
+                let mut i = 0usize;
+                self.record_kinds.iter().map(move |&kind| {
+                    let data = &self.buffer[i..i + kind.len()];
+                    i += kind.len();
+                    (kind, data)
+                })
+            };
 
+            w.write_all(&[self.flags.to_byte(), id_width, 0, 0])?;
             w.write_all(
                 &u32::try_from(self.requested_modules_keys.len())
                     .unwrap()
                     .to_le_bytes(),
             )?;
-            w.write_all(slice_as_bytes(self.requested_modules_keys))?;
-            w.write_all(slice_as_bytes(self.requested_modules_values))?;
-            w.write_all(slice_as_bytes(self.requested_modules_phases))?;
-            let pad = (4 - (self.requested_modules_phases.len() % 4)) % 4;
-            w.write_all(&[0u8; 4][..pad])?; // alignment padding
-
-            w.write_all(&[self.flags.to_byte()])?;
-            w.write_all(&[0u8; 3])?; // alignment padding
-
             w.write_all(
-                &u32::try_from(self.strings_lens.len())
+                &u32::try_from(self.record_kinds.len())
                     .unwrap()
                     .to_le_bytes(),
             )?;
-            w.write_all(slice_as_bytes(self.strings_lens))?;
-            w.write_all(self.strings_buf)?;
+            for (kind, data) in records() {
+                let (_, fetch, _, same_name) = shape(kind, data);
+                w.write_all(&[(kind as u8) | (fetch_kind(fetch) << 3) | ((same_name as u8) << 6)])?;
+            }
+            for (&value, &phase) in self
+                .requested_modules_values
+                .iter()
+                .zip(self.requested_modules_phases)
+            {
+                w.write_all(&[(phase as u8) | (fetch_kind(value) << 1)])?;
+            }
+            for (&key, &value) in self
+                .requested_modules_keys
+                .iter()
+                .zip(self.requested_modules_values)
+            {
+                id(w, key)?;
+                if fetch_kind(value) == 4 {
+                    id(w, StringID(value.0))?;
+                }
+            }
+            for (kind, data) in records() {
+                let (ids, fetch, skip1, skip2) = shape(kind, data);
+                for (slot, &s) in ids.iter().enumerate() {
+                    if (skip1 && slot == 1) || (skip2 && slot == 2) {
+                        continue;
+                    }
+                    id(w, s)?;
+                }
+                if fetch_kind(fetch) == 4 {
+                    id(w, StringID(fetch.0))?;
+                }
+            }
             Ok(())
         }
     }
 
     /// Insertion-ordered list of requested modules. Dedup key is
-    /// `(specifier, phase)` to match JSC's `ModuleAnalyzer::appendRequestedModule`,
-    /// which appends one entry per unique pair — so the same specifier can be
-    /// requested at both Evaluation and Defer phase.
+    /// `(specifier, ScriptFetchParameters::Type, phase)` per JSC's
+    /// `ModuleAnalyzer::appendRequestedModule` (WebKit 90b2ecf79ae3).
     // PERF: three allocations + a side HashMap; revisit with a real IndexMap.
     #[derive(Default)]
     struct RequestedModules {
         keys: Vec<StringID>,
         values: Vec<FetchParameters>,
         phases: Vec<ModulePhase>,
-        index: HashMap<(StringID, ModulePhase), usize>,
+        index: HashMap<(StringID, u8, ModulePhase), usize>,
     }
     impl RequestedModules {
         fn keys(&self) -> &[StringID] {
@@ -255,17 +453,18 @@ pub mod analyze_transpiled_module {
         fn phases(&self) -> &[ModulePhase] {
             &self.phases
         }
-        /// Returns `true` if `(key, phase)` was already present.
+        /// Returns `true` if `(key, type-of-value, phase)` was already present.
         fn insert_if_absent(
             &mut self,
             key: StringID,
             value: FetchParameters,
             phase: ModulePhase,
         ) -> bool {
-            if self.index.contains_key(&(key, phase)) {
+            let type_key = value.to_script_fetch_parameters_type();
+            if self.index.contains_key(&(key, type_key, phase)) {
                 return true;
             }
-            self.index.insert((key, phase), self.keys.len());
+            self.index.insert((key, type_key, phase), self.keys.len());
             self.keys.push(key);
             self.values.push(value);
             self.phases.push(phase);
@@ -283,8 +482,15 @@ pub mod analyze_transpiled_module {
             }
             if touched {
                 self.index.clear();
-                for (i, (&k, &p)) in self.keys.iter().zip(self.phases.iter()).enumerate() {
-                    self.index.insert((k, p), i);
+                for (i, ((&k, &v), &p)) in self
+                    .keys
+                    .iter()
+                    .zip(self.values.iter())
+                    .zip(self.phases.iter())
+                    .enumerate()
+                {
+                    self.index
+                        .insert((k, v.to_script_fetch_parameters_type(), p), i);
                 }
             }
         }
@@ -346,11 +552,12 @@ pub mod analyze_transpiled_module {
             self.record_kinds.push(kind);
             self.buffer.extend_from_slice(data);
         }
-        pub fn add_import_info_single(
+        pub(crate) fn add_import_info_single(
             &mut self,
             module_name: StringID,
             import_name: StringID,
             local_name: StringID,
+            fetch_parameters: FetchParameters,
             only_used_as_type: bool,
         ) {
             self.add_record(
@@ -359,23 +566,44 @@ pub mod analyze_transpiled_module {
                 } else {
                     RecordKind::ImportInfoSingle
                 },
-                &[module_name, import_name, local_name],
+                &[
+                    module_name,
+                    import_name,
+                    local_name,
+                    StringID(fetch_parameters.0),
+                ],
             );
         }
-        pub fn add_import_info_namespace(&mut self, module_name: StringID, local_name: StringID) {
+        pub(crate) fn add_import_info_namespace(
+            &mut self,
+            module_name: StringID,
+            local_name: StringID,
+            fetch_parameters: FetchParameters,
+        ) {
             self.add_record(
                 RecordKind::ImportInfoNamespace,
-                &[module_name, StringID::STAR_NAMESPACE, local_name],
+                &[
+                    module_name,
+                    StringID::STAR_NAMESPACE,
+                    local_name,
+                    StringID(fetch_parameters.0),
+                ],
             );
         }
         pub(crate) fn add_import_info_namespace_defer(
             &mut self,
             module_name: StringID,
             local_name: StringID,
+            fetch_parameters: FetchParameters,
         ) {
             self.add_record(
                 RecordKind::ImportInfoNamespaceDefer,
-                &[module_name, StringID::STAR_NAMESPACE, local_name],
+                &[
+                    module_name,
+                    StringID::STAR_NAMESPACE,
+                    local_name,
+                    StringID(fetch_parameters.0),
+                ],
             );
         }
         pub(crate) fn add_export_info_indirect(
@@ -383,13 +611,19 @@ pub mod analyze_transpiled_module {
             export_name: StringID,
             import_name: StringID,
             module_name: StringID,
+            fetch_parameters: FetchParameters,
         ) {
             if self.has_or_add_exported_name(export_name) {
                 return;
             } // a syntax error will be emitted later in this case
             self.add_record(
                 RecordKind::ExportInfoIndirect,
-                &[export_name, import_name, module_name],
+                &[
+                    export_name,
+                    import_name,
+                    module_name,
+                    StringID(fetch_parameters.0),
+                ],
             );
         }
         pub(crate) fn add_export_info_local(
@@ -402,21 +636,37 @@ pub mod analyze_transpiled_module {
             } // a syntax error will be emitted later in this case
             self.add_record(
                 RecordKind::ExportInfoLocal,
-                &[export_name, local_name, StringID(u32::MAX)],
+                &[
+                    export_name,
+                    local_name,
+                    StringID(u32::MAX),
+                    StringID(FetchParameters::None.0),
+                ],
             );
         }
         pub(crate) fn add_export_info_namespace(
             &mut self,
             export_name: StringID,
             module_name: StringID,
+            fetch_parameters: FetchParameters,
         ) {
             if self.has_or_add_exported_name(export_name) {
                 return;
             } // a syntax error will be emitted later in this case
-            self.add_record(RecordKind::ExportInfoNamespace, &[export_name, module_name]);
+            self.add_record(
+                RecordKind::ExportInfoNamespace,
+                &[export_name, module_name, StringID(fetch_parameters.0)],
+            );
         }
-        pub(crate) fn add_export_info_star(&mut self, module_name: StringID) {
-            self.add_record(RecordKind::ExportInfoStar, &[module_name]);
+        pub(crate) fn add_export_info_star(
+            &mut self,
+            module_name: StringID,
+            fetch_parameters: FetchParameters,
+        ) {
+            self.add_record(
+                RecordKind::ExportInfoStar,
+                &[module_name, StringID(fetch_parameters.0)],
+            );
         }
 
         fn has_or_add_exported_name(&mut self, name: StringID) -> bool {
@@ -444,12 +694,13 @@ pub mod analyze_transpiled_module {
             StringID(idx)
         }
 
-        pub fn request_module(
+        pub(crate) fn request_module(
             &mut self,
             import_record_path: StringID,
             fetch_parameters: FetchParameters,
         ) {
-            // jsc only records the attributes of the first import with the given import_record_path. so only put if not exists.
+            // JSC dedupes by (specifier, ScriptFetchParameters::Type) per phase;
+            // insert_if_absent mirrors that.
             self.requested_modules.insert_if_absent(
                 import_record_path,
                 fetch_parameters,
@@ -465,6 +716,67 @@ pub mod analyze_transpiled_module {
         ) {
             self.requested_modules
                 .insert_if_absent(import_record_path, fetch_parameters, phase);
+        }
+
+        /// Appends `other`'s requested modules and import/export records to
+        /// `self`, re-interning its strings. The bundler prints the part ranges
+        /// of a chunk in parallel, each into its own `ModuleInfo`, then appends
+        /// them to the chunk's `ModuleInfo` in output order, so the chunk's
+        /// record lists its dependencies in the order JSC's parser would derive
+        /// from the printed source. `is_typescript` describes the destination
+        /// module and is left alone.
+        pub fn append(&mut self, other: &ModuleInfo) {
+            debug_assert!(!self.finalized);
+            debug_assert!(!other.finalized);
+
+            let mut ids: Vec<StringID> = Vec::with_capacity(other.strings_lens.len());
+            let mut offset = 0usize;
+            for &len in other.strings_lens.iter() {
+                let len = len as usize;
+                ids.push(self.str(&other.strings_buf[offset..offset + len]));
+                offset += len;
+            }
+            // Record slots also hold `STAR_DEFAULT` / `STAR_NAMESPACE`, the
+            // `ExportInfoLocal` padding word, and bitcast `FetchParameters`
+            // (a string ID for host-defined loaders, otherwise a sentinel);
+            // everything that is not an index into `other`'s string table is
+            // copied through unchanged.
+            let map = |raw: u32| -> u32 { ids.get(raw as usize).map_or(raw, |id| id.0) };
+
+            let (keys, values, phases) = (
+                other.requested_modules.keys(),
+                other.requested_modules.values(),
+                other.requested_modules.phases(),
+            );
+            for ((&key, &value), &phase) in keys.iter().zip(values).zip(phases) {
+                self.requested_modules.insert_if_absent(
+                    StringID(map(key.0)),
+                    FetchParameters(map(value.0)),
+                    phase,
+                );
+            }
+
+            let mut i = 0usize;
+            for &kind in other.record_kinds.iter() {
+                let data = &other.buffer[i..i + kind.len()];
+                i += kind.len();
+                // Same first-declaration-wins rule as `add_export_info_*`.
+                if matches!(
+                    kind,
+                    RecordKind::ExportInfoIndirect
+                        | RecordKind::ExportInfoLocal
+                        | RecordKind::ExportInfoNamespace
+                ) && self.has_or_add_exported_name(StringID(map(data[0].0)))
+                {
+                    continue;
+                }
+                self.record_kinds.push(kind);
+                self.buffer
+                    .extend(data.iter().map(|slot| StringID(map(slot.0))));
+            }
+
+            self.flags.contains_import_meta |= other.flags.contains_import_meta;
+            self.flags.has_tla |= other.flags.has_tla;
         }
 
         /// Replace all occurrences of `old_id` with `new_id` in records and requested_modules.
@@ -488,6 +800,7 @@ pub mod analyze_transpiled_module {
             struct LocalImport {
                 module_name: StringID,
                 import_name: StringID,
+                fetch_parameters: StringID,
                 record_kinds_idx: usize,
                 is_namespace: bool,
             }
@@ -504,6 +817,7 @@ pub mod analyze_transpiled_module {
                             LocalImport {
                                 module_name: self.buffer[i],
                                 import_name: self.buffer[i + 1],
+                                fetch_parameters: self.buffer[i + 3],
                                 record_kinds_idx: idx,
                                 is_namespace: false,
                             },
@@ -514,6 +828,7 @@ pub mod analyze_transpiled_module {
                             LocalImport {
                                 module_name: self.buffer[i],
                                 import_name: StringID::STAR_NAMESPACE,
+                                fetch_parameters: self.buffer[i + 3],
                                 record_kinds_idx: idx,
                                 is_namespace: true,
                             },
@@ -539,6 +854,7 @@ pub mod analyze_transpiled_module {
                             *k = RecordKind::ExportInfoIndirect;
                             self.buffer[i + 1] = ip.import_name;
                             self.buffer[i + 2] = ip.module_name;
+                            self.buffer[i + 3] = ip.fetch_parameters;
                             // In TypeScript, the re-exported import may target a type-only
                             // export that was elided. Convert the import to SingleTypeScript
                             // so JSC tolerates it being NotFound during linking.
@@ -821,7 +1137,7 @@ where
         }
         match c {
             0x07 => {
-                writer.write_all(b"\\x07")?;
+                writer.write_all(if json { b"\\u0007" } else { b"\\x07" })?;
                 i += 1;
             }
             0x08 => {
@@ -846,7 +1162,7 @@ where
             }
             // \v
             0x0B => {
-                writer.write_all(b"\\v")?;
+                writer.write_all(if json { b"\\u000B" } else { b"\\v" })?;
                 i += 1;
             }
             // "\\"
@@ -1018,7 +1334,6 @@ pub struct Options<'a> {
     pub indent: Indentation,
     // allocator dropped — global mimalloc (this is an AST crate but Options.allocator is the global default)
     pub source_map_handler: Option<SourceMapHandler<'a>>,
-    pub css_import_behavior: CssInJsBehavior,
     pub target: bun_ast::Target,
 
     pub runtime_transpiler_cache: Option<RuntimeTranspilerCacheRef>,
@@ -1038,7 +1353,6 @@ pub struct Options<'a> {
     pub minify_syntax: bool,
     pub print_dce_annotations: bool,
 
-    pub transform_only: bool,
     pub inline_require_and_import_errors: bool,
     pub has_run_symbol_renamer: bool,
 
@@ -1059,8 +1373,8 @@ pub struct Options<'a> {
     // us do binary search on to figure out what line a given AST node came from
     /// Borrowed from `LinkerGraph.files[i].line_offset_table`. The same
     /// source can print into multiple part-ranges/chunks, so the table must
-    /// not be consumed. `get_source_map_builder` shallow-copies it into the
-    /// builder (`ManuallyDrop`, never freed on the bundler path).
+    /// not be consumed. `get_source_map_builder` moves the borrow into the
+    /// builder as `LineOffsetTables::Borrowed`.
     pub line_offset_tables: Option<&'a SourceMap::line_offset_table::List<bun_alloc::AstAlloc>>,
 
     pub mangled_props: Option<&'a crate::MangledProps>,
@@ -1095,7 +1409,6 @@ impl<'a> Default for Options<'a> {
             hmr_ref: Ref::NONE,
             indent: Indentation::default(),
             source_map_handler: None,
-            css_import_behavior: CssInJsBehavior::Facade,
             target: bun_ast::Target::Browser,
             runtime_transpiler_cache: None,
             module_info: None,
@@ -1109,7 +1422,6 @@ impl<'a> Default for Options<'a> {
             minify_identifiers: false,
             minify_syntax: false,
             print_dce_annotations: true,
-            transform_only: false,
             inline_require_and_import_errors: true,
             has_run_symbol_renamer: false,
             require_or_import_meta_for_source_callback: RequireOrImportMetaCallback::default(),
@@ -1216,6 +1528,17 @@ fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> 
     use js_ast::ExprData;
     match &expr.data {
         ExprData::EIdentifier(_) | ExprData::EDot(_) | ExprData::EIndex(_) => true,
+        // Visit-pass rewrites that print as an identifier or property access.
+        ExprData::EImportIdentifier(_)
+        | ExprData::ECommonjsExportIdentifier(_)
+        | ExprData::ESpecial(_)
+        | ExprData::ERequireCallTarget
+        | ExprData::ERequireResolveCallTarget
+        | ExprData::ERequireMain
+        | ExprData::EImportMeta(_)
+        | ExprData::EImportMetaMain(_)
+        | ExprData::EUndefined(_) => true,
+        ExprData::EInlinedEnum(e) => is_identifier_or_numeric_constant_or_property_access(&e.value),
         ExprData::ENumber(e) => e.value().is_infinite() || e.value().is_nan(),
         _ => false,
     }
@@ -1340,7 +1663,7 @@ pub(crate) mod __gated_printer {
 
         pub(crate) renamer: rename::Renamer<'a, 'a>,
         pub(crate) prev_stmt_tag: StmtTag,
-        pub(crate) source_map_builder: SourceMap::chunk::Builder,
+        pub(crate) source_map_builder: SourceMap::chunk::Builder<'a>,
 
         pub(crate) temporary_bindings: Vec<B::Property>,
 
@@ -1993,8 +2316,6 @@ pub(crate) mod __gated_printer {
                             properties: js_ast::StoreSlice::new_mut(temp_bindings.as_mut_slice()),
                             is_single_line: true,
                         };
-                        // `Binding::init(*B.Object, loc)` is gated upstream;
-                        // inline its body — it just tags the union and copies `loc`.
                         // `from_bump` wraps a `&mut T` as a non-null arena ref; here the
                         // pointee is a stack local but `print_binding` only reads it and
                         // returns before `b_object` is dropped (same as the prior `&raw mut`).
@@ -2492,9 +2813,10 @@ pub(crate) mod __gated_printer {
 
                 if self.options.inline_require_and_import_errors {
                     if record.path.is_disabled
-                        && record
-                            .flags
-                            .contains(ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+                        && record.flags.contains(
+                            ImportRecordFlags::HANDLES_IMPORT_ERRORS
+                                | ImportRecordFlags::WAS_UNRESOLVED,
+                        )
                     {
                         self.print_require_error(record.path.text);
                         if wrap {
@@ -3177,7 +3499,7 @@ pub(crate) mod __gated_printer {
                 ExprData::ERequireString(e) => {
                     self.print_require_or_import_expr(
                         e.import_record_index,
-                        e.unwrapped_id != u32::MAX,
+                        e.unwrapped_id.is_some(),
                         &[],
                         Expr::EMPTY,
                         level,
@@ -3310,8 +3632,8 @@ pub(crate) mod __gated_printer {
                     if e.optional_chain.is_none() {
                         flags.insert(ExprFlag::HasNonOptionalChainParent);
 
-                        if let Some(mut str) = e.index.data.as_e_string() {
-                            str.resolve_rope_if_needed(self.bump);
+                        if let Some(str) = e.index.data.as_e_string() {
+                            let str = str.flattened(self.bump);
                             if str.is_utf8() {
                                 if let Some(value) =
                                     self.try_to_get_imported_enum_value(e.target, str.slice8())
@@ -3526,7 +3848,7 @@ pub(crate) mod __gated_printer {
                     self.print(b"{");
                     let props = e.properties.slice();
                     if !props.is_empty() {
-                        if !e.is_single_line {
+                        if !e.is_single_line || IS_JSON {
                             self.indent();
                         }
 
@@ -3602,8 +3924,28 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::EString(e) => {
-                    let mut e = *e;
-                    e.resolve_rope_if_needed(self.bump);
+                    // The `--no-bundle` data-loader path prints the TOML AST
+                    // as-is; the bundler lowers these to a real call first.
+                    if let Some(kind) = e.toml_datetime {
+                        let wrap = level.gte(Level::New) || flags.contains(ExprFlag::ForbidCall);
+                        if wrap {
+                            self.print(b"(");
+                        }
+                        self.print_space_before_identifier();
+                        self.add_source_mapping(expr.loc);
+                        self.print(b"Temporal.");
+                        self.print(kind.temporal_class());
+                        self.print(b".from(\"");
+                        // Always ASCII (validated by the TOML scanner); no escaping.
+                        self.print(e.slice8());
+                        self.print(b"\")");
+                        if wrap {
+                            self.print(b")");
+                        }
+                        return;
+                    }
+
+                    let e = e.flattened(self.bump);
                     self.add_source_mapping(expr.loc);
 
                     // If this was originally a template literal, print it as one as long as we're not minifying
@@ -3766,12 +4108,12 @@ pub(crate) mod __gated_printer {
                     }
 
                     self.print(b"`");
-                    match &mut e.head {
+                    match &e.head {
                         E::TemplateContents::Raw(raw) => self.print_raw_template_literal(raw),
                         E::TemplateContents::Cooked(cooked) => {
                             if cooked.is_present() {
-                                cooked.resolve_rope_if_needed(self.bump);
-                                self.print_string_characters_e_string(cooked, b'`');
+                                let cooked = cooked.flattened(self.bump);
+                                self.print_string_characters_e_string(&cooked, b'`');
                             }
                         }
                     }
@@ -3784,12 +4126,7 @@ pub(crate) mod __gated_printer {
                             E::TemplateContents::Raw(raw) => self.print_raw_template_literal(raw),
                             E::TemplateContents::Cooked(cooked) => {
                                 if cooked.is_present() {
-                                    // `parts` is `*mut [TemplatePart]` but accessed `&[T]`
-                                    // here. We resolve a local copy of the
-                                    // EString header (the rope chain is StoreRef-linked and Copy) and
-                                    // prints from that — the arena node stays roped.
-                                    let mut local = E::EString { ..*cooked };
-                                    local.resolve_rope_if_needed(self.bump);
+                                    let local = cooked.flattened(self.bump);
                                     self.print_string_characters_e_string(&local, b'`');
                                 }
                             }
@@ -3880,10 +4217,10 @@ pub(crate) mod __gated_printer {
                             {
                                 self.add_source_mapping(expr.loc);
 
-                                if import_record
-                                    .flags
-                                    .contains(ImportRecordFlags::HANDLES_IMPORT_ERRORS)
-                                {
+                                if import_record.flags.contains(
+                                    ImportRecordFlags::HANDLES_IMPORT_ERRORS
+                                        | ImportRecordFlags::WAS_UNRESOLVED,
+                                ) {
                                     self.print_require_error(import_record.path.text);
                                 } else {
                                     self.print_disabled_import();
@@ -4492,10 +4829,9 @@ pub(crate) mod __gated_printer {
                     self.print_symbol(priv_.ref_);
                 }
                 ExprData::EString(key_str) => {
-                    let mut key_str = *key_str;
+                    let key_str = key_str.flattened(self.bump);
                     self.add_source_mapping(key.loc);
                     if key_str.is_utf8() {
-                        key_str.resolve_rope_if_needed(self.bump);
                         self.print_space_before_identifier();
                         let mut allow_shorthand = true;
                         if !IS_JSON && lexer::is_identifier(key_str.slice8()) {
@@ -4650,14 +4986,12 @@ pub(crate) mod __gated_printer {
                     self.print_space_before_identifier();
                     self.add_source_mapping(binding.loc);
                     self.print_symbol(b.r#ref);
-                    if Self::MAY_HAVE_MODULE_INFO {
+                    if Self::MAY_HAVE_MODULE_INFO && tlm.is_export {
                         // reshaped for borrowck — fetch name before borrowing module_info.
                         let local_name = self.name_for_symbol(b.r#ref);
                         if let Some(mi) = self.module_info() {
                             let name_id = mi.str(local_name);
-                            if tlm.is_export {
-                                mi.add_export_info_local(name_id, name_id);
-                            }
+                            mi.add_export_info_local(name_id, name_id);
                         }
                     }
                 }
@@ -4750,8 +5084,7 @@ pub(crate) mod __gated_printer {
 
                                 match &property.key.data {
                                     ExprData::EString(str) => {
-                                        let mut str = *str;
-                                        str.resolve_rope_if_needed(self.bump);
+                                        let str = str.flattened(self.bump);
                                         self.add_source_mapping(property.key.loc);
 
                                         if str.is_utf8() {
@@ -4767,14 +5100,14 @@ pub(crate) mod __gated_printer {
                                                     if str.slice8()
                                                         == self.name_for_symbol(id.r#ref)
                                                     {
-                                                        if Self::MAY_HAVE_MODULE_INFO {
+                                                        if Self::MAY_HAVE_MODULE_INFO
+                                                            && tlm.is_export
+                                                        {
                                                             if let Some(mi) = self.module_info() {
                                                                 let name_id = mi.str(str.slice8());
-                                                                if tlm.is_export {
-                                                                    mi.add_export_info_local(
-                                                                        name_id, name_id,
-                                                                    );
-                                                                }
+                                                                mi.add_export_info_local(
+                                                                    name_id, name_id,
+                                                                );
                                                             }
                                                         }
                                                         self.maybe_print_default_binding_value(
@@ -4800,16 +5133,16 @@ pub(crate) mod __gated_printer {
                                                     str.slice16(),
                                                     self.name_for_symbol(id.r#ref),
                                                 ) {
-                                                    if Self::MAY_HAVE_MODULE_INFO {
+                                                    if Self::MAY_HAVE_MODULE_INFO && tlm.is_export {
                                                         // reshaped for borrowck — bump access first.
-                                                        let str8 = str.slice(self.bump);
+                                                        let str8 = bun_core::handle_oom(
+                                                            str.string(self.bump),
+                                                        );
                                                         if let Some(mi) = self.module_info() {
                                                             let name_id = mi.str(str8);
-                                                            if tlm.is_export {
-                                                                mi.add_export_info_local(
-                                                                    name_id, name_id,
-                                                                );
-                                                            }
+                                                            mi.add_export_info_local(
+                                                                name_id, name_id,
+                                                            );
                                                         }
                                                     }
                                                     self.maybe_print_default_binding_value(
@@ -4916,12 +5249,10 @@ pub(crate) mod __gated_printer {
                     self.print_identifier(local_name);
                     self.print_func(&s.func);
 
-                    if Self::MAY_HAVE_MODULE_INFO {
+                    if Self::MAY_HAVE_MODULE_INFO && s.func.flags.contains(G::FnFlags::IsExport) {
                         if let Some(mi) = self.module_info() {
                             let name_id = mi.str(local_name);
-                            if s.func.flags.contains(G::FnFlags::IsExport) {
-                                mi.add_export_info_local(name_id, name_id);
-                            }
+                            mi.add_export_info_local(name_id, name_id);
                         }
                     }
 
@@ -4947,12 +5278,10 @@ pub(crate) mod __gated_printer {
                     self.print_identifier(name_str);
                     self.print_class(&s.class);
 
-                    if Self::MAY_HAVE_MODULE_INFO {
+                    if Self::MAY_HAVE_MODULE_INFO && s.is_export {
                         if let Some(mi) = self.module_info() {
                             let name_id = mi.str(name_str);
-                            if s.is_export {
-                                mi.add_export_info_local(name_id, name_id);
-                            }
+                            mi.add_export_info_local(name_id, name_id);
                         }
                     }
 
@@ -5112,9 +5441,16 @@ pub(crate) mod __gated_printer {
                             );
                             if let Some(alias) = &s.alias {
                                 let alias_id = mi.str(alias.original_name.slice());
-                                mi.add_export_info_namespace(alias_id, irp_id);
+                                mi.add_export_info_namespace(
+                                    alias_id,
+                                    irp_id,
+                                    analyze_transpiled_module::FetchParameters::None,
+                                );
                             } else {
-                                mi.add_export_info_star(irp_id);
+                                mi.add_export_info_star(
+                                    irp_id,
+                                    analyze_transpiled_module::FetchParameters::None,
+                                );
                             }
                         }
                     }
@@ -5292,7 +5628,12 @@ pub(crate) mod __gated_printer {
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let alias_id = mi.str(item.alias.slice());
                             let name_id = mi.str(name);
-                            mi.add_export_info_indirect(alias_id, name_id, irp_id);
+                            mi.add_export_info_indirect(
+                                alias_id,
+                                name_id,
+                                irp_id,
+                                analyze_transpiled_module::FetchParameters::None,
+                            );
                         }
                     }
                 }
@@ -5752,6 +6093,9 @@ pub(crate) mod __gated_printer {
                                 Loader::Json5 => {
                                     self.print_whitespacer(ws!(b" with { type: \"json5\" }"))
                                 }
+                                Loader::Xml => {
+                                    self.print_whitespacer(ws!(b" with { type: \"xml\" }"))
+                                }
                                 Loader::Wasm => {
                                     self.print_whitespacer(ws!(b" with { type: \"wasm\" }"))
                                 }
@@ -5789,10 +6133,10 @@ pub(crate) mod __gated_printer {
                         // so we re-borrow it between `name_for_symbol` calls instead of holding
                         // a single long-lived `mi` across the whole block. `irp_id` is Copy.
                         let import_record_path = &record.path.text;
-                        let irp_id = {
+                        use analyze_transpiled_module::FetchParameters as FP;
+                        let (irp_id, fetch_parameters) = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let irp_id = mi.str(import_record_path);
-                            use analyze_transpiled_module::FetchParameters as FP;
                             let fetch_parameters: FP = if IS_BUN_PLATFORM {
                                 if let Some(loader) = record.loader {
                                     use bun_ast::Loader;
@@ -5818,6 +6162,7 @@ pub(crate) mod __gated_printer {
                                         }
                                         Loader::Html => FP::host_defined(mi.str(b"html")),
                                         Loader::Json5 => FP::host_defined(mi.str(b"json5")),
+                                        Loader::Xml => FP::host_defined(mi.str(b"xml")),
                                         Loader::Md => FP::host_defined(mi.str(b"md")),
                                     }
                                 } else {
@@ -5832,7 +6177,7 @@ pub(crate) mod __gated_printer {
                                 analyze_transpiled_module::ModulePhase::Evaluation
                             };
                             mi.request_module_with_phase(irp_id, fetch_parameters, phase);
-                            irp_id
+                            (irp_id, fetch_parameters)
                         };
 
                         if let Some(name) = &s.default_name {
@@ -5840,7 +6185,13 @@ pub(crate) mod __gated_printer {
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let local_name_id = mi.str(local_name);
                             let default_id = mi.str(b"default");
-                            mi.add_import_info_single(irp_id, default_id, local_name_id, false);
+                            mi.add_import_info_single(
+                                irp_id,
+                                default_id,
+                                local_name_id,
+                                fetch_parameters,
+                                false,
+                            );
                         }
 
                         for item in slice_of(s.items).iter() {
@@ -5848,7 +6199,13 @@ pub(crate) mod __gated_printer {
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let local_name_id = mi.str(local_name);
                             let alias_id = mi.str(item.alias.slice());
-                            mi.add_import_info_single(irp_id, alias_id, local_name_id, false);
+                            mi.add_import_info_single(
+                                irp_id,
+                                alias_id,
+                                local_name_id,
+                                fetch_parameters,
+                                false,
+                            );
                         }
 
                         if record
@@ -5859,9 +6216,17 @@ pub(crate) mod __gated_printer {
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let local_name_id = mi.str(local_name);
                             if phase_defer {
-                                mi.add_import_info_namespace_defer(irp_id, local_name_id);
+                                mi.add_import_info_namespace_defer(
+                                    irp_id,
+                                    local_name_id,
+                                    fetch_parameters,
+                                );
                             } else {
-                                mi.add_import_info_namespace(irp_id, local_name_id);
+                                mi.add_import_info_namespace(
+                                    irp_id,
+                                    local_name_id,
+                                    fetch_parameters,
+                                );
                             }
                         }
                     }
@@ -6383,9 +6748,9 @@ pub(crate) mod __gated_printer {
             import_records: &'a [ImportRecord],
             opts: Options<'a>,
             renamer: rename::Renamer<'a, 'a>,
-            source_map_builder: SourceMap::chunk::Builder,
+            source_map_builder: SourceMap::chunk::Builder<'a>,
         ) -> Self {
-            let printer = Self {
+            Self {
                 bump,
                 import_records,
                 needs_semicolon: false,
@@ -6409,13 +6774,7 @@ pub(crate) mod __gated_printer {
                 stack_overflowed: false,
                 was_lazy_export: false,
                 module_info: None,
-            };
-            // The `Builder` field is `&'static [u32]` pending lifetime threading,
-            // so instead of caching a self-borrow here,
-            // `Builder::add_source_mapping` derives the slice on demand from `line_offset_tables`
-            // via `ListExt::items_byte_offset_to_start_of_line()` (see Chunk.rs).
-            let _ = GENERATE_SOURCE_MAP;
-            printer
+            }
         }
 
         pub(crate) fn print_dev_server_module(
@@ -7013,7 +7372,6 @@ impl BufferWriter {
             self.append_newline = false;
             self.buffer.append_char(b'\n')?;
         }
-
         if self.append_null_byte {
             // Append a NUL unless the buffer already ends with one; the NUL is
             // *included* in `written` (consumers strip it via
@@ -7122,6 +7480,7 @@ impl GenerateSourceMap {
 // `Scope.parent` backref). `print_json` is live as well.
 // ───────────────────────────────────────────────────────────────────────────
 use self::__gated_printer::{Printer, slice_of};
+use SourceMap::chunk::LineOffsetTables;
 use js_ast::Ast;
 
 // `generate_source_map` is a runtime arg: `generic_const_exprs`
@@ -7129,17 +7488,16 @@ use js_ast::Ast;
 // viral `where` clauses, and the body only does runtime branches anyway. The
 // `IS_BUN_PLATFORM` axis stays const so `prepend_count` is still a compile-time
 // constant in the monomorphized callers.
-pub(crate) fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
+pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
     generate_source_map: GenerateSourceMap,
-    opts: &mut Options,
-    source: &bun_ast::Source,
+    opts: &mut Options<'a>,
+    source: &'a bun_ast::Source,
     tree: &Ast,
-) -> SourceMap::chunk::Builder {
+) -> SourceMap::chunk::Builder<'a> {
     if generate_source_map == GenerateSourceMap::Disable {
         return SourceMap::chunk::Builder::default();
     }
 
-    let precomputed = opts.line_offset_tables.take();
     let mut builder = SourceMap::chunk::Builder {
         source_map: SourceMap::chunk::SourceMapFormat::init(
             // opts.source_map_allocator orelse opts.allocator — allocator dropped
@@ -7148,32 +7506,17 @@ pub(crate) fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
         cover_lines_without_mappings: true,
         approximate_input_line_count: tree.approximate_newline_count,
         prepend_count: IS_BUN_PLATFORM && generate_source_map == GenerateSourceMap::Lazy,
-        // `Options.line_offset_tables` is a borrow into shared linker
-        // state; copy it bitwise via `ptr::read` into a
-        // `ManuallyDrop` so dropping the `Builder` never frees borrowed
-        // storage. When no table is supplied (the runtime/transpiler path) we
-        // leave this `EMPTY` and let the builder build it lazily on the first
-        // mapping (see `set_deferred_line_offset_table` below).
-        line_offset_tables: core::mem::ManuallyDrop::new(match precomputed {
-            // SAFETY: `borrowed` points to a valid `List` owned by the caller
-            // (e.g. `LinkerGraph.files[i].line_offset_table`). The bitwise
-            // copy aliases that storage; it is wrapped in `ManuallyDrop` and
-            // never dropped, so ownership stays with the caller.
-            Some(borrowed) => unsafe { core::ptr::read(borrowed) },
-            None => SourceMap::line_offset_table::List::new_in(bun_alloc::AstAlloc),
-        }),
+        line_offset_tables: match opts.line_offset_tables.take() {
+            Some(table) => LineOffsetTables::Borrowed(table),
+            None if generate_source_map == GenerateSourceMap::Lazy => LineOffsetTables::Deferred {
+                contents: source.contents(),
+                approximate_line_count: i32::try_from(tree.approximate_newline_count)
+                    .expect("int cast"),
+            },
+            None => LineOffsetTables::None,
+        },
         ..Default::default()
     };
-    if precomputed.is_none() && generate_source_map == GenerateSourceMap::Lazy {
-        // Defer table construction to the first `add_source_mapping` call:
-        // modules that emit no mappings (asset/JSON shims, empty modules,
-        // fully-stripped files) never pay the full-source scan + allocation.
-        builder.set_deferred_line_offset_table(
-            // allocator dropped
-            &source.contents,
-            i32::try_from(tree.approximate_newline_count).expect("int cast"),
-        );
-    }
     // Pre-size the VLQ mappings buffer. With `--minify` we emit roughly one
     // mapping per token; growing from 0 by doubling means ~16 reallocs and
     // O(n) memmoves on a large module. The estimate is intentionally
@@ -7302,8 +7645,6 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         no_op_renamer.to_renamer()
     };
 
-    // defer: if minify_identifiers { renamer.deinit() } — Drop handles.
-
     // `is_bun_platform = ascii_only` for printAst.
     type PrinterType<'a, W, const A: bool, const G: bool> =
         Printer<'a, W, A, /*IS_BUN_PLATFORM=*/ A, false, G>;
@@ -7329,12 +7670,6 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         renamer,
         source_map_builder,
     );
-    // `defer { if (generate_source_map) printer.source_map_builder.line_offset_tables.deinit(opts.allocator); }`
-    // — no longer needed: `Builder.line_offset_tables` is `List<AstAlloc>` and on
-    // this path is always EMPTY (`get_source_map_builder` defers generation to
-    // the `Global`-backed `lazy_line_offset_tables`, freed by `Printer`'s drop
-    // via `OwnedLineOffsetTables::Drop`). No caller of `print_ast` supplies a
-    // precomputed table.
     printer.was_lazy_export = tree.has_lazy_export;
     // Borrowck: `opts` was moved into `Printer::init`; populate
     // `printer.module_info` by taking it back out of `printer.options`
@@ -7400,7 +7735,6 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     } else {
         None
     };
-    // defer: if let Some(chunk) = &mut source_maps_chunk { chunk.deinit() } — Drop handles.
 
     if let Some(cache) = printer.options.runtime_transpiler_cache {
         let mut srlz_res: Vec<u8> = Vec::new();
@@ -7478,7 +7812,7 @@ pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
     bump: &'a bun_alloc::Arena,
     target: bun_ast::Target,
     ast: &Ast,
-    source: &bun_ast::Source,
+    source: &'a bun_ast::Source,
     opts: Options<'a>,
     import_records: &'a [ImportRecord],
     parts: &[js_ast::Part],
@@ -7509,7 +7843,7 @@ pub fn print_with_writer<'a, W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
     bump: &'a bun_alloc::Arena,
     target: bun_ast::Target,
     ast: &Ast,
-    source: &bun_ast::Source,
+    source: &'a bun_ast::Source,
     opts: Options<'a>,
     import_records: &'a [ImportRecord],
     parts: &[js_ast::Part],
@@ -7550,7 +7884,7 @@ pub(crate) fn print_with_writer_and_platform<
     mut writer: W,
     bump: &'a bun_alloc::Arena,
     ast: &Ast,
-    source: &bun_ast::Source,
+    source: &'a bun_ast::Source,
     opts: Options<'a>,
     import_records: &'a [ImportRecord],
     parts: &[js_ast::Part],
@@ -7588,7 +7922,6 @@ pub(crate) fn print_with_writer_and_platform<
         printer.module_info = printer.options.module_info.take();
     }
     printer.binary_expression_stack = Vec::new();
-    // defer: temporary_bindings.deinit / writer.* = printer.writer.* — handled by move-out below.
 
     // `Index::is_runtime` ⇔ `index.value == 0`.
     if module_type == bundle_opts::Format::InternalBakeDev && source.index.0 != 0 {
@@ -7647,8 +7980,8 @@ pub(crate) fn print_with_writer_and_platform<
     })
 }
 
-/// Serializes ModuleInfo to an owned byte slice. Returns null on failure.
-/// The caller is responsible for freeing the returned slice.
+/// Serializes ModuleInfo (its own string table, then its body) to an owned
+/// byte slice. Returns `None` on failure.
 pub fn serialize_module_info(
     module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
 ) -> Option<Box<[u8]>> {
@@ -7664,4 +7997,20 @@ pub fn serialize_module_info(
         return None;
     }
     Some(buf.into_boxed_slice())
+}
+
+/// Serializes only ModuleInfo's body, with its strings referenced through
+/// `table_ids` (from `ModuleInfoStringTable::intern_all`) into a table of
+/// `table_count` strings that is stored once for many modules.
+pub fn serialize_module_info_body(
+    mi: &analyze_transpiled_module::ModuleInfo,
+    table_count: u32,
+    table_ids: &[u32],
+) -> Box<[u8]> {
+    debug_assert!(mi.finalized);
+    let mut buf: Vec<u8> = Vec::new();
+    mi.as_deserialized()
+        .serialize_body(&mut buf, table_count, |id| table_ids[id as usize])
+        .expect("Vec<u8> write");
+    buf.into_boxed_slice()
 }

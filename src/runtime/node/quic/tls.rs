@@ -28,7 +28,7 @@ fn value_to_bytes(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Ve
     }
     if value.is_string() {
         return Ok(Some(
-            bun_core::String::from_js(value, global)?.to_utf8_bytes(),
+            bun_core::String::from_js(value, global)?.to_owned_slice(),
         ));
     }
     if let Some(buf) = value.as_array_buffer(global) {
@@ -65,7 +65,7 @@ fn tls13_policy_for_ciphers(ciphers: &[u8]) -> Option<c_int> {
     let mut has_128 = false;
     let mut has_256 = false;
     let mut has_chacha = false;
-    for name in ciphers.split(|&b| b == b':') {
+    for name in bun_core::strings::split(ciphers, b":") {
         if name == TLS13_AES_128_GCM_SHA256 {
             has_128 = true;
         } else if name == TLS13_AES_256_GCM_SHA384 {
@@ -114,7 +114,7 @@ impl TlsConfig {
             }
         }
         if let Some(v) = tls.get(global, "servername")?.filter(|v| v.is_string()) {
-            let mut bytes = bun_core::String::from_js(v, global)?.to_utf8_bytes();
+            let mut bytes = bun_core::String::from_js(v, global)?.to_owned_slice();
             bytes.push(0);
             config.servername = Some(bytes);
         }
@@ -146,10 +146,10 @@ impl TlsConfig {
             config.enable_early_data = v.to_boolean();
         }
         if let Some(v) = tls.get(global, "ciphers")?.filter(|v| v.is_string()) {
-            config.ciphers = Some(bun_core::String::from_js(v, global)?.to_utf8_bytes());
+            config.ciphers = Some(bun_core::String::from_js(v, global)?.to_owned_slice());
         }
         if let Some(v) = tls.get(global, "groups")?.filter(|v| v.is_string()) {
-            let mut bytes = bun_core::String::from_js(v, global)?.to_utf8_bytes();
+            let mut bytes = bun_core::String::from_js(v, global)?.to_owned_slice();
             bytes.push(0);
             config.groups = Some(bytes);
         }

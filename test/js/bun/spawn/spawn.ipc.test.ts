@@ -85,9 +85,85 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
         .sort((a, b) => a - b),
     ).toEqual(Array.from({ length: 32 }, (_, i) => i));
   });
+
+  it("a message the serializer rejects throws from send() and leaves the channel usable", async () => {
+    // JSON.stringify rejects cycles; structured clone rejects functions. Both
+    // surface from the native serializer as a pending exception that send()
+    // must rethrow without having written anything to the channel.
+    const rejected =
+      mode === "json" ? `const rejected = {}; rejected.self = rejected;` : `const rejected = { callback() {} };`;
+    const childSource = [
+      rejected,
+      `let thrown = null;`,
+      `try {`,
+      `  process.send(rejected);`,
+      `} catch (error) {`,
+      `  thrown = { name: error.name, message: error.message };`,
+      `}`,
+      `process.send({ thrown });`,
+      `process.on("message", () => {});`,
+    ].join("\n");
+    const { promise, resolve, reject } = Promise.withResolvers<any>();
+    await using child = spawn([bunExe(), "-e", childSource], {
+      env: bunEnv,
+      stdio: ["ignore", "inherit", "inherit"],
+      serialization: mode,
+      ipc: message => resolve(message),
+      onExit(_subprocess, exitCode, signalCode) {
+        reject(new Error(`child exited (${exitCode}, ${signalCode}) before a message arrived`));
+      },
+    });
+    expect(await promise).toEqual({
+      thrown:
+        mode === "json"
+          ? { name: "TypeError", message: "JSON.stringify cannot serialize cyclic structures." }
+          : { name: "DataCloneError", message: "The object can not be cloned." },
+    });
+  });
 });
 
 describe("ipc mode advanced", () => {
+  it("unwraps the Buffer envelope before cmd dispatch", async () => {
+    // A cmd-bearing message whose payload holds a Buffer travels as the
+    // [message, buffers] envelope. The receiver's cmd fast-path reads
+    // message.cmd straight off the decoded value, so the envelope must be
+    // restored first — otherwise the fast-get sees an array (no cmd), the
+    // NODE_HANDLE interception is skipped, and user listeners receive the
+    // raw envelope instead of the message.
+    const childSource = [
+      // A non-NODE cmd goes through the same fast-get, then to the user.
+      `process.send({ cmd: "USER_CMD", payload: Buffer.from("through-dispatch") });`,
+      // A NODE_HANDLE cmd (no fd attached) must be intercepted, NACKed and
+      // withheld from user listeners — proving cmd was readable post-restore.
+      `process.send({ cmd: "NODE_HANDLE", type: "net.Socket", msg: { buf: Buffer.from("hidden") } });`,
+      `process.send({ done: true });`,
+      `process.on("message", () => {});`,
+    ].join("\n");
+    const { promise, resolve, reject } = Promise.withResolvers<any[]>();
+    const messages: any[] = [];
+    await using child = spawn([bunExe(), "-e", childSource], {
+      env: bunEnv,
+      stdio: ["ignore", "inherit", "inherit"],
+      serialization: "advanced",
+      ipc(message) {
+        messages.push(message);
+        if (message?.done) resolve(messages);
+      },
+      onExit(_subprocess, exitCode, signalCode) {
+        reject(new Error(`child exited (${exitCode}, ${signalCode}) after ${messages.length} messages`));
+      },
+    });
+    const received = await promise;
+    const userCmd = received.filter(message => message?.cmd === "USER_CMD");
+    expect(userCmd).toHaveLength(1);
+    expect(Buffer.isBuffer(userCmd[0].payload)).toBe(true);
+    expect(userCmd[0].payload.toString()).toBe("through-dispatch");
+    // The NODE_HANDLE message is protocol traffic, not a user message.
+    expect(received.filter(message => message?.cmd === "NODE_HANDLE")).toHaveLength(0);
+    // And no raw [message, buffers] envelope may leak through.
+    expect(received.filter(message => Array.isArray(message))).toHaveLength(0);
+  });
+
   it("a message_len that overflows header_length + message_len does not crash the receiver", async () => {
     // The advanced IPC framing is [u8 type][u32-le length][payload]. Decoding previously
     // checked `data.len < header_length + message_len`, which is u32 arithmetic: a child
@@ -187,5 +263,35 @@ it("child with unusable NODE_CHANNEL_FD tears down IPC without crashing", async 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain("Unable to start IPC");
   expect(stdout).toBe("err ERR_IPC_CHANNEL_CLOSED\nok\n");
+  expect(exitCode).toBe(0);
+});
+
+it.skipIf(isWindows)("advanced serialization advertises wire format version 2", async () => {
+  // The version packet is the first frame on the channel:
+  // [type=Version(1), u32 LE version]. Read it raw off fd 3 before the
+  // child's own channel machinery starts consuming the socket.
+  await using child = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const fs = require("fs");
+      const buf = Buffer.alloc(5);
+      let n = 0;
+      while (n < 5) {
+        try {
+          n += fs.readSync(3, buf, n, 5 - n);
+        } catch (e) {
+          if (e.code !== "EAGAIN") throw e;
+        }
+      }
+      console.log(JSON.stringify([...buf]));`,
+    ],
+    env: bunEnv,
+    stdio: ["ignore", "pipe", "inherit"],
+    serialization: "advanced",
+    ipc() {},
+  });
+  const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+  expect(JSON.parse(stdout.trim())).toEqual([1, 2, 0, 0, 0]);
   expect(exitCode).toBe(0);
 });

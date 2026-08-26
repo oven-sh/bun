@@ -16,7 +16,7 @@ use crate::h3_client as h3;
 
 pub struct Stream {
     // BACKREF: owned by `session.pending`; session outlives every Stream it holds.
-    pub(crate) session: bun_ptr::BackRef<ClientSession>,
+    pub(crate) session: bun_ptr::BackRef<ClientSession, bun_ptr::Mut>,
     // BACKREF: lifetime-erased — cleared on detach; never reads borrowed fields.
     pub(crate) client: Option<NonNull<HttpClient<'static>>>,
     // FFI handle into lsquic; bound from `callbacks.onStreamOpen`, closed via `abort`.

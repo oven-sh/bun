@@ -1,7 +1,10 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { once } from "events";
+import { bunEnv, bunExe, tls as tlsCert } from "harness";
 import { createServer, request } from "http";
+import { createServer as createHttpsServer } from "https";
 import { AddressInfo, connect, Server } from "net";
+import { connect as tlsConnect } from "tls";
 
 const fixture = "node-http-transfer-encoding-fixture.ts";
 test(`should not duplicate transfer-encoding header in request`, async () => {
@@ -93,6 +96,153 @@ test("should not duplicate transfer-encoding header in response when explicitly 
   const bodySection = response.split("\r\n\r\n").slice(1).join("\r\n\r\n");
   expect(bodySection).toContain("Hello, World!");
   expect(bodySection).toContain("Goodbye, World!");
+});
+
+// llhttp flags Transfer-Encoding as present only once a non-whitespace value
+// byte arrives, so node treats a TE field with an empty (or whitespace-only)
+// value as if the header were absent: no clientError, Content-Length framing
+// applies. oven-sh/bun#40124: Bun served the request AND fired a spurious
+// clientError, so a typical handler destroyed the live connection.
+test.each([
+  ["empty", ""],
+  ["whitespace-only", "   "],
+])("%s Transfer-Encoding value is ignored like node, no clientError", async (name, te) => {
+  const events: string[] = [];
+  await using server = createServer((req, res) => {
+    events.push(`request ${req.url}`);
+    res.end("ok");
+  });
+  server.on("clientError", (err: any, socket) => {
+    events.push(`clientError ${err.code}`);
+    socket.destroy();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const { promise, resolve } = Promise.withResolvers<string>();
+  // Pipeline a second request: the spurious clientError kills the
+  // connection after the first response, so /b proves it survived.
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write(
+      `GET /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding:${te}\r\n\r\n` +
+        "GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+  });
+  let raw = "";
+  socket.on("data", chunk => (raw += chunk.toString()));
+  socket.on("error", () => {});
+  socket.on("close", () => resolve(raw));
+  const response = await promise;
+  expect(events).toEqual(["request /a", "request /b"]);
+  expect(response.match(/HTTP\/1\.1 200/g)).toHaveLength(2);
+});
+
+test("empty Transfer-Encoding with Content-Length frames the body like node", async () => {
+  const events: string[] = [];
+  await using server = createServer((req, res) => {
+    let body = "";
+    req.on("data", d => (body += d));
+    req.on("end", () => {
+      events.push(`request ${req.url} body=${body}`);
+      res.end("ok");
+    });
+  });
+  server.on("clientError", (err: any, socket) => {
+    events.push(`clientError ${err.code}`);
+    socket.destroy();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const { promise, resolve } = Promise.withResolvers<string>();
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write(
+      "POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding:\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello",
+    );
+  });
+  let raw = "";
+  socket.on("data", chunk => (raw += chunk.toString()));
+  socket.on("error", () => {});
+  socket.on("close", () => resolve(raw));
+  const response = await promise;
+  expect(events).toEqual(["request /p body=hello"]);
+  expect(response).toStartWith("HTTP/1.1 200");
+});
+
+// An empty field followed by "Transfer-Encoding: chunked" combines to just
+// "chunked" (RFC 9110 5.6.1). llhttp frames the body as chunked and node
+// delivers it. The has-body decision must look at every Transfer-Encoding
+// field: reading only the first one sees an empty value and drops the body.
+test.each([
+  ["empty", ""],
+  ["whitespace-only", "   "],
+])("%s Transfer-Encoding field followed by chunked delivers the body like node", async (name, te) => {
+  const events: string[] = [];
+  await using server = createServer((req, res) => {
+    let body = "";
+    req.on("data", d => (body += d));
+    req.on("end", () => {
+      events.push(`request ${req.url} body=${body}`);
+      res.end("ok");
+    });
+  });
+  server.on("clientError", (err: any, socket) => {
+    events.push(`clientError ${err.code}`);
+    socket.destroy();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const { promise, resolve } = Promise.withResolvers<string>();
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write(
+      `POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding:${te}\r\nTransfer-Encoding: chunked\r\n\r\n` +
+        "5\r\nhello\r\n0\r\n\r\n" +
+        "GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+  });
+  let raw = "";
+  socket.on("data", chunk => (raw += chunk.toString()));
+  socket.on("error", () => {});
+  socket.on("close", () => resolve(raw));
+  const response = await promise;
+  expect(events).toEqual(["request /a body=hello", "request /b body="]);
+  expect(response.match(/HTTP\/1\.1 200/g)).toHaveLength(2);
+});
+
+// Boundary of the leniency: node errors once any non-whitespace value byte
+// arrives, even one that names no coding.
+test("comma-only Transfer-Encoding value still fires clientError like node", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<any>();
+  const urls: string[] = [];
+  await using server = createServer((req, res) => {
+    urls.push(req.url!);
+    req.resume();
+    res.end("ok");
+  });
+  server.on("clientError", (err, socket) => {
+    socket.destroy();
+    resolve(err);
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  // Pipeline a follow-up with Connection: close so that, if the comma value
+  // were wrongly treated as absent, /b is served and the socket closes,
+  // rejecting below instead of idling on keep-alive until the test times out.
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write(
+      "GET /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: ,\r\n\r\n" +
+        "GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+  });
+  socket.resume();
+  socket.on("error", () => {});
+  socket.on("close", () => reject(new Error(`socket closed without clientError, served: ${urls.join(",")}`)));
+  const err = await promise;
+  socket.destroy();
+  expect(err.code).toBe("HPE_INVALID_TRANSFER_ENCODING");
+  expect(urls).toEqual(["/a"]);
 });
 
 // Value lengths landing parseTrailerFields' 8-byte field-value scan on the
@@ -578,4 +728,168 @@ test("pipelined chunked request keeps its own trailers when the next one is pars
   const trailers = await done.promise;
   socket.destroy();
   expect(trailers).toEqual({ "x-a": "a" });
+});
+
+// Once the header section is on the wire, tearing a response down (res.destroy(),
+// req.destroy(), a handler throwing) must not write anything else: the header
+// terminator is gone, so header bytes would land inside the body. Node writes
+// nothing and closes the socket; these tests pin the bytes received after the
+// header section to exactly what the handler wrote before the teardown.
+describe("tearing down a response with its headers on the wire adds no bytes", () => {
+  // Sends one raw request, waits until `marker` (the part of the response the
+  // handler wrote) has arrived so the handler's teardown runs with those bytes
+  // already flushed, then returns what arrived after the header section once
+  // the server closed the connection.
+  async function bodyAfterTeardown({
+    handler,
+    marker,
+    request = "GET / HTTP/1.1\r\nHost: x\r\n\r\n",
+    https = false,
+  }: {
+    handler: (req: any, res: any, markerArrived: Promise<void>) => void;
+    marker: string;
+    request?: string;
+    https?: boolean;
+  }) {
+    const markerArrived = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    const listener = (req: any, res: any) => handler(req, res, markerArrived.promise);
+    await using server = https ? createHttpsServer(tlsCert, listener) : createServer(listener);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const socket = https
+      ? tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false }, () => socket.write(request))
+      : connect(port, "127.0.0.1", () => socket.write(request));
+    let raw = "";
+    socket.on("data", (chunk: Buffer) => {
+      raw += chunk.toString("latin1");
+      if (raw.includes(marker)) markerArrived.resolve();
+    });
+    // The teardown may surface as ECONNRESET; what matters is what arrived before 'close'.
+    socket.on("error", () => {});
+    socket.on("close", closed.resolve);
+    await closed.promise;
+
+    const headerEnd = raw.indexOf("\r\n\r\n");
+    expect(raw.slice(0, headerEnd)).toStartWith("HTTP/1.1 200 OK\r\n");
+    return raw.slice(headerEnd + 4);
+  }
+
+  test.concurrent("res.destroy() after res.write() on a chunked response", async () => {
+    const body = await bodyAfterTeardown({
+      marker: "hello",
+      handler(req, res, markerArrived) {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write("hello");
+        markerArrived.then(() => res.destroy());
+      },
+    });
+    expect(body).toBe("5\r\nhello\r\n");
+  });
+
+  test.concurrent("res.destroy() after res.flushHeaders() on a chunked response", async () => {
+    const body = await bodyAfterTeardown({
+      marker: "\r\n\r\n",
+      handler(req, res, markerArrived) {
+        res.writeHead(200);
+        res.flushHeaders();
+        markerArrived.then(() => res.destroy());
+      },
+    });
+    expect(body).toBe("");
+  });
+
+  test.concurrent("res.destroy() after res.write() on a Content-Length response", async () => {
+    const body = await bodyAfterTeardown({
+      marker: "hello",
+      handler(req, res, markerArrived) {
+        res.writeHead(200, { "content-length": "10" });
+        res.write("hello");
+        markerArrived.then(() => res.destroy());
+      },
+    });
+    expect(body).toBe("hello");
+  });
+
+  test.concurrent("res.destroy() after res.write() on an HTTP/1.0 (close-delimited) response", async () => {
+    const body = await bodyAfterTeardown({
+      marker: "hello",
+      request: "GET / HTTP/1.0\r\nHost: x\r\n\r\n",
+      handler(req, res, markerArrived) {
+        res.writeHead(200);
+        res.write("hello");
+        markerArrived.then(() => res.destroy());
+      },
+    });
+    expect(body).toBe("hello");
+  });
+
+  test.concurrent("req.destroy() after res.write() on a chunked response", async () => {
+    const body = await bodyAfterTeardown({
+      marker: "hello",
+      handler(req, res, markerArrived) {
+        res.writeHead(200);
+        res.write("hello");
+        markerArrived.then(() => req.destroy());
+      },
+    });
+    expect(body).toBe("5\r\nhello\r\n");
+  });
+
+  test.concurrent("res.destroy() after res.write() on a chunked https response", async () => {
+    const body = await bodyAfterTeardown({
+      https: true,
+      marker: "hello",
+      handler(req, res, markerArrived) {
+        res.writeHead(200);
+        res.write("hello");
+        markerArrived.then(() => res.destroy());
+      },
+    });
+    expect(body).toBe("5\r\nhello\r\n");
+  });
+
+  // A synchronous throw out of the request listener is ended natively by the
+  // server dispatch rather than by res.destroy(); same rule applies. Runs in a
+  // child because the throw reaches uncaughtException.
+  test.concurrent("request listener throwing after res.write() on a chunked response", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { createServer } = require("node:http");
+        const { connect } = require("node:net");
+        process.on("uncaughtException", err => {
+          if (err.message !== "boom") throw err;
+        });
+        const server = createServer((req, res) => {
+          res.writeHead(200);
+          res.write("hello");
+          throw new Error("boom");
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const socket = connect(server.address().port, "127.0.0.1", () => {
+            socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          });
+          let raw = "";
+          socket.on("data", chunk => (raw += chunk.toString("latin1")));
+          socket.on("error", () => {});
+          socket.on("close", () => {
+            console.log(JSON.stringify(raw.slice(raw.indexOf("\\r\\n\\r\\n") + 4)));
+            server.close();
+          });
+        });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toBe("5\r\nhello\r\n");
+    expect(exitCode).toBe(0);
+  });
 });

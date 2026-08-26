@@ -1332,7 +1332,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let name = self.lexer.identifier;
         self.lexer.expect(T::TIdentifier)?;
 
-        if opts.is_module_scope {
+        if opts.scope.is_module() {
             self.local_type_names.put(name, true)?;
         }
 
@@ -1354,7 +1354,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let name = self.lexer.identifier;
         self.lexer.expect(T::TIdentifier)?;
 
-        if opts.is_module_scope {
+        if opts.scope.is_module() {
             self.local_type_names.put(name, true)?;
         }
 

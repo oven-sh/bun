@@ -19,8 +19,6 @@
 #include "JavaScriptCore/Parser.h"
 #include "JavaScriptCore/SourceCodeKey.h"
 
-#include "../vm/SigintWatcher.h"
-
 namespace Bun {
 using namespace NodeVM;
 
@@ -91,17 +89,20 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     RefPtr fetcher(NodeVMScriptFetcher::create(vm, dynamicImportCallback, moduleWrapper));
-    RETURN_IF_EXCEPTION(scope, nullptr);
 
     SourceOrigin sourceOrigin { {}, *fetcher };
 
     WTF::String sourceText = sourceTextValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    Ref<StringSourceProvider> sourceProvider = StringSourceProvider::create(WTF::move(sourceText), sourceOrigin, String {}, SourceTaintedOrigin::Untainted,
-        TextPosition { OrdinalNumber::fromZeroBasedInt(lineOffset), OrdinalNumber::fromZeroBasedInt(columnOffset) }, SourceProviderSourceType::Module);
+    TextPosition startPosition {
+        clampOffsetForSource(OrdinalNumber::fromZeroBasedInt(lineOffset), sourceText.length()),
+        clampOffsetForSource(OrdinalNumber::fromZeroBasedInt(columnOffset), sourceText.length()),
+    };
 
-    SourceCode sourceCode(WTF::move(sourceProvider), lineOffset, columnOffset);
+    Ref<StringSourceProvider> sourceProvider = StringSourceProvider::create(WTF::move(sourceText), sourceOrigin, String {}, SourceTaintedOrigin::Untainted, startPosition, SourceProviderSourceType::Module);
+
+    SourceCode sourceCode(WTF::move(sourceProvider), startPosition.m_line.zeroBasedInt(), startPosition.m_column.zeroBasedInt());
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     WTF::String identifier = identifierValue.toWTFString(globalObject);
@@ -109,7 +110,6 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     NodeVMSourceTextModule* ptr = new (NotNull, allocateCell<NodeVMSourceTextModule>(vm)) NodeVMSourceTextModule(
         vm, zigGlobalObject->NodeVMSourceTextModuleStructure(), WTF::move(identifier), contextValue,
         WTF::move(sourceCode), moduleWrapper, initializeImportMeta);
-    RETURN_IF_EXCEPTION(scope, nullptr);
     ptr->finishCreation(vm);
 
     if (cachedData.isEmpty()) {
@@ -127,9 +127,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
     SourceCodeKey key(ptr->sourceCode(), {}, SourceCodeType::ProgramType, lexicallyScopedFeatures, JSParserScriptMode::Classic, DerivedContextType::None, EvalContextType::None, false, {}, std::nullopt);
     Ref<CachedBytecode> cachedBytecode = CachedBytecode::create(std::span(cachedData), nullptr, {});
-    RETURN_IF_EXCEPTION(scope, nullptr);
     UnlinkedModuleProgramCodeBlock* unlinkedBlock = decodeCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, key, WTF::move(cachedBytecode));
-    RETURN_IF_EXCEPTION(scope, nullptr);
 
     if (unlinkedBlock) {
         JSScope* jsScope = globalObject->globalScope();
@@ -295,6 +293,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         requestObject->putDirect(vm, attributesIdentifier, attributesObject);
         addModuleRequest({ request.m_specifier.string(), WTF::move(attributeMap) });
         requestsArray->putDirectIndex(globalObject, i, requestObject);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     m_moduleRequestsArray.set(vm, this, requestsArray);
@@ -549,8 +548,8 @@ void NodeVMSourceTextModule::initializeImportMeta(JSGlobalObject* globalObject)
     args.append(metaValue);
     args.append(m_moduleWrapper.get());
 
-    JSC::call(globalObject, m_initializeImportMeta.get(), callData, jsUndefined(), args);
     scope.release();
+    JSC::call(globalObject, m_initializeImportMeta.get(), callData, jsUndefined(), args);
 }
 
 JSObject* NodeVMSourceTextModule::createPrototype(VM& vm, JSGlobalObject* globalObject)

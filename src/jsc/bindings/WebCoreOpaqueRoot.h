@@ -26,8 +26,6 @@
 
 #pragma once
 
-#include "Node.h"
-
 namespace WebCore {
 
 class WebCoreOpaqueRoot {

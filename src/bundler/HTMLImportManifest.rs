@@ -193,7 +193,7 @@ pub(crate) fn write<W: Write + ?Sized>(
 
     writer.write_all(b"{")?;
 
-    let inject_compiler_filesystem_prefix = options.compile;
+    let inject_compiler_filesystem_prefix = options.compile_mode.is_executable();
     // Use the server-side public path here.
     let public_path: &[u8] = &options.public_path;
     let mut temp_buffer: Vec<u8> = Vec::new();

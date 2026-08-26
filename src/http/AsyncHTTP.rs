@@ -3,7 +3,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_ast::{Loc, Log};
 use bun_core::FeatureFlags;
-use bun_core::{MutableString, ZigStringSlice};
+use bun_core::MutableString;
 use bun_threading::IntrusiveWorkTask as _;
 use bun_threading::thread_pool::{self, Batch, Task};
 use bun_url::{PercentEncoding, URL};
@@ -24,14 +24,12 @@ bun_core::declare_scope!(AsyncHTTP, visible);
 
 // Lifetime `'a` covers every borrowed input the caller hands in: `url`,
 // `http_proxy`, `request_header_buf`, the borrowed `HTTPRequestBody::Bytes`
-// payload, and `client.{header_buf,hostname,if_modified_since}`. Intrusive
-// fields (`real`, `next`) are raw pointers and thus lifetime-erased; the
-// HTTP-thread copy uses the same `'a` as the JS-thread original it mirrors.
+// payload, and `client.{header_buf,hostname,unix_socket_path,if_modified_since}`.
+// Intrusive fields (`real`, `next`) are raw pointers and thus lifetime-erased;
+// the HTTP-thread copy uses the same `'a` as the JS-thread original it mirrors.
 pub struct AsyncHTTP<'a> {
     pub response: Option<picohttp::Response<'static>>,
     pub request_headers: headers::EntryList,
-    // Caller-owned response buffer (raw pointer, lifetime-erased); never freed here.
-    pub response_buffer: *mut MutableString,
     pub request_body: HTTPRequestBody<'a>,
     pub(crate) method: Method,
     pub url: URL<'a>,
@@ -181,7 +179,7 @@ fn make_client<'a>(
         custom_ssl_ctx: None,
         result_callback: noop_callback(),
         if_modified_since: b"",
-        request_content_len_buf: [0u8; b"-4294967295".len()],
+        request_content_len_buf: [0u8; b"18446744073709551615".len()],
         http_proxy,
         proxy_settings: None,
         proxy_headers,
@@ -193,7 +191,7 @@ fn make_client<'a>(
         signals,
         async_http_id,
         hostname,
-        unix_socket_path: ZigStringSlice::EMPTY,
+        unix_socket_path: b"",
         compress: None,
         compressed_request_body: Vec::new(),
         compressed_body_len: 0,
@@ -247,7 +245,7 @@ pub struct Options<'a> {
     pub proxy_headers: Option<Headers>,
     pub hostname: Option<&'a [u8]>,
     pub signals: Option<Signals>,
-    pub unix_socket_path: Option<ZigStringSlice>,
+    pub unix_socket_path: Option<&'a [u8]>,
     pub disable_timeout: Option<bool>,
     /// Per-request idle timeout override in seconds; see
     /// `HTTPClient::idle_timeout_seconds`.
@@ -282,7 +280,15 @@ impl<'a> AsyncHTTP<'a> {
         &MAX_SIMULTANEOUS_REQUESTS
     }
 
-    pub fn enable_response_body_streaming(&mut self) {
+    /// The method the request was made with. A redirect only ever rewrites the
+    /// HTTP thread's copy (`client.method`), and only to GET.
+    #[inline]
+    pub fn method(&self) -> Method {
+        self.method
+    }
+
+    /// A store into the shared signal `Store`, not into `self`.
+    pub fn enable_response_body_streaming(&self) {
         self.signals.store(
             crate::signals::Field::ResponseBodyStreaming,
             true,
@@ -302,7 +308,6 @@ impl<'a> AsyncHTTP<'a> {
         self.elapsed = src.elapsed;
         self.err = src.err;
         self.response = src.response;
-        self.response_buffer = src.response_buffer;
         self.client.url = src.client.url.clone();
         self.client.flags = src.client.flags;
         self.client.remaining_redirect_count = src.client.remaining_redirect_count;
@@ -310,9 +315,6 @@ impl<'a> AsyncHTTP<'a> {
 
     pub fn clear_data(&mut self) {
         self.response = None;
-        // Note: `ZigStringSlice` Drop releases WTF/owned variants;
-        // assigning EMPTY runs Drop on the old value.
-        self.client.unix_socket_path = ZigStringSlice::EMPTY;
     }
 }
 
@@ -321,12 +323,9 @@ impl<'a> AsyncHTTP<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 
 struct Preconnect {
-    // Self-referential — `async_http.response_buffer` borrows
-    // `self.response_buffer`. `Option` so we can write the field after the heap
-    // address is fixed (late-init); `None` is never observed after `preconnect()`
-    // populates it.
+    // `Option` so we can write the field after the heap address is fixed
+    // (late-init); `None` is never observed after `preconnect()` populates it.
     async_http: Option<AsyncHTTP<'static>>,
-    response_buffer: MutableString,
     url: URL<'static>,
     is_url_owned: bool,
 }
@@ -336,7 +335,6 @@ impl Preconnect {
         // SAFETY: `this` was produced by `heap::alloc` in `preconnect()` and is
         // uniquely owned here; `async_http` was fully written before scheduling.
         unsafe {
-            (*this).response_buffer = MutableString::default();
             (*this)
                 .async_http
                 .as_mut()
@@ -348,7 +346,7 @@ impl Preconnect {
                 free_owned_href((*this).url.href);
             }
             // Reclaim and drop the heap allocation (runs Drop on `async_http`
-            // — which in turn drops `HTTPClient` — and on `response_buffer`).
+            // — which in turn drops `HTTPClient`).
             drop(bun_core::heap::take(this));
         }
     }
@@ -374,23 +372,20 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
 
     let this: *mut Preconnect = bun_core::heap::into_raw(Box::new(Preconnect {
         async_http: None,
-        response_buffer: MutableString::default(),
         url,
         is_url_owned,
     }));
 
     // SAFETY: `this` is a freshly Box-allocated, uniquely-owned pointer; we
     // in-place write `async_http` before any read and before it can be observed
-    // by another thread. The address of `response_buffer` is stable (heap).
+    // by another thread.
     unsafe {
-        let response_buffer: *mut MutableString = core::ptr::addr_of_mut!((*this).response_buffer);
         let url = (*this).url.clone();
         let async_http = (*this).async_http.insert(AsyncHTTP::init(
             Method::GET,
             url,
             headers::EntryList::default(),
             b"",
-            response_buffer,
             b"",
             HTTPClientResultCallback::new::<Preconnect>(this, Preconnect::on_result),
             FetchRedirect::Manual,
@@ -412,7 +407,6 @@ impl<'a> AsyncHTTP<'a> {
         url: URL<'a>,
         headers: headers::EntryList,
         headers_buf: &'a [u8],
-        response_buffer: *mut MutableString,
         request_body: &'a [u8],
         callback: HTTPClientResultCallback,
         redirect_type: FetchRedirect,
@@ -449,7 +443,6 @@ impl<'a> AsyncHTTP<'a> {
         let mut this = AsyncHTTP {
             response: None,
             request_headers: headers,
-            response_buffer,
             request_body: HTTPRequestBody::Bytes(request_body),
             method,
             url,
@@ -467,7 +460,6 @@ impl<'a> AsyncHTTP<'a> {
             signals,
         };
         if let Some(val) = options.unix_socket_path {
-            debug_assert!(this.client.unix_socket_path.slice().is_empty());
             this.client.unix_socket_path = val;
         }
         if let Some(val) = options.disable_timeout {
@@ -517,7 +509,6 @@ impl<'a> AsyncHTTP<'a> {
         url: URL<'a>,
         headers: headers::EntryList,
         headers_buf: &'a [u8],
-        response_buffer: *mut MutableString,
         request_body: &'a [u8],
         http_proxy: Option<URL<'a>>,
         hostname: Option<&'a [u8]>,
@@ -528,7 +519,6 @@ impl<'a> AsyncHTTP<'a> {
             url,
             headers,
             headers_buf,
-            response_buffer,
             request_body,
             noop_callback(),
             redirect_type,
@@ -556,6 +546,7 @@ impl<'a> AsyncHTTP<'a> {
 pub(crate) struct SingleHTTPChannel {
     slot: bun_threading::Guarded<Option<HTTPClientResult<'static>>>,
     cv: bun_threading::Condvar,
+    response_buffer: *mut MutableString,
 }
 
 impl SingleHTTPChannel {
@@ -563,6 +554,7 @@ impl SingleHTTPChannel {
         SingleHTTPChannel {
             slot: bun_threading::Guarded::new(None),
             cv: bun_threading::Condvar::new(),
+            response_buffer: core::ptr::null_mut(),
         }
     }
     fn write_item(&self, item: HTTPClientResult<'static>) {
@@ -584,7 +576,7 @@ impl SingleHTTPChannel {
 fn send_sync_callback(
     this: *mut SingleHTTPChannel,
     async_http: *mut AsyncHTTP<'static>,
-    result: HTTPClientResult<'_>,
+    mut result: HTTPClientResult<'_>,
 ) {
     // `init_sync` leaves every streaming/progress signal unset, so the only
     // callback is the terminal one; writing on `has_more` would hand
@@ -606,25 +598,29 @@ fn send_sync_callback(
         real.response = None;
         real.err = async_http.err;
         real.elapsed = async_http.elapsed;
-        real.response_buffer = async_http.response_buffer;
     }
-    // SAFETY: `this` is the leaked `SingleHTTPChannel` from `send_sync` and is
-    // alive for the process lifetime; `result` borrows the HTTP-thread copy's
-    // response buffer, which is the caller's buffer — outlives the read in
-    // `send_sync`.
+    // SAFETY: `this` is the heap `SingleHTTPChannel` from `send_sync`;
+    // `response_buffer` is the caller's `&mut MutableString` which outlives
+    // `read_item`.
     unsafe {
+        result.body_into(&mut (*(*this).response_buffer).list);
         (*this).write_item(result.detach_lifetime());
     }
 }
 
 impl<'a> AsyncHTTP<'a> {
-    pub fn send_sync(&mut self) -> crate::Result<crate::HTTPResponseMetadata> {
+    pub fn send_sync(
+        &mut self,
+        response_buffer: &mut MutableString,
+    ) -> crate::Result<crate::HTTPResponseMetadata> {
         crate::http_thread::init(&Default::default());
 
         // Note: `Box::leak` is forbidden (PORTING.md §Forbidden);
         // allocate via `heap::alloc` and reclaim once
         // the single sync callback has fired and we've read the result.
-        let ctx = bun_core::heap::into_raw_nn(Box::new(SingleHTTPChannel::init()));
+        let mut ch = SingleHTTPChannel::init();
+        ch.response_buffer = &raw mut *response_buffer;
+        let ctx = bun_core::heap::into_raw_nn(Box::new(ch));
         self.result_callback =
             HTTPClientResultCallback::new::<SingleHTTPChannel>(ctx.as_ptr(), send_sync_callback);
 
@@ -713,11 +709,11 @@ impl<'a> AsyncHTTP<'a> {
                 // (`start_queued_task`), so any owned field that was already
                 // populated at that point — `request_headers`,
                 // `client.header_entries`, `client.proxy_headers`,
-                // `client.proxy_settings`, `client.tls_props`,
-                // `client.unix_socket_path` — is *shared* with the original
-                // and must NOT be dropped here; the original drops them when
-                // its `Box<AsyncHTTP>` is reclaimed. Only the state the clone
-                // built up itself during request processing is torn down.
+                // `client.proxy_settings`, `client.tls_props` — is *shared*
+                // with the original and must NOT be dropped here; the original
+                // drops them when its `Box<AsyncHTTP>` is reclaimed. Only the
+                // state the clone built up itself during request processing is
+                // torn down.
                 {
                     // `handle_response_metadata` rewrites per-hop request state in
                     // place: `client.url`/`connected_url` become self-borrows into
@@ -751,19 +747,9 @@ impl<'a> AsyncHTTP<'a> {
                     drop(core::mem::take(&mut client.prev_redirect));
                     drop(core::mem::take(&mut client.compressed_request_body));
                     drop(core::mem::take(&mut client.proxy_authorization));
-                    if let Some(tunnel) = client.proxy_tunnel.take() {
-                        // SAFETY: tunnel was created by ProxyTunnel::start
-                        // (heap::alloc) and is refcounted; detach the socket
-                        // (the first half of the old `detach_and_deref`)
-                        // before releasing the clone's strong ref below.
-                        (*tunnel.as_ptr()).detach_socket();
-                        tunnel.deref();
-                    }
+                    client.close_proxy_tunnel(false);
                     debug_assert!(client.h2.is_none());
-                    if let Some(ctx) = client.custom_ssl_ctx.take() {
-                        // Release the strong ref the clone took in set_custom_ssl_ctx.
-                        ctx.deref();
-                    }
+                    drop(core::mem::take(&mut client.custom_ssl_ctx));
                     // `state` was `Default` at `ptr::read` time and was
                     // populated by the clone (`on_start` → `client.start`); it
                     // owns the decompressor / compressed_body buffers.
@@ -851,20 +837,12 @@ impl<'a> AsyncHTTP<'a> {
 
         self.elapsed = http_thread_timer_read();
 
-        // `response_buffer` was set in `init()` to a caller-owned MutableString
-        // that outlives this request — the very buffer `start()` records as
-        // `state.body_out_str`. Route through the shared `body_out` accessor
-        // (one centralised unsafe).
-        let response_buffer = crate::body_out::as_mut(
-            NonNull::new(self.response_buffer).expect("response_buffer set in init"),
-        );
-
         // Note: `HTTPRequestBody` is not `Clone` (the `Stream` arm holds an
         // intrusive refcount). Move owned
         // payloads into the client and leave a detached placeholder so Drop on
         // `self.request_body` is a no-op.
         let body = core::mem::replace(&mut self.request_body, HTTPRequestBody::Bytes(b""));
-        self.client.start(body, response_buffer);
+        self.client.start(body);
     }
 }
 

@@ -1,5 +1,6 @@
 use bun_paths::resolve_path;
 
+use crate::node::PathLike;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
@@ -243,7 +244,13 @@ impl Cp {
                     // SAFETY: paired with `heap::alloc` in `create()`.
                     drop(unsafe { bun_core::heap::take(t) });
                 }
-                Some((t, false)) => return Self::print_shell_cp_task(interp, cmd, t),
+                // SAFETY: `t` is a live heap task stashed in
+                // `on_shell_cp_task_done`; reclaim ownership.
+                Some((t, false)) => {
+                    return Self::print_shell_cp_task(interp, cmd, unsafe {
+                        bun_core::heap::take(t)
+                    });
+                }
                 None => break,
             }
         }
@@ -260,12 +267,14 @@ impl Cp {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.tasks_count -= 1;
         }
+        // SAFETY: `task` was heap-allocated in `create()`; ownership transfers
+        // to this completion callback. Re-leaked below only on the EBUSY-defer path.
+        #[cfg_attr(not(windows), allow(unused_mut))]
+        let mut task = unsafe { bun_core::heap::take(task) };
         #[cfg(windows)]
         {
-            // SAFETY: `task` is a live heap-allocated task; main-thread only.
-            let tref = unsafe { &mut *task };
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                if let Some(err) = &tref.err {
+                if let Some(err) = &task.err {
                     // Defer the task to the ebusy phase. Note the precedence:
                     //   `(is_sys && errno==EBUSY && tgt_match) || src_match`
                     // i.e. ANY sys error whose `path` equals `src_absolute` is
@@ -273,21 +282,21 @@ impl Cp {
                     // compatibility.
                     let is_ebusy = matches!(err, ShellErr::Sys(sys)
                         if (sys.get_errno() == bun_sys::E::EBUSY
-                                && tref.tgt_absolute.as_deref()
+                                && task.tgt_absolute.as_deref()
                                     .map_or(false, |p| sys.path.eql_utf8(p)))
-                            || tref.src_absolute.as_deref()
+                            || task.src_absolute.as_deref()
                                     .map_or(false, |p| sys.path.eql_utf8(p)));
                     if is_ebusy {
-                        exec.ebusy.tasks.push(task);
+                        exec.ebusy.tasks.push(bun_core::heap::into_raw(task));
                         return Self::next(interp, cmd).run(interp);
                     }
                 } else {
                     // Record successful absolute paths so a deferred EBUSY
                     // sibling can be suppressed.
-                    if let Some(tgt) = tref.tgt_absolute.take() {
+                    if let Some(tgt) = task.tgt_absolute.take() {
                         bun_core::handle_oom(exec.ebusy.absolute_targets.insert(&tgt));
                     }
-                    if let Some(src) = tref.src_absolute.take() {
+                    if let Some(src) = task.src_absolute.take() {
                         bun_core::handle_oom(exec.ebusy.absolute_srcs.insert(&src));
                     }
                 }
@@ -296,9 +305,11 @@ impl Cp {
         Self::print_shell_cp_task(interp, cmd, task).run(interp);
     }
 
-    fn print_shell_cp_task(interp: &Interpreter, cmd: NodeId, task: *mut ShellCpTask) -> Yield {
-        // SAFETY: task was heap-allocated in create(); reclaim.
-        let mut task = unsafe { bun_core::heap::take(task) };
+    #[allow(
+        clippy::boxed_local,
+        reason = "reclaim point for the box the work pool handed back"
+    )]
+    fn print_shell_cp_task(interp: &Interpreter, cmd: NodeId, mut task: Box<ShellCpTask>) -> Yield {
         // The lock is uncontended here (all work-pool subtasks have
         // finished) but the data lives inside it.
         let output = core::mem::take(&mut *task.verbose_output.lock());
@@ -387,6 +398,8 @@ pub struct ShellCpTask {
     pub(crate) operands: usize,
     pub(crate) src: Vec<u8>,
     pub(crate) tgt: Vec<u8>,
+    /// The absolute paths handed to the `ShellAsyncCpTask`, moved back by
+    /// [`cp_on_finish`](Self::cp_on_finish) for the EBUSY bookkeeping.
     pub(crate) src_absolute: Option<Vec<u8>>,
     pub(crate) tgt_absolute: Option<Vec<u8>>,
     pub(crate) cwd_path: Vec<u8>,
@@ -472,14 +485,23 @@ impl ShellCpTask {
     /// `this` is the live `heap::alloc`'d task originally passed to
     /// [`schedule`](Self::schedule); not touched again on this thread after
     /// return.
-    pub(crate) unsafe fn cp_on_finish(this: *mut ShellCpTask, result: bun_sys::Maybe<()>) {
-        // SAFETY: caller contract — `this` is live and exclusively owned by
-        // this thread until `enqueue_to_event_loop` hands it off.
+    pub(crate) unsafe fn cp_on_finish(
+        this: *mut ShellCpTask,
+        src: PathLike<'static>,
+        dest: PathLike<'static>,
+        result: bun_sys::Maybe<()>,
+    ) {
+        // SAFETY: caller contract — JS thread, from the `ShellAsyncCpTask`'s
+        // completion; `this` is live and ours. The pool side finished (and
+        // dropped its poster) when it handed the copy to that task, so continue
+        // in place rather than bouncing through the concurrent queue again.
         unsafe {
+            (*this).src_absolute = Some(src.into_vec());
+            (*this).tgt_absolute = Some(dest.into_vec());
             if let Err(e) = result {
                 (*this).err = Some(ShellErr::new_sys(&e));
             }
-            Self::enqueue_to_event_loop(this);
+            ShellTask::run_from_main_thread::<ShellCpTask>(this);
         }
     }
 
@@ -502,6 +524,7 @@ impl ShellCpTask {
             let st = &raw mut (*this).task;
             (*st).task.callback = Self::work_pool_callback;
             (*st).keep_alive.ref_((*st).event_loop.as_event_loop_ctx());
+            (*st).arm();
             WorkPool::schedule(&raw mut (*st).task);
         }
     }
@@ -519,9 +542,22 @@ impl ShellCpTask {
                 task,
                 <Self as crate::shell::interpreter::ShellTaskCtx>::TASK_OFFSET,
             );
-            if let Some(e) = (*this).run_from_thread_pool_impl() {
+            // Moved out first: on success the copy is handed to a
+            // `ShellAsyncCpTask` whose completion may free `*this` at once.
+            let poster = (*this)
+                .task
+                .poster
+                .take()
+                .expect("shell cp task on the pool is armed");
+            if let Some(e) = (*this).run_from_thread_pool_impl(&poster) {
                 (*this).err = Some(e);
+                (*this).task.poster = Some(poster);
                 Self::enqueue_to_event_loop(this);
+            } else {
+                // The copy now belongs to a `ShellAsyncCpTask` (holding its
+                // own poster, completing on the JS thread via `cp_on_finish`);
+                // this task's pool part is over.
+                drop(poster);
             }
         }
     }
@@ -565,7 +601,10 @@ impl ShellCpTask {
     /// POSIX `cp` synopses
     /// (<https://man7.org/linux/man-pages/man1/cp.1p.html>), then hands off to
     /// the node:fs async cp implementation.
-    fn run_from_thread_pool_impl(&mut self) -> Option<ShellErr> {
+    fn run_from_thread_pool_impl(
+        &mut self,
+        poster: &bun_jsc::ConcurrentPoster,
+    ) -> Option<ShellErr> {
         use resolve_path::{Platform, platform};
 
         let mut buf2 = bun_paths::PathBuffer::uninit();
@@ -677,18 +716,9 @@ impl ShellCpTask {
             _copying_many = true;
         }
 
-        self.src_absolute = Some(src.as_bytes().to_vec());
-        self.tgt_absolute = Some(tgt.as_bytes().to_vec());
-
         let args = crate::node::fs::args::Cp {
-            src: bun_jsc::node::PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                self.src_absolute.as_deref().unwrap(),
-                false,
-            )),
-            dest: bun_jsc::node::PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                self.tgt_absolute.as_deref().unwrap(),
-                false,
-            )),
+            src: PathLike::owned(src.as_bytes().to_vec()),
+            dest: PathLike::owned(tgt.as_bytes().to_vec()),
             flags: crate::node::fs::args::CpFlags {
                 recursive: self.opts.recursive,
                 force: true,
@@ -696,36 +726,14 @@ impl ShellCpTask {
             },
         };
 
-        match self.task.event_loop {
-            EventLoopHandle::Js { .. } => {
-                let vm_ptr = self
-                    .task
-                    .event_loop
-                    .bun_vm()
-                    .cast::<bun_jsc::virtual_machine::VirtualMachine>();
-                // SAFETY: `Js` arm always has a live VM (set at interpreter
-                // construction); accessed read-only here for the
-                // global-object handle and event-loop pointer.
-                // Read the raw `global`
-                // field instead of `vm.global()` so the `&mut VirtualMachine`
-                // passed below doesn't overlap a `&JSGlobalObject` borrow.
-                let (global, vm) = unsafe { (&*(*vm_ptr).global, &mut *vm_ptr) };
-                let _ = crate::node::fs::ShellAsyncCpTask::create_with_shell_task(
-                    global,
-                    args,
-                    vm,
-                    std::ptr::from_mut::<ShellCpTask>(self),
-                    false,
-                );
-            }
-            EventLoopHandle::Mini(mini) => {
-                let _ = crate::node::fs::ShellAsyncCpTask::create_mini(
-                    args,
-                    mini.as_ptr(),
-                    std::ptr::from_mut::<ShellCpTask>(self),
-                );
-            }
-        }
+        // Pool thread: hand the copy to an fs.cp task bound to the loop and
+        // poster this shell task captured on its own thread.
+        let _ = crate::node::fs::ShellAsyncCpTask::create_for_shell(
+            args,
+            self.task.event_loop,
+            poster.clone(),
+            std::ptr::from_mut::<ShellCpTask>(self),
+        );
 
         None
     }
@@ -742,6 +750,15 @@ impl ShellCpTask {
 
 impl bun_event_loop::Taskable for ShellCpTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellCpTask;
+    /// A pool completion that will not run: drop the keep-alive and the box
+    /// (nothing else frees an unrun one).
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box the builtin scheduled.
+        unsafe {
+            (*this).task.unref_unrun();
+            drop(bun_core::heap::take(this));
+        }
+    }
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellCpTask {

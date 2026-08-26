@@ -135,7 +135,7 @@ public:
 
 
     /* Server name */
-    TemplatedApp &&addServerName(const std::string &hostname_pattern, SocketContextOptions options = {}, bool *success = nullptr) {
+    TemplatedApp &&addServerName(const std::string &hostname_pattern, SocketContextOptions options = {}, bool *success = nullptr, bool applyClientCertPolicy = false) {
 
         /* Do nothing if not even on SSL */
         if constexpr (SSL) {
@@ -144,6 +144,12 @@ public:
             if (!domainCtx) {
                 if (success) *success = false;
                 return std::move(*this);
+            }
+            /* A per-serverName entry carries its own client-certificate
+             * policy; the default entry's own hostname keeps the app-level
+             * one. */
+            if (applyClientCertPolicy) {
+                us_ssl_ctx_set_sni_policy(domainCtx, options.request_cert, options.reject_unauthorized);
             }
             auto *domainRouter = new HttpRouter<typename HttpContextData<SSL>::RouterData>();
             int result = 0;
@@ -214,13 +220,6 @@ public:
     }
 
     using PublishStatus = typename WebSocket<SSL, true, int>::SendStatus;
-
-    /* Publishes a message to all websocket contexts - conceptually as if publishing to the one single
-     * TopicTree of this app (technically there are many TopicTrees, however the concept is that one
-     * app has one conceptual Topic tree) */
-    PublishStatus publish(std::string_view topic, std::string_view message, unsigned char opCode, bool compress = false) {
-        return this->publish(topic, message, (OpCode)opCode, compress);
-    }
 
     /* Publishes a message to the app's one conceptual websocket Topic tree.
      * Returns the worst subscriber SendStatus; no subscribers is DROPPED,
@@ -375,7 +374,6 @@ public:
         MoveOnlyFunction<void(WebSocket<SSL, true, UserData> *)> drain = nullptr;
         MoveOnlyFunction<void(WebSocket<SSL, true, UserData> *, std::string_view)> ping = nullptr;
         MoveOnlyFunction<void(WebSocket<SSL, true, UserData> *, std::string_view)> pong = nullptr;
-        MoveOnlyFunction<void(WebSocket<SSL, true, UserData> *, std::string_view, int, int)> subscription = nullptr;
         MoveOnlyFunction<void(WebSocket<SSL, true, UserData> *, int, std::string_view)> close = nullptr;
     };
 
@@ -391,20 +389,28 @@ public:
         return std::move(*this);
     }
 
-    /** Closes all connections connected to this server which are not sending a request or waiting for a response. Does not close the listen socket. */
-    TemplatedApp &&closeIdle() {
+    /** Closes all connections connected to this server which are not sending a request or waiting for a response. Does not close the listen socket.
+     * With closeWhenIdle set, connections that are busy right now are marked to close as soon as their in-flight work completes (graceful shutdown);
+     * upgraded WebSockets and CONNECT/Upgrade tunnels never become idle, so they are left alone either way.
+     * Returns the number of connections closed. */
+    size_t closeIdle(bool closeWhenIdle = false) {
         auto *group = httpContext->getSocketGroup();
         struct us_socket_t *s = group->head_sockets;
+        size_t closed = 0;
         while (s) {
-            // no matter the type of socket will always contain the AsyncSocketData
-            auto *data = ((AsyncSocket<SSL> *) s)->getAsyncSocketData();
+            /* The HTTP group only holds HTTP sockets (an upgraded WebSocket is
+             * adopted into its own group), so the ext block is an HttpResponseData. */
+            auto *data = (HttpResponseData<SSL> *) ((AsyncSocket<SSL> *) s)->getAsyncSocketData();
             struct us_socket_t *next = s->next;
             if (data->isIdle) {
                 us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+                closed++;
+            } else if (closeWhenIdle) {
+                data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
             }
             s = next;
         }
-        return std::move(*this);
+        return closed;
     }
 
     template <typename UserData>
@@ -499,11 +505,6 @@ public:
         /* We also keep this list for easy closing */
         webSocketGroups.push_back(webSocketContext->getSocketGroup());
 
-        /* Quick fix to disable any compression if set */
-#ifdef UWS_NO_ZLIB
-        behavior.compression = DISABLED;
-#endif
-
         /* If we are the first one to use compression, initialize it */
         if (behavior.compression) {
             LoopData *loopData = (LoopData *) us_loop_ext(us_socket_group_loop(webSocketContext->getSocketGroup()));
@@ -520,7 +521,6 @@ public:
         webSocketContext->getExt()->openHandler = std::move(behavior.open);
         webSocketContext->getExt()->messageHandler = std::move(behavior.message);
         webSocketContext->getExt()->drainHandler = std::move(behavior.drain);
-        webSocketContext->getExt()->subscriptionHandler = std::move(behavior.subscription);
         webSocketContext->getExt()->closeHandler = [closeHandler = std::move(behavior.close)](WebSocket<SSL, true, UserData> *ws, int code, std::string_view message) mutable {
             if (closeHandler) {
                 closeHandler(ws, code, message);
@@ -700,15 +700,6 @@ private:
     struct ssl_ctx_st *sslCtxOrNull() { return SSL ? sslCtx : nullptr; }
 
 public:
-    /* Host, port, callback */
-    TemplatedApp &&listen(const std::string &host, int port, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
-        if (host.empty()) {
-            return listen(port, std::move(handler));
-        }
-        handler(httpContext ? trackListenSocket(httpContext->listen(sslCtxOrNull(), host.c_str(), port, 0)) : nullptr);
-        return std::move(*this);
-    }
-
     /* Host, port, options, callback */
     TemplatedApp &&listen(const std::string &host, int port, int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
         if (host.empty()) {
@@ -732,12 +723,6 @@ public:
 
     /* options, callback, path to unix domain socket */
     TemplatedApp &&listen(int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler, std::string_view path) {
-        handler(httpContext ? trackListenSocket(httpContext->listen_unix(sslCtxOrNull(), path.data(), path.length(), options)) : nullptr);
-        return std::move(*this);
-    }
-
-    /* callback, path to unix domain socket */
-    TemplatedApp &&listen(MoveOnlyFunction<void(us_listen_socket_t *)> &&handler, std::string_view path, int options) {
         handler(httpContext ? trackListenSocket(httpContext->listen_unix(sslCtxOrNull(), path.data(), path.length(), options)) : nullptr);
         return std::move(*this);
     }
@@ -775,10 +760,13 @@ public:
         return std::move(*this);
     }
 
-    TemplatedApp &&setFlags(bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool httpAllowHalfOpen) {
+    /* lenientHttpFlags: bit 0 = lenient header values (llhttp LENIENT_HEADERS),
+     * bit 1 = lenient transfer-encoding (llhttp LENIENT_TRANSFER_ENCODING). */
+    TemplatedApp &&setFlags(bool requireHostHeader, bool useStrictMethodValidation, uint8_t lenientHttpFlags, bool httpAllowHalfOpen) {
         httpContext->getSocketContextData()->flags.requireHostHeader = requireHostHeader;
         httpContext->getSocketContextData()->flags.useStrictMethodValidation = useStrictMethodValidation;
-        httpContext->getSocketContextData()->flags.useInsecureHTTPParser = useInsecureHTTPParser;
+        httpContext->getSocketContextData()->flags.useInsecureHTTPParser = (lenientHttpFlags & 1) != 0;
+        httpContext->getSocketContextData()->flags.useLenientTransferEncoding = (lenientHttpFlags & 2) != 0;
         httpContext->getSocketContextData()->flags.httpAllowHalfOpen = httpAllowHalfOpen;
         return std::move(*this);
     }

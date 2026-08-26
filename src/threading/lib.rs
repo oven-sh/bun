@@ -29,11 +29,10 @@ pub use condition::{Condition, Condvar};
 /// `Futex` re-exported as a capitalized module alias so callers can write
 /// `Futex::wait`, `Futex::wake`, `Futex::Deadline`.
 pub use futex as Futex;
-pub use guarded::RawMutex;
-pub use guarded::{Guarded, GuardedBy, GuardedLock};
+pub use guarded::{Guarded, GuardedLock};
 pub use mutex::{Mutex, MutexGuard};
 pub use reset_event::ResetEvent;
-pub use rwlock::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+pub use rwlock::RwLock;
 pub use semaphore::Semaphore;
 pub use thread_pool::ThreadPool;
 pub use unbounded_queue::{Link, Linked, UnboundedQueue};

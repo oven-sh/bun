@@ -3,6 +3,8 @@ import type * as SqliteTypes from "bun:sqlite";
 
 const kSafeIntegersFlag = 1 << 1;
 const kStrictFlag = 1 << 2;
+const kOwnedByDatabaseFlag = 1 << 3;
+const kPrepareOwned = Symbol("prepareOwned");
 
 const defineProperties = Object.defineProperties;
 const toStringTag = Symbol.toStringTag;
@@ -105,6 +107,7 @@ interface CppSQLStatement {
   raw: (...args: TODO[]) => TODO;
   finalize: (...args: TODO[]) => TODO;
   toString: (...args: TODO[]) => TODO;
+  isFinalized: boolean;
   columns: string[];
   columnsCount: number;
   paramsCount: number;
@@ -161,7 +164,9 @@ class Statement {
   values: SqliteTypes.Statement["values"];
   raw: SqliteTypes.Statement["raw"];
   run: SqliteTypes.Statement["run"];
-  isFinalized = false;
+  get isFinalized() {
+    return this.#raw.isFinalized;
+  }
 
   toJSON() {
     return {
@@ -325,7 +330,6 @@ class Statement {
   }
 
   finalize(...args) {
-    this.isFinalized = true;
     return this.#raw.finalize(...args);
   }
 
@@ -426,11 +430,8 @@ class Database implements SqliteTypes.Database {
 
   #internalFlags = 0;
   #handle;
-  #cachedQueriesKeys: string[] = [];
-  #cachedQueriesLengths: number[] = [];
-  #cachedQueriesValues: Statement[] = [];
+  #queryCache: Map<string, Statement> = new Map();
   filename;
-  #hasClosed = false;
   get handle() {
     return this.#handle;
   }
@@ -474,9 +475,7 @@ class Database implements SqliteTypes.Database {
   }
 
   [Symbol.dispose]() {
-    if (!this.#hasClosed) {
-      this.close(true);
-    }
+    this.close(true);
   }
 
   static setCustomSQLite(path) {
@@ -498,34 +497,14 @@ class Database implements SqliteTypes.Database {
   }
 
   close(throwOnError = false) {
-    this.clearQueryCache();
-    // Finalize any prepared statements created by db.transaction()
-    if (controllers) {
-      const controller = controllers.get(this);
-      if (controller) {
-        controllers.delete(this);
-        const seen = new Set();
-        for (const ctrl of [controller.default, controller.deferred, controller.immediate, controller.exclusive]) {
-          if (!ctrl) continue;
-          for (const stmt of [ctrl.begin, ctrl.commit, ctrl.rollback, ctrl.savepoint, ctrl.release, ctrl.rollbackTo]) {
-            if (stmt && !seen.has(stmt)) {
-              seen.add(stmt);
-              stmt.finalize?.();
-            }
-          }
-        }
-      }
-    }
-    this.#hasClosed = true;
+    // native close finalizes every kOwnedByDatabaseFlag statement (query cache + transaction controller)
+    this.#queryCache.$clear();
+    controllers?.delete(this);
     return SQL.close(this.#handle, throwOnError);
   }
   clearQueryCache() {
-    for (let item of this.#cachedQueriesValues) {
-      item?.finalize?.();
-    }
-    this.#cachedQueriesKeys.length = 0;
-    this.#cachedQueriesValues.length = 0;
-    this.#cachedQueriesLengths.length = 0;
+    this.#queryCache.$forEach(stmt => stmt.finalize());
+    this.#queryCache.$clear();
   }
 
   run(query, ...params) {
@@ -548,10 +527,16 @@ class Database implements SqliteTypes.Database {
     return new Statement(SQL.prepare(this.#handle, query, params, flags || 0, this.#internalFlags));
   }
 
+  [kPrepareOwned](query: string, flags: number) {
+    return new Statement(
+      SQL.prepare(this.#handle, query, undefined, flags, this.#internalFlags | kOwnedByDatabaseFlag),
+    );
+  }
+
   static MAX_QUERY_CACHE_SIZE = 20;
 
   get [cachedCount]() {
-    return this.#cachedQueriesKeys.length;
+    return this.#queryCache.$size;
   }
 
   query(query) {
@@ -563,35 +548,23 @@ class Database implements SqliteTypes.Database {
       throw new Error("SQL query cannot be empty.");
     }
 
-    const willCache = this.#cachedQueriesKeys.length < Database.MAX_QUERY_CACHE_SIZE;
-
-    // this list should be pretty small
-    let index = this.#cachedQueriesLengths.indexOf(query.length);
-    while (index !== -1) {
-      if (this.#cachedQueriesKeys[index] !== query) {
-        index = this.#cachedQueriesLengths.indexOf(query.length, index + 1);
-        continue;
-      }
-
-      const stmt = this.#cachedQueriesValues[index];
-      if (stmt.isFinalized) {
-        return (this.#cachedQueriesValues[index] = this.prepare(
-          query,
-          undefined,
-          willCache ? constants.SQLITE_PREPARE_PERSISTENT : 0,
-        ));
-      }
+    const cache = this.#queryCache;
+    let stmt = cache.$get(query);
+    if (stmt !== undefined) {
+      // LRU: re-insert so the most recently used key is last
+      cache.$delete(query);
+      if (stmt.isFinalized) stmt = this[kPrepareOwned](query, constants.SQLITE_PREPARE_PERSISTENT);
+      cache.$set(query, stmt);
       return stmt;
     }
 
-    var stmt = this.prepare(query, undefined, willCache ? constants.SQLITE_PREPARE_PERSISTENT : 0);
-
-    if (willCache) {
-      this.#cachedQueriesKeys.push(query);
-      this.#cachedQueriesLengths.push(query.length);
-      this.#cachedQueriesValues.push(stmt);
+    stmt = this[kPrepareOwned](query, constants.SQLITE_PREPARE_PERSISTENT);
+    const max = Database.MAX_QUERY_CACHE_SIZE;
+    if (max > 0) {
+      // evicted statements stay usable; close() still finalizes them via kOwnedByDatabaseFlag
+      if (cache.$size >= max) cache.$delete(cache.$keys().next().value);
+      cache.$set(query, stmt);
     }
-
     return stmt;
   }
 
@@ -635,20 +608,20 @@ const getController = (db, _self) => {
   let controller = (controllers ||= new WeakMap()).get(db);
   if (!controller) {
     const shared = {
-      commit: db.prepare("COMMIT", undefined, 0),
-      rollback: db.prepare("ROLLBACK", undefined, 0),
-      savepoint: db.prepare("SAVEPOINT `\t_bs3.\t`", undefined, 0),
-      release: db.prepare("RELEASE `\t_bs3.\t`", undefined, 0),
-      rollbackTo: db.prepare("ROLLBACK TO `\t_bs3.\t`", undefined, 0),
+      commit: db[kPrepareOwned]("COMMIT", 0),
+      rollback: db[kPrepareOwned]("ROLLBACK", 0),
+      savepoint: db[kPrepareOwned]("SAVEPOINT `\t_bs3.\t`", 0),
+      release: db[kPrepareOwned]("RELEASE `\t_bs3.\t`", 0),
+      rollbackTo: db[kPrepareOwned]("ROLLBACK TO `\t_bs3.\t`", 0),
     };
 
     controllers.set(
       db,
       (controller = {
-        default: Object.assign({ begin: db.prepare("BEGIN", undefined, 0) }, shared),
-        deferred: Object.assign({ begin: db.prepare("BEGIN DEFERRED", undefined, 0) }, shared),
-        immediate: Object.assign({ begin: db.prepare("BEGIN IMMEDIATE", undefined, 0) }, shared),
-        exclusive: Object.assign({ begin: db.prepare("BEGIN EXCLUSIVE", undefined, 0) }, shared),
+        default: Object.assign({ begin: db[kPrepareOwned]("BEGIN", 0) }, shared),
+        deferred: Object.assign({ begin: db[kPrepareOwned]("BEGIN DEFERRED", 0) }, shared),
+        immediate: Object.assign({ begin: db[kPrepareOwned]("BEGIN IMMEDIATE", 0) }, shared),
+        exclusive: Object.assign({ begin: db[kPrepareOwned]("BEGIN EXCLUSIVE", 0) }, shared),
       }),
     );
   }

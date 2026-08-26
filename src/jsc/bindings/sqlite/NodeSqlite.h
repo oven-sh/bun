@@ -106,7 +106,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static JSDatabaseSync* create(JSC::VM& vm, JSC::Structure* structure, WTF::String&& location, DatabaseSyncOpenConfiguration&& config);
@@ -270,7 +270,7 @@ public:
 
     static JSDatabaseSyncPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        auto* ptr = new (NotNull, JSC::allocateCell<JSDatabaseSyncPrototype>(vm)) JSDatabaseSyncPrototype(vm, structure);
+        auto* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSDatabaseSyncPrototype))) JSDatabaseSyncPrototype(vm, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
     }
@@ -284,7 +284,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -306,7 +306,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject*, JSC::CallFrame*);
@@ -335,7 +335,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static JSStatementSync* create(JSC::VM& vm, JSC::Structure* structure, JSDatabaseSync* db, sqlite3_stmt* stmt);
@@ -363,8 +363,6 @@ public:
 
     bool useBigInts() const { return m_useBigInts; }
     bool returnArrays() const { return m_returnArrays; }
-    bool allowBareNamedParams() const { return m_allowBareNamedParams; }
-    bool allowUnknownNamedParams() const { return m_allowUnknownNamedParams; }
     void setUseBigInts(bool v) { m_useBigInts = v; }
     void setReturnArrays(bool v) { m_returnArrays = v; }
     void setAllowBareNamedParams(bool v) { m_allowBareNamedParams = v; }
@@ -417,7 +415,6 @@ public:
     // invalidated when the statement is reset with a different shape.
     JSC::Structure* ensureRowStructure(JSC::JSGlobalObject*);
     void invalidateRowStructure();
-    JSC::Structure* rowStructure() const { return m_rowStructure.get(); }
     // Per-result-column index into the structure's inline slots.
     // Duplicate column names share the first occurrence's slot so the
     // later column overwrites it — last-wins, matching Node's V8
@@ -470,7 +467,7 @@ public:
 
     static JSStatementSyncPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        auto* ptr = new (NotNull, JSC::allocateCell<JSStatementSyncPrototype>(vm)) JSStatementSyncPrototype(vm, structure);
+        auto* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSStatementSyncPrototype))) JSStatementSyncPrototype(vm, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
     }
@@ -484,7 +481,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -506,7 +503,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject*, JSC::CallFrame*);
@@ -539,7 +536,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static JSStatementSyncIterator* create(JSC::VM& vm, JSC::Structure* structure, JSStatementSync* stmt);
@@ -580,7 +577,7 @@ public:
 
     static JSStatementSyncIteratorPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        auto* ptr = new (NotNull, JSC::allocateCell<JSStatementSyncIteratorPrototype>(vm)) JSStatementSyncIteratorPrototype(vm, structure);
+        auto* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSStatementSyncIteratorPrototype))) JSStatementSyncIteratorPrototype(vm, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
     }
@@ -594,7 +591,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -623,7 +620,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static JSNodeSqliteSession* create(JSC::VM& vm, JSC::Structure* structure, JSDatabaseSync* db, Ref<NodeSqliteSessionRecord>&& record);
@@ -669,7 +666,7 @@ public:
 
     static JSNodeSqliteSessionPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        auto* ptr = new (NotNull, JSC::allocateCell<JSNodeSqliteSessionPrototype>(vm)) JSNodeSqliteSessionPrototype(vm, structure);
+        auto* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSNodeSqliteSessionPrototype))) JSNodeSqliteSessionPrototype(vm, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
     }
@@ -683,7 +680,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -705,7 +702,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject*, JSC::CallFrame*);
@@ -742,7 +739,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static JSNodeSqliteLimits* create(JSC::VM& vm, JSC::Structure* structure, JSDatabaseSync* db);
@@ -792,7 +789,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static JSNodeSqliteTagStore* create(JSC::VM& vm, JSC::Structure* structure, JSDatabaseSync* db, size_t capacity);
@@ -848,7 +845,7 @@ public:
 
     static JSNodeSqliteTagStorePrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        auto* ptr = new (NotNull, JSC::allocateCell<JSNodeSqliteTagStorePrototype>(vm)) JSNodeSqliteTagStorePrototype(vm, structure);
+        auto* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSNodeSqliteTagStorePrototype))) JSNodeSqliteTagStorePrototype(vm, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
     }
@@ -862,7 +859,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -884,7 +881,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject*, JSC::CallFrame*);

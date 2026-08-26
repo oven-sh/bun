@@ -154,7 +154,11 @@ impl BuildCommand {
         this_transpiler.options.source_map =
             options::SourceMapOption::from_api(ctx.args.source_map);
 
-        this_transpiler.options.compile = ctx.bundler_options.compile;
+        this_transpiler.options.compile_mode = if ctx.bundler_options.compile {
+            options::CompileMode::Executable
+        } else {
+            options::CompileMode::None
+        };
 
         if this_transpiler.options.source_map == options::SourceMapOption::External
             && ctx.bundler_options.outdir.is_empty()
@@ -231,6 +235,7 @@ impl BuildCommand {
                 options::AllowUnresolved::All
             };
         this_transpiler.options.css_chunking = ctx.bundler_options.css_chunking;
+        this_transpiler.options.min_chunk_size = ctx.bundler_options.min_chunk_size;
         this_transpiler.options.metafile =
             !ctx.bundler_options.metafile.is_empty() || !ctx.bundler_options.metafile_md.is_empty();
 
@@ -245,6 +250,9 @@ impl BuildCommand {
         }
 
         this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
+        this_transpiler.options.bytecode_depth = ctx.bundler_options.bytecode_depth;
+        this_transpiler.options.compile_target_is_host =
+            ctx.bundler_options.compile_target.is_default();
         let mut was_renamed_from_index = false;
 
         if ctx.bundler_options.compile {
@@ -284,9 +292,8 @@ impl BuildCommand {
                     Global::exit(1);
                 }
 
-                this_transpiler.options.compile_to_standalone_html = true;
                 // This is not a bun executable compile - clear compile flags
-                this_transpiler.options.compile = false;
+                this_transpiler.options.compile_mode = options::CompileMode::StandaloneHtml;
                 ctx.bundler_options.compile = false;
 
                 if ctx.bundler_options.outdir.is_empty() && outfile.is_empty() {
@@ -1062,7 +1069,7 @@ impl BuildCommand {
             }
 
             for f in output_files.iter() {
-                if let Err(err) = f.write_to_disk(root_dir.fd, from_path) {
+                if let Err(err) = f.write_to_disk(root_dir.fd) {
                     Output::err(
                         err,
                         "failed to write file '{}'",
@@ -1087,7 +1094,10 @@ impl BuildCommand {
                         options::OutputKind::Asset => "<magenta>",
                         options::OutputKind::Sourcemap => "<d>",
                         options::OutputKind::Bytecode => "<d>",
-                        options::OutputKind::ModuleInfo => "<d>",
+                        options::OutputKind::ModuleInfo
+                        | options::OutputKind::BuiltinBytecode
+                        | options::OutputKind::BytecodeStringTable
+                        | options::OutputKind::ModuleInfoStringTable => "<d>",
                         options::OutputKind::MetafileJson
                         | options::OutputKind::MetafileMarkdown => "<green>",
                     }))?;
@@ -1133,6 +1143,9 @@ impl BuildCommand {
                         options::OutputKind::Sourcemap => "source map",
                         options::OutputKind::Bytecode => "bytecode",
                         options::OutputKind::ModuleInfo => "module info",
+                        options::OutputKind::BuiltinBytecode => "builtin bytecode",
+                        options::OutputKind::BytecodeStringTable => "bytecode strings",
+                        options::OutputKind::ModuleInfoStringTable => "module info strings",
                         options::OutputKind::MetafileJson => "metafile json",
                         options::OutputKind::MetafileMarkdown => "metafile markdown",
                     }

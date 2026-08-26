@@ -33,6 +33,10 @@ export default [
         fn: "getCurrentState",
         length: 0,
       },
+      getFrameCounters: {
+        fn: "getFrameCounters",
+        length: 0,
+      },
       settings: {
         fn: "updateSettings",
         length: 1,

@@ -551,6 +551,7 @@ function spawnSync(file, args, options) {
   }
 
   var error;
+  var failedToSpawn = false;
   try {
     var {
       stdout = null,
@@ -584,37 +585,53 @@ function spawnSync(file, args, options) {
     });
   } catch (err) {
     error = err;
-    stdout = null;
-    stderr = null;
+    failedToSpawn = true;
   }
 
-  // When stdio is redirected to a file descriptor, Bun.spawnSync returns the fd number
-  // instead of the actual output. We should treat this as no output available.
-  const outputStdout = typeof stdout === "number" ? null : stdout;
-  const outputStderr = typeof stderr === "number" ? null : stderr;
+  let result;
+  if (failedToSpawn) {
+    // Node's SyncProcessRunner::BuildResultObject (src/spawn_sync.cc) sets `status`
+    // and `output` to null when the process was never started, and always sets
+    // `pid` (uv_process_t is zero-initialized on a failed spawn). `stdout` and
+    // `stderr` stay undefined (`result.stdout = result.output?.[1]` in
+    // lib/internal/child_process.js).
+    result = {
+      signal: null,
+      status: null,
+      output: null,
+      pid: 0,
+      stdout: undefined,
+      stderr: undefined,
+    };
+  } else {
+    // When stdio is redirected to a file descriptor, Bun.spawnSync returns the fd number
+    // instead of the actual output. We should treat this as no output available.
+    const outputStdout = typeof stdout === "number" ? null : stdout;
+    const outputStderr = typeof stderr === "number" ? null : stderr;
 
-  const result = {
-    signal: signalCode ?? null,
-    status: exitCode,
-    // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
-    output: [null, outputStdout, outputStderr],
-    pid,
-  };
+    result = {
+      signal: signalCode ?? null,
+      status: exitCode,
+      // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
+      output: [null, outputStdout, outputStderr],
+      pid,
+    };
+
+    if (outputStdout && encoding && encoding !== "buffer") {
+      result.output[1] = result.output[1]?.toString(encoding);
+    }
+
+    if (outputStderr && encoding && encoding !== "buffer") {
+      result.output[2] = result.output[2]?.toString(encoding);
+    }
+
+    result.stdout = result.output[1];
+    result.stderr = result.output[2];
+  }
 
   if (error) {
     result.error = error;
   }
-
-  if (outputStdout && encoding && encoding !== "buffer") {
-    result.output[1] = result.output[1]?.toString(encoding);
-  }
-
-  if (outputStderr && encoding && encoding !== "buffer") {
-    result.output[2] = result.output[2]?.toString(encoding);
-  }
-
-  result.stdout = result.output[1];
-  result.stderr = result.output[2];
 
   if (exitedDueToTimeout && error == null) {
     result.error = new SystemError(

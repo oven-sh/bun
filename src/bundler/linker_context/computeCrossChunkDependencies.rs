@@ -603,6 +603,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
     {
         debug!("Generating cross-chunk imports");
         let mut list: Vec<CrossChunkImport> = Vec::new();
+        let mut evaluation_rank: Vec<u32> = vec![u32::MAX; chunks.len()];
         // We move the per-chunk fields we
         // mutate (`imports_from_other_chunks`, `cross_chunk_imports`) out via `take`, drop
         // the `chunk` borrow, hand the whole `chunks` slice to `sorted_cross_chunk_imports`
@@ -624,13 +625,24 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             // write it back at loop end.
             let mut cross_chunk_prefix_stmts = Vec::<bun_ast::Stmt>::default();
 
+            let reached = &chunks[chunk_index]
+                .content
+                .javascript()
+                .reached_chunks_in_order;
+            for (rank, &other) in reached.iter().enumerate() {
+                evaluation_rank[other as usize] = rank as u32;
+            }
             CrossChunkImport::sorted_cross_chunk_imports(
                 &mut list,
                 chunks,
                 &mut imports_from_other_chunks,
                 c.graph.stable_source_indices.slice(),
+                &evaluation_rank,
             )
             .expect("unreachable");
+            for &other in reached.iter() {
+                evaluation_rank[other as usize] = u32::MAX;
+            }
             let cross_chunk_imports_input: &[CrossChunkImport] = list.as_slice();
             for cross_chunk_import in cross_chunk_imports_input {
                 match c.options.output_format {

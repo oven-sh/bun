@@ -148,14 +148,18 @@ pub mod clipboard {
         /// `None` once another process has held the clipboard for the whole
         /// retry window.
         pub fn open() -> Option<OpenedClipboard> {
+            const ATTEMPTS: u32 = 5;
             let transaction = TRANSACTION.lock();
-            for attempt in 0..5u32 {
+            for attempt in 0..ATTEMPTS {
                 if OpenClipboard(core::ptr::null_mut()) != 0 {
                     return Some(OpenedClipboard {
                         _transaction: transaction,
                     });
                 }
-                Sleep(5 * (attempt + 1));
+                // No sleep after the last try: the lock is held all the while.
+                if attempt + 1 < ATTEMPTS {
+                    Sleep(5 * (attempt + 1));
+                }
             }
             None
         }

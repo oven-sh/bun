@@ -488,13 +488,15 @@ impl Processor {
                 p.oldest_ns = 0;
                 (core::mem::replace(&mut p.scopes, spare), count)
             } else {
-                // Split at a span boundary: each encoded span is
-                // tag(SS_SPANS) + varint length + body.
+                // Split at a span boundary (each encoded span is tag(SS_SPANS)
+                // + varint length + body): the first `max` spans leave in the
+                // buffers they are in; only the (smaller) remainder is copied
+                // out into the spare buffers, which then become `pending`.
                 let mut taken = 0u32;
-                let mut out = spare;
-                out.resize_with(p.scopes.len().max(out.len()), Vec::new);
+                let mut rest = spare;
+                rest.resize_with(p.scopes.len().max(rest.len()), Vec::new);
                 for (i, buf) in p.scopes.iter_mut().enumerate() {
-                    if taken == max || buf.is_empty() {
+                    if buf.is_empty() {
                         continue;
                     }
                     let mut at = 0usize;
@@ -503,13 +505,15 @@ impl Processor {
                         at += 1 + hdr + len;
                         taken += 1;
                     }
-                    out[i].extend_from_slice(&buf[..at]);
-                    buf.drain(..at);
+                    if at < buf.len() {
+                        rest[i].extend_from_slice(&buf[at..]);
+                        buf.truncate(at);
+                    }
                 }
                 p.count -= taken;
                 self.split_remainder.store(true, Ordering::Release);
                 // `oldest_ns` stays: the remainder is at least that old.
-                (out, taken)
+                (core::mem::replace(&mut p.scopes, rest), taken)
             }
         };
         let body = {

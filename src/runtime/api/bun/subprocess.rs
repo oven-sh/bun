@@ -481,17 +481,11 @@ impl Subprocess<'_> {
     pub(crate) fn on_close_io(&self, kind: StdioKind) {
         match kind {
             StdioKind::Stdin => self.stdin.with_mut(|stdin| match stdin {
-                Writable::Pipe(pipe) => {
-                    let pipe = *pipe;
-                    // `source` is a `JsCell`, so the shared `&FileSink` from the
-                    // centralised `pipe_sink` accessor suffices for `with_mut`.
-                    Writable::pipe_sink(pipe).source.with_mut(|s| s.clear());
-                    *stdin = Writable::Ignore;
-                    // `Writable::Pipe` owns one intrusive ref; release it now
-                    // that the variant has been overwritten. Ordered after the
-                    // assignment so any re-entrant `on_stdin_destroyed` from
-                    // `deinit` observes `.Ignore`.
-                    Writable::pipe_release(pipe);
+                Writable::Pipe(_) => {
+                    let Writable::Pipe(pipe) = core::mem::replace(stdin, Writable::Ignore) else {
+                        unreachable!()
+                    };
+                    pipe.source.with_mut(|s| s.clear());
                 }
                 Writable::Buffer(_) => {
                     let Writable::Buffer(buffer) = core::mem::replace(stdin, Writable::Ignore)
@@ -499,7 +493,6 @@ impl Subprocess<'_> {
                         unreachable!()
                     };
                     Writable::buffer_writer_mut(&buffer).source.detach();
-                    buffer.deref();
                 }
                 _ => {}
             }),
@@ -524,8 +517,6 @@ impl Subprocess<'_> {
                         // pipe.state was emptied via take()
                     }
                     // else: *out stays Readable::Ignore (set by replace above).
-                    // RefPtr has no Drop — release the ref this Readable held.
-                    pipe.deref();
                 }
             }
         }
@@ -1021,8 +1012,7 @@ impl Subprocess<'_> {
             && self.flags.get().contains(Flags::IS_STDIN_A_READABLE_STREAM)
         {
             if let Writable::Pipe(pipe) = self.stdin.get() {
-                // Writable::Pipe already stores `NonNull<FileSink>`; just copy it.
-                Some(*pipe)
+                Some(pipe.as_non_null())
             } else {
                 unreachable!()
             }

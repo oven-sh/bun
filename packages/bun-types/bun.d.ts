@@ -3353,6 +3353,17 @@ declare module "bun" {
     bytecode?: boolean;
 
     /**
+     * How many levels of nested functions to compile to bytecode ahead of time.
+     * `0` compiles only each module's top-level code; nested functions past the
+     * limit are compiled from source when first called. Lower values make the
+     * bytecode smaller at the cost of some startup work.
+     *
+     * Must be a non-negative integer. Only used when `bytecode: true`.
+     * @default undefined (all nested functions)
+     */
+    bytecodeDepth?: number;
+
+    /**
      * Add a banner to the bundled code such as "use client";
      */
     banner?: string;

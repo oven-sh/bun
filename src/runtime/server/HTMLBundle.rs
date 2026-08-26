@@ -150,7 +150,6 @@ pub(crate) type HTMLBundleRoute = Route;
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(debug_name = "HTMLBundleRoute")]
 pub struct Route {
-    /// Released in `Drop`.
     pub(crate) bundle: RefPtr<HTMLBundle>,
     /// One HTMLBundle.Route can be specified multiple times
     ref_count: RefCount<Route>,
@@ -174,21 +173,10 @@ pub enum State {
     /// (`schedule_bundle`).
     Building,
     Err(Log),
-    /// Released in `State::deinit`.
     Html(RefPtr<StaticRoute>),
 }
 
-// `State::deinit` is *only* invoked from `Route::drop` and the dev-mode reset
-// in `on_any_request`; ordinary `state.set(...)` overwrites in
-// `on_complete`/`on_plugins_resolved`/etc. never replace a `State::Html`, so
-// they do not need it.
 impl State {
-    fn deinit(self) {
-        if let State::Html(html) = self {
-            html.deref();
-        }
-    }
-
     fn memory_cost(&self) -> usize {
         match self {
             State::Pending => 0,
@@ -229,7 +217,7 @@ impl Route {
     }
 
     fn on_any_request(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse, is_head: bool) {
-        let _keep_alive = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
         let route: &Route = &this;
 
         let Some(server) = route.server.get() else {
@@ -260,10 +248,8 @@ impl Route {
             }
 
             // Simpler development workflow which rebundles on every request.
-            // R-2: swap the state out *before* releasing what it holds so no
-            // borrow into `route.state` is live across `StaticRoute`'s deref.
             if matches!(route.state.get(), State::Html(_) | State::Err(_)) {
-                route.state.replace(State::Pending).deinit();
+                route.state.set(State::Pending);
             }
         }
 
@@ -321,7 +307,7 @@ impl Route {
                     let pending = PendingResponse {
                         method,
                         resp,
-                        route: RefPtr::from_this(this),
+                        _route: RefPtr::from_this(this),
                         is_response_pending: Cell::new(true),
                         otel: Cell::new(otel),
                     };
@@ -751,8 +737,6 @@ impl Drop for Route {
     fn drop(&mut self) {
         // pending responses keep a ref to the route
         debug_assert!(self.pending_responses.get().is_empty());
-        self.state.replace(State::Pending).deinit();
-        self.bundle.deref();
     }
 }
 
@@ -761,8 +745,8 @@ pub struct PendingResponse {
     method: Method,
     resp: AnyResponse,
     is_response_pending: Cell<bool>,
-    /// Released in `Drop`.
-    route: RefPtr<Route>,
+    /// Keeps the route alive while this response waits on it.
+    _route: RefPtr<Route>,
     /// SERVER span for a request parked while the bundle builds; ends when
     /// it is answered (or aborted).
     otel: Cell<bun_telemetry::NativeSpan>,
@@ -772,7 +756,7 @@ impl PendingResponse {
     fn otel_end(&self, status: u16, aborted: bool) {
         let span = self.otel.replace(bun_telemetry::NativeSpan::NONE);
         if span.is_some() {
-            if let Some(server) = self.route.server.get() {
+            if let Some(server) = self._route.server.get() {
                 crate::telemetry::server::end(server.global_this(), span, status, aborted);
             }
         }
@@ -786,7 +770,6 @@ impl Drop for PendingResponse {
             self.resp.clear_on_writable();
             self.resp.end_without_body(true);
         }
-        self.route.deref();
     }
 }
 
@@ -794,7 +777,7 @@ impl Route {
     /// uws onAborted for a response waiting in `pending_responses`.
     fn on_pending_response_aborted(this: ThisPtr<Self>, resp: AnyResponse) {
         // Technically, this could be the final ref count, but we don't want to risk it
-        let _keep_alive = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
 
         // R-2: scope the `&mut Vec` to the find+remove only — dropping the
         // removed entry releases a route ref and must not overlap a live

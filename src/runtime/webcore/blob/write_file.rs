@@ -306,9 +306,6 @@ impl WriteFile {
             close_after_io: false,
             mkdirp_if_not_exists,
         };
-        // No explicit store ref bump: the caller passes a `+1` Blob (via
-        // `borrowed_view()`'s `StoreRef::clone`) and dropping the `WriteFile`
-        // in `then` runs `StoreRef::drop`, so the ref/deref pair is RAII.
         Ok(write_file)
     }
 
@@ -368,13 +365,6 @@ impl WriteFile {
         let cb_ctx = this.on_complete_ctx;
         let system_error = this.system_error.take();
         let total_written = this.total_written;
-        // Cleanup is RAII: dropping the `Box` runs `WriteFile`'s field-drop
-        // glue, which drops `bytes_blob.store`/`file_blob.store: Option<
-        // StoreRef>` → `Store::deref()` — exactly one deref each.
-        // (An earlier explicit `detach()` here was a no-op; the
-        // bun-write-leak.test.ts failure was the ASAN debug build's ~320 MB
-        // baseline RSS exceeding the fixture's 256 MB absolute threshold,
-        // not an unbalanced ref.)
         drop(this);
 
         if let Some(err) = system_error {
@@ -656,10 +646,6 @@ mod windows_impl {
                 owned_fd: false,
             });
             // SAFETY: just allocated, sole owner until returned.
-            // No explicit store ref bumps — the caller passes `+1` Blobs via
-            // `borrowed_view()` and `deinit` releases them via
-            // `heap::take → StoreRef::drop`.
-            //
             // `open`/`do_write_loop` may free `*write_file` on the `Err` path,
             // so we operate through the raw `write_file` pointer rather than
             // holding a `&mut` across those calls (Stacked Borrows: a `&mut`
@@ -1203,8 +1189,6 @@ mod windows_impl {
                 if fd > 0 && (*this).owned_fd {
                     aio::Closer::close(Fd::from_uv(fd), (*this).io_request.loop_);
                 }
-                // The store derefs happen via `StoreRef::drop` when the Box is
-                // reclaimed below (paired with the RAII note in `create_with_ctx`).
                 (*this).poll_ref.disable();
                 // (*this).io_request is a valid uv_fs_t embedded in this struct; uv_fs_req_cleanup
                 // is safe on a zeroed or previously-used req.

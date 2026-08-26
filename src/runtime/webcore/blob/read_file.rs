@@ -11,7 +11,7 @@ use crate::webcore::Lifetime;
 #[cfg(not(windows))]
 use crate::webcore::blob::ClosingState;
 use crate::webcore::blob::store::{Bytes as ByteStore, Data, File as FileStore};
-use crate::webcore::blob::{Blob, FileCloser, FileOpener, MAX_SIZE, SizeType, StoreRef};
+use crate::webcore::blob::{Blob, FileCloser, FileOpener, MAX_SIZE, SizeType, Store};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_collections::ByteVecExt as _;
@@ -26,6 +26,7 @@ use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{
     self as jsc, AnyPromise, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, SystemError,
 };
+use bun_ptr::RefPtr;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(not(windows))]
@@ -307,7 +308,7 @@ pub struct ReadFile {
     pub(crate) file_store: FileStore,
     #[cfg(not(windows))]
     pub(crate) byte_store: ByteStore,
-    pub(crate) store: Option<StoreRef>,
+    pub(crate) store: Option<RefPtr<Store>>,
     pub offset: SizeType,
     #[cfg(not(windows))]
     pub(crate) max_length: SizeType,
@@ -395,11 +396,10 @@ impl ReadFile {
     // Not for Windows; Windows callers use ReadFileUV.
     #[cfg(not(windows))]
     pub(crate) fn create(
-        store: StoreRef,
+        store: RefPtr<Store>,
         off: SizeType,
         max_len: SizeType,
     ) -> Result<ReadFile, Error> {
-        // store.ref() — `StoreRef` carries the +1; held in `self.store`.
         let file_store = store.data.as_file().clone();
         let read_file = ReadFile {
             file_store,
@@ -729,7 +729,7 @@ impl ReadFile {
         };
 
         if let Some(store) = &self.store {
-            if let Data::File(file) = store.data_mut() {
+            if let Data::File(file) = Store::data_mut(store) {
                 let mtime = bun_sys::PosixStat::init(&stat).mtime();
                 file.last_modified = jsc::to_js_time(mtime.sec as isize, mtime.nsec as isize);
             }
@@ -972,7 +972,7 @@ pub struct ReadFileUV<'a> {
     pub(crate) event_loop: &'a EventLoop,
     pub(crate) file_store: FileStore,
     pub(crate) byte_store: ByteStore,
-    pub(crate) store: StoreRef,
+    pub(crate) store: RefPtr<Store>,
     pub offset: SizeType,
     pub(crate) max_length: SizeType,
     pub(crate) total_size: SizeType,
@@ -1069,7 +1069,7 @@ impl<'a> ReadFileUV<'a> {
     /// Typed entry: `C` supplies run/cancel for the erased completion.
     pub(crate) fn start<C: ReadFileCompletion>(
         event_loop: *mut EventLoop,
-        store: StoreRef,
+        store: RefPtr<Store>,
         off: SizeType,
         max_len: SizeType,
         handler: *mut C,
@@ -1087,7 +1087,7 @@ impl<'a> ReadFileUV<'a> {
     /// Shares the body with `start`.
     pub(crate) fn start_with_ctx(
         event_loop: *mut EventLoop,
-        store: StoreRef,
+        store: RefPtr<Store>,
         off: SizeType,
         max_len: SizeType,
         completion: ReadFileCompletionFns,
@@ -1161,7 +1161,6 @@ impl<'a> ReadFileUV<'a> {
         // exception the JS side left pending is reported here (a termination just stands down).
         crate::dispatch::fold(completion.complete(result));
 
-        // store.deref runs via StoreRef's Drop when the Box drops.
         this_box.req.deinit();
         drop(this_box);
         // Release the event loop reference now that we're done
@@ -1248,7 +1247,7 @@ impl<'a> ReadFileUV<'a> {
         let stat = this.req.statbuf;
 
         // keep in sync with resolveSizeAndLastModified
-        if let Data::File(file) = this.store.data_mut() {
+        if let Data::File(file) = Store::data_mut(&this.store) {
             // `uv_timespec_t` fields are `c_long` (i32 on Windows); widen to the
             // platform-width `isize` `to_js_time` expects.
             file.last_modified =

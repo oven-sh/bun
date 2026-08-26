@@ -2737,10 +2737,11 @@ pub mod args {
             let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
                 ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray"))
             })?;
-            let len: u64 = 'brk: {
-                let Some(len_value) = arguments.next() else {
-                    break 'brk 0;
-                };
+            // Node treats an explicit `undefined` len the same as a missing one: 0.
+            let len_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
+            let len: u64 = if len_value.is_undefined() {
+                0
+            } else {
                 validators::validate_integer(ctx, len_value, "len", None, None)?.max(0) as u64
             };
             Ok(Truncate {
@@ -2814,17 +2815,23 @@ pub mod args {
             arguments: &mut ArgumentsSlice,
         ) -> JsResult<FTruncate> {
             let fd = FD::from_js_required(ctx, arguments)?;
-            let len: BlobSizeType = BlobSizeType::try_from(
-                validators::validate_integer(
-                    ctx,
-                    arguments.next().unwrap_or_else(|| JSValue::js_number(0.0)),
-                    "len",
-                    Some(i52::MIN),
-                    Some(BLOB_SIZE_MAX as i64),
-                )?
-                .max(0),
-            )
-            .expect("infallible: validated range");
+            // Node treats an explicit `undefined` len the same as a missing one: 0.
+            let len_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
+            let len: BlobSizeType = if len_value.is_undefined() {
+                0
+            } else {
+                BlobSizeType::try_from(
+                    validators::validate_integer(
+                        ctx,
+                        len_value,
+                        "len",
+                        Some(i52::MIN),
+                        Some(BLOB_SIZE_MAX as i64),
+                    )?
+                    .max(0),
+                )
+                .expect("infallible: validated range")
+            };
             Ok(FTruncate { fd, len: Some(len) })
         }
     }

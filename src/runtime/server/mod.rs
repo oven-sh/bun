@@ -143,7 +143,7 @@ pub(crate) fn status_line(status: u16, buf: &mut [u8; 16]) -> &[u8] {
 }
 
 // ─── AnyRoute ────────────────────────────────────────────────────────────────
-/// The route table's ref on each route; `StaticRouteEntry`'s `Drop` releases it.
+/// The route table's ref on each route.
 pub enum AnyRoute {
     /// Serve a static file — `"/robots.txt": new Response(...)`
     Static(bun_ptr::RefPtr<StaticRoute>),
@@ -167,16 +167,6 @@ impl AnyRoute {
             AnyRoute::FrameworkRouter(_) => {
                 core::mem::size_of::<crate::bake::FileSystemRouterType>()
             }
-        }
-    }
-
-    pub(crate) fn deref_(&self) {
-        match self {
-            AnyRoute::Static(r) => r.deref(),
-            AnyRoute::File(r) => r.deref(),
-            AnyRoute::Directory(r) => r.deref(),
-            AnyRoute::Html(r) => r.deref(),
-            AnyRoute::FrameworkRouter(_) => {} // not reference counted
         }
     }
 
@@ -849,7 +839,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         if let Some(req_len) = request_body_length {
             ctx_ref.request_body_content_len.set(req_len);
-            let is_transfer_encoding = req.header(b"transfer-encoding").is_some();
+            let is_transfer_encoding = req.has_transfer_encoding();
             ctx_ref.flags.set_is_transfer_encoding(is_transfer_encoding);
             if req_len > 0 || is_transfer_encoding {
                 // we defer pre-allocating the body until we receive the first chunk
@@ -4178,10 +4168,7 @@ pub(crate) mod http_server_agent {
                     _ => RouteType::Default,
                 },
                 file_path: match &entry.route {
-                    // SAFETY: RefPtr.data is a live NonNull while held in the
-                    // route table; `.bundle` (IntrusiveRc) derefs to the live
-                    // HTMLBundle whose `path` outlives this borrow.
-                    AnyRoute::Html(r) => BunString::from_bytes(&r.data().bundle.path),
+                    AnyRoute::Html(r) => BunString::from_bytes(&r.bundle.path),
                     _ => BunString::EMPTY,
                 },
                 ..Default::default()

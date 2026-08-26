@@ -7,7 +7,7 @@ use bun_collections::OffsetByteList;
 use bun_core::UnwrapOrOom;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSPromise, JSValue, JsResult};
-use bun_ptr::ScopedRef;
+use bun_ptr::RefPtr;
 use bun_uws::{self as uws, AnySocket, SocketGroup, SocketKind, SslCtx};
 use bun_valkey::valkey_protocol as protocol;
 use bun_valkey::valkey_protocol::{RESPValue, RedisError};
@@ -649,11 +649,11 @@ impl ValkeyClient {
         if !is_semi_socket {
             return thrown;
         }
-        // SAFETY: adopts the keep-alive ref `connect()` forgot for this
+        // SAFETY: takes over the keep-alive ref `connect()` handed to this
         // socket, as `SocketHandler::on_close` does for one uSockets closes.
         // Every caller of `close()` holds a scoped ref of its own, so the
         // client outlives this scope.
-        let _socket_ref = unsafe { ScopedRef::adopt(self.parent_ptr()) };
+        let _socket_ref = unsafe { RefPtr::from_raw(self.parent_ptr()) };
         self.status = Status::Disconnected;
         let closed = self.on_close();
         thrown.and(closed)

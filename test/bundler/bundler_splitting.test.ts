@@ -605,9 +605,6 @@ describe("bundler", () => {
     run: { file: "/out/entry.js", stdout: "shared evaluated\nentry 1\nlazy 2" },
   });
 
-  // An entry point with exports of its own keeps its module namespace as
-  // written: shared code is not folded into it (which would add exports),
-  // but the chunks that are always loaded with it still fold into one.
   // A binding shared across chunks carries one bundle-wide name that every
   // chunk's renamer pins; locals that already have that name (top level or
   // nested) are renamed around it and the import stays bare.
@@ -740,6 +737,9 @@ describe("bundler", () => {
     ],
   });
 
+  // An entry point with exports of its own keeps its module namespace as
+  // written: shared code is not folded into it (which would add exports),
+  // but the chunks that are always loaded with it still fold into one.
   itBundled("splitting/EntryWithExportsKeepsSignature", {
     files: {
       "/entry.js": /* js */ `

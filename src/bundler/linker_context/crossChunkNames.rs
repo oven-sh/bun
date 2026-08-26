@@ -38,10 +38,9 @@ fn cross_chunk_refs(chunks: &[Chunk]) -> Vec<Ref> {
 fn reserved_names(
     c: &LinkerContext,
     chunks: &[Chunk],
+    minify: bool,
 ) -> Result<StringHashMap<u32>, bun_alloc::AllocError> {
     let mut reserved = renamer::compute_initial_reserved_names(c.options.output_format)?;
-    // `MinifyRenamer::init` keeps bare `$` free as well (#14586).
-    reserved.put(b"$", 1)?;
     let scopes = c.graph.ast.items_module_scope();
     let export_aliases = c.graph.meta.items_sorted_and_filtered_export_aliases();
     for chunk in chunks {
@@ -61,6 +60,11 @@ fn reserved_names(
                 reserved.put(alias, 1)?;
             }
         }
+    }
+    // `MinifyRenamer::init` never hands out bare `$` (#14586); an unminified
+    // binding named `$` keeps it.
+    if minify {
+        reserved.put(b"$", 1)?;
     }
     Ok(reserved)
 }
@@ -82,7 +86,7 @@ pub(crate) fn assign_unminified(
     if refs.is_empty() {
         return Ok(());
     }
-    let mut used = reserved_names(c, chunks)?;
+    let mut used = reserved_names(c, chunks, false)?;
     let mut buf: Vec<u8> = Vec::new();
     c.cross_chunk_names.reserve(refs.len());
     for ref_ in refs {
@@ -122,7 +126,7 @@ pub(crate) fn assign_minified(
     if refs.is_empty() {
         return Ok(());
     }
-    let reserved = reserved_names(c, chunks)?;
+    let reserved = reserved_names(c, chunks, true)?;
 
     // (total count, first-seen order) per binding; most used first.
     let mut order: Vec<(u32, u32, Ref, bool)> = Vec::with_capacity(refs.len());

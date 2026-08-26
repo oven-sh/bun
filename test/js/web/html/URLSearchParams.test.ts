@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 describe("URLSearchParams", () => {
   it("does not crash when calling .toJSON() on a URLSearchParams object with a large number of properties", () => {
@@ -305,4 +306,144 @@ it(".has second argument", () => {
   expect(params.has("a", 3)).toBe(false);
   expect(params.has("b", 3)).toBe(true);
   expect(params.has("b", 4)).toBe(false);
+});
+
+// The pairs live in a WTF::Vector, which aborts the process when a growth step
+// asks for a capacity over its INT32_MAX-byte cap. Bun throws a RangeError at
+// the last size the Vector can hold instead. The limit follows the synthetic
+// allocation limit (1 MiB is its floor), so 65536 pairs of 16 bytes reach it.
+// Each child parses tens of thousands of pairs, which takes seconds in a debug build.
+describe("entry count limit", () => {
+  const LIMIT = 1024 * 1024;
+  const MAX = LIMIT / 16;
+  const tooMany = `URLSearchParams cannot hold more than ${MAX} entries.`;
+  const preamble = `
+    import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
+    setSyntheticAllocationLimitForTesting(${LIMIT});
+    const MAX = ${MAX};
+    const pairs = n => Buffer.alloc(2 * n, "a&").toString();
+    const threw = fn => {
+      try {
+        fn();
+        return null;
+      } catch (e) {
+        return e instanceof RangeError ? e.message : String(e);
+      }
+    };
+    const out = {};
+  `;
+
+  async function run(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `${preamble}\n${script}\nconsole.log(JSON.stringify(out));`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  it.concurrent(
+    "parses a string with exactly the limit, then append and set throw",
+    async () => {
+      const out = await run(`
+        const params = new URLSearchParams(pairs(MAX));
+        out.size = params.size;
+        out.append = threw(() => params.append("b", "1"));
+        out.setNew = threw(() => params.set("b", "1"));
+        out.setExisting = threw(() => params.set("a", "1"));
+        out.sizeAfter = params.size;
+        out.first = params.get("a");
+        out.has = params.has("b");
+      `);
+      expect(out).toEqual({
+        size: MAX,
+        append: tooMany,
+        setNew: tooMany,
+        setExisting: null,
+        sizeAfter: 1,
+        first: "1",
+        has: false,
+      });
+    },
+    60_000,
+  );
+
+  it.concurrent(
+    "throws from the constructor one pair past the limit",
+    async () => {
+      const out = await run(`
+        out.string = threw(() => new URLSearchParams("?" + pairs(MAX + 1)));
+        const list = Array.from({ length: MAX + 1 }, () => ["a", ""]);
+        out.sequence = threw(() => new URLSearchParams(list));
+        out.record = new URLSearchParams({ a: "1", b: "2" }).size;
+      `);
+      expect(out).toEqual({ string: tooMany, sequence: tooMany, record: 2 });
+    },
+    60_000,
+  );
+
+  it.concurrent(
+    "throws from append once the limit is reached",
+    async () => {
+      const out = await run(`
+        const params = new URLSearchParams();
+        for (let i = 0; i < MAX; i++) params.append("a", "");
+        out.size = params.size;
+        out.append = threw(() => params.append("a", ""));
+        out.sizeAfter = params.size;
+        params.delete("a");
+        out.appendAfterDelete = threw(() => params.append("b", "1"));
+        out.string = params.toString();
+      `);
+      expect(out).toEqual({ size: MAX, append: tooMany, sizeAfter: MAX, appendAfterDelete: null, string: "b=1" });
+    },
+    60_000,
+  );
+
+  it.concurrent(
+    "url.searchParams throws when the query has too many pairs",
+    async () => {
+      const out = await run(`
+        const url = new URL("http://example.com/?" + pairs(MAX + 1));
+        out.searchLength = url.search.length;
+        out.searchParams = threw(() => url.searchParams);
+        out.searchParamsAgain = threw(() => url.searchParams);
+        url.search = "a=1";
+        out.size = url.searchParams.size;
+      `);
+      expect(out).toEqual({
+        searchLength: 1 + 2 * (MAX + 1),
+        searchParams: tooMany,
+        searchParamsAgain: tooMany,
+        size: 1,
+      });
+    },
+    60_000,
+  );
+
+  it.concurrent(
+    "url.href throws when the new query has too many pairs",
+    async () => {
+      const out = await run(`
+        const url = new URL("http://example.com/?a=1");
+        const params = url.searchParams;
+        out.href = threw(() => { url.href = "http://example.com/?" + pairs(MAX + 1); });
+        out.searchLength = url.search.length;
+        out.sizeAfterFailedHref = params.size;
+        url.href = "http://example.com/?b=2";
+        out.getAfterHref = params.get("b");
+      `);
+      expect(out).toEqual({
+        href: tooMany,
+        searchLength: 1 + 2 * (MAX + 1),
+        sizeAfterFailedHref: 0,
+        getAfterHref: "2",
+      });
+    },
+    60_000,
+  );
 });

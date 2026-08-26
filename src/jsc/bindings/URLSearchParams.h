@@ -41,19 +41,17 @@ public:
     ~URLSearchParams();
 
     static ExceptionOr<Ref<URLSearchParams>> create(std::variant<Vector<Vector<String>>, Vector<KeyValuePair<String, String>>, String>&&);
-    static Ref<URLSearchParams> create(const String& string, DOMURL* associatedURL)
-    {
-        return adoptRef(*new URLSearchParams(string, associatedURL));
-    }
+    static ExceptionOr<Ref<URLSearchParams>> create(const String& string, DOMURL* associatedURL);
 
-    void append(const String& name, const String& value);
+    // create, append and set throw a RangeError when the pair count would exceed what a Vector can grow to.
+    ExceptionOr<void> append(const String& name, const String& value);
     void remove(const StringView name, const String& value = {});
     String get(const StringView name) const;
     Vector<String> getAll(const StringView name) const;
     bool has(const StringView name, const String& value = {}) const;
-    void set(const String& name, const String& value);
+    ExceptionOr<void> set(const String& name, const String& value);
     String toString() const;
-    void updateFromAssociatedURL();
+    ExceptionOr<void> updateFromAssociatedURL();
     void sort();
     size_t size() const { return m_pairs.size(); }
     size_t memoryCost() const;
@@ -72,7 +70,7 @@ public:
 
 private:
     const Vector<KeyValuePair<String, String>>& pairs() const { return m_pairs; }
-    URLSearchParams(const String&, DOMURL*);
+    URLSearchParams(Vector<KeyValuePair<String, String>>&&, DOMURL* = nullptr);
     URLSearchParams(const Vector<KeyValuePair<String, String>>&);
     void updateURL();
 

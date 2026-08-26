@@ -1004,3 +1004,171 @@ describe("USVString conversion of lone surrogates", () => {
     expect(formData.get("\uFFFD")).toBeNull();
   });
 });
+
+// The entries live in a WTF::Vector, which aborts the process when a growth step
+// asks for a capacity over its INT32_MAX-byte cap. Bun throws a RangeError at the
+// last size the Vector can hold instead. The limit follows the synthetic
+// allocation limit (1 MiB is its floor), so 43690 entries of 24 bytes reach it.
+// Each child parses tens of thousands of entries, which takes seconds in a debug build.
+describe("entry count limit", () => {
+  const LIMIT = 1024 * 1024;
+  const MAX = Math.floor(LIMIT / 24);
+  const tooMany = `FormData cannot hold more than ${MAX} entries.`;
+  const preamble = `
+    import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
+    setSyntheticAllocationLimitForTesting(${LIMIT});
+    const MAX = ${MAX};
+    const pairs = n => Buffer.alloc(2 * n, "a&").toString();
+    const PART = '--foo\\r\\nContent-Disposition: form-data; name="a"\\r\\n\\r\\n\\r\\n';
+    const multipart = n => Buffer.concat([Buffer.alloc(n * PART.length, PART), Buffer.from("--foo--\\r\\n")]);
+    const urlencoded = { "content-type": "application/x-www-form-urlencoded" };
+    const multipartType = { "content-type": "multipart/form-data; boundary=foo" };
+    const message = e => (e instanceof RangeError ? e.message : String(e));
+    const threw = fn => {
+      try {
+        fn();
+        return null;
+      } catch (e) {
+        return message(e);
+      }
+    };
+    const rejected = promise => promise.then(() => null, message);
+    const out = {};
+  `;
+
+  async function run(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `${preamble}\n${script}\nconsole.log(JSON.stringify(out));`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  it.concurrent(
+    "parses a body with exactly the limit, then append and set throw",
+    async () => {
+      const out = await run(`
+        const form = FormData.from(pairs(MAX));
+        out.count = [...form.keys()].length;
+        out.appendString = threw(() => form.append("b", "1"));
+        out.appendBlob = threw(() => form.append("b", new Blob(["x"]), "x.txt"));
+        out.setNew = threw(() => form.set("b", "1"));
+        out.setExisting = threw(() => form.set("a", "1"));
+        out.setExistingBlob = threw(() => form.set("a", new Blob(["x"]), "x.txt"));
+        out.countAfter = [...form.keys()].length;
+        out.name = form.get("a").name;
+        out.has = form.has("b");
+      `);
+      expect(out).toEqual({
+        count: MAX,
+        appendString: tooMany,
+        appendBlob: tooMany,
+        setNew: tooMany,
+        setExisting: null,
+        setExistingBlob: null,
+        countAfter: 1,
+        name: "x.txt",
+        has: false,
+      });
+    },
+    60_000,
+  );
+
+  it.concurrent(
+    "FormData.from throws one pair past the limit",
+    async () => {
+      const out = await run(`
+        out.string = threw(() => FormData.from(pairs(MAX + 1)));
+        out.bytes = threw(() => FormData.from(Buffer.from(pairs(MAX + 1))));
+      `);
+      expect(out).toEqual({ string: tooMany, bytes: tooMany });
+    },
+    60_000,
+  );
+
+  it.concurrent(
+    "throws from append once the limit is reached",
+    async () => {
+      const out = await run(`
+        const form = new FormData();
+        for (let i = 0; i < MAX; i++) form.append("a", "");
+        out.count = [...form.keys()].length;
+        out.append = threw(() => form.append("a", ""));
+        out.countAfter = [...form.keys()].length;
+        form.delete("a");
+        out.appendAfterDelete = threw(() => form.append("b", "1"));
+        out.entries = [...form];
+      `);
+      expect(out).toEqual({
+        count: MAX,
+        append: tooMany,
+        countAfter: MAX,
+        appendAfterDelete: null,
+        entries: [["b", "1"]],
+      });
+    },
+    60_000,
+  );
+
+  it.concurrent(
+    "Response.formData() rejects a URL-encoded body one pair past the limit",
+    async () => {
+      const out = await run(`
+        out.response = await rejected(new Response(pairs(MAX + 1), { headers: urlencoded }).formData());
+        out.ok = [...(await new Response(pairs(3), { headers: urlencoded }).formData()).keys()].length;
+      `);
+      expect(out).toEqual({ response: tooMany, ok: 3 });
+    },
+    60_000,
+  );
+
+  it.concurrent(
+    "Request.formData() and Blob.formData() reject a URL-encoded body past the limit",
+    async () => {
+      const out = await run(`
+        const request = new Request("http://example.com/", { method: "POST", body: pairs(MAX + 1), headers: urlencoded });
+        out.request = await rejected(request.formData());
+        out.blob = await rejected(new Blob([pairs(MAX + 1)], { type: urlencoded["content-type"] }).formData());
+      `);
+      expect(out).toEqual({ request: tooMany, blob: tooMany });
+    },
+    60_000,
+  );
+
+  it.concurrent(
+    "a streamed Response.formData() rejects a URL-encoded body past the limit",
+    async () => {
+      const out = await run(`
+        const body = Buffer.from(pairs(MAX + 1));
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(body.subarray(0, body.length >> 1));
+            controller.enqueue(body.subarray(body.length >> 1));
+            controller.close();
+          },
+        });
+        out.streamed = await rejected(new Response(stream, { headers: urlencoded }).formData());
+      `);
+      expect(out).toEqual({ streamed: tooMany });
+    },
+    60_000,
+  );
+
+  it.concurrent(
+    "multipart bodies hit the same limit",
+    async () => {
+      const out = await run(`
+        out.from = threw(() => FormData.from(multipart(MAX + 1), "foo"));
+        out.response = await rejected(new Response(multipart(MAX + 1), { headers: multipartType }).formData());
+        out.ok = [...FormData.from(multipart(MAX), "foo").keys()].length;
+      `);
+      expect(out).toEqual({ from: tooMany, response: tooMany, ok: MAX });
+    },
+    60_000,
+  );
+});

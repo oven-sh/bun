@@ -6372,15 +6372,28 @@ extern "C" int JSC__JSValue__DateNowISOString(JSC::JSGlobalObject* globalObject,
 
 #pragma mark - WebCore::DOMFormData
 
-CPP_DECL void WebCore__DOMFormData__append(WebCore::DOMFormData* arg0, const EncodedSlice* arg1, const EncodedSlice* arg2)
+// Both append functions return false after throwing when the FormData is full.
+CPP_DECL bool WebCore__DOMFormData__append(WebCore::DOMFormData* arg0, JSC::JSGlobalObject* globalObject, const EncodedSlice* arg1, const EncodedSlice* arg2)
 {
-    arg0->append(toStringCopy(*arg1), toStringCopy(*arg2));
+    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto result = arg0->append(toStringCopy(*arg1), toStringCopy(*arg2));
+    if (result.hasException()) [[unlikely]] {
+        WebCore::propagateException(*globalObject, throwScope, result.releaseException());
+        return false;
+    }
+    return true;
 }
 
-CPP_DECL void WebCore__DOMFormData__appendBlob(WebCore::DOMFormData* arg0, JSC::JSGlobalObject* arg1, const EncodedSlice* arg2, void* blobValueInner, const EncodedSlice* fileName)
+CPP_DECL bool WebCore__DOMFormData__appendBlob(WebCore::DOMFormData* arg0, JSC::JSGlobalObject* arg1, const EncodedSlice* arg2, void* blobValueInner, const EncodedSlice* fileName)
 {
+    auto throwScope = DECLARE_THROW_SCOPE(arg1->vm());
     RefPtr<Blob> blob = WebCore::Blob::create(blobValueInner);
-    arg0->append(toStringCopy(*arg2), blob, toStringCopy(*fileName));
+    auto result = arg0->append(toStringCopy(*arg2), blob, toStringCopy(*fileName));
+    if (result.hasException()) [[unlikely]] {
+        WebCore::propagateException(*arg1, throwScope, result.releaseException());
+        return false;
+    }
+    return true;
 }
 CPP_DECL size_t WebCore__DOMFormData__count(WebCore::DOMFormData* arg0)
 {
@@ -6409,8 +6422,13 @@ CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__createFromURLQuery(JSC::JSGlo
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         return Bun::ERR::STRING_TOO_LONG(scope, globalObject);
     }
-    auto formData = DOMFormData::create(globalObject->scriptExecutionContext(), WTF::move(str));
-    return JSValue::encode(toJSNewlyCreated(arg0, globalObject, WTF::move(formData)));
+    auto formData = DOMFormData::create(globalObject->scriptExecutionContext(), str);
+    if (formData.hasException()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        WebCore::propagateException(*globalObject, scope, formData.releaseException());
+        return {};
+    }
+    return JSValue::encode(toJSNewlyCreated(arg0, globalObject, formData.releaseReturnValue()));
 }
 
 CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__create(JSC::JSGlobalObject* arg0)

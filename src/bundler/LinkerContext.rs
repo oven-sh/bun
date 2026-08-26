@@ -1018,7 +1018,8 @@ impl<'a> LinkerContext<'a> {
         // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task.
         let chunk: &mut Chunk = unsafe { &mut *chunk };
         if let crate::bun_renamer::ChunkRenamer::Minify(r) = &mut chunk.renamer {
-            r.finish().expect("TODO: handle error");
+            // Only allocation can fail here.
+            bun_core::handle_oom(r.finish());
         }
     }
 

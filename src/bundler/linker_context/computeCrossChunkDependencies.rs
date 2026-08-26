@@ -573,7 +573,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                             alias_loc: bun_ast::Loc::EMPTY,
                             original_name: bun_ast::StoreStr::EMPTY,
                         });
-                        let _ = repr.exports_to_other_chunks.put(ref_, b""); // OOM-only Result
+                        let _ = repr.exports_to_other_chunks.put(ref_, ()); // OOM-only Result
                     }
 
                     if clause_items.len() > 0 {

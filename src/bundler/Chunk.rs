@@ -1306,7 +1306,8 @@ pub struct JavaScriptChunk {
     // The map hashes via `Ref`'s `Hash` impl. Values
     // are `&'static`-erased slices into bundler-owned storage (see the
     // lifetime note on `Chunk`).
-    pub(crate) exports_to_other_chunks: ArrayHashMap<Ref, &'static [u8]>,
+    /// Bindings declared in this chunk that another chunk imports; named by `cross_chunk_names`.
+    pub(crate) exports_to_other_chunks: ArrayHashMap<Ref, ()>,
     pub(crate) imports_from_other_chunks: ImportsFromOtherChunks,
     pub(crate) cross_chunk_prefix_stmts: Vec<Stmt>,
     pub(crate) cross_chunk_suffix_stmts: Vec<Stmt>,

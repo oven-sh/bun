@@ -31,16 +31,19 @@ fn cross_chunk_refs(chunks: &[Chunk]) -> Vec<Ref> {
     refs
 }
 
-/// Names no chunk may use for a top-level binding: keywords and the like,
-/// plus every unbound or must-not-be-renamed name in any module scope of the
-/// bundle. A per-chunk renamer only avoids its own chunk's; a bundle-wide
-/// name has to avoid all of them.
+/// Names no chunk may use for a cross-chunk binding: keywords and the like,
+/// every unbound or must-not-be-renamed name in any module scope of the
+/// bundle, and the entry points' own export names. A per-chunk renamer only
+/// avoids its own chunk's; a bundle-wide name has to avoid all of them.
 fn reserved_names(
     c: &LinkerContext,
     chunks: &[Chunk],
 ) -> Result<StringHashMap<u32>, bun_alloc::AllocError> {
     let mut reserved = renamer::compute_initial_reserved_names(c.options.output_format)?;
+    // `MinifyRenamer::init` keeps bare `$` free as well (#14586).
+    reserved.put(b"$", 1)?;
     let scopes = c.graph.ast.items_module_scope();
+    let export_aliases = c.graph.meta.items_sorted_and_filtered_export_aliases();
     for chunk in chunks {
         if let Content::Javascript(js) = &chunk.content {
             for &source_index in js.files_in_chunk_order.iter() {
@@ -49,6 +52,13 @@ fn reserved_names(
                     &c.graph.symbols,
                     &mut reserved,
                 );
+            }
+        }
+        // An entry point's own `export {}` names share its export namespace
+        // with the cross-chunk exports it may carry.
+        if chunk.entry_point.is_entry_point() {
+            for alias in export_aliases[chunk.entry_point.source_index() as usize].iter() {
+                reserved.put(alias, 1)?;
             }
         }
     }
@@ -183,8 +193,7 @@ pub(crate) fn assign_minified(
     Ok(())
 }
 
-/// Writes the names into the cross-chunk `export {}` / `import {}` clause
-/// items and `exports_to_other_chunks`.
+/// Writes the names into the cross-chunk `export {}` / `import {}` clause items.
 pub(crate) fn apply_to_clauses(c: &LinkerContext, chunks: &mut [Chunk]) {
     if c.cross_chunk_names.is_empty() {
         return;
@@ -193,10 +202,6 @@ pub(crate) fn apply_to_clauses(c: &LinkerContext, chunks: &mut [Chunk]) {
         let Content::Javascript(js) = &mut chunk.content else {
             continue;
         };
-        for i in 0..js.exports_to_other_chunks.count() {
-            let ref_ = js.exports_to_other_chunks.keys()[i];
-            js.exports_to_other_chunks.values_mut()[i] = *c.cross_chunk_names.get(&ref_).unwrap();
-        }
         for stmt in js
             .cross_chunk_suffix_stmts
             .iter_mut()

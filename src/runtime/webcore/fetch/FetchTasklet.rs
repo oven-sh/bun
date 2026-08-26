@@ -498,7 +498,7 @@ impl FetchTasklet {
         crate::telemetry::fetch::end(
             &self.global_this,
             &stub,
-            self.otel_method,
+            crate::telemetry::fetch::MethodName::Known(self.otel_method),
             url,
             status,
             minor_version,

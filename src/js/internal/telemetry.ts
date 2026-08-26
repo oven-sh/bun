@@ -37,7 +37,10 @@ const StringPrototypeTrim = String.prototype.trim;
 const ArrayPrototypeJoin = Array.prototype.join;
 const SafeMap = Map;
 const JSONParse = JSON.parse;
-const BunResolveSync = Bun.resolveSync.bind(Bun);
+// (not `Bun.resolveSync` at module scope: this module is evaluated while the
+// Bun object is reifying its lazy `otel` property, and reading another Bun
+// property re-entrantly during that is not allowed)
+let BunResolveSync: typeof Bun.resolveSync;
 
 // @opentelemetry/api well-known keys (createContextKey === Symbol.for).
 const SPAN_KEY = Symbol.for("OpenTelemetry Context Key SPAN");
@@ -416,7 +419,7 @@ function installedApiVersion(): string {
   for (const from of [Bun.main, process.cwd() + "/"]) {
     if (!from) continue;
     try {
-      const path = BunResolveSync("@opentelemetry/api/package.json", from + "");
+      const path = (BunResolveSync ??= Bun.resolveSync)("@opentelemetry/api/package.json", from + "");
       const pkg = JSONParse(readFileSync(path, "utf8"));
       if (typeof pkg?.version === "string") return pkg.version;
     } catch {}
@@ -443,7 +446,7 @@ function installGlobal() {
     // delegate through trace.setGlobalTracerProvider(), so register through
     // the api rather than by writing the registry.
     try {
-      const path = BunResolveSync("@opentelemetry/api", (Bun.main || process.cwd() + "/") + "");
+      const path = (BunResolveSync ??= Bun.resolveSync)("@opentelemetry/api", (Bun.main || process.cwd() + "/") + "");
       // loaded as CJS (require) or as ESM (import): only look, never load
       const api = $requireMap.$get(path)?.exports ?? $esmNamespaceForCjs(path);
       if (api?.trace?.setGlobalTracerProvider) {

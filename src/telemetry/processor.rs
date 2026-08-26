@@ -555,9 +555,7 @@ impl Processor {
         };
         let exporters = self.exporters.read().clone();
         if exporters.is_empty() {
-            self.stats
-                .spans_dropped
-                .fetch_add(payload.span_count as u64, Ordering::Relaxed);
+            self.drop_unexported(&payload);
             return false;
         }
         // A synchronous exporter (console) completes inside `e.export()`; if a
@@ -583,9 +581,7 @@ impl Processor {
             };
             exporters.clone_from(&self.exporters.read());
             if exporters.is_empty() {
-                self.stats
-                    .spans_dropped
-                    .fetch_add(next.span_count as u64, Ordering::Relaxed);
+                self.drop_unexported(&next);
                 return true;
             }
             payload = next;
@@ -619,16 +615,29 @@ impl Processor {
                 &self.stats.spans_dropped
             };
             counter.fetch_add(payload.span_count as u64, Ordering::Relaxed);
-            {
-                let mut o = self.outstanding.lock();
-                if let Some(i) = o.iter().position(|s| *s == payload.seq) {
-                    o.swap_remove(i);
-                }
+            self.retire(payload);
+        }
+    }
+
+    /// A payload taken with no exporter to hand it to.
+    fn drop_unexported(&self, payload: &ExportPayload) {
+        self.stats
+            .spans_dropped
+            .fetch_add(payload.span_count as u64, Ordering::Relaxed);
+        self.retire(payload);
+    }
+
+    /// `payload` is done (exported, dropped or abandoned): no longer outstanding.
+    fn retire(&self, payload: &ExportPayload) {
+        {
+            let mut o = self.outstanding.lock();
+            if let Some(i) = o.iter().position(|s| *s == payload.seq) {
+                o.swap_remove(i);
             }
-            // forceFlush() waiters re-check on every settled payload.
-            for (_, h) in self.idle_hooks.read().iter() {
-                h();
-            }
+        }
+        // forceFlush() waiters re-check on every settled payload.
+        for (_, h) in self.idle_hooks.read().iter() {
+            h();
         }
     }
 
@@ -706,9 +715,7 @@ impl Processor {
         while let Some(payload) = self.take_payload() {
             let exporters = self.exporters.read().clone();
             if exporters.is_empty() {
-                self.stats
-                    .spans_dropped
-                    .fetch_add(payload.span_count as u64, Ordering::Relaxed);
+                self.drop_unexported(&payload);
                 return;
             }
             payload.expect(exporters.len());
@@ -743,9 +750,8 @@ impl Processor {
         while let Some(payload) = self.take_payload() {
             let exporters = self.exporters.read().clone();
             if exporters.is_empty() {
-                self.stats
-                    .spans_dropped
-                    .fetch_add(payload.span_count as u64, Ordering::Relaxed);
+                self.drop_unexported(&payload);
+                continue;
             }
             payload.expect(exporters.len());
             for e in exporters {

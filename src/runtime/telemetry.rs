@@ -377,7 +377,6 @@ pub fn init_for_vm(global: &JSGlobalObject) {
     }
     let loader = vm.env_loader();
     if loader.get(b"BUN_OTEL").is_none()
-        && loader.get(b"OTEL_BUN").is_none()
         && !bun_telemetry_cold::config::bunfig().is_some_and(|b| b.enabled == Some(true))
     {
         return;
@@ -891,7 +890,6 @@ fn read_exporter_headers(
             let entries = headers.entries.slice();
             for (name, value) in entries.items_name().iter().zip(entries.items_value()) {
                 let name = bstr::ByteSlice::to_str_lossy(headers.as_str(*name)).into_owned();
-                // Merged over a preset's headers: a user header replaces the preset's.
                 x.headers.retain(|(k, _)| !k.eq_ignore_ascii_case(&name));
                 x.headers.push((
                     name,

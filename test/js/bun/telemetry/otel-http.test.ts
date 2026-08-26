@@ -715,6 +715,21 @@ describe("node:http", () => {
         .request({ host: "127.0.0.1", port: server.port, method: "PROPFIND" }, res => res.resume().on("end", r))
         .end(),
     );
+    // a token the runtime's method enum does not know at all (Bun.serve refuses
+    // those, so a bare socket answers it)
+    using raw = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(s) {
+          s.write("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+          s.end();
+        },
+      },
+    });
+    await new Promise<void>(r =>
+      http.request({ host: "127.0.0.1", port: raw.port, method: "FOO" }, res => res.resume().on("end", r)).end(),
+    );
     const got = byName(await collect(), "bun.http.client");
     expect(
       got.map(s => [
@@ -726,6 +741,7 @@ describe("node:http", () => {
     ).toEqual([
       ["HTTP", "_OTHER", "PROPFIND", "1.1"],
       ["HTTP", "_OTHER", "PROPFIND", "1.1"],
+      ["HTTP", "_OTHER", "FOO", "1.1"],
     ]);
   });
 

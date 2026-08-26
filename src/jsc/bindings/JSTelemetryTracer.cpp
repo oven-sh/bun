@@ -1,6 +1,6 @@
-// Native OpenTelemetry: tracers, span creation (incl. the DOMJIT fast
-// paths), startSpan option parsing, and the propagation glue used by
-// internal/telemetry.ts and node:http.
+// Native OpenTelemetry: tracers (startSpan with its DOMJIT fast path,
+// startActiveSpan), Bun.otel.span/wrap/set, span-context carriers, and the
+// propagation glue used by internal/telemetry.ts.
 
 #include "root.h"
 
@@ -381,24 +381,22 @@ static void unwindTraced(Zig::GlobalObject* globalObject, JSC::ThrowScope& scope
 }
 
 // End `spanCell` when `promise` settles (websocket async message handlers):
-// the derived promise from telemetryTraceSettled, or empty if `promise` is not
-// a pending JSPromise (caller ends the span now).
+// the derived promise from telemetryTraceSettled; undefined if `promise` is
+// not a pending JSPromise (caller ends the span now); empty on exception.
 extern "C" EncodedJSValue Bun__Telemetry__observeSettlement(Zig::GlobalObject* globalObject, EncodedJSValue promiseValue, EncodedJSValue spanCell)
 {
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue promiseJS = JSValue::decode(promiseValue);
     auto* promise = promiseJS.isCell() ? dynamicDowncast<JSPromise>(promiseJS.asCell()) : nullptr;
     auto* span = toTelemetrySpan(JSValue::decode(spanCell));
     if (!promise || !span || promise->status() != JSPromise::Status::Pending)
-        return {};
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
     auto* settle = globalObject->getDirect(vm, WebCore::builtinNames(vm).telemetryTraceSettledPrivateName()).getObject();
     MarkedArgumentBuffer args;
     args.append(span);
     args.append(promise);
-    JSValue derived = call(globalObject, settle, jsUndefined(), args, "telemetryTraceSettled"_s);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(derived);
+    RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, settle, jsUndefined(), args, "telemetryTraceSettled"_s)));
 }
 
 // Bun.otel.span(name, attributes?, fn?) — without fn: the span, active until

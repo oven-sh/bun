@@ -85,17 +85,13 @@ pub fn end_message(
                 // An async handler: the span covers the promise and records its
                 // rejection, like Bun.otel.span(name, async fn).
                 let cell = super::span::Bun__Telemetry__poolMaterialize(global, span.0);
-                let derived = Bun__Telemetry__observeSettlement(global, result, cell);
-                if global.has_exception() {
-                    return Err(bun_jsc::JsError::Thrown);
-                }
-                if !derived.is_empty() {
-                    // The handler's own promise is what the caller keeps; the
-                    // derived one only ends the span (its rejection is the
-                    // handler's, reported through the caller's promise).
-                    if let Some(p) = derived.as_any_promise() {
-                        p.set_handled(global.vm());
-                    }
+                let derived = bun_jsc::host_fn::from_js_host_call(global, || {
+                    Bun__Telemetry__observeSettlement(global, result, cell)
+                })?;
+                if !derived.is_undefined() {
+                    // Observing marks the handler's promise handled; the derived
+                    // promise rethrows the same reason and nobody handles it, so
+                    // a late rejection still reaches `unhandledRejection` once.
                     return Ok(true);
                 }
             }

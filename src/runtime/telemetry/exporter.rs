@@ -837,9 +837,9 @@ impl JsExporter {
     }
 
     fn run_task(task: *mut JsExportTask) -> JsResult<()> {
-        // SAFETY: allocated in `export`; owned by the ManagedTask (new_owned),
-        // which frees it after this returns.
-        let task = unsafe { &*task };
+        // SAFETY: allocated in `export`; `ManagedTask::run` hands ownership to
+        // the callback (only `release` of an unrun task drops it itself).
+        let task = unsafe { Box::from_raw(task) };
         // Already settled (abandoned at VM exit) if no longer queued.
         if task.exporter.take_queued(&task.payload) {
             match task.exporter.deliver(&task.payload) {

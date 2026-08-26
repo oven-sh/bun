@@ -37,7 +37,7 @@ pub struct Local {
     pub pool: pool::Pool,
     pub batch: batch::LocalBatch,
     pub http_templates: http_record::Cache,
-    /// PRNG for span/trace ids; seeded lazily from `bun_core::fast_random`.
+    /// PRNG for span/trace ids; seeded lazily from the OS, per thread.
     pub rng: span::IdRng,
     /// Reused transcode buffers: [0..3] for attribute key/value/array bytes, [3] for the span name.
     pub scratch: [Vec<u8>; 4],

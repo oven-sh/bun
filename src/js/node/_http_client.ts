@@ -39,7 +39,7 @@ const onClientRequestStartChannel = dc.channel("http.client.request.start");
 const onClientRequestErrorChannel = dc.channel("http.client.request.error");
 const onClientResponseFinishChannel = dc.channel("http.client.response.finish");
 const otelHttpClientEnabled = $newRustFunction("telemetry.rs", "httpClientEnabled", 0);
-const otelHttpClientBegin = $newRustFunction("telemetry.rs", "httpClientBegin", 3);
+const otelHttpClientBegin = $newRustFunction("telemetry.rs", "httpClientBegin", 2);
 const otelHttpClientEnd = $newRustFunction("telemetry.rs", "httpClientEnd", 7);
 
 function emitErrorEvent(request, error) {
@@ -226,7 +226,7 @@ function otelClientRequestStart(req, protocol, host, port, arrayHeaders?) {
     if (typeof v === "string") callerTraceparent = v;
     hasBaggage = req.getHeader("baggage") !== undefined;
   }
-  const started = otelHttpClientBegin(req.method, callerTraceparent, hasBaggage);
+  const started = otelHttpClientBegin(callerTraceparent, hasBaggage);
   if (started === undefined) return arrayHeaders;
   const [stub, traceparent, tracestate, baggage] = started;
   req[kOtelSpan] = stub;

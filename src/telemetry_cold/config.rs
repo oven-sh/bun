@@ -33,8 +33,8 @@ impl OtlpExporterConfig {
     }
 }
 
-/// The traces URL for an OTLP base endpoint (`OTEL_EXPORTER_OTLP_ENDPOINT`,
-/// bunfig `endpoint`, a preset's base URL): the spec appends `/v1/traces` to
+/// The traces URL for an OTLP base endpoint (`OTEL_EXPORTER_OTLP_ENDPOINT`):
+/// the spec appends `/v1/traces` to
 /// whatever path the base has. Idempotent, so a full traces URL passes through.
 /// Signal-specific URLs (`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) are not passed
 /// through here; they are used verbatim.

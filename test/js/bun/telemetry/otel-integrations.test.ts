@@ -338,19 +338,20 @@ describe("WebSocket", () => {
         });
         const ws = new WebSocket("ws://127.0.0.1:" + server.port + "/");
         ws.onopen = () => ws.send("x");
-        const how = await Promise.race([promise, Bun.sleep(200).then(() => "no-unhandled")]);
+        const how = await Promise.race([promise, Bun.sleep(500).then(() => "no-unhandled")]);
         ws.close();
         await Bun.sleep(10);
         await Bun.otel.forceFlush();
         const m = spans.find(s => s.name === "websocket.message");
-        console.log(JSON.stringify([m.status.code, m.events[0]?.attributes["exception.message"], (m.endTime - m.startTime) >= 15]));
+        console.log(JSON.stringify([how, m.status.code, m.events[0]?.attributes["exception.message"], (m.endTime - m.startTime) >= 15]));
         server.stop(true);
         process.exit(0);
       `,
     });
     await using proc = Bun.spawn({ cmd: [bunExe(), "index.js"], cwd: String(dir), env: bunEnv, stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe(JSON.stringify([2, "late", true]));
+    // the rejection is still reported as unhandled (once), and the span records it
+    expect(stdout.trim()).toBe(JSON.stringify(["unhandled:late", 2, "late", true]));
     expect(exitCode).toBe(0);
   });
 

@@ -1,5 +1,5 @@
 // Native OpenTelemetry: the active-span slot (see TelemetryContext.h for the
-// layout) and the async-frame hook that gives it structured semantics.
+// layout): enter/exit, and what integrations read from it.
 
 #include "root.h"
 #include "TelemetryContext.h"

@@ -11,8 +11,8 @@ pub struct TraceId(pub [u8; 16]);
 pub struct SpanId(pub [u8; 8]);
 
 /// Ids come from the per-VM PRNG (`Local::rng`, `bun_core::rand::DefaultPrng`
-/// seeded from the process CSPRNG-backed `fast_random`). Zero is re-drawn: an
-/// all-zero id is invalid in W3C trace context.
+/// seeded per thread from OS entropy). Zero is re-drawn: an all-zero id is
+/// invalid in W3C trace context.
 pub type IdRng = Option<bun_core::rand::DefaultPrng>;
 
 #[inline(always)]

@@ -426,8 +426,6 @@ pub fn find_attribute(attrs: &[u8], key: &[u8]) -> Option<(usize, usize)> {
 pub struct SpanWriter<'a> {
     out: &'a mut Vec<u8>,
     nested: Nested<SPAN_LEN_RESERVE>,
-    /// For clamping a late `end_time` (see `begin`).
-    start_ns: u64,
     /// `attributeValueLengthLimit` for string values written through
     /// `attr*`/`fail` (leaf spans); `usize::MAX` when the caller already
     /// truncated (pooled, JS-owned and HTTP-server spans).
@@ -435,9 +433,7 @@ pub struct SpanWriter<'a> {
 }
 
 impl<'a> SpanWriter<'a> {
-    /// Writes identity, name, kind and timestamps. `end_ns == 0` is allowed
-    /// for callers that set it later via [`Self::end_time`], but every span
-    /// must have one before `finish`.
+    /// Writes identity, name, kind and timestamps.
     #[inline]
     pub fn begin(
         out: &'a mut Vec<u8>,
@@ -472,7 +468,7 @@ impl<'a> SpanWriter<'a> {
         b[n] = (f::START_TIME << 3 | 1) as u8;
         b[n + 1..n + 9].copy_from_slice(&stub.start_ns.to_le_bytes());
         n += 9;
-        if end_ns != 0 {
+        {
             // Never export end < start (an epoch re-anchor after a backward
             // clock step between the two reads; see clock.rs).
             let end_ns = end_ns.max(stub.start_ns);
@@ -490,15 +486,8 @@ impl<'a> SpanWriter<'a> {
         SpanWriter {
             out,
             nested,
-            start_ns: stub.start_ns,
             value_limit: usize::MAX,
         }
-    }
-
-    #[inline]
-    pub fn end_time(&mut self, end_ns: u64) -> &mut Self {
-        proto::write_fixed64(self.out, f::END_TIME, end_ns.max(self.start_ns));
-        self
     }
 
     #[inline]

@@ -153,7 +153,7 @@ impl PropagationHeaders for NodeHeaders {
     }
 }
 
-/// internal: `httpClientBegin(method, callerTraceparent, callerHasBaggage)` →
+/// internal: `httpClientBegin(callerTraceparent, callerHasBaggage)` →
 /// undefined (no span) or `[stub: Uint8Array, traceparent, tracestate | null
 /// (remove) | undefined (leave), baggage | undefined]`.
 pub fn http_client_begin(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
@@ -161,11 +161,11 @@ pub fn http_client_begin(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         return Ok(JSValue::UNDEFINED);
     }
     let mut h = NodeHeaders::default();
-    let tp = frame.argument(1);
+    let tp = frame.argument(0);
     if tp.is_string() {
         h.caller_traceparent = tp.to_utf8(global)?.slice().to_vec();
     }
-    h.caller_has_baggage = frame.argument(2).to_boolean();
+    h.caller_has_baggage = frame.argument(1).to_boolean();
     let stub = begin(global, &mut h);
     if !stub.is_some() {
         return Ok(JSValue::UNDEFINED);
@@ -213,7 +213,10 @@ pub fn http_client_end(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
         return Ok(JSValue::UNDEFINED);
     };
     let method = frame.argument(1).to_utf8(global)?;
-    let method = Method::which(method.slice()).unwrap_or(Method::GET);
+    let method = match Method::which(method.slice()) {
+        Some(m) => MethodName::Known(m),
+        None => MethodName::Other(method.slice()),
+    };
     let url = frame.argument(2).to_utf8(global)?;
     let status = frame.argument(3).as_number() as u16;
     let minor = frame.argument(4);
@@ -256,10 +259,18 @@ pub fn http_client_end(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
 /// (before redirects); `status == 0` means no response was received.
 /// `minor_version`: HTTP/1.x minor version of the response, if one arrived.
 /// `error`: the `(code, message)` the request rejected with.
+/// The request method as `(http.request.method, http.request.method_original)`:
+/// semconv's known set by name; anything else (incl. tokens `bun_http::Method`
+/// does not know) is `_OTHER` with the original alongside.
+pub enum MethodName<'a> {
+    Known(Method),
+    Other(&'a [u8]),
+}
+
 pub fn end(
     global: &JSGlobalObject,
     stub: &SpanStub,
-    method: Method,
+    method: MethodName<'_>,
     url: &[u8],
     status: u16,
     minor_version: Option<u8>,
@@ -268,7 +279,13 @@ pub fn end(
     if !stub.is_recording() {
         return;
     }
-    let name = bun_telemetry::http_record::method_name(method);
+    let (name, original): (&str, &[u8]) = match method {
+        MethodName::Known(m) => (
+            bun_telemetry::http_record::method_name(m),
+            m.as_str().as_bytes(),
+        ),
+        MethodName::Other(o) => ("_OTHER", o),
+    };
     super::end_leaf(
         global,
         Instrument::HttpClient,
@@ -283,7 +300,7 @@ pub fn end(
         |w| {
             w.attr("http.request.method", name);
             if name == "_OTHER" {
-                w.attr("http.request.method_original", method.as_str());
+                w.attr("http.request.method_original", original);
             }
             let u = URL::parse(url);
             // url.full MUST NOT contain credentials. (`bun_url` does not

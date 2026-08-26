@@ -956,6 +956,11 @@ impl JSGlobalObject {
         JSGlobalObject__hasException(self)
     }
 
+    /// `Object.prototype` of this realm.
+    pub fn object_prototype(&self) -> JSValue {
+        JSGlobalObject__objectPrototype(self)
+    }
+
     /// The pending exception is the VM's TerminationException: for host code that handles ordinary errors
     /// itself but must let a termination keep unwinding without taking it.
     #[inline]
@@ -1448,6 +1453,23 @@ extern "C" fn Zig__GlobalObject__onCrash() {
     panic!("A C++ exception occurred");
 }
 
+/// An Objective-C exception nothing caught, already described on stderr by
+/// the terminate handler: the program's error, ended like an uncaught
+/// JavaScript one (exit code 1), with no crash report. `std::terminate` runs
+/// on the raising thread; off the main thread the exit handlers would run
+/// beside a main thread still executing JavaScript, so only the main thread
+/// takes the ordinary exit path.
+#[cfg(target_os = "macos")]
+#[unsafe(no_mangle)]
+extern "C" fn Zig__GlobalObject__onUncaughtObjCException(on_main_thread: bool) -> ! {
+    crate::mark_binding();
+    if on_main_thread {
+        bun_core::Global::exit(1)
+    } else {
+        bun_core::Global::exit_now(1)
+    }
+}
+
 // LAYERING: `getBodyStreamOrBytesForWasmStreaming` deals entirely
 // in `webcore` types (`Response`, `Body.Value`, `Blob`, `ReadableStream`)
 // which live in `bun_runtime`. The exported `extern "C"` symbol
@@ -1569,6 +1591,7 @@ unsafe extern "C" {
     safe fn JSGlobalObject__clearExceptionExceptTermination(this: &JSGlobalObject) -> bool;
     safe fn JSGlobalObject__clearTerminationException(this: &JSGlobalObject);
     safe fn JSGlobalObject__hasException(this: &JSGlobalObject) -> bool;
+    safe fn JSGlobalObject__objectPrototype(this: &JSGlobalObject) -> JSValue;
     safe fn JSGlobalObject__setTimeZone(this: &JSGlobalObject, time_zone: &EncodedSlice) -> bool;
     safe fn JSGlobalObject__tryTakeException(this: &JSGlobalObject) -> JSValue;
 

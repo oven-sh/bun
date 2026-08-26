@@ -701,6 +701,9 @@ unsafe extern "C" {
     #[cfg(unix)]
     #[link_name = "exit"]
     safe fn libc_exit(code: c_int) -> !;
+    #[cfg(unix)]
+    #[link_name = "_exit"]
+    safe fn libc_exit_now(code: c_int) -> !;
     #[cfg(all(unix, not(target_os = "macos")))]
     safe fn quick_exit(code: c_int) -> !;
 }
@@ -746,6 +749,16 @@ pub fn exit(code: u32) -> ! {
         }
         quick_exit(code as c_int);
     }
+}
+
+/// Flushes stdout and stderr and ends the process at once: no atexit
+/// handlers, no exit callbacks, no static destructors. For a thread that
+/// must end the process while another thread is still running JavaScript.
+#[cfg(unix)]
+pub fn exit_now(code: u32) -> ! {
+    IS_EXITING.store(true, Ordering::Relaxed);
+    Output::flush();
+    libc_exit_now(code as i32)
 }
 
 pub fn raise_ignoring_panic_handler(sig: crate::SignalCode) -> ! {

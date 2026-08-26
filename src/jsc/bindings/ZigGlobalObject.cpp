@@ -1,6 +1,11 @@
 #include "root.h"
 
 #include "ZigGlobalObject.h"
+#if OS(DARWIN)
+#include <cxxabi.h>
+#include <dlfcn.h>
+#include <pthread.h>
+#endif
 #include "MessagePort.h"
 #include "helpers.h"
 #include "JavaScriptCore/ArgList.h"
@@ -278,6 +283,75 @@ extern "C" long Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
 // bun_icu_default_locale.cpp
 extern "C" void Bun__ensureICUDefaultLocale();
 
+#if OS(DARWIN)
+extern "C" [[noreturn]] void Zig__GlobalObject__onUncaughtObjCException(bool onMainThread);
+
+// An Objective-C exception is a C++ exception whose type_info lives inside the
+// thrown object, right after the `id` (objc4's `struct objc_exception`). When
+// one reaches std::terminate, it is the program's exception, not a fault in
+// this process: say what it was and where it was raised, and return true so
+// the caller ends the process the way an uncaught error does instead of
+// filing a crash report. The runtime's own handler that would have printed
+// it was displaced above.
+static bool reportUncaughtObjCException()
+{
+    const std::type_info* type = abi::__cxa_current_exception_type();
+    if (!type)
+        return false;
+    void* thrown = abi::__cxa_current_primary_exception();
+    if (!thrown)
+        return false;
+    if (reinterpret_cast<const char*>(type) != static_cast<const char*>(thrown) + sizeof(void*)) {
+        abi::__cxa_decrement_exception_refcount(thrown);
+        return false;
+    }
+    void* exception = *static_cast<void**>(thrown);
+    using Send = void* (*)(void*, void*);
+    auto msgSend = reinterpret_cast<Send>(dlsym(RTLD_DEFAULT, "objc_msgSend"));
+    auto registerName = reinterpret_cast<void* (*)(const char*)>(dlsym(RTLD_DEFAULT, "sel_registerName"));
+    auto getClass = reinterpret_cast<void* (*)(void*)>(dlsym(RTLD_DEFAULT, "object_getClass"));
+    // `BOOL` is `signed char` on x86_64 and `bool` on arm64; `signed char`
+    // reads both correctly.
+    auto respondsTo = reinterpret_cast<signed char (*)(void*, void*)>(dlsym(RTLD_DEFAULT, "class_respondsToSelector"));
+    auto className = reinterpret_cast<const char* (*)(void*)>(dlsym(RTLD_DEFAULT, "class_getName"));
+    const char* name = type->name();
+    const char* reason = "";
+    const char* stack = nullptr;
+    if (exception && msgSend && registerName && getClass && respondsTo && className) {
+        // Anything may be thrown (`@throw someString`), so only what the
+        // object's class answers is sent to it.
+        auto send = [&](void* object, const char* selector) -> void* {
+            void* sel = registerName(selector);
+            void* cls = object ? getClass(object) : nullptr;
+            return cls && respondsTo(cls, sel) != 0 ? msgSend(object, sel) : nullptr;
+        };
+        auto utf8 = [&](const char* selector) -> const char* {
+            void* value = send(exception, selector);
+            if (!value)
+                return nullptr;
+            if (const char* text = static_cast<const char*>(send(value, "UTF8String")))
+                return text;
+            return static_cast<const char*>(send(send(value, "description"), "UTF8String"));
+        };
+        if (void* cls = getClass(exception))
+            if (const char* n = className(cls))
+                name = n;
+        if (const char* n = utf8("name"))
+            name = n;
+        if (const char* r = utf8("reason"))
+            reason = r;
+        else if (const char* d = utf8("description"))
+            reason = d;
+        stack = utf8("callStackSymbols");
+    }
+    fprintf(stderr, "error: uncaught Objective-C exception %s: %s\n", name, reason);
+    if (stack)
+        fprintf(stderr, "%s\n", stack);
+    fflush(stderr);
+    return true;
+}
+#endif
+
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals)
 {
     static std::once_flag jsc_init_flag;
@@ -288,7 +362,13 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         // JSC options come from BUN_JSC_* (applied in the callback below), not JSC_*.
         JSC::Config::disableEnvironmentOptions();
 
-        std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
+        std::set_terminate([]() {
+#if OS(DARWIN)
+            if (reportUncaughtObjCException())
+                Zig__GlobalObject__onUncaughtObjCException(pthread_main_np() == 1);
+#endif
+            Zig__GlobalObject__onCrash();
+        });
         WTF::initializeMainThread();
 
         // Use JSC::initialize with a callback to set Options during initialization.

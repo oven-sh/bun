@@ -361,5 +361,10 @@ const errors: ErrorCodeMapping = [
   ["ERR_INSPECTOR_NOT_WORKER", Error],
   ["ERR_INSPECTOR_COMMAND", Error],
   ["ERR_REDIS_SERVER_ERROR", Error, "RedisError"],
+  ["ERR_OBJC_UNAVAILABLE", Error],
+  ["ERR_OBJC_EXCEPTION", Error],
+  ["ERR_OBJC_NOT_FOUND", TypeError],
+  ["ERR_OBJC_UNRECOGNIZED_SELECTOR", TypeError],
+  ["ERR_OBJC_WRONG_THREAD", Error],
 ];
 export default errors;

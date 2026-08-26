@@ -6543,6 +6543,11 @@ extern "C" EncodedJSValue JSArray__constructEmptyArray(
     return JSValue::encode(JSC::constructEmptyArray(global, (ArrayAllocationProfile*)nullptr, len));
 }
 
+extern "C" JSC::EncodedJSValue JSGlobalObject__objectPrototype(JSC::JSGlobalObject* globalObject)
+{
+    return JSC::JSValue::encode(globalObject->objectPrototype());
+}
+
 extern "C" bool JSGlobalObject__hasException(JSC::JSGlobalObject* globalObject)
 {
     return DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm()).exception() != 0;

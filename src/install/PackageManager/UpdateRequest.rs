@@ -345,5 +345,3 @@ impl PackageManager {
 }
 
 pub use super::Subcommand;
-pub use bun_install::package_manager::Options;
-pub use bun_install::package_manager::command_line_arguments as CommandLineArguments;

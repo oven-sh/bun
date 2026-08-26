@@ -1196,17 +1196,6 @@ impl EventLoop {
 }
 
 impl EventLoop {
-    /// # Safety
-    /// `done` must point to a live `bool`; C++ writes `true` through it from a
-    /// callback inside `tick()`, so it cannot be a Rust `&mut` (would alias).
-    pub unsafe fn tick_while_paused(&mut self, done: *const bool) {
-        // SAFETY: see fn contract — `done` is a live FFI bool written by C++.
-        while !unsafe { done.read_volatile() } {
-            // SAFETY: `native_loop()` is live for this loop's lifetime; JS thread.
-            unsafe { (*self.native_loop()).tick() };
-        }
-    }
-
     /// Prefer `runCallbackWithResult` unless you really need to make sure that microtasks are drained.
     pub fn run_callback_with_result_and_forcefully_drain_microtasks(
         &mut self,

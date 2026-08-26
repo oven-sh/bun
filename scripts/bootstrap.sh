@@ -104,16 +104,6 @@ fetch() {
 	fi
 }
 
-compare_version() {
-	if [ "$1" = "$2" ]; then
-		print "0"
-	elif [ "$1" = "$(echo -e "$1\n$2" | sort -V | head -n1)" ]; then
-		print "-1"
-	else
-		print "1"
-	fi
-}
-
 create_directory() {
 	path="$1"
 	path_dir="$path"

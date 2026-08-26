@@ -84,11 +84,8 @@ use linux_impl as imp;
     target_os = "linux",
     target_os = "android",
     target_os = "freebsd",
-    target_arch = "wasm32",
 )))]
 use unsupported_impl as imp;
-#[cfg(target_arch = "wasm32")]
-use wasm_impl as imp;
 #[cfg(windows)]
 use windows_impl as imp;
 
@@ -100,7 +97,6 @@ use windows_impl as imp;
     target_os = "linux",
     target_os = "android",
     target_os = "freebsd",
-    target_arch = "wasm32",
 )))]
 mod unsupported_impl {
     use super::*;
@@ -457,48 +453,6 @@ mod freebsd_impl {
             E::EINVAL => panic!("_umtx_op() WAKE returned EINVAL unexpectedly"),
             _ => panic!("Unexpected _umtx_op() WAKE return code"),
         }
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-mod wasm_impl {
-    use super::*;
-
-    pub(crate) fn wait(
-        ptr: &AtomicU32,
-        expect: u32,
-        timeout: Option<u64>,
-    ) -> Result<(), TimeoutError> {
-        #[cfg(not(target_feature = "atomics"))]
-        compile_error!("WASI target missing cpu feature 'atomics'");
-
-        let to: i64 = match timeout {
-            Some(to) => i64::try_from(to).expect("int cast"),
-            None => -1,
-        };
-        // SAFETY: ptr.as_ptr() is a valid aligned *mut i32 (AtomicU32 has the same layout).
-        let result = unsafe {
-            core::arch::wasm32::memory_atomic_wait32(ptr.as_ptr().cast::<i32>(), expect as i32, to)
-        };
-        match result {
-            0 => Ok(()), // ok
-            1 => Ok(()), // expected =! loaded
-            2 => Err(TimeoutError::Timeout),
-            _ => panic!("Unexpected memory.atomic.wait32() return code"),
-        }
-    }
-
-    pub fn wake(ptr: *const AtomicU32, max_waiters: u32) {
-        #[cfg(not(target_feature = "atomics"))]
-        compile_error!("WASI target missing cpu feature 'atomics'");
-
-        debug_assert!(max_waiters != 0);
-        // SAFETY: memory.atomic.notify only keys on the aligned address, and linear memory is
-        // never unmapped (see `super::wake_raw`); AtomicU32 has the layout of i32.
-        let woken_count = unsafe {
-            core::arch::wasm32::memory_atomic_notify(ptr.cast::<i32>().cast_mut(), max_waiters)
-        };
-        let _ = woken_count; // can be 0 when linker flag 'shared-memory' is not enabled
     }
 }
 

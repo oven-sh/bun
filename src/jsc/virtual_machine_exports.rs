@@ -250,17 +250,6 @@ pub fn set_verbose_fetch_value(value: i32) {
         }));
 }
 
-// HOST_EXPORT(Bun__getVerboseFetchValue, c)
-pub fn get_verbose_fetch_value() -> i32 {
-    use bun_http::HTTPVerboseLevel;
-    // SAFETY: VM singleton is process-lifetime.
-    match VirtualMachine::get().get_verbose_fetch() {
-        HTTPVerboseLevel::None => 0,
-        HTTPVerboseLevel::Headers => 1,
-        HTTPVerboseLevel::Curl => 2,
-    }
-}
-
 // `Bun__addBakeSourceProviderSourceMap` / `Bun__addDevServerSourceProvider` /
 // `Bun__removeDevServerSourceProvider` live in
 // `bun_runtime::bake::source_provider_exports` (their callers are bake's C++

@@ -163,7 +163,7 @@ pub(crate) fn runtime_state() -> *mut RuntimeState {
 /// Note: `bun_jsc::VirtualMachine.timer` is a `()` placeholder;
 /// the real `All` lives in [`RuntimeState::timer`] until that slot widens.
 /// Null only before [`init_runtime_state`] has run (e.g. `bun_jsc` unit tests
-/// with no high tier, or `Bun__Timer__getNextID` racing init).
+/// with no high tier).
 ///
 /// Returns `*mut` (NOT `&mut`) so callers that are themselves fields of `All`
 /// (`DateHeaderTimer`, `EventLoopDelayMonitor`, `FakeTimers`) can dereference

@@ -32,10 +32,9 @@ pub use self::js_valkey as js_valkey_body;
 
 // ─── public re-exports ───────────────────────────────────────────────────────
 pub use js_valkey::JSValkeyClient;
-pub use valkey::{Options, Protocol, Status, ValkeyClient};
 
 pub mod valkey_command {
-    pub use super::valkey_command_body::{Entry, Meta, Promise, PromisePair, entry, promise_pair};
+    pub use super::valkey_command_body::{Entry, PromisePair};
 }
 
 // ── JsClass wiring (codegen name = "RedisClient", see valkey.classes.ts) ────

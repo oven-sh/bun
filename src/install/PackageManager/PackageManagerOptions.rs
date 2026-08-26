@@ -723,7 +723,6 @@ impl Options {
         }
 
         if let Some(cli) = maybe_cli {
-            self.do_.set(Do::ANALYZE, cli.analyze);
             self.enable
                 .set(Enable::ONLY_MISSING, cli.only_missing || cli.analyze);
 
@@ -958,12 +957,10 @@ bitflags::bitflags! {
         const WRITE_PACKAGE_JSON           = 1 << 3;
         const RUN_SCRIPTS                  = 1 << 4;
         const SAVE_YARN_LOCK               = 1 << 5;
-        const PRINT_META_HASH_STRING       = 1 << 6;
         const VERIFY_INTEGRITY             = 1 << 7;
         const SUMMARY                      = 1 << 8;
         const TRUST_DEPENDENCIES_FROM_ARGS = 1 << 9;
         const UPDATE_TO_LATEST             = 1 << 10;
-        const ANALYZE                      = 1 << 11;
         const RECURSIVE                    = 1 << 12;
         const PREFETCH_RESOLVED_TARBALLS   = 1 << 13;
         // _: u2 padding
@@ -1039,10 +1036,6 @@ impl Do {
     #[inline]
     pub(crate) fn save_yarn_lock(self) -> bool {
         self.contains(Do::SAVE_YARN_LOCK)
-    }
-    #[inline]
-    pub(crate) fn print_meta_hash_string(self) -> bool {
-        self.contains(Do::PRINT_META_HASH_STRING)
     }
     #[inline]
     pub(crate) fn summary(self) -> bool {

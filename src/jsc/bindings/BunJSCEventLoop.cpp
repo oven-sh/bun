@@ -10,12 +10,6 @@
 // Matches oven-sh/mimalloc's mi_attr_noexcept declaration; bmalloc's
 // vendored mimalloc.h predates this entry point.
 extern "C" void mi_on_thread_idle(void) noexcept;
-#if !OS(WINDOWS)
-// uSockets' CLOCK_MONOTONIC reading (packages/bun-usockets/src/loop.c). Must be
-// the same clock the caller's `nowNs` came from, or the rate limit below
-// compares two epochs. Windows always passes a reading, so it needs no fallback.
-extern "C" uint64_t us_internal_monotonic_ns(void);
-#endif
 #endif
 
 // Rust-side `AtomicI32` static (src/jsc/VirtualMachine.rs). Same layout as a plain

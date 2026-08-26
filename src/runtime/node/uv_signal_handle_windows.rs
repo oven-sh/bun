@@ -2,15 +2,11 @@
 //! Lives under `runtime/` because `init` takes a `*JSGlobalObject` to reach
 //! the VM's libuv loop; the rest of `sys/windows/` is JSC-free.
 
-#[cfg(windows)]
 use core::ffi::c_int;
 
-#[cfg(windows)]
 use bun_jsc::JSGlobalObject;
-#[cfg(windows)]
 use bun_sys::windows::libuv;
 
-#[cfg(windows)]
 #[unsafe(no_mangle)]
 extern "C" fn Bun__UVSignalHandle__init(
     global: &JSGlobalObject,
@@ -45,7 +41,6 @@ extern "C" fn Bun__UVSignalHandle__init(
     signal
 }
 
-#[cfg(windows)]
 extern "C" fn free_with_default_allocator(handle: *mut libuv::uv_handle_t) {
     // Body discharges its own precondition; safe `extern "C" fn` coerces to
     // libuv's `uv_close_cb` pointer type.
@@ -59,7 +54,6 @@ extern "C" fn free_with_default_allocator(handle: *mut libuv::uv_handle_t) {
 // The caller discards the return, but the Rust side must still match the
 // signature — a `void`-vs-pointer return is an ABI mismatch (different
 // register usage on Win64). Return null (handle is being torn down).
-#[cfg(windows)]
 #[unsafe(no_mangle)]
 extern "C" fn Bun__UVSignalHandle__close(
     signal: *mut libuv::uv_signal_t,

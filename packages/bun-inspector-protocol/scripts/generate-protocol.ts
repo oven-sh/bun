@@ -1,7 +1,7 @@
 // Regenerates src/protocol/jsc/{protocol.json,index.d.ts} from the inspector
 // protocol of the WebKit build Bun links against.
 //
-//   bun scripts/generate-protocol.ts [path/to/CombinedDomains.json] [--v8]
+//   bun scripts/generate-protocol.ts [path/to/CombinedDomains.json]
 //
 // CombinedDomains.json is what JavaScriptCore's build produces from
 // Source/JavaScriptCore/inspector/protocol/*.json. The bun-webkit prebuilt
@@ -9,9 +9,6 @@
 // build cache for the WEBKIT_VERSION pinned in scripts/build/deps/webkit.ts;
 // that is what is used when no path is given. A local WebKit build writes it
 // to <build>/JavaScriptCore/DerivedSources/CombinedDomains.json.
-//
-// Pass --v8 to also refresh src/protocol/v8 from the Chrome DevTools protocol
-// repository (requires network access).
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -132,32 +129,6 @@ function formatProperty(property: Property): string {
   return body;
 }
 
-/**
- * @link https://github.com/ChromeDevTools/devtools-protocol/tree/master/json
- */
-async function downloadV8(): Promise<Protocol> {
-  const baseUrl = "https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/json";
-  const domains = ["Runtime", "Console", "Debugger", "Memory", "HeapProfiler", "Profiler", "Network", "Inspector"];
-  return Promise.all([
-    download<Protocol>(`${baseUrl}/js_protocol.json`),
-    download<Protocol>(`${baseUrl}/browser_protocol.json`),
-  ]).then(([js, browser]) => ({
-    name: "V8",
-    version: js.version,
-    domains: [...js.domains, ...browser.domains]
-      .filter(domain => !domains.includes(domain.domain))
-      .sort((a, b) => a.domain.localeCompare(b.domain)),
-  }));
-}
-
-async function download<V>(url: string): Promise<V> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`${response.status}: ${url}`);
-  }
-  return response.json();
-}
-
 function toTitle(name: string): string {
   return name.charAt(0).toUpperCase() + name.slice(1);
 }
@@ -203,7 +174,6 @@ function findPinnedCombinedDomains(): string | undefined {
 const domainsWithoutAgent = new Set(["File", "Process"]);
 
 const args = process.argv.slice(2);
-const includeV8 = args.includes("--v8");
 const combinedDomainsPath = args.find(arg => !arg.startsWith("--")) ?? findPinnedCombinedDomains();
 if (!combinedDomainsPath) {
   console.error(
@@ -237,12 +207,6 @@ const jsc: Protocol = {
 };
 write("jsc/protocol.json", JSON.stringify(jsc, null, 2));
 write("jsc/index.d.ts", "// GENERATED - DO NOT EDIT\n" + formatProtocol(jsc, baseNoComments));
-
-if (includeV8) {
-  const v8 = await downloadV8();
-  write("v8/protocol.json", JSON.stringify(v8));
-  write("v8/index.d.ts", "// GENERATED - DO NOT EDIT\n" + formatProtocol(v8, baseNoComments));
-}
 
 const { status } = spawnSync("bunx", ["prettier", "--write", ...written], { cwd: repoRoot, stdio: "inherit" });
 if (status !== 0) {

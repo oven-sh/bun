@@ -12,38 +12,9 @@ unsafe extern "C" {
     // safe: `JSValue` is a by-value tagged i64; returns a nullable GC-cell
     // pointer the caller checks before deref.
     safe fn JSC__JSBigInt__fromJS(value: JSValue) -> *mut JSBigInt;
-    safe fn JSC__JSBigInt__orderDouble(this: &JSBigInt, num: f64) -> i8;
-    safe fn JSC__JSBigInt__orderUint64(this: &JSBigInt, num: u64) -> i8;
     safe fn JSC__JSBigInt__orderInt64(this: &JSBigInt, num: i64) -> i8;
     safe fn JSC__JSBigInt__toInt64(this: &JSBigInt) -> i64;
     safe fn JSC__JSBigInt__toString(this: &JSBigInt, global: &JSGlobalObject) -> BunString;
-}
-
-/// Types that can be compared against a `JSBigInt` via the FFI order functions.
-pub trait BigIntOrderable: Copy {
-    fn raw_order(self, this: &JSBigInt) -> i8;
-}
-
-impl BigIntOrderable for f64 {
-    #[inline]
-    fn raw_order(self, this: &JSBigInt) -> i8 {
-        debug_assert!(!self.is_nan());
-        JSC__JSBigInt__orderDouble(this, self)
-    }
-}
-
-impl BigIntOrderable for u64 {
-    #[inline]
-    fn raw_order(self, this: &JSBigInt) -> i8 {
-        JSC__JSBigInt__orderUint64(this, self)
-    }
-}
-
-impl BigIntOrderable for i64 {
-    #[inline]
-    fn raw_order(self, this: &JSBigInt) -> i8 {
-        JSC__JSBigInt__orderInt64(this, self)
-    }
 }
 
 impl JSBigInt {
@@ -57,8 +28,8 @@ impl JSBigInt {
         (!p.is_null()).then(|| JSBigInt::opaque_ref(p))
     }
 
-    pub fn order<T: BigIntOrderable>(&self, num: T) -> Ordering {
-        let result = num.raw_order(self);
+    pub fn order(&self, num: i64) -> Ordering {
+        let result = JSC__JSBigInt__orderInt64(self, num);
         if result == 0 {
             return Ordering::Equal;
         }

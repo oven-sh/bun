@@ -89,8 +89,6 @@ using namespace WebCore;
 
 namespace Bun {
 
-extern "C" bool has_bun_garbage_collector_flag_enabled;
-
 static JSValue BunObject_lazyPropCb_wrap_ArrayBufferSink(VM& vm, JSObject* bunObject)
 {
     return uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject())->ArrayBufferSink();

@@ -41,15 +41,8 @@ class ContextDestructionObserver;
 
 using ScriptExecutionContextIdentifier = uint32_t;
 
-#if ENABLE(MALLOC_BREAKDOWN)
-DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
-#endif
 class ScriptExecutionContext : public CanMakeWeakPtr<ScriptExecutionContext>, public RefCounted<ScriptExecutionContext> {
-#if ENABLE(MALLOC_BREAKDOWN)
-    WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(ScriptExecutionContext, ScriptExecutionContext);
-#else
     WTF_MAKE_TZONE_ALLOCATED(ScriptExecutionContext);
-#endif
 
 public:
     ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* globalObject);

@@ -911,8 +911,13 @@ impl StandaloneModuleGraph {
                     offset: read_u32(record_at),
                     length: read_u32(record_at + 4),
                 };
-                // SAFETY: read-only subrange placed by `to_bytes`, disjoint from the writable regions.
-                unsafe { slice_to(raw_const, raw_len, ptr) }
+                if (ptr.offset as usize).saturating_add(ptr.length as usize) > raw_len {
+                    &[]
+                } else {
+                    // SAFETY: bounds checked above; read-only subrange placed by `to_bytes`, disjoint from
+                    // the writable regions.
+                    unsafe { slice_to(raw_const, raw_len, ptr) }
+                }
             } else {
                 &[]
             };

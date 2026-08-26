@@ -519,7 +519,7 @@ trait JSModuleRecordExt {
 }
 impl JSModuleRecordExt for *mut JSModuleRecord {
     // SAFETY (all below): `self` is the non-null pointer returned by JSC_JSModuleRecord__create;
-    // `ia` is one of the VM-owned identifier arrays, which outlive the caller.
+    // `ia` is either the VM's shared identifier slots or the caller's `OwnedIdentifierArray`; both outlive every call below.
     #[inline]
     fn add_indirect_export(
         self,
@@ -529,7 +529,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         module_request_type: u8,
     ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is VM-owned and outlives the call.
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
         unsafe {
             JSC_JSModuleRecord__addIndirectExport(
                 self,
@@ -548,7 +548,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         export_name: StringID,
         local_name: StringID,
     ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is VM-owned and outlives the call.
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
         unsafe { JSC_JSModuleRecord__addLocalExport(self, ia, export_name, local_name) }
     }
     #[inline]
@@ -559,7 +559,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         module_request_type: u8,
     ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is VM-owned and outlives the call.
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
         unsafe {
             JSC_JSModuleRecord__addNamespaceExport(
                 self,
@@ -577,7 +577,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         module_request_type: u8,
     ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is VM-owned and outlives the call.
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
         unsafe { JSC_JSModuleRecord__addStarExport(self, ia, module_name, module_request_type) }
     }
     #[inline]
@@ -587,7 +587,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         phase_defer: bool,
     ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is VM-owned and outlives the call.
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
         unsafe {
             JSC_JSModuleRecord__addRequestedModuleNullAttributesPtr(
                 self,
@@ -604,7 +604,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         phase_defer: bool,
     ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is VM-owned and outlives the call.
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
         unsafe {
             JSC_JSModuleRecord__addRequestedModuleJavaScript(self, ia, module_name, phase_defer)
         }
@@ -616,7 +616,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         phase_defer: bool,
     ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is VM-owned and outlives the call.
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
         unsafe {
             JSC_JSModuleRecord__addRequestedModuleWebAssembly(self, ia, module_name, phase_defer)
         }
@@ -628,7 +628,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         phase_defer: bool,
     ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is VM-owned and outlives the call.
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
         unsafe { JSC_JSModuleRecord__addRequestedModuleJSON(self, ia, module_name, phase_defer) }
     }
     #[inline]
@@ -639,7 +639,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         host_defined_import_type: StringID,
         phase_defer: bool,
     ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is VM-owned and outlives the call.
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
         unsafe {
             JSC_JSModuleRecord__addRequestedModuleHostDefined(
                 self,
@@ -659,7 +659,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         module_request_type: u8,
     ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is VM-owned and outlives the call.
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
         unsafe {
             JSC_JSModuleRecord__addImportEntrySingle(
                 self,
@@ -680,7 +680,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         module_request_type: u8,
     ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is VM-owned and outlives the call.
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
         unsafe {
             JSC_JSModuleRecord__addImportEntrySingleTypeScript(
                 self,
@@ -701,7 +701,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         module_request_type: u8,
     ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is VM-owned and outlives the call.
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
         unsafe {
             JSC_JSModuleRecord__addImportEntryNamespace(
                 self,
@@ -722,7 +722,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         module_name: StringID,
         module_request_type: u8,
     ) {
-        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` is VM-owned and outlives the call.
+        // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
         unsafe {
             JSC_JSModuleRecord__addImportEntryNamespaceDefer(
                 self,

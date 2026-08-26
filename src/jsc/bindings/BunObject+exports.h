@@ -60,7 +60,6 @@
     macro(listen) \
     macro(mmap) \
     macro(openInEditor) \
-    macro(registerMacro) \
     macro(resolve) \
     macro(resolveSync) \
     macro(serve) \

@@ -694,19 +694,9 @@ impl TranspilerJob {
         transpiler.set_log(&raw mut log);
         // Note: the resolver already shares opts with the parent
         // Transpiler via raw pointer; set_arena/set_log keep them in sync.
-        transpiler.macro_context = None;
-        // Note: `parse_maybe` re-creates the macro context per-iteration
-        // when `macro_context.is_none()`. It boxes a
-        // higher-tier `MacroContext` via `__bun_macro_context_init`; that Box
-        // is intentionally leaked for the long-lived `vm.transpiler`, but here
-        // we operate on a per-iteration `ManuallyDrop` bytewise copy, so we
-        // MUST free what `parse_maybe` allocates or every dynamic `import()`
-        // leaks one `Box<MacroContext>` (require-cache.test.ts "files
-        // transpiled and loaded don't leak file paths > via import()" OOMs at
-        // ~0.5 GB after 100k iterations). The owned `MimallocArena` inside is
-        // now lazy (`bump: Option<Arena>`, init on first `.call()`), so the
-        // per-iteration `mi_heap_new()` is gone; this guard just reclaims the
-        // small `Box`.
+        // This per-iteration copy of the transpiler gets its own macro context
+        // (below); free it on every return path, or each dynamic `import()`
+        // leaks one `Box<MacroContext>`.
         let _macro_ctx_guard =
             scopeguard::guard(ptr::addr_of_mut!(transpiler.macro_context), |slot| {
                 // SAFETY: `slot` points into `transpiler_storage`, which is
@@ -717,6 +707,15 @@ impl TranspilerJob {
                     ctx.deinit();
                 }
             });
+        // This parse is for `vm`: if it waits on a macro and `vm` is stopped
+        // meanwhile (a terminated Worker), the wait is interrupted through
+        // this handle instead of holding `vm`'s teardown up.
+        let waiting_vm: crate::VmHandle = ticket.handle();
+        {
+            let mut ctx = bun_js_parser::Macro::MacroContext::init(&mut *transpiler);
+            ctx.waiting_vm = (&raw const waiting_vm).cast();
+            transpiler.macro_context = Some(ctx);
+        }
 
         let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
         let hash = Watcher::get_hash(path.text);
@@ -737,11 +736,8 @@ impl TranspilerJob {
         // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
         let is_node_override = strings::has_prefix_comptime(specifier, node_fallbacks::IMPORT_PATH);
 
-        // SAFETY: leaf scalar field reads on `*vm`; see `vm` note above.
-        let macro_remappings = if unsafe { (*vm).macro_mode }
-            || !unsafe { (*vm).has_any_macro_remappings }
-            || is_node_override
-        {
+        // SAFETY: leaf scalar field read on `*vm`; see `vm` note above.
+        let macro_remappings = if !unsafe { (*vm).has_any_macro_remappings } || is_node_override {
             MacroRemap::default()
         } else {
             // Note: `MacroRemap` (StringArrayHashMap of StringArrayHashMap)

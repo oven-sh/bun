@@ -84,7 +84,17 @@ fn data_to_js_with_check(
             JSValue::FALSE
         }),
         ExprData::ENumber(e) => Ok(number_to_js(*e)),
-        // ExprData::EBigInt(e) => e.to_js(ctx, exception),
+        ExprData::EBigInt(e) => JSValue::big_int_from_literal(global, &e.value).map_err(js_err),
+        ExprData::EUnary(e)
+            if e.op == bun_ast::OpCode::UnNeg && matches!(e.value.data, ExprData::EBigInt(_)) =>
+        {
+            let ExprData::EBigInt(b) = &e.value.data else {
+                unreachable!()
+            };
+            JSValue::big_int_from_literal(global, &b.value)
+                .and_then(|v| v.big_int_unary_minus(global))
+                .map_err(js_err)
+        }
         ExprData::EInlinedEnum(inlined) => {
             data_to_js_with_check(&inlined.value.data, global, stack_check)
         }

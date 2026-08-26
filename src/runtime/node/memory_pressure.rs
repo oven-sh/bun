@@ -343,9 +343,7 @@ mod windows {
                 break;
             }
             let task = ConcurrentTask::create(super::pressure_task(super::level::CRITICAL));
-            if let bun_jsc::vm_handle::Posted::Refused(task) =
-                vm.post(bun_jsc::LoopKind::Regular, task)
-            {
+            if let bun_jsc::vm_handle::Posted::Refused(task) = vm.post(task) {
                 // VM torn down (uninstall joins us right after): drop the notification.
                 // SAFETY: refused ⇒ we own the task box.
                 unsafe { drop(bun_core::heap::take(task.as_ptr())) };

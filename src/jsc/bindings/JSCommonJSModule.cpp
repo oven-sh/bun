@@ -257,7 +257,7 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
         this->m_filename.get());
 
     if (auto exception = scope.exception()) {
-        if (vm.hasPendingTerminationException()) [[unlikely]]
+        if (vm.hasPendingTerminationException() || vm.traps().needHandling(JSC::VMTraps::NeedTermination)) [[unlikely]]
             return false;
         (void)scope.tryClearException();
 
@@ -1282,8 +1282,9 @@ ALWAYS_INLINE EncodedJSValue finishRequireWithError(Zig::GlobalObject* globalObj
     JSC::JSValue exception = throwScope.exception();
     ASSERT(exception);
     // tryClearException() cannot clear a termination, and JSMap::remove with
-    // it still pending returns false, tripping ASSERT(wasRemoved).
-    if (vm.hasPendingTerminationException()) [[unlikely]]
+    // it pending (or requested: remove() reaches a trap check and it becomes
+    // pending there) returns false, tripping ASSERT(wasRemoved).
+    if (vm.hasPendingTerminationException() || vm.traps().needHandling(JSC::VMTraps::NeedTermination)) [[unlikely]]
         RELEASE_AND_RETURN(throwScope, {});
     (void)throwScope.tryClearException();
 

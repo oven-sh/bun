@@ -5,7 +5,6 @@ class JSVMClientData;
 }
 
 #include <JavaScriptCore/DeferredWorkTimer.h>
-#include "BunLoopKind.h"
 
 namespace Bun {
 
@@ -35,9 +34,8 @@ public:
 public:
     Lock m_lock;
     bool m_isShuttingDown WTF_GUARDED_BY_LOCK(m_lock) { false };
-    // Value: the loop that was current when JSC registered the work; its completion is posted there.
-    UncheckedKeyHashMap<Ref<JSC::DeferredWorkTimer::Ticket>, BunLoopKind> m_pendingTicketsKeepingEventLoopAlive;
-    UncheckedKeyHashMap<Ref<JSC::DeferredWorkTimer::Ticket>, BunLoopKind> m_pendingTicketsOther;
+    UncheckedKeyHashSet<Ref<JSC::DeferredWorkTimer::Ticket>> m_pendingTicketsKeepingEventLoopAlive;
+    UncheckedKeyHashSet<Ref<JSC::DeferredWorkTimer::Ticket>> m_pendingTicketsOther;
 };
 
 }

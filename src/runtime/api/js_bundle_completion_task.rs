@@ -57,6 +57,9 @@ pub struct JSBundleCompletionTask {
     /// JS thread releases it unstarted): how the bundle thread and its plugin
     /// hops reach the VM that called Bun.build, and what makes it wait.
     pub(crate) bundle_ticket: Option<jsc::Ticket>,
+    /// The VM a parse for this build waits on a macro for: stopping it
+    /// interrupts that wait (see `MacroContext.waiting_vm`).
+    pub(crate) waiting_vm: jsc::VmHandle,
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub poll_ref: KeepAlive,
@@ -147,6 +150,7 @@ impl JSBundleCompletionTask {
             ref_count: RefCount::init(),
             config,
             bundle_ticket: Some(global_this.bun_vm().ticket()),
+            waiting_vm: global_this.bun_vm().handle(),
             global_this: BackRef::new(global_this),
             promise: jsc::JSPromiseStrong::default(),
             poll_ref: KeepAlive::init(),
@@ -847,6 +851,7 @@ static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDis
             .cancelled
             .load(core::sync::atomic::Ordering::Acquire)
     },
+    waiting_vm: |c| (&raw const from_completion_handle(c).waiting_vm).cast(),
     enqueue_task_concurrent: |c, task| {
         // SAFETY: `task` is a fresh non-null `ConcurrentTask` passed through
         // from the bundler vtable; the queue takes ownership.

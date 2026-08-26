@@ -28,7 +28,6 @@ use crate::BundleV2;
 use crate::options_impl::Target;
 use crate::parse_task::{ContentsOrFd, ParseTask, ParseTaskStage};
 use crate::transpiler::Transpiler;
-use bun_js_parser as js_ast;
 
 bun_core::declare_scope!(ThreadPool, visible);
 
@@ -605,9 +604,7 @@ impl Worker {
             // `wire_after_move` boxed a `bun_js_parser_jsc::Macro::MacroContext`
             // behind `macro_context.data` (raw `*mut`, no `Drop` glue);
             // `Transpiler` has no `Drop` impl, so `worker.data = None` below
-            // would strand it. Free both transpilers' boxes explicitly — the
-            // box only owns a `MacroMap` and a lazy `bun_alloc::Arena`, no JSC
-            // handles, so the worker thread tearing it down is safe.
+            // would strand it. Free both transpilers' boxes explicitly.
             if let Some(data) = worker.data.as_mut() {
                 if let Some(ctx) = data.transpiler.macro_context.take() {
                     ctx.deinit();
@@ -617,7 +614,6 @@ impl Worker {
                         ctx.deinit();
                     }
                 }
-                js_ast::Macro::collect_vm_garbage();
             }
             // Drop order: `data` (whose `transpiler.arena` borrows `heap`)
             // first, then the arenas it references.

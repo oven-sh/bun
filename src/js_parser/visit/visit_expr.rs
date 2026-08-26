@@ -719,12 +719,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     _ => None,
                 };
 
-                if let Some(ref_) = ref_
-                    && !p.options.features.is_macro_runtime
-                {
+                if let Some(ref_) = ref_ {
                     if let Some(macro_ref_data) = p.macro_.refs.get(&ref_).copied() {
                         p.ignore_usage(ref_);
                         if p.is_control_flow_dead {
+                            *e = p.new_expr(E::Undefined {}, e_.tag.unwrap().loc);
+                            return;
+                        }
+                        if p.options.features.is_macro_runtime {
+                            p.log().add_error(
+                                Some(p.source),
+                                tag.loc,
+                                b"Macros cannot be invoked from inside a macro",
+                            );
                             *e = p.new_expr(E::Undefined {}, e_.tag.unwrap().loc);
                             return;
                         }
@@ -785,12 +792,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         else {
                             return;
                         };
-
-                        if !matches!(macro_result.data, Data::ETemplate(..)) {
-                            *e = macro_result;
-                            p.visit_expr(e);
-                            return;
-                        }
+                        *e = macro_result;
+                        p.visit_expr(e);
+                        return;
                     }
                 }
             }
@@ -2123,7 +2127,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if Self::ALLOW_MACROS {
-            if is_macro_ref && !p.options.features.is_macro_runtime {
+            if is_macro_ref {
                 let ref_ = match &e_.target.data {
                     Data::EImportIdentifier(ident) => ident.ref_,
                     Data::EDot(dot) => {
@@ -2140,6 +2144,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.ignore_usage(ref_);
                 if p.is_control_flow_dead {
                     *e = p.new_expr(E::Undefined {}, e_.target.loc);
+                    return;
+                }
+
+                if p.options.features.is_macro_runtime {
+                    p.log().add_error(
+                        Some(p.source),
+                        expr.loc,
+                        b"Macros cannot be invoked from inside a macro",
+                    );
+                    *e = p.new_expr(E::Undefined {}, expr.loc);
                     return;
                 }
 
@@ -2208,11 +2222,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 };
 
-                if !matches!(macro_result.data, Data::ECall(..)) {
-                    *e = macro_result;
-                    p.visit_expr(e);
-                    return;
-                }
+                *e = macro_result;
+                p.visit_expr(e);
+                return;
             }
         }
 

@@ -401,9 +401,8 @@ impl<'a> Transpiler<'a> {
         // `E::Object`) — same lifetime as the block-store. Only the bundler
         // resets it; install/`--define` (which also use the block-store) hold
         // `StoreRef`s across reset, see `store_ast_alloc_heap` doc. Must mirror
-        // the block-store's FULL early-return gate (`DISABLE_RESET ||
-        // memory_allocator() != null`, Stmt.rs `Store::reset`): macro
-        // evaluation pins the store via `DisableStoreReset`, and
+        // the block-store's early-return gate (`memory_allocator() != null`,
+        // Stmt.rs `Store::reset`):
         // `ParseTask`/`RuntimeTranspilerStore` call this from inside an
         // `ASTMemoryAllocator::Scope` (where the block-store reset is a no-op
         // and the active `AstAlloc` state belongs to that scope, NOT the
@@ -412,9 +411,7 @@ impl<'a> Transpiler<'a> {
         // transpiles left while `--define`/install still hold `StoreRef`s
         // into them (and the side module's debug assert that *its* state is
         // the installed one would fire).
-        if !bun_ast::stmt::data::Store::disable_reset()
-            && bun_ast::stmt::data::Store::memory_allocator().is_null()
-        {
+        if bun_ast::stmt::data::Store::memory_allocator().is_null() {
             bun_ast::store_ast_alloc_heap::reset();
         }
     }

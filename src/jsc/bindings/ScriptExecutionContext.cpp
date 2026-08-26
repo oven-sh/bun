@@ -178,7 +178,7 @@ void ScriptExecutionContext::willDestroyActiveDOMObject(ActiveDOMObject& activeD
     m_activeDOMObjects.remove(activeDOMObject);
 }
 
-bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identifier, BunLoopKind loopKind, Function<void(ScriptExecutionContext&)>&& task)
+bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task)
 {
     // The map lock covers the lookup only. The context may be destroyed the moment the
     // lock is released, so nothing of it is used afterwards except a count taken on its
@@ -194,7 +194,7 @@ bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identif
             return false;
         retained = Bun__VmHandle__retainRef(context->m_vmHandle);
     }
-    Bun__VmHandle__postAndRelease(retained, new EventLoopTask(WTF::move(task)), loopKind);
+    Bun__VmHandle__postAndRelease(retained, new EventLoopTask(WTF::move(task)));
     return true;
 }
 
@@ -268,7 +268,7 @@ bool ScriptExecutionContext::ensureOnContextThread(ScriptExecutionContextIdentif
     }
     if (retained) {
         // Off its thread: as postTaskTo(), through the handle, outside the lock.
-        Bun__VmHandle__postAndRelease(retained, new EventLoopTask(WTF::move(task)), BunLoopKind::Regular);
+        Bun__VmHandle__postAndRelease(retained, new EventLoopTask(WTF::move(task)));
         return true;
     }
     // On its own thread the context cannot be destroyed under us.

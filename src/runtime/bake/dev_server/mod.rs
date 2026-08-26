@@ -947,10 +947,11 @@ impl WatcherAtomics {
                     // provenance) so it stays valid across `Drop for DevServer`'s
                     // writes. Refused ⇒ the VM is torn down; the event is one of
                     // DevServer's inline slots and simply never runs.
-                    let _ = (*(*ev).owner).vm_handle.post(
-                        bun_jsc::LoopKind::Regular,
-                        core::ptr::NonNull::new_unchecked(&raw mut (*ev).concurrent_task),
-                    );
+                    let _ = (*(*ev).owner)
+                        .vm_handle
+                        .post(core::ptr::NonNull::new_unchecked(
+                            &raw mut (*ev).concurrent_task,
+                        ));
                 }
 
                 NextEvent::WAITING => {

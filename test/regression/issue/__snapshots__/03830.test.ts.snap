@@ -3,6 +3,6 @@
 exports[`issue/03830 macros should not lead to seg faults under any given input 1`] = `
 "2 | fn(\`©\${Number(0)}\`);
     ^
-error: "Cannot convert argument type to JS" error in macro
+error: cannot pass this argument to a macro: Cannot convert argument type to JS
     at [dir]/index.ts:2:1"
 `;

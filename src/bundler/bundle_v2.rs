@@ -1528,6 +1528,11 @@ pub mod bv2_impl {
             /// Whether the VM that owns the plugins is shutting down: stop
             /// waiting for their answers and fail the build (any thread).
             pub is_cancelled: unsafe fn(core::ptr::NonNull<super::JSBundleCompletionTask>) -> bool,
+            /// `MacroContext.waiting_vm` for this build's parses: the `VmHandle`
+            /// of the VM that called Bun.build.
+            pub waiting_vm: unsafe fn(
+                core::ptr::NonNull<super::JSBundleCompletionTask>,
+            ) -> *const core::ffi::c_void,
             /// Folds the event-loop field access + enqueue so the bundler
             /// needn't name the JSC event-loop type.
             pub enqueue_task_concurrent: unsafe fn(
@@ -1556,6 +1561,11 @@ pub mod bv2_impl {
             pub(crate) fn is_cancelled(&self) -> bool {
                 // SAFETY: vtable contract.
                 unsafe { (self.vtable.is_cancelled)(self.owner) }
+            }
+            #[inline]
+            pub(crate) fn waiting_vm(&self) -> *const core::ffi::c_void {
+                // SAFETY: vtable contract.
+                unsafe { (self.vtable.waiting_vm)(self.owner) }
             }
             #[inline]
             pub(crate) fn enqueue_task_concurrent(

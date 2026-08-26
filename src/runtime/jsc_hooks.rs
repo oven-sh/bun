@@ -482,7 +482,6 @@ unsafe fn init_runtime_state(
                         .insert(Box::new(bun_jsc::async_module::WakeContext {
                             queue: &raw mut (*vm).modules,
                             handle: (*vm).handle(),
-                            kind: (*vm).current_loop_kind(),
                         }));
                     t.resolver.on_wake_package_manager = bun_resolver::install_types::WakeHandler {
                         context: core::ptr::NonNull::new(wake_ctx.cast()),
@@ -965,7 +964,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // `VirtualMachine`, so holding `&mut EventLoop` while also touching VM
     // siblings would alias. Dereference per-field via the raw `vm` ptr.
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
-    let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop;
+    let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop();
     // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
     let loop_ = unsafe { (*el).usockets_loop() };
 
@@ -1129,7 +1128,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
 unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     // Note: reshaped for borrowck — see `auto_tick` above.
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
-    let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop;
+    let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop();
     // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
     let loop_ = unsafe { (*el).usockets_loop() };
 
@@ -1345,8 +1344,7 @@ fn has_blob_url(blob_id: &[u8]) -> bool {
 /// `Request::get_blob_without_call_frame`. Downcasts
 /// `value` to a `Response`/`Request` (whose data shapes + `BodyMixin` impl live
 /// in this crate, above `bun_jsc` / `bun_js_parser_jsc`) and returns its body
-/// Blob wrapped in a resolved Promise; `Ok(None)` to fall through to the
-/// `Blob`/`BuildMessage`/`ResolveMessage` arms in `Macro::Run::coerce`.
+/// Blob as a Promise; `Ok(None)` if `value` is neither.
 fn body_mixin_get_blob(
     value: JSValue,
     global: &JSGlobalObject,
@@ -1532,6 +1530,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     stop_dns_for_vm_teardown,
     stop_active_handles_for_vm_teardown: stop_active_handles_for_vm_teardown_hook,
     disarm_all_timers_for_vm_teardown,
+    stop_macro_host: bun_js_parser_jsc::Macro::MacroHost::shutdown,
     close_timer_loop_handles_after_vm_destroyed,
 };
 
@@ -2437,9 +2436,8 @@ fn transpile_source_code_inner(
             let is_node_override = specifier.starts_with(node_fallbacks::IMPORT_PATH);
 
             // SAFETY: per fn contract.
-            let (macro_mode, has_any_macro_remappings) =
-                unsafe { ((*jsc_vm).macro_mode, (*jsc_vm).has_any_macro_remappings) };
-            let macro_remappings = if macro_mode || !has_any_macro_remappings || is_node_override {
+            let has_any_macro_remappings = unsafe { (*jsc_vm).has_any_macro_remappings };
+            let macro_remappings = if !has_any_macro_remappings || is_node_override {
                 bun_resolver::package_json::MacroMap::default()
             } else {
                 // Note: `MacroMap`'s value type
@@ -3700,7 +3698,7 @@ fn get_hardcoded_module(
 }
 
 /// `ModuleLoader.fetchBuiltinModule(jsc_vm, specifier)` — `HardcodedModule`
-/// lookup + macro-namespace + standalone-module-graph probe.
+/// lookup + standalone-module-graph probe.
 #[unsafe(no_mangle)]
 fn __bun_fetch_builtin_module(
     jsc_vm: &VirtualMachine,
@@ -3723,28 +3721,6 @@ fn __bun_fetch_builtin_module(
             tag,
             ..ResolvedSource::default()
         });
-    }
-
-    // ── `macro:` namespace ──────────────────────────────────────────────
-    // `vm.macro_entry_points` values are
-    // `*mut MacroEntryPoint` (gated `bun_bundler::entry_points` type); the
-    // map itself is keyed by `i32` hash of the specifier.
-    if spec.starts_with(b"macro:") {
-        use bun_bundler::entry_points::MacroEntryPoint;
-        let id = MacroEntryPoint::generate_id_from_specifier(spec);
-        if let Some(&entry) = jsc_vm.macro_entry_points.get(&id) {
-            let entry = entry.cast::<MacroEntryPoint>();
-            // SAFETY: `entry` is the `heap::alloc`d `MacroEntryPoint`
-            // inserted by `load_macro_entry_point`; map ownership keeps it
-            // alive for the VM lifetime.
-            let contents = unsafe { &(*entry).source.contents };
-            return Some(ResolvedSource {
-                source_code: bun_core::String::clone_utf8(contents),
-                source_url: specifier.clone(),
-                ..ResolvedSource::default()
-            });
-        }
-        return None;
     }
 
     // ── Standalone-module-graph probe ───────────────────────────────────

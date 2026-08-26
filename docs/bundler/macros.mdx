@@ -112,9 +112,9 @@ The first import resolves to `./node_modules/my-package/index.js`; Bun's bundler
 
 When Bun's transpiler sees a macro import, it calls the function using Bun's JavaScript runtime and converts the return value into an AST node.
 
-Macros run synchronously in the transpiler during the visiting phase, after the transpiler parses the file into an AST. They run in the order their calls appear in the file; the transpiler does not load or run a macro module until it reaches a call to one of its exports. The transpiler waits for each macro to finish before continuing, and awaits any Promise a macro returns.
+Macros run during the transpiler's visiting phase, after the file is parsed into an AST. They run in the order their calls appear in the file; a macro module is not loaded until the transpiler reaches a call to one of its exports. The transpiler waits for each macro to finish before continuing, and awaits any Promise a macro returns, so macros may be `async` and macro modules may use top-level `await`.
 
-Bun's bundler is multi-threaded, so macros execute in parallel in multiple spawned JavaScript "workers".
+All macros in a process run in a single dedicated JavaScript VM on its own thread, separate from your application: they do not share globals or module state with the program being run or bundled, and `process.exit()` inside a macro is an error. Bun's bundler parses files on several threads, and each of them hands its macro calls to that VM; while one macro is awaiting I/O, macros from other files keep running there. A macro module cannot itself invoke macros.
 
 ## Dead code elimination
 
@@ -138,7 +138,7 @@ if (returnFalse()) {
 
 ## Serializability
 
-Bun's transpiler must be able to serialize the result of the macro to inline it into the AST. All JSON-compatible data structures are supported:
+Bun's transpiler must be able to serialize the result of the macro to inline it into the AST. All JSON-compatible data structures are supported, plus `undefined` and `BigInt` (inlined as a BigInt literal):
 
 ```ts title="macro.ts" icon="/icons/typescript.svg"
 export function getObject() {
@@ -146,6 +146,7 @@ export function getObject() {
     foo: "bar",
     baz: 123,
     array: [1, 2, { nested: "value" }],
+    limit: 2n ** 64n,
   };
 }
 ```

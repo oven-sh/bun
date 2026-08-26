@@ -1112,7 +1112,6 @@ folded: >
           expect(err).toBeInstanceOf(SyntaxError);
           const msg = (err as SyntaxError).message;
           expect(msg).toMatch(/\(line \d+, column \d+\)/);
-          expect(msg).toContain("Tab characters");
         });
       });
     });

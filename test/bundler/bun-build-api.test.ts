@@ -216,7 +216,47 @@ describe("Bun.build", () => {
         expect(exitCode).toBe(0);
       }),
     );
-  });
+  }, 60_000);
+
+  test("bytecode: repeated builds don't retain the generated code", async () => {
+    using dir = tempDir("bun-build-api-bytecode-retained", {
+      "retained-fixture.ts": /* ts */ `
+        import { writeFileSync } from "fs";
+        const [functions, limit] = process.argv.slice(2).map(Number);
+        let source = "";
+        for (let i = 0; i < functions; i++)
+          source += "export function f" + i + "(a, b) { if (a > " + i + ") { return a * b + " + i + "; } for (let j = 0; j < b; j++) a += j ^ " + i + '; return { a, b, name: "f' + i + '" }; }\\n';
+        writeFileSync("in.js", source);
+        const build = (bytecode: boolean) => Bun.build({ entrypoints: ["./in.js"], outdir: "./out", target: "bun", format: "cjs", bytecode });
+        const rss = () => Math.round(process.memoryUsage.rss() / 1024 / 1024);
+        if (!(await build(false)).success) throw new Error("build failed");
+        Bun.gc(true);
+        const base = rss();
+        for (let i = 0; i < 3; i++) if (!(await build(true)).success) throw new Error("build failed");
+        // The bundle thread frees its bytecode VM once it goes idle.
+        const deadline = Date.now() + 5000;
+        let after = rss();
+        while ((Bun.gc(true), (after = rss())) - base > limit && Date.now() < deadline) await Bun.sleep(20);
+        console.log(JSON.stringify({ base, after }));
+        if (after - base > limit) process.exit(1);
+      `,
+    });
+    // Release, 20k functions: ~+65 MB without freeing the VM, about level with the baseline with it. Debug/ASAN parse far
+    // slower and hold freed pages in quarantine, so they get a smaller module and only guard against gross retention.
+    const slow = isASAN || isDebug;
+    const [functions, limit] = slow ? [3000, 400] : [20000, 40];
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "retained-fixture.ts", String(functions), String(limit)],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const { base, after } = JSON.parse(stdout.trim());
+    expect(after - base).toBeLessThanOrEqual(limit);
+    expect(exitCode).toBe(0);
+  }, 60_000);
 
   test("passing undefined doesnt segfault", () => {
     try {

@@ -116,7 +116,7 @@ pub fn u32_from_bytes(src: &[u8]) -> u32 {
 /// A 31-bit value with a reserved high bit. The RFC 7540 §6.3 wire format
 /// wants the reserved/E bit at bit 31, so the layout is the RFC-compliant
 /// `(reserved << 31) | uint31`, which matches
-/// `from_bytes`/`encode_into` and the on-wire `StreamPriority.stream_identifier`.
+/// `from_bytes`/`encode_into` and the on-wire PRIORITY stream identifier.
 #[repr(transparent)]
 #[derive(Copy, Clone, Default, PartialEq, Eq)]
 pub struct UInt31WithReserved(u32);
@@ -138,7 +138,8 @@ impl UInt31WithReserved {
 
 // ─── packed wire structs ────────────────────────
 
-/// 5-byte PRIORITY payload: BE stream identifier + weight.
+/// Marker for the 5-byte PRIORITY payload (BE stream identifier + weight).
+/// Only its length is needed.
 pub struct StreamPriority;
 
 impl StreamPriority {

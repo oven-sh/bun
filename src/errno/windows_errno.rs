@@ -329,8 +329,8 @@ impl E {
 }
 
 /// Mirrors `bun_errno::posix` on POSIX targets so callers can `use
-/// bun_errno::posix::*` unconditionally. Windows has no real `mode_t`/kernel
-/// `errno`, so this is the minimal subset higher tiers reach for.
+/// bun_errno::posix::*` unconditionally. Only the file-mode bits are needed
+/// on Windows.
 pub mod posix {
     /// File-mode bits. Re-export the canonical module so
     /// `posix::S::IFDIR` / `posix::S::ISREG(m)` resolve identically to POSIX.

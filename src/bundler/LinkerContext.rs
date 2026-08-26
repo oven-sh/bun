@@ -122,6 +122,11 @@ pub struct LinkerContext<'a> {
     pub(crate) framework: Option<bun_ptr::BackRef<bake::Framework>>,
 
     pub(crate) mangled_props: MangledProps,
+
+    /// One name per binding that crosses a chunk boundary, shared by the
+    /// chunk that exports it and every chunk that imports it
+    /// (`assign_cross_chunk_names`). Values live in the linker arena.
+    pub(crate) cross_chunk_names: bun_collections::HashMap<bun_ast::Ref, &'static [u8]>,
 }
 
 // SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /
@@ -155,6 +160,7 @@ impl<'a> Default for LinkerContext<'a> {
             dev_server: None,
             framework: None,
             mangled_props: Default::default(),
+            cross_chunk_names: Default::default(),
         }
     }
 }
@@ -999,6 +1005,21 @@ impl<'a> LinkerContext<'a> {
         let mut worker = scopeguard::guard(worker, |w| w.unget());
         if let crate::chunk::Content::Javascript(_) = chunk.content {
             Self::generate_js_renamer_(*ctx, &mut **worker, chunk, chunk_index);
+        }
+    }
+
+    /// Second half of the minifying renamer under code splitting: names every
+    /// slot `assign_cross_chunk_names` did not pin. Writes `chunk.renamer` only.
+    pub(crate) fn finish_js_renamer(
+        _ctx: &GenerateChunkCtx,
+        chunk: *mut Chunk,
+        _chunk_index: usize,
+    ) {
+        // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task.
+        let chunk: &mut Chunk = unsafe { &mut *chunk };
+        if let crate::bun_renamer::ChunkRenamer::Minify(r) = &mut chunk.renamer {
+            // Only allocation can fail here.
+            bun_core::handle_oom(r.finish());
         }
     }
 
@@ -2423,114 +2444,109 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    pub(crate) fn append_isolated_hashes_for_imported_chunks(
-        &self,
-        hash: &mut ContentHasher,
-        chunks: &mut [Chunk],
-        index: u32,
-        chunk_visit_map: &mut AutoBitSet,
-    ) {
-        // Only visit each chunk at most once. This is important because there may be
-        // cycles in the chunk import graph. If there's a cycle, we want to include
-        // the hash of every chunk involved in the cycle (along with all of their
-        // dependencies). This depth-first traversal will naturally do that.
-        if chunk_visit_map.is_set(index as usize) {
-            return;
-        }
-        chunk_visit_map.set(index as usize);
-
-        // Visit the other chunks that this chunk imports before visiting this chunk
-        // Note: reshaped for borrowck — collect imports first to avoid aliasing &chunks[index] with recursive &mut chunks
-        let cross_chunk_imports: Vec<u32> = chunks[index as usize]
-            .cross_chunk_imports
-            .slice()
-            .iter()
-            .map(|import| import.chunk_index)
-            .collect();
-        for chunk_index in cross_chunk_imports {
-            self.append_isolated_hashes_for_imported_chunks(
-                hash,
-                chunks,
-                chunk_index,
-                chunk_visit_map,
-            );
-        }
-
-        // Mix in hashes for content referenced via output pieces. JS chunks
-        // express cross-chunk dependencies via `cross_chunk_imports` above, but
-        // HTML (and CSS) chunks only reference other chunks through pieces, so
-        // recurse on those too.
-        // Note: reshaped for borrowck — collect piece queries first so the
-        // `&chunks[index]` borrow is dropped before the recursive `&mut chunks`
-        // calls in the Chunk/Scb arms below. `final_rel_path` is re-indexed per
-        // Asset arm (not hoisted) because it is now `Box<[u8]>` (not `Copy`).
-        let piece_queries: Vec<(crate::chunk::QueryKind, u32)> =
-            if let crate::chunk::IntermediateOutput::Pieces(pieces) =
-                &chunks[index as usize].intermediate_output
-            {
-                pieces
-                    .slice()
-                    .iter()
-                    .map(|p| (p.query.kind(), p.query.index()))
-                    .collect()
-            } else {
-                Vec::new()
-            };
-
-        for (kind, piece_index) in piece_queries {
-            match kind {
-                crate::chunk::QueryKind::Asset => {
-                    let mut from_chunk_dir = bun_paths::resolve_path::dirname::<
-                        bun_paths::resolve_path::platform::Posix,
-                    >(
-                        &chunks[index as usize].final_rel_path
-                    );
-                    if from_chunk_dir == b"." {
-                        from_chunk_dir = b"";
-                    }
-
-                    let source_index = piece_index;
-                    let parse_graph = self.parse_graph();
-                    let additional_files: &[AdditionalFile] =
-                        parse_graph.input_files.items_additional_files()[source_index as usize]
-                            .slice();
-                    debug_assert!(!additional_files.is_empty());
-                    match &additional_files[0] {
-                        AdditionalFile::OutputFile(output_file_id) => {
-                            let path = &parse_graph.additional_output_files
-                                [*output_file_id as usize]
-                                .dest_path;
-                            hash.write(bun_paths::resolve_path::relative_platform::<
-                                bun_paths::resolve_path::platform::Posix,
-                                false,
-                            >(from_chunk_dir, path));
+    /// Each chunk's final content hash: its own isolated hash (plus the
+    /// asset paths its output pieces reference) and that of every chunk it
+    /// transitively reaches through cross-chunk imports or output pieces, so a
+    /// change anywhere below a chunk renames it. Cycles are fine: reachability
+    /// is a fixpoint over bitsets, and each chunk digests its own hash first,
+    /// then the rest of its closure in chunk order (so two chunks that reach
+    /// each other still differ).
+    pub(crate) fn final_chunk_hashes(&self, chunks: &[Chunk]) -> Result<Vec<u64>, AllocError> {
+        let n = chunks.len();
+        let mut own: Vec<u64> = Vec::with_capacity(n);
+        let mut edges: Vec<Vec<u32>> = Vec::with_capacity(n);
+        for chunk in chunks {
+            let mut hash = ContentHasher::default();
+            let mut out: Vec<u32> = chunk
+                .cross_chunk_imports
+                .slice()
+                .iter()
+                .map(|import| import.chunk_index)
+                .collect();
+            if let crate::chunk::IntermediateOutput::Pieces(pieces) = &chunk.intermediate_output {
+                for piece in pieces.slice() {
+                    match piece.query.kind() {
+                        crate::chunk::QueryKind::Asset => {
+                            let mut from_chunk_dir =
+                                bun_paths::resolve_path::dirname::<
+                                    bun_paths::resolve_path::platform::Posix,
+                                >(&chunk.final_rel_path);
+                            if from_chunk_dir == b"." {
+                                from_chunk_dir = b"";
+                            }
+                            let parse_graph = self.parse_graph();
+                            let additional_files: &[AdditionalFile] =
+                                parse_graph.input_files.items_additional_files()
+                                    [piece.query.index() as usize]
+                                    .slice();
+                            debug_assert!(!additional_files.is_empty());
+                            if let AdditionalFile::OutputFile(output_file_id) = &additional_files[0]
+                            {
+                                let path = &parse_graph.additional_output_files
+                                    [*output_file_id as usize]
+                                    .dest_path;
+                                hash.write(bun_paths::resolve_path::relative_platform::<
+                                    bun_paths::resolve_path::platform::Posix,
+                                    false,
+                                >(from_chunk_dir, path));
+                            }
                         }
-                        AdditionalFile::SourceIndex(_) => {}
+                        crate::chunk::QueryKind::Chunk => out.push(piece.query.index()),
+                        crate::chunk::QueryKind::Scb => {
+                            let chunk_index = self.graph.files.items_entry_point_chunk_index()
+                                [piece.query.index() as usize];
+                            if chunk_index != u32::MAX {
+                                out.push(chunk_index);
+                            }
+                        }
+                        crate::chunk::QueryKind::None | crate::chunk::QueryKind::HtmlImport => {}
                     }
                 }
-                crate::chunk::QueryKind::Chunk => {
-                    self.append_isolated_hashes_for_imported_chunks(
-                        hash,
-                        chunks,
-                        piece_index,
-                        chunk_visit_map,
-                    );
+            }
+            hash.write(&chunk.isolated_hash.to_ne_bytes());
+            own.push(hash.digest());
+            edges.push(out);
+        }
+
+        let mut reach: Vec<AutoBitSet> = Vec::with_capacity(n);
+        for i in 0..n {
+            let mut bits = AutoBitSet::init_empty(n)?;
+            bits.set(i);
+            reach.push(bits);
+        }
+        loop {
+            let mut changed = false;
+            for i in 0..n {
+                for &j in &edges[i] {
+                    let j = j as usize;
+                    if j == i || reach[j].subset_of(&reach[i]) {
+                        continue;
+                    }
+                    let other = reach[j].clone()?;
+                    reach[i].set_union(&other);
+                    changed = true;
                 }
-                crate::chunk::QueryKind::Scb => {
-                    self.append_isolated_hashes_for_imported_chunks(
-                        hash,
-                        chunks,
-                        self.graph.files.items_entry_point_chunk_index()[piece_index as usize],
-                        chunk_visit_map,
-                    );
-                }
-                crate::chunk::QueryKind::None | crate::chunk::QueryKind::HtmlImport => {}
+            }
+            if !changed {
+                break;
             }
         }
 
-        // Mix in the hash for this chunk
-        let chunk = &chunks[index as usize];
-        hash.write(&chunk.isolated_hash.to_ne_bytes());
+        Ok(reach
+            .iter()
+            .enumerate()
+            .map(|(i, bits)| {
+                let mut hash = ContentHasher::default();
+                hash.write(&own[i].to_ne_bytes());
+                let mut iter = bits.iterator::<true, true>();
+                while let Some(j) = iter.next() {
+                    if j != i {
+                        hash.write(&own[j].to_ne_bytes());
+                    }
+                }
+                hash.digest()
+            })
+            .collect())
     }
 
     // Sort cross-chunk exports by chunk name for determinism

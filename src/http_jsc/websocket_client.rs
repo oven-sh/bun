@@ -1625,7 +1625,6 @@ impl<const SSL: bool> WebSocket<SSL> {
         // This is under-estimated a little, as we don't include usockets context.
         cost
     }
-
 }
 
 impl<const SSL: bool> Drop for WebSocket<SSL> {

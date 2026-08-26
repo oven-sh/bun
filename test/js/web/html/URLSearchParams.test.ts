@@ -346,6 +346,9 @@ describe("URL-encoded input longer than the string limit", () => {
         attempt("latin1 past limit", () => new URLSearchParams(latin1(${LIMIT / 2} + 1)).size);
         attempt("utf16 at limit", () => new URLSearchParams(utf16(349525)).size);
         attempt("utf16 past limit", () => new URLSearchParams(utf16(349526)).size);
+        // WTF converts the encoded text to UTF-8 before it percent-decodes, so the
+        // encoded length is the one that counts.
+        attempt("percent-encoded past limit", () => new URLSearchParams(Buffer.alloc(${LIMIT} + 2, "%41").toString()).size);
         // The limit applies to one name or value, not to the whole input.
         attempt("two names at limit", () => new URLSearchParams(ascii(${LIMIT}) + "&" + ascii(${LIMIT})).size);
         attempt("name and value at limit", () => new URLSearchParams(ascii(${LIMIT}) + "=" + ascii(${LIMIT})).size);
@@ -372,8 +375,10 @@ describe("URL-encoded input longer than the string limit", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
-      stdout: {
+    // Keep stderr and the exit code in the diff when the child aborts before it prints.
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ results, stderr, exitCode }).toEqual({
+      results: {
         "ascii at limit": 1,
         "ascii past limit": tooLong(LIMIT + 1),
         "leading ? is not counted": 1,
@@ -381,6 +386,7 @@ describe("URL-encoded input longer than the string limit", () => {
         "latin1 past limit": tooLong(LIMIT + 2),
         "utf16 at limit": 1,
         "utf16 past limit": tooLong(LIMIT + 2),
+        "percent-encoded past limit": tooLong(LIMIT + 2),
         "two names at limit": 2,
         "name and value at limit": 1,
         "one value past limit among pairs": tooLong(LIMIT + 1),

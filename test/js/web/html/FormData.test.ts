@@ -1058,8 +1058,10 @@ describe("URL-encoded bodies longer than the string limit", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
-      stdout: {
+    // Keep stderr and the exit code in the diff when the child aborts before it prints.
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ results, stderr, exitCode }).toEqual({
+      results: {
         "FormData.from(bytes) at limit": "",
         "FormData.from(bytes) past limit": tooLong(LIMIT + 2),
         "FormData.from(string) past limit": tooLong(LIMIT + 2),

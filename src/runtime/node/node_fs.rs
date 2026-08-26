@@ -5522,6 +5522,56 @@ impl NodeFS {
         args: &args::Mkdir,
         ctx: &Ctx,
     ) -> Maybe<ret::Mkdir> {
+        // Node's Windows binding namespaces the path (cwd-resolve + `\\?\`,
+        // `ToNamespacedPath` in node_file.cc) before the mkdirp walk, so the
+        // returned first-path-created is absolute even for relative input
+        // (oven-sh/bun#40535). `os_path_kernel32` already namespaces absolute
+        // input; resolve the plain-relative case here. On POSIX,
+        // `ToNamespacedPath` is a no-op and Node returns the relative path,
+        // so only Windows resolves. Internal callers (`always_return_none`)
+        // ignore the returned path and keep the un-resolved behavior.
+        #[cfg(windows)]
+        if !args.always_return_none {
+            let s = args.path.slice();
+            if !s.is_empty()
+                && !paths::is_sep_any(s[0])
+                && !(s.len() >= 2 && paths::is_drive_letter(s[0]) && s[1] == b':')
+            {
+                let mut cwd_buf = paths::path_buffer_pool::get();
+                if let Ok(cwd_len) = sys::getcwd(&mut cwd_buf[..]) {
+                    let mut resolved_buf = paths::path_buffer_pool::get();
+                    let resolved_buf_len = resolved_buf.len();
+                    let Some(resolved) = paths::resolve_path::join_abs_string_buf_checked::<
+                        paths::platform::Windows,
+                    >(
+                        &cwd_buf[..cwd_len],
+                        &mut resolved_buf[..resolved_buf_len - 1],
+                        &[s],
+                    ) else {
+                        return Err(sys::Error {
+                            errno: E::ENAMETOOLONG as _,
+                            syscall: sys::Tag::mkdir,
+                            path: args.path.slice().into(),
+                            ..Default::default()
+                        });
+                    };
+                    let resolved = PathLike::borrowed(resolved);
+                    let mut buf = paths::path_buffer_pool::get();
+                    let path = match resolved.os_path_kernel32(&mut *buf) {
+                        Ok(p) => p,
+                        Err(NameTooLong) => {
+                            return Err(sys::Error {
+                                errno: E::ENAMETOOLONG as _,
+                                syscall: sys::Tag::mkdir,
+                                path: args.path.slice().into(),
+                                ..Default::default()
+                            });
+                        }
+                    };
+                    return self.mkdir_recursive_os_path_impl::<Ctx, true>(ctx, path, args.mode);
+                }
+            }
+        }
         let mut buf = paths::path_buffer_pool::get();
         let path = match args.path.os_path_kernel32(&mut *buf) {
             Ok(p) => p,

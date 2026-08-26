@@ -1102,7 +1102,17 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     /// First call wins.
     /// `error`: (`error.type`, message).
+    #[inline(always)]
     pub(crate) fn otel_connect_end(&self, error: Option<(&str, &str)>) {
+        if !self.otel_connect.get().is_some() {
+            return;
+        }
+        self.otel_connect_end_slow(error);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn otel_connect_end_slow(&self, error: Option<(&str, &str)>) {
         use bun_telemetry::http_record::PeerIp;
         let stub = self.otel_connect.replace(bun_telemetry::SpanStub::NONE);
         if !stub.is_recording() {

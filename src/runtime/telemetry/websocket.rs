@@ -16,6 +16,7 @@ unsafe extern "C" {
 
 /// Start a span for one incoming WebSocket message and make it active for
 /// the handler. `link` is the upgrade request's context (may be invalid).
+#[inline(always)]
 pub fn begin_message(
     global: &JSGlobalObject,
     link: &SpanContext,
@@ -26,6 +27,18 @@ pub fn begin_message(
     if !bun_telemetry::enabled(Instrument::WebSocket) {
         return None;
     }
+    begin_message_enabled(global, link, binary, size, server)
+}
+
+#[cold]
+#[inline(never)]
+fn begin_message_enabled(
+    global: &JSGlobalObject,
+    link: &SpanContext,
+    binary: bool,
+    size: usize,
+    server: bool,
+) -> Option<(NativeSpan, Entered)> {
     let parent = super::active_context(global);
     if parent.is_none() && !bun_telemetry::allows_root(Instrument::WebSocket) {
         return None;

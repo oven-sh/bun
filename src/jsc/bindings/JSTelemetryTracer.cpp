@@ -15,6 +15,8 @@
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/JSTypedArrays.h>
+#include <JavaScriptCore/ArrayBuffer.h>
 
 namespace Bun {
 using namespace JSC;
@@ -470,6 +472,22 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryWrappedCall, (JSGlobalObject * lexicalGlobal
 }
 
 // Bun.otel.wrap(name, fn) — or wrap(fn), named after the function.
+extern "C" uint32_t Bun__Telemetry__enabled;
+
+// internal: a Uint32Array over the process-wide instrument mask, so JS
+// integrations (node:http) test a bit instead of calling into native when
+// tracing is off.
+JSC_DEFINE_HOST_FUNCTION(jsTelemetryEnabledMask, (JSGlobalObject * globalObject, CallFrame*))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // Static storage: nothing to free.
+    auto buffer = ArrayBuffer::createFromBytes(std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(&Bun__Telemetry__enabled), sizeof(uint32_t) }, createSharedTask<void(void*)>([](void*) {}));
+    auto* view = JSUint32Array::create(globalObject, globalObject->typedArrayStructure(TypeUint32, false), WTF::move(buffer), 0, 1);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(view);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsTelemetryOtelWrap, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);

@@ -39,6 +39,8 @@ const onClientRequestStartChannel = dc.channel("http.client.request.start");
 const onClientRequestErrorChannel = dc.channel("http.client.request.error");
 const onClientResponseFinishChannel = dc.channel("http.client.response.finish");
 const otelHttpClientEnabled = $newRustFunction("telemetry.rs", "httpClientEnabled", 0);
+// bun_telemetry::ENABLED viewed from JS: bit 1 = Instrument::HttpClient.
+const otelMask = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetryEnabledMask", 0)() as Uint32Array;
 const otelHttpClientBegin = $newRustFunction("telemetry.rs", "httpClientBegin", 2);
 const otelHttpClientEnd = $newRustFunction("telemetry.rs", "httpClientEnd", 7);
 
@@ -185,8 +187,8 @@ function formatAuthority(host: string, port, defaultPort: number) {
 
 // Native OpenTelemetry (Bun.otel): one CLIENT span per request, recorded
 // natively by the same code as fetch() (telemetry/fetch.rs). The span's stub
-// rides on the request as bytes between begin and end; `otelHttpClientEnabled`
-// is a single native call that returns false unless tracing is on.
+// rides on the request as bytes between begin and end. Off costs one typed-array
+// load (`otelMask`); `otelHttpClientEnabled` then decides nested/root.
 const kOtelSpan = Symbol("kOtelSpan");
 const kOtelUrl = Symbol("kOtelUrl");
 const kOtelFinish = Symbol("kOtelFinish");
@@ -515,7 +517,7 @@ function ClientRequest(input, options, cb) {
     }
   }
 
-  if (!otelHttpClientEnabled()) {
+  if (!(otelMask[0] & 2) || !otelHttpClientEnabled()) {
     finishInit.$call(this, options, optsWithoutSignal, headersArray, optionsHeaders, thisAgent);
     return;
   }

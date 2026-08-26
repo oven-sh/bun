@@ -116,8 +116,7 @@ pub struct Facts {
     pub peer: PeerIp,
     pub peer_port: u16,
     /// Length of the encoded `network.peer.*` bytes at the front of `raw`
-    /// ([`encode_peer_attrs`]; the transport caches them per connection and
-    /// [`Facts::set_request`] copies them in). 0 = encode from `peer`.
+    /// ([`encode_peer_attrs`], written by [`Facts::set_request`]). 0 = encode from `peer`.
     peer_encoded_len: u8,
     /// How many attributes those bytes hold (address, or address + port).
     peer_encoded_attrs: u8,
@@ -197,24 +196,19 @@ impl Facts {
         }
     }
 
-    /// Set the request strings in one go (must be called before `set_route`).
-    /// `peer_encoded`: the connection's cached [`encode_peer_attrs`] bytes
-    /// (or empty); `client`: the first forwarded-for hop (empty if none).
+    /// Set the request strings in one go (must be called before `set_route`);
+    /// `self.peer` / `self.peer_port` must already be set (their
+    /// `network.peer.*` attributes are encoded here). `client`: the first
+    /// forwarded-for hop (empty if none).
     #[inline]
     pub fn set_request(
         &mut self,
-        peer_encoded: &[u8],
         url: &[u8],
         path_len: usize,
         client: &[u8],
         host: &[u8],
         ua: &[u8],
     ) {
-        let peer_encoded = if peer_encoded.len() > u8::MAX as usize {
-            &b""[..]
-        } else {
-            peer_encoded
-        };
         // Bounded so `lens` fits; cut on a UTF-8 boundary.
         let cap = |s| otlp::truncate_utf8(s, u16::MAX as usize);
         let (url, client, host, ua) = (
@@ -225,26 +219,27 @@ impl Facts {
         );
         self.raw.clear();
         self.raw
-            .reserve(peer_encoded.len() + url.len() + client.len() + host.len() + ua.len());
-        self.raw.extend_from_slice(peer_encoded);
-        self.peer_encoded_len = peer_encoded.len() as u8;
-        self.peer_encoded_attrs = match peer_encoded.len() {
+            .reserve(PEER_ATTRS_MAX + url.len() + client.len() + host.len() + ua.len());
+        encode_peer_attrs(&self.peer, self.peer_port, &mut self.raw);
+        let peer_encoded_len = self.raw.len();
+        debug_assert!(peer_encoded_len <= u8::MAX as usize);
+        self.peer_encoded_len = peer_encoded_len as u8;
+        self.peer_encoded_attrs = match peer_encoded_len {
             0 => 0,
-            n => 1 + u8::from(n > PEER_TEXT_OFF + peer_encoded[PEER_TEXT_OFF - 1] as usize),
+            n => 1 + u8::from(n > PEER_TEXT_OFF + self.raw[PEER_TEXT_OFF - 1] as usize),
         };
-        self.raw.extend_from_slice(url);
-        self.raw.extend_from_slice(client);
-        self.raw.extend_from_slice(host);
-        self.raw.extend_from_slice(ua);
-        self.lens = [
-            url.len() as u32,
-            client.len() as u32,
-            host.len() as u32,
-            ua.len() as u32,
-            0,
-        ];
-        self.path_len = path_len.min(url.len()) as u32;
-        if (self.path_len as usize) + 1 < url.len() {
+        // Wire bytes may not be UTF-8 (obs-text); proto3 strings must be.
+        let mut lens = [0u32; 5];
+        for (i, s) in [url, client, host, ua].into_iter().enumerate() {
+            let at = self.raw.len();
+            otlp::extend_utf8_lossy(&mut self.raw, s);
+            lens[i] = (self.raw.len() - at) as u32;
+        }
+        self.lens = lens;
+        // (a lossy replacement can only lengthen bytes after the path, which
+        // is ASCII up to the first non-ASCII byte; clamp anyway)
+        self.path_len = path_len.min(lens[0] as usize) as u32;
+        if (self.path_len as usize) + 1 < lens[0] as usize {
             self.flags |= FLAG_HAS_QUERY;
         }
     }
@@ -596,14 +591,10 @@ const PEER_PORT_KEY: &str = "network.peer.port";
 const PEER_TEXT_OFF: usize = 4 + PEER_ADDRESS_KEY.len() + 4;
 /// Upper bound of [`encode_peer_attrs`] output: the address KV with the
 /// longest text plus the port KV (4 + key + 3 value header + 3-byte varint).
-/// The transport's per-connection cache (uWS `HttpResponseData::peerAttrs`)
-/// is sized from this.
 pub const PEER_ATTRS_MAX: usize =
     PEER_TEXT_OFF + PeerIp::MAX_TEXT + 4 + PEER_PORT_KEY.len() + 3 + 3;
 
-/// `network.peer.address` + `network.peer.port` for a connection. The
-/// transport caches this per connection and hands it back in
-/// `Facts::peer_encoded`, so steady-state requests copy instead of format.
+/// `network.peer.address` + `network.peer.port` encoded for `Facts`.
 pub fn encode_peer_attrs(peer: &PeerIp, port: u16, out: &mut Vec<u8>) {
     let mut ip_buf = [0u8; 64];
     let text = peer.text(&mut ip_buf);
@@ -698,12 +689,17 @@ fn append_tail(
         );
         room -= 1;
     }
-    if !encoded.is_empty() {
+    if !encoded.is_empty() && room != 0 {
+        // Strictly in order, so the head's dropped_attributes_count (which
+        // assumes the first `room` tail attributes are written) stays exact:
+        // with room for one, keep network.peer.address and drop the port.
         if room >= n {
             out.extend_from_slice(encoded);
             room -= n;
         } else {
-            room = 0;
+            let first = PEER_TEXT_OFF + peer_text_of(encoded).len();
+            out.extend_from_slice(&encoded[..first.min(encoded.len())]);
+            room -= 1;
         }
     }
     if room != 0 {
@@ -884,10 +880,10 @@ mod tests {
     use super::split_host_port;
 
     #[test]
-    fn peer_attrs_fit_the_connection_cache() {
+    fn peer_attrs_bound() {
         use super::{PEER_ATTRS_MAX, PeerIp, encode_peer_attrs, peer_text_of};
-        // uWS sizes HttpResponseData::peerAttrs with this number.
-        assert_eq!(PEER_ATTRS_MAX, 100);
+        // `Facts::peer_encoded_len` is a u8.
+        assert!(PEER_ATTRS_MAX <= u8::MAX as usize);
         let widest = PeerIp::from_text(&[b'f'; PeerIp::MAX_TEXT]);
         let mut out = Vec::new();
         encode_peer_attrs(&widest, u16::MAX, &mut out);

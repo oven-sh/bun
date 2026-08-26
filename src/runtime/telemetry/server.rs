@@ -44,6 +44,11 @@ pub fn begin(
             }
         }
     }
+    // `http: "nested"`: a server span's only possible parent is the caller's
+    // traceparent, so record only requests that are part of a trace.
+    if parent.is_none() && !bun_telemetry::allows_root(Instrument::HttpServer) {
+        return None;
+    }
     let now = clock::now_unix_nanos();
     let mut l = local(global)?;
     let stub = SpanStub::start(&mut l.rng, parent.as_ref(), &st.sampler, now);
@@ -93,46 +98,32 @@ pub fn begin(
                 return;
             }
             f.flags = flags;
-            // network.peer.* are per connection: encoded once and cached on the
-            // connection (H1); each request copies the bytes into its facts.
-            let mut fresh = Vec::new();
-            let cache = resp.peer_attrs_cache();
-            let cached: &[u8] = cache.as_ref().map_or(b"", |c| c.get());
+            // network.peer.*: the raw address is cached per connection by the
+            // transport (one getpeername); it is formatted into the facts per
+            // request (no per-connection encoded cache: that costs every
+            // connection ~100 B whether tracing is on or not).
             let h1 = if h.http10 != 0 {
                 R::HttpVersion::Http10
             } else {
                 R::HttpVersion::Http11
             };
-            let peer_encoded: &[u8] = if !cached.is_empty() {
-                f.version = h1;
-                cached
-            } else {
-                (f.peer, f.peer_port, f.version) = match resp {
-                    bun_uws::AnyResponse::H3(_) => match resp.get_remote_socket_info() {
-                        Some(a) => (
-                            R::PeerIp::from_text(a.ip()),
-                            u16::try_from(a.port).unwrap_or(0),
-                            R::HttpVersion::Http3,
-                        ),
-                        None => (R::PeerIp::None, 0, R::HttpVersion::Http3),
-                    },
-                    _ => match resp.get_remote_address_raw() {
-                        Some((RawIp::V4(b), port)) => (R::PeerIp::V4(b), port, h1),
-                        // (a v4-mapped `::ffff:a.b.c.d` stays as such, like requestIP() / net.Socket.remoteAddress)
-                        Some((RawIp::V6(b), port)) => (R::PeerIp::V6(b), port, h1),
-                        None => (R::PeerIp::None, 0, h1),
-                    },
-                };
-                match (&cache, &f.peer) {
-                    (None, _) | (_, R::PeerIp::None) => &b""[..],
-                    (Some(cache), _) => {
-                        fresh.reserve(R::PEER_ATTRS_MAX);
-                        R::encode_peer_attrs(&f.peer, f.peer_port, &mut fresh);
-                        cache.set(&fresh);
-                        &fresh[..]
-                    }
-                }
+            (f.peer, f.peer_port, f.version) = match resp {
+                bun_uws::AnyResponse::H3(_) => match resp.get_remote_socket_info() {
+                    Some(a) => (
+                        R::PeerIp::from_text(a.ip()),
+                        u16::try_from(a.port).unwrap_or(0),
+                        R::HttpVersion::Http3,
+                    ),
+                    None => (R::PeerIp::None, 0, R::HttpVersion::Http3),
+                },
+                _ => match resp.get_remote_address_raw() {
+                    Some((RawIp::V4(b), port)) => (R::PeerIp::V4(b), port, h1),
+                    // (a v4-mapped `::ffff:a.b.c.d` stays as such, like requestIP() / net.Socket.remoteAddress)
+                    Some((RawIp::V6(b), port)) => (R::PeerIp::V6(b), port, h1),
+                    None => (R::PeerIp::None, 0, h1),
+                },
             };
+
             let url = req.url();
             let path_len = if h.path_len == u32::MAX {
                 bun_core::strings::index_of_char_usize(url, b'?').unwrap_or(url.len())
@@ -140,7 +131,6 @@ pub fn begin(
                 h.path_len as usize
             };
             f.set_request(
-                peer_encoded,
                 url,
                 path_len,
                 R::forwarded_client(h.forwarded(), h.x_forwarded_for()),
@@ -153,6 +143,7 @@ pub fn begin(
                     // semconv: string[]; a repeated header's values are joined
                     // with ", " (one element), as Request.headers.get() shows them.
                     if let Some(v) = req.header_joined(name) {
+                        let v = bun_telemetry::otlp::utf8_lossy(&v);
                         let mut key = Vec::with_capacity(20 + name.len());
                         key.extend_from_slice(b"http.request.header.");
                         key.extend_from_slice(name);

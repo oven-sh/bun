@@ -272,6 +272,9 @@ fn finish_ended(global: &JSGlobalObject, ended: Option<pool::Ended>) {
 
 /// Drop a native-owned span without recording it.
 pub fn discard_native(global: &JSGlobalObject, span: NativeSpan) {
+    if !span.is_some() {
+        return;
+    }
     let Some(mut l) = local(global) else { return };
     let cell = pool::discard(&mut l.pool, span);
     drop(l);

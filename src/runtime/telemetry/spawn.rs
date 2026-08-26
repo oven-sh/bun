@@ -42,6 +42,7 @@ fn begin_span(
 }
 
 /// Wrap the pre-spawn `stub` into a span once the child exists.
+#[inline]
 pub fn begin(
     global: &JSGlobalObject,
     stub: SpanStub,

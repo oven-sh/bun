@@ -34,10 +34,23 @@ impl ServerAddress {
 pub struct QuerySpan(Cell<NativeSpan>);
 
 impl QuerySpan {
+    #[inline(always)]
     pub fn begin(&self, global: &JSGlobalObject, system: System, addr: &ServerAddress, db: &[u8]) {
         if !bun_telemetry::enabled(bun_telemetry::Instrument::Sql) {
             return;
         }
+        self.begin_enabled(global, system, addr, db);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn begin_enabled(
+        &self,
+        global: &JSGlobalObject,
+        system: System,
+        addr: &ServerAddress,
+        db: &[u8],
+    ) {
         self.0.set(bun_telemetry::db::begin(
             global.as_ptr().cast(),
             system,

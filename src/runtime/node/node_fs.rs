@@ -648,6 +648,7 @@ mod _async_tasks {
         pub(crate) r#ref: KeepAlive,
         pub(crate) tracker: AsyncTaskTracker,
         pub(crate) otel: bun_telemetry::SpanStub,
+        pub(crate) otel_end_ns: u64,
     }
 
     #[cfg(windows)]
@@ -683,6 +684,7 @@ mod _async_tasks {
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
                 otel: crate::telemetry::start_leaf(global_object, bun_telemetry::Instrument::Fs),
+                otel_end_ns: 0,
             });
             // Transfer ownership to libuv: the box outlives the async request and is
             // reclaimed in `destroy()` (run_from_js_thread → scopeguard). `heap::release`
@@ -914,6 +916,9 @@ mod _async_tasks {
             // second overlapping `&mut` (Stacked-Borrows UB). Go through `this.req` instead.
             this.result =
                 NodeFS::uv_dispatch::<R, A, F>(&mut node_fs, &this.args, this.req.result.int());
+            if this.otel.is_some() {
+                this.otel_end_ns = bun_telemetry::clock::now_unix_nanos();
+            }
             // `sys::Error::path` is `Box<[u8]>` boxed at the
             // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
             let this_ptr: *mut Self = this;
@@ -937,6 +942,9 @@ mod _async_tasks {
             let rc = this.req.result.int();
             this.result =
                 NodeFS::uv_dispatch_req::<R, A, F>(&mut node_fs, &this.args, &mut this.req, rc);
+            if this.otel.is_some() {
+                this.otel_end_ns = bun_telemetry::clock::now_unix_nanos();
+            }
             // No `err.clone()` needed — see `uv_callback` above.
             let this_ptr: *mut Self = this;
             this.global_object()
@@ -959,6 +967,7 @@ mod _async_tasks {
                     F.otel_name(false),
                     self.args.path(),
                     result.as_ref().err(),
+                    self.otel_end_ns,
                 );
             }
             let global_object = self.global_object();
@@ -1268,6 +1277,9 @@ mod _async_tasks {
         pub args: ThreadIsolated<A>,
         pub(crate) result: Maybe<R>,
         pub(crate) otel: bun_telemetry::SpanStub,
+        /// Stamped on the pool thread when the operation finishes, so the
+        /// span does not include the hop back to the JS thread.
+        pub(crate) otel_end_ns: u64,
     }
     // SAFETY: results are plain data / owned buffers / WTF strings built off
     // thread for hand-off (`ret::*`); `ThreadIsolated<A>` is Send by its contract.
@@ -1294,6 +1306,9 @@ mod _async_tasks {
         ) -> Option<bun_jsc::Completion<Self>> {
             let mut node_fs = NodeFS::default();
             this.result = NodeFS::dispatch::<R, A, F>(&mut node_fs, &this.args, Flavor::Async);
+            if this.otel.is_some() {
+                this.otel_end_ns = bun_telemetry::clock::now_unix_nanos();
+            }
             // `sys::Error::path` is `Box<[u8]>` boxed at the `errno_sys_p`
             // construction site, so no clone is needed — `node_fs` may drop.
             Some(done)
@@ -1315,6 +1330,7 @@ mod _async_tasks {
                     F.otel_name(false),
                     this.args.path(),
                     this.result.as_ref().err(),
+                    this.otel_end_ns,
                 );
             }
             let promise_value = js.promise.value();
@@ -1381,6 +1397,7 @@ mod _async_tasks {
                         global_object,
                         bun_telemetry::Instrument::Fs,
                     ),
+                    otel_end_ns: 0,
                     args: args.into_thread_isolated(),
                     // Sentinel — overwritten by `run` before any read. `Maybe<R>`
                     // may be niche-optimised; never construct an all-zero `Result`.

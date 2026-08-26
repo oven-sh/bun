@@ -1061,21 +1061,6 @@ extern "C"
     return uws_res_remote_address_raw((uWS::HttpResponse<false> *)res, out, port);
   }
 
-  /* Per-connection scratch for telemetry's encoded peer attributes.
-   * Returns the buffer and its capacity; **len is the filled length (0 = empty). */
-  uint8_t *uws_res_peer_attrs(int ssl, uws_res_r res, uint8_t **len, size_t *cap) {
-    if (ssl) {
-      auto *data = ((uWS::HttpResponse<true> *)res)->getHttpResponseData();
-      *len = &data->peerAttrsLength;
-      *cap = sizeof(data->peerAttrs);
-      return data->peerAttrs;
-    }
-    auto *data = ((uWS::HttpResponse<false> *)res)->getHttpResponseData();
-    *len = &data->peerAttrsLength;
-    *cap = sizeof(data->peerAttrs);
-    return data->peerAttrs;
-  }
-
   void uws_res_mark_wrote_content_length_header(int ssl, uws_res_r res) {
     if (ssl) {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;

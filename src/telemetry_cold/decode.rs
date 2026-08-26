@@ -618,3 +618,22 @@ mod tests {
         assert_eq!(seen, 1);
     }
 }
+
+/// `ExportTraceServiceResponse.partial_success` → (rejected_spans, error_message).
+pub fn partial_success(body: &[u8]) -> Option<(u64, Vec<u8>)> {
+    for (field, v) in fields(body) {
+        if let (1, Value::Len(ps)) = (field, v) {
+            let mut rejected = 0u64;
+            let mut message = Vec::new();
+            for (f, v) in fields(ps) {
+                match (f, v) {
+                    (1, Value::Varint(n)) => rejected = n,
+                    (2, Value::Len(m)) => message = m.to_vec(),
+                    _ => {}
+                }
+            }
+            return Some((rejected, message));
+        }
+    }
+    None
+}

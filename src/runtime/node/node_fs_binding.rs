@@ -57,6 +57,7 @@ where
             F.otel_name(true),
             args.path(),
             result.as_ref().err(),
+            0,
         );
     }
     match result {

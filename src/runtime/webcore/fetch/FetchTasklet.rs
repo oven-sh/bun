@@ -124,6 +124,9 @@ pub struct FetchTasklet {
     /// Length of the URL prefix of `url_proxy_buffer` and the request method, for the span.
     pub(crate) otel_url_len: u32,
     pub(crate) otel_method: bun_http::Method,
+    /// Stamped on the HTTP thread when the response completes, so the span
+    /// does not include the hop back to the JS thread.
+    pub(crate) otel_end_ns: u64,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) concurrent_task: ConcurrentTask,
     /// `JsCell`: the ByteStream's drain signal reaches `on_stream_drained` through a shared ref.
@@ -504,6 +507,7 @@ impl FetchTasklet {
             status,
             minor_version,
             error.as_ref().map(|(c, m)| (&c[..], &m[..])),
+            self.otel_end_ns,
         );
     }
 
@@ -1720,6 +1724,7 @@ impl FetchTasklet {
             otel: bun_telemetry::SpanStub::NONE,
             otel_url_len: fetch_options.url.href.len() as u32,
             otel_method: fetch_options.method,
+            otel_end_ns: 0,
             promise,
             concurrent_task: ConcurrentTask::default(),
             poll_ref: JsCell::new(KeepAlive::default()),
@@ -2214,6 +2219,9 @@ impl FetchTasklet {
         let task_ref = Self::from_raw_mut(task);
 
         task_ref.mutex.lock();
+        if is_done && task_ref.otel.is_some() {
+            task_ref.otel_end_ns = bun_telemetry::clock::now_unix_nanos();
+        }
         // we need to unlock before task.deref();
         // explicit unlock + deref at end instead of nested defers.
         // Sync HTTP-thread state back into the JS-side instance via an

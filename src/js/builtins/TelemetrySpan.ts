@@ -67,15 +67,18 @@ export function telemetrySpanSetAttributesImpl(span: any, attributes: unknown) {
   const state = $getInternalField(span, Field.State) as number;
   if (!(state & State.Recording) || attributes == null || typeof attributes !== "object") return span;
   if (state & State.Native) {
-    for (const key in attributes as object) {
-      const value = attributes[key];
-      if (value != null) $telemetrySetAttribute(span, key, value);
+    const keys = Object.keys(attributes as object);
+    for (let i = 0; i < keys.length; i++) {
+      const value = attributes[keys[i]];
+      if (value != null) $telemetrySetAttribute(span, keys[i], value);
     }
     return span;
   }
   let attrs = $getInternalField(span, Field.Attributes) as unknown[] | null;
   const existing = attrs === null ? 0 : attrs.length;
-  for (const key in attributes as object) {
+  const keys = Object.keys(attributes as object);
+  for (let k = 0; k < keys.length; k++) {
+    const key = keys[k];
     const value = attributes[key];
     if (value == null) continue;
     if (attrs === null) {
@@ -266,7 +269,9 @@ $visibility = "Private";
 export function telemetryFlattenAttributes(attributes: unknown): unknown[] | null {
   if (attributes == null || typeof attributes !== "object") return null;
   const flat: unknown[] = [];
-  for (const key in attributes as object) {
+  const keys = Object.keys(attributes as object);
+  for (let k = 0; k < keys.length; k++) {
+    const key = keys[k];
     const v = attributes[key];
     if (v != null) {
       $arrayPush(flat, key);

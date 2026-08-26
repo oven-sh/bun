@@ -547,6 +547,27 @@ pub fn end_leaf(
     bun_telemetry::rt::end_leaf(global.as_ptr().cast(), i, stub, name, kind, write)
 }
 
+/// [`end_leaf`] with the end time stamped elsewhere (0 = now).
+pub fn end_leaf_at(
+    global: &JSGlobalObject,
+    i: Instrument,
+    stub: &bun_telemetry::SpanStub,
+    name: &[u8],
+    kind: bun_telemetry::SpanKind,
+    end_ns: u64,
+    mut write: impl FnMut(&mut bun_telemetry::SpanWriter<'_>),
+) {
+    bun_telemetry::rt::end_leaf_at(
+        global.as_ptr().cast(),
+        i,
+        stub,
+        name,
+        kind,
+        end_ns,
+        &mut write,
+    )
+}
+
 pub use propagation::{format_traceparent, parse_traceparent};
 
 // ─────────────────────────── host functions (`$newRustFunction("telemetry.rs", …)`) ───────────────────────────

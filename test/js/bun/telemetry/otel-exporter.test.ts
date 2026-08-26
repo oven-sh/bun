@@ -296,6 +296,47 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(c.spans().map((s: any) => s.name)).toEqual(["retried", "retried"]);
   });
 
+  test("a partial_success response is reported with the collector's message", async () => {
+    // ExportTraceServiceResponse { partial_success { rejected_spans: 1, error_message: "bad span" } }
+    const msg = new TextEncoder().encode("bad span");
+    const ps = new Uint8Array([0x08, 0x01, 0x12, msg.length, ...msg]);
+    const body = new Uint8Array([0x0a, ps.length, ...ps]);
+    using c = collector(() => new Response(body, { headers: { "content-type": "application/x-protobuf" } }));
+    const { stderr, exitCode } = await run(
+      `
+        Bun.otel.start({ endpoint: process.env.COLLECTOR });
+        Bun.otel.tracer("t").startSpan("x").end();
+        await Bun.otel.forceFlush();
+      `,
+      { COLLECTOR: c.url },
+    );
+    expect(stderr).toContain("collector rejected 1 span(s): bad span");
+    expect(exitCode).toBe(0);
+  });
+
+  test("Retry-After on a 429 sets the retry delay", async () => {
+    // A 429 with Retry-After: 60 parks the batch for 60 s (not the default 1 s),
+    // so 1.5 s later it has not been retried; forceFlush() then retries it now.
+    using c = collector(i =>
+      i === 0 ? new Response("slow down", { status: 429, headers: { "Retry-After": "60" } }) : undefined,
+    );
+    const { stdout, exitCode } = await run(
+      `
+        Bun.otel.start({ endpoint: process.env.COLLECTOR, batch: { delayMs: 10 } });
+        Bun.otel.tracer("t").startSpan("x").end();
+        const count = async () => (await fetch(process.env.COLLECTOR)).json();
+        for (let i = 0; i < 300 && (await count()) < 1; i++) await Bun.sleep(10);
+        await Bun.sleep(1500);
+        const before = await count();
+        await Bun.otel.forceFlush();
+        console.log(JSON.stringify([before, await count(), Bun.otel.stats().spansExported]));
+      `,
+      { COLLECTOR: c.url, BUN_OTEL_INSTRUMENTATIONS: "http" },
+    );
+    expect(stdout.trim()).toBe(JSON.stringify([1, 2, 1]));
+    expect(exitCode).toBe(0);
+  });
+
   test("after a forceFlush(), later failed exports keep their backoff (are not retried in a burst)", async () => {
     // Batch 1 succeeds and is flushed. Batch 2 then gets 503s: it must be
     // parked for its backoff, not burned through every attempt at once.

@@ -675,6 +675,19 @@ describe("node:http", () => {
     expect([res.errored, sawErrorEvent]).toEqual([null, false]);
   });
 
+  test("node:http server: a ws upgrade ends the SERVER span with 101", async () => {
+    const { WebSocketServer } = require("ws");
+    const httpServer = http.createServer((req, res) => res.end("no"));
+    const wss = new WebSocketServer({ server: httpServer });
+    wss.on("connection", ws => ws.close());
+    await new Promise<void>(r => httpServer.listen(0, "127.0.0.1", r));
+    const ws = new WebSocket("ws://127.0.0.1:" + (httpServer.address() as any).port);
+    await new Promise(r => (ws.onclose = r));
+    const [srv] = byName(await collect(), "bun.http.server");
+    httpServer.close();
+    expect(srv.attributes["http.response.status_code"]).toBe(101);
+  });
+
   test("node:http: an Upgrade / CONNECT response ends the CLIENT span with its status", async () => {
     using server = Bun.serve({
       port: 0,
@@ -922,6 +935,54 @@ describe("request facts", () => {
     const [srv] = byName(await collect(1), "bun.http.server");
     sock.end();
     expect(srv.attributes["network.protocol.version"]).toBe("1.0");
+  });
+
+  test("request bytes that are not UTF-8 are exported as valid UTF-8 (U+FFFD)", async () => {
+    using server = Bun.serve({ port: 0, fetch: () => new Response("x") });
+    const sock = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        data(s) {
+          s.end();
+        },
+        open(s) {
+          s.write(
+            Buffer.concat([
+              Buffer.from("GET /a HTTP/1.1\r\nHost: h\r\nUser-Agent: curl/"),
+              Buffer.from([0xff]),
+              Buffer.from("8\r\n\r\n"),
+            ]),
+          );
+        },
+      },
+    });
+    const [srv] = byName(await collect(1), "bun.http.server");
+    sock.end();
+    expect(srv.attributes["user_agent.original"]).toBe("curl/\uFFFD8");
+  });
+
+  test('instrumentations: { http: "nested" } records only requests that carry a traceparent', async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const spans = [];
+        Bun.otel.start({ exporters: [{ export: b => spans.push(...b) }], instrumentations: { http: "nested", fetch: false } });
+        using server = Bun.serve({ port: 0, fetch: () => new Response("x") });
+        await fetch(server.url);
+        await fetch(server.url, { headers: { traceparent: "00-11111111111111111111111111111111-2222222222222222-01" } });
+        await Bun.otel.forceFlush();
+        console.log(JSON.stringify(spans.map(s => s.parentSpanContext?.spanId ?? s.parentSpanId)));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe(JSON.stringify(["2222222222222222"]));
+    expect(exitCode).toBe(0);
   });
 
   test("repeated tracestate / baggage request headers are combined into one list", async () => {

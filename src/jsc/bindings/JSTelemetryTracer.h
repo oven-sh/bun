@@ -29,6 +29,7 @@ private:
 // $cpp / $newCppFunction("JSTelemetryTracer.cpp", …) targets for internal/telemetry.ts.
 JSC_DECLARE_HOST_FUNCTION(jsTelemetryOtelSpan);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetryOtelWrap);
+JSC_DECLARE_HOST_FUNCTION(jsTelemetryEnabledMask);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetryOtelSet);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetryCreateTracer);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetryWrapSpanContext);

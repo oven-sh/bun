@@ -598,6 +598,8 @@ impl NodeHTTPResponse {
 
         if let Some(raw_response) = self.raw_response.take() {
             self.update_flags(|f| f.insert(Flags::UPGRADED));
+            // uWS writes the 101 itself.
+            self.otel_status.set(101);
             // Unref the poll_ref since the socket is now upgraded to WebSocket
             // and will have its own lifecycle management
             let vm = self.server.global_this().bun_vm().as_mut();

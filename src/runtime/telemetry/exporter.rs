@@ -40,7 +40,8 @@ const MAX_ATTEMPTS: u32 = 5;
 
 enum SendError {
     Transport(bun_http::Error),
-    Status(u32),
+    /// (status, Retry-After seconds if the server sent one)
+    Status(u32, Option<u32>),
     NoResponse,
 }
 
@@ -48,7 +49,7 @@ impl SendError {
     fn retryable(&self) -> bool {
         match self {
             SendError::Transport(_) | SendError::NoResponse => true,
-            SendError::Status(s) => matches!(s, 408 | 429 | 502 | 503 | 504),
+            SendError::Status(s, _) => matches!(s, 408 | 429 | 502 | 503 | 504),
         }
     }
 }
@@ -57,17 +58,36 @@ impl fmt::Display for SendError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SendError::Transport(e) => write!(f, "{e}"),
-            SendError::Status(s) => write!(f, "HTTP {s}"),
+            SendError::Status(s, _) => write!(f, "HTTP {s}"),
             SendError::NoResponse => f.write_str("no response"),
         }
     }
 }
 
-fn check_status(status: u32) -> Result<(), SendError> {
-    if (200..300).contains(&status) {
+fn check_response(res: &bun_picohttp::Response<'_>, body: &[u8]) -> Result<(), SendError> {
+    if (200..300).contains(&res.status_code) {
+        // OTLP partial success: the server took the request but rejected some
+        // spans; it says how many and why (ExportTraceServiceResponse field 1).
+        if !body.is_empty() {
+            if let Some((rejected, message)) = bun_telemetry_cold::decode::partial_success(body) {
+                if rejected > 0 {
+                    bun_core::warn!(
+                        "[otel] collector rejected {} span(s): {}",
+                        rejected,
+                        bstr::BStr::new(&message)
+                    );
+                }
+            }
+        }
         Ok(())
     } else {
-        Err(SendError::Status(status))
+        // Retry-After (429/503): seconds form only; an HTTP-date is ignored.
+        let retry_after = res
+            .headers
+            .get(b"retry-after")
+            .and_then(|v| core::str::from_utf8(v).ok())
+            .and_then(|v| v.trim().parse::<u32>().ok());
+        Err(SendError::Status(res.status_code, retry_after))
     }
 }
 
@@ -235,7 +255,7 @@ impl OtlpHttpExporter {
         );
         let mut response = MutableString::default();
         let meta = req.send_sync(&mut response).map_err(SendError::Transport)?;
-        check_status(meta.response.status_code)
+        check_response(&meta.response, response.list.as_slice())
     }
 
     fn failed(
@@ -246,7 +266,10 @@ impl OtlpHttpExporter {
         err: &SendError,
     ) {
         if err.retryable() && attempt + 1 < MAX_ATTEMPTS {
-            let backoff = Duration::from_secs(1u64 << attempt.min(4));
+            let mut backoff = Duration::from_secs(1u64 << attempt.min(4));
+            if let SendError::Status(_, Some(secs)) = err {
+                backoff = Duration::from_secs(u64::from(*secs).clamp(1, 120));
+            }
             processor.retry_later(self, payload, attempt + 1, backoff);
         } else {
             self.warn_once(&payload, "", err);
@@ -303,7 +326,7 @@ impl InflightExport {
     fn callback(
         this: *mut Self,
         async_http: *mut AsyncHTTP<'static>,
-        result: HTTPClientResult<'_>,
+        mut result: HTTPClientResult<'_>,
     ) {
         if result.has_more {
             return;
@@ -312,9 +335,11 @@ impl InflightExport {
         // buffers are dropped exactly once (see S3HttpSimpleTask::stage_http_result).
         // SAFETY: HTTP thread exclusively owns `this` during the callback.
         unsafe { core::ptr::write((*this).http.0.as_mut_ptr(), core::ptr::read(async_http)) };
+        let mut body = Vec::new();
+        result.body_into(&mut body);
         let outcome = match (result.fail, &result.metadata) {
             (Some(err), _) => Err(SendError::Transport(err)),
-            (None, Some(meta)) => check_status(meta.response.status_code),
+            (None, Some(meta)) => check_response(&meta.response, &body),
             (None, None) => Err(SendError::NoResponse),
         };
         // SAFETY: allocated in `export`; the HTTP thread is done with it.

@@ -364,6 +364,36 @@ pub fn redact_url(url: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     }
 }
 
+/// Append `s` (bytes off the wire: a request target, a header value) to
+/// `out` as valid UTF-8, replacing invalid sequences with U+FFFD. proto3
+/// `string` fields must be UTF-8 or receivers reject the whole request; the
+/// ASCII case (nearly always) is one SIMD scan and a copy.
+#[inline]
+pub fn extend_utf8_lossy(out: &mut Vec<u8>, s: &[u8]) {
+    if s.is_ascii() || core::str::from_utf8(s).is_ok() {
+        out.extend_from_slice(s);
+        return;
+    }
+    for chunk in s.utf8_chunks() {
+        out.extend_from_slice(chunk.valid().as_bytes());
+        if !chunk.invalid().is_empty() {
+            out.extend_from_slice("\u{FFFD}".as_bytes());
+        }
+    }
+}
+
+/// `s` if it is valid UTF-8 (borrowed), else a lossy copy.
+#[inline]
+pub fn utf8_lossy(s: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if s.is_ascii() || core::str::from_utf8(s).is_ok() {
+        std::borrow::Cow::Borrowed(s)
+    } else {
+        let mut v = Vec::with_capacity(s.len() + 8);
+        extend_utf8_lossy(&mut v, s);
+        std::borrow::Cow::Owned(v)
+    }
+}
+
 /// Longest prefix of `s` that is at most `max` bytes and does not split a
 /// UTF-8 sequence.
 #[inline]
@@ -803,6 +833,20 @@ mod redact_tests {
         ));
         assert!(matches!(
             redact_url(b"https://h/p"),
+            std::borrow::Cow::Borrowed(_)
+        ));
+    }
+}
+
+#[cfg(test)]
+mod utf8_tests {
+    #[test]
+    fn lossy() {
+        let mut out = Vec::new();
+        super::extend_utf8_lossy(&mut out, b"curl/\xff8.0 \xe2\x82\xac");
+        assert_eq!(out, "curl/\u{FFFD}8.0 €".as_bytes());
+        assert!(matches!(
+            super::utf8_lossy(b"plain"),
             std::borrow::Cow::Borrowed(_)
         ));
     }

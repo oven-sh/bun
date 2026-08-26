@@ -46,10 +46,17 @@ impl PropagationHeaders for Headers {
 
 /// Start a CLIENT span for an outgoing request and inject `traceparent`
 /// (+ `tracestate`, `baggage`). Returns `SpanStub::NONE` when disabled.
+#[inline(always)]
 pub fn begin(global: &JSGlobalObject, headers: &mut impl PropagationHeaders) -> SpanStub {
     if !bun_telemetry::enabled(Instrument::HttpClient) {
         return SpanStub::NONE;
     }
+    begin_enabled(global, headers)
+}
+
+#[cold]
+#[inline(never)]
+fn begin_enabled(global: &JSGlobalObject, headers: &mut impl PropagationHeaders) -> SpanStub {
     let st = state();
     // Parent: the active span; failing that (manual propagation, no active
     // span) a `traceparent` the caller put on the request — which then also
@@ -251,6 +258,7 @@ pub fn http_client_end(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
         status,
         minor_version,
         error,
+        0,
     );
     Ok(JSValue::UNDEFINED)
 }
@@ -276,6 +284,7 @@ pub fn end(
     status: u16,
     minor_version: Option<u8>,
     error: Option<(&[u8], &[u8])>,
+    end_ns: u64,
 ) {
     if !stub.is_recording() {
         return;
@@ -287,7 +296,7 @@ pub fn end(
         ),
         MethodName::Other(o) => ("_OTHER", o),
     };
-    super::end_leaf(
+    super::end_leaf_at(
         global,
         Instrument::HttpClient,
         stub,
@@ -298,6 +307,7 @@ pub fn end(
             name.as_bytes()
         },
         SpanKind::Client,
+        end_ns,
         |w| {
             w.attr("http.request.method", name);
             if name == "_OTHER" {

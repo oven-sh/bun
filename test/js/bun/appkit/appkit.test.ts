@@ -777,10 +777,13 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
       const r = await runFixture("wait.ts");
       if (r.skipped) return;
       const inside = step(r, "inside-wait");
-      expect(inside, r.stderr).toMatchObject({ step: "inside-wait", immediate: true });
-      // The immediate ends the wait itself; it does not ride on the 10 ms timer.
-      expect(inside.immediateMs).toBeLessThan(inside.timerMs);
-      expect(inside.timerMs).toBeLessThan(isDebug || isASAN ? 1000 : 250);
+      expect(inside, r.stderr).toBeDefined();
+      // The wait the callout ran in ended by the wake the callout posted (one
+      // wake consumed), and the immediate ran before any further wait began.
+      expect(inside.immediate, r.stderr).toMatchObject({ wakes: 1, waits: 0 });
+      // Both ran off that wake and the 10 ms deadline, not the 30 s timer.
+      expect(inside.immediate.ms).toBeLessThan(isDebug || isASAN ? 1000 : 250);
+      expect(inside.timer.ms).toBeLessThan(isDebug || isASAN ? 1000 : 250);
       expect(step(r, "sync-wait")).toEqual({ step: "sync-wait", before: 0, during0: 1, resolved: 1, after: 1 });
       expect(r.signal).toBeNull();
       expect(r.exitCode).toBe(0);

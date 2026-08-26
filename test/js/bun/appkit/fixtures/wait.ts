@@ -15,23 +15,27 @@ await run(async () => {
   win.show();
 
   // Nothing but a far-off timer is pending when the callback runs, so the
-  // wait was armed for seconds away; the 10 ms timer it arms must still fire
-  // promptly, and so must the immediate.
+  // wait was armed for seconds away. The immediate it queues makes the
+  // callout post a wake: that wait ends by the wake (not by its 30 s date),
+  // the immediate runs before any further wait begins, and the 10 ms timer
+  // fires on its own deadline rather than the far one.
   await new Promise<void>(done => {
     const far = setTimeout(() => {}, 30_000);
     appKitInternals.runInsideWait(20, () => {
       const armed = performance.now();
-      let immediate = false;
-      let immediateMs = -1;
-      setImmediate(() => {
-        immediate = true;
-        immediateMs = performance.now() - armed;
-      });
-      setTimeout(() => {
-        clearTimeout(far);
-        emit({ step: "inside-wait", timerMs: performance.now() - armed, immediate, immediateMs });
-        done();
-      }, 10);
+      const inCallout = appKitInternals.runLoopStats();
+      const seen: Record<string, { ms: number; wakes: number; waits: number }> = {};
+      const mark = (name: string) => {
+        const now = appKitInternals.runLoopStats();
+        seen[name] = { ms: performance.now() - armed, wakes: now.wakes - inCallout.wakes, waits: now.waits - inCallout.waits };
+        if (seen.immediate && seen.timer) {
+          clearTimeout(far);
+          emit({ step: "inside-wait", ...seen });
+          done();
+        }
+      };
+      setImmediate(() => mark("immediate"));
+      setTimeout(() => mark("timer"), 10);
     });
   });
 

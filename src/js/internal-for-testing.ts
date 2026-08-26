@@ -801,10 +801,11 @@ export const appKitInternals = {
   runInsideWait: (ms: number, callback: () => void): void =>
     void require("internal/appkit_private").testing("runInsideWait", ms, callback),
   /** What the event pump has done since the app started: waits begun, events sent to the application, wake events skipped as stale, run-loop sleeps the thread's heaps were handed to the allocator's scavenger for. */
-  runLoopStats: (): { waits: number; dispatched: number; staleWakes: number; handOffs: number } =>
+  runLoopStats: (): { waits: number; dispatched: number; wakes: number; staleWakes: number; handOffs: number } =>
     require("internal/appkit_private").testing("runLoopStats") as {
       waits: number;
       dispatched: number;
+      wakes: number;
       staleWakes: number;
       handOffs: number;
     },

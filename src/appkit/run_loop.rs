@@ -122,12 +122,13 @@ struct Park {
 }
 
 /// Counters for tests of the pump: waits begun, events sent to the
-/// application, wake events skipped as stale, sleeps the heaps were handed
-/// to the scavenger for.
+/// application, wake events that ended a wait, wake events skipped as stale,
+/// sleeps the heaps were handed to the scavenger for.
 #[derive(Clone, Copy, Default)]
 pub struct Stats {
     pub waits: u64,
     pub dispatched: u64,
+    pub wakes: u64,
     pub stale_wakes: u64,
     pub hand_offs: u64,
 }
@@ -595,6 +596,7 @@ fn pump(park: &Park, deadline: &NSDate) {
         };
         if event.kind() == APPLICATION_DEFINED && event.subtype() == WAKE_SUBTYPE {
             if park.woke.replace(false) {
+                park.count(|s| s.wakes += 1);
                 break;
             }
             // A wake left over from an earlier park.

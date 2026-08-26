@@ -226,14 +226,15 @@ impl AppKitApp {
                 );
                 Ok(JSValue::UNDEFINED)
             }
-            // `{ waits, dispatched, staleWakes, handOffs }`: what the event
+            // `{ waits, dispatched, wakes, staleWakes, handOffs }`: what the event
             // pump has done since the application started.
             "runLoopStats" => {
                 let stats = started(global)?.run_loop_stats();
-                let object = JSValue::create_empty_object(global, 4);
+                let object = JSValue::create_empty_object(global, 5);
                 for (name, value) in [
                     (&b"waits"[..], stats.waits),
                     (b"dispatched", stats.dispatched),
+                    (b"wakes", stats.wakes),
                     (b"staleWakes", stats.stale_wakes),
                     (b"handOffs", stats.hand_offs),
                 ] {

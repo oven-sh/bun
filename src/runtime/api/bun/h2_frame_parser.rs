@@ -98,17 +98,20 @@ enum BunSocket {
     // BACKREF — the socket strictly outlives the H2FrameParser while attached:
     // `Tls`/`Tcp` are kept alive by the `RefPtr<H2FrameParser>` stored in
     // the socket's `native_callback` slot (released in `detach_native_socket`),
-    // and `*Writeonly` are kept alive by the manual `ref_()`/`deref()` pair in
-    // `attach_to_native_socket` / `detach_native_socket`. `BackRef` makes the
-    // shared-only deref safe at every read site (all `NewSocket` methods used
-    // here take `&self`). LIFETIMES.tsv: SHARED — intrusive refcount, *T
-    // crosses FFI; `NewSocket<SSL>` does not implement `bun_ptr::RefCounted`
-    // (hand-rolled `ref_()/deref()` on a `Cell<u32>`), so `RefPtr` cannot
-    // wrap it.
+    // and `*Writeonly` by `H2FrameParser.writeonly_socket_ref`. `BackRef`
+    // makes the shared-only deref safe at every read site (all `NewSocket`
+    // methods used here take `&self`).
     Tls(bun_ptr::BackRef<TLSSocket>),
     TlsWriteonly(bun_ptr::BackRef<TLSSocket>),
     Tcp(bun_ptr::BackRef<TCPSocket>),
     TcpWriteonly(bun_ptr::BackRef<TCPSocket>),
+}
+
+/// Held, not read: dropping it releases the socket.
+#[allow(dead_code)]
+enum WriteonlySocketRef {
+    Tls(RefPtr<TLSSocket>),
+    Tcp(RefPtr<TCPSocket>),
 }
 
 unsafe extern "C" {
@@ -955,6 +958,9 @@ pub struct H2FrameParser {
     // allocator field dropped — global mimalloc
     handlers: JsCell<Handlers>,
     native_socket: Cell<BunSocket>,
+    /// Our ref on a `*Writeonly` `native_socket` (one whose native-callback
+    /// slot was already taken), released in `detach_native_socket`.
+    writeonly_socket_ref: JsCell<Option<WriteonlySocketRef>>,
     local_settings: Cell<FullSettingsPayload>,
     /// Bitmask (SETTING_BIT_*) of standard SETTINGS explicitly provided by JS. node only
     /// serializes explicitly submitted settings — defaults are never put on the wire, so the
@@ -7454,8 +7460,8 @@ impl H2FrameParser {
     /// `attach_native_callback` stores a `RefPtr<H2FrameParser>`, dropped in
     /// `NewSocket::detach_native_callback` (or inside `attach_native_callback`
     /// when rejected). When the socket already has a native callback attached
-    /// we fall back to write-only mode and take a manual `ref()` on the socket
-    /// itself, balanced by `detach_native_socket`.
+    /// we fall back to write-only mode and hold a ref on the socket itself
+    /// (`writeonly_socket_ref`) until `detach_native_socket`.
     fn attach_to_native_socket<const SSL: bool>(
         &self,
         socket: *mut crate::socket::NewSocket<SSL>,
@@ -7473,13 +7479,22 @@ impl H2FrameParser {
             } else {
                 BunSocket::Tcp(bun_ptr::BackRef::from(socket_nn.cast::<TCPSocket>()))
             }
+        } else if SSL {
+            let socket = socket_nn.cast::<TLSSocket>();
+            // SAFETY: `socket` is live (see above).
+            self.writeonly_socket_ref
+                .set(Some(WriteonlySocketRef::Tls(unsafe {
+                    RefPtr::init_ref(socket.as_ptr())
+                })));
+            BunSocket::TlsWriteonly(bun_ptr::BackRef::from(socket))
         } else {
-            socket_ref.ref_();
-            if SSL {
-                BunSocket::TlsWriteonly(bun_ptr::BackRef::from(socket_nn.cast::<TLSSocket>()))
-            } else {
-                BunSocket::TcpWriteonly(bun_ptr::BackRef::from(socket_nn.cast::<TCPSocket>()))
-            }
+            let socket = socket_nn.cast::<TCPSocket>();
+            // SAFETY: `socket` is live (see above).
+            self.writeonly_socket_ref
+                .set(Some(WriteonlySocketRef::Tcp(unsafe {
+                    RefPtr::init_ref(socket.as_ptr())
+                })));
+            BunSocket::TcpWriteonly(bun_ptr::BackRef::from(socket))
         }
     }
 
@@ -7490,10 +7505,9 @@ impl H2FrameParser {
             // BackRef invariant: socket kept alive by attach_native_callback; this is the matching detach.
             BunSocket::Tcp(socket) => socket.detach_native_callback(),
             BunSocket::Tls(socket) => socket.detach_native_callback(),
-            // BackRef invariant: Writeonly socket was ref()'d on attach; this is the
-            // matching deref. UFCS so method resolution doesn't pick `<BackRef as Deref>::deref`.
-            BunSocket::TcpWriteonly(socket) => TCPSocket::deref(socket.get()),
-            BunSocket::TlsWriteonly(socket) => TLSSocket::deref(socket.get()),
+            BunSocket::TcpWriteonly(_) | BunSocket::TlsWriteonly(_) => {
+                self.writeonly_socket_ref.set(None)
+            }
             BunSocket::None => {}
         }
     }
@@ -7530,6 +7544,7 @@ impl H2FrameParser {
             global_this: GlobalRef::from(global_object),
             strong_this: JsCell::new(JsRef::empty()),
             native_socket: Cell::new(BunSocket::None),
+            writeonly_socket_ref: JsCell::new(None),
             local_settings: Cell::new(FullSettingsPayload::default()),
             explicit_settings: Cell::new(0),
             custom_settings: JsCell::new(Vec::new()),

@@ -8,6 +8,7 @@ use bun_core::MutableString;
 use bun_http::HeadersExt as _;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult};
+use bun_ptr::RefPtr;
 
 // Re-exports (thin aliases)
 pub(crate) use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
@@ -545,9 +546,8 @@ pub(crate) fn writable_stream(
     // compatible (`{ sink: NetworkSink }`) so the cast in `to_sink()` is just a pointer reinterpret.
     let response_stream: *mut NetworkSink =
         bun_core::heap::into_raw(NetworkSink::new(NetworkSink {
-            // SAFETY: `task_ptr` is the live heap-alloc'd MultiPartUpload (write provenance
-            // from `into_raw`); the sink holds a counted ref released in `detach_writable`.
-            task: Some(unsafe { bun_ptr::BackRef::from_raw_mut(task_ptr) }),
+            // SAFETY: adopts one of `task_ptr`'s two initial refs (released in `detach_writable`).
+            task: Some(unsafe { RefPtr::from_raw(task_ptr) }),
             global_this: Some(bun_ptr::BackRef::new(global_this)),
             high_water_mark: part_size as BlobSizeType,
             writer_holders: Cell::new(2),
@@ -565,12 +565,12 @@ pub(crate) fn writable_stream(
     Ok(sink.to_js(global_this))
 }
 
+#[derive(bun_ptr::CellRefCounted)]
 pub struct S3UploadStreamWrapper {
-    /// Hand-rolled intrusive count; released through [`Self::deref_`].
     pub(crate) ref_count: core::cell::Cell<u32>,
 
     pub sink: Option<NonNull<NetworkSink>>,
-    pub task: *mut MultiPartUpload,
+    pub task: RefPtr<MultiPartUpload>,
     pub(crate) end_promise: bun_jsc::JSPromiseStrong,
     pub callback: Option<fn(S3UploadResult, *mut c_void)>,
     pub(crate) callback_context: *mut c_void,
@@ -583,19 +583,6 @@ pub struct S3UploadStreamWrapper {
 }
 
 impl S3UploadStreamWrapper {
-    /// Intrusive `deref()` — decrements ref_count; runs finalizer + frees on zero.
-    /// SAFETY: `this` must be a live Box-allocated `Self` (created via heap::alloc).
-    pub(crate) unsafe fn deref_(this: *mut Self) {
-        // SAFETY: caller contract above.
-        let rc = unsafe { (*this).ref_count.get() } - 1;
-        // SAFETY: caller contract above — `this` is still live (freed only after rc hits zero below).
-        unsafe { (*this).ref_count.set(rc) };
-        if rc == 0 {
-            // SAFETY: ref_count hit zero; reconstitute the Box to run Drop and free.
-            drop(unsafe { bun_core::heap::take(this) });
-        }
-    }
-
     fn detach_sink(&mut self) {
         bun_output::scoped_log!(S3UploadStream, "detachSink {}", self.sink.is_some());
         if let Some(sink_ptr) = self.sink.take() {
@@ -615,12 +602,8 @@ impl S3UploadStreamWrapper {
         self.sink.map(|p| unsafe { &mut *p.as_ptr() })
     }
 
-    /// The `MultiPartUpload` this wrapper holds a counted ref on (released in
-    /// `Drop`). SAFETY (encapsulated): `task` is set once at construction and
-    /// intrusive-ref'd for this wrapper's entire lifetime.
     fn task_ref(&self) -> &MultiPartUpload {
-        // SAFETY: see doc comment — counted ref keeps pointee live.
-        unsafe { &*self.task }
+        &self.task
     }
 
     pub(crate) fn on_writable(task: &MultiPartUpload, self_: &mut Self, flushed: u64) {
@@ -646,7 +629,7 @@ impl S3UploadStreamWrapper {
         bun_output::scoped_log!(S3UploadStream, "handleResolveStream");
         self.detach_sink();
         // SAFETY: `self` is a live Box allocation; this balances the pump ref.
-        unsafe { Self::deref_(std::ptr::from_mut::<Self>(self)) };
+        unsafe { Self::deref(std::ptr::from_mut::<Self>(self)) };
     }
 
     /// Stream pump rejected. Rejects the caller's end_promise, fails the upload,
@@ -658,7 +641,7 @@ impl S3UploadStreamWrapper {
         let _deref_guard = scopeguard::guard(std::ptr::from_mut::<Self>(self), |s| {
             // SAFETY: s points to self which is alive for the duration of the guard; deref_
             // decrements ref_count and may free self only after all borrows above are released
-            unsafe { Self::deref_(s) }
+            unsafe { Self::deref(s) }
         });
         if self.end_promise.has_value() && !err.is_empty_or_undefined_or_null() {
             // if we have a explicit error, reject the promise
@@ -680,7 +663,7 @@ impl S3UploadStreamWrapper {
         let _deref_guard = scopeguard::guard(std::ptr::from_mut::<Self>(self_), |s| {
             // SAFETY: s points to self_ which is alive for the duration of the guard; deref_
             // decrements ref_count and may free self only after all borrows above are released
-            unsafe { Self::deref_(s) }
+            unsafe { Self::deref(s) }
         });
         let global = self_.global;
         // The native teardown (source close, pump-ref release, completion callback)
@@ -748,7 +731,7 @@ impl S3UploadStreamWrapper {
                     // SAFETY: `self_` is the live Box allocation; this balances the
                     // pump +1 from `upload_stream` (rc 2→1). The scopeguard above
                     // releases the remaining ref at scope exit.
-                    unsafe { Self::deref_(std::ptr::from_mut::<Self>(self_)) };
+                    unsafe { Self::deref(std::ptr::from_mut::<Self>(self_)) };
                 }
                 if self_.end_promise.has_value() {
                     if settled.is_ok() {
@@ -824,10 +807,6 @@ impl Drop for S3UploadStreamWrapper {
     fn drop(&mut self) {
         bun_output::scoped_log!(S3UploadStream, "deinit {}", self.sink.is_some());
         self.detach_sink();
-        // task.deref() — release our ref on the MultiPartUpload.
-        // SAFETY: `self.task` is the +1 ref held since this stream was created.
-        MultiPartUpload::deref_(self.task);
-        // endPromise.deinit() — Strong field Drop handles this
     }
 }
 
@@ -996,7 +975,8 @@ pub(crate) fn upload_stream(
             callback,
             callback_context,
             path: bun_ptr::RawSlice::new(&task.path),
-            task: task_ptr,
+            // SAFETY: adopts one of `task_ptr`'s two initial refs.
+            task: unsafe { RefPtr::from_raw(task_ptr) },
             end_promise: bun_jsc::JSPromiseStrong::init(global_this),
             readable_stream_ref: ReadableStreamStrong::default(),
             global: global_static,
@@ -1012,20 +992,14 @@ pub(crate) fn upload_stream(
     // via `controller.end()/close()` before GC so its destructor never calls
     // `finalize` on this allocation.
     let sink: &mut NetworkSink = Box::leak(NetworkSink::new(NetworkSink {
-        // SAFETY: `task_ptr` is the live heap-alloc'd MultiPartUpload (write provenance
-        // from `into_raw`); the sink holds a counted ref released in `detach_writable`.
-        task: Some(unsafe { bun_ptr::BackRef::from_raw_mut(task_ptr) }),
+        // SAFETY: `task_ptr` is live; the sink's ref is released in `detach_writable`.
+        task: Some(unsafe { RefPtr::init_ref(task_ptr) }),
         global_this: Some(bun_ptr::BackRef::new(global_this)),
         high_water_mark: part_size as BlobSizeType,
         ..Default::default()
     }));
     let sink_handle = crate::webcore::SinkHandle::S3Upload(bun_ptr::BackRef::new_mut(sink));
     ctx.sink = Some(NonNull::from(&mut *sink));
-
-    // NetworkSink.task now holds a counted ref on the MultiPartUpload (released in
-    // `detach_writable`). Take it here rather than bump the initial ref_count so the
-    // early-error paths below (which detach_sink → finalize → deref) stay balanced.
-    task.ref_();
 
     // Captured before `assign_to_stream`: a synchronously-draining stream may
     // resolve + clear `ctx.end_promise` before control returns here.

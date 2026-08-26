@@ -567,55 +567,36 @@ enum RewritePhase {
 
 /// The JS wrapper a suspended handler is still using. Typed so the retarget/
 /// release dispatch is a match, not a `c_void` + fn-ptr pair.
-#[derive(Clone, Copy)]
 enum SuspendedWrapper {
-    Element(NonNull<Element>),
-    Comment(NonNull<Comment>),
-    TextChunk(NonNull<TextChunk>),
-    EndTag(NonNull<EndTag>),
-    DocType(NonNull<DocType>),
-    DocEnd(NonNull<DocEnd>),
+    Element(RefPtr<Element>),
+    Comment(RefPtr<Comment>),
+    TextChunk(RefPtr<TextChunk>),
+    EndTag(RefPtr<EndTag>),
+    DocType(RefPtr<DocType>),
+    DocEnd(RefPtr<DocEnd>),
 }
 
 impl SuspendedWrapper {
     /// Point the wrapper at the heap copy lol-html parked on suspend.
     fn retarget(&self, rewriter: &mut LolRewriter) {
-        match *self {
-            Self::Element(p) => BackRef::from(p).retarget(Element::suspended_raw(rewriter)),
-            Self::Comment(p) => BackRef::from(p).retarget(Comment::suspended_raw(rewriter)),
-            Self::TextChunk(p) => BackRef::from(p).retarget(TextChunk::suspended_raw(rewriter)),
-            Self::EndTag(p) => BackRef::from(p).retarget(EndTag::suspended_raw(rewriter)),
-            Self::DocType(p) => BackRef::from(p).retarget(DocType::suspended_raw(rewriter)),
-            Self::DocEnd(p) => BackRef::from(p).retarget(DocEnd::suspended_raw(rewriter)),
+        match self {
+            Self::Element(p) => p.retarget(Element::suspended_raw(rewriter)),
+            Self::Comment(p) => p.retarget(Comment::suspended_raw(rewriter)),
+            Self::TextChunk(p) => p.retarget(TextChunk::suspended_raw(rewriter)),
+            Self::EndTag(p) => p.retarget(EndTag::suspended_raw(rewriter)),
+            Self::DocType(p) => p.retarget(DocType::suspended_raw(rewriter)),
+            Self::DocEnd(p) => p.retarget(DocEnd::suspended_raw(rewriter)),
         }
     }
     /// Detach the wrapper and drop the ref `handler_callback` took.
     fn release(self) {
-        match self {
-            Self::Element(p) => {
-                BackRef::from(p).detach();
-                <Element as CellRefCounted>::deref_nn(p);
-            }
-            Self::Comment(p) => {
-                BackRef::from(p).detach();
-                <Comment as CellRefCounted>::deref_nn(p);
-            }
-            Self::TextChunk(p) => {
-                BackRef::from(p).detach();
-                <TextChunk as CellRefCounted>::deref_nn(p);
-            }
-            Self::EndTag(p) => {
-                BackRef::from(p).detach();
-                <EndTag as CellRefCounted>::deref_nn(p);
-            }
-            Self::DocType(p) => {
-                BackRef::from(p).detach();
-                <DocType as CellRefCounted>::deref_nn(p);
-            }
-            Self::DocEnd(p) => {
-                BackRef::from(p).detach();
-                <DocEnd as CellRefCounted>::deref_nn(p);
-            }
+        match &self {
+            Self::Element(p) => WrapperLike::detach(&**p),
+            Self::Comment(p) => WrapperLike::detach(&**p),
+            Self::TextChunk(p) => WrapperLike::detach(&**p),
+            Self::EndTag(p) => WrapperLike::detach(&**p),
+            Self::DocType(p) => WrapperLike::detach(&**p),
+            Self::DocEnd(p) => WrapperLike::detach(&**p),
         }
     }
 }
@@ -631,13 +612,16 @@ struct PendingSuspension {
 impl PendingSuspension {
     /// Hand the wrapper to a caller that adopts its ref, disarming [`Drop`].
     fn take_wrapper(self) -> SuspendedWrapper {
-        core::mem::ManuallyDrop::new(self).wrapper
+        let this = core::mem::ManuallyDrop::new(self);
+        // SAFETY: `this` is never dropped, so the field moves out exactly once.
+        unsafe { core::ptr::read(&this.wrapper) }
     }
 }
 
 impl Drop for PendingSuspension {
     fn drop(&mut self) {
-        self.wrapper.release();
+        // SAFETY: dropped exactly once here; the field is not touched again.
+        unsafe { core::ptr::read(&self.wrapper) }.release();
     }
 }
 
@@ -762,7 +746,7 @@ pub struct RewriterPipe {
     /// Handed from the suspending [`handler_callback`] to
     /// [`Self::begin_suspension`] across the lol-html unwind.
     pending_suspension: Cell<Option<PendingSuspension>>,
-    suspended_wrapper: Cell<Option<SuspendedWrapper>>,
+    suspended_wrapper: JsCell<Option<SuspendedWrapper>>,
     /// `true` while a lol-html `write`/`end_mut`/`resume` call on this pipe's
     /// `rewriter` is on the stack. The output sink may re-enter the pipe via
     /// `on_ready`/`write`/`end_from_stream` during that call; those entry
@@ -1026,7 +1010,7 @@ impl RewriterPipe {
             phase: Cell::new(RewritePhase::WritePending),
             sync_only_noun: Cell::new(sync_only_noun),
             pending_suspension: Cell::new(None),
-            suspended_wrapper: Cell::new(None),
+            suspended_wrapper: JsCell::new(None),
             driving: Cell::new(false),
             pending: JsCell::new(WritablePending::default()),
             done: Cell::new(false),
@@ -2118,12 +2102,9 @@ impl HandlerLike for EndTagHandler {
 
 /// Trait abstracting the wrapper-type bits [`handler_callback`] and the
 /// suspension plumbing need.
-trait WrapperLike {
+trait WrapperLike: bun_ptr::AnyRefCounted + Sized {
     type Raw;
     fn init(value: *mut Self::Raw) -> NonNull<Self>;
-    fn ref_(&self);
-    /// Release one intrusive ref on the live `heap::alloc` allocation `this`.
-    fn deref_nn(this: NonNull<Self>);
     /// `jsc.Codegen.JS${T}.toJS` — wraps the *existing* heap allocation `this`
     /// in a JS wrapper (the codegen `${T}__create`). Takes `NonNull<Self>` (not
     /// `&self`) because the C++ side stores the raw heap pointer in `m_ctx`;
@@ -2141,8 +2122,8 @@ trait WrapperLike {
     /// lifetime-erased raw pointer the wrapper stores. Null if the rewriter
     /// is not suspended on a `Self::Raw`.
     fn suspended_raw(rewriter: &mut LolRewriter) -> *mut Self::Raw;
-    /// Wrap a ref'd `NonNull<Self>` as the matching [`SuspendedWrapper`] variant.
-    fn into_suspended(wrapper: NonNull<Self>) -> SuspendedWrapper;
+    /// Wrap a ref as the matching [`SuspendedWrapper`] variant.
+    fn into_suspended(wrapper: RefPtr<Self>) -> SuspendedWrapper;
 }
 
 /// Forwarding `WrapperLike` impl — every wrapper type's trait impl is a pure
@@ -2158,12 +2139,6 @@ macro_rules! impl_wrapper_like {
             fn init(v: *mut Self::Raw) -> NonNull<Self> {
                 Self::init(v)
             }
-            fn ref_(&self) {
-                self.ref_()
-            }
-            fn deref_nn(this: NonNull<Self>) {
-                <Self as CellRefCounted>::deref_nn(this)
-            }
             fn to_js(this: NonNull<Self>, g: &JSGlobalObject) -> JSValue {
                 Self::to_js_nonnull(this, g)
             }
@@ -2178,7 +2153,7 @@ macro_rules! impl_wrapper_like {
                     core::ptr::from_mut(unit).cast()
                 })
             }
-            fn into_suspended(wrapper: NonNull<Self>) -> SuspendedWrapper {
+            fn into_suspended(wrapper: RefPtr<Self>) -> SuspendedWrapper {
                 SuspendedWrapper::$ty(wrapper)
             }
         }
@@ -2218,14 +2193,13 @@ where
     jsc::mark_binding();
 
     let wrapper: NonNull<Z> = Z::init(value);
-    BackRef::from(wrapper).ref_();
 
-    // The detach+deref runs at most once on this path. On the SUSPEND path the
-    // guard is disarmed and `SuspendedWrapper::release` runs the same
-    // detach+deref once the handler's promise settles instead.
-    let guard = scopeguard::guard(wrapper, |w| {
-        BackRef::from(w).detach();
-        Z::deref_nn(w);
+    // Our ref across the handler call; the guard detaches then drops it. On
+    // the SUSPEND path the guard is disarmed and `SuspendedWrapper::release`
+    // does the same once the handler's promise settles instead.
+    // SAFETY: `wrapper` is the live allocation `init` just made.
+    let guard = scopeguard::guard(unsafe { RefPtr::init_ref(wrapper.as_ptr()) }, |w| {
+        w.detach()
     });
 
     // `this` is the Box<ElementHandler>/Box<DocumentHandler> userdata pointer we
@@ -3250,12 +3224,6 @@ impl WrapperLike for Element {
     fn init(v: *mut Self::Raw) -> NonNull<Self> {
         Self::init(v)
     }
-    fn ref_(&self) {
-        self.ref_()
-    }
-    fn deref_nn(this: NonNull<Self>) {
-        <Self as CellRefCounted>::deref_nn(this)
-    }
     fn to_js(this: NonNull<Self>, g: &JSGlobalObject) -> JSValue {
         Self::to_js_nonnull(this, g)
     }
@@ -3277,7 +3245,7 @@ impl WrapperLike for Element {
                 core::ptr::from_mut(unit).cast()
             })
     }
-    fn into_suspended(wrapper: NonNull<Self>) -> SuspendedWrapper {
+    fn into_suspended(wrapper: RefPtr<Self>) -> SuspendedWrapper {
         SuspendedWrapper::Element(wrapper)
     }
 }

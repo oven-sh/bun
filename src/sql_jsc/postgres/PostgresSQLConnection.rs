@@ -54,7 +54,8 @@ bun_core::define_scoped_log!(debug, Postgres, visible);
 
 const MAX_PIPELINE_SIZE: usize = u16::MAX as usize; // about 64KB per connection
 
-type PreparedStatementsMap = StringHashMap<*mut PostgresSQLStatement>;
+/// `None` only transiently, inside `get_or_put` before the new statement is stored.
+type PreparedStatementsMap = StringHashMap<Option<RefPtr<PostgresSQLStatement>>>;
 
 pub mod js {
     pub use crate::jsc::codegen::JSPostgresSQLConnection::*;
@@ -193,11 +194,6 @@ impl Drop for PostgresSQLConnection {
     fn drop(&mut self) {
         self.disconnect();
         self.stop_timers();
-        for stmt_ptr in self.statements.get().values() {
-            // statements map owns a ref to each statement.
-            // SAFETY: every map value is a live statement the map holds a ref on.
-            unsafe { PostgresSQLStatement::deref(*stmt_ptr) };
-        }
         // `free_sensitive`: the connection options carry the password.
         for b in self.options_buf.iter_mut() {
             // SAFETY: plain byte write; volatile so it is not elided.
@@ -2936,21 +2932,19 @@ impl PostgresSQLConnection {
                         stmt.error_response = Some(
                             crate::postgres::postgres_sql_statement::Error::Protocol(err),
                         );
-                        let owned_by_map = self.statements.with_mut(|m| {
+                        // The request still holds another ref; this cannot drop to 0.
+                        let stmt_ptr: *const PostgresSQLStatement = &*stmt;
+                        self.statements.with_mut(|m| {
                             let name = &stmt.signature.name[..];
-                            if m.get(name)
-                                .is_some_and(|&p| core::ptr::eq(p, core::ptr::from_ref(&*stmt)))
-                            {
-                                m.remove(name).is_some()
-                            } else {
-                                false
+                            if m.get(name).is_some_and(|p| {
+                                core::ptr::eq(
+                                    p.as_ref().map_or(core::ptr::null(), |p| p.as_ptr()),
+                                    stmt_ptr,
+                                )
+                            }) {
+                                m.remove(name);
                             }
                         });
-                        if owned_by_map {
-                            // SAFETY: the map entry just removed was `stmt` itself, so the map
-                            // held one ref and the request still holds another; cannot drop to 0.
-                            unsafe { PostgresSQLStatement::deref(core::ptr::from_mut(stmt)) };
-                        }
                     }
                 }
                 // If `err` was not moved into stmt above, it drops here automatically.

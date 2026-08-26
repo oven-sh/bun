@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_ptr::{BackRef, RawSlice};
+use bun_ptr::{BackRef, RawSlice, RefPtr};
 
 use crate::webcore::jsc::{
     self as jsc, ArrayBuffer, CommonAbortReason, CommonAbortReasonExt as _, JSGlobalObject,
@@ -2115,10 +2115,8 @@ pub type H3ResponseSink = HTTPServerWritable<true, true>;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct NetworkSink {
-    // Stored as `BackRef`
-    // (set-once); while `Some` the sink holds a counted ref on the intrusively
-    // ref-counted `MultiPartUpload`, released in `detach_writable`.
-    pub task: Option<BackRef<bun_s3::MultiPartUpload, bun_ptr::Mut>>,
+    /// The sink's ref on the upload, released in `detach_writable`.
+    pub task: Option<RefPtr<bun_s3::MultiPartUpload>>,
     pub(crate) source: SourceHandle,
     // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
     pub global_this: Option<BackRef<JSGlobalObject>>,
@@ -2184,8 +2182,7 @@ impl NetworkSink {
     /// so the pointee is live for at least `'_`.
     #[inline]
     fn task_ref(&self) -> Option<&bun_s3::MultiPartUpload> {
-        // `BackRef::get` encapsulates the deref under the counted-ref invariant.
-        self.task.as_ref().map(BackRef::get)
+        self.task.as_deref()
     }
 
     pub(crate) fn new(init: NetworkSink) -> Box<NetworkSink> {
@@ -2236,10 +2233,7 @@ impl NetworkSink {
     }
 
     fn detach_writable(&mut self) {
-        if let Some(task) = self.task.take() {
-            // task is ref-counted; deref releases our ref
-            bun_s3::MultiPartUpload::deref_(task.as_ptr());
-        }
+        self.task = None;
     }
 
     /// The S3 upload drained: settle the flush/write promises (terminal, like
@@ -2451,7 +2445,7 @@ impl NetworkSink {
         let (task_ref, wrapper) = unsafe {
             (*this).ended = true;
             (*this).source.clear();
-            let Some(task_ref) = (*this).task else {
+            let Some(task_ref) = (*this).task.as_deref() else {
                 return;
             };
             let wrapper = task_ref
@@ -2470,7 +2464,7 @@ impl NetworkSink {
             }
             (task_ref, wrapper)
         };
-        let task = task_ref.get();
+        let task = task_ref;
         if err.is_some() {
             let _ = task.fail(bun_s3_signing::error::S3Error {
                 code: b"UnknownError",
@@ -2480,7 +2474,7 @@ impl NetworkSink {
             let _ = task.write_bytes(b"", true);
         }
         // SAFETY: `wrapper` live with rc ≥ 1; this may free `*this`.
-        unsafe { crate::webcore::s3::client::S3UploadStreamWrapper::deref_(wrapper) };
+        unsafe { crate::webcore::s3::client::S3UploadStreamWrapper::deref(wrapper) };
     }
 
     pub(crate) fn end_from_js(

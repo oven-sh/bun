@@ -69,17 +69,6 @@ impl Error {
 pub use bun_sql::shared::statement_status::Status;
 
 impl PostgresSQLStatement {
-    /// Set the initial intrusive
-    /// refcount at construction time, before any `ref_()`/`deref()`. The
-    /// `ref_count` field is private (refcount invariant), so callers building
-    /// a statement with >1 owner (query + connection-map entry) go through
-    /// this instead of writing the field directly.
-    #[inline]
-    pub(crate) fn init_exact_refs(&mut self, n: u32) {
-        debug_assert!(n > 0);
-        self.ref_count.set(n);
-    }
-
     pub(crate) fn check_for_duplicate_fields(&mut self) {
         if !self.needs_duplicate_check {
             return;

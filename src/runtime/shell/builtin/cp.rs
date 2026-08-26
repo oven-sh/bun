@@ -729,7 +729,8 @@ impl ShellCpTask {
         // Pool thread: hand the copy to an fs.cp task bound to the loop and
         // poster this shell task captured on its own thread.
         let _ = crate::node::fs::ShellAsyncCpTask::create_for_shell(
-            args,
+            // SAFETY: both paths are owned copies; nothing JS-backed.
+            unsafe { bun_jsc::ThreadIsolated::adopt(args) },
             self.task.event_loop,
             poster.clone(),
             std::ptr::from_mut::<ShellCpTask>(self),

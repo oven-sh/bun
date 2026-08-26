@@ -2636,7 +2636,11 @@ pub mod JSZstd {
     fn get_options_async(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
-    ) -> JsResult<(node::StringOrBuffer<'static>, Option<JSValue>, i32)> {
+    ) -> JsResult<(
+        bun_jsc::ThreadIsolated<node::StringOrBuffer<'static>>,
+        Option<JSValue>,
+        i32,
+    )> {
         let (buffer_value, options_val) = parse_compress_args(global_this, callframe)?;
 
         let level = get_level(global_this, options_val)?;
@@ -2647,7 +2651,12 @@ pub mod JSZstd {
             node::Flavor::Async,
             node::StringObjects::Allow,
         )? {
-            return Ok((buffer, options_val, level));
+            // SAFETY: parsed with `Flavor::Async` above.
+            return Ok((
+                unsafe { bun_jsc::ThreadIsolated::adopt(buffer) },
+                options_val,
+                level,
+            ));
         }
 
         Err(global_this
@@ -2811,7 +2820,7 @@ pub mod JSZstd {
 
     fn create_job(
         global_this: &JSGlobalObject,
-        buffer: node::StringOrBuffer<'static>,
+        buffer: bun_jsc::ThreadIsolated<node::StringOrBuffer<'static>>,
         is_compress: bool,
         level: i32,
     ) -> JSValue {
@@ -2821,7 +2830,7 @@ pub mod JSZstd {
         jsc::Job::<ZstdJob>::schedule(
             &cx,
             ZstdJob {
-                buffer: bun_jsc::ThreadIsolated::adopt(buffer),
+                buffer,
                 is_compress,
                 level,
                 result: Ok(Box::default()),

@@ -2,7 +2,10 @@ use core::ptr::NonNull;
 
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _,
+    ThreadIsolated,
+};
 use bun_sys_jsc::SystemErrorJsc as _;
 
 use crate::node::fs::{
@@ -60,7 +63,7 @@ fn run_async<A: FsArgument>(
     this: &Binding,
     global: &JSGlobalObject,
     frame: &CallFrame,
-    create_task: fn(&JSGlobalObject, &Binding, A, &mut VirtualMachine) -> JSValue,
+    create_task: fn(&JSGlobalObject, &Binding, ThreadIsolated<A>, &mut VirtualMachine) -> JSValue,
 ) -> JsResult<JSValue> {
     let args = match parse_async_args::<A>(global, frame) {
         Ok(args) => args,
@@ -74,15 +77,14 @@ fn run_async<A: FsArgument>(
 fn parse_async_args<A: FsArgument>(
     global: &JSGlobalObject,
     frame: &CallFrame,
-) -> Result<A, JsResult<JSValue>> {
+) -> Result<ThreadIsolated<A>, JsResult<JSValue>> {
     let vm: &VirtualMachine = global.bun_vm();
     let mut slice = ArgumentsSlice::init(vm, frame.arguments());
     slice.will_be_async = true;
 
-    let args = match <A as FsArgument>::from_js(global, &mut slice) {
-        Ok(a) => a,
-        Err(err) => return Err(Err(err)),
-    };
+    let args = <A as FsArgument>::from_js(global, &mut slice).map_err(Err)?;
+    // SAFETY: parsed with `will_be_async` above.
+    let args = unsafe { ThreadIsolated::adopt(args) };
 
     let rejection = 'rejection: {
         if A::HAVE_ABORT_SIGNAL {

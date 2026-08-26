@@ -1131,7 +1131,12 @@ mod _impl {
     #[bun_jsc::host_fn]
     fn pbkdf2(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (data, callback) = PBKDF2::from_js(global_this, call_frame, Flavor::Async)?;
-        pbkdf2::create_job(global_this, data, callback);
+        // SAFETY: parsed with `Flavor::Async` above.
+        pbkdf2::create_job(
+            global_this,
+            unsafe { bun_jsc::ThreadIsolated::adopt(data) },
+            callback,
+        );
         Ok(JSValue::UNDEFINED)
     }
 
@@ -1269,7 +1274,8 @@ mod _impl {
     #[bun_jsc::host_fn]
     fn scrypt(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (ctx, callback) = Scrypt::from_js::<true>(global, call_frame)?;
-        let params = bun_jsc::ThreadIsolated::adopt(ctx);
+        // SAFETY: parsed with `IS_ASYNC = true` above.
+        let params = unsafe { bun_jsc::ThreadIsolated::adopt(ctx) };
         if params.keylen as usize > jsc::virtual_machine::synthetic_allocation_limit() {
             return Err(global.throw_out_of_memory());
         }

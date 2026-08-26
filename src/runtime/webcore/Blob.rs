@@ -2188,10 +2188,13 @@ impl BlobExt for Blob {
                         Ok(crate::node::fs::async_::Stat::create(
                             global_this,
                             binding,
-                            crate::node::fs::args::Stat {
-                                path: PathLike::owned(path_like.slice().to_vec()),
-                                big_int: false,
-                                throw_if_no_entry: true,
+                            // SAFETY: the path is an owned copy; nothing JS-backed.
+                            unsafe {
+                                bun_jsc::ThreadIsolated::adopt(crate::node::fs::args::Stat {
+                                    path: PathLike::owned(path_like.slice().to_vec()),
+                                    big_int: false,
+                                    throw_if_no_entry: true,
+                                })
                             },
                             vm,
                         ))
@@ -2206,9 +2209,12 @@ impl BlobExt for Blob {
                         Ok(crate::node::fs::async_::Fstat::create(
                             global_this,
                             binding,
-                            crate::node::fs::args::Fstat {
-                                fd: *fd,
-                                big_int: false,
+                            // SAFETY: an fd and flags; nothing JS-backed.
+                            unsafe {
+                                bun_jsc::ThreadIsolated::adopt(crate::node::fs::args::Fstat {
+                                    fd: *fd,
+                                    big_int: false,
+                                })
                             },
                             vm,
                         ))
@@ -5599,7 +5605,7 @@ pub(crate) fn construct_bun_file(
     let arguments_slice = callframe.arguments();
     let mut args = jsc::ArgumentsSlice::init(vm, arguments_slice);
 
-    let Some(path) = PathOrFileDescriptor::from_js(global_object, &mut args)? else {
+    let Some(mut path) = PathOrFileDescriptor::from_js(global_object, &mut args)? else {
         return Err(global_object.throw_invalid_arguments(format_args!(
             "Expected file path string or file descriptor"
         )));
@@ -5610,12 +5616,12 @@ pub(crate) fn construct_bun_file(
         None
     };
 
-    let mut path = match path {
-        PathOrFileDescriptor::Path(p) if p.slice().starts_with(b"s3://") => {
-            return S3File::construct_internal_js(global_object, p, options);
+    if let PathOrFileDescriptor::Path(ref p) = path {
+        if p.slice().starts_with(b"s3://") {
+            // The clone owns a copy of a buffer's bytes; `path` unpins at scope exit.
+            return S3File::construct_internal_js(global_object, p.clone(), options);
         }
-        path => path,
-    };
+    }
 
     let blob = Blob::find_or_create_file_from_path(&mut path, global_object, false);
 

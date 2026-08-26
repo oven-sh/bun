@@ -666,12 +666,12 @@ mod _async_tasks {
         pub(crate) fn create(
             global_object: &JSGlobalObject,
             binding: &Binding,
-            task_args: A,
+            task_args: ThreadIsolated<A>,
             vm: &mut VirtualMachine,
         ) -> JSValue {
             let task = Box::new(Self {
                 promise: JSPromiseStrong::init(global_object),
-                args: ThreadIsolated::adopt(task_args),
+                args: task_args,
                 // Sentinel — overwritten by `uv_callback` (or the early-return arms
                 // below) before any read on the JS thread. `Maybe<R>` is
                 // `Result<R, sys::Error>` and may be niche-optimised for arbitrary
@@ -1209,7 +1209,10 @@ mod _async_tasks {
     }
     // SAFETY: results are plain data / owned buffers / WTF strings built off
     // thread for hand-off (`ret::*`); `ThreadIsolated<A>` is Send by its contract.
-    unsafe impl<R: FsReturn, A, const F: NodeFSFunctionEnum> Send for AsyncFSTask<R, A, F> {}
+    unsafe impl<R: FsReturn, A: ThreadIsolatedArg, const F: NodeFSFunctionEnum> Send
+        for AsyncFSTask<R, A, F>
+    {
+    }
 
     /// The JS-thread half of an async fs operation.
     #[derive(bun_jsc::JsAffine)]
@@ -1296,7 +1299,7 @@ mod _async_tasks {
         pub(crate) fn create(
             global_object: &JSGlobalObject,
             _binding: &Binding,
-            args: A,
+            args: ThreadIsolated<A>,
             vm: &mut VirtualMachine,
         ) -> JSValue {
             let tracker = AsyncTaskTracker::init(vm);
@@ -1306,7 +1309,7 @@ mod _async_tasks {
             bun_jsc::Job::<Self>::schedule(
                 &global_object.js_thread(),
                 Self {
-                    args: ThreadIsolated::adopt(args),
+                    args,
                     // Sentinel — overwritten by `run` before any read. `Maybe<R>`
                     // may be niche-optimised; never construct an all-zero `Result`.
                     result: Err(sys::Error::default()),
@@ -1512,7 +1515,7 @@ mod _async_tasks {
         pub(crate) fn create(
             global_object: &JSGlobalObject,
             _binding: &Binding,
-            cp_args: args::Cp<'static>,
+            cp_args: ThreadIsolated<args::Cp<'static>>,
             vm: &mut VirtualMachine,
         ) -> JSValue {
             let tracker = AsyncTaskTracker::init(vm);
@@ -1533,7 +1536,7 @@ mod _async_tasks {
         /// global is touched — the loop and poster are the ones the shell task
         /// already captured on its own thread.
         pub(crate) fn create_for_shell(
-            cp_args: args::Cp<'static>,
+            cp_args: ThreadIsolated<args::Cp<'static>>,
             evtloop: EventLoopHandle,
             poster: bun_jsc::ConcurrentPoster,
             shelltask: *mut ShellCpTask,
@@ -1550,7 +1553,7 @@ mod _async_tasks {
 
         fn schedule_new(
             promise: JSPromiseStrong,
-            cp_args: args::Cp<'static>,
+            cp_args: ThreadIsolated<args::Cp<'static>>,
             evtloop: EventLoopHandle,
             poster: bun_jsc::ConcurrentPoster,
             tracker: AsyncTaskTracker,
@@ -1558,7 +1561,7 @@ mod _async_tasks {
         ) -> *mut Self {
             let mut task = Box::new(Self {
                 promise,
-                args: ThreadIsolated::adopt(cp_args),
+                args: cp_args,
                 has_result: AtomicBool::new(false),
                 // Sentinel — overwritten by `finish_concurrently` (gated by the
                 // `has_result` CAS) before any read on the JS thread.
@@ -2106,7 +2109,7 @@ mod _async_tasks {
     /// is stable while any subtask runs). Subtasks touch only owned data here —
     /// never the JS-backed `args` — since they run outside `run`.
     pub struct AsyncReaddirRecursiveTask {
-        /// Protected arguments; their JS-backed path is not read off-thread
+        /// Async-parsed arguments; their JS-backed path is not read off-thread
         /// (`root_path` is the owned copy).
         pub args: ThreadIsolated<args::Readdir<'static>>,
         pub(crate) tag: ret::ReaddirTag,
@@ -2306,7 +2309,7 @@ mod _async_tasks {
 
         pub(crate) fn create(
             global_object: &JSGlobalObject,
-            args: args::Readdir<'static>,
+            args: ThreadIsolated<args::Readdir<'static>>,
             vm: &mut VirtualMachine,
         ) -> JSValue {
             let tag = args.tag();
@@ -2332,7 +2335,7 @@ mod _async_tasks {
             bun_jsc::Job::<Self>::schedule(
                 &global_object.js_thread(),
                 AsyncReaddirRecursiveTask {
-                    args: ThreadIsolated::adopt(args),
+                    args,
                     tag,
                     encoding,
                     done: None,

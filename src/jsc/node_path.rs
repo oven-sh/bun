@@ -28,9 +28,10 @@ pub unsafe trait ThreadIsolatedArg {}
 pub struct ThreadIsolated<T>(T);
 
 impl<T: ThreadIsolatedArg> ThreadIsolated<T> {
-    /// `value` was parsed for the async flavor.
+    /// # Safety
+    /// `value` was parsed for the async flavor (see [`ThreadIsolatedArg`]).
     #[inline]
-    pub fn adopt(value: T) -> Self {
+    pub unsafe fn adopt(value: T) -> Self {
         Self(value)
     }
 }

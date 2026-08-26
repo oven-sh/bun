@@ -229,8 +229,11 @@ impl FileExt for File {
                 Ok(node_fs::async_::Unlink::create(
                     global_this,
                     &binding,
-                    node_fs::args::Unlink {
-                        path: PathLike::owned(path_like.slice().to_vec()),
+                    // SAFETY: the path is an owned copy; nothing JS-backed.
+                    unsafe {
+                        bun_jsc::ThreadIsolated::adopt(node_fs::args::Unlink {
+                            path: PathLike::owned(path_like.slice().to_vec()),
+                        })
                     },
                     global_this.bun_vm().as_mut(),
                 ))

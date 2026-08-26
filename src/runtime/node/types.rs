@@ -124,52 +124,24 @@ impl BlobOrStringOrBuffer {
         self.slice().len()
     }
 
-    pub(crate) fn from_js_maybe_file_maybe_async(
-        global: &JSGlobalObject,
-        value: JSValue,
-        file_blobs: FileBlobs,
-        flavor: Flavor,
-    ) -> JsResult<Option<BlobOrStringOrBuffer>> {
-        // Check StringOrBuffer first because it's more common and cheaper.
-        let str = StringOrBuffer::from_js_maybe_async(global, value, flavor, StringObjects::Allow)?;
-        let str = match str {
-            Some(s) => s,
-            None => {
-                // `as_class_ref` is the safe shared-borrow downcast (centralised
-                // deref proof in `JSValue`); the JS wrapper roots the payload
-                // while `value` is on the stack. All `Blob` accessors below
-                // take `&self`.
-                let Some(blob) = value.as_class_ref::<Blob>() else {
-                    return Ok(None);
-                };
-                if file_blobs == FileBlobs::Reject && blob.needs_to_read_file() {
-                    return Err(global
-                        .throw_invalid_arguments(format_args!("File blob cannot be used here")));
-                }
-
-                if flavor == Flavor::Async {
-                    // For async/cross-thread usage, copy the blob data to an owned slice
-                    // rather than referencing the store which isn't thread-safe
-                    let blob_data = blob.shared_view();
-                    let owned_data: Vec<u8> = blob_data.to_vec();
-                    return Ok(Some(Self::StringOrBuffer(StringOrBuffer::owned(
-                        owned_data,
-                    ))));
-                }
-
-                return Ok(Some(Self::Blob(Box::new(blob.dupe()))));
-            }
-        };
-
-        Ok(Some(Self::StringOrBuffer(str)))
-    }
-
     pub(crate) fn from_js_maybe_file(
         global: &JSGlobalObject,
         value: JSValue,
         file_blobs: FileBlobs,
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
-        Self::from_js_maybe_file_maybe_async(global, value, file_blobs, Flavor::Sync)
+        // Check StringOrBuffer first because it's more common and cheaper.
+        if let Some(str) = StringOrBuffer::from_js(global, value)? {
+            return Ok(Some(Self::StringOrBuffer(str)));
+        }
+        let Some(blob) = value.as_class_ref::<Blob>() else {
+            return Ok(None);
+        };
+        if file_blobs == FileBlobs::Reject && blob.needs_to_read_file() {
+            return Err(
+                global.throw_invalid_arguments(format_args!("File blob cannot be used here"))
+            );
+        }
+        Ok(Some(Self::Blob(Box::new(blob.dupe()))))
     }
 
     pub fn from_js(

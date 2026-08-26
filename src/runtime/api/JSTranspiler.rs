@@ -1379,7 +1379,8 @@ impl JSTranspiler {
                 "string or Uint8Array",
             ));
         };
-        let code = bun_jsc::ThreadIsolated::adopt(code);
+        // SAFETY: an owned copy, or parsed with `Flavor::Async` above.
+        let code = unsafe { bun_jsc::ThreadIsolated::adopt(code) };
 
         args.eat();
         let loader: Option<Loader> = 'brk: {

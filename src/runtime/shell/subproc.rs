@@ -601,7 +601,7 @@ impl ShellSubprocess {
         let _ = &inherited_env_storage;
 
         // Until ownership transfers into Writable/Readable, deinit any caller-provided
-        // stdio resources (memfd, ArrayBuffer.Strong, Blob) on early return so they
+        // stdio resources (memfd, PinnedArrayBuffer, Blob) on early return so they
         // aren't leaked. Defused via `ScopeGuard::into_inner` once consumed.
         let mut stdio_guard = scopeguard::guard(&mut spawn_args.stdio, |stdio| {
             for s in stdio.iter_mut() {

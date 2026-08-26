@@ -116,8 +116,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
 
     const namespace = out;
     // In a require cycle the namespace is live while the module body is still
-    // running, so an export named `module.exports` may be in TDZ. The `in`
-    // checks below only consult the export list and cannot hit TDZ.
+    // running, so an export named `module.exports` may be in TDZ.
     let moduleExports;
     try {
       moduleExports = namespace["module.exports"];

@@ -90,7 +90,7 @@ impl XML {
 
     /// [`parse`](Self::parse) for a UTF-16 document (a 16-bit JS string):
     /// the strings in the result are UTF-16 as well. `source` is only what
-    /// diagnostics are attributed to.
+    /// diagnostics are attributed to and what the length limit is checked on.
     pub fn parse_utf16<'a>(
         source: &'a Source,
         units: &'a [u16],
@@ -109,6 +109,7 @@ impl XML {
         bump: &'a Bump,
         options: Options,
     ) -> crate::Result<Expr> {
+        source.check_parseable_len(log, "XML document")?;
         let mut tape = Tape::new_in(bump, core::mem::size_of_val(contents));
         // SAFETY: see `Tape::object_from`.
         unsafe { tape.tape.as_mut() }.encoding = if U::WIDE {
@@ -127,7 +128,6 @@ impl XML {
         match result {
             Ok(root) => Ok(root),
             Err(PErr::Syntax) => Err(crate::Error::SyntaxError),
-            Err(PErr::Oom) => Err(crate::Error::Alloc(bun_alloc::AllocError)),
             Err(PErr::StackOverflow) => Err(crate::Error::StackOverflow),
             Err(PErr::NeedsWiderEncoding) => Err(crate::Error::NeedsWiderEncoding),
         }
@@ -138,16 +138,9 @@ impl XML {
 enum PErr {
     /// Already logged.
     Syntax,
-    Oom,
     StackOverflow,
     /// See `InputEncoding::Latin1`.
     NeedsWiderEncoding,
-}
-
-impl From<bun_alloc::AllocError> for PErr {
-    fn from(_: bun_alloc::AllocError) -> Self {
-        PErr::Oom
-    }
 }
 
 type PResult<T> = Result<T, PErr>;
@@ -1265,13 +1258,16 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                 }
             })
             .collect();
-        let mut utf8 = vec![0u8; simdutf::length::utf8::from::utf16::le(&units)];
-        let result = simdutf::convert::utf16::to::utf8::with_errors::le(&units, &mut utf8);
+        let len = simdutf::length::utf8::from::utf16::le(&units);
+        let slot = self.bump.alloc_uninit_slice::<u8>(len);
+        // SAFETY: simdutf only writes into `utf8`; only the `result.count` bytes it wrote are read.
+        let utf8: &'a mut [u8] =
+            unsafe { core::slice::from_raw_parts_mut(slot.as_mut_ptr().cast::<u8>(), len) };
+        let result = simdutf::convert::utf16::to::utf8::with_errors::le(&units, utf8);
         if !result.is_successful() {
             return Err(self.err(result.count * 2, "Invalid UTF-16"));
         }
-        utf8.truncate(result.count);
-        self.src = Self::units_of(self.bump.alloc_slice_copy(&utf8));
+        self.src = Self::units_of(&utf8[..result.count]);
         self.pos = 0;
         self.transcoded = true;
         Ok(())
@@ -3102,13 +3098,14 @@ const MAX_DEPTH: usize = 100_000;
 /// Checks the grammar and the structural well-formedness constraints over
 /// the scanner's tokens (and, in the document entity, its fast paths),
 /// applies DTD information to attributes, and drives a `Sink`.
+/// `repr(C)` with `sink` last: everything the sink-independent methods (the
+/// DTD parser) touch sits at the same offset for every `S`, so those
+/// instantiations are identical and the linker folds them.
+#[repr(C)]
 struct Parser<'a, 'log, U: Unit, S: Sink<'a, U>> {
     scanner: Scanner<'a, 'log, U>,
-    /// Inside the document type declaration, for diagnostics.
-    in_dtd: bool,
     /// For the content-model parser, which does recurse.
     stack_check: StackCheck,
-    sink: S,
     attlists: HashMap<&'a [U], AttList<'a, U>>,
     /// The open elements: name and the input frame the start tag was in.
     open: Vec<(&'a [U], u32)>,
@@ -3117,6 +3114,9 @@ struct Parser<'a, 'log, U: Unit, S: Sink<'a, U>> {
     attribute_first: [&'a [U]; LINEAR_ATTRIBUTE_LIMIT],
     attribute_names: HashMap<&'a [U], ()>,
     attribute_count: usize,
+    /// Inside the document type declaration, for diagnostics.
+    in_dtd: bool,
+    sink: S,
 }
 
 impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {

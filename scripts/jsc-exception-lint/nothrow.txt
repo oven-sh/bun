@@ -1,0 +1,112 @@
+# Functions that take a JSGlobalObject* or ThrowScope& but cannot throw, or
+# whose effect on the exception state differs from the default convention.
+#
+# Format: <qualified name> [kind]
+#   kind: nothrow (default) | maythrow | thrower | check | checkrelease | release
+#   indirect:<member> classifies calls through a function-pointer member
+#   (method tables) by the member name.
+#
+# Everything with a visible body, or a body in a file the summary pass has
+# seen, is classified from the body. Entries here cover the remainder, and
+# override the body analysis where the analysis is too coarse.
+
+# Error object construction does not throw. JSC throws with
+# throwException(globalObject, scope, createTypeError(...)).
+JSC::createError
+JSC::createEvalError
+JSC::createRangeError
+JSC::createReferenceError
+JSC::createSyntaxError
+JSC::createTypeError
+JSC::createURIError
+JSC::createOutOfMemoryError
+JSC::createNotEnoughArgumentsError
+JSC::createNotAFunctionError
+JSC::createNotAConstructorError
+JSC::createNotAnObjectError
+JSC::createStackOverflowError
+JSC::createTerminatedExecutionException
+JSC::createInvalidFunctionApplyParameterError
+JSC::createInvalidInParameterError
+JSC::createInvalidInstanceofParameterErrorNotFunction
+JSC::createInvalidInstanceofParameterErrorHasInstanceValueNotFunction
+JSC::createErrorForInvalidGlobalAssignment
+JSC::createTDZError
+JSC::createUndefinedVariableError
+JSC::createInvalidPrivateNameError
+JSC::createRedefinedPrivateNameError
+JSC::createPrivateMethodAccessError
+JSC::createReinstallPrivateMethodError
+JSC::createGetterTypeError
+JSC::ErrorInstance::create
+JSC::Exception::create
+
+# Functions installing properties on objects that are being built.
+JSC::JSObject::putDirectNativeFunction
+JSC::JSObject::putDirectNativeFunctionWithoutTransition
+JSC::JSObject::putDirectBuiltinFunction
+JSC::JSObject::putDirectBuiltinFunctionWithoutTransition
+JSC::JSObject::putDirectAccessor
+JSC::JSFunction::create
+JSC::JSFunction::createFunctionThatMasqueradesAsUndefined
+JSC::JSNativeStdFunction::create
+JSC::JSBoundFunction::create
+JSC::JSCustomGetterFunction::create
+JSC::JSCustomSetterFunction::create
+
+# Value predicates with a slow path that takes the global object for
+# masquerades-as-undefined checks only.
+JSC::JSValue::toBooleanSlowCase
+JSC::JSValue::toThisSlowCase
+
+# Promise plumbing. reject/resolve run no user code synchronously (thenable
+# lookups are caught internally and turned into rejections).
+JSC::JSPromise::rejectedPromise
+JSC::JSPromise::resolve
+JSC::JSPromise::reject
+JSC::JSPromise::rejectAsHandled
+JSC::JSPromise::resolvePromise
+JSC::JSPromise::rejectPromise
+JSC::JSPromise::rejectWithCaughtException checkrelease
+JSC::JSPromise::rejectedPromiseWithCaughtException checkrelease
+JSC::JSInternalPromise::rejectWithCaughtException checkrelease
+
+# Global object method table hooks that Bun implements without a throw scope.
+indirect:promiseRejectionTracker
+indirect:reportUncaughtExceptionAtEventLoop
+indirect:queueMicrotaskToEventLoop
+indirect:shouldInterruptScript
+indirect:shouldInterruptScriptBeforeTimeout
+indirect:javaScriptRuntimeFlags
+indirect:supportsRichSourceInfo
+indirect:currentScriptExecutionOwner
+indirect:scriptExecutionStatus
+indirect:reportViolationForUnsafeEval
+indirect:defaultLanguage
+indirect:trustedScriptStructure
+
+# Virtual hooks resolved to the base declaration. Bun's overrides do not throw.
+JSC::TypedArrayController::registerWrapper
+JSC::SimpleTypedArrayController::registerWrapper
+WebCore::WebCoreTypedArrayController::registerWrapper
+
+# Microtask and promise plumbing that only enqueues work.
+JSC::JSGlobalObject::queueMicrotask
+JSC::JSGlobalObject::queueMicrotaskSlow
+JSC::VM::queueMicrotask
+JSC::JSPromise::performPromiseThen
+JSC::JSPromise::performPromiseThenWithContext
+JSC::JSPromise::performPromiseThenExported
+JSC::JSPromise::performPromiseThenWithInternalMicrotask
+JSC::JSPromise::fulfill
+JSC::JSPromise::fulfillPromise
+JSC::JSPromise::triggerPromiseReactions
+
+# toThis only boxes primitives. The method table hook is implemented by
+# JSObject and friends without a scope.
+JSC::JSCell::toThis
+JSC::JSValue::toThisSloppySlowCase
+indirect:toThis
+
+# Wraps an ArrayBuffer in its JS object. Bun's override does not throw.
+JSC::TypedArrayController::toJS

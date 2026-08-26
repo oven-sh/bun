@@ -18,6 +18,7 @@ use crate::node::PathLike;
 use crate::node::fs::{NodeFS, args as fs_args};
 use crate::test_command;
 use crate::test_runner::jest::Summary;
+use bun_collections::index_sort;
 
 fn attr_value(head: &[u8], name: &'static [u8]) -> u32 {
     let needle = [b" ", name, b"=\""].concat();
@@ -114,27 +115,49 @@ pub(crate) fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], sum
     }
 }
 
+#[derive(Default, Clone, Copy)]
+struct LineAgg {
+    /// Summed hit count across fragments.
+    hits: u32,
+    /// Number of fragments covering this file whose DA set contains this line.
+    fragments: u32,
+}
+
 #[derive(Default)]
 struct FileCoverage {
     path: Box<[u8]>,
     fnf: u32,
     fnh: u32,
-    /// 1-based line number → summed hit count.
-    da: ArrayHashMap<u32, u32>,
+    /// Number of fragments with an SF record for this file.
+    fragments: u32,
+    /// 1-based line number → aggregate.
+    da: ArrayHashMap<u32, LineAgg>,
 }
 
 impl FileCoverage {
-    fn lh(&self) -> u32 {
-        let mut n: u32 = 0;
-        for &c in self.da.values() {
-            n += (c > 0) as u32;
+    /// The `(line, hits)` pairs to report, sorted by line. A zero-hit line
+    /// counts only if every fragment that covers this file lists it. A worker
+    /// that never executes a function marks the function's whole line range
+    /// (blank lines included) as executable with zero hits, while a worker
+    /// that executed it has real per-line data and omits those lines. Keeping
+    /// a line the executed worker omits would report a fully executed
+    /// function as partially covered (#39930).
+    fn merged_lines(&self) -> Vec<(u32, u32)> {
+        let mut out: Vec<(u32, u32)> = Vec::new();
+        for (&ln, agg) in self.da.keys().iter().zip(self.da.values()) {
+            if agg.hits > 0 || agg.fragments == self.fragments {
+                out.push((ln, agg.hits));
+            }
         }
-        n
+        index_sort::sort_slice_unstable_by(&mut out, |a, b| a.0.cmp(&b.0));
+        out
     }
 }
 
 /// Merge per-worker LCOV fragments into a single report. Line-level (DA) merge
-/// is precise. FNF/FNH take the per-worker max since Bun's LCOV writer doesn't
+/// sums hits, and keeps a zero-hit line only when every fragment covering the
+/// file agrees it is executable (see `FileCoverage::merged_lines`). FNF/FNH
+/// take the per-worker max since Bun's LCOV writer doesn't
 /// emit per-function FN/FNDA records yet, so disjoint per-worker function hits
 /// can't be unioned; this under-reports % Funcs when workers cover different
 /// functions of the same file. The non-parallel path has the same FN/FNDA gap.
@@ -160,7 +183,9 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                         ..Default::default()
                     };
                 }
-                cur = Some(gop.index);
+                let idx = gop.index;
+                by_file.values_mut()[idx].fragments += 1;
+                cur = Some(idx);
             } else if line == b"end_of_record" {
                 cur = None;
             } else if let Some(i) = cur {
@@ -177,9 +202,15 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                     };
                     let gop = bun_core::handle_oom(fc.da.get_or_put(ln));
                     *gop.value_ptr = if gop.found_existing {
-                        gop.value_ptr.saturating_add(cnt)
+                        LineAgg {
+                            hits: gop.value_ptr.hits.saturating_add(cnt),
+                            fragments: gop.value_ptr.fragments + 1,
+                        }
                     } else {
-                        cnt
+                        LineAgg {
+                            hits: cnt,
+                            fragments: 1,
+                        }
                     };
                 } else if line.starts_with(b"FNF:") {
                     fc.fnf = fc
@@ -203,15 +234,20 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     let mut order: Vec<usize> = (0..by_file.count()).collect();
     {
         let keys = by_file.keys();
-        order.sort_by(|&a, &b| keys[a].as_ref().cmp(keys[b].as_ref()));
+        index_sort::sort_slice_by(&mut order, |&a, &b| keys[a].as_ref().cmp(keys[b].as_ref()));
     }
+
+    // Indexed like `by_file.values()`, not like `order`.
+    let merged: Vec<Vec<(u32, u32)>> = by_file
+        .values()
+        .iter()
+        .map(FileCoverage::merged_lines)
+        .collect();
 
     if opts.reporters.lcov {
         let mut fs = NodeFS::default();
         let _ = fs.mkdir_recursive(&fs_args::Mkdir {
-            path: PathLike::EncodedSlice(bun_core::zig_string::Slice::from_utf8_never_free(
-                &opts.reports_directory,
-            )),
+            path: PathLike::borrowed(&opts.reports_directory),
             always_return_none: true,
             ..Default::default()
         });
@@ -237,8 +273,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                 let mut w: Vec<u8> = Vec::with_capacity(64 * 1024);
                 for &i in &order {
                     let fc = &by_file.values()[i];
-                    let mut sorted: Vec<u32> = fc.da.keys().to_vec();
-                    sorted.sort_unstable();
+                    let lines = &merged[i];
                     let _ = write!(
                         &mut w,
                         "TN:\nSF:{}\nFNF:{}\nFNH:{}\n",
@@ -246,16 +281,12 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                         fc.fnf,
                         fc.fnh
                     );
-                    for &ln in &sorted {
-                        let _ =
-                            writeln!(&mut w, "DA:{},{}", ln, fc.da.get(&ln).expect("unreachable"));
+                    let mut lh: u32 = 0;
+                    for &(ln, hits) in lines {
+                        lh += (hits > 0) as u32;
+                        let _ = writeln!(&mut w, "DA:{},{}", ln, hits);
                     }
-                    let _ = write!(
-                        &mut w,
-                        "LF:{}\nLH:{}\nend_of_record\n",
-                        fc.da.count(),
-                        fc.lh()
-                    );
+                    let _ = write!(&mut w, "LF:{}\nLH:{}\nend_of_record\n", lines.len(), lh);
                 }
                 let _ = File::write_all(&f, &w);
             }
@@ -275,8 +306,8 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     debug_assert_eq!(order.len(), fracs.len());
     for (&i, frac) in order.iter().zip(fracs.iter_mut()) {
         let fc = &by_file.values()[i];
-        let lf: f64 = fc.da.count() as f64;
-        let lh_: f64 = fc.lh() as f64;
+        let lf: f64 = merged[i].len() as f64;
+        let lh_: f64 = merged[i].iter().filter(|&&(_, hits)| hits > 0).count() as f64;
         *frac = CoverageFraction {
             functions: if fc.fnf > 0 {
                 fc.fnh as f64 / fc.fnf as f64
@@ -346,13 +377,11 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             );
             let _ = body.write_all(Output::pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>").as_ref());
 
-            let mut sorted: Vec<u32> = fc.da.keys().to_vec();
-            sorted.sort_unstable();
             let mut first = true;
             let mut range_start: u32 = 0;
             let mut range_end: u32 = 0;
-            for &ln in &sorted {
-                if *fc.da.get(&ln).expect("unreachable") != 0 {
+            for &(ln, hits) in &merged[i] {
+                if hits != 0 {
                     continue;
                 }
                 if range_start == 0 {

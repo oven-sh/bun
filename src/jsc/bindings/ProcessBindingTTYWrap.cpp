@@ -126,17 +126,12 @@ public:
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
 
-        return WebCore::subspaceForImpl<TTYWrapObject, UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForTTYWrapObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTTYWrapObject = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForTTYWrapObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForTTYWrapObject = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<TTYWrapObject, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForTTYWrapObject, m_subspaceForTTYWrapObject));
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSObject* prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static void destroy(JSC::JSCell* cell)
@@ -261,15 +256,16 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
         return {};
     }
 
+    int modeInt = JSC::toInt32(mode.asNumber());
 #if OS(WINDOWS)
-    if (mode.toInt32(globalObject) == 0) {
+    if (modeInt == 0) {
         Bun__setCTRLHandler(1);
     }
 
-    int err = uv_tty_set_mode(ttyWrap->handle->tty(), mode.toInt32(globalObject));
+    int err = uv_tty_set_mode(ttyWrap->handle->tty(), modeInt);
 #else
     // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
-    int err = Bun__ttySetMode(fd, mode.toInt32(globalObject), &ttyWrap->ttyState, 1);
+    int err = Bun__ttySetMode(fd, modeInt, &ttyWrap->ttyState, 1);
 #endif
     return JSValue::encode(jsNumber(err));
 }
@@ -304,7 +300,9 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionGetWindowSize,
     }
 
     array->putDirectIndex(globalObject, 0, jsNumber(width));
+    RETURN_IF_EXCEPTION(throwScope, {});
     array->putDirectIndex(globalObject, 1, jsNumber(height));
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     return JSC::JSValue::encode(jsBoolean(true));
 }
@@ -358,7 +356,7 @@ public:
 
     static TTYWrapPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        TTYWrapPrototype* prototype = new (NotNull, JSC::allocateCell<TTYWrapPrototype>(vm)) TTYWrapPrototype(vm, structure);
+        TTYWrapPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(TTYWrapPrototype))) TTYWrapPrototype(vm, structure);
         prototype->finishCreation(vm, globalObject);
         return prototype;
     }
@@ -374,8 +372,8 @@ public:
     {
         Base::finishCreation(vm);
 
-        reifyStaticProperties(vm, TTYWrapObject::info(), TTYWrapPrototypeValues, *this);
-        JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+        Bun::reifyStaticPropertyTable(vm, TTYWrapObject::info(), TTYWrapPrototypeValues, *this);
+        Bun::putToStringTagWithoutTransition(vm, this, info());
     }
 
     TTYWrapPrototype(JSC::VM& vm, JSC::Structure* structure)
@@ -404,7 +402,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)

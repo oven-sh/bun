@@ -69,10 +69,6 @@ mod _impl {
     use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
     use crate::node::util::validators;
 
-    // Intrusive refcount: the handle type is `bun_ptr::IntrusiveRc<NativeBrotli>`; the
-    // `ref_count` field below is read/written by that wrapper, and `deinit` is the
-    // drop body invoked when the count reaches zero.
-
     // `.classes.ts`-backed: the C++ JSCell wrapper (JSNativeBrotli) is generated;
     // this struct is the `m_ctx` payload. Codegen provides toJS/fromJS/fromJSDirect.
     // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
@@ -92,6 +88,8 @@ mod _impl {
         // TODO: Strong self-ref on the wrapper → JsRef per PORTING.md §JSC (Strong back-ref to own wrapper leaks)
         pub this_value: JsCell<StrongOptional>, // Strong.Optional — empty-initialised
         pub write_in_progress: Cell<bool>,
+        /// bit 0: the pending input's ArrayBuffer is pinned; bit 1: the pending output's. A held bufferless view sets neither.
+        pub pinned_buffers: Cell<u8>,
         pub pending_close: Cell<bool>,
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
@@ -154,6 +152,7 @@ mod _impl {
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
+                pinned_buffers: Cell::new(0),
                 pending_close: Cell::new(false),
                 closed: Cell::new(false),
                 // .callback = undefined — overwritten before WorkPool::schedule()
@@ -340,7 +339,6 @@ mod _impl {
                 bun_zlib::NodeMode::BROTLI_ENCODE | bun_zlib::NodeMode::BROTLI_DECODE => s.close(),
                 _ => {}
             });
-            // Freeing self is handled by IntrusiveRc / heap::take.
         }
     }
 

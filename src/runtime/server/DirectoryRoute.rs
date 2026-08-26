@@ -1,19 +1,18 @@
 //! Serve a directory tree at a URL prefix: `"/static/*": { dir: "./public" }`.
 
 use core::cell::Cell;
-use core::ffi::c_void;
 use core::mem::size_of;
-use core::ptr::NonNull;
 
 use bun_core::strings;
 use bun_http::Method;
 use bun_io::FileType;
 use bun_paths::resolve_path;
+use bun_ptr::{RefPtr, ThisPtr};
 use bun_resolver::fs::StatHash;
 use bun_sys::{self, Fd, File};
 use bun_uws::{AnyRequest, AnyResponse};
 
-use crate::server::file_response_stream::StartOptions as FileResponseStreamOptions;
+use crate::server::file_response_stream::{StartOptions as FileResponseStreamOptions, StreamOwner};
 use crate::server::file_route::{status_for_preconditions, write_any_status, write_content_range};
 use crate::server::jsc::{JSGlobalObject, JsResult};
 use crate::server::{AnyServer, FileResponseStream, HTTPStatusText, RangeRequest};
@@ -30,7 +29,6 @@ struct StatCacheEntry {
 }
 
 #[derive(bun_ptr::CellRefCounted)]
-#[ref_count(destroy = DirectoryRoute::deinit)]
 pub struct DirectoryRoute {
     ref_count: Cell<u32>,
     server: Cell<Option<AnyServer>>,
@@ -61,7 +59,7 @@ impl DirectoryRoute {
         root: &[u8],
         url_prefix: &[u8],
         enable_stat_cache: bool,
-    ) -> JsResult<*mut DirectoryRoute> {
+    ) -> JsResult<RefPtr<DirectoryRoute>> {
         debug_assert!(url_prefix.last() == Some(&b'/'));
         debug_assert!(!strings::contains(url_prefix, b"//"));
 
@@ -87,48 +85,31 @@ impl DirectoryRoute {
             stat_cache.push(Cell::new(StatCacheEntry::default()));
         }
 
-        Ok(bun_core::heap::into_raw(Box::new(DirectoryRoute {
+        Ok(RefPtr::new(DirectoryRoute {
             ref_count: Cell::new(1),
             server: Cell::new(None),
             root_fd: Cell::new(root_fd),
             url_prefix: url_prefix.to_vec().into_boxed_slice(),
             stat_cache: stat_cache.into_boxed_slice(),
             stat_cache_path_bytes: Cell::new(0),
-        })))
+        }))
     }
 
-    fn deinit(this: *mut DirectoryRoute) {
-        // SAFETY: heap-allocated in `create`; refcount has reached 0.
-        let this = unsafe { bun_core::heap::take(this) };
-        drop(File::from_fd(this.root_fd.get()));
+    pub fn on_head_request(this: ThisPtr<DirectoryRoute>, req: AnyRequest, resp: AnyResponse) {
+        Self::on(this, req, resp, Method::HEAD);
     }
 
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn on_head_request(this: *mut DirectoryRoute, req: AnyRequest, resp: AnyResponse) {
-        Self::on(NonNull::new(this).unwrap(), req, resp, Method::HEAD);
-    }
-
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn on_request(this: *mut DirectoryRoute, req: AnyRequest, resp: AnyResponse) {
+    pub fn on_request(this: ThisPtr<DirectoryRoute>, req: AnyRequest, resp: AnyResponse) {
         let method = Method::find(req.method()).unwrap_or(Method::GET);
-        Self::on(NonNull::new(this).unwrap(), req, resp, method);
+        Self::on(this, req, resp, method);
     }
 
-    // `this_ptr` (not `&self`) because it is stashed as `FileResponseStream`'s
-    // ctx userdata; `on_stream_complete` may drop the last ref after a reload,
-    // and `Box::from_raw` on a `&self`-derived pointer is UB under Stacked
-    // Borrows. See src/CLAUDE.md §Pointer provenance at FFI boundaries.
-    fn on(
-        this_ptr: NonNull<DirectoryRoute>,
-        mut req: AnyRequest,
-        resp: AnyResponse,
-        method: Method,
-    ) {
-        let this = bun_ptr::BackRef::from(this_ptr);
+    fn on(this: ThisPtr<DirectoryRoute>, mut req: AnyRequest, resp: AnyResponse, method: Method) {
         debug_assert!(this.server.get().is_some());
-        this.ref_();
+        // Held until the response completes; a reload can drop the route
+        // table's ref while a `FileResponseStream` is still streaming.
         let guard = ResponseGuard {
-            route: this_ptr,
+            route: Some(RefPtr::from_this(this)),
             resp,
         };
         if let Some(mut server) = this.server.get() {
@@ -259,7 +240,7 @@ impl DirectoryRoute {
         );
 
         let server = this.server.get().unwrap();
-        FileResponseStream::start(&FileResponseStreamOptions {
+        FileResponseStream::start(FileResponseStreamOptions {
             fd: file.into_raw(),
             auto_close: true,
             resp,
@@ -269,10 +250,7 @@ impl DirectoryRoute {
             offset: body_offset,
             length: Some(body_len),
             idle_timeout: server.config().idle_timeout,
-            ctx: guard.into_ctx(),
-            on_complete: on_stream_complete,
-            on_abort: None,
-            on_error: on_stream_error,
+            owner: StreamOwner::DirectoryRoute(guard.into_route()),
         });
     }
 
@@ -371,42 +349,44 @@ impl DirectoryRoute {
         (ms, buf, len)
     }
 
-    fn on_response_complete(this: NonNull<DirectoryRoute>, resp: AnyResponse) {
+    /// The last thing a response does with the route; callers then release
+    /// the ref `on()` took for it.
+    pub(crate) fn on_response_complete(&self, resp: AnyResponse) {
         resp.clear_aborted();
         resp.clear_on_writable();
         resp.clear_timeout();
-        if let Some(mut server) = bun_ptr::BackRef::from(this).server.get() {
+        if let Some(mut server) = self.server.get() {
             server.on_static_request_complete();
         }
-        // SAFETY: intrusive refcount; `ref_()` in `on()` pairs with this.
-        unsafe { Self::deref(this.as_ptr()) };
     }
 }
 
-/// Releases the route ref (and file, if any) on every non-streaming return.
+impl Drop for DirectoryRoute {
+    fn drop(&mut self) {
+        drop(File::from_fd(self.root_fd.get()));
+    }
+}
+
+/// Completes the response and releases its route ref (closing the file, if
+/// any, as it drops) on every non-streaming return.
 struct ResponseGuard {
-    route: NonNull<DirectoryRoute>,
+    route: Option<RefPtr<DirectoryRoute>>,
     resp: AnyResponse,
 }
 
 impl ResponseGuard {
-    fn into_ctx(self) -> *mut c_void {
-        core::mem::ManuallyDrop::new(self).route.as_ptr().cast()
+    /// Hand the ref to the `FileResponseStream` instead.
+    fn into_route(mut self) -> RefPtr<DirectoryRoute> {
+        self.route.take().expect("taken once")
     }
 }
 
 impl Drop for ResponseGuard {
     fn drop(&mut self) {
-        DirectoryRoute::on_response_complete(self.route, self.resp);
+        if let Some(route) = self.route.take() {
+            route.on_response_complete(self.resp);
+        }
     }
-}
-
-fn on_stream_complete(ctx: *mut c_void, resp: AnyResponse) {
-    DirectoryRoute::on_response_complete(NonNull::new(ctx.cast()).unwrap(), resp);
-}
-
-fn on_stream_error(ctx: *mut c_void, resp: AnyResponse, _err: bun_sys::Error) {
-    DirectoryRoute::on_response_complete(NonNull::new(ctx.cast()).unwrap(), resp);
 }
 
 // `Stat` is ~144 bytes; boxing it would add a heap alloc on the hot path.

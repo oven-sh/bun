@@ -68,14 +68,13 @@ macro_rules! impl_timer_object {
 
         // Intrusive single-thread refcount mixin.
         impl ::bun_ptr::RefCounted for $T {
-            type DestructorCtx = ();
             #[inline]
             unsafe fn get_ref_count(this: *mut Self) -> *mut ::bun_ptr::RefCount<Self> {
                 // SAFETY: caller contract — `this` points to a live `Self`.
                 unsafe { &raw mut (*this).ref_count }
             }
             #[inline]
-            unsafe fn destructor(this: *mut Self, _ctx: ()) {
+            unsafe fn destructor(this: *mut Self) {
                 // SAFETY: `raw_count == 0` ⇒ unique ownership; `deinit`
                 // consumes the `heap::alloc`'d allocation from `init_with()`.
                 unsafe { Self::deinit(this) }
@@ -427,10 +426,9 @@ impl DateHeaderTimer {
 }
 
 pub struct EventLoopDelayMonitor {
-    // TODO: bare `JSValue` heap field with no Strong/visitChildren rooting —
-    // the histogram object can be GC'd while `monitorEventLoopDelay` is active.
-    // Needs JsRef-style rooting.
-    js_histogram: JSValue,
+    /// Weak, so a leaked monitor does not pin the retired `--isolate` realm.
+    /// `stop_active_handles` drops it before `~VM` (`All` outlives the heap).
+    histogram: bun_jsc::Weak<()>,
     pub(crate) event_loop_timer: EventLoopTimer,
     pub(crate) resolution_ms: i32,
     pub(crate) last_fire_ns: u64,
@@ -439,7 +437,7 @@ pub struct EventLoopDelayMonitor {
 impl Default for EventLoopDelayMonitor {
     fn default() -> Self {
         Self {
-            js_histogram: JSValue::default(),
+            histogram: bun_jsc::Weak::default(),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::EventLoopDelayMonitor),
             resolution_ms: 10,
             last_fire_ns: 0,
@@ -455,14 +453,12 @@ impl EventLoopDelayMonitor {
 
     fn enable(
         &mut self,
-        _vm: &mut bun_jsc::virtual_machine::VirtualMachine,
+        vm: &mut bun_jsc::virtual_machine::VirtualMachine,
         histogram: JSValue,
         resolution_ms: i32,
     ) {
-        if self.enabled {
-            return;
-        }
-        self.js_histogram = histogram;
+        self.disable();
+        self.histogram = bun_jsc::Weak::create_passive(histogram, vm.global());
         self.resolution_ms = resolution_ms;
         self.enabled = true;
 
@@ -479,16 +475,19 @@ impl EventLoopDelayMonitor {
         unsafe { (*Self::timer_all()).insert(elt) };
     }
 
-    fn disable(&mut self, _vm: &mut bun_jsc::virtual_machine::VirtualMachine) {
+    pub(crate) fn disable(&mut self) {
         if !self.enabled {
             return;
         }
         self.enabled = false;
-        self.js_histogram = JSValue::default();
+        self.histogram = bun_jsc::Weak::default();
         self.last_fire_ns = 0;
-        let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-        // SAFETY: see `enable` — disjoint-field access on `All`.
-        unsafe { (*Self::timer_all()).remove(elt) };
+        // FIRED (not linked) when called from `on_fire`.
+        if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
+            let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
+            // SAFETY: see `enable` — disjoint-field access on `All`.
+            unsafe { (*Self::timer_all()).remove(elt) };
+        }
     }
 
     /// Record `now - last_fire_ns`
@@ -498,9 +497,14 @@ impl EventLoopDelayMonitor {
         _vm: &mut bun_jsc::virtual_machine::VirtualMachine,
         now: &bun_event_loop::EventLoopTimer::Timespec,
     ) {
-        if !self.enabled || self.js_histogram.is_empty() {
+        self.event_loop_timer.state = EventLoopTimerState::FIRED;
+        if !self.enabled {
             return;
         }
+        let Some(histogram) = self.histogram.get() else {
+            self.disable();
+            return;
+        };
 
         let now_ns = now.ns();
         if self.last_fire_ns > 0 {
@@ -518,7 +522,7 @@ impl EventLoopDelayMonitor {
                         delay_ns: i64,
                     );
                 }
-                JSNodePerformanceHooksHistogram_recordDelay(self.js_histogram, delay_ns);
+                JSNodePerformanceHooksHistogram_recordDelay(histogram, delay_ns);
             }
         }
 
@@ -1356,14 +1360,6 @@ pub use bun_event_loop::EventLoopTimer::{Kind, KindBig};
 pub(crate) struct ID {
     pub id: i32,
     pub kind: KindBig,
-}
-impl Default for ID {
-    fn default() -> Self {
-        Self {
-            id: 0,
-            kind: KindBig::SetTimeout,
-        }
-    }
 }
 impl ID {
     #[inline]

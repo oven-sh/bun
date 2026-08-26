@@ -265,7 +265,7 @@ Multiple paths use the platform's delimiter (`:` on Unix, `;` on Windows):
 
 ```bash
 NODE_PATH=./packages:./lib bun run src/index.js  # Unix/macOS
-NODE_PATH=./packages;./lib bun run src/index.js  # Windows
+NODE_PATH="./packages;./lib" bun run src/index.js  # Windows
 ```
 
 ### Custom conditions

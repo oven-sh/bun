@@ -28,9 +28,6 @@
 #include "webcore/streams/BunStreamConsumers.h"
 #include "WebCoreJSBuiltins.h"
 #include <JavaScriptCore/JSObject.h>
-#include "DOMJITIDLConvert.h"
-#include "DOMJITIDLType.h"
-#include "DOMJITIDLTypeFilter.h"
 #include "Exception.h"
 #include "JSDOMException.h"
 #include "JSDOMConvert.h"
@@ -73,8 +70,6 @@ BUN_DECLARE_HOST_FUNCTION(Bun__DNS__reverse);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__lookupService);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__prefetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__getCacheStats);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__new);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__cancel);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetchPreconnect);
 BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv7);
@@ -264,13 +259,13 @@ JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObje
     size_t maxLength = std::numeric_limits<size_t>::max();
     auto arg1 = callFrame->argument(1);
     if (!arg1.isUndefined() && arg1.isNumber()) {
-        double number = arg1.toNumber(globalObject);
+        double number = arg1.asNumber();
         if (std::isnan(number) || number < 0) {
             throwRangeError(globalObject, throwScope, "Maximum length must be >= 0"_s);
             return {};
         }
         if (!std::isinf(number)) {
-            maxLength = arg1.toUInt32(globalObject);
+            maxLength = JSC::toUInt32(number);
         }
     }
 
@@ -320,9 +315,6 @@ static JSValue defaultBunSQLObject(VM& vm, JSObject* bunObject)
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(bunObject->globalObject());
     JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
-#if BUN_DEBUG
-    if (scope.exception()) globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
-#endif
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, vm.propertyNames->defaultKeyword));
 }
@@ -332,9 +324,6 @@ static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(bunObject->globalObject());
     JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
-#if BUN_DEBUG
-    if (scope.exception()) globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
-#endif
     RETURN_IF_EXCEPTION(scope, {});
     auto clientData = WebCore::clientData(vm);
     RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, clientData->builtinNames().SQLPublicName()));
@@ -483,7 +472,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject * globalObject, C
                 throwOutOfMemoryError(globalObject, scope);
                 return {};
             }
-            auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const char8_t*>(data), length });
+            auto str = Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(data), length });
             if (str.isNull()) {
                 throwOutOfMemoryError(globalObject, scope);
                 return {};
@@ -582,7 +571,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObje
                 throwOutOfMemoryError(globalObject, scope);
                 return {};
             }
-            auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const char8_t*>(sliceData), sliceLen });
+            auto str = Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(sliceData), sliceLen });
             if (str.isNull()) {
                 throwOutOfMemoryError(globalObject, scope);
                 return {};
@@ -691,8 +680,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (callFrame->argumentCount() < 2) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        throwTypeError(globalObject, throwScope, "Expected 2 values to compare"_s);
+        throwTypeError(globalObject, scope, "Expected 2 values to compare"_s);
         return {};
     }
 
@@ -826,6 +814,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
         if (useArrayBuffer) {
             JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
             auto bytes = builder.jsonBytes();
+            RETURN_IF_EXCEPTION(throwScope, {});
             auto released = bytes.releaseBuffer();
             auto span = released.leakSpan();
             auto buffer = ArrayBuffer::createFromBytes(std::span<const uint8_t> { span.data(), span.size() }, createSharedTask<void(void*)>([](void* p) {
@@ -835,12 +824,15 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
         }
 
         JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
-        return JSC::JSValue::encode(jsString(vm, builder.json()));
+        auto json = builder.json();
+        RETURN_IF_EXCEPTION(throwScope, {});
+        return JSC::JSValue::encode(jsString(vm, json));
     }
 
     JSC::HeapSnapshotBuilder builder(heapProfiler);
     builder.buildSnapshot();
     auto json = builder.json();
+    RETURN_IF_EXCEPTION(throwScope, {});
     // Returning an object was a bad idea but it's a breaking change
     // so we'll just keep it for now.
     JSC::JSValue jsonValue = JSONParseWithException(globalObject, json);
@@ -1062,19 +1054,19 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     void finishCreation(JSC::VM& vm)
     {
         Base::finishCreation(vm);
-        JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+        Bun::putToStringTagWithoutTransition(vm, this, info());
     }
 
     static JSBunObject* create(JSC::VM& vm, JSGlobalObject* globalObject)
     {
         auto structure = createStructure(vm, globalObject, globalObject->objectPrototype());
-        auto* object = new (NotNull, JSC::allocateCell<JSBunObject>(vm)) JSBunObject(vm, structure);
+        auto* object = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSBunObject))) JSBunObject(vm, structure);
         object->finishCreation(vm);
         return object;
     }
@@ -1168,7 +1160,7 @@ JSC::JSObject* generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobal
     object->getOwnNonIndexPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    return exportObjectProperties(vm, object, propertyNames, exportNames, exportValues);
+    RELEASE_AND_RETURN(scope, exportObjectProperties(globalObject, object, propertyNames, exportNames, exportValues));
 }
 
 } // namespace Zig

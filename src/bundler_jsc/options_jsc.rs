@@ -3,7 +3,6 @@
 
 // `bun_bundler::options` re-exports `Target`/`Loader` but not `Format`; pull it
 // from the lower-tier source crate directly.
-use bun_core::ZigString;
 use bun_jsc::ComptimeStringMapExt as _;
 use bun_options_types::compile_target::CompileTarget;
 
@@ -31,13 +30,12 @@ pub fn loader_from_js(
         return Err(global.throw_invalid_arguments(format_args!("loader must be a string")));
     }
 
-    let mut zig_str = ZigString::init(b"");
-    loader.to_zig_string(&mut zig_str, global)?;
-    if zig_str.len == 0 {
+    let loader_str = loader.to_js_string_view(global)?;
+    if loader_str.is_empty() {
         return Ok(None);
     }
 
-    let slice = zig_str.to_slice();
+    let slice = loader_str.to_utf8();
 
     let Some(v) = bun_ast::Loader::from_string(slice.slice()) else {
         return Err(global.throw_invalid_arguments(format_args!(
@@ -67,7 +65,7 @@ pub fn loader_from_js(
 
 // ── CompileTarget ──────────────────────────────────────────────────────────
 pub fn compile_target_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<CompileTarget> {
-    let slice = value.to_slice(global)?;
+    let slice = value.to_utf8(global)?;
     if !slice.slice().starts_with(b"bun-") {
         return Err(global.throw_invalid_arguments(format_args!(
             "Expected compile target to start with 'bun-', got {}",

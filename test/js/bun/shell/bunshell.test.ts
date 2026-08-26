@@ -528,6 +528,52 @@ describe("bunshell", () => {
     expect(stdout.toString()).toEqual("LMAO\n");
   });
 
+  // The builtin cat is only on by default on Windows; the flag turns it on
+  // everywhere. Captured output finishes the command from the reader side,
+  // output on a real fd also goes through the writer completions, and the
+  // missing-file case with stderr on a fd finishes from the writer side alone.
+  test("builtin cat finishes from its reader and writer completions", async () => {
+    using dir = tempDir("builtin-cat", {});
+    const script = /* ts */ `
+      import { $ } from "bun";
+      $.nothrow();
+      const results = {};
+      for (const [name, run] of Object.entries({
+        "captured": () => $\`echo hi | cat\`,
+        "stdout to fd": () => $\`echo hi | cat > out.txt\`,
+        "missing file, stderr captured": () => $\`cat missing.txt\`,
+        "missing file, stderr to fd": () => $\`cat missing.txt 2> err.txt\`,
+      })) {
+        const r = await run().quiet();
+        results[name] = { stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode };
+      }
+      results["out.txt"] = await Bun.file("out.txt").text();
+      results["err.txt"] = await Bun.file("err.txt").text();
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // On Windows the message carries the absolute path (shell_openat only
+    // re-tags the error with the argument as written on POSIX).
+    const missingFileError = expect.stringMatching(/^cat: (.*[\\/])?missing\.txt: No such file or directory\n$/);
+    expect(JSON.parse(stdout)).toEqual({
+      "captured": { stdout: "hi\n", stderr: "", exitCode: 0 },
+      "stdout to fd": { stdout: "", stderr: "", exitCode: 0 },
+      "missing file, stderr captured": { stdout: "", stderr: missingFileError, exitCode: 1 },
+      "missing file, stderr to fd": { stdout: "", stderr: "", exitCode: 1 },
+      "out.txt": "hi\n",
+      "err.txt": missingFileError,
+    });
+    expect(exitCode).toBe(0);
+  });
+
   describe("operators no spaces", async () => {
     TestBuilder.command`echo LMAO|cat`.stdout("LMAO\n").runAsTest("pipeline");
     TestBuilder.command`echo foo&&echo hi`.stdout("foo\nhi\n").runAsTest("&&");

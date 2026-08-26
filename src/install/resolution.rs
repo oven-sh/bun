@@ -17,33 +17,35 @@ use crate::versioned_url::VersionedURLType;
 pub type Resolution = ResolutionType<u64>;
 
 impl Resolution {
-    /// True when this resolution can satisfy `version`: npm ranges by
+    /// True when this resolution can satisfy `dep_version`: npm ranges by
     /// semver, git/github by exact repo equality. Any other kind pairing
     /// (workspace, folder, tarball, dist-tag, …) never satisfies. This is
     /// the comparison the resolver's deferred-peer phase uses to bind peer
     /// edges against already-resolved packages.
     pub(crate) fn satisfies_dependency_version(
         &self,
-        version: &dependency::Version,
-        version_buf: &[u8],
+        dep_version: &dependency::Version,
+        dep_version_buf: &[u8],
         resolution_buf: &[u8],
     ) -> bool {
-        if self.tag == Tag::Npm && version.tag == dependency::VersionTag::Npm {
-            return version.npm().version.satisfies(
+        if self.tag == Tag::Npm && dep_version.tag == dependency::VersionTag::Npm {
+            return dep_version.npm().version.satisfies(
                 self.npm().version,
-                version_buf,
+                dep_version_buf,
                 resolution_buf,
             );
         }
 
-        if self.tag == Tag::Git && version.tag == dependency::VersionTag::Git {
-            return self.git().eql(version.git(), resolution_buf, version_buf);
+        if self.tag == Tag::Git && dep_version.tag == dependency::VersionTag::Git {
+            return self
+                .git()
+                .eql(dep_version.git(), resolution_buf, dep_version_buf);
         }
 
-        if self.tag == Tag::Github && version.tag == dependency::VersionTag::Github {
+        if self.tag == Tag::Github && dep_version.tag == dependency::VersionTag::Github {
             return self
                 .github()
-                .eql(version.github(), resolution_buf, version_buf);
+                .eql(dep_version.github(), resolution_buf, dep_version_buf);
         }
 
         false
@@ -549,7 +551,7 @@ impl<'a, SemverInt: VersionInt> fmt::Display for StorePathFormatter<'a, SemverIn
                 write!(
                     writer,
                     "{}",
-                    res.remote_tarball().fmt_store_path(string_buf)
+                    fmt_store_url(res.remote_tarball().slice(string_buf))
                 )
             }
             Tag::Folder => write!(writer, "{}", res.folder().fmt_store_path(string_buf)),
@@ -572,6 +574,53 @@ impl<'a, SemverInt: VersionInt> fmt::Display for StorePathFormatter<'a, SemverIn
             }
             _ => Ok(()),
         }
+    }
+}
+
+/// Store path of a tarball or repository URL. The store path becomes a
+/// directory name (realpaths, stack traces, `bun pm` output), so the userinfo
+/// and the query string, which is where credentials go, are left out of it;
+/// when either was present, the hash of the complete URL takes their place so
+/// that URLs differing only in those parts still get separate entries:
+/// `https://user:token@host/pkg.tgz?token=x` becomes
+/// `https+++host+pkg.tgz+<16 hex>`. A URL without either part is spelled out
+/// unchanged.
+pub(crate) struct StoreURLFormatter<'a> {
+    url: &'a [u8],
+}
+
+pub(crate) fn fmt_store_url(url: &[u8]) -> StoreURLFormatter<'_> {
+    StoreURLFormatter { url }
+}
+
+impl fmt::Display for StoreURLFormatter<'_> {
+    fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let url = self.url;
+
+        // RFC 3986: the authority follows `scheme://` (or, for an scp-like
+        // `user@host:path`, starts the string) and ends at the first `/`, `?`
+        // or `#`; the userinfo is everything in it up to the last `@`.
+        let authority_start = match strings::index_of_char_usize(url, b':') {
+            Some(colon) if url[colon + 1..].starts_with(b"//") => colon + b"://".len(),
+            _ => 0,
+        };
+        let authority_end = strings::index_of_any(&url[authority_start..], b"/?#")
+            .map_or(url.len(), |i| authority_start + i);
+        let host_start = strings::last_index_of_char(&url[authority_start..authority_end], b'@')
+            .map_or(authority_start, |at| authority_start + at + 1);
+        let query_start = strings::index_of_char_usize(&url[host_start..], b'?')
+            .map_or(url.len(), |i| host_start + i);
+
+        write!(
+            writer,
+            "{}{}",
+            semver::string::fmt_store_path(&url[..authority_start]),
+            semver::string::fmt_store_path(&url[host_start..query_start]),
+        )?;
+        if host_start != authority_start || query_start != url.len() {
+            write!(writer, "+{:016x}", bun_wyhash::hash(url))?;
+        }
+        Ok(())
     }
 }
 

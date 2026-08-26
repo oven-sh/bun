@@ -628,15 +628,6 @@ pub trait AddrInfoHandler: Sized {
 impl AddrInfo {
     // toJSArray alias deleted — lives in bun_runtime::dns_jsc.
 
-    #[inline]
-    pub fn name(&self) -> &[u8] {
-        if self.name_.is_null() {
-            return b"";
-        }
-        // SAFETY: name_ is a NUL-terminated string allocated by c-ares.
-        unsafe { core::ffi::CStr::from_ptr(self.name_) }.to_bytes()
-    }
-
     // Consumers walk `cnames_` / `node` pointer chains directly.
 
     pub(crate) unsafe extern "C" fn callback_wrapper<T: AddrInfoHandler>(
@@ -667,12 +658,6 @@ pub struct AddrInfo_hints {
 }
 // SAFETY: four `c_int` fields; all-zero is a valid hints value (S021).
 unsafe impl bun_core::ffi::Zeroable for AddrInfo_hints {}
-
-impl AddrInfo_hints {
-    pub fn is_empty(&self) -> bool {
-        self.ai_flags == 0 && self.ai_family == 0 && self.ai_socktype == 0 && self.ai_protocol == 0
-    }
-}
 
 #[derive(Copy, Clone, Default)]
 pub struct ChannelOptions {
@@ -772,6 +757,12 @@ impl Channel {
         let optmask: c_int =
             ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS | ARES_OPT_SOCK_STATE_CB | ARES_OPT_TRIES;
 
+        // SAFETY: idempotent Winsock init (uv_once); c-ares creates its sockets with
+        // ws2_32 directly and libuv otherwise initializes Winsock lazily.
+        #[cfg(windows)]
+        unsafe {
+            bun_libuv_sys::uv__winsock_ensure()
+        };
         // SAFETY: c-ares FFI; opts/channel are valid stack pointers.
         let rc = unsafe { ares_init_options(&raw mut channel, &raw mut opts, optmask) };
         if let Some(err) = Error::get(rc) {
@@ -1539,7 +1530,6 @@ unsafe extern "C" {
     ) -> c_int;
     pub fn ares_free_hostent(host: *mut struct_hostent);
     pub fn ares_free_data(dataptr: *mut c_void);
-    pub safe fn ares_strerror(code: c_int) -> *const u8;
 }
 
 #[repr(C)]

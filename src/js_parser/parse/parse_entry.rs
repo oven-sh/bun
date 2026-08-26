@@ -313,6 +313,7 @@ impl<'a> Parser<'a> {
         define: &'a Define,
         bump: &'a Arena,
     ) -> Result<Parser<'a>, Error> {
+        source.check_parseable_len(log, "File")?;
         let mut lexer = js_lexer::Lexer::init_without_reading(log, source, bump);
         // Must be set before the priming `next()` so leading comments are seen.
         lexer.track_comments = options.features.minify_identifiers;
@@ -766,14 +767,6 @@ impl<'a> Parser<'a> {
         // Pre-sized to typical worst-case binary-expression nesting depth.
         p.binary_expression_stack = BumpVec::with_capacity_in(41, p.arena);
         p.binary_expression_simplify_stack = BumpVec::with_capacity_in(47, p.arena);
-
-        // defer {
-        //     if (p.allocated_names_pool) |pool| {
-        //         pool.data = p.allocated_names;
-        //         pool.release();
-        //         p.allocated_names_pool = null;
-        //     }
-        // }
 
         // Consume a leading hashbang comment
         let mut hashbang: &[u8] = b"";
@@ -1470,22 +1463,17 @@ impl<'a> Parser<'a> {
                                     let right = bin.right;
 
                                     if bin.op == js_ast::op::Code::BinAssign
-                                        && matches!(right.data, js_ast::ExprData::ERequireString(_))
+                                        && let js_ast::ExprData::ERequireString(req) = right.data
+                                        && let Some(unwrapped_id) = req.unwrapped_id.get()
                                         && matches!(&left.data, js_ast::ExprData::EDot(d)
                                             if d.name == b"exports"
                                                 && matches!(&d.target.data, js_ast::ExprData::EIdentifier(id)
                                                     if id.ref_.eql(p.module_ref)))
                                     {
-                                        let req = match &right.data {
-                                            js_ast::ExprData::ERequireString(r) => r,
-                                            _ => unreachable!(),
-                                        };
                                         p.export_star_import_records.push(req.import_record_index);
-                                        let namespace_ref =
-                                            p.imports_to_convert_from_require.as_slice()
-                                                [req.unwrapped_id as usize]
-                                                .namespace
-                                                .ref_;
+                                        let deferred = &p.imports_to_convert_from_require
+                                            [unwrapped_id.get_usize()];
+                                        let namespace_ref = deferred.namespace.ref_;
 
                                         let stmt_loc = stmt.loc;
                                         part.stmts = {
@@ -2028,10 +2016,13 @@ impl<'a> Parser<'a> {
                 i += 1;
             }
 
-            runtime_imports[0..i].sort_unstable_by(|a, b| {
-                RuntimeImports::ALL_SORTED_INDEX[*a as usize]
-                    .cmp(&RuntimeImports::ALL_SORTED_INDEX[*b as usize])
-            });
+            bun_collections::index_sort::sort_slice_unstable_by(
+                &mut runtime_imports[0..i],
+                |a, b| {
+                    RuntimeImports::ALL_SORTED_INDEX[*a as usize]
+                        .cmp(&RuntimeImports::ALL_SORTED_INDEX[*b as usize])
+                },
+            );
 
             if i > 0 {
                 // snapshot to break the `&mut self` ↔ `&self.runtime_imports`

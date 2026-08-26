@@ -1942,9 +1942,12 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
     if (ssl_gone(s)) return s;
   }
 
-  /* code != 0 (forceful — `_destroy()` / `_handle.close()` / abort): send
-   * close_notify best-effort and raw-close now. The Zig destroy path detaches
-   * + poll_ref.unref() right after, so deferring would orphan the us_socket_t.
+  /* code == 2 (forceful — `_destroy()` / `_handle.close()`): send close_notify
+   * best-effort and raw-close now. The destroy path detaches + poll_ref.unref()
+   * right after, so deferring would orphan the us_socket_t.
+   *
+   * code == 1 (reset — terminate() / abort): no close_notify, only the RST,
+   * like node's resetAndDestroy().
    *
    * code == 0 (graceful — `end()` → markInactive → closeAndDetach(.normal)):
    * send close_notify and DEFER the fd close until the peer replies. The
@@ -1954,7 +1957,7 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
    * under low-prio fan-out (connectionListener race). The actual raw-close
    * happens via on_end/ZERO_RETURN re-entering this function with
    * SSL_SENT_SHUTDOWN already set (ssl_handle_shutdown then returns 1). */
-  if (ssl_handle_shutdown(s, code != 0)) {
+  if (code == LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET || ssl_handle_shutdown(s, code != 0)) {
     return us_internal_socket_close_raw(s, code, reason);
   }
   return s;
@@ -2067,16 +2070,25 @@ struct us_socket_t *us_internal_ssl_on_close(struct us_socket_t *s, int code, vo
   return ret;
 }
 
-/* The EOF dispatch below is scoped to uWS HTTP server sockets: their
- * context's onEnd owns the EOF (premature-EOF clientError
- * HPE_INVALID_EOF_STATE, CONNECT/Upgrade half-open, pipeline drain after
- * FIN), and closing without dispatching silently skipped all of it for
- * node:https. Every other TLS socket kind predates the dispatch and
- * synthesizes its JS 'end' from the close event, so they keep the
- * historical force-close (dispatching for them strands sockets whose end
- * handler expects the transport to close underneath it). */
-static int ssl_wants_eof_dispatch(struct us_socket_t *s) {
+static int ssl_is_uws_http_tls(struct us_socket_t *s) {
   return us_socket_kind(s) == BUN_SOCKET_KIND_UWS_HTTP_TLS;
+}
+
+/* EOF dispatch only for kinds whose user layer consumes 'end' + honors
+ * allow_half_open (uWS HTTP server: their context's onEnd owns the EOF;
+ * Bun.connect/listen, which node:tls rides on). All other TLS kinds derive
+ * EOF from close and keep the historical force-close (dispatching for them
+ * strands sockets whose end handler expects the transport to close
+ * underneath it). */
+static int ssl_wants_eof_dispatch(struct us_socket_t *s) {
+  unsigned char kind = us_socket_kind(s);
+  if (kind == BUN_SOCKET_KIND_UWS_HTTP_TLS) {
+    return 1;
+  }
+  /* Mid-handshake EOF keeps the force-close so JS surfaces it as a failed
+   * handshake (ECONNRESET "socket hang up", like Node) not a clean 'end'. */
+  return kind == BUN_SOCKET_KIND_BUN_SOCKET_TLS &&
+         s->ssl_handshake_state == HANDSHAKE_COMPLETED;
 }
 
 /* Deliver the plaintext EOF to the user layer once, like the plain-TCP path
@@ -2118,11 +2130,15 @@ struct us_socket_t *us_internal_ssl_on_end(struct us_socket_t *s) {
     if (!s || us_socket_is_closed(s)) {
       return s;
     }
-    if (s->flags.allow_half_open) {
+    if (s->flags.allow_half_open &&
+        (ssl_gone(s) || !(SSL_get_shutdown(s_ssl(s)) & SSL_SENT_SHUTDOWN))) {
       /* Keep the write side alive like the plain-TCP half-open branch in
        * loop.c: TCP permits writing after a received FIN, so queued
        * responses still flush and the app's own end() completes the
-       * shutdown. */
+       * shutdown. With SENT_SHUTDOWN both directions are closed; fall
+       * through so a deferred graceful close completes (mirrors the
+       * ZERO_RETURN path; loop.c raw-closes this case first on the
+       * epoll/kqueue backend, the libuv one reaches here). */
       return s;
     }
   }
@@ -2201,7 +2217,7 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
    * onWritable clears the teardown timeout armed at shutdown. node sockets
    * still get write-completion dispatch after a half-close in either
    * direction. */
-  if (ssl_wants_eof_dispatch(s) && us_internal_ssl_is_shut_down(s)) return s;
+  if (ssl_is_uws_http_tls(s) && us_internal_ssl_is_shut_down(s)) return s;
 
   if (s->ssl_handshake_state == HANDSHAKE_COMPLETED) {
     s = us_dispatch_writable(s);
@@ -2310,11 +2326,15 @@ restart:
           if (ssl_wants_eof_dispatch(s)) {
             s = ssl_deliver_eof(s);
             if (!s || ssl_gone(s)) return NULL;
-            if (s->flags.allow_half_open) {
+            if (s->flags.allow_half_open &&
+                !(SSL_get_shutdown(s_ssl(s)) & SSL_SENT_SHUTDOWN)) {
               /* close_notify only ended the peer's write side; ours may
                * still flush queued bytes, and the app's own end() completes
                * the shutdown (ssl_handle_shutdown sees RECEIVED_SHUTDOWN and
-               * finishes immediately). */
+               * finishes immediately). With SENT_SHUTDOWN both directions are
+               * closed and nothing is left to hold open: fall through so the
+               * deferred graceful close (code 0, no FIN sent) completes here
+               * instead of waiting for a FIN that may never come. */
               return s;
             }
           }
@@ -2653,11 +2673,6 @@ void us_socket_sni_resolve(struct us_socket_t *s, struct ssl_ctx_st *ctx, int er
   /* Re-drive the handshake; select_cert_cb re-fires and consumes the state. */
   ssl_set_loop_data(s);
   ssl_update_handshake(s);
-}
-
-void us_internal_ssl_handshake_abort(struct us_socket_t *s) {
-  s->ssl_fatal_error = 1;
-  ssl_close(s, 0, NULL);
 }
 
 /* ── Adopt-TLS (STARTTLS / Bun.connect upgrade) ──────────────────────────── */
@@ -3066,10 +3081,6 @@ void us_socket_on_server_name(struct us_socket_t *s, us_socket_server_name_cb cb
 void *us_socket_server_name_userdata(struct us_socket_t *s) {
   if (!s->ssl || !s_ssl(s) || us_sni_ex_idx < 0) return NULL;
   return SSL_CTX_get_ex_data(SSL_get_SSL_CTX(s_ssl(s)), us_sni_ex_idx);
-}
-
-void *us_internal_ssl_sni_userdata(struct us_socket_t *s) {
-  return us_socket_server_name_userdata(s);
 }
 
 const char *us_internal_ssl_sni_servername(struct us_socket_t *s) {

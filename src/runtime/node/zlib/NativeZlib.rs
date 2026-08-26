@@ -28,12 +28,10 @@ mod _impl {
     /// struct-init site; the body never dereferences the pointer.
     fn noop_task_callback(_task: *mut WorkPoolTask) {}
 
-    // `mod js { write_callback_*, error_callback_*, dictionary_* }` is emitted by
+    // `mod js { write_callback_*, error_callback_*, ... }` is emitted by
     // `__impl_compression_stream!` below (wraps `bun_jsc::codegen_cached_accessors!`).
 
-    /// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive single-thread refcount.
-    /// `ref`/`deref` are provided by `bun_ptr::IntrusiveRc<NativeZlib>`; when the count hits
-    /// zero it invokes [`NativeZlib::deinit`].
+    /// Intrusive refcount; [`NativeZlib::deinit`] runs when it hits zero.
     #[bun_jsc::JsClass]
     #[derive(bun_ptr::CellRefCounted)]
     #[ref_count(destroy = Self::deinit)]
@@ -48,6 +46,8 @@ mod _impl {
         pub poll_ref: JsCell<CountedKeepAlive>,
         pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
         pub write_in_progress: Cell<bool>,
+        /// bit 0: the pending input's ArrayBuffer is pinned; bit 1: the pending output's. A held bufferless view sets neither.
+        pub pinned_buffers: Cell<u8>,
         pub pending_close: Cell<bool>,
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
@@ -102,6 +102,7 @@ mod _impl {
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
+                pinned_buffers: Cell::new(0),
                 pending_close: Cell::new(false),
                 closed: Cell::new(false),
                 task: JsCell::new(WorkPoolTask {
@@ -261,7 +262,7 @@ mod _impl {
         /// Not `Drop` because this is an intrusive-refcounted `m_ctx` payload whose
         /// box is freed here.
         fn deinit(this: *mut Self) {
-            // SAFETY: called exactly once by IntrusiveRc when refcount hits 0; `this`
+            // SAFETY: called exactly once when the refcount hits 0; `this`
             // is the heap::alloc pointer produced at construction. `this_value`
             // (Strong) and `poll_ref` (CountedKeepAlive) are Drop types — freed by
             // heap::take below.

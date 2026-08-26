@@ -118,6 +118,54 @@ describe("bundler", () => {
       api.expectFile("out.js").not.toInclude("import ");
     },
   });
+  // The polyfill is plain JS bundled into the user's output, so it cannot use
+  // JSC builtin intrinsics ($newPromiseCapability and friends). Those are
+  // only rewritten inside src/js; in a browser bundle they are bare globals.
+  itBundled("browser/NodeEventsOnce", {
+    files: {
+      "/entry.js": /* js */ `
+        import { once, EventEmitter } from "node:events";
+        const results = [];
+        {
+          const e = new EventEmitter();
+          const p = once(e, "hello");
+          e.emit("hello", 1, "two");
+          results.push(JSON.stringify(await p));
+        }
+        {
+          const e = new EventEmitter();
+          const p = once(e, "never");
+          e.emit("error", new Error("boom"));
+          results.push(await p.then(() => "resolved", err => "rejected:" + err.message));
+          results.push(e.listenerCount("never") + "," + e.listenerCount("error"));
+        }
+        {
+          const e = new EventEmitter();
+          const ac = new AbortController();
+          const p = once(e, "never", { signal: ac.signal });
+          ac.abort();
+          results.push(await p.then(() => "resolved", err => err.name + ":" + err.code));
+          results.push(e.listenerCount("never") + "," + e.listenerCount("error"));
+        }
+        {
+          const et = new EventTarget();
+          const p = once(et, "ping");
+          et.dispatchEvent(new Event("ping"));
+          const [ev] = await p;
+          results.push(ev.type);
+        }
+        console.log(results.join("\\n"));
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: '[1,"two"]\nrejected:boom\n0,0\nAbortError:ABORT_ERR\n0,0\nping',
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      assert(!out.includes("$newPromiseCapability"), "events polyfill must not reference a JSC builtin intrinsic");
+    },
+  });
   itBundled("browser/NodeUrlProtocolTablesIgnorePrototype", {
     files: {
       "/entry.js": /* js */ `
@@ -371,6 +419,87 @@ describe("bundler", () => {
     target: "browser",
     run: {
       stdout: "undefined function",
+    },
+  });
+
+  // An entry point the "browser" field maps to false has nothing to bundle.
+  // This used to reach the linker with zero entry points and crash
+  // ("index out of bounds" in generateChunksInParallel); with a second, live
+  // entry point it silently built only that one.
+  const browserFieldDisabledEntryPointFiles = {
+    "/package.json": /* json */ `
+      { "name": "app", "browser": { "./entry.js": false } }
+    `,
+    "/entry.js": /* js */ `
+      console.log("entry");
+    `,
+    "/other.js": /* js */ `
+      console.log("other");
+    `,
+  };
+  itBundled("browser/EntryPointDisabledByBrowserField", {
+    skipOnEsbuild: true,
+    backend: "cli",
+    files: browserFieldDisabledEntryPointFiles,
+    entryPointsRaw: ["./entry.js"],
+    target: "browser",
+    bundleErrors: {
+      "<bun>": ['"./entry.js" is disabled due to "browser" field in package.json (entry point)'],
+    },
+  });
+  itBundled("browser/EntryPointDisabledByBrowserFieldNextToLiveEntryPoint", {
+    skipOnEsbuild: true,
+    backend: "cli",
+    files: browserFieldDisabledEntryPointFiles,
+    entryPointsRaw: ["./entry.js", "./other.js"],
+    target: "browser",
+    bundleErrors: {
+      "<bun>": ['"./entry.js" is disabled due to "browser" field in package.json (entry point)'],
+    },
+  });
+  itBundled("browser/EntryPointDisabledByBrowserFieldOnlyAppliesToBrowserTarget", {
+    skipOnEsbuild: true,
+    backend: "cli",
+    files: browserFieldDisabledEntryPointFiles,
+    entryPointsRaw: ["./entry.js"],
+    target: "bun",
+    run: {
+      file: "/out/entry.js",
+      stdout: "entry",
+    },
+  });
+  itBundled("browser/EntryPointDisabledByPackageMainBrowserField", {
+    // The disabled module is reached through a package's "main", so the entry
+    // point specifier and the disabled file differ.
+    skipOnEsbuild: true,
+    backend: "cli",
+    files: {
+      "/node_modules/pkg/package.json": /* json */ `
+        { "name": "pkg", "main": "./node.js", "browser": { "./node.js": false } }
+      `,
+      "/node_modules/pkg/node.js": /* js */ `
+        console.log("node only");
+      `,
+    },
+    entryPointsRaw: ["pkg"],
+    target: "browser",
+    bundleErrors: {
+      "<bun>": ['"pkg" is disabled due to "browser" field in package.json (entry point)'],
+    },
+  });
+  itBundled("browser/EntryPointIsNodeBuiltinStubbedForBrowser", {
+    // Browser builds replace "fs" (and node:* builtins without a polyfill) with
+    // an empty module, so as entry points they have nothing to bundle either.
+    skipOnEsbuild: true,
+    backend: "cli",
+    files: {},
+    entryPointsRaw: ["fs", "node:fs"],
+    target: "browser",
+    bundleErrors: {
+      "<bun>": [
+        `Cannot use Node.js builtin "fs" as an entry point`,
+        `Cannot use Node.js builtin "node:fs" as an entry point`,
+      ],
     },
   });
 

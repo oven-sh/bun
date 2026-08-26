@@ -148,8 +148,12 @@ impl Error {
     pub fn from_code_int(errno: c_int, syscall_tag: Tag) -> Error {
         #[cfg(windows)]
         let n = Int::try_from(errno.unsigned_abs()).unwrap();
+        // errno values are small positive integers; a truncating cast matches Zig's `@intCast`.
         #[cfg(not(windows))]
-        let n = u16::try_from(errno).expect("int cast");
+        let n = {
+            debug_assert!((0..=c_int::from(u16::MAX)).contains(&errno));
+            errno as u16
+        };
         Error {
             errno: n,
             syscall: syscall_tag,
@@ -368,22 +372,22 @@ impl Error {
 
         let mut err = SystemError {
             errno: js_errno,
-            syscall: BunString::static_(<&'static str>::from(self.syscall).as_bytes()).into(),
+            syscall: BunString::static_(<&'static str>::from(self.syscall).as_bytes()),
             ..Default::default()
         };
 
         // both maps are total (`initFull("unknown error")`).
         let looked_up = self.get_error_code_tag_name().map(|(code, system_errno)| {
-            err.code = BunString::static_(code.as_bytes()).into();
+            err.code = BunString::static_(code.as_bytes());
             (code, map[system_errno])
         });
 
         if !self.path.is_empty() {
-            err.path = BunString::clone_utf8(&self.path).into();
+            err.path = BunString::clone_utf8(&self.path);
         }
 
         if !self.dest.is_empty() {
-            err.dest = BunString::clone_utf8(&self.dest).into();
+            err.dest = BunString::clone_utf8(&self.dest);
         }
 
         if let Some(valid) = fd_unwrap_valid(self.fd) {
@@ -406,7 +410,7 @@ impl Error {
         let (mut err, looked_up) =
             self.fill_system_error_common(&coreutils_error_map::COREUTILS_ERROR_MAP);
         if let Some((_, label)) = looked_up {
-            err.message = BunString::static_(label.as_bytes()).into();
+            err.message = BunString::static_(label.as_bytes());
         }
         err
     }
@@ -470,7 +474,7 @@ impl Error {
             }
             usize::try_from(cursor.position()).expect("int cast")
         };
-        err.message = BunString::clone_utf8(&message_buf[..pos]).into();
+        err.message = BunString::clone_utf8(&message_buf[..pos]);
 
         err
     }
@@ -497,8 +501,8 @@ impl fmt::Display for Error {
         let mut that = self.without_path().to_shell_system_error();
         debug_assert!(that.path.tag() != bun_core::Tag::WTFStringImpl);
         debug_assert!(that.dest.tag() != bun_core::Tag::WTFStringImpl);
-        that.path = BunString::borrow_utf8(&self.path).into();
-        that.dest = BunString::borrow_utf8(&self.dest).into();
+        that.path = BunString::borrow_utf8(&self.path);
+        that.dest = BunString::borrow_utf8(&self.dest);
         debug_assert!(that.path.tag() != bun_core::Tag::WTFStringImpl);
         debug_assert!(that.dest.tag() != bun_core::Tag::WTFStringImpl);
 

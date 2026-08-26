@@ -27,7 +27,7 @@
 #include "config.h"
 #include "Worker.h"
 
-#include "BunClientData.h"
+#include "InternalModuleRegistry.h"
 #include "ErrorCode.h"
 #include "ErrorEvent.h"
 #include "Event.h"
@@ -47,6 +47,8 @@
 #include "JSDOMConvertObject.h"
 #include "JSDOMConvertSequences.h"
 #include "JSMessagePort.h"
+#include "JSMessageChannel.h"
+#include "JSWorker.h"
 #include "MessagePortPipe.h"
 #include "JSBroadcastChannel.h"
 #include "JSStructuredSerializeOptions.h"
@@ -188,10 +190,10 @@ extern "C" void WebWorker__parentContextWillDestroy(WorkerMessagingProxy* proxy)
 
 // An uncaught error inside the worker: dispatch 'error' on the worker's own global scope, then report
 // it to the Worker object.
-extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, WorkerMessagingProxy* proxy, BunString* message, JSC::EncodedJSValue errorValue)
+extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, WorkerMessagingProxy* proxy, BunString message, JSC::EncodedJSValue errorValue)
 {
     JSC::JSValue error = JSC::JSValue::decode(errorValue);
-    String messageStr = message->transferToWTFString();
+    String messageStr = message.transferToWTFString();
     ErrorEvent::Init init;
     init.message = messageStr;
     init.error = error;
@@ -202,6 +204,7 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSetParentPort);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSetNodeWorkerStdioPorts);
 
 JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -249,28 +252,18 @@ JSC_DEFINE_HOST_FUNCTION(jsMessagePortIsActive, (JSGlobalObject * lexicalGlobalO
     return JSC::JSValue::encode(jsBoolean(false));
 }
 
-// markAsUncloneable/markAsUntransferable tag objects with a DontEnum JSC private name
-// (node uses a v8 Private): invisible to and unforgeable from user JS, and not removable,
-// so marking cannot be undone. Primitives are a documented no-op.
-static void markObjectWithPrivateName(JSC::VM& vm, JSC::JSValue value, const JSC::Identifier& privateName)
-{
-    JSC::JSObject* object = value.getObject();
-    if (!object || object->getDirect(vm, privateName))
-        return;
-    object->putDirect(vm, privateName, JSC::jsBoolean(true), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
-}
-
+// Primitives are a documented no-op for both.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionMarkAsUncloneable, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    auto& vm = lexicalGlobalObject->vm();
-    markObjectWithPrivateName(vm, callFrame->argument(0), builtinNames(vm).isUncloneablePrivateName());
+    if (auto* object = callFrame->argument(0).getObject())
+        markAsUncloneable(lexicalGlobalObject->vm(), *object);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionMarkAsUntransferable, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    auto& vm = lexicalGlobalObject->vm();
-    markObjectWithPrivateName(vm, callFrame->argument(0), builtinNames(vm).isUntransferablePrivateName());
+    if (auto* object = callFrame->argument(0).getObject())
+        markAsUntransferable(lexicalGlobalObject->vm(), *object);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -344,21 +337,62 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 
     bool isNodeWorker = proxy && proxy->options().kind == WorkerOptions::Kind::Node;
 
-    JSObject* array = constructEmptyArray(globalObject, nullptr, 12);
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 17);
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
+    RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 1, threadId);
+    RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 2, JSFunction::create(vm, globalObject, 1, "receiveMessageOnPort"_s, jsReceiveMessageOnPort, ImplementationVisibility::Public, NoIntrinsic));
+    RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 3, environmentData);
+    RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 4, threadName);
+    RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 5, JSFunction::create(vm, globalObject, 1, "isMessagePortActive"_s, jsMessagePortIsActive, ImplementationVisibility::Public, NoIntrinsic));
+    RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 6, JSFunction::create(vm, globalObject, 1, "markAsUntransferable"_s, jsFunctionMarkAsUntransferable, ImplementationVisibility::Public, NoIntrinsic));
+    RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 7, JSFunction::create(vm, globalObject, 1, "isMarkedAsUntransferable"_s, jsFunctionIsMarkedAsUntransferable, ImplementationVisibility::Public, NoIntrinsic));
+    RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 8, JSFunction::create(vm, globalObject, 1, "markAsUncloneable"_s, jsFunctionMarkAsUncloneable, ImplementationVisibility::Public, NoIntrinsic));
+    RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 9, JSFunction::create(vm, globalObject, 1, "setEntryEvaluatedHook"_s, jsFunctionSetEntryEvaluatedHook, ImplementationVisibility::Public, NoIntrinsic));
+    RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 10, jsBoolean(isNodeWorker));
+    RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 11, JSFunction::create(vm, globalObject, 1, "setParentPort"_s, jsFunctionSetParentPort, ImplementationVisibility::Public, NoIntrinsic));
+    RETURN_IF_EXCEPTION(scope, {});
+    array->putDirectIndex(globalObject, 12, JSFunction::create(vm, globalObject, 1, "setStdioPorts"_s, jsFunctionSetNodeWorkerStdioPorts, ImplementationVisibility::Public, NoIntrinsic));
+    RETURN_IF_EXCEPTION(scope, {});
+    // The intrinsic constructors, so worker_threads keeps working when user code
+    // replaces globalThis.MessagePort etc. before the module loads (#40268).
+    array->putDirectIndex(globalObject, 13, JSMessagePort::getConstructor(vm, globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
+    array->putDirectIndex(globalObject, 14, JSMessageChannel::getConstructor(vm, globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
+    array->putDirectIndex(globalObject, 15, JSBroadcastChannel::getConstructor(vm, globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
+    array->putDirectIndex(globalObject, 16, JSWorker::getConstructor(vm, globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
     return array;
+}
+
+// worker_threads (worker side): { stdin?, stdout, stderr } ports from the parent Worker.
+// process.stdin/stdout/stderr are created over them on first access (BunProcess.cpp).
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetNodeWorkerStdioPorts, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    if (auto* ports = callFrame->argument(0).getObject())
+        defaultGlobalObject(lexicalGlobalObject)->setNodeWorkerStdioPorts(ports);
+    return JSValue::encode(jsUndefined());
+}
+
+// A node:worker_threads worker loads node:worker_threads before preloads and the entry
+// point (it rebinds process stdio and registers parentPort / the postMessageToThread
+// port), as Node runs its worker bootstrap before user code. Throws like require() would.
+extern "C" void Bun__Worker__loadNodeWorkerThreadsModule(Zig::GlobalObject* globalObject)
+{
+    globalObject->internalModuleRegistry()->requireId(globalObject, globalObject->vm(), Bun::InternalModuleRegistry::Field::NodeWorkerThreads);
 }
 
 // worker_threads (worker side): register the transferred port as this thread's parentPort.
@@ -409,6 +443,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
 
     Vector<RefPtr<MessagePort>> ports;
     ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTF::move(transferList), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
+    RETURN_IF_EXCEPTION(scope, {});
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, scope, serialized.releaseException());
         RELEASE_AND_RETURN(scope, {});

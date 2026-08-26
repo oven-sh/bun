@@ -457,7 +457,7 @@ const rustSharedTypes: Record<string, string> = {
   "JSC::JSGlobalObject": "crate::JSGlobalObject",
   "Zig::GlobalObject": "crate::JSGlobalObject",
   "ZigException": "crate::zig_exception::ZigException",
-  "ZigString": "bun_core::ZigString",
+  "EncodedSlice": "bun_core::EncodedSlice",
   "JSC::VM": "crate::VM",
   "JSC::JSPromise": "crate::JSPromise",
   "JSC::JSMap": "crate::JSMap",
@@ -901,9 +901,6 @@ async function renderError(position: Srcloc, message: string, label: string, col
   console.error(`\x1b[m${" ".repeat(Bun.stringWidth(before))}${color}^${"~".repeat(Math.max(length - 1, 0))}\x1b[m`);
 }
 
-type Cfg = {
-  dstDir: string;
-};
 async function readFileOrEmpty(file: string): Promise<string> {
   try {
     const fileContents = await Bun.file(file).text();

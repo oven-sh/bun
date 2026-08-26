@@ -91,9 +91,9 @@ impl Editor {
             return false;
         };
 
-        if let Some(path) = BIN_NAME[editor] {
-            if !path.is_empty() {
-                if let Some(bin) = which(buf, path_env, cwd, path) {
+        if let Some(bin_name) = BIN_NAME[editor] {
+            if !bin_name.is_empty() {
+                if let Some(bin) = which(buf, path_env, cwd, bin_name) {
                     *out = bin.as_bytes();
                     return true;
                 }

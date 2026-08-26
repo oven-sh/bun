@@ -106,7 +106,12 @@ const bundlerBuilds = [...corpusBuilds, ...libraryBuilds];
 const bigPath = join(corpusDir, "big.js");
 writeFileSync(bigPath, bigSource());
 
-async function bundle(outdir: string, entry: string, args: readonly string[], env: Record<string, string | undefined> = bunEnv) {
+async function bundle(
+  outdir: string,
+  entry: string,
+  args: readonly string[],
+  env: Record<string, string | undefined> = bunEnv,
+) {
   const name = basename(entry);
   await using proc = Bun.spawn({
     // Relative entry + fixed cwd: the unminified output names each module by its path relative to cwd.
@@ -319,9 +324,14 @@ describe("bytecode cache portability", () => {
     results["Bun.build() after running other JS"] = hash(readFileSync(join(String(dir), "api", "features.js.jsc")));
     expect(results).toEqual(Object.fromEntries(Object.keys(results).map(k => [k, expected])));
 
-    const vmExpected = hash(new vm.Script(featuresSource, { filename: "features.js", produceCachedData: true }).cachedData!);
-    expect({ "vm.Script#createCachedData() after running it, in a busy VM": hash(readFileSync(join(String(dir), "api", "vm.cached"))) })
-      .toEqual({ "vm.Script#createCachedData() after running it, in a busy VM": vmExpected });
+    const vmExpected = hash(
+      new vm.Script(featuresSource, { filename: "features.js", produceCachedData: true }).cachedData!,
+    );
+    expect({
+      "vm.Script#createCachedData() after running it, in a busy VM": hash(
+        readFileSync(join(String(dir), "api", "vm.cached")),
+      ),
+    }).toEqual({ "vm.Script#createCachedData() after running it, in a busy VM": vmExpected });
   });
 
   // Identical bytes only help if this platform also decodes what it encodes.

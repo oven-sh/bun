@@ -926,10 +926,8 @@ impl TranspilerJob {
             }
         }
 
-        // The parser can log an error and still return an AST (an `import`
-        // statement next to `module.exports`, a React Compiler failure). The
-        // sync path in `transpile_source_code_inner` rejects the file at this
-        // point; do the same instead of handing the printed output to JSC.
+        // Errors logged after the AST exists (duplicate export names, `import` next
+        // to `module.exports`) must still fail the load, as in `transpile_source_code_inner`.
         if transpiler.log().errors > 0 {
             self.parse_error = Some(crate::CrateError::ParseError);
             return;

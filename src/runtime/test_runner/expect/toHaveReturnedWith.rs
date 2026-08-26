@@ -31,14 +31,14 @@ pub(crate) fn to_have_returned_with(
 
     // Check for a pass and collect info for error messages
     for i in 0..calls_count {
-        let result = returns.get_direct_index(global, i);
+        let result = returns.get_direct_index(global, i)?;
 
         if result.is_object() {
             let result_type = result.get(global, "type")?.unwrap_or(JSValue::UNDEFINED);
             if result_type.is_string() {
                 let type_str = result_type.to_bun_string(global)?;
 
-                if type_str.eql_comptime("return") {
+                if type_str.eq_ascii(b"return") {
                     let result_value = result.get(global, "value")?.unwrap_or(JSValue::UNDEFINED);
                     successful_returns.push(result_value);
 
@@ -48,7 +48,7 @@ pub(crate) fn to_have_returned_with(
                             pass = true;
                         }
                     }
-                } else if type_str.eql_comptime("throw") {
+                } else if type_str.eq_ascii(b"throw") {
                     has_errors = true;
                 }
             }

@@ -51,9 +51,12 @@ bun_core::declare_scope!(cache, visible);
 /// Version 25: Every ModuleInfo record carries a trailing FetchParameters slot
 /// so ImportEntry/ExportEntry/StarExportEntry moduleRequestType matches JSC's
 /// after WebKit 90b2ecf79ae3 keyed m_loadedModules on (specifier, type).
-/// Version 26: ModuleInfo is written for every runtime ESM transpile, not only
+/// Version 26: ModuleInfo wire format is a string table (u8/u16/u32
+/// offsets picked by a header byte) plus a body of tagged records with
+/// u8/u16/u32 ids and implied slots dropped, instead of fixed u32 arrays.
+/// Version 27: ModuleInfo is written for every runtime ESM transpile, not only
 /// under --isolate; older entries have an empty esm_record (#7384).
-const EXPECTED_VERSION: u32 = 26;
+const EXPECTED_VERSION: u32 = 27;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -399,7 +402,7 @@ impl Entry {
         );
 
         self.output_code = if self.metadata.output_byte_length == 0 {
-            BunString::empty()
+            BunString::EMPTY
         } else {
             match self.metadata.output_encoding {
                 Encoding::UTF8 => {
@@ -964,7 +967,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             debug_assert!(this.entry.is_none());
 
             // Borrowed Latin-1 view: `to_file` only reads `byte_slice()` + the encoding
-            // tag (unmarked 8-bit ZigString -> Encoding::LATIN1, same as clone_latin1),
+            // tag (unmarked 8-bit EncodedSlice -> Encoding::LATIN1, same as clone_latin1),
             // and `output_code_bytes` outlives the synchronous `to_file` call.
             let output_code = BunString::ascii(output_code_bytes);
             let result = RuntimeTranspilerCache::to_file(

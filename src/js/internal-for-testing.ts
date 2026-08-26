@@ -658,9 +658,15 @@ export const structuredCloneAdvanced: (
 
 export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);
 
-export const BunString_toThreadSafeRefCountDelta: () => number = $newCppFunction(
+export const BunString_threadIsolatedCopyRefCountDelta: () => number = $newCppFunction(
   "InternalForTesting.cpp",
-  "jsFunction_BunString_toThreadSafeRefCountDelta",
+  "jsFunction_BunString_threadIsolatedCopyRefCountDelta",
+  0,
+);
+
+export const BunString_makeThreadShareableRefCountDelta: () => number = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_BunString_makeThreadShareableRefCountDelta",
   0,
 );
 
@@ -783,3 +789,11 @@ export const byteStreamInternals = {
     stream: ReadableStream,
   ) => void,
 };
+
+// How many internal modules (node:fs etc.) this process created from bytecode embedded by `bun build --compile
+// --bytecode` instead of parsing their source.
+export const internalModulesLoadedFromBytecode: () => number = $newCppFunction(
+  "InternalModuleRegistry.cpp",
+  "jsInternalModulesLoadedFromBytecode",
+  0,
+);

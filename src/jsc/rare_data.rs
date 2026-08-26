@@ -1029,14 +1029,14 @@ fn set_tls_default_ciphers_from_js(
     if !ciphers.is_string() {
         return Err(global_this.throw_invalid_argument_type_value(b"ciphers", b"string", ciphers));
     }
-    let sliced = ciphers.to_slice(global_this)?;
+    let utf8 = ciphers.to_utf8(global_this)?;
     // `bun_vm()` is the safe BACKREF accessor for the per-thread VM; `as_mut()`
     // is the audited single-JS-thread `&mut` escape hatch.
     global_this
         .bun_vm()
         .as_mut()
         .rare_data()
-        .set_tls_default_ciphers(sliced.slice());
+        .set_tls_default_ciphers(utf8.slice());
     Ok(JSValue::UNDEFINED)
 }
 

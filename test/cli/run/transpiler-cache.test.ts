@@ -301,19 +301,18 @@ describe("transpiler cache", () => {
 //   0: cache_version u32, 4: module_type u8, 5: output_encoding u8,
 //   then twelve u64 fields; esm_record_byte_offset @ 78,
 //   esm_record_byte_length @ 86, esm_record_hash @ 94. Payload follows @ 102.
-// Serialized module record layout (src/js_printer/lib.rs,
-// ModuleInfoDeserialized::serialize):
-//   [record_kinds_len u32][record_kinds, 1 byte each][pad to 4]
-//   [buffer_len u32][buffer: u32 string index x buffer_len]
-//   [requested_modules_len u32][keys u32 x n][values u32 x n][phases u8 x n][pad to 4]
-//   [flags u8][pad 3]
-//   [strings_len u32][string byte lengths u32 x strings_len][string bytes]
+// Serialized module record layout (ModuleInfoStringTable + body, see
+// `ModuleInfoDeserialized::serialize` in src/js_printer/lib.rs):
+//   table: [offset_width u8][0;3][count u32][(count+1) offsets][bytes]
+//   body:  [flags u8][id_width u8][0;2][n_requested u32][n_records u32]
+//          [n_records tag bytes][n_requested tag bytes][string ids @ id_width ...]
 const ESM_RECORD_BYTE_OFFSET_AT = 78;
 const ESM_RECORD_BYTE_LENGTH_AT = 86;
 const ESM_RECORD_HASH_AT = 94;
 const METADATA_SIZE = 102;
 
-// src/js_printer/lib.rs RecordKind discriminants and payload lengths.
+// src/js_printer/lib.rs RecordKind discriminants and the id count each kind
+// writes before elisions (see `shape` in `serialize_body`).
 const RECORD_KIND = {
   ImportInfoSingle: 0,
   ImportInfoSingleTypeScript: 1,
@@ -324,7 +323,7 @@ const RECORD_KIND = {
   ExportInfoStar: 6,
   ImportInfoNamespaceDefer: 7,
 } as const;
-const RECORD_LEN = [4, 4, 4, 4, 4, 3, 2, 4] as const;
+const RECORD_IDS = [3, 3, 3, 3, 2, 2, 1, 3] as const;
 const RECORD_KIND_NAME = Object.fromEntries(Object.entries(RECORD_KIND).map(([name, kind]) => [kind, name]));
 
 function readModuleRecord(file: string): { kind: string; name: string }[] | null {
@@ -333,38 +332,63 @@ function readModuleRecord(file: string): { kind: string; name: string }[] | null
   const esmOff = Number(data.readBigUInt64LE(ESM_RECORD_BYTE_OFFSET_AT));
   const esmLen = Number(data.readBigUInt64LE(ESM_RECORD_BYTE_LENGTH_AT));
   if (esmLen === 0) return null;
-  const record = data.subarray(esmOff, esmOff + esmLen);
 
-  let off = 0;
-  const recordKindsLen = record.readUInt32LE(off);
-  off += 4;
-  const kinds = record.subarray(off, off + recordKindsLen);
-  off += recordKindsLen + ((4 - (recordKindsLen % 4)) % 4);
-  const bufferLen = record.readUInt32LE(off);
-  off += 4;
-  const buffer = record.subarray(off, off + bufferLen * 4);
-  off += bufferLen * 4;
-  const requestedModulesLen = record.readUInt32LE(off);
-  off += 4 + requestedModulesLen * 4 * 2 + requestedModulesLen;
-  off += (4 - (requestedModulesLen % 4)) % 4;
-  off += 4; // flags + padding
-  const stringsLen = record.readUInt32LE(off);
-  off += 4;
-  const strings: string[] = [];
-  let stringOff = off + stringsLen * 4;
-  for (let i = 0; i < stringsLen; i++) {
-    const len = record.readUInt32LE(off + i * 4);
-    strings.push(record.toString("utf8", stringOff, stringOff + len));
-    stringOff += len;
+  const readUint = (at: number, width: number) =>
+    width === 1 ? data.readUInt8(at) : width === 2 ? data.readUInt16LE(at) : data.readUInt32LE(at);
+
+  // String table.
+  const offsetWidth = data.readUInt8(esmOff);
+  const count = data.readUInt32LE(esmOff + 4);
+  const offsetsAt = esmOff + 8;
+  const bytesAt = offsetsAt + (count + 1) * offsetWidth;
+  const string = (id: number) => {
+    if (id === count) return "*namespace";
+    if (id === count + 1) return "*default";
+    const start = readUint(offsetsAt + id * offsetWidth, offsetWidth);
+    const end = readUint(offsetsAt + (id + 1) * offsetWidth, offsetWidth);
+    return data.toString("utf8", bytesAt + start, bytesAt + end);
+  };
+  const total = readUint(offsetsAt + count * offsetWidth, offsetWidth);
+
+  // Body.
+  const bodyAt = bytesAt + total;
+  const idWidth = data.readUInt8(bodyAt + 1);
+  const nRequested = data.readUInt32LE(bodyAt + 4);
+  const nRecords = data.readUInt32LE(bodyAt + 8);
+  const recordTagsAt = bodyAt + 12;
+  const requestedTagsAt = recordTagsAt + nRecords;
+  let idsAt = requestedTagsAt + nRequested;
+  const nextId = () => {
+    const v = readUint(idsAt, idWidth);
+    idsAt += idWidth;
+    return v;
+  };
+
+  // Skip the requested-module ids: a specifier each, plus a host-defined type
+  // id when the tag's fetch-kind (bits 1..) is 4.
+  for (let i = 0; i < nRequested; i++) {
+    nextId();
+    if (data.readUInt8(requestedTagsAt + i) >> 1 === 4) nextId();
   }
 
-  // The first slot of every record names what it declares: the module
-  // specifier for imports and star exports, the export name otherwise.
+  // The first id of every record names what it declares: the module specifier
+  // for imports and star exports, the export name otherwise. Namespace imports
+  // elide slot 1, `same-name` single imports elide slot 2, and a fetch-kind of
+  // 4 appends a host-defined type id.
   const records: { kind: string; name: string }[] = [];
-  let slot = 0;
-  for (const kind of kinds) {
-    records.push({ kind: RECORD_KIND_NAME[kind], name: strings[buffer.readUInt32LE(slot * 4)] });
-    slot += RECORD_LEN[kind];
+  for (let i = 0; i < nRecords; i++) {
+    const tag = data.readUInt8(recordTagsAt + i);
+    const kind = tag & 7;
+    const fetchKind = (tag >> 3) & 7;
+    const sameName = (tag >> 6) & 1;
+    let written = RECORD_IDS[kind];
+    if (kind === RECORD_KIND.ImportInfoNamespace || kind === RECORD_KIND.ImportInfoNamespaceDefer) written -= 1;
+    if ((kind === RECORD_KIND.ImportInfoSingle || kind === RECORD_KIND.ImportInfoSingleTypeScript) && sameName)
+      written -= 1;
+    const name = string(nextId());
+    for (let j = 1; j < written; j++) nextId();
+    if (fetchKind === 4) nextId();
+    records.push({ kind: RECORD_KIND_NAME[kind], name });
   }
   return records;
 }
@@ -422,18 +446,22 @@ test("rejects cached module records containing out-of-range string indices", () 
     const esmLen = Number(data.readBigUInt64LE(ESM_RECORD_BYTE_LENGTH_AT));
     if (esmLen === 0 || esmOff + esmLen > data.length) return false;
 
-    const recordKindsLen = data.readUInt32LE(esmOff);
-    const pad = (4 - (recordKindsLen % 4)) % 4;
-    let off = esmOff + 4 + recordKindsLen + pad;
-    const bufferLen = data.readUInt32LE(off);
-    off += 4;
-    if (bufferLen === 0) return false;
+    const readUint = (at: number, width: number) =>
+      width === 1 ? data.readUInt8(at) : width === 2 ? data.readUInt16LE(at) : data.readUInt32LE(at);
+    const offsetWidth = data.readUInt8(esmOff);
+    const count = data.readUInt32LE(esmOff + 4);
+    const offsetsAt = esmOff + 8;
+    const total = readUint(offsetsAt + count * offsetWidth, offsetWidth);
+    const bodyAt = offsetsAt + (count + 1) * offsetWidth + total;
+    const nRequested = data.readUInt32LE(bodyAt + 4);
+    const nRecords = data.readUInt32LE(bodyAt + 8);
+    const idsAt = bodyAt + 12 + nRecords + nRequested;
+    const end = esmOff + esmLen;
+    if (nRecords === 0 || idsAt >= end) return false;
 
-    // Point every string index in the record buffer far beyond the identifier
-    // table (but below the reserved sentinel range near u32::MAX).
-    for (let i = 0; i < bufferLen; i++) {
-      data.writeUInt32LE(0x7fffffff, off + i * 4);
-    }
+    // Point every string id in the body past the table (and past the two
+    // sentinels count / count+1): all-ones at whatever width the ids use.
+    data.fill(0xff, idsAt, end);
     // The cache loader skips esm-record content verification when the stored
     // hash field is zero, so whoever writes the cache file controls exactly
     // what reaches the module record deserializer.

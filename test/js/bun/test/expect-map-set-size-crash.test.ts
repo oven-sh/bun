@@ -15,7 +15,9 @@ const set = new Set([1, 2]);
 Object.defineProperty(set, "size", { value: {} });
 const map = new Map([[1, 2]]);
 Object.defineProperty(map, "size", { value: null });
-for (const value of [weakSet, weakMap, set, map]) {
+const selfSized = new WeakMap();
+selfSized.size = selfSized;
+for (const value of [weakSet, weakMap, set, map, { nested: selfSized }]) {
   try {
     expect(value).toEqual(1);
   } catch (e) {
@@ -49,7 +51,17 @@ for (const value of [weakSet, weakMap, set, map]) {
     expect(received).toEqual(expected)
 
     Expected: 1
-    Received: Map {}"
+    Received: Map {}
+
+    expect(received).toEqual(expected)
+
+    - 1
+    + {
+    +   "nested": WeakMap {},
+    + }
+
+    - Expected  - 1
+    + Received  + 3"
   `);
   expect(exitCode).toBe(0);
 });

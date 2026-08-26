@@ -150,6 +150,18 @@ bun build <entry points>
   Preserve original function and class names when minifying
 </ParamField>
 
+<ParamField path="--mangle-props" type="string">
+  Rename properties whose names match this regular expression to shorter names, e.g. <code>--mangle-props='_$'</code>
+</ParamField>
+
+<ParamField path="--reserve-props" type="string">
+  Never rename properties whose names match this regular expression, even if they match <code>--mangle-props</code>
+</ParamField>
+
+<ParamField path="--mangle-quoted" type="boolean">
+  Also rename matching properties written as string literals, e.g. <code>obj["foo_"]</code>
+</ParamField>
+
 ### Development Features
 
 <ParamField path="--watch" type="boolean">

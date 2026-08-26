@@ -7,6 +7,7 @@ use bun_ast::flags;
 use bun_ast::op::Level;
 use bun_ast::{E, Expr, ExprNodeIndex, ExprNodeList, G};
 use bun_collections::VecExt;
+use bun_core::strings;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) fn parse_jsx_element(&mut self, loc: bun_ast::Loc) -> crate::CrateResult<Expr> {
@@ -74,8 +75,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             key_prop_i = i;
                         }
 
-                        let prop_name =
-                            p.new_expr(E::EString::init(prop_name_literal), key_range.loc);
+                        // Namespaced attributes (`xlink:href`) are never mangled.
+                        let prop_name = if strings::contains_char(prop_name_literal, b':') {
+                            p.reserve_prop(prop_name_literal);
+                            p.new_expr(E::EString::init(prop_name_literal), key_range.loc)
+                        } else {
+                            p.property_key_for_name(prop_name_literal, key_range.loc)
+                        };
 
                         // Parse the value
                         let value: Expr = if p.lexer.token != T::TEquals {
@@ -136,34 +142,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 let key = 'brk: {
                                     match &expr.data {
                                         ExprData::EImportIdentifier(ident) => {
-                                            break 'brk p.new_expr(
-                                                E::EString::init(p.load_name_from_ref(ident.ref_)),
-                                                expr.loc,
-                                            );
+                                            let name = p.load_name_from_ref(ident.ref_);
+                                            break 'brk p.property_key_for_name(name, expr.loc);
                                         }
                                         ExprData::ECommonjsExportIdentifier(ident) => {
-                                            break 'brk p.new_expr(
-                                                E::EString::init(p.load_name_from_ref(ident.ref_)),
-                                                expr.loc,
-                                            );
+                                            let name = p.load_name_from_ref(ident.ref_);
+                                            break 'brk p.property_key_for_name(name, expr.loc);
                                         }
                                         ExprData::EIdentifier(ident) => {
-                                            break 'brk p.new_expr(
-                                                E::EString::init(p.load_name_from_ref(ident.ref_)),
-                                                expr.loc,
-                                            );
+                                            let name = p.load_name_from_ref(ident.ref_);
+                                            break 'brk p.property_key_for_name(name, expr.loc);
                                         }
                                         ExprData::EDot(dot) => {
-                                            break 'brk p.new_expr(
-                                                E::EString::init(&dot.name),
+                                            break 'brk p.property_key_for_name(
+                                                dot.name.slice(),
                                                 dot.name_loc,
                                             );
                                         }
-                                        ExprData::EIndex(index) => {
-                                            if matches!(index.index.data, ExprData::EString(_)) {
-                                                break 'brk index.index;
+                                        ExprData::EIndex(index) => match index.index.data {
+                                            ExprData::EString(_) => {
+                                                break 'brk p.mangle_string_as_prop(index.index);
                                             }
-                                        }
+                                            // `/* @__KEY__ */ "name"`: already the mangled key.
+                                            ExprData::ENameOfSymbol(_) => break 'brk index.index,
+                                            _ => {}
+                                        },
                                         _ => {}
                                     }
 
@@ -192,10 +195,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             T::TStringLiteral => {
                                 let key_loc = p.lexer.loc();
                                 let key_str = p.lexer.to_e_string()?;
-                                let key = p.new_expr(key_str, key_loc);
+                                let value = p.new_expr(key_str, key_loc);
                                 p.lexer.next()?;
+                                let key = p.mangle_string_as_prop(value);
                                 props.push(G::Property {
-                                    value: Some(key),
+                                    value: Some(value),
                                     key: Some(key),
                                     kind: G::PropertyKind::Normal,
                                     ..Default::default()

@@ -672,7 +672,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Arena-owned B::Object valid for 'a; exclusive during visit pass.
                 for property in bind.properties_mut() {
                     if !property.flags.contains(flags::Property::IsSpread) {
-                        self.visit_expr(&mut property.key);
+                        self.visit_expr_in_out(
+                            &mut property.key,
+                            ExprIn {
+                                should_mangle_strings_as_props: property
+                                    .flags
+                                    .contains(flags::Property::IsComputed),
+                                ..Default::default()
+                            },
+                        );
                     }
 
                     self.visit_binding(property.value, duplicate_arg_check.as_deref_mut());
@@ -891,7 +899,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     };
                     self.record_declared_symbol(priv_ref);
                 } else if let Some(key) = property.key.as_mut() {
-                    self.visit_expr(key);
+                    self.visit_expr_in_out(
+                        key,
+                        ExprIn {
+                            should_mangle_strings_as_props: property
+                                .flags
+                                .contains(flags::Property::IsComputed),
+                            ..Default::default()
+                        },
+                    );
                 }
 
                 // Make it an error to use "arguments" in a class body
@@ -913,8 +929,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && !property.flags.contains(flags::Property::IsComputed)
                 {
                     if let Some(key) = property.key {
-                        if let ExprData::EString(e_str) = key.data {
-                            name_to_keep = Some(e_str.string(self.arena).expect("oom"));
+                        match key.data {
+                            ExprData::EString(e_str) => {
+                                name_to_keep = Some(e_str.string(self.arena).expect("oom"));
+                            }
+                            // A mangled property still keeps its original name.
+                            ExprData::ENameOfSymbol(name) => {
+                                name_to_keep = Some(
+                                    self.symbols[name.ref_.inner_index() as usize]
+                                        .original_name
+                                        .slice(),
+                                );
+                            }
+                            _ => {}
                         }
                     }
                 } else if property.flags.contains(flags::Property::IsMethod) {
@@ -1025,14 +1052,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && p.value.is_none()
                         && p.key.is_some()
                 };
-                // A `[K]` / `[K] = init` field can't be lowered without hoisting the key.
+                // A `[K] = init` field can only be lowered without hoisting `K` if `K` is a constant.
                 let lower_fields = !use_define
                     && !class.properties.slice().iter().any(|p| {
                         is_instance_field(p)
                             && p.flags.contains(flags::Property::IsComputed)
                             && !matches!(
                                 p.key.map(|k| k.data),
-                                Some(ExprData::EString(_) | ExprData::ENumber(_))
+                                Some(
+                                    ExprData::EString(_)
+                                        | ExprData::ENumber(_)
+                                        | ExprData::ENameOfSymbol(_)
+                                )
                             )
                     });
 
@@ -1070,28 +1101,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .slice();
                         let arg_ident = self.new_expr(E::Identifier::init(id_ref), bind_loc);
                         let this_target = self.new_expr(E::This {}, bind_loc);
-                        let dot = self.new_expr(
-                            E::Dot {
-                                target: this_target,
-                                name: name.into(),
-                                name_loc: bind_loc,
-                                ..Default::default()
-                            },
-                            bind_loc,
-                        );
+                        let dot = self.dot_or_mangled_prop(this_target, name, bind_loc, bind_loc);
                         injected.push(Stmt::assign(dot, arg_ident));
 
                         if use_define {
-                            // New symbol so renaming can't desync the field from the arg.
-                            let field_symbol_ref = self
-                                .declare_symbol(SymbolKind::Other, bind_loc, name)
-                                .unwrap_or(id_ref);
-                            self.symbols[field_symbol_ref.inner_index() as usize]
-                                .set_must_not_be_renamed(true);
-                            let field_ident =
-                                self.new_expr(E::Identifier::init(field_symbol_ref), bind_loc);
+                            let field_key = match dot.data {
+                                // Declare the field under the same mangled name.
+                                ExprData::EIndex(_) => self
+                                    .mangled_prop_expr(name, bind_loc, false)
+                                    .expect("the name was mangled just above"),
+                                _ => {
+                                    // New symbol so renaming can't desync the field from the arg.
+                                    let field_symbol_ref = self
+                                        .declare_symbol(SymbolKind::Other, bind_loc, name)
+                                        .unwrap_or(id_ref);
+                                    self.symbols[field_symbol_ref.inner_index() as usize]
+                                        .set_must_not_be_renamed(true);
+                                    self.new_expr(E::Identifier::init(field_symbol_ref), bind_loc)
+                                }
+                            };
                             class_body.push(G::Property {
-                                key: Some(field_ident),
+                                key: Some(field_key),
                                 ..Default::default()
                             });
                         }

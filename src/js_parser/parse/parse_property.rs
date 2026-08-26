@@ -266,6 +266,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 T::TStringLiteral => {
                     key = p.parse_string_literal()?;
+                    key = p.mangle_string_as_prop(key);
                 }
                 T::TBigIntegerLiteral => {
                     key = p.new_expr(
@@ -542,7 +543,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         return Err(crate::Error::SyntaxError);
                     }
 
-                    key = p.new_expr(E::EString::init(name), name_range.loc);
+                    key = p.property_key_for_name(name, name_range.loc);
 
                     // Parse a shorthand property
                     let is_shorthand_property = !opts.is_class

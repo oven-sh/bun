@@ -1155,6 +1155,7 @@ impl Tag {
             Tag::ENull
                 | Tag::EUndefined
                 | Tag::EString
+                | Tag::ENameOfSymbol
                 | Tag::EBoolean
                 | Tag::EBranchBoolean
                 | Tag::ENumber
@@ -1172,7 +1173,7 @@ impl Tag {
             Tag::EBoolean | Tag::EBranchBoolean => b"boolean",
             Tag::ENumber => b"number",
             Tag::EBigInt => b"bigint",
-            Tag::EString => b"string",
+            Tag::EString | Tag::ENameOfSymbol => b"string",
             Tag::EFunction | Tag::EArrow => b"function",
             _ => return None,
         })
@@ -2409,7 +2410,7 @@ impl Data {
             Data::EBoolean(_) | Data::EBranchBoolean(_) => PrimitiveType::Boolean,
             Data::ENull(_) => PrimitiveType::Null,
             Data::ENumber(_) => PrimitiveType::Number,
-            Data::EString(_) => PrimitiveType::String,
+            Data::EString(_) | Data::ENameOfSymbol(_) => PrimitiveType::String,
             Data::EUndefined(_) => PrimitiveType::Undefined,
             Data::ETemplate(t) => {
                 if t.tag.is_none() {

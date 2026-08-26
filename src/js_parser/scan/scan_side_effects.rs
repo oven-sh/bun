@@ -109,6 +109,7 @@ impl SideEffects {
             ExprData::ENull(_)
                 | ExprData::EUndefined(_)
                 | ExprData::EString(_)
+                | ExprData::ENameOfSymbol(_)
                 | ExprData::EBoolean(_)
                 | ExprData::EBranchBoolean(_)
                 | ExprData::ENumber(_)
@@ -143,6 +144,7 @@ impl SideEffects {
             | ExprData::ENumber(_)
             | ExprData::EBigInt(_)
             | ExprData::EString(_)
+            | ExprData::ENameOfSymbol(_)
             | ExprData::EThis(_)
             | ExprData::ERegExp(_)
             | ExprData::EFunction(_)
@@ -727,6 +729,7 @@ impl SideEffects {
             | ExprData::ENumber(_)
             | ExprData::EBigInt(_)
             | ExprData::EString(_)
+            | ExprData::ENameOfSymbol(_)
             | ExprData::EInlinedEnum(_) => true,
             ExprData::EUnary(e) => matches!(
                 e.op,
@@ -792,6 +795,7 @@ impl SideEffects {
             | ExprData::EBranchBoolean(_)
             | ExprData::ENumber(_)
             | ExprData::EString(_)
+            | ExprData::ENameOfSymbol(_)
             | ExprData::ERegExp(_)
             | ExprData::EFunction(_)
             | ExprData::EArrow(_)

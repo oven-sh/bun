@@ -2059,8 +2059,6 @@ impl BlobExt for Blob {
         JSValue::js_empty_string(global_this)
     }
 
-    /// `name` holds only an assigned name; it stays `Dead` for a plain
-    /// `Bun.file()`, whose name is derived from the store path on each call.
     fn get_name_string(&self) -> Option<BunString> {
         let name = self.name.get();
         if name.tag() != bun_core::Tag::Dead {

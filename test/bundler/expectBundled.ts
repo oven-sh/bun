@@ -631,6 +631,9 @@ function expectBundled(
   if (ESBUILD && _throw) {
     throw new Error("throw not implemented in esbuild");
   }
+  if (ESBUILD && minChunkSize !== undefined) {
+    throw new Error("minChunkSize not possible in esbuild backend");
+  }
   if (ESBUILD && allowUnresolved !== undefined) {
     throw new Error("allowUnresolved not possible in esbuild backend");
   }

@@ -993,6 +993,12 @@ describe("bundler", () => {
     minChunkSize: 1024,
     outdir: "/out",
     format: "esm",
+    onAfterBundle(api) {
+      // main, b, d, and the {main, d} chunk holding shared.js.
+      expect(jsFilesIn(api)).toHaveLength(4);
+      api.expectFile("/out/main.js").not.toContain("41");
+      expect(jsOutput(api, "d")).not.toContain('from "./main.js"');
+    },
     run: { file: "/out/b.js", stdout: "b\nd 42" },
   });
 

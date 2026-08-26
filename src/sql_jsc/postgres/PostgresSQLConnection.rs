@@ -320,7 +320,7 @@ impl PostgresSQLConnection {
             // if we have backpressure, wait for onWritable
             return false;
         }
-        self.ref_();
+        let _guard = self.ref_guard();
         debug!("onAutoFlush: draining");
         // drain as much as we can
         self.drain_internal();
@@ -334,8 +334,6 @@ impl PostgresSQLConnection {
         );
         self.auto_flusher
             .with_mut(|a| a.registered = keep_flusher_registered);
-        // SAFETY: `self` is a live Box-allocated connection; this releases one ref.
-        unsafe { Self::deref(self.as_ctx_ptr()) };
         keep_flusher_registered
     }
 
@@ -717,7 +715,7 @@ impl PostgresSQLConnection {
 
         self.status.set(Status::Failed);
 
-        self.ref_();
+        let _guard = self.ref_guard();
         // we defer the refAndClose so the on_close will be called first before we reject the pending requests
         let on_close_opt = self.consume_on_close_callback(self.global());
         if let Some(on_close) = on_close_opt {
@@ -741,8 +739,6 @@ impl PostgresSQLConnection {
             );
         }
         self.ref_and_close(Some(value));
-        // SAFETY: `self` is a live Box-allocated connection; this releases one ref.
-        unsafe { Self::deref(self.as_ctx_ptr()) };
         self.update_has_pending_activity();
     }
 
@@ -957,7 +953,7 @@ impl PostgresSQLConnection {
     }
 
     pub(crate) fn on_data(&self, data: &[u8]) {
-        self.ref_();
+        let _guard = self.ref_guard();
         self.update_flags(|f| f.insert(ConnectionFlags::IS_PROCESSING_DATA));
 
         if self.status.get() == Status::Connected {
@@ -1058,8 +1054,6 @@ impl PostgresSQLConnection {
         if self.status.get() == Status::Connected {
             self.reset_connection_timeout();
         }
-        // SAFETY: `self` is a live Box-allocated connection; this releases one ref.
-        unsafe { Self::deref(self.as_ctx_ptr()) };
     }
 
     pub fn constructor(
@@ -1472,6 +1466,13 @@ impl PostgresSQLConnection {
             }
             self.discard_request(request_ptr);
         }
+    }
+
+    /// Hold a ref on `self` for the guard's lifetime (across re-entrant JS).
+    #[inline]
+    fn ref_guard(&self) -> RefPtr<Self> {
+        // SAFETY: `self` is the live heap allocation.
+        unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
     }
 
     fn ref_and_close(&self, js_reason: Option<JSValue>) {

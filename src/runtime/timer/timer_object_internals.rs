@@ -15,6 +15,7 @@ use crate::jsc::{
     Debugger, JSGlobalObject, JSValue, JsRef, JsResult, ScriptExecutionStatus,
     generated::{JSImmediate, JSTimeout},
 };
+use bun_ptr::RefPtr;
 use core::cell::Cell;
 // Note: `bun_jsc::VirtualMachine` is a *module* alias; the struct lives at
 // `virtual_machine::VirtualMachine`.
@@ -87,6 +88,13 @@ unsafe extern "C" {
 /// §Forbidden — the callback can reach the same field via `cancel()`/
 /// `refresh()`). Provenance is `&self`-derived (read-only); the `*mut` is a
 /// type-only cast — writes must go through `Cell`/`UnsafeCell` fields.
+/// A ref held on whichever container `TimerObjectInternals` lives in.
+#[allow(dead_code)] // held, not read
+enum TimerParentRef {
+    Immediate(RefPtr<ImmediateObject>),
+    Timeout(RefPtr<TimeoutObject>),
+}
+
 enum TimerParent {
     Immediate(*mut ImmediateObject),
     Timeout(*mut TimeoutObject),
@@ -136,6 +144,16 @@ impl TimerObjectInternals {
             TimerParent::Immediate(p) => unsafe { ImmediateObject::ref_(p) },
             // SAFETY: as above.
             TimerParent::Timeout(p) => unsafe { TimeoutObject::ref_(p) },
+        }
+    }
+
+    /// Hold a ref on the parent container for the guard's lifetime.
+    fn ref_guard(&self) -> TimerParentRef {
+        match self.parent_ptr() {
+            // SAFETY: `p` is a live container per `parent_ptr()`.
+            TimerParent::Immediate(p) => TimerParentRef::Immediate(unsafe { RefPtr::init_ref(p) }),
+            // SAFETY: as above.
+            TimerParent::Timeout(p) => TimerParentRef::Timeout(unsafe { RefPtr::init_ref(p) }),
         }
     }
 
@@ -410,21 +428,18 @@ impl TimerObjectInternals {
             JSImmediate::arguments_get_cached(timer).expect("ImmediateObject arguments slot");
 
         let exception_thrown = {
-            s.ref_();
+            let _pin = s.ref_guard();
             let async_id = s.async_id();
-            // SAFETY: `this` is the live `internals` per fn contract; `ref_()`
-            // above pins the parent across re-entrancy.
+            // SAFETY: `this` is the live `internals` per fn contract; `_pin`
+            // keeps the parent across re-entrancy.
             let result =
                 unsafe { Self::run(this, global_this, timer, callback, arguments, async_id, vm) };
-            // `Self::run` has no early return so the deref ordering below is
-            // preserved. After the second `deref()` `*this` may be
-            // freed; do not touch it past this block.
             // Fresh read: re-entrant `cancel()`/`refresh()` may have changed
-            // `state` (`ref_()` above pins the parent).
+            // `state`. After `_pin` drops `*this` may be freed; do not touch
+            // it past this block.
             if s.event_loop_timer_state() == EventLoopTimerState::FIRED {
                 s.deref();
             }
-            s.deref();
             result
         };
         // --- after this point, the timer is no longer guaranteed to be alive ---
@@ -565,10 +580,7 @@ impl TimerObjectInternals {
         unsafe { (*(*vm).event_loop()).enter() };
         {
             // Ensure it stays alive for this scope.
-            s.ref_();
-            // The matching `deref()` is at the end of this
-            // block. Every path through the labelled-block + `is_timer_done`
-            // tail reaches it (no `return` between here and the deref).
+            let _pin = s.ref_guard();
 
             // SAFETY: `this` is the live `internals` per fn contract; `ref_()`
             // above pins the parent across re-entrancy.
@@ -682,9 +694,8 @@ impl TimerObjectInternals {
                 s.deref();
             }
 
-            // End of pinned scope. After
-            // this `*this` may be freed; do not touch past this block.
-            s.deref();
+            // End of pinned scope. After this `*this` may be freed; do not
+            // touch past this block.
         }
         // --- after this point, the timer is no longer guaranteed to be alive ---
 

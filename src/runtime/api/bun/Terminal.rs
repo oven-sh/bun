@@ -663,8 +663,8 @@ impl Terminal {
         }
         // Both reader callbacks below re-enter user JS and may deref; hold a
         // +1 so `self` stays live for the trailing field accesses.
-        self.ref_();
-        let guard = scopeguard::guard((), |()| self.deref_());
+        // SAFETY: `self` is the live heap allocation.
+        let guard = unsafe { bun_ptr::RefPtr::init_ref(self.as_ctx_ptr()) };
         if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
             // SAFETY: single JS thread; re-entrant user JS (data callback may
             // call `terminal.close()`) is handled by `read`'s raw dispatch.

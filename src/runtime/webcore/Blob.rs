@@ -2897,23 +2897,19 @@ impl BlobExt for Blob {
                                     // SAFETY: `memfd` is the live Box-allocated ptr
                                     // smuggled through `StdAllocator.ptr` by
                                     // `LinuxMemFdAllocator::allocator`.
-                                    unsafe { (*memfd).ref_() };
+                                    let memfd = unsafe { bun_ptr::RefPtr::init_ref(memfd) };
                                     let byte_offset = (buf.cast::<u8>() as usize)
                                         .saturating_sub(allocated.as_ptr() as usize);
                                     let result =
                                         jsc::ArrayBuffer::to_array_buffer_from_shared_memfd(
-                                            // SAFETY: `memfd` is live for the ref held above.
-                                            unsafe { (*memfd).fd }.native() as i64,
+                                            memfd.fd.native() as i64,
                                             global,
                                             byte_offset,
                                             buf_len,
                                             allocated.len(),
                                             TYPED_ARRAY_VIEW,
                                         );
-                                    // SAFETY: drop the ref taken above; `memfd` came
-                                    // from `heap::alloc` (see `LinuxMemFdAllocator::deref`
-                                    // contract).
-                                    unsafe { LinuxMemFdAllocator::deref(memfd) };
+                                    drop(memfd);
                                     let result = result?;
                                     debug!(
                                         "toArrayBuffer COW clone({}, {}) = {}",

@@ -1979,7 +1979,7 @@ impl Resolver {
         // Failing the pending queries releases their refs on this resolver from
         // inside `ares_destroy`; hold one so it outlives its own channel close.
         // SAFETY: fn contract.
-        unsafe { (*this).ref_() };
+        let _guard = unsafe { RefPtr::init_ref(this) };
         // SAFETY: alive under the ref just taken.
         let result = if unsafe { (*this).destroy_channel() } {
             SweepResult::Stopped
@@ -1989,11 +1989,8 @@ impl Resolver {
         // `GetAddrInfoRequest`'s EDESTRUCTION path does not call
         // `request_completed()`, so the c-ares timeout timer (and its +1 ref on
         // this resolver plus the uws active-handle bump) can still be linked.
-        // SAFETY: as above; then release our ref (may free `this`).
-        unsafe {
-            (*this).remove_timer();
-            Self::deref(this);
-        }
+        // SAFETY: as above. `_guard` then releases our ref (may free `this`).
+        unsafe { (*this).remove_timer() };
         result
     }
 }

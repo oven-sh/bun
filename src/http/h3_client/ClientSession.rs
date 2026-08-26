@@ -26,7 +26,6 @@ pub struct ClientSession {
     /// `quic.Socket` ext slot while connected (1, transferred from the registry
     /// add via `connect`), and one per entry in `pending`. `PendingConnect` holds
     /// an extra ref while DNS is in flight.
-    // Intrusive refcount — see `bun_ptr::IntrusiveRc<ClientSession>`.
     ref_count: Cell<u32>,
     /// Null while DNS is in flight; set once `us_quic_connect_addr` returns.
     // FFI handle that becomes dangling after onConnClose; raw is intentional.

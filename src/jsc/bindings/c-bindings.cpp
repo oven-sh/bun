@@ -20,6 +20,9 @@
 #include <uv.h>
 #include <windows.h>
 #include <corecrt_io.h>
+#include <atomic>
+#include <new>
+#include <wtf/Threading.h>
 #endif // !OS(WINDOWS)
 #include <lshpack.h>
 
@@ -644,6 +647,25 @@ BOOL WINAPI Ctrlhandler(DWORD signal)
 extern "C" void Bun__setCTRLHandler(BOOL add)
 {
     SetConsoleCtrlHandler(Ctrlhandler, add);
+}
+
+// Held, never released, across ExitProcess: a WTF suspender it kills between
+// SuspendThread and ResumeThread of this thread would leave it suspended forever.
+extern "C" void Bun__lockThreadSuspensionForExit()
+{
+    static std::atomic<DWORD> owner { 0 };
+    DWORD self = GetCurrentThreadId();
+    DWORD expected = 0;
+    if (!owner.compare_exchange_strong(expected, self, std::memory_order_acq_rel)) {
+        // Re-entered on the thread that already holds the lock.
+        if (expected == self)
+            return;
+        // Another thread's exit holds it and is about to terminate this thread.
+        for (;;)
+            SleepEx(INFINITE, FALSE);
+    }
+    alignas(WTF::ThreadSuspendLocker) static unsigned char storage[sizeof(WTF::ThreadSuspendLocker)];
+    new (storage) WTF::ThreadSuspendLocker();
 }
 #endif
 

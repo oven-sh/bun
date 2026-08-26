@@ -671,6 +671,16 @@ impl Stdio {
     }
 }
 
+impl Stdio {
+    /// Move the memfd out (ownership passes to the caller); `self` becomes `Ignore`.
+    pub fn take_memfd(&mut self) -> Option<Fd> {
+        let Stdio::Memfd(fd) = *self else { return None };
+        // Don't run Drop on the old value: it would close `fd`.
+        let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Stdio::Ignore));
+        Some(fd)
+    }
+}
+
 impl Drop for Stdio {
     fn drop(&mut self) {
         match self {

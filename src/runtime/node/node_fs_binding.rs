@@ -89,7 +89,7 @@ fn parse_async_args<A: FsArgument>(
     // `ManuallyDrop` keeps `slice` alive past return when ownership transfers
     // to the Task: dropped only on the early-return
     // error/abort branches; on the success path the Task owns `args` (whose
-    // protected JSValues are released by `Drop for ThreadSafe<A>` when the
+    // protected JSValues are released by `Drop for ThreadIsolated<A>` when the
     // Task completes), and `slice` is intentionally not dropped — its
     // `Drop`-unprotect would race that.
 
@@ -224,7 +224,7 @@ impl Binding {
         };
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         // /$bunfs/ is in-memory; readdir_inner handles it (recursive included).
-        let is_bunfs = bun_standalone_graph::Graph::get().is_some()
+        let is_bunfs = bun_standalone_graph::Graph::get_ref().is_some()
             && bun_standalone_graph::is_bun_standalone_file_path(rd_args.path.slice());
         if rd_args.recursive && !is_bunfs {
             return Ok(AsyncReaddirRecursiveTask::create(global, rd_args, vm));

@@ -729,7 +729,13 @@ pub fn exit(code: u32) -> ! {
     }
     #[cfg(windows)]
     {
+        // c-bindings.cpp: no WTF thread may hold this one suspended when ExitProcess
+        // kills it. No args, no preconditions: `safe fn`.
+        unsafe extern "C" {
+            safe fn Bun__lockThreadSuspensionForExit();
+        }
         Bun__onExit();
+        Bun__lockThreadSuspensionForExit();
         // `ExitProcess` is `safe fn` (no preconditions; never returns).
         crate::windows_sys::kernel32::ExitProcess(code)
     }

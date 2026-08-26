@@ -1120,7 +1120,7 @@ describe("new Request(input) transfers the input body", () => {
     ["Uint8Array", () => make(new TextEncoder().encode("hello")), "hello"],
     ["Blob", () => make(new Blob(["hello"])), "hello"],
     [
-      "ReadableStream",
+      "ReadableStream (push)",
       () =>
         make(
           new ReadableStream({
@@ -1130,6 +1130,22 @@ describe("new Request(input) transfers the input body", () => {
             },
           }),
         ),
+      "hello",
+    ],
+    [
+      "ReadableStream (pull)",
+      () => {
+        let done = false;
+        return make(
+          new ReadableStream({
+            pull(c) {
+              if (done) return c.close();
+              c.enqueue(new TextEncoder().encode("hello"));
+              done = true;
+            },
+          }),
+        );
+      },
       "hello",
     ],
   ] as const)("%s body", (_, factory, expected) => {
@@ -1144,9 +1160,12 @@ describe("new Request(input) transfers the input body", () => {
       await expect(input.text()).rejects.toThrow(TypeError);
     });
 
-    test("new Request(input, init) without init.body: input is consumed", async () => {
+    test.each([
+      ["{}", {}],
+      ["{ headers }", { headers: { "x-a": "1" } }],
+    ])("new Request(input, %s) without init.body: input is consumed", async (_, init) => {
       const input = factory();
-      const copy = new Request(input, { headers: { "x-a": "1" } });
+      const copy = new Request(input, init);
       expect({ inputUsed: input.bodyUsed, copyUsed: copy.bodyUsed }).toEqual({
         inputUsed: true,
         copyUsed: false,
@@ -1161,6 +1180,14 @@ describe("new Request(input) transfers the input body", () => {
       expect(() => new Request(input)).toThrow(TypeError);
       expect(() => new Request(input)).toThrow("Body is disturbed or locked");
       expect(() => new Request(input, { method: "PUT" })).toThrow(TypeError);
+      expect(() => new Request(input, { body: null })).toThrow(TypeError);
+    });
+
+    test("after the transfer, input.body is a locked stream that cannot be read", () => {
+      const input = factory();
+      new Request(input);
+      expect({ locked: input.body!.locked, used: input.bodyUsed }).toEqual({ locked: true, used: true });
+      expect(() => input.body!.getReader()).toThrow(TypeError);
     });
 
     test("new Request(input, { body }) leaves the input intact", async () => {
@@ -1191,7 +1218,7 @@ describe("new Request(input) transfers the input body", () => {
 
   // Bun extension: a Request supplied as the *init* argument is not the spec's
   // input Request, so its body is teed (not transferred), matching the
-  // Response-as-init branch and Node.
+  // Response-as-init branch.
   test("new Request(url, requestAsInit) does not consume the init Request's body", async () => {
     const src = make("from-init");
     // @ts-expect-error Bun accepts a Request as init
@@ -1244,6 +1271,31 @@ describe("new Request(input) transfers the input body", () => {
     });
     // and a second construction from the same null-body input still works
     expect(() => new Request(input)).not.toThrow();
+  });
+
+  // The input wrapper's cached `stream` slot was what rooted a user-provided
+  // ReadableStream. The transfer clears that slot, so the copy must hold the
+  // moved stream strongly itself, or a GC before the first read collects it
+  // and the read never settles.
+  test.each([
+    ["single-arg", (input: Request) => new Request(input)],
+    ["two-arg", (input: Request) => new Request(input, { headers: { "x-a": "1" } })],
+  ])("the moved stream survives a GC before the copy is read (%s)", async (_, construct) => {
+    const { copy, weak } = (() => {
+      const stream = new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("hello"));
+          c.close();
+        },
+      });
+      const weak = new WeakRef(stream);
+      return { copy: construct(make(stream)), weak };
+    })();
+    // `new WeakRef(target)` keeps the target alive until the current job ends.
+    await Bun.sleep(0);
+    Bun.gc(true);
+    expect(weak.deref()).toBeDefined();
+    expect(await copy.text()).toBe("hello");
   });
 
   // A Bun.serve incoming Request shares its body slot with the RequestContext.

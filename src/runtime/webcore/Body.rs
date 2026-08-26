@@ -1702,9 +1702,13 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         Ok(cloned)
     }
 
-    /// Fetch §Request ctor step 45: move this body out (re-seating any stream
-    /// already migrated to the JS cache), leave this owner `Used`, and clear
-    /// its `body`/`stream` cache. Null/Empty bodies pass through unchanged.
+    /// Fetch §Request ctor step 45: move this body out, leave this owner
+    /// `Used`, and clear its `body`/`stream` cache. Null/Empty bodies pass
+    /// through unchanged.
+    ///
+    /// A moved stream comes back in a `Held` `Locked.readable`: this owner's
+    /// wrapper slot (cleared here) was what rooted it, and the new owner only
+    /// adopts it into its own slot in `check_body_stream_ref`.
     fn transfer_body_value(&self, global_this: &JSGlobalObject) -> JsResult<Value> {
         if matches!(self.get_body_value(), Value::Null | Value::Empty) {
             return Ok(Value::Null);
@@ -1714,18 +1718,15 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         // Prefer a stream that is already live (JS cache or `locked.readable`);
         // only fall back to `to_readable_stream` to materialize one in place.
         if matches!(self.get_body_value(), Value::Locked(l) if l.task.is_some()) {
-            let readable = match self.get_body_readable_stream(global_this) {
+            let readable = match self.get_body_readable_stream() {
                 Some(rs) => Some(rs),
                 None => {
                     let v = self.get_body_value().to_readable_stream(global_this)?;
-                    ReadableStream::from_js(v, global_this)?
+                    ReadableStream::from_js_direct(v)
                 }
             };
             *self.get_body_value() = Value::Used;
-            if let Some(js_ref) = self.js_ref() {
-                Self::stream_set_cached(js_ref, global_this, JSValue::ZERO);
-                Self::body_set_cached(js_ref, global_this, JSValue::ZERO);
-            }
+            self.clear_body_cache(global_this);
             return Ok(match readable {
                 Some(rs) => Value::Locked(PendingValue {
                     readable: webcore::readable_stream::Strong::init(rs, global_this),
@@ -1734,23 +1735,26 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 None => Value::Null,
             });
         }
-        let cached_stream = match self.js_ref().and_then(Self::stream_get_cached) {
-            Some(stream) => ReadableStream::from_js(stream, global_this)?,
-            None => None,
-        };
+        // JS is the source of truth for the stream (see `get_body_readable_stream`).
+        let cached_stream = self
+            .js_ref()
+            .and_then(Self::stream_get_cached)
+            .and_then(ReadableStream::from_js_direct);
         let mut body = core::mem::replace(self.get_body_value(), Value::Used);
         if let Value::Locked(locked) = &mut body {
-            if !locked.readable.has() {
-                if let Some(rs) = cached_stream {
-                    locked.readable = webcore::readable_stream::Strong::init(rs, global_this);
-                }
+            if let Some(rs) = cached_stream.or_else(|| locked.readable.get()) {
+                locked.readable = webcore::readable_stream::Strong::init(rs, global_this);
             }
         }
+        self.clear_body_cache(global_this);
+        Ok(body)
+    }
+
+    fn clear_body_cache(&self, global_this: &JSGlobalObject) {
         if let Some(js_ref) = self.js_ref() {
             Self::stream_set_cached(js_ref, global_this, JSValue::ZERO);
             Self::body_set_cached(js_ref, global_this, JSValue::ZERO);
         }
-        Ok(body)
     }
 
     fn get_text(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {

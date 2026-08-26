@@ -1498,16 +1498,16 @@ impl Request {
     ) -> JsResult<()> {
         // allocator param dropped (global mimalloc)
         let _ = self.ensure_url();
+        // Headers first: a transfer leaves `self` `Used`, so nothing fallible
+        // may run after it. `headers` drops on the `?` error path below.
+        let headers = self.clone_headers(global_this)?;
+        // Last fallible call; an early return here leaves `req.url` untouched.
         let body_ = if transfer_body {
             self.transfer_body_value(global_this)?
         } else {
             self.clone_body_value_via_cached_stream(global_this)?
         };
-        // BodyValue's Drop frees `body_` on the `?` error path
         let body = body::hive_alloc(body_);
-        // Last fallible call; an early return here leaves `req.url` untouched.
-        // `body` (a `BodyHiveHandle`) drops on the `?` error path, releasing its +1.
-        let headers = self.clone_headers(global_this)?;
         let url = if preserve_url {
             req.url.take()
         } else {

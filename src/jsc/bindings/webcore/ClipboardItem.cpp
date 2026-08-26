@@ -94,6 +94,9 @@ void ClipboardItem::cancelDataCollection()
 
 bool ClipboardItem::supports(const String& type)
 {
+    // The spec also answers true for a "web " custom format. Bun does not
+    // implement web custom formats, so it does not claim to support them: a
+    // caller that feature-detects here and then writes one would fail.
     auto essence = parseMIMETypeEssence(type);
     return !essence.isEmpty() && clipboardSupportsType(essence);
 }

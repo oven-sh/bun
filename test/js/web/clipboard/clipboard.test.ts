@@ -199,6 +199,11 @@ describe("ClipboardItem", () => {
     expect(() => new ClipboardItem({ "text/plain": "a", " text/plain ": "b" })).toThrow(TypeError);
     // supports() matches by essence.
     expect(ClipboardItem.supports("text/plain;charset=utf-8")).toBe(true);
+    // Spec "web " custom formats are not implemented. The error says so
+    // instead of calling the key malformed.
+    expect(() => new ClipboardItem({ "web text/csv": "a,b" })).toThrow(
+      new TypeError('Web custom formats like "web text/csv" are not supported'),
+    );
   });
 
   test("getType() matches by the parsed MIME essence", async () => {
@@ -324,6 +329,10 @@ describe("ClipboardItem", () => {
     expect(ClipboardItem.supports("image/png")).toBe(true);
     expect(ClipboardItem.supports("text/html")).toBe(true);
     expect(ClipboardItem.supports("application/x-bun-custom")).toBe(false);
+    // Browsers answer true for a spec "web " custom format because they can
+    // write one. Bun cannot, so it does not claim to.
+    expect(ClipboardItem.supports("web text/html")).toBe(false);
+    expect(ClipboardItem.supports("web application/x-bun-custom")).toBe(false);
     // WebIDL DOMString conversion: stringifiable objects work, Symbols throw,
     // and the argument is required.
     expect(ClipboardItem.supports({ toString: () => "text/plain" } as unknown as string)).toBe(true);

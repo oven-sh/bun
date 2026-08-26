@@ -158,8 +158,13 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSClipboardItemDOMConstr
         // Spec: `types` holds the serialization of the parsed MIME type
         // (mimesniff §4.4), parameters included, as in Chrome.
         String normalized = ClipboardItem::parseAndSerializeMIMEType(entry.key);
-        if (normalized.isEmpty()) [[unlikely]]
+        if (normalized.isEmpty()) [[unlikely]] {
+            // A spec "web " custom format never parses as a MIME type. Name the
+            // missing feature instead of calling the key malformed.
+            if (entry.key.startsWith("web "_s))
+                return JSValue::encode(throwTypeError(lexicalGlobalObject, throwScope, makeString("Web custom formats like \""_s, entry.key, "\" are not supported"_s)));
             return JSValue::encode(throwTypeError(lexicalGlobalObject, throwScope, makeString("\""_s, entry.key, "\" is not a valid MIME type"_s)));
+        }
         bool duplicate = items.containsIf([&](auto& item) { return item.key == normalized; });
         if (duplicate) [[unlikely]]
             return JSValue::encode(throwTypeError(lexicalGlobalObject, throwScope, makeString("Duplicate MIME type \""_s, normalized, "\""_s)));

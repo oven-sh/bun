@@ -1,6 +1,6 @@
 use crate::mal_prelude::*;
 use bun_alloc::ArenaVecExt as _;
-use bun_collections::{ArrayHashMap, VecExt, index_sort};
+use bun_collections::{ArrayHashMap, AutoBitSet, VecExt, index_sort};
 
 use crate::LinkerContext;
 use crate::js_meta;
@@ -322,28 +322,24 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
 /// loading one runs nothing, and neither does anything its files statically
 /// import (which may live in a chunk the entry would otherwise only have
 /// reached, in order, through this one).
-fn inert_chunks(c: &LinkerContext, chunks: &[Chunk]) -> Vec<bool> {
+fn inert_chunks(c: &LinkerContext, chunks: &[Chunk]) -> Result<AutoBitSet, bun_alloc::AllocError> {
     let mut chunk_of_file = vec![u32::MAX; c.graph.files.len()];
-    let mut inert: Vec<bool> = chunks
-        .iter()
-        .map(|chunk| {
-            matches!(chunk.content, chunk::Content::Javascript(_))
-                && !chunk.entry_point.is_entry_point()
-        })
-        .collect();
+    let mut inert = AutoBitSet::init_empty(chunks.len())?;
     for (chunk_index, chunk) in chunks.iter().enumerate() {
         if !matches!(chunk.content, chunk::Content::Javascript(_)) {
             continue;
         }
+        let mut runs_nothing = !chunk.entry_point.is_entry_point();
         for &source_index in chunk.files_with_parts_in_chunk.keys() {
             chunk_of_file[source_index as usize] = chunk_index as u32;
-            if inert[chunk_index] && !c.loading_file_has_no_side_effects(source_index) {
-                inert[chunk_index] = false;
-            }
+            runs_nothing = runs_nothing && c.loading_file_has_no_side_effects(source_index);
+        }
+        if runs_nothing {
+            inert.set(chunk_index);
         }
     }
-    if !inert.iter().any(|&b| b) {
-        return inert;
+    if inert.count() == 0 {
+        return Ok(inert);
     }
 
     // Other chunks each still-inert chunk's files statically import from.
@@ -351,7 +347,7 @@ fn inert_chunks(c: &LinkerContext, chunks: &[Chunk]) -> Vec<bool> {
     let parts = c.graph.ast.items_parts();
     let mut imported_chunks: Vec<Vec<u32>> = vec![Vec::new(); chunks.len()];
     for (chunk_index, chunk) in chunks.iter().enumerate() {
-        if !inert[chunk_index] {
+        if !inert.is_set(chunk_index) {
             continue;
         }
         let imported = &mut imported_chunks[chunk_index];
@@ -389,17 +385,17 @@ fn inert_chunks(c: &LinkerContext, chunks: &[Chunk]) -> Vec<bool> {
     loop {
         let mut changed = false;
         for chunk_index in 0..chunks.len() {
-            if inert[chunk_index]
+            if inert.is_set(chunk_index)
                 && imported_chunks[chunk_index]
                     .iter()
-                    .any(|&other| !inert[other as usize])
+                    .any(|&other| !inert.is_set(other as usize))
             {
-                inert[chunk_index] = false;
+                inert.unset(chunk_index);
                 changed = true;
             }
         }
         if !changed {
-            return inert;
+            return Ok(inert);
         }
     }
 }
@@ -409,7 +405,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
     chunks: &mut [Chunk],
     chunk_metas: &mut [ChunkMeta],
 ) -> Result<(), bun_alloc::AllocError> {
-    let mut inert: Option<Vec<bool>> = None;
+    let mut inert: Option<AutoBitSet> = None;
 
     // Mark imported symbols as exported in the chunk from which they are declared
     // The loop body also indexes chunk_metas[other_chunk_index] /
@@ -498,7 +494,10 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                     continue;
                 }
                 // Nothing is used from it; skip it if loading it runs nothing.
-                if inert.get_or_insert_with(|| inert_chunks(c, chunks))[other_chunk_index] {
+                if inert.is_none() {
+                    inert = Some(inert_chunks(c, chunks)?);
+                }
+                if inert.as_ref().unwrap().is_set(other_chunk_index) {
                     continue;
                 }
                 let js = chunks[chunk_index].content.javascript_mut();

@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
 import "bun:sqlite";
+import { describe, expect, test } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, isWindows, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";

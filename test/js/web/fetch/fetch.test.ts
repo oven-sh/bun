@@ -3203,7 +3203,7 @@ it("does not reuse a keep-alive connection when bytes follow a response that end
   const injected = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 8\r\n\r\ninjected";
   // A well-formed chunked body. RFC 9112 §6.3: a 204/304 ends at its header block no
   // matter what framing headers it carries, so these bytes are trailing junk too, not
-  // a body for the chunked decoder to consume (#2732).
+  // a body for the chunked decoder to consume.
   const chunkedBody = "5\r\nhello\r\n0\r\n\r\n";
   const responses: Record<string, { head: string; junk: string }> = {
     "/204": { head: "HTTP/1.1 204 No Content\r\nConnection: keep-alive\r\n\r\n", junk: injected },

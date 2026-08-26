@@ -12,38 +12,30 @@ use crate::{Chunk, LinkerContext, chunk};
 /// Splits chunks so that a bundle runs top-level side effects in the order
 /// the unbundled modules would.
 ///
-/// ESM hoists every `import` above the module's own code. A chunk is one
-/// module, so everything it imports from other chunks runs before any of its
-/// own files, whatever the source order was. With `e1.js` importing `s1.js`
-/// (only used by `e1`) and then `s2.js` (also used by `e2`), the `e1` chunk
-/// inlines `s1` and imports the `s2` chunk, and `s2` runs first. The only
-/// layout ESM allows is a chunk per run: `s1` moves to its own chunk, which
-/// `e1` imports before the `s2` chunk.
+/// ESM hoists every `import` above the module's own code, so whatever a chunk
+/// imports from other chunks runs before any of its own files. With `e1.js`
+/// importing `s1.js` (only used by `e1`) and then `s2.js` (shared with `e2`),
+/// the `e1` chunk inlines `s1` and imports the `s2` chunk: `s2` runs first.
+/// The only layout ESM allows is a chunk per run: `s1` in its own chunk,
+/// imported before the `s2` chunk.
 ///
 /// For each entry point, this walks the files it loads in evaluation order
-/// and cuts a chunk wherever a file with top-level side effects from another
-/// chunk interrupts it. `find_imported_parts_in_js_order` then lays a chunk
-/// out in the order of the first entry that loads it and ranks the chunks by
-/// where their first such file finishes in the same walk, so the entry's
-/// `import` statements, in that order, evaluate the runs in source order.
-/// When two entries run two files of one chunk in opposite orders, the files
-/// are cut apart too.
+/// and cuts a chunk wherever a side-effect file of another chunk interrupts
+/// its run. `find_imported_parts_in_js_order` lays a chunk out in the first
+/// loading entry's order and ranks chunks by the same walk, so the entry's
+/// imports evaluate the runs in source order. Files that two entries run in
+/// opposite orders are cut apart too.
 ///
-/// A file that runs nothing when loaded only has to run after its imports
-/// and before its importers, which the `import` statements guarantee. It
-/// joins the current run of its chunk across an interruption as long as the
-/// run can still be evaluated when it has to be: before its own side effects
-/// begin, or before the side effects of whatever imports it. Everything the
-/// file imports (through files that run nothing) must have run its side
-/// effects by then, and must not gain any later.
+/// A file that runs nothing when loaded may join a run across an interruption
+/// if the run can still be evaluated when it must be (before its own side
+/// effects, or before what imports it): everything the file imports, through
+/// other such files, must have run its side effects by then and must not gain
+/// any later.
 ///
-/// The new chunks keep their parent's `entry_bits` (the load condition has
-/// not changed) under a longer key, so `compute_chunks` sorts them next to
-/// it; chunk membership is `files_with_parts_in_chunk` from here on.
-///
-/// `guaranteed_loaded` is `merge_small_chunks`'s: per entry, the entries
-/// that have finished evaluating whenever it loads. What they load has run
-/// already and takes no part in the entry's order.
+/// New chunks keep their parent's `entry_bits` under a longer key; chunk
+/// membership is `files_with_parts_in_chunk` from here on. `guaranteed_loaded`
+/// (from `merge_small_chunks`): per entry, the entries that have finished
+/// whenever it loads. What they load takes no part in its order.
 pub(crate) fn split_chunks_for_evaluation_order<'t>(
     this: &LinkerContext,
     temp: &'t Arena,
@@ -97,11 +89,9 @@ pub(crate) fn split_chunks_for_evaluation_order<'t>(
         }
     };
 
-    // The files each entry point's chunk loads, in evaluation order: the
-    // post-order walk `find_imported_parts_in_js_order` does from the entry
-    // file, keeping the files that carry the entry's bit (a file that lost
-    // it to `merge_small_chunks` is loaded by an entry that precedes this
-    // one). Computed once; splitting does not move files in it.
+    // Each entry's files in evaluation order: the post-order walk from the
+    // entry file, kept to files that carry the entry's bit and that no entry
+    // finished before it loads. Splitting does not change it.
     enum Frame {
         Enter(u32),
         Exit(u32),
@@ -211,23 +201,19 @@ pub(crate) fn split_chunks_for_evaluation_order<'t>(
     struct Run {
         chunk_index: u32,
         files: Vec<u32>,
-        /// Positions of the run's first and last file with side effects, 0
-        /// while it has none.
+        /// Positions of the first and last side-effect file.
         first_impure: u32,
         last_impure: u32,
-        /// Position of the first file with side effects from another chunk
-        /// after `last_impure`: the run's side effects are over. Only set
-        /// while `last_impure != 0`.
+        /// Position of the first foreign side-effect file after `last_impure`.
         interrupted: u32,
-        /// A run whose side effects begin at this position imports the run
-        /// (through files that run nothing, possibly), so the run has to be
-        /// evaluated before it. 0 while nothing does.
+        /// The run must be evaluated before this position: a run whose side
+        /// effects begin there imports it.
         importer: u32,
     }
     let mut runs: Vec<Run> = Vec::new();
     let mut run_of_chunk: Vec<u32> = Vec::new();
     let mut run_of_file: Vec<u32> = vec![u32::MAX; files_len];
-    // Runs with side effects that may still gain `interrupted`.
+    // Runs with side effects and no `interrupted` yet.
     let mut uninterrupted: Vec<u32> = Vec::new();
     // Per file, the smallest position a walk has checked its imports
     // against (`u32::MAX`: none yet).
@@ -236,12 +222,10 @@ pub(crate) fn split_chunks_for_evaluation_order<'t>(
     // What one walk changed, to undo when it fails.
     let mut walk_touched: Vec<(u32, u32)> = Vec::new();
     let mut walk_marked: Vec<(u32, u32)> = Vec::new();
-    // Whether run `current` can be evaluated before position `before`, given
-    // that `start` (files of `current`) are in it: everything they import,
-    // through files that run nothing, must have run its side effects before
-    // that. Runs met on the way without side effects are imported from then
-    // on: they inherit the bound (and the walk continues through all of
-    // their files) so that they never gain side effects later than it.
+    // Whether `current` can be evaluated before position `before` with `start`
+    // in it: all they import, through files that run nothing, ran its side
+    // effects before that. Runs without side effects met on the way inherit
+    // the bound, so they never gain side effects later than it.
     let mut can_evaluate_before = |runs: &mut Vec<Run>,
                                    run_of_file: &[u32],
                                    walked_below: &mut [u32],
@@ -286,15 +270,13 @@ pub(crate) fn split_chunks_for_evaluation_order<'t>(
         walk_marked.clear();
         ok
     };
-    // For the order check across entries: per chunk, the files with side
-    // effects in the order of the first entry that loads the chunk, and the
-    // current entry's; `reference_position` indexes the former by file.
+    // Per chunk, its side-effect files in the first loading entry's order
+    // (`reference`) and in the current entry's (`sequence`).
     let mut reference: Vec<Vec<u32>> = Vec::new();
     let mut sequence: Vec<Vec<u32>> = Vec::new();
     let mut touched_chunks: Vec<u32> = Vec::new();
     let mut reference_position: Vec<u32> = vec![0; files_len];
-    // A cut made for one entry can separate two files that another entry
-    // saw in one run; a pass that makes no cut means every order agrees.
+    // A cut for one entry can break a run of another; repeat until no pass cuts.
     'passes: loop {
         let mut changed = false;
         for order in orders.iter() {
@@ -357,9 +339,8 @@ pub(crate) fn split_chunks_for_evaluation_order<'t>(
                     uninterrupted.push(run_index);
                 }
                 runs[run_index as usize].last_impure = pos;
-                // What the run imports has run before its side effects (or
-                // never will); the files that joined it while it had none
-                // are only bound now.
+                // Bind what the run imports to its first side effect; files
+                // that joined before it had any are bound now.
                 let files = core::mem::take(&mut runs[run_index as usize].files);
                 let before = runs[run_index as usize].first_impure;
                 let ok = can_evaluate_before(
@@ -389,9 +370,7 @@ pub(crate) fn split_chunks_for_evaluation_order<'t>(
                 walked_below[source_index as usize] = u32::MAX;
             }
 
-            // Every run but the chunk's last one becomes a chunk of its own.
-            // The last run holds the entry file when this is its entry's
-            // chunk, so the entry chunk stays the entry chunk.
+            // All but the chunk's last run split off; the last holds the entry file.
             for run_index in 0..runs.len() {
                 let chunk_index = runs[run_index].chunk_index;
                 if run_of_chunk[chunk_index as usize] == run_index as u32 {
@@ -406,11 +385,9 @@ pub(crate) fn split_chunks_for_evaluation_order<'t>(
             continue 'passes;
         }
 
-        // Every chunk is now one run in every order. Two entries can still
-        // run two files of a shared chunk, with no import between them, in
-        // opposite orders; the chunk is laid out in the first entry's order,
-        // so cut the first file the other entry runs too early, and
-        // everything the first entry runs before it, off the chunk.
+        // Every chunk is one run in every order. A chunk follows the first
+        // entry's order; where another entry runs a file earlier, cut it and
+        // everything the first entry runs before it off the chunk.
         reference.clear();
         reference.resize(js_chunks.count(), Vec::new());
         sequence.clear();

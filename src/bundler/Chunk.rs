@@ -1303,11 +1303,8 @@ pub struct JavaScriptChunk {
     pub parts_in_chunk_in_order: Box<[PartRange]>,
 
     // for code splitting
-    /// The other chunks with top-level side effects that the walk ordering
-    /// this chunk reaches, in the order it finishes their first file with
-    /// side effects: the order the unbundled modules would run them in.
-    /// `compute_cross_chunk_dependencies` sorts this chunk's `import`
-    /// statements by it.
+    /// The chunks with side effects that this chunk's walk reaches, in the
+    /// order it finishes their first side-effect file. Orders the `import`s.
     pub(crate) reached_chunks_in_order: Box<[u32]>,
     /// Bindings declared in this chunk that another chunk imports; named by `cross_chunk_names`.
     pub(crate) exports_to_other_chunks: ArrayHashMap<Ref, ()>,
@@ -1551,11 +1548,8 @@ pub mod cross_chunk_import {
 }
 
 impl CrossChunkImport {
-    /// `evaluation_rank[other]` is the position of `other` in the importing
-    /// chunk's `reached_chunks_in_order` (`u32::MAX` when the walk did not
-    /// reach it). ESM hoists every `import` above the chunk's own code, so
-    /// this order is the only part of the source evaluation order the
-    /// statements can keep.
+    /// `evaluation_rank[other]`: position of `other` in the importing chunk's
+    /// `reached_chunks_in_order`, `u32::MAX` when unreached.
     pub(crate) fn sorted_cross_chunk_imports(
         list: &mut Vec<CrossChunkImport>,
         chunks: &[Chunk],

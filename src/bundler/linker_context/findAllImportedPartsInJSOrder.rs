@@ -19,10 +19,8 @@ pub(crate) fn find_all_imported_parts_in_js_order(
         return Ok(());
     }
 
-    // With code splitting a live JS file is in exactly one chunk. The walk
-    // below orders each chunk's cross-chunk imports by where it reaches the
-    // files that run something when loaded; the rest (and every file without
-    // code splitting) map to `u32::MAX`.
+    // With code splitting, the chunk of each file that runs something when
+    // loaded; `u32::MAX` otherwise.
     let mut chunk_of_file: Vec<u32> = vec![u32::MAX; this.graph.files.len()];
     if this.graph.code_splitting {
         for (chunk_index, chunk) in chunks.iter().enumerate() {
@@ -114,12 +112,9 @@ pub(crate) fn find_imported_parts_in_js_order(
     let with_code_splitting = this.graph.code_splitting;
     let with_scb = this.graph.is_scb_bitset.bit_length > 0;
 
-    // With code splitting, walk from the first entry point that loads this
-    // chunk before the chunk's own files, so that files of a shared chunk
-    // with no dependency between them come out in the order that entry
-    // evaluates them (an entry chunk's walk already starts at its entry).
-    // Files the walk never reaches (side-effect free code that
-    // `merge_small_chunks` moved here) follow in `chunk_order_array` order.
+    // With code splitting, walk from the first entry that loads the chunk
+    // first, so a shared chunk's files come out in that entry's order. Files
+    // it never reaches follow in `chunk_order_array` order.
     let first_entry_source_index = if with_code_splitting {
         chunk
             .entry_bits()
@@ -211,9 +206,7 @@ fn run_visits<const WITH_CODE_SPLITTING: bool, const WITH_SCB: bool>(
 
 pub(crate) struct FindImportedPartsVisitor<'a, 'ctx> {
     pub(crate) entry_bits: &'a AutoBitSet,
-    /// The chunk's files. With code splitting this decides membership;
-    /// `entry_bits` alone cannot, as chunks split for evaluation order share
-    /// their entry bits (`compute_chunks`).
+    /// Membership with code splitting: split chunks share `entry_bits`.
     pub(crate) files_in_chunk: &'a ArrayHashMap<IndexInt, AtomicUsize>,
     pub(crate) flags: &'a [crate::js_meta::Flags],
     pub(crate) parts: &'a [bun_ast::PartList<'ctx>],
@@ -228,8 +221,7 @@ pub(crate) struct FindImportedPartsVisitor<'a, 'ctx> {
     /// `visit` (see the raw-pointer note above).
     entry_point_chunk_indices: *mut [u32],
     stack: Vec<PartsFrame>,
-    /// The chunk of each file that runs something when loaded; `u32::MAX`
-    /// for the others (and everywhere without code splitting).
+    /// The chunk of each file with side effects, `u32::MAX` otherwise.
     chunk_of_file: &'a [u32],
     /// `JavaScriptChunk::reached_chunks_in_order` under construction.
     reached_chunks: Vec<u32>,
@@ -353,9 +345,8 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                             });
                         }
                     } else {
-                        // Post-order, like the files above: another chunk's
-                        // first file with side effects finishes here exactly
-                        // when the unbundled module would have run them.
+                        // Post-order: the other chunk's first side-effect
+                        // file finishes here.
                         let other = self.chunk_of_file[source_index as usize];
                         if other != u32::MAX
                             && other != self.chunk_index
@@ -412,13 +403,8 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                         let part_index = part_index_ as u32;
                         let is_part_live = parts_live.is_set(part_index_);
                         let is_part_in_this_chunk = is_file_in_chunk && is_part_live;
-                        // A live part's `require()` is followed whichever chunk
-                        // holds it, so that this walk, the one in
-                        // `split_chunks_for_evaluation_order` and the one for
-                        // every other chunk agree on where each file is reached.
-                        // It cannot reach a file of this chunk that a static
-                        // import does not: a file's importers all have a
-                        // subset of its entry bits.
+                        // A live part's `require()` is followed from any
+                        // chunk, so every walk reaches a file at the same place.
                         for &record_id in part.import_record_indices.slice() {
                             let record: &ImportRecord = &records[record_id as usize];
                             if record.source_index.is_valid()

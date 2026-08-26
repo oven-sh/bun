@@ -2087,6 +2087,7 @@ fn parse_build_command_options(
         let mut browsers = bun_css::Browsers::default();
         for val in css_target_args {
             for entry in strings::split(val, b",") {
+                let entry = strings::trim(entry, b" \t");
                 if entry.is_empty() {
                     continue;
                 }

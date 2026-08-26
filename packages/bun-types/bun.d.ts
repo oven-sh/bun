@@ -3203,7 +3203,8 @@ declare module "bun" {
      * Browser versions to compile CSS for, as esbuild-style target strings:
      * a browser name plus version (`"chrome100"`, `"safari16.4"`,
      * `"firefox115"`, `"edge110"`, `"ios16"`, `"opera100"`), an ECMAScript
-     * year (`"es2020"`), or `"esnext"`.
+     * year from `"es2015"` through `"es2023"`, or `"esnext"`. Any other
+     * entry throws.
      *
      * By default, `target: "browser"` compiles modern CSS (nesting,
      * `oklch()`, `color()`, logical properties) down to widely supported

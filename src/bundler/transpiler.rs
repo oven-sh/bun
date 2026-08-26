@@ -3194,7 +3194,7 @@ impl<'a> Transpiler<'a> {
             &bun_css::PrinterOptions {
                 targets: bun_css::Targets::for_bundler(
                     self.options.target,
-                    self.options.css_target,
+                    self.options.css_target.as_ref(),
                 ),
                 minify: self.options.minify_whitespace,
                 ..bun_css::PrinterOptions::default()

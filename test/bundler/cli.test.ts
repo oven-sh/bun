@@ -919,7 +919,7 @@ describe.concurrent("--css-target", () => {
       "app.css": ".a { color: oklch(92.73% 0.0139 247.98); }\n",
     });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "app.css", "--minify", "--css-target", "chrome130,safari18,firefox130"],
+      cmd: [bunExe(), "build", "app.css", "--minify", "--css-target", "chrome130, safari18,firefox130"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",

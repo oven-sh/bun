@@ -102,7 +102,7 @@ async function resizePixels(
   src: Uint8Array,
   w: number,
   h: number,
-  filter: "box" | "bilinear" | "lanczos3" | "mitchell",
+  filter: "box" | "bilinear" | "lanczos3" | "mitchell" | "nearest",
 ): Promise<Uint8Array> {
   return decodePng(await new Bun.Image(src).resize(w, h, { filter }).png().bytes()).data;
 }
@@ -227,6 +227,68 @@ describe("resize filter properties", () => {
     const flat = makePng(16, 5, x => [(x * 16) & 255, 0, 0, 255]);
     const out = await resizePixels(flat, 8, 5, filter);
     for (let x = 0; x < 8; x++) for (let y = 1; y < 5; y++) expect(out[(y * 8 + x) * 4]).toBe(out[x * 4]);
+  });
+});
+
+// ─── premultiplied-alpha resampling ─────────────────────────────────────────
+// Resize must filter premultiplied RGBA: a fully transparent pixel's RGB
+// carries no weight, so it can't bleed into neighbours (issue #40514).
+
+describe("premultiplied alpha resampling", () => {
+  // box 2×1 → 1×1 is an exact average, so the expected pixel is exact.
+  // premul(transparent white) = (0,0,0,0); average with opaque black =
+  // (0,0,0,128); unpremultiply leaves RGB at 0. Straight-alpha resampling
+  // produced rgba(128,128,128,128) here.
+  test("transparent white does not bleed into opaque black (box)", async () => {
+    const src = makePng(2, 1, x => (x === 0 ? [0, 0, 0, 255] : [255, 255, 255, 0]));
+    const out = await resizePixels(src, 1, 1, "box");
+    expect(Array.from(out)).toEqual([0, 0, 0, 128]);
+  });
+
+  // The transparent pixels' green is premultiplied to 0, so no filter tap can
+  // introduce it — the green channel must be exactly 0 everywhere.
+  test("transparent green does not tint an opaque red checker (lanczos3)", async () => {
+    const src = makePng(16, 16, (x, y) => ((x + y) & 1 ? [255, 0, 0, 255] : [0, 255, 0, 0]));
+    const out = await resizePixels(src, 8, 8, "lanczos3");
+    for (let i = 0; i < out.length; i += 4) expect(out[i + 1]).toBe(0);
+  });
+
+  test("fully transparent output pixels have zero RGB", async () => {
+    const src = makePng(4, 4, () => [255, 255, 255, 0]);
+    const out = await resizePixels(src, 2, 2, "box");
+    for (let i = 0; i < out.length; i += 4) {
+      expect([out[i], out[i + 1], out[i + 2], out[i + 3]]).toEqual([0, 0, 0, 0]);
+    }
+  });
+
+  // The u8 premultiply round trip loses at most ~255/alpha per channel; at
+  // alpha 128 a flat field must come back within 1.
+  test("translucent flat field survives resize within rounding", async () => {
+    const src = makePng(9, 7, () => [200, 100, 50, 128]);
+    const out = await resizePixels(src, 3, 3, "mitchell");
+    for (let i = 0; i < out.length; i += 4) {
+      expect(Math.abs(out[i] - 200)).toBeLessThanOrEqual(1);
+      expect(Math.abs(out[i + 1] - 100)).toBeLessThanOrEqual(1);
+      expect(Math.abs(out[i + 2] - 50)).toBeLessThanOrEqual(1);
+      expect(out[i + 3]).toBe(128);
+    }
+  });
+
+  // nearest copies single source samples, so it must stay bit-exact for
+  // translucent pixels (no premultiply round trip).
+  test("nearest keeps translucent pixels bit-exact", async () => {
+    const colors: [number, number, number, number][] = [
+      [200, 100, 50, 128],
+      [7, 250, 13, 3],
+      [255, 0, 255, 0],
+      [1, 2, 3, 254],
+    ];
+    const src = makePng(2, 2, (x, y) => colors[y * 2 + x]);
+    const out = await resizePixels(src, 4, 4, "nearest");
+    for (let i = 0; i < out.length; i += 4) {
+      const px = [out[i], out[i + 1], out[i + 2], out[i + 3]];
+      expect(colors.some(c => c[0] === px[0] && c[1] === px[1] && c[2] === px[2] && c[3] === px[3])).toBe(true);
+    }
   });
 });
 

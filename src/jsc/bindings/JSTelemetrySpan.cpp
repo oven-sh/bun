@@ -472,6 +472,7 @@ static JSTelemetrySpan* thisSpan(JSGlobalObject* globalObject, CallFrame* callFr
 
 // DFG/FTL call `end()` (no arguments) through this directly (CallDOM): no JS
 // call frame, `this` already type-checked.
+JSC_DECLARE_JIT_OPERATION(telemetrySpanEndWithoutTypeCheck, JSC::EncodedJSValue, (JSGlobalObject*, JSTelemetrySpan*));
 JSC_DEFINE_JIT_OPERATION(telemetrySpanEndWithoutTypeCheck, JSC::EncodedJSValue, (JSGlobalObject * lexicalGlobalObject, JSTelemetrySpan* span))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);

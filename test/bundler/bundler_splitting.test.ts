@@ -710,6 +710,41 @@ describe("bundler", () => {
       { file: "/out/b.js", stdout: "A B" },
     ],
   });
+  // The eval file's *import* bindings must not be pinned: the linker merges
+  // them into the exporter's symbol, and a third chunk importing that symbol
+  // would then print it under its source name without having reserved it.
+  itBundled("splitting/DirectEvalDoesNotPinSharedExport", {
+    files: {
+      "/e.js": /* js */ `
+        import { a } from './shared.js'
+        var x = 'ex'
+        console.log(a(), eval('x'))
+      `,
+      "/p.js": /* js */ `
+        import { a, b } from './shared.js'
+        ${Array.from({ length: 120 }, (_, i) => `var l${i} = ${i}; l${i}++; l${i}++; l${i}++;`).join("\n")}
+        console.log(a(), b(), ${Array.from({ length: 120 }, (_, i) => `l${i}`).join("+")})
+      `,
+      "/q.js": /* js */ `
+        import { a, b } from './shared.js'
+        console.log(a(), b())
+      `,
+      "/shared.js": /* js */ `
+        export function a() { return 'A' }
+        export function b() { return 'B' }
+      `,
+    },
+    entryPoints: ["/e.js", "/p.js", "/q.js"],
+    splitting: true,
+    minifyIdentifiers: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/e.js", stdout: "A ex" },
+      { file: "/out/p.js", stdout: `A B ${120 * 3 + (119 * 120) / 2}` },
+      { file: "/out/q.js", stdout: "A B" },
+    ],
+  });
   itBundled("splitting/CrossChunkNamesWithDirectEval", {
     files: {
       "/a.js": /* js */ `

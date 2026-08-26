@@ -8033,14 +8033,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // the bundler wraps this file in a CommonJS closure those names stay
         // private to it, so pin them too. A flat ESM file's top-level names
         // share the chunk's scope with other files', so they stay renameable
-        // (as in esbuild) and eval may not see them.
+        // (as in esbuild) and eval may not see them. Import bindings are left
+        // out: the linker merges them into the exporting file's symbol, which
+        // would pin that name in every chunk that references it.
         if bundling
             && exports_kind == js_ast::ExportsKind::Cjs
             && self.module_scope().contains_direct_eval
         {
             let module_scope = self.module_scope_ref();
             for member in module_scope.members.values() {
-                self.symbols[member.ref_.inner_index() as usize].set_must_not_be_renamed(true);
+                let symbol = &mut self.symbols[member.ref_.inner_index() as usize];
+                if symbol.kind != js_ast::symbol::Kind::Import {
+                    symbol.set_must_not_be_renamed(true);
+                }
             }
         }
 

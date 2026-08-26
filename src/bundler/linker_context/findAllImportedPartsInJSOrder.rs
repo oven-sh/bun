@@ -255,10 +255,24 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                             // for `entry_point_chunk_index` (distinct from every
                             // column read through `self.c` / `self.flags` / `self.parts`),
                             // valid for `graph.files.len()` writes for the duration of the
-                            // link step. No `&` to this column is live here.
+                            // link step. Chunks run in parallel and, without code
+                            // splitting, several may contain this file: highest index wins
+                            // (unset is `u32::MAX`), as when this ran chunk by chunk.
                             unsafe {
-                                (*self.entry_point_chunk_indices)[source_index as usize] =
-                                    self.chunk_index;
+                                core::sync::atomic::AtomicU32::from_ptr(
+                                    (*self.entry_point_chunk_indices)
+                                        .as_mut_ptr()
+                                        .add(source_index as usize),
+                                )
+                                .try_update(
+                                    core::sync::atomic::Ordering::Relaxed,
+                                    core::sync::atomic::Ordering::Relaxed,
+                                    |cur| {
+                                        (cur == u32::MAX || cur < self.chunk_index)
+                                            .then_some(self.chunk_index)
+                                    },
+                                )
+                                .ok();
                             }
                         }
 

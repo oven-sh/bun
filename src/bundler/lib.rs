@@ -120,6 +120,9 @@ pub mod linker_context {
     #[path = "computeChunks.rs"]
     pub mod compute_chunks;
 
+    #[path = "mergeSmallChunks.rs"]
+    pub mod merge_small_chunks;
+
     #[path = "computeCrossChunkDependencies.rs"]
     pub mod compute_cross_chunk_dependencies;
 

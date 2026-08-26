@@ -256,6 +256,8 @@ export interface BundlerTestInput {
   targetFromAPI?: "TargetWasConfigured";
   minifyWhitespace?: boolean;
   splitting?: boolean;
+  /** `--min-chunk-size` / `minChunkSize`; requires `splitting` */
+  minChunkSize?: number;
   serverComponents?: boolean;
   reactCompiler?: boolean;
   reactCompilerOutputMode?: "client" | "ssr";
@@ -529,6 +531,7 @@ function expectBundled(
     snapshotSourceMap,
     sourceMap,
     splitting,
+    minChunkSize,
     target,
     todo: notImplemented,
     treeShaking,
@@ -627,6 +630,9 @@ function expectBundled(
   }
   if (ESBUILD && _throw) {
     throw new Error("throw not implemented in esbuild");
+  }
+  if (ESBUILD && minChunkSize !== undefined) {
+    throw new Error("minChunkSize not possible in esbuild backend");
   }
   if (ESBUILD && allowUnresolved !== undefined) {
     throw new Error("allowUnresolved not possible in esbuild backend");
@@ -816,6 +822,7 @@ function expectBundled(
               chunkNaming && chunkNaming !== "[name]-[hash].[ext]" && [`--chunk-naming`, chunkNaming],
               assetNaming && assetNaming !== "[name]-[hash].[ext]" && [`--asset-naming`, assetNaming],
               splitting && `--splitting`,
+              minChunkSize !== undefined && `--min-chunk-size=${minChunkSize}`,
               serverComponents && "--server-components",
               reactCompiler && "--react-compiler",
               outbase && `--root=${outbase}`,
@@ -1185,6 +1192,7 @@ function expectBundled(
           outdir: generateOutput ? buildOutDir : undefined,
           sourcemap: sourceMap,
           splitting,
+          minChunkSize,
           target,
           reactCompiler,
           reactCompilerOutputMode,

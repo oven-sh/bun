@@ -230,8 +230,7 @@ impl PosixLoop {
         unsafe { c::us_quic_loop_flush_if_pending(self) };
     }
 
-    /// Returns `None` when the kernel cannot create the backing event
-    /// provider (epoll/kqueue EMFILE); callers surface that as an error.
+    /// `None` if epoll/kqueue cannot be created (EMFILE).
     pub fn create<H: LoopHandler>() -> Option<NonNull<Loop>> {
         // SAFETY: us_create_loop allocates and returns a new loop; null hint is valid
         let p = unsafe {
@@ -408,8 +407,7 @@ impl WindowsLoop {
         unsafe { c::us_quic_loop_flush_if_pending(self) };
     }
 
-    /// Returns `None` when `uv_loop_init` fails (CreateIoCompletionPort under
-    /// handle/non-paged-pool exhaustion); callers surface that as an error.
+    /// `None` if `uv_loop_init` fails (handle exhaustion).
     pub fn create<H: LoopHandler>() -> Option<NonNull<WindowsLoop>> {
         // SAFETY: us_create_loop allocates and returns a new loop; null hint is valid
         let p = unsafe {

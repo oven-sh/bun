@@ -144,9 +144,7 @@ impl SpawnSyncEventLoop {
     // upheld by the caller). The caller provides uninitialized storage, hence
     // `MaybeUninit<Self>` (out-param ctor exception).
     //
-    // Returns `false` when the isolated event loop cannot be created
-    // (uv_loop_init / epoll_create1 / kqueue failure under resource
-    // exhaustion). `this` is left uninitialized on failure.
+    // Returns `false`, leaving `this` uninitialized, if the loop cannot be created.
     pub fn init(
         this: &mut core::mem::MaybeUninit<Self>,
         vm: *mut (), /* SAFETY: erased *mut VirtualMachine */
@@ -200,10 +198,9 @@ impl SpawnSyncEventLoop {
     /// Shared borrow of the isolated `uws::Loop`.
     ///
     /// # Safety (invariant)
-    /// `uws_loop` is created in `init` via `uws::Loop::create`; `init` returns
-    /// `false` on `None`, so `Self` is never constructed with a null loop. It
-    /// is freed only in `Drop`, so it is valid for all of `self`'s
-    /// lifetime. The loop is only mutated through `&mut self` paths
+    /// `uws_loop` is set in `init` (which fails instead of constructing `Self`
+    /// with a null loop) and freed only in `Drop`, so it is valid for all of
+    /// `self`'s lifetime. The loop is only mutated through `&mut self` paths
     /// (`uws_loop_mut`), so a shared borrow tied to `&self` cannot overlap a
     /// unique borrow.
     #[inline]

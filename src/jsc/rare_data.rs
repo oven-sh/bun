@@ -728,12 +728,8 @@ impl RareData {
             .push(CleanupHook::from(global_this, ctx, func));
     }
 
-    /// Returns `None` when the isolated event loop cannot be created
-    /// (uv_loop_init / epoll_create1 / kqueue failure under resource
-    /// exhaustion); the caller surfaces that as a thrown JS error so a
-    /// `Bun.spawnSync` under resource pressure fails the one call instead of
-    /// taking the process down. Once created the loop is cached, so only the
-    /// first call per VM can return `None`.
+    /// `None` if the loop cannot be created (resource exhaustion). Nothing is
+    /// cached on failure, so a later call retries.
     pub fn spawn_sync_event_loop(
         &mut self,
         vm: &mut VirtualMachine,

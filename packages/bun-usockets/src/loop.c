@@ -121,9 +121,7 @@ void us_internal_sweep_if_due(struct us_loop_t *loop) {
 #endif
 
 
-/* Returns 0 on success, -1 when the wakeup async cannot be created
- * (eventfd/mach_port under resource exhaustion). On failure nothing is left
- * allocated in loop->data. */
+/* -1 if the wakeup async cannot be created; nothing is left allocated in loop->data. */
 int us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
     void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop)) {
     // We allocate with calloc, so we only need to initialize the specific fields in use.

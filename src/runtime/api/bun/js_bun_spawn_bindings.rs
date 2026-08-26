@@ -1058,10 +1058,7 @@ fn spawn_maybe_sync(
                 .rare_data()
                 .spawn_sync_event_loop(&mut *jsc_vm_ptr)
             else {
-                // The per-spawnSync isolated event loop could not be created
-                // (uv_loop_init on Windows, epoll_create1/kqueue on POSIX).
-                // Throw instead of letting the unchecked NULL dereference in
-                // us_create_loop segfault the whole process.
+                // `WindowsStdio` has no `Drop`; free the pipes `as_spawn_option` allocated.
                 #[cfg(windows)]
                 for e in &mut extra_fds {
                     e.deinit();
@@ -2074,9 +2071,7 @@ fn spawn_maybe_sync(
 }
 
 fn throw_spawn_sync_loop_init_failed(global_this: &JSGlobalObject) -> JsError {
-    // us_create_loop discards the real errno by returning NULL, so the exact
-    // cause (EMFILE vs ENFILE, epoll_create1 vs eventfd) is not recoverable
-    // here. Report the common case with a platform-appropriate syscall name.
+    // us_create_loop returns NULL without the errno; EMFILE is the common cause.
     let err = SystemError {
         message: BunString::static_(
             b"spawnSync failed to initialize its event loop (system resource exhaustion)",

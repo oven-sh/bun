@@ -240,10 +240,7 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
 #else
     loop->fd = kqueue();
 #endif
-    /* EMFILE/ENFILE on epoll_create1/kqueue, or on the wakeup eventfd inside
-     * us_internal_loop_data_init: return NULL so per-call loop creation
-     * (Bun.spawnSync's SpawnSyncEventLoop) can surface a catchable error
-     * instead of aborting the process. */
+    /* EMFILE/ENFILE: the caller decides whether this is fatal. */
     if (loop->fd == -1) {
         us_free(loop);
         return NULL;
@@ -802,10 +799,7 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
 
     int efd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     if (efd == -1) {
-        /* EMFILE/ENFILE: the loop is unusable without its wakeup async.
-         * Return NULL so us_internal_loop_data_init (and in turn
-         * us_create_loop) can unwind and let the caller surface a catchable
-         * error instead of taking the process down. */
+        /* EMFILE/ENFILE: us_create_loop unwinds and returns NULL. */
         if (!fallthrough) {
             loop->num_polls--;
         }

@@ -16,6 +16,7 @@
 #include <JavaScriptCore/SourceCodeKey.h>
 #include <mimalloc.h>
 #include <JavaScriptCore/CodeCache.h>
+#include "BunBuiltinNames.h"
 
 namespace Zig {
 
@@ -170,17 +171,37 @@ extern "C" void CachedBytecode__deref(JSC::CachedBytecode* cachedBytecode)
 }
 
 JSC::VM& vmForBytecodeCache();
+static thread_local JSC::VM* s_vmForBytecodeCache = nullptr;
+// The builtins parse with private @names; this VM has no JSVMClientData to register Bun's, so it owns them directly.
+static thread_local std::unique_ptr<WebCore::BunBuiltinNames> s_builtinNamesForBytecodeCache;
+
 JSC::VM& vmForBytecodeCache()
 {
-    static thread_local JSC::VM* vmForBytecodeCache = nullptr;
-    if (!vmForBytecodeCache) {
+    if (!s_vmForBytecodeCache) {
         const auto heapSize = JSC::HeapType::Small;
         auto vmPtr = JSC::VM::tryCreate(heapSize);
         vmPtr->refSuppressingSaferCPPChecking();
-        vmForBytecodeCache = vmPtr.get();
+        s_vmForBytecodeCache = vmPtr.get();
         vmPtr->heap.acquireAccess();
     }
-    return *vmForBytecodeCache;
+    return *s_vmForBytecodeCache;
+}
+
+void ensureBuiltinNamesForBytecodeCache(JSC::VM& vm)
+{
+    ASSERT(&vm == s_vmForBytecodeCache);
+    if (!s_builtinNamesForBytecodeCache)
+        s_builtinNamesForBytecodeCache = WebCore::BunBuiltinNames::createStandalone(vm);
+}
+
+extern "C" void Bun__destroyBytecodeCacheVM()
+{
+    JSC::VM* vm = std::exchange(s_vmForBytecodeCache, nullptr);
+    if (!vm)
+        return;
+    JSC::JSLockHolder locker(*vm);
+    s_builtinNamesForBytecodeCache = nullptr;
+    vm->derefSuppressingSaferCPPChecking();
 }
 
 extern "C" JSC::EncoderStringTable* Bun__EncoderStringTable__create()

@@ -1411,6 +1411,8 @@ extern "C" void Bun__FakeTimers__setSystemTime(JSC::JSGlobalObject* globalObject
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue argument0 = callframe->argument(0);
 
     // JSGlobalObject::overridenDateNow's "no override" sentinel is NaN (see
@@ -1421,6 +1423,9 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalO
         ms = dateInstance->internalNumber();
     } else {
         ms = argument0.isNumber() ? argument0.asNumber() : PNaN;
+    }
+    if (std::isinf(ms)) {
+        return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "setSystemTime() expects a finite number or a Date"_s);
     }
     globalObject->overridenDateNow = ms;
     // Rebase the Rust-side fake-timers offset so advanceTimersByTime ticks

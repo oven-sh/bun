@@ -57,8 +57,8 @@ export class Y {
   );
 });
 
-/** Runs `bun test --coverage` in `dir` and returns the text table row for `file` plus the lcov `DA:` records for it. */
-async function coverageOf(dir: string, file: string) {
+/** Runs `bun test --coverage` in `dir` with the text and lcov reporters. */
+async function runCoverage(dir: string) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", "--coverage-dir=cov"],
     cwd: dir,
@@ -67,29 +67,41 @@ async function coverageOf(dir: string, file: string) {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
 
-  const row = stderr
+  /** The rows of the text table, without the dashed rules. */
+  const table = stderr
     .split("\n")
-    .find(line => line.startsWith(` ${file} `))
-    ?.trimEnd();
-  expect({ stdout, stderr, exitCode, row }).toMatchObject({ exitCode: 0, row: expect.any(String) });
+    .filter(line => line.includes(" | "))
+    .map(line => line.trimEnd());
+  const lcov = readFileSync(path.join(dir, "cov", "lcov.info"), "utf-8");
 
-  const record = readFileSync(path.join(dir, "cov", "lcov.info"), "utf-8")
-    .split("end_of_record")
-    .find(record => record.includes(`SF:${file}\n`))!;
-  const hits: Record<number, number> = {};
-  for (const [, line, count] of record.matchAll(/^DA:(\d+),(\d+)$/gm)) {
-    hits[Number(line)] = Number(count);
-  }
-  /** Per source line (1-based): hit, missed, or not an executable line at all. */
-  const status = (lineCount: number) =>
-    Object.fromEntries(
-      Array.from({ length: lineCount }, (_, i) => {
-        const line = i + 1;
-        return [line, !(line in hits) ? "-" : hits[line] > 0 ? "hit" : "MISSED"];
-      }),
-    );
-  return { row, record, status };
+  /** The text table row for `file` plus the lcov `DA:` records for it. */
+  const of = (file: string) => {
+    const row = table.find(line => line.startsWith(` ${file} `));
+    expect({ stderr, row }).toMatchObject({ row: expect.any(String) });
+
+    const record = lcov.split("end_of_record").find(record => record.includes(`SF:${file}\n`))!;
+    const hits: Record<number, number> = {};
+    for (const [, line, count] of record.matchAll(/^DA:(\d+),(\d+)$/gm)) {
+      hits[Number(line)] = Number(count);
+    }
+    /** Per source line (1-based): hit, missed, or not an executable line at all. */
+    const status = (lineCount: number) =>
+      Object.fromEntries(
+        Array.from({ length: lineCount }, (_, i) => {
+          const line = i + 1;
+          return [line, !(line in hits) ? "-" : hits[line] > 0 ? "hit" : "MISSED"];
+        }),
+      );
+    return { row: row!, record, status };
+  };
+  return { table, of };
+}
+
+/** Runs `bun test --coverage` in `dir` and returns the text table row for `file` plus the lcov `DA:` records for it. */
+async function coverageOf(dir: string, file: string) {
+  return (await runCoverage(dir)).of(file);
 }
 
 const skipTestFiles = `[test]\ncoverageSkipTestFiles = true\n`;
@@ -249,19 +261,37 @@ test.concurrent("coverage of classes counts methods, not synthesized constructor
 export const factory = () => class {};
 export class Derived extends factory() {}
 `,
+    // The file from #8290: blank lines and four-space indentation between the members. The
+    // uncalled `consume` was reported as `3-5` (shifted onto `calls = []`) and `another` not at all.
+    "live.mock.mjs": `export class MockLive {
+
+    calls = []
+
+    async consume(event) {
+        this.calls.push({ consume: { event } })
+    }
+
+    covered() { return 1 }
+
+    another() { return 2 }
+}
+`,
     "classes.test.js": `import { test, expect } from "bun:test";
 import { Base, Derived } from "./classes.js";
+import { MockLive } from "./live.mock.mjs";
 test("covered", () => {
   expect(new Base().covered()).toBe(1);
   expect(Derived.name).toBe("Derived");
+  expect(new MockLive().covered()).toBe(1);
 });
 `,
   });
 
-  const { row, record, status } = await coverageOf(String(dir), "classes.js");
+  const { of } = await runCoverage(String(dir));
+  const { row, record, status } = of("classes.js");
   // consume, covered, another and factory; covered and factory ran.
   expect(record).toContain("\nFNF:4\nFNH:2\n");
-  expect(row).toMatch(/^ classes\.js \|   50\.00 \| +\d+\.\d\d \| 3-4,7$/);
+  expect(row).toMatch(/^ classes\.js +\|   50\.00 \| +\d+\.\d\d \| 3-4,7$/);
   expect(status(10)).toMatchObject({
     3: "MISSED",
     4: "MISSED",
@@ -270,6 +300,24 @@ test("covered", () => {
     7: "MISSED",
     9: "hit",
     10: "hit",
+  });
+
+  const mock = of("live.mock.mjs");
+  expect(mock.record).toContain("\nFNF:3\nFNH:1\n");
+  expect(mock.row).toMatch(/^ live\.mock\.mjs \|   33\.33 \| +\d+\.\d\d \| 5-6,11$/);
+  expect(mock.status(12)).toEqual({
+    1: "hit",
+    2: "-",
+    3: "hit",
+    4: "-",
+    5: "MISSED",
+    6: "MISSED",
+    7: "-",
+    8: "-",
+    9: "hit",
+    10: "-",
+    11: "MISSED",
+    12: "hit",
   });
 });
 
@@ -302,6 +350,153 @@ test("positive", () => {
     5: "MISSED",
     6: "-",
   });
+});
+
+// The file from #5307, in TypeScript: the type annotations are stripped, so generated columns
+// differ from the source's and every byte goes through the source map. The `return result` that
+// the test never reaches was reported as covered, with the column below 100% but empty.
+test.concurrent("coverage of a TypeScript file reports the unreached tail of a nested function", async () => {
+  using dir = tempDir("cov", {
+    "bunfig.toml": skipTestFiles,
+    "table.ts": `export function make() {
+  const cache: Record<number, number> = {}
+  return {
+    get(n: number) {
+      const result = cache[n]
+      if (result === undefined) {
+        const v = n * 2
+        cache[n] = v
+        return v
+      }
+      return result
+    },
+  }
+}
+export const table = make()
+`,
+    "table.test.ts": `import { test, expect } from "bun:test";
+import { table } from "./table";
+test("get", () => {
+  expect(table.get(1)).toBe(2);
+  expect(table.get(2)).toBe(4);
+});
+`,
+  });
+
+  const { row, status } = await coverageOf(String(dir), "table.ts");
+  expect(row).toBe(" table.ts  |  100.00 |   91.67 | 11");
+  expect(status(15)).toEqual({
+    1: "hit",
+    2: "hit",
+    3: "hit",
+    4: "hit",
+    5: "hit",
+    6: "hit",
+    7: "hit",
+    8: "hit",
+    9: "hit",
+    10: "-", // `}` closing the if block
+    11: "MISSED",
+    12: "-", // `},`
+    13: "hit", // `}` ends the executed return statement
+    14: "-",
+    15: "hit",
+  });
+});
+
+// Every shape of the uncovered-lines column, in TypeScript: a run that starts on line 1 (the old
+// reporter used line 0 as "no run yet"), isolated lines, a run followed by an isolated line, and a
+// lone line (the old reporter dropped a trailing single-line run, #9008). The classes have no
+// constructor of their own, so JSC's synthesized ones must not count as functions (#7025).
+test.concurrent("coverage prints every uncovered run and counts no synthesized constructors", async () => {
+  using dir = tempDir("cov", {
+    "bunfig.toml": skipTestFiles,
+    "classes.ts": `export class Base {
+  #x = 0;
+  get x(): number {
+    return this.#x;
+  }
+  set x(v: number) {
+    this.#x = v;
+  }
+}
+export class Derived extends Base {
+  y = 1;
+}
+`,
+    "line1.ts": `export function miss(): never {
+  throw new Error("a");
+}
+export function also(): never {
+  throw new Error("b");
+}
+export function ok2() { return "ok"; }
+`,
+    "many.ts": `export function check(n: number): string {
+  if (n === 1) {
+    throw new Error("one");
+  }
+  if (n === 2) {
+    throw new Error("two");
+  }
+  if (n === 3) {
+    throw new Error("three");
+  }
+  return "ok";
+}
+`,
+    "mix.ts": `export function mix(n: number): string {
+  if (n === 1) {
+    n += 1;
+    throw new Error("a");
+  }
+  const x = n * 2;
+  if (x === -1) {
+    throw new Error("b");
+  }
+  return "ok";
+}
+`,
+    "one.ts": `export function only(n: number): string {
+  if (n < 0) {
+    throw new Error("negative");
+  }
+  return "ok";
+}
+`,
+    "demo.test.ts": `import { test, expect } from "bun:test";
+import { Base, Derived } from "./classes";
+import { ok2 } from "./line1";
+import { check } from "./many";
+import { mix } from "./mix";
+import { only } from "./one";
+test("paths", () => {
+  const d = new Derived();
+  d.x = 5;
+  expect(d.x).toBe(5);
+  expect(d.y).toBe(1);
+  expect(new Base().x).toBe(0);
+  expect(ok2()).toBe("ok");
+  expect(check(0)).toBe("ok");
+  expect(mix(2)).toBe("ok");
+  expect(only(1)).toBe("ok");
+});
+`,
+  });
+
+  const { table, of } = await runCoverage(String(dir));
+  expect(table).toEqual([
+    "File        | % Funcs | % Lines | Uncovered Line #s",
+    "All files   |   86.67 |   64.00 |",
+    " classes.ts |  100.00 |  100.00 |",
+    " line1.ts   |   33.33 |   20.00 | 1-2,4-5",
+    " many.ts    |  100.00 |   62.50 | 3,6,9",
+    " mix.ts     |  100.00 |   62.50 | 3-4,8",
+    " one.ts     |  100.00 |   75.00 | 3",
+  ]);
+  // The getter and the setter; `miss`, `also` and `ok2`.
+  expect(of("classes.ts").record).toContain("\nFNF:2\nFNH:2\n");
+  expect(of("line1.ts").record).toContain("\nFNF:3\nFNH:1\n");
 });
 
 test("coverage excludes node_modules directory", () => {

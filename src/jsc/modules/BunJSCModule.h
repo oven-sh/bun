@@ -53,6 +53,7 @@ extern "C" char* mi_stats_get_json(size_t, char*);
 extern "C" char* mi_heap_dump_json(bool include_blocks, bool hash_addresses);
 
 #include <JavaScriptCore/ControlFlowProfiler.h>
+#include "CodeCoverage.h"
 
 #if OS(DARWIN)
 #if ASSERT_ENABLED
@@ -933,20 +934,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
 
     size_t functionStartOffset = basicBlocks.size();
 
-    const Vector<std::tuple<bool, unsigned, unsigned>>& functionRanges = vm.functionHasExecutedCache()->getFunctionRanges(sourceID);
-
-    basicBlocks.reserveCapacity(functionRanges.size() + basicBlocks.size());
-
-    for (const auto& functionRange : functionRanges) {
-        BasicBlockRange range;
-        range.m_hasExecuted = std::get<0>(functionRange);
-        range.m_startOffset = static_cast<int>(std::get<1>(functionRange));
-        range.m_endOffset = static_cast<int>(std::get<2>(functionRange));
-        range.m_executionCount = range.m_hasExecuted
-            ? 1
-            : 0; // This is a hack. We don't actually count this.
-        basicBlocks.append(range);
-    }
+    Bun::appendFunctionRangesForCoverage(basicBlocks, vm, sourceID);
 
     BunString fileNameBunString = Bun::toString(fileName);
     return ByteRangeMapping__findExecutedLines(

@@ -3,8 +3,8 @@
 exports[`lcov coverage reporter: lcov-coverage-reporter-output 1`] = `
 "TN:
 SF:demo1.ts
-FNF:0
-FNH:0
+FNF:1
+FNH:1
 DA:3,7
 DA:4,1
 LF:2

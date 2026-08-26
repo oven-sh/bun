@@ -637,21 +637,6 @@ impl BasicBlockRange {
             _ => 0..0,
         }
     }
-
-    /// JSC registers the constructor it synthesizes for a class without one in the defining
-    /// file's function table, with offsets into its template string
-    /// (`BuiltinExecutables::defaultConstructorSourceCode`), and never marks it executed.
-    fn is_synthesized_default_constructor(&self) -> bool {
-        const BASE: &str = "(function () { })";
-        const DERIVED: &str = "(function (...args) { super(...args); })";
-        const FUNCTION_KEYWORD: c_int = "(".len() as c_int;
-        const BASE_CLOSING_BRACE: c_int = (BASE.len() - "})".len()) as c_int;
-        const DERIVED_CLOSING_BRACE: c_int = (DERIVED.len() - "})".len()) as c_int;
-
-        !self.has_executed()
-            && self.start_offset == FUNCTION_KEYWORD
-            && (self.end_offset == BASE_CLOSING_BRACE || self.end_offset == DERIVED_CLOSING_BRACE)
-    }
 }
 
 /// One line of the text JSC executed (the transpiled output, not the file on disk).
@@ -794,10 +779,6 @@ impl ByteRangeMapping {
         let mut functions_which_have_executed = Bitset::init_empty(function_blocks.len())?;
 
         for function in function_blocks {
-            if function.is_synthesized_default_constructor() {
-                continue;
-            }
-
             let did_fn_execute = function.has_executed();
             let byte_offsets = function.byte_offsets();
             let mut has_lines = false;

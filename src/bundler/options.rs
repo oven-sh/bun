@@ -520,7 +520,7 @@ pub fn get_loader_and_virtual_source<'a>(
 
             // "file:" loader makes no sense for blobs
             // so let's default to tsx.
-            if let Some(filename) = jsc_vm.blob_file_name(blob) {
+            if let Some(filename) = jsc_vm.blob_store_path(blob) {
                 let current_path = Fs::Path::init(filename);
 
                 // Only treat it as a file if is a Bun.file()

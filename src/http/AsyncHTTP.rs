@@ -3,7 +3,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_ast::{Loc, Log};
 use bun_core::FeatureFlags;
-use bun_core::{MutableString, Utf8Bytes};
+use bun_core::MutableString;
 use bun_threading::IntrusiveWorkTask as _;
 use bun_threading::thread_pool::{self, Batch, Task};
 use bun_url::{PercentEncoding, URL};
@@ -24,9 +24,9 @@ bun_core::declare_scope!(AsyncHTTP, visible);
 
 // Lifetime `'a` covers every borrowed input the caller hands in: `url`,
 // `http_proxy`, `request_header_buf`, the borrowed `HTTPRequestBody::Bytes`
-// payload, and `client.{header_buf,hostname,if_modified_since}`. Intrusive
-// fields (`real`, `next`) are raw pointers and thus lifetime-erased; the
-// HTTP-thread copy uses the same `'a` as the JS-thread original it mirrors.
+// payload, and `client.{header_buf,hostname,unix_socket_path,if_modified_since}`.
+// Intrusive fields (`real`, `next`) are raw pointers and thus lifetime-erased;
+// the HTTP-thread copy uses the same `'a` as the JS-thread original it mirrors.
 pub struct AsyncHTTP<'a> {
     pub response: Option<picohttp::Response<'static>>,
     pub request_headers: headers::EntryList,
@@ -191,7 +191,7 @@ fn make_client<'a>(
         signals,
         async_http_id,
         hostname,
-        unix_socket_path: Utf8Bytes::EMPTY,
+        unix_socket_path: b"",
         compress: None,
         compressed_request_body: Vec::new(),
         compressed_body_len: 0,
@@ -245,7 +245,7 @@ pub struct Options<'a> {
     pub proxy_headers: Option<Headers>,
     pub hostname: Option<&'a [u8]>,
     pub signals: Option<Signals>,
-    pub unix_socket_path: Option<Utf8Bytes<'static>>,
+    pub unix_socket_path: Option<&'a [u8]>,
     pub disable_timeout: Option<bool>,
     /// Per-request idle timeout override in seconds; see
     /// `HTTPClient::idle_timeout_seconds`.
@@ -315,7 +315,6 @@ impl<'a> AsyncHTTP<'a> {
 
     pub fn clear_data(&mut self) {
         self.response = None;
-        self.client.unix_socket_path = Utf8Bytes::EMPTY;
     }
 }
 
@@ -461,7 +460,6 @@ impl<'a> AsyncHTTP<'a> {
             signals,
         };
         if let Some(val) = options.unix_socket_path {
-            debug_assert!(this.client.unix_socket_path.slice().is_empty());
             this.client.unix_socket_path = val;
         }
         if let Some(val) = options.disable_timeout {
@@ -711,11 +709,11 @@ impl<'a> AsyncHTTP<'a> {
                 // (`start_queued_task`), so any owned field that was already
                 // populated at that point — `request_headers`,
                 // `client.header_entries`, `client.proxy_headers`,
-                // `client.proxy_settings`, `client.tls_props`,
-                // `client.unix_socket_path` — is *shared* with the original
-                // and must NOT be dropped here; the original drops them when
-                // its `Box<AsyncHTTP>` is reclaimed. Only the state the clone
-                // built up itself during request processing is torn down.
+                // `client.proxy_settings`, `client.tls_props` — is *shared*
+                // with the original and must NOT be dropped here; the original
+                // drops them when its `Box<AsyncHTTP>` is reclaimed. Only the
+                // state the clone built up itself during request processing is
+                // torn down.
                 {
                     // `handle_response_metadata` rewrites per-hop request state in
                     // place: `client.url`/`connected_url` become self-borrows into

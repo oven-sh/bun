@@ -367,7 +367,7 @@ bun_dispatch::link_interface! {
         fn is_blob_url(specifier: &[u8]) -> bool;
         fn resolve_blob(specifier: &[u8]) -> Option<options::OpaqueBlob>;
         fn blob_loader(blob: options::OpaqueBlob) -> Option<bun_ast::Loader>;
-        fn blob_file_name(blob: options::OpaqueBlob) -> Option<&'static [u8]>;
+        fn blob_store_path(blob: options::OpaqueBlob) -> Option<&'static [u8]>;
         fn blob_needs_read_file(blob: options::OpaqueBlob) -> bool;
         fn blob_shared_view(blob: options::OpaqueBlob) -> &'static [u8];
         fn blob_deinit(blob: options::OpaqueBlob);

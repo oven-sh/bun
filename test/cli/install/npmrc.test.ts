@@ -1435,16 +1435,25 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     tarballPath?: string;
     /** Let the manifest through without credentials; only the tarball is protected. */
     publicManifest?: boolean;
+    /** Serve over https with the harness certificate (`install` passes it as `--ca`). */
+    secure?: boolean;
   };
 
   // Serves no-deps@1.0.0 and answers 401 to any request that does not carry
   // exactly `expectedAuth`.
   function mockRegistry(expectedAuth: string, options: MockRegistryOptions = {}) {
-    const { tarballOrigin, registryPath = "", tarballPath = "/no-deps/-/no-deps-1.0.0.tgz", publicManifest } = options;
+    const {
+      tarballOrigin,
+      registryPath = "",
+      tarballPath = "/no-deps/-/no-deps-1.0.0.tgz",
+      publicManifest,
+      secure,
+    } = options;
     const requests: Req[] = [];
     const server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
+      ...(secure ? { tls } : {}),
       fetch(req) {
         const url = new URL(req.url);
         const auth = req.headers.get("authorization");
@@ -1455,7 +1464,7 @@ describe.concurrent("//host/ credential lines are matched against the request UR
         }
         if (url.pathname === tarballPath) return new Response(Bun.file(tgz));
         if (isManifest) {
-          const origin = tarballOrigin ? tarballOrigin() : `http://127.0.0.1:${server.port}`;
+          const origin = tarballOrigin ? tarballOrigin() : `${secure ? "https" : "http"}://127.0.0.1:${server.port}`;
           return Response.json({
             name: "no-deps",
             "dist-tags": { latest: "1.0.0" },
@@ -1474,7 +1483,7 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     return {
       requests,
       host: `127.0.0.1:${server.port}`,
-      origin: `http://127.0.0.1:${server.port}`,
+      origin: `${secure ? "https" : "http"}://127.0.0.1:${server.port}`,
       [Symbol.dispose]() {
         server.stop(true);
       },
@@ -1493,7 +1502,7 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     };
     delete spawnEnv.XDG_CONFIG_HOME;
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "install", ...args],
+      cmd: [bunExe(), "install", "--ca", tls.cert, ...args],
       cwd: dir,
       env: spawnEnv,
       stdout: "pipe",
@@ -1630,9 +1639,9 @@ describe.concurrent("//host/ credential lines are matched against the request UR
   });
 
   test("a line for the tarball host takes precedence over userinfo in the dist.tarball url", async () => {
-    using cdn = mockRegistry("Bearer cdn-token");
+    using cdn = mockRegistry("Bearer cdn-token", { secure: true });
     using registry = mockRegistry("Bearer registry-token", {
-      tarballOrigin: () => `http://carol:s3cret@${cdn.host}`,
+      tarballOrigin: () => `https://carol:s3cret@${cdn.host}`,
     });
     using dir = tempDir("npmrc-url-auth-line-over-userinfo", {
       "package.json": packageJson,
@@ -1653,7 +1662,7 @@ describe.concurrent("//host/ credential lines are matched against the request UR
   });
 
   test("a tarball on a different host than its registry gets that host's own line", async () => {
-    using cdn = mockRegistry("Bearer cdn-token");
+    using cdn = mockRegistry("Bearer cdn-token", { secure: true });
     using registry = mockRegistry("Bearer registry-token", { tarballOrigin: () => cdn.origin });
     using dir = tempDir("npmrc-url-auth-tarball-host", {
       "package.json": packageJson,
@@ -1675,7 +1684,7 @@ describe.concurrent("//host/ credential lines are matched against the request UR
   });
 
   test("username and _password lines for the tarball host are sent to it as basic auth", async () => {
-    using cdn = mockRegistry(basic("cdn-user", "cdn-pass"));
+    using cdn = mockRegistry(basic("cdn-user", "cdn-pass"), { secure: true });
     using registry = mockRegistry("Bearer registry-token", { tarballOrigin: () => cdn.origin });
     using dir = tempDir("npmrc-url-auth-tarball-host-basic", {
       "package.json": packageJson,
@@ -1698,7 +1707,7 @@ describe.concurrent("//host/ credential lines are matched against the request UR
   });
 
   test("the line with the deepest path covering the tarball url wins; other paths on the host do not apply", async () => {
-    using cdn = mockRegistry("Bearer deep-token");
+    using cdn = mockRegistry("Bearer deep-token", { secure: true });
     using registry = mockRegistry("Bearer registry-token", { tarballOrigin: () => cdn.origin });
     using dir = tempDir("npmrc-url-auth-tarball-path", {
       "package.json": packageJson,
@@ -1793,7 +1802,7 @@ describe.concurrent("//host/ credential lines are matched against the request UR
   });
 
   test("a lockfile recorded against a registry that has since moved still downloads from the old host", async () => {
-    using oldRegistry = mockRegistry("Bearer old-token");
+    using oldRegistry = mockRegistry("Bearer old-token", { secure: true });
     using newRegistry = mockRegistry("Bearer new-token");
     using dir = tempDir("npmrc-url-auth-moved-registry", {
       "package.json": packageJson,
@@ -1981,7 +1990,38 @@ describe.concurrent("//host/ credential lines are matched against the request UR
       ].join("\n"),
     });
 
-    await install(String(dir), ["--ca", tls.cert]);
+    await install(String(dir));
+
+    expect(tarballRequests).toEqual([null]);
+  });
+
+  // The same holds when the registry itself is http: a plaintext registry (or anyone
+  // on its path) must not be able to steer another host's token over plaintext.
+  test("an http tarball on another host gets no .npmrc credentials even from an http registry", async () => {
+    const tarballRequests: (string | null)[] = [];
+    using other = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        tarballRequests.push(req.headers.get("authorization"));
+        return new Response(Bun.file(tgz));
+      },
+    });
+    using registry = mockRegistry("Bearer registry-token", {
+      tarballOrigin: () => `http://127.0.0.1:${other.port}`,
+      publicManifest: true,
+    });
+    using dir = tempDir("npmrc-url-auth-http-other-host", {
+      "package.json": packageJson,
+      ".npmrc": [
+        `registry=${registry.origin}/`,
+        `//${registry.host}/:_authToken=registry-token`,
+        `//127.0.0.1:${other.port}/:_authToken=must-not-leak`,
+        "",
+      ].join("\n"),
+    });
+
+    await install(String(dir));
 
     expect(tarballRequests).toEqual([null]);
   });

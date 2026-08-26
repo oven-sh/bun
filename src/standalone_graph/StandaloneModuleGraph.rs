@@ -2203,7 +2203,6 @@ pub(crate) fn download_to_path(
                 b"",
                 b"",
                 http_proxy,
-                None,
                 bun_http::FetchRedirect::Follow,
             ));
             async_http.client.progress_node =

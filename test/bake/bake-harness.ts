@@ -1926,6 +1926,26 @@ class OutputLineStream extends EventEmitter {
   }
 }
 
+/** After `ms`, every `race()` rejects with `message`. Disposing it disarms the timer. */
+class Deadline {
+  #passed = Promise.withResolvers<never>();
+  #timer: ReturnType<typeof setTimeout>;
+
+  constructor(ms: number, message: string) {
+    // The rejection is only observed through `race()`.
+    this.#passed.promise.catch(() => {});
+    this.#timer = setTimeout(() => this.#passed.reject(new Error(message)), Math.max(0, ms));
+  }
+
+  race<T>(promise: Promise<T>): Promise<T> {
+    return Promise.race([promise, this.#passed.promise]);
+  }
+
+  [Symbol.dispose]() {
+    clearTimeout(this.#timer);
+  }
+}
+
 export function indexHtmlScript(htmlFiles: string[]) {
   return [
     ...htmlFiles.map((file, i) => `import html${i} from ${JSON.stringify("./" + file.replaceAll(path.sep, "/"))};`),
@@ -1978,7 +1998,16 @@ function testImpl<T extends DevServerTest>(
 
   const isStressTest = stressTestSelect === "ALL" || (stressTestSelect && name.includes(stressTestSelect));
 
+  // A function: `interactive` is only known once the test runs.
+  const testTimeout = () =>
+    isStressTest
+      ? 11 * 60 * 1000
+      : interactive
+        ? interactive_timeout
+        : (options.timeoutMultiplier ?? 1) * (isWindows ? 45_000 : 30_000) * WAIT_MULTIPLIER;
+
   async function run() {
+    const started = performance.now();
     const root = path.join(tempDir, basename + count);
 
     // Clean the test directory if it exists
@@ -2141,8 +2170,17 @@ function testImpl<T extends DevServerTest>(
         }
       },
     };
+    // When a test times out, the runner kills its processes only if the test
+    // is not concurrent. So the harness gives up before the runner's timeout:
+    // a rejection here returns through the disposers above, which kill this
+    // test's dev server and clients.
+    const timeout = testTimeout();
+    using deadline = new Deadline(
+      timeout - Math.min(5_000, timeout / 10) - (performance.now() - started),
+      `The test did not finish before the harness deadline (runner timeout: ${timeout}ms). Its dev server and clients are killed.`,
+    );
     if (dev.nodeEnv === "development") {
-      await dev.connectSocket();
+      await deadline.race(dev.connectSocket());
     }
     if (isStressTest) {
       dev.stressTestEndurance = true;
@@ -2151,7 +2189,7 @@ function testImpl<T extends DevServerTest>(
     await maybeWaitInteractive("start");
 
     try {
-      await options.test(dev);
+      await deadline.race(options.test(dev));
     } catch (err: any) {
       while (err instanceof SuppressedError) {
         logErr(err.suppressed);
@@ -2174,7 +2212,7 @@ function testImpl<T extends DevServerTest>(
       process.exit(0);
     }
 
-    await dev.gracefulExit();
+    await deadline.race(dev.gracefulExit());
   }
 
   try {
@@ -2184,15 +2222,7 @@ function testImpl<T extends DevServerTest>(
     }
 
     const test = options.only ? jest.test.only : jest.test;
-    (options.concurrent ? test.concurrent : test)(
-      name,
-      run,
-      isStressTest
-        ? 11 * 60 * 1000
-        : interactive
-          ? interactive_timeout
-          : (options.timeoutMultiplier ?? 1) * (isWindows ? 45_000 : 30_000) * WAIT_MULTIPLIER,
-    );
+    (options.concurrent ? test.concurrent : test)(name, run, testTimeout());
     return options;
   } catch {
     // not in bun test. allow interactive use
@@ -2282,11 +2312,18 @@ class TrailingLog {
   }
 }
 
-process.on("exit", () => {
+function killDanglingProcesses() {
   for (const proc of danglingProcesses) {
     proc.kill("SIGKILL");
   }
-});
+}
+process.on("exit", killDanglingProcesses);
+// `bun test` does not run exit listeners. Reap what a test left behind when its file ends.
+try {
+  (Bun as any).jest(import.meta.path).afterAll(killDanglingProcesses);
+} catch {
+  // Not in bun test (interactive use).
+}
 
 export function devTest<T extends DevServerTest>(description: string, options: T): T {
   // Capture the caller name as part of the test tempdir

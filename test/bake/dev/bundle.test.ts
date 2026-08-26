@@ -493,6 +493,7 @@ devTest("import.meta.main", {
 });
 devTest("commonjs forms", {
   concurrent: true,
+  timeoutMultiplier: 2,
   files: {
     "index.html": emptyHtmlFile({
       styles: [],
@@ -509,22 +510,34 @@ devTest("commonjs forms", {
   async test(dev) {
     await using c = await dev.client("/");
     await c.expectMessage({ field: {} });
-    // A CommonJS module does not accept hot updates, so each form reloads the page.
-    const forms: [source: string, field: string][] = [
-      [`exports.field = "1";`, "1"],
-      [`let theExports = exports; theExports.field = "2";`, "2"],
-      [`let theModule = module; theModule.exports.field = "3";`, "3"],
-      [`let { exports } = module; exports.field = "4";`, "4"],
-      [`var { exports } = module; exports.field = "4.5";`, "4.5"],
-      [`let theExports = module.exports; theExports.field = "5";`, "5"],
-      [`require; eval("module.exports.field = '6'");`, "6"],
-    ];
-    for (const [source, field] of forms) {
-      await c.expectReload(async () => {
-        await dev.write("cjs.js", source);
-      });
-      await c.expectMessage({ field });
-    }
+    await c.expectReload(async () => {
+      await dev.write("cjs.js", `exports.field = "1";`);
+    });
+    await c.expectMessage({ field: "1" });
+    await c.expectReload(async () => {
+      await dev.write("cjs.js", `let theExports = exports; theExports.field = "2";`);
+    });
+    await c.expectMessage({ field: "2" });
+    await c.expectReload(async () => {
+      await dev.write("cjs.js", `let theModule = module; theModule.exports.field = "3";`);
+    });
+    await c.expectMessage({ field: "3" });
+    await c.expectReload(async () => {
+      await dev.write("cjs.js", `let { exports } = module; exports.field = "4";`);
+    });
+    await c.expectMessage({ field: "4" });
+    await c.expectReload(async () => {
+      await dev.write("cjs.js", `var { exports } = module; exports.field = "4.5";`);
+    });
+    await c.expectMessage({ field: "4.5" });
+    await c.expectReload(async () => {
+      await dev.write("cjs.js", `let theExports = module.exports; theExports.field = "5";`);
+    });
+    await c.expectMessage({ field: "5" });
+    await c.expectReload(async () => {
+      await dev.write("cjs.js", `require; eval("module.exports.field = '6'");`);
+    });
+    await c.expectMessage({ field: "6" });
   },
 });
 

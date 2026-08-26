@@ -12,28 +12,31 @@ use bun_sys::Fd;
 
 use crate::array_buffer::PinnedArrayBuffer;
 
-/// A `T` parsed for the async flavor: every JS-backed payload inside it is
-/// pinned and GC-rooted ([`PinnedArrayBuffer::root`]) or thread-isolated
-/// (strings), so a work-pool job may read it and the value comes back to the
-/// JS thread to drop.
+/// # Safety
+/// Once parsed for the async flavor (`Flavor::Async` / `will_be_async`), every
+/// JS-backed payload in the type is pinned and GC-rooted
+/// ([`PinnedArrayBuffer::root`]) or thread-isolated (strings), and nothing
+/// else in it is thread-affine: a work-pool job may read it and it comes back
+/// to the JS thread to drop.
+pub unsafe trait ThreadIsolatedArg {}
+
+/// A `T` parsed for the async flavor (see [`ThreadIsolatedArg`]).
 ///
 /// `repr(transparent)` so identity-casts in the const-generic dispatch macros
 /// (see `node_fs.rs`'s `args_as!`) remain bit-exact.
 #[repr(transparent)]
-#[derive(Default)]
 pub struct ThreadIsolated<T>(T);
 
-impl<T> ThreadIsolated<T> {
-    /// Wrap a `T` that already satisfies the invariant above (parsed with
-    /// `Flavor::Async` / `will_be_async`, or passed through `make_thread_isolated`).
+impl<T: ThreadIsolatedArg> ThreadIsolated<T> {
+    /// `value` was parsed for the async flavor.
     #[inline]
     pub fn adopt(value: T) -> Self {
         Self(value)
     }
 }
 
-// SAFETY: this is what the type asserts — see the struct doc.
-unsafe impl<T> Send for ThreadIsolated<T> {}
+// SAFETY: what `ThreadIsolatedArg` asserts for an async-parsed `T`.
+unsafe impl<T: ThreadIsolatedArg> Send for ThreadIsolated<T> {}
 
 impl<T> core::ops::Deref for ThreadIsolated<T> {
     type Target = T;
@@ -71,14 +74,10 @@ impl Default for PathLike<'_> {
 
 impl Clone for PathLike<'_> {
     /// `clone().slice()` returns the same bytes. String payloads bump their
-    /// ref; a `Buffer` clone *borrows* its bytes — it owns no pin or GC root
-    /// (clones are taken on work-pool threads too) and must not outlive `self`.
+    /// ref; a `Buffer`'s bytes are copied (the clone owns no pin or GC root).
     fn clone(&self) -> Self {
         match self {
-            // SAFETY: the pinned backing store cannot move or detach while `self` lives; see the doc above.
-            Self::Buffer(b) => Self::Utf8(Utf8Bytes::Borrowed(unsafe {
-                &*core::ptr::from_ref(b.slice())
-            })),
+            Self::Buffer(b) => Self::Utf8(Utf8Bytes::Owned(b.slice().to_vec())),
             Self::String(s) => Self::String(s.clone()),
             Self::ThreadIsolatedString(s) => Self::ThreadIsolatedString(s.clone()),
             Self::Utf8(s) => Self::Utf8(s.clone()),
@@ -98,11 +97,11 @@ impl<'a> PathLike<'a> {
     }
 
     /// The bytes as a `Vec<u8>`: moved out of [`PathLike::owned`], copied otherwise.
-    pub fn into_vec(mut self) -> Vec<u8> {
-        if let Self::Utf8(utf8) = &mut self {
-            return core::mem::replace(utf8, Utf8Bytes::EMPTY).into_vec();
+    pub fn into_vec(self) -> Vec<u8> {
+        match self {
+            Self::Utf8(utf8) => utf8.into_vec(),
+            path => path.slice().to_vec(),
         }
-        self.slice().to_vec()
     }
 
     #[inline]
@@ -124,32 +123,20 @@ impl<'a> PathLike<'a> {
 }
 
 impl PathLike<'static> {
-    /// Promote a JS-backed string to its thread-isolated representation. A
-    /// `Buffer` parsed with `will_be_async` is already rooted.
-    ///
-    /// Called in place by the fs `args::*` types' `into_thread_isolated`, which
-    /// wrap the result in a [`ThreadIsolated`].
-    pub fn make_thread_isolated(&mut self) {
-        if let Self::String(s) = self {
-            s.make_thread_isolated();
-            let owned = core::mem::take(s);
-            *self = Self::ThreadIsolatedString(owned);
-        }
-    }
-
     /// For a path a `Blob` store keeps (dropped on any thread): a JS-backed
-    /// string is replaced by a private copy never handed to JS; a `Buffer` is
-    /// GC-rooted for good.
-    pub fn thread_isolated_copy(mut self) -> Self {
-        match &mut self {
+    /// string becomes a private copy never handed to JS; a buffer stays
+    /// pinned and is GC-protected for good.
+    pub fn thread_isolated_copy(self) -> Self {
+        match self {
             Self::String(s) | Self::ThreadIsolatedString(s) => {
-                let s = core::mem::take(s).thread_isolated_copy();
-                self = Self::ThreadIsolatedString(s);
+                Self::ThreadIsolatedString(s.thread_isolated_copy())
             }
-            Self::Buffer(b) => b.value.protect(),
-            Self::Utf8(_) => {}
+            Self::Buffer(b) => {
+                b.value.protect();
+                Self::Buffer(b)
+            }
+            Self::Utf8(s) => Self::Utf8(s),
         }
-        self
     }
 }
 
@@ -195,12 +182,6 @@ impl PathOrFileDescriptorSerializeTag {
 }
 
 impl PathOrFileDescriptor<'static> {
-    #[inline]
-    pub fn make_thread_isolated(&mut self) {
-        if let Self::Path(p) = self {
-            p.make_thread_isolated();
-        }
-    }
     #[inline]
     pub fn thread_isolated_copy(self) -> Self {
         match self {

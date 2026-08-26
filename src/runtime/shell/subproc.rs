@@ -509,13 +509,13 @@ impl ShellSubprocess {
     }
 
     /// `Heap::lastChanceToFinalize` deletes the `JSC::ArrayBuffer` impls
-    /// before the sweep that reaches us, so the `> ${arraybuffer}` unpin in
-    /// `BufferedOutput::drop` would write to a freed impl. Clear the value
-    /// so the drop skips it; the `Strong` handle still releases normally.
+    /// before the sweep that reaches us, so the `> ${arraybuffer}`
+    /// [`PinnedArrayBuffer`](jsc::PinnedArrayBuffer) drop would write to a
+    /// freed impl; defuse it.
     ///
     /// # Safety
     /// Same contract as [`Self::deinit_in_flight_io`]; VM-shutdown finalizer
-    /// only (on a live heap this would leak the pin).
+    /// only (on a live heap this would leak the pin and GC root).
     #[cfg(not(windows))]
     pub(crate) unsafe fn defuse_array_buffer_unpins(this: *mut Self) {
         // SAFETY: disjoint field projections of the live subprocess.
@@ -530,9 +530,7 @@ impl ShellSubprocess {
             // borrow of the `PipeReader` is live.
             unsafe {
                 if let BufferedOutput::ArrayBuffer { buf, .. } = &mut (*pipe).buffered_output {
-                    // `Default` has `value: JSValue::ZERO`, which
-                    // `BufferedOutput::drop` reads as "nothing to unpin".
-                    let _ = core::mem::take(&mut buf.array_buffer);
+                    buf.defuse();
                 }
             }
         }
@@ -1051,14 +1049,7 @@ impl Writable {
                         JscSubprocess::source_from_blob(blob),
                     )));
                 }
-                Stdio::ArrayBuffer(array_buffer) => {
-                    return Ok(Writable::Buffer(StaticPipeWriter::create(
-                        event_loop,
-                        subprocess,
-                        result,
-                        JscSubprocess::source_from_array_buffer(core::mem::take(array_buffer)),
-                    )));
-                }
+                Stdio::ArrayBuffer(_) => unreachable!("ArrayBuffer stdin arrives as Stdio::Blob"),
                 Stdio::Fd(fd) => {
                     return Ok(Writable::Fd(*fd));
                 }
@@ -1112,12 +1103,7 @@ impl Writable {
                         JscSubprocess::source_from_blob(blob),
                     )))
                 }
-                Stdio::ArrayBuffer(array_buffer) => Ok(Writable::Buffer(StaticPipeWriter::create(
-                    event_loop,
-                    subprocess,
-                    result,
-                    JscSubprocess::source_from_array_buffer(core::mem::take(array_buffer)),
-                ))),
+                Stdio::ArrayBuffer(_) => unreachable!("ArrayBuffer stdin arrives as Stdio::Blob"),
                 Stdio::Memfd(memfd) => {
                     debug_assert!(memfd.is_valid());
                     let fd = *memfd;
@@ -1515,10 +1501,7 @@ pub struct PipeReader {
 
 pub enum BufferedOutput {
     Bytelist(Vec<u8>),
-    ArrayBuffer {
-        buf: jsc::array_buffer::ArrayBufferStrong,
-        i: u32,
-    },
+    ArrayBuffer { buf: jsc::PinnedArrayBuffer, i: u32 },
 }
 
 impl Default for BufferedOutput {
@@ -1558,21 +1541,6 @@ impl BufferedOutput {
                 let length = (array_buf_slice.len() - idx).min(bytes.len());
                 array_buf_slice[idx..idx + length].copy_from_slice(&bytes[..length]);
                 *i += u32::try_from(length).expect("int cast");
-            }
-        }
-    }
-}
-
-impl Drop for BufferedOutput {
-    fn drop(&mut self) {
-        match self {
-            BufferedOutput::Bytelist(_b) => {
-                // Vec<u8> drops its own storage.
-            }
-            BufferedOutput::ArrayBuffer { buf, .. } => {
-                if !buf.array_buffer.value.is_empty() {
-                    buf.array_buffer.unpin();
-                }
             }
         }
     }

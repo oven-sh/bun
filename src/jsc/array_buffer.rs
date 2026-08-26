@@ -640,44 +640,14 @@ impl ArrayBuffer {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// ArrayBuffer.Strong
-// ──────────────────────────────────────────────────────────────────────────
-
-pub struct ArrayBufferStrong {
-    pub array_buffer: ArrayBuffer,
-    pub held: crate::StrongOptional, // jsc.Strong.Optional
-}
-
-impl Default for ArrayBufferStrong {
-    fn default() -> Self {
-        Self {
-            array_buffer: ArrayBuffer::default(),
-            held: crate::StrongOptional::empty(),
-        }
-    }
-}
-
-impl ArrayBufferStrong {
-    pub fn slice(&self) -> &[u8] {
-        self.array_buffer.slice()
-    }
-
-    pub fn slice_mut(&mut self) -> &mut [u8] {
-        self.array_buffer.slice_mut()
-    }
-}
-
-// `crate::Strong` already impls `Drop`, so no explicit
-// `impl Drop for ArrayBufferStrong` is needed.
-
-// ──────────────────────────────────────────────────────────────────────────
 // PinnedArrayBuffer
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A JS ArrayBuffer/view whose backing store is pinned (cannot be detached or
 /// moved) for as long as this value lives; [`root`](Self::root) additionally
 /// GC-roots the cell. `Drop` releases what was taken. Construct and drop on
-/// the JS thread.
+/// the JS thread. `Default` is an empty buffer holding nothing.
+#[derive(Default)]
 pub struct PinnedArrayBuffer {
     buffer: ArrayBuffer,
     rooted: bool,
@@ -709,6 +679,18 @@ impl PinnedArrayBuffer {
         this.rooted = true;
         Some(this)
     }
+
+    #[inline]
+    pub fn slice_mut(&mut self) -> &mut [u8] {
+        self.buffer.byte_slice_mut()
+    }
+
+    /// VM-shutdown finalizer only: the heap sweep already deleted what `Drop`
+    /// would unpin and unprotect, so release nothing.
+    pub fn defuse(&mut self) {
+        self.buffer = ArrayBuffer::default();
+        self.rooted = false;
+    }
 }
 
 impl core::ops::Deref for PinnedArrayBuffer {
@@ -716,13 +698,6 @@ impl core::ops::Deref for PinnedArrayBuffer {
     #[inline]
     fn deref(&self) -> &ArrayBuffer {
         &self.buffer
-    }
-}
-
-impl core::ops::DerefMut for PinnedArrayBuffer {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut ArrayBuffer {
-        &mut self.buffer
     }
 }
 

@@ -709,12 +709,9 @@ impl Cmd {
                 let jsval = interp.jsobjs[idx];
 
                 if let Some(buf) = jsval.as_array_buffer(global) {
-                    let mk_out = || {
-                        let pinned = jsval.as_pinned_arraybuffer(global);
-                        Stdio::ArrayBuffer(crate::jsc::array_buffer::ArrayBufferStrong {
-                            array_buffer: pinned.unwrap_or(buf),
-                            held: crate::jsc::StrongOptional::create(buf.value, global),
-                        })
+                    let mk_out = || match crate::jsc::PinnedArrayBuffer::root(global, jsval) {
+                        Some(buf) => Ok(Stdio::ArrayBuffer(buf)),
+                        None => Err(global.throw_out_of_memory()),
                     };
                     if flags.stdin() {
                         let bytes = buf.byte_slice();
@@ -727,14 +724,14 @@ impl Cmd {
                         };
                     }
                     if flags.duplicate_out() {
-                        stdio[STDOUT_NO] = mk_out();
-                        stdio[STDERR_NO] = mk_out();
+                        stdio[STDOUT_NO] = mk_out()?;
+                        stdio[STDERR_NO] = mk_out()?;
                     } else {
                         if flags.stdout() {
-                            stdio[STDOUT_NO] = mk_out();
+                            stdio[STDOUT_NO] = mk_out()?;
                         }
                         if flags.stderr() {
-                            stdio[STDERR_NO] = mk_out();
+                            stdio[STDERR_NO] = mk_out()?;
                         }
                     }
                 } else if let Some(blob_ref) = jsval.as_class_ref::<crate::webcore::Blob>() {

@@ -58,7 +58,8 @@ pub enum Stdio {
     Dup2(Dup2),
     Path(PathLike<'static>),
     Blob(webcore::blob::Any),
-    ArrayBuffer(jsc::array_buffer::ArrayBufferStrong),
+    /// A shell `> ${arraybuffer}` redirect (stdout/stderr only; stdin arrives as `Blob`).
+    ArrayBuffer(jsc::PinnedArrayBuffer),
     Memfd(Fd),
     Pipe,
     /// Like `Pipe` at indices >= 3, but the parent end of the socketpair is
@@ -109,7 +110,7 @@ impl Stdio {
             // returned slice borrows `self` and the caller guarantees the
             // Vec<u8> outlives this Stdio.
             Self::Capture(c) => unsafe { (*c.buf).slice() },
-            Self::ArrayBuffer(ab) => ab.array_buffer.byte_slice(),
+            Self::ArrayBuffer(ab) => ab.byte_slice(),
             Self::Blob(blob) => blob.slice(),
             _ => &[],
         }
@@ -569,15 +570,9 @@ impl Stdio {
                 )));
             }
 
-            let copied_value =
-                jsc::array_buffer::ArrayBuffer::create_buffer(global, array_buffer.byte_slice())?;
-            let copied = copied_value
-                .as_array_buffer(global)
-                .expect("create_buffer returns a Uint8Array");
-            *out_stdio = Stdio::ArrayBuffer(jsc::array_buffer::ArrayBufferStrong {
-                array_buffer: copied,
-                held: jsc::StrongOptional::create(copied.value, global),
-            });
+            *out_stdio = Stdio::Blob(webcore::blob::Any::from_owned_slice(
+                array_buffer.byte_slice().to_vec(),
+            ));
             return Ok(());
         }
 
@@ -678,9 +673,6 @@ impl Stdio {
 impl Drop for Stdio {
     fn drop(&mut self) {
         match self {
-            Self::ArrayBuffer(_array_buffer) => {
-                // `array_buffer.deinit()` — handled by field Drop.
-            }
             Self::Blob(blob) => {
                 blob.detach();
             }

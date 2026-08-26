@@ -763,6 +763,8 @@ pub(crate) struct Scrypt {
     maxmem: u64,
     keylen: u32,
 }
+// SAFETY: `password` and `salt` are `StringOrBuffer`s (see its impl); the rest is plain data.
+unsafe impl bun_jsc::ThreadIsolatedArg for Scrypt {}
 
 // ───────────────────────────────────────────────────────────────────────────
 // Argon2 (crypto.argon2 / crypto.argon2Sync)

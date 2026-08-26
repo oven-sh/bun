@@ -179,13 +179,6 @@ impl BlobOrStringOrBuffer {
         Self::from_js_maybe_file(global, value, FileBlobs::Reject)
     }
 
-    pub(crate) fn from_js_async(
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsResult<Option<BlobOrStringOrBuffer>> {
-        Self::from_js_maybe_file_maybe_async(global, value, FileBlobs::Reject, Flavor::Async)
-    }
-
     /// Like [`from_js_with_encoding_value_allow_request_response`] but takes an
     /// already-parsed [`Encoding`], so callers that must inspect the encoding
     /// first (e.g. to validate odd-length hex) don't coerce `encoding_value`
@@ -327,17 +320,10 @@ impl StringOrBuffer<'_> {
     }
 }
 
-impl StringOrBuffer<'static> {
-    /// Promote a JS-backed string to its thread-isolated representation; a
-    /// buffer must already have been parsed with `Flavor::Async`.
-    pub(crate) fn make_thread_isolated(&mut self) {
-        if let Self::String(s) = self {
-            s.make_thread_isolated();
-            let str = core::mem::take(s);
-            *self = Self::ThreadIsolatedString(str);
-        }
-    }
+// SAFETY: `Flavor::Async` yields `ThreadIsolatedString` / `Utf8` / `PinnedBuffer` only.
+unsafe impl bun_jsc::ThreadIsolatedArg for StringOrBuffer<'static> {}
 
+impl StringOrBuffer<'static> {
     /// `value` is ArrayBuffer-like (the caller checked): borrowed for `Sync`,
     /// pinned and GC-rooted for `Async`.
     pub(crate) fn buffer_from_js(
@@ -780,7 +766,7 @@ pub struct NameTooLong;
 
 /// `bun_runtime`-tier behaviour layered on `bun_jsc::node_path::PathLike`.
 ///
-/// `make_thread_isolated` / `into_thread_isolated` / `slice` / `estimated_size` are
+/// `thread_isolated_copy` / `slice` / `estimated_size` are
 /// inherent on the lower-tier type (see `bun_jsc::node_path`); this trait
 /// adds only the path-buffer slicers and JS-argument parsing that depend on
 /// `bun_runtime` types (`Valid`, `ArgumentsSlice` cursor flow).

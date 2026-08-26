@@ -714,6 +714,10 @@ impl AsyncInput {
         chunk: JSValue,
         fallback: &[u8],
     ) -> (Self, Option<PinnedArrayBuffer>) {
+        // Continuation steps pass no chunk.
+        if !chunk.is_cell() {
+            return (Self::Owned(fallback.to_vec()), None);
+        }
         if let Some(buf) = PinnedArrayBuffer::root(global, chunk) {
             // A resizable non-shared backing can `mprotect()` pages out on
             // `resize()`; pinning does not block that, so spill to a copy.

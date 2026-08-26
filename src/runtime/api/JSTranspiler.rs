@@ -5,7 +5,7 @@ use bun_options_types::TargetExt as _;
 use std::io::Write as _;
 
 use crate::Error;
-use crate::node::{Encoding, Flavor, StringObjects, StringOrBuffer};
+use crate::node::{Flavor, StringObjects, StringOrBuffer};
 use bun_alloc::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec re-exports
 use bun_ast::Expr;
 use bun_ast::Loader;
@@ -1361,28 +1361,25 @@ impl JSTranspiler {
             ));
         };
 
-        let Some(code) = StringOrBuffer::from_js_with_encoding_maybe_async(
+        let code = if let Some(buffer) = code_arg.as_array_buffer(global) {
+            let bytes = buffer.byte_slice().to_vec();
+            global.vm().report_extra_memory(bytes.len());
+            StringOrBuffer::owned(bytes)
+        } else if let Some(code) = StringOrBuffer::from_js_maybe_async(
             global,
             code_arg,
-            Encoding::Utf8,
             Flavor::Async,
             StringObjects::Allow,
-        )?
-        else {
+        )? {
+            code
+        } else {
             return Err(global.throw_invalid_argument_type(
                 "transform",
                 "code",
                 "string or Uint8Array",
             ));
         };
-        let code = bun_jsc::ThreadIsolated::adopt(match code {
-            StringOrBuffer::PinnedBuffer(buffer) => {
-                let bytes = buffer.slice().to_vec();
-                global.vm().report_extra_memory(bytes.len());
-                StringOrBuffer::owned(bytes)
-            }
-            code => code,
-        });
+        let code = bun_jsc::ThreadIsolated::adopt(code);
 
         args.eat();
         let loader: Option<Loader> = 'brk: {

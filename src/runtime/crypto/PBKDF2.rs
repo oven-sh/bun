@@ -16,6 +16,8 @@ pub(crate) struct PBKDF2 {
     pub length: usize,
     algorithm: Algorithm,
 }
+// SAFETY: `password` and `salt` are `StringOrBuffer`s (see its impl); the rest is plain data.
+unsafe impl bun_jsc::ThreadIsolatedArg for PBKDF2 {}
 
 impl PBKDF2 {
     pub(crate) fn run(&mut self, output: &mut [u8]) -> bool {

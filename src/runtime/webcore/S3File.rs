@@ -139,11 +139,11 @@ fn resolve_s3_blob(
 ) -> JsResult<(Box<Blob>, Option<JSValue>)> {
     let options = args.next_eat();
     match path_or_blob {
-        PathOrBlob::Path(path) => {
-            if matches!(path, crate::node::PathOrFileDescriptor::Fd(_)) {
-                return Err(global.throw_invalid_arguments(format_args!("{error_message}")));
-            }
-            let blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
+        PathOrBlob::Path(crate::node::PathOrFileDescriptor::Fd(_)) => {
+            Err(global.throw_invalid_arguments(format_args!("{error_message}")))
+        }
+        PathOrBlob::Path(crate::node::PathOrFileDescriptor::Path(path)) => {
+            let blob = construct_s3_file_internal_store(global, path, options)?;
             Ok((Box::new(blob), options))
         }
         PathOrBlob::Blob(blob) => Ok((blob, options)),

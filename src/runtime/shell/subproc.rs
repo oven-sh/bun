@@ -1474,8 +1474,16 @@ impl<'a> SpawnArgs<'a> {
             line[len] = 0;
             let line: &'a [u8] = line;
 
-            if key == b"PATH" {
-                self.path = &line[b"PATH=".len()..len];
+            // Windows environment variable names are case-insensitive, and
+            // `EnvMap` keeps the casing of the first insert (`Path` from the
+            // process environment), so `export PATH=...` lands under `Path`.
+            let is_path = if cfg!(windows) {
+                bun_core::strings::eql_case_insensitive_ascii_check_length(key, b"PATH")
+            } else {
+                key == b"PATH"
+            };
+            if is_path {
+                self.path = &line[key.len() + 1..len];
             }
 
             self.env_array.push(line.as_ptr().cast::<c_char>());

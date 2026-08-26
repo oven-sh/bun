@@ -939,12 +939,10 @@ pub mod command {
         let Some(mut first_arg_name) = iter.next() else {
             return Tag::AutoCommand;
         };
-        // `--filter=pat` / `-F=pat` / `-Fpat` / `--workspaces` before the
-        // subcommand word select workspace packages, so a following `test` or
-        // `build` must take the filtered-run path (AutoCommand), not the
+        // A filter flag before `test` or `build` means those words name
+        // package scripts: take the AutoCommand filtered-run path, not the
         // test runner or the bundler. The space form (`--filter pat test`)
-        // never reaches those cases: the loop below stops at `pat`, which is
-        // not a subcommand keyword.
+        // already does, because the loop stops at `pat`.
         let mut saw_filter_flag = false;
         while !first_arg_name.is_empty()
             && first_arg_name[0] == b'-'
@@ -975,8 +973,6 @@ pub mod command {
         }
         if x == RootCommandMatcher::case(b"build") || x == RootCommandMatcher::case(b"bun") {
             if saw_filter_flag && x == RootCommandMatcher::case(b"build") {
-                // `bun --filter=<pat> build` runs each matched package's
-                // "build" script, same as `bun run --filter=<pat> build`.
                 return Tag::AutoCommand;
             }
             return Tag::BuildCommand;
@@ -1021,8 +1017,6 @@ pub mod command {
         }
         if x == RootCommandMatcher::case(b"test") {
             if saw_filter_flag {
-                // `bun --filter=<pat> test` runs each matched package's
-                // "test" script, same as `bun run --filter=<pat> test`.
                 return Tag::AutoCommand;
             }
             return Tag::TestCommand;

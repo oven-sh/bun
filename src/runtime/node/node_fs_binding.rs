@@ -35,11 +35,6 @@ where
     // for the duration of argument parsing on the JS thread.
     let vm: &VirtualMachine = global.bun_vm();
     let mut slice = ArgumentsSlice::init(vm, frame.arguments());
-    // `defer slice.deinit()` → `Drop for ArgumentsSlice`.
-
-    // `defer if (@hasDecl(Arguments, "deinit")) args.deinit()` → `Drop for A`
-    // (every `args::*` field type — `PathLike`, `StringOrBuffer`, `Vec`, … —
-    // releases its own resources; the wrapper structs need no manual hook).
     let args = <A as FsArgument>::from_js(global, &mut slice)?;
 
     // R-2: `JsCell::with_mut` scopes the `&mut NodeFS` to the blocking

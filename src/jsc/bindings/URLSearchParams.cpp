@@ -26,6 +26,7 @@
 
 #include "DOMURL.h"
 #include <wtf/URLParser.h>
+#include <wtf/SIMDUTF.h>
 #include "helpers.h"
 #include "JSURLSearchParams.h"
 
@@ -46,9 +47,38 @@ extern "C" void URLSearchParams__toString(WebCore::URLSearchParams* urlSearchPar
     callback(ctx, &slice);
 }
 
-URLSearchParams::URLSearchParams(const String& init, DOMURL* associatedURL)
+// Mirrors WTF::isValidCapacityForVector<char16_t>: String::fromUTF8ReplacingInvalidSequences
+// sizes a Vector<char16_t> by the UTF-8 byte count of each decoded name and value.
+static constexpr size_t maxURLEncodedFormUTF8Length = (std::numeric_limits<unsigned>::max() >> 1) / sizeof(char16_t);
+static_assert(WTF::isValidCapacityForVector<char16_t>(maxURLEncodedFormUTF8Length));
+static_assert(!WTF::isValidCapacityForVector<char16_t>(maxURLEncodedFormUTF8Length + 1));
+
+ExceptionOr<void> URLSearchParams::checkURLEncodedFormLength(StringView input)
+{
+    size_t maxLength = std::min(maxURLEncodedFormUTF8Length, Bun__stringSyntheticAllocationLimit);
+    // A UTF-16 code unit is at most 3 UTF-8 bytes and a Latin-1 character at most 2.
+    if (static_cast<size_t>(input.length()) * 3 <= maxLength) [[likely]]
+        return {};
+    size_t utf8Length = input.is8Bit()
+        ? simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(input.span8().data()), input.length())
+        : simdutf::utf8_length_from_utf16le(input.span16().data(), input.length());
+    if (utf8Length <= maxLength) [[likely]]
+        return {};
+    return Exception { RangeError, makeString("URL-encoded data must not be longer than "_s, maxLength, " bytes as UTF-8. Received "_s, utf8Length, " bytes."_s) };
+}
+
+static ExceptionOr<WTF::URLParser::URLEncodedForm> parseURLEncodedForm(const String& init)
+{
+    StringView query = init.startsWith('?') ? StringView(init).substring(1) : StringView(init);
+    auto check = URLSearchParams::checkURLEncodedFormLength(query);
+    if (check.hasException())
+        return check.releaseException();
+    return WTF::URLParser::parseURLEncodedForm(query);
+}
+
+URLSearchParams::URLSearchParams(Vector<KeyValuePair<String, String>>&& pairs, DOMURL* associatedURL)
     : m_associatedURL(associatedURL)
-    , m_pairs(init.startsWith('?') ? WTF::URLParser::parseURLEncodedForm(StringView(init).substring(1)) : WTF::URLParser::parseURLEncodedForm(init))
+    , m_pairs(WTF::move(pairs))
 {
 }
 
@@ -59,6 +89,14 @@ URLSearchParams::URLSearchParams(const Vector<KeyValuePair<String, String>>& pai
 
 URLSearchParams::~URLSearchParams() = default;
 
+ExceptionOr<Ref<URLSearchParams>> URLSearchParams::create(const String& init, DOMURL* associatedURL)
+{
+    auto pairs = parseURLEncodedForm(init);
+    if (pairs.hasException())
+        return pairs.releaseException();
+    return adoptRef(*new URLSearchParams(pairs.releaseReturnValue(), associatedURL));
+}
+
 ExceptionOr<Ref<URLSearchParams>> URLSearchParams::create(std::variant<Vector<Vector<String>>, Vector<KeyValuePair<String, String>>, String>&& variant)
 {
     auto visitor = WTF::makeVisitor([&](const Vector<Vector<String>>& vector) -> ExceptionOr<Ref<URLSearchParams>> {
@@ -68,7 +106,7 @@ ExceptionOr<Ref<URLSearchParams>> URLSearchParams::create(std::variant<Vector<Ve
                 return Exception { TypeError };
             pairs.append({pair[0], pair[1]});
         }
-        return adoptRef(*new URLSearchParams(WTF::move(pairs))); }, [&](const Vector<KeyValuePair<String, String>>& pairs) -> ExceptionOr<Ref<URLSearchParams>> { return adoptRef(*new URLSearchParams(pairs)); }, [&](const String& string) -> ExceptionOr<Ref<URLSearchParams>> { return adoptRef(*new URLSearchParams(string, nullptr)); });
+        return adoptRef(*new URLSearchParams(WTF::move(pairs))); }, [&](const Vector<KeyValuePair<String, String>>& pairs) -> ExceptionOr<Ref<URLSearchParams>> { return adoptRef(*new URLSearchParams(pairs)); }, [&](const String& string) -> ExceptionOr<Ref<URLSearchParams>> { return create(string, nullptr); });
     return std::visit(visitor, variant);
 }
 
@@ -163,11 +201,15 @@ void URLSearchParams::updateURL()
         m_associatedURL->markSearchParamsDirty();
 }
 
-void URLSearchParams::updateFromAssociatedURL()
+ExceptionOr<void> URLSearchParams::updateFromAssociatedURL()
 {
     ASSERT(m_associatedURL);
-    String search = m_associatedURL->search();
-    m_pairs = search.startsWith('?') ? WTF::URLParser::parseURLEncodedForm(StringView(search).substring(1)) : WTF::URLParser::parseURLEncodedForm(search);
+    m_pairs.clear();
+    auto pairs = parseURLEncodedForm(m_associatedURL->search());
+    if (pairs.hasException())
+        return pairs.releaseException();
+    m_pairs = pairs.releaseReturnValue();
+    return {};
 }
 
 std::optional<KeyValuePair<String, String>> URLSearchParams::Iterator::next()

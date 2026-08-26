@@ -40,6 +40,11 @@ impl AsyncFormDataExt for AsyncFormData {
 
         let js_value = match FormData::to_js(global, data, &self.encoding) {
             Ok(v) => v,
+            Err(crate::Error::JSError) => {
+                scoped_log!(FormData, "AsnycFormData.toJS -> failed ");
+                promise.reject(global, global.take_error(JsError::Thrown))?;
+                return Ok(());
+            }
             Err(e) => {
                 scoped_log!(FormData, "AsnycFormData.toJS -> failed ");
                 promise.reject(

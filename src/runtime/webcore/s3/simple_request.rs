@@ -644,6 +644,9 @@ pub(crate) type S3RequestOptions<'a> = S3SimpleRequestOptions<'a>;
 pub struct S3SimpleRequestOptions<'a> {
     // signing options
     pub path: &'a [u8],
+    /// Bucket-level request (ListObjectsV2): an empty `path` is the bucket
+    /// root rather than an invalid key.
+    pub(crate) allow_empty_path: bool,
     pub method: Method,
     pub(crate) search_params: Option<&'a [u8]>,
     pub(crate) content_type: Option<&'a [u8]>,
@@ -664,6 +667,7 @@ impl<'a> Default for S3SimpleRequestOptions<'a> {
     fn default() -> Self {
         Self {
             path: b"",
+            allow_empty_path: false,
             method: Method::GET,
             search_params: None,
             content_type: None,
@@ -710,7 +714,7 @@ pub(crate) fn execute_simple_s3_request<F: 'static>(
         content_md5: None,
         content_type: None,
     };
-    let result = match if options.path.is_empty() {
+    let result = match if options.allow_empty_path {
         this.sign_request::<true>(&sign_options, None)
     } else {
         this.sign_request::<false>(&sign_options, None)

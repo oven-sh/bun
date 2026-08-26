@@ -1330,3 +1330,22 @@ it("rejects a large malformed list response (repeated unclosed Key tags) quickly
   // a single 5MB response should be handled in well under 10 seconds.
   expect(elapsed).toBeLessThan(10_000);
 }, 600_000);
+
+it("only list() may address the bucket root; an empty key is rejected before any request", async () => {
+  let requests = 0;
+  using server = createBunServer(async () => {
+    requests++;
+    return new Response("<ListBucketResult></ListBucketResult>", { status: 200 });
+  });
+  const client = new S3Client({ ...options, endpoint: server.url.href });
+  const file = client.file("");
+
+  expect(await file.exists().then(String, e => e.code)).toBe("ERR_S3_INVALID_PATH");
+  expect(await file.unlink().then(String, e => e.code)).toBe("ERR_S3_INVALID_PATH");
+  expect(await file.text().then(String, e => e.code)).toBe("ERR_S3_INVALID_PATH");
+  expect(await file.write("x").then(String, e => e.code)).toBe("ERR_S3_INVALID_PATH");
+  expect(requests).toBe(0);
+
+  await client.list();
+  expect(requests).toBe(1);
+});

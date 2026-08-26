@@ -249,6 +249,7 @@ pub(crate) fn list_objects<F: FnOnce(S3ListObjectsResult<'_>) -> JsResult<()> + 
         this,
         s3_simple_request::Options {
             path: b"",
+            allow_empty_path: true,
             method: bun_http::Method::GET,
             search_params: Some(search_params.slice()),
             proxy_url,

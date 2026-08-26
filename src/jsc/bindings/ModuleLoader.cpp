@@ -42,6 +42,7 @@
 #include "JSCommonJSExtensions.h"
 
 #include "BunProcess.h"
+#include "ErrorCode.h"
 
 namespace Bun {
 using namespace JSC;
@@ -49,6 +50,11 @@ using namespace Zig;
 using namespace WebCore;
 
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunString* specifier);
+
+JSC::EncodedJSValue throwRequireAsyncModuleError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const WTF::String& specifier)
+{
+    return Bun::throwError(globalObject, scope, ErrorCode::ERR_REQUIRE_ASYNC_MODULE, makeString("require() async module \""_s, specifier, "\" is unsupported. use \"await import()\" instead."_s));
+}
 
 static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
@@ -676,7 +682,7 @@ JSValue fetchCommonJSModule(
                 RELEASE_AND_RETURN(scope, JSValue {});
             }
             case JSPromise::Status::Pending: {
-                JSC::throwTypeError(globalObject, scope, makeString("require() async module \""_s, specifierWtfString, "\" is unsupported. use \"await import()\" instead."_s));
+                throwRequireAsyncModuleError(globalObject, scope, specifierWtfString);
                 RELEASE_AND_RETURN(scope, JSValue {});
             }
             case JSPromise::Status::Fulfilled: {
@@ -745,7 +751,7 @@ JSValue fetchCommonJSModule(
                 RELEASE_AND_RETURN(scope, JSValue {});
             }
             case JSPromise::Status::Pending: {
-                JSC::throwTypeError(globalObject, scope, makeString("require() async module \""_s, specifierWtfString, "\" is unsupported. use \"await import()\" instead."_s));
+                throwRequireAsyncModuleError(globalObject, scope, specifierWtfString);
                 RELEASE_AND_RETURN(scope, JSValue {});
             }
             case JSPromise::Status::Fulfilled: {

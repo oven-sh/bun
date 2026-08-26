@@ -70,26 +70,6 @@ impl RecordKind {
     pub const ExportInfoLocal: Self = Self::EXPORT_INFO_LOCAL;
     pub const ExportInfoNamespace: Self = Self::EXPORT_INFO_NAMESPACE;
     pub const ExportInfoStar: Self = Self::EXPORT_INFO_STAR;
-
-    pub fn len(self) -> crate::Result<usize> {
-        match self {
-            Self::IMPORT_INFO_SINGLE => Ok(4),
-            Self::IMPORT_INFO_SINGLE_TYPE_SCRIPT => Ok(4),
-            Self::IMPORT_INFO_NAMESPACE => Ok(4),
-            Self::IMPORT_INFO_NAMESPACE_DEFER => Ok(4),
-            Self::EXPORT_INFO_INDIRECT => Ok(4),
-            Self::EXPORT_INFO_LOCAL => Ok(4),
-            Self::EXPORT_INFO_NAMESPACE => Ok(3),
-            Self::EXPORT_INFO_STAR => Ok(2),
-            _ => Err(crate::Error::InvalidRecordKind),
-        }
-    }
-
-    /// Number of trailing slots holding a bitcast `FetchParameters` rather
-    /// than a `StringID`. Every record kind has exactly one trailing FP slot.
-    pub fn trailing_fetch_parameters_slots(self) -> usize {
-        1
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

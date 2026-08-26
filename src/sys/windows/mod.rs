@@ -605,6 +605,16 @@ pub use bun_windows_sys::externs::SetInformationJobObject;
 
 pub use bun_windows_sys::externs::OpenProcess;
 
+// Shell-dispatch surface (`Bun.open`) — canonical declarations live in
+// bun_windows_sys::externs. S_OK/S_FALSE/RPC_E_CHANGED_MODE already exist
+// above in this module.
+pub use bun_windows_sys::externs::{
+    CloseHandle, CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
+    GetExitCodeProcess, GetProcessId, S_FALSE, SEE_MASK_FLAG_NO_UI, SEE_MASK_NOCLOSEPROCESS,
+    SHELLEXECUTEINFOW, SW_SHOWNORMAL, ShellExecuteExW, WAIT_FAILED, WAIT_OBJECT_0,
+    WaitForSingleObject,
+};
+
 // https://learn.microsoft.com/en-us/windows/win32/procthread/process-security-and-access-rights
 pub const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;
 
@@ -1462,7 +1472,6 @@ pub mod rescle {
     }
 }
 
-pub use bun_windows_sys::externs::CloseHandle;
 pub use bun_windows_sys::externs::CreateDirectoryW;
 pub use bun_windows_sys::externs::CreateSymbolicLinkW;
 pub use bun_windows_sys::externs::DeleteFileW;

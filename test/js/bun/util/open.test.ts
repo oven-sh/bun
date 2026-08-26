@@ -110,7 +110,7 @@ describe("Bun.open", () => {
   describe("hermetic launch (app override)", () => {
     test("launches and reports pid + exited promise shape", async () => {
       resetSentinel();
-      const result = await Bun.open("hermetic-target", { app: launcherPath });
+      const result = await Bun.open("hermetic-target", { app: launcherPath, wait: true });
       expect(Number.isInteger(result.pid)).toBe(true);
       expect(result.pid).toBeGreaterThan(0);
       expect(result.exited).toBeInstanceOf(Promise);
@@ -123,7 +123,7 @@ describe("Bun.open", () => {
 
     test("writes the target into the sentinel proving the target was passed", async () => {
       resetSentinel();
-      const result = await Bun.open("sentinel-probe", { app: launcherPath });
+      const result = await Bun.open("sentinel-probe", { app: launcherPath, wait: true });
       await result.exited;
       expect(await waitForSentinel()).toBe(true);
       resetSentinel();
@@ -160,9 +160,11 @@ describe("Bun.open", () => {
       resetSentinel();
       const result = await Bun.open("hermetic-target", {
         app: launcherPath,
+        wait: true,
         background: true,
         newInstance: true,
-        edit: true,
+        // `edit` is deliberately absent here: on Windows it maps to the
+        // shell "edit" verb, whose DDE negotiation can stall the dispatch.
       });
       await result.exited;
       expect(await waitForSentinel()).toBe(true);
@@ -175,18 +177,19 @@ describe("Bun.open", () => {
       // chars even though CreateProcessW allows 32_767, so stay under that.
       // POSIX argv is unbounded in practice.
       const longTarget = "x".repeat(isWindows ? 4_000 : 20_000);
-      const result = await Bun.open(longTarget, { app: launcherPath });
+      const result = await Bun.open(longTarget, { app: launcherPath, wait: true });
       await result.exited;
       expect(await waitForSentinel()).toBe(true);
       resetSentinel();
     }, 20000);
 
     test.skipIf(!isWindows)("targets beyond cmd.exe's 8_191-char line limit settle cleanly", async () => {
-      // The launch fails at the OS layer; the contract is that it surfaces
-      // as a normal resolution-with-exit-code or promise rejection, never a
-      // crash or a hang.
+      // ShellExecuteExW on a .cmd still routes through cmd.exe internally,
+      // whose own 8_191-char limit applies even though CreateProcessW allows
+      // 32_767. The contract: settle deterministically (exit code or
+      // rejection), never crash or hang.
       const huge = "x".repeat(20_000);
-      const outcome = await Bun.open(huge, { app: launcherPath }).then(
+      const outcome = await Bun.open(huge, { app: launcherPath, wait: true }).then(
         () => "fulfilled" as const,
         error => {
           expect(error).toBeInstanceOf(Error);
@@ -196,9 +199,62 @@ describe("Bun.open", () => {
       expect(["fulfilled", "rejected"]).toContain(outcome);
     }, 20000);
 
+    test("wait: true settles the outer promise after the handler exits", async () => {
+      resetSentinel();
+      const result = await Bun.open("waited-target", { app: launcherPath, wait: true });
+      // By the time the promise settles on Windows, the handler has already
+      // exited — so its writes are visible without awaiting `exited`.
+      expect(result.pid).toBeGreaterThan(0);
+      expect(await waitForSentinel(1500)).toBe(true);
+      const code = await result.exited;
+      expect(code).toBe(0);
+      resetSentinel();
+    }, 20000);
+
+    test("app object form carries name plus arguments", async () => {
+      resetSentinel();
+      const result = await Bun.open("object-app-target", {
+        app: { name: launcherPath, arguments: ["ignored-by-fixture"] },
+        wait: true,
+      });
+      await result.exited;
+      expect(await waitForSentinel()).toBe(true);
+      resetSentinel();
+    }, 20000);
+
+    test("rejects an already-aborted signal without launching", async () => {
+      const controller = new AbortController();
+      controller.abort();
+      await expect(
+        Bun.open("https://example.com", { signal: controller.signal }),
+      ).rejects.toThrow(/abort/i);
+    }, 10000);
+
+    test("a live signal does not disturb the launch", async () => {
+      resetSentinel();
+      const controller = new AbortController();
+      const result = await Bun.open("signal-live-target", {
+        app: launcherPath,
+        wait: true,
+        signal: controller.signal,
+      });
+      await result.exited;
+      expect(await waitForSentinel()).toBe(true);
+      controller.abort();
+      resetSentinel();
+    }, 20000);
+
+    test.skipIf(!isWindows)("hideErrors suppresses the shell dialog and surfaces an error", async () => {
+      // An extension nothing handles would normally pop the "How do you want
+      // to open this?" dialog; SEE_MASK_FLAG_NO_UI turns it into a rejection.
+      await expect(
+        Bun.open("definitely-unassociated.dsh-no-association"),
+      ).rejects.toThrow();
+    }, 20000);
+
     test("handles concurrent launches", async () => {
       const results = await Promise.all(
-        Array.from({ length: 5 }, () => Bun.open("concurrent-target", { app: launcherPath })),
+        Array.from({ length: 5 }, () => Bun.open("concurrent-target", { app: launcherPath, wait: true })),
       );
       for (const result of results) {
         expect(result.pid).toBeGreaterThan(0);
@@ -210,20 +266,20 @@ describe("Bun.open", () => {
 
     test("handles sequential launches", async () => {
       for (let i = 0; i < 3; i++) {
-        const result = await Bun.open(`sequential-${i}`, { app: launcherPath });
+        const result = await Bun.open(`sequential-${i}`, { app: launcherPath, wait: true });
         await result.exited;
       }
     }, 20000);
 
     test("survives unicode and space-laden targets", async () => {
-      const result = await Bun.open("héllo wörld 🦀", { app: launcherPath });
+      const result = await Bun.open("héllo wörld 🦀", { app: launcherPath, wait: true });
       await result.exited;
       expect(await waitForSentinel()).toBe(true);
       resetSentinel();
     }, 15000);
 
     test("whitespace-only targets settle without crashing the runtime", async () => {
-      const outcome = await Bun.open("   ", { app: launcherPath }).then(
+      const outcome = await Bun.open("   ", { app: launcherPath, wait: true }).then(
         () => "fulfilled" as const,
         error => {
           expect(error).toBeInstanceOf(Error);
@@ -254,7 +310,7 @@ describe("Bun.open", () => {
         writeFileSync(failingLauncher, "#!/bin/sh\nexit 3\n");
         chmodSync(failingLauncher, 0o755);
       }
-      const result = await Bun.open("target", { app: failingLauncher });
+      const result = await Bun.open("target", { app: failingLauncher, wait: true });
       // The launch itself succeeded; the failure surfaces on `exited`
       // (non-zero code or rejection), never as a crash.
       const outcome = await result.exited.then(

@@ -5498,15 +5498,18 @@ declare module "bun" {
   /**
    * Open a file, URL, or folder with the platform's default handler.
    *
-   * The platform opener runs detached from the current process with every
-   * stdio stream ignored: it keeps running after Bun exits and never pops a
-   * console window. All failures — argument validation, a missing opener
-   * binary, OS spawn errors — reject the returned promise.
+   * Windows dispatches through the shell (`ShellExecuteEx`) and reports the
+   * launched handler's real PID; macOS uses `/usr/bin/open`; Linux uses the
+   * first available of `xdg-open`, `gio`, `kde-open`, or `wslview`. The
+   * launched process runs detached from Bun with every stdio stream ignored,
+   * so it keeps running after Bun exits and never pops a console window. All
+   * failures — argument validation, a missing opener binary, OS spawn
+   * errors, an already-aborted signal — reject the returned promise.
    *
    * @category Utilities
    *
    * @param target The URL, file path, or folder to open
-   * @param options Behavior overrides (app, background, newInstance, edit)
+   * @param options Behavior overrides (app, wait, signal, background, newInstance, edit)
    * @returns A {@link BunOpenResult} describing the launch
    *
    * @example
@@ -5517,23 +5520,45 @@ declare module "bun" {
    * // Open a file in its default app
    * await Bun.open(import.meta.path);
    *
-   * // Open a URL in a specific app (macOS / Windows)
-   * await Bun.open("https://example.com", { app: "Safari" });
+   * // Open a URL in Chrome with extra arguments
+   * await Bun.open("https://example.com", {
+   *   app: { name: "chrome", arguments: ["--incognito"] },
+   * });
    *
-   * // Emulate the npm `open` package's `wait: true`: await the opener's exit
-   * const { exited } = await Bun.open("https://example.com");
-   * await exited;
+   * // Emulate the npm `open` package's `wait: true`: settle after exit
+   * await Bun.open("https://example.com", { wait: true });
+   *
+   * // Cancel a launch that has not happened yet
+   * const controller = new AbortController();
+   * controller.abort();
+   * await Bun.open("https://example.com", { signal: controller.signal }); // rejects
    * ```
    */
   function open(target: string, options?: BunOpenOptions): Promise<BunOpenResult>;
 
   interface BunOpenOptions {
     /**
-     * Application to open with. On macOS this maps to `/usr/bin/open -a`.
-     * On Windows and Linux the named binary is executed directly with the
-     * target as its only argument; the platform default opener is bypassed.
+     * Application to open with: either its name/path, or an object carrying
+     * the name plus extra command-line arguments passed before the target
+     * (macOS forwards them after the target via `--args`). When given, the
+     * platform default opener is bypassed entirely.
      */
-    app?: string;
+    app?: string | { name: string; arguments?: string[] };
+
+    /**
+     * Keep the returned promise pending until the launched handler's process
+     * exits (Windows always honors this via the shell-returned process
+     * handle; macOS maps it to `/usr/bin/open -W`; on Linux the opener exits
+     * immediately after handing off, so this is effectively a no-op).
+     * Regardless of `wait`, `exited` resolves with the same exit code.
+     */
+    wait?: boolean;
+
+    /**
+     * Cancel a launch that has not started yet. An already-aborted signal
+     * rejects immediately; aborting after resolution has no effect.
+     */
+    signal?: AbortSignal;
 
     /**
      * macOS only. Maps to `open -g` — launch the app without bringing it
@@ -5548,24 +5573,26 @@ declare module "bun" {
     newInstance?: boolean;
 
     /**
-     * macOS only. Maps to `open -e`. Ignored on other platforms.
+     * Use the platform's "edit" verb instead of "open": macOS passes `-e`,
+     * Windows dispatches the `edit` shell verb (whose DDE negotiation can
+     * stall the dispatch for some handlers). Ignored on Linux.
      */
     edit?: boolean;
   }
 
   interface BunOpenResult {
     /**
-     * PID of the launched opener process (`cmd.exe` on Windows when using
-     * the default `start` route, `/usr/bin/open` on macOS, `xdg-open` or
-     * the named app elsewhere).
+     * PID of the launched handler process. On Windows this is the process
+     * the shell actually created (not an intermediate cmd.exe); `0` when the
+     * shell reused an already-running singleton and no fresh handle exists.
      */
     pid: number;
 
     /**
-     * Resolves with the opener process's exit code once it exits. On Linux
-     * and Windows' default `start` route the opener hands off to an already-
-     * running application and exits immediately; awaiting this emulates the
-     * npm `open` package's `wait: true`.
+     * Resolves with the launched handler's exit code once its process exits.
+     * On Windows this reflects the real handler even though `Bun.open`
+     * itself resolved long before; awaiting it emulates the npm `open`
+     * package's `wait: true`.
      */
     exited: Promise<number>;
   }

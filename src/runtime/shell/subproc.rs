@@ -509,8 +509,8 @@ impl ShellSubprocess {
     }
 
     /// `Heap::lastChanceToFinalize` deletes the `JSC::ArrayBuffer` impls
-    /// before the sweep that reaches us, so the `> ${arraybuffer}`
-    /// [`PinnedArrayBuffer`](jsc::PinnedArrayBuffer) drop would write to a
+    /// before the sweep that reaches us, so dropping the redirect target's
+    /// [`PinnedArrayBuffer`](jsc::PinnedArrayBuffer) would write to a
     /// freed impl; defuse it.
     ///
     /// # Safety

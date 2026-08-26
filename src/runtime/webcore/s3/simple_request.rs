@@ -374,10 +374,11 @@ impl S3HttpSimpleTask {
             unsafe { ((*this).destroy)(this) }
         });
         let task = this;
-        // SAFETY: as above; the deliver fns below only touch the closure slot
-        // that follows `*this`, never `*this` itself.
-        let this = unsafe { &mut *this };
-        let callback = this.callback.take().expect("delivered once");
+        // SAFETY: (here and the two `response_buffer` takes below) sole owner;
+        // the deliver fns only touch the closure slot after `*task`.
+        let callback = unsafe { (*task).callback.take() }.expect("delivered once");
+        // SAFETY: as above.
+        let this = unsafe { &*task };
 
         if !this.result.is_success() {
             return this.with_body_error(Failure, |err| callback.fail(task, err));
@@ -461,7 +462,8 @@ impl S3HttpSimpleTask {
                 200 | 204 | 206 => deliver(
                     task,
                     S3DownloadResult::Success(S3DownloadSuccess {
-                        body: core::mem::take(&mut this.response_buffer),
+                        // SAFETY: as above.
+                        body: core::mem::take(unsafe { &mut (*task).response_buffer }),
                     }),
                 ),
                 404 => {
@@ -473,7 +475,8 @@ impl S3HttpSimpleTask {
                 200 | 204 | 206 => MultiPartUpload::start_multi_part_request_result(
                     upload,
                     S3DownloadResult::Success(S3DownloadSuccess {
-                        body: core::mem::take(&mut this.response_buffer),
+                        // SAFETY: as above.
+                        body: core::mem::take(unsafe { &mut (*task).response_buffer }),
                     }),
                 ),
                 404 => this.with_body_error(NotFound, |e| {

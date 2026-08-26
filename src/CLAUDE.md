@@ -124,7 +124,7 @@ string, or Rust-side bytes: `PathLike::borrowed(bytes)` lends `&'a [u8]` to a
 synchronous call, `PathLike::owned(vec)` when the value must own them),
 `Buffer`. Anything parsed from JS, stored, or sent to another thread
 (`make_thread_isolated` / `ThreadIsolated<T>` for the fs `args::*<'static>`
-async path, `PathLike::make_thread_shareable` for a `Blob` store) is `'static`.
+async path, `PathLike::thread_isolated_copy` for a `Blob` store) is `'static`.
 
 `EncodedSlice<'a>` is the `{ptr, len}` + encoding-bits (Latin-1/UTF-8/UTF-16)
 borrowed view handed to C++. Constructors name the encoding of the bytes:

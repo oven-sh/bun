@@ -114,7 +114,7 @@ use bun_s3_signing::storage_class::StorageClass;
 use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
 use crate::webcore::s3::simple_request::{
     self as s3_simple_request, S3CommitResult, S3DownloadResult, S3PartResult, S3UploadResult,
-    execute_simple_s3_request,
+    execute_multipart_request,
 };
 use crate::webcore::s3::xml_response;
 use bun_collections::index_sort;
@@ -330,7 +330,7 @@ impl UploadPart {
             2048 - w.len()
         };
         let search_params = &params_buffer[..written];
-        execute_simple_s3_request(
+        execute_multipart_request(
             &ctx.credentials,
             s3_simple_request::S3RequestOptions {
                 path: &ctx.path,
@@ -408,7 +408,7 @@ impl MultiPartUpload {
                     options.retry -= 1;
                     self_.options.set(options);
                     self_.ref_();
-                    execute_simple_s3_request(
+                    execute_multipart_request(
                         &self_.credentials,
                         s3_simple_request::S3RequestOptions {
                             path: &self_.path,
@@ -791,7 +791,7 @@ impl MultiPartUpload {
             2048 - w.len()
         };
         let search_params = &params_buffer[..written];
-        execute_simple_s3_request(
+        execute_multipart_request(
             &self.credentials,
             s3_simple_request::S3RequestOptions {
                 path: &self.path,
@@ -819,7 +819,7 @@ impl MultiPartUpload {
             2048 - w.len()
         };
         let search_params = &params_buffer[..written];
-        execute_simple_s3_request(
+        execute_multipart_request(
             &self.credentials,
             s3_simple_request::S3RequestOptions {
                 path: &self.path,
@@ -848,7 +848,7 @@ impl MultiPartUpload {
             // will auto start later
             self.state.set(State::MultipartStarted);
             self.ref_();
-            execute_simple_s3_request(
+            execute_multipart_request(
                 &self.credentials,
                 s3_simple_request::S3RequestOptions {
                     path: &self.path,
@@ -981,7 +981,7 @@ impl MultiPartUpload {
             self.state.set(State::SinglefileStarted);
             // we can do only 1 request
             self.ref_();
-            let _ = execute_simple_s3_request(
+            let _ = execute_multipart_request(
                 &self.credentials,
                 s3_simple_request::S3RequestOptions {
                     path: &self.path,

@@ -36,7 +36,6 @@ pub(crate) use crate::webcore::s3::list_objects::S3ListObjectsOptions;
 pub(crate) use crate::webcore::s3::list_objects::get_list_objects_options_from_js;
 pub(crate) use crate::webcore::s3::simple_request::S3DeleteResult;
 pub(crate) use crate::webcore::s3::simple_request::S3DownloadResult;
-pub(crate) use crate::webcore::s3::simple_request::S3HttpSimpleTask;
 pub(crate) use crate::webcore::s3::simple_request::S3ListObjectsResult;
 pub(crate) use crate::webcore::s3::simple_request::S3StatResult;
 pub use crate::webcore::s3::simple_request::S3UploadResult;
@@ -58,10 +57,10 @@ use bun_jsc::CallFrame;
 
 bun_core::declare_scope!(S3UploadStream, visible);
 
-pub(crate) fn stat(
+pub(crate) fn stat<F: FnOnce(S3StatResult<'_>) -> JsResult<()> + 'static>(
     this: &S3Credentials,
     path: &[u8],
-    callback: impl FnOnce(S3StatResult<'_>) -> JsResult<()> + 'static,
+    callback: F,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
 ) -> JsResult<()> {
@@ -75,14 +74,15 @@ pub(crate) fn stat(
             request_payer,
             ..Default::default()
         },
-        s3_simple_request::Callback::Stat(Box::new(callback)),
+        s3_simple_request::Completion::stat(callback),
     )
+    .or_else(|(callback, err)| callback(S3StatResult::Failure(err)))
 }
 
-pub(crate) fn download(
+pub(crate) fn download<F: FnOnce(S3DownloadResult<'_>) -> JsResult<()> + 'static>(
     this: &S3Credentials,
     path: &[u8],
-    callback: impl FnOnce(S3DownloadResult<'_>) -> JsResult<()> + 'static,
+    callback: F,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
 ) -> JsResult<()> {
@@ -96,16 +96,17 @@ pub(crate) fn download(
             request_payer,
             ..Default::default()
         },
-        s3_simple_request::Callback::Download(Box::new(callback)),
+        s3_simple_request::Completion::download(callback),
     )
+    .or_else(|(callback, err)| callback(S3DownloadResult::Failure(err)))
 }
 
-pub(crate) fn download_slice(
+pub(crate) fn download_slice<F: FnOnce(S3DownloadResult<'_>) -> JsResult<()> + 'static>(
     this: &S3Credentials,
     path: &[u8],
     offset: usize,
     size: Option<usize>,
-    callback: impl FnOnce(S3DownloadResult<'_>) -> JsResult<()> + 'static,
+    callback: F,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
 ) -> JsResult<()> {
@@ -138,14 +139,15 @@ pub(crate) fn download_slice(
             request_payer,
             ..Default::default()
         },
-        s3_simple_request::Callback::Download(Box::new(callback)),
+        s3_simple_request::Completion::download(callback),
     )
+    .or_else(|(callback, err)| callback(S3DownloadResult::Failure(err)))
 }
 
-pub(crate) fn delete(
+pub(crate) fn delete<F: FnOnce(S3DeleteResult<'_>) -> JsResult<()> + 'static>(
     this: &S3Credentials,
     path: &[u8],
-    callback: impl FnOnce(S3DeleteResult<'_>) -> JsResult<()> + 'static,
+    callback: F,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
 ) -> JsResult<()> {
@@ -159,14 +161,15 @@ pub(crate) fn delete(
             request_payer,
             ..Default::default()
         },
-        s3_simple_request::Callback::Delete(Box::new(callback)),
+        s3_simple_request::Completion::delete(callback),
     )
+    .or_else(|(callback, err)| callback(S3DeleteResult::Failure(err)))
 }
 
-pub(crate) fn list_objects(
+pub(crate) fn list_objects<F: FnOnce(S3ListObjectsResult<'_>) -> JsResult<()> + 'static>(
     this: &S3Credentials,
     list_options: &S3ListObjectsOptions,
-    callback: impl FnOnce(S3ListObjectsResult<'_>) -> JsResult<()> + 'static,
+    callback: F,
     proxy_url: Option<&[u8]>,
 ) -> JsResult<()> {
     let mut search_params: Vec<u8> = Vec::<u8>::default();
@@ -242,124 +245,21 @@ pub(crate) fn list_objects(
         let _ = search_params.append_fmt(format_args!("&start-after={}", bstr::BStr::new(encoded))); // OOM/capacity: fire-and-forget
     }
 
-    let result = match this.sign_request::<true>(
-        &bun_s3_signing::SignOptions {
+    s3_simple_request::execute_simple_s3_request(
+        this,
+        s3_simple_request::Options {
             path: b"",
             method: bun_http::Method::GET,
             search_params: Some(search_params.slice()),
-            content_hash: None,
-            content_md5: None,
-            content_disposition: None,
-            content_type: None,
-            content_encoding: None,
-            acl: None,
-            storage_class: None,
-            request_payer: false,
-        },
-        None,
-    ) {
-        Ok(r) => r,
-        Err(sign_err) => {
-            drop(search_params);
-
-            let error_code_and_message = Error::get_sign_error_code_and_message(sign_err.into());
-            return callback(S3ListObjectsResult::Failure(Error::S3Error {
-                code: error_code_and_message.code,
-                message: error_code_and_message.message,
-            }));
-        }
-    };
-
-    drop(search_params);
-
-    let headers = bun_http::Headers::from_pico_http_headers(result.headers());
-
-    let task_ptr = bun_core::heap::into_raw(Box::new(S3HttpSimpleTask {
-        // Written below via `MaybeUninit::write` before any read.
-        http: core::mem::MaybeUninit::uninit(),
-        sign_result: result,
-        callback: Some(s3_simple_request::Callback::ListObjects(Box::new(callback))),
-        headers,
-        http_ticket: None,
-        response_buffer: MutableString::default(),
-        result: bun_http::HTTPClientResult::default(),
-        concurrent_task: Default::default(),
-        proxy_url: Box::default(),
-        body: Box::default(),
-        poll_ref: bun_io::KeepAlive::init(),
-        signal_store: Default::default(),
-    }));
-    // SAFETY: just allocated, non-null
-    let task = unsafe { &mut *task_ptr };
-
-    task.poll_ref.ref_(bun_io::js_vm_ctx());
-
-    let proxy = proxy_url.unwrap_or(b"");
-    task.proxy_url = if !proxy.is_empty() {
-        Box::<[u8]>::from(proxy)
-    } else {
-        Box::<[u8]>::default()
-    };
-
-    // SAFETY: lifetime extension — `url`, `headers_buf`, and `proxy_url` borrow from
-    // heap-allocated fields of `*task` which the task outlives. AsyncHTTP::init wants
-    // `'static` borrows because the HTTP thread reads them concurrently; they remain valid
-    // until `task` is dropped in `on_response`.
-    let url = bun_url::URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
-    // SAFETY: same lifetime-extension invariant as `url` above — `task.headers.buf` is
-    // heap-owned by `*task` and outlives the AsyncHTTP request.
-    let headers_buf: &'static [u8] =
-        unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
-    let http_proxy = if !task.proxy_url.is_empty() {
-        // SAFETY: same lifetime-extension invariant as `url` above — `task.proxy_url` is
-        // heap-owned by `*task` and outlives the AsyncHTTP request.
-        Some(bun_url::URL::parse(unsafe {
-            bun_ptr::detach_lifetime_ref(&*task.proxy_url)
-        }))
-    } else {
-        None
-    };
-    // JS thread (request setup): read options from the current VM.
-    let vm = VirtualMachine::get();
-
-    task.http.write(bun_http::AsyncHTTP::init(
-        bun_http::Method::GET,
-        url,
-        task.headers.entries.clone().expect("OOM"),
-        headers_buf,
-        b"",
-        bun_http::HTTPClientResultCallback::new_with_release::<S3HttpSimpleTask>(
-            task_ptr,
-            // SAFETY: `task_ptr` is the heap-allocated task registered above; the
-            // HTTP thread invokes this with that exact pointer.
-            S3HttpSimpleTask::http_callback,
-            S3HttpSimpleTask::release_at_shutdown,
-        ),
-        bun_http::FetchRedirect::Follow,
-        bun_http::async_http::Options {
-            http_proxy,
-            verbose: Some(vm.get_verbose_fetch()),
-            reject_unauthorized: Some(vm.get_tls_reject_unauthorized()),
-            signals: Some(task.signal_store.to()),
+            proxy_url,
             ..Default::default()
         },
-    ));
-
-    // queue http request
-    bun_http::http_thread::init(&Default::default());
-    let mut batch = bun_threading::thread_pool::Batch::default();
-    // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
-    unsafe { task.http.assume_init_mut() }.schedule(&mut batch);
-    // Out on the HTTP thread until its final callback: the VM aborts it at
-    // teardown (registry) and waits for it (the ticket).
-    task.http_ticket = Some(VirtualMachine::get().ticket());
-    crate::jsc_hooks::ActiveHandle::S3Request(core::ptr::NonNull::new(task_ptr).expect("task"))
-        .register();
-    bun_http::HTTPThread::schedule(batch);
-    Ok(())
+        s3_simple_request::Completion::list_objects(callback),
+    )
+    .or_else(|(callback, err)| callback(S3ListObjectsResult::Failure(err)))
 }
 
-pub(crate) fn upload(
+pub(crate) fn upload<F: FnOnce(S3UploadResult<'_>) -> JsResult<()> + 'static>(
     this: &S3Credentials,
     path: &[u8],
     content: &[u8],
@@ -370,7 +270,7 @@ pub(crate) fn upload(
     proxy_url: Option<&[u8]>,
     storage_class: Option<StorageClass>,
     request_payer: bool,
-    callback: impl FnOnce(S3UploadResult<'_>) -> JsResult<()> + 'static,
+    callback: F,
 ) -> JsResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
@@ -387,8 +287,9 @@ pub(crate) fn upload(
             request_payer,
             ..Default::default()
         },
-        s3_simple_request::Callback::Upload(Box::new(callback)),
+        s3_simple_request::Completion::upload(callback),
     )
+    .or_else(|(callback, err)| callback(S3UploadResult::Failure(err)))
 }
 
 /// returns a writable stream that writes to the s3 path

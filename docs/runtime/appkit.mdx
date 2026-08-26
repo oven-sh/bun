@@ -1,0 +1,446 @@
+---
+title: AppKit
+description: Build native macOS windows and controls from JavaScript with bun:appkit
+---
+
+`bun:appkit` creates real AppKit windows and controls from JavaScript on macOS. There is no web view and no bundled UI toolkit: a `Button` is an `NSButton`, a `TextField` is an `NSTextField`, and layout is Auto Layout through `NSStackView`.
+
+<Warning>This API is experimental and macOS-only. It may change in future releases.</Warning>
+
+```ts counter.ts icon="/icons/typescript.svg"
+import { app, Window, VStack, Text, Button } from "bun:appkit";
+
+let count = 0;
+const label = new Text({ text: "Count: 0", font: { size: 24, weight: "bold" } });
+const button = new Button({
+  title: "Increment",
+  onClick() {
+    count++;
+    label.text = `Count: ${count}`;
+  },
+});
+
+const stack = new VStack({ spacing: 12, padding: 20 });
+stack.append(label, button);
+
+const win = new Window({ title: "Counter", width: 280, height: 140, content: stack });
+win.show();
+```
+
+```sh
+bun counter.ts
+```
+
+The process stays alive while a window is open and exits when the last window closes, the same way it does for a server or an open socket. Nothing is linked into `bun` for this: AppKit is loaded with `dlopen` the first time you use it, so programs that never import it pay nothing. `bun:appkit` exists only on macOS: elsewhere it is not a builtin, so importing it fails to resolve and `process.getBuiltinModule("bun:appkit")` returns `undefined`. Feature-test with that, or with `process.platform === "darwin"`.
+
+### How it is put together
+
+The module is a layer over [`bun:objc`](/runtime/objc), the Objective-C bridge, and both are yours to use.
+
+The floor is [`objc`](/runtime/objc), a bridge to the Objective-C runtime: every class, selector and protocol that Foundation, AppKit, QuartzCore, Metal and MetalKit register, under Apple's own names (`objc.classes.NSAlert`, `panel.beginSheetModalForWindow_completionHandler_(win.native, fn)`), every `NS_ENUM` and `NS_OPTIONS` of those frameworks by name (`objc.enums.NSWindowStyleMask.titled`, `objc.enums.MTLPixelFormat.bgra8Unorm`), exported constants, blocks made from functions, out-parameters, and classes defined in JavaScript for delegates, data sources and targets. It converts arguments and results by the method's type signature, turns an `NSException` into a JavaScript error, and manages retain and release for you. Someone with Apple's documentation open can predict what any call does.
+
+`Window`, `VStack`, `Button`, `Table`, the menu bar, `app` and the rest of this page are written in JavaScript on that bridge and its [`app`](/runtime/objc#the-application-app), using nothing but their public surface; nothing in them is out of reach of a program that uses `bun:objc` directly. Each one makes its `NSWindow`, `NSStackView` or `NSButton`, wires the control's target and action to a JavaScript-defined object, listens for its notifications (delegate slots are left for you), and lays out with `NSLayoutConstraint`. So every element has `.native`, the very object it made, as an `objc` handle; the props that can be read from that object read it live (`button.title` after `button.native.setTitle_("x")` is `"x"`); a prop that names an enumeration accepts every member by Apple's name; colour, font and image props take `NSColor`, `NSFont` and `NSImage` handles; and nothing is create-only. What stays native (Rust) is small: loading the frameworks, running Bun's event loop inside AppKit's, starting the application and keeping the process alive, [`MetalView` and `gpu`](#metal), and the bridge's message, block and class machinery. The application delegate, the quit sequence, activation and the Dock badge are JavaScript too.
+
+---
+
+## The `app` object
+
+```ts
+import { app } from "bun:appkit";
+
+app.name = "My Tool"; // used in the standard menus ("About My Tool", "Quit My Tool"); defaults to the executable's name
+app.activationPolicy = "regular"; // "regular" (Dock icon + menu bar), "accessory" (no Dock icon), "background" (NSApplicationActivationPolicyProhibited: no UI)
+app.badge = "3"; // Dock badge, null to clear
+app.keepAlive = true; // starts the app and keeps the process running with no window open (menu bar utilities)
+app.menu = [
+  { title: app.name, items: [{ title: `Quit ${app.name}`, key: "q", action: "terminate:" }] },
+  {
+    title: "File",
+    items: [
+      { title: "New Window", key: "n", onClick: () => new Window({ title: "Untitled" }).show() },
+      "separator",
+      { title: "Close", key: "w", action: "performClose:" },
+    ],
+  },
+  {
+    title: "Edit",
+    items: [
+      { title: "Copy", key: "c", action: "copy:" },
+      { title: "Paste", key: "v", action: "paste:" },
+    ],
+  },
+];
+
+app.windows; // open Window objects
+app.isDark; // whether the app's appearance is dark (false until the app has started)
+app.hasDisplay; // false over ssh, on CI agents and in sandboxes; does not start the app
+app.isRunning; // whether the app has started
+app.activate(); // start if needed and bring to front
+app.hide();
+app.quit(); // same path as Cmd-Q, see below
+
+app.on("beforequit", e => e.preventDefault()); // Cmd-Q, the Dock's Quit, logout, app.quit(); veto by preventing default
+app.on("reopen", () => {}); // Dock icon clicked while running
+```
+
+The application starts lazily when the first `Window` is created, `app.keepAlive` is set to `true`, or `app.activate()` is called (`app.quit()` before that point is just `process.exit()`). Set `app.activationPolicy` before that if you do not want a Dock icon. Starting does not activate the app or take focus: the first `win.show()`, `win.focus()` or `app.activate()` does. Reading `app.hasDisplay`, `app.isDark` or any other property never starts it. While a window is open or `app.keepAlive` is `true` the process holds an `NSProcessInfo` activity so App Nap does not throttle its timers and I/O in the background; with neither, macOS may nap it like any other idle app.
+
+`app` is this layer's view of [`bun:objc`'s `app`](/runtime/objc#the-application-app), the application lifecycle the bridge provides: `app.keepAlive` and each open window hold one of its `retain()` tokens, `app.on("beforequit")` and the windows' `shouldClose` run as one of its `beforequit` listeners, `activationPolicy`, `badge`, `isDark`, `activate()`, `hide()` and `quit()` pass straight through. The application delegate, an explicit `start()`, and keep-alive tokens of your own are there.
+
+### Menus
+
+By default the menu bar has the standard application, Edit, View and Window menus, so text editing shortcuts, full screen and Cmd-Q work without any setup. Assigning `app.menu` replaces the whole menu bar with your menus. The first one is always the application menu (macOS titles it with the app's name whatever its `title`), so start with that and include the standard items you want to keep. `app.menu = null` restores the default bar.
+
+Each item of a menu is `"separator"` (or `"-"`), which draws a line, or an object with these properties:
+
+| Property                         | Meaning                                                                                                                                                                     |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `title`                          | The item's text.                                                                                                                                                            |
+| `onClick` or `action` (function) | Called when the item is chosen: target/action on a script object.                                                                                                           |
+| `action` (string)                | An Objective-C action such as `"copy:"`, `"undo:"`, `"selectAll:"`, `"performClose:"`, `"toggleFullScreen:"`, `"terminate:"`, sent down the responder chain with no target. |
+| `key`                            | The key equivalent, with optional `shift` / `option` / `control` / `command` (default `true`) modifiers.                                                                    |
+| `enabled`, `checked`             | Initial state.                                                                                                                                                              |
+| `submenu`                        | An array of items, same shape.                                                                                                                                              |
+
+A selector action goes to the focused view, then its window, then the application, which is how the built-in menus work. AppKit enables such an item only while something in that chain implements the method, so any action a responder has (including one on a class from `objc.defineClass`) can go there.
+
+The bar is built out of `NSMenu` and `NSMenuItem` through the [`objc` bridge](/runtime/objc) once the application starts, and rebuilt on every assignment; `objc.classes.NSApplication.sharedApplication().mainMenu()` is that object. Reading `app.menu` gives back the array you assigned, since the functions in it cannot be read back out of an `NSMenu`.
+
+To change one item later without rebuilding the bar (check it, retitle it), `app.menuItem(item)` returns the `NSMenuItem` built for that item object of `app.menu`, or for one of its menus the main-menu item holding it; it is `null` for an object that is not in the installed bar. `setState_` and `setTitle_` on it take effect at once. `setEnabled_` only lasts while the menu has `autoenablesItems` off, since AppKit re-validates targeted items whenever a menu opens; otherwise set `enabled` in the spec.
+
+The standard bar also registers its Window menu with AppKit as the one that lists open windows, and its Services submenu as the Services menu. A custom bar that wants either can call `setWindowsMenu:` / `setServicesMenu:` on the application through `objc`.
+
+### Quitting
+
+`app.quit()`, Cmd-Q, the Dock's Quit and a logout all take one path:
+
+1. `beforequit` listeners run, those added here and those added to [`bun:objc`'s `app`](/runtime/objc#the-application-app) alike, in registration order. Calling `event.preventDefault()` or returning `false` cancels the quit, and nothing has been touched yet whichever listener cancels. A listener that throws is reported like an uncaught error; it neither cancels the quit nor hides another listener's veto.
+2. Every window that is still open (hidden, minimized and non-closable ones too) is asked through its `shouldClose`, oldest first, and closed if it agrees. The first `false` cancels the quit and later windows are left alone. This is `bun:objc`'s `willquit` round; a `willquit` listener of your own runs after it and may still cancel, with the windows already closed.
+3. If none refused, the process exits the way `process.exit()` does: `process.on("exit")` handlers run, the exit code is `process.exitCode`, and `app.keepAlive`, listening servers and pending timers do not hold it.
+
+From `app.quit()` the exit happens at the next turn of the event loop, so code after the call in the same function still runs; from Cmd-Q, the Dock or a logout it happens before AppKit's own terminate returns. Once a quit has been accepted, further requests do not run `beforequit` again. To only close the windows and keep running, veto and close them yourself: `app.on("beforequit", e => { e.preventDefault(); for (const w of app.windows) w.close(); })`.
+
+---
+
+## Windows
+
+```ts
+const win = new Window({
+  title: "Inspector",
+  width: 480, // content size in points; default 480 x 320
+  height: 320,
+  x: 100, // screen coordinates, bottom-left origin; omit both to center
+  y: 100,
+  minWidth: 200, // also maxWidth, minHeight, maxHeight
+  minHeight: 100,
+  resizable: true, // also closable, minimizable (default true)
+  titlebarTransparent: false,
+  fullSizeContent: false,
+  titleHidden: false,
+  restoreName: "inspector", // AppKit saves and restores the frame under this name
+  background: "windowBackground",
+  alpha: 1,
+  content: someView,
+  visible: false, // default true: shown as soon as it is created
+});
+
+win.show(); // orders front and activates the app
+win.hide();
+win.center();
+win.focus();
+win.close(); // idempotent
+win.content = otherView; // replace the root view
+win.width = 600; // every option above is a property afterwards, and assigning it changes the window
+win.snapshot(); // Uint8Array PNG of the window's content view (null before the window has a size)
+
+win.visible;
+win.closed; // once closed, assigning any property throws ERR_INVALID_STATE
+win.key; // has keyboard focus
+win.resizable = false; // read from and written to the window's styleMask, like closable and minimizable
+
+win.onClose = () => {}; // after the window closed, by the user, close() or a quit
+win.shouldClose = () => confirmDiscard(); // close button and quit; return false to keep the window open (close() does not ask)
+win.onResize = ({ width, height }) => {}; // user resizes, zoom, full screen, content-driven growth; not win.width = ...
+win.onMove = ({ x, y }) => {}; // user moves; not win.x = ... or center()
+win.onFocus = () => {};
+win.onBlur = () => {};
+```
+
+A `Window` is written in JavaScript on the [`objc` bridge](/runtime/objc) like the views are: the class makes the `NSWindow` (`win.native` is that very object, an `NSWindow` subclass named `BunAppKitWindow`), its events come from the window's notifications (`onClose` `NSWindowWillCloseNotification`, `onResize`/`onMove` `NSWindowDidResizeNotification`/`NSWindowDidMoveNotification`, `onFocus`/`onBlur` `NSWindowDidBecomeKeyNotification`/`NSWindowDidResignKeyNotification`) and `shouldClose` is the window's own `windowShouldClose:`, so the delegate slot is free for one of yours (a delegate that implements `windowShouldClose:` answers the close button in place of `shouldClose`); and `title`, `width`/`height`, `x`/`y`, `alpha`, `visible`, `key`, the style-mask flags, `titlebarTransparent`, `titleHidden`, `restoreName`, `background` and the size limits (`contentMinSize` / `contentMaxSize`) read the window itself, so a change made through `win.native` shows in them. `win.native` stays the `NSWindow` after the window closes, so an `onClose` handler can still ask it anything.
+
+The root view is pinned to the window's edges. A `VStack` root hugs the top and lets a child with `grow` (or a `ScrollView`, `TextEditor`, `Table`) take the remaining height. Content that needs more room than the window has makes the window wider or taller; content that fits leaves the size alone. `minWidth` / `maxWidth` / `minHeight` / `maxHeight` bound user drags, `win.width = n`, the initial size, and content-driven growth where the content can be compressed (a fixed `height` on a child yields to `maxHeight`; required spacing and padding do not, and grow the window to fit). Lowering a limit under the current size resizes the window to it, and if a minimum exceeds a maximum the minimum wins.
+
+---
+
+## Views
+
+Every view is a class you construct with an optional props object and then mutate through accessors. Containers (`VStack`, `HStack`, `ZStack`, `Group`, `ScrollView`, `SplitView`) additionally have `children`, `append(...views)`, `insertBefore(view, ref)`, `removeChild(view)` and `replaceChildren(...views)`. A view has at most one parent; `view.remove()` detaches it. `insertBefore` and `replaceChildren` with a view that is already a child move it in place, so a focused text field keeps its focus through a reorder; a call that is rejected (a reference view that is not a child, a view that belongs to another container) changes nothing. `view.parent`, `view.window` and `view.frame` are read-only; `frame` is `{ x, y, width, height }` in the parent's coordinates and lays the window out first, so it reflects every change made so far (all zeros while the view is not in a window). `view.snapshot()` returns a PNG of just that view.
+
+### Common props
+
+| Prop                                          | Type                | Notes                                                                                                                                                                                                                                                   |
+| --------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hidden`                                      | `boolean`           | `-hidden`, read live. Hidden views keep their place in `children` but take no space in a stack.                                                                                                                                                         |
+| `alpha`                                       | `number`            | `-alphaValue`, 0 to 1, read live.                                                                                                                                                                                                                       |
+| `tooltip`                                     | `string \| null`    | `-toolTip`, read live.                                                                                                                                                                                                                                  |
+| `id`                                          | `string \| null`    | `-identifier`, read live; also the accessibility identifier, useful for UI tests.                                                                                                                                                                       |
+| `width` `height`                              | `number \| null`    | Fixed size in points (a constraint at priority 999). `null` removes the constraint.                                                                                                                                                                     |
+| `minWidth` `maxWidth` `minHeight` `maxHeight` | `number \| null`    | When they conflict the minimum wins, and `width` / `height` are clamped between them, whatever order they are set in.                                                                                                                                   |
+| `grow`                                        | `number`            | `0` (default) keeps the natural size. In a stack, siblings with `grow` share the leftover length in proportion to their values; in a `SplitView` the pane with the larger `grow` absorbs resizes; at the window's root a growing view fills the window. |
+| `background`                                  | `Color \| null`     | Fills the view's layer. A system colour name is resolved for the view's appearance when it is set.                                                                                                                                                      |
+| `cornerRadius`                                | `number`            |                                                                                                                                                                                                                                                         |
+| `border`                                      | `{ width, color? }` |                                                                                                                                                                                                                                                         |
+
+### Elements
+
+| Element                                 | AppKit class                       | Props                                                                                                                                                                                | Events                                                                                         | Readable state                                                                                   |
+| --------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `VStack` `HStack`                       | `NSStackView`                      | `spacing` (8), `padding` (number or `{top,left,bottom,right}`), `align` (or any `NSLayoutAttribute` name), `distribution` (any `NSStackViewDistribution` name)                       |                                                                                                | `spacing` `padding` (as `{top,left,bottom,right}`) `align` `distribution`                        |
+| `ZStack`                                | `NSView`                           | children pinned to its edges                                                                                                                                                         |                                                                                                |                                                                                                  |
+| `Group`                                 | `NSBox`                            | `title`, `spacing`, `padding`, `align`, `distribution`                                                                                                                               |                                                                                                | `title` `spacing` `padding` `align` `distribution`                                               |
+| `ScrollView`                            | `NSScrollView`                     | `scrollBars: { horizontal, vertical }`                                                                                                                                               |                                                                                                | `scrollBars`                                                                                     |
+| `SplitView`                             | `NSSplitView`                      | `vertical`                                                                                                                                                                           |                                                                                                | `vertical`                                                                                       |
+| `Text`                                  | `NSTextField` (label)              | `text`, `font`, `color`, `textAlign` (any `NSTextAlignment` name), `selectable`, `lineLimit` (1; `0` wraps; a non-negative integer)                                                  |                                                                                                | `text` `textAlign` `selectable` `lineLimit`                                                      |
+| `Button`                                | `NSButton`                         | `title`, `bezelStyle` (any `NSBezelStyle` name: `push` `toolbar` `accessoryBarAction` ...), `bordered`, `hasDestructiveAction`, `keyEquivalent`, `enabled`, `symbol`, `font`, `tint` | `onClick()` (target/action)                                                                    | `title` `bezelStyle` `bordered` `hasDestructiveAction` `keyEquivalent` `enabled`                 |
+| `Checkbox` `Radio`                      | `NSButton`                         | `title`, `checked`, `enabled`, `font`                                                                                                                                                | `onChange(checked)` (target/action)                                                            | `title` `checked` `enabled`                                                                      |
+| `Switch`                                | `NSSwitch`                         | `checked`, `enabled`                                                                                                                                                                 | `onChange(checked)` (target/action)                                                            | `checked` `enabled`                                                                              |
+| `TextField` `SecureField` `SearchField` | `NSTextField` and subclasses       | `value`, `placeholder`, `editable`, `enabled`, `font`, `textAlign`, `continuous`                                                                                                     | `onChange(value)` `onFocus()` `onBlur()` (notifications) `onSubmit(value)` (target/action)     | `value` `placeholder` `editable` `enabled` `textAlign`                                           |
+| `TextEditor`                            | `NSTextView` in a scroll view      | `value`, `editable`, `font`, `color`                                                                                                                                                 | `onChange(value)` (notification)                                                               | `value` `editable`                                                                               |
+| `Slider`                                | `NSSlider`                         | `value`, `min` (0), `max` (1), `step`, `continuous`, `enabled`                                                                                                                       | `onChange(value)` (target/action)                                                              | `value` `min` `max` `continuous` `enabled`                                                       |
+| `Picker`                                | `NSPopUpButton`                    | `items: string[]`, `selectedIndex`, `enabled`                                                                                                                                        | `onChange(index)` (target/action)                                                              | `items` `selectedIndex` `enabled`                                                                |
+| `Segmented`                             | `NSSegmentedControl`               | `items: string[]`, `selectedIndex`, `enabled`                                                                                                                                        | `onChange(index)` (target/action)                                                              | `items` `selectedIndex` `enabled`                                                                |
+| `Progress`                              | `NSProgressIndicator`              | `value`, `min`, `max`, `indeterminate`, `running`, `spinner`                                                                                                                         |                                                                                                | `value` `min` `max` `indeterminate` `spinner`                                                    |
+| `Image`                                 | `NSImageView`                      | `image` (`{ symbol }`, `{ file }` or bytes), `scaling` (`fit` `fill` `down` `none`, or any `NSImageScaling` name), `tint`, `size`, `enabled`                                         |                                                                                                | `scaling` `enabled`                                                                              |
+| `Divider`                               | `NSBox` separator                  | `vertical` (`null`: across the parent's axis, so vertical in an `HStack`, horizontal in a `VStack`)                                                                                  |                                                                                                |                                                                                                  |
+| `Spacer`                                | `NSView`                           | `minLength`; shares leftover space like `grow: 1`, so one on each side centres and two split it equally                                                                              |                                                                                                |                                                                                                  |
+| `NativeView`                            | any `NSView` you made              | `new NativeView(objc.classes.NSDatePicker.new(), { width: 200 })`: the common props only                                                                                             |                                                                                                |                                                                                                  |
+| `MetalView`                             | `MTKView` (`NSView` without Metal) | `clearColor` (`clearColor`), `preferredFPS` (60; `preferredFramesPerSecond`), `running` (`paused`, inverted, and kept paused with no display); see [Metal](#metal)                   | `onFrame(frame, info)` (`drawInMTKView:`) `onResize(size)` (`mtkView:drawableSizeWillChange:`) | `preferredFPS` (with Metal) `drawableSize`                                                       |
+| `Table`                                 | `NSTableView` in a scroll view     | `columns: { id, title, width? }[]`, `rows: string[][]`, `selectedIndexes`, `multiple`, `headerVisible`, `alternatingRows`, `rowHeight`                                               | `onSelect(indexes)` (notification) `onActivate(row)` (double action)                           | `columns` (as `{ id, title, width }`) `selectedIndexes` `multiple` `alternatingRows` `rowHeight` |
+
+"Readable state" props read the live value back from the control, so `field.value` reflects what the user typed and `button.title` reflects a `setTitle:` sent through `button.native`. Every other getter returns the last value you set, or the prop's default (the value in parentheses above, or the `@default` in the type definitions) while it is unset; assigning `null` puts a prop back to its default. Setting a value from code (`field.value = "x"`, `slider.value = 3`, `checkbox.checked = true`, `win.width = 500`) does not fire that view's `onChange` or the window's `onResize` / `onMove`.
+
+Everything in this table except `MetalView` is written in JavaScript on the [`objc` bridge](/runtime/objc). The class makes the `NSButton`, `NSTextField` or `NSStackView` (`view.native` is that very object) and reads it back for the props in the last column; the common props, `frame` and `snapshot` are sends and `NSLayoutConstraint`s on that object for every view.
+
+- A `VStack` is an `NSStackView` whose children are its arranged subviews (`align: "fill"` adds a width constraint per child; `grow` ties the growing children's lengths together in ratio). A `ZStack` is a plain `NSView` with each child pinned to its edges, a `ScrollView` an `NSScrollView` over a flipped `NSClipView`, a `SplitView` an `NSSplitView` whose panes' holding priorities follow `grow`.
+- A control's `onClick` / `onChange` / `onSubmit` are its target and action, so they run synchronously inside the click or keystroke, whether the user's or `click()`'s. A text field's `onChange`, `onFocus` and `onBlur` are its `NSTextFieldDelegate`, a text editor's `onChange` its `NSTextViewDelegate`.
+- A `Table` is a view-based `NSTableView` whose data source and delegate is one script object, which it keeps: AppKit asks them for the row count and for a cell view as each row scrolls into sight, so `rows` stay in JavaScript and a long array costs nothing until it is looked at. `onSelect` is `NSTableViewSelectionDidChangeNotification` and `onActivate` the table's double action.
+- Props that name an enumeration (`bezelStyle`, `textAlign`, `scaling`) take every member of Apple's by its name without the prefix, the full name, or the number from `objc.enums`, and read back the short name. `bezelStyle` for one is `"push"` for `NSBezelStylePush` (or `"NSBezelStylePush"`, or `objc.enums.NSBezelStyle.push`) and reads back the number for a value with no current name.
+- The usual button roles are plain props: `keyEquivalent: "\r"` makes the window's default button (accent-coloured, answers Return), `bordered: false` draws like a link, `bezelStyle: "toolbar"` is a toolbar button and `hasDestructiveAction: true` marks a destructive one.
+
+A `TextField`'s `onBlur` (and, with `continuous: false`, the pending `onChange`) fires whenever editing ends, including when your own code ends it: hiding or removing the field, replacing the window's content, closing the window (ahead of the window's `onClose`). It is then delivered as that call returns, after the change it made is complete, so the handler may freely read and change the field, its container and the window. Return in a text field calls `onSubmit`; a field without one presses the window's default button (the one whose `keyEquivalent` is `"\r"`) instead, as a native dialog does.
+
+`Radio` buttons that are direct children of the same container act as one group: turning one on (by click or from code) turns the others in that container off, and only the one that was clicked fires `onChange`. Radios in different containers are independent.
+
+`click()` on a `Button`, `Checkbox`, `Radio` or `Switch` performs a real click (`performClick:`), which is how tests drive the UI without a mouse.
+
+In a `VStack`, children stretch to the stack's width by default (`align: "fill"`); buttons keep their natural width. In an `HStack` children are vertically centered. `align` accepts `fill leading center trailing top bottom firstBaseline lastBaseline` (each the `NSLayoutAttribute` that means that on the stack's axis, so `bottom` on a `VStack` reads back as `trailing`), or any `NSLayoutAttribute` by name or number, read back by its name; `distribution` accepts `fill fillEqually fillProportionally equalSpacing equalCentering gravity` or any `NSStackViewDistribution` name or number. `padding` reads back as the stack's `{ top, left, bottom, right }` edge insets whichever form set it. A `Group`'s `title` set to `""` hides the title area; setting one again shows it at the top unless a position was chosen through `.native`. A title or text that does not fit is truncated rather than making the window wider.
+
+### Colors and fonts
+
+Colors are strings: `"#rgb"`, `"#rgba"`, `"#rrggbb"`, `"#rrggbbaa"`, `"rgb(r, g, b)"` / `"rgba(r, g, b, a)"`, a short system color name that follows the user's appearance and accent settings (`label secondaryLabel tertiaryLabel quaternaryLabel text placeholder link separator accent control controlText controlBackground windowBackground underPageBackground textBackground selectedContentBackground clear black white gray red orange yellow green mint teal cyan blue indigo purple pink brown`), or any of `NSColor`'s class colors by Apple's name (`"systemRedColor"`, `"labelColor"`, `"controlAccentColor"`, `"findHighlightColor"`, …). An `NSColor` handle from the bridge is a color too (`text.color = objc.classes.NSColor.colorWithSRGBRed_green_blue_alpha_(0.2, 0.4, 1, 1)`).
+
+`font` is a point size, `{ size?, weight?, design?, italic? }`, or an `NSFont` handle. `weight` is CSS-style `100`-`900` or one of `ultralight thin light regular medium semibold bold heavy black`; `design` is `default`, `monospaced`, `rounded` or `serif`; `size: 0` or omitted means the standard control size. An `Image`'s `image` likewise takes an `NSImage` handle besides `{ symbol }`, `{ file }` and `{ data }`.
+
+The color and font props AppKit itself holds (`Text.color`, `TextEditor.color`, `tint`, a `Window`'s `background`, every `font`) read the control: the value you gave while that is still what the control has, otherwise the `NSColor` or `NSFont` handle it has now (after `text.native.setTextColor_(…)`, say). A view's `background` and `border` colors are drawn into its layer and read back as given.
+
+### `.native` and the bridge
+
+`window.native` is the `NSWindow` and `view.native` the widget's outer `NSView`: for `ScrollView`, `Table` and `TextEditor` that is the `NSScrollView` (`.documentView()` reaches the `NSTableView` or `NSTextView`); for `Group` it is the `NSBox`, whose children sit in an `NSStackView` inside its `contentView()`; for `MetalView` it is the `MTKView`, or a plain `NSView` when Metal is unavailable. Changes made through them show up in the curated properties that read the live object (`title`, `width`, `value`, `checked`, ...). A closed window's `.native` is still its `NSWindow`.
+
+The other direction is `NativeView`: any `NSView` you made through `bun:objc` (`objc.classes.NSDatePicker.new()`, an instance of a class from `objc.defineClass`) becomes a view of the tree with `new NativeView(handle, props?)`. It takes the props every view has (`width`, `height`, `grow`, `hidden`, `tooltip`, `background`, `border`, `cornerRadius`, …), goes in a container's `children` or a `Window`'s `content`, and answers `frame`, `parent`, `window` and `snapshot()` like the rest; `.native` is the handle you gave. Everything specific to the control stays a message to that handle. The `NSView` must not be in a view hierarchy yet, and one `NSView` is one `NativeView`.
+
+A `View` and its handlers live while your program references the `View`, or while it is a `Window`'s content or in a container's `children`: the `NSView` refers back to it only weakly. Hierarchy edits go through the curated methods (`append`, `insertBefore`, `removeChild`, `content`): `children`, `parent` and `window` are the tree those built and are not reconciled with subviews you add or remove through `.native`. Placing a view somewhere with `someView.addSubview_(button.native)` works, but it is then a subview and not a child: nothing keeps the `Button` (once your program drops it, it is collected, the `NSButton` stays where you put it, and clicks reach nothing; an orphaned `Table` answers no rows), and its `parent` and `window` read `null`. Keep such a view in a variable, or wrap the bridge-made view in a `NativeView` and add that.
+
+The delegate of a curated view's or window's object is yours to set: `Window`, `TextField` and `Table` hear what they report through `NSNotificationCenter` (`NSWindowDidResizeNotification`, `NSControlTextDidChangeNotification`, `NSTableViewSelectionDidChangeNotification`, …), and a `Window`'s `shouldClose` is its `NSWindow`'s own `windowShouldClose:`, which AppKit asks when the delegate does not implement it. Two keep one: a `TextEditor`'s `NSTextView` delegate hands it its own undo manager (replace it and undo merges into the window's), and a `Table`'s delegate and data source supply its cells and row count (replace them and it shows nothing). Targets are the control's: `button.native.setTarget_(…)` takes `onClick` away.
+
+Everything else about handles (what a message converts, ownership, blocks, defining a delegate class of your own, Workers) is in [`bun:objc`](/runtime/objc).
+
+---
+
+## Metal
+
+`MetalView` is an `MTKView` in the view tree, and `gpu` is a small typed API over the system's default Metal device: compile Metal Shading Language from a string, create buffers and textures from typed arrays, build render and compute pipelines, encode a frame, and read results back. It is enough to draw custom content in a window, render offscreen, or run a compute kernel, without any native add-on. There is no scene graph; you write the shaders.
+
+```ts triangle.ts icon="/icons/typescript.svg"
+import { Window, MetalView, gpu } from "bun:appkit";
+
+const lib = gpu.library(/* metal */ `
+  #include <metal_stdlib>
+  using namespace metal;
+  struct Out { float4 position [[position]]; float4 color; };
+
+  vertex Out vs(uint id [[vertex_id]], constant float& angle [[buffer(0)]]) {
+    const float2 corners[] = { float2(0, 0.8), float2(-0.7, -0.6), float2(0.7, -0.6) };
+    const float3 colors[] = { float3(1, 0, 0), float3(0, 1, 0), float3(0, 0, 1) };
+    float2 p = corners[id];
+    float2x2 rotate = float2x2(cos(angle), sin(angle), -sin(angle), cos(angle));
+    return { float4(rotate * p, 0, 1), float4(colors[id], 1) };
+  }
+  fragment float4 fs(Out in [[stage_in]]) { return in.color; }
+`);
+const pipeline = gpu.renderPipeline({ vertex: lib.function("vs"), fragment: lib.function("fs") });
+
+const view = new MetalView({
+  grow: 1,
+  clearColor: "#1e1e1e",
+  onFrame(frame, { time }) {
+    frame.renderPass(view).pipeline(pipeline).vertexBytes(0, Float32Array.of(time)).draw(3);
+  },
+});
+new Window({ title: "Triangle", width: 400, height: 400, content: view });
+```
+
+### Frames
+
+Every frame, `onFrame(frame, { time, dt, width, height })` receives a `GpuFrame`, which is one Metal command buffer with a chained encoding API. `frame.renderPass(view)` starts a render pass into the view's drawable and only works inside that view's `onFrame`; the first pass into the view each frame clears it to `clearColor`, later ones draw on top (pass `{ clear }` to choose). `renderPass({ color: texture, clear, depth })` renders offscreen instead. `computePass()` and `blit()` start the other two kinds of pass, and starting a pass ends the previous one. Bindings follow Metal's argument tables: `vertexBuffer(0, buf)` is `[[buffer(0)]]` in the vertex function, `fragmentTexture(1, tex)` is `[[texture(1)]]` in the fragment function, and `vertexBytes` / `fragmentBytes` / `bytes` copy up to 4 KB of uniforms inline without a buffer.
+
+When `onFrame` returns, the frame is committed and the drawable presented for you unless you already called `frame.commit()`. If `onFrame` throws, the frame is dropped and the error is reported like any other uncaught exception in a callback. If the GPU later fails to run a `MetalView` frame (a faulting shader, a timeout), that is reported the same way, as a `GpuExecutionError`, before that view's next `onFrame`, unless your code kept the frame and read its `gpuStatus` or `error` first; frames from `gpu.frame()` report only through `gpuStatus`, `error` and `commitAndWait()`. All encoding happens synchronously on the main thread inside `onFrame`; the GPU then executes the frame asynchronously.
+
+Pipelines, buffers and textures are meant to be created once and reused across frames. `buffer.write()`, `buffer.read()`, `texture.replace()` and `texture.readPixels()` wait for any committed frame that used the resource to finish first, so they never race the GPU; the cost is that writing one buffer every frame makes the CPU wait for the previous frame. For a few KB of per-frame data use `vertexBytes` / `fragmentBytes` / `bytes`, which copy inline; for more, rotate between two or three buffers (`buffer.inFlight` says whether a write would wait).
+
+For a depth buffer, ask for one in the pass: `frame.renderPass(view, { depthFormat: "depth32float" })`. The view allocates a depth texture the size of its drawable the first time and keeps it; pipelines used in that pass declare the same `depthFormat`, and `frame.depthStencil(gpu.depthStencil({ compare: "less" }))` turns the depth test on.
+
+With a display attached and `running: true` (the default) the view drives `onFrame` from the screen's refresh at `preferredFPS`. With `running: false`, or in a headless process, nothing happens until you call `view.draw()`, which runs one frame synchronously; that is also how tests drive it. `onResize({ width, height })` reports the drawable size in pixels whenever it changes. The view's output is colour-matched as sRGB, the same as colours given to other views.
+
+### Offscreen rendering
+
+`gpu.frame()` makes a frame that is not tied to a view. Render into a texture, wait for the GPU, and read the pixels back:
+
+```ts
+const target = gpu.texture({ width: 256, height: 256, format: "rgba8unorm", usage: ["render", "read"] });
+
+gpu
+  .frame()
+  .renderPass({ color: target, clear: [0, 0, 0, 0] })
+  .pipeline(
+    gpu.renderPipeline({ vertex: lib.function("vs"), fragment: lib.function("fs"), colorFormats: ["rgba8unorm"] }),
+  )
+  .vertexBytes(0, Float32Array.of(0))
+  .draw(3)
+  .end()
+  .commitAndWait(); // blocks until the GPU is done
+
+const rgba = target.readPixels(); // Uint8Array, 256 * 256 * 4 bytes, rows top to bottom
+await Bun.write("triangle.rgba", rgba);
+```
+
+`commit()` returns immediately; afterwards `frame.gpuStatus` moves from `"running"` to `"completed"` or `"failed"` (with the reason in `frame.error`) without blocking. `commitAndWait()` blocks until the work has finished and throws a `GpuExecutionError` if the GPU reported one. A pipeline's `colorFormats` must match the textures it renders into (`"bgra8unorm"`, the `MetalView` format, is the default). Up to 32 frames can be open (created and not yet committed) at once; `gpu.frame()` throws past that, so commit frames as you go rather than collecting them.
+
+A vertex function that takes `[[stage_in]]` needs a `vertexLayout` on the pipeline: `{ stride, attributes: [{ format, offset }] }` describes vertex buffer 0, and an array of those describes one vertex buffer per element, with `[[attribute(n)]]` numbers counting on across them (or given as `index`).
+
+### Compute
+
+```ts
+import { gpu } from "bun:appkit";
+
+const lib = gpu.library(`
+  #include <metal_stdlib>
+  using namespace metal;
+  kernel void twice(device float* values [[buffer(0)]], uint i [[thread_position_in_grid]]) {
+    values[i] *= 2.0;
+  }
+`);
+const twice = gpu.computePipeline(lib.function("twice"));
+
+const input = new Float32Array([1, 2, 3, 4, 5, 6, 7, 8]);
+const buffer = gpu.buffer(input); // "shared" storage: one allocation seen by CPU and GPU
+
+gpu.frame().computePass().pipeline(twice).buffer(0, buffer).dispatch(input.length).end().commitAndWait();
+
+const output = new Float32Array(buffer.read().buffer); // 2, 4, 6, 8, ...
+```
+
+`dispatch(threads, threadsPerGroup?)` takes a total grid size in one, two or three dimensions (`1024`, `[width, height]`). Left out, the threadgroup size is the pipeline's `maxTotalThreadsPerThreadgroup` for a one-dimensional grid, and `threadExecutionWidth` wide by as many rows as that maximum allows for two or three dimensions, capped at the grid size. `buffer.read()` after `commitAndWait()` (or after `commit()`, where it waits by itself) sees the kernel's writes.
+
+### Shaders and errors
+
+`gpu.library(source)` compiles MSL at run time. A compile error throws a `GpuCompileError` whose `message` is the compiler log with line and column numbers; asking a library for a function it does not have throws a `TypeError` that lists the ones it does have, and so does handing `renderPipeline` a kernel or `computePipeline` a vertex function (`fn.type` says which kind a function is). Creating a render or compute pipeline can also throw `GpuCompileError` when the functions do not link (for example a fragment input the vertex function does not produce). `GpuExecutionError` is for failures on the device: it is thrown by `commitAndWait()`, returned by `frame.error`, thrown by `gpu.buffer()` / `gpu.texture()` when Metal cannot allocate, and reported for `MetalView` frames as described above.
+
+### Packing uniforms with `gpu.struct`
+
+Metal lays structs out with its own alignment rules (a `float3` takes 16 bytes, a `float4x4` is 16-byte aligned), so hand-packing a `Float32Array` is error-prone. `gpu.struct` computes the layout, prints the matching MSL declaration, and packs JavaScript values into bytes you can pass to `vertexBytes` or write into a buffer:
+
+```ts
+const Uniforms = gpu.struct({ mvp: "float4x4", tint: "float3", time: "float" }, "Uniforms");
+
+Uniforms.size; // 96
+Uniforms.fields.tint; // { offset: 64, size: 16, align: 16, ... }
+Uniforms.msl; // "struct Uniforms {\n  float4x4 mvp;\n  float3 tint;\n  float time;\n};"  (paste into the shader)
+
+frame.vertexBytes(1, Uniforms.pack({ mvp: modelViewProjection, tint: [1, 0.5, 0], time }));
+
+// Reuse one allocation across frames:
+const scratch = new ArrayBuffer(Uniforms.size);
+Uniforms.pack({ time }, scratch); // fields you leave out stay as they were
+```
+
+Supported types are `bool`, `uchar4`, `short`, `ushort`, `half`, `half2`, `half3`, `half4`, `int` to `int4`, `uint` to `uint4`, `float` to `float4`, `float2x2`, `float3x3` and `float4x4`. Vectors and matrices take arrays or typed arrays; matrices are column-major. This part is pure arithmetic and works without a GPU.
+
+### Availability
+
+`gpu.available` is `false` on Macs without a Metal device, which in practice means virtual machines and some sandboxes. Every other `gpu` member then throws `TypeError: Metal is not available`, and a `MetalView` still takes part in layout but never calls `onFrame`. Check it once at startup if your program can do something useful without the GPU. Buffers and textures default to `"shared"` storage, which JavaScript can read and write directly; `"private"` storage is GPU-only and is filled with `frame.blit().copyBuffer(...)` or by rendering into it. Buffers and textures report their size to the garbage collector; `destroy()` releases one right away when you know you are done with it.
+
+---
+
+## Event loop
+
+AppKit must run on the main thread, which is also the JavaScript thread. Bun keeps its own event loop as the outer loop and, from the moment the app starts until the process ends, waits for I/O inside AppKit's event dispatch instead of directly in `kevent`. A file descriptor becoming ready or a timer coming due wakes that wait by itself, so there is no polling interval: timers, `fetch`, sockets, `Bun.serve`, subprocesses, `Worker` messages and file watchers all keep running while windows are open, and UI callbacks (`onClick`, `onChange`, window events, `onFrame`) run in the same phase of the tick as socket callbacks, with microtasks drained before control returns to AppKit. When one of them runs because your own code provoked it synchronously (`button.click()`, `metalView.draw()`, a `close()` inside a test body), it is an ordinary nested call instead: promise continuations and `nextTick` callbacks queued inside it wait until the code that made the call finishes, as after any function call.
+
+Three consequences:
+
+- Every wake of an idle process now passes through AppKit's run loop rather than returning straight from `kevent`: a few tens of microseconds of CPU per wake and a fraction of a millisecond of added latency, whether or not a window is open. A process that is idle pays nothing; a server that starts the app for a menu-bar item pays this on each request that finds the process idle.
+- A long synchronous piece of JavaScript freezes the UI, exactly as it would freeze a server. Move heavy work to a `Worker`.
+- While AppKit runs a tracking loop of its own (the user is holding a menu open, dragging a slider, or live-resizing a window), JavaScript timers and I/O callbacks pause; they run as soon as the gesture ends. UI callbacks the gesture itself causes (`onChange` while dragging a slider, `onResize` during the resize) still fire.
+- A modal session begun through `objc` (`NSApp.runModalForWindow_()`, an `NSAlert` or open panel's `runModal()`) is such a loop for as long as it lasts: the call returns when the session ends, and no timer, I/O callback, immediate or promise continuation runs before then, wherever the call was made from. Prefer the sheet and completion-handler forms (`beginSheetModalForWindow:completionHandler:`, `-[NSSavePanel beginWithCompletionHandler:]`), which return at once and call back.
+
+Process lifetime follows the usual rule: open windows keep the process alive; when the last one closes and nothing else is pending, `beforeExit` / `exit` fire and the process ends. Set `app.keepAlive = true` for menu-bar style tools that should outlive their windows. A quit (Cmd-Q, the Dock, logout, `app.quit()`) that nothing vetoes closes every window and exits as described under [the `app` object](#the-app-object).
+
+An Objective-C exception raised inside a message sent through [`objc`](/runtime/objc) becomes a JavaScript error; one raised while AppKit waits for or dispatches an event is reported as an uncaught error (`ERR_OBJC_EXCEPTION`) and the loop carries on; one raised anywhere else that nothing catches ends the process as an uncaught error does (`error: uncaught Objective-C exception <name>: <reason>` and the raising stack on stderr, exit code 1, no crash report).
+
+`bun --hot` is not supported with `bun:appkit`: the app, its windows and its menu live for the whole process, so a reload would add a second set next to the first. Use `bun --watch`, which restarts the process.
+
+---
+
+## Testing
+
+Each view and window can render itself to PNG with `snapshot()`, `button.click()` triggers the real action, `view.frame` is current after every change, and readable props (`value`, `checked`, `selectedIndex`, ...) reflect control state, so UI logic is testable by driving the objects directly. Without a display (plain `ssh`, CI agents, sandboxes) everything still runs off screen: windows lay out, controls fire, snapshots render; they are just never shown. `app.hasDisplay` tells you which case you are in. `"ERR_OBJC_UNAVAILABLE"` is only thrown if the system frameworks cannot be loaded at all.
+
+The application, its windows and `app`'s listeners are process-wide and `bun test` does not reset them between files, so a window a failed test leaves open is still in `app.windows` for the next file (under `--isolate`, which loads the module afresh per file, it is closed instead; see [Limitations](#limitations)), and an unvetoed quit ends the whole run. The pattern that isolates tests is a small script per scenario that prints what it observed, run as a subprocess:
+
+```ts counter.fixture.ts icon="/icons/typescript.svg"
+import { app, Window, Button, Text, VStack } from "bun:appkit";
+
+app.activationPolicy = "accessory"; // no Dock icon
+const label = new Text({ text: "0" });
+const button = new Button({ title: "+", onClick: () => (label.text = String(Number(label.text) + 1)) });
+const win = new Window({ content: new VStack({ children: [label, button] }) });
+button.click();
+button.click();
+console.log(JSON.stringify({ text: label.text, width: button.frame.width }));
+win.close(); // nothing keeps the process alive after this
+```
+
+```ts counter.test.ts icon="/icons/typescript.svg"
+import { test, expect } from "bun:test";
+
+test("counter increments", async () => {
+  await using proc = Bun.spawn({ cmd: ["bun", "counter.fixture.ts"], cwd: import.meta.dir, stdout: "pipe" });
+  const result = JSON.parse(await proc.stdout.text());
+  expect(result.text).toBe("2");
+  expect(result.width).toBeGreaterThan(0);
+  expect(await proc.exited).toBe(0);
+});
+```
+
+Driving views inside the test process itself also works for quick checks; close every window you open (`for (const w of app.windows) w.close()` in `afterEach`) and do not call `app.quit()` there.
+
+---
+
+## Limitations
+
+- macOS only: arm64; x64 builds but is untested. On other platforms importing `bun:appkit` throws `ERR_OBJC_UNAVAILABLE`.
+- The user interface runs on the main thread; there is no separate UI thread. `app`, `Window`, the views, `MetalView` and `gpu` throw in a `Worker` ([`bun:objc`](/runtime/objc#threads-and-workers) works there for everything that is not user interface).
+- Timers and I/O pause while a menu is open, a window is being live-resized or a modal session runs, and a long synchronous callback stalls the UI as it would any other.
+- `bun --hot` is not supported; use `bun --watch`. Under `bun test --isolate` (which `--parallel` implies) each file loads `bun:appkit` afresh: the application stays started, with the new file's delegate and listeners; a window an earlier file left open is closed by the next file's load of the module (the earlier file's handlers no longer run, and `app.windows` lists only this file's windows), and a quit asks only this file's windows. A second global object alive beside the main one on the same thread (a `ShadowRealm`) cannot load it: that throws.
+- `bun build --compile` works: `bun:appkit` stays a builtin of the compiled executable, which needs macOS to run like any other use of it. A compiled executable has its own `NSUserDefaults` domain (its file name), so state AppKit keeps per application, such as a window's `restoreName` frame, is separate from what the same script saved when run with `bun`, where every script shares the `bun` domain.
+- No curated modal APIs (`NSAlert`, open/save panels, sheets), drag and drop, or custom drawing other than through `MetalView` yet; `objc` reaches the underlying classes, within [its limits](/runtime/objc#limitations). No `.app` bundling: the program is a normal `bun` process, so it has the generic executable icon in the Dock unless `activationPolicy` is `"accessory"`.

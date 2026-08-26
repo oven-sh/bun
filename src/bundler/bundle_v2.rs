@@ -1412,6 +1412,7 @@ pub mod bv2_impl {
                 format: crate::options_impl::Format,
                 source: &[u8],
                 source_provider_url: &bun_core::String,
+                depth: u32,
                 external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
             ) -> Option<Box<[u8]>>;
 
@@ -1424,6 +1425,7 @@ pub mod bv2_impl {
             ) -> Vec<(u32, Box<[u8]>)>;
 
             safe fn __bun_jsc_encoder_string_table_new() -> core::ptr::NonNull<EncoderStringTable>;
+            pub(crate) safe fn __bun_jsc_destroy_bytecode_cache_vm();
             safe fn __bun_jsc_encoder_string_table_take(
                 table: core::ptr::NonNull<EncoderStringTable>,
             ) -> Box<[u8]>;
@@ -1464,12 +1466,19 @@ pub mod bv2_impl {
             format: crate::options_impl::Format,
             source: &[u8],
             source_provider_url: &bun_core::String,
+            depth: u32,
             external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
         ) -> Option<Box<[u8]>> {
+            // A CJS chunk is wrapped in `(function(exports, require, module, ...) {})`, so the module's top level is one function deep.
+            let depth = match format {
+                crate::options_impl::Format::Cjs => depth.saturating_add(1),
+                _ => depth,
+            };
             __bun_jsc_generate_cached_bytecode(
                 format,
                 source,
                 source_provider_url,
+                depth,
                 external_strings,
             )
         }
@@ -2964,6 +2973,7 @@ pub mod bv2_impl {
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
             this.linker.options.footer = unsafe { interned_slice(&this.transpiler.options.footer) };
             this.linker.options.css_chunking = this.transpiler.options.css_chunking;
+            this.linker.options.min_chunk_size = this.transpiler.options.min_chunk_size;
             this.linker.options.source_maps = this.transpiler.options.source_map;
             this.linker.options.tree_shaking = this.transpiler.options.tree_shaking;
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
@@ -2974,6 +2984,7 @@ pub mod bv2_impl {
             this.linker.options.generate_bytecode_cache = this.transpiler.options.bytecode;
             this.linker.options.generate_internal_module_bytecode =
                 this.transpiler.options.bytecode && this.transpiler.options.compile_target_is_host;
+            this.linker.options.bytecode_depth = this.transpiler.options.bytecode_depth;
             this.linker.options.compile_mode = this.transpiler.options.compile_mode;
             this.linker.options.metafile = this.transpiler.options.metafile;
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.

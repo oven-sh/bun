@@ -49,6 +49,7 @@ unsafe extern "C" {
         source_provider_url: &BunString,
         input_code: *const u8,
         input_source_code_size: usize,
+        depth: u32,
         output_byte_code: *mut Option<NonNull<u8>>,
         output_byte_code_size: *mut usize,
         cached_bytecode: *mut Option<NonNull<CachedBytecode>>,
@@ -59,6 +60,7 @@ unsafe extern "C" {
         source_provider_url: &BunString,
         input_code: *const u8,
         input_source_code_size: usize,
+        depth: u32,
         output_byte_code: *mut Option<NonNull<u8>>,
         output_byte_code_size: *mut usize,
         cached_bytecode: *mut Option<NonNull<CachedBytecode>>,
@@ -91,6 +93,7 @@ impl CachedBytecode {
         format: Format,
         input: &[u8],
         source_provider_url: &BunString,
+        depth: u32,
         external_strings: Option<NonNull<EncoderStringTable>>,
     ) -> Option<(&'static [u8], NonNull<CachedBytecode>)> {
         let f = match format {
@@ -107,6 +110,7 @@ impl CachedBytecode {
                 source_provider_url,
                 input.as_ptr(),
                 input.len(),
+                depth,
                 &raw mut out_ptr,
                 &raw mut out_size,
                 &raw mut this,
@@ -146,18 +150,28 @@ pub(crate) fn __bun_jsc_generate_cached_bytecode(
     format: Format,
     source: &[u8],
     source_provider_url: &BunString,
+    depth: u32,
     external_strings: Option<NonNull<EncoderStringTable>>,
 ) -> Option<Box<[u8]>> {
     crate::virtual_machine::IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.set(true);
     crate::initialize(crate::InitializeOptions::default());
     let (bytes, handle) =
-        CachedBytecode::generate(format, source, source_provider_url, external_strings)?;
+        CachedBytecode::generate(format, source, source_provider_url, depth, external_strings)?;
     let owned = Box::<[u8]>::from(bytes);
     // `handle` was just produced by C++ and is valid until deref;
     // `CachedBytecode` is an opaque ZST handle so `opaque_mut` is the
     // centralised zero-byte deref proof.
     CachedBytecode__deref(CachedBytecode::opaque_mut(handle.as_ptr()));
     Some(owned)
+}
+
+/// Frees the calling thread's bytecode-generation VM, if it made one.
+#[unsafe(no_mangle)]
+pub(crate) fn __bun_jsc_destroy_bytecode_cache_vm() {
+    unsafe extern "C" {
+        safe fn Bun__destroyBytecodeCacheVM();
+    }
+    Bun__destroyBytecodeCacheVM()
 }
 
 /// Serialize the shared string table into an owned buffer for the standalone graph, then free the table.

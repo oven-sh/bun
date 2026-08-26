@@ -662,19 +662,19 @@ impl EventLoop {
     }
 
     /// Fold refs/unrefs queued through `ref_keep_alive`/`unref_keep_alive`
-    /// (here, or from another thread through `VmHandle`) into this loop's own
-    /// platform loop keep-alive count — not `vm.event_loop_handle`, which
-    /// `Bun.spawnSync` points at its private loop while it runs (a GC inside it
-    /// still reaches this through FinalizationRegistry / MessagePort refs).
-    /// Runs at the top of every tick, and once more from a worker's shutdown
-    /// after its stop phase (which unrefs ports/channels/sockets on a loop that
-    /// no longer ticks) so the loop is not torn down still believing something
-    /// keeps it alive.
+    /// (here, or from another thread through `VmHandle`) into this loop's
+    /// keep-alive count. Runs at the top of every tick, and once more from a
+    /// worker's shutdown after its stop phase (which unrefs
+    /// ports/channels/sockets on a loop that no longer ticks) so the loop is not
+    /// torn down still believing something keeps it alive.
+    ///
+    /// Targets `self.native_loop()`, never `vm.event_loop_handle`: `Bun.spawnSync`
+    /// points the latter at its private loop, and a GC inside it still refs
+    /// this loop (FinalizationRegistry, MessagePort).
     pub(crate) fn apply_concurrent_ref_delta(&self) {
         let delta = self.concurrent_ref.swap(0, Ordering::SeqCst);
-        // SAFETY: `uv_loop()` is this loop's live uws/uv loop (set once in
-        // `ensure_waker` / at spawnSync-loop creation); JS thread only.
-        let loop_ = unsafe { &mut *self.uv_loop() };
+        // SAFETY: `native_loop()` is live for this loop's lifetime; JS thread only.
+        let loop_ = unsafe { &mut *self.native_loop() };
         #[cfg(windows)]
         {
             if delta > 0 {
@@ -699,29 +699,24 @@ impl EventLoop {
         }
     }
 
-    /// This loop's platform loop (the uws loop on POSIX, its libuv loop on
-    /// Windows).
-    #[inline]
-    pub fn uv_loop(&self) -> *mut crate::PlatformEventLoop {
-        #[cfg(windows)]
-        {
-            // SAFETY: `usockets_loop()` is a live uws loop; `uv_loop` is set by
-            // `us_create_loop` for its lifetime.
-            return unsafe { (*self.usockets_loop()).uv_loop };
-        }
-        #[cfg(not(windows))]
-        {
-            self.usockets_loop()
-        }
-    }
-
+    /// The uws loop this `EventLoop` runs on.
     pub fn usockets_loop(&self) -> *mut uws::Loop {
-        // Panic on null rather than returning it — callers immediately
-        // materialize `&mut *`, so a null return would be instant UB instead
-        // of a clean panic.
         self.uws_loop
             .expect("usockets_loop: uws_loop not initialized (call ensure_waker first)")
             .as_ptr()
+    }
+
+    /// [`usockets_loop`](Self::usockets_loop) as the platform-native loop
+    /// (`us_loop_t*` on POSIX, its `uv_loop_t*` on Windows).
+    #[inline]
+    pub fn native_loop(&self) -> *mut crate::PlatformEventLoop {
+        Async::uws_to_native(self.usockets_loop())
+    }
+
+    #[cfg(windows)]
+    #[inline]
+    pub fn uv_loop(&self) -> *mut crate::PlatformEventLoop {
+        self.native_loop()
     }
 
     #[inline]
@@ -1204,8 +1199,8 @@ impl EventLoop {
     pub unsafe fn tick_while_paused(&mut self, done: *const bool) {
         // SAFETY: see fn contract — `done` is a live FFI bool written by C++.
         while !unsafe { done.read_volatile() } {
-            // SAFETY: `uv_loop()` is this loop's live platform loop; JS thread.
-            unsafe { (*self.uv_loop()).tick() };
+            // SAFETY: `native_loop()` is live for this loop's lifetime; JS thread.
+            unsafe { (*self.native_loop()).tick() };
         }
     }
 
@@ -1576,13 +1571,6 @@ pub(crate) fn __bun_spawn_sync_vm_set_event_loop_handle(
     h: bun_event_loop::SpawnSyncEventLoop::VmEventLoopHandle,
 ) {
     vm_from_ptr(vm).event_loop_handle = h.map(NonNull::as_ptr);
-}
-
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_spawn_sync_vm_set_event_loop(vm: *mut (), el: *mut ()) {
-    // `el` is its previous `event_loop` pointer (a `*mut EventLoop` into
-    // `regular_event_loop`/`macro_event_loop`).
-    vm_from_ptr(vm).event_loop = el.cast::<EventLoop>();
 }
 
 #[unsafe(no_mangle)]

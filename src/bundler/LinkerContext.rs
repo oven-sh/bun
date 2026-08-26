@@ -2492,10 +2492,13 @@ impl<'a> LinkerContext<'a> {
                             }
                         }
                         crate::chunk::QueryKind::Chunk => out.push(piece.query.index()),
-                        crate::chunk::QueryKind::Scb => out.push(
-                            self.graph.files.items_entry_point_chunk_index()
-                                [piece.query.index() as usize],
-                        ),
+                        crate::chunk::QueryKind::Scb => {
+                            let chunk_index = self.graph.files.items_entry_point_chunk_index()
+                                [piece.query.index() as usize];
+                            if chunk_index != u32::MAX {
+                                out.push(chunk_index);
+                            }
+                        }
                         crate::chunk::QueryKind::None | crate::chunk::QueryKind::HtmlImport => {}
                     }
                 }

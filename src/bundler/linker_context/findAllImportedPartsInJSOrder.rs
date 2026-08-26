@@ -255,7 +255,8 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                             // link step. Chunks run in parallel and, without code
                             // splitting, several may contain this file: highest index wins
                             // (unset is `u32::MAX`), as when this ran chunk by chunk.
-                            unsafe {
+                            // Err = another chunk with a higher index already claimed it.
+                            let _ = unsafe {
                                 core::sync::atomic::AtomicU32::from_ptr(
                                     (*self.entry_point_chunk_indices)
                                         .as_mut_ptr()
@@ -269,8 +270,7 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                                             .then_some(self.chunk_index)
                                     },
                                 )
-                                .ok();
-                            }
+                            };
                         }
 
                         self.files.push(source_index);

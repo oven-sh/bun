@@ -803,6 +803,16 @@ impl IntermediateOutput {
                                 QueryKind::None => unreachable!(),
                             };
 
+                            // Normalize exactly like the write pass below, so
+                            // the counted and the written lengths agree.
+                            let file_path: &[u8] = {
+                                file_path_posix.clear();
+                                file_path_posix.extend_from_slice(file_path);
+                                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
+                                    &mut file_path_posix,
+                                );
+                                &file_path_posix
+                            };
                             let cheap_normalizer = cheap_prefix_normalizer(
                                 import_prefix,
                                 if use_outdir_relative_path {

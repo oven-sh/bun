@@ -512,21 +512,26 @@ fn message_with_type_and_level_(
         }
     }
 
-    if message_type == MessageType::Dir && len >= 2 {
-        print_length = 1;
-        let opts = vals_slice[1];
-        if opts.is_object() {
-            if let Some(depth_prop) = opts.get(global, b"depth")? {
-                if depth_prop.is_int32() || depth_prop.is_number() || depth_prop.is_big_int() {
-                    // Clamp negatives to 0, then truncate (not saturate) to u16.
-                    print_options.max_depth = depth_prop.to_int32().max(0) as u32 as u16;
-                } else if depth_prop.is_null() {
-                    print_options.max_depth = u16::MAX;
+    if message_type == MessageType::Dir {
+        // console.dir always uses inspect-style formatting: strings get quotes,
+        // unlike console.log which prints strings raw. Matches Node.js behavior.
+        print_options.quote_strings = true;
+        if len >= 2 {
+            print_length = 1;
+            let opts = vals_slice[1];
+            if opts.is_object() {
+                if let Some(depth_prop) = opts.get(global, b"depth")? {
+                    if depth_prop.is_int32() || depth_prop.is_number() || depth_prop.is_big_int() {
+                        // Clamp negatives to 0, then truncate (not saturate) to u16.
+                        print_options.max_depth = depth_prop.to_int32().max(0) as u32 as u16;
+                    } else if depth_prop.is_null() {
+                        print_options.max_depth = u16::MAX;
+                    }
                 }
-            }
-            if let Some(colors_prop) = opts.get(global, b"colors")? {
-                if colors_prop.is_boolean() {
-                    print_options.enable_colors = colors_prop.to_boolean();
+                if let Some(colors_prop) = opts.get(global, b"colors")? {
+                    if colors_prop.is_boolean() {
+                        print_options.enable_colors = colors_prop.to_boolean();
+                    }
                 }
             }
         }

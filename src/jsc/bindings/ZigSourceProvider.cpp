@@ -170,17 +170,27 @@ extern "C" void CachedBytecode__deref(JSC::CachedBytecode* cachedBytecode)
 }
 
 JSC::VM& vmForBytecodeCache();
+static thread_local JSC::VM* s_vmForBytecodeCache = nullptr;
+
 JSC::VM& vmForBytecodeCache()
 {
-    static thread_local JSC::VM* vmForBytecodeCache = nullptr;
-    if (!vmForBytecodeCache) {
+    if (!s_vmForBytecodeCache) {
         const auto heapSize = JSC::HeapType::Small;
         auto vmPtr = JSC::VM::tryCreate(heapSize);
         vmPtr->refSuppressingSaferCPPChecking();
-        vmForBytecodeCache = vmPtr.get();
+        s_vmForBytecodeCache = vmPtr.get();
         vmPtr->heap.acquireAccess();
     }
-    return *vmForBytecodeCache;
+    return *s_vmForBytecodeCache;
+}
+
+extern "C" void Bun__destroyBytecodeCacheVM()
+{
+    JSC::VM* vm = std::exchange(s_vmForBytecodeCache, nullptr);
+    if (!vm)
+        return;
+    JSC::JSLockHolder locker(*vm);
+    vm->derefSuppressingSaferCPPChecking();
 }
 
 extern "C" JSC::EncoderStringTable* Bun__EncoderStringTable__create()

@@ -177,6 +177,47 @@ describe("Bun.build", () => {
     expect(exitCode).toBe(1);
   });
 
+  // A function's record stores its own offset as a varint, so its size depends on where it lands. Sweep the payload
+  // size across the encoder's first page boundary (64 KB) with a few tail shapes so a record lands exactly on it.
+  test("bytecode: function record on an encoder page boundary", async () => {
+    using dir = tempDir("bun-build-api-bytecode-page-boundary", {
+      "sweep-fixture.ts": /* ts */ `
+        import { writeFileSync } from "fs";
+        const variant = Number(process.argv[2]);
+        const params = variant & 1 ? Array.from({ length: 130 }, (_, i) => "a" + i).join(",") : "";
+        const consts = variant & 2 ? "var c = " + Array.from({ length: 130 }, (_, i) => i + ".5").join("+") + ";" : "";
+        async function bytecodeSize(n: number) {
+          const file = "in" + variant + ".js";
+          writeFileSync(file, 'function p(){ return "' + Buffer.alloc(n, "p").toString() + '"; }\\n'
+            + "function t(" + params + "){ " + consts + ' return "' + Buffer.alloc(200, "t").toString() + '"; }\\n'
+            + "module.exports = [p, t];\\n");
+          const build = await Bun.build({ entrypoints: ["./" + file], outdir: "./out" + variant, target: "bun", format: "cjs", bytecode: true });
+          if (!build.success) throw new AggregateError(build.logs);
+          return build.outputs.find(o => o.kind === "bytecode")!.size;
+        }
+        const pageEnd = 64 * 1024;
+        const n0 = 60000;
+        const target = n0 + (pageEnd - (await bytecodeSize(n0)));
+        for (let n = target - 24; n < target + 104; n++) await bytecodeSize(n);
+        console.log("ok");
+      `,
+    });
+    await Promise.all(
+      [0, 1, 2, 3].map(async variant => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "sweep-fixture.ts", String(variant)],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        expect(stdout).toBe("ok\n");
+        expect(exitCode).toBe(0);
+      }),
+    );
+  });
+
   test("passing undefined doesnt segfault", () => {
     try {
       // @ts-ignore

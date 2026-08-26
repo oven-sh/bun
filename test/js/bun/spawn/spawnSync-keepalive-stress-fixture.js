@@ -42,7 +42,14 @@ for (let iter = 0; iter < 8; iter++) {
     process.exit(1);
   }
   // Worker messages posted during/after spawnSync were delivered.
-  while (received === before) await new Promise(resolve => setImmediate(resolve));
+  const deadline = performance.now() + 5000;
+  while (received === before) {
+    if (performance.now() > deadline) {
+      console.log("NO WORKER MESSAGE " + JSON.stringify({ iter, ...getEventLoopStats() }));
+      process.exit(1);
+    }
+    await new Promise(resolve => setImmediate(resolve));
+  }
 
   const { numPolls } = getEventLoopStats();
   if (numPolls < baseline) {

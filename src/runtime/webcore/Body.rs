@@ -1702,22 +1702,16 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         Ok(cloned)
     }
 
-    /// Fetch §Request ctor step 45: move this body out, leave this owner
-    /// `Used`, and clear its `body`/`stream` cache. A `Null` body passes
-    /// through unchanged (`Empty` is a non-null body per spec and transfers).
-    /// A stream JS may already hold is handed over as a proxy (step 45.2), so
-    /// the caller's handle reads as locked. The moved stream comes back
-    /// strongly `Held`: the slot cleared here was its root, and the new owner
-    /// adopts it in `check_body_stream_ref`.
+    /// Fetch §Request ctor step 45: move this body out and leave this owner
+    /// `Used`. `Null` passes through; a stream JS may hold is proxied (45.2)
+    /// so the caller's handle locks; the result is strongly `Held` because the
+    /// slot cleared here was its root.
     fn transfer_body_value(&self, global_this: &JSGlobalObject) -> JsResult<Value> {
         if matches!(self.get_body_value(), Value::Null) {
             return Ok(Value::Null);
         }
         // A Bun.serve body shares its slot with the RequestContext (= `task`):
         // hand out a detached PendingValue instead of moving the Locked out.
-        // A stream that is already live (JS cache or `locked.readable`) is
-        // proxied; otherwise `to_readable_stream` materializes a fresh one that
-        // JS has never seen.
         if matches!(self.get_body_value(), Value::Locked(l) if l.task.is_some()) {
             let readable = match self.get_body_readable_stream() {
                 Some(rs) => Self::proxy_transferred_stream(rs, global_this)?,
@@ -1758,9 +1752,8 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         Ok(body)
     }
 
-    /// Step 45.2 "create a proxy": lock `source` by teeing it and cancel the
-    /// branch nobody reads, so the branch handed over pulls straight from the
-    /// source without buffering for a second consumer.
+    /// Step 45.2 "create a proxy": tee `source` (locks it) and cancel the
+    /// branch nobody reads so it does not buffer.
     fn proxy_transferred_stream(
         source: ReadableStream,
         global_this: &JSGlobalObject,

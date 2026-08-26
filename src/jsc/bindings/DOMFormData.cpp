@@ -48,8 +48,7 @@ Ref<DOMFormData> DOMFormData::create(ScriptExecutionContext* context)
     return adoptRef(*new DOMFormData(context));
 }
 
-// Same as WTF::URLParser::parseURLEncodedForm, but each pair goes straight into
-// m_items so the entry count is bounded and no second Vector is filled.
+// WTF::URLParser::parseURLEncodedForm would fill an unbounded Vector first.
 ExceptionOr<Ref<DOMFormData>> DOMFormData::create(ScriptExecutionContext* context, StringView urlEncodedString)
 {
     auto newFormData = adoptRef(*new DOMFormData(context));

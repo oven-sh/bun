@@ -15,8 +15,6 @@ unsafe extern "C" {
         arg1: &EncodedSlice,
     ) -> JSValue;
     safe fn WebCore__DOMFormData__fromJS(js_value0: JSValue) -> *mut DOMFormData;
-    // Both append functions return `false` after throwing a RangeError when the
-    // FormData holds as many entries as its backing Vector can grow to.
     safe fn WebCore__DOMFormData__append(
         arg0: &mut DOMFormData,
         arg1: &JSGlobalObject,

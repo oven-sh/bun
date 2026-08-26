@@ -7,12 +7,10 @@ extern "C" size_t Bun__stringSyntheticAllocationLimit;
 
 namespace Bun {
 
-// WTF::Vector::append CRASH()es when its 1.5x growth step asks for a capacity over
-// WTF::isValidCapacityForVector<T>, which caps the buffer at INT32_MAX bytes. A
-// Vector filled from user input uses these two functions to throw instead.
+// WTF::Vector::append CRASH()es once a 1.5x growth step asks for more than
+// isValidCapacityForVector<T> (INT32_MAX bytes). These two bound the size instead.
 
-// The largest size a Vector<T> may reach. It follows Bun__stringSyntheticAllocationLimit
-// so that tests can reach the limit with small inputs.
+// Follows Bun__stringSyntheticAllocationLimit so tests reach the limit with small inputs.
 template<typename T>
 size_t maxVectorSize()
 {
@@ -22,9 +20,7 @@ size_t maxVectorSize()
     return std::min(maxBytes, Bun__stringSyntheticAllocationLimit) / sizeof(T);
 }
 
-// Appends item unless the Vector already holds maxSize elements. The growth step is
-// the same as Vector::expandCapacity, capped at maxSize, so the Vector never asks
-// for a capacity it cannot have.
+// The growth step of Vector::expandCapacity, capped at maxSize.
 template<typename T, size_t inlineCapacity, typename OverflowHandler, size_t minCapacity, typename Malloc, typename U>
 [[nodiscard]] bool appendWithinLimit(WTF::Vector<T, inlineCapacity, OverflowHandler, minCapacity, Malloc>& vector, U&& item, size_t maxSize)
 {

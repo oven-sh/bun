@@ -326,12 +326,16 @@ describe("fs.mkdir - return values", () => {
       // Climbs past the filesystem root and clamps at it. Node reaches the
       // existing root: undefined on POSIX, EPERM from mkdir("C:\\") on Windows.
       const depth = process.cwd().split(path.sep).length - 1;
-      const overRoot = Array(depth + 2).fill("..").join(path.sep);
+      const ups = Array(depth + 2).fill("..");
       try {
-        out.overRoot = String(fs.mkdirSync(overRoot, { recursive: true }));
+        out.overRoot = String(fs.mkdirSync(ups.join(path.sep), { recursive: true }));
       } catch (e) {
         out.overRoot = e.code;
       }
+      // Climbs past the root, then descends into an existing ancestor. The
+      // clamp must land on it, so nothing is created and node returns undefined.
+      const firstBelowRoot = process.cwd().split(path.sep).filter(p => p && !p.endsWith(":"))[0];
+      out.overClamp = fs.mkdirSync(ups.concat(firstBelowRoot).join(path.sep), { recursive: true }) === undefined;
       fs.mkdir(path.join("cb", "dir"), { recursive: true }, (err, first) => {
         if (err) throw err;
         out.callback = first;
@@ -378,6 +382,7 @@ describe("fs.mkdir - return values", () => {
       existing: true,
       updirAgain: true,
       overRoot: isWindows ? "EPERM" : "undefined",
+      overClamp: true,
       callbackAgain: true,
       ...expected,
     });

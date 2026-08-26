@@ -18,7 +18,7 @@ use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     ArrayBuffer, EventLoopHandle, JSGlobalObject, JSValue, JsResult, PinnedArrayBuffer,
-    StringJsc as _, ThreadIsolated, ThreadIsolatedArg,
+    StringJsc as _,
 };
 use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
 use bun_sys::FdExt as _;
@@ -158,7 +158,7 @@ use super::time_like::TimeLike;
 use super::types::{
     ArgumentsSlice, Dirent, Encoding, FdArgExt as _, FileSystemFlags, FileSystemFlagsKind,
     NameTooLong, PathLike, PathLikeExt as _, PathOrFdExt as _, StringObjects, StringOrBuffer,
-    VectorArrayBuffer,
+    ThreadIsolated, ThreadIsolatedArg, VectorArrayBuffer,
 };
 // Re-exported publicly: `crate::node::fs::PathOrFileDescriptor` is the
 // canonical path used by `cli/build_command.rs` et al., and `node_fs::Flavor`
@@ -994,8 +994,7 @@ mod _async_tasks {
     // NewAsyncFSTask — runs a NodeFS method on the thread pool.
     // ──────────────────────────────────────────────────────────────────────────
 
-    /// One `fs.*` operation's parsed arguments. [`ThreadIsolatedArg`] is what lets
-    /// the async bindings wrap a `will_be_async` parse in [`ThreadIsolated`].
+    /// One `fs.*` operation's parsed arguments.
     pub trait FsArgument: Sized + ThreadIsolatedArg {
         const HAVE_ABORT_SIGNAL: bool = false;
         /// `Arguments.fromJS(ctx, &slice)` — parse this argument set from a JS
@@ -1003,6 +1002,15 @@ mod _async_tasks {
         /// `from_js`; the trait forwards to it so the generic `Bindings` in
         /// `node_fs_binding.rs` can call it without per-type macro arms.
         fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self>;
+        /// [`from_js`](Self::from_js) for a work-pool job: paths and data parse
+        /// thread-isolated / pinned and rooted under `will_be_async`.
+        fn from_js_async(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<ThreadIsolated<Self>> {
+            arguments.will_be_async = true;
+            Self::from_js(ctx, arguments).map(ThreadIsolated::new)
+        }
         fn signal(&self) -> Option<&AbortSignal> {
             None
         }
@@ -1013,8 +1021,8 @@ mod _async_tasks {
     macro_rules! impl_fs_argument {
     ( $( $ty:ty ),+ $(,)? ) => {
         $(
-        // SAFETY: paths and data parse thread-isolated / pinned and rooted under
-        // `will_be_async`; the remaining fields are plain data.
+        // SAFETY: `from_js_async` parses paths and data thread-isolated / pinned
+        // and rooted; the remaining fields are plain data.
         unsafe impl ThreadIsolatedArg for $ty {}
         impl FsArgument for $ty {
             #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { <$ty>::from_js(ctx, arguments) }
@@ -2938,6 +2946,15 @@ pub mod args {
                 throw_if_no_entry,
             })
         }
+
+        /// `fs.stat(path)` of Rust-owned bytes, for a work-pool job.
+        pub fn owned(path: Vec<u8>) -> ThreadIsolated<Self> {
+            ThreadIsolated::new(Stat {
+                path: PathLike::owned(path),
+                big_int: false,
+                throw_if_no_entry: true,
+            })
+        }
     }
 
     pub struct Fstat {
@@ -2962,6 +2979,11 @@ pub mod args {
                 false
             };
             Ok(Fstat { fd, big_int })
+        }
+
+        /// `fs.fstat(fd)`, for a work-pool job.
+        pub fn for_fd(fd: FD) -> ThreadIsolated<Self> {
+            ThreadIsolated::new(Fstat { fd, big_int: false })
         }
     }
 
@@ -3123,6 +3145,13 @@ pub mod args {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
             Ok(Unlink { path })
+        }
+
+        /// `fs.unlink(path)` of Rust-owned bytes, for a work-pool job.
+        pub fn owned(path: Vec<u8>) -> ThreadIsolated<Self> {
+            ThreadIsolated::new(Unlink {
+                path: PathLike::owned(path),
+            })
         }
     }
 
@@ -4156,6 +4185,15 @@ pub mod args {
                     error_on_exist,
                     force,
                 },
+            })
+        }
+
+        /// `fs.cp(src, dest)` of Rust-owned bytes, for a work-pool job.
+        pub fn owned(src: Vec<u8>, dest: Vec<u8>, flags: CpFlags) -> ThreadIsolated<Self> {
+            ThreadIsolated::new(Cp {
+                src: PathLike::owned(src),
+                dest: PathLike::owned(dest),
+                flags,
             })
         }
     }

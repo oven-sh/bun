@@ -208,7 +208,6 @@ impl<'a> Writable<'a> {
                         super::source_from_blob(blob),
                     )));
                 }
-                Stdio::ArrayBuffer(_) => unreachable!("ArrayBuffer stdin arrives as Stdio::Blob"),
                 Stdio::Fd(fd) => {
                     return Ok(Writable::Fd(*fd));
                 }
@@ -305,7 +304,6 @@ impl<'a> Writable<'a> {
                     super::source_from_blob(blob),
                 )))
             }
-            Stdio::ArrayBuffer(_) => unreachable!("ArrayBuffer stdin arrives as Stdio::Blob"),
             Stdio::Memfd(_) => {
                 // Transfer ownership: `Stdio`'s Drop would close the memfd, so
                 // take it out via ManuallyDrop (same pattern as the Blob arm)

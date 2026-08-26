@@ -533,7 +533,12 @@ impl Cmd {
 
         // Apply file/jsbuf/`2>&1` redirects on
         // top of the IO-derived stdio.
-        match Self::init_subproc_redirections(interp, this, &mut spawn_args.stdio) {
+        match Self::init_subproc_redirections(
+            interp,
+            this,
+            &mut spawn_args.stdio,
+            &mut spawn_args.redirect_buf,
+        ) {
             Ok(None) => {}
             Ok(Some(y)) => {
                 drop(spawn_args);
@@ -669,6 +674,7 @@ impl Cmd {
         interp: &Interpreter,
         this: NodeId,
         stdio: &mut [Stdio; 3],
+        redirect_buf: &mut [Option<crate::jsc::PinnedArrayBuffer>; 2],
     ) -> crate::jsc::JsResult<Option<Yield>> {
         const STDIN_NO: usize = 0;
         const STDOUT_NO: usize = 1;
@@ -709,10 +715,6 @@ impl Cmd {
                 let jsval = interp.jsobjs[idx];
 
                 if let Some(buf) = jsval.as_array_buffer(global) {
-                    let mk_out = || match crate::jsc::PinnedArrayBuffer::root(global, jsval) {
-                        Some(buf) => Ok(Stdio::ArrayBuffer(buf)),
-                        None => Err(global.throw_out_of_memory()),
-                    };
                     if flags.stdin() {
                         let bytes = buf.byte_slice();
                         // An empty buffer delivers EOF immediately; `Stdio::Ignore`
@@ -723,15 +725,23 @@ impl Cmd {
                             Stdio::Blob(crate::webcore::blob::Any::from_owned_slice(bytes.to_vec()))
                         };
                     }
+                    let mut redirect_out = |fd: usize| {
+                        let Some(buf) = crate::jsc::PinnedArrayBuffer::root(global, jsval) else {
+                            return Err(global.throw_out_of_memory());
+                        };
+                        stdio[fd] = Stdio::Pipe;
+                        redirect_buf[fd - STDOUT_NO] = Some(buf);
+                        Ok(())
+                    };
                     if flags.duplicate_out() {
-                        stdio[STDOUT_NO] = mk_out()?;
-                        stdio[STDERR_NO] = mk_out()?;
+                        redirect_out(STDOUT_NO)?;
+                        redirect_out(STDERR_NO)?;
                     } else {
                         if flags.stdout() {
-                            stdio[STDOUT_NO] = mk_out()?;
+                            redirect_out(STDOUT_NO)?;
                         }
                         if flags.stderr() {
-                            stdio[STDERR_NO] = mk_out()?;
+                            redirect_out(STDERR_NO)?;
                         }
                     }
                 } else if let Some(blob_ref) = jsval.as_class_ref::<crate::webcore::Blob>() {

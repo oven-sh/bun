@@ -125,10 +125,9 @@ synchronous call, `PathLike::owned(vec)` when the value must own them),
 `Buffer` (`PathLike`: a `PinnedArrayBuffer`, GC-rooted too when parsed for an
 async call; `StringOrBuffer`: borrowed for a sync call) and
 `StringOrBuffer::PinnedBuffer` (pinned and GC-rooted, parsed for an async
-call). Anything parsed from JS, stored, or sent to another thread
-(`Flavor::Async` / `will_be_async` parsing + `ThreadIsolated<T>` for the fs
-`args::*<'static>` async path, `PathLike::thread_isolated_copy` for a `Blob`
-store) is `'static`.
+call). Anything parsed from JS, stored, or sent to another thread (the
+`from_js_async` parsers, which return `ThreadIsolated<T>`;
+`PathLike::thread_isolated_copy` for a `Blob` store) is `'static`.
 
 `EncodedSlice<'a>` is the `{ptr, len}` + encoding-bits (Latin-1/UTF-8/UTF-16)
 borrowed view handed to C++. Constructors name the encoding of the bytes:

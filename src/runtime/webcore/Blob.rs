@@ -2188,14 +2188,7 @@ impl BlobExt for Blob {
                         Ok(crate::node::fs::async_::Stat::create(
                             global_this,
                             binding,
-                            // SAFETY: the path is an owned copy; nothing JS-backed.
-                            unsafe {
-                                bun_jsc::ThreadIsolated::adopt(crate::node::fs::args::Stat {
-                                    path: PathLike::owned(path_like.slice().to_vec()),
-                                    big_int: false,
-                                    throw_if_no_entry: true,
-                                })
-                            },
+                            crate::node::fs::args::Stat::owned(path_like.slice().to_vec()),
                             vm,
                         ))
                     }
@@ -2209,13 +2202,7 @@ impl BlobExt for Blob {
                         Ok(crate::node::fs::async_::Fstat::create(
                             global_this,
                             binding,
-                            // SAFETY: an fd and flags; nothing JS-backed.
-                            unsafe {
-                                bun_jsc::ThreadIsolated::adopt(crate::node::fs::args::Fstat {
-                                    fd: *fd,
-                                    big_int: false,
-                                })
-                            },
+                            crate::node::fs::args::Fstat::for_fd(*fd),
                             vm,
                         ))
                     }

@@ -5,7 +5,7 @@ use bun_jsc::{
     ArrayBuffer, CallFrame, JSGlobalObject, JSValue, Job, JobContext, JsResult, JsThread, Strong,
 };
 
-use crate::node::{Flavor, StringObjects, StringOrBuffer};
+use crate::node::{Flavor, StringObjects, StringOrBuffer, ThreadIsolated, ThreadIsolatedArg};
 
 use crate::crypto::evp::{self, Algorithm};
 
@@ -17,7 +17,7 @@ pub(crate) struct PBKDF2 {
     algorithm: Algorithm,
 }
 // SAFETY: `password` and `salt` are `StringOrBuffer`s (see its impl); the rest is plain data.
-unsafe impl bun_jsc::ThreadIsolatedArg for PBKDF2 {}
+unsafe impl ThreadIsolatedArg for PBKDF2 {}
 
 impl PBKDF2 {
     pub(crate) fn run(&mut self, output: &mut [u8]) -> bool {
@@ -239,11 +239,20 @@ impl PBKDF2 {
 
         Ok((out, callback))
     }
+
+    /// [`from_js`](Self::from_js) for the work-pool job, with its validated callback.
+    pub(crate) fn from_js_async(
+        global_this: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<(ThreadIsolated<PBKDF2>, JSValue)> {
+        let (data, callback) = Self::from_js(global_this, call_frame, Flavor::Async)?;
+        Ok((ThreadIsolated::new(data), callback))
+    }
 }
 
 /// `crypto.pbkdf2` off the JS thread.
 pub(crate) struct Pbkdf2Job {
-    pub pbkdf2: bun_jsc::ThreadIsolated<PBKDF2>,
+    pub pbkdf2: ThreadIsolated<PBKDF2>,
     pub output: Vec<u8>,
     pub err: bool,
 }
@@ -310,11 +319,10 @@ impl JobContext for Pbkdf2Job {
     }
 }
 
-/// Schedule the derivation on the work pool; `callback` was validated by
-/// `from_js(.., Flavor::Async)`.
+/// Schedule the derivation on the work pool; `callback` was validated by `from_js_async`.
 pub(crate) fn create_job(
     global_this: &JSGlobalObject,
-    data: bun_jsc::ThreadIsolated<PBKDF2>,
+    data: ThreadIsolated<PBKDF2>,
     callback: JSValue,
 ) {
     let cx = global_this.js_thread();

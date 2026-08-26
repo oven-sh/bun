@@ -58,8 +58,6 @@ pub enum Stdio {
     Dup2(Dup2),
     Path(PathLike<'static>),
     Blob(webcore::blob::Any),
-    /// A shell `> ${arraybuffer}` redirect (stdout/stderr only; stdin arrives as `Blob`).
-    ArrayBuffer(jsc::PinnedArrayBuffer),
     Memfd(Fd),
     Pipe,
     /// Like `Pipe` at indices >= 3, but the parent end of the socketpair is
@@ -110,7 +108,6 @@ impl Stdio {
             // returned slice borrows `self` and the caller guarantees the
             // Vec<u8> outlives this Stdio.
             Self::Capture(c) => unsafe { (*c.buf).slice() },
-            Self::ArrayBuffer(ab) => ab.byte_slice(),
             Self::Blob(blob) => blob.slice(),
             _ => &[],
         }
@@ -125,7 +122,7 @@ impl Stdio {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         match self {
             Self::Blob(blob) => !blob.needs_to_read_file(),
-            Self::Memfd(_) | Self::ArrayBuffer(_) => true,
+            Self::Memfd(_) => true,
             // `Self::Pipe` is never memfd: a memfd has no EOF signal, so a
             // grandchild still writing after the child exits would be lost.
             _ => false,
@@ -287,9 +284,7 @@ impl Stdio {
                 out: d.out,
                 to: d.to,
             }),
-            Self::Capture(_) | Self::Pipe | Self::ArrayBuffer(_) | Self::ReadableStream(_) => {
-                buffer()
-            }
+            Self::Capture(_) | Self::Pipe | Self::ReadableStream(_) => buffer(),
             #[cfg(not(windows))]
             Self::SocketFd => SpawnOptionsStdio::SocketFd,
             // Windows extra-stdio is a libuv pipe handle (no raw-fd ownership
@@ -313,11 +308,7 @@ impl Stdio {
 
     pub(crate) fn is_piped(&self) -> bool {
         match self {
-            Self::Capture(_)
-            | Self::ArrayBuffer(_)
-            | Self::Blob(_)
-            | Self::Pipe
-            | Self::ReadableStream(_) => true,
+            Self::Capture(_) | Self::Blob(_) | Self::Pipe | Self::ReadableStream(_) => true,
             Self::Ipc => cfg!(windows),
             _ => false,
         }

@@ -234,6 +234,46 @@ impl BlobOrStringOrBuffer {
 
 // ──────────────────────────────────────────────────────────────────────────
 
+/// # Safety
+/// As the type's `from_js_async` parser or owned constructor builds it — JS
+/// buffers pinned and GC-rooted, strings thread-isolated — nothing in it is
+/// thread-affine: a work-pool job may read it and the JS thread drops it.
+pub unsafe trait ThreadIsolatedArg {}
+
+/// A `T` built by its `from_js_async` parser or owned constructor (see
+/// [`ThreadIsolatedArg`]); nothing else constructs one.
+///
+/// `repr(transparent)` so identity-casts in the const-generic dispatch macros
+/// (see `node_fs.rs`'s `args_as!`) remain bit-exact.
+#[repr(transparent)]
+pub struct ThreadIsolated<T>(T);
+
+impl<T: ThreadIsolatedArg> ThreadIsolated<T> {
+    /// For `T`'s async parser and owned constructors only.
+    #[inline]
+    pub(crate) fn new(value: T) -> Self {
+        Self(value)
+    }
+}
+
+// SAFETY: what `ThreadIsolatedArg` asserts for the values `new`'s callers build.
+unsafe impl<T: ThreadIsolatedArg> Send for ThreadIsolated<T> {}
+
+impl<T> core::ops::Deref for ThreadIsolated<T> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T> core::ops::DerefMut for ThreadIsolated<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
+
 /// Parsed from JS it is `StringOrBuffer<'static>`; `Utf8` may instead borrow
 /// Rust-side bytes for a synchronous call ([`StringOrBuffer::borrowed`]).
 pub enum StringOrBuffer<'a> {
@@ -293,9 +333,15 @@ impl StringOrBuffer<'_> {
 }
 
 // SAFETY: `Flavor::Async` yields `ThreadIsolatedString` / `Utf8` / `PinnedBuffer` only.
-unsafe impl bun_jsc::ThreadIsolatedArg for StringOrBuffer<'static> {}
+unsafe impl ThreadIsolatedArg for StringOrBuffer<'static> {}
 
 impl StringOrBuffer<'static> {
+    /// Rust-owned bytes for a work-pool job.
+    #[inline]
+    pub(crate) fn owned_isolated(bytes: Vec<u8>) -> ThreadIsolated<Self> {
+        ThreadIsolated::new(Self::owned(bytes))
+    }
+
     /// `value` is ArrayBuffer-like (the caller checked): borrowed for `Sync`,
     /// pinned and GC-rooted for `Async`.
     pub(crate) fn buffer_from_js(
@@ -407,6 +453,18 @@ impl StringOrBuffer<'static> {
     #[inline]
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
         Self::from_js_maybe_async(global, value, Flavor::Sync, StringObjects::Allow)
+    }
+
+    /// [`from_js`](Self::from_js) for a work-pool job: strings thread-isolated, buffers pinned and GC-rooted.
+    #[inline]
+    pub(crate) fn from_js_async(
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<Option<ThreadIsolated<Self>>> {
+        Ok(
+            Self::from_js_maybe_async(global, value, Flavor::Async, StringObjects::Allow)?
+                .map(ThreadIsolated::new),
+        )
     }
 
     #[inline]

@@ -13,7 +13,7 @@ use bun_jsc::{
     JsThread, Protected, Strong,
 };
 
-use crate::node::{Flavor, StringObjects, StringOrBuffer};
+use crate::node::{Flavor, StringObjects, StringOrBuffer, ThreadIsolated, ThreadIsolatedArg};
 
 // `&JSGlobalObject` is ABI-identical to a non-null pointer; remaining params
 // are by-value `JSValue`, so no caller-side preconditions remain.
@@ -764,7 +764,7 @@ pub(crate) struct Scrypt {
     keylen: u32,
 }
 // SAFETY: `password` and `salt` are `StringOrBuffer`s (see its impl); the rest is plain data.
-unsafe impl bun_jsc::ThreadIsolatedArg for Scrypt {}
+unsafe impl ThreadIsolatedArg for Scrypt {}
 
 // ───────────────────────────────────────────────────────────────────────────
 // Argon2 (crypto.argon2 / crypto.argon2Sync)
@@ -995,6 +995,15 @@ mod _impl {
             Ok((ctx, JSValue::UNDEFINED))
         }
 
+        /// `from_js::<true>` for the work-pool job, with its callback.
+        fn from_js_async(
+            global: &JSGlobalObject,
+            call_frame: &CallFrame,
+        ) -> JsResult<(ThreadIsolated<Self>, JSValue)> {
+            let (ctx, callback) = Self::from_js::<true>(global, call_frame)?;
+            Ok((ThreadIsolated::new(ctx), callback))
+        }
+
         fn check_scrypt_params(&self, global: &JSGlobalObject) -> JsResult<()> {
             let n = self.n;
             let r = self.r;
@@ -1061,7 +1070,7 @@ mod _impl {
     /// `crypto.scrypt` off the JS thread: derives straight into the result
     /// ArrayBuffer's bytes under the job's ticket, which keeps their VM alive.
     pub(crate) struct ScryptJob {
-        params: bun_jsc::ThreadIsolated<Scrypt>,
+        params: ThreadIsolated<Scrypt>,
         result: JsPtr<[u8]>,
         err: Option<u32>,
     }
@@ -1130,13 +1139,8 @@ mod _impl {
 
     #[bun_jsc::host_fn]
     fn pbkdf2(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let (data, callback) = PBKDF2::from_js(global_this, call_frame, Flavor::Async)?;
-        // SAFETY: parsed with `Flavor::Async` above.
-        pbkdf2::create_job(
-            global_this,
-            unsafe { bun_jsc::ThreadIsolated::adopt(data) },
-            callback,
-        );
+        let (data, callback) = PBKDF2::from_js_async(global_this, call_frame)?;
+        pbkdf2::create_job(global_this, data, callback);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -1273,9 +1277,7 @@ mod _impl {
 
     #[bun_jsc::host_fn]
     fn scrypt(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let (ctx, callback) = Scrypt::from_js::<true>(global, call_frame)?;
-        // SAFETY: parsed with `IS_ASYNC = true` above.
-        let params = unsafe { bun_jsc::ThreadIsolated::adopt(ctx) };
+        let (params, callback) = Scrypt::from_js_async(global, call_frame)?;
         if params.keylen as usize > jsc::virtual_machine::synthetic_allocation_limit() {
             return Err(global.throw_out_of_memory());
         }

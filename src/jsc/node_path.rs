@@ -12,48 +12,6 @@ use bun_sys::Fd;
 
 use crate::array_buffer::PinnedArrayBuffer;
 
-/// # Safety
-/// Once parsed for the async flavor (`Flavor::Async` / `will_be_async`), every
-/// JS-backed payload in the type is pinned and GC-rooted
-/// ([`PinnedArrayBuffer::root`]) or thread-isolated (strings), and nothing
-/// else in it is thread-affine: a work-pool job may read it and it comes back
-/// to the JS thread to drop.
-pub unsafe trait ThreadIsolatedArg {}
-
-/// A `T` parsed for the async flavor (see [`ThreadIsolatedArg`]).
-///
-/// `repr(transparent)` so identity-casts in the const-generic dispatch macros
-/// (see `node_fs.rs`'s `args_as!`) remain bit-exact.
-#[repr(transparent)]
-pub struct ThreadIsolated<T>(T);
-
-impl<T: ThreadIsolatedArg> ThreadIsolated<T> {
-    /// # Safety
-    /// `value` was parsed for the async flavor (see [`ThreadIsolatedArg`]).
-    #[inline]
-    pub unsafe fn adopt(value: T) -> Self {
-        Self(value)
-    }
-}
-
-// SAFETY: what `ThreadIsolatedArg` asserts for an async-parsed `T`.
-unsafe impl<T: ThreadIsolatedArg> Send for ThreadIsolated<T> {}
-
-impl<T> core::ops::Deref for ThreadIsolated<T> {
-    type Target = T;
-    #[inline]
-    fn deref(&self) -> &T {
-        &self.0
-    }
-}
-
-impl<T> core::ops::DerefMut for ThreadIsolated<T> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut T {
-        &mut self.0
-    }
-}
-
 /// `node.PathLike`. Parsed from JS it is `PathLike<'static>`; `Utf8` may
 /// instead borrow Rust-side bytes for a synchronous call ([`PathLike::borrowed`]).
 pub enum PathLike<'a> {

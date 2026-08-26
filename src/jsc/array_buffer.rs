@@ -647,9 +647,7 @@ impl ArrayBuffer {
 /// moved) for as long as this value lives; [`root`](Self::root) additionally
 /// GC-roots the cell. `Drop` releases what was taken. Constructed on the JS
 /// thread; a `root()`ed value is dropped there too, while a `pin()`-only value
-/// held by a `Blob` store drops wherever the store's last ref goes. `Default`
-/// is an empty buffer holding nothing.
-#[derive(Default)]
+/// held by a `Blob` store drops wherever the store's last ref goes.
 pub struct PinnedArrayBuffer {
     buffer: ArrayBuffer,
     rooted: bool,

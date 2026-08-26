@@ -2,12 +2,10 @@ use core::ptr::NonNull;
 
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
-    CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _,
-    ThreadIsolated,
-};
+use bun_jsc::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
 use bun_sys_jsc::SystemErrorJsc as _;
 
+use crate::node::ThreadIsolated;
 use crate::node::fs::{
     self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
     NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, ret,
@@ -80,11 +78,7 @@ fn parse_async_args<A: FsArgument>(
 ) -> Result<ThreadIsolated<A>, JsResult<JSValue>> {
     let vm: &VirtualMachine = global.bun_vm();
     let mut slice = ArgumentsSlice::init(vm, frame.arguments());
-    slice.will_be_async = true;
-
-    let args = <A as FsArgument>::from_js(global, &mut slice).map_err(Err)?;
-    // SAFETY: parsed with `will_be_async` above.
-    let args = unsafe { ThreadIsolated::adopt(args) };
+    let args = A::from_js_async(global, &mut slice).map_err(Err)?;
 
     let rejection = 'rejection: {
         if A::HAVE_ABORT_SIGNAL {

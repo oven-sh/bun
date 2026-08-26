@@ -2637,7 +2637,7 @@ pub mod JSZstd {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<(
-        bun_jsc::ThreadIsolated<node::StringOrBuffer<'static>>,
+        node::ThreadIsolated<node::StringOrBuffer<'static>>,
         Option<JSValue>,
         i32,
     )> {
@@ -2645,18 +2645,8 @@ pub mod JSZstd {
 
         let level = get_level(global_this, options_val)?;
 
-        if let Some(buffer) = node::StringOrBuffer::from_js_maybe_async(
-            global_this,
-            buffer_value,
-            node::Flavor::Async,
-            node::StringObjects::Allow,
-        )? {
-            // SAFETY: parsed with `Flavor::Async` above.
-            return Ok((
-                unsafe { bun_jsc::ThreadIsolated::adopt(buffer) },
-                options_val,
-                level,
-            ));
+        if let Some(buffer) = node::StringOrBuffer::from_js_async(global_this, buffer_value)? {
+            return Ok((buffer, options_val, level));
         }
 
         Err(global_this
@@ -2772,8 +2762,7 @@ pub mod JSZstd {
 
     /// `Bun.zstdCompress` / `Bun.zstdDecompress` off the JS thread.
     pub(crate) struct ZstdJob {
-        /// Parsed with `Flavor::Async`.
-        pub buffer: bun_jsc::ThreadIsolated<node::StringOrBuffer<'static>>,
+        pub buffer: node::ThreadIsolated<node::StringOrBuffer<'static>>,
         pub is_compress: bool,
         pub level: i32,
         /// Filled in by `run`.
@@ -2820,7 +2809,7 @@ pub mod JSZstd {
 
     fn create_job(
         global_this: &JSGlobalObject,
-        buffer: bun_jsc::ThreadIsolated<node::StringOrBuffer<'static>>,
+        buffer: node::ThreadIsolated<node::StringOrBuffer<'static>>,
         is_compress: bool,
         level: i32,
     ) -> JSValue {

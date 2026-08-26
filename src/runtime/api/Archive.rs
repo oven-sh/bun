@@ -25,12 +25,30 @@ pub(crate) enum Compression {
     #[default]
     None,
     Gzip(GzipOptions),
+    /// DEFLATE per-entry compression. Only meaningful for the `zip` format
+    /// (libarchive applies it inside the zip writer); level `0` selects the
+    /// ZIP "store" method (uncompressed entries).
+    Deflate(DeflateOptions),
 }
 
 #[derive(Clone, Copy)]
 pub(crate) struct GzipOptions {
     /// Compression level: 1 (fastest) to 12 (maximum compression). Default is 6.
     pub level: u8,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct DeflateOptions {
+    /// Compression level: 0 (store) to 9 (maximum). Default is 6.
+    pub level: u8,
+}
+
+/// Container format for archive construction and format detection hints.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum Format {
+    #[default]
+    Tar,
+    Zip,
 }
 
 // Hand-written JS class glue (not the `#[bun_jsc::JsClass]` derive): Archive
@@ -111,10 +129,11 @@ impl Archive {
     }
 }
 
-/// Configure archive for reading tar/tar.gz
+/// Configure archive for reading tar/tar.gz/zip
 fn configure_archive_reader(archive: &libarchive::lib::Archive) {
     let _ = archive.read_support_format_tar();
     let _ = archive.read_support_format_gnutar();
+    let _ = archive.read_support_format_zip();
     let _ = archive.read_support_filter_gzip();
     let _ = archive.read_set_options(c"read_concatenated_archives");
 }
@@ -189,9 +208,10 @@ impl Archive {
             return Ok(create_archive(data, compress));
         }
 
-        // For plain objects, build a tarball
+        // For plain objects, build the requested archive format
         if data_arg.is_object() {
-            let data = build_tarball_from_object(global, data_arg)?;
+            let format = parse_format(global, options_arg)?;
+            let data = build_archive_from_object(global, data_arg, format, &compress)?;
             return Ok(create_archive(data, compress));
         }
 
@@ -220,7 +240,7 @@ fn parse_compression_options(
 
     // Check for compress option
     if let Some(compress_val) = options_arg.get_truthy(global, "compress")? {
-        // compress must be "gzip"
+        // compress must be "gzip" or "deflate"
         if !compress_val.is_string() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Archive: compress option must be a string"
@@ -228,14 +248,21 @@ fn parse_compression_options(
         }
 
         let compress_str = compress_val.to_utf8(global)?;
-
-        if compress_str.slice() != b"gzip" {
+        let is_gzip = compress_str.slice() == b"gzip";
+        let is_deflate = compress_str.slice() == b"deflate";
+        if !is_gzip && !is_deflate {
             return Err(global.throw_invalid_arguments(format_args!(
-                "Archive: compress option must be \"gzip\""
+                "Archive: compress option must be \"gzip\" or \"deflate\""
             )));
         }
 
-        // Parse level option (1-12, default 6)
+        if is_deflate && !matches!(parse_format(global, options_arg)?, Format::Zip) {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Archive: compress \"deflate\" requires format \"zip\""
+            )));
+        }
+
+        // Parse level option (gzip: 1-12 default 6; deflate: 0-9 default 6)
         let mut level: u8 = 6;
         if let Some(level_val) = options_arg.get_truthy(global, "level")? {
             if !level_val.is_number() {
@@ -244,19 +271,50 @@ fn parse_compression_options(
                 );
             }
             let level_num = level_val.to_int64();
-            if level_num < 1 || level_num > 12 {
+            let (min, max) = if is_gzip { (1, 12) } else { (0, 9) };
+            if level_num < i64::from(min) || level_num > i64::from(max) {
                 return Err(global.throw_invalid_arguments(format_args!(
-                    "Archive: level must be between 1 and 12"
+                    "Archive: level must be between {} and {}",
+                    min, max
                 )));
             }
             level = u8::try_from(level_num).expect("int cast");
         }
 
-        return Ok(Compression::Gzip(GzipOptions { level }));
+        if is_gzip {
+            return Ok(Compression::Gzip(GzipOptions { level }));
+        }
+        return Ok(Compression::Deflate(DeflateOptions { level }));
     }
 
     // No compress option specified in options object means no compression
     Ok(Compression::None)
+}
+
+/// Parse the `format` option: `"tar"` (default) or `"zip"`.
+fn parse_format(global: &JSGlobalObject, options_arg: JSValue) -> JsResult<Format> {
+    if options_arg.is_undefined_or_null() {
+        return Ok(Format::Tar);
+    }
+    if let Some(format_val) = options_arg.get_truthy(global, "format")? {
+        if !format_val.is_string() {
+            return Err(
+                global.throw_invalid_arguments(format_args!("Archive: format must be a string"))
+            );
+        }
+        let format_str = format_val.to_utf8(global)?;
+        match format_str.slice() {
+            b"tar" => return Ok(Format::Tar),
+            b"zip" => return Ok(Format::Zip),
+            other => {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Archive: format must be \"tar\" or \"zip\", received {:?}",
+                    String::from_utf8_lossy(other)
+                )));
+            }
+        }
+    }
+    Ok(Format::Tar)
 }
 
 fn create_archive(data: Vec<u8>, compress: Compression) -> Box<Archive> {
@@ -272,8 +330,15 @@ fn blob_from_js(value: JSValue) -> Option<&'static Blob> {
     value.as_class_ref::<Blob>()
 }
 
-/// Shared helper that builds tarball bytes from a JS object
-fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<Vec<u8>> {
+/// Shared helper that builds archive bytes from a JS object. `format`
+/// selects the container; `compression` is interpreted per format (gzip is a
+/// whole-archive filter for tar, deflate configures the zip writer).
+fn build_archive_from_object(
+    global: &JSGlobalObject,
+    obj: JSValue,
+    format: Format,
+    compression: &Compression,
+) -> JsResult<Vec<u8>> {
     use libarchive::lib;
 
     let Some(js_obj) = obj.get_object() else {
@@ -287,10 +352,51 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
     let archive = lib::WriteArchive::new();
     let archive_ref: &lib::Archive = &archive;
 
-    if archive_ref.write_set_format_pax_restricted() != lib::Result::Ok {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "Failed to create tarball: ArchiveFormatError"
-        )));
+    match format {
+        Format::Tar => {
+            if archive_ref.write_set_format_pax_restricted() != lib::Result::Ok {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Failed to create tarball: ArchiveFormatError"
+                )));
+            }
+        }
+        Format::Zip => {
+            if archive_ref.write_set_format_zip() != lib::Result::Ok {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Failed to create zip: ArchiveFormatError"
+                )));
+            }
+            // libarchive's zip writer deflates per entry when configured;
+            // level 0 selects the "store" method (uncompressed entries).
+            let store_only = matches!(
+                compression,
+                Compression::Deflate(DeflateOptions { level: 0 })
+            );
+            let options: &core::ffi::CStr = if store_only {
+                c"zip:compression=store"
+            } else {
+                c"zip:compression=deflate"
+            };
+            if archive_ref.write_set_options_str(options) != lib::Result::Ok {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Failed to create zip: ArchiveFormatOptionError"
+                )));
+            }
+            if let Compression::Deflate(opts) = compression {
+                if opts.level > 0 {
+                    let level_c = std::ffi::CString::new(format!(
+                        "zip:compression-level={}",
+                        opts.level
+                    ))
+                    .expect("no NUL");
+                    if archive_ref.write_set_options_str(&level_c) != lib::Result::Ok {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "Failed to create zip: ArchiveCompressionLevelError"
+                        )));
+                    }
+                }
+            }
+        }
     }
 
     // `archive` is a live `archive_write_new()` handle (see `Archive::write_new`
@@ -378,7 +484,37 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
     }
 
     match growing_buffer.to_owned_slice() {
-        Ok(v) => Ok(v),
+        Ok(mut v) => {
+            // libarchive flushes its 10_240-byte staging block, so the tail
+            // can be zero padding beyond the real archive. Locate the End of
+            // Central Directory record by scanning backwards for its
+            // signature (`PK\x05\x06`, max comment size bounds the search)
+            // and truncate everything after it plus its own optional comment.
+            // A ZIP without a discoverable EOCD is left untouched — readers
+            // will surface the error themselves.
+            if matches!(format, Format::Zip) {
+                let sig = [0x50u8, 0x4b, 0x05, 0x06];
+                let min_start = v.len().saturating_sub(22 + 65_536);
+                let mut eocd = None;
+                let mut i = v.len().checked_sub(22);
+                while let Some(at) = i {
+                    if v[at..at + 4] == sig {
+                        eocd = Some(at);
+                        break;
+                    }
+                    if at == min_start {
+                        break;
+                    }
+                    i = at.checked_sub(1);
+                }
+                if let Some(at) = eocd {
+                    let comment_len =
+                        u16::from_le_bytes([v[at + 20], v[at + 21]]) as usize;
+                    v.truncate(at + 22 + comment_len);
+                }
+            }
+            Ok(v)
+        }
         Err(_) => {
             Err(global
                 .throw_invalid_arguments(format_args!("Failed to create tarball: OutOfMemory")))
@@ -470,9 +606,10 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
         );
     }
 
-    // For plain objects, build a tarball with options compression
+    // For plain objects, build the requested archive format
     if data_arg.is_object() {
-        let data = build_tarball_from_object(global, data_arg)?;
+        let format = parse_format(global, options_arg)?;
+        let data = build_archive_from_object(global, data_arg, format, &options_compress)?;
         return start_write_task(
             global,
             WriteData::Owned(data),
@@ -821,7 +958,9 @@ impl TaskContext for BlobContext {
                 Ok(data) => BlobResult::Compressed(data),
                 Err(e) => BlobResult::Err(e),
             },
-            Compression::None => BlobResult::Uncompressed,
+            // Deflate is a zip-writer configuration, never a post-hoc filter:
+            // an Archive constructed from raw bytes cannot "deflate" itself.
+            Compression::Deflate(_) | Compression::None => BlobResult::Uncompressed,
         };
     }
 
@@ -939,7 +1078,9 @@ impl WriteContext {
                 };
                 &compressed_buf
             }
-            Compression::None => source_data,
+            // Deflate only applies inside the zip writer for object-built
+            // archives; writing raw bytes with a Deflate setting is a no-op.
+            Compression::Deflate(_) | Compression::None => source_data,
         };
         // `defer if (compress != .none) free(data_to_write)` — handled by `compressed_buf: Vec<u8>` Drop.
 

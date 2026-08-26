@@ -450,6 +450,8 @@ pub(crate) mod watch {
         /// timer's `data` slot carries it back into every tick.
         timer: core::ptr::NonNull<libuv::Timer>,
         global: BackRef<JSGlobalObject>,
+        /// Ticks elapsed since arm; drives the best-effort downgrade.
+        tick: core::cell::Cell<u32>,
     }
 
     impl Drop for Watch {
@@ -462,6 +464,11 @@ pub(crate) mod watch {
         }
     }
 
+    /// After this many ticks without exit, downgrade to best-effort: stop
+    /// polling, unref the handle, and leave `.exited` pending. Bounds both
+    /// the shutdown-interaction window and long-lived-browser bookkeeping.
+    const MAX_TICKS: u32 = 200; // 50ms x 200 = 10s
+
     extern "C" fn on_timer(timer_: *mut libuv::Timer) {
 
         // SAFETY: `data` was set to the boxed `Watch` before `start`, and the
@@ -473,6 +480,18 @@ pub(crate) mod watch {
         // handle yields WAIT_FAILED rather than UB (mirrors the
         // `bun_sys::windows` safe-wrapper rationale).
         let status = unsafe { win32::WaitForSingleObject(watch.process, 0) };
+        watch.tick.set(watch.tick.get() + 1);
+        if watch.tick.get() >= MAX_TICKS {
+            // Abandon: stop polling and release the loop pin. The strong
+            // roots must survive a possible later settle, so leak the box
+            // exactly like on_close does.
+            let t = unsafe { &mut *timer_ };
+            t.stop();
+            t.unref();
+            t.data = core::ptr::null_mut();
+            t.close(on_close);
+            return;
+        }
         match status {
             win32::WAIT_OBJECT_0 => settle(watch, timer_, None),
             win32::WAIT_FAILED => {
@@ -614,6 +633,7 @@ pub(crate) mod watch {
             process,
             timer: timer_ptr,
             global: BackRef::new(global),
+            tick: core::cell::Cell::new(0),
         });
         // Fix the self-reference now that the box address is stable; the
         // timer reads `data` back into every tick.

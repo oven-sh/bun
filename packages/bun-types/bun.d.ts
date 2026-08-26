@@ -9800,7 +9800,15 @@ declare module "bun" {
    * Compression format for archive output.
    * Only `"gzip"` is supported.
    */
-  type ArchiveCompression = "gzip";
+  type ArchiveCompression = "gzip" | "deflate";
+
+  /**
+   * Archive container format.
+   *
+   * - `"tar"`: POSIX tar (default). Pair with `compress: "gzip"` for tgz.
+   * - `"zip"`: ZIP with per-entry DEFLATE (or stored entries at `level: 0`).
+   */
+  type ArchiveFormat = "tar" | "zip";
 
   /**
    * Options for creating an Archive instance.
@@ -9822,15 +9830,21 @@ declare module "bun" {
   interface ArchiveOptions {
     /**
      * Compression algorithm to use.
-     * Only `"gzip"` is supported.
+     * - `"gzip"`: whole-archive gzip filter (tar only).
+     * - `"deflate"`: per-entry DEFLATE inside the ZIP writer (`format: "zip"`
+     *   only); `level: 0` selects stored (uncompressed) entries.
      * If not specified, no compression is applied.
      */
     compress?: ArchiveCompression;
     /**
-     * Compression level (1-12). Only applies when `compress` is set.
-     * - 1: Fastest compression, lowest ratio
-     * - 6: Default balance of speed and ratio
-     * - 12: Best compression ratio, slowest
+     * Container format. `"tar"` (default) writes a POSIX pax-restricted tar;
+     * `"zip"` writes a standard ZIP archive readable by every unzip tool.
+     */
+    format?: ArchiveFormat;
+    /**
+     * Compression level. Only applies when `compress` is set.
+     * - gzip: 1 (fastest) to 12 (best ratio)
+     * - deflate/zip: 0 (stored entries) to 9 (best ratio)
      *
      * @default 6
      */

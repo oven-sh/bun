@@ -184,6 +184,23 @@ describe("Bun.CSRF", () => {
     expect(() => CSRF.verify(token, { secret, sessionId: 123 })).toThrow();
   });
 
+  test("rejects encodings that are not token formats", () => {
+    const token = CSRF.generate(secret);
+    const message = "Invalid format: must be 'base64', 'base64url', or 'hex'";
+
+    // Buffer encodings that are not token formats, and names that are not encodings at all
+    for (const encoding of ["utf8", "latin1", "buffer", "bogus"]) {
+      // @ts-expect-error - testing invalid input
+      expect(() => CSRF.generate(secret, { encoding })).toThrow(message);
+      // @ts-expect-error - testing invalid input
+      expect(() => CSRF.verify(token, { secret, encoding })).toThrow(message);
+    }
+
+    // An empty string selects the default (base64url) in both directions
+    // @ts-expect-error - testing invalid input
+    expect(CSRF.verify(CSRF.generate(secret, { encoding: "" }), { secret, encoding: "" })).toBe(true);
+  });
+
   test("handle bad decoding", () => {
     const ambigousSecret = "test-secret";
 

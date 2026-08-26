@@ -8,11 +8,6 @@ use bun_core::String as BunString;
 
 use crate::{E, Fd, SystemErrno, Tag, coreutils_error_map, libuv_error_map};
 
-// Local helper replacing the `errno_to_err` forward-ref.
-#[inline]
-fn errno_to_err(errno: Int) -> bun_core::Error {
-    bun_core::Error::from_errno(errno as i32)
-}
 /// `Fd::unwrap_valid` — Some(fd) if fd != invalid_fd. Port of `bun.FD.unwrapValid`.
 #[inline]
 fn fd_unwrap_valid(fd: Fd) -> Option<Fd> {
@@ -130,7 +125,7 @@ impl Error {
     /// `from_libuv` left at default `false`.
     #[cfg(windows)]
     #[inline]
-    pub fn from_uv_rc64(
+    pub(crate) fn from_uv_rc64(
         rc: crate::windows::libuv::ReturnCodeI64,
         syscall_tag: Tag,
     ) -> Option<Error> {
@@ -153,8 +148,12 @@ impl Error {
     pub fn from_code_int(errno: c_int, syscall_tag: Tag) -> Error {
         #[cfg(windows)]
         let n = Int::try_from(errno.unsigned_abs()).unwrap();
+        // errno values are small positive integers; a truncating cast matches Zig's `@intCast`.
         #[cfg(not(windows))]
-        let n = u16::try_from(errno).expect("int cast");
+        let n = {
+            debug_assert!((0..=c_int::from(u16::MAX)).contains(&errno));
+            errno as u16
+        };
         Error {
             errno: n,
             syscall: syscall_tag,
@@ -248,8 +247,9 @@ impl Error {
     /// preserves every other field — chained on a libuv-sourced error
     /// (`from_libuv=true`, errno in the 4000-range) it must keep `from_libuv`
     /// so `name()`/`msg()` still route through the uv→errno mapper.
+    #[cfg(windows)]
     #[inline]
-    pub fn with_dest(&self, dest: &[u8]) -> Error {
+    pub(crate) fn with_dest(&self, dest: &[u8]) -> Error {
         Error {
             errno: self.errno,
             syscall: self.syscall,
@@ -324,8 +324,8 @@ impl Error {
             .unwrap_or(b"UNKNOWN")
     }
 
-    pub fn to_zig_err(&self) -> bun_core::Error {
-        errno_to_err(self.errno)
+    pub fn to_zig_err(&self) -> SystemErrno {
+        self.resolve_system_errno().unwrap_or(SystemErrno::EIO)
     }
 
     /// 1. Convert libuv errno values into libc ones.
@@ -334,6 +334,13 @@ impl Error {
         let e = self.resolve_system_errno()?;
         // strum::IntoStaticStr — variant name (e.g., "ENOENT").
         Some((<&'static str>::from(e), e))
+    }
+
+    /// (code, uv_strerror label) pair, e.g. `("ENOENT", "no such file or
+    /// directory")` — the pieces of Node's `UVException` message.
+    pub fn uv_code_label(&self) -> Option<(&'static str, &'static str)> {
+        let (code, system_errno) = self.get_error_code_tag_name()?;
+        Some((code, libuv_error_map::LIBUV_ERROR_MAP[system_errno]))
     }
 
     pub fn msg(&self) -> Option<&'static [u8]> {
@@ -351,10 +358,21 @@ impl Error {
         &self,
         map: &enum_map::EnumMap<SystemErrno, &'static str>,
     ) -> (SystemError, Option<(&'static str, &'static str)>) {
+        // Node reports libuv's codes in `err.errno` on every platform. On POSIX
+        // that is just the negated host errno. On Windows `self.errno` may be
+        // either an `E` discriminant or a raw libuv magnitude regardless of
+        // `from_libuv` (callers are inconsistent), so always try the
+        // discriminant→UV table first; a raw magnitude falls through to plain
+        // negation and lands on the same value.
+        #[cfg(windows)]
+        let js_errno = crate::windows::libuv::e_discriminant_to_uv(self.errno)
+            .unwrap_or_else(|| c_int::from(self.errno).wrapping_neg());
+        #[cfg(not(windows))]
+        let js_errno = c_int::from(self.errno).wrapping_neg();
+
         let mut err = SystemError {
-            errno: c_int::from(self.errno).wrapping_neg(),
+            errno: js_errno,
             syscall: BunString::static_(<&'static str>::from(self.syscall).as_bytes()),
-            message: BunString::empty(),
             ..Default::default()
         };
 
@@ -376,11 +394,11 @@ impl Error {
             // When the FD is a windows handle, there is no sane way to report this.
             #[cfg(windows)]
             if valid.kind() == crate::FdKind::Uv {
-                err.fd = valid.uv();
+                err.fd = Some(valid.uv());
             }
             #[cfg(not(windows))]
             {
-                err.fd = valid.uv();
+                err.fd = Some(valid.uv());
             }
         }
 

@@ -116,10 +116,12 @@ without *requiring* a postinstall script.
       postinstall: "node install.js",
     },
     optionalDependencies: Object.fromEntries(
-      platforms.map(({ bin }) => [
-        `${owner}/${bin}`,
-        dryRun ? `file:./oven-${bin.replaceAll("/", "-") + "-" + version + ".tgz"}` : version,
-      ]),
+      platforms
+        .filter(p => !p.alias)
+        .map(({ bin }) => [
+          `${owner}/${bin}`,
+          dryRun ? `file:./oven-${bin.replaceAll("/", "-") + "-" + version + ".tgz"}` : version,
+        ]),
     ),
     bin: {
       bun: "bin/bun.exe",
@@ -140,7 +142,7 @@ without *requiring* a postinstall script.
 
 async function buildModule(
   release: Awaited<ReturnType<typeof getRelease>>,
-  { bin, exe, os, arch }: Platform,
+  { bin, exe, os, arch, abi }: Platform,
 ): Promise<void> {
   const module = `${owner}/${bin}`;
   log("Building:", `${module}@${version}`);
@@ -165,6 +167,7 @@ async function buildModule(
     preferUnplugged: true,
     os: [os],
     cpu: [arch],
+    ...(os === "linux" ? { libc: [abi === "musl" ? "musl" : "glibc"] } : {}),
   });
   if (exists(".npmrc")) {
     copy(".npmrc", join(cwd, ".npmrc"));

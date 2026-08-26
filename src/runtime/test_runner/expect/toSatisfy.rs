@@ -1,8 +1,8 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::ZigString;
 
 use super::Expect;
 use super::get_signature;
+use super::throw;
 
 pub(crate) fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // toSatisfy bypasses get_value (no .resolves/.rejects handling), so it cannot use
@@ -10,8 +10,7 @@ pub(crate) fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFra
     let _guard = this.post_match_guard(global);
 
     let this_value = frame.this();
-    let arguments_ = frame.arguments_old::<1>();
-    let arguments = arguments_.slice();
+    let arguments = frame.arguments();
 
     if arguments.len() < 1 {
         return Err(global.throw_invalid_arguments(format_args!("toSatisfy() requires 1 argument")));
@@ -33,14 +32,7 @@ pub(crate) fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFra
     };
     value.ensure_still_alive();
 
-    let result = match predicate.call(global, JSValue::UNDEFINED, &[value]) {
-        Ok(r) => r,
-        Err(e) => {
-            let err = global.take_exception(e);
-            let fmt = ZigString::init(b"toSatisfy() predicate threw an exception");
-            return Err(global.throw_value(global.create_aggregate_error(&[err], &fmt)?));
-        }
-    };
+    let result = predicate.call(global, JSValue::UNDEFINED, &[value])?;
 
     let not = this.flags.get().not();
     let pass = (result.is_boolean() && result.to_boolean()) != not;
@@ -54,10 +46,11 @@ pub(crate) fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFra
 
     if not {
         let signature = get_signature("toSatisfy", "<green>expected<r>", true);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!("\n\nExpected: not <green>{}<r>\n", predicate.to_fmt(&mut formatter)),
+            "\n\nExpected: not <green>{}<r>\n", predicate.to_fmt(&mut formatter),
         );
     }
 
@@ -66,13 +59,12 @@ pub(crate) fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFra
     // `to_fmt(&mut Formatter)` borrows exclusively, so use a second formatter for the
     // received value (matches the toBeGreaterThan.rs pattern).
     let mut formatter2 = super::make_formatter(global);
-    this.throw(
+    throw!(
+        this,
         global,
         signature,
-        format_args!(
-            "\n\nExpected: <green>{}<r>\nReceived: <red>{}<r>\n",
-            predicate.to_fmt(&mut formatter),
-            value.to_fmt(&mut formatter2),
-        ),
+        "\n\nExpected: <green>{}<r>\nReceived: <red>{}<r>\n",
+        predicate.to_fmt(&mut formatter),
+        value.to_fmt(&mut formatter2),
     )
 }

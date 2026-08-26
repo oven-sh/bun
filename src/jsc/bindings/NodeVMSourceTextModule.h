@@ -15,24 +15,18 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<NodeVMSourceTextModule, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForNodeVMSourceTextModule.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeVMSourceTextModule = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForNodeVMSourceTextModule.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeVMSourceTextModule = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<NodeVMSourceTextModule, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNodeVMSourceTextModule, m_subspaceForNodeVMSourceTextModule));
     }
 
     static JSObject* createPrototype(VM& vm, JSGlobalObject* globalObject);
     static void destroy(JSC::JSCell* cell);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     JSValue createModuleRecord(JSGlobalObject* globalObject);
     void ensureModuleRecord(JSGlobalObject* globalObject);
-    bool hasModuleRecord() const { return !!m_moduleRecord; }
     JSModuleRecord* moduleRecordIfExists() const { return m_moduleRecord.get(); }
     AbstractModuleRecord* moduleRecord(JSGlobalObject* globalObject);
     JSValue link(JSGlobalObject* globalObject, JSArray* specifiers, JSArray* moduleNatives, JSValue scriptFetcher);

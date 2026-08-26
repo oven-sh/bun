@@ -518,6 +518,32 @@ describe("createHash", () => {
     expect(copy.digest("hex")).toBe(hash.digest("hex"));
   });
 
+  it("treats a view over a detached ArrayBuffer as empty input", () => {
+    const detachedView = () => {
+      const ab = new ArrayBuffer(8);
+      const v = new Uint8Array(ab);
+      ab.transfer();
+      return v;
+    };
+
+    const emptyHash = crypto.createHash("sha256").digest("hex");
+    expect(crypto.createHash("sha256").update(detachedView()).digest("hex")).toBe(emptyHash);
+
+    const emptyDataHmac = crypto.createHmac("sha256", "k").digest("hex");
+    expect(crypto.createHmac("sha256", "k").update(detachedView()).digest("hex")).toBe(emptyDataHmac);
+
+    const emptyKeyHmac = crypto.createHmac("sha256", Buffer.alloc(0)).update("m").digest("hex");
+    expect(crypto.createHmac("sha256", detachedView()).update("m").digest("hex")).toBe(emptyKeyHmac);
+
+    const { privateKey, publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+
+    const sig = crypto.createSign("sha256").update(detachedView()).sign(privateKey);
+    expect(crypto.createVerify("sha256").verify(publicKey, sig)).toBe(true);
+
+    const emptySig = crypto.createSign("sha256").sign(privateKey);
+    expect(crypto.createVerify("sha256").update(detachedView()).verify(publicKey, emptySig)).toBe(true);
+  });
+
   it("uses the Transform options object", () => {
     const hasher = crypto.createHash("sha256", { defaultEncoding: "binary" });
     hasher.on("readable", () => {
@@ -608,6 +634,154 @@ describe("DiffieHellman", () => {
     expect(dh.setPublicKey.name).toBe("setPublicKey");
     expect(dh.setPrivateKey.name).toBe("setPrivateKey");
   });
+
+  // BN_get_word reports a BIGNUM too wide for a single BN_ULONG by returning
+  // the all-ones word. The generator-below-2 check must not misread that (or a
+  // truncation of a 33-to-64-bit value on LLP64, where unsigned long is 32
+  // bits) as a small value: any generator that wide is necessarily >= 2.
+  it.each([
+    ["33 bits (wider than a 32-bit unsigned long)", "0100000000"],
+    ["72 bits (wider than any BN_ULONG)", "020000000000000001"],
+  ])("accepts a buffer generator of %s", (_label, hex) => {
+    const p = crypto.getDiffieHellman("modp5").getPrime();
+    const g = Buffer.from(hex, "hex");
+
+    const alice = crypto.createDiffieHellman(p, g);
+    const bob = crypto.createDiffieHellman(p, g);
+    alice.generateKeys();
+    bob.generateKeys();
+
+    expect(alice.getGenerator()).toEqual(g);
+    expect(alice.computeSecret(bob.getPublicKey())).toEqual(bob.computeSecret(alice.getPublicKey()));
+  });
+
+  it("rejects a buffer generator below 2 and accepts exactly 2", () => {
+    const p = crypto.getDiffieHellman("modp5").getPrime();
+    expect(() => crypto.createDiffieHellman(p, Buffer.from([0x00]))).toThrow(/bad.generator/i);
+    expect(() => crypto.createDiffieHellman(p, Buffer.from([0x01]))).toThrow(/bad.generator/i);
+    expect(() => crypto.createDiffieHellman(p, Buffer.from([0x02]))).not.toThrow();
+  });
+
+  it("throws (not returns) validation errors from the constructor", () => {
+    // toThrow() accepts a *returned* Error instance as a throw, so it cannot
+    // distinguish the two here; capture the control-flow outcome explicitly.
+    function outcome(fn) {
+      try {
+        return { threw: false, value: fn() };
+      } catch (e) {
+        return { threw: true, value: e };
+      }
+    }
+
+    // DHPointer::New rejects a 2-bit modulus; that must surface as a thrown error.
+    expect(outcome(() => crypto.createDiffieHellman(2))).toEqual({
+      threw: true,
+      value: expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE", message: "Invalid DH parameters" }),
+    });
+    // Numeric sizeOrKey with a non-numeric generator reaches the int32-only guard.
+    expect(outcome(() => crypto.createDiffieHellman(1024, "abc"))).toEqual({
+      threw: true,
+      value: expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message: "Second argument must be an int32" }),
+    });
+    // `new DiffieHellman(...)` must behave identically to the factory.
+    expect(outcome(() => new crypto.DiffieHellman(2))).toEqual({
+      threw: true,
+      value: expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    });
+  });
+});
+
+// An integer-valued Number is not always an int32 JSValue. An element of an array that
+// also holds a non-int32 number, or anything read out of a Float64Array, is stored as a
+// double. Node validates these arguments by value, so every case below works there.
+describe("integer arguments whose JSValue is a double", () => {
+  const asDouble = n => new Float64Array([n])[0];
+  const [, twentyFromJson] = JSON.parse("[1e10, 20]");
+
+  function errorCode(fn) {
+    try {
+      fn();
+      return "no error";
+    } catch (e) {
+      return e.code;
+    }
+  }
+
+  it("sign() and verify() accept padding and saltLength by value", () => {
+    const { privateKey, publicKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 1024 });
+    const data = Buffer.from("msg");
+    const pss = crypto.constants.RSA_PKCS1_PSS_PADDING;
+    const signature = crypto.sign("sha256", data, { key: privateKey, padding: pss, saltLength: 20 });
+    const verifyWith = (options, sig = signature) =>
+      crypto.verify("sha256", data, { key: publicKey, padding: pss, ...options }, sig);
+
+    expect({
+      doubleSaltLength: verifyWith({ saltLength: asDouble(20) }),
+      saltLengthFromJsonArray: verifyWith({ saltLength: twentyFromJson }),
+      doublePadding: verifyWith({ padding: asDouble(pss), saltLength: 20 }),
+      createVerifyDoubleSaltLength: crypto
+        .createVerify("sha256")
+        .update(data)
+        .verify({ key: publicKey, padding: pss, saltLength: asDouble(20) }, signature),
+      signDoubleSaltLength: verifyWith(
+        { saltLength: 20 },
+        crypto.sign("sha256", data, { key: privateKey, padding: pss, saltLength: asDouble(20) }),
+      ),
+      createSignDoubleSaltLength: verifyWith(
+        { saltLength: 20 },
+        crypto
+          .createSign("sha256")
+          .update(data)
+          .sign({ key: privateKey, padding: pss, saltLength: asDouble(20) }),
+      ),
+      // Node's check is `value === value >> 0`, which accepts -0 as 0.
+      negativeZeroSaltLength: verifyWith(
+        { saltLength: -0 },
+        crypto.sign("sha256", data, { key: privateKey, padding: pss, saltLength: 0 }),
+      ),
+      fractionalSaltLength: errorCode(() => verifyWith({ saltLength: 20.5 })),
+      saltLengthPastInt32: errorCode(() => verifyWith({ saltLength: 2 ** 31 })),
+      stringSaltLength: errorCode(() => verifyWith({ saltLength: "20" })),
+    }).toEqual({
+      doubleSaltLength: true,
+      saltLengthFromJsonArray: true,
+      doublePadding: true,
+      createVerifyDoubleSaltLength: true,
+      signDoubleSaltLength: true,
+      createSignDoubleSaltLength: true,
+      negativeZeroSaltLength: true,
+      fractionalSaltLength: "ERR_INVALID_ARG_VALUE",
+      saltLengthPastInt32: "ERR_INVALID_ARG_VALUE",
+      stringSaltLength: "ERR_INVALID_ARG_VALUE",
+    });
+  });
+
+  it("generateKeySync('aes') accepts the length by value", () => {
+    expect({
+      double128: crypto.generateKeySync("aes", { length: asDouble(128) }).symmetricKeySize,
+      double256: crypto.generateKeySync("aes", { length: asDouble(256) }).symmetricKeySize,
+    }).toEqual({ double128: 16, double256: 32 });
+    for (const length of [128.5, 64, "128"]) {
+      expect(() => crypto.generateKeySync("aes", { length })).toThrow(
+        "The property 'options.length' must be one of: 128, 192, 256",
+      );
+    }
+  });
+
+  it("createDiffieHellman(prime, generator) reads a double generator", () => {
+    const prime = crypto.getDiffieHellman("modp5").getPrime();
+    const generatorOf = generator => crypto.createDiffieHellman(prime, generator).getGenerator().toString("hex");
+    // Before the fix the double was read as 0 and rejected as a bad generator.
+    expect({ double2: generatorOf(asDouble(2)), double5: generatorOf(asDouble(5)) }).toEqual({
+      double2: "02",
+      double5: "05",
+    });
+  });
+
+  it("getCipherInfo(nid) reads a double nid", () => {
+    const info = crypto.getCipherInfo("aes-128-cbc");
+    expect(crypto.getCipherInfo(asDouble(info.nid))).toEqual(info);
+  });
 });
 
 describe("ECDH", () => {
@@ -617,7 +791,7 @@ describe("ECDH", () => {
     expect(ecdh.computeSecret.name).toBe("computeSecret");
     expect(ecdh.getPublicKey.name).toBe("getPublicKey");
     expect(ecdh.getPrivateKey.name).toBe("getPrivateKey");
-    expect(ecdh.setPublicKey.name).toBe("setPublicKey");
+    expect(ecdh.setPublicKey.name).toBe("deprecated"); // wrapped by util.deprecate (DEP0031), same as Node
     expect(ecdh.setPrivateKey.name).toBe("setPrivateKey");
   });
 });
@@ -637,8 +811,8 @@ describe("crypto module", () => {
   });
 
   it("should have correct constructor names", () => {
-    expect(crypto.Hash.name).toBe("Hash");
-    expect(crypto.Hmac.name).toBe("Hmac");
+    expect(crypto.Hash.name).toBe("deprecated"); // wrapped by util.deprecate (DEP0179), same as Node
+    expect(crypto.Hmac.name).toBe("deprecated"); // wrapped by util.deprecate (DEP0181), same as Node
     expect(crypto.Sign.name).toBe("Sign");
     expect(crypto.Verify.name).toBe("Verify");
   });
@@ -892,4 +1066,253 @@ it("generatePrime(Sync) should return an ArrayBuffer", async () => {
   });
 
   await promise;
+});
+
+describe("sign/verify context option", () => {
+  // The `context` signing option only applies to Ed448, which BoringSSL does not provide, so
+  // providing one fails the operation with the same error on the sync and callback paths.
+  const data = Buffer.from("hello");
+
+  it("crypto.sign rejects the context option synchronously and asynchronously with the same error", async () => {
+    const { privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const keyOpts = { key: privateKey, context: Buffer.alloc(1) };
+
+    let syncErr;
+    expect(() => {
+      try {
+        crypto.sign("sha256", data, keyOpts);
+      } catch (err) {
+        syncErr = err;
+        throw err;
+      }
+    }).toThrow("Context parameter is unsupported");
+    expect(syncErr.code).toBe("ERR_CRYPTO_OPERATION_FAILED");
+
+    const { promise, resolve, reject } = Promise.withResolvers();
+    crypto.sign("sha256", data, keyOpts, (err, sig) => (err ? resolve(err) : reject(new Error("expected an error"))));
+    const asyncErr = await promise;
+    expect(asyncErr.code).toBe(syncErr.code);
+    expect(asyncErr.message).toBe(syncErr.message);
+  });
+
+  it("crypto.diffieHellman reports the same error from the sync and callback paths", async () => {
+    const alice = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const bob = crypto.generateKeyPairSync("ec", { namedCurve: "P-384" });
+    const options = { privateKey: alice.privateKey, publicKey: bob.publicKey };
+
+    let syncErr;
+    try {
+      crypto.diffieHellman(options);
+    } catch (err) {
+      syncErr = err;
+    }
+    expect(syncErr).toBeDefined();
+
+    const { promise, resolve, reject } = Promise.withResolvers();
+    crypto.diffieHellman(options, (err, secret) => (err ? resolve(err) : reject(new Error("expected an error"))));
+    const asyncErr = await promise;
+    expect(asyncErr.code).toBe(syncErr.code);
+    expect(asyncErr.message).toBe(syncErr.message);
+
+    // The failed derive must not leave OpenSSL errors behind for unrelated operations to pick up.
+    expect(() => crypto.generateKeyPairSync("rsa", { modulusLength: 2048 })).not.toThrow();
+  });
+});
+
+describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
+  describe.each([
+    ["ed25519", undefined, 32, 32],
+    ["x25519", undefined, 32, 32],
+    ["ec", "P-256", 65, 32],
+    ["ec", "P-384", 97, 48],
+  ])("raw key format %s %s", (keyType, namedCurve, pubLen, privLen) => {
+    const gen = () => crypto.generateKeyPairSync(keyType, keyType === "ec" ? { namedCurve } : undefined);
+
+    it("round-trips through raw-public and raw-private", () => {
+      const { publicKey, privateKey } = gen();
+      const rawPub = publicKey.export({ format: "raw-public" });
+      const rawPriv = privateKey.export({ format: "raw-private" });
+      expect(Buffer.isBuffer(rawPub)).toBe(true);
+      expect(Buffer.isBuffer(rawPriv)).toBe(true);
+      expect(rawPub.length).toBe(pubLen);
+      expect(rawPriv.length).toBe(privLen);
+
+      const importOpts = { asymmetricKeyType: keyType, ...(namedCurve ? { namedCurve } : {}) };
+      const pub2 = crypto.createPublicKey({ key: rawPub, format: "raw-public", ...importOpts });
+      const priv2 = crypto.createPrivateKey({ key: rawPriv, format: "raw-private", ...importOpts });
+      expect(pub2.type).toBe("public");
+      expect(pub2.asymmetricKeyType).toBe(keyType);
+      expect(priv2.type).toBe("private");
+      expect(priv2.asymmetricKeyType).toBe(keyType);
+      expect(pub2.export({ format: "raw-public" })).toEqual(rawPub);
+      expect(priv2.export({ format: "raw-private" })).toEqual(rawPriv);
+
+      // A private key's raw-public export should match the public key's.
+      expect(privateKey.export({ format: "raw-public" })).toEqual(rawPub);
+    });
+
+    if (keyType === "ec") {
+      it("exports a compressed EC point when requested", () => {
+        const { publicKey } = gen();
+        const compressed = publicKey.export({ format: "raw-public", type: "compressed" });
+        expect(compressed.length).toBe((pubLen - 1) / 2 + 1);
+        const reimported = crypto.createPublicKey({
+          key: compressed,
+          format: "raw-public",
+          asymmetricKeyType: "ec",
+          namedCurve,
+        });
+        expect(reimported.export({ format: "raw-public" })).toEqual(publicKey.export({ format: "raw-public" }));
+
+        // generateKeyPair's publicKeyEncoding path honors the same option.
+        const { publicKey: keygenCompressed } = crypto.generateKeyPairSync("ec", {
+          namedCurve,
+          publicKeyEncoding: { format: "raw-public", type: "compressed" },
+        });
+        expect(Buffer.isBuffer(keygenCompressed)).toBe(true);
+        expect(keygenCompressed.length).toBe((pubLen - 1) / 2 + 1);
+        expect(() =>
+          crypto.generateKeyPairSync("ec", {
+            namedCurve,
+            publicKeyEncoding: { format: "raw-public", type: "garbage" },
+          }),
+        ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
+      });
+    }
+  });
+
+  it("raw key formats reject unsupported combinations", () => {
+    const { publicKey: rsaPub, privateKey: rsaPriv } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+    for (const fmt of ["raw-public", "raw-private", "raw-seed"]) {
+      expect(() => rsaPriv.export({ format: fmt })).toThrow(
+        expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }),
+      );
+    }
+    expect(() => rsaPub.export({ format: "raw-public" })).toThrow(
+      expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }),
+    );
+
+    const { privateKey: edPriv } = crypto.generateKeyPairSync("ed25519");
+    expect(() => edPriv.export({ format: "raw-seed" })).toThrow(
+      expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }),
+    );
+    expect(() => edPriv.export({ format: "raw-private", passphrase: "x" })).toThrow(
+      expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }),
+    );
+
+    // Import validation
+    expect(() =>
+      crypto.createPrivateKey({ key: Buffer.alloc(32), format: "raw-private", asymmetricKeyType: "rsa" }),
+    ).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }));
+    expect(() =>
+      crypto.createPrivateKey({ key: Buffer.alloc(32), format: "raw-private", asymmetricKeyType: "banana" }),
+    ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
+    expect(() =>
+      crypto.createPublicKey({ key: Buffer.alloc(32), format: "raw-public", asymmetricKeyType: "ec" }),
+    ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    expect(() =>
+      crypto.createPrivateKey({ key: Buffer.alloc(32), format: "raw-public", asymmetricKeyType: "ed25519" }),
+    ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
+    expect(() =>
+      crypto.createPrivateKey({ key: "not a buffer", format: "raw-private", asymmetricKeyType: "ed25519" }),
+    ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    expect(() =>
+      crypto.createPrivateKey({
+        key: Buffer.alloc(31),
+        format: "raw-private",
+        asymmetricKeyType: "ec",
+        namedCurve: "P-256",
+      }),
+    ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
+    expect(() =>
+      crypto.createPrivateKey({
+        key: Buffer.alloc(32),
+        format: "raw-private",
+        asymmetricKeyType: "ec",
+        namedCurve: "no-such-curve",
+      }),
+    ).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_INVALID_CURVE" }));
+
+    // generateKeyPair's encoding path must also reject encryption for raw output.
+    expect(() =>
+      crypto.generateKeyPairSync("ed25519", {
+        privateKeyEncoding: { format: "raw-private", cipher: "aes-128-cbc", passphrase: "secret" },
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS",
+        message: "The selected key encoding raw format does not support encryption.",
+      }),
+    );
+    expect(() =>
+      crypto.generateKeyPairSync("ed25519", {
+        privateKeyEncoding: { format: "raw-private", passphrase: "secret" },
+      }),
+    ).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }));
+  });
+
+  it("publicEncrypt is not confused by a buffer detached from an oaepLabel getter", () => {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const label = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+    const opts = {
+      key: publicKey,
+      oaepLabel: label,
+      padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+      get passphrase() {
+        structuredClone(label.buffer, { transfer: [label.buffer] });
+        return undefined;
+      },
+    };
+    const ct = crypto.publicEncrypt(opts, Buffer.from("hello"));
+    const pt = crypto.privateDecrypt(
+      {
+        key: privateKey,
+        oaepLabel: new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]),
+        padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+      },
+      ct,
+    );
+    expect(pt.toString()).toBe("hello");
+  });
+});
+
+// Certificate.{verifySpkac,exportPublicKey,exportChallenge} share getArrayBufferOrView,
+// which previously threw "ReferenceError: key is not defined" for public/private
+// KeyObjects and silently accepted secret ones. Node rejects every KeyObject here.
+describe("Certificate spkac argument validation", () => {
+  const argTypeMessage =
+    'The "spkac" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView.';
+  const keys = () => {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+    return [publicKey, privateKey, crypto.createSecretKey(Buffer.from("secret"))];
+  };
+
+  for (const fn of ["verifySpkac", "exportPublicKey", "exportChallenge"]) {
+    it(`Certificate.${fn} rejects KeyObject input with ERR_INVALID_ARG_TYPE`, () => {
+      for (const key of keys()) {
+        expect(() => crypto.Certificate[fn](key)).toThrow(
+          expect.objectContaining({
+            name: "TypeError",
+            code: "ERR_INVALID_ARG_TYPE",
+            message: expect.stringContaining(argTypeMessage),
+          }),
+        );
+      }
+    });
+  }
+
+  it("Certificate.verifySpkac rejects non-buffer input with node's message", () => {
+    expect(() => crypto.Certificate.verifySpkac(42)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `${argTypeMessage} Received type number (42)`,
+      }),
+    );
+  });
+
+  it("Certificate.verifySpkac still returns false for a well-typed but invalid spkac", () => {
+    expect(crypto.Certificate.verifySpkac(Buffer.from("not a spkac"))).toBe(false);
+    expect(new crypto.Certificate().verifySpkac("not a spkac", "utf8")).toBe(false);
+  });
 });

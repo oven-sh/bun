@@ -25,7 +25,6 @@
 #include "CryptoKey.h"
 #include "JSDOMConvertEnumeration.h"
 #include "JSDOMWrapper.h"
-#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 
@@ -44,13 +43,11 @@ public:
     static CryptoKey* toWrapped(JSC::VM&, JSC::JSValue);
     static void destroy(JSC::JSCell*);
 
-    static JSCryptoKey* fromJS(JSGlobalObject* globalObject, JSValue value);
-
     DECLARE_INFO;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
     }
 
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
@@ -73,23 +70,6 @@ protected:
     void finishCreation(JSC::VM&);
 };
 
-class JSCryptoKeyOwner final : public JSC::WeakHandleOwner {
-public:
-    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
-};
-
-inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, CryptoKey*)
-{
-    static NeverDestroyed<JSCryptoKeyOwner> owner;
-    return &owner.get();
-}
-
-inline void* wrapperKey(CryptoKey* wrappableObject)
-{
-    return wrappableObject;
-}
-
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, CryptoKey&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, CryptoKey* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<CryptoKey>&&);
@@ -101,9 +81,6 @@ template<> struct JSDOMWrapperConverterTraits<CryptoKey> {
 };
 String convertEnumerationToString(CryptoKey::Type);
 template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, CryptoKey::Type);
-
-template<> std::optional<CryptoKey::Type> parseEnumeration<CryptoKey::Type>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> ASCIILiteral expectedEnumerationValues<CryptoKey::Type>();
 
 } // namespace WebCore
 

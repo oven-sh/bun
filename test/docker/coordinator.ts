@@ -24,28 +24,14 @@
 import { unlinkSync } from "node:fs";
 import * as net from "node:net";
 import { ensure, type ServiceInfo, type ServiceName } from "./index.ts";
+import { prestartMap as prestartMapRaw } from "./prestart-map.mjs";
 
 // Keys are paths relative to test/ — that's the shape runner.node.mjs passes
-// (getTests() walks from testsPath, not repo root). Prefix-matched. The map is
-// hand-maintained; a missing entry just means that test's service starts on
-// first request instead of at launch (correct, just slower).
-const prestartMap: Record<string, readonly ServiceName[]> = {
-  "js/sql/sql-mysql": ["mysql_plain", "mysql_native_password", "mysql_tls"],
-  "js/sql/tls-sql": ["postgres_tls"],
-  "js/sql/local-sql": ["postgres_tls"],
-  "js/sql/sql.test": ["postgres_plain"],
-  "js/sql/sql-prepare-false": ["postgres_plain"],
-  "js/valkey/": ["redis_unified"],
-  "js/bun/s3/": ["minio"],
-  "js/web/websocket/autobahn": ["autobahn"],
-  "js/web/websocket/websocket-proxy": ["squid"],
-  "integration/mysql2/": ["mysql_plain", "mysql_native_password"],
-  "regression/issue/21311": ["postgres_plain"],
-  "regression/issue/24850": ["mysql_plain"],
-  "regression/issue/26030": ["mysql_plain"],
-  "regression/issue/26063": ["mysql_plain"],
-  "regression/issue/28632": ["mysql_plain"],
-};
+// (getTests() walks from testsPath, not repo root). Prefix-matched. The map
+// literal lives in prestart-map.mjs (add new entries THERE) because
+// scripts/runner.node.mjs — plain Node, which cannot import .ts — also reads
+// it to schedule docker-backed test files last within the shard.
+const prestartMap = prestartMapRaw as Record<string, readonly ServiceName[]>;
 
 const socketPath = process.env.BUN_DOCKER_COORDINATOR_SOCKET;
 if (!socketPath) {
@@ -58,29 +44,73 @@ if (!socketPath) {
 // environment.
 delete process.env.BUN_DOCKER_COORDINATOR;
 
-// Collapse concurrent requests for one service onto a single ensure(), but
-// never memoize a settled result: each new request re-runs `up -d --wait`
-// (restarting the container and waiting for health again if it died since)
-// and re-reads the port mapping. That's the self-healing every test file's
-// own ensure() provided before the coordinator existed; answering from a
-// cache for the rest of the shard hands out dead ports after a mid-run
-// container crash.
+// Collapse concurrent requests for one service onto a single ensureServiceNow(),
+// and remember the last ServiceInfo a successful ensure produced. The full
+// ensure() path costs several serial `docker compose` spawns (build, ps -a,
+// up --wait, port), so paying it once per requesting test file dominates the
+// wall time of every container-backed test file in the shard. A settled result
+// is still never trusted blindly: each new request re-validates the cached
+// mapping with one TCP connect per published port and falls back to the full
+// ensure() when any probe fails. That preserves the self-healing every test
+// file's own ensure() provided before the coordinator existed — a container
+// that died mid-run (host OOM kill, server crash) tears down its docker-proxy
+// port bindings, so the probe fails and the next request restarts it — without
+// handing out dead ports after a mid-run container crash.
 const inflight = new Map<ServiceName, Promise<ServiceInfo>>();
+const lastGood = new Map<ServiceName, ServiceInfo>();
+
+// One TCP connect (bounded by `timeout` ms) to host:port. Resolves false on
+// refusal, unreachable host, or timeout — never rejects.
+function probePort(host: string, port: number, timeout = 2000): Promise<boolean> {
+  return new Promise(resolve => {
+    const socket = net.connect({ host, port });
+    let done = false;
+    const finish = (ok: boolean) => {
+      if (done) return;
+      done = true;
+      socket.destroy();
+      resolve(ok);
+    };
+    socket.setTimeout(timeout, () => finish(false));
+    socket.on("connect", () => finish(true));
+    socket.on("error", () => finish(false));
+  });
+}
+
+async function isStillUp(info: ServiceInfo): Promise<boolean> {
+  const results = await Promise.all(Object.values(info.ports).map(port => probePort(info.host, port)));
+  return results.length > 0 && results.every(Boolean);
+}
+
+async function ensureServiceNow(service: ServiceName): Promise<ServiceInfo> {
+  const cached = lastGood.get(service);
+  if (cached !== undefined) {
+    if (await isStillUp(cached)) {
+      console.log(`coordinator: ${service} ready (cached)`);
+      return cached;
+    }
+    // The container died (or its ports moved) since the last ensure: drop the
+    // stale mapping and let the full ensure() restart it and re-read the ports.
+    lastGood.delete(service);
+    console.log(`coordinator: ${service} cached ports unreachable; re-ensuring`);
+  }
+
+  console.log(`coordinator: ensuring ${service}`);
+  try {
+    const info = await ensure(service);
+    console.log(`coordinator: ${service} ready`);
+    lastGood.set(service, info);
+    return info;
+  } catch (error) {
+    console.error(`coordinator: ${service} failed: ${error}`);
+    throw error;
+  }
+}
 
 function ensureService(service: ServiceName): Promise<ServiceInfo> {
   let p = inflight.get(service);
   if (p === undefined) {
-    console.log(`coordinator: ensuring ${service}`);
-    p = ensure(service).then(
-      info => {
-        console.log(`coordinator: ${service} ready`);
-        return info;
-      },
-      error => {
-        console.error(`coordinator: ${service} failed: ${error}`);
-        throw error;
-      },
-    );
+    p = ensureServiceNow(service);
     inflight.set(service, p);
     const evict = () => inflight.delete(service);
     p.then(evict, evict);

@@ -6,9 +6,12 @@ use core::sync::atomic::{AtomicI32, Ordering};
 
 #[cfg(not(windows))]
 use crate::E;
+#[cfg(not(windows))]
 use crate::Fd;
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
 use crate::Tag;
+#[cfg(not(windows))]
+use bun_core::vec::UninitBuf;
 
 // `declare_scope!` uses the ident as both static name AND tag string, but
 // `copy_file` would shadow `pub fn copy_file()` below. Hand-expand with the
@@ -19,9 +22,9 @@ static debug: bun_core::output::ScopedLogger =
     bun_core::output::ScopedLogger::new("copy_file", bun_core::output::Visibility::Hidden);
 
 #[cfg(windows)]
-pub type InputType<'a> = &'a bun_core::WStr; // bun.OSPathSliceZ == [:0]const u16
+type InputType<'a> = &'a bun_core::WStr; // bun.OSPathSliceZ == [:0]const u16
 #[cfg(not(windows))]
-pub type InputType<'a> = Fd;
+type InputType<'a> = Fd;
 // lifetime param is unused on posix (Fd is Copy); kept so callers
 // can write `InputType<'_>` uniformly across platforms.
 
@@ -58,7 +61,9 @@ bitflags::bitflags! {
         const HAS_IOCTL_FICLONE_FAILED     = 1 << 1;
         const HAS_COPY_FILE_RANGE_FAILED   = 1 << 2;
         const HAS_SENDFILE_FAILED          = 1 << 3;
-        // _: u4 padding
+        /// Per-fd, not per-tree: cleared on entry to `copy_file_with_state`.
+        const HAS_HINTED_SEQUENTIAL        = 1 << 4;
+        // _: u3 padding
     }
 }
 impl Default for LinuxCopyFileState {
@@ -111,6 +116,9 @@ pub fn copy_file_with_state(
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
+        // Per-fd bit; the other bits persist across files in a tree walk.
+        copy_file_state.remove(LinuxCopyFileState::HAS_HINTED_SEQUENTIAL);
+
         if can_use_ioctl_ficlone()
             && !copy_file_state.contains(LinuxCopyFileState::HAS_SEEN_EXDEV)
             && !copy_file_state.contains(LinuxCopyFileState::HAS_IOCTL_FICLONE_FAILED)
@@ -217,6 +225,11 @@ pub fn copy_file_with_state(
 
     #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
     {
+        // macOS has no posix_fadvise; FreeBSD's matches Linux semantics.
+        #[cfg(target_os = "freebsd")]
+        // SAFETY: `in_` is a valid open fd; `posix_fadvise` only reads it.
+        let _ = unsafe { libc::posix_fadvise(in_.native(), 0, 0, libc::POSIX_FADV_SEQUENTIAL) };
+
         loop {
             {
                 let amt =
@@ -278,7 +291,7 @@ pub fn can_use_copy_file_range_syscall() -> bool {
     result == 1
 }
 
-pub static CAN_USE_IOCTL_FICLONE_: AtomicI32 = AtomicI32::new(0);
+pub(crate) static CAN_USE_IOCTL_FICLONE_: AtomicI32 = AtomicI32::new(0);
 
 #[inline]
 pub fn disable_ioctl_ficlone() {
@@ -323,10 +336,11 @@ pub fn can_use_ioctl_ficlone() -> bool {
 // Only the
 // posix paths call the fns below, so c_int is sufficient here.
 #[allow(non_camel_case_types)]
+#[cfg(not(windows))]
 type fd_t = core::ffi::c_int;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
-pub fn copy_file_range(
+pub(crate) fn copy_file_range(
     in_: fd_t,
     out: fd_t,
     len: usize,
@@ -408,12 +422,22 @@ pub fn copy_file_range(
         break;
     }
 
+    if !copy_file_state.contains(LinuxCopyFileState::HAS_HINTED_SEQUENTIAL) {
+        copy_file_state.insert(LinuxCopyFileState::HAS_HINTED_SEQUENTIAL);
+        // The read/write loop below is called once per 32 KiB chunk; hint once
+        // up front so the kernel doubles its readahead window. Best-effort.
+        // SAFETY: `in_` is a valid open fd; `posix_fadvise` only reads it.
+        let _ = unsafe { libc::posix_fadvise(in_, 0, 0, libc::POSIX_FADV_SEQUENTIAL) };
+    }
+
     copy_file_read_write_loop(in_, out, len)
 }
 
-pub fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> crate::Result<usize> {
-    // PERF: 32 KiB stack buffer is zero-initialized — profile if it shows up on a hot path
-    let mut buf = [0u8; 8 * 4096];
+#[cfg(not(windows))]
+pub(crate) fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> crate::Result<usize> {
+    let mut stack_buf = UninitBuf::<{ 8 * 4096 }>::uninit();
+    // SAFETY: `read` below is the only writer of `buf`; only `buf[..amt_read]` is read back.
+    let buf = unsafe { stack_buf.as_bytes_mut() };
     let adjusted_count = buf.len().min(len);
     match crate::read(Fd::from_native(in_ as _), &mut buf[0..adjusted_count]) {
         Ok(amt_read) => {
@@ -442,12 +466,10 @@ pub fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> crate::Res
     }
 }
 
-/// `Platform.kernelVersion().orderWithoutTag(.{ major, minor }).compare(.gte)`.
-/// `bun_analytics::generate_header::Platform` (T6) is the canonical
-/// source; T1 routes through `bun_core::linux_kernel_version()` (TYPE_ONLY
-/// move-down) so this crate stays leaf. Compare is
-/// lexicographic on major→minor→patch,
-/// with patch defaulting to 0 in the comparand.
+/// Same probe as `bun_analytics::generate_header::generate_platform::kernel_version()`,
+/// routed through `bun_core::linux_kernel_version()` so this crate stays leaf.
+/// Compare is lexicographic on major→minor→patch, with patch defaulting to 0
+/// in the comparand.
 #[inline]
 fn kernel_at_least(major: u32, minor: u32) -> bool {
     let v = bun_core::linux_kernel_version();

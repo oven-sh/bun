@@ -62,7 +62,7 @@ impl<A: Allocator + 'static> LineOffsetTableColumns for List<A> {
 
 impl LineOffsetTable {
     #[inline]
-    pub fn find_line(byte_offsets_to_start_of_line: &[u32], loc: Loc) -> i32 {
+    pub(crate) fn find_line(byte_offsets_to_start_of_line: &[u32], loc: Loc) -> i32 {
         debug_assert!(loc.start > -1); // checked by caller
         let mut original_line: usize = 0;
         let loc_start = usize::try_from(loc.start).expect("int cast");
@@ -94,7 +94,7 @@ impl LineOffsetTable {
     /// call; this short-circuits to a couple of compares for the common case
     /// and falls back to the binary search otherwise.
     #[inline]
-    pub fn find_line_with_hint(offsets: &[u32], loc: Loc, hint: u32) -> i32 {
+    pub(crate) fn find_line_with_hint(offsets: &[u32], loc: Loc, hint: u32) -> i32 {
         debug_assert!(loc.start > -1);
         let loc_start = loc.start as u32;
         let len = offsets.len();
@@ -212,18 +212,17 @@ impl LineOffsetTable {
                 line_byte_offset = offset;
             }
 
-            if c > 0x7F && columns_for_non_ascii.is_empty() {
+            // `byte_offset_to_first_non_ascii` doubles as the "line has non-ASCII"
+            // flag (`i32::MAX as u32` = none so far). The extend below appends this
+            // byte's entry; seeding one here too would shift every later column by one.
+            if c > 0x7F && byte_offset_to_first_non_ascii == i32::MAX as u32 {
                 debug_assert!(remaining.as_ptr() as usize >= base);
-                // we have a non-ASCII character, so we need to keep track of the
-                // mapping from byte offsets to UTF-16 code unit counts
-                // Scratch is empty here with 256 inline slots, so this never reallocs.
-                columns_for_non_ascii.push(column);
                 column_byte_offset = offset - line_byte_offset;
                 byte_offset_to_first_non_ascii = column_byte_offset;
             }
 
             // Update the per-byte column offsets
-            if !columns_for_non_ascii.is_empty() {
+            if byte_offset_to_first_non_ascii != i32::MAX as u32 {
                 let line_bytes_so_far = offset - line_byte_offset;
                 let need = (line_bytes_so_far - column_byte_offset + 1) as usize;
                 columns_for_non_ascii.extend(core::iter::repeat_n(column, need));

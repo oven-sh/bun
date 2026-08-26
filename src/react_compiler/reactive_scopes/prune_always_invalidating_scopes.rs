@@ -26,7 +26,7 @@ use crate::reactive_scopes::visitors::{
 /// Prunes scopes that always invalidate because they depend on unmemoized
 /// always-invalidating values.
 /// TS: `pruneAlwaysInvalidatingScopes`
-pub fn prune_always_invalidating_scopes(
+pub(crate) fn prune_always_invalidating_scopes(
     func: &mut ReactiveFunction,
     env: &Environment,
 ) -> Result<(), crate::diagnostics::CompilerError> {

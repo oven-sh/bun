@@ -5,14 +5,21 @@ use bun_alloc::AllocError;
 use bun_collections::ArrayHashMap;
 use bun_collections::array_hash_map::ArrayHashAdapter;
 use bun_install::dependency::DependencyExt as _;
+use bun_install::dependency::{
+    NpmInfo, Tag as DependencyVersionTag, Value as DependencyVersionValue,
+    Version as DependencyVersion,
+};
 use bun_install::lockfile::{Buffers, StringBuilder};
-use bun_install::{Dependency, Lockfile, PackageManager};
+use bun_install::{Behavior, Dependency, Lockfile, PackageManager};
+use bun_semver::SlicedString;
+use core::mem::ManuallyDrop;
 // Layering: every install-side caller (Package.rs / pnpm.rs) parses JSON/YAML
 // into the lower-tier `bun_ast::js_ast` shape (re-exported via
 // `crate::bun_json`). Importing `bun_js_parser` here would force a higher-tier
 // dep and produce distinct-`Expr`-type errors at every call site, so use the
 // T2 type directly.
-use crate::bun_json::{E, Expr, ExprData};
+use crate::bun_json::{E, Expr, ExprData, value_loc_of_property};
+use bstr::BStr;
 use bun_ast::{Log, Source};
 use bun_semver::String;
 use bun_semver::string::{ArrayHashContext, Buf as StringBuf, Builder as StringBuilderNs};
@@ -41,31 +48,149 @@ fn ctx(buf: &[u8]) -> ArrayHashContext<'_> {
 }
 
 impl CatalogMap {
-    pub fn has_any(&self) -> bool {
+    pub(crate) fn has_any(&self) -> bool {
         self.default.count() > 0 || self.groups.count() > 0
     }
 
-    pub fn get(
+    /// `catalog:` and `catalog:default` name the same catalog.
+    pub(crate) fn same_name(a: &[u8], b: &[u8]) -> bool {
+        let is_default = |name: &[u8]| name.is_empty() || name == b"default";
+        a == b || (is_default(a) && is_default(b))
+    }
+
+    /// `(None, i)` indexes `default`, `(Some(g), i)` indexes `groups`; the default catalog is looked up under both spellings, the one matching `catalog_name` first.
+    fn locate(
+        &self,
+        string_buf: &[u8],
+        catalog_name: &[u8],
+        dep_name: &[u8],
+    ) -> Option<(Option<usize>, usize)> {
+        let has_default = self.default.count() > 0;
+        let has_groups = self.groups.count() > 0;
+        if !has_default && !has_groups {
+            return None;
+        }
+        let dep_key = String::init(dep_name, dep_name);
+        let dep_ctx = ArrayHashContext {
+            arg_buf: dep_name,
+            existing_buf: string_buf,
+        };
+        let dep_hash = dep_ctx.hash(dep_key);
+        let probe = |map: &Map| {
+            map.get_index_adapted_raw(dep_hash, |existing: &String, i| {
+                dep_ctx.eql(dep_key, *existing, i)
+            })
+        };
+        let in_default = || {
+            if !has_default {
+                return None;
+            }
+            probe(&self.default).map(|i| (None, i))
+        };
+        let in_group = |name: &[u8]| {
+            if !has_groups {
+                return None;
+            }
+            let ctx = ArrayHashContext {
+                arg_buf: name,
+                existing_buf: string_buf,
+            };
+            let g = self
+                .groups
+                .get_index_adapted(&String::init(name, name), &ctx)?;
+            let i = probe(&self.groups.values()[g])?;
+            Some((Some(g), i))
+        };
+        if catalog_name.is_empty() {
+            return in_default().or_else(|| in_group(b"default"));
+        }
+        in_group(catalog_name).or_else(|| (catalog_name == b"default").then(in_default).flatten())
+    }
+
+    pub fn find<'a>(
+        &'a self,
+        string_buf: &[u8],
+        catalog_name: &[u8],
+        dep_name: &[u8],
+    ) -> Option<&'a Dependency> {
+        let (group, i) = self.locate(string_buf, catalog_name, dep_name)?;
+        let map = match group {
+            Some(g) => &self.groups.values()[g],
+            None => &self.default,
+        };
+        Some(&map.values()[i])
+    }
+
+    pub(crate) fn get_ref<'a>(
+        &'a self,
+        string_buf: &[u8],
+        catalog_name: String,
+        dep_name: String,
+    ) -> Option<&'a Dependency> {
+        self.find(
+            string_buf,
+            catalog_name.slice(string_buf),
+            dep_name.slice(string_buf),
+        )
+    }
+
+    pub(crate) fn get(
         &self,
         lockfile: &Lockfile,
         catalog_name: String,
         dep_name: String,
     ) -> Option<Dependency> {
-        let buf = lockfile.buffers.string_bytes.as_slice();
-        if catalog_name.is_empty() {
-            if self.default.count() == 0 {
-                return None;
-            }
-            return self.default.get_adapted(&dep_name, &ctx(buf)).cloned();
+        self.get_ref(
+            lockfile.buffers.string_bytes.as_slice(),
+            catalog_name,
+            dep_name,
+        )
+        .cloned()
+    }
+
+    // Falls back to the unresolved `catalog:` version when the entry is missing.
+    pub(crate) fn resolve_range<'a>(
+        &'a self,
+        string_buf: &[u8],
+        dep: &'a Dependency,
+    ) -> &'a DependencyVersion {
+        if dep.version.tag != DependencyVersionTag::Catalog {
+            return &dep.version;
         }
-
-        let group = self.groups.get_adapted(&catalog_name, &ctx(buf))?;
-
-        if group.count() == 0 {
-            return None;
+        match self.get_ref(string_buf, *dep.version.catalog(), dep.name) {
+            Some(entry) => &entry.version,
+            None => &dep.version,
         }
+    }
 
-        group.get_adapted(&dep_name, &ctx(buf)).cloned()
+    /// Only the root and its workspaces may reference catalogs; elsewhere a `catalog:` dependency is left unresolvable and a `catalog:` peer becomes an optional `*` peer, binding to whatever the importer provides.
+    pub(crate) fn strip_reference(dep: &mut Dependency) {
+        if dep.version.tag != DependencyVersionTag::Catalog {
+            return;
+        }
+        let literal = dep.version.literal;
+        if !dep.behavior.is_peer() {
+            dep.version = DependencyVersion {
+                tag: DependencyVersionTag::Uninitialized,
+                literal,
+                value: DependencyVersionValue::default(),
+            };
+            return;
+        }
+        let star = bun_semver::query::parse(b"*", SlicedString::init(b"*", b"*"))
+            .unwrap_or_else(|_| bun_core::out_of_memory());
+        dep.behavior.insert(Behavior::OPTIONAL);
+        dep.version = DependencyVersion {
+            tag: DependencyVersionTag::Npm,
+            literal,
+            value: DependencyVersionValue {
+                npm: ManuallyDrop::new(NpmInfo {
+                    name: dep.name,
+                    version: star,
+                    is_alias: false,
+                }),
+            },
+        };
     }
 
     /// Takes `buf: &[u8]` (the lockfile's string buffer, used for the hash
@@ -73,7 +198,7 @@ impl CatalogMap {
     /// `&mut lockfile.catalogs` while only borrowing `buffers.string_bytes`
     /// (disjoint field), instead of forcing a whole-`Lockfile` borrow that
     /// conflicts with the `&mut self` receiver.
-    pub fn get_or_put_group(
+    pub(crate) fn get_or_put_group(
         &mut self,
         buf: &[u8],
         catalog_name: String,
@@ -91,210 +216,144 @@ impl CatalogMap {
         Ok(entry.value_ptr)
     }
 
-    pub fn get_group(
-        &mut self,
-        map_buf: &[u8],
-        catalog_name: String,
-        catalog_name_buf: &[u8],
-    ) -> Option<&mut Map> {
-        if catalog_name.is_empty() {
-            return Some(&mut self.default);
-        }
-
-        self.groups.get_ptr_adapted(
-            &catalog_name,
-            &ArrayHashContext {
-                arg_buf: catalog_name_buf,
-                existing_buf: map_buf,
-            },
-        )
-    }
-
     // Deliberately takes no `Lockfile` param so `lockfile.catalogs.parse_count`
     // call sites avoid the `&mut self` vs `&mut Lockfile` self-alias.
-    pub fn parse_count(&mut self, expr: Expr, builder: &mut StringBuilder) {
+    pub(crate) fn parse_count(&mut self, expr: Expr, builder: &mut StringBuilder) {
         if let Some(default_catalog) = expr.get(b"catalog") {
-            if let ExprData::EObject(obj) = &default_catalog.data {
-                for item in obj.properties.slice() {
-                    let key = item.key.as_ref().expect("infallible: prop has key");
-                    builder.count(
-                        key.as_utf8_string_literal()
-                            .expect("infallible: is_string checked"),
-                    );
-                    if let ExprData::EString(version_str) = &item
-                        .value
-                        .as_ref()
-                        .expect("infallible: prop has value")
-                        .data
-                    {
-                        builder.count(&version_str.data);
-                    }
-                }
-            }
+            Self::count_catalog_group(&default_catalog, builder);
         }
 
         if let Some(catalogs) = expr.get(b"catalogs") {
-            if let ExprData::EObject(catalog_names) = &catalogs.data {
-                for catalog in catalog_names.properties.slice() {
-                    let catalog_key = catalog.key.as_ref().unwrap();
-                    builder.count(
-                        catalog_key
-                            .as_utf8_string_literal()
-                            .expect("infallible: is_string checked"),
-                    );
-                    if let ExprData::EObject(obj) = &catalog.value.as_ref().unwrap().data {
-                        for item in obj.properties.slice() {
-                            let key = item.key.as_ref().expect("infallible: prop has key");
-                            builder.count(
-                                key.as_utf8_string_literal()
-                                    .expect("infallible: is_string checked"),
-                            );
-                            if let ExprData::EString(version_str) = &item
-                                .value
-                                .as_ref()
-                                .expect("infallible: prop has value")
-                                .data
-                            {
-                                builder.count(&version_str.data);
-                            }
-                        }
-                    }
-                }
-            }
+            catalogs.for_each_property(|catalog_name, _, catalog_value| {
+                builder.count(catalog_name);
+                Self::count_catalog_group(&catalog_value, builder);
+            });
         }
+    }
+
+    fn count_catalog_group(group: &Expr, builder: &mut StringBuilder) {
+        group.for_each_property(|dep_name, _, version| {
+            builder.count(dep_name);
+            if let Some(version_str) = version.as_utf8_string_literal() {
+                builder.count(version_str);
+            }
+        });
     }
 
     /// `builder` already holds `&mut string_bytes`, so the string buffer is
     /// read through it rather than taking a `lockfile` param — otherwise call
     /// sites would alias `&mut lockfile.catalogs` against `&mut lockfile`.
-    pub fn parse_append(
+    pub(crate) fn parse_append(
         &mut self,
         pm: &mut PackageManager,
         log: &mut Log,
         source: &Source,
         expr: Expr,
         builder: &mut StringBuilder,
-    ) -> Result<bool, AllocError> {
+    ) -> crate::Result<bool> {
         let mut found_any = false;
         if let Some(default_catalog) = expr.get(b"catalog") {
             let group = self.get_or_put_group(builder.string_bytes.as_slice(), String::EMPTY)?;
             found_any = true;
-            if let ExprData::EObject(obj) = &default_catalog.data {
-                for item in obj.properties.slice() {
-                    let key = item.key.as_ref().expect("infallible: prop has key");
-                    let value = item.value.as_ref().expect("infallible: prop has value");
-                    let dep_name_str = key
-                        .as_utf8_string_literal()
-                        .expect("infallible: is_string checked");
-
-                    let dep_name_hash = StringBuilderNs::string_hash(dep_name_str);
-                    let dep_name = builder.append_with_hash::<String>(dep_name_str, dep_name_hash);
-
-                    if let ExprData::EString(version_str) = &value.data {
-                        let version_literal = builder.append::<String>(&version_str.data);
-
-                        let buf = builder.string_bytes.as_slice();
-                        let version_sliced = version_literal.sliced(buf);
-
-                        let Some(version) = Dependency::parse(
-                            dep_name,
-                            dep_name_hash,
-                            version_sliced.slice,
-                            &version_sliced,
-                            &mut *log,
-                            Some(&mut *pm),
-                        ) else {
-                            log.add_error(Some(source), value.loc, b"Invalid dependency version");
-                            continue;
-                        };
-
-                        let buf = builder.string_bytes.as_slice();
-                        let entry = group.get_or_put_adapted(&dep_name, &ctx(buf))?;
-
-                        if entry.found_existing {
-                            log.add_error(Some(source), key.loc, b"Duplicate catalog");
-                            continue;
-                        }
-
-                        *entry.key_ptr = dep_name;
-                        *entry.value_ptr = Dependency {
-                            name: dep_name,
-                            name_hash: dep_name_hash,
-                            version,
-                            ..Dependency::default()
-                        };
-                    }
-                }
-            }
+            Self::parse_append_group(group, pm, log, source, &default_catalog, builder)?;
         }
 
         if let Some(catalogs) = expr.get(b"catalogs") {
             found_any = true;
-            if let ExprData::EObject(catalog_names) = &catalogs.data {
-                for catalog in catalog_names.properties.slice() {
-                    let catalog_key = catalog.key.as_ref().unwrap();
-                    let catalog_name_str = catalog_key
-                        .as_utf8_string_literal()
-                        .expect("infallible: is_string checked");
-                    let catalog_name = builder.append::<String>(catalog_name_str);
+            catalogs.try_for_each_property(|catalog_name_str, _, catalog_value| {
+                let catalog_name = builder.append::<String>(catalog_name_str);
+                let group = self.get_or_put_group(builder.string_bytes.as_slice(), catalog_name)?;
+                Self::parse_append_group(group, pm, log, source, &catalog_value, builder)
+            })?;
+        }
 
-                    let group =
-                        self.get_or_put_group(builder.string_bytes.as_slice(), catalog_name)?;
-
-                    if let ExprData::EObject(obj) = &catalog.value.as_ref().unwrap().data {
-                        for item in obj.properties.slice() {
-                            let key = item.key.as_ref().expect("infallible: prop has key");
-                            let value = item.value.as_ref().expect("infallible: prop has value");
-                            let dep_name_str = key
-                                .as_utf8_string_literal()
-                                .expect("infallible: is_string checked");
-                            let dep_name_hash = StringBuilderNs::string_hash(dep_name_str);
-                            let dep_name =
-                                builder.append_with_hash::<String>(dep_name_str, dep_name_hash);
-                            if let ExprData::EString(version_str) = &value.data {
-                                let version_literal = builder.append::<String>(&version_str.data);
-                                let buf = builder.string_bytes.as_slice();
-                                let version_sliced = version_literal.sliced(buf);
-
-                                let Some(version) = Dependency::parse(
-                                    dep_name,
-                                    dep_name_hash,
-                                    version_sliced.slice,
-                                    &version_sliced,
-                                    &mut *log,
-                                    Some(&mut *pm),
-                                ) else {
-                                    log.add_error(
-                                        Some(source),
-                                        value.loc,
-                                        b"Invalid dependency version",
-                                    );
-                                    continue;
-                                };
-
-                                let buf = builder.string_bytes.as_slice();
-                                let entry = group.get_or_put_adapted(&dep_name, &ctx(buf))?;
-
-                                if entry.found_existing {
-                                    log.add_error(Some(source), key.loc, b"Duplicate catalog");
-                                    continue;
-                                }
-
-                                *entry.key_ptr = dep_name;
-                                *entry.value_ptr = Dependency {
-                                    name: dep_name,
-                                    name_hash: dep_name_hash,
-                                    version,
-                                    ..Dependency::default()
-                                };
-                            }
-                        }
-                    }
+        // `self.default` is only fed by the singular `catalog` object; `catalogs.default` lands in `groups`.
+        if self.default.count() > 0
+            && let Some(default_group) = expr.get(b"catalogs").and_then(|c| c.get(b"default"))
+        {
+            let buf = builder.string_bytes.as_slice();
+            let singular = &self.default;
+            let mut conflict = false;
+            default_group.for_each_property(|dep_name, key_loc, _| {
+                let ctx = ArrayHashContext {
+                    arg_buf: dep_name,
+                    existing_buf: buf,
+                };
+                if singular
+                    .get_index_adapted(&String::init(dep_name, dep_name), &ctx)
+                    .is_some()
+                {
+                    log.add_error_fmt(
+                        Some(source),
+                        key_loc,
+                        format_args!(
+                            "\"{}\" is defined in both \"catalog\" and \"catalogs.default\"; keep one of them",
+                            BStr::new(dep_name)
+                        ),
+                    );
+                    conflict = true;
                 }
+            });
+            if conflict {
+                return Err(crate::Error::InstallFailed);
             }
         }
 
         Ok(found_any)
+    }
+
+    fn parse_append_group(
+        group: &mut Map,
+        pm: &mut PackageManager,
+        log: &mut Log,
+        source: &Source,
+        catalog: &Expr,
+        builder: &mut StringBuilder,
+    ) -> Result<(), AllocError> {
+        catalog.try_for_each_property(|dep_name_str, key_loc, value| {
+            let dep_name_hash = StringBuilderNs::string_hash(dep_name_str);
+            let dep_name = builder.append_with_hash::<String>(dep_name_str, dep_name_hash);
+
+            let Some(version_str) = value.as_utf8_string_literal() else {
+                return Ok(());
+            };
+            let version_literal = builder.append::<String>(version_str);
+            let buf = builder.string_bytes.as_slice();
+            let version_sliced = version_literal.sliced(buf);
+
+            let Some(version) = Dependency::parse(
+                dep_name,
+                dep_name_hash,
+                version_sliced.slice,
+                &version_sliced,
+                &mut *log,
+                Some(&mut *pm),
+            ) else {
+                log.add_error(
+                    Some(source),
+                    value_loc_of_property(&source.contents, key_loc, &value),
+                    b"Invalid dependency version",
+                );
+                return Ok(());
+            };
+
+            let buf = builder.string_bytes.as_slice();
+            let entry = group.get_or_put_adapted(&dep_name, &ctx(buf))?;
+
+            if entry.found_existing {
+                log.add_error(Some(source), key_loc, b"Duplicate catalog");
+                return Ok(());
+            }
+
+            *entry.key_ptr = dep_name;
+            *entry.value_ptr = Dependency {
+                name: dep_name,
+                name_hash: dep_name_hash,
+                version,
+                ..Dependency::default()
+            };
+            Ok(())
+        })
     }
 
     // The only lockfile field this body touches is `lockfile.catalogs`, and
@@ -303,7 +362,7 @@ impl CatalogMap {
     // `lockfile.string_pool`). Taking `&mut Lockfile` here would alias those
     // borrows, so narrow to `&mut CatalogMap` and let the caller split the
     // disjoint fields.
-    pub fn from_pnpm_lockfile(
+    pub(crate) fn from_pnpm_lockfile(
         catalogs: &mut CatalogMap,
         log: &mut Log,
         catalogs_obj: &mut E::Object,
@@ -341,7 +400,7 @@ impl CatalogMap {
     // `lockfile.buffers` immutably (disjoint fields), instead of forcing a
     // whole-`Lockfile` shared borrow that conflicts with the `&mut self`
     // receiver.
-    pub fn sort(&mut self, buffers: &Buffers) {
+    pub(crate) fn sort(&mut self, buffers: &Buffers) {
         let buf = buffers.string_bytes.as_slice();
         let dep_less_than = |_: &[String], deps: &[Dependency], l: usize, r: usize| -> bool {
             deps[l].name.order(deps[r].name, buf, buf) == Ordering::Less
@@ -365,7 +424,7 @@ impl CatalogMap {
     /// Accepts `lockfile.buffers.string_bytes` directly (rather than the whole
     /// `Lockfile`) so callers can split-borrow the lockfile alongside a live
     /// `StringBuilder`.
-    pub fn count(&self, string_bytes: &[u8], builder: &mut StringBuilder) {
+    pub(crate) fn count(&self, string_bytes: &[u8], builder: &mut StringBuilder) {
         let buf = string_bytes;
         // `ArrayHashMap::iterator()` requires `&mut`; iterate the
         // `keys()`/`values()` slices instead so `count` can stay `&self`.
@@ -390,12 +449,12 @@ impl CatalogMap {
     /// `pm` is generic over `NpmAliasRegistry` (was `&mut PackageManager`) so a
     /// caller already holding `&mut manager.lockfile` can pass
     /// `&mut manager.known_npm_aliases` instead of the whole manager.
-    pub fn clone<PM: crate::dependency::NpmAliasRegistry>(
+    pub(crate) fn clone<PM: crate::dependency::NpmAliasRegistry>(
         &self,
         pm: &mut PM,
         old_buf: &[u8],
         builder: &mut StringBuilder,
-    ) -> Result<CatalogMap, bun_core::Error> {
+    ) -> Result<CatalogMap, crate::Error> {
         let mut new_catalog = CatalogMap::default();
 
         new_catalog
@@ -460,8 +519,6 @@ pub enum FromPnpmLockfileError {
 }
 
 bun_core::oom_from_alloc!(FromPnpmLockfileError);
-
-bun_core::named_error_set!(FromPnpmLockfileError);
 
 fn put_entries_from_pnpm_lockfile(
     catalog_map: &mut Map,

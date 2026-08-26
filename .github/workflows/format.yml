@@ -9,7 +9,7 @@ on:
   pull_request:
   merge_group:
 env:
-  BUN_VERSION: "1.3.2"
+  BUN_VERSION: "1.3.14"
   LLVM_VERSION: "21.1.8"
   LLVM_VERSION_MAJOR: "21"
 
@@ -22,7 +22,9 @@ jobs:
       cancel-in-progress: true
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Configure Git
         run: |
           git config --global core.autocrlf true
@@ -40,11 +42,23 @@ jobs:
           # Pin the toolchain explicitly so rustup ignores rust-toolchain.toml's
           # `targets` list (11 cross triples ≈ 450 MB of prebuilt std we don't
           # need just to run rustfmt). Keep this in sync with `channel` there.
-          RUSTUP_TOOLCHAIN: nightly-2026-05-06
+          RUSTUP_TOOLCHAIN: nightly-2026-07-20
         run: |
           # Without pipefail, `cmd | sed` always reports sed's exit status, so a
           # failing formatter is invisible to the `wait $PID` checks below.
           set -o pipefail
+
+          # `*.generated.rs` are deterministic outputs of `*.string-map.ts`; the
+          # source `.ts` is the truth. Regenerating here, alongside the
+          # formatters, makes a stale checked-in copy one more fix for the
+          # autofix step below to push back to the PR (it also fails the run
+          # whenever it has something to push, so staleness stays a red check
+          # where it can't push, e.g. the merge queue). Runs before the
+          # formatters start so prettier isn't rewriting a `.string-map.ts`
+          # while the generator imports it.
+          echo "::group::String maps"
+          bun run codegen:string-maps 2>&1 | sed 's/^/[string-maps] /'
+          echo "::endgroup::"
 
           # Start prettier in background with prefixed output
           echo "::group::Prettier"
@@ -54,13 +68,13 @@ jobs:
           # Start clang-format installation and formatting in background with prefixed output
           echo "::group::Clang-format"
           (
-            echo "[clang-format] Installing clang-format-${{ env.LLVM_VERSION_MAJOR }}..."
+            echo "[clang-format] Installing clang-format-${LLVM_VERSION_MAJOR}..."
             wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
-            echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${{ env.LLVM_VERSION_MAJOR }} main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+            echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${LLVM_VERSION_MAJOR} main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
             sudo apt-get update -qq
-            sudo apt-get install -y -qq --no-install-recommends --no-install-suggests -o=Dpkg::Use-Pty=0 clang-format-${{ env.LLVM_VERSION_MAJOR }}
+            sudo apt-get install -y -qq --no-install-recommends --no-install-suggests -o=Dpkg::Use-Pty=0 clang-format-${LLVM_VERSION_MAJOR}
             echo "[clang-format] Running clang-format..."
-            LLVM_VERSION_MAJOR=${{ env.LLVM_VERSION_MAJOR }} ./scripts/run-clang-format.sh format 2>&1 | sed 's/^/[clang-format] /'
+            ./scripts/run-clang-format.sh format 2>&1 | sed 's/^/[clang-format] /'
           ) &
           CLANG_PID=$!
 
@@ -106,11 +120,4 @@ jobs:
           fi
 
           echo "✅ All formatters completed successfully"
-      - name: Verify checked-in codegen
-        # `*.generated.rs` are deterministic outputs of `*.string-map.ts`; the
-        # source `.ts` is the truth. This step regenerates and fails if the
-        # committed `.generated.rs` is stale, so a forgotten regen surfaces in
-        # CI rather than as a confusing behaviour diff later.
-        run: |
-          bun run codegen:verify
-      - uses: autofix-ci/action@635ffb0c9798bd160680f18fd73371e355b85f27
+      - uses: autofix-ci/action@c5b2d67aa2274e7b5a18224e8171550871fc7e4a # v1.3.4

@@ -2,12 +2,12 @@
 // The client portions (Agent, request, get) are a port of Node.js's lib/https.js
 // https://github.com/nodejs/node/blob/v26.3.0/lib/https.js
 const http = require("node:http");
-const tls = require("node:tls");
-const { isIP } = require("node:net");
-const net = require("node:net");
+const { isIP } = require("internal/net/isIP");
 const { urlToHttpOptions } = require("internal/url");
 const { kEmptyObject, once } = require("internal/shared");
+const { validateObject } = require("internal/validators");
 const { kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel } = require("internal/http");
+const { validateHeaderValue } = require("node:_http_common");
 
 const ArrayPrototypeShift = Array.prototype.shift;
 const ObjectAssign = Object.assign;
@@ -68,10 +68,9 @@ function getTunnelConfigForProxiedHttps(agent, reqOptions) {
   const endpoint = `${requestHost}:${requestPort}`;
   // The ClientRequest constructor should already have validated the host and the port.
   // When the request options come from a string invalid characters would be stripped away,
-  // when it's an object ERR_INVALID_CHAR would be thrown. Here we just assert in case
+  // when it's an object ERR_INVALID_CHAR would be thrown. Validate again in case
   // agent.createConnection() is called with invalid options.
-  $assert(endpoint.includes("\r") === false);
-  $assert(endpoint.includes("\n") === false);
+  validateHeaderValue("host", endpoint);
 
   let payload = `CONNECT ${endpoint} HTTP/1.1\r\n`;
   // The parseProxyConfigFromEnv() method should have already validated the authorization header
@@ -185,7 +184,7 @@ function establishTunnel(agent, socket, options, tunnelConfig, afterSocket) {
         $debug("Propagate free event from tunneled socket to tunnel socket");
         socket.emit("free");
       }
-      tunneledSocket = tls.connect(requestOptions, onTLSHandshakeSuccess);
+      tunneledSocket = require("node:tls").connect(requestOptions, onTLSHandshakeSuccess);
       tunneledSocket.on("free", onTunneledSocketFree);
       tunneledSocket.on("error", onTLSHandshakeError);
       const agentKey = requestOptions._agentKey;
@@ -273,7 +272,7 @@ function createConnection(...args) {
   const tunnelConfig = getTunnelConfigForProxiedHttps(this, options);
 
   if (tunnelConfig === null) {
-    socket = tls.connect(options);
+    socket = require("node:tls").connect(options);
   } else {
     const connectOptions = {
       ...this[kProxyConfig].proxyConnectionOptions,
@@ -313,9 +312,9 @@ function createConnection(...args) {
       establishTunnel(agent, socket, options, tunnelConfig, cleanupAndPropagate);
     }
     if (this[kProxyConfig].protocol === "http:") {
-      socket = net.connect(connectOptions, onProxyConnection);
+      socket = require("node:net").connect(connectOptions, onProxyConnection);
     } else {
-      socket = tls.connect(connectOptions, onProxyConnection);
+      socket = require("node:tls").connect(connectOptions, onProxyConnection);
     }
 
     socket.on("error", onError);
@@ -495,6 +494,35 @@ Agent.prototype._evictSession = function _evictSession(key) {
 
 const { shouldUseEnvProxy } = require("node:_http_agent");
 
+// Like Node's https.Server constructor: default ALPNProtocols to ['http/1.1']
+// when neither ALPNProtocols nor ALPNCallback was given, and store the
+// normalized protocol list / callback on the server instance the way
+// tls.Server does (test-https-argument-of-creating.js).
+// https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L82-L97
+function createServer(options, requestListener) {
+  if (typeof options === "function") {
+    requestListener = options;
+    options = {};
+  } else if (options == null) {
+    options = {};
+  } else {
+    validateObject(options, "options");
+    options = { ...options };
+  }
+  if (!options.ALPNProtocols && !options.ALPNCallback) {
+    // http/1.0 is not defined as a Protocol ID in the IANA registry, so
+    // ALPN requests are always answered with http/1.1.
+    options.ALPNProtocols = ["http/1.1"];
+  }
+  const server = http.createServer(options, requestListener);
+  const optionsALPNProtocols = options.ALPNProtocols;
+  if (optionsALPNProtocols) {
+    require("node:tls").convertALPNProtocols(optionsALPNProtocols, server);
+  }
+  server.ALPNCallback = options.ALPNCallback;
+  return server;
+}
+
 var https = {
   Agent,
   globalAgent: new Agent({
@@ -504,7 +532,7 @@ var https = {
     proxyEnv: shouldUseEnvProxy() ? process.env : undefined,
   }),
   Server: http.Server,
-  createServer: http.createServer,
+  createServer,
   get,
   request,
 };

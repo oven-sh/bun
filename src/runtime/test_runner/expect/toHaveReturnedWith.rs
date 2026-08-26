@@ -2,6 +2,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::DiffFormatter;
 use super::mock;
+use super::throw;
 use super::Expect;
 
 pub(crate) fn to_have_returned_with(
@@ -30,14 +31,14 @@ pub(crate) fn to_have_returned_with(
 
     // Check for a pass and collect info for error messages
     for i in 0..calls_count {
-        let result = returns.get_direct_index(global, i);
+        let result = returns.get_direct_index(global, i)?;
 
         if result.is_object() {
             let result_type = result.get(global, "type")?.unwrap_or(JSValue::UNDEFINED);
             if result_type.is_string() {
-                let type_str = bun_core::OwnedString::new(result_type.to_bun_string(global)?);
+                let type_str = result_type.to_bun_string(global)?;
 
-                if type_str.eql_comptime("return") {
+                if type_str.eq_ascii(b"return") {
                     let result_value = result.get(global, "value")?.unwrap_or(JSValue::UNDEFINED);
                     successful_returns.push(result_value);
 
@@ -47,7 +48,7 @@ pub(crate) fn to_have_returned_with(
                             pass = true;
                         }
                     }
-                } else if type_str.eql_comptime("throw") {
+                } else if type_str.eq_ascii(b"throw") {
                     has_errors = true;
                 }
             }
@@ -65,13 +66,12 @@ pub(crate) fn to_have_returned_with(
 
     if this.flags.get().not() {
         let not_signature: &str = Expect::get_signature("toHaveReturnedWith", "<green>expected<r>", true);
-        return this.throw(
+        return throw!(
+            this,
             global,
             not_signature,
-            format_args!(
-                "\n\nExpected mock function not to have returned: <green>{}<r>\n",
-                expected.to_fmt(&mut formatter),
-            ),
+            "\n\nExpected mock function not to have returned: <green>{}<r>\n",
+            expected.to_fmt(&mut formatter),
         );
     }
 
@@ -90,21 +90,20 @@ pub(crate) fn to_have_returned_with(
                 global_this: Some(global),
                 not: false,
             };
-            return this.throw(global, signature, format_args!("\n\n{}\n", diff_format));
+            return throw!(this, global, signature, "\n\n{}\n", diff_format);
         }
 
         // The `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters cannot alias
         // the same backing formatter. Use a second formatter for the received value —
         // `make_formatter` is a trivial struct init with no shared state between values.
         let mut formatter2 = super::make_formatter(global);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                "\n\nExpected: <green>{}<r>\nReceived: <red>{}<r>",
-                expected.to_fmt(&mut formatter),
-                received.to_fmt(&mut formatter2),
-            ),
+            "\n\nExpected: <green>{}<r>\nReceived: <red>{}<r>",
+            expected.to_fmt(&mut formatter),
+            received.to_fmt(&mut formatter2),
         );
     }
 
@@ -119,33 +118,30 @@ pub(crate) fn to_have_returned_with(
             returns,
             formatter: core::cell::RefCell::new(&mut list_fmt),
         };
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                "\n\nSome calls errored:\n\n    Expected: {}\n    Received:\n{}\n\n    Number of returns: {}\n    Number of calls:   {}\n",
-                expected.to_fmt(&mut formatter),
-                list_formatter,
-                successful_returns_count,
-                calls_count,
-            ),
+            "\n\nSome calls errored:\n\n    Expected: {}\n    Received:\n{}\n\n    Number of returns: {}\n    Number of calls:   {}\n",
+            expected.to_fmt(&mut formatter),
+            list_formatter,
+            successful_returns_count,
+            calls_count,
         );
     } else {
         // Case: No errors, but no match (and multiple returns)
         let list_formatter = mock::SuccessfulReturnsFormatter {
-            global_this: global,
             successful_returns: &successful_returns,
             formatter: core::cell::RefCell::new(&mut list_fmt),
         };
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                "\n\n    <green>Expected<r>: {}\n    <red>Received<r>:\n{}\n\n    Number of returns: {}\n",
-                expected.to_fmt(&mut formatter),
-                list_formatter,
-                successful_returns_count,
-            ),
+            "\n\n    <green>Expected<r>: {}\n    <red>Received<r>:\n{}\n\n    Number of returns: {}\n",
+            expected.to_fmt(&mut formatter),
+            list_formatter,
+            successful_returns_count,
         );
     }
 }

@@ -22,6 +22,8 @@
 
 import { mkdirSync, rmSync } from "node:fs";
 import { parseArgs } from "node:util";
+// @ts-ignore — utils.mjs has JSDoc types but no .d.ts
+import { markBuildkiteStepReported } from "./utils.mjs";
 
 type Target = { triplet: string };
 type Sizes = Record<string, number>;
@@ -236,6 +238,9 @@ for (const r of rows) {
 
 if (failed) {
   console.error(`\nerror: ${overThreshold.length} target(s) exceeded ${limit} vs ${buildKind}`);
+  // Suppress the generic fallback in .buildkite/hooks/pre-exit; this script
+  // owns its failure annotation.
+  markBuildkiteStepReported();
   process.exit(1);
 }
 

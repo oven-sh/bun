@@ -1,7 +1,6 @@
-use crate::bun_renamer as renamer;
 use crate::mal_prelude::*;
 use bun_alloc::ArenaVecExt as _;
-use bun_collections::{ArrayHashMap, VecExt};
+use bun_collections::{ArrayHashMap, VecExt, index_sort};
 
 use crate::LinkerContext;
 use crate::js_meta;
@@ -11,7 +10,7 @@ use crate::{
     RefImportData, ResolvedExports, StableRef, WrapKind, chunk,
 };
 
-pub fn compute_cross_chunk_dependencies(
+pub(crate) fn compute_cross_chunk_dependencies(
     c: &mut LinkerContext,
     chunks: &mut [Chunk],
 ) -> Result<(), bun_alloc::AllocError> {
@@ -28,7 +27,6 @@ pub fn compute_cross_chunk_dependencies(
             dynamic_imports: ArrayHashMap::<IndexInt, ()>::default(),
         })
         .collect();
-    // defer { meta.*.deinit(); free(chunk_metas) } — handled by Drop
 
     {
         // Constructed on the stack and dropped at scope end.
@@ -83,7 +81,7 @@ pub fn compute_cross_chunk_dependencies(
     compute_cross_chunk_dependencies_with_chunk_metas(c, chunks, &mut chunk_metas)
 }
 
-pub(crate) struct CrossChunkDependencies<'a, 'bump> {
+struct CrossChunkDependencies<'a, 'bump> {
     chunk_meta: &'a mut [ChunkMeta],
     // `BackRef` — the same `[Chunk]` slice is also iterated mutably by
     // the caller's sequential `walk` loop; `walk` only reads `chunks[other].unique_key`
@@ -124,7 +122,7 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
     // membership — debug-asserted in `assign_chunk_index`).
     // Reads `ctx`/`chunks`/SoA columns shared. Never forms `&mut
     // LinkerContext` (`ctx` is a `BackRef`, deref'd to `&`).
-    pub(crate) fn walk(&mut self, chunk: &mut Chunk, chunk_index: usize) {
+    fn walk(&mut self, chunk: &mut Chunk, chunk_index: usize) {
         let deps = self;
         // `ctx` / `chunks` are `BackRef`s into `LinkerContext` / the caller's chunk
         // slice, valid for the link pass (see note on the struct fields).
@@ -320,11 +318,99 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
     }
 }
 
+/// Chunks an entry point need not import when it uses nothing from them:
+/// loading one runs nothing, and neither does anything its files statically
+/// import (which may live in a chunk the entry would otherwise only have
+/// reached, in order, through this one).
+fn inert_chunks(c: &LinkerContext, chunks: &[Chunk]) -> Vec<bool> {
+    let mut chunk_of_file = vec![u32::MAX; c.graph.files.len()];
+    let mut inert: Vec<bool> = chunks
+        .iter()
+        .map(|chunk| {
+            matches!(chunk.content, chunk::Content::Javascript(_))
+                && !chunk.entry_point.is_entry_point()
+        })
+        .collect();
+    for (chunk_index, chunk) in chunks.iter().enumerate() {
+        if !matches!(chunk.content, chunk::Content::Javascript(_)) {
+            continue;
+        }
+        for &source_index in chunk.files_with_parts_in_chunk.keys() {
+            chunk_of_file[source_index as usize] = chunk_index as u32;
+            if inert[chunk_index] && !c.loading_file_has_no_side_effects(source_index) {
+                inert[chunk_index] = false;
+            }
+        }
+    }
+    if !inert.iter().any(|&b| b) {
+        return inert;
+    }
+
+    // Other chunks each still-inert chunk's files statically import from.
+    let import_records = c.graph.ast.items_import_records();
+    let parts = c.graph.ast.items_parts();
+    let mut imported_chunks: Vec<Vec<u32>> = vec![Vec::new(); chunks.len()];
+    for (chunk_index, chunk) in chunks.iter().enumerate() {
+        if !inert[chunk_index] {
+            continue;
+        }
+        let imported = &mut imported_chunks[chunk_index];
+        let mut add = |source_index: u32| {
+            let other = chunk_of_file[source_index as usize];
+            if other != u32::MAX && other != chunk_index as u32 && imported.last() != Some(&other) {
+                imported.push(other);
+            }
+        };
+        for &source_index in chunk.files_with_parts_in_chunk.keys() {
+            let parts_live = &c.graph.parts_live[source_index as usize];
+            let records = import_records[source_index as usize].as_slice();
+            for (part_index, part) in parts[source_index as usize].as_slice().iter().enumerate() {
+                if !parts_live.is_set(part_index) {
+                    continue;
+                }
+                for &i in part.import_record_indices.iter() {
+                    let record = &records[i as usize];
+                    if record.source_index.is_valid()
+                        && !c.is_external_dynamic_import(record, source_index)
+                    {
+                        add(record.source_index.get());
+                    }
+                }
+                for dep in part.dependencies.iter() {
+                    add(dep.source_index.get());
+                }
+            }
+        }
+    }
+    for imported in imported_chunks.iter_mut() {
+        imported.sort_unstable();
+        imported.dedup();
+    }
+    loop {
+        let mut changed = false;
+        for chunk_index in 0..chunks.len() {
+            if inert[chunk_index]
+                && imported_chunks[chunk_index]
+                    .iter()
+                    .any(|&other| !inert[other as usize])
+            {
+                inert[chunk_index] = false;
+                changed = true;
+            }
+        }
+        if !changed {
+            return inert;
+        }
+    }
+}
+
 fn compute_cross_chunk_dependencies_with_chunk_metas(
     c: &mut LinkerContext,
     chunks: &mut [Chunk],
     chunk_metas: &mut [ChunkMeta],
 ) -> Result<(), bun_alloc::AllocError> {
+    let mut inert: Option<Vec<bool>> = None;
+
     // Mark imported symbols as exported in the chunk from which they are declared
     // The loop body also indexes chunk_metas[other_chunk_index] /
     // chunks[other_chunk_index], so iterate by index and re-borrow per access.
@@ -366,10 +452,9 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                             other_chunk_index,
                             CrossChunkImportItemList::default(),
                         )?;
-                        entry.value_ptr.push(CrossChunkImportItem {
-                            r#ref: import_ref,
-                            ..Default::default()
-                        });
+                        entry
+                            .value_ptr
+                            .push(CrossChunkImportItem { r#ref: import_ref });
                     }
                     let _ = chunk_metas[other_chunk_index as usize]
                         .exports
@@ -401,16 +486,26 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                     continue;
                 }
 
-                if chunks[other_chunk_index]
+                if !chunks[other_chunk_index]
                     .entry_bits
                     .is_set(entry_point_id as usize)
+                    || chunks[chunk_index]
+                        .content
+                        .javascript()
+                        .imports_from_other_chunks
+                        .contains(&(other_chunk_index as u32))
                 {
-                    let js = chunks[chunk_index].content.javascript_mut();
-                    let _ = js.imports_from_other_chunks.get_or_put_value(
-                        other_chunk_index as u32,
-                        CrossChunkImportItemList::default(),
-                    );
+                    continue;
                 }
+                // Nothing is used from it; skip it if loading it runs nothing.
+                if inert.get_or_insert_with(|| inert_chunks(c, chunks))[other_chunk_index] {
+                    continue;
+                }
+                let js = chunks[chunk_index].content.javascript_mut();
+                let _ = js.imports_from_other_chunks.get_or_put_value(
+                    other_chunk_index as u32,
+                    CrossChunkImportItemList::default(),
+                );
             }
         }
 
@@ -419,7 +514,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         // of hash calculation.
         if chunk_metas[chunk_index].dynamic_imports.count() > 0 {
             let dynamic_chunk_indices = chunk_metas[chunk_index].dynamic_imports.keys_mut();
-            dynamic_chunk_indices.sort_unstable();
+            index_sort::sort_slice_unstable_by(dynamic_chunk_indices, |a, b| a.cmp(b));
 
             let chunk = &mut chunks[chunk_index];
             // `ChunkImport.import_kind` is a `#[repr(u8)]` enum (validity
@@ -437,13 +532,11 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         }
     }
 
-    // Generate cross-chunk exports. These must be computed before cross-chunk
-    // imports because of export alias renaming, which must consider all export
-    // aliases simultaneously to avoid collisions.
+    // Generate cross-chunk export clauses. Aliases are left empty here and in
+    // the import clauses below; `cross_chunk_names` fills both in once every
+    // chunk's renamer has run.
     {
         debug_assert!(chunk_metas.len() == chunks.len());
-        let mut r = renamer::ExportRenamer::init();
-        // defer r.deinit() — handled by Drop
         debug!("Generating cross-chunk exports");
 
         let mut stable_ref_list: Vec<StableRef> = Vec::new();
@@ -465,47 +558,22 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                             c.arena(),
                         );
                     repr.exports_to_other_chunks.reserve(stable_ref_list.len());
-                    r.clear_retaining_capacity();
 
+                    // The alias is the bundle-wide name `assign_cross_chunk_names`
+                    // gives the binding once every chunk's renamer has counted
+                    // its uses; until then the clause item carries an empty one.
                     for stable_ref in stable_ref_list.iter() {
                         let ref_ = stable_ref.r#ref;
-                        let original_name = c
-                            .graph
-                            .symbols
-                            .get_const(ref_)
-                            .unwrap()
-                            .original_name
-                            .slice();
-                        // The alias is stored on the chunk (`exports_to_other_chunks`,
-                        // `cross_chunk_suffix_stmts`) and read later in postProcessJSChunk,
-                        // so it must live in the linker arena — `r`'s internal arena is
-                        // reset per chunk and dropped at the end of this block.
-                        let alias: bun_ast::StoreStr = if c.options.minify_identifiers {
-                            bun_ast::StoreStr::new(
-                                c.arena()
-                                    .alloc_slice_copy(&r.next_minified_name().expect("OOM")),
-                            )
-                        } else {
-                            bun_ast::StoreStr::new(
-                                c.arena()
-                                    .alloc_slice_copy(r.next_renamed_name(original_name)),
-                            )
-                        };
-
                         clause_items.push(bun_ast::ClauseItem {
                             name: bun_ast::LocRef {
                                 ref_,
                                 loc: bun_ast::Loc::EMPTY,
                             },
-                            alias,
+                            alias: bun_ast::StoreStr::EMPTY,
                             alias_loc: bun_ast::Loc::EMPTY,
-                            original_name: bun_ast::StoreStr::new(b"" as &[u8]),
+                            original_name: bun_ast::StoreStr::EMPTY,
                         });
-
-                        // `alias` points into the link-pass arena (see note above),
-                        // which outlives `exports_to_other_chunks`; `.slice()` re-borrows
-                        // under the StoreStr arena contract.
-                        let _ = repr.exports_to_other_chunks.put(ref_, alias.slice()); // OOM-only Result
+                        let _ = repr.exports_to_other_chunks.put(ref_, ()); // OOM-only Result
                     }
 
                     if clause_items.len() > 0 {
@@ -530,13 +598,11 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         }
     }
 
-    // Generate cross-chunk imports. These must be computed after cross-chunk
-    // exports because the export aliases must already be finalized so they can
-    // be embedded in the generated import statements.
+    // Generate cross-chunk import clauses (needs `exports_to_other_chunks`
+    // from the loop above to know which chunk declares each binding).
     {
         debug!("Generating cross-chunk imports");
         let mut list: Vec<CrossChunkImport> = Vec::new();
-        // defer list.deinit() — handled by Drop
         // We move the per-chunk fields we
         // mutate (`imports_from_other_chunks`, `cross_chunk_imports`) out via `take`, drop
         // the `chunk` borrow, hand the whole `chunks` slice to `sorted_cross_chunk_imports`
@@ -562,6 +628,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                 &mut list,
                 chunks,
                 &mut imports_from_other_chunks,
+                c.graph.stable_source_indices.slice(),
             )
             .expect("unreachable");
             let cross_chunk_imports_input: &[CrossChunkImport] = list.as_slice();
@@ -582,7 +649,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                                     ref_: item.r#ref,
                                     loc: bun_ast::Loc::EMPTY,
                                 },
-                                alias: bun_ast::StoreStr::new(item.export_alias.as_ref()),
+                                alias: bun_ast::StoreStr::EMPTY,
                                 alias_loc: bun_ast::Loc::EMPTY,
                                 original_name: bun_ast::StoreStr::new(b"" as &[u8]),
                             });
@@ -619,8 +686,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
 
     Ok(())
 }
-
-pub use crate::{DeferredBatchTask, ParseTask, ThreadPool};
 
 // `Format` is the bundler output-format enum (Esm/Cjs/Iife/...);
 // aliased so callsites read as `c.options.output_format`.

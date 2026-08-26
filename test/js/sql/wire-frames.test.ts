@@ -7,14 +7,21 @@ import { SQL } from "bun";
 import { expect, test } from "bun:test";
 import {
   listeningServer,
+  mysqlAckSessionSetup,
   mysqlHandshakeV10,
   mysqlLenencInt,
   mysqlOkPacket,
   mysqlReadPackets,
   pgAuthenticationOk,
+  pgCommandComplete,
+  pgCopyData,
+  pgCopyDone,
+  pgCopyOutResponse,
+  pgDataRow,
   pgErrorResponse,
   pgMinimalReadyServer,
   pgReadyForQuery,
+  pgRowDescription,
 } from "./wire-frames";
 
 test("mysqlLenencInt encodes per page_protocol_basic_dt_integers.html", () => {
@@ -50,6 +57,43 @@ test("postgres: pgAuthenticationOk + pgReadyForQuery are accepted by Bun's parse
   }
 });
 
+test("postgres: COPY OUT response frames are consumed and the following result set decodes", async () => {
+  const { port, server } = await listeningServer(socket => {
+    socket.on("error", () => {});
+    let startup = true;
+    socket.on("data", data => {
+      if (startup) {
+        startup = false;
+        socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
+        return;
+      }
+      if (data[0] !== 0x51) return;
+      socket.end(
+        Buffer.concat([
+          pgCopyOutResponse([0]),
+          pgCopyData(Buffer.from("1\n")),
+          pgCopyData(Buffer.from("2\n")),
+          pgCopyDone(),
+          pgCommandComplete("COPY 2"),
+          pgRowDescription([{ name: "y", typeOid: 25 }]),
+          pgDataRow([Buffer.from("2")]),
+          pgCommandComplete("SELECT 1"),
+          pgReadyForQuery(),
+        ]),
+      );
+    });
+  });
+
+  const db = new SQL({ url: `postgres://u@127.0.0.1:${port}/db`, max: 1, idleTimeout: 5, connectionTimeout: 5 });
+  try {
+    const result = await db`copy t to stdout; select 2 as y`.simple();
+    expect(result).toEqual([[], [{ y: "2" }]]);
+  } finally {
+    await db.close().catch(() => {});
+    await new Promise<void>(r => server.close(() => r()));
+  }
+});
+
 test("postgres: pgMinimalReadyServer satisfies connect()", async () => {
   const { port, server } = await pgMinimalReadyServer();
   const db = new SQL({ url: `postgres://postgres@127.0.0.1:${port}/postgres`, max: 1 });
@@ -69,10 +113,12 @@ test("mysql: mysqlHandshakeV10 + mysqlOkPacket are accepted by Bun's parser", as
     let authed = false;
     socket.write(mysqlHandshakeV10());
     socket.on("data", chunk => {
-      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), seq => {
+      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
         if (!authed) {
           authed = true;
           socket.write(mysqlOkPacket(seq + 1));
+        } else {
+          mysqlAckSessionSetup(socket, payload);
         }
       });
     });

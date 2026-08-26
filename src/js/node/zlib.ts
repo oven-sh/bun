@@ -17,8 +17,7 @@ const ArrayPrototypeForEach = Array.prototype.forEach;
 const NumberIsNaN = Number.isNaN;
 const MathMax = Math.max;
 
-const ArrayBufferIsView = ArrayBuffer.isView;
-const isArrayBufferView = ArrayBufferIsView;
+const isArrayBufferView = ArrayBuffer.isView;
 const isAnyArrayBuffer = b => b instanceof ArrayBuffer || b instanceof SharedArrayBuffer;
 const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
 
@@ -507,6 +506,7 @@ function processCallback() {
     // stream has ended early.
     // This applies to streams where we don't check data past the end of
     // what was consumed; that is, everything except Gunzip/Unzip.
+
     self.push(null);
   }
 
@@ -564,7 +564,11 @@ function Zlib(opts, mode) {
       if (isAnyArrayBuffer(dictionary)) {
         dictionary = Buffer.from(dictionary);
       } else {
-        throw $ERR_INVALID_ARG_TYPE("options.dictionary", "Buffer, TypedArray, DataView, or ArrayBuffer", dictionary);
+        throw $ERR_INVALID_ARG_TYPE(
+          "options.dictionary",
+          ["Buffer", "TypedArray", "DataView", "ArrayBuffer"],
+          dictionary,
+        );
       }
     }
   }
@@ -674,7 +678,7 @@ function createConvenienceMethod(ctor, sync, methodName, isZstd) {
           bufferSize = 0;
         }
         // Set pledgedSrcSize if not already set
-        if (!opts.pledgedSrcSize && bufferSize > 0) {
+        if (!opts?.pledgedSrcSize && bufferSize > 0) {
           opts = { ...opts, pledgedSrcSize: bufferSize };
         }
       }
@@ -713,10 +717,23 @@ function Brotli(opts, mode) {
     });
   }
 
+  let dictionary = opts?.dictionary;
+  if (dictionary !== undefined && !isArrayBufferView(dictionary)) {
+    if (isAnyArrayBuffer(dictionary)) {
+      dictionary = Buffer.from(dictionary);
+    } else {
+      throw $ERR_INVALID_ARG_TYPE(
+        "options.dictionary",
+        ["Buffer", "TypedArray", "DataView", "ArrayBuffer"],
+        dictionary,
+      );
+    }
+  }
+
   const handle = new NativeBrotli(mode);
 
   this._writeState = new Uint32Array(2);
-  if (!handle.init(brotliInitParamsArray, this._writeState, processCallback)) {
+  if (!handle.init(brotliInitParamsArray, this._writeState, processCallback, dictionary)) {
     throw $ERR_ZLIB_INITIALIZATION_FAILED();
   }
 
@@ -767,7 +784,16 @@ class Zstd extends ZlibBase {
     const pledgedSrcSize = opts?.pledgedSrcSize ?? undefined;
 
     const writeState = new Uint32Array(2);
-    handle.init(initParamsArray, pledgedSrcSize, writeState, processCallback);
+    // Node does not validate options.dictionary here (unlike Zlib/Brotli) — a
+    // non-view is silently ignored — and re-reads it rather than caching. Both
+    // are load-bearing for parity, so this mirrors lib/zlib.js:920 verbatim.
+    handle.init(
+      initParamsArray,
+      pledgedSrcSize,
+      writeState,
+      processCallback,
+      opts?.dictionary && isArrayBufferView(opts.dictionary) ? opts.dictionary : undefined,
+    );
     super(opts, mode, handle, zstdDefaultOpts);
     this._writeState = writeState;
   }

@@ -10,8 +10,6 @@
 
 use std::sync::Arc;
 
-use bun_collections::VecExt;
-
 use crate::ParsedSourceMap;
 
 /// Parsed inner sourcemap + per-source content bytes, owned.
@@ -82,8 +80,7 @@ impl InputSourceMap {
 /// paths. These are passed through verbatim by the linker / dev server
 /// instead of being joined against an on-disk directory.
 pub fn is_url_like_source_name(name: &[u8]) -> bool {
-    bun_core::strings::contains_comptime(name, b"://")
-        || bun_core::strings::has_prefix_comptime(name, b"//")
+    bun_core::strings::contains(name, b"://") || bun_core::strings::has_prefix_comptime(name, b"//")
 }
 
 /// Malformed input is indistinguishable from "no chain available" — callers
@@ -98,7 +95,6 @@ struct InvalidSourceMap;
 fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourceMap> {
     use bun_ast::StoreResetGuard as DataStoreScope;
 
-    let arena = bun_alloc::Arena::new();
     let json_src = bun_ast::Source::init_path_string("sourcemap.json", json_bytes);
     let mut log = bun_ast::Log::init();
 
@@ -106,8 +102,9 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
     // alloc, so reset the AST store on entry and exit.
     let _store_scope = DataStoreScope::new();
 
-    let json = bun_parsers::json::parse::<false>(&json_src, &mut log, &arena)
+    let parsed = bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log)
         .map_err(|_| InvalidSourceMap)?;
+    let json = parsed.root;
 
     if let Some(version) = json.get(b"version") {
         match version.data.as_e_number() {
@@ -116,56 +113,51 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
         }
     }
 
-    let mappings_str = json.get(b"mappings").ok_or(InvalidSourceMap)?;
-    let mut mappings_e_string = mappings_str.data.as_e_string().ok_or(InvalidSourceMap)?;
-    let mappings_slice: &[u8] = mappings_e_string.slice(&arena);
-
-    let sources_paths = json
-        .get(b"sources")
-        .ok_or(InvalidSourceMap)?
-        .data
-        .as_e_array()
+    // `Expr::get` returns an owned `Expr`; bind each to a local so the
+    // string / array borrows below outlive the match that produced them.
+    let mappings_expr = json.get(b"mappings").ok_or(InvalidSourceMap)?;
+    let mappings_slice: &[u8] = mappings_expr
+        .as_utf8_string_literal()
         .ok_or(InvalidSourceMap)?;
 
+    let sources_paths_ref = match json.get(b"sources").ok_or(InvalidSourceMap)?.data {
+        bun_ast::ExprData::EArrayJSON(arr) => arr,
+        _ => return Err(InvalidSourceMap),
+    };
+    let sources_paths = sources_paths_ref.get();
+
     // `sourcesContent` is optional; when absent or null every slot is empty.
-    let sources_content_opt = match json.get(b"sourcesContent") {
+    let sources_content_ref = match json.get(b"sourcesContent") {
         None => None,
-        Some(v) => match v.data.as_e_array() {
-            Some(arr) => Some(arr),
-            None => {
-                // `null` is tolerated; other non-array values are malformed.
-                if matches!(v.data, bun_ast::ExprData::ENull(_)) {
-                    None
-                } else {
-                    return Err(InvalidSourceMap);
-                }
-            }
+        Some(v) => match v.data {
+            bun_ast::ExprData::EArrayJSON(arr) => Some(arr),
+            // `null` is tolerated; other non-array values are malformed.
+            bun_ast::ExprData::ENull(_) => None,
+            _ => return Err(InvalidSourceMap),
         },
     };
+    let sources_content_opt = sources_content_ref.as_ref().map(|r| r.get());
 
     if let Some(arr) = sources_content_opt {
-        if arr.items.len_u32() != sources_paths.items.len_u32() {
+        if arr.items().len() != sources_paths.items().len() {
             return Err(InvalidSourceMap);
         }
     }
 
-    let source_count = sources_paths.items.len_u32() as usize;
+    let source_count = sources_paths.items().len();
 
     // `sourceRoot` is optional; per the spec it is prepended to each entry
     // in `sources` before further resolution.
-    let source_root: &[u8] = match json.get(b"sourceRoot") {
-        Some(v) => match v.data.as_e_string() {
-            Some(estr) => bun_core::handle_oom(estr.string(&arena)),
-            None => b"",
-        },
-        None => b"",
-    };
+    let source_root_expr = json.get(b"sourceRoot");
+    let source_root: &[u8] = source_root_expr
+        .as_ref()
+        .and_then(|v| v.as_utf8_string_literal())
+        .unwrap_or(b"");
 
     // Copy source paths out of the arena into owned storage.
     let mut source_paths_slice: Vec<Box<[u8]>> = Vec::with_capacity(source_count);
-    for item in sources_paths.items.slice() {
-        let estr = item.data.as_e_string().ok_or(InvalidSourceMap)?;
-        let s = bun_core::handle_oom(estr.string(&arena));
+    for item in sources_paths.items() {
+        let s = item.as_str().ok_or(InvalidSourceMap)?;
         let owned: Box<[u8]> = if source_root.is_empty() {
             Box::<[u8]>::from(s)
         } else {
@@ -187,16 +179,10 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
     // Copy source contents. Non-strings (null, etc.) and empty slots map to `b""`.
     let mut sources_content_slice: Vec<Box<[u8]>> = Vec::with_capacity(source_count);
     if let Some(arr) = sources_content_opt {
-        for item in arr.items.slice() {
-            let slot: Box<[u8]> = if let Some(estr) = item.data.as_e_string() {
-                let s = bun_core::handle_oom(estr.string(&arena));
-                if s.is_empty() {
-                    Box::<[u8]>::from(&b""[..])
-                } else {
-                    Box::<[u8]>::from(s)
-                }
-            } else {
-                Box::<[u8]>::from(&b""[..])
+        for item in arr.items() {
+            let slot: Box<[u8]> = match item.as_str() {
+                Some(s) => Box::<[u8]>::from(s),
+                None => Box::<[u8]>::from(&b""[..]),
             };
             sources_content_slice.push(slot);
         }
@@ -224,8 +210,8 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
             sort: true,
         },
     ) {
-        crate::ParseResult::Success(x) => x,
-        crate::ParseResult::Fail(_) => return Err(InvalidSourceMap),
+        Ok(x) => x,
+        Err(_) => return Err(InvalidSourceMap),
     };
 
     let mut psm = map_data;

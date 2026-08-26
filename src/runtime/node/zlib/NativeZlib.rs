@@ -28,26 +28,27 @@ mod _impl {
     /// struct-init site; the body never dereferences the pointer.
     fn noop_task_callback(_task: *mut WorkPoolTask) {}
 
-    // `mod js { write_callback_*, error_callback_*, dictionary_* }` is emitted by
+    // `mod js { write_callback_*, error_callback_*, ... }` is emitted by
     // `__impl_compression_stream!` below (wraps `bun_jsc::codegen_cached_accessors!`).
 
-    /// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive single-thread refcount.
-    /// `ref`/`deref` are provided by `bun_ptr::IntrusiveRc<NativeZlib>`; when the count hits
-    /// zero it invokes [`NativeZlib::deinit`].
+    /// Intrusive refcount; [`NativeZlib::deinit`] runs when it hits zero.
     #[bun_jsc::JsClass]
     #[derive(bun_ptr::CellRefCounted)]
     #[ref_count(destroy = Self::deinit)]
     pub struct NativeZlib {
-        pub ref_count: Cell<u32>,
+        pub(crate) ref_count: Cell<u32>,
         // JSC_BORROW backref; global outlives this m_ctx payload. `BackRef`
         // centralises the single unsafe deref so the trait impl is safe.
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
+        /// How the pool thread delivers a finished write to the VM.
+        pub ticket: Cell<Option<bun_jsc::Ticket>>,
         pub stream: JsCell<Context>,
         pub poll_ref: JsCell<CountedKeepAlive>,
         pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
         pub write_in_progress: Cell<bool>,
+        /// bit 0: the pending input's ArrayBuffer is pinned; bit 1: the pending output's. A held bufferless view sets neither.
+        pub pinned_buffers: Cell<u8>,
         pub pending_close: Cell<bool>,
-        pub pending_reset: Cell<bool>,
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
     }
@@ -62,7 +63,10 @@ mod _impl {
     impl NativeZlib {
         // NB: no `#[bun_jsc::host_fn]` here — the `#[bun_jsc::JsClass]` derive emits
         // the constructor shim that calls `<NativeZlib>::constructor(g, f)` directly.
-        pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Self>> {
+        pub(crate) fn constructor(
+            global: &JSGlobalObject,
+            frame: &CallFrame,
+        ) -> JsResult<Box<Self>> {
             let arguments = frame.arguments_undef::<4>();
 
             let mode = arguments.ptr[0];
@@ -92,14 +96,14 @@ mod _impl {
             };
             Ok(Box::new(Self {
                 ref_count: Cell::new(1),
-                // JSC_BORROW backref — the global outlives this m_ctx payload.
                 global_this: bun_ptr::BackRef::new(global),
+                ticket: Cell::new(None),
                 stream: JsCell::new(stream),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
+                pinned_buffers: Cell::new(0),
                 pending_close: Cell::new(false),
-                pending_reset: Cell::new(false),
                 closed: Cell::new(false),
                 task: JsCell::new(WorkPoolTask {
                     node: Default::default(),
@@ -109,14 +113,14 @@ mod _impl {
         }
 
         //// adding this didnt help much but leaving it here to compare the number with later
-        pub fn estimated_size(&self) -> usize {
+        pub(crate) fn estimated_size(&self) -> usize {
             // @sizeOf(@cImport(@cInclude("deflate.h")).internal_state) @ cloudflare/zlib @ 92530568d2c128b4432467b76a3b54d93d6350bd
             const INTERNAL_STATE_SIZE: usize = 3309;
             mem::size_of::<Self>() + INTERNAL_STATE_SIZE
         }
 
         #[bun_jsc::host_fn(method)]
-        pub fn init(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        pub(crate) fn init(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             let arguments = frame.arguments_undef::<7>();
             let this_value = frame.this();
 
@@ -221,7 +225,11 @@ mod _impl {
         }
 
         #[bun_jsc::host_fn(method)]
-        pub fn params(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        pub(crate) fn params(
+            &self,
+            global: &JSGlobalObject,
+            frame: &CallFrame,
+        ) -> JsResult<JSValue> {
             let arguments = frame.arguments_undef::<2>();
 
             if arguments.len != 2 {
@@ -254,7 +262,7 @@ mod _impl {
         /// Not `Drop` because this is an intrusive-refcounted `m_ctx` payload whose
         /// box is freed here.
         fn deinit(this: *mut Self) {
-            // SAFETY: called exactly once by IntrusiveRc when refcount hits 0; `this`
+            // SAFETY: called exactly once when the refcount hits 0; `this`
             // is the heap::alloc pointer produced at construction. `this_value`
             // (Strong) and `poll_ref` (CountedKeepAlive) are Drop types — freed by
             // heap::take below.
@@ -274,12 +282,12 @@ pub use _impl::NativeZlib;
 // ─── non-JSC body (real): zlib stream Context ─────────────────────────────
 
 pub struct Context {
-    pub mode: c::NodeMode,
-    pub state: c::z_stream,
-    pub err: c::ReturnCode,
+    pub(crate) mode: c::NodeMode,
+    pub(crate) state: c::z_stream,
+    pub(crate) err: c::ReturnCode,
     pub flush: c::FlushValue,
     pub dictionary: Vec<u8>,
-    pub gzip_id_bytes_read: u8,
+    pub(crate) gzip_id_bytes_read: u8,
 }
 
 impl Default for Context {
@@ -304,7 +312,7 @@ impl Context {
         &self.dictionary
     }
 
-    pub fn init(
+    pub(crate) fn init(
         &mut self,
         level: c_int,
         window_bits: c_int,
@@ -366,7 +374,7 @@ impl Context {
         let _ = self.set_dictionary();
     }
 
-    pub fn set_dictionary(&mut self) -> Error {
+    pub(crate) fn set_dictionary(&mut self) -> Error {
         use c::NodeMode::*;
         // Reshaped for borrowck — capture raw ptr/len before
         // re-borrowing `self.state` mutably.
@@ -395,14 +403,19 @@ impl Context {
         Error::ok()
     }
 
-    pub fn set_params(&mut self, level: c_int, strategy: c_int) -> Error {
+    pub(crate) fn set_params(&mut self, level: c_int, strategy: c_int) -> Error {
         use c::NodeMode::*;
         self.err = c::ReturnCode::Ok;
         match self.mode {
-            // SAFETY: FFI — state is an initialized deflate stream.
-            DEFLATE | DEFLATERAW => unsafe {
-                self.err = c::deflateParams(&raw mut self.state, level, strategy);
-            },
+            DEFLATE | DEFLATERAW => {
+                self.set_buffers(None, Some(&mut []));
+                // SAFETY: FFI — state is an initialized deflate stream; avail_in/avail_out
+                // are 0 (next_out non-null) so the internal deflate(Z_BLOCK) returns
+                // Z_BUF_ERROR without touching any previously installed caller buffer.
+                unsafe {
+                    self.err = c::deflateParams(&raw mut self.state, level, strategy);
+                }
+            }
             _ => {}
         }
         if self.err != c::ReturnCode::Ok && self.err != c::ReturnCode::BufError {
@@ -471,6 +484,10 @@ impl Context {
             Some(p) => p.as_mut_ptr(),
             None => core::ptr::null_mut(),
         };
+    }
+
+    pub fn flush_value_is_valid(flush: u32) -> bool {
+        flush <= 6
     }
 
     pub fn set_flush(&mut self, flush: c_int) {

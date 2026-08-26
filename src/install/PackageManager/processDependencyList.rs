@@ -27,13 +27,13 @@ use crate::{
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct GitResolver<'a> {
-    pub resolved: &'a [u8],
-    pub resolution: &'a Resolution,
-    pub dep_id: DependencyID,
+    pub(crate) resolved: &'a [u8],
+    pub(crate) resolution: &'a Resolution,
+    pub(crate) dep_id: DependencyID,
     /// Owned scratch buffer that
     /// `Package::parse_with_json` may assign when the package.json `name`
     /// field is missing (see `ResolverContext::set_new_name`).
-    pub new_name: Vec<u8>,
+    pub(crate) new_name: Vec<u8>,
 }
 
 impl<'a> ResolverContext for GitResolver<'a> {
@@ -51,7 +51,7 @@ impl<'a> ResolverContext for GitResolver<'a> {
         &mut self,
         builder: &mut StringBuilder<'_>,
         _json: &Expr,
-    ) -> Result<ResolutionType<u64>, bun_core::Error> {
+    ) -> Result<ResolutionType<u64>, crate::Error> {
         // `git` and `github` share the `Repository` payload in the value union,
         // so writing through `.github` is correct for both tags.
         // SAFETY: caller guarantees `tag` is `.git` or `.github` (see
@@ -106,7 +106,7 @@ impl<'a> ResolverContext for TarballResolver<'a> {
         &mut self,
         builder: &mut StringBuilder<'_>,
         _json: &Expr,
-    ) -> Result<ResolutionType<u64>, bun_core::Error> {
+    ) -> Result<ResolutionType<u64>, crate::Error> {
         Ok(ResolutionType::<u64>::init(match self.resolution.tag {
             ResolutionTag::LocalTarball => {
                 TaggedValue::LocalTarball(builder.append::<SemverString>(self.url))
@@ -125,7 +125,7 @@ impl<'a> ResolverContext for TarballResolver<'a> {
 
 impl PackageManager {
     /// Returns true if we need to drain dependencies
-    pub fn process_extracted_tarball_package(
+    pub(crate) fn process_extracted_tarball_package(
         &mut self,
         package_id: &mut PackageID,
         dep_id: DependencyID,
@@ -302,11 +302,9 @@ impl PackageManager {
                     // SAFETY: `self.log` is set once by `PackageManager::init()` and
                     // never null while tasks run.
                     let log = self.log_mut();
-                    let bump = bun_alloc::Arena::new();
-                    let json_root = match json::parse_package_json_utf8(
+                    let parsed = match json::ParsedJson::parse_package_json(
                         package_json_source,
                         log,
-                        &bump,
                     ) {
                         Ok(v) => v,
                         Err(err) => {
@@ -321,6 +319,7 @@ impl PackageManager {
                             Global::crash();
                         }
                     };
+                    let json_root = parsed.root;
                     // Intentional dead store: `scripts` is a local copy of
                     // `lockfile.packages[id].scripts`, and the `parse_alloc` /
                     // `.filled = true` mutations are never stored back, so
@@ -347,12 +346,12 @@ impl PackageManager {
         }
     }
 
-    pub fn process_dependency_list_item(
+    pub(crate) fn process_dependency_list_item(
         &mut self,
         item: &TaskCallbackContext,
         any_root: Option<&Cell<bool>>,
         install_peer: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         match *item {
             TaskCallbackContext::Dependency(dependency_id) => {
                 // Clone the dependency row out of the buffer before
@@ -401,7 +400,7 @@ impl PackageManager {
         Ok(())
     }
 
-    pub fn process_peer_dependency_list(&mut self) -> Result<(), bun_core::Error> {
+    pub(crate) fn process_peer_dependency_list(&mut self) -> Result<(), crate::Error> {
         while let Some(peer_dependency_id) = self.peer_dependencies.read_item() {
             // Clone the dependency row out of the buffer before re-borrowing
             // `self` for enqueue.
@@ -422,13 +421,13 @@ impl PackageManager {
         Ok(())
     }
 
-    pub fn process_dependency_list<C>(
+    pub(crate) fn process_dependency_list<C>(
         &mut self,
         dep_list: TaskCallbackList,
         ctx: C,
         on_resolve: Option<impl FnOnce(C)>,
         install_peer: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         if !dep_list.is_empty() {
             let dependency_list = dep_list;
             let any_root = Cell::new(false);
@@ -447,48 +446,4 @@ impl PackageManager {
         }
         Ok(())
     }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Free-function re-export surface — thin shims over the
-// `impl PackageManager` bodies above so `pub use process_dependency_list::{…}`
-// in `PackageManager.rs` resolves (matching the directories/enqueue pattern).
-// ──────────────────────────────────────────────────────────────────────────
-
-#[inline]
-pub fn process_extracted_tarball_package(
-    manager: &mut PackageManager,
-    package_id: &mut PackageID,
-    dep_id: DependencyID,
-    resolution: &Resolution,
-    data: &ExtractData,
-    log_level: LogLevel,
-) -> Option<Package> {
-    manager.process_extracted_tarball_package(package_id, dep_id, resolution, data, log_level)
-}
-
-#[inline]
-pub fn process_dependency_list_item(
-    this: &mut PackageManager,
-    item: &TaskCallbackContext,
-    any_root: Option<&Cell<bool>>,
-    install_peer: bool,
-) -> Result<(), bun_core::Error> {
-    this.process_dependency_list_item(item, any_root, install_peer)
-}
-
-#[inline]
-pub fn process_peer_dependency_list(this: &mut PackageManager) -> Result<(), bun_core::Error> {
-    this.process_peer_dependency_list()
-}
-
-#[inline]
-pub fn process_dependency_list<C>(
-    this: &mut PackageManager,
-    dep_list: TaskCallbackList,
-    ctx: C,
-    on_resolve: Option<impl FnOnce(C)>,
-    install_peer: bool,
-) -> Result<(), bun_core::Error> {
-    this.process_dependency_list(dep_list, ctx, on_resolve, install_peer)
 }

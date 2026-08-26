@@ -1,10 +1,10 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-use super::Expect;
+use super::{throw, Expect};
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
-    pub fn to_be_within(
+    pub(crate) fn to_be_within(
         &self,
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -16,8 +16,7 @@ impl Expect {
             "<green>start<r><d>, <r><green>end<r>",
         )?;
 
-        let _arguments = frame.arguments_old::<2>();
-        let arguments = _arguments.slice();
+        let arguments = frame.arguments();
 
         if arguments.len() < 1 {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -62,7 +61,6 @@ impl Expect {
         let mut formatter = super::make_formatter(global);
         let mut formatter2 = super::make_formatter(global);
         let mut formatter3 = super::make_formatter(global);
-        // defer formatter.deinit(); — handled by Drop
         let start_fmt = start_value.to_fmt(&mut formatter);
         let end_fmt = end_value.to_fmt(&mut formatter2);
         let received_fmt = value.to_fmt(&mut formatter3);
@@ -73,19 +71,18 @@ impl Expect {
                 "<green>start<r><d>, <r><green>end<r>",
                 true,
             );
-            return this.throw(
+            return throw!(
+                this,
                 global,
                 signature,
-                format_args!(
-                    concat!(
-                        "\n\n",
-                        "Expected: not between <green>{}<r> <d>(inclusive)<r> and <green>{}<r> <d>(exclusive)<r>\n",
-                        "Received: <red>{}<r>\n",
-                    ),
-                    start_fmt,
-                    end_fmt,
-                    received_fmt,
+                concat!(
+                    "\n\n",
+                    "Expected: not between <green>{}<r> <d>(inclusive)<r> and <green>{}<r> <d>(exclusive)<r>\n",
+                    "Received: <red>{}<r>\n",
                 ),
+                start_fmt,
+                end_fmt,
+                received_fmt,
             );
         }
 
@@ -94,19 +91,18 @@ impl Expect {
             "<green>start<r><d>, <r><green>end<r>",
             false,
         );
-        this.throw(
+        throw!(
+            this,
             global,
             signature,
-            format_args!(
-                concat!(
-                    "\n\n",
-                    "Expected: between <green>{}<r> <d>(inclusive)<r> and <green>{}<r> <d>(exclusive)<r>\n",
-                    "Received: <red>{}<r>\n",
-                ),
-                start_fmt,
-                end_fmt,
-                received_fmt,
+            concat!(
+                "\n\n",
+                "Expected: between <green>{}<r> <d>(inclusive)<r> and <green>{}<r> <d>(exclusive)<r>\n",
+                "Received: <red>{}<r>\n",
             ),
+            start_fmt,
+            end_fmt,
+            received_fmt,
         )
     }
 }

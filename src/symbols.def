@@ -572,6 +572,11 @@ EXPORTS
   node_api_create_property_key_latin1
   node_api_create_property_key_utf16
   node_api_create_property_key_utf8
+  node_api_set_prototype
+  node_api_create_object_with_properties
+  node_api_create_sharedarraybuffer
+  node_api_create_external_sharedarraybuffer
+  node_api_is_sharedarraybuffer
   dumpBtjsTrace
   ?TryGetCurrent@Isolate@v8@@SAPEAV12@XZ
   ?GetCurrent@Isolate@v8@@SAPEAV12@XZ

@@ -203,7 +203,7 @@ impl<H: Handler> Make<H> {
 
 /// The trampolines themselves, exposed so `dispatch.rs` can direct-call them
 /// per-kind without going through the vtable pointer at all.
-pub(crate) struct Trampolines<H>(core::marker::PhantomData<H>);
+struct Trampolines<H>(core::marker::PhantomData<H>);
 
 impl<H: Handler> Trampolines<H> {
     // Rust can't splat tuples into a call, so each trampoline inlines the
@@ -218,7 +218,7 @@ impl<H: Handler> Trampolines<H> {
         us_socket_t::opaque_mut(s).ext::<H::Ext>()
     }
 
-    pub(crate) extern "C" fn on_open(
+    extern "C" fn on_open(
         s: *mut us_socket_t,
         is_client: c_int,
         ip: *mut u8,
@@ -235,11 +235,7 @@ impl<H: Handler> Trampolines<H> {
         s
     }
 
-    pub(crate) extern "C" fn on_data(
-        s: *mut us_socket_t,
-        data: *mut u8,
-        len: c_int,
-    ) -> *mut us_socket_t {
+    extern "C" fn on_data(s: *mut us_socket_t, data: *mut u8, len: c_int) -> *mut us_socket_t {
         // SAFETY: usockets guarantees `data[0..len]` is valid.
         let data_slice = unsafe { thunk::c_slice(data, usize::try_from(len).expect("int cast")) };
         if H::HAS_EXT {
@@ -250,7 +246,7 @@ impl<H: Handler> Trampolines<H> {
         s
     }
 
-    pub(crate) extern "C" fn on_fd(s: *mut us_socket_t, fd: c_int) -> *mut us_socket_t {
+    extern "C" fn on_fd(s: *mut us_socket_t, fd: c_int) -> *mut us_socket_t {
         if H::HAS_EXT {
             H::on_fd(Self::ext(s), s, fd);
         } else {
@@ -259,7 +255,7 @@ impl<H: Handler> Trampolines<H> {
         s
     }
 
-    pub(crate) extern "C" fn on_writable(s: *mut us_socket_t) -> *mut us_socket_t {
+    extern "C" fn on_writable(s: *mut us_socket_t) -> *mut us_socket_t {
         if H::HAS_EXT {
             H::on_writable(Self::ext(s), s);
         } else {
@@ -268,7 +264,7 @@ impl<H: Handler> Trampolines<H> {
         s
     }
 
-    pub(crate) extern "C" fn on_close(
+    extern "C" fn on_close(
         s: *mut us_socket_t,
         code: c_int,
         reason: *mut c_void,
@@ -282,7 +278,7 @@ impl<H: Handler> Trampolines<H> {
         s
     }
 
-    pub(crate) extern "C" fn on_timeout(s: *mut us_socket_t) -> *mut us_socket_t {
+    extern "C" fn on_timeout(s: *mut us_socket_t) -> *mut us_socket_t {
         if H::HAS_EXT {
             H::on_timeout(Self::ext(s), s);
         } else {
@@ -291,7 +287,7 @@ impl<H: Handler> Trampolines<H> {
         s
     }
 
-    pub(crate) extern "C" fn on_long_timeout(s: *mut us_socket_t) -> *mut us_socket_t {
+    extern "C" fn on_long_timeout(s: *mut us_socket_t) -> *mut us_socket_t {
         if H::HAS_EXT {
             H::on_long_timeout(Self::ext(s), s);
         } else {
@@ -300,7 +296,7 @@ impl<H: Handler> Trampolines<H> {
         s
     }
 
-    pub(crate) extern "C" fn on_end(s: *mut us_socket_t) -> *mut us_socket_t {
+    extern "C" fn on_end(s: *mut us_socket_t) -> *mut us_socket_t {
         if H::HAS_EXT {
             H::on_end(Self::ext(s), s);
         } else {
@@ -309,10 +305,7 @@ impl<H: Handler> Trampolines<H> {
         s
     }
 
-    pub(crate) extern "C" fn on_connect_error(
-        s: *mut us_socket_t,
-        code: c_int,
-    ) -> *mut us_socket_t {
+    extern "C" fn on_connect_error(s: *mut us_socket_t, code: c_int) -> *mut us_socket_t {
         if H::HAS_EXT {
             H::on_connect_error(Self::ext(s), s, code);
         } else {
@@ -321,7 +314,7 @@ impl<H: Handler> Trampolines<H> {
         s
     }
 
-    pub(crate) extern "C" fn on_connecting_error(
+    extern "C" fn on_connecting_error(
         cs: *mut ConnectingSocket,
         code: c_int,
     ) -> *mut ConnectingSocket {
@@ -329,7 +322,7 @@ impl<H: Handler> Trampolines<H> {
         cs
     }
 
-    pub(crate) extern "C" fn on_handshake(
+    extern "C" fn on_handshake(
         s: *mut us_socket_t,
         ok: c_int,
         err: us_bun_verify_error_t,

@@ -3,14 +3,12 @@ import { expect, test } from "bun:test";
 import { copyFileSync, cpSync, promises as fs, readFileSync, rmSync } from "fs";
 import { cp } from "fs/promises";
 import { join } from "path";
-import { bunEnv, bunExe, getPuppeteerInstallEnv, isDebug, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
+import { bunEnv, bunExe, isDebug, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
 const { parseLockfile } = install_test_helpers;
 
 expect.extend({ toMatchNodeModulesAt });
 
 const root = join(import.meta.dir, "../");
-
-const puppeteerInstallEnv = getPuppeteerInstallEnv();
 
 async function tempDirToBuildIn() {
   const dir = tmpdirSync(
@@ -32,14 +30,18 @@ async function tempDirToBuildIn() {
   cpSync(join(root, "src/Counter1.txt"), join(dir, "src/Counter.tsx"));
   cpSync(join(root, "tsconfig_for_build.json"), join(dir, "tsconfig.json"));
 
-  const install = Bun.spawnSync([bunExe(), "i"], {
+  // This file never launches a browser (only dev-server*.test.ts do), so skip
+  // puppeteer's chromium download entirely. This also keeps the two concurrent
+  // installs independent: they'd otherwise race extracting into a shared cache.
+  const install = Bun.spawn([bunExe(), "i"], {
     cwd: dir,
-    env: { ...bunEnv, ...puppeteerInstallEnv },
+    env: { ...bunEnv, PUPPETEER_SKIP_DOWNLOAD: "1" },
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",
   });
-  if (!install.success) {
+  await install.exited;
+  if (install.exitCode !== 0) {
     const reason = install.signalCode || `code ${install.exitCode}`;
     throw new Error(`Failed to install dependencies: ${reason}`);
   }
@@ -114,12 +116,13 @@ test(
     rmSync(join(root, ".next"), { recursive: true, force: true });
     copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
 
-    const bunDir = await tempDirToBuildIn();
+    // The two installs are independent (separate temp dirs, no shared
+    // puppeteer cache), so run them concurrently.
+    const [bunDir, nodeDir] = await Promise.all([tempDirToBuildIn(), tempDirToBuildIn()]);
     let lockfile = parseLockfile(bunDir);
     expect(lockfile).toMatchNodeModulesAt(bunDir);
     expect(parseLockfile(bunDir)).toMatchSnapshot("bun");
 
-    const nodeDir = await tempDirToBuildIn();
     lockfile = parseLockfile(nodeDir);
     expect(lockfile).toMatchNodeModulesAt(nodeDir);
     expect(lockfile).toMatchSnapshot("node");

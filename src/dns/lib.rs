@@ -3,7 +3,6 @@
 use core::ffi::c_int;
 use std::io::Write as _;
 
-use bun_alloc::AllocError;
 use bun_core::String as BunString;
 // `bun_wyhash` exports `Wyhash11` (iterative init/update/final_ surface).
 // Hash is in-memory dedupe only — algorithm identity is not load-bearing.
@@ -176,7 +175,6 @@ pub enum Family {
     Unspecified,
     Inet,
     Inet6,
-    Unix,
 }
 
 bun_core::comptime_string_map! {
@@ -190,12 +188,11 @@ bun_core::comptime_string_map! {
 }
 
 impl Family {
-    pub fn to_libc(self) -> i32 {
+    pub(crate) fn to_libc(self) -> i32 {
         match self {
             Family::Unspecified => 0,
             Family::Inet => sock::AF_INET,
             Family::Inet6 => sock::AF_INET6,
-            Family::Unix => sock::AF_UNIX,
         }
     }
 }
@@ -218,7 +215,7 @@ bun_core::comptime_string_map! {
 }
 
 impl SocketType {
-    pub fn to_libc(self) -> i32 {
+    pub(crate) fn to_libc(self) -> i32 {
         match self {
             SocketType::Unspecified => 0,
             SocketType::Stream => sock::SOCK_STREAM,
@@ -243,7 +240,7 @@ bun_core::comptime_string_map! {
 }
 
 impl Protocol {
-    pub fn to_libc(self) -> i32 {
+    pub(crate) fn to_libc(self) -> i32 {
         match self {
             Protocol::Unspecified => 0,
             Protocol::Tcp => sock::IPPROTO_TCP,
@@ -292,12 +289,6 @@ impl Backend {
     }
 }
 
-impl Default for Backend {
-    fn default() -> Self {
-        Backend::default()
-    }
-}
-
 pub type Address = bun_sys::net::Address;
 
 pub struct GetAddrInfoResult {
@@ -329,7 +320,7 @@ impl Drop for ResultAny {
 }
 
 impl GetAddrInfoResult {
-    pub fn to_list(addrinfo: &sock::addrinfo) -> Result<ResultList, AllocError> {
+    pub fn to_list(addrinfo: &sock::addrinfo) -> ResultList {
         let mut list = ResultList::with_capacity(addr_info_count(addrinfo) as usize);
 
         let mut addr: *const sock::addrinfo = addrinfo;
@@ -342,7 +333,7 @@ impl GetAddrInfoResult {
             addr = a.ai_next;
         }
 
-        Ok(list)
+        list
     }
 
     pub fn from_addr_info(addrinfo: &sock::addrinfo) -> Option<GetAddrInfoResult> {
@@ -363,17 +354,17 @@ impl GetAddrInfoResult {
     }
 }
 
-pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
+pub fn address_to_string(address: &Address) -> BunString {
     // Reshaped — bun_sys::net::Address exposes family()/as_in4()/
     // as_in6() rather than .in/.in6/.un union views.
     match address.family() {
         sock::AF_INET => {
             let v4 = address.as_in4().unwrap(); // family() just checked
             let bytes: [u8; 4] = v4.sin_addr.s_addr.to_ne_bytes();
-            Ok(BunString::create_format(format_args!(
+            BunString::create_format(format_args!(
                 "{}.{}.{}.{}",
                 bytes[0], bytes[1], bytes[2], bytes[3]
-            )))
+            ))
         }
         sock::AF_INET6 => {
             let v6 = address.as_in6().unwrap(); // family() just checked
@@ -387,7 +378,7 @@ pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
                 bun_cares_sys::ntop(sock::AF_INET6, (&raw const v6.sin6_addr).cast(), &mut buf)
             } {
                 Some(s) => s.len(),
-                None => return Ok(BunString::EMPTY),
+                None => return BunString::EMPTY,
             };
             let len = if v6.sin6_scope_id != 0 {
                 let mut cursor = &mut buf[n..];
@@ -398,7 +389,7 @@ pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
             } else {
                 n
             };
-            Ok(BunString::clone_latin1(&buf[..len]))
+            BunString::clone_latin1(&buf[..len])
         }
         sock::AF_UNIX => {
             // Unix sockets exist on every target Bun ships (Windows 10 rs4+
@@ -409,9 +400,9 @@ pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
             let path: &[u8] = unsafe {
                 core::slice::from_raw_parts(un.sun_path.as_ptr().cast::<u8>(), un.sun_path.len())
             };
-            Ok(BunString::clone_latin1(path))
+            BunString::clone_latin1(path)
         }
-        _ => Ok(BunString::EMPTY),
+        _ => BunString::EMPTY,
     }
 }
 
@@ -461,8 +452,6 @@ bun_core::comptime_string_map! {
 }
 
 impl Order {
-    pub const DEFAULT: Self = Order::Verbatim;
-
     pub fn from_string(order: &[u8]) -> Option<Order> {
         ORDER_MAP.get(order).copied()
     }

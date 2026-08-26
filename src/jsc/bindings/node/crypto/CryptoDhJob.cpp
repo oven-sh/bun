@@ -23,6 +23,10 @@ extern "C" void Bun__DhJobCtx__runTask(DhJobCtx* ctx, JSGlobalObject* globalObje
 }
 void DhJobCtx::runTask(JSGlobalObject* globalObject)
 {
+    // A failed derive must not leave its OpenSSL errors on the thread's error queue, where a
+    // later unrelated operation would pick them up.
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
+
     auto dp = DHPointer::stateless(m_privateKey->asymmetricKey, m_publicKey->asymmetricKey);
     if (!dp) {
         return;
@@ -36,42 +40,25 @@ void DhJobCtx::runTask(JSGlobalObject* globalObject)
     m_result = ByteSource::allocated(dp.release());
 }
 
-extern "C" void Bun__DhJobCtx__runFromJS(DhJobCtx* ctx, JSGlobalObject* globalObject, EncodedJSValue callback)
+extern "C" void Bun__DhJobCtx__runFromJS(DhJobCtx* ctx, JSGlobalObject* globalObject, JSCallbackArgs* out)
 {
-    ctx->runFromJS(globalObject, JSValue::decode(callback));
+    *out = ctx->runFromJS(globalObject);
 }
-void DhJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback)
+JSCallbackArgs DhJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
 {
     VM& vm = lexicalGlobalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
     if (!m_result) {
-        JSObject* err = createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "diffieHellman failed"_s);
-        Bun__EventLoop__runCallback1(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(err));
-        return;
+        // Same message as the synchronous path so callers observe identical errors either way.
+        JSObject* err = createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "diffieHellman operation failed"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+        return { err };
     }
 
     JSValue result = WebCore::createBuffer(lexicalGlobalObject, m_result.span());
-
-    Bun__EventLoop__runCallback2(
-        lexicalGlobalObject,
-        JSValue::encode(callback),
-        JSValue::encode(jsUndefined()),
-        JSValue::encode(jsNull()),
-        JSValue::encode(result));
-}
-
-extern "C" DhJob* Bun__DhJob__create(JSGlobalObject* globalObject, DhJobCtx* ctx, EncodedJSValue callback);
-DhJob* DhJob::create(JSGlobalObject* globalObject, DhJobCtx&& ctx, JSValue callback)
-{
-    DhJobCtx* ctxCopy = new DhJobCtx(WTF::move(ctx));
-    return Bun__DhJob__create(globalObject, ctxCopy, JSValue::encode(callback));
-}
-
-extern "C" void Bun__DhJob__schedule(DhJob* job);
-void DhJob::schedule()
-{
-    Bun__DhJob__schedule(this);
+    RETURN_IF_EXCEPTION(scope, {});
+    return { jsNull(), result };
 }
 
 extern "C" void Bun__DhJob__createAndSchedule(JSGlobalObject* globalObject, DhJobCtx* ctx, EncodedJSValue callback);
@@ -111,7 +98,7 @@ std::optional<DhJobCtx> DhJobCtx::fromJS(JSGlobalObject* globalObject, ThrowScop
     }
 
     if (publicKey.type() != CryptoKeyType::Public && publicKey.type() != CryptoKeyType::Private) {
-        ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, publicKey.type(), "public or private"_s);
+        ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, publicKey.type(), "private or public"_s);
         return std::nullopt;
     }
 

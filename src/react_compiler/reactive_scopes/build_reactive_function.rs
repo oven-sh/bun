@@ -22,7 +22,7 @@ use crate::hir::{
 };
 
 /// Convert the HIR CFG into a tree-structured ReactiveFunction.
-pub fn build_reactive_function(
+pub(crate) fn build_reactive_function(
     hir: &HirFunction,
     env: &Environment,
 ) -> Result<ReactiveFunction, CompilerDiagnostic> {

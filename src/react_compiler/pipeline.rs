@@ -90,7 +90,7 @@ mod timing {
 }
 
 #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
-pub(crate) fn ensure_timing_dump_registered() {
+fn ensure_timing_dump_registered() {
     timing::ensure_dump_registered();
 }
 #[cfg(not(any(debug_assertions, bun_asan, feature = "fixtures")))]
@@ -119,7 +119,7 @@ macro_rules! timed {
 
 /// Run the compilation pipeline on a single function.
 #[allow(clippy::too_many_arguments)]
-pub fn compile_fn(
+pub(crate) fn compile_fn(
     func: &FunctionNode<'_>,
     fn_name: Option<&str>,
     host: &mut dyn Host,
@@ -269,7 +269,7 @@ pub fn compile_fn(
 /// outlined `CodegenFunction` is wrapped in a `G::Fn` and re-lowered as-is.
 #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
 #[allow(clippy::too_many_arguments)]
-pub fn compile_outlined_fn(
+pub(crate) fn compile_outlined_fn(
     codegen_fn: CodegenFunction,
     fn_name: Option<&str>,
     host: &mut dyn Host,

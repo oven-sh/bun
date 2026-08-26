@@ -6,7 +6,7 @@
 //! large and the number of actual items in a given set is usually
 //! small, they may be less memory efficient than an array set.
 //!
-//! There are five variants defined here:
+//! There are four variants defined here:
 //!
 //! IntegerBitSet:
 //!   A bit set with static size, which is backed by a single integer.
@@ -17,10 +17,6 @@
 //!   A bit set with static size, which is backed by an array of usize.
 //!   This set is good for sets with a larger size, but may use
 //!   more bytes than necessary if your set is small.
-//!
-//! StaticBitSet:
-//!   Picks either IntegerBitSet or ArrayBitSet depending on the requested
-//!   size.  The interfaces of these two types match exactly, except for fields.
 //!
 //! DynamicBitSet:
 //!   A bit set with runtime-known size, backed by an allocated slice
@@ -83,15 +79,14 @@ fn set_range_value_masks(masks: &mut [usize], range: Range, value: bool) {
         mask2 = bool_mask_usize(value) >> ((MASK_LEN - 1) - (end_bit - 1));
         masks[start_mask_index] |= mask1 & mask2;
     } else {
-        let bulk_mask_index: usize;
-        if start_bit > 0 {
+        let bulk_mask_index: usize = if start_bit > 0 {
             masks[start_mask_index] = (masks[start_mask_index]
                 & !(bool_mask_usize(true) << start_bit))
                 | (bool_mask_usize(value) << start_bit);
-            bulk_mask_index = start_mask_index + 1;
+            start_mask_index + 1
         } else {
-            bulk_mask_index = start_mask_index;
-        }
+            start_mask_index
+        };
 
         for mask in &mut masks[bulk_mask_index..end_mask_index] {
             *mask = bool_mask_usize(value);
@@ -103,19 +98,6 @@ fn set_range_value_masks(masks: &mut [usize], range: Range, value: bool) {
         }
     }
 }
-
-// ───────────────────────────── StaticBitSet ─────────────────────────────
-
-/// Returns the optimal static bit set type for the specified number
-/// of elements.  The returned type will perform no allocations,
-/// can be copied by value, and does not require deinitialization.
-/// Both possible implementations fulfill the same interface.
-///
-// Stable Rust cannot select a struct definition from a const generic, so this
-// alias is the integer form and is only valid for `SIZE <= usize::BITS`
-// (enforced by `IntegerBitSet`'s debug asserts). Callers needing more bits
-// must use `ArrayBitSet<SIZE, { num_masks_for(SIZE) }>` directly.
-pub type StaticBitSet<const SIZE: usize> = IntegerBitSet<SIZE>;
 
 // ───────────────────────────── IntegerBitSet ─────────────────────────────
 
@@ -134,7 +116,7 @@ pub struct IntegerBitSet<const SIZE: usize> {
 
 impl<const SIZE: usize> IntegerBitSet<SIZE> {
     /// The number of items in this bit set
-    pub const BIT_LENGTH: usize = SIZE;
+    pub(crate) const BIT_LENGTH: usize = SIZE;
 
     const FULL_MASK: usize = if SIZE as u32 >= usize::BITS {
         // SIZE > usize::BITS is a caller error (use ArrayBitSet); saturating
@@ -157,12 +139,6 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
         }
     }
 
-    /// Returns the number of bits in this bit set
-    #[inline(always)]
-    pub const fn capacity(self) -> usize {
-        Self::BIT_LENGTH
-    }
-
     /// Returns true if the bit at the specified index
     /// is present in the set, false otherwise.
     pub fn is_set(self, index: usize) -> bool {
@@ -173,18 +149,6 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
     /// Returns the total number of set bits in this bit set.
     pub const fn count(self) -> usize {
         self.mask.count_ones() as usize
-    }
-
-    /// Changes the value of the specified bit of the bit
-    /// set to match the passed boolean.
-    pub fn set_value(&mut self, index: usize, value: bool) {
-        debug_assert!(index < Self::BIT_LENGTH);
-        if SIZE == 0 {
-            return;
-        }
-        let bit = Self::mask_bit(index);
-        let new_bit = bit & bool_mask_usize(value);
-        self.mask = (self.mask & !bit) | new_bit;
     }
 
     /// Adds a specific bit to the bit set
@@ -236,37 +200,6 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
         self.mask &= !Self::mask_bit(index);
     }
 
-    /// Flips a specific bit in the bit set
-    pub fn toggle(&mut self, index: usize) {
-        debug_assert!(index < Self::BIT_LENGTH);
-        self.mask ^= Self::mask_bit(index);
-    }
-
-    /// Flips all bits in this bit set which are present
-    /// in the toggles bit set.
-    pub fn toggle_set(&mut self, toggles: Self) {
-        self.mask ^= toggles.mask;
-    }
-
-    /// Flips every bit in the bit set.
-    pub fn toggle_all(&mut self) {
-        self.mask = !self.mask & Self::FULL_MASK;
-    }
-
-    /// Performs a union of two bit sets, and stores the
-    /// result in the first one.  Bits in the result are
-    /// set if the corresponding bits were set in either input.
-    pub fn set_union(&mut self, other: Self) {
-        self.mask |= other.mask;
-    }
-
-    /// Performs an intersection of two bit sets, and stores
-    /// the result in the first one.  Bits in the result are
-    /// set if the corresponding bits were set in both inputs.
-    pub fn set_intersection(&mut self, other: Self) {
-        self.mask &= other.mask;
-    }
-
     /// Finds the index of the first set bit.
     /// If no bits are set, returns null.
     pub fn find_first_set(self) -> Option<usize> {
@@ -275,90 +208,6 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
             return None;
         }
         Some(mask.trailing_zeros() as usize)
-    }
-
-    /// Finds the index of the first unset bit.
-    /// If all bits are set, returns null.
-    pub fn find_first_unset(self) -> Option<usize> {
-        let mask = !self.mask & Self::FULL_MASK;
-        if mask == 0 {
-            return None;
-        }
-        Some(mask.trailing_zeros() as usize)
-    }
-
-    /// Finds the index of the first set bit, and unsets it.
-    /// If no bits are set, returns null.
-    pub fn toggle_first_set(&mut self) -> Option<usize> {
-        let mask = self.mask;
-        if mask == 0 {
-            return None;
-        }
-        let index = mask.trailing_zeros() as usize;
-        self.mask = mask & (mask - 1);
-        Some(index)
-    }
-
-    /// Returns true iff every corresponding bit in both
-    /// bit sets are the same.
-    pub fn eql(self, other: Self) -> bool {
-        Self::BIT_LENGTH == 0 || self.mask == other.mask
-    }
-
-    /// Returns true iff the first bit set is the subset
-    /// of the second one.
-    pub fn subset_of(self, other: Self) -> bool {
-        self.intersect_with(other).eql(self)
-    }
-
-    /// Returns true iff the first bit set is the superset
-    /// of the second one.
-    pub fn superset_of(self, other: Self) -> bool {
-        other.subset_of(self)
-    }
-
-    /// Returns the complement bit sets. Bits in the result
-    /// are set if the corresponding bits were not set.
-    pub fn complement(self) -> Self {
-        let mut result = self;
-        result.toggle_all();
-        result
-    }
-
-    /// Returns the union of two bit sets. Bits in the
-    /// result are set if the corresponding bits were set
-    /// in either input.
-    pub fn union_with(self, other: Self) -> Self {
-        let mut result = self;
-        result.set_union(other);
-        result
-    }
-
-    /// Returns the intersection of two bit sets. Bits in
-    /// the result are set if the corresponding bits were
-    /// set in both inputs.
-    pub fn intersect_with(self, other: Self) -> Self {
-        let mut result = self;
-        result.set_intersection(other);
-        result
-    }
-
-    /// Returns the xor of two bit sets. Bits in the
-    /// result are set if the corresponding bits were
-    /// not the same in both inputs.
-    pub fn xor_with(self, other: Self) -> Self {
-        let mut result = self;
-        result.toggle_set(other);
-        result
-    }
-
-    /// Returns the difference of two bit sets. Bits in
-    /// the result are set if set in the first but not
-    /// set in the second set.
-    pub fn difference_with(self, other: Self) -> Self {
-        let mut result = self;
-        result.set_intersection(other.complement());
-        result
     }
 
     /// Iterates through the items in the set, according to the options.
@@ -436,12 +285,12 @@ pub const fn num_masks_for(bit_length: usize) -> usize {
 pub struct ArrayBitSet<const SIZE: usize, const NUM_MASKS: usize> {
     /// The bit masks, ordered with lower indices first.
     /// Padding bits at the end are undefined.
-    pub masks: [usize; NUM_MASKS],
+    pub(crate) masks: [usize; NUM_MASKS],
 }
 
 impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
     /// The number of items in this bit set
-    pub const BIT_LENGTH: usize = SIZE;
+    pub(crate) const BIT_LENGTH: usize = SIZE;
 
     /// The integer type used to represent a mask in this bit set
     // type MaskInt = usize (inherent assoc → inline usize)
@@ -461,32 +310,13 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
     /// Mask of valid bits in the last mask.
     /// All functions will ensure that the invalid
     /// bits in the last mask are zero.
-    pub const LAST_ITEM_MASK: usize = usize::MAX >> Self::LAST_PAD_BITS;
+    pub(crate) const LAST_ITEM_MASK: usize = usize::MAX >> Self::LAST_PAD_BITS;
 
     /// Creates a bit set with no elements present.
     pub const fn init_empty() -> Self {
         Self {
             masks: [0usize; NUM_MASKS],
         }
-    }
-
-    /// Creates a bit set with all elements present.
-    pub const fn init_full() -> Self {
-        if NUM_MASKS == 0 {
-            Self {
-                masks: [0usize; NUM_MASKS],
-            }
-        } else {
-            let mut masks = [usize::MAX; NUM_MASKS];
-            masks[NUM_MASKS - 1] = Self::LAST_ITEM_MASK;
-            Self { masks }
-        }
-    }
-
-    /// Returns the number of bits in this bit set
-    #[inline(always)]
-    pub const fn capacity(&self) -> usize {
-        Self::BIT_LENGTH
     }
 
     /// Returns true if the bit at the specified index
@@ -500,25 +330,12 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
     }
 
     /// Returns the total number of set bits in this bit set.
-    pub fn count(&self) -> usize {
+    pub(crate) fn count(&self) -> usize {
         let mut total: usize = 0;
         for mask in self.masks {
             total += mask.count_ones() as usize;
         }
         total
-    }
-
-    /// Changes the value of the specified bit of the bit
-    /// set to match the passed boolean.
-    pub fn set_value(&mut self, index: usize, value: bool) {
-        debug_assert!(index < Self::BIT_LENGTH);
-        if NUM_MASKS == 0 {
-            return; // doesn't compile in this case
-        }
-        let bit = word_mask_bit(index);
-        let mask_index = word_mask_index(index);
-        let new_bit = bit & bool_mask_usize(value);
-        self.masks[mask_index] = (self.masks[mask_index] & !bit) | new_bit;
     }
 
     /// Adds a specific bit to the bit set
@@ -530,17 +347,6 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
         self.masks[word_mask_index(index)] |= word_mask_bit(index);
     }
 
-    /// Changes the value of all bits in the specified range to
-    /// match the passed boolean.
-    pub fn set_range_value(&mut self, range: Range, value: bool) {
-        debug_assert!(range.end <= Self::BIT_LENGTH);
-        debug_assert!(range.start <= range.end);
-        if NUM_MASKS == 0 {
-            return;
-        }
-        set_range_value_masks(&mut self.masks, range, value);
-    }
-
     /// Removes a specific bit from the bit set
     pub fn unset(&mut self, index: usize) {
         debug_assert!(index < Self::BIT_LENGTH);
@@ -550,38 +356,8 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
         self.masks[word_mask_index(index)] &= !word_mask_bit(index);
     }
 
-    /// Flips a specific bit in the bit set
-    pub fn toggle(&mut self, index: usize) {
-        debug_assert!(index < Self::BIT_LENGTH);
-        if NUM_MASKS == 0 {
-            return; // doesn't compile in this case
-        }
-        self.masks[word_mask_index(index)] ^= word_mask_bit(index);
-    }
-
-    /// Flips all bits in this bit set which are present
-    /// in the toggles bit set.
-    pub fn toggle_set(&mut self, toggles: &Self) {
-        debug_assert_eq!(self.masks.len(), toggles.masks.len());
-        for (mask, b) in self.masks.iter_mut().zip(toggles.masks.iter()) {
-            *mask ^= *b;
-        }
-    }
-
-    /// Flips every bit in the bit set.
-    pub fn toggle_all(&mut self) {
-        for mask in self.masks.iter_mut() {
-            *mask = !*mask;
-        }
-
-        // Zero the padding bits
-        if NUM_MASKS > 0 {
-            self.masks[NUM_MASKS - 1] &= Self::LAST_ITEM_MASK;
-        }
-    }
-
     /// Sets all bits
-    pub fn set_all(&mut self, value: bool) {
+    pub(crate) fn set_all(&mut self, value: bool) {
         self.masks.fill(if value { usize::MAX } else { 0 });
 
         // Zero the padding bits
@@ -600,19 +376,26 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
         }
     }
 
-    /// Performs an intersection of two bit sets, and stores
-    /// the result in the first one.  Bits in the result are
-    /// set if the corresponding bits were set in both inputs.
-    pub fn set_intersection(&mut self, other: &Self) {
+    /// Performs an intersection of two bit sets, and stores the
+    /// result in the first one.
+    pub(crate) fn set_intersection(&mut self, other: &Self) {
         debug_assert_eq!(self.masks.len(), other.masks.len());
         for (mask, alt) in self.masks.iter_mut().zip(other.masks.iter()) {
             *mask &= *alt;
         }
     }
 
+    /// Returns true iff the first bit set is the subset of the second one.
+    pub(crate) fn subset_of(&self, other: &Self) -> bool {
+        self.masks
+            .iter()
+            .zip(other.masks.iter())
+            .all(|(a, b)| a & b == *a)
+    }
+
     /// Finds the index of the first set bit.
     /// If no bits are set, returns null.
-    pub fn find_first_set(&self) -> Option<usize> {
+    pub(crate) fn find_first_set(&self) -> Option<usize> {
         let mut offset: usize = 0;
         let mask = 'brk: {
             for mask in self.masks {
@@ -626,76 +409,7 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
         Some(offset + mask.trailing_zeros() as usize)
     }
 
-    /// Finds the index of the first set bit, and unsets it.
-    /// If no bits are set, returns null.
-    pub fn toggle_first_set(&mut self) -> Option<usize> {
-        let mut offset: usize = 0;
-        let mask = 'brk: {
-            for mask in self.masks.iter_mut() {
-                if *mask != 0 {
-                    break 'brk mask;
-                }
-                offset += Self::MASK_LEN as usize;
-            }
-            return None;
-        };
-        let index = mask.trailing_zeros() as usize;
-        *mask &= *mask - 1;
-        Some(offset + index)
-    }
-
-    /// Returns true iff every corresponding bit in both
-    /// bit sets are the same.
-    pub fn eql(&self, other: &Self) -> bool {
-        let mut i: usize = 0;
-        while i < NUM_MASKS {
-            if self.masks[i] != other.masks[i] {
-                return false;
-            }
-            i += 1;
-        }
-        true
-    }
-
-    /// Returns true iff the first bit set is the subset
-    /// of the second one.
-    pub fn subset_of(&self, other: &Self) -> bool {
-        self.intersect_with(other).eql(self)
-    }
-
-    /// Returns true iff the first bit set is the superset
-    /// of the second one.
-    pub fn superset_of(&self, other: &Self) -> bool {
-        other.subset_of(self)
-    }
-
-    /// Returns the complement bit sets. Bits in the result
-    /// are set if the corresponding bits were not set.
-    pub fn complement(&self) -> Self {
-        let mut result = *self;
-        result.toggle_all();
-        result
-    }
-
-    /// Returns the union of two bit sets. Bits in the
-    /// result are set if the corresponding bits were set
-    /// in either input.
-    pub fn union_with(&self, other: &Self) -> Self {
-        let mut result = *self;
-        result.set_union(other);
-        result
-    }
-
-    /// Returns the intersection of two bit sets. Bits in
-    /// the result are set if the corresponding bits were
-    /// set in both inputs.
-    pub fn intersect_with(&self, other: &Self) -> Self {
-        let mut result = *self;
-        result.set_intersection(other);
-        result
-    }
-
-    pub fn has_intersection(&self, other: &Self) -> bool {
+    pub(crate) fn has_intersection(&self, other: &Self) -> bool {
         debug_assert_eq!(self.masks.len(), other.masks.len());
         for (a, b) in self.masks.iter().zip(other.masks.iter()) {
             if a & b != 0 {
@@ -705,29 +419,11 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
         false
     }
 
-    /// Returns the xor of two bit sets. Bits in the
-    /// result are set if the corresponding bits were
-    /// not the same in both inputs.
-    pub fn xor_with(&self, other: &Self) -> Self {
-        let mut result = *self;
-        result.toggle_set(other);
-        result
-    }
-
-    /// Returns the difference of two bit sets. Bits in
-    /// the result are set if set in the first but not
-    /// set in the second set.
-    pub fn difference_with(&self, other: &Self) -> Self {
-        let mut result = *self;
-        result.set_intersection(&other.complement());
-        result
-    }
-
     /// Iterates through the items in the set, according to the options.
     /// The default options (.{}) will iterate indices of set bits in
     /// ascending order.  Modifications to the underlying bit set may
     /// or may not be observed by the iterator.
-    pub fn iterator<const KIND_SET: bool, const DIR_FWD: bool>(
+    pub(crate) fn iterator<const KIND_SET: bool, const DIR_FWD: bool>(
         &self,
     ) -> BitSetIterator<'_, KIND_SET, DIR_FWD> {
         BitSetIterator::init(&self.masks, Self::LAST_ITEM_MASK)
@@ -756,7 +452,7 @@ pub struct DynamicBitSetUnmanaged {
 
     /// The bit masks, ordered with lower indices first.
     /// Padding bits at the end must be zeroed.
-    pub masks: *mut usize,
+    pub(crate) masks: *mut usize,
     // This pointer is one usize after the actual allocation.
     // That slot holds the size of the true allocation, which
     // is needed when freeing.
@@ -801,7 +497,7 @@ impl DynamicBitSetUnmanaged {
 
     /// Borrow the mask words as a shared slice of length `num_masks(bit_length)`.
     #[inline(always)]
-    pub fn masks_slice(&self) -> &[usize] {
+    pub(crate) fn masks_slice(&self) -> &[usize] {
         let n = Self::num_masks(self.bit_length);
         // SAFETY: `masks` is never null (defaults to `empty_masks_ptr()`) and
         // points to at least `n` valid, initialized usize words, maintained by
@@ -815,21 +511,12 @@ impl DynamicBitSetUnmanaged {
     /// `DynamicBitSetList::at`). Callers must not hold a `masks_slice_mut()`
     /// borrow on one view while another aliasing view is read or written.
     #[inline(always)]
-    pub fn masks_slice_mut(&mut self) -> &mut [usize] {
+    pub(crate) fn masks_slice_mut(&mut self) -> &mut [usize] {
         let n = Self::num_masks(self.bit_length);
         // SAFETY: see `masks_slice`. `&mut self` gives us exclusive access to
         // *this* struct; the caller is responsible for not aliasing the
         // underlying storage via another view.
         unsafe { slice::from_raw_parts_mut(self.masks, n) }
-    }
-
-    /// Raw pointer to the mask words. Use this (not `masks_slice{,_mut}`) when
-    /// `self` and another `DynamicBitSetUnmanaged` may point at the same
-    /// storage and both are accessed in the same operation — forming
-    /// overlapping `&mut [usize]` / `&[usize]` would be UB.
-    #[inline(always)]
-    pub fn masks_ptr(&self) -> *mut usize {
-        self.masks
     }
 
     /// `self.masks[i] = f(self.masks[i], other.masks[i])` for every mask word.
@@ -858,14 +545,6 @@ impl DynamicBitSetUnmanaged {
     pub fn init_empty(bit_length: usize) -> Result<Self, AllocError> {
         let mut this = Self::default();
         this.resize(bit_length, false)?;
-        Ok(this)
-    }
-
-    /// Creates a bit set with all elements present.
-    /// If bit_length is not zero, deinit must eventually be called.
-    pub fn init_full(bit_length: usize) -> Result<Self, AllocError> {
-        let mut this = Self::default();
-        this.resize(bit_length, true)?;
         Ok(this)
     }
 
@@ -978,7 +657,7 @@ impl DynamicBitSetUnmanaged {
 
     /// Returns the number of bits in this bit set
     #[inline(always)]
-    pub fn capacity(&self) -> usize {
+    pub(crate) fn capacity(&self) -> usize {
         self.bit_length
     }
 
@@ -1012,7 +691,7 @@ impl DynamicBitSetUnmanaged {
         total
     }
 
-    pub fn has_intersection(&self, other: &Self) -> bool {
+    pub(crate) fn has_intersection(&self, other: &Self) -> bool {
         debug_assert_eq!(
             Self::num_masks(self.bit_length),
             Self::num_masks(other.bit_length)
@@ -1025,17 +704,6 @@ impl DynamicBitSetUnmanaged {
         false
     }
 
-    /// Changes the value of the specified bit of the bit
-    /// set to match the passed boolean.
-    pub fn set_value(&mut self, index: usize, value: bool) {
-        debug_assert!(index < self.bit_length);
-        let bit = word_mask_bit(index);
-        let mask_index = word_mask_index(index);
-        let new_bit = bit & bool_mask_usize(value);
-        let mask = &mut self.masks_slice_mut()[mask_index];
-        *mask = (*mask & !bit) | new_bit;
-    }
-
     /// Adds a specific bit to the bit set
     pub fn set(&mut self, index: usize) {
         debug_assert!(index < self.bit_length);
@@ -1044,7 +712,7 @@ impl DynamicBitSetUnmanaged {
 
     /// Changes the value of all bits in the specified range to
     /// match the passed boolean.
-    pub fn set_range_value(&mut self, range: Range, value: bool) {
+    pub(crate) fn set_range_value(&mut self, range: Range, value: bool) {
         debug_assert!(range.end <= self.bit_length);
         debug_assert!(range.start <= range.end);
         set_range_value_masks(self.masks_slice_mut(), range, value);
@@ -1054,30 +722,6 @@ impl DynamicBitSetUnmanaged {
     pub fn unset(&mut self, index: usize) {
         debug_assert!(index < self.bit_length);
         self.masks_slice_mut()[word_mask_index(index)] &= !word_mask_bit(index);
-    }
-
-    /// Flips a specific bit in the bit set
-    pub fn toggle(&mut self, index: usize) {
-        debug_assert!(index < self.bit_length);
-        self.masks_slice_mut()[word_mask_index(index)] ^= word_mask_bit(index);
-    }
-
-    /// Flips all bits in this bit set which are present
-    /// in the toggles bit set.  Both sets must have the
-    /// same bit_length.
-    pub fn toggle_set(&mut self, toggles: &Self) {
-        debug_assert!(toggles.bit_length == self.bit_length);
-        let bit_length = self.bit_length;
-        if bit_length == 0 {
-            return;
-        }
-        let num_masks = Self::num_masks(self.bit_length);
-        self.zip_masks_raw(toggles, |a, b| a ^ b);
-
-        let padding_bits =
-            u32::try_from(num_masks * DYN_MASK_BITS as usize - bit_length).expect("int cast");
-        let last_item_mask = usize::MAX >> padding_bits;
-        self.masks_slice_mut()[num_masks - 1] &= last_item_mask;
     }
 
     pub fn set_all(&mut self, value: bool) {
@@ -1097,7 +741,7 @@ impl DynamicBitSetUnmanaged {
     }
 
     /// Flips every bit in the bit set.
-    pub fn toggle_all(&mut self) {
+    pub(crate) fn toggle_all(&mut self) {
         let bit_length = self.bit_length;
         // avoid underflow if bit_length is zero
         if bit_length == 0 {
@@ -1144,17 +788,9 @@ impl DynamicBitSetUnmanaged {
     /// the result in the first one.  Bits in the result are
     /// set if the corresponding bits were set in both inputs.
     /// The two sets must both be the same bit_length.
-    pub fn set_intersection(&mut self, other: &Self) {
+    pub(crate) fn set_intersection(&mut self, other: &Self) {
         debug_assert!(other.bit_length == self.bit_length);
         self.zip_masks_raw(other, |a, b| a & b);
-    }
-
-    pub fn set_exclude_two(&mut self, other: &Self, third: &Self) {
-        debug_assert!(other.bit_length == self.bit_length);
-        // Two passes is equivalent to the original fused loop: each word is
-        // independent, so `(a & !b) & !c` per index is associative across passes.
-        self.zip_masks_raw(other, |a, b| a & !b);
-        self.zip_masks_raw(third, |a, c| a & !c);
     }
 
     pub fn set_exclude(&mut self, other: &Self) {
@@ -1164,27 +800,11 @@ impl DynamicBitSetUnmanaged {
 
     /// Finds the index of the first set bit.
     /// If no bits are set, returns null.
-    pub fn find_first_set(&self) -> Option<usize> {
+    pub(crate) fn find_first_set(&self) -> Option<usize> {
         let mut offset: usize = 0;
         for &mask in self.masks_slice() {
             if mask != 0 {
                 return Some(offset + mask.trailing_zeros() as usize);
-            }
-            offset += DYN_MASK_BITS as usize;
-        }
-        None
-    }
-
-    /// Finds the index of the first set bit, and unsets it.
-    /// If no bits are set, returns null.
-    pub fn toggle_first_set(&mut self) -> Option<usize> {
-        let mut offset: usize = 0;
-        for mask in self.masks_slice_mut() {
-            let m = *mask;
-            if m != 0 {
-                let index = m.trailing_zeros() as usize;
-                *mask = m & (m - 1);
-                return Some(offset + index);
             }
             offset += DYN_MASK_BITS as usize;
         }
@@ -1214,20 +834,6 @@ impl DynamicBitSetUnmanaged {
         true
     }
 
-    /// Returns true iff the first bit set is the superset
-    /// of the second one.
-    pub fn superset_of(&self, other: &Self) -> bool {
-        if self.bit_length != other.bit_length {
-            return false;
-        }
-        for (&a, &b) in self.masks_slice().iter().zip(other.masks_slice()) {
-            if a & b != b {
-                return false;
-            }
-        }
-        true
-    }
-
     /// Iterates through the items in the set, according to the options.
     /// The default options (.{}) will iterate indices of set bits in
     /// ascending order.  Modifications to the underlying bit set may
@@ -1244,7 +850,7 @@ impl DynamicBitSetUnmanaged {
     }
 
     #[inline(always)]
-    pub const fn num_masks(bit_length: usize) -> usize {
+    pub(crate) const fn num_masks(bit_length: usize) -> usize {
         num_masks_for(bit_length)
     }
 }
@@ -1267,8 +873,8 @@ impl DynamicBitSetUnmanaged {
 pub struct DynamicBitSetList {
     buf: ptr::NonNull<usize>,
     buf_len: usize,
-    pub n: usize,
-    pub bit_length: usize,
+    n: usize,
+    bit_length: usize,
 }
 
 impl DynamicBitSetList {
@@ -1401,7 +1007,7 @@ unsafe fn dyn_realloc(
 // ───────────────────────────── AutoBitSet ─────────────────────────────
 
 /// Static arm size: one less than the bit-size of `DynamicBitSetUnmanaged`.
-pub(crate) const AUTO_STATIC_BITS: usize = mem::size_of::<DynamicBitSetUnmanaged>() * 8 - 1;
+const AUTO_STATIC_BITS: usize = mem::size_of::<DynamicBitSetUnmanaged>() * 8 - 1;
 
 pub(crate) type AutoBitSetStatic =
     ArrayBitSet<AUTO_STATIC_BITS, { num_masks_for(AUTO_STATIC_BITS) }>;
@@ -1469,7 +1075,34 @@ impl AutoBitSet {
         auto_forward!(self, |b| b.unset(index))
     }
 
-    pub fn raw_bytes(&self) -> &[u8] {
+    /// `self |= other`. Both sets must have the same arm (same bit length).
+    pub fn set_union(&mut self, other: &AutoBitSet) {
+        match (self, other) {
+            (AutoBitSet::Static(a), AutoBitSet::Static(b)) => a.set_union(b),
+            (AutoBitSet::Dynamic(a), AutoBitSet::Dynamic(b)) => a.set_union(b),
+            _ => unreachable!("AutoBitSet::set_union: mismatched bit lengths"),
+        }
+    }
+
+    /// `self &= other`. Both sets must have the same arm (same bit length).
+    pub fn set_intersection(&mut self, other: &AutoBitSet) {
+        match (self, other) {
+            (AutoBitSet::Static(a), AutoBitSet::Static(b)) => a.set_intersection(b),
+            (AutoBitSet::Dynamic(a), AutoBitSet::Dynamic(b)) => a.set_intersection(b),
+            _ => unreachable!("AutoBitSet::set_intersection: mismatched bit lengths"),
+        }
+    }
+
+    /// Is every bit of `self` also set in `other`?
+    pub fn subset_of(&self, other: &AutoBitSet) -> bool {
+        match (self, other) {
+            (AutoBitSet::Static(a), AutoBitSet::Static(b)) => a.subset_of(b),
+            (AutoBitSet::Dynamic(a), AutoBitSet::Dynamic(b)) => a.subset_of(b),
+            _ => unreachable!("AutoBitSet::subset_of: mismatched bit lengths"),
+        }
+    }
+
+    pub(crate) fn raw_bytes(&self) -> &[u8] {
         match self {
             AutoBitSet::Static(s) => bun_core::cast_slice::<usize, u8>(&s.masks),
             AutoBitSet::Dynamic(d) => d.bytes(),
@@ -1482,10 +1115,6 @@ impl AutoBitSet {
 
     pub fn eql(&self, b: &AutoBitSet) -> bool {
         self.raw_bytes() == b.raw_bytes()
-    }
-
-    pub fn hash(&self) -> u64 {
-        bun_wyhash::hash(self.raw_bytes())
     }
 
     pub fn for_each<Ctx>(&self, ctx: &mut Ctx, function: fn(&mut Ctx, usize)) {
@@ -1555,13 +1184,6 @@ impl DynamicBitSet {
         })
     }
 
-    /// Creates a bit set with all elements present.
-    pub fn init_full(bit_length: usize) -> Result<Self, AllocError> {
-        Ok(Self {
-            unmanaged: DynamicBitSetUnmanaged::init_full(bit_length)?,
-        })
-    }
-
     /// Resizes to a new length.  If the new length is larger
     /// than the old length, fills any added bits with `fill`.
     pub fn resize(&mut self, new_len: usize, fill: bool) -> Result<(), AllocError> {
@@ -1611,20 +1233,9 @@ impl DynamicBitSet {
         self.unmanaged.count()
     }
 
-    /// Changes the value of the specified bit of the bit
-    /// set to match the passed boolean.
-    pub fn set_value(&mut self, index: usize, value: bool) {
-        self.unmanaged.set_value(index, value);
-    }
-
     /// Adds a specific bit to the bit set
     pub fn set(&mut self, index: usize) {
         self.unmanaged.set(index);
-    }
-
-    /// Set all bits to the specified value.
-    pub fn set_all(&mut self, value: bool) {
-        self.unmanaged.set_all(value);
     }
 
     /// Changes the value of all bits in the specified range to
@@ -1637,30 +1248,9 @@ impl DynamicBitSet {
     pub fn unset(&mut self, index: usize) {
         self.unmanaged.unset(index);
     }
-
-    /// Flips a specific bit in the bit set
-    pub fn toggle(&mut self, index: usize) {
-        self.unmanaged.toggle(index);
-    }
-
-    /// Flips all bits in this bit set which are present
-    /// in the toggles bit set.  Both sets must have the
-    /// same bit_length.
-    pub fn toggle_set(&mut self, toggles: &Self) {
-        self.unmanaged.toggle_set(&toggles.unmanaged);
-    }
-
     /// Flips every bit in the bit set.
     pub fn toggle_all(&mut self) {
         self.unmanaged.toggle_all();
-    }
-
-    /// Performs a union of two bit sets, and stores the
-    /// result in the first one.  Bits in the result are
-    /// set if the corresponding bits were set in either input.
-    /// The two sets must both be the same bit_length.
-    pub fn set_union(&mut self, other: &Self) {
-        self.unmanaged.set_union(&other.unmanaged);
     }
 
     /// Performs an intersection of two bit sets, and stores
@@ -1669,24 +1259,6 @@ impl DynamicBitSet {
     /// The two sets must both be the same bit_length.
     pub fn set_intersection(&mut self, other: &Self) {
         self.unmanaged.set_intersection(&other.unmanaged);
-    }
-
-    /// Finds the index of the first set bit.
-    /// If no bits are set, returns null.
-    pub fn find_first_set(&self) -> Option<usize> {
-        self.unmanaged.find_first_set()
-    }
-
-    /// Finds the index of the first set bit, and unsets it.
-    /// If no bits are set, returns null.
-    pub fn toggle_first_set(&mut self) -> Option<usize> {
-        self.unmanaged.toggle_first_set()
-    }
-
-    /// Returns true iff every corresponding bit in both
-    /// bit sets are the same.
-    pub fn eql(&self, other: &Self) -> bool {
-        self.unmanaged.eql(&other.unmanaged)
     }
 
     /// Iterates through the items in the set, according to the options.
@@ -1699,36 +1271,6 @@ impl DynamicBitSet {
     ) -> BitSetIterator<'_, KIND_SET, DIR_FWD> {
         self.unmanaged.iterator::<KIND_SET, DIR_FWD>()
     }
-}
-
-// ───────────────────────────── IteratorOptions ─────────────────────────────
-
-/// Options for configuring an iterator over a bit set
-#[derive(Clone, Copy, Default)]
-pub struct IteratorOptions {
-    /// determines which bits should be visited
-    pub kind: IteratorKind,
-    /// determines the order in which bit indices should be visited
-    pub direction: IteratorDirection,
-}
-
-#[derive(PartialEq, Eq, Clone, Copy, Default)]
-pub enum IteratorKind {
-    /// visit indexes of set bits
-    #[default]
-    Set,
-    /// visit indexes of unset bits
-    Unset,
-}
-
-#[derive(PartialEq, Eq, Clone, Copy, Default)]
-pub enum IteratorDirection {
-    /// visit indices in ascending order
-    #[default]
-    Forward,
-    /// visit indices in descending order.
-    /// Note that this may be slightly more expensive than forward iteration.
-    Reverse,
 }
 
 // ───────────────────────────── BitSetIterator ─────────────────────────────

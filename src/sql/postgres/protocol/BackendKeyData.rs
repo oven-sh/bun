@@ -1,19 +1,9 @@
 use super::new_reader::NewReader;
 use crate::postgres::AnyPostgresError;
 
-#[derive(Default)]
-pub struct BackendKeyData {
-    pub process_id: u32,
-    pub secret_key: u32,
-}
+pub struct BackendKeyData {}
 
 impl BackendKeyData {
-    pub fn decode<Container: super::new_reader::ReaderContext>(
-        context: Container,
-    ) -> Result<Self, AnyPostgresError> {
-        Self::decode_internal(NewReader { wrapped: context })
-    }
-
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         mut reader: NewReader<Container>,
     ) -> Result<Self, AnyPostgresError> {
@@ -21,10 +11,9 @@ impl BackendKeyData {
             return Err(AnyPostgresError::InvalidBackendKeyData);
         }
 
-        Ok(Self {
-            // i32 -> u32: same-width signed→unsigned `as` cast preserves bits.
-            process_id: reader.int4()?,
-            secret_key: reader.int4()?,
-        })
+        // process_id, secret_key
+        reader.int4()?;
+        reader.int4()?;
+        Ok(Self {})
     }
 }

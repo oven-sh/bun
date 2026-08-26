@@ -22,7 +22,7 @@
  * rustc has no option to emit a regular-LTO summary, so this step bolts
  * one on:
  *
- *   1. extract the bitcode member(s) from `libbun_rust.a`,
+ *   1. extract the bitcode member(s) from `libbun_runtime.a`,
  *   2. `llvm-link` in a stub that adds the `ThinLTO=0` module flag — that
  *      flag is what makes the bitcode writer emit a FULL_LTO summary block
  *      instead of a ThinLTO one,
@@ -39,7 +39,7 @@
  * `rust_build_cross` rule self-heals missing `rust-std` targets on CI
  * agents that pin the toolchain via `RUSTUP_TOOLCHAIN`.
  *
- * argv: [node, rust-lto-fix-cli.ts, <libbun_rust.a>, <out.o>, <llvm-bin-dir>, <ar>]
+ * argv: [node, rust-lto-fix-cli.ts, <libbun_runtime.a>, <out.o>, <llvm-bin-dir>, <ar>]
  */
 
 import { spawnSync } from "node:child_process";
@@ -80,7 +80,7 @@ function isBitcode(path: string): boolean {
  * list), so install it on demand.
  */
 function ensureLlvmTools(llvmBin: string): void {
-  const needed = ["llvm-link", "opt", "llvm-as"];
+  const needed = ["llvm-link", "opt", "llvm-as", "llvm-dis"];
   const missing = () => needed.filter(t => !existsSync(join(llvmBin, t)));
   if (missing().length === 0) return;
 
@@ -103,7 +103,7 @@ function main(): void {
   const argv = process.argv.slice(2);
   assert(
     argv[0] !== undefined && argv[1] !== undefined && argv[2] !== undefined && argv[3] !== undefined,
-    "usage: rust-lto-fix-cli.ts <libbun_rust.a> <out.o> <llvm-bin-dir> <ar>",
+    "usage: rust-lto-fix-cli.ts <libbun_runtime.a> <out.o> <llvm-bin-dir> <ar>",
   );
   // Ninja passes buildDir-relative $in/$out and runs us with cwd=buildDir,
   // but the archive is extracted with cwd set to the scratch dir below —
@@ -134,9 +134,21 @@ function main(): void {
     // The `ThinLTO=0` module flag is the bitcode writer's "this is a regular
     // LTO module" marker — without it `--module-summary` writes a ThinLTO
     // summary block and lld would send the module to a ThinLTO backend.
+    // Carry the module's target data layout on the stub too: without it the
+    // stub's empty layout mismatches the real module and llvm-link prints a
+    // "Linking two modules of different data layouts" warning on every link.
+    // llvm-dis streams the .ll header first, so a bounded read suffices.
+    const dis = spawnSync(join(llvmBin, "llvm-dis"), ["-o", "-", bitcode[0]], {
+      encoding: "utf8",
+      maxBuffer: 256 * 1024,
+    });
+    const dataLayout = /^target datalayout = "[^"]*"/m.exec(dis.stdout || "")?.[0];
     const stubLl = join(tmp, "regular-lto-flag-stub.ll");
     const stubBc = join(tmp, "regular-lto-flag-stub.bc");
-    writeFileSync(stubLl, '!llvm.module.flags = !{!0}\n!0 = !{i32 1, !"ThinLTO", i32 0}\n');
+    writeFileSync(
+      stubLl,
+      `${dataLayout ? `${dataLayout}\n` : ""}!llvm.module.flags = !{!0}\n!0 = !{i32 1, !"ThinLTO", i32 0}\n`,
+    );
     run(join(llvmBin, "llvm-as"), [stubLl, "-o", stubBc]);
 
     const merged = join(tmp, "merged.bc");

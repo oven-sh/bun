@@ -12,13 +12,13 @@ pub(crate) type LineCount = bun_core::GenericIndex<u32, u8>;
 /// generated_line is recomputed per concatenation).
 #[derive(Copy, Clone, Default)]
 pub struct EndState {
-    pub original_line: i32,
-    pub original_column: i32,
+    pub(crate) original_line: i32,
+    pub(crate) original_column: i32,
     /// Chunk-local source index of the last emitted mapping.
     /// `0` → the input file itself (the intermediate); `1 + i` → inner
     /// source `i` from the input file's `//# sourceMappingURL=` chain.
     /// Only nonzero when `inner_sources` is non-empty.
-    pub source_index: i32,
+    pub(crate) source_index: i32,
 }
 
 /// An inner source contributed by the input file's own
@@ -28,8 +28,8 @@ pub struct EndState {
 /// `escaped_content` is the JSON-quoted `sourcesContent[i]` (empty when
 /// the input map did not carry content for that slot).
 pub struct InnerSource {
-    pub path: Box<[u8]>,
-    pub escaped_content: Box<[u8]>,
+    pub(crate) path: Box<[u8]>,
+    pub(crate) escaped_content: Box<[u8]>,
 }
 
 /// Packed source mapping data for a single file.
@@ -40,15 +40,15 @@ pub struct PackedMap {
     /// The bundler runs quoting on multiple threads, so it only makes sense
     /// to preserve that effort for concatenation and re-concatenation.
     escaped_source: Box<[u8]>,
-    pub end_state: EndState,
+    pub(crate) end_state: EndState,
     /// Inner sources contributed by the input file's own sourcemap.
     /// Empty when the input carried no `//# sourceMappingURL=` chain (the
     /// common case).
-    pub inner_sources: Box<[InnerSource]>,
+    pub(crate) inner_sources: Box<[InnerSource]>,
 }
 
 impl PackedMap {
-    pub fn new_non_empty(
+    pub(crate) fn new_non_empty(
         chunk: &mut bun_sourcemap::Chunk,
         escaped_source: Box<[u8]>,
         inner_sources: Box<[InnerSource]>,
@@ -70,12 +70,12 @@ impl PackedMap {
     /// How many `sources[]` slots this file occupies in the rendered
     /// sourcemap: one for the intermediate input, plus one per inner source.
     #[inline]
-    pub fn source_slot_count(&self) -> usize {
+    pub(crate) fn source_slot_count(&self) -> usize {
         1 + self.inner_sources.len()
     }
 
     #[inline]
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         let mut cost =
             self.vlq().len() + self.quoted_contents().len() + core::mem::size_of::<Self>();
         for inner in self.inner_sources.iter() {
@@ -87,13 +87,13 @@ impl PackedMap {
     }
 
     #[inline]
-    pub fn vlq(&self) -> &[u8] {
+    pub(crate) fn vlq(&self) -> &[u8] {
         &self.vlq_
     }
 
     // TODO: rename to `escaped_source`
     #[inline]
-    pub fn quoted_contents(&self) -> &[u8] {
+    pub(crate) fn quoted_contents(&self) -> &[u8] {
         &self.escaped_source
     }
 }

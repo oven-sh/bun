@@ -37,6 +37,9 @@ export default [
     configurable: false,
     klass: {},
     JSType: "0b11101110",
+    // Per-class cached-stream slot. `Blob::get_stream` reads/writes the
+    // receiver's slot; it must never reach through JSBlob's layout here.
+    values: ["stream"],
     proto: {
       text: { fn: "getText" },
       json: { fn: "getJSON" },

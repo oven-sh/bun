@@ -8,7 +8,7 @@ namespace v8 {
 
 Local<Number> Number::New(Isolate* isolate, double value)
 {
-    return isolate->currentHandleScope()->createLocal<Number>(isolate->vm(), JSC::jsNumber(value));
+    return isolate->currentHandleScope()->createLocal<Number>(isolate->vm(), JSC::jsNumber(JSC::purifyNaN(value)));
 }
 
 Local<Number> Number::NewFromInt32(Isolate* isolate, int32_t value)

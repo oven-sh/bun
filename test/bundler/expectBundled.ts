@@ -6,16 +6,7 @@ import { callerSourceOrigin } from "bun:jsc";
 import type { Matchers } from "bun:test";
 import * as esbuild from "esbuild";
 import filenamify from "filenamify";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isCI, isDebug } from "harness";
 import { tmpdir } from "os";
 import path from "path";
@@ -51,6 +42,39 @@ export function dedent(str: string | TemplateStringsArray, ...args: any[]) {
       .map(x => x.slice(smallest_indent))
       .join("\n")
   );
+}
+
+export function decodeSourceMappingsLine(line: string) {
+  const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const segs: { gen: number; src: number; ol: number; oc: number }[] = [];
+  let gen = 0;
+  let src = 0;
+  let ol = 0;
+  let oc = 0;
+  for (const raw of line ? line.split(",") : []) {
+    const f: number[] = [];
+    let v = 0;
+    let sh = 0;
+    for (const c of raw) {
+      const d = B64.indexOf(c);
+      v |= (d & 31) << sh;
+      if (d & 32) {
+        sh += 5;
+        continue;
+      }
+      f.push(v & 1 ? -(v >>> 1) : v >>> 1);
+      v = 0;
+      sh = 0;
+    }
+    gen += f[0];
+    if (f.length > 1) {
+      src += f[1];
+      ol += f[2];
+      oc += f[3];
+    }
+    segs.push({ gen, src, ol, oc });
+  }
+  return segs;
 }
 
 let currentFile: string | undefined;
@@ -201,6 +225,7 @@ export interface BundlerTestInput {
   globalName?: string;
   ignoreDCEAnnotations?: boolean;
   bytecode?: boolean;
+  bytecodeDepth?: number;
   emitDCEAnnotations?: boolean;
   inject?: string[];
   jsx?: {
@@ -231,6 +256,8 @@ export interface BundlerTestInput {
   targetFromAPI?: "TargetWasConfigured";
   minifyWhitespace?: boolean;
   splitting?: boolean;
+  /** `--min-chunk-size` / `minChunkSize`; requires `splitting` */
+  minChunkSize?: number;
   serverComponents?: boolean;
   reactCompiler?: boolean;
   reactCompilerOutputMode?: "client" | "ssr";
@@ -304,7 +331,7 @@ export interface BundlerTestInput {
   capture?: string[];
 
   /** Run after bundle happens but before runtime. */
-  onAfterBundle?(api: BundlerTestBundleAPI): void;
+  onAfterBundle?(api: BundlerTestBundleAPI): Promise<void> | void;
 
   /* TODO: remove this from the tests after this is implemented */
   skipIfWeDidNotImplementWildcardSideEffects?: boolean;
@@ -504,6 +531,7 @@ function expectBundled(
     snapshotSourceMap,
     sourceMap,
     splitting,
+    minChunkSize,
     target,
     todo: notImplemented,
     treeShaking,
@@ -512,6 +540,7 @@ function expectBundled(
     useDefineForClassFields,
     ignoreDCEAnnotations,
     bytecode = false,
+    bytecodeDepth,
     emitDCEAnnotations,
     production,
     // @ts-expect-error
@@ -601,6 +630,9 @@ function expectBundled(
   }
   if (ESBUILD && _throw) {
     throw new Error("throw not implemented in esbuild");
+  }
+  if (ESBUILD && minChunkSize !== undefined) {
+    throw new Error("minChunkSize not possible in esbuild backend");
   }
   if (ESBUILD && allowUnresolved !== undefined) {
     throw new Error("allowUnresolved not possible in esbuild backend");
@@ -782,14 +814,15 @@ function expectBundled(
               jsx.factory && ["--jsx-factory", jsx.factory],
               jsx.fragment && ["--jsx-fragment", jsx.fragment],
               jsx.importSource && ["--jsx-import-source", jsx.importSource],
-              jsx.side_effects && ["--jsx-side-effects"],
+              jsx.sideEffects && ["--jsx-side-effects"],
               dotenv && ["--env", dotenv],
-              // metafile && `--manifest=${metafile}`,
+              metafile && `--metafile=${metafile}`,
               sourceMap && `--sourcemap=${sourceMap}`,
               entryNaming && entryNaming !== "[dir]/[name].[ext]" && [`--entry-naming`, entryNaming],
               chunkNaming && chunkNaming !== "[name]-[hash].[ext]" && [`--chunk-naming`, chunkNaming],
               assetNaming && assetNaming !== "[name]-[hash].[ext]" && [`--asset-naming`, assetNaming],
               splitting && `--splitting`,
+              minChunkSize !== undefined && `--min-chunk-size=${minChunkSize}`,
               serverComponents && "--server-components",
               reactCompiler && "--react-compiler",
               outbase && `--root=${outbase}`,
@@ -806,6 +839,7 @@ function expectBundled(
               loader && Object.entries(loader).map(([k, v]) => ["--loader", `${k}:${v}`]),
               publicPath && `--public-path=${publicPath}`,
               bytecode && "--bytecode",
+              bytecodeDepth !== undefined && `--bytecode-depth=${bytecodeDepth}`,
               production && "--production",
             ]
           : [
@@ -1158,10 +1192,12 @@ function expectBundled(
           outdir: generateOutput ? buildOutDir : undefined,
           sourcemap: sourceMap,
           splitting,
+          minChunkSize,
           target,
           reactCompiler,
           reactCompilerOutputMode,
           bytecode,
+          bytecodeDepth,
           publicPath,
           emitDCEAnnotations,
           ignoreDCEAnnotations,
@@ -1555,7 +1591,7 @@ for (const [key, blob] of build.outputs) {
     }
 
     if (onAfterBundle) {
-      onAfterBundle(api);
+      await onAfterBundle(api);
     }
 
     // check reference
@@ -1589,6 +1625,24 @@ for (const [key, blob] of build.outputs) {
         const file = file_input.toString("utf8"); // type bug? `file_input` is `Buffer|string`
         if (file.endsWith(".map")) {
           const parsed = await Bun.file(path.join(outdir, file)).json();
+          // SourceMapConsumer re-sorts segments by generated position, so
+          // decode the raw VLQ first to catch out-of-order segments (a
+          // source-map spec violation).
+          {
+            let ln = 0;
+            for (const line of String(parsed.mappings).split(";")) {
+              ln++;
+              const segs = decodeSourceMappingsLine(line);
+              for (let i = 1; i < segs.length; i++) {
+                if (segs[i].gen < segs[i - 1].gen) {
+                  throw new Error(
+                    `${file}: out-of-order segments on generated line ${ln}: ` +
+                      `column ${segs[i - 1].gen} -> ${segs[i].gen}\n  mappings line: ${line}`,
+                  );
+                }
+              }
+            }
+          }
           const mappedLocations = new Map();
           await SourceMapConsumer.with(parsed, null, async map => {
             map.eachMapping(m => {

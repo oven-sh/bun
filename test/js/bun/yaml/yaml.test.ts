@@ -63,9 +63,9 @@ describe("Bun.YAML", () => {
         const str = "value: 42";
         const encoder = new TextEncoder();
         const bytes = encoder.encode(str);
-        // Ensure buffer is aligned for Int32Array
+        // Ensure buffer is aligned for Int32Array; pad with LF (NUL is not c-printable)
         const alignedBuffer = new ArrayBuffer(Math.ceil(bytes.length / 4) * 4);
-        new Uint8Array(alignedBuffer).set(bytes);
+        new Uint8Array(alignedBuffer).fill(0x0a).set(bytes);
         const int32Array = new Int32Array(alignedBuffer);
         expect(YAML.parse(int32Array)).toEqual({ value: 42 });
       });
@@ -74,9 +74,9 @@ describe("Bun.YAML", () => {
         const str = "test: pass";
         const encoder = new TextEncoder();
         const bytes = encoder.encode(str);
-        // Ensure buffer is aligned for Uint32Array
+        // Ensure buffer is aligned for Uint32Array; pad with LF (NUL is not c-printable)
         const alignedBuffer = new ArrayBuffer(Math.ceil(bytes.length / 4) * 4);
-        new Uint8Array(alignedBuffer).set(bytes);
+        new Uint8Array(alignedBuffer).fill(0x0a).set(bytes);
         const uint32Array = new Uint32Array(alignedBuffer);
         expect(YAML.parse(uint32Array)).toEqual({ test: "pass" });
       });
@@ -118,9 +118,9 @@ describe("Bun.YAML", () => {
         const str = "huge: 1000";
         const encoder = new TextEncoder();
         const bytes = encoder.encode(str);
-        // Ensure buffer is aligned for BigUint64Array
+        // Ensure buffer is aligned for BigUint64Array; pad with LF (NUL is not c-printable)
         const alignedBuffer = new ArrayBuffer(Math.ceil(bytes.length / 8) * 8);
-        new Uint8Array(alignedBuffer).set(bytes);
+        new Uint8Array(alignedBuffer).fill(0x0a).set(bytes);
         const bigUint64Array = new BigUint64Array(alignedBuffer);
         expect(YAML.parse(bigUint64Array)).toEqual({ huge: 1000 });
       });
@@ -171,9 +171,9 @@ database:
         const yaml = "[1, 2, 3, 4, 5]";
         const encoder = new TextEncoder();
         const bytes = encoder.encode(yaml);
-        // Ensure buffer is aligned for Uint32Array
+        // Ensure buffer is aligned for Uint32Array; pad with LF (NUL is not c-printable)
         const alignedBuffer = new ArrayBuffer(Math.ceil(bytes.length / 4) * 4);
-        new Uint8Array(alignedBuffer).set(bytes);
+        new Uint8Array(alignedBuffer).fill(0x0a).set(bytes);
         const uint32Array = new Uint32Array(alignedBuffer);
         expect(YAML.parse(uint32Array)).toEqual([1, 2, 3, 4, 5]);
       });
@@ -315,6 +315,15 @@ development:
             size: 100,
           },
         });
+      });
+
+      test("stringifies any other input instead of throwing, undefined and null included", () => {
+        // Unlike TOML/JSONC/JSON5/XML, YAML.parse(undefined) parses the text "undefined".
+        expect(YAML.parse(undefined as any)).toBe("undefined");
+        expect((YAML.parse as any)()).toBe("undefined");
+        expect(YAML.parse(null as any)).toBe(null);
+        expect(YAML.parse(42 as any)).toBe(42);
+        expect(YAML.parse({ toString: () => "a: 1" } as any)).toEqual({ a: 1 });
       });
 
       test("complex nested structure from various input types", () => {
@@ -496,7 +505,7 @@ database:
       });
     });
 
-    test.todo("handles circular references with anchors and aliases", () => {
+    test("handles circular references with anchors and aliases", () => {
       const yaml = `
 parent: &ref
   name: parent
@@ -508,6 +517,168 @@ parent: &ref
       expect(result.parent.name).toBe("parent");
       expect(result.parent.child.name).toBe("child");
       expect(result.parent.child.parent).toBe(result.parent);
+    });
+
+    describe("cyclic aliases", () => {
+      test("block mapping referencing itself", () => {
+        const root = YAML.parse("&a\nname: root\nself: *a\n");
+        expect(root.name).toBe("root");
+        expect(root.self).toBe(root);
+      });
+
+      test("block sequence referencing itself", () => {
+        const seq = YAML.parse("&a\n- 1\n- *a\n- 3\n");
+        expect(seq[0]).toBe(1);
+        expect(seq[1]).toBe(seq);
+        expect(seq[2]).toBe(3);
+      });
+
+      test("flow collections with the anchor on the same line", () => {
+        const map = YAML.parse("&a { name: root, self: *a }");
+        expect(map.self).toBe(map);
+        const seq = YAML.parse("&a [1, *a]");
+        expect(seq[1]).toBe(seq);
+        // nested inside a block collection
+        const doc = YAML.parse("outer:\n  - &a [x, *a]\n  - &b { self: *b }\n");
+        expect(doc.outer[0][1]).toBe(doc.outer[0]);
+        expect(doc.outer[1].self).toBe(doc.outer[1]);
+      });
+
+      test("explicit key mapping whose key and value reference it", () => {
+        const map = YAML.parse("&a\n? key\n: *a\n");
+        expect(map.key).toBe(map);
+        // The mapping node exists before its first key is parsed. A mapping used
+        // as its own key is stringified like any other non-scalar key.
+        expect(YAML.parse("&a\n? *a\n: v\n")).toEqual({ "[object Object]": "v" });
+      });
+
+      test("anchor on the line before an implicit key belongs to the mapping", () => {
+        // [200] the anchor is the block mapping's, so the value may alias it...
+        const map = YAML.parse("&a\n[x]: *a\n");
+        expect(map.x).toBe(map);
+        const map2 = YAML.parse("&a\n{k: v}:\n  nested: *a\n");
+        expect(map2["[object Object]"].nested).toBe(map2);
+        const map3 = YAML.parse("k: &k 1\nsub:\n  &a\n  *k : *a\n");
+        expect(map3.sub["1"]).toBe(map3.sub);
+        // ...and without a `:` it is the flow collection's.
+        expect(YAML.parse("&a\n[x]\n")).toEqual(["x"]);
+        expect(YAML.parse("- &a\n  {k: v}\n- *a\n")).toEqual([{ k: "v" }, { k: "v" }]);
+        // Which of the two is unknown until the closing bracket, so inside the
+        // flow collection the anchor is not visible yet (unchanged).
+        expect(() => YAML.parse("&a\n[*a]\n")).toThrow("Unresolved alias");
+        expect(() => YAML.parse("&a\n{ x: *a }\n")).toThrow("Unresolved alias");
+        expect(() => YAML.parse("key:\n  &a\n  [1, *a]\n")).toThrow("Unresolved alias");
+      });
+
+      test("anchor on the same line as a flow collection implicit key belongs to the key", () => {
+        const seqKey = YAML.parse("x:\n  &k [a]: v\ny: *k\n");
+        expect(seqKey.y).toEqual(["a"]);
+        const mapKey = YAML.parse("x:\n  &k {a: 1}: v\ny: *k\n");
+        expect(mapKey.y).toEqual({ a: 1 });
+        // so the key can refer to itself, while the mapping's own anchor goes
+        // on the line before
+        const both = YAML.parse("&m\n&k {a: 1, self: *k}: *m\nz: *k\n");
+        expect(both["[object Object]"]).toBe(both);
+        expect(both.z.self).toBe(both.z);
+        expect(both.z.a).toBe(1);
+      });
+
+      test("deeply nested back-references", () => {
+        const doc = YAML.parse(`
+root: &root
+  level1:
+    level2:
+      - name: leaf
+        top: *root
+        siblings: &sibs
+          - *root
+          - *sibs
+`);
+        expect(doc.root.level1.level2[0].top).toBe(doc.root);
+        expect(doc.root.level1.level2[0].siblings[0]).toBe(doc.root);
+        expect(doc.root.level1.level2[0].siblings[1]).toBe(doc.root.level1.level2[0].siblings);
+      });
+
+      test("later aliases to a cyclic node are not charged as infinite expansion", () => {
+        const lines = ["a: &a { self: *a, items: &i [*a, *i] }"];
+        for (let i = 0; i < 200; i++) lines.push(`k${i}: [*a, *i]`);
+        const doc = YAML.parse(lines.join("\n"));
+        expect(doc.a.self).toBe(doc.a);
+        expect(doc.k199[0]).toBe(doc.a);
+        expect(doc.k199[1]).toBe(doc.a.items);
+        expect(doc.a.items[1]).toBe(doc.a.items);
+      });
+
+      test("aliases that already resolved are unaffected by an enclosing anchor of the same name", () => {
+        // An enclosing collection is only consulted for aliases that would
+        // otherwise be unresolved; everything else resolves as it always has.
+        const redefinedInside = YAML.parse("- &a [&a 1, *a]\n- *a\n");
+        expect(redefinedInside).toEqual([
+          [1, 1],
+          [1, 1],
+        ]);
+        expect(redefinedInside[1]).toBe(redefinedInside[0]);
+        expect(YAML.parse("- &a 1\n- &a\n  k: *a\n")).toEqual([1, { k: 1 }]);
+        expect(YAML.parse("- &a 1\n- &a\n  [*a]\n")).toEqual([1, [1]]);
+        expect(YAML.parse("x: &a 1\ny: &a\n  z: *a\nw: *a\n")).toEqual({ x: 1, y: { z: 1 }, w: { z: 1 } });
+
+        const doc = YAML.parse("- &a\n  first: *a\n  again: &a 2\n  last: *a\n- *a\n");
+        expect(doc[0].first).toBe(doc[0]);
+        expect(doc[0].last).toBe(2);
+        expect(doc[1]).toBe(doc[0]);
+      });
+
+      test("merge key cannot pull in a mapping that is still being defined", () => {
+        expect(() => YAML.parse("&a\nx: 1\n<<: *a\n")).toThrow("Merge key cannot reference an enclosing node");
+        expect(() => YAML.parse("&a\nx: 1\nchild:\n  <<: *a\n  y: 2\n")).toThrow(
+          "Merge key cannot reference an enclosing node",
+        );
+        expect(() => YAML.parse("&a\nx: 1\nchild:\n  <<: [ { y: 2 }, *a ]\n")).toThrow(
+          "Merge key cannot reference an enclosing node",
+        );
+        // a completed cyclic mapping merges fine
+        const doc = YAML.parse("base: &b\n  self: *b\n  x: 1\nderived:\n  <<: *b\n  y: 2\n");
+        expect(doc.derived).toEqual({ self: doc.base, x: 1, y: 2 });
+        expect(doc.derived.self).toBe(doc.base);
+      });
+
+      test("each document has its own anchors", () => {
+        const docs = YAML.parse("--- &a\n- *a\n--- &a\nk: *a\n");
+        expect(docs).toHaveLength(2);
+        expect(docs[0][0]).toBe(docs[0]);
+        expect(docs[1].k).toBe(docs[1]);
+        expect(() => YAML.parse("--- &a\n- *a\n---\n- *a\n")).toThrow("Unresolved alias");
+      });
+
+      test("importing a cyclic document as a module is rejected", async () => {
+        using dir = tempDir("yaml-cyclic-import", {
+          "cyclic.yaml": "&root\nname: root\nself: *root\n",
+          "shared.yaml": "a: &x { b: 1 }\nc: *x\n",
+          "index.ts": `
+            import shared from "./shared.yaml";
+            console.log(JSON.stringify(shared));
+            try {
+              await import("./cyclic.yaml");
+              console.log("imported");
+            } catch (e) {
+              console.log(e.message);
+            }
+          `,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "index.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: '{"a":{"b":1},"c":{"b":1}}\n' + "Cyclic aliases are only supported by Bun.YAML.parse\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      });
     });
 
     test("handles multiple documents", () => {
@@ -1305,6 +1476,36 @@ folded: >
           // ScanOptions.tag doesn't affect their resolution anyway.
           expect(YAML.parse('a: !!str\n"b": c\n')).toEqual({ a: "", b: "c" });
           expect(YAML.parse("a: !!str\n'b': c\n")).toEqual({ a: "", b: "c" });
+          // Same for a seq entry; the tag resolves e-scalar and the quoted
+          // sibling is not re-scanned.
+          expect(YAML.parse('- !!str\n- "123"\n')).toEqual(["", "123"]);
+          expect(YAML.parse("- !!str\n- '123'\n")).toEqual(["", "123"]);
+          // A quoted scalar that *is* content (indent > n) takes the tag as-is.
+          expect(YAML.parse('a:\n  !!str\n  "0xFF"\n')).toEqual({ a: "0xFF" });
+          expect(YAML.parse("a:\n  !!str\n  '0xFF'\n")).toEqual({ a: "0xFF" });
+          // Block scalar at parent indent after a tag: tag resolves e-scalar
+          // (`|` at indent 0 cannot be [197] flow-in-block content for `a:`).
+          expect(() => YAML.parse("a: !!str\n|\n text\n")).toThrow("Unexpected token");
+        });
+
+        test("multi-line quoted scalars fold line breaks per [120]/[109]", () => {
+          // Line folding: a single break becomes a space, an extra break
+          // becomes a literal newline, and `\\<break>` in double-quoted is a
+          // line continuation (no space). These are the inputs the old
+          // `multiline` computation keyed on; the resolved value is the only
+          // observable.
+          expect(YAML.parse('a: "one\n  two"\n')).toEqual({ a: "one two" });
+          expect(YAML.parse("a: 'one\n  two'\n")).toEqual({ a: "one two" });
+          expect(YAML.parse('a: "one\n\n  two"\n')).toEqual({ a: "one\ntwo" });
+          expect(YAML.parse('a: "one\\\n  two"\n')).toEqual({ a: "onetwo" });
+          expect(YAML.parse('a:\n  "one\n   two"\nb: y\n')).toEqual({ a: "one two", b: "y" });
+          expect(YAML.parse("a:\n  'one\n   two'\nb: y\n")).toEqual({ a: "one two", b: "y" });
+          // Same folding applies in flow context.
+          expect(YAML.parse('["a\n b", c]\n')).toEqual(["a b", "c"]);
+          expect(YAML.parse('{"a\n b": 1}\n')).toEqual({ "a b": 1 });
+          // A multi-line quoted scalar used as an implicit block-map key is
+          // still a [154] violation, regardless of how the value folds.
+          expect(() => YAML.parse('a: !!str\n"b\n c": x\n')).toThrow("Multiline implicit key");
         });
 
         test("tag does not leak to abandoned sibling key", () => {
@@ -1833,11 +2034,37 @@ folded: >
       // Bugs surfaced by the multi-modal bughunt (12 finder lenses × 3 rounds).
       // Each todo asserts the spec-correct result.
       describe("bughunt findings", () => {
-        test.todo("NUL byte (U+0000) is not c-printable — should error, not truncate", () => {
-          // [1] c-printable excludes NUL. Currently NUL is the EOF sentinel, so
-          // input is silently truncated. Data loss / security-adjacent.
-          expect(() => YAML.parse("a: 1\x00b: 2")).toThrow();
-          expect(() => YAML.parse("key: foo\x00bar")).toThrow();
+        describe("NUL byte (U+0000) is not c-printable — should error, not truncate", () => {
+          // [1] c-printable excludes NUL. NUL is the peek()/next() EOF sentinel,
+          // so a literal NUL in the input must be distinguished from real EOF.
+          test.each([
+            ["between mappings", "a: 1\x00b: 2"],
+            ["inside a plain scalar value", "key: foo\x00bar"],
+            ["at start of input", "\x00a: 1"],
+            ["as the only byte", "\x00"],
+            ["inside a block sequence", "- a\n- b\x00- c"],
+            ["inside a literal block scalar", "x: |\n  foo\x00bar"],
+            ["inside a folded block scalar", "x: >\n  foo\x00bar"],
+            ["in a block scalar header", "x: |\x00"],
+            ["inside a comment", "# foo\x00bar\nkey: 1"],
+            ["inside a block-scalar header comment", "x: | # foo\x00bar\n  body"],
+            ["inside a directive trailing comment", "%YAML 1.2 # c\x00mt\n---\nkey: 1"],
+            ["inside a plain scalar (utf16 input)", "😀: foo\x00bar"],
+            ["from a Buffer", Buffer.from("a: 1\x00b: 2")],
+          ] as const)("%s", (_name, input) => {
+            expect(() => YAML.parse(input as string)).toThrow(SyntaxError);
+          });
+          test("flow collections still error (not truncate) on NUL", () => {
+            expect(() => YAML.parse("[a, b\x00, c]")).toThrow(SyntaxError);
+            expect(() => YAML.parse("{a: 1\x00, b: 2}")).toThrow(SyntaxError);
+          });
+          test("quoted scalars still error on NUL", () => {
+            expect(() => YAML.parse('"foo\x00bar"')).toThrow(SyntaxError);
+            expect(() => YAML.parse("'foo\x00bar'")).toThrow(SyntaxError);
+          });
+          test('escaped NUL ("\\0") remains valid', () => {
+            expect(YAML.parse('"a\\0b"')).toBe("a\x00b");
+          });
         });
 
         test.todo("C0/C1/DEL control characters are not c-printable — should error", () => {
@@ -2359,32 +2586,36 @@ my_config:
       expect(YAML.parse(input2)).toMatchSnapshot();
     });
 
-    test("handles YAML bombs", () => {
-      function buildTest(depth) {
-        const lines: string[] = [];
-        lines.push(`a0: &a0\n  k0: 0`);
-        for (let i = 1; i <= depth; i++) {
-          const refs = Array.from({ length: i }, (_, j) => `*a${j}`).join(", ");
-          lines.push(`a${i}: &a${i}\n  <<: [${refs}]\n  k${i}: ${i}`);
+    test(
+      "handles YAML bombs",
+      () => {
+        function buildTest(depth) {
+          const lines: string[] = [];
+          lines.push(`a0: &a0\n  k0: 0`);
+          for (let i = 1; i <= depth; i++) {
+            const refs = Array.from({ length: i }, (_, j) => `*a${j}`).join(", ");
+            lines.push(`a${i}: &a${i}\n  <<: [${refs}]\n  k${i}: ${i}`);
+          }
+          lines.push(`root:\n  <<: *a${depth}`);
+          const input = lines.join("\n");
+
+          const expected: any = {};
+          for (let i = 0; i <= depth; i++) {
+            const record = {};
+            for (let j = 0; j <= i; j++) record[`k${j}`] = j;
+            expected[`a${i}`] = record;
+          }
+          expected.root = { ...expected[`a${depth}`] };
+
+          return { input, expected };
         }
-        lines.push(`root:\n  <<: *a${depth}`);
-        const input = lines.join("\n");
 
-        const expected: any = {};
-        for (let i = 0; i <= depth; i++) {
-          const record = {};
-          for (let j = 0; j <= i; j++) record[`k${j}`] = j;
-          expected[`a${i}`] = record;
-        }
-        expected.root = { ...expected[`a${depth}`] };
+        const { input, expected } = buildTest(24);
 
-        return { input, expected };
-      }
-
-      const { input, expected } = buildTest(24);
-
-      expect(YAML.parse(input)).toEqual(expected);
-    }, 100);
+        expect(YAML.parse(input)).toEqual(expected);
+      },
+      isDebug || isASAN ? 2000 : 100,
+    );
 
     describe("merge keys", () => {
       test("merge overrides", () => {
@@ -2941,16 +3172,19 @@ config:
         expect(parsed.shared.host).toBe("localhost");
       });
 
-      test.todo("handles self-referencing objects", () => {
-        // Skipping as this causes build issues with circular references
-        const obj = { name: "root" };
+      test("handles self-referencing objects and arrays", () => {
+        const obj = { name: "root", list: [] };
         obj.self = obj;
+        obj.list.push(obj, obj.list, { back: obj.list });
 
-        const yaml = YAML.stringify(obj);
-        const parsed = YAML.parse(yaml);
-
-        expect(parsed.self).toBe(parsed);
-        expect(parsed.name).toBe("root");
+        for (const space of [undefined, 2, 10]) {
+          const parsed = YAML.parse(YAML.stringify(obj, null, space));
+          expect(parsed.name).toBe("root");
+          expect(parsed.self).toBe(parsed);
+          expect(parsed.list[0]).toBe(parsed);
+          expect(parsed.list[1]).toBe(parsed.list);
+          expect(parsed.list[2].back).toBe(parsed.list);
+        }
       });
 
       test("generates unique anchor names for different objects", () => {
@@ -3421,7 +3655,51 @@ config:
           str: new String("world"),
           bool: new Boolean(false),
         };
-        expect(YAML.stringify(obj, null, 2)).toBe("num: \n  3.14\nstr: world\nbool: \n  false");
+        expect(YAML.stringify(obj, null, 2)).toBe("num: 3.14\nstr: world\nbool: false");
+      });
+
+      test("boxed Number and Boolean property values stay on the key line in block style", () => {
+        expect(YAML.stringify({ a: new Number(1), b: new Boolean(true), c: new String("s"), d: 1 }, null, 2)).toBe(
+          "a: 1\nb: true\nc: s\nd: 1",
+        );
+        expect(YAML.stringify({ a: new Number(1), b: new Boolean(true), c: new String("s"), d: 1 })).toBe(
+          "{a: 1,b: true,c: s,d: 1}",
+        );
+      });
+
+      test("a boxed property value is written exactly like the primitive it wraps", () => {
+        class Port extends Number {}
+        class Flag extends Boolean {}
+        const boxed = {
+          numbers: { int: new Number(1), float: Object(2.5), nan: new Number(NaN), negativeZero: new Number(-0) },
+          flags: { enabled: new Boolean(true), disabled: Object(false), port: new Port(8080), flag: new Flag(false) },
+          list: [new Number(1), new Boolean(false), { count: new Number(2) }],
+        };
+        const plain = {
+          numbers: { int: 1, float: 2.5, nan: NaN, negativeZero: -0 },
+          flags: { enabled: true, disabled: false, port: 8080, flag: false },
+          list: [1, false, { count: 2 }],
+        };
+        for (const space of [2, 4, "\t", undefined]) {
+          expect(YAML.stringify(boxed, null, space)).toBe(YAML.stringify(plain, null, space));
+        }
+        expect(YAML.parse(YAML.stringify(boxed, null, 2))).toEqual(plain);
+      });
+
+      test("block style unwraps a boxed property value as many times as flow style", () => {
+        let calls = 0;
+        const port = new Number(7);
+        port.valueOf = () => {
+          calls++;
+          return 7;
+        };
+
+        expect(YAML.stringify({ port }, null, 2)).toBe("port: 7");
+        const blockStyleCalls = calls;
+
+        calls = 0;
+        expect(YAML.stringify({ port })).toBe("{port: 7}");
+        expect(blockStyleCalls).toBe(calls);
       });
 
       test("handles Date objects", () => {
@@ -3593,6 +3871,28 @@ config:
 
         // Should throw stack overflow for deeply nested structures
         expect(() => YAML.stringify(deep)).toThrow("Maximum call stack size exceeded");
+      });
+
+      test("stack overflow protection in the write pass", () => {
+        let deep = {};
+        let current = deep;
+        for (let i = 0; i < 1000000; i++) {
+          current.next = {};
+          current = current.next;
+        }
+
+        // stringify reads every property twice: once to find anchors and once
+        // to write. Hand the first read a shallow value so that only the write
+        // pass walks the deep structure.
+        let reads = 0;
+        const root = {
+          get value() {
+            return reads++ === 0 ? {} : deep;
+          },
+        };
+
+        expect(() => YAML.stringify(root)).toThrow("Maximum call stack size exceeded");
+        expect(reads).toBe(2);
       });
 
       test("handles arrays as root with references", () => {
@@ -3958,7 +4258,7 @@ refs:
         expect(parsed.level2.nested.deep.data.id).toBe(4);
       });
 
-      test.todo("handles root level anchors correctly", () => {
+      test("handles root level anchors correctly", () => {
         // When the root itself is referenced
         const obj = { name: "root" };
         obj.self = obj;
@@ -4211,6 +4511,37 @@ refs:
         };
 
         expect(YAML.stringify(obj, null, 2)).toBe("normal: value");
+      });
+
+      // Unwrapping a String/Number wrapper re-enters JS via Symbol.toPrimitive,
+      // which can throw; debug builds abort if that exception is dropped, so
+      // this must run in a subprocess.
+      test("boxed primitive whose Symbol.toPrimitive throws propagates the error", async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `const s = new String();
+             s[Symbol.toPrimitive] = () => String;
+             try { Bun.YAML.stringify(s); } catch (e) { console.log("string:", e.message); }
+             const n = new Number(1);
+             n[Symbol.toPrimitive] = () => Number;
+             try { Bun.YAML.stringify({ a: n }); } catch (e) { console.log("number:", e.message); }
+             try { Bun.YAML.stringify({ a: 1 }, null, s); } catch (e) { console.log("space:", e.message); }`,
+          ],
+          env: bunEnv,
+          stderr: "pipe",
+        });
+
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect(stdout).toBe(
+          "string: Symbol.toPrimitive returned an object\n" +
+            "number: Symbol.toPrimitive returned an object\n" +
+            "space: Symbol.toPrimitive returned an object\n",
+        );
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
       });
 
       test("handles Intl objects", () => {

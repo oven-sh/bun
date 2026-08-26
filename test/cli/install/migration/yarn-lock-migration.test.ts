@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 describe("yarn.lock migration basic", () => {
   test("simple yarn.lock migration produces correct bun.lock", async () => {
-    const tempDir = tempDirWithFiles("yarn-migration-simple", {
+    await using tmpDir = tempDir("yarn-migration-simple", {
       "package.json": JSON.stringify(
         {
           name: "simple-test",
@@ -31,7 +31,7 @@ is-number@^7.0.0:
     // Run bun pm migrate
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -45,14 +45,14 @@ is-number@^7.0.0:
     ]);
 
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("simple-yarn-migration");
   });
 
   test("yarn.lock with packages containing long build tags", async () => {
-    const tempDir = tempDirWithFiles("yarn-migration-build-tags", {
+    await using tmpDir = tempDir("yarn-migration-build-tags", {
       "package.json": JSON.stringify(
         {
           name: "build-tags-test",
@@ -128,7 +128,7 @@ to-fast-properties@^2.0.0:
     // Run bun pm migrate
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -142,9 +142,9 @@ to-fast-properties@^2.0.0:
     ]);
 
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
 
     // Verify that long build tags are preserved correctly
     expect(bunLockContent).toContain("4.16.1-1.4bc8b6e1b66cb932731fb1bdbbc550d1e010de81");
@@ -159,7 +159,7 @@ to-fast-properties@^2.0.0:
     // Install should work after migration
     const installResult = await Bun.spawn({
       cmd: [bunExe(), "install"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -171,7 +171,7 @@ to-fast-properties@^2.0.0:
   });
 
   test("yarn.lock with extremely long build tags (regression test)", async () => {
-    const tempDir = tempDirWithFiles("yarn-migration-extreme-build-tags", {
+    await using tmpDir = tempDir("yarn-migration-extreme-build-tags", {
       "package.json": JSON.stringify(
         {
           name: "extreme-build-tags-test",
@@ -198,7 +198,7 @@ test-package@1.0.0-alpha.beta.gamma.delta.epsilon.zeta.eta.theta.iota.kappa.lamb
     // Run bun pm migrate
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -208,7 +208,7 @@ test-package@1.0.0-alpha.beta.gamma.delta.epsilon.zeta.eta.theta.iota.kappa.lamb
     const exitCode = await migrateResult.exited;
     expect(exitCode).toBe(0);
 
-    const bunLockPath = join(tempDir, "bun.lock");
+    const bunLockPath = join(tmpDir, "bun.lock");
     expect(fs.existsSync(bunLockPath)).toBe(true);
 
     const bunLockContent = fs.readFileSync(bunLockPath, "utf8");
@@ -226,7 +226,7 @@ test-package@1.0.0-alpha.beta.gamma.delta.epsilon.zeta.eta.theta.iota.kappa.lamb
   });
 
   test("complex yarn.lock with multiple dependencies and versions", async () => {
-    const tempDir = tempDirWithFiles("yarn-migration-complex", {
+    await using tmpDir = tempDir("yarn-migration-complex", {
       "package.json": JSON.stringify(
         {
           name: "complex-test",
@@ -714,7 +714,7 @@ vary@~1.1.2:
     // Run bun pm migrate
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -728,14 +728,14 @@ vary@~1.1.2:
     ]);
 
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("complex-yarn-migration");
   });
 
   test("yarn.lock with npm aliases", async () => {
-    const tempDir = tempDirWithFiles("yarn-migration-aliases", {
+    await using tmpDir = tempDir("yarn-migration-aliases", {
       "package.json": JSON.stringify(
         {
           name: "alias-test",
@@ -786,7 +786,7 @@ undici-types@~5.26.4:
     // Run bun pm migrate
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -800,9 +800,9 @@ undici-types@~5.26.4:
     ]);
 
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("aliases-yarn-migration");
 
     // Verify that npm aliases are handled correctly
@@ -810,8 +810,101 @@ undici-types@~5.26.4:
     expect(bunLockContent).toContain('"my-lodash": ["lodash@4.17.21"');
   });
 
+  test("yarn.lock with npm aliases of a scoped package keep the scope", async () => {
+    const typesNode20Integrity =
+      "sha512-g557vgQjUUfN76MZAN/dt1z3dzcUsimuysco0KeluHgrPdJXkP/XdAURgyO2W9fZWHRtRBiVKzKn8vyOAwlG+w==";
+    const typesNode18Integrity = "sha512-" + Buffer.alloc(64, 1).toString("base64");
+    const needsNodeTypesIntegrity = "sha512-" + Buffer.alloc(64, 2).toString("base64");
+
+    await using tmpDir = tempDir("yarn-migration-scoped-aliases", {
+      "package.json": JSON.stringify(
+        {
+          name: "scoped-alias-test",
+          version: "1.0.0",
+          dependencies: {
+            "@aliased/node-types": "npm:@types/node@20.11.5",
+            "@types/node": "^18.0.0",
+            "my-node-types": "npm:@types/node@20.11.5",
+            "needs-node-types": "1.0.0",
+          },
+        },
+        null,
+        2,
+      ),
+      // yarn v1 lists every pattern that resolved to the same tarball on one key line,
+      // so the three aliases of @types/node@20.11.5 share a single entry.
+      "yarn.lock": `# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
+# yarn lockfile v1
+
+
+"@aliased/node-types@npm:@types/node@20.11.5", "my-node-types@npm:@types/node@20.11.5", "types-alias@npm:@types/node@20.11.5":
+  version "20.11.5"
+  resolved "https://registry.yarnpkg.com/@types/node/-/node-20.11.5.tgz#be10c622ca7fcaa3cf226cf80166abc31389d86e"
+  integrity ${typesNode20Integrity}
+
+"@types/node@^18.0.0":
+  version "18.19.0"
+  resolved "https://registry.yarnpkg.com/@types/node/-/node-18.19.0.tgz#1111111111111111111111111111111111111111"
+  integrity ${typesNode18Integrity}
+
+needs-node-types@1.0.0:
+  version "1.0.0"
+  resolved "https://registry.yarnpkg.com/needs-node-types/-/needs-node-types-1.0.0.tgz#2222222222222222222222222222222222222222"
+  integrity ${needsNodeTypesIntegrity}
+  dependencies:
+    types-alias "npm:@types/node@20.11.5"
+`,
+    });
+
+    // After migrating, bun fetches the manifest of every migrated package by the name it
+    // recorded, so the registry sees which package each alias was resolved to.
+    const requestedManifests = new Set<string>();
+    await using registry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        requestedManifests.add(decodeURIComponent(new URL(req.url).pathname.slice(1)));
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "migrate", "-f"],
+      cwd: tmpDir,
+      env: {
+        ...bunEnv,
+        BUN_CONFIG_REGISTRY: registry.url.href,
+        BUN_INSTALL_CACHE_DIR: join(tmpDir, ".bun-cache"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(exitCode).toBe(0);
+
+    const lock = Bun.JSONC.parse(await Bun.file(join(tmpDir, "bun.lock")).text()) as { packages: unknown };
+    expect(lock.packages).toStrictEqual({
+      "@aliased/node-types": ["@types/node@20.11.5", "", {}, typesNode20Integrity],
+      "@types/node": ["@types/node@18.19.0", "", {}, typesNode18Integrity],
+      "my-node-types": ["@types/node@20.11.5", "", {}, typesNode20Integrity],
+      "needs-node-types": [
+        "needs-node-types@1.0.0",
+        "",
+        { dependencies: { "types-alias": "npm:@types/node@20.11.5" } },
+        needsNodeTypesIntegrity,
+      ],
+      "types-alias": ["@types/node@20.11.5", "", {}, typesNode20Integrity],
+    });
+
+    expect([...requestedManifests].sort()).toStrictEqual(["@types/node", "needs-node-types"]);
+  });
+
   test("yarn.lock with resolutions", async () => {
-    const tempDir = tempDirWithFiles("yarn-migration-resolutions", {
+    await using tmpDir = tempDir("yarn-migration-resolutions", {
       "package.json": JSON.stringify(
         {
           name: "resolutions-test",
@@ -876,7 +969,7 @@ webpack@^5.89.0:
     // Run bun pm migrate
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -890,17 +983,84 @@ webpack@^5.89.0:
     ]);
 
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("resolutions-yarn-migration");
 
     // Verify resolutions are handled
     expect(bunLockContent).toContain("resolutions");
   });
 
+  test.concurrent("workspace yarn.lock with $ref resolutions", async () => {
+    await using tmpDir = tempDir("yarn-migration-ref-resolutions", {
+      "package.json": JSON.stringify(
+        {
+          name: "ref-resolutions-root",
+          private: true,
+          workspaces: ["packages/*"],
+          dependencies: {
+            "is-number": "^7.0.0",
+          },
+          resolutions: {
+            "acorn": "$acorn",
+            "is-number": "$is-number",
+            "is-odd": "$missing",
+            "is-even": "1.0.0",
+          },
+        },
+        null,
+        2,
+      ),
+      "packages/a/package.json": JSON.stringify({
+        name: "@ref/a",
+        version: "1.0.0",
+        dependencies: { acorn: "^8.11.3" },
+      }),
+      "yarn.lock": `# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
+# yarn lockfile v1
+
+
+acorn@^8.11.3:
+  version "8.11.3"
+  resolved "https://registry.yarnpkg.com/acorn/-/acorn-8.11.3.tgz#71e0b14e13a4ec160724b38fb7b0f233b1b81d7a"
+  integrity sha512-Y9rRfJG5jcKOE0CLisYbojUjIrIEE7AGMzA/Sm4BslANhbS+cDMpgBdcPT91oJ7OuJ9hYJBx59RjbhxVnrF8Xg==
+
+is-number@^7.0.0:
+  version "7.0.0"
+  resolved "https://registry.yarnpkg.com/is-number/-/is-number-7.0.0.tgz#7535345b896734d5f80c4d06c50955527a14f12b"
+  integrity sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng==
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "migrate", "-f"],
+      cwd: tmpDir,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(tmpDir, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toContain('warn: Could not resolve "$missing": "missing" is not in dependencies');
+    expect(stderr).not.toContain('"$acorn"');
+    expect(stderr).not.toContain('"$is-number"');
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(exitCode).toBe(0);
+
+    const lock = Bun.JSONC.parse(await Bun.file(join(tmpDir, "bun.lock")).text()) as { overrides: unknown };
+    expect(lock.overrides).toStrictEqual({
+      "acorn": "^8.11.3",
+      "is-even": "1.0.0",
+      "is-number": "^7.0.0",
+    });
+  });
+
   test("yarn.lock with workspace dependencies", async () => {
-    const tempDir = tempDirWithFiles("yarn-migration-workspace", {
+    await using tmpDir = tempDir("yarn-migration-workspace", {
       "package.json": JSON.stringify(
         {
           name: "workspace-root",
@@ -974,7 +1134,7 @@ lodash@^4.17.21:
     // Run bun pm migrate
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -988,9 +1148,9 @@ lodash@^4.17.21:
     ]);
 
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("workspace-yarn-migration");
 
     // TODO: Workspace dependencies are not yet supported in yarn migration
@@ -998,7 +1158,7 @@ lodash@^4.17.21:
   });
 
   test("yarn.lock with scoped packages and parent/child relationships", async () => {
-    const tempDir = tempDirWithFiles("yarn-migration-scoped", {
+    await using tmpDir = tempDir("yarn-migration-scoped", {
       "package.json": JSON.stringify(
         {
           name: "scoped-test",
@@ -1089,7 +1249,7 @@ babel-loader/chalk@^2.4.2:
     // Run bun pm migrate
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -1103,9 +1263,9 @@ babel-loader/chalk@^2.4.2:
     ]);
 
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("scoped-yarn-migration");
 
     // Verify scoped packages are at the bottom
@@ -1124,7 +1284,7 @@ babel-loader/chalk@^2.4.2:
 
   test("migration with realistic complex yarn.lock", async () => {
     // Create a realistic yarn.lock with various edge cases
-    const tempDir = tempDirWithFiles("yarn-migration-complex-realistic", {
+    await using tmpDir = tempDir("yarn-migration-complex-realistic", {
       "package.json": JSON.stringify(
         {
           name: "complex-app",
@@ -1314,7 +1474,7 @@ webpack@^5.75.0:
     // Run bun pm migrate
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -1323,9 +1483,9 @@ webpack@^5.75.0:
 
     const exitCode = await migrateResult.exited;
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("complex-realistic-yarn-migration");
 
     // Verify key features are migrated
@@ -1352,14 +1512,14 @@ describe("bun pm migrate for existing yarn.lock", () => {
     const packageJsonContent = await Bun.file(join(import.meta.dir, "yarn", folder, "package.json")).text();
     const yarnLockContent = await Bun.file(join(import.meta.dir, "yarn", folder, "yarn.lock")).text();
 
-    const tempDir = tempDirWithFiles("yarn-lock-migration-", {
+    await using tmpDir = tempDir("yarn-lock-migration-", {
       "package.json": packageJsonContent,
       "yarn.lock": yarnLockContent,
     });
 
     const migrateResult = Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -1367,14 +1527,14 @@ describe("bun pm migrate for existing yarn.lock", () => {
     });
 
     expect(migrateResult.exited).resolves.toBe(0);
-    expect(Bun.file(join(tempDir, "bun.lock")).exists()).resolves.toBe(true);
+    expect(Bun.file(join(tmpDir, "bun.lock")).exists()).resolves.toBe(true);
 
-    const bunLockContent = await Bun.file(join(tempDir, "bun.lock")).text();
+    const bunLockContent = await Bun.file(join(tmpDir, "bun.lock")).text();
     expect(bunLockContent).toMatchSnapshot(folder);
   });
 
   test("yarn.lock with packages that have os/cpu requirements", async () => {
-    const tempDir = tempDirWithFiles("yarn-migration-os-cpu", {
+    await using tmpDir = tempDir("yarn-migration-os-cpu", {
       "package.json": JSON.stringify(
         {
           name: "os-cpu-test",
@@ -1454,7 +1614,7 @@ fsevents@^2.3.2:
     // Run bun pm migrate
     const migrateResult = await Bun.spawn({
       cmd: [bunExe(), "pm", "migrate", "-f"],
-      cwd: tempDir,
+      cwd: tmpDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -1468,9 +1628,9 @@ fsevents@^2.3.2:
     ]);
 
     expect(exitCode).toBe(0);
-    expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tempDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("os-cpu-yarn-migration");
 
     // Verify that the lockfile contains the expected os/cpu metadata by checking the snapshot

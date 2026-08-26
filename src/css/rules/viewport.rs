@@ -4,14 +4,14 @@ use crate::{DeclarationBlock, PrintErr, Printer, VendorPrefix};
 /// A [@viewport](https://drafts.csswg.org/css-device-adapt/#atviewport-rule) rule.
 pub struct ViewportRule {
     /// The vendor prefix for this rule, e.g. `@-ms-viewport`.
-    pub vendor_prefix: VendorPrefix,
+    pub(crate) vendor_prefix: VendorPrefix,
     /// The declarations within the `@viewport` rule.
     // `DeclarationBlock<'bump>` borrows the parser arena; the lifetime is
     // erased to `'static` here, matching `CssRule<R>` in rules/mod.rs
     // (the `'bump` arena lifetime is re-threaded crate-wide in one pass).
-    pub declarations: DeclarationBlock<'static>,
+    pub(crate) declarations: DeclarationBlock<'static>,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl ViewportRule {

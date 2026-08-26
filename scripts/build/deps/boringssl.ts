@@ -22,9 +22,9 @@
 
 import { quote } from "../shell.ts";
 import type { Dependency, DirectBuild } from "../source.ts";
-import { depSourceDir } from "../source.ts";
+import { LIBC_ALLOCATION_SYMBOLS, depSourceDir } from "../source.ts";
 
-const BORINGSSL_COMMIT = "1a41b9025c2c0a37edd07ff10f6944f03e028522";
+const BORINGSSL_COMMIT = "2288897e2e716330490893d226b4f079f9da9e0c";
 
 export const boringssl: Dependency = {
   name: "boringssl",
@@ -48,6 +48,13 @@ export const boringssl: Dependency = {
       includes: ["include"],
       defines: {
         BORINGSSL_IMPLEMENTATION: true,
+        // The fork (oven-sh/boringssl#11) binds OPENSSL_memory_* as plain externs
+        // on every object format, not just as ELF weak symbols, and routes the
+        // sites upstream keeps on libc malloc (TLS record buffers, error queue,
+        // thread-local tables) through OPENSSL_system_*; src/boringssl/lib.rs
+        // defines all of them. Off under ASAN so BoringSSL stays on the
+        // intercepted libc heap instead of mimalloc.
+        ...(!cfg.asan && { BORINGSSL_REQUIRE_MEMORY_HOOKS: true }),
         ...(cfg.windows && {
           _HAS_EXCEPTIONS: 0,
           WIN32_LEAN_AND_MEAN: true,
@@ -77,6 +84,10 @@ export const boringssl: Dependency = {
         "-gcv8",
         `-I${quote(depSourceDir(cfg, "boringssl") + "/gen/", cfg.host.os === "windows")}`,
       ],
+      // With the hooks on, nothing in BoringSSL may allocate from libc any
+      // more (mem.cc's fallback is dead code the compiler drops); under ASAN
+      // the fallbacks are live and libc is the point.
+      ...(!cfg.asan && { forbidUndefined: { symbols: LIBC_ALLOCATION_SYMBOLS } }),
     };
     return spec;
   },

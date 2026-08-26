@@ -23,7 +23,7 @@ use crate::reactive_scopes::visitors::{
 
 /// Rewrites block IDs to sequential values.
 /// TS: `stabilizeBlockIds`
-pub fn stabilize_block_ids(func: &mut ReactiveFunction, env: &mut Environment) {
+pub(crate) fn stabilize_block_ids(func: &mut ReactiveFunction, env: &mut Environment) {
     // Pass 1: Collect referenced labels (preserving insertion order to match TS Set behavior)
     let mut referenced: IndexSet<BlockId> = IndexSet::new();
     let collector = CollectReferencedLabels { env: &*env };

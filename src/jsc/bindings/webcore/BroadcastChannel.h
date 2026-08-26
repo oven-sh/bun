@@ -36,7 +36,7 @@
 
 #pragma once
 
-#include "ContextDestructionObserver.h"
+#include "ActiveDOMObject.h"
 #include "EventTarget.h"
 #include "ExceptionOr.h"
 #include "ScriptExecutionContext.h"
@@ -52,18 +52,22 @@ namespace WebCore {
 
 class SerializedScriptValue;
 
-class BroadcastChannel final : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<BroadcastChannel>, public EventTarget, public ContextDestructionObserver {
+class BroadcastChannel final : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<BroadcastChannel>, public EventTarget, public ActiveDOMObject {
     WTF_MAKE_TZONE_ALLOCATED(BroadcastChannel);
 
 public:
     static Ref<BroadcastChannel> create(ScriptExecutionContext& context, const String& name)
     {
-        return adoptRef(*new BroadcastChannel(context, name));
+        auto channel = adoptRef(*new BroadcastChannel(context, name));
+        channel->suspendIfNeeded();
+        return channel;
     }
     ~BroadcastChannel();
 
-    using ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<BroadcastChannel>::ref;
-    using ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<BroadcastChannel>::deref;
+    // ActiveDOMObject.
+    void ref() const final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::ref(); }
+    void deref() const final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::deref(); }
+    USING_CAN_MAKE_WEAKPTR(EventTarget);
 
     String name() const { return m_name; }
 
@@ -73,8 +77,6 @@ public:
 
     // Called on this channel's context thread with one message.
     void dispatchMessage(Ref<SerializedScriptValue>&&);
-
-    bool hasPendingActivity() const;
 
     void jsRef(JSGlobalObject*);
     void jsUnref(JSGlobalObject*);
@@ -86,11 +88,15 @@ private:
 
     // EventTarget
     EventTargetInterface eventTargetInterface() const final { return BroadcastChannelEventTargetInterfaceType; }
-    ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
+    ScriptExecutionContext* scriptExecutionContext() const final { return ActiveDOMObject::scriptExecutionContext(); }
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
     void eventListenersDidChange() final;
+
+    // ActiveDOMObject.
     void contextDestroyed() final;
+    bool virtualHasPendingActivity() const final;
+    void stop() final { close(); }
 
     // State is a single atomic so the GC-thread hasPendingActivity() check
     // never takes a lock.

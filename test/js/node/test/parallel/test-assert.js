@@ -557,7 +557,7 @@ test('Output that extends beyond 10 lines should also be truncated for display',
     assert.strictEqual(multilineString, '');
   }, (err) => {
     assert.strictEqual(err.code, 'ERR_ASSERTION');
-    assert.strictEqual(err.message.split('\n').length, 21);
+    assert.strictEqual(err.message.split('\n').length, 20);
     assert.strictEqual(err.actual.split('\n').length, 16);
     assert.ok(inspect(err).includes(
       "actual: 'fhqwhgads\\n' +\n" +
@@ -1048,8 +1048,9 @@ test('Additional asserts', () => {
     {
       code: 'ERR_INVALID_ARG_TYPE',
       name: 'TypeError',
-      // message: 'The "error" argument must be of type Object, Error, Function or RegExp. Received: "Error message"',
-      message: 'The "error" argument must be of type function or an instance of Error, RegExp, or Object.' + invalidArgTypeHelper('Error message'),
+      message: 'The "error" argument must be of type function or ' +
+              'an instance of Error, RegExp, or Object. Received type string ' +
+              "('Error message')"
     }
   );
 
@@ -1059,7 +1060,9 @@ test('Additional asserts', () => {
       () => assert.throws(() => {}, input),
       {
         code: 'ERR_INVALID_ARG_TYPE',
-        message: 'The "error" argument must be of type function or an instance of Error, RegExp, or Object.' + invalidArgTypeHelper(input)
+        message: 'The "error" argument must be of type function or ' +
+                'an instance of Error, RegExp, or Object.' +
+                invalidArgTypeHelper(input)
 
       }
     );
@@ -1141,7 +1144,7 @@ test('Throws accepts objects', () => {
       name: 'TypeError',
       code: 'ERR_INVALID_ARG_TYPE',
       message: 'The "expected" argument must be of type function or an ' +
-        'instance of RegExp.' + invalidArgTypeHelper({foo: 'bar'})
+               'instance of RegExp. Received an instance of Object'
     }
   );
 
@@ -1493,8 +1496,8 @@ test('Additional assert', () => {
       () => assert.match(/abc/, 'string'),
       {
         code: 'ERR_INVALID_ARG_TYPE',
-        message: 'The "regexp" argument must be of type RegExp.' +
-          invalidArgTypeHelper('string')
+        message: 'The "regexp" argument must be an instance of RegExp. ' +
+                "Received type string ('string')"
       }
     );
     assert.throws(
@@ -1546,8 +1549,8 @@ test('Additional assert', () => {
       () => assert.doesNotMatch(/abc/, 'string'),
       {
         code: 'ERR_INVALID_ARG_TYPE',
-        message: 'The "regexp" argument must be of type RegExp.' +
-        invalidArgTypeHelper('string')
+        message: 'The "regexp" argument must be an instance of RegExp. ' +
+                "Received type string ('string')"
       }
     );
     assert.throws(

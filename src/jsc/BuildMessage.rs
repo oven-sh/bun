@@ -1,10 +1,8 @@
 use core::cell::Cell;
 use std::io::Write as _;
 
-use crate::zig_string::ZigString;
-use crate::{
-    CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _, ZigStringJsc as _,
-};
+use crate::bun_string_jsc;
+use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
 
 #[crate::JsClass] // codegen: JSBuildMessage (toJS / fromJS / fromJSDirect wired by derive)
 // R-2 (`sharedThis`): every JS-facing host-fn takes `&self`; the only field
@@ -13,22 +11,13 @@ use crate::{
 pub struct BuildMessage {
     pub msg: bun_ast::Msg,
     // resolve_result: Resolver.Result,
-    pub logged: Cell<bool>,
-}
-
-impl Default for BuildMessage {
-    fn default() -> Self {
-        Self {
-            msg: bun_ast::Msg::default(),
-            logged: Cell::new(false),
-        }
-    }
+    pub(crate) logged: Cell<bool>,
 }
 
 impl BuildMessage {
     // `#[JsClass]` emits `BuildMessageClass__construct` calling this.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut BuildMessage> {
-        Err(global.throw_illegal_constructor("BuildMessage"))
+        Err(global.throw_illegal_constructor())
     }
 
     #[crate::host_fn(getter)]
@@ -45,34 +34,15 @@ impl BuildMessage {
         })
     }
 
-    pub fn to_string_fn(&self, global: &JSGlobalObject) -> JSValue {
-        // write! into a Vec<u8>; Rust aborts on OOM so no OOM-throw path is needed.
-        let mut text: Vec<u8> = Vec::new();
+    pub(crate) fn to_string_fn(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        let mut text = Vec::new();
         write!(
             &mut text,
             "BuildMessage: {}",
             bstr::BStr::new(&self.msg.data.text)
         )
         .expect("infallible: in-memory write");
-
-        let mut str = ZigString::init(&text);
-        str.set_output_encoding();
-        if str.is_utf8() {
-            let out = str.to_js(global);
-            // default_allocator.free(text) → `text` drops on return.
-            return out;
-        }
-
-        // All-ASCII path: hand the buffer to JSC as an external Latin-1 string.
-        // Ownership transfers via `heap::alloc`; the external-string finalizer
-        // calls `mi_free` on the block (global allocator is mimalloc).
-        let len = text.len();
-        let ptr = bun_core::heap::into_raw(text.into_boxed_slice()).cast::<u8>();
-        // SAFETY: ptr/len describe a contiguous mimalloc-owned buffer just
-        // released by `heap::alloc`; it stays live until JSC frees it.
-        let mut str = ZigString::init(unsafe { bun_core::ffi::slice(ptr, len) });
-        str.set_output_encoding();
-        str.to_external_value(global)
+        bun_string_jsc::owned_utf8_into_js(global, text)
     }
 
     /// Clone `msg` into a
@@ -97,7 +67,7 @@ impl BuildMessage {
 
     #[crate::host_fn(method)]
     pub fn to_string(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        Ok(self.to_string_fn(global))
+        self.to_string_fn(global)
     }
 
     #[crate::host_fn(method)]
@@ -106,16 +76,15 @@ impl BuildMessage {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_ = callframe.arguments_old::<1>();
-        let args = &args_.ptr[0..args_.len];
+        let args = callframe.arguments();
         if !args.is_empty() {
             if !args[0].is_string() {
                 return Ok(JSValue::NULL);
             }
 
-            let str = args[0].get_zig_string(global)?;
-            if str.eql_comptime(b"default") || str.eql_comptime(b"string") {
-                return Ok(self.to_string_fn(global));
+            let str = args[0].to_bun_string(global)?;
+            if str.eq_ascii(b"default") || str.eq_ascii(b"string") {
+                return self.to_string_fn(global);
             }
         }
 
@@ -128,7 +97,7 @@ impl BuildMessage {
         object.put(
             global,
             b"name",
-            bun_core::String::static_str(b"BuildMessage").to_js(global)?,
+            bun_core::String::static_("BuildMessage").to_js(global)?,
         );
         object.put(global, b"position", self.get_position(global)?);
         object.put(global, b"message", self.get_message(global)?);
@@ -136,33 +105,39 @@ impl BuildMessage {
         Ok(object)
     }
 
-    pub fn generate_position_object(msg: &bun_ast::Msg, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn generate_position_object(
+        msg: &bun_ast::Msg,
+        global: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
         let Some(location) = &msg.data.location else {
-            return JSValue::NULL;
+            return Ok(JSValue::NULL);
         };
         let object = JSValue::create_empty_object(global, 7);
 
         object.put(
             global,
             b"lineText",
-            ZigString::init(location.line_text.as_deref().unwrap_or(b"")).to_js(global),
+            bun_string_jsc::create_utf8_for_js(
+                global,
+                location.line_text.as_deref().unwrap_or(b""),
+            )?,
         );
         object.put(
             global,
             b"file",
-            ZigString::init(&location.file).to_js(global),
+            bun_string_jsc::create_utf8_for_js(global, &location.file)?,
         );
         object.put(
             global,
             b"namespace",
-            ZigString::init(location.namespace).to_js(global),
+            bun_string_jsc::create_utf8_for_js(global, location.namespace)?,
         );
         object.put(global, b"line", JSValue::from(location.line));
         object.put(global, b"column", JSValue::from(location.column));
         object.put(global, b"length", JSValue::from(location.length));
         object.put(global, b"offset", JSValue::from(location.offset));
 
-        object
+        Ok(object)
     }
 
     // https://github.com/oven-sh/bun/issues/2375#issuecomment-2121530202
@@ -186,16 +161,16 @@ impl BuildMessage {
 
     #[crate::host_fn(getter)]
     pub fn get_position(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(BuildMessage::generate_position_object(&self.msg, global))
+        BuildMessage::generate_position_object(&self.msg, global)
     }
 
     #[crate::host_fn(getter)]
     pub fn get_message(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(ZigString::init(&self.msg.data.text).to_js(global))
+        bun_string_jsc::create_utf8_for_js(global, &self.msg.data.text)
     }
 
     #[crate::host_fn(getter)]
     pub fn get_level(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(ZigString::init(self.msg.kind.string()).to_js(global))
+        bun_core::String::static_(self.msg.kind.string()).to_js(global)
     }
 }

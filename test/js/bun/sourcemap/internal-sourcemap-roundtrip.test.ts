@@ -294,6 +294,50 @@ describe("InternalSourceMap.toVLQ", () => {
 });
 
 describe("InternalSourceMap round-trip", () => {
+  test("large blank-line run and many mappings re-encode byte-identically", () => {
+    // append_vlq_to() reserves mapping_count * 6 bytes upfront and writes
+    // multi-line `;` gaps in one shot; this input exercises both with a
+    // 50 000-line gap and >2000 mappings (many sync windows).
+    let vlqIn = "";
+    let prevGenCol = 0;
+    let prevOrigLine = 0;
+    let prevOrigCol = 0;
+    const emit = (genCol: number, origLine: number, origCol: number) => {
+      if (vlqIn.length && !vlqIn.endsWith(";")) vlqIn += ",";
+      vlqIn +=
+        encodeVLQ(genCol - prevGenCol) +
+        encodeVLQ(0) +
+        encodeVLQ(origLine - prevOrigLine) +
+        encodeVLQ(origCol - prevOrigCol);
+      prevGenCol = genCol;
+      prevOrigLine = origLine;
+      prevOrigCol = origCol;
+    };
+    const newline = (n: number) => {
+      vlqIn += Buffer.alloc(n, ";").toString();
+      prevGenCol = 0;
+    };
+    for (let line = 0; line < 500; line++) {
+      for (let k = 0; k < 4; k++) emit(k * 4, line, k * 3);
+      newline(1);
+    }
+    newline(50_000);
+    emit(0, 600, 0);
+    newline(1);
+    for (let k = 0; k < 100; k++) emit(k * 2, 601, k * 2);
+
+    const reference = decodeMappings(vlqIn);
+    expect(reference.length).toBe(2101);
+
+    const blob = internalSourceMap.fromVLQ(vlqIn);
+    const vlqOut = internalSourceMap.toVLQ(blob);
+
+    // The gap re-encodes as exactly 50 001 consecutive ';'.
+    expect(vlqOut.indexOf(Buffer.alloc(50_001, ";").toString())).toBeGreaterThan(0);
+    // Semantics preserved end to end.
+    expect(decodeMappings(vlqOut)).toEqual(reference);
+  });
+
   test("synthetic: fromVLQ → toVLQ preserves all 4-field positions; names dropped, 1-field skipped", () => {
     const vlqIn = buildSyntheticVLQ();
     const reference = decodeMappings(vlqIn);

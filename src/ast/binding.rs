@@ -1,6 +1,4 @@
 use bun_collections::VecExt;
-#[cfg(debug_assertions)]
-use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_alloc::Arena;
 
@@ -35,43 +33,10 @@ pub enum Tag {
     BMissing,
 }
 
-// Debug-only so release doesn't pay a contended `lock xadd` per Binding.
-#[cfg(debug_assertions)]
-pub(crate) static ICOUNT: AtomicUsize = AtomicUsize::new(0);
-
 // ──────────────────────────────────────────────────────────────────────────
-// `init` / `alloc` — a pair of small traits implemented for each payload
-// type pick the `B` variant; `Binding::init` / `Binding::alloc` stay
-// monomorphic per call-site.
+// `alloc` — a small trait implemented for each payload type picks the `B`
+// variant; `Binding::alloc` stays monomorphic per call-site.
 // ──────────────────────────────────────────────────────────────────────────
-
-pub trait BindingInit {
-    fn into_b(self) -> B;
-}
-impl BindingInit for StoreRef<crate::b::Identifier> {
-    #[inline]
-    fn into_b(self) -> B {
-        B::BIdentifier(self)
-    }
-}
-impl BindingInit for StoreRef<crate::b::Array> {
-    #[inline]
-    fn into_b(self) -> B {
-        B::BArray(self)
-    }
-}
-impl BindingInit for StoreRef<crate::b::Object> {
-    #[inline]
-    fn into_b(self) -> B {
-        B::BObject(self)
-    }
-}
-impl BindingInit for crate::b::Missing {
-    #[inline]
-    fn into_b(self) -> B {
-        B::BMissing(self)
-    }
-}
 
 pub trait BindingAlloc: Sized {
     fn alloc_into_b(self, bump: &Arena) -> B;
@@ -103,18 +68,7 @@ impl BindingAlloc for crate::b::Missing {
 
 impl Binding {
     #[inline]
-    pub fn init(t: impl BindingInit, loc: crate::Loc) -> Binding {
-        #[cfg(debug_assertions)]
-        ICOUNT.fetch_add(1, Ordering::Relaxed);
-        Binding {
-            loc,
-            data: t.into_b(),
-        }
-    }
-    #[inline]
     pub fn alloc(bump: &Arena, t: impl BindingAlloc, loc: crate::Loc) -> Binding {
-        #[cfg(debug_assertions)]
-        ICOUNT.fetch_add(1, Ordering::Relaxed);
         Binding {
             loc,
             data: t.alloc_into_b(bump),
@@ -168,12 +122,17 @@ impl ToExprWrapper {
     }
 
     #[inline]
-    pub fn wrap_identifier(&self, ctx: *mut core::ffi::c_void, loc: crate::Loc, ref_: Ref) -> Expr {
+    pub(crate) fn wrap_identifier(
+        &self,
+        ctx: *mut core::ffi::c_void,
+        loc: crate::Loc,
+        ref_: Ref,
+    ) -> Expr {
         (self.wrap)(ctx, loc, ref_)
     }
 
     #[inline]
-    pub fn arena(&self) -> &Arena {
+    pub(crate) fn arena(&self) -> &Arena {
         // `BackRef::get` encapsulates the deref under the owner-outlives-holder
         // invariant; `expect` mirrors the prior `debug_assert!(!null)`.
         self.arena
@@ -182,11 +141,6 @@ impl ToExprWrapper {
             .get()
     }
 }
-
-/// Alias for `ToExprWrapper`; construct via `ToExprWrapper::new`. Kept as a
-/// type alias (not a generic struct) so `P` can store two of these without
-/// threading its own generics through.
-pub type ToExpr = ToExprWrapper;
 
 impl Binding {
     /// `ctx` is the type-erased `*mut P<..>` derived from the *caller's live*

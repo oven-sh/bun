@@ -35,33 +35,39 @@ namespace WebCore {
 
 class Exception {
 public:
-    explicit Exception(ExceptionCode, String = {});
+    explicit Exception(ExceptionCode, String = {}, String = {});
 
     ExceptionCode code() const { return m_code; }
     const String& message() const { return m_message; }
     String&& releaseMessage() { return WTF::move(m_message); }
+    // Optional secondary payload for codes that need more than one string to
+    // shape the JS error (currently InvalidURLError's `error.base`).
+    const String& extra() const { return m_extra; }
+    String&& releaseExtra() { return WTF::move(m_extra); }
 
     Exception isolatedCopy() const
     {
-        return Exception { m_code, m_message.isolatedCopy() };
+        return Exception { m_code, m_message.isolatedCopy(), m_extra.isolatedCopy() };
     }
 
 private:
     ExceptionCode m_code;
     String m_message;
+    String m_extra;
 };
 
 Exception isolatedCopy(Exception&&);
 
-inline Exception::Exception(ExceptionCode code, String message)
+inline Exception::Exception(ExceptionCode code, String message, String extra)
     : m_code { code }
     , m_message { WTF::move(message) }
+    , m_extra { WTF::move(extra) }
 {
 }
 
 inline Exception isolatedCopy(Exception&& value)
 {
-    return Exception { value.code(), value.releaseMessage().isolatedCopy() };
+    return Exception { value.code(), value.releaseMessage().isolatedCopy(), value.releaseExtra().isolatedCopy() };
 }
 
 }

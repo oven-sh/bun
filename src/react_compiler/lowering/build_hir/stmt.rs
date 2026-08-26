@@ -35,7 +35,7 @@ fn statement_loc(stmt: &Stmt) -> Option<SourceLocation> {
 ///
 /// Implements the TS BlockStatement hoisting pass: identifies forward references to
 /// block-scoped bindings and emits DeclareContext instructions to hoist them.
-pub(super) fn lower_block_statement(
+fn lower_block_statement(
     builder: &mut HirBuilder,
     body: &[Stmt],
 ) -> Result<(), CompilerDiagnostic> {
@@ -49,14 +49,18 @@ pub(super) fn lower_block_statement_with_scope(
     lower_block_statement_inner(builder, body)
 }
 
-// Upstream's hoisting pass uses Babel `ScopeInfo`'s per-reference Locs to
-// detect a binding referenced textually before its declaration. Bun's parser
-// does not retain per-reference Locs, so the equivalent ordering check is done
-// by statement index: a let/const binding declared at body[j] that is
-// referenced anywhere inside body[i] for some i < j (or inside its own
-// initializer when i == j) gets a `DeclareContext` at block start so EnterSSA
-// sees a definition before the use. The scan is bounded to this block's direct
-// statements; blocks with no let/const fall straight through to lowering.
+// Upstream's BlockStatement hoisting only emits a `DeclareContext` for a
+// let/const binding referenced from inside a nested function (`fnDepth > 0`)
+// or for a function declaration referenced anywhere (`binding.kind ===
+// 'hoisted'`); a plain forward reference to a let/const is left for EnterSSA
+// to reject. The `DeclareContext` goes immediately before the first
+// referencing statement so EnterSSA sees a definition before the use. Bun
+// mirrors upstream's in-order statement walk by index: a binding declared at
+// body[j] is checked against body[i] for i < j, and against only this
+// statement's own initializer expressions when i == j (the binding pattern
+// itself is the definition, not a reference). The scan is bounded to this
+// block's direct statements; blocks with no let/const or function
+// declarations fall straight through to lowering.
 fn lower_block_statement_inner(
     builder: &mut HirBuilder,
     body: &[Stmt],
@@ -99,8 +103,13 @@ fn lower_block_statement_inner(
     }
 
     // Phase 2: for each statement preceding (or equal to) a decl's index,
-    // scan its subtree for a reference to that decl. Passing depth=1 to the
-    // `ref_in_nested_fn_*` walkers makes them match at any nesting level.
+    // scan its subtree for a reference to that decl. Upstream only hoists a
+    // reference when it sits inside a nested function (`fnDepth > 0`) or the
+    // target is a function declaration (`binding.kind === 'hoisted'`), so a
+    // plain forward reference to a let/const is left for EnterSSA to reject.
+    // The `ref_in_nested_fn_*` walkers match at `depth > 0` and increment on
+    // function entry, so the nested-function filter is a start depth of 0;
+    // HoistedFunction targets start at 1 to match at any nesting level.
     // Record the statement index of the first reference so DeclareContext is
     // emitted immediately before that statement (matching upstream); emitting
     // it any earlier would extend the variable's mutable range across
@@ -111,8 +120,9 @@ fn lower_block_statement_inner(
         let mut k = 0;
         while k < decls.len() {
             let (decl_i, target, loc, kind) = decls[k];
+            let depth = u32::from(kind == InstructionKind::HoistedFunction);
             let found = if decl_i > i {
-                ref_in_nested_fn_stmt(builder, target, stmt, 1)
+                ref_in_nested_fn_stmt(builder, target, stmt, depth)
             } else if decl_i == i {
                 // Self-reference: only the initializer expressions of this
                 // statement count (the binding pattern itself is the def).
@@ -120,9 +130,9 @@ fn lower_block_statement_inner(
                     Data::SLocal(local) => local.decls.iter().any(|d| {
                         d.value
                             .as_ref()
-                            .is_some_and(|v| ref_in_nested_fn_expr(builder, target, v, 1))
+                            .is_some_and(|v| ref_in_nested_fn_expr(builder, target, v, depth))
                     }),
-                    Data::SFunction(f) => ref_in_nested_fn_func(builder, target, &f.func, 1),
+                    Data::SFunction(f) => ref_in_nested_fn_func(builder, target, &f.func, depth),
                     _ => false,
                 }
             } else {
@@ -225,7 +235,7 @@ fn ref_in_nested_fn_stmt(builder: &HirBuilder, target: Ref, stmt: &Stmt, depth: 
             .is_some_and(|v| ref_in_nested_fn_expr(builder, target, v, depth)),
         Data::SThrow(t) => ref_in_nested_fn_expr(builder, target, &t.value, depth),
         Data::SIf(i) => {
-            ref_in_nested_fn_expr(builder, target, &i.test_, depth)
+            ref_in_nested_fn_expr(builder, target, &i.test, depth)
                 || ref_in_nested_fn_stmt(builder, target, &i.yes, depth)
                 || i.no
                     .as_ref()
@@ -235,7 +245,7 @@ fn ref_in_nested_fn_stmt(builder: &HirBuilder, target: Ref, stmt: &Stmt, depth: 
             f.init
                 .as_ref()
                 .is_some_and(|s| ref_in_nested_fn_stmt(builder, target, s, depth))
-                || f.test_
+                || f.test
                     .as_ref()
                     .is_some_and(|e| ref_in_nested_fn_expr(builder, target, e, depth))
                 || f.update
@@ -254,15 +264,15 @@ fn ref_in_nested_fn_stmt(builder: &HirBuilder, target: Ref, stmt: &Stmt, depth: 
                 || ref_in_nested_fn_stmt(builder, target, &f.body, depth)
         }
         Data::SWhile(w) => {
-            ref_in_nested_fn_expr(builder, target, &w.test_, depth)
+            ref_in_nested_fn_expr(builder, target, &w.test, depth)
                 || ref_in_nested_fn_stmt(builder, target, &w.body, depth)
         }
         Data::SDoWhile(d) => {
             ref_in_nested_fn_stmt(builder, target, &d.body, depth)
-                || ref_in_nested_fn_expr(builder, target, &d.test_, depth)
+                || ref_in_nested_fn_expr(builder, target, &d.test, depth)
         }
         Data::SSwitch(sw) => {
-            ref_in_nested_fn_expr(builder, target, &sw.test_, depth)
+            ref_in_nested_fn_expr(builder, target, &sw.test, depth)
                 || sw.cases.slice().iter().any(|c| {
                     c.value
                         .as_ref()
@@ -278,7 +288,7 @@ fn ref_in_nested_fn_stmt(builder: &HirBuilder, target: Ref, stmt: &Stmt, depth: 
                 .slice()
                 .iter()
                 .any(|s| ref_in_nested_fn_stmt(builder, target, s, depth))
-                || t.catch_.as_ref().is_some_and(|c| {
+                || t.catch.as_ref().is_some_and(|c| {
                     c.body
                         .slice()
                         .iter()
@@ -417,7 +427,7 @@ fn ref_in_nested_fn_expr(builder: &HirBuilder, target: Ref, e: &Expr, depth: u32
         }),
         ExprData::ESpread(s) => ref_in_nested_fn_expr(builder, target, &s.value, depth),
         ExprData::EIf(c) => {
-            ref_in_nested_fn_expr(builder, target, &c.test_, depth)
+            ref_in_nested_fn_expr(builder, target, &c.test, depth)
                 || ref_in_nested_fn_expr(builder, target, &c.yes, depth)
                 || ref_in_nested_fn_expr(builder, target, &c.no, depth)
         }
@@ -481,7 +491,7 @@ fn ref_in_nested_fn_expr(builder: &HirBuilder, target: Ref, e: &Expr, depth: u32
 // =============================================================================
 
 #[allow(clippy::too_many_lines)]
-pub(crate) fn lower_statement(
+fn lower_statement(
     builder: &mut HirBuilder,
     stmt: &Stmt,
     label: Option<String>,
@@ -730,7 +740,7 @@ pub(crate) fn lower_statement(
                 continuation_id
             };
 
-            let test = lower_expression_to_temporary(builder, &if_stmt.test_)?;
+            let test = lower_expression_to_temporary(builder, &if_stmt.test)?;
             builder.terminate_with_continuation(
                 Terminal::If {
                     test,
@@ -845,7 +855,7 @@ pub(crate) fn lower_statement(
             );
 
             // Fill in the test block
-            if let Some(test_expr) = &for_stmt.test_ {
+            if let Some(test_expr) = &for_stmt.test {
                 let test = lower_expression_to_temporary(builder, test_expr)?;
                 builder.terminate_with_continuation(
                     Terminal::Branch {
@@ -923,7 +933,7 @@ pub(crate) fn lower_statement(
             );
 
             // Fill in the conditional block: lower test, branch
-            let test = lower_expression_to_temporary(builder, &while_stmt.test_)?;
+            let test = lower_expression_to_temporary(builder, &while_stmt.test)?;
             builder.terminate_with_continuation(
                 Terminal::Branch {
                     test,
@@ -972,7 +982,7 @@ pub(crate) fn lower_statement(
             );
 
             // Fill in the conditional block: lower test, branch
-            let test = lower_expression_to_temporary(builder, &do_while_stmt.test_)?;
+            let test = lower_expression_to_temporary(builder, &do_while_stmt.test)?;
             builder.terminate_with_continuation(
                 Terminal::Branch {
                     test,
@@ -1231,7 +1241,7 @@ pub(crate) fn lower_statement(
             }
 
             builder.pop_scope();
-            let test = lower_expression_to_temporary(builder, &switch_stmt.test_)?;
+            let test = lower_expression_to_temporary(builder, &switch_stmt.test)?;
             builder.terminate_with_continuation(
                 Terminal::Switch {
                     test,
@@ -1248,7 +1258,7 @@ pub(crate) fn lower_statement(
             let continuation_block = builder.reserve(BlockKind::Block);
             let continuation_id = continuation_block.id;
 
-            let handler_clause = match &try_stmt.catch_ {
+            let handler_clause = match &try_stmt.catch {
                 Some(h) => h,
                 None => {
                     builder.record_error(CompilerErrorDetail {

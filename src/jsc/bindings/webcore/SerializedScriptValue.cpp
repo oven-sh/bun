@@ -4611,10 +4611,10 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
                                     objOk = false;
                                     return false;
                                 }
-                                properties.append({ Bun::isolatedCopyForSharing(*entry.key()),
+                                properties.append({ Bun::threadShareableCopy(*entry.key()),
                                     Bun::toCrossThreadShareable(stringValue) });
                             } else {
-                                properties.append({ Bun::isolatedCopyForSharing(*entry.key()), propValue });
+                                properties.append({ Bun::threadShareableCopy(*entry.key()), propValue });
                             }
                             return true;
                         });
@@ -4693,10 +4693,10 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
                         canUseObjectFastPath = false;
                         return false;
                     }
-                    properties.append({ Bun::isolatedCopyForSharing(*entry.key()), Bun::toCrossThreadShareable(stringValue) });
+                    properties.append({ Bun::threadShareableCopy(*entry.key()), Bun::toCrossThreadShareable(stringValue) });
                 } else {
                     // Primitive values are safe to share across threads.
-                    properties.append({ Bun::isolatedCopyForSharing(*entry.key()), value });
+                    properties.append({ Bun::threadShareableCopy(*entry.key()), value });
                 }
 
                 return true;

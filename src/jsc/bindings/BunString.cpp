@@ -300,7 +300,7 @@ static constexpr unsigned int kMinCrossThreadShareableLength = 256;
 // the receivers race the lazy m_hashAndFlags update (debug: ASSERT(!hasHash())
 // in setHash; e.g. two workers switch()ing on the same BroadcastChannel
 // message). Static strings are immortal, pre-hashed and safe to share as-is.
-Ref<WTF::StringImpl> isolatedCopyForSharing(const WTF::StringImpl& impl)
+Ref<WTF::StringImpl> threadShareableCopy(const WTF::StringImpl& impl)
 {
     Ref<WTF::StringImpl> copy = impl.isolatedCopy();
     if (!copy->isStatic()) {
@@ -313,7 +313,7 @@ Ref<WTF::StringImpl> isolatedCopyForSharing(const WTF::StringImpl& impl)
 Ref<WTF::StringImpl> makeThreadShareable(WTF::StringImpl& impl)
 {
     if (impl.isAtom() || impl.isSymbol() || impl.isSubString())
-        return isolatedCopyForSharing(impl);
+        return threadShareableCopy(impl);
     if (!impl.isStatic()) {
         impl.hash();
         // Already set means other threads may hold this impl; don't write the flags word.
@@ -329,7 +329,7 @@ WTF::String toCrossThreadShareable(const WTF::String& string)
     if (!impl)
         return string;
     if (impl->length() < kMinCrossThreadShareableLength)
-        return isolatedCopyForSharing(*impl);
+        return threadShareableCopy(*impl);
     return makeThreadShareable(*impl);
 }
 

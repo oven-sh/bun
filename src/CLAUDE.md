@@ -395,7 +395,7 @@ computed hash/flags word is also unsynchronized. Rules:
   (`Box<[u8]>`, `clone_utf8` on arrival).
 - Letting several VMs reach one impl (process-global registry, one
   `SerializedScriptValue` with many receivers): `String::make_thread_shareable()`
-  (C++ `Bun::makeThreadShareable` / `isolatedCopyForSharing` /
+  (C++ `Bun::makeThreadShareable` / `threadShareableCopy` /
   `toCrossThreadShareable`) once — pre-hashed, never atomized in place, so each
   receiver's atom table takes its own copy — then hand out plain `clone()`s.
   Static strings already qualify.

@@ -55,19 +55,23 @@ extern "C" bool JSC__IdentifierArray__isNull(Identifier* identifierArray, size_t
 // strings): null until first use, then kept for every later module.
 extern "C" Identifier* Bun__VM__sharedModuleInfoIdentifiers(VM& vm, size_t count)
 {
-    auto& identifiers = WebCore::clientData(vm)->moduleInfoIdentifiers.shared;
+    auto& identifiers = WebCore::clientData(vm)->sharedModuleInfoIdentifiers;
     if (identifiers.size() < count)
         identifiers.grow(count);
     return identifiers.mutableSpan().data();
 }
-// `count` slots for a record that carries its own strings; the caller
-// overwrites every slot before reading it.
-extern "C" Identifier* Bun__VM__scratchModuleInfoIdentifiers(VM& vm, size_t count)
+// `count` null slots for a record that carries its own strings, freed by
+// JSC__IdentifierArray__destroy once the JSModuleRecord is built.
+extern "C" Identifier* JSC__IdentifierArray__create(size_t count)
 {
-    auto& identifiers = WebCore::clientData(vm)->moduleInfoIdentifiers.scratch;
-    if (identifiers.size() < count)
-        identifiers.grow(count);
-    return identifiers.mutableSpan().data();
+    static_assert(VectorTraits<Identifier>::canInitializeWithMemset);
+    return static_cast<Identifier*>(WTF::fastZeroedMalloc(count * sizeof(Identifier)));
+}
+extern "C" void JSC__IdentifierArray__destroy(Identifier* identifiers, size_t count)
+{
+    for (size_t i = 0; i < count; ++i)
+        identifiers[i].~Identifier();
+    WTF::fastFree(identifiers);
 }
 
 extern "C" JSModuleRecord* JSC_JSModuleRecord__create(JSGlobalObject* globalObject, VM& vm, const Identifier* moduleKey, const SourceCode& sourceCode, bool hasImportMeta, bool isTypescript, bool hasTLA)

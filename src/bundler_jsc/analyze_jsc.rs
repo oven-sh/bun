@@ -51,7 +51,7 @@ extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
         return core::ptr::null_mut();
     }
 
-    // Both arrays live on the VM's client data and outlive this call.
+    let mut owned_identifiers: Option<OwnedIdentifierArray> = None;
     let identifiers: *mut IdentifierArray = if res.shared_table().is_some() {
         // Ids index the executable's shared table: fill only the slots this
         // record touches that no earlier module filled.
@@ -77,12 +77,16 @@ extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
         }
         identifiers
     } else {
-        let identifiers = IdentifierArray::scratch(vm, identifier_count);
+        // The record carries its own strings: a throwaway array, freed when
+        // `owned_identifiers` drops at the end of this function.
+        let identifiers = owned_identifiers
+            .insert(OwnedIdentifierArray::new(identifier_count))
+            .ptr;
         for index in 0..identifier_count {
             let Some(sub) = res.string(index) else {
                 return core::ptr::null_mut();
             };
-            // SAFETY: `identifiers` has at least `identifier_count` slots.
+            // SAFETY: `identifiers` has `identifier_count` slots.
             unsafe { IdentifierArray::set_from_utf8(identifiers, index, vm, sub) };
         }
         identifiers
@@ -250,7 +254,8 @@ extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
 bun_opaque::opaque_ffi! { pub struct IdentifierArray; }
 unsafe extern "C" {
     fn Bun__VM__sharedModuleInfoIdentifiers(vm: *const VM, count: usize) -> *mut IdentifierArray;
-    fn Bun__VM__scratchModuleInfoIdentifiers(vm: *const VM, count: usize) -> *mut IdentifierArray;
+    fn JSC__IdentifierArray__create(count: usize) -> *mut IdentifierArray;
+    fn JSC__IdentifierArray__destroy(identifiers: *mut IdentifierArray, count: usize);
     fn JSC__IdentifierArray__isNull(identifier_array: *mut IdentifierArray, n: usize) -> bool;
     fn JSC__IdentifierArray__setFromUtf8(
         identifier_array: *mut IdentifierArray,
@@ -268,13 +273,28 @@ impl IdentifierArray {
         // SAFETY: FFI call; the vector lives on the VM's client data.
         unsafe { Bun__VM__sharedModuleInfoIdentifiers(vm, count) }
     }
-    /// The VM's reusable scratch slots, grown to at least `count`; every
-    /// slot must be written before it is read.
-    #[inline]
-    pub(crate) fn scratch(vm: &VM, count: usize) -> *mut IdentifierArray {
-        // SAFETY: FFI call; the vector lives on the VM's client data.
-        unsafe { Bun__VM__scratchModuleInfoIdentifiers(vm, count) }
+}
+/// `count` identifier slots owned by this value (fastMalloc'd on the C++ side).
+struct OwnedIdentifierArray {
+    ptr: *mut IdentifierArray,
+    count: usize,
+}
+impl OwnedIdentifierArray {
+    fn new(count: usize) -> Self {
+        Self {
+            // SAFETY: FFI call; returns `count` null slots.
+            ptr: unsafe { JSC__IdentifierArray__create(count) },
+            count,
+        }
     }
+}
+impl Drop for OwnedIdentifierArray {
+    fn drop(&mut self) {
+        // SAFETY: `ptr`/`count` are exactly what `create` returned / was given.
+        unsafe { JSC__IdentifierArray__destroy(self.ptr, self.count) }
+    }
+}
+impl IdentifierArray {
     /// # Safety
     /// `this` must be live; `n` must be in-bounds for the array's length.
     #[inline]

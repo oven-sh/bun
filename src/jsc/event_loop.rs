@@ -671,8 +671,6 @@ impl EventLoop {
     /// no longer ticks) so the loop is not torn down still believing something
     /// keeps it alive.
     pub(crate) fn apply_concurrent_ref_delta(&self) {
-        // Do NOT silently drop the swapped delta when the handle is
-        // missing — queued refs would be lost forever.
         let delta = self.concurrent_ref.swap(0, Ordering::SeqCst);
         // SAFETY: `uv_loop()` is this loop's live uws/uv loop (set once in
         // `ensure_waker` / at spawnSync-loop creation); JS thread only.
@@ -1206,10 +1204,8 @@ impl EventLoop {
     pub unsafe fn tick_while_paused(&mut self, done: *const bool) {
         // SAFETY: see fn contract — `done` is a live FFI bool written by C++.
         while !unsafe { done.read_volatile() } {
-            self.vm_ref()
-                .platform_loop_opt()
-                .expect("event_loop_handle")
-                .tick();
+            // SAFETY: `uv_loop()` is this loop's live platform loop; JS thread.
+            unsafe { (*self.uv_loop()).tick() };
         }
     }
 

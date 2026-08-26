@@ -99,8 +99,8 @@ pub struct SpawnSyncEventLoop {
     // stored back into `internal_loop_data` (self-referential w.r.t. `event_loop`).
     uws_loop: NonNull<uws::Loop>,
 
-    /// On POSIX, we need to temporarily override the VM's event_loop_handle
-    /// Store the original so we can restore it
+    /// `prepare` overrides the VM's event_loop_handle; the original, restored
+    /// by `cleanup`.
     original_event_loop_handle: VmEventLoopHandle,
 
     #[cfg(windows)]

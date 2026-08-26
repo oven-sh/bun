@@ -557,6 +557,27 @@ The generated `chunk-dqmx6gc8.js` file contains the shared code. To avoid collis
 
 Each `import()` of a bundled JavaScript module also becomes its own chunk. Tree shaking applies to these chunks too: if every `import()` of a module lives in code that tree shaking removes — for example inside a function that is only called behind a [`define`](#define) or [`features`](#features) gate that evaluates to `false` — and nothing else in the live output imports the module, its chunk is not written and the module is absent from the [metafile](#metafile)'s `inputs` and `outputs`. Setting `treeShaking: false` keeps every `import()` chunk. This differs from esbuild, which emits a chunk for every reachable `import()` target.
 
+With `target: "bun"`, a `require()` of a bundled ES module becomes a chunk of its own as well. The call is emitted as `import.meta.require("./chunk-<hash>.js")` and stays synchronous — Bun evaluates the chunk when the call runs — so a `require()` inside a function that never runs keeps its module out of the startup working set entirely. Tree shaking treats these chunks like `import()` chunks. `require()` of a CommonJS module is unaffected and keeps returning `module.exports`. A `require()` cycle between such chunks follows Bun's runtime `require()` of an ES module: a module required again while its chunk is still being loaded sees the partially initialized CommonJS placeholder (`{}`) rather than the live bindings the in-chunk wrapper provides. For other targets — and with `splitRequire: false` (`--no-split-require`) — the required module is inlined into the calling chunk behind a lazy wrapper instead, because the call must return synchronously.
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./index.tsx"],
+      outdir: "./out",
+      target: "bun",
+      splitting: true,
+      splitRequire: false, // keep require()'d modules in the calling chunk
+    });
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash title="Terminal" icon="terminal"
+    bun build ./index.tsx --outdir ./out --target bun --splitting --no-split-require
+    ```
+  </Tab>
+</Tabs>
+
 ### minChunkSize
 
 With `splitting`, also fold small side-effect-free chunks into a chunk that more entrypoints load.
@@ -1712,6 +1733,7 @@ interface BuildConfig {
       };
   root?: string; // project root
   splitting?: boolean; // default false, enable code splitting
+  splitRequire?: boolean; // default true, with splitting and target "bun": require() of an ES module is a chunk too
   minChunkSize?: number; // default 0, also fold side-effect-free chunks smaller than this many source bytes
   plugins?: BunPlugin[];
   external?: string[];

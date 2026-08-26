@@ -3312,13 +3312,15 @@ describe("stat", () => {
         const path = Buffer.from(process.execPath);
         for (let i = 0; i < 400; i++) await fs.promises.stat(Buffer.from(path));
         Bun.gc(true);
-        console.log(require("bun:jsc").heapStats().objectTypeCounts.Uint8Array ?? 0);`,
+        console.log(require("bun:jsc").heapStats().objectTypeCounts.Uint8Array);`,
       ],
       env: bunEnv,
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(Number(stdout)).toBeLessThan(200);
+    const live = Number(stdout);
+    expect(Number.isFinite(live)).toBe(true);
+    expect(live).toBeLessThan(200);
     expect(exitCode).toBe(0);
   });
 

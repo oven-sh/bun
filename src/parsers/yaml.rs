@@ -5999,6 +5999,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                         self.inc(1);
                     }
+                    let end = self.pos;
+                    let line = self.line;
+                    self.comments.push(ParsedComment {
+                        start,
+                        end,
+                        line,
+                    });
                     continue;
                 }
                 0x26 /* '&' */ => {

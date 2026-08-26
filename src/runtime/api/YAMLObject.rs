@@ -6,20 +6,12 @@ use bun_collections::{HashMap, StringHashMap};
 use bun_core::StackCheck;
 use bun_core::String as BunString;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
+    self as jsc, CallFrame, JSGlobalObject, JSFunction, JSObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
+    js_function::CreateJSFunctionOptions,
     JsError, JsResult, MarkedArgumentBuffer, wtf,
 };
 use bun_parsers::yaml::{CyclicAliases, YAML, YamlParseError};
-
-pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
-    jsc::create_host_function_object(
-        global_this,
-        &[
-            ("parse", __jsc_host_parse, 1),
-            ("stringify", __jsc_host_stringify, 3),
-        ],
-    )
-}
+use bun_jsc::bun_string_jsc;
 
 #[bun_jsc::host_fn]
 fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
@@ -1240,4 +1232,660 @@ impl<'a> ParserCtx<'a> {
             _ => Ok(JSValue::UNDEFINED),
         }
     }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Bun.YAML.Document — comment-preserving YAML document. Mirrors yaml@2's
+// Document API (parseDocument / toJS / toString / setIn / deleteIn /
+// comment) for use by credentials-local and settings-file write paths.
+
+/// Private data slot key on every Document instance. A non-enumerable
+/// string property (not a Symbol) so `for...in` and `Object.keys` skip it
+/// but `Object.hasOwn`/direct access work.
+const DOC_STORAGE_KEY: &[u8] = b"\0Bun.YAML.Document";
+
+/// Extract the byte offset from a `Pos`. `Pos` is `#[repr(transparent)]`
+/// over `usize`, so transmutation is layout-identical and safe.
+#[inline]
+fn pos_to_usize(pos: bun_parsers::yaml::Pos) -> usize {
+    // SAFETY: Pos is #[repr(transparent)] newtype over usize.
+    unsafe { std::mem::transmute(pos) }
+}
+
+/// Parse a `BunString` as a u32 (for array indices). Returns 0 on failure.
+fn bun_string_to_u32(s: &BunString) -> u32 {
+    std::str::from_utf8(s.to_utf8().slice())
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(0)
+}
+
+/// Fetch the private data slot from a Document instance, or throw.
+fn doc_storage_of(global: &JSGlobalObject, this: JSValue) -> JsResult<JSValue> {
+    match this.get(global, DOC_STORAGE_KEY)? {
+        Some(v) => Ok(v),
+        None => Err(global.throw_type_error(format_args!(
+            "this is not a Bun.YAML.Document"
+        ))),
+    }
+}
+
+/// Create a fresh storage object: `{ value, source?, comments: [] }`.
+fn make_doc_storage(
+    global: &JSGlobalObject,
+    value: JSValue,
+    source_text: Option<Vec<u8>>,
+    comments: Vec<Vec<u8>>,
+) -> JsResult<JSValue> {
+    let obj = JSValue::create_empty_object(global, 3);
+    obj.put(global, b"value", value);
+    if let Some(src) = source_text {
+        obj.put(
+            global,
+            b"source",
+            bun_string_jsc::create_utf8_for_js(global, &src)?,
+        );
+    }
+    let arr = JSValue::create_empty_array(global, comments.len())?;
+    for (i, c) in comments.iter().enumerate() {
+        arr.put_index(
+            global,
+            i as u32,
+            bun_string_jsc::create_utf8_for_js(global, c)?,
+        )?;
+    }
+    obj.put(global, b"comments", arr);
+    Ok(obj)
+}
+
+/// Update the `value` slot of an existing storage object.
+fn update_doc_value(global: &JSGlobalObject, storage: JSValue, value: JSValue) -> JsResult<()> {
+    storage.put(global, b"value", value);
+    Ok(())
+}
+
+/// Read the `value` slot from storage.
+fn read_doc_value(global: &JSGlobalObject, storage: JSValue) -> JsResult<JSValue> {
+    // `JSValue::get` returns `None` for both missing properties AND
+    // properties holding `undefined` (JSC treats them identically at the C
+    // API level). Use `UNDEFINED` as the fallback so we don't collapse
+    // `undefined` into `null`.
+    let v = storage.get(global, b"value")?.unwrap_or(JSValue::UNDEFINED);
+    Ok(v)
+}
+
+/// Read the `comments` slot from storage. Returns Vec<Vec<u8>> (raw UTF-8 bytes).
+fn read_doc_comments(global: &JSGlobalObject, storage: JSValue) -> JsResult<Vec<Vec<u8>>> {
+    let cmt = storage.get(global, b"comments")?;
+    let Some(arr) = cmt else {
+        return Ok(Vec::new());
+    };
+    let len = arr.get_length(global)? as usize;
+    let mut out = Vec::with_capacity(len);
+    for i in 0..len {
+        let v = arr.get_index(global, i as u32)?;
+        if v.is_string() {
+            let bs = v.to_bun_string(global)?;
+            let mut buf = Vec::with_capacity(bs.length());
+            for j in 0..bs.length() {
+                let ch = bs.char_at(j);
+                if ch < 0x80 {
+                    buf.push(ch as u8);
+                } else {
+                    buf.push(0xef);
+                    buf.push(0xbf);
+                    buf.push(0xbd);
+                }
+            }
+            out.push(buf);
+        }
+    }
+    Ok(out)
+}
+
+/// Update the `comments` slot with a new array.
+fn update_doc_comments(
+    global: &JSGlobalObject,
+    storage: JSValue,
+    comments: &[Vec<u8>],
+) -> JsResult<()> {
+    let arr = JSValue::create_empty_array(global, comments.len())?;
+    for (i, c) in comments.iter().enumerate() {
+        arr.put_index(
+            global,
+            i as u32,
+            bun_string_jsc::create_utf8_for_js(global, c)?,
+        )?;
+    }
+    storage.put(global, b"comments", arr);
+    Ok(())
+}
+
+/// Slice comment text out of the raw source bytes using each comment's
+/// start/end byte offsets. Returns Vec<Vec<u8>> (one per comment, UTF-8 bytes
+/// including the leading `#`).
+fn collect_comments(source_bytes: &[u8], parsed: &bun_parsers::yaml::ParsedYaml) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+    for doc in &parsed.docs {
+        for c in &doc.comments {
+            let start = pos_to_usize(c.start);
+            let end = pos_to_usize(c.end);
+            if start < source_bytes.len() && end <= source_bytes.len() {
+                let line_start = source_bytes[..start]
+                    .iter()
+                    .rposition(|&b| b == b'\n')
+                    .map_or(0, |p| p + 1);
+                let snippet = &source_bytes[line_start..end];
+                out.push(snippet.to_vec());
+            }
+        }
+    }
+    out
+}
+
+#[bun_jsc::host_fn]
+pub(crate) fn parse_document(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    let args = call_frame.arguments();
+    let input = if args.len() > 0 { args[0] } else { JSValue::UNDEFINED };
+    let yaml_ns = call_frame.this();
+
+    if input.is_null() {
+        let storage = make_doc_storage(global, JSValue::NULL, None, Vec::new())?;
+        return create_doc_instance(global, yaml_ns, storage);
+    }
+    if input.is_undefined() {
+        let storage = make_doc_storage(global, JSValue::UNDEFINED, None, Vec::new())?;
+        return create_doc_instance(global, yaml_ns, storage);
+    }
+    if !input.is_string() {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "YAML.parseDocument: expected a string"
+        )));
+    }
+
+    let unique_keys = if args.len() > 1 && args[1].is_object() {
+        args[1]
+            .get(global, b"uniqueKeys")
+            .ok()
+            .flatten()
+            .map(|v| v.as_boolean())
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    super::with_text_format_source(
+        global,
+        call_frame,
+        b"input.yaml",
+        super::BlobOrBufferInput::Bytes,
+        super::NullishInput::ToString,
+        |arena, log, source| {
+            let source_bytes = source.contents();
+
+            let parsed = match YAML::parse_with_comments(
+                source,
+                log,
+                arena,
+                CyclicAliases::Allow,
+                unique_keys,
+            ) {
+                Ok(p) => p,
+                Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
+                Err(YamlParseError::StackOverflow) => return Err(global.throw_stack_overflow()),
+                Err(YamlParseError::SyntaxError) => {
+                    if !log.msgs.is_empty() {
+                        let first_msg = &log.msgs[0];
+                        let error_text = &first_msg.data.text;
+                        let msg = if let Some(loc) = &first_msg.data.location {
+                            if loc.line > 0 {
+                                format_args!(
+                                    "YAML Parse error: {} (line {}, column {})",
+                                    bstr::BStr::new(error_text),
+                                    loc.line,
+                                    loc.column,
+                                )
+                            } else {
+                                format_args!("YAML Parse error: {}", bstr::BStr::new(error_text))
+                            }
+                        } else {
+                            format_args!("YAML Parse error: {}", bstr::BStr::new(error_text))
+                        };
+                        return Err(global.throw_value(global.create_syntax_error_instance(msg)));
+                    }
+                    return Err(global.throw_value(global.create_syntax_error_instance(
+                        format_args!("YAML Parse error: Unable to parse YAML string"),
+                    )));
+                }
+            };
+
+            let root = parsed.root;
+            let mut ctx = ParserCtx {
+                seen_objects: HashMap::default(),
+                stack_check: StackCheck::init(),
+                global,
+                root,
+                result: JSValue::ZERO,
+            };
+            MarkedArgumentBuffer::run(&mut ctx, ParserCtx::run);
+            let value = ctx.result;
+
+            let comments = collect_comments(source_bytes, &parsed);
+
+            let storage = make_doc_storage(global, value, Some(source_bytes.to_vec()), comments)?;
+            create_doc_instance(global, yaml_ns, storage)
+        },
+    )
+}
+
+/// Create a Document instance with the given storage, attaching
+/// `Document.prototype` so instance methods (`toJS`, `toString`, etc.) are
+/// inherited.
+fn create_doc_instance(
+    global: &JSGlobalObject,
+    yaml_ns: JSValue,
+    storage: JSValue,
+) -> JsResult<JSValue> {
+    let document_fn = match yaml_ns.get(global, b"Document")? {
+        Some(v) => v,
+        None => {
+            let obj = JSValue::create_empty_object(global, 0);
+            obj.put_non_enumerable(global, DOC_STORAGE_KEY, storage);
+            return Ok(obj);
+        }
+    };
+    create_doc_instance_from_ctor(global, document_fn, storage)
+}
+
+/// Build a Document instance using `Object.create(ctor.prototype)`.
+/// `ctor` is the Document constructor function.
+fn create_doc_instance_from_ctor(
+    global: &JSGlobalObject,
+    ctor: JSValue,
+    storage: JSValue,
+) -> JsResult<JSValue> {
+    let proto_val = match ctor.get(global, b"prototype")? {
+        Some(v) => v,
+        None => {
+            let obj = JSValue::create_empty_object(global, 0);
+            obj.put_non_enumerable(global, DOC_STORAGE_KEY, storage);
+            return Ok(obj);
+        }
+    };
+    let object_ctor = match global.to_js_value().get(global, b"Object")? {
+        Some(v) => v,
+        None => {
+            let obj = JSValue::create_empty_object(global, 0);
+            obj.put_non_enumerable(global, DOC_STORAGE_KEY, storage);
+            return Ok(obj);
+        }
+    };
+    let object_create = match object_ctor.get(global, b"create")? {
+        Some(v) => v,
+        None => {
+            let obj = JSValue::create_empty_object(global, 0);
+            obj.put_non_enumerable(global, DOC_STORAGE_KEY, storage);
+            return Ok(obj);
+        }
+    };
+
+    let obj = object_create.call(global, object_ctor, &[proto_val])?;
+    obj.put_non_enumerable(global, DOC_STORAGE_KEY, storage);
+    Ok(obj)
+}
+
+#[bun_jsc::host_fn]
+fn doc_to_js(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    let this = call_frame.this();
+    let storage = doc_storage_of(global, this)?;
+    read_doc_value(global, storage)
+}
+
+#[bun_jsc::host_fn]
+fn doc_to_string(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    let this = call_frame.this();
+    let storage = doc_storage_of(global, this)?;
+    let value = read_doc_value(global, storage)?;
+
+    let space_value = if call_frame.arguments().len() > 0 {
+        call_frame.arguments()[0]
+    } else {
+        JSValue::from(2u32)
+    };
+
+    // Empty document: value is null or undefined. Return just a trailing newline.
+    if value.is_null() || value.is_undefined() {
+        let mut sb = bun_jsc::StringBuilder::init();
+        sb.append_lchar(b'\n');
+        return sb.to_string(global);
+    }
+
+    let mut stringifier = Stringifier::init(global, space_value)?;
+    stringifier
+        .find_anchors_and_aliases(global, value, ValueOrigin::Root)
+        .map_err(|e| e.to_js_error(global))?;
+    stringifier
+        .stringify(global, value)
+        .map_err(|e| e.to_js_error(global))?;
+
+    let comments = read_doc_comments(global, storage)?;
+    let mut first = true;
+    for c in comments {
+        if !first {
+            stringifier.builder.append_lchar(b'\n');
+        }
+        first = false;
+        stringifier.builder.append_latin1(&c);
+    }
+
+    stringifier.builder.append_lchar(b'\n');
+    stringifier.builder.to_string(global)
+}
+
+#[bun_jsc::host_fn]
+fn doc_set_in(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    let this = call_frame.this();
+    let storage = doc_storage_of(global, this)?;
+    let args = call_frame.arguments();
+    if args.len() < 2 {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "YAML.Document.setIn: expected path and value"
+        )));
+    }
+    let path_val = args[0];
+    let new_value = args[1];
+
+    let path = resolve_path(global, &path_val)?;
+    if path.is_empty() {
+        return Ok(this);
+    }
+
+    let value = read_doc_value(global, storage)?;
+    let unwrapped = value.unwrap_boxed_primitive(global)?;
+    let result = set_in_impl(global, unwrapped, &path, new_value)?;
+    update_doc_value(global, storage, result)?;
+    Ok(this)
+}
+
+fn resolve_path(global: &JSGlobalObject, path_val: &JSValue) -> JsResult<Vec<BunString>> {
+    if path_val.is_array() {
+        let len = path_val.get_length(global)? as usize;
+        let mut out = Vec::with_capacity(len);
+        for i in 0..len {
+            let item = path_val.get_index(global, i as u32)?;
+            if !item.is_undefined_or_null() {
+                out.push(item.to_bun_string(global)?);
+            }
+        }
+        return Ok(out);
+    }
+    let s = path_val.to_bun_string(global)?;
+    let bytes = s.to_utf8().into_vec();
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    for i in 0..bytes.len() {
+        if bytes[i] == b'.' {
+            if i > start {
+                out.push(BunString::clone_utf8(&bytes[start..i]));
+            }
+            start = i + 1;
+        }
+    }
+    if start <= bytes.len() {
+        out.push(BunString::clone_utf8(&bytes[start..bytes.len()]));
+    }
+    Ok(out)
+}
+
+fn set_in_impl(
+    global: &JSGlobalObject,
+    current: JSValue,
+    path: &[BunString],
+    value: JSValue,
+) -> JsResult<JSValue> {
+    let unwrapped = current.unwrap_boxed_primitive(global)?;
+
+    if path.len() == 1 {
+        let key = &path[0];
+        if unwrapped.is_object() {
+            if unwrapped.is_array() {
+                let idx = bun_string_to_u32(key);
+                unwrapped.put_index(global, idx, value)?;
+            } else {
+                unwrapped.put_may_be_index(global, key, value)?;
+            }
+            return Ok(unwrapped);
+        }
+        let new_obj = JSValue::create_empty_object(global, 1);
+        new_obj.put_may_be_index(global, key, value)?;
+        return Ok(new_obj);
+    }
+
+    let next_key = &path[0];
+    let rest = &path[1..];
+
+    if unwrapped.is_object() {
+        if unwrapped.is_array() {
+            let idx = bun_string_to_u32(next_key);
+            let existing = unwrapped.get_index(global, idx)?;
+            let child = set_in_impl(global, existing, rest, value)?;
+            unwrapped.put_index(global, idx, child)?;
+            return Ok(unwrapped);
+        } else {
+            let existing = unwrapped
+                .get(global, next_key.to_utf8().into_vec())?
+                .unwrap_or(JSValue::UNDEFINED);
+            let child = set_in_impl(global, existing, rest, value)?;
+            unwrapped.put_may_be_index(global, next_key, child)?;
+            return Ok(unwrapped);
+        }
+    }
+
+    let new_obj = JSValue::create_empty_object(global, 1);
+    let child = set_in_impl(global, JSValue::UNDEFINED, rest, value)?;
+    new_obj.put_may_be_index(global, next_key, child)?;
+    Ok(new_obj)
+}
+
+#[bun_jsc::host_fn]
+fn doc_delete_in(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    let this = call_frame.this();
+    let storage = doc_storage_of(global, this)?;
+    let args = call_frame.arguments();
+    if args.len() < 1 {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "YAML.Document.deleteIn: expected path"
+        )));
+    }
+    let path_val = args[0];
+
+    let path = resolve_path(global, &path_val)?;
+    if path.is_empty() {
+        return Ok(this);
+    }
+
+    let value = read_doc_value(global, storage)?;
+    let unwrapped = value.unwrap_boxed_primitive(global)?;
+    let result = delete_in_impl(global, unwrapped, &path)?;
+    update_doc_value(global, storage, result)?;
+    Ok(this)
+}
+
+fn delete_in_impl(
+    global: &JSGlobalObject,
+    current: JSValue,
+    path: &[BunString],
+) -> JsResult<JSValue> {
+    let unwrapped = current.unwrap_boxed_primitive(global)?;
+
+    if path.len() == 1 {
+        let key = &path[0];
+        if unwrapped.is_object() {
+            if unwrapped.is_array() {
+                let idx = bun_string_to_u32(key);
+                unwrapped.put_index(global, idx, JSValue::UNDEFINED)?;
+            } else {
+                unwrapped
+                    .delete_property(global, key.to_utf8().into_vec())?;
+            }
+            return Ok(unwrapped);
+        }
+        return Ok(JSValue::UNDEFINED);
+    }
+
+    let next_key = &path[0];
+    let rest = &path[1..];
+
+    if !unwrapped.is_object() {
+        return Ok(JSValue::UNDEFINED);
+    }
+
+    if unwrapped.is_array() {
+        let idx = bun_string_to_u32(next_key);
+        let existing = unwrapped.get_index(global, idx)?;
+        let child = delete_in_impl(global, existing, rest)?;
+        if child.is_undefined() {
+            unwrapped.put_index(global, idx, JSValue::UNDEFINED)?;
+        } else {
+            unwrapped.put_index(global, idx, child)?;
+        }
+        return Ok(unwrapped);
+    }
+
+    let existing = unwrapped
+        .get(global, next_key.to_utf8().into_vec())?
+        .unwrap_or(JSValue::UNDEFINED);
+    let child = delete_in_impl(global, existing, rest)?;
+    if child.is_undefined() {
+        unwrapped.delete_property(global, next_key.to_utf8().into_vec())?;
+    } else {
+        unwrapped.put_may_be_index(global, next_key, child)?;
+    }
+    Ok(unwrapped)
+}
+
+#[bun_jsc::host_fn]
+fn doc_comment(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    let this = call_frame.this();
+    let storage = doc_storage_of(global, this)?;
+    let args = call_frame.arguments();
+    if args.len() < 1 {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "YAML.Document.comment: expected text"
+        )));
+    }
+    let text_val = args[0];
+
+    let text = text_val.to_bun_string(global)?;
+    let mut cmt = Vec::with_capacity(text.length());
+    for i in 0..text.length() {
+        let ch = text.char_at(i);
+        if ch < 0x80 {
+            cmt.push(ch as u8);
+        }
+    }
+
+    let cmt_str = if cmt.first() == Some(&b'#') {
+        if cmt.len() > 1 && cmt[1] == b' ' {
+            cmt
+        } else {
+            let mut v = Vec::with_capacity(cmt.len() + 1);
+            v.extend_from_slice(b"# ");
+            v.extend_from_slice(&cmt[1..]);
+            v
+        }
+    } else {
+        let mut v = Vec::with_capacity(cmt.len() + 2);
+        v.extend_from_slice(b"# ");
+        v.extend_from_slice(&cmt);
+        v
+    };
+
+    let mut comments = read_doc_comments(global, storage)?;
+    comments.push(cmt_str);
+    update_doc_comments(global, storage, &comments)?;
+    Ok(this)
+}
+
+#[bun_jsc::host_fn]
+fn doc_construct(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    let args = call_frame.arguments();
+    let value = if args.len() > 0 { args[0] } else { JSValue::NULL };
+    let storage = make_doc_storage(global, value, None, Vec::new())?;
+
+    // `call_frame.this()` is a freshly-created empty object (JSC's
+    // callHostFunctionAsConstructor) with no access to the Document
+    // constructor or YAML namespace. Retrieve the YAML namespace from the
+    // global scope (Bun.YAML) to look up Document.prototype.
+    let yaml_ns = get_yaml_ns_from_global(global)?;
+    create_doc_instance(global, yaml_ns, storage)
+}
+
+/// Look up the `Bun.YAML` namespace from the global scope.
+fn get_yaml_ns_from_global(global: &JSGlobalObject) -> JsResult<JSValue> {
+    match global.to_js_value().get(global, b"Bun")? {
+        Some(bun) => match bun.get(global, b"YAML")? {
+            Some(v) => Ok(v),
+            None => Ok(JSValue::UNDEFINED),
+        },
+        None => Ok(JSValue::UNDEFINED),
+    }
+}
+
+/// Register the Document constructor + prototype on the YAML namespace.
+pub(crate) fn register_doc_class(global: &JSGlobalObject, yaml_obj: JSValue) -> JsResult<()> {
+    let proto = JSValue::create_empty_object(global, 5);
+    proto.put(
+        global,
+        b"toJS",
+        JSFunction::create(global, "toJS", __jsc_host_doc_to_js, 0, Default::default()),
+    );
+    proto.put(
+        global,
+        b"toString",
+        JSFunction::create(global, "toString", __jsc_host_doc_to_string, 1, Default::default()),
+    );
+    proto.put(
+        global,
+        b"setIn",
+        JSFunction::create(global, "setIn", __jsc_host_doc_set_in, 2, Default::default()),
+    );
+    proto.put(
+        global,
+        b"deleteIn",
+        JSFunction::create(global, "deleteIn", __jsc_host_doc_delete_in, 1, Default::default()),
+    );
+    proto.put(
+        global,
+        b"comment",
+        JSFunction::create(global, "comment", __jsc_host_doc_comment, 1, Default::default()),
+    );
+
+    let constructor = JSFunction::create(
+        global,
+        "Document",
+        __jsc_host_doc_construct,
+        1,
+        CreateJSFunctionOptions {
+            constructor: Some(__jsc_host_doc_construct),
+            ..Default::default()
+        },
+    );
+    constructor.put(global, b"prototype", proto);
+    yaml_obj.put(global, b"Document", constructor);
+
+    Ok(())
+}
+
+pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
+    let yaml_obj = jsc::create_host_function_object(
+        global_this,
+        &[
+            ("parse", __jsc_host_parse, 1),
+            ("stringify", __jsc_host_stringify, 3),
+            ("parseDocument", __jsc_host_parse_document, 1),
+        ],
+    );
+    let _ = register_doc_class(global_this, yaml_obj);
+    yaml_obj
 }

@@ -146,13 +146,11 @@ pub enum ModuleInfoError {
 pub struct ModuleInfoDeserialized {
     body: Body<'static>,
     table: ModuleInfoStringTable<'static>,
-    /// The ids index the executable's shared string table, so identifiers
-    /// come from the VM-wide slots (`Bun__VM__sharedModuleInfoIdentifiers`)
-    /// rather than a per-record array.
-    shared: bool,
     pub flags: Flags,
-    /// Backing storage for `body`/`table` when they were not `'static`.
-    #[allow(dead_code)]
+    /// Backing storage for `body`/`table`: `None` when they live in the
+    /// executable's mapped section — the ids then index the shared string
+    /// table and identifiers come from the VM-wide slots
+    /// (`Bun__VM__sharedModuleInfoIdentifiers`) rather than a per-record array.
     owned: Option<Box<[u8]>>,
 }
 
@@ -255,10 +253,11 @@ impl ModuleInfoDeserialized {
             count: self.table.count,
         }
     }
-    /// Whether identifiers come from the VM-wide shared slots.
+    /// Whether the ids index the executable's shared string table (and so
+    /// the VM-wide identifier slots).
     #[inline]
     pub fn shared(&self) -> bool {
-        self.shared
+        self.owned.is_none()
     }
     /// Ids below this are strings; the rest are sentinels.
     #[inline]
@@ -294,7 +293,6 @@ impl ModuleInfoDeserialized {
         Ok(Box::new(ModuleInfoDeserialized {
             body,
             table,
-            shared: false,
             flags,
             owned: Some(owned),
         }))
@@ -317,7 +315,6 @@ impl ModuleInfoDeserialized {
         Some(Box::new(ModuleInfoDeserialized {
             body,
             table: *table,
-            shared: true,
             flags,
             owned: None,
         }))

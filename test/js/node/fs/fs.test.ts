@@ -3303,16 +3303,24 @@ it("realpath async", async () => {
 }, 30_000);
 
 describe("stat", () => {
-  it("async call does not keep a Buffer path alive after it completes", async () => {
+  it("async calls do not keep a Buffer path alive after they complete", async () => {
+    using dir = tempDir("fs-async-buffer-path", { x: "hello" });
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `const fs = require("fs");
-        const path = Buffer.from(process.execPath);
-        for (let i = 0; i < 400; i++) await fs.promises.stat(Buffer.from(path));
+        const file = Buffer.from(require("path").join(process.argv[1], "x"));
+        const missing = Buffer.from(require("path").join(process.argv[1], "missing"));
+        for (let i = 0; i < 200; i++) {
+          await fs.promises.stat(Buffer.from(file));
+          await fs.promises.readFile(Buffer.from(file));
+          await fs.promises.writeFile(Buffer.from(file), Buffer.from("hello"));
+          await fs.promises.stat(Buffer.from(missing)).catch(() => {});
+        }
         Bun.gc(true);
         console.log(require("bun:jsc").heapStats().objectTypeCounts.Uint8Array);`,
+        String(dir),
       ],
       env: bunEnv,
       stderr: "inherit",
@@ -3320,6 +3328,7 @@ describe("stat", () => {
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     const live = Number(stdout);
     expect(Number.isFinite(live)).toBe(true);
+    // 200 iterations × 4 path Buffers stay rooted without the fix.
     expect(live).toBeLessThan(200);
     expect(exitCode).toBe(0);
   });

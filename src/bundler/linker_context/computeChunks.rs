@@ -314,6 +314,12 @@ pub(crate) fn compute_chunks(
                     }
 
                     if this.graph.code_splitting {
+                        // A file none of whose parts survived tree shaking contributes
+                        // no code; giving it a chunk would emit an empty file (and two
+                        // such chunks share a content hash).
+                        if this.graph.parts_live[source_index.get() as usize].count() == 0 {
+                            continue;
+                        }
                         let js_chunk_key =
                             temp.alloc_slice_copy(entry_bits.bytes(this.graph.entry_points.len()));
                         let js_chunk_entry = js_chunks.get_or_put(js_chunk_key)?;

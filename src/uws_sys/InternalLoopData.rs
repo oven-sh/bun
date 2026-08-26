@@ -63,6 +63,9 @@ pub struct InternalLoopData {
     // Higher tier (`bun_runtime`) casts this back when reading.
     pub jsc_vm: *const c_void,
     pub tick_depth: c_int,
+    /// See `park_cb` in `packages/bun-usockets/src/internal/loop_data.h`.
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    pub park_cb: Option<unsafe extern "C" fn(*mut Loop, *const bun_core::Timespec)>,
 }
 
 impl InternalLoopData {

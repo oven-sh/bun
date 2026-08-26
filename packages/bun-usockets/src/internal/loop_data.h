@@ -19,6 +19,7 @@
 #define LOOP_DATA_H
 
 #include <stdint.h>
+#include <time.h>
 
 #if defined(__APPLE__)
 #include <os/lock.h>
@@ -93,6 +94,14 @@ struct us_internal_loop_data_t {
      * sockets must be deferred to the outermost tick so the outer dispatch
      * doesn't read a freed poll. */
     int tick_depth;
+#if defined(__APPLE__) || defined(__FreeBSD__)
+    /* When set, an idle tick parks here instead of in kevent64. Used on macOS
+     * to wait inside the AppKit run loop; the callee returns once `timeout`
+     * elapses, a UI event was dispatched, or the kqueue fd became readable.
+     * A zero `timeout` asks for a non-blocking UI event drain. The caller
+     * harvests the kqueue with KEVENT_FLAG_IMMEDIATE afterwards. */
+    void (*park_cb)(struct us_loop_t *loop, const struct timespec *timeout);
+#endif
 };
 
 #endif // LOOP_DATA_H

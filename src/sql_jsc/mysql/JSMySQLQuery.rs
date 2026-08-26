@@ -170,7 +170,8 @@ impl JSMySQLQuery {
             }
             return Err(jsc::JsError::Thrown);
         }
-        connection.enqueue_request(this.as_ctx_ptr());
+        // The queue holds this ref until it pops the request.
+        connection.enqueue_request(this.ref_guard());
         Ok(JSValue::UNDEFINED)
     }
 

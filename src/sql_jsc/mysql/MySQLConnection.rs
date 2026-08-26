@@ -219,7 +219,7 @@ impl MySQLConnection {
     }
 
     #[inline]
-    pub(crate) fn enqueue_request(&mut self, request: *mut JSMySQLQuery) {
+    pub(crate) fn enqueue_request(&mut self, request: bun_ptr::RefPtr<JSMySQLQuery>) {
         self.queue.add(request);
     }
 

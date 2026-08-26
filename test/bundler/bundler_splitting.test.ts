@@ -806,7 +806,9 @@ describe("bundler", () => {
       "/b.js": `import './c.js'; console.log('b')`,
       "/e.js": `import './d.js'; console.log('e')`,
       "/c.js": `export function dead() {}`,
-      "/d.js": `export function dead() {}`,
+      // only live part is a bare import of an unwrapped file: prints nothing either
+      "/d.js": `import './shared.js'; export function dead() {}`,
+      "/shared.js": `console.log('shared')`,
     },
     entryPoints: ["/entry.js"],
     splitting: true,
@@ -814,10 +816,10 @@ describe("bundler", () => {
     outdir: "/out",
     chunkNaming: "chunk-[hash].[ext]",
     onAfterBundle(api) {
-      // entry + the three import() targets; nothing for c.js / d.js
-      expect(readdirSync(api.outdir).filter(f => f.endsWith(".js"))).toHaveLength(4);
+      // entry + the three import() targets + shared.js's chunk; nothing for c.js / d.js
+      expect(readdirSync(api.outdir).filter(f => f.endsWith(".js"))).toHaveLength(5);
     },
-    run: { file: "/out/entry.js", stdout: "a\nb\ne" },
+    run: { file: "/out/entry.js", stdout: "shared\na\nb\ne" },
   });
   // An entry point with exports of its own keeps its module namespace as
   // written: shared code is not folded into it (which would add exports),

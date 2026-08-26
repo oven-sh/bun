@@ -302,6 +302,7 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
   emitGeneratedClasses(ctx);
   emitHostExports(ctx);
   emitCppBind(ctx);
+  emitAppKitSdk(ctx);
   emitJsModules(ctx);
   emitBakeCodegen(ctx);
   emitBindgenV2(ctx);
@@ -750,8 +751,55 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
   o.rustInputs.push(outputRs);
 }
 
+/** `<codegenDir>/appkit/` — the bun:objc tables generated from the macOS SDK. */
+function appkitCodegenDir(cfg: Config): string {
+  return resolve(cfg.codegenDir, "appkit");
+}
+
+/**
+ * The tables bun:objc reads from the macOS SDK headers (what the Objective-C
+ * runtime cannot tell it: variadic methods, block signatures, enum values,
+ * …), generated from the SDK the build links. sdk.rs and cf.rs are
+ * `include!`d by src/appkit/objc/mod.rs; appkit_enums.ts is the body of the
+ * `internal/appkit_enums` builtin, read by bundle-modules in place of the
+ * committed stub (emitJsModules lists it as an input). Darwin targets only:
+ * the crate is `#![cfg(target_os = "macos")]` and other targets bundle the
+ * throwing stub.
+ */
+function emitAppKitSdk({ n, cfg, o, dirStamp }: Ctx): void {
+  if (!cfg.darwin) return;
+  assert(cfg.osxSysroot !== undefined, "darwin build without an SDK path");
+  const scripts = [
+    "appkit-generate.ts",
+    "appkit-sdk.ts",
+    "appkit-sdk-methods.ts",
+    "appkit-enums.ts",
+    "build/macos-sdk.ts",
+  ].map(f => resolve(cfg.cwd, "scripts", f));
+  const outDir = appkitCodegenDir(cfg);
+  const outputs = ["sdk.rs", "cf.rs", "appkit_enums.ts"].map(f => resolve(outDir, f));
+
+  n.build({
+    outputs,
+    rule: "codegen",
+    // SDKSettings.json carries the SDK version: a changed SDK regenerates.
+    inputs: [...scripts, resolve(cfg.osxSysroot, "SDKSettings.json")],
+    orderOnlyInputs: [dirStamp],
+    vars: {
+      cwd: cfg.cwd,
+      desc: "appkit SDK tables",
+      args: shJoin(cfg, ["run", scripts[0]!, "--out", outDir, "--sdk", cfg.osxSysroot]),
+    },
+  });
+
+  o.all.push(...outputs);
+  o.rustInputs.push(outputs[0]!, outputs[1]!);
+}
+
 function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bundle-modules.ts");
+  // The generated body of internal/appkit_enums (emitAppKitSdk).
+  const appkitEnums = cfg.darwin ? [resolve(appkitCodegenDir(cfg), "appkit_enums.ts")] : [];
 
   // InternalModuleRegistry.cpp is read by the script (for a sanity check).
   const extraInput = resolve(cfg.cwd, "src", "jsc", "bindings", "InternalModuleRegistry.cpp");
@@ -785,7 +833,7 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   n.build({
     outputs,
     rule: "codegen",
-    inputs: [script, ...sources.js, ...sources.jsCodegen, extraInput, errorCodeInput],
+    inputs: [script, ...sources.js, ...sources.jsCodegen, extraInput, errorCodeInput, ...appkitEnums],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,

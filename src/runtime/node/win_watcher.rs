@@ -513,9 +513,6 @@ pub(crate) fn watch(
     recursive: bool,
     ctx: *mut c_void,
 ) -> sys::Result<*mut PathWatcher> {
-    #[cfg(not(windows))]
-    compile_error!("win_watcher should only be used on Windows");
-
     // DEFAULT_MANAGER is only read/written while holding DEFAULT_MANAGER_MUTEX
     // (see static decl). The guard covers the whole registration — not just the
     // slot load — because `PathWatcher::init` below mutates the manager's

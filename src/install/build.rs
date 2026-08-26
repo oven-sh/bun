@@ -10,6 +10,10 @@ use std::fs;
 use std::path::PathBuf;
 
 fn main() {
+    // Without any `rerun-if-changed`, cargo reruns this script whenever any
+    // file in the crate changes. Nothing below reads crate sources.
+    println!("cargo:rerun-if-changed=build.rs");
+
     // ── Windows .bin/ shim PE ───────────────────────────────────────────────
     // `BinLinkingShim.rs` does `include_bytes!("bun_shim_impl.exe")` on
     // Windows. The real PE is produced by a separate `cargo build -p

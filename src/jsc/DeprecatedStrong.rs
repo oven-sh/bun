@@ -21,7 +21,6 @@ struct SafetyData {
     // so freeing does NOT run DeprecatedStrong::drop on the sentinel value; the
     // pointer is stored cast to the inner type for ergonomic field access.
     ptr: NonNull<DeprecatedStrong>,
-    ref_count: u32,
 }
 
 pub struct DeprecatedStrong {
@@ -44,7 +43,6 @@ impl DeprecatedStrong {
                 _safety: None,
             })))
             .cast::<DeprecatedStrong>(),
-            ref_count: 1,
         });
         #[cfg(not(debug_assertions))]
         let _safety: Safety = ();
@@ -64,12 +62,11 @@ impl Drop for DeprecatedStrong {
         self.raw.unprotect();
         #[cfg(debug_assertions)]
         if let Some(_safety) = &mut self._safety {
-            // SAFETY: ptr was produced by heap::alloc in `init` and has not been freed
-            // (ref_count == 1 asserted below).
+            // SAFETY: ptr was produced by heap::alloc in `init` and is freed only
+            // here, once.
             unsafe {
                 debug_assert!((*_safety.ptr.as_ptr()).raw.encoded() == 0xAEBCFA);
                 (*_safety.ptr.as_ptr()).raw = JSValue::from_encoded(0xFFFFFF);
-                debug_assert!(_safety.ref_count == 1);
                 // Free without running Drop on the sentinel (ManuallyDrop is repr(transparent)).
                 drop(bun_core::heap::take(
                     _safety

@@ -337,7 +337,9 @@ describe("linear-light resize", () => {
     // A hinted decode collapses every 8×8 block to its ~128 DC before the
     // linear resize runs, so the mean reads ~128. Full decode + linear
     // resize reads ~188 (JPEG quantization noise gives a wide margin).
-    expect(sum / n).toBeGreaterThan(165);
+    const mean = sum / n;
+    expect(mean).toBeGreaterThan(165);
+    expect(mean).toBeLessThan(210);
   });
 
   test("invalid colorspace value throws", () => {

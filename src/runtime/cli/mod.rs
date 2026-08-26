@@ -939,10 +939,8 @@ pub mod command {
         let Some(mut first_arg_name) = iter.next() else {
             return Tag::AutoCommand;
         };
-        // A filter flag before `test` or `build` means those words name
-        // package scripts: take the AutoCommand filtered-run path, not the
-        // test runner or the bundler. The space form (`--filter pat test`)
-        // already does, because the loop stops at `pat`.
+        // A filter flag before `test`/`build` means the word names a package
+        // script: route to the filtered-run path, not the subcommand.
         let mut saw_filter_flag = false;
         while !first_arg_name.is_empty()
             && first_arg_name[0] == b'-'

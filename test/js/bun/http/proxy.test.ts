@@ -803,7 +803,7 @@ test("HTTPS proxy tunnel keeps a caller-supplied Host header out of SNI and cert
       });
     },
   );
-  target.listen(0, "127.0.0.1");
+  target.listen(0);
   await once(target, "listening");
   try {
     const port = (target.address() as net.AddressInfo).port;

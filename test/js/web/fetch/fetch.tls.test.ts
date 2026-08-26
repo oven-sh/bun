@@ -97,7 +97,6 @@ describe.concurrent("fetch-tls", () => {
     const receivedHostHeaders: (string | null)[] = [];
     using server = Bun.serve({
       port: 0,
-      hostname: "127.0.0.1",
       tls: CERT_LOCALHOST_ONLY,
       fetch: req => {
         receivedHostHeaders.push(req.headers.get("host"));
@@ -182,7 +181,7 @@ describe.concurrent("fetch-tls", () => {
         });
       },
     );
-    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>(resolve => server.listen(0, resolve));
     try {
       const port = (server.address() as import("node:net").AddressInfo).port;
       const get = async (url: string, host?: string) => {

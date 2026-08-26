@@ -323,6 +323,10 @@ describe("fs.mkdir - return values", () => {
       out.trailing = fs.mkdirSync("trail" + path.sep + "x" + path.sep, { recursive: true });
       out.updir = fs.mkdirSync(path.join("..", "updir", "x"), { recursive: true });
       out.updirAgain = fs.mkdirSync(path.join("..", "updir", "x"), { recursive: true }) === undefined;
+      // Climbs past the filesystem root, clamps at it, and finds it existing.
+      const depth = process.cwd().split(path.sep).length - 1;
+      const overRoot = Array(depth + 2).fill("..").join(path.sep);
+      out.overRoot = fs.mkdirSync(overRoot, { recursive: true }) === undefined;
       fs.mkdir(path.join("cb", "dir"), { recursive: true }, (err, first) => {
         if (err) throw err;
         out.callback = first;
@@ -368,6 +372,7 @@ describe("fs.mkdir - return values", () => {
       cwd: out.cwd,
       existing: true,
       updirAgain: true,
+      overRoot: true,
       callbackAgain: true,
       ...expected,
     });

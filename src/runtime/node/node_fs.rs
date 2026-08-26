@@ -5532,6 +5532,14 @@ impl NodeFS {
             if let Some(joined) =
                 super::types::join_cwd_windows(args.path.slice(), &mut cwd_join_scratch)
             {
+                // Root-clamping normalize: the raw join can carry `..`
+                // segments that climb past the drive root, and Win32 does no
+                // dot processing under the `\\?\` prefix the slicer adds.
+                let mut norm_buf = paths::path_buffer_pool::get();
+                let joined = paths::resolve_path::normalize_buf::<paths::platform::Windows>(
+                    joined,
+                    &mut norm_buf[..],
+                );
                 let joined = PathLike::borrowed(joined);
                 let mut buf = paths::path_buffer_pool::get();
                 let path = match joined.os_path_kernel32(&mut *buf) {

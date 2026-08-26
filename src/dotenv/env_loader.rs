@@ -600,23 +600,19 @@ impl Loader {
             return Ok(());
         }
 
-        // A worker's loader re-walks environ on its own thread while the main
-        // thread may be inside a `process.env` write.
         #[cfg(unix)]
         let _environ_guard = bun_core::environ_read_lock();
         let environ: &[*const c_char] = bun_sys::environ();
         self.map.map.ensure_total_capacity(environ.len())?;
-        // The kernel accepts duplicate `KEY=` entries in environ; libc getenv()
-        // and Node resolve to the first one, so later duplicates are skipped.
-        // Entries seeded before this scan (`bun test` pre-seeds NODE_ENV) lose
-        // to the process environment, but only to its first occurrence.
+        // Duplicate keys resolve to the first occurrence, like getenv(); a key
+        // seeded before this scan (`bun test` pre-seeds NODE_ENV) is overwritten
+        // by that first occurrence only.
         let preseeded_count = self.map.map.count();
         let mut preseeded_written = bun_collections::AutoBitSet::init_empty(preseeded_count)?;
         for &_env in environ {
             // SAFETY: environ entries are NUL-terminated C strings from the OS
             let env = unsafe { bun_core::ffi::cstr(_env) }.to_bytes();
-            // POSIX environ entries are `name=value`; getenv() and Node ignore
-            // an entry with no '='.
+            // An entry with no '=' is malformed; getenv() ignores it.
             let Some(i) = strings::index_of_char_usize(env, b'=') else {
                 continue;
             };

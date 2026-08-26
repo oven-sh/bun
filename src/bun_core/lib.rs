@@ -2888,9 +2888,7 @@ pub mod asan {
         #[cfg(not(bun_asan))]
         let _ = (ptr, size);
     }
-    /// Tell LSAN the allocation containing `ptr` is an intentional
-    /// process-lifetime leak, so it is not reported once the last pointer to
-    /// it is overwritten.
+    /// LSAN: the allocation containing `ptr` is an intentional leak.
     #[inline]
     pub fn ignore_object<T>(ptr: *const T) {
         #[cfg(bun_asan)]

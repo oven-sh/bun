@@ -2121,9 +2121,7 @@ pub(crate) mod environment_variables {
         Some(EncodedSlice::from_bytes(value))
     }
 
-    /// setenv(3) takes C strings, so Node stores a key or value only up to its
-    /// first NUL. The C++ setter already cuts both; this keeps every caller
-    /// (including the SHARE_ENV store's write-through) on the same contract.
+    /// setenv(3) takes C strings: a key or value ends at its first NUL.
     #[inline]
     fn truncate_at_nul(s: &[u8]) -> &[u8] {
         match bun_core::strings::index_of_char_usize(s, 0) {
@@ -2132,9 +2130,8 @@ pub(crate) mod environment_variables {
         }
     }
 
-    /// `process.env[name] = value`: update the env map, and on the main thread
-    /// also the OS environment so a native library's `getenv()` observes the
-    /// write. Workers only update their own map, like Node's `MapKVStore`.
+    /// `process.env[name] = value`: the env map, plus the OS environment on the
+    /// main thread (a worker's env is a copy, like Node's `MapKVStore`).
     #[unsafe(no_mangle)]
     extern "C" fn Bun__ProcessEnv__put(
         global_object: &JSGlobalObject,
@@ -2151,8 +2148,7 @@ pub(crate) mod environment_variables {
         let val = truncate_at_nul(value_slice.slice());
 
         {
-            // Serialises against a spawning worker's `clone_with_allocator`
-            // of this map (web_worker.rs holds the same lock).
+            // A spawning worker clones this map under the same lock.
             let _slots = vm.proxy_env_storage.lock();
             bun_core::handle_oom(vm.transpiler.env_mut().map.put(key, val));
         }
@@ -2163,8 +2159,8 @@ pub(crate) mod environment_variables {
         }
     }
 
-    /// `delete process.env[name]`: remove from the env map, and on the main
-    /// thread also from the OS environment.
+    /// `delete process.env[name]`: the env map, plus the OS environment on the
+    /// main thread.
     #[unsafe(no_mangle)]
     extern "C" fn Bun__ProcessEnv__delete(global_object: &JSGlobalObject, name: &BunString) {
         let vm = global_object.bun_vm().as_mut();
@@ -2176,8 +2172,7 @@ pub(crate) mod environment_variables {
 
         {
             let mut slots = vm.proxy_env_storage.lock();
-            // A proxy var's slot would otherwise be re-inserted into the map
-            // of the next spawned worker by `sync_into`.
+            // Or `sync_into` re-inserts the deleted proxy var into the next worker's map.
             if let Some(slot) = slots.slot(key) {
                 *slot.ptr = None;
             }

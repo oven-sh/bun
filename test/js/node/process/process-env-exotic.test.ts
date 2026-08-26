@@ -213,6 +213,8 @@ describe.skipIf(!isPosix)("process.env writes reach the OS environment", () => {
     };
   `;
 
+  // Returns `{ out, exitCode }` so a caller asserts the output before the
+  // exit code: a failed run then shows what the child printed.
   async function run(script: string, extraEnv: Record<string, string> = {}) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", getenvProbe + script],
@@ -221,8 +223,11 @@ describe.skipIf(!isPosix)("process.env writes reach the OS environment", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-    return JSON.parse(stdout);
+    let out: unknown = stdout;
+    try {
+      out = JSON.parse(stdout);
+    } catch {}
+    return { out, exitCode };
   }
 
   test.concurrent("set, overwrite and delete reach native getenv()", async () => {
@@ -250,11 +255,14 @@ describe.skipIf(!isPosix)("process.env writes reach the OS environment", () => {
       { ENVFIX_LAUNCH: "launch", ENVFIX_TODEL: "present" },
     );
     expect(out).toEqual({
-      set: "from-js",
-      overwrite: "overwritten",
-      coerced: "42",
-      deleted: null,
-      repeated: ["0", "1", "2", "3"],
+      out: {
+        set: "from-js",
+        overwrite: "overwritten",
+        coerced: "42",
+        deleted: null,
+        repeated: ["0", "1", "2", "3"],
+      },
+      exitCode: 0,
     });
   });
 
@@ -269,7 +277,7 @@ describe.skipIf(!isPosix)("process.env writes reach the OS environment", () => {
         keyNul: read("ENVFIX_KEYNUL"),
       }));
     `);
-    expect(out).toEqual({ eq: null, nul: "ab", keyNul: "k" });
+    expect(out).toEqual({ out: { eq: null, nul: "ab", keyNul: "k" }, exitCode: 0 });
   });
 
   test.concurrent("Bun.spawn and Bun.which without an env option observe runtime writes", async () => {
@@ -290,7 +298,7 @@ describe.skipIf(!isPosix)("process.env writes reach the OS environment", () => {
       `,
       { ENVFIX_SPAWN_DEL: "startup", ENVFIX_TOOL_DIR: String(dir) },
     );
-    expect(out).toEqual({ child: "via-js,unset", before: null, after: true, ran: "found" });
+    expect(out).toEqual({ out: { child: "via-js,unset", before: null, after: true, ran: "found" }, exitCode: 0 });
   });
 
   test.concurrent("a worker_threads Worker starts from the parent's current process.env", async () => {
@@ -308,28 +316,43 @@ describe.skipIf(!isPosix)("process.env writes reach the OS environment", () => {
     `,
       { ENVFIX_WORKER_DEL: "startup" },
     );
-    expect(out).toEqual(["from-parent-js", null]);
+    expect(out).toEqual({ out: ["from-parent-js", null], exitCode: 0 });
   });
 
-  test.concurrent("a write after founding a SHARE_ENV tree still reaches native getenv()", async () => {
+  test.concurrent("the same rules hold after founding a SHARE_ENV tree", async () => {
     const out = await run(
       `
       const { Worker, SHARE_ENV } = require("node:worker_threads");
       const w = new Worker("require('node:worker_threads').parentPort.postMessage(1)", { eval: true, env: SHARE_ENV });
       await new Promise(r => w.on("exit", r));
+      const probe = fn => { try { fn(); return null; } catch (e) { return e.constructor.name; } };
       process.env.ENVFIX_POSTSWAP = "after-swap";
       process.env.ENVFIX_SNUL = "ab\\x00cd";
+      process.env["ENVFIX_SEQ=X"] = "v";
       delete process.env.ENVFIX_SWAPDEL;
       process.stdout.write(JSON.stringify({
         set: read("ENVFIX_POSTSWAP"),
         nul: read("ENVFIX_SNUL"),
         js: process.env.ENVFIX_SNUL,
+        eq: "ENVFIX_SEQ=X" in process.env,
         deleted: read("ENVFIX_SWAPDEL"),
+        freeze: probe(() => Object.freeze(process.env)),
+        stillWritable: (process.env.ENVFIX_SAFTER = "x", process.env.ENVFIX_SAFTER),
       }));
     `,
       { ENVFIX_SWAPDEL: "present" },
     );
-    // The shared store keeps the JS string as written; only the OS copy is cut.
-    expect(out).toEqual({ set: "after-swap", nul: "ab", js: "ab\x00cd", deleted: null });
+    expect(out).toEqual({
+      out: {
+        set: "after-swap",
+        nul: "ab",
+        js: "ab",
+        eq: false,
+        deleted: null,
+        freeze: "TypeError",
+        stillWritable: "x",
+      },
+      exitCode: 0,
+    });
   });
 });

@@ -18,9 +18,7 @@ namespace Bun {
 class JSEnvironmentVariableMap final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
-    // Cached puts and fast indexed storage would both store without reaching
-    // put() / putByIndex(): the second execution of the same assignment would
-    // skip ToString and the OS-environment write-through.
+    // A cached put or fast indexed store would bypass put() / putByIndex().
     static constexpr unsigned StructureFlags = Base::StructureFlags
         | JSC::OverridesPut
         | JSC::ProhibitsPropertyCaching

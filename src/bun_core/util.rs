@@ -314,31 +314,20 @@ impl core::ops::Deref for ZStr {
     }
 }
 
-/// Serialises Bun's own readers of libc `environ` ([`getenv_z`],
-/// [`getenv_z_any_case`], [`environ_read_lock`] holders) against the runtime
-/// `process.env` write path ([`putenv_leaked`], [`unsetenv`]). `getenv()`
-/// walks the `environ` array unlocked, and a write that adds or removes a
-/// key reallocates or shifts that array under it. A native addon's direct
-/// `getenv()` is not covered, the same limitation Node has with its
-/// `env_var_mutex`.
+/// Readers of libc `environ` (`getenv`, a walk of the array) against the
+/// `process.env` write path, which reallocates or shifts that array.
 #[cfg(unix)]
 static ENVIRON_LOCK: RwLock<()> = RwLock::new(());
 
-/// Hold this while walking `environ` directly (e.g. `bun_sys::environ()`).
 #[cfg(unix)]
 pub fn environ_read_lock() -> RwLockReadGuard<'static, ()> {
     ENVIRON_LOCK.read()
 }
 
-/// `process.env[key] = value`. Inserts a leaked, Bun-owned `KEY=VALUE` string
-/// with `putenv(3)` rather than `setenv(3)`. `setenv` copies the value, and
-/// musl, macOS and FreeBSD free that copy when the key is later overwritten
-/// or unset. That would dangle every `&'static [u8]` slice [`getenv_z`] has
-/// handed out (the `env_var` caches keep theirs for the process lifetime).
-/// A `putenv`'d string is never owned by libc, so nothing ever frees it: one
-/// small allocation per runtime write, which is what glibc's `setenv` costs
-/// too (it never frees either). `key` must be non-empty and free of `=` and
-/// NUL, `value` free of NUL (the `process.env` setter cuts both at NUL).
+/// `process.env[key] = value`. `putenv` with a leaked Bun-owned string, not
+/// `setenv`: musl, macOS and FreeBSD free a `setenv` copy on overwrite, which
+/// would dangle the `&'static [u8]` slices [`getenv_z`] hands out.
+/// `key` has no `=` or NUL and `value` has no NUL (the setter cuts both).
 #[cfg(unix)]
 pub fn putenv_leaked(key: &[u8], value: &[u8]) {
     debug_assert!(!key.is_empty());
@@ -351,31 +340,26 @@ pub fn putenv_leaked(key: &[u8], value: &[u8]) {
     entry.extend_from_slice(value);
     entry.push(0);
     let entry: &'static mut [u8] = Vec::leak(entry);
-    // Overwriting the key later drops environ's pointer to this string; it
-    // stays alive for any reader that still holds a slice into it.
     crate::asan::ignore_object(entry.as_ptr());
     let _guard = ENVIRON_LOCK.write();
-    // SAFETY: `entry` is NUL-terminated and never freed; putenv stores the
-    // pointer itself. The write lock excludes Bun's own environ readers.
+    // SAFETY: `entry` is NUL-terminated and never freed; putenv stores the pointer.
     unsafe { libc::putenv(entry.as_mut_ptr().cast()) };
 }
 
-/// `delete process.env[key]`. `key` must be free of NUL.
+/// `delete process.env[key]`.
 #[cfg(unix)]
 pub fn unsetenv(key: &[u8]) {
     let Ok(key_z) = std::ffi::CString::new(key) else {
         return;
     };
     let _guard = ENVIRON_LOCK.write();
-    // SAFETY: NUL-terminated C string; the write lock excludes Bun's own
-    // environ readers while unsetenv shifts the array.
+    // SAFETY: NUL-terminated C string.
     unsafe { libc::unsetenv(key_z.as_ptr()) };
 }
 
 /// `bun.getenvZ` — read an environment variable. Returns the value as borrowed
-/// process-static bytes: the env block lives for the process, and Bun's own
-/// write path ([`putenv_leaked`]) never frees a replaced string. On POSIX
-/// wraps `libc::getenv`; on Windows scans `environ` case-insensitively.
+/// process-static bytes (env block lives for the process). On POSIX wraps
+/// `libc::getenv`; on Windows scans `environ` case-insensitively.
 pub fn getenv_z(key: &ZStr) -> Option<&'static [u8]> {
     #[cfg(not(any(unix, windows)))]
     {
@@ -385,9 +369,8 @@ pub fn getenv_z(key: &ZStr) -> Option<&'static [u8]> {
     #[cfg(unix)]
     {
         let _guard = ENVIRON_LOCK.read();
-        // SAFETY: key is NUL-terminated by ZStr invariant; getenv reads until
-        // NUL. It returns a pointer into the process env block, valid for the
-        // process lifetime: Bun's own write path never frees a replaced string.
+        // SAFETY: key is NUL-terminated by ZStr invariant; getenv reads until NUL
+        // and returns a pointer into the env block, which is never freed.
         unsafe {
             let p = libc::getenv(key.as_ptr());
             if p.is_null() {

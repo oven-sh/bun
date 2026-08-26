@@ -2034,9 +2034,8 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
             }
         }
     }
-    // The env map rather than raw `environ`, like Bun.spawn: it carries runtime
-    // `process.env` writes, and a job on a worker thread must not walk
-    // `environ` while the main thread may be rewriting it.
+    // The env map, like Bun.spawn: it carries runtime `process.env` writes, and
+    // raw `environ` may be rewritten by the main thread while a worker spawns.
     let envp_owned;
     let env_strings: Vec<&CStr>;
     let env = {

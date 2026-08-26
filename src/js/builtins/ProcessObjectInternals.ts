@@ -502,10 +502,8 @@ export function windowsEnv(
     }
   }
 
-  // Node hands the name to the OS as a C string: it is cut at the first NUL,
-  // and a name that is empty or contains '=' is rejected, so the write is
-  // silently dropped (https://github.com/nodejs/node/issues/32920). Returns the
-  // name as the OS will hold it, or null when the write is dropped.
+  // The name as the OS holds it (cut at NUL), or null when Node drops the write
+  // (empty or contains '=', https://github.com/nodejs/node/issues/32920).
   function envName(p: string): string | null {
     const nul = p.indexOf("\0");
     if (nul !== -1) p = p.slice(0, nul);
@@ -545,8 +543,7 @@ export function windowsEnv(
       return true;
     },
     preventExtensions() {
-      // Node: Object.freeze / seal / preventExtensions on process.env throw a
-      // TypeError. Refusing here makes the Object builtins throw theirs.
+      // Object.freeze / seal / preventExtensions throw on process.env in Node.
       return false;
     },
     has(_, p) {

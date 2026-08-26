@@ -47,8 +47,8 @@ extern "C" bool Bun__Node__ProcessPendingDeprecation;
 
 namespace Bun {
 
-// Node's RealEnvStore hands keys and values to setenv(3), so each is cut at its
-// first NUL and a name that is empty or contains '=' fails EINVAL and is dropped.
+// setenv(3) takes C strings: Node cuts a key or value at its first NUL and
+// drops a write whose name is empty or contains '=' (EINVAL).
 static ALWAYS_INLINE String truncateAtNUL(const String& s)
 {
     size_t nul = s.find('\0');
@@ -60,9 +60,8 @@ static ALWAYS_INLINE bool isRejectedEnvName(const String& key)
     return key.isEmpty() || key.contains('=');
 }
 
-// Mirror a process.env write into Bun's env map (Bun.spawn's default env,
-// Bun.which, fetch proxy lookup) and, on the main thread, libc environ so a
-// native getenv() observes it. `value == nullptr` deletes.
+// Mirror a process.env write into Bun's env map and the OS environment.
+// `value == nullptr` deletes.
 static void writeThroughEnv(JSGlobalObject* globalObject, const String& key, const String* value)
 {
     BunString name = Bun::toString(key);
@@ -238,8 +237,7 @@ bool JSEnvironmentVariableMap::putByIndex(JSCell* cell, JSGlobalObject* globalOb
 
 bool JSEnvironmentVariableMap::preventExtensions(JSObject*, JSGlobalObject*)
 {
-    // Node: Object.freeze / seal / preventExtensions on process.env throw a
-    // TypeError. Refusing here makes the Object builtins throw theirs.
+    // Object.freeze / seal / preventExtensions throw on process.env in Node.
     return false;
 }
 
@@ -340,9 +338,8 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterProxyEnvironmentVariable, (JSGlobalObject * glo
     unsigned attributes;
     JSValue existing = object->getDirect(vm, propertyName, attributes);
     if (existing && (attributes & JSC::PropertyAttribute::DontEnum)) {
-        // putDirectCustomAccessor asserts NewProperty, so delete first. This is
-        // an attribute reset, not an env delete: bypass the method table so
-        // JSEnvironmentVariableMap::deleteProperty does not unset the var.
+        // putDirectCustomAccessor asserts NewProperty, so delete first; not via
+        // the method table, whose deleteProperty would unset the env var.
         DeletePropertySlot deleteSlot;
         JSC::JSObject::deleteProperty(object, globalObject, propertyName, deleteSlot);
         RETURN_IF_EXCEPTION(scope, false);
@@ -558,9 +555,8 @@ JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * global
 #if OS(WINDOWS)
 extern "C" void Bun__Process__editWindowsEnvVar(const BunString*, const BunString*);
 
-// Windows Proxy set/defineProperty write path: DEP0104 + ToString + NUL cut via
-// coerceEnvValueForStore, plus the TZ side effect so it survives
-// `delete process.env.TZ`. Returns the string.
+// Windows Proxy set/defineProperty write path: DEP0104 + ToString + NUL cut,
+// plus the TZ side effect so it survives `delete process.env.TZ`.
 JSC_DEFINE_HOST_FUNCTION(jsProcessEnvCoerceForWrite, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -631,13 +627,9 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
 #endif
 
 // Founding a SHARE_ENV tree swaps main's process.env off the object that wrote
-// through to the OS environment (the windowsEnv Proxy's SetEnvironmentVariableW,
-// JSEnvironmentVariableMap's setenv), so every mutation of a main-rooted shared
-// store has to re-apply that write-through. Gated on the *store*, not the
-// writing thread: node roots a main-founded tree at its RealEnvStore, so a
-// worker writing through that tree reaches the OS env too. On POSIX the
-// write-through itself only reaches environ from the main thread.
-// `value == nullptr` deletes.
+// through to the OS environment, so a main-rooted shared store re-applies that
+// write-through on every mutation. Gated on the store, not the writing thread,
+// like node's main-rooted RealEnvStore. `value == nullptr` deletes.
 static ALWAYS_INLINE void syncOSEnv(JSGlobalObject* globalObject, SharedEnvStore* store, const String& key, const String* value)
 {
     if (!store || !store->isMainRooted())
@@ -725,6 +717,7 @@ public:
     static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned);
     static void getOwnPropertyNames(JSObject*, JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);
     static bool defineOwnProperty(JSObject*, JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);
+    static bool preventExtensions(JSObject*, JSGlobalObject*) { return false; }
 
 private:
     JSSharedEnvMap(JSC::VM& vm, JSC::Structure* structure)
@@ -864,8 +857,11 @@ bool JSSharedEnvMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNam
     RETURN_IF_EXCEPTION(scope, false);
     String stringValue = value.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
+    stringValue = truncateAtNUL(stringValue);
 
-    String keyStr = String(uid);
+    String keyStr = truncateAtNUL(String(uid));
+    if (isRejectedEnvName(keyStr))
+        return true;
     applySharedEnvSideEffects(globalObject, keyStr, stringValue);
     syncOSEnv(globalObject, store, keyStr, &stringValue);
     store->set(keyStr, stringValue);
@@ -948,6 +944,7 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
     RETURN_IF_EXCEPTION(scope, false);
     String stringValue = descriptor.value().toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
+    stringValue = truncateAtNUL(stringValue);
 
     auto* store = sharedEnvStoreFor(object);
     if (!store) [[unlikely]] {
@@ -955,7 +952,9 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
     }
 
-    String keyStr = String(uid);
+    String keyStr = truncateAtNUL(String(uid));
+    if (isRejectedEnvName(keyStr))
+        return true;
     applySharedEnvSideEffects(globalObject, keyStr, stringValue);
     syncOSEnv(globalObject, store, keyStr, &stringValue);
     store->set(keyStr, stringValue);

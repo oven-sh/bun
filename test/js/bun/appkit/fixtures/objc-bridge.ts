@@ -197,6 +197,9 @@ await run(async () => {
   });
 
   const win = new Window({ title: "t", visible: false, width: 300, height: 200 });
+  // Making the first window starts the application. The policy asked for
+  // above is applied then; a session AppKit refuses it for keeps its own.
+  emit({ step: "started", running: app.isRunning, policy: app.activationPolicy });
   const native = win.native;
   const titleBefore = String(native.title());
   native.setTitle_("u");

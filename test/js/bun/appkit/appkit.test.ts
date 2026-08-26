@@ -2442,6 +2442,9 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
         tableDocument: true,
         scrollInsets: { top: 0, left: 0, bottom: 0, right: 0 },
       });
+      expect(step(r, "started")).toMatchObject({ step: "started", running: true });
+      // "accessory" was asked for before start; a headless session may keep "regular".
+      expect(["accessory", "regular"]).toContain(step(r, "started").policy);
       // Changes made through the NSWindow show in the curated getters, which read the live object.
       expect(step(r, "window")).toEqual({
         step: "window",

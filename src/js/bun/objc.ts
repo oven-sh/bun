@@ -1061,9 +1061,15 @@ function startApp(policy?: unknown): void {
   if (started) return;
   // Off the main thread the native side refuses the start before anything
   // else matters, so nothing is touched there.
-  if (Bun.isMainThread) applyActivationPolicy(activationPolicy);
   nativeApp.start(Bun.isMainThread ? (nativeOfProxy.get(effectiveDelegate()) as NativeObjCObject) : null);
   started = true;
+  // The policy wanted before start is applied once the application exists.
+  // A session AppKit will not change it for (no WindowServer connection)
+  // keeps AppKit's own; `app.activationPolicy` reads the live value either
+  // way, and an explicit set after start still throws when refused.
+  if (activationPolicies[activationPolicy] !== Number(nsapp().activationPolicy())) {
+    nsapp().setActivationPolicy_(activationPolicies[activationPolicy]);
+  }
   // App Nap follows the hold once there is an application to tell.
   holdProcess();
   if (appBadge !== null) nsapp().dockTile().setBadgeLabel_(appBadge);

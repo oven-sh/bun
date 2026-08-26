@@ -1247,6 +1247,7 @@ impl Readable {
     ) -> Readable {
         assert_stdio_result!(result);
 
+        debug_assert!(redirect_buf.is_none() || matches!(stdio, Stdio::Pipe | Stdio::Capture(_)));
         let buffered_output = match redirect_buf {
             Some(buf) => BufferedOutput::ArrayBuffer { buf, i: 0 },
             None => BufferedOutput::default(),

@@ -242,21 +242,19 @@ pub unsafe trait ThreadIsolatedArg {}
 
 /// A `T` built by its `from_js_async` parser or owned constructor (see
 /// [`ThreadIsolatedArg`]); nothing else constructs one.
-///
-/// `repr(transparent)` so identity-casts in the const-generic dispatch macros
-/// (see `node_fs.rs`'s `args_as!`) remain bit-exact.
-#[repr(transparent)]
 pub struct ThreadIsolated<T>(T);
 
 impl<T: ThreadIsolatedArg> ThreadIsolated<T> {
-    /// For `T`'s async parser and owned constructors only.
+    /// # Safety
+    /// `value` was built as [`ThreadIsolatedArg`] describes (async parse or
+    /// owned data only).
     #[inline]
-    pub(crate) fn new(value: T) -> Self {
+    pub(crate) unsafe fn new(value: T) -> Self {
         Self(value)
     }
 }
 
-// SAFETY: what `ThreadIsolatedArg` asserts for the values `new`'s callers build.
+// SAFETY: `new`'s contract is exactly what makes the value sendable.
 unsafe impl<T: ThreadIsolatedArg> Send for ThreadIsolated<T> {}
 
 impl<T> core::ops::Deref for ThreadIsolated<T> {
@@ -339,7 +337,8 @@ impl StringOrBuffer<'static> {
     /// Rust-owned bytes for a work-pool job.
     #[inline]
     pub(crate) fn owned_isolated(bytes: Vec<u8>) -> ThreadIsolated<Self> {
-        ThreadIsolated::new(Self::owned(bytes))
+        // SAFETY: owned bytes only.
+        unsafe { ThreadIsolated::new(Self::owned(bytes)) }
     }
 
     /// `value` is ArrayBuffer-like (the caller checked): borrowed for `Sync`,
@@ -461,10 +460,9 @@ impl StringOrBuffer<'static> {
         global: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<ThreadIsolated<Self>>> {
-        Ok(
-            Self::from_js_maybe_async(global, value, Flavor::Async, StringObjects::Allow)?
-                .map(ThreadIsolated::new),
-        )
+        let parsed = Self::from_js_maybe_async(global, value, Flavor::Async, StringObjects::Allow)?;
+        // SAFETY: parsed with `Flavor::Async`.
+        Ok(parsed.map(|v| unsafe { ThreadIsolated::new(v) }))
     }
 
     #[inline]

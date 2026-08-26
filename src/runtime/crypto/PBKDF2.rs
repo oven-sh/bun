@@ -246,7 +246,8 @@ impl PBKDF2 {
         call_frame: &CallFrame,
     ) -> JsResult<(ThreadIsolated<PBKDF2>, JSValue)> {
         let (data, callback) = Self::from_js(global_this, call_frame, Flavor::Async)?;
-        Ok((ThreadIsolated::new(data), callback))
+        // SAFETY: parsed with `Flavor::Async`.
+        Ok((unsafe { ThreadIsolated::new(data) }, callback))
     }
 }
 

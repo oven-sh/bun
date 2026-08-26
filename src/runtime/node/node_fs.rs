@@ -1009,7 +1009,9 @@ mod _async_tasks {
             arguments: &mut ArgumentsSlice,
         ) -> JsResult<ThreadIsolated<Self>> {
             arguments.will_be_async = true;
-            Self::from_js(ctx, arguments).map(ThreadIsolated::new)
+            let args = Self::from_js(ctx, arguments)?;
+            // SAFETY: parsed with `will_be_async`.
+            Ok(unsafe { ThreadIsolated::new(args) })
         }
         fn signal(&self) -> Option<&AbortSignal> {
             None
@@ -2949,11 +2951,14 @@ pub mod args {
 
         /// `fs.stat(path)` of Rust-owned bytes, for a work-pool job.
         pub fn owned(path: Vec<u8>) -> ThreadIsolated<Self> {
-            ThreadIsolated::new(Stat {
-                path: PathLike::owned(path),
-                big_int: false,
-                throw_if_no_entry: true,
-            })
+            // SAFETY: owned path only.
+            unsafe {
+                ThreadIsolated::new(Stat {
+                    path: PathLike::owned(path),
+                    big_int: false,
+                    throw_if_no_entry: true,
+                })
+            }
         }
     }
 
@@ -2983,7 +2988,8 @@ pub mod args {
 
         /// `fs.fstat(fd)`, for a work-pool job.
         pub fn for_fd(fd: FD) -> ThreadIsolated<Self> {
-            ThreadIsolated::new(Fstat { fd, big_int: false })
+            // SAFETY: no JS-backed fields.
+            unsafe { ThreadIsolated::new(Fstat { fd, big_int: false }) }
         }
     }
 
@@ -3149,9 +3155,12 @@ pub mod args {
 
         /// `fs.unlink(path)` of Rust-owned bytes, for a work-pool job.
         pub fn owned(path: Vec<u8>) -> ThreadIsolated<Self> {
-            ThreadIsolated::new(Unlink {
-                path: PathLike::owned(path),
-            })
+            // SAFETY: owned path only.
+            unsafe {
+                ThreadIsolated::new(Unlink {
+                    path: PathLike::owned(path),
+                })
+            }
         }
     }
 
@@ -4190,11 +4199,14 @@ pub mod args {
 
         /// `fs.cp(src, dest)` of Rust-owned bytes, for a work-pool job.
         pub fn owned(src: Vec<u8>, dest: Vec<u8>, flags: CpFlags) -> ThreadIsolated<Self> {
-            ThreadIsolated::new(Cp {
-                src: PathLike::owned(src),
-                dest: PathLike::owned(dest),
-                flags,
-            })
+            // SAFETY: owned paths only.
+            unsafe {
+                ThreadIsolated::new(Cp {
+                    src: PathLike::owned(src),
+                    dest: PathLike::owned(dest),
+                    flags,
+                })
+            }
         }
     }
 

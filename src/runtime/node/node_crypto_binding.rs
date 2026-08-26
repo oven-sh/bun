@@ -1001,7 +1001,8 @@ mod _impl {
             call_frame: &CallFrame,
         ) -> JsResult<(ThreadIsolated<Self>, JSValue)> {
             let (ctx, callback) = Self::from_js::<true>(global, call_frame)?;
-            Ok((ThreadIsolated::new(ctx), callback))
+            // SAFETY: parsed with the async flavor (`from_js::<true>`).
+            Ok((unsafe { ThreadIsolated::new(ctx) }, callback))
         }
 
         fn check_scrypt_params(&self, global: &JSGlobalObject) -> JsResult<()> {

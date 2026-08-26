@@ -1306,6 +1306,9 @@ pub struct JavaScriptChunk {
     /// The chunks with side effects that this chunk's walk reaches, in the
     /// order it finishes their first side-effect file. Orders the `import`s.
     pub(crate) reached_chunks_in_order: Box<[u32]>,
+    /// The first entry point that evaluates this chunk's files; the chunk is
+    /// laid out in its order. Set by `split_chunks_for_evaluation_order`.
+    pub(crate) layout_entry_source_index: Option<IndexInt>,
     /// Bindings declared in this chunk that another chunk imports; named by `cross_chunk_names`.
     pub(crate) exports_to_other_chunks: ArrayHashMap<Ref, ()>,
     pub(crate) imports_from_other_chunks: ImportsFromOtherChunks,

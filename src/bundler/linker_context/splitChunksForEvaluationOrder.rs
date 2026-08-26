@@ -96,7 +96,7 @@ pub(crate) fn split_chunks_for_evaluation_order<'t>(
         Enter(u32),
         Exit(u32),
     }
-    let mut orders: Vec<Vec<u32>> = Vec::new();
+    let mut orders: Vec<(u32, Vec<u32>)> = Vec::new();
     let mut visited: Vec<bool> = vec![false; files_len];
     let mut touched: Vec<u32> = Vec::new();
     let mut stack: Vec<Frame> = Vec::new();
@@ -151,7 +151,7 @@ pub(crate) fn split_chunks_for_evaluation_order<'t>(
                 && bits.is_set(entry_id)
                 && !already_loaded.is_some_and(|loaded| bits.has_intersection(loaded))
         });
-        orders.push(order);
+        orders.push((entry_source_index, order));
     }
 
     // Moves `files` out of chunk `chunk_index` into a new chunk.
@@ -279,7 +279,7 @@ pub(crate) fn split_chunks_for_evaluation_order<'t>(
     // A cut for one entry can break a run of another; repeat until no pass cuts.
     'passes: loop {
         let mut changed = false;
-        for order in orders.iter() {
+        for (_, order) in orders.iter() {
             runs.clear();
             run_of_chunk.clear();
             run_of_chunk.resize(js_chunks.count(), u32::MAX);
@@ -392,7 +392,7 @@ pub(crate) fn split_chunks_for_evaluation_order<'t>(
         reference.resize(js_chunks.count(), Vec::new());
         sequence.clear();
         sequence.resize(js_chunks.count(), Vec::new());
-        for order in orders.iter() {
+        for (_, order) in orders.iter() {
             for &source_index in order.iter() {
                 if !impure[source_index as usize] {
                     continue;
@@ -441,6 +441,19 @@ pub(crate) fn split_chunks_for_evaluation_order<'t>(
             touched_chunks.clear();
         }
         break;
+    }
+
+    // The first entry that evaluates a chunk lays it out
+    // (`find_imported_parts_in_js_order`), the same entry the order check
+    // above took as its reference.
+    for (entry_source_index, order) in orders.iter() {
+        for &source_index in order.iter() {
+            let chunk_index = chunk_of_file[source_index as usize] as usize;
+            let js = js_chunks.values_mut()[chunk_index].content.javascript_mut();
+            if js.layout_entry_source_index.is_none() {
+                js.layout_entry_source_index = Some(*entry_source_index);
+            }
+        }
     }
     debug!(
         "splitChunksForEvaluationOrder: {} chunks split off to keep the evaluation order",

@@ -112,15 +112,23 @@ pub(crate) fn find_imported_parts_in_js_order(
     let with_code_splitting = this.graph.code_splitting;
     let with_scb = this.graph.is_scb_bitset.bit_length > 0;
 
-    // With code splitting, walk from the first entry that loads the chunk
+    // With code splitting, walk from the first entry that evaluates the chunk
     // first, so a shared chunk's files come out in that entry's order. Files
     // it never reaches follow in `chunk_order_array` order.
     let first_entry_source_index = if with_code_splitting {
         chunk
-            .entry_bits()
-            .find_first_set()
-            .map(|entry_id| this.graph.entry_points.items_source_index()[entry_id])
-            .filter(|&source_index| this.graph.ast.items_css()[source_index as usize].is_none())
+            .content
+            .javascript()
+            .layout_entry_source_index
+            .or_else(|| {
+                chunk
+                    .entry_bits()
+                    .find_first_set()
+                    .map(|entry_id| this.graph.entry_points.items_source_index()[entry_id])
+                    .filter(|&source_index| {
+                        this.graph.ast.items_css()[source_index as usize].is_none()
+                    })
+            })
     } else {
         None
     };

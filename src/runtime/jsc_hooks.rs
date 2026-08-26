@@ -3791,9 +3791,11 @@ export default db;
         }
 
         // SAFETY: `file.module_info`/`file.bytecode` are live subranges of
-        // the embedded section (set in `Graph::from_bytes`);
-        // `create_from_cached_record` copies out of it before returning.
+        // the embedded section (set in `Graph::from_bytes`).
         let (module_info, bytecode) = unsafe { (&*file.module_info, &*file.bytecode) };
+        // SAFETY: `graph` is the process-global standalone graph; the table
+        // is a read-only subrange of the embedded section.
+        let module_info_strings = unsafe { (*graph).module_info_string_table };
         return Some(ResolvedSource {
             source_code: file.to_wtf_string(),
             source_url: specifier.clone(),
@@ -3801,8 +3803,17 @@ export default db;
             bytecode_cache: Bytecode::persistent(bytecode),
             source_code_hash: file.source_hash,
             module_info: if !module_info.is_empty() {
-                bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized
-                    ::create_from_cached_record(module_info)
+                let decoded =
+                    bun_bundler::analyze_transpiled_module::ModuleInfoStringTable::parse(
+                        module_info_strings,
+                    )
+                    .ok()
+                    .and_then(|table| {
+                        bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized
+                            ::create_with_table(&table, module_info)
+                    });
+                debug_assert!(decoded.is_some(), "embedded module_info does not decode");
+                decoded
             } else {
                 None
             },

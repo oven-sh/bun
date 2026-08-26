@@ -1,4 +1,3 @@
-use core::mem::size_of;
 use core::ptr::NonNull;
 
 use bun_core;
@@ -137,14 +136,10 @@ pub enum ModuleInfoError {
 }
 
 /// All slice fields are **self-referential** views into `owner`
-/// (`Owner::AllocatedSlice`) or into the parent `ModuleInfo`'s `Vec` storage
-/// (`Owner::ModuleInfo`). They are stored as [`bun_ptr::RawSlice`] (raw fat
+/// (`Owner::Decoded`'s boxed slices) or into the parent `ModuleInfo`'s `Vec`
+/// storage (`Owner::ModuleInfo`). They are stored as [`bun_ptr::RawSlice`] (raw fat
 /// pointers) because Rust references cannot express the self-borrow.
 ///
-/// Alignment: the on-disk format pads every multi-byte field to a 4-byte
-/// offset, and [`Self::create`] allocates the backing buffer with 4-byte
-/// alignment ([`MODULE_INFO_ALIGN`]), so every `RawSlice<T>` here is properly
-/// aligned for `T` and `.slice()` is sound.
 pub struct ModuleInfoDeserialized {
     pub(crate) strings_buf: bun_ptr::RawSlice<u8>,
     pub(crate) strings_lens: bun_ptr::RawSlice<u32>,
@@ -160,21 +155,23 @@ pub struct ModuleInfoDeserialized {
 pub enum Owner {
     /// `Box<ModuleInfo>` whose internal vectors back the raw slice fields.
     ModuleInfo(*mut ModuleInfo),
-    AllocatedSlice {
-        /// [`MODULE_INFO_ALIGN`]-aligned heap slice from [`dupe_aligned`];
-        /// freed via [`free_aligned_dup`].
-        slice: *mut [u8],
-    },
+    /// Decoded from the wire format by [`ModuleInfoDeserialized::create`].
+    Decoded(Box<Decoded>),
+}
+
+/// The fixed-width in-memory layout the wire format decodes into: one `u32`
+/// arena (`[strings_lens | requested keys | requested values | buffer]`) and
+/// one byte arena (`[record_kinds | requested phases | strings_buf]`).
+pub struct Decoded {
+    words: Box<[u32]>,
+    bytes: Box<[u8]>,
 }
 
 impl Drop for ModuleInfoDeserialized {
     fn drop(&mut self) {
-        // SAFETY: `owner` is the unique owner of its allocation (see `Owner`).
-        unsafe {
-            match self.owner {
-                Owner::ModuleInfo(mi) => drop(bun_core::heap::take(mi)),
-                Owner::AllocatedSlice { slice } => free_aligned_dup(slice),
-            }
+        if let Owner::ModuleInfo(mi) = self.owner {
+            // SAFETY: `owner` is the unique owner of the leaked `Box<ModuleInfo>`.
+            drop(unsafe { bun_core::heap::take(mi) });
         }
     }
 }
@@ -187,10 +184,8 @@ impl ModuleInfoDeserialized {
     // `&self`, and no `&mut` alias to that storage is ever handed out — so
     // materialising `&[T]` for `'_ self` (via `RawSlice::slice`) is sound.
     //
-    // Alignment: every constructor guarantees each view is aligned for its
-    // element type — `create` allocates a `MODULE_INFO_ALIGN`-aligned buffer
-    // and `bytes_as_slice` rejects misaligned sub-slices; `into_deserialized`
-    // borrows from typed `Vec<T>` storage which is naturally aligned.
+    // Both constructors borrow from typed `Vec<T>` / `Box<[T]>` storage,
+    // which is naturally aligned.
 
     #[inline]
     pub fn strings_buf(&self) -> &[u8] {
@@ -231,94 +226,209 @@ impl ModuleInfoDeserialized {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    #[inline]
-    fn eat<'a>(rem: &mut &'a [u8], len: usize) -> Result<&'a [u8], ModuleInfoError> {
-        if rem.len() < len {
-            return Err(ModuleInfoError::BadModuleInfo);
-        }
-        let res = &rem[..len];
-        *rem = &rem[len..];
-        Ok(res)
-    }
-
-    #[inline]
-    fn eat_c<'a, const N: usize>(rem: &mut &'a [u8]) -> Result<&'a [u8; N], ModuleInfoError> {
-        let (head, tail) = rem
-            .split_first_chunk::<N>()
-            .ok_or(ModuleInfoError::BadModuleInfo)?;
-        *rem = tail;
-        Ok(head)
-    }
-
+    /// Decodes the self-contained form (a module's own string table followed
+    /// by its body, as the runtime transpiler cache stores it).
     pub(crate) fn create(source: &[u8]) -> Result<Box<ModuleInfoDeserialized>, ModuleInfoError> {
-        // Copy into a `MODULE_INFO_ALIGN`-aligned buffer so the typed
-        // sub-slices below (whose offsets the format pads to 4 bytes) are
-        // properly aligned for `&[T]` materialisation.
-        let duped_raw: *mut [u8] = dupe_aligned(source);
-        // On error, reclaim the allocation.
-        let guard = scopeguard::guard(duped_raw, |p| {
-            // SAFETY: `p` is the `dupe_aligned` result captured above and has
-            // not been freed — this guard only fires on the error path, before
-            // `ScopeGuard::into_inner` transfers ownership into `owner`.
-            unsafe { free_aligned_dup(p) }
+        let table = ModuleInfoStringTable::parse(source)?;
+        let body = &source[table.byte_len..];
+        Self::decode(&table, body, false)
+    }
+
+    /// Decodes a body whose ids index `table`, a string table shared by many
+    /// modules (`StandaloneModuleGraph`); only the strings this body uses are
+    /// copied out.
+    pub fn create_with_table(
+        table: &ModuleInfoStringTable<'_>,
+        body: &[u8],
+    ) -> Option<Box<ModuleInfoDeserialized>> {
+        Self::decode(table, body, true).ok()
+    }
+
+    /// Widens the body wire format written by
+    /// `bun_js_printer::analyze_transpiled_module::ModuleInfoDeserialized::serialize_body`
+    /// (layout documented there) into the fixed `u32` layout
+    /// `to_js_module_record` reads: one `u32` arena
+    /// `[strings_lens | requested keys | requested values | buffer]` and one
+    /// byte arena `[record_kinds | requested phases | strings_buf]`. With
+    /// `remap`, table ids are renumbered densely in first-use order so the
+    /// module's identifier array holds only its own strings.
+    fn decode(
+        table: &ModuleInfoStringTable<'_>,
+        body: &[u8],
+        remap: bool,
+    ) -> Result<Box<ModuleInfoDeserialized>, ModuleInfoError> {
+        use ModuleInfoError::BadModuleInfo;
+        let mut r = Reader { rem: body };
+        let &[flags, id_width, 0, 0] = r.bytes(4)? else {
+            return Err(BadModuleInfo);
+        };
+        let flags = Flags::from_bits_retain(flags);
+        let id_width = width(id_width)?;
+        let requested_count = r.u32()? as usize;
+        let record_count = r.u32()? as usize;
+        // Every counted item takes at least one byte below; reject headers
+        // that would over-allocate before reading anything.
+        if requested_count + record_count > r.rem.len() {
+            return Err(BadModuleInfo);
+        }
+        let record_tags = r.bytes(record_count)?;
+        let requested_tags = r.bytes(requested_count)?;
+        let mut buffer_len = 0usize;
+        for &tag in record_tags {
+            buffer_len += RecordKind(tag & 0b111).len().map_err(|_| BadModuleInfo)?;
+        }
+
+        // Table id -> local id. Without `remap` the table is this module's own
+        // and ids pass through.
+        struct Ids {
+            table_count: u32,
+            id_width: usize,
+            remap: bool,
+            local_of: bun_collections::HashMap<u32, u32>,
+            used: Vec<u32>,
+        }
+        impl Ids {
+            fn id(&mut self, r: &mut Reader<'_>) -> Result<u32, ModuleInfoError> {
+                let v = r.uint(self.id_width)?;
+                Ok(match v.checked_sub(self.table_count) {
+                    Some(0) => StringID::STAR_NAMESPACE.0,
+                    Some(1) => StringID::STAR_DEFAULT.0,
+                    Some(_) => return Err(ModuleInfoError::BadModuleInfo),
+                    None if !self.remap => v,
+                    None => {
+                        let used = &mut self.used;
+                        *self.local_of.entry(v).or_insert_with(|| {
+                            used.push(v);
+                            (used.len() - 1) as u32
+                        })
+                    }
+                })
+            }
+            fn fetch(&mut self, r: &mut Reader<'_>, kind: u8) -> Result<u32, ModuleInfoError> {
+                Ok(match kind {
+                    0 => FetchParameters::None.0,
+                    1 => FetchParameters::Javascript.0,
+                    2 => FetchParameters::Webassembly.0,
+                    3 => FetchParameters::Json.0,
+                    4 => self.id(r)?,
+                    _ => return Err(ModuleInfoError::BadModuleInfo),
+                })
+            }
+        }
+        let table_count = table.count;
+        let mut ids = Ids {
+            table_count,
+            id_width,
+            remap,
+            local_of: Default::default(),
+            used: Vec::new(),
+        };
+        let mut words: Vec<u32> = Vec::with_capacity(2 * requested_count + buffer_len);
+        // requested keys, then values
+        words.resize(2 * requested_count, 0);
+        for (n, &tag) in requested_tags.iter().enumerate() {
+            if tag >> 1 > 4 {
+                return Err(BadModuleInfo);
+            }
+            words[n] = ids.id(&mut r)?;
+            words[requested_count + n] = ids.fetch(&mut r, tag >> 1)?;
+        }
+        for &tag in record_tags {
+            let kind = RecordKind(tag & 0b111);
+            let same_name = tag & (1 << 6) != 0;
+            match kind {
+                RecordKind::IMPORT_INFO_SINGLE | RecordKind::IMPORT_INFO_SINGLE_TYPE_SCRIPT => {
+                    let module_name = ids.id(&mut r)?;
+                    let import_name = ids.id(&mut r)?;
+                    let local_name = if same_name {
+                        import_name
+                    } else {
+                        ids.id(&mut r)?
+                    };
+                    words.extend([module_name, import_name, local_name]);
+                }
+                RecordKind::IMPORT_INFO_NAMESPACE | RecordKind::IMPORT_INFO_NAMESPACE_DEFER => {
+                    let module_name = ids.id(&mut r)?;
+                    words.extend([module_name, StringID::STAR_NAMESPACE.0, ids.id(&mut r)?]);
+                }
+                RecordKind::EXPORT_INFO_INDIRECT => {
+                    let export_name = ids.id(&mut r)?;
+                    let import_name = ids.id(&mut r)?;
+                    words.extend([export_name, import_name, ids.id(&mut r)?]);
+                }
+                RecordKind::EXPORT_INFO_LOCAL => {
+                    let export_name = ids.id(&mut r)?;
+                    words.extend([export_name, ids.id(&mut r)?, u32::MAX]);
+                }
+                RecordKind::EXPORT_INFO_NAMESPACE => {
+                    let export_name = ids.id(&mut r)?;
+                    words.extend([export_name, ids.id(&mut r)?]);
+                }
+                RecordKind::EXPORT_INFO_STAR => words.push(ids.id(&mut r)?),
+                _ => return Err(BadModuleInfo),
+            }
+            words.push(ids.fetch(&mut r, (tag >> 3) & 0b111)?);
+        }
+        let used = ids.used;
+        if !r.rem.is_empty() {
+            return Err(BadModuleInfo);
+        }
+        debug_assert_eq!(words.len(), 2 * requested_count + buffer_len);
+
+        // Local string table: lengths up front in `words`, bytes at the end of `bytes`.
+        let strings_count = if remap {
+            used.len()
+        } else {
+            table_count as usize
+        };
+        let string = |local: usize| {
+            if remap {
+                table.get(used[local])
+            } else {
+                table.get(local as u32)
+            }
+        };
+        let mut strings_total = 0usize;
+        let mut all_words: Vec<u32> = Vec::with_capacity(strings_count + words.len());
+        for local in 0..strings_count {
+            let s = string(local).ok_or(BadModuleInfo)?;
+            strings_total += s.len();
+            all_words.push(s.len() as u32);
+        }
+        all_words.extend_from_slice(&words);
+        drop(words);
+        let mut bytes: Vec<u8> = Vec::with_capacity(record_count + requested_count + strings_total);
+        bytes.extend(record_tags.iter().map(|&tag| tag & 0b111));
+        bytes.extend(requested_tags.iter().map(|&tag| tag & 1));
+        for local in 0..strings_count {
+            bytes.extend_from_slice(string(local).ok_or(BadModuleInfo)?);
+        }
+
+        let decoded = Box::new(Decoded {
+            words: all_words.into(),
+            bytes: bytes.into(),
         });
-
-        // SAFETY: `duped_raw` is a valid, exclusively-owned allocation.
-        let mut rem: &[u8] = unsafe { &*duped_raw };
-
-        let record_kinds_len = u32::from_le_bytes(*Self::eat_c::<4>(&mut rem)?);
-        let record_kinds = bytes_as_slice::<RecordKind>(Self::eat(
-            &mut rem,
-            record_kinds_len as usize * size_of::<RecordKind>(),
-        )?)?;
-        let _ = Self::eat(&mut rem, ((4 - (record_kinds_len % 4)) % 4) as usize)?; // alignment padding
-
-        let buffer_len = u32::from_le_bytes(*Self::eat_c::<4>(&mut rem)?);
-        let buffer = bytes_as_slice::<StringID>(Self::eat(
-            &mut rem,
-            buffer_len as usize * size_of::<StringID>(),
-        )?)?;
-
-        let requested_modules_len = u32::from_le_bytes(*Self::eat_c::<4>(&mut rem)?);
-        let requested_modules_keys = bytes_as_slice::<StringID>(Self::eat(
-            &mut rem,
-            requested_modules_len as usize * size_of::<StringID>(),
-        )?)?;
-        let requested_modules_values = bytes_as_slice::<FetchParameters>(Self::eat(
-            &mut rem,
-            requested_modules_len as usize * size_of::<FetchParameters>(),
-        )?)?;
-        let requested_modules_phases = Self::eat(&mut rem, requested_modules_len as usize)?;
-        let _ = Self::eat(&mut rem, ((4 - (requested_modules_len % 4)) % 4) as usize)?; // alignment padding
-
-        let flags = Flags::from_bits_retain(Self::eat_c::<1>(&mut rem)?[0]);
-        let _ = Self::eat(&mut rem, 3)?; // alignment padding
-
-        let strings_len = u32::from_le_bytes(*Self::eat_c::<4>(&mut rem)?);
-        let strings_lens = bytes_as_slice::<u32>(Self::eat(
-            &mut rem,
-            strings_len as usize * size_of::<u32>(),
-        )?)?;
-        let strings_buf: &[u8] = rem;
-
-        // Disarm the errdefer: ownership moves into the result.
-        let duped_raw = scopeguard::ScopeGuard::into_inner(guard);
-
-        // All seven views borrow `duped_raw` (the boxed allocation moved into
-        // `owner` below); they stay valid and at a stable address for the
-        // lifetime of every `RawSlice` copied from this struct. `RawSlice::new`
-        // erases the borrow lifetime — the structural invariant is upheld by
-        // `owner` outliving the views.
+        let (strings_lens, rest) = decoded.words.split_at(strings_count);
+        let (requested_keys, rest) = rest.split_at(requested_count);
+        let (requested_values, buffer) = rest.split_at(requested_count);
+        let (record_kinds, rest) = decoded.bytes.split_at(record_count);
+        let (requested_phases, strings_buf) = rest.split_at(requested_count);
+        // All seven views borrow the boxed `Decoded` moved into `owner` below;
+        // its two heap slices stay at a stable address for the struct's lifetime.
+        // `StringID` / `FetchParameters` / `RecordKind` are `#[repr(transparent)]`
+        // over `u32` / `u32` / `u8` (Pod), so `cast_slice` is a safe reinterpret.
         Ok(Box::new(ModuleInfoDeserialized {
             strings_buf: bun_ptr::RawSlice::new(strings_buf),
             strings_lens: bun_ptr::RawSlice::new(strings_lens),
-            requested_modules_keys: bun_ptr::RawSlice::new(requested_modules_keys),
-            requested_modules_values: bun_ptr::RawSlice::new(requested_modules_values),
-            requested_modules_phases: bun_ptr::RawSlice::new(requested_modules_phases),
-            buffer: bun_ptr::RawSlice::new(buffer),
-            record_kinds: bun_ptr::RawSlice::new(record_kinds),
+            requested_modules_keys: bun_ptr::RawSlice::new(bytemuck::cast_slice(requested_keys)),
+            requested_modules_values: bun_ptr::RawSlice::new(bytemuck::cast_slice(
+                requested_values,
+            )),
+            requested_modules_phases: bun_ptr::RawSlice::new(requested_phases),
+            buffer: bun_ptr::RawSlice::new(bytemuck::cast_slice(buffer)),
+            record_kinds: bun_ptr::RawSlice::new(bytemuck::cast_slice(record_kinds)),
             flags,
-            owner: Owner::AllocatedSlice { slice: duped_raw },
+            owner: Owner::Decoded(decoded),
         }))
     }
 
@@ -332,67 +442,94 @@ impl ModuleInfoDeserialized {
     }
 }
 
-/// Maximum element alignment appearing in the serialized format
-/// (`u32` / `StringID` / `FetchParameters`). The writer pads every multi-byte
-/// field to this boundary, and [`dupe_aligned`] allocates the backing buffer
-/// at this alignment, so every typed sub-slice is properly aligned.
-const MODULE_INFO_ALIGN: usize = core::mem::align_of::<u32>();
-
-// Compile-time guard: if a wider element type is ever added to the format,
-// bump `MODULE_INFO_ALIGN` accordingly.
-const _: () = {
-    assert!(core::mem::align_of::<StringID>() <= MODULE_INFO_ALIGN);
-    assert!(core::mem::align_of::<FetchParameters>() <= MODULE_INFO_ALIGN);
-    assert!(core::mem::align_of::<RecordKind>() <= MODULE_INFO_ALIGN);
-};
-
-/// Allocate a [`MODULE_INFO_ALIGN`]-aligned copy of `source`.
-/// Paired with [`free_aligned_dup`].
-fn dupe_aligned(source: &[u8]) -> *mut [u8] {
-    if source.is_empty() {
-        // Non-null, well-aligned, len-0 — valid input for `&*` and for
-        // `free_aligned_dup` (which no-ops on len 0).
-        return core::ptr::slice_from_raw_parts_mut(MODULE_INFO_ALIGN as *mut u8, 0);
-    }
-    let layout = std::alloc::Layout::from_size_align(source.len(), MODULE_INFO_ALIGN)
-        .expect("module-info buffer too large");
-    // SAFETY: layout has non-zero size (checked above).
-    let ptr = unsafe { std::alloc::alloc(layout) };
-    if ptr.is_null() {
-        std::alloc::handle_alloc_error(layout);
-    }
-    // SAFETY: `ptr` is a fresh `source.len()`-byte allocation; `source` is a
-    // valid readable slice; the regions cannot overlap.
-    unsafe { core::ptr::copy_nonoverlapping(source.as_ptr(), ptr, source.len()) };
-    core::ptr::slice_from_raw_parts_mut(ptr, source.len())
+struct Reader<'a> {
+    rem: &'a [u8],
 }
-
-/// # Safety
-/// `slice` must have been returned by [`dupe_aligned`] and not yet freed.
-unsafe fn free_aligned_dup(slice: *mut [u8]) {
-    let len = slice.len();
-    if len == 0 {
-        return;
+impl<'a> Reader<'a> {
+    fn bytes(&mut self, len: usize) -> Result<&'a [u8], ModuleInfoError> {
+        if self.rem.len() < len {
+            return Err(ModuleInfoError::BadModuleInfo);
+        }
+        let (head, rest) = self.rem.split_at(len);
+        self.rem = rest;
+        Ok(head)
     }
-    // SAFETY: caller contract — `slice` came from `dupe_aligned`, which
-    // allocated with this exact layout.
-    unsafe {
-        std::alloc::dealloc(
-            slice.cast::<u8>(),
-            std::alloc::Layout::from_size_align_unchecked(len, MODULE_INFO_ALIGN),
-        );
+    fn u32(&mut self) -> Result<u32, ModuleInfoError> {
+        Ok(u32::from_le_bytes(self.bytes(4)?.try_into().unwrap()))
+    }
+    fn uint(&mut self, width: usize) -> Result<u32, ModuleInfoError> {
+        Ok(read_uint(self.bytes(width)?, width))
     }
 }
-
-/// Reinterpret a byte sub-slice of the [`MODULE_INFO_ALIGN`]-aligned backing
-/// buffer as `&[T]`. Returns `BadModuleInfo` if `bytes` is not aligned for `T`
-/// or its length is not a multiple of `size_of::<T>()` (i.e. the format's
-/// internal padding was violated).
-///
-/// (`bytemuck::try_cast_slice` checks both alignment and size.)
 #[inline]
-fn bytes_as_slice<T: bytemuck::AnyBitPattern>(bytes: &[u8]) -> Result<&[T], ModuleInfoError> {
-    bytemuck::try_cast_slice(bytes).map_err(|_| ModuleInfoError::BadModuleInfo)
+fn read_uint(b: &[u8], width: usize) -> u32 {
+    match width {
+        1 => b[0] as u32,
+        2 => u16::from_le_bytes([b[0], b[1]]) as u32,
+        _ => u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+    }
+}
+fn width(b: u8) -> Result<usize, ModuleInfoError> {
+    match b {
+        1 | 2 | 4 => Ok(b as usize),
+        _ => Err(ModuleInfoError::BadModuleInfo),
+    }
+}
+
+/// Borrowed view over a serialized
+/// `bun_js_printer::analyze_transpiled_module::ModuleInfoStringTable`
+/// (layout documented there).
+pub struct ModuleInfoStringTable<'a> {
+    count: u32,
+    offset_width: usize,
+    /// `count + 1` offsets at `offset_width` bytes each.
+    offsets: &'a [u8],
+    buf: &'a [u8],
+    /// Bytes the table occupies at the front of the slice it was parsed from.
+    byte_len: usize,
+}
+impl<'a> ModuleInfoStringTable<'a> {
+    pub fn parse(bytes: &'a [u8]) -> Result<Self, ModuleInfoError> {
+        if bytes.is_empty() {
+            return Ok(Self {
+                count: 0,
+                offset_width: 1,
+                offsets: &[0],
+                buf: &[],
+                byte_len: 0,
+            });
+        }
+        let mut r = Reader { rem: bytes };
+        let &[offset_width, 0, 0, 0] = r.bytes(4)? else {
+            return Err(ModuleInfoError::BadModuleInfo);
+        };
+        let offset_width = width(offset_width)?;
+        let count = r.u32()?;
+        let offsets_len = (count as usize)
+            .checked_add(1)
+            .and_then(|n| n.checked_mul(offset_width))
+            .ok_or(ModuleInfoError::BadModuleInfo)?;
+        let offsets = r.bytes(offsets_len)?;
+        let total = read_uint(&offsets[offsets_len - offset_width..], offset_width) as usize;
+        let buf = r.bytes(total)?;
+        Ok(Self {
+            count,
+            offset_width,
+            offsets,
+            buf,
+            byte_len: bytes.len() - r.rem.len(),
+        })
+    }
+    #[inline]
+    fn get(&self, id: u32) -> Option<&'a [u8]> {
+        if id >= self.count {
+            return None;
+        }
+        let at = id as usize * self.offset_width;
+        let start = read_uint(&self.offsets[at..], self.offset_width) as usize;
+        let end = read_uint(&self.offsets[at + self.offset_width..], self.offset_width) as usize;
+        self.buf.get(start..end)
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

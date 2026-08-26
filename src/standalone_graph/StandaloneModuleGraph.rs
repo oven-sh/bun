@@ -49,6 +49,8 @@ pub struct StandaloneModuleGraph {
     pub builtin_bytecode: Vec<(u32, *mut [u8])>,
     /// The one shared bytecode string table (`JSC::EncoderStringTable::serialize`) every chunk's payload references by ordinal; installed on the VM's `DecoderStringTable` at startup.
     pub bytecode_string_table: &'static [u8],
+    /// The string table every module's `module_info` body indexes (`ModuleInfoStringTable`); empty when there is none.
+    pub module_info_string_table: &'static [u8],
     /// The first `startup_module_count` of `files` (table order = load order) are the entry
     /// point's static import closure, i.e. what loads before the first `import()`.
     pub startup_module_count: u32,
@@ -769,6 +771,9 @@ bitflags::bitflags! {
         /// After the string-table pointer: `u32` count of leading modules (in table order) that make up the
         /// entry point's static import closure, i.e. load before the first `import()`; `prefetch_startup_pages` reads ahead what they need.
         const HAS_STARTUP_MODULE_COUNT      = 1 << 8;
+        /// After the startup module count: one `StringPointer` to the string table every module's `module_info`
+        /// body indexes.
+        const HAS_MODULE_INFO_STRING_TABLE  = 1 << 9;
         // _padding: u23
     }
 }
@@ -800,6 +805,7 @@ impl StandaloneModuleGraph {
                 flags: Flags::default(),
                 builtin_bytecode: Vec::new(),
                 bytecode_string_table: &[],
+                module_info_string_table: &[],
                 startup_module_count: 0,
             });
         }
@@ -891,10 +897,25 @@ impl StandaloneModuleGraph {
         let startup_module_count = if offsets.flags.contains(Flags::HAS_STARTUP_MODULE_COUNT)
             && record_at + size_of::<u32>() <= raw_len
         {
-            read_u32(record_at)
+            let count = read_u32(record_at);
+            record_at += size_of::<u32>();
+            count
         } else {
             0
         };
+        let module_info_string_table: &'static [u8] =
+            if offsets.flags.contains(Flags::HAS_MODULE_INFO_STRING_TABLE)
+                && record_at + 2 * size_of::<u32>() <= raw_len
+            {
+                let ptr = StringPointer {
+                    offset: read_u32(record_at),
+                    length: read_u32(record_at + 4),
+                };
+                // SAFETY: read-only subrange placed by `to_bytes`, disjoint from the writable regions.
+                unsafe { slice_to(raw_const, raw_len, ptr) }
+            } else {
+                &[]
+            };
 
         let mut modules = StringArrayHashMap::<File>::new();
         modules.reserve(modules_list_count);
@@ -999,6 +1020,7 @@ impl StandaloneModuleGraph {
             flags: offsets.flags,
             builtin_bytecode,
             bytecode_string_table,
+            module_info_string_table,
             startup_module_count: startup_module_count.min(module_count as u32),
         })
     }
@@ -1158,6 +1180,8 @@ pub(crate) fn to_bytes(
                 string_builder.cap += bytes.len().div_ceil(256) * 256 + 256 + 16;
             } else if output_file.output_kind == options::OutputKind::ModuleInfo {
                 string_builder.cap += bytes.len();
+            } else if output_file.output_kind == options::OutputKind::ModuleInfoStringTable {
+                string_builder.cap += bytes.len() + 2 * size_of::<u32>();
             } else {
                 has_entry_point |= is_entry_point(output_file);
 
@@ -1229,7 +1253,7 @@ pub(crate) fn to_bytes(
         .iter()
         .take_while(|f| f.loads_at_startup)
         .count();
-    let mut shared_bytecode: Option<(Vec<u8>, StringPointer)> = None;
+    let mut shared_bytecode: Option<(Vec<u8>, StringPointer, StringPointer)> = None;
 
     let mut modules: Vec<CompiledModuleGraphFile> = Vec::with_capacity(module_files.len());
     for (i, &output_file) in module_files.iter().enumerate() {
@@ -1271,6 +1295,14 @@ pub(crate) fn to_bytes(
                 let mi_bytes = output_files[output_file.module_info_index as usize]
                     .value
                     .as_slice();
+                bun_core::scoped_log!(
+                    StandaloneModuleGraph,
+                    "module_info {}: {} bytes (js {} bytes, bytecode {} bytes)",
+                    bstr::BStr::new(&output_file.dest_path),
+                    mi_bytes.len(),
+                    output_file.value.as_slice().len(),
+                    bytecode.length
+                );
                 let offset = string_builder.len;
                 let writable = string_builder.writable();
                 writable[0..mi_bytes.len()].copy_from_slice(&mi_bytes[0..mi_bytes.len()]);
@@ -1362,8 +1394,9 @@ pub(crate) fn to_bytes(
         });
     }
 
-    let (builtin_bytecode_table, bytecode_string_table_ptr) = shared_bytecode
-        .unwrap_or_else(|| append_shared_bytecode(&mut string_builder, output_files));
+    let (builtin_bytecode_table, bytecode_string_table_ptr, module_info_string_table_ptr) =
+        shared_bytecode
+            .unwrap_or_else(|| append_shared_bytecode(&mut string_builder, output_files));
 
     // Region layout after the bytecode/module_info run above: source maps
     // (unread until an error prints), then every file's source text as one run
@@ -1453,6 +1486,13 @@ pub(crate) fn to_bytes(
     }
     let _ = string_builder.append_count(&(startup_module_count as u32).to_le_bytes());
     flags |= Flags::HAS_STARTUP_MODULE_COUNT;
+    if module_info_string_table_ptr.length != 0 {
+        let mut record = [0u8; 8];
+        record[0..4].copy_from_slice(&module_info_string_table_ptr.offset.to_le_bytes());
+        record[4..8].copy_from_slice(&module_info_string_table_ptr.length.to_le_bytes());
+        let _ = string_builder.append_count(&record);
+        flags |= Flags::HAS_MODULE_INFO_STRING_TABLE;
+    }
     let compile_exec_argv_ptr = string_builder.append_count_z(compile_exec_argv);
 
     let offsets = Offsets {
@@ -2710,13 +2750,14 @@ fn address_span(regions: impl Iterator<Item = (*const u8, usize)>) -> Option<(us
     (lo < hi).then_some((lo, hi))
 }
 
-/// Writes the ahead-of-time bytecode of the internal modules and the shared
-/// bytecode string table. Returns the builtin table (`u32 count`, then `count`
-/// × `{ u32 id, StringPointer bytes }`) and the string table's pointer.
+/// Writes the ahead-of-time bytecode of the internal modules, the shared
+/// bytecode string table and the module-info string table. Returns the builtin
+/// table (`u32 count`, then `count` × `{ u32 id, StringPointer bytes }`) and
+/// the two string tables' pointers.
 fn append_shared_bytecode(
     string_builder: &mut bun_core::StringBuilder,
     output_files: &[OutputFile],
-) -> (Vec<u8>, StringPointer) {
+) -> (Vec<u8>, StringPointer, StringPointer) {
     let mut builtin_bytecode_table: Vec<u8> = Vec::new();
     let mut count: u32 = 0;
     builtin_bytecode_table.extend_from_slice(&0u32.to_le_bytes());
@@ -2751,7 +2792,18 @@ fn append_shared_bytecode(
         };
         bytecode_string_table_ptr = append_bytecode_aligned(string_builder, bytes);
     }
-    (builtin_bytecode_table, bytecode_string_table_ptr)
+    let mut module_info_string_table_ptr = StringPointer::default();
+    if let Some(table) = output_files
+        .iter()
+        .find(|f| f.output_kind == options::OutputKind::ModuleInfoStringTable)
+    {
+        module_info_string_table_ptr = string_builder.append_count(table.value.as_slice());
+    }
+    (
+        builtin_bytecode_table,
+        bytecode_string_table_ptr,
+        module_info_string_table_ptr,
+    )
 }
 
 /// JSC reads cached bytecode in place and expects its start 128-byte aligned once mapped. The section data begins

@@ -312,11 +312,13 @@ it(".has second argument", () => {
 // asks for a capacity over its INT32_MAX-byte cap. Bun throws a RangeError at
 // the last size the Vector can hold instead. The limit follows the synthetic
 // allocation limit (1 MiB is its floor), so 65536 pairs of 16 bytes reach it.
-// Each child parses tens of thousands of pairs, which takes seconds in a debug build.
 describe("entry count limit", () => {
   const LIMIT = 1024 * 1024;
   const MAX = LIMIT / 16;
   const tooMany = `URLSearchParams cannot hold more than ${MAX} entries.`;
+  // Each child parses 65536 pairs, 3 to 7 s in a debug build, past the 5 s default.
+  // The work cannot shrink: 1 MiB is the smallest synthetic limit.
+  const TIMEOUT = 60_000;
   const preamble = `
     import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
     setSyntheticAllocationLimitForTesting(${LIMIT});
@@ -369,21 +371,32 @@ describe("entry count limit", () => {
         has: false,
       });
     },
-    60_000,
+    TIMEOUT,
   );
 
   it.concurrent(
-    "throws from the constructor one pair past the limit",
+    "the string constructor throws one pair past the limit",
     async () => {
       const out = await run(`
         out.string = threw(() => new URLSearchParams("?" + pairs(MAX + 1)));
-        const list = Array.from({ length: MAX + 1 }, () => ["a", ""]);
-        out.sequence = threw(() => new URLSearchParams(list));
         out.record = new URLSearchParams({ a: "1", b: "2" }).size;
       `);
-      expect(out).toEqual({ string: tooMany, sequence: tooMany, record: 2 });
+      expect(out).toEqual({ string: tooMany, record: 2 });
     },
-    60_000,
+    TIMEOUT,
+  );
+
+  it.concurrent(
+    "the sequence constructor throws one pair past the limit",
+    async () => {
+      const out = await run(`
+        const list = Array.from({ length: MAX + 1 }, () => ["a", ""]);
+        out.sequence = threw(() => new URLSearchParams(list));
+        out.size = new URLSearchParams(list.slice(1)).size;
+      `);
+      expect(out).toEqual({ sequence: tooMany, size: MAX });
+    },
+    TIMEOUT,
   );
 
   it.concurrent(
@@ -401,7 +414,7 @@ describe("entry count limit", () => {
       `);
       expect(out).toEqual({ size: MAX, append: tooMany, sizeAfter: MAX, appendAfterDelete: null, string: "b=1" });
     },
-    60_000,
+    TIMEOUT,
   );
 
   it.concurrent(
@@ -422,7 +435,7 @@ describe("entry count limit", () => {
         size: 1,
       });
     },
-    60_000,
+    TIMEOUT,
   );
 
   it.concurrent(
@@ -444,6 +457,6 @@ describe("entry count limit", () => {
         getAfterHref: "2",
       });
     },
-    60_000,
+    TIMEOUT,
   );
 });

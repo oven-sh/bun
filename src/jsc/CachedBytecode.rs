@@ -165,6 +165,15 @@ pub(crate) fn __bun_jsc_generate_cached_bytecode(
     Some(owned)
 }
 
+/// Frees the calling thread's bytecode-generation VM, if it made one.
+#[unsafe(no_mangle)]
+pub(crate) fn __bun_jsc_destroy_bytecode_cache_vm() {
+    unsafe extern "C" {
+        safe fn Bun__destroyBytecodeCacheVM();
+    }
+    Bun__destroyBytecodeCacheVM()
+}
+
 /// Serialize the shared string table into an owned buffer for the standalone graph, then free the table.
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_jsc_encoder_string_table_take(table: NonNull<EncoderStringTable>) -> Box<[u8]> {

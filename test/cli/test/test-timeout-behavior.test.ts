@@ -53,12 +53,12 @@ describe("a matcher blocked on a promise that never settles fails with the test 
     const timeout = ${TIMEOUT_MS};
   `;
 
-  async function runTestFile(source: string) {
+  async function runTestFile(source: string, env: Record<string, string | undefined> = bunEnv) {
     using dir = tempDir("blocked-matcher", { "blocked.test.ts": prelude + source });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "./blocked.test.ts"],
       cwd: String(dir),
-      env: bunEnv,
+      env,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -78,6 +78,13 @@ describe("a matcher blocked on a promise that never settles fails with the test 
     const result = await runTestFile(`
       expect.extend({ toSettle() { return never(); } });
 
+      // The shape from #14950: the promise can only settle after the matcher returns.
+      test("resolved after the matcher call", () => {
+        let resolve;
+        expect(new Promise(r => (resolve = r))).resolves.toBe(25);
+        console.log("unreachable: resolve(25)");
+        resolve(25);
+      }, { timeout });
       test("resolves", async () => {
         await expect(never()).resolves.toBe("settled");
         console.log("unreachable: resolves");
@@ -117,12 +124,25 @@ describe("a matcher blocked on a promise that never settles fails with the test 
         "exitCode": 1,
         "stderr": 
       "blocked.test.ts:
-       5 |     const timeout = 200;
-       6 | 
        7 |       expect.extend({ toSettle() { return never(); } });
        8 | 
-       9 |       test("resolves", async () => {
-      10 |         await expect(never()).resolves.toBe("settled");
+       9 |       // The shape from #14950: the promise can only settle after the matcher returns.
+      10 |       test("resolved after the matcher call", () => {
+      11 |         let resolve;
+      12 |         expect(new Promise(r => (resolve = r))).resolves.toBe(25);
+                                                                    ^
+      error: expect(received).resolves.toBe(expected)
+
+      Expected promise that resolves
+      Received promise that was still pending when the test timed out: Promise { <pending> }
+      (fail) resolved after the matcher call
+        ^ this test timed out after 200ms.
+      12 |         expect(new Promise(r => (resolve = r))).resolves.toBe(25);
+      13 |         console.log("unreachable: resolve(25)");
+      14 |         resolve(25);
+      15 |       }, { timeout });
+      16 |       test("resolves", async () => {
+      17 |         await expect(never()).resolves.toBe("settled");
                                                   ^
       error: expect(received).resolves.toBe(expected)
 
@@ -130,12 +150,12 @@ describe("a matcher blocked on a promise that never settles fails with the test 
       Received promise that was still pending when the test timed out: Promise { <pending> }
       (fail) resolves
         ^ this test timed out after 200ms.
-       9 |       test("resolves", async () => {
-      10 |         await expect(never()).resolves.toBe("settled");
-      11 |         console.log("unreachable: resolves");
-      12 |       }, { timeout });
-      13 |       test("rejects", async () => {
-      14 |         await expect(never()).rejects.toThrow();
+      16 |       test("resolves", async () => {
+      17 |         await expect(never()).resolves.toBe("settled");
+      18 |         console.log("unreachable: resolves");
+      19 |       }, { timeout });
+      20 |       test("rejects", async () => {
+      21 |         await expect(never()).rejects.toThrow();
                                                  ^
       error: expect(received).rejects.toThrow(expected)
 
@@ -143,32 +163,32 @@ describe("a matcher blocked on a promise that never settles fails with the test 
       Received promise that was still pending when the test timed out: Promise { <pending> }
       (fail) rejects
         ^ this test timed out after 200ms.
-      13 |       test("rejects", async () => {
-      14 |         await expect(never()).rejects.toThrow();
-      15 |         console.log("unreachable: rejects");
-      16 |       }, { timeout });
-      17 |       test("toThrow on an async function", () => {
-      18 |         expect(async () => { await never(); }).toThrow();
+      20 |       test("rejects", async () => {
+      21 |         await expect(never()).rejects.toThrow();
+      22 |         console.log("unreachable: rejects");
+      23 |       }, { timeout });
+      24 |       test("toThrow on an async function", () => {
+      25 |         expect(async () => { await never(); }).toThrow();
                                                           ^
       error: Received function returned a promise that was still pending when the test timed out
       (fail) toThrow on an async function
         ^ this test timed out after 200ms.
-      17 |       test("toThrow on an async function", () => {
-      18 |         expect(async () => { await never(); }).toThrow();
-      19 |         console.log("unreachable: toThrow");
-      20 |       }, { timeout });
-      21 |       test("async custom matcher", () => {
-      22 |         expect(1).toSettle();
+      24 |       test("toThrow on an async function", () => {
+      25 |         expect(async () => { await never(); }).toThrow();
+      26 |         console.log("unreachable: toThrow");
+      27 |       }, { timeout });
+      28 |       test("async custom matcher", () => {
+      29 |         expect(1).toSettle();
                              ^
       error: Matcher \`toSettle\` returned a promise that was still pending when the test timed out
       (fail) async custom matcher
         ^ this test timed out after 200ms.
-      21 |       test("async custom matcher", () => {
-      22 |         expect(1).toSettle();
-      23 |         console.log("unreachable: custom matcher");
-      24 |       }, { timeout });
-      25 |       test("asymmetric resolvesTo", () => {
-      26 |         expect(never()).toEqual(expect.resolvesTo.anything());
+      28 |       test("async custom matcher", () => {
+      29 |         expect(1).toSettle();
+      30 |         console.log("unreachable: custom matcher");
+      31 |       }, { timeout });
+      32 |       test("asymmetric resolvesTo", () => {
+      33 |         expect(never()).toEqual(expect.resolvesTo.anything());
                                    ^
       error: expect(received).toEqual(expected)
 
@@ -176,23 +196,23 @@ describe("a matcher blocked on a promise that never settles fails with the test 
       Received: Promise {}
       (fail) asymmetric resolvesTo
         ^ this test timed out after 200ms.
-      27 |         console.log("unreachable: resolvesTo");
-      28 |       }, { timeout });
-      29 |       // Roomier timeout: the inner matcher is reached through a timer that has to fire first.
-      30 |       test("nested inside the test's own blocked matcher", async () => {
-      31 |         const outer = new Promise(resolve => setTimeout(() => {
-      32 |           expect(never()).resolves.toBe("settled");
+      34 |         console.log("unreachable: resolvesTo");
+      35 |       }, { timeout });
+      36 |       // Roomier timeout: the inner matcher is reached through a timer that has to fire first.
+      37 |       test("nested inside the test's own blocked matcher", async () => {
+      38 |         const outer = new Promise(resolve => setTimeout(() => {
+      39 |           expect(never()).resolves.toBe("settled");
                                               ^
       error: expect(received).resolves.toBe(expected)
 
       Expected promise that resolves
       Received promise that was still pending when the test timed out: Promise { <pending> }
-      31 |         const outer = new Promise(resolve => setTimeout(() => {
-      32 |           expect(never()).resolves.toBe("settled");
-      33 |           console.log("unreachable: inner matcher");
-      34 |           resolve("settled");
-      35 |         }, 0));
-      36 |         await expect(outer).resolves.toBe("settled");
+      38 |         const outer = new Promise(resolve => setTimeout(() => {
+      39 |           expect(never()).resolves.toBe("settled");
+      40 |           console.log("unreachable: inner matcher");
+      41 |           resolve("settled");
+      42 |         }, 0));
+      43 |         await expect(outer).resolves.toBe("settled");
                                                 ^
       error: expect(received).resolves.toBe(expected)
 
@@ -203,9 +223,9 @@ describe("a matcher blocked on a promise that never settles fails with the test 
       (pass) the next test runs
 
        1 pass
-       6 fail
+       7 fail
        5 expect() calls
-      Ran 7 tests across 1 file."
+      Ran 8 tests across 1 file."
       ,
         "stdout": "bun test <version> (<revision>)",
       }
@@ -397,7 +417,9 @@ describe("a matcher blocked on a promise that never settles fails with the test 
 
   // The sibling's own matcher is blocked on the stack underneath the hanging one, so the runner
   // cannot give either test up; the hanging matcher gives up once every test still executing in
-  // the group has timed out. The sibling's promise did settle, but by then it has timed out too.
+  // the group has timed out, and the sibling's matcher, unblocked, gives up right after it. (A
+  // sibling promise that a timer settles meanwhile is platform-dependent: on Windows a timer already
+  // in the heap does not fire inside a tick nested in another timer's callback, see #40023.)
   test("reached from a continuation while a concurrent sibling is blocked in a matcher", async () => {
     const result = await runTestFile(`
       test.concurrent("resolves after an await", async () => {
@@ -406,7 +428,8 @@ describe("a matcher blocked on a promise that never settles fails with the test 
         console.log("unreachable: resolves after an await");
       }, { timeout });
       test.concurrent("sibling blocked in a matcher", async () => {
-        await expect(soon()).resolves.toBe("settled");
+        await expect(never()).resolves.toBe("settled");
+        console.log("unreachable: sibling");
       }, { timeout });
       test("the next test runs", () => {});
     `);
@@ -426,6 +449,17 @@ describe("a matcher blocked on a promise that never settles fails with the test 
 
       Expected promise that resolves
       Received promise that was still pending when the test timed out: Promise { <pending> }
+       8 |         await soon();
+       9 |         await expect(never()).resolves.toBe("settled");
+      10 |         console.log("unreachable: resolves after an await");
+      11 |       }, { timeout });
+      12 |       test.concurrent("sibling blocked in a matcher", async () => {
+      13 |         await expect(never()).resolves.toBe("settled");
+                                                  ^
+      error: expect(received).resolves.toBe(expected)
+
+      Expected promise that resolves
+      Received promise that was still pending when the test timed out: Promise { <pending> }
       (fail) sibling blocked in a matcher
         ^ this test timed out after 200ms.
       (fail) resolves after an await
@@ -434,7 +468,99 @@ describe("a matcher blocked on a promise that never settles fails with the test 
 
        1 pass
        2 fail
+      Ran 3 tests across 1 file."
+      ,
+        "stdout": "bun test <version> (<revision>)",
+      }
+    `);
+  });
+
+  // The matcher owns the promise it gave up on: a rejection that arrives later is not an unhandled
+  // rejection of whatever test runs by then.
+  test("a rejection that arrives after the matcher gave up is not reported", async () => {
+    const result = await runTestFile(`
+      test("toThrow on an async function that rejects late", () => {
+        expect(async () => {
+          await new Promise(resolve => setTimeout(resolve, timeout * 2));
+          throw new Error("late");
+        }).toThrow("late");
+        console.log("unreachable: toThrow");
+      }, { timeout });
+      test("the next test runs while the late rejection arrives", async () => {
+        await new Promise(resolve => setTimeout(resolve, timeout * 2));
+      });
+    `);
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "exitCode": 1,
+        "stderr": 
+      "blocked.test.ts:
+       6 | 
+       7 |       test("toThrow on an async function that rejects late", () => {
+       8 |         expect(async () => {
+       9 |           await new Promise(resolve => setTimeout(resolve, timeout * 2));
+      10 |           throw new Error("late");
+      11 |         }).toThrow("late");
+                      ^
+      error: Received function returned a promise that was still pending when the test timed out
+      (fail) toThrow on an async function that rejects late
+        ^ this test timed out after 200ms.
+      (pass) the next test runs while the late rejection arrives
+
+       1 pass
+       1 fail
        1 expect() calls
+      Ran 2 tests across 1 file."
+      ,
+        "stdout": "bun test <version> (<revision>)",
+      }
+    `);
+  });
+
+  // The file's timeout timer is armed for the first test and only ever moves sooner, so it is still
+  // armed for that deadline when the second test, with a longer timeout, blocks. It fires under the
+  // blocked matcher, which disarms it, and the runner that would re-arm it is blocked behind the
+  // test body. With the server keeping the loop alive and no other timer due, the wait's poll would
+  // park for good; the wait arms the timer for its own deadline. The GC idle timer is disabled
+  // because it would otherwise wake the loop once a second and hide this.
+  test("wakes at the deadline when an earlier test's timer fires under the wait", async () => {
+    const result = await runTestFile(
+      `
+      import { afterAll } from "bun:test";
+      const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+      afterAll(() => server.stop(true));
+      test("a test with a shorter timeout", () => {}, { timeout });
+      test("blocked with a longer timeout", () => {
+        expect(never()).resolves.toBe("settled");
+        console.log("unreachable: resolves");
+      }, { timeout: timeout * 3 });
+      test("the next test runs", () => {});
+    `,
+      { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
+    );
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "exitCode": 1,
+        "stderr": 
+      "blocked.test.ts:
+      (pass) a test with a shorter timeout
+       7 |       import { afterAll } from "bun:test";
+       8 |       const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+       9 |       afterAll(() => server.stop(true));
+      10 |       test("a test with a shorter timeout", () => {}, { timeout });
+      11 |       test("blocked with a longer timeout", () => {
+      12 |         expect(never()).resolves.toBe("settled");
+                                            ^
+      error: expect(received).resolves.toBe(expected)
+
+      Expected promise that resolves
+      Received promise that was still pending when the test timed out: Promise { <pending> }
+      (fail) blocked with a longer timeout
+        ^ this test timed out after 600ms.
+      (pass) the next test runs
+
+       2 pass
+       1 fail
       Ran 3 tests across 1 file."
       ,
         "stdout": "bun test <version> (<revision>)",
@@ -450,6 +576,10 @@ describe("a matcher blocked on a promise that never settles fails with the test 
       describe("in a describe callback", async () => {
         await expect(soon()).resolves.toBe("settled");
         test("registered after the wait", () => {});
+      });
+      test("already settled", async () => {
+        await expect(Promise.resolve("settled")).resolves.toBe("settled");
+        await expect(Promise.reject(new Error("settled"))).rejects.toThrow("settled");
       });
       test("in a test without a timeout", async () => {
         await expect(soon()).resolves.toBe("settled");
@@ -483,6 +613,7 @@ describe("a matcher blocked on a promise that never settles fails with the test 
         "stderr": 
       "blocked.test.ts:
       (pass) in a describe callback > registered after the wait
+      (pass) already settled
       (pass) in a test without a timeout
       (pass) after an await
       (pass) inside the test's own blocked matcher
@@ -490,10 +621,10 @@ describe("a matcher blocked on a promise that never settles fails with the test 
       (pass) after an await in a concurrent group
       (pass) while a concurrent sibling is blocked in a matcher
 
-       7 pass
+       8 pass
        0 fail
-       15 expect() calls
-      Ran 7 tests across 1 file."
+       18 expect() calls
+      Ran 8 tests across 1 file."
       ,
         "stdout": "bun test <version> (<revision>)",
       }

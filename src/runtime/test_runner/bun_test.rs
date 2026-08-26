@@ -1526,7 +1526,10 @@ pub(crate) struct WaitingEntry {
 }
 
 /// The first two hold a callback on the stack, which `BunTest::run` (re-entrancy guarded) cannot give
-/// up, so they watch deadlines themselves; the others only notice what the running runner did meanwhile.
+/// up, so they watch deadlines themselves; the others give up once the runner has moved past the
+/// entry, and step the runner's timeout handling themselves when its deadline has passed. Every
+/// variant watches the clock: the file timer may not fire while the wait ticks (it fires only from a
+/// poll that wakes, and on Windows not from a tick nested inside a timer callback at all).
 enum EndsWhen {
     /// The on-stack callback's own code; once the matcher throws, the runner evaluates its overrun as usual.
     EntryTimedOut(NonNull<ExecutionEntry>),
@@ -1568,36 +1571,105 @@ impl WaitingEntry {
         matches!(self.ends_when, EndsWhen::EntryTimedOut(_) | EndsWhen::GroupTimedOut)
     }
 
-    pub(crate) fn timed_out(&self) -> bool {
+    pub(crate) fn timed_out(&self, global_this: &JSGlobalObject) -> bool {
+        let now = Timespec::now_force_real_time();
         match &self.ends_when {
             EndsWhen::EntryTimedOut(entry) => {
                 // SAFETY: entries live as long as the BunTest, which `self.buntest` keeps alive.
-                unsafe { entry.as_ref() }.has_timed_out(&Timespec::now_force_real_time())
+                let entry = unsafe { entry.as_ref() };
+                if entry.has_timed_out(&now) {
+                    return true;
+                }
+                self.wake_at(global_this, &entry.timespec);
+                false
             }
             EndsWhen::GroupTimedOut => {
                 let buntest = self.buntest.get();
-                let now = Timespec::now_force_real_time();
+                let mut soonest = Timespec::EPOCH;
                 let group_timed_out = buntest.execution.active_group_ref().is_none_or(|group| {
                     group
                         .sequences(&buntest.execution)
                         .iter()
                         .filter(|sequence| sequence.executing)
                         .all(|sequence| {
-                            sequence
-                                .active_entry
+                            sequence.active_entry.is_some_and(|entry| {
                                 // SAFETY: as above.
-                                .is_some_and(|entry| unsafe { entry.as_ref() }.has_timed_out(&now))
+                                let entry = unsafe { entry.as_ref() };
+                                if entry.has_timed_out(&now) {
+                                    return true;
+                                }
+                                soonest = soonest.min_ignore_epoch(entry.timespec);
+                                false
+                            })
                         })
                 });
                 if group_timed_out {
                     // What the timer's `handle_timeout` queues (it may not have fired yet), ahead of the
                     // failure the matcher's error is about to produce, so the entry reports as timed out.
                     buntest.add_result(RefDataValue::Start);
+                    return true;
                 }
-                group_timed_out
+                self.wake_at(global_this, &soonest);
+                false
             }
-            EndsWhen::RunnerGaveEntryUp(data) => data.entry(self.buntest.get()).is_none(),
-            EndsWhen::GroupOver(group_index) => *group_index != self.buntest.execution.group_index,
+            EndsWhen::RunnerGaveEntryUp(data) => {
+                let Some(entry) = data.entry(self.buntest.get()) else {
+                    return true;
+                };
+                if !entry.has_timed_out(&now) {
+                    return false;
+                }
+                self.step_timed_out_entries(global_this);
+                data.entry(self.buntest.get()).is_none()
+            }
+            EndsWhen::GroupOver(group_index) => {
+                let buntest = self.buntest.get();
+                if *group_index != buntest.execution.group_index {
+                    return true;
+                }
+                let any_timed_out = buntest.execution.active_group_ref().is_some_and(|group| {
+                    group
+                        .sequences(&buntest.execution)
+                        .iter()
+                        .filter(|sequence| sequence.executing)
+                        .any(|sequence| {
+                            sequence
+                                .active_entry
+                                // SAFETY: as above.
+                                .is_some_and(|entry| unsafe { entry.as_ref() }.has_timed_out(&now))
+                        })
+                });
+                if any_timed_out {
+                    self.step_timed_out_entries(global_this);
+                }
+                *group_index != self.buntest.execution.group_index
+            }
+        }
+    }
+
+    /// The wait's next poll must wake by `deadline`. The file timer is armed for it when the entry
+    /// starts, but an earlier entry's timer firing underneath this wait disarms it, and `BunTest::run`,
+    /// which re-arms, is blocked behind the callback this wait holds on the stack.
+    fn wake_at(&self, global_this: &JSGlobalObject, deadline: &Timespec) {
+        if deadline.eql(&Timespec::EPOCH) {
+            return;
+        }
+        self.buntest.get().update_min_timeout(global_this, deadline);
+    }
+
+    /// What `bun_test_timeout_callback` does for an entry the runner is not blocked on: report the
+    /// timeout and step on (nested in this wait). The timer does the same when it fires first.
+    fn step_timed_out_entries(&self, global_this: &JSGlobalObject) {
+        // Both calls re-enter this BunTest: no `&mut` is held across them (see `BunTestCell::get`).
+        if let Err(e) = self.buntest.get().execution.handle_timeout(global_this) {
+            self.buntest
+                .get()
+                .on_uncaught_exception(global_this, Some(global_this.take_exception(e)), false, &RefDataValue::Done);
+        }
+        if let Err(e) = BunTest::run(&self.buntest, global_this) {
+            self.buntest
+                .get()
+                .on_uncaught_exception(global_this, Some(global_this.take_exception(e)), false, &RefDataValue::Done);
         }
     }
 }

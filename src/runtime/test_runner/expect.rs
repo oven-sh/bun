@@ -480,7 +480,7 @@ impl Expect {
             .bun_vm()
             .event_loop_mut()
             .wait_for_promise_or_give_up(promise, || {
-                waiting_entry.as_ref().is_some_and(bun_test::WaitingEntry::timed_out)
+                waiting_entry.as_ref().is_some_and(|waiting| waiting.timed_out(global_this))
             })
             .map_err(|stopped| stopped.throw(global_this))
     }
@@ -893,6 +893,9 @@ impl Expect {
         }
 
         if let Some(promise) = return_value.as_any_promise() {
+            // As in `process_promise`: the matcher owns this promise's outcome, including a rejection
+            // that arrives after the wait gave up on it.
+            promise.set_handled(global_this.vm());
             let settled = Self::wait_for_promise(global_this, promise);
             scope.apply(vm);
             if !settled? {

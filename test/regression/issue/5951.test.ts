@@ -66,10 +66,13 @@ test("handleUpgrade works when socket is wrapped in a Proxy that hides symbol pr
     expect(await serverReceived.promise).toBe("hello from client");
     expect(await clientReceived.promise).toBe("hello from server");
   } finally {
+    // Plain listener instead of events.once: it must resolve even when the
+    // teardown destroys the TCP connection and an "error" fires before "close".
+    const clientClosed = new Promise<void>(resolve => client.on("close", () => resolve()));
     client.close();
     const wssClosed = new Promise<void>(resolve => wss.close(() => resolve()));
     const serverClosed = new Promise<void>(resolve => httpServer.close(() => resolve()));
     httpServer.closeAllConnections();
-    await Promise.all([wssClosed, serverClosed]);
+    await Promise.all([clientClosed, wssClosed, serverClosed]);
   }
 });

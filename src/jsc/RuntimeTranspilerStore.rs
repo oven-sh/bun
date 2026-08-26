@@ -926,6 +926,15 @@ impl TranspilerJob {
             }
         }
 
+        // The parser can log an error and still return an AST (an `import`
+        // statement next to `module.exports`, a React Compiler failure). The
+        // sync path in `transpile_source_code_inner` rejects the file at this
+        // point; do the same instead of handing the printed output to JSC.
+        if transpiler.log().errors > 0 {
+            self.parse_error = Some(crate::CrateError::ParseError);
+            return;
+        }
+
         // SAFETY: leaf scalar field read; see `vm` note above. Inlined
         // `VirtualMachine::use_isolation_source_provider_cache` to avoid forming
         // `&VirtualMachine`.

@@ -301,8 +301,7 @@ impl WindowsNamedPipe {
     fn on_read_error(&self, err: bun_sys::E) {
         bun_output::scoped_log!(WindowsNamedPipe, "onReadError");
         let _keep_alive = self.keep_alive();
-        // `E::EOF` only exists in the Windows errno table (libuv UV_EOF mapping);
-        // this type is Windows-only at runtime so the comparison is gated.
+        // `E::EOF` only exists in the Windows errno table (libuv UV_EOF mapping).
         if err == bun_sys::E::EOF {
             // we received FIN but we dont allow half-closed connections right now
             (self.handlers.on_end)(self.handlers.ctx);
@@ -624,30 +623,28 @@ impl WindowsNamedPipe {
                 }
             }
         }
-        {
-            let uv_loop = self.vm.uv_loop();
-            let pipe = self.uv_pipe().unwrap();
-            // SAFETY: live libuv handle alias; see `pipe`.
-            if let Err(e) = unsafe { (*pipe).init(uv_loop, false) }.to_result(bun_sys::Tag::pipe) {
-                self.discard_unadopted_pipe();
-                return Err(e);
-            }
-            // Until the writer adopts it (start_with_pipe), a thread teardown closes
-            // this pipe through us; afterwards the writer re-records itself as owner.
-            uv::open_handles::set_owner(
-                pipe.cast(),
-                self.root_ptr().cast(),
-                Some(Self::stop_for_vm_teardown),
-            );
+        let uv_loop = self.vm.uv_loop();
+        let pipe = self.uv_pipe().unwrap();
+        // SAFETY: live libuv handle alias; see `pipe`.
+        if let Err(e) = unsafe { (*pipe).init(uv_loop, false) }.to_result(bun_sys::Tag::pipe) {
+            self.discard_unadopted_pipe();
+            return Err(e);
+        }
+        // Until the writer adopts it (start_with_pipe), a thread teardown closes
+        // this pipe through us; afterwards the writer re-records itself as owner.
+        uv::open_handles::set_owner(
+            pipe.cast(),
+            self.root_ptr().cast(),
+            Some(Self::stop_for_vm_teardown),
+        );
 
-            // SAFETY: as above.
-            if let Err(e) = server
-                .accept(unsafe { &mut *pipe })
-                .to_result(bun_sys::Tag::accept)
-            {
-                self.discard_unadopted_pipe();
-                return Err(e);
-            }
+        // SAFETY: as above.
+        if let Err(e) = server
+            .accept(unsafe { &mut *pipe })
+            .to_result(bun_sys::Tag::accept)
+        {
+            self.discard_unadopted_pipe();
+            return Err(e);
         }
 
         self.update_flags(|f| f.set(Flags::DISCONNECTED, false));
@@ -1007,15 +1004,13 @@ impl WindowsNamedPipe {
         // `on_close_source()` from re-entering `Parent::on_close` (we're already
         // inside it). `current_payload` may still back an in-flight `uv_write`
         // (cancelled async by `uv_close`) so it is left to the writer's own Drop.
-        {
-            if let Some(stream) = self.writer.with_mut(|w| w.get_stream()) {
-                // SAFETY: `stream` is the live pipe stream; `uv_read_stop`
-                // always succeeds and is a no-op if not reading.
-                unsafe { (*stream).read_stop() };
-            }
-            self.writer.with_mut(|w| w.close_without_reporting());
-            self.writer.with_mut(|w| w.outgoing = Default::default());
+        if let Some(stream) = self.writer.with_mut(|w| w.get_stream()) {
+            // SAFETY: `stream` is the live pipe stream; `uv_read_stop`
+            // always succeeds and is a no-op if not reading.
+            unsafe { (*stream).read_stop() };
         }
+        self.writer.with_mut(|w| w.close_without_reporting());
+        self.writer.with_mut(|w| w.outgoing = Default::default());
         if !self.flags.get().contains(Flags::WRAPPER_BUSY) {
             self.wrapper.set(None);
         }

@@ -70,6 +70,21 @@ impl Snapshots {
             last_error_snapshot_name: None,
         }
     }
+
+    /// The counters behind the run summary's "snapshots:" line. A `--parallel`
+    /// worker ships deltas of these to the coordinator, whose own `Snapshots`
+    /// (no test runs there) folds them in with `add_summary_counts` and is
+    /// what the summary is printed from.
+    pub(crate) fn summary_counts(&self) -> [usize; 4] {
+        [self.total, self.added, self.passed, self.failed]
+    }
+
+    pub(crate) fn add_summary_counts(&mut self, [total, added, passed, failed]: [usize; 4]) {
+        self.total += total;
+        self.added += added;
+        self.passed += passed;
+        self.failed += failed;
+    }
 }
 
 // hoisted out of `impl Snapshots` — inherent associated types are unstable.

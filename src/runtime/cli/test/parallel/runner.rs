@@ -560,6 +560,7 @@ impl<'a> WorkerLoop<'a> {
 
             let before = *self.reporter.summary();
             let before_unhandled = self.reporter.jest.unhandled_errors_between_tests;
+            let before_snapshots = self.reporter.jest.snapshots.summary_counts();
 
             // A worker never knows which file is its last, so preload-level hooks wrap every file (with or without --isolate).
             if let Err(err) = TestCommand::run(
@@ -614,6 +615,10 @@ impl<'a> WorkerLoop<'a> {
             ] {
                 wf.u32(v);
             }
+            wf.count_deltas(
+                self.reporter.jest.snapshots.summary_counts(),
+                before_snapshots,
+            );
             self.cmds.send(wf.finish());
         }
     }
@@ -706,13 +711,17 @@ fn worker_flush_aggregates(
 ) {
     // Snapshots flush lazily when the next file opens its snapshot file; the
     // last file each worker ran has no successor to trigger that.
-    if let Some(runner) = crate::test_runner::jest::Jest::runner() {
-        let _ = runner.snapshots.write_inline_snapshots().unwrap_or(false);
-        let _ = runner.snapshots.write_snapshot_file();
-    }
+    let snapshots = &mut reporter.jest.snapshots;
+    let counts_before_flush = snapshots.summary_counts();
+    let _ = snapshots.write_inline_snapshots();
+    let _ = snapshots.write_snapshot_file();
 
     // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer
     let wf = unsafe { &mut *WORKER_FRAME.get() };
+
+    wf.begin(frame::Kind::SnapshotCounts);
+    wf.count_deltas(snapshots.summary_counts(), counts_before_flush);
+    cmds.send(wf.finish());
 
     wf.begin(frame::Kind::RepeatBufs);
     wf.str(reporter.failures_to_repeat_buf.as_slice());

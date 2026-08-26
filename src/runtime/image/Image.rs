@@ -365,6 +365,36 @@ fn get_number_option(
     }
 }
 
+/// Integer option with a documented range, e.g. `quality` (1-100). Missing
+/// or `undefined` → `None` (use the default). A non-number throws
+/// `ERR_INVALID_ARG_TYPE`; NaN or a fraction throws the same with "integer";
+/// a value outside `min..=max` throws `ERR_OUT_OF_RANGE`.
+fn get_int_option<T: bun_core::Integer>(
+    opt: JSValue,
+    global: &JSGlobalObject,
+    name: &'static str,
+    min: i128,
+    max: i128,
+) -> JsResult<Option<T>> {
+    let Some(v) = opt.get(global, name)? else {
+        return Ok(None);
+    };
+    // `validate_integer_range` maps NaN to the default; reject it instead.
+    if v.is_number() && v.as_number().is_nan() {
+        return Err(global.throw_invalid_property_type_value(name.as_bytes(), b"integer", v));
+    }
+    Ok(Some(global.validate_integer_range::<T>(
+        v,
+        T::ZERO,
+        jsc::IntegerRange {
+            min,
+            max,
+            field_name: name.as_bytes(),
+            always_allow_zero: false,
+        },
+    )?))
+}
+
 fn apply_options(img: &mut Image, global: &JSGlobalObject, opt: JSValue) -> JsResult<()> {
     if !opt.is_object() {
         return Ok(());
@@ -597,20 +627,20 @@ impl Image {
         let args = callframe.arguments();
         if args.len() > 0 && args[0].is_object() {
             let opt = args[0];
-            if let Some(q) = get_number_option(opt, global, "quality")? {
-                enc.quality = coerce_int!(u8, q, 1.0, 100.0);
+            if let Some(q) = get_int_option::<u8>(opt, global, "quality", 1, 100)? {
+                enc.quality = q;
             }
             if let Some(l) = opt.get(global, "lossless")? {
                 enc.lossless = l.to_boolean();
             }
-            if let Some(c) = get_number_option(opt, global, "compressionLevel")? {
-                enc.compression_level = coerce_int!(i8, c, 0.0, 9.0);
+            if let Some(c) = get_int_option::<i8>(opt, global, "compressionLevel", 0, 9)? {
+                enc.compression_level = c;
             }
             if let Some(p) = opt.get(global, "palette")? {
                 enc.palette = p.to_boolean();
             }
-            if let Some(c) = get_number_option(opt, global, "colors")? {
-                enc.colors = coerce_int!(u16, c, 2.0, 256.0);
+            if let Some(c) = get_int_option::<u16>(opt, global, "colors", 2, 256)? {
+                enc.colors = c;
             }
             if let Some(d) = opt.get(global, "dither")? {
                 enc.dither = d.to_boolean();

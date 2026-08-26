@@ -16,8 +16,7 @@ import { totalmem } from "node:os";
 // and turns the concurrent JIT off, so a function reaches the FTL within a handful of calls and
 // numberOfDFGCompiles() is exact. Optimized code that keeps exiting is jettisoned and recompiled
 // after 20 exits instead of 100, so every exit -> recompile chain below settles within a few
-// hundred calls. (Not jitPolicyScale: Bun applies BUN_JSC_ options one at a time and JSC
-// re-applies the scale on every change, so the result would depend on how many options are set.)
+// hundred calls. (Not jitPolicyScale: until #40583, Bun applied it once per BUN_JSC_ variable.)
 const jitEnv = {
   ...bunEnv,
   BUN_JSC_forceEagerCompilation: "1",

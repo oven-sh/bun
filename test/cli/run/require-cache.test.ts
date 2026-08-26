@@ -332,7 +332,7 @@ describe.concurrent("require.cache", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { result: stdout.trim() ? JSON.parse(stdout.trim()) : stdout, stderr, exitCode };
+      return { stdout, stderr, exitCode };
     }
 
     // a.mjs is fetched, then its CommonJS dependency runs before a.mjs evaluates.
@@ -363,27 +363,25 @@ describe.concurrent("require.cache", () => {
 
     test("import() of the module from its dependency", async () => {
       using dir = tempDir("require-cache-delete-loading-import", deleteThenImport);
-      expect(await run(String(dir), "main.mjs")).toEqual({
-        result: {
-          evaluated: 1,
-          inCacheBeforeDelete: false,
-          deleted: true,
-          mainImport: 1,
-          secondImportIsSame: true,
-          depImport: 1,
-        },
-        stderr: "",
-        exitCode: 0,
+      const { stdout, stderr, exitCode } = await run(String(dir), "main.mjs");
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        evaluated: 1,
+        inCacheBeforeDelete: false,
+        deleted: true,
+        mainImport: 1,
+        secondImportIsSame: true,
+        depImport: 1,
       });
+      expect(exitCode).toBe(0);
     });
 
     test("import() of the module from its dependency, module is the entry point", async () => {
       using dir = tempDir("require-cache-delete-loading-entry", deleteThenImport);
-      expect(await run(String(dir), "a.mjs")).toEqual({
-        result: { evaluated: 1, inCacheBeforeDelete: false, deleted: true, depImport: 1 },
-        stderr: "",
-        exitCode: 0,
-      });
+      const { stdout, stderr, exitCode } = await run(String(dir), "a.mjs");
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ evaluated: 1, inCacheBeforeDelete: false, deleted: true, depImport: 1 });
+      expect(exitCode).toBe(0);
     });
 
     test("require() of the module from its dependency", async () => {
@@ -396,11 +394,16 @@ describe.concurrent("require.cache", () => {
           result.depRequire = require("./a.mjs").x;
         `,
       });
-      expect(await run(String(dir), "main.mjs")).toEqual({
-        result: { evaluated: 1, deleted: true, depRequire: 1, mainImport: 1, secondImportIsSame: true },
-        stderr: "",
-        exitCode: 0,
+      const { stdout, stderr, exitCode } = await run(String(dir), "main.mjs");
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        evaluated: 1,
+        deleted: true,
+        depRequire: 1,
+        mainImport: 1,
+        secondImportIsSame: true,
       });
+      expect(exitCode).toBe(0);
     });
 
     test("while the module's top level is running", async () => {
@@ -428,11 +431,16 @@ describe.concurrent("require.cache", () => {
           globalThis.__result.mainImport = ns.x;
         `,
       });
-      expect(await run(String(dir), "main.mjs")).toEqual({
-        result: { evaluated: 1, inCacheBeforeDelete: false, deleted: true, mainImport: 1, depImport: 1 },
-        stderr: "",
-        exitCode: 0,
+      const { stdout, stderr, exitCode } = await run(String(dir), "main.mjs");
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        evaluated: 1,
+        inCacheBeforeDelete: false,
+        deleted: true,
+        mainImport: 1,
+        depImport: 1,
       });
+      expect(exitCode).toBe(0);
     });
 
     test("an evaluated module is still evicted", async () => {
@@ -455,17 +463,16 @@ describe.concurrent("require.cache", () => {
           result.secondImportIsSame = (await import("./a.mjs")) === first;
         `,
       });
-      expect(await run(String(dir), "main.mjs")).toEqual({
-        result: {
-          evaluated: 2,
-          inCacheBeforeDelete: true,
-          deleted: true,
-          inCacheAfterDelete: false,
-          secondImportIsSame: false,
-        },
-        stderr: "",
-        exitCode: 0,
+      const { stdout, stderr, exitCode } = await run(String(dir), "main.mjs");
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        evaluated: 2,
+        inCacheBeforeDelete: true,
+        deleted: true,
+        inCacheAfterDelete: false,
+        secondImportIsSame: false,
       });
+      expect(exitCode).toBe(0);
     });
   });
 

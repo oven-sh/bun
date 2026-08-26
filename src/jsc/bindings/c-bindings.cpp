@@ -610,30 +610,20 @@ extern "C" void Bun__setCTRLHandler(BOOL add)
     SetConsoleCtrlHandler(Ctrlhandler, add);
 }
 
-// Called right before ExitProcess(). ExitProcess terminates every other thread
-// and waits for them to finish. WTF suspends threads with SuspendThread() from
-// other threads: a Wasm compiler thread runs Thread::barrierInstructionCache()
-// on every thread that executes Wasm when it installs compiled code (ARM64
-// only; x64 needs no barrier), the GC scans machine stacks, the libpas
-// scavenger force-stops an idle thread's allocators. If such a thread has
-// suspended the exiting thread and is killed before its ResumeThread(), the
-// exiting thread stays suspended inside NtTerminateProcess forever and the
-// process never finishes exiting. Every suspender holds the ThreadSuspendLocker
-// across its suspend/resume pair, so taking it here waits for an in-flight
-// suspension to end and keeps a new one from starting. It is never released:
-// the process is going away.
+// ExitProcess kills every other thread. A WTF suspender (Wasm i-cache barrier, GC
+// stack scan, libpas scavenger) killed between SuspendThread and ResumeThread of
+// this thread would leave it suspended inside NtTerminateProcess forever. All of
+// them hold ThreadSuspendLocker across that pair: hold it here, never release it.
 extern "C" void Bun__lockThreadSuspensionForExit()
 {
     static std::atomic<DWORD> owner { 0 };
     DWORD self = GetCurrentThreadId();
     DWORD expected = 0;
     if (!owner.compare_exchange_strong(expected, self, std::memory_order_acq_rel)) {
-        // Re-entered on the exiting thread (something in ExitProcess exits
-        // again): the lock is already ours.
+        // Re-entered on the thread that already holds the lock.
         if (expected == self)
             return;
-        // Another thread is exiting and owns the lock. Its ExitProcess
-        // terminates this thread; wait for that instead of racing it.
+        // Another thread's exit holds it and is about to terminate this thread.
         for (;;)
             SleepEx(INFINITE, FALSE);
     }

@@ -309,35 +309,41 @@ describe("fs.mkdir - return values", () => {
   // created on Windows (the binding resolves the path before the mkdir
   // walk) and the relative first path created on POSIX.
   it("returns the first path created like node when the input path is relative", async () => {
-    using dir = tempDir("mkdir-relative-return", {
-      "nest/mkdir-return-fixture.js": `
-        const fs = require("node:fs");
-        const fsp = require("node:fs/promises");
-        const path = require("node:path");
-        const out = {};
-        out.cwd = process.cwd();
-        out.sync = fs.mkdirSync(path.join("alpha", "beta"), { recursive: true });
-        out.lastNew = fs.mkdirSync(path.join("alpha", "beta", "gamma"), { recursive: true });
-        out.existing = fs.mkdirSync(path.join("alpha", "beta"), { recursive: true }) === undefined;
-        out.dotted = fs.mkdirSync("." + path.sep + "dotted", { recursive: true });
-        out.trailing = fs.mkdirSync("trail" + path.sep + "x" + path.sep, { recursive: true });
-        out.updir = fs.mkdirSync(path.join("..", "updir", "x"), { recursive: true });
-        out.updirAgain = fs.mkdirSync(path.join("..", "updir", "x"), { recursive: true }) === undefined;
-        fsp.mkdir(path.join("delta", "epsilon"), { recursive: true }).then(p => {
-          out.promisified = p;
-          console.log(JSON.stringify(out));
+    using dir = tempDir("mkdir-relative-return", { "nest/.keep": "" });
+    const script = `
+      const fs = require("node:fs");
+      const fsp = require("node:fs/promises");
+      const path = require("node:path");
+      const out = {};
+      out.cwd = process.cwd();
+      out.sync = fs.mkdirSync(path.join("alpha", "beta"), { recursive: true });
+      out.lastNew = fs.mkdirSync(path.join("alpha", "beta", "gamma"), { recursive: true });
+      out.existing = fs.mkdirSync(path.join("alpha", "beta"), { recursive: true }) === undefined;
+      out.dotted = fs.mkdirSync("." + path.sep + "dotted", { recursive: true });
+      out.trailing = fs.mkdirSync("trail" + path.sep + "x" + path.sep, { recursive: true });
+      out.updir = fs.mkdirSync(path.join("..", "updir", "x"), { recursive: true });
+      out.updirAgain = fs.mkdirSync(path.join("..", "updir", "x"), { recursive: true }) === undefined;
+      fs.mkdir(path.join("cb", "dir"), { recursive: true }, (err, first) => {
+        if (err) throw err;
+        out.callback = first;
+        fs.mkdir(path.join("cb", "dir"), { recursive: true }, (err2, again) => {
+          if (err2) throw err2;
+          out.callbackAgain = again === undefined;
+          fsp.mkdir(path.join("delta", "epsilon"), { recursive: true }).then(p => {
+            out.promisified = p;
+            console.log(JSON.stringify(out));
+          });
         });
-      `,
-    });
+      });
+    `;
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "mkdir-return-fixture.js"],
+      cmd: [bunExe(), "-e", script],
       env: bunEnv,
       cwd: path.join(String(dir), "nest"),
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
     expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
     const out = JSON.parse(stdout);
     const expected = isWindows
       ? {
@@ -346,6 +352,7 @@ describe("fs.mkdir - return values", () => {
           dotted: path.toNamespacedPath(path.join(out.cwd, "dotted")),
           trailing: path.toNamespacedPath(path.join(out.cwd, "trail")),
           updir: path.toNamespacedPath(path.resolve(out.cwd, "..", "updir")),
+          callback: path.toNamespacedPath(path.join(out.cwd, "cb")),
           promisified: path.toNamespacedPath(path.join(out.cwd, "delta")),
         }
       : {
@@ -354,14 +361,17 @@ describe("fs.mkdir - return values", () => {
           dotted: "./dotted",
           trailing: "trail",
           updir: path.join("..", "updir"),
+          callback: "cb",
           promisified: "delta",
         };
     expect(out).toEqual({
       cwd: out.cwd,
       existing: true,
       updirAgain: true,
+      callbackAgain: true,
       ...expected,
     });
+    expect(await proc.exited).toBe(0);
   });
 });
 

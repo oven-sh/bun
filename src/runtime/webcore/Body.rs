@@ -1705,19 +1705,22 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// Fetch §Request ctor step 45: move this body out, leave this owner
     /// `Used`, and clear its `body`/`stream` cache. A `Null` body passes
     /// through unchanged (`Empty` is a non-null body per spec and transfers).
-    /// The moved stream comes back strongly `Held`: the slot cleared here was
-    /// its root, and the new owner adopts it in `check_body_stream_ref`.
+    /// A stream JS may already hold is handed over as a proxy (step 45.2), so
+    /// the caller's handle reads as locked. The moved stream comes back
+    /// strongly `Held`: the slot cleared here was its root, and the new owner
+    /// adopts it in `check_body_stream_ref`.
     fn transfer_body_value(&self, global_this: &JSGlobalObject) -> JsResult<Value> {
         if matches!(self.get_body_value(), Value::Null) {
             return Ok(Value::Null);
         }
         // A Bun.serve body shares its slot with the RequestContext (= `task`):
         // hand out a detached PendingValue instead of moving the Locked out.
-        // Prefer a stream that is already live (JS cache or `locked.readable`);
-        // only fall back to `to_readable_stream` to materialize one in place.
+        // A stream that is already live (JS cache or `locked.readable`) is
+        // proxied; otherwise `to_readable_stream` materializes a fresh one that
+        // JS has never seen.
         if matches!(self.get_body_value(), Value::Locked(l) if l.task.is_some()) {
             let readable = match self.get_body_readable_stream() {
-                Some(rs) => Some(rs),
+                Some(rs) => Self::proxy_transferred_stream(rs, global_this)?,
                 None => {
                     let v = self.get_body_value().to_readable_stream(global_this)?;
                     ReadableStream::from_js_direct(v)
@@ -1738,14 +1741,35 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             .js_ref()
             .and_then(Self::stream_get_cached)
             .and_then(ReadableStream::from_js_direct);
+        // Proxy before the move so a tee failure leaves the input untouched.
+        let live_stream = match self.get_body_value() {
+            Value::Locked(locked) => cached_stream.or_else(|| locked.readable.get()),
+            _ => None,
+        };
+        let proxied = match live_stream {
+            Some(rs) => Self::proxy_transferred_stream(rs, global_this)?.or(Some(rs)),
+            None => None,
+        };
         let mut body = core::mem::replace(self.get_body_value(), Value::Used);
-        if let Value::Locked(locked) = &mut body {
-            if let Some(rs) = cached_stream.or_else(|| locked.readable.get()) {
-                locked.readable = webcore::readable_stream::Strong::init(rs, global_this);
-            }
+        if let (Value::Locked(locked), Some(rs)) = (&mut body, proxied) {
+            locked.readable = webcore::readable_stream::Strong::init(rs, global_this);
         }
         self.clear_body_cache(global_this);
         Ok(body)
+    }
+
+    /// Step 45.2 "create a proxy": lock `source` by teeing it and cancel the
+    /// branch nobody reads, so the branch handed over pulls straight from the
+    /// source without buffering for a second consumer.
+    fn proxy_transferred_stream(
+        source: ReadableStream,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<Option<ReadableStream>> {
+        let Some((branch, unused)) = source.tee(global_this)? else {
+            return Ok(None);
+        };
+        unused.cancel_with_reason(global_this, JSValue::UNDEFINED)?;
+        Ok(Some(branch))
     }
 
     fn clear_body_cache(&self, global_this: &JSGlobalObject) {

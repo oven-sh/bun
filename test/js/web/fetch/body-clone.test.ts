@@ -1224,6 +1224,24 @@ describe("new Request(input) transfers the input body", () => {
       expect(() => input.body!.getReader()).toThrow(TypeError);
     });
 
+    // Step 45.2: the copy gets a *proxy* of the input body, so a stream handle
+    // taken before the constructor is locked afterwards and cannot steal bytes.
+    test.each([
+      ["single-arg", (req: Request) => new Request(req)],
+      ["two-arg", (req: Request) => new Request(req, { headers: { "x-a": "1" } })],
+    ])("a stream observed before %s new Request(input) is locked by the transfer", async (_, construct) => {
+      const input = factory();
+      const observed = input.body!;
+      const copy = construct(input);
+      expect({
+        observedLocked: observed.locked,
+        copyBodyIsObserved: copy.body === observed,
+        copyBodyLocked: copy.body!.locked,
+      }).toEqual({ observedLocked: true, copyBodyIsObserved: false, copyBodyLocked: false });
+      expect(() => observed.getReader()).toThrow(TypeError);
+      expect(await copy.text()).toBe(expected);
+    });
+
     test("new Request(input, { body }) leaves the input intact", async () => {
       const input = factory();
       const copy = new Request(input, { body: "override" });
@@ -1288,6 +1306,40 @@ describe("new Request(input) transfers the input body", () => {
     expect(() => new Request(input, { url: "http://[" })).toThrow();
     expect(input.bodyUsed).toBe(false);
     expect(await input.text()).toBe("survivor");
+  });
+
+  test("the user's own ReadableStream passed as the input body is locked by the transfer", async () => {
+    const userStream = new ReadableStream({
+      start(c) {
+        c.enqueue(new TextEncoder().encode("mine"));
+        c.close();
+      },
+    });
+    const input = make(userStream);
+    const copy = new Request(input);
+    expect({ userStreamLocked: userStream.locked, copyBodyIsUserStream: copy.body === userStream }).toEqual({
+      userStreamLocked: true,
+      copyBodyIsUserStream: false,
+    });
+    expect(() => userStream.getReader()).toThrow(TypeError);
+    expect(await copy.text()).toBe("mine");
+  });
+
+  test("cancelling the copy's body cancels the transferred source", async () => {
+    const { promise: cancelled, resolve } = Promise.withResolvers<void>();
+    const input = make(
+      new ReadableStream({
+        pull(c) {
+          c.enqueue(new Uint8Array(16));
+        },
+        cancel() {
+          resolve();
+        },
+      }),
+    );
+    const copy = new Request(input);
+    await copy.body!.cancel("done");
+    await cancelled;
   });
 
   test("constructing twice from the same input throws on the second call", () => {
@@ -1373,9 +1425,11 @@ describe("new Request(input) transfers the input body", () => {
         await using server = Bun.serve({
           port: 0,
           async fetch(req) {
-            if (touchBodyFirst) void req.body;
+            const observed = touchBodyFirst ? req.body : null;
             const r = construct(req);
             const inputUsed = req.bodyUsed;
+            // A handle taken before the transfer is locked by the proxy.
+            const observedLocked = observed ? observed.locked : null;
             let secondThrew = false;
             try {
               new Request(req);
@@ -1389,12 +1443,13 @@ describe("new Request(input) transfers the input body", () => {
             } catch (e) {
               inputTextRejected = e instanceof TypeError;
             }
-            return Response.json({ inputUsed, copyText, secondThrew, inputTextRejected });
+            return Response.json({ inputUsed, observedLocked, copyText, secondThrew, inputTextRejected });
           },
         });
         const res = await fetch(server.url, { method: "POST", body: "hello-server" });
         expect(await res.json()).toEqual({
           inputUsed: true,
+          observedLocked: touchBodyFirst ? true : null,
           copyText: "hello-server",
           secondThrew: true,
           inputTextRejected: true,

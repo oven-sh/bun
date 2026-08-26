@@ -12,11 +12,11 @@ type tjhandle = *mut c_void;
 
 // TJINIT_COMPRESS=0, TJINIT_DECOMPRESS=1.
 unsafe extern "C" {
-    pub(crate) fn tj3Init(init_type: c_int) -> tjhandle;
-    pub(crate) fn tj3Destroy(h: tjhandle);
+    fn tj3Init(init_type: c_int) -> tjhandle;
+    fn tj3Destroy(h: tjhandle);
     fn tj3Set(h: tjhandle, param: c_int, value: c_int) -> c_int;
-    pub(crate) fn tj3Get(h: tjhandle, param: c_int) -> c_int;
-    pub(crate) fn tj3DecompressHeader(h: tjhandle, buf: *const u8, len: usize) -> c_int;
+    fn tj3Get(h: tjhandle, param: c_int) -> c_int;
+    fn tj3DecompressHeader(h: tjhandle, buf: *const u8, len: usize) -> c_int;
     fn tj3Decompress8(
         h: tjhandle,
         buf: *const u8,
@@ -106,8 +106,8 @@ fn scaled(dim: u32, sf: ScalingFactor) -> u32 {
 // tjparam / tjpf enum values from turbojpeg.h.
 const TJPARAM_QUALITY: c_int = 3;
 const TJPARAM_SUBSAMP: c_int = 4;
-pub(crate) const TJPARAM_JPEGWIDTH: c_int = 5;
-pub(crate) const TJPARAM_JPEGHEIGHT: c_int = 6;
+const TJPARAM_JPEGWIDTH: c_int = 5;
+const TJPARAM_JPEGHEIGHT: c_int = 6;
 const TJPARAM_PROGRESSIVE: c_int = 12;
 const TJPARAM_MAXPIXELS: c_int = 24;
 /// `2` = save only APP2/ICC_PROFILE markers (enough for colour management,

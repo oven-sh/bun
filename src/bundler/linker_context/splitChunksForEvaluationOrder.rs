@@ -166,10 +166,14 @@ pub(crate) fn split_chunks_for_evaluation_order<'t>(
         let mut key = bun_alloc::ArenaVec::with_capacity_in(parent_key.len() + 4, temp);
         key.extend_from_slice(parent_key);
         key.extend_from_slice(&split_count.to_le_bytes());
-        let is_browser_chunk_from_server_build = could_be_browser_target_from_server_build
-            && files
-                .iter()
-                .any(|&source_index| ast_targets[source_index as usize] == Target::Browser);
+        // Like `compute_chunks`: a chunk that is not an entry point is a
+        // browser chunk when any of its files is.
+        let has_browser_file = |files: &[u32]| {
+            could_be_browser_target_from_server_build
+                && files
+                    .iter()
+                    .any(|&source_index| ast_targets[source_index as usize] == Target::Browser)
+        };
         let new_chunk_index = js_chunks.count() as u32;
         let parent = &mut js_chunks.values_mut()[chunk_index as usize];
         let mut new_chunk = Chunk {
@@ -177,7 +181,7 @@ pub(crate) fn split_chunks_for_evaluation_order<'t>(
             entry_point: chunk::EntryPoint::non_entry_point(files[0], 0),
             content: chunk::Content::Javascript(chunk::JavaScriptChunk::default()),
             output_source_map: SourceMapPieces::init(),
-            flags: if is_browser_chunk_from_server_build {
+            flags: if has_browser_file(files) {
                 chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD
             } else {
                 chunk::Flags::empty()
@@ -192,6 +196,12 @@ pub(crate) fn split_chunks_for_evaluation_order<'t>(
                 .files_with_parts_in_chunk
                 .put(source_index, AtomicUsize::new(0))?;
             chunk_of_file[source_index as usize] = new_chunk_index;
+        }
+        if !parent.entry_point.is_entry_point() {
+            parent.flags.set(
+                chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD,
+                has_browser_file(parent.files_with_parts_in_chunk.keys()),
+            );
         }
         js_chunks.put(key.into_bump_slice(), new_chunk)
     };

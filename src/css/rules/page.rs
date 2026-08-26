@@ -318,6 +318,7 @@ const _: () = {
         fn parse_value(
             this: &mut Self,
             name: &[u8],
+            _start: &ParserState,
             input: &mut Parser,
         ) -> Result<Self::Declaration> {
             css::declaration::parse_declaration(

@@ -919,10 +919,42 @@ describe("request facts", () => {
         },
       },
     });
-    await new Promise<void>(r => setTimeout(r, 50));
+    const [srv] = byName(await collect(1), "bun.http.server");
     sock.end();
-    const [srv] = byName(await collect(), "bun.http.server");
     expect(srv.attributes["network.protocol.version"]).toBe("1.0");
+  });
+
+  test("repeated tracestate / baggage request headers are combined into one list", async () => {
+    let seenBaggage: string | undefined, seenTs: string | undefined;
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        seenBaggage = apiPropagation
+          .getActiveBaggage()
+          ?.getAllEntries()
+          .map(([k, v]) => `${k}=${v.value}`)
+          .join(",");
+        seenTs = (Bun.otel.activeSpan()!.spanContext().traceState as any)?.serialize();
+        return new Response("x");
+      },
+    });
+    const sock = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        data(s) {
+          s.end();
+        },
+        open(s) {
+          s.write(
+            "GET / HTTP/1.1\r\nHost: h\r\ntraceparent: 00-11111111111111111111111111111111-2222222222222222-01\r\ntracestate: a=1\r\ntracestate: b=2\r\nbaggage: x=1\r\nbaggage: y=2\r\n\r\n",
+          );
+        },
+      },
+    });
+    await collect(1);
+    sock.end();
+    expect([seenTs, seenBaggage]).toEqual(["a=1, b=2", "x=1,y=2"]);
   });
 
   test("a repeated request header captured via OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SERVER_REQUEST is joined", async () => {
@@ -935,8 +967,7 @@ describe("request facts", () => {
         Bun.otel.start({ exporters: [{ export: b => spans.push(...b) }], instrumentations: { http: true } });
         const server = Bun.serve({ port: 0, fetch: () => new Response("x") });
         const s = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data(s) { s.end(); }, open(s) { s.write("GET / HTTP/1.1\\r\\nHost: h\\r\\nX-Forwarded-For: a\\r\\nX-Forwarded-For: b\\r\\n\\r\\n"); } } });
-        await Bun.sleep(50);
-        await Bun.otel.forceFlush();
+        for (let i = 0; i < 500 && !spans.some(s => s.scope.name === "bun.http.server"); i++) { await Bun.sleep(10); await Bun.otel.forceFlush(); }
         console.log(JSON.stringify(spans.find(s => s.scope.name === "bun.http.server").attributes["http.request.header.x-forwarded-for"]));
         server.stop(true);
         `,

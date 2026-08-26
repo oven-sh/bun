@@ -33,7 +33,7 @@ pub fn begin(
         if let Some(tp) = h.traceparent() {
             parent = propagation::parse_traceparent(tp);
             if parent.is_some() {
-                if h.tracestate_repeated != 0 {
+                if h.tracestate_repeated != 0 && h.tracestate().is_some() {
                     // W3C: several tracestate fields are one list, in order.
                     joined_trace_state = req.header_joined(b"tracestate");
                 }
@@ -47,8 +47,16 @@ pub fn begin(
     let now = clock::now_unix_nanos();
     let mut l = local(global)?;
     let stub = SpanStub::start(&mut l.rng, parent.as_ref(), &st.sampler, now);
+    let joined_baggage: Option<Vec<u8>> =
+        if st.propagate_baggage && h.baggage_repeated != 0 && h.baggage().is_some() {
+            req.header_joined(b"baggage")
+        } else {
+            None
+        };
     let baggage = if st.propagate_baggage {
-        h.baggage()
+        joined_baggage
+            .as_deref()
+            .or_else(|| h.baggage())
             .filter(|b| propagation::baggage_is_reasonable(b))
     } else {
         None

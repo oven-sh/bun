@@ -252,10 +252,10 @@ impl Facts {
     /// The span name as it would be exported now: `{METHOD} {route}`, the
     /// method alone without a route, `HTTP` for methods outside the known set.
     pub fn append_name(&self, out: &mut Vec<u8>) {
-        let method: &[u8] = if self.flags & FLAG_METHOD_OTHER != 0 {
-            b"HTTP"
-        } else {
-            method_name(self.method).as_bytes()
+        let method: &[u8] = match method_name(self.method) {
+            _ if self.flags & FLAG_METHOD_OTHER != 0 => b"HTTP",
+            "_OTHER" => b"HTTP",
+            m => m.as_bytes(),
         };
         out.extend_from_slice(method);
         let route = self.strings().route;

@@ -1523,8 +1523,9 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     uint32_t path_len;
     /* The request line said HTTP/1.0. */
     uint8_t http10;
-    /* More than one tracestate field was present (combine them). */
+    /* More than one tracestate / baggage field was present (combine them). */
     uint8_t tracestate_repeated;
+    uint8_t baggage_repeated;
   };
   void uws_req_telemetry_headers(uws_req_t *res, struct uws_telemetry_headers_t *out)
   {
@@ -1549,10 +1550,11 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
       if (slot && !slot->ptr) {
         slot->ptr = header.second.data();
         slot->len = header.second.length();
-      } else if (slot == &out->tracestate && slot->ptr) {
-        /* W3C: multiple tracestate fields MUST be combined; flag it so the
-         * caller re-reads the header joined (rare). */
-        out->tracestate_repeated = 1;
+      } else if (slot && (slot == &out->tracestate || slot == &out->baggage)) {
+        /* W3C: multiple tracestate / baggage fields are one list; flag it so
+         * the caller re-reads that header joined (rare). */
+        if (slot == &out->tracestate) out->tracestate_repeated = 1;
+        else out->baggage_repeated = 1;
       }
     }
   }

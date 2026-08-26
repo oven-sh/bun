@@ -210,20 +210,24 @@ describe("Bun.otel", () => {
   test("a span kept past its block does not pin the AsyncLocalStorage stores it was created under once it ends", async () => {
     const { AsyncLocalStorage } = require("node:async_hooks");
     const als = new AsyncLocalStorage();
-    let ref!: WeakRef<object>;
+    const refs: WeakRef<object>[] = [];
     const kept: any[] = [];
-    als.run({ big: Buffer.alloc(1024) }, () => {
-      ref = new WeakRef(als.getStore() as object);
-      const s = Bun.otel.span("session");
-      kept.push(s);
-      s.end();
-    });
+    for (let i = 0; i < 50; i++) {
+      als.run({ big: Buffer.alloc(1024) }, () => {
+        refs.push(new WeakRef(als.getStore() as object));
+        const s = Bun.otel.span("session");
+        kept.push(s);
+        s.end();
+      });
+    }
     await Bun.sleep(0);
     Bun.gc(true);
     await Bun.sleep(0);
     Bun.gc(true);
-    expect(ref.deref()).toBeUndefined();
-    expect(kept.length).toBe(1);
+    // A retained Restore slot would keep all 50 alive; allow a straggler or two
+    // that a register/stack word may still reference.
+    expect(refs.filter(r => r.deref() !== undefined).length).toBeLessThan(5);
+    expect(kept.length).toBe(50);
     await collect();
   });
 

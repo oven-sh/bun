@@ -41,7 +41,9 @@ impl AnyRequest {
                     x_forwarded_for: RawSlice::of(r.header(b"x-forwarded-for")),
                     path_len: u32::MAX,
                     http10: 0,
-                    tracestate_repeated: 0,
+                    // H3 cannot see repeats in one pass; the caller joins.
+                    tracestate_repeated: 1,
+                    baggage_repeated: 1,
                     _req: core::marker::PhantomData,
                 }
             }
@@ -112,8 +114,9 @@ pub struct TelemetryHeaders<'a> {
     pub path_len: u32,
     /// The request line said `HTTP/1.0` (H1 only).
     pub http10: u8,
-    /// More than one `tracestate` field was present: use `header_joined`.
+    /// More than one `tracestate` / `baggage` field was present: use `header_joined`.
     pub tracestate_repeated: u8,
+    pub baggage_repeated: u8,
     _req: core::marker::PhantomData<&'a Request>,
 }
 
@@ -199,6 +202,7 @@ impl Request {
             path_len: u32::MAX,
             http10: 0,
             tracestate_repeated: 0,
+            baggage_repeated: 0,
             _req: core::marker::PhantomData,
         };
         c::uws_req_telemetry_headers(self, &mut out);

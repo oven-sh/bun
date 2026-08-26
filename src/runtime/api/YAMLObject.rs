@@ -1039,9 +1039,26 @@ pub(crate) fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult
                     if !log.msgs.is_empty() {
                         let first_msg = &log.msgs[0];
                         let error_text = &first_msg.data.text;
-                        return Err(global.throw_value(global.create_syntax_error_instance(
-                            format_args!("YAML Parse error: {}", bstr::BStr::new(error_text)),
-                        )));
+                        let msg = if let Some(loc) = &first_msg.data.location {
+                            // `Location.line` is 1-based; `Location.column` is 0-based
+                            // bytes — the same coordinate js-yaml's `linePos` and
+                            // `yaml@2`'s `parseDocument` positional errors expose,
+                            // so downstream consumers (credentials-local config
+                            // validation) get identical line/column on failure.
+                            if loc.line > 0 {
+                                format_args!(
+                                    "YAML Parse error: {} (line {}, column {})",
+                                    bstr::BStr::new(error_text),
+                                    loc.line,
+                                    loc.column,
+                                )
+                            } else {
+                                format_args!("YAML Parse error: {}", bstr::BStr::new(error_text))
+                            }
+                        } else {
+                            format_args!("YAML Parse error: {}", bstr::BStr::new(error_text))
+                        };
+                        return Err(global.throw_value(global.create_syntax_error_instance(msg)));
                     }
                     return Err(global.throw_value(global.create_syntax_error_instance(
                         format_args!("YAML Parse error: Unable to parse YAML string"),

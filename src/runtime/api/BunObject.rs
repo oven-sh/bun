@@ -1132,6 +1132,53 @@ fn do_open(global_this: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsRe
 
     #[cfg(windows)]
     {
+        // A bare directory target would go through ShellExecuteExW → Explorer
+        // singleton (DDE handshake): `hProcess` comes back null (pid 0), the
+        // test's `pid>0` contract breaks, and the DDE state left on the COM
+        // apartment crashes at process exit. Route directory targets to
+        // `explorer.exe` via `Bun.spawn` instead — real pid, real exited
+        // promise, no COM. URLs, files, and `options.app` still take the
+        // ShellExecute path.
+        if options.app.is_none() {
+            let target_wide: Vec<u16> = target_str
+                .encode_utf16()
+                .chain(core::iter::once(0))
+                .collect();
+            let attrs = unsafe { bun_sys::c::GetFileAttributesW(target_wide.as_ptr()) };
+            const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+            if attrs != 0xFFFF_FFFF && attrs & FILE_ATTRIBUTE_DIRECTORY != 0 {
+                let explorer = BunString::from_bytes(b"explorer.exe");
+                let target_s = BunString::from_bytes(target_str.as_bytes());
+                let cmd_array =
+                    bun_string_jsc::to_js_array(global_this, &[explorer, target_s])?;
+                let ignore_string = BunString::from_bytes(b"ignore");
+                let spawn_options = JSValue::create_empty_object(global_this, 4);
+                spawn_options.put(global_this, b"stdin", ignore_string.to_js(global_this)?);
+                spawn_options.put(global_this, b"stdout", ignore_string.to_js(global_this)?);
+                spawn_options.put(global_this, b"stderr", ignore_string.to_js(global_this)?);
+                spawn_options.put(global_this, b"detached", JSValue::from(true));
+                let subprocess = crate::api::js_bun_spawn_bindings::spawn(
+                    global_this,
+                    cmd_array,
+                    Some(spawn_options),
+                )?;
+                let pid = subprocess
+                    .get(global_this, b"pid")?
+                    .unwrap_or(JSValue::ZERO);
+                let exited = subprocess.get(global_this, b"exited")?;
+                let exited = exited.unwrap_or_else(|| {
+                    JSPromise::resolved_promise_value(global_this, JSValue::ZERO)
+                });
+                let result = JSValue::create_empty_object(global_this, 2);
+                result.put(global_this, b"pid", pid);
+                result.put(global_this, b"exited", exited);
+                let mut outer = JSPromiseStrong::init(global_this);
+                let value = outer.value();
+                let _ = outer.resolve(global_this, result);
+                return Ok(value);
+            }
+        }
+
         let verb: &str = if options.edit { "edit" } else { "open" };
         let app_name: Option<&str> = options
             .app

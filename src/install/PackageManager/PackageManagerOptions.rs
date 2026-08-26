@@ -294,20 +294,25 @@ impl Options {
     /// bunfig, env or CLI credential, so `scope` wins; any other key is the tarball's
     /// own and wins as in npm.
     /// A path the server would resolve elsewhere (`..`, `%2e`, a backslash) gets
-    /// nothing.
+    /// nothing, and an `http://` tarball on another host never gets a key's credential.
     pub fn tarball_credentials<'a>(
         &'a self,
         scope: &'a Npm::registry::Scope,
         tarball: &bun_url::URL,
     ) -> Option<&'a Npm::registry::Scope> {
-        // `dist.tarball` is registry-controlled, and `.npmrc` keys carry no scheme: a
-        // token written for an https registry must not go out in plaintext.
-        if !Npm::registry::path_is_canonical(tarball.pathname)
-            || (scope.url.url().is_https() && !tarball.is_https())
-        {
+        if !Npm::registry::path_is_canonical(tarball.pathname) {
             return None;
         }
-        let own = Npm::registry::UrlAuth::find_entry(&self.url_auth, tarball);
+        // `dist.tarball` is registry-controlled and `.npmrc` keys carry no scheme, so a
+        // key's credential goes over plaintext only back to the registry's own origin,
+        // which already sees the registry's credentials that way; never to another host.
+        let plaintext_to_another_host =
+            !tarball.is_https() && !same_origin(tarball, &scope.url.url());
+        let own = if plaintext_to_another_host {
+            None
+        } else {
+            Npm::registry::UrlAuth::find_entry(&self.url_auth, tarball)
+        };
         if scope.has_credentials() && same_origin(tarball, &scope.url.url()) {
             let registry_own = Npm::registry::UrlAuth::find_entry(&self.url_auth, &scope.url.url());
             return match own {

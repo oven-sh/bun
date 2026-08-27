@@ -137,7 +137,7 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
                 bun_telemetry::SpanKind::Internal,
                 |w| {
                     if let Some(p) = &path {
-                        w.attr_opt("file.path", p);
+                        w.attr_bytes_opt("file.path", p);
                     }
                     if !code.is_empty() || !msg.is_empty() {
                         w.attr_opt("error.type", code);

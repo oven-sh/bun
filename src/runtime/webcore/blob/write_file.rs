@@ -1254,7 +1254,7 @@ impl WriteFilePromise {
                     bun_telemetry::SpanKind::Internal,
                     |w| {
                         if let Some(p) = &h.otel_path {
-                            w.attr_opt("file.path", p);
+                            w.attr_bytes_opt("file.path", p);
                         }
                         if let WriteFileResultType::Result(n) = &count {
                             w.attr("file.size", *n as i64);

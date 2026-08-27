@@ -150,6 +150,19 @@ describe("node:fs / Bun.file / Bun.write", () => {
     expect(got.every(s => s.kind === 0)).toBe(true);
   });
 
+  test("a path that is not UTF-8 is exported as a valid protobuf string (U+FFFD), not raw bytes", async () => {
+    // proto3 `string` must be UTF-8; one raw 0xff makes a collector reject the whole export request.
+    const raw = Buffer.from([0x2f, 0xff, 0xfe, 0x6f, 0x74, 0x65, 0x6c]); // "/\xff\xfeotel"
+    let bytes: Uint8Array | undefined;
+    Bun.otel.start({ instrumentations: { fs: "always" }, exporters: [{ exportProtobuf: (b: Uint8Array) => (bytes = b) }] });
+    expect(() => fs.statSync(raw)).toThrow();
+    await Bun.otel.forceFlush();
+    expect(bytes).toBeDefined();
+    expect(Buffer.from(bytes!).includes(raw)).toBe(false);
+    const [span] = Bun.otel.decode(bytes!).filter((s: any) => s.name === "fs.statSync");
+    expect(span.attributes["file.path"]).toBe("/\uFFFD\uFFFDotel");
+  });
+
   test("default policy is nested-only: no fs spans without a parent", async () => {
     Bun.otel.start({ exporters: [{ export: (b: any[]) => spans.push(...b) }] }); // defaults
     fs.readFileSync(import.meta.path);

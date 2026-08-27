@@ -2,54 +2,8 @@
 //! `cargo test` binary. Never compiled into the real build.
 #![allow(clippy::missing_safety_doc)]
 
-#[unsafe(no_mangle)]
-unsafe extern "C" fn highway_index_of_char(
-    haystack: *const u8,
-    haystack_len: usize,
-    needle: u8,
-) -> usize {
-    // SAFETY: caller passes a valid slice.
-    let h = unsafe { core::slice::from_raw_parts(haystack, haystack_len) };
-    h.iter().position(|&c| c == needle).unwrap_or(haystack_len)
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn highway_last_index_of_char(
-    haystack: *const u8,
-    haystack_len: usize,
-    needle: u8,
-) -> usize {
-    // SAFETY: caller passes a valid slice.
-    let h = unsafe { core::slice::from_raw_parts(haystack, haystack_len) };
-    h.iter().rposition(|&c| c == needle).unwrap_or(haystack_len)
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn highway_memmem(
-    haystack: *const u8,
-    haystack_len: usize,
-    needle: *const u8,
-    needle_len: usize,
-) -> *const u8 {
-    // SAFETY: caller passes valid slices.
-    let (h, n) = unsafe {
-        (
-            core::slice::from_raw_parts(haystack, haystack_len),
-            core::slice::from_raw_parts(needle, needle_len),
-        )
-    };
-    if n.is_empty() {
-        return haystack;
-    }
-    if h.len() < n.len() {
-        return core::ptr::null();
-    }
-    match (0..=h.len() - n.len()).find(|&i| h[i..i + n.len()] == *n) {
-        // SAFETY: i is in bounds.
-        Some(i) => unsafe { haystack.add(i) },
-        None => core::ptr::null(),
-    }
-}
+#[path = "../parsers/native_test_shims.rs"]
+mod shared;
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn highway_decode_hex8(
@@ -109,11 +63,6 @@ unsafe extern "C" fn simdutf__base64_encode(
         });
     }
     o
-}
-
-#[unsafe(no_mangle)]
-extern "Rust" fn __bun_crash_handler_out_of_memory() -> ! {
-    panic!("out of memory");
 }
 
 #[unsafe(no_mangle)]

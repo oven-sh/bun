@@ -602,7 +602,7 @@ impl ShellSubprocess {
 
         // Until ownership transfers into Writable/Readable, deinit any caller-provided
         // stdio resources (memfd, Blob) on early return so they aren't leaked
-        // (`redirect_buf` drops with `spawn_args`). Defused via
+        // (`redirect_stdout`/`redirect_stderr` drop with `spawn_args`). Defused via
         // `ScopeGuard::into_inner` once consumed.
         let mut stdio_guard = scopeguard::guard(&mut spawn_args.stdio, |stdio| {
             for s in stdio.iter_mut() {
@@ -759,11 +759,10 @@ impl ShellSubprocess {
                 panic!("unexpected error while creating stdin");
             }
         };
-        let [stdout_buf, stderr_buf] = core::mem::take(&mut spawn_args.redirect_buf);
         let stdout = Readable::init(
             OutKind::Stdout,
             stdio1,
-            stdout_buf,
+            spawn_args.redirect_stdout.take(),
             shellio.stdout.clone(),
             event_loop,
             subprocess,
@@ -775,7 +774,7 @@ impl ShellSubprocess {
         let stderr = Readable::init(
             OutKind::Stderr,
             stdio2,
-            stderr_buf,
+            spawn_args.redirect_stderr.take(),
             shellio.stderr.clone(),
             event_loop,
             subprocess,
@@ -1379,8 +1378,9 @@ pub struct SpawnArgs<'a> {
     pub(crate) env_array: Vec<*const c_char>,
     pub(crate) cwd: &'a [u8],
     pub(crate) stdio: [Stdio; 3],
-    /// `> ${arraybuffer}` redirect targets for stdout/stderr; the matching `stdio` slot is `Pipe`.
-    pub(crate) redirect_buf: [Option<jsc::PinnedArrayBuffer>; 2],
+    /// `> ${arraybuffer}` redirect targets; the matching `stdio` slot is `Pipe`.
+    pub(crate) redirect_stdout: Option<jsc::PinnedArrayBuffer>,
+    pub(crate) redirect_stderr: Option<jsc::PinnedArrayBuffer>,
     pub(crate) lazy: bool,
     pub path: &'a [u8],
     // ipc_mode: IPCMode,
@@ -1402,7 +1402,8 @@ impl<'a> SpawnArgs<'a> {
             env_array: Vec::new(),
             cwd: event_loop.top_level_dir(),
             stdio: [Stdio::Ignore, Stdio::Pipe, Stdio::Inherit],
-            redirect_buf: [None, None],
+            redirect_stdout: None,
+            redirect_stderr: None,
             lazy: false,
             // PATH unset → fall back to _PATH_DEFPATH on POSIX (Android often
             // has no PATH). PATH="" (explicit empty) is preserved — that's a

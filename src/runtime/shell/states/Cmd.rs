@@ -537,7 +537,8 @@ impl Cmd {
             interp,
             this,
             &mut spawn_args.stdio,
-            &mut spawn_args.redirect_buf,
+            &mut spawn_args.redirect_stdout,
+            &mut spawn_args.redirect_stderr,
         ) {
             Ok(None) => {}
             Ok(Some(y)) => {
@@ -674,7 +675,8 @@ impl Cmd {
         interp: &Interpreter,
         this: NodeId,
         stdio: &mut [Stdio; 3],
-        redirect_buf: &mut [Option<crate::jsc::PinnedArrayBuffer>; 2],
+        redirect_stdout: &mut Option<crate::jsc::PinnedArrayBuffer>,
+        redirect_stderr: &mut Option<crate::jsc::PinnedArrayBuffer>,
     ) -> crate::jsc::JsResult<Option<Yield>> {
         const STDIN_NO: usize = 0;
         const STDOUT_NO: usize = 1;
@@ -725,24 +727,21 @@ impl Cmd {
                             Stdio::Blob(crate::webcore::blob::Any::from_owned_slice(bytes.to_vec()))
                         };
                     }
-                    let mut redirect_out = |fd: usize| {
-                        let Some(buf) = crate::jsc::PinnedArrayBuffer::root(global, jsval) else {
-                            return Err(global.throw_out_of_memory());
+                    let mut redirect_out =
+                        |fd: usize, slot: &mut Option<crate::jsc::PinnedArrayBuffer>| {
+                            let Some(buf) = crate::jsc::PinnedArrayBuffer::root(global, jsval)
+                            else {
+                                return Err(global.throw_out_of_memory());
+                            };
+                            stdio[fd] = Stdio::Pipe;
+                            *slot = Some(buf);
+                            Ok(())
                         };
-                        stdio[fd] = Stdio::Pipe;
-                        redirect_buf[fd - STDOUT_NO] = Some(buf);
-                        Ok(())
-                    };
-                    if flags.duplicate_out() {
-                        redirect_out(STDOUT_NO)?;
-                        redirect_out(STDERR_NO)?;
-                    } else {
-                        if flags.stdout() {
-                            redirect_out(STDOUT_NO)?;
-                        }
-                        if flags.stderr() {
-                            redirect_out(STDERR_NO)?;
-                        }
+                    if flags.duplicate_out() || flags.stdout() {
+                        redirect_out(STDOUT_NO, redirect_stdout)?;
+                    }
+                    if flags.duplicate_out() || flags.stderr() {
+                        redirect_out(STDERR_NO, redirect_stderr)?;
                     }
                 } else if let Some(blob_ref) = jsval.as_class_ref::<crate::webcore::Blob>() {
                     let blob = blob_ref.dupe();

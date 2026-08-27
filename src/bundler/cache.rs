@@ -88,8 +88,7 @@ impl JavaScript {
 
         let result = match parser.parse() {
             Ok(r) => {
-                // Every phase of the parse halts on a logged error, so callers
-                // may run or cache an AST without checking the log.
+                // The parser halts on every logged error, so an AST never comes with one.
                 debug_assert!(!matches!(r, js_parser::Result::Ast(_)) || temp_log.errors == 0);
                 r
             }

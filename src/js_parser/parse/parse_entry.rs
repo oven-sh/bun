@@ -62,8 +62,7 @@ pub struct Parser<'a> {
     pub(crate) source: &'a bun_ast::Source,
     pub(crate) define: &'a Define,
     pub(crate) bump: &'a Arena,
-    /// `log.errors` before the priming `lexer.next()` in `init`. An error the
-    /// lexer logs for the first token must count against the parse too.
+    /// `log.errors` before the priming `lexer.next()` in `init`.
     pub(crate) orig_error_count: u32,
 }
 

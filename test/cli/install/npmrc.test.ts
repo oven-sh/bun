@@ -1730,7 +1730,8 @@ describe.concurrent("//host/ credential lines are matched against the request UR
   });
 
   test("a line for another path on the tarball host does not authenticate it, even if it is a string prefix", async () => {
-    using cdn = mockRegistry("Bearer other-token");
+    // https, so the key walk is what decides, not the plaintext guard.
+    using cdn = mockRegistry("Bearer other-token", { secure: true });
     using registry = mockRegistry("Bearer registry-token", { tarballOrigin: () => cdn.origin });
     using dir = tempDir("npmrc-url-auth-tarball-wrong-path", {
       "package.json": packageJson,

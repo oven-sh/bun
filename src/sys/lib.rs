@@ -8119,9 +8119,8 @@ pub mod posix {
                 // `_IO('T', 0x41)`; the `libc` crate lacks it on Android.
                 const TIOCGPTPEER: c_int = 0x5441;
                 // SAFETY: TIOCGPTPEER takes open(2) flags by value and returns a new fd.
-                let fd = unsafe {
-                    libc::ioctl(master.native(), TIOCGPTPEER as _, O::RDWR | O::NOCTTY)
-                };
+                let fd =
+                    unsafe { libc::ioctl(master.native(), TIOCGPTPEER as _, O::RDWR | O::NOCTTY) };
                 if fd >= 0 {
                     return Ok(Fd::from_native(fd));
                 }

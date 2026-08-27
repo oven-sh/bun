@@ -34,6 +34,12 @@ pub struct OutputFile {
     pub referenced_css_chunks: Box<[Index]>,
     pub source_index: IndexOptional,
     pub bake_extra: BakeExtra,
+    /// Position of this chunk in the order the runtime is expected to load it
+    /// (see `chunk_load_order`); `u32::MAX` for anything that is not a chunk.
+    pub load_order: u32,
+    /// The chunk is in the entry point's static import closure, i.e. it loads
+    /// before the first `import()`.
+    pub loads_at_startup: bool,
 }
 
 impl OutputFile {
@@ -59,6 +65,8 @@ impl OutputFile {
             referenced_css_chunks: Box::default(),
             source_index: IndexOptional::NONE,
             bake_extra: BakeExtra::default(),
+            load_order: u32::MAX,
+            loads_at_startup: false,
         }
     }
 }
@@ -206,6 +214,8 @@ impl OutputFile {
             entry_point_index: options.entry_point_index,
             referenced_css_chunks: options.referenced_css_chunks,
             bake_extra: options.bake_extra,
+            load_order: u32::MAX,
+            loads_at_startup: false,
         }
     }
 

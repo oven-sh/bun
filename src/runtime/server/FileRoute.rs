@@ -16,6 +16,7 @@ use bun_uws::{AnyRequest, AnyResponse};
 use crate::node::types::PathOrFileDescriptor;
 use crate::server::file_response_stream::{StartOptions as FileResponseStreamOptions, StreamOwner};
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
+use bun_jsc::bun_string_jsc;
 
 use crate::server::{AnyServer, FileResponseStream, HTTPStatusText, RangeRequest};
 use crate::webcore::blob::store::Data as StoreData;
@@ -89,7 +90,7 @@ impl FileRoute {
             if let Some(last_modified) = self.headers.get(b"last-modified") {
                 let string = BunString::borrow_utf8(last_modified);
                 let global = VirtualMachine::get().as_mut().global();
-                let date_f64 = bun_jsc::bun_string_jsc::parse_date(&string, global)?;
+                let date_f64 = bun_string_jsc::parse_date(&string, global)?;
                 if !date_f64.is_nan() && date_f64.is_finite() {
                     return Ok(Some(date_f64 as u64));
                 }
@@ -273,7 +274,6 @@ impl FileRoute {
         let Some(path) = store.get_path() else {
             req.set_yield(true);
             route.on_response_complete(resp);
-            route.deref();
             return;
         };
 
@@ -300,7 +300,6 @@ impl FileRoute {
         let Ok(fd) = fd_result else {
             req.set_yield(true);
             route.on_response_complete(resp);
-            route.deref();
             return;
         };
 
@@ -316,7 +315,6 @@ impl FileRoute {
                 #[cfg(not(windows))]
                 Closer::close(fd, ());
                 route.on_response_complete(resp);
-                route.deref();
             }
             Serve::Stream {
                 file_type,

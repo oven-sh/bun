@@ -1951,7 +1951,6 @@ impl Example {
             headers_buf,
             b"",
             http_proxy,
-            None,
             HTTP::FetchRedirect::Follow,
         ));
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut *progress));
@@ -2054,7 +2053,6 @@ impl Example {
                 b"",
                 b"",
                 http_proxy,
-                None,
                 HTTP::FetchRedirect::Follow,
             ));
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut *progress));
@@ -2147,7 +2145,6 @@ impl Example {
             b"",
             b"",
             http_proxy,
-            None,
             HTTP::FetchRedirect::Follow,
         );
         async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut *progress));
@@ -2192,7 +2189,6 @@ impl Example {
             b"",
             b"",
             http_proxy,
-            None,
             HTTP::FetchRedirect::Follow,
         ));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();

@@ -768,6 +768,353 @@ it("should include unused resolutions in the lockfile", async () => {
   await runBunInstall(env, packageDir, { frozenLockfile: true });
 });
 
+/** The `packages` keys (install paths) in `bun.lock` whose entry is the package `name`. */
+function lockfileKeysFor(lockfile: string, name: string): string[] {
+  return [...lockfile.matchAll(/^ {4}"([^"]+)": \["(@?[^"@]+)@/gm)].filter(m => m[2] === name).map(m => m[1]);
+}
+
+/** The lockfile bun just wrote must load back: `--frozen-lockfile` passes and a plain install is a no-op. */
+async function expectLockfileRoundTrips(packageDir: string) {
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+  await runBunInstall(env, packageDir, { frozenLockfile: true });
+  const { err } = await runBunInstall(env, packageDir, { savesLockfile: false });
+  expect(err).not.toContain("Saved lockfile");
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+}
+
+it("binds a peer dependency to the root's file: dependency instead of asking the registry", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  // `zz-host-a` is not in the registry. The root provides it as a folder, and
+  // that one copy has to satisfy the plugin's peer: no registry lookup and no
+  // second copy placed under the plugin.
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "peer-from-root-folder",
+        version: "1.0.0",
+        dependencies: {
+          "zz-plugin-a": "file:./vendor/zz-plugin-a",
+          "zz-host-a": "file:./vendor/zz-host-a",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "vendor", "zz-host-a", "package.json"),
+      JSON.stringify({ name: "zz-host-a", version: "1.0.0" }),
+    ),
+    write(
+      join(packageDir, "vendor", "zz-plugin-a", "package.json"),
+      JSON.stringify({
+        name: "zz-plugin-a",
+        version: "1.0.0",
+        peerDependencies: { "zz-host-a": ">=1.0.0" },
+      }),
+    ),
+  ]);
+
+  await runBunInstall(env, packageDir);
+
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+  expect(lockfile).toContain('"zz-host-a@file:vendor/zz-host-a"');
+  expect(lockfileKeysFor(lockfile, "zz-host-a")).toEqual(["zz-host-a"]);
+  expect(
+    await Promise.all([
+      file(join(packageDir, "node_modules", "zz-host-a", "package.json")).json(),
+      exists(join(packageDir, "node_modules", "zz-plugin-a", "node_modules")),
+    ]),
+  ).toEqual([{ name: "zz-host-a", version: "1.0.0" }, false]);
+
+  await expectLockfileRoundTrips(packageDir);
+});
+
+it("binds a peer dependency to a root file: dependency that lives outside the project", async () => {
+  const { packageDir } = await registry.createTestDir();
+
+  // The provider is `file:../zz-host-b`, a path that is only installable from
+  // the root's node_modules. A placement under the plugin would fail.
+  const project = join(packageDir, "project");
+  await Promise.all([
+    registry.writeBunfig(project, { linker: "hoisted" }),
+    write(
+      join(project, "package.json"),
+      JSON.stringify({
+        name: "peer-from-outside-folder",
+        version: "1.0.0",
+        dependencies: {
+          "zz-plugin-b": "file:./vendor/zz-plugin-b",
+          "zz-host-b": "file:../zz-host-b",
+        },
+      }),
+    ),
+    write(join(packageDir, "zz-host-b", "package.json"), JSON.stringify({ name: "zz-host-b", version: "1.0.0" })),
+    write(
+      join(project, "vendor", "zz-plugin-b", "package.json"),
+      JSON.stringify({
+        name: "zz-plugin-b",
+        version: "1.0.0",
+        peerDependencies: { "zz-host-b": "*" },
+      }),
+    ),
+  ]);
+
+  await runBunInstall(env, project);
+
+  const lockfile = await file(join(project, "bun.lock")).text();
+  expect(lockfile).toContain('"zz-host-b@file:../zz-host-b"');
+  expect(lockfileKeysFor(lockfile, "zz-host-b")).toEqual(["zz-host-b"]);
+  expect(
+    await Promise.all([
+      file(join(project, "node_modules", "zz-host-b", "package.json")).json(),
+      exists(join(project, "node_modules", "zz-plugin-b", "node_modules")),
+    ]),
+  ).toEqual([{ name: "zz-host-b", version: "1.0.0" }, false]);
+
+  await expectLockfileRoundTrips(project);
+});
+
+it("places a file: dependency that is also declared as a file: peer once", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  // Both edges name the same folder. They have to share one entry under the
+  // plugin; two of them serialize as a duplicate key that bun then refuses to
+  // load back.
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "file-dep-and-file-peer",
+        version: "1.0.0",
+        dependencies: { "zz-plugin-e": "file:./vendor/zz-plugin-e" },
+      }),
+    ),
+    write(
+      join(packageDir, "vendor", "zz-host-e", "package.json"),
+      JSON.stringify({ name: "zz-host-e", version: "1.0.0" }),
+    ),
+    write(
+      join(packageDir, "vendor", "zz-plugin-e", "package.json"),
+      JSON.stringify({
+        name: "zz-plugin-e",
+        version: "1.0.0",
+        dependencies: { "zz-host-e": "file:../zz-host-e" },
+        peerDependencies: { "zz-host-e": "file:../zz-host-e" },
+      }),
+    ),
+  ]);
+
+  await runBunInstall(env, packageDir);
+
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+  expect(lockfileKeysFor(lockfile, "zz-host-e")).toEqual(["zz-plugin-e/zz-host-e"]);
+  expect(
+    await file(join(packageDir, "node_modules", "zz-plugin-e", "node_modules", "zz-host-e", "package.json")).json(),
+  ).toEqual({ name: "zz-host-e", version: "1.0.0" });
+
+  await expectLockfileRoundTrips(packageDir);
+});
+
+it("binds a peer dependency to the file: dependency its own package declares on the same name", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  // The optional-peer idiom: a package peers on a name and also vendors it via
+  // `optionalDependencies` (or `dependencies`). Neither host is in the registry;
+  // each peer binds to the copy its own package declared, installed once there.
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "peer-from-own-folder",
+        version: "1.0.0",
+        dependencies: {
+          "zz-plugin-c": "file:./vendor/zz-plugin-c",
+          "zz-plugin-d": "file:./vendor/zz-plugin-d",
+        },
+      }),
+    ),
+    ...["c", "d"].map(s =>
+      write(
+        join(packageDir, "vendor", `zz-host-${s}`, "package.json"),
+        JSON.stringify({ name: `zz-host-${s}`, version: "1.0.0" }),
+      ),
+    ),
+    write(
+      join(packageDir, "vendor", "zz-plugin-c", "package.json"),
+      JSON.stringify({
+        name: "zz-plugin-c",
+        version: "1.0.0",
+        peerDependencies: { "zz-host-c": "*" },
+        optionalDependencies: { "zz-host-c": "file:../zz-host-c" },
+      }),
+    ),
+    write(
+      join(packageDir, "vendor", "zz-plugin-d", "package.json"),
+      JSON.stringify({
+        name: "zz-plugin-d",
+        version: "1.0.0",
+        peerDependencies: { "zz-host-d": ">=1.0.0" },
+        dependencies: { "zz-host-d": "file:../zz-host-d" },
+      }),
+    ),
+  ]);
+
+  await runBunInstall(env, packageDir);
+
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+  expect([lockfileKeysFor(lockfile, "zz-host-c"), lockfileKeysFor(lockfile, "zz-host-d")]).toEqual([
+    ["zz-plugin-c/zz-host-c"],
+    ["zz-plugin-d/zz-host-d"],
+  ]);
+  expect(
+    await Promise.all([
+      file(join(packageDir, "node_modules", "zz-plugin-c", "node_modules", "zz-host-c", "package.json")).json(),
+      file(join(packageDir, "node_modules", "zz-plugin-d", "node_modules", "zz-host-d", "package.json")).json(),
+      exists(join(packageDir, "node_modules", "zz-host-c")),
+      exists(join(packageDir, "node_modules", "zz-host-d")),
+    ]),
+  ).toEqual([{ name: "zz-host-c", version: "1.0.0" }, { name: "zz-host-d", version: "1.0.0" }, false, false]);
+
+  await expectLockfileRoundTrips(packageDir);
+});
+
+it("prefers the file: dependency a package declares itself over the root's copy of the same name", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "peer-prefers-own-folder",
+        version: "1.0.0",
+        dependencies: {
+          "zz-plugin-f": "file:./vendor/zz-plugin-f",
+          "zz-host-f": "file:./vendor/zz-host-f",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "vendor", "zz-host-f", "package.json"),
+      JSON.stringify({ name: "zz-host-f", version: "2.0.0" }),
+    ),
+    write(
+      join(packageDir, "vendor", "zz-host-f-vendored", "package.json"),
+      JSON.stringify({ name: "zz-host-f", version: "1.0.0" }),
+    ),
+    write(
+      join(packageDir, "vendor", "zz-plugin-f", "package.json"),
+      JSON.stringify({
+        name: "zz-plugin-f",
+        version: "1.0.0",
+        peerDependencies: { "zz-host-f": "*" },
+        optionalDependencies: { "zz-host-f": "file:../zz-host-f-vendored" },
+      }),
+    ),
+  ]);
+
+  await runBunInstall(env, packageDir);
+
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+  expect(lockfileKeysFor(lockfile, "zz-host-f").sort()).toEqual(["zz-host-f", "zz-plugin-f/zz-host-f"]);
+  expect(
+    await Promise.all([
+      file(join(packageDir, "node_modules", "zz-host-f", "package.json")).json(),
+      file(join(packageDir, "node_modules", "zz-plugin-f", "node_modules", "zz-host-f", "package.json")).json(),
+    ]),
+  ).toEqual([
+    { name: "zz-host-f", version: "2.0.0" },
+    { name: "zz-host-f", version: "1.0.0" },
+  ]);
+
+  await expectLockfileRoundTrips(packageDir);
+});
+
+it("a file: peer lands on its own package's copy of the folder, not a sibling package's", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  // Both plugins depend on the same folder, so two copies with the same
+  // resolution exist; zz-plugin-h's peer has to dedupe onto zz-plugin-h's own.
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "shared-folder-file-peer",
+        version: "1.0.0",
+        dependencies: {
+          "zz-plugin-g": "file:./vendor/zz-plugin-g",
+          "zz-plugin-h": "file:./vendor/zz-plugin-h",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "vendor", "zz-shared", "package.json"),
+      JSON.stringify({ name: "zz-shared", version: "1.0.0" }),
+    ),
+    write(
+      join(packageDir, "vendor", "zz-plugin-g", "package.json"),
+      JSON.stringify({
+        name: "zz-plugin-g",
+        version: "1.0.0",
+        dependencies: { "zz-shared": "file:../zz-shared" },
+      }),
+    ),
+    write(
+      join(packageDir, "vendor", "zz-plugin-h", "package.json"),
+      JSON.stringify({
+        name: "zz-plugin-h",
+        version: "1.0.0",
+        dependencies: { "zz-shared": "file:../zz-shared" },
+        peerDependencies: { "zz-shared": "file:../zz-shared" },
+      }),
+    ),
+  ]);
+
+  await runBunInstall(env, packageDir);
+
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+  expect(lockfileKeysFor(lockfile, "zz-shared").sort()).toEqual(["zz-plugin-g/zz-shared", "zz-plugin-h/zz-shared"]);
+
+  await expectLockfileRoundTrips(packageDir);
+});
+
+it("binds a workspace package's peer dependency to the root's file: dependency", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  // A workspace package sits directly below the root, so the root's folder is
+  // the copy it resolves; `zz-host-w` is not in the registry.
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "workspace-peer-from-root-folder",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+        dependencies: { "zz-host-w": "file:./vendor/zz-host-w" },
+      }),
+    ),
+    write(
+      join(packageDir, "vendor", "zz-host-w", "package.json"),
+      JSON.stringify({ name: "zz-host-w", version: "1.0.0" }),
+    ),
+    write(
+      join(packageDir, "packages", "zz-member-w", "package.json"),
+      JSON.stringify({
+        name: "zz-member-w",
+        version: "1.0.0",
+        peerDependencies: { "zz-host-w": "*" },
+      }),
+    ),
+  ]);
+
+  await runBunInstall(env, packageDir);
+
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+  expect(lockfileKeysFor(lockfile, "zz-host-w")).toEqual(["zz-host-w"]);
+  expect(await exists(join(packageDir, "packages", "zz-member-w", "node_modules"))).toBe(false);
+
+  await expectLockfileRoundTrips(packageDir);
+});
+
 it("requires an integrity hash for an off-registry npm tarball URL at lockfileVersion 2", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
 

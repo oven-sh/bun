@@ -3415,7 +3415,7 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
     globalObject->vm().queueMicrotask(WTF::move(task));
 }
 
-extern "C" bool Bun__isStandaloneModuleKey(const Latin1Character*, size_t);
+extern "C" const Latin1Character* Bun__standaloneModuleKey(const Latin1Character*, size_t, size_t* outLength);
 extern "C" bool Bun__standaloneModuleHasModuleInfo(const Latin1Character*, size_t);
 extern "C" bool Bun__hasStandaloneModuleGraph();
 extern "C" int ModuleLoader__builtinAliasIndex(const Latin1Character*, size_t);
@@ -3526,8 +3526,13 @@ JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* glob
             auto view = string->tryGetValue();
             if (view->is8Bit()) {
                 auto span = view->span8();
-                if (Bun__isStandaloneModuleKey(span.data(), span.size()))
-                    return Identifier::fromString(globalObject->vm(), string->tryGetValue());
+                size_t canonicalLength = 0;
+                if (const Latin1Character* canonical = Bun__standaloneModuleKey(span.data(), span.size(), &canonicalLength)) {
+                    // The graph's spelling is the printed specifier's on POSIX; on Windows it fixes the separator form.
+                    if (canonicalLength == span.size() && !memcmp(canonical, span.data(), canonicalLength))
+                        return Identifier::fromString(globalObject->vm(), string->tryGetValue());
+                    return Identifier::fromString(globalObject->vm(), String({ canonical, canonicalLength }));
+                }
             }
         }
     }

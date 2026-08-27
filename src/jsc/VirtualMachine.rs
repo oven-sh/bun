@@ -455,15 +455,23 @@ pub extern "C" fn Bun__hasStandaloneModuleGraph() -> bool {
     standalone_module_graph().is_some()
 }
 
-/// `StandaloneGlobalObject::moduleLoaderResolve`: every embedded import specifier is already the canonical `/$bunfs/`
-/// key, so one that names an embedded file resolves to itself without entering the resolver.
+/// `StandaloneGlobalObject::moduleLoaderResolve`: an embedded import specifier names its file directly, so it resolves
+/// without entering the resolver. Returns the graph's own spelling of the key (the same bytes on POSIX; on Windows the
+/// canonical separator form) so every importer lands on one registry entry, or null if `name` is not an embedded file.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__isStandaloneModuleKey(name: *const u8, len: usize) -> bool {
-    // SAFETY: `name[..len]` is the caller's live 8-bit string buffer.
+pub unsafe extern "C" fn Bun__standaloneModuleKey(name: *const u8, len: usize, out_len: *mut usize) -> *const u8 {
+    // SAFETY: `name[..len]` is the caller's live 8-bit string buffer; `out_len` is writable.
     let name = unsafe { bun_core::ffi::slice(name, len) };
-    bun_options_types::standalone_path::is_bun_standalone_file_path(name)
-        && standalone_module_graph()
-            .is_some_and(|graph| graph.find_assume_standalone_path(name).is_some())
+    if !bun_options_types::standalone_path::is_bun_standalone_file_path(name) {
+        return core::ptr::null();
+    }
+    match standalone_module_graph().and_then(|graph| graph.find_assume_standalone_path(name)) {
+        Some(canonical) => {
+            unsafe { *out_len = canonical.len() };
+            canonical.as_ptr()
+        }
+        None => core::ptr::null(),
+    }
 }
 
 /// `StandaloneGlobalObject::moduleLoaderFetch`: an embedded key whose file carries a serialized ES module record, i.e.

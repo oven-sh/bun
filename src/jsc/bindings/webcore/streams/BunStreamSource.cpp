@@ -899,8 +899,6 @@ static void rsisAbrupt(JSC::VM&, JSGlobalObject*, JSReadStreamIntoSinkOperation*
 static JSValue rsisSinkWrite(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIntoSinkOperation* op, JSValue chunk)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // Both sink paths below read a detached view or buffer as 0 bytes, which would end the
-    // sink successfully with the chunk's data gone.
     if (isDetachedBufferSource(chunk)) [[unlikely]] {
         throwDetachedChunkError(globalObject, scope);
         return {};

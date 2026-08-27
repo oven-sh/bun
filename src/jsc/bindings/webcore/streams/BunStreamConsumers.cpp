@@ -321,9 +321,7 @@ static JSC::JSUint8Array* encodeStringToUint8Array(JSC::VM& vm, JSGlobalObject* 
     RELEASE_AND_RETURN(scope, JSC::JSUint8Array::create(globalObject, structure, WTF::move(resultBuffer), 0, byteLength));
 }
 
-// The bytes of a binary chunk. False (with no exception) for a non-binary chunk; false with the
-// detached-chunk TypeError pending when the chunk's ArrayBuffer has been detached since it was
-// enqueued, so the consumer rejects instead of producing empty output.
+// False for a non-binary chunk; false with a TypeError pending for a detached one.
 static bool binaryChunkSpan(JSGlobalObject* globalObject, JSValue chunk, std::span<const uint8_t>& out)
 {
     auto& vm = getVM(globalObject);
@@ -441,8 +439,6 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
             }
             continue;
         }
-        // No user code ran since the sizing pass, so the chunk is still a binary chunk and
-        // still attached.
         std::span<const uint8_t> span;
         binaryChunkSpan(globalObject, values.at(i), span);
         RETURN_IF_EXCEPTION(scope, {});
@@ -1500,8 +1496,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadableStreamToBlobFulfilled, (J
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // The Blob constructor reads a detached part as empty (WebIDL "get a copy of the bytes"),
-    // which for a stream chunk would hide lost data behind an empty blob.
+    // new Blob() reads a detached part as empty.
     if (auto* chunks = dynamicDowncast<JSArray>(callFrame->argument(0))) {
         unsigned length = chunks->length();
         for (unsigned i = 0; i < length; i++) {

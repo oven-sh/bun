@@ -17,6 +17,14 @@ const development = process.argv[3] === "development";
 // wire. Called from the raw request's data handler below.
 let midStreamResolve: (() => void) | undefined;
 
+// Set by the pending-error-after-headers variant so it only errors once the
+// status line has provably reached the client socket. (uWS terminates the
+// header block only with the first body byte, so a blank line never arrives
+// for this variant.) The forced close that follows sends a RST, and a RST can
+// discard data the peer has not read yet (Windows always does), so the error
+// must not race the client's read.
+let statusLineReceivedResolve: (() => void) | undefined;
+
 // Set by the cancel variants: resolved once the source's cancel() has run, so
 // the test observes any resulting rejection before declaring success.
 const cancelRan = Promise.withResolvers<void>();
@@ -62,6 +70,17 @@ const sources: Record<string, () => ReadableStream> = {
       },
       { highWaterMark: 0 },
     ),
+  // The first pull() is pending when the server flushes the headers; the
+  // source then errors without ever producing a chunk.
+  "pending-error-after-headers": () =>
+    new ReadableStream({
+      async pull(c) {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        statusLineReceivedResolve = resolve;
+        await promise;
+        c.error(new Error("boom"));
+      },
+    }),
   // Errors only after a chunk has already been flushed to the client.
   "mid-stream-reject": () =>
     new ReadableStream({
@@ -155,7 +174,12 @@ function rawRequest(path: string, abort: boolean): Promise<string> {
     });
     sock.on("data", d => {
       chunks.push(d);
-      if (Buffer.concat(chunks).includes("chunk-a")) {
+      const received = Buffer.concat(chunks);
+      if (received.includes("\r\n")) {
+        statusLineReceivedResolve?.();
+        statusLineReceivedResolve = undefined;
+      }
+      if (received.includes("chunk-a")) {
         midStreamResolve?.();
         // The cancel variants tear down the socket once a body chunk has
         // provably reached the client, so the server's onAborted path fires

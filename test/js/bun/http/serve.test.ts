@@ -631,7 +631,7 @@ describe("streaming", () => {
       const onMessage = mock(async url => {
         outcome = await fetch(url).then(
           response => `resolved ${response.status}`,
-          () => "rejected",
+          (err: any) => `rejected ${err.code}`,
         );
         subprocess.kill();
       });
@@ -647,7 +647,7 @@ describe("streaming", () => {
 
       let [exitCode, stderr] = await Promise.all([subprocess.exited, subprocess.stderr.text()]);
       expect(exitCode).toBeInteger();
-      expect(outcome).toBe("rejected");
+      expect(outcome).toBe("rejected ECONNRESET");
       expect(stderr).toContain("error: Oops");
       expect(stderr).not.toContain("error handler called");
       expect(onMessage).toHaveBeenCalled();
@@ -662,7 +662,7 @@ describe("streaming", () => {
         const url = new URL("write", href);
         outcome = await fetch(url).then(
           response => `resolved ${response.status}`,
-          () => "rejected",
+          (err: any) => `rejected ${err.code}`,
         );
         subprocess.kill();
       });
@@ -678,7 +678,7 @@ describe("streaming", () => {
 
       let [exitCode, stderr] = await Promise.all([subprocess.exited, subprocess.stderr.text()]);
       expect(exitCode).toBeInteger();
-      expect(outcome).toBe("rejected");
+      expect(outcome).toBe("rejected ECONNRESET");
       expect(stderr).toContain("error: Oops");
       expect(stderr).not.toContain("error handler called");
       expect(onMessage).toHaveBeenCalled();

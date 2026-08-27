@@ -2231,12 +2231,8 @@ pub struct RuntimeHooks {
         transpiler: *mut Transpiler<'static>,
         graph: &'static dyn bun_resolver::StandaloneModuleGraph,
     ),
-    /// Parse a Worker's `execArgv` and return the runtime flags it carries,
-    /// or `None` if parsing failed. The param table lives in
-    /// `bun_runtime::cli` (forward-dep). Only `--no-addons` and
-    /// `--no-ffi-cc` are honoured; the caller ANDs each returned bool into
-    /// the worker's `transform_options`, so a parent that disabled a
-    /// feature keeps it disabled in the worker.
+    /// Parse a Worker's `execArgv` for the flags in [`WorkerExecArgvFlags`].
+    /// `None` if parsing failed.
     pub parse_worker_exec_argv_flags:
         unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> Option<WorkerExecArgvFlags>,
     /// `CronJob.clearAllForVM(vm, .teardown)`. `CronJob` lives in
@@ -3507,8 +3503,7 @@ impl VirtualMachine {
             .unwrap_or(true)
     }
 
-    /// Whether `bun:ffi` `cc()` may compile C source. Both `--no-ffi-cc` and
-    /// `--no-addons` disable it.
+    /// Whether `bun:ffi` `cc()` is allowed (`--no-ffi-cc` and `--no-addons` disable it).
     pub fn allow_ffi_cc(&self) -> bool {
         let opts = &self.transpiler.options.transform_options;
         opts.allow_ffi_cc.unwrap_or(true) && opts.allow_addons.unwrap_or(true)

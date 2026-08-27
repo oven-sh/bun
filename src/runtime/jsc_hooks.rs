@@ -1565,16 +1565,8 @@ unsafe fn apply_standalone_runtime_flags(
     crate::run_main::apply_standalone_runtime_flags(unsafe { &mut *transpiler }, graph);
 }
 
-/// Parse a Worker's `execArgv` and return the `--no-addons` / `--no-ffi-cc`
-/// flags it carries, or `None` on parse error.
-///
-/// Note: the Rust `bun_clap::parse_ex` port currently constrains
-/// `ArgIter<'static>` (parsed values are stored by reference), which would
-/// force leaking the per-call UTF-8 copies of `exec_argv`. Only these two
-/// boolean flags are read from a Worker's `execArgv`, so this body scans the
-/// converted argv directly with the same `stop_after_positional_at = 1`
-/// short-circuit. Full clap routing can return when `ComptimeClap` grows a
-/// borrowed-lifetime variant.
+/// Scan a Worker's `execArgv` for `--no-addons` and `--no-ffi-cc`. Like the
+/// CLI parser, the scan stops at the first positional.
 ///
 /// # Safety
 /// Each `WTFStringImpl` in `exec_argv` is a live WTF string (the C++
@@ -1593,7 +1585,6 @@ unsafe fn parse_worker_exec_argv_flags(
         // SAFETY: per fn contract — `arg` is a live `WTFStringImpl*`.
         let owned = unsafe { &*arg }.to_owned_slice_z();
         let bytes = owned.as_bytes();
-        // `stop_after_positional_at = 1` — first non-flag token ends parsing.
         if bytes.first() != Some(&b'-') {
             break;
         }

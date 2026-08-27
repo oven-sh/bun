@@ -355,8 +355,7 @@ impl WebWorker {
         if !inherit_exec_argv {
             let hooks = runtime_hooks().expect("RuntimeHooks not installed");
             // SAFETY: caller passed valid (ptr,len) borrowed from C++ WorkerOptions;
-            // the hook only reads the slice. `None` on parse failure keeps the
-            // parent's settings.
+            // the hook only reads the slice.
             let parsed = unsafe {
                 (hooks.parse_worker_exec_argv_flags)(bun_core::ffi::slice(
                     exec_argv_ptr,

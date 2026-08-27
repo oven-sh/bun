@@ -371,6 +371,8 @@ devTest("error report endpoint blanks stray non-text bytes in reported frames", 
   },
 });
 devTest("editing a file imported from outside the project root hot-reloads", {
+  // The Windows watcher does not watch files outside the project directory.
+  skip: ["win32"],
   files: {
     "web/index.html": emptyHtmlFile({
       scripts: ["index.ts"],

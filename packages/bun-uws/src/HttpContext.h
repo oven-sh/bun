@@ -1035,7 +1035,7 @@ public:
                         /* Expect is list-typed, so repeated field lines form one
                          * list (RFC 9110 §5.2); scan the rest before rejecting. */
                         for (auto [key, value] : *user.httpRequest) {
-                            if (utils::asciiIEquals(key, "expect") && utils::hasExpect100Continue(value)) {
+                            if (key.size() == 6 && asciiIEquals(key, "expect") && utils::hasExpect100Continue(value)) {
                                 has100Continue = true;
                                 break;
                             }

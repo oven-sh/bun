@@ -32,6 +32,7 @@ const { STATUS_CODES } = require("internal/http");
 const { kTimeout, getTimerDuration } = require("internal/timers");
 // Lazily required: loading _http_common eagerly breaks http_parser monkey-patching.
 let continueExpression;
+const RegExpPrototypeExec = RegExp.prototype.exec;
 const tls = require("node:tls");
 const net = require("node:net");
 const fs = require("node:fs");

@@ -64,20 +64,6 @@ namespace utils {
  * buffers u64toa and std::to_chars write into; neither appends a terminator. */
 static constexpr size_t U64_MAX_DIGITS = std::numeric_limits<uint64_t>::digits10 + 1;
 
-/* ASCII case-insensitive equality for header token matching (RFC 7230 §3.2.6).
- * Only the 26 ASCII letters are folded; all other bytes compare as-is. */
-inline bool asciiIEquals(std::string_view a, std::string_view b) {
-    if (a.size() != b.size()) return false;
-    for (size_t i = 0; i < a.size(); i++) {
-        unsigned char ca = (unsigned char) a[i];
-        unsigned char cb = (unsigned char) b[i];
-        if (ca >= 'A' && ca <= 'Z') ca = (unsigned char) (ca + ('a' - 'A'));
-        if (cb >= 'A' && cb <= 'Z') cb = (unsigned char) (cb + ('a' - 'A'));
-        if (ca != cb) return false;
-    }
-    return true;
-}
-
 /* RFC 9110 §10.1.1: Expect is a list of case-insensitive tokens with optional
  * parameters. Mirrors Node's continueExpression /(?:^|\W)100-continue(?:$|\W)/i
  * so "100-Continue", "100-continue; p=1" and list members all match. */
@@ -88,7 +74,7 @@ inline bool hasExpect100Continue(std::string_view expect) {
         return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
     };
     for (size_t i = 0; i + needle.length() <= expect.length(); i++) {
-        if (!asciiIEquals(expect.substr(i, needle.length()), needle)) continue;
+        if (!asciiIEquals(expect.substr(i, needle.length()), "100-continue")) continue;
         if (i > 0 && isWord((unsigned char) expect[i - 1])) continue;
         size_t end = i + needle.length();
         if (end < expect.length() && isWord((unsigned char) expect[end])) continue;

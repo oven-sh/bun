@@ -45,7 +45,7 @@ struct Http3Context {
                     /* Expect is list-typed, so repeated field lines form one
                      * list (RFC 9110 §5.2); scan the rest before rejecting. */
                     req.forEachHeader([&](std::string_view name, std::string_view value) {
-                        if (utils::asciiIEquals(name, "expect") && utils::hasExpect100Continue(value)) {
+                        if (name.size() == 6 && asciiIEquals(name, "expect") && utils::hasExpect100Continue(value)) {
                             has100Continue = true;
                         }
                     });

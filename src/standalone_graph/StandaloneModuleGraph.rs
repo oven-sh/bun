@@ -779,7 +779,15 @@ pub(crate) struct Offsets {
     pub _reserved: u32,
 }
 // Written out as raw bytes; no padding, so every byte of it is a field.
-const _: () = assert!(size_of::<Offsets>() == size_of::<usize>() + 3 * size_of::<StringPointer>() + size_of::<u32>() + size_of::<Flags>() + size_of::<CompileHost>() + size_of::<u32>());
+const _: () = assert!(
+    size_of::<Offsets>()
+        == size_of::<usize>()
+            + 3 * size_of::<StringPointer>()
+            + size_of::<u32>()
+            + size_of::<Flags>()
+            + size_of::<CompileHost>()
+            + size_of::<u32>()
+);
 
 bitflags::bitflags! {
     #[repr(transparent)]

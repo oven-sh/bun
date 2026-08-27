@@ -37,11 +37,11 @@ impl RunLoopTimer {
 /// by the C++ `RunLoop::TimerBase` that `WTFTimer__create`d it; `update` /
 /// `cancel` may arrive from any thread.
 pub struct WTFTimer {
-    /// `Timer::All` of the VM whose JS thread created this timer. The C++
-    /// `RunLoop::TimerBase` that owns this wrapper lives on that VM's run loop
-    /// and is destroyed with the JSC VM, before `RuntimeState` (which holds
-    /// `All`) is freed. Off that thread only `wtf_arm`/`wtf_disarm`/the
-    /// `wtf_timers` lock may be used through it.
+    /// `Timer::All` of the VM whose JS thread created this timer. Live while
+    /// `script_execution_context_id` is valid; a C++ `RunLoop::TimerBase` can
+    /// outlive `RuntimeState` (which holds `All`) on Worker teardown, so
+    /// `cancel`/`Drop` only follow this after that check. Off the JS thread
+    /// only `wtf_arm`/`wtf_disarm`/the `wtf_timers` lock may be used through it.
     timers: BackRef<All>,
     // FFI handle into WebKit's RunLoop::TimerBase; owned by C++.
     run_loop_timer: NonNull<RunLoopTimer>,
@@ -154,7 +154,9 @@ impl WTFTimer {
                 Ordering::SeqCst,
             );
 
-            // No-op for a slot that is no longer linked.
+            // No-op for a slot that is no longer linked. Not reached once the
+            // context is gone: `timers` may already be freed by then (see the
+            // field), and nothing walks `wtf_timers` after that point.
             self.timers.wtf_disarm(self.timer_ref());
         }
     }

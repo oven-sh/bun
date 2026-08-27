@@ -96,9 +96,7 @@ unsafe extern "C" {
 /// `refresh()`, the `_destroyed` getter), so all state is in `Cell`/`JsCell`.
 /// Methods that may drop the heap's ref (and with it possibly the last ref)
 /// take `ThisPtr<Self>`; after they release it `this` may be gone.
-pub trait TimerObject:
-    bun_ptr::RefCounted + TimerOwner + Sized + 'static
-{
+pub trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static {
     fn internals(&self) -> &TimerObjectInternals;
     fn event_loop_timer(&self) -> &JsCell<EventLoopTimer>;
     /// The slot for the ref held while this timer is scheduled (see the

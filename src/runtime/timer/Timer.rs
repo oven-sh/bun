@@ -293,6 +293,11 @@ impl All {
         let all = timer_all();
 
         let timer: ThisPtr<TimeoutObject> = 'brk: {
+            // Immediates have no numeric id (Node.js: `clearImmediate` only
+            // accepts the Immediate object), so a primitive never names one.
+            if kind == Kind::SetImmediate && !timer_id_value.is_object() {
+                return Ok(());
+            }
             if timer_id_value.is_number() {
                 // Node.js looks the id up by value (`knownTimersById[id]`): a double holding an
                 // integer names the same timer as the int32. Anything else clears nothing.

@@ -149,7 +149,6 @@ pub fn to_fetch_headers_ref(
     global: &JSGlobalObject,
 ) -> JsResult<bun_jsc::fetch_headers::HeadersRef> {
     use bun_http_types::ETag::HeaderEntryColumns;
-    use bun_jsc::JsError;
     if this.entries.len() == 0 {
         return Ok(bun_jsc::fetch_headers::HeadersRef::create_empty());
     }
@@ -159,9 +158,8 @@ pub fn to_fetch_headers_ref(
         this.entries.items_value(),
         // `from_bytes` scans for non-ASCII and tags UTF-8; `init` would leave
         // the buffer Latin-1 and mojibake any UTF-8 header value bytes ≥0x80.
-        &ZigString::from_bytes(this.buf.as_slice()),
+        &EncodedSlice::from_bytes(this.buf.as_slice()),
     )
-    .ok_or(JsError::Thrown)
 }
 
 struct H2TestingAPIs;

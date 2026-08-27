@@ -637,6 +637,13 @@ impl<'a, K, V, C> IntoIterator for &'a mut HashMap<K, V, C> {
         self.iter_mut()
     }
 }
+impl<K, V, C> IntoIterator for HashMap<K, V, C> {
+    type Item = (K, V);
+    type IntoIter = core::iter::Flatten<std::vec::IntoIter<Option<(K, V)>>>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.slots.into_iter().flatten()
+    }
+}
 
 // ─── Entry API ─────────────────────────────────────────────────────────────
 

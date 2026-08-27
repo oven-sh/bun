@@ -34,10 +34,6 @@ impl AdditionalOnAbortCallback {
     fn fire(&self) {
         self.0.on_abort_from_request_context();
     }
-    /// Release the ref the callback holds.
-    pub fn deref(self) {
-        self.0.deref();
-    }
 }
 
 // NOTE (transport selection): the response/request handle types vary with
@@ -987,9 +983,7 @@ where
 
         self.request_body_take_unref();
 
-        if let Some(cb) = self.additional_on_abort.replace(None) {
-            cb.deref();
-        }
+        drop(self.additional_on_abort.replace(None));
 
         if let Some(server) = self.server.take() {
             drop(self.pool_slot.take());
@@ -1484,7 +1478,6 @@ where
         let abort = this.additional_on_abort.replace(None);
         if let Some(abort) = abort {
             abort.fire();
-            abort.deref();
         }
 
         this.detach_response();

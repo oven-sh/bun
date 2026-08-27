@@ -346,9 +346,7 @@ impl HmrSocket {
                 .remove(&(std::ptr::from_ref(self) as usize));
             debug_assert!(removed.is_some());
             self.detach_from_dev_server(dev);
-            if let Some(map_ref) = removed {
-                map_ref.deref();
-            }
+            drop(removed);
         });
     }
 }

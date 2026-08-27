@@ -917,12 +917,11 @@ impl Drop for DevServer {
         // WebSockets should be deinitialized before other parts. Each socket is
         // detached from this dev server first (its `on_close`, dispatched
         // synchronously by `close()`, then only releases the socket itself).
-        for socket in ::core::mem::take(&mut self.active_websocket_connections).values() {
+        for (_, socket) in ::core::mem::take(&mut self.active_websocket_connections) {
             socket.detach_from_dev_server(self);
             if let Some(websocket) = socket.underlying.get() {
                 websocket.close();
             }
-            socket.deref();
         }
 
         if self.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE {
@@ -1381,7 +1380,7 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         let socket = bun_ptr::RefPtr::new(HmrSocket::new(bun_ptr::BackRef::new(this.get())));
         this.get().with_mut(|dev| {
             dev.active_websocket_connections
-                .insert(socket.as_ptr() as usize, socket.dupe_ref())
+                .insert(socket.as_ptr() as usize, socket.clone())
         });
         // `res.upgrade_ref(..)` synchronously runs `HmrSocket::on_open`, which
         // enters the dev server itself, so no `with_mut` may span it.
@@ -1861,9 +1860,7 @@ impl DevServer {
             Handler::ServerHandler(saved) => {
                 saved.ctx.ref_();
                 saved.ctx.set_additional_on_abort_callback(Some(
-                    crate::server::any_request_context::AdditionalOnAbortCallback(
-                        deferred.dupe_ref(),
-                    ),
+                    crate::server::any_request_context::AdditionalOnAbortCallback(deferred.clone()),
                 ));
             }
             Handler::Aborted => unreachable!(),
@@ -2555,7 +2552,7 @@ impl DeferredRequest {
     #[allow(clippy::needless_pass_by_value)] // consumes the list's ref
     pub(crate) fn release(this: bun_ptr::RefPtr<DeferredRequest>) {
         this.retire();
-        this.deref();
+        drop(this);
     }
 
     fn retire(&self) {

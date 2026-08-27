@@ -187,7 +187,14 @@ test.if(isPosix)("a generic root error is not reported as fd exhaustion under a 
       path.join(import.meta.dir, "fixture-crash.js"),
       "rootError",
     ],
-    env: noReportEnv,
+    env: {
+      ...noReportEnv,
+      // The rootError hook exits through handle_root_error, which terminates
+      // without VM teardown, so on the LSAN-validation lane the live VM's
+      // native allocations are reported as leaks and abort_on_error turns the
+      // expected exit(1) into SIGABRT.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

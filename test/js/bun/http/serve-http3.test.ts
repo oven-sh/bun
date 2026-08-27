@@ -311,7 +311,9 @@ describe.concurrent("Bun.serve HTTP/3", () => {
     });
   });
 
-  test("http1: false rejects HTTP/1.1 but accepts HTTP/3", async () => {
+  // Serial: the TCP probe below must be refused, so no other fixture may bind
+  // this port number while it runs.
+  test.serial("http1: false rejects HTTP/1.1 but accepts HTTP/3", async () => {
     await using server = serveFixture(String(fixtureDir!), { http1: false });
     const port = server.port;
     const h3 = await fetchH3(port, "/hello");

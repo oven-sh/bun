@@ -188,10 +188,11 @@ pub trait JobContext: Sized + 'static {
     const CANCELLABLE: bool = false;
 
     /// The pool [`run`](Self::run) executes on. The shared [`WorkPool`] (one
-    /// thread per core; file I/O, hashing, DNS, everything) unless `run` can
-    /// block without bound on something outside the process, such as a
-    /// keychain prompt nobody answers. Such a job names a small pool of its
-    /// own, so the instances of it that hang hold up only each other.
+    /// thread per core; file I/O, hashing, compression, everything) unless
+    /// `run` waits on something outside the process for as long as that
+    /// takes: a keychain prompt nobody answers, a DNS resolver that does not
+    /// reply. Such a job names a pool of its own, so the instances of it that
+    /// hang hold up only each other.
     fn pool() -> &'static ThreadPool {
         WorkPool::get()
     }

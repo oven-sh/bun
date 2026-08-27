@@ -919,6 +919,14 @@ pub struct GetAddrInfoRequest {
 }
 
 pub mod get_addr_info_request {
+    #[cfg(not(windows))]
+    use std::sync::OnceLock;
+
+    #[cfg(not(windows))]
+    use bun_threading::ThreadPool;
+    #[cfg(not(windows))]
+    use bun_threading::thread_pool::{Config, DEFAULT_THREAD_STACK_SIZE};
+
     use super::*;
 
     /// The blocking `getaddrinfo` of one libc-backend lookup, run on the pool.
@@ -966,6 +974,23 @@ pub mod get_addr_info_request {
     impl bun_jsc::JobContext for LibcLookup {
         type OffThread = Self;
         type Js = LibcRequest;
+
+        /// `getaddrinfo` holds its thread until the resolver answers, which
+        /// against one that does not is the whole resolver timeout, per
+        /// lookup. The lookups get a pool of their own, the size of the shared
+        /// one so their throughput does not change. A stream of them against a
+        /// dead resolver then occupies only this pool, and file I/O on the
+        /// shared `WorkPool` keeps flowing.
+        fn pool() -> &'static ThreadPool {
+            static POOL: OnceLock<ThreadPool> = OnceLock::new();
+            POOL.get_or_init(|| {
+                ThreadPool::init(Config {
+                    max_threads: u32::from(bun::get_thread_count()),
+                    stack_size: DEFAULT_THREAD_STACK_SIZE,
+                })
+            })
+        }
+
         fn run(
             this: &mut Self,
             done: bun_jsc::Completion<Self>,

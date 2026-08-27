@@ -206,7 +206,7 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 };
 
                 let bound = if let Some(cb) = args.callback {
-                    Some(JSValueTestExt::bind(cb, global, item, &BunString::static_("cb"), 0.0, args_list.as_slice())?)
+                    Some(JSValueTestExt::bind(cb, global, item, &BunString::from_static("cb"), 0.0, args_list.as_slice())?)
                 } else {
                     None
                 };
@@ -775,7 +775,7 @@ fn bind(value: JSValue, global: &JSGlobalObject, name: &'static str) -> JsResult
     // `__jsc_host_call_as_function`; `JSFunction::create` wants the raw
     // `JSHostFn` shape, not the safe Rust signature.
     let call_fn = bun_jsc::JSFunction::create(global, name, __jsc_host_call_as_function, 1, Default::default());
-    let bound = JSValueTestExt::bind(call_fn, global, value, &BunString::static_(name), 1.0, &[])?;
+    let bound = JSValueTestExt::bind(call_fn, global, value, &BunString::from_static(name), 1.0, &[])?;
     set_prototype_direct(bound, value.get_prototype(global)?, global)?;
     Ok(bound)
 }

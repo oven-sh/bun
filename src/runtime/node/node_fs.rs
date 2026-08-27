@@ -3210,7 +3210,7 @@ pub mod args {
                 if val.is_object() {
                     let get_option = |name: &'static str| -> JsResult<Option<JSValue>> {
                         if strict_booleans {
-                            val.get_own(ctx, &bun_core::StringView::static_(name))
+                            val.get_own(ctx, &bun_core::String::from_static(name))
                         } else {
                             val.get(ctx, name)
                         }
@@ -7853,7 +7853,7 @@ impl NodeFS {
                 let _ = global_this.throw_value(
                     bun_jsc::SystemError {
                         message: BunString::clone_utf8(&buf[..]),
-                        code: BunString::static_(err.name()),
+                        code: BunString::from_static(err.name()),
                         path: BunString::clone_utf8(path.as_slice()),
                         ..Default::default()
                     }

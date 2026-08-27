@@ -785,7 +785,7 @@ fn dirname(
 
     let path_str = path_ptr.to_js_string_view(global_object)?;
     if path_str.is_empty() {
-        return bun_core::String::static_(CHAR_STR_DOT).to_js(global_object);
+        return bun_core::String::from_static(CHAR_STR_DOT).to_js(global_object);
     }
 
     let path_slice = path_str.to_utf8();
@@ -1524,7 +1524,7 @@ pub(crate) fn join(
 ) -> JsResult<JSValue> {
     let args_len = args.len();
     if args_len == 0 {
-        return bun_core::String::static_(CHAR_STR_DOT).to_js(global_object);
+        return bun_core::String::from_static(CHAR_STR_DOT).to_js(global_object);
     }
 
     // ASCII-only inputs (the common case) borrow the JSString backing without
@@ -1980,7 +1980,7 @@ fn normalize(
     validate_string(global_object, path_ptr, format_args!("path"))?;
     let path_str = path_ptr.to_js_string_view(global_object)?;
     if path_str.is_empty() {
-        return bun_core::String::static_(CHAR_STR_DOT).to_js(global_object);
+        return bun_core::String::from_static(CHAR_STR_DOT).to_js(global_object);
     }
 
     let path_slice = path_str.to_utf8();

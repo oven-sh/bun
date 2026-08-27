@@ -379,7 +379,7 @@ impl WebWorker {
             match parent_ref.env_loader().map.clone_with_allocator() {
                 Ok(m) => m,
                 Err(_) => {
-                    *error_message = BunString::static_("Out of memory");
+                    *error_message = BunString::from_static("Out of memory");
                     return core::ptr::null_mut();
                 }
             }
@@ -489,7 +489,7 @@ impl WebWorker {
                     WebWorker::deref(worker);
                     WebWorker::deref(worker);
                 }
-                *error_message = BunString::static_("Failed to spawn worker thread");
+                *error_message = BunString::from_static("Failed to spawn worker thread");
                 core::ptr::null_mut()
             }
         }
@@ -1376,7 +1376,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
         if (hooks.has_blob_url)(&str[b"blob:".len()..]) {
             return Some(str);
         } else {
-            *error_message = BunString::static_("Blob URL is missing");
+            *error_message = BunString::from_static("Blob URL is missing");
             return None;
         }
     }
@@ -1404,7 +1404,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
                 }
                 Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
                 Err(JsError::Thrown | JsError::Terminated) => {
-                    *error_message = BunString::static_("unexpected exception");
+                    *error_message = BunString::from_static("unexpected exception");
                     return None;
                 }
             }

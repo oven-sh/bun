@@ -608,7 +608,7 @@ impl ExitHandler {
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__VM__entryRootKey(vm: &VirtualMachine) -> StringView<'_> {
         if !vm.transpiler.options.disable_transpilation && !vm.main_is_html_entrypoint {
-            StringView::static_(MAIN_FILE_NAME)
+            StringView::from_static(MAIN_FILE_NAME)
         } else {
             StringView::utf8(vm.main())
         }
@@ -2869,7 +2869,7 @@ impl VirtualMachine {
             let global = self.global;
             let global_ref = self.global();
             let promise = if !self.main_is_html_entrypoint {
-                let name = StringView::static_(MAIN_FILE_NAME);
+                let name = bun_core::String::from_static(MAIN_FILE_NAME);
                 jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &name)
                     .map(NonNull::as_ptr)
                     .ok_or(crate::CrateError::JSError)?
@@ -4616,7 +4616,7 @@ impl VirtualMachine {
                 if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
                     specifier.to_owned()
                 } else {
-                    bun_core::String::static_(hardcoded.path.as_bytes())
+                    bun_core::String::from_static(hardcoded.path.as_bytes())
                 },
             ));
         }
@@ -5758,21 +5758,26 @@ impl VirtualMachine {
                 *must_reset_parser_arena_later = true;
                 original_source.source_code.into_utf8()
             };
-            // WTF-backed when possible so each source line below shares its buffer.
-            let code = match code {
+            // One owned WTF impl over `code`'s bytes (adopted, not copied) so the
+            // source lines below can be zero-copy substrings of it.
+            let mut code = code;
+            let base: Option<bun_core::String> = match &mut code {
                 bun_core::Utf8Bytes::Owned(bytes)
-                    if !bytes.is_empty()
-                        && bytes.len() <= bun_core::String::max_length()
-                        && bun_core::is_all_ascii(&bytes) =>
+                    if !bytes.is_empty() && bytes.len() <= bun_core::String::max_length() =>
                 {
-                    bun_core::Utf8Bytes::Shared(
-                        bun_core::String::create_external_globally_allocated_latin1(bytes),
-                    )
+                    Some(bun_core::String::create_external_globally_allocated_latin1(
+                        core::mem::take(bytes),
+                    ))
                 }
-                code => code,
+                bun_core::Utf8Bytes::Shared(s) => Some(core::mem::take(s)),
+                _ => None,
+            };
+            let text: &[u8] = match &base {
+                Some(base) => base.latin1_slice(),
+                None => code.slice(),
             };
 
-            if enable_source_code_preview.get() && code.slice().is_empty() {
+            if enable_source_code_preview.get() && text.is_empty() {
                 exception.collect_source_lines(error_instance, global);
             }
 
@@ -5785,7 +5790,7 @@ impl VirtualMachine {
             let last_line = frames[top].position.line.zero_based().max(0);
             if let Some(lines_buf) = bun_core::strings::get_lines_in_text::<
                 { crate::zig_exception::Holder::SOURCE_LINES_COUNT },
-            >(code.slice(), last_line as u32)
+            >(text, last_line as u32)
             {
                 let lines = lines_buf.as_slice();
                 const N: usize = crate::zig_exception::Holder::SOURCE_LINES_COUNT;
@@ -5802,13 +5807,13 @@ impl VirtualMachine {
 
                 let take = lines.len().min(N);
                 let mut current_line_number = last_line;
-                let base = code.slice().as_ptr() as usize;
                 for (i, line) in lines[..take].iter().enumerate() {
-                    source_lines[i] = match &code {
-                        bun_core::Utf8Bytes::Shared(shared) => {
-                            shared.substring_shared(line.as_ptr() as usize - base, line.len())
+                    source_lines[i] = match &base {
+                        // An ASCII line reads the same as Latin-1: share `base`'s buffer.
+                        Some(base) if bun_core::is_all_ascii(line) => {
+                            let start = line.as_ptr() as usize - text.as_ptr() as usize;
+                            base.substring_shared(start, start + line.len())
                         }
-                        // Non-ASCII UTF-8 (or static bytes): a Latin-1 view would mis-decode.
                         _ => bun_core::String::clone_utf8(line),
                     };
                     source_line_numbers[i] = current_line_number;
@@ -6407,7 +6412,7 @@ impl VirtualMachine {
 
             // "cause" is not enumerable, so the above loop won't see it.
             if !saw_cause {
-                let key = StringView::static_("cause");
+                let key = bun_core::String::from_static("cause");
                 if let Some(cause) = error_instance.get_own(global_ref, &key)? {
                     if cause.is_cell() && cause.js_type() == JSType::ErrorInstance {
                         cause.protect();
@@ -6863,20 +6868,20 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
 
             let namespace_str = namespace_value.to_bun_string(global)?;
             if namespace_str.is_empty() {
-                break 'brk bun_core::String::static_("file");
+                break 'brk bun_core::String::from_static("file");
             }
             if namespace_str.eq_ascii(b"file") {
-                break 'brk bun_core::String::static_("file");
+                break 'brk bun_core::String::from_static("file");
             }
             if namespace_str.eq_ascii(b"bun") {
-                break 'brk bun_core::String::static_("bun");
+                break 'brk bun_core::String::from_static("bun");
             }
             if namespace_str.eq_ascii(b"node") {
-                break 'brk bun_core::String::static_("node");
+                break 'brk bun_core::String::from_static("node");
             }
             break 'brk namespace_str;
         }
-        break 'brk bun_core::String::static_("file");
+        break 'brk bun_core::String::from_static("file");
     };
 
     // A `file`-namespace result (the default) is a filesystem path, not a new

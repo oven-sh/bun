@@ -359,12 +359,12 @@ mod _impl {
         if vm.standalone_module_graph.is_some() {
             // Don't break user's code because they did process.argv.slice(2)
             // Even if they didn't type "bun", we still want to add it as argv[0]
-            args_list.push(BunString::static_("bun"));
+            args_list.push(BunString::from_static("bun"));
         } else {
             let exe_path = bun_core::self_exe_path().ok();
             args_list.push(match exe_path {
                 Some(str_) => BunString::clone_utf8(str_.as_bytes()),
-                None => BunString::static_("bun"),
+                None => BunString::from_static("bun"),
             });
         }
 
@@ -384,7 +384,7 @@ mod _impl {
             && !strings::ends_with(vm.main(), STDIN_SUFFIX)
         {
             if worker.is_some_and(|w| w.eval_mode()) {
-                args_list.push(BunString::static_("[worker eval]"));
+                args_list.push(BunString::from_static("[worker eval]"));
             } else {
                 args_list.push(BunString::clone_utf8(vm.main()));
             }
@@ -461,9 +461,9 @@ mod _impl {
                     format!("{code}: process.cwd failed with error {label}{hint}, uv_cwd");
                 let err = bun_jsc::SystemError {
                     errno: core::ffi::c_int::from(e.errno).wrapping_neg(),
-                    code: BunString::static_(code),
+                    code: BunString::from_static(code),
                     message: BunString::clone_utf8(message.as_bytes()),
-                    syscall: BunString::static_("uv_cwd"),
+                    syscall: BunString::from_static("uv_cwd"),
                     ..Default::default()
                 };
                 Err(global_object.throw_value(err.to_error_instance(global_object)))

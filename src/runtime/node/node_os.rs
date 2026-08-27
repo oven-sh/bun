@@ -232,8 +232,8 @@ mod _impl {
             Ok(v) => Ok(v),
             Err(_) => {
                 let err = SystemError {
-                    message: BunString::static_("Failed to get CPU information"),
-                    code: BunString::static_("ERR_SYSTEM_ERROR"),
+                    message: BunString::from_static("Failed to get CPU information"),
+                    code: BunString::from_static("ERR_SYSTEM_ERROR"),
                     ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance(global)))
@@ -273,7 +273,7 @@ mod _impl {
                             cpu.put(
                                 global_this,
                                 b"model",
-                                BunString::static_("unknown").to_js(global_this)?,
+                                BunString::from_static("unknown").to_js(global_this)?,
                             );
                             cpu.put(global_this, b"speed", JSValue::js_number(0.0));
                             stubs.put_index(global_this, i, cpu)?;
@@ -349,7 +349,7 @@ mod _impl {
                         cpu.put(
                             global_this,
                             b"model",
-                            BunString::static_("unknown").to_js(global_this)?,
+                            BunString::from_static("unknown").to_js(global_this)?,
                         );
                     }
                     // If this line starts a new processor, parse the index from the line
@@ -376,7 +376,7 @@ mod _impl {
                 cpu.put(
                     global_this,
                     b"model",
-                    BunString::static_("unknown").to_js(global_this)?,
+                    BunString::from_static("unknown").to_js(global_this)?,
                 );
             }
 
@@ -388,7 +388,7 @@ mod _impl {
                 cpu.put(
                     global_this,
                     b"model",
-                    BunString::static_("unknown").to_js(global_this)?,
+                    BunString::from_static("unknown").to_js(global_this)?,
                 );
             }
         }
@@ -444,7 +444,7 @@ mod _impl {
         let model = if bun_sys::posix::sysctl_read_slice(c"hw.model", &mut model_buf[..]).is_ok() {
             bun_string_jsc::create_utf8_for_js(global_this, bun_core::slice_to_nul(&model_buf))?
         } else {
-            BunString::static_("unknown").to_js(global_this)?
+            BunString::from_static("unknown").to_js(global_this)?
         };
 
         let mut speed_mhz: c_uint = 0;
@@ -641,13 +641,13 @@ mod _impl {
         let result = get_process_priority(pid);
         if result == i32::MAX {
             let err = SystemError {
-                message: BunString::static_("no such process"),
-                code: BunString::static_("ESRCH"),
+                message: BunString::from_static("no such process"),
+                code: BunString::from_static("ESRCH"),
                 #[cfg(not(windows))]
                 errno: -(bun_sys::posix::E::ESRCH as c_int),
                 #[cfg(windows)]
                 errno: libuv::UV_ESRCH,
-                syscall: BunString::static_("uv_os_getpriority"),
+                syscall: BunString::from_static("uv_os_getpriority"),
                 ..Default::default()
             };
             return Err(global.throw_value(err.to_error_instance_with_info_object(global)));
@@ -740,7 +740,7 @@ mod _impl {
                 // (zygote/run-as), return a usable default rather than throwing.
                 #[cfg(target_os = "android")]
                 {
-                    return Ok(BunString::static_("/data/local/tmp"));
+                    return Ok(BunString::from_static("/data/local/tmp"));
                 }
                 // in uv__getpwuid_r, null result throws UV_ENOENT.
                 #[cfg(not(target_os = "android"))]
@@ -770,7 +770,7 @@ mod _impl {
                 return BunString::clone_utf16(slice_to_nul_u16(&name_buffer)).into_js(global);
             }
 
-            return BunString::static_("unknown").to_js(global);
+            return BunString::from_static("unknown").to_js(global);
         }
         #[cfg(not(windows))]
         {
@@ -869,12 +869,12 @@ mod _impl {
                 }
             }
             let err = SystemError {
-                message: BunString::static_(
+                message: BunString::from_static(
                     "A system error occurred: getifaddrs returned an error",
                 ),
-                code: BunString::static_("ERR_SYSTEM_ERROR"),
+                code: BunString::from_static("ERR_SYSTEM_ERROR"),
                 errno: errno as c_int,
-                syscall: BunString::static_("getifaddrs"),
+                syscall: BunString::from_static("getifaddrs"),
                 ..Default::default()
             };
 
@@ -1033,7 +1033,7 @@ mod _impl {
                 match addr.family() as c_int {
                     libc::AF_INET => global_this.common_strings().ipv4(),
                     libc::AF_INET6 => global_this.common_strings().ipv6(),
-                    _ => BunString::static_("unknown").to_js(global_this)?,
+                    _ => BunString::from_static("unknown").to_js(global_this)?,
                 },
             );
 
@@ -1151,11 +1151,11 @@ mod _impl {
         let err = unsafe { libuv::uv_interface_addresses(&mut ifaces, &mut count) };
         if err != 0 {
             let sys_err = SystemError {
-                message: BunString::static_("uv_interface_addresses failed").into(),
-                code: BunString::static_("ERR_SYSTEM_ERROR").into(),
+                message: BunString::from_static("uv_interface_addresses failed").into(),
+                code: BunString::from_static("ERR_SYSTEM_ERROR").into(),
                 //.info = info,
                 errno: err,
-                syscall: BunString::static_("uv_interface_addresses").into(),
+                syscall: BunString::from_static("uv_interface_addresses").into(),
                 ..Default::default()
             };
             return Err(global_this.throw_value(sys_err.to_error_instance(global_this)));
@@ -1266,7 +1266,7 @@ mod _impl {
                 match family {
                     bun_sys::posix::AF::INET => global_this.common_strings().ipv4(),
                     bun_sys::posix::AF::INET6 => global_this.common_strings().ipv6(),
-                    _ => BunString::static_("unknown").to_js(global_this)?,
+                    _ => BunString::from_static("unknown").to_js(global_this)?,
                 },
             );
 
@@ -1383,39 +1383,39 @@ mod _impl {
         match errcode {
             bun_sys::E::ESRCH => {
                 let err = SystemError {
-                    message: BunString::static_("no such process"),
-                    code: BunString::static_("ESRCH"),
+                    message: BunString::from_static("no such process"),
+                    code: BunString::from_static("ESRCH"),
                     #[cfg(not(windows))]
                     errno: -(bun_sys::posix::E::ESRCH as c_int),
                     #[cfg(windows)]
                     errno: libuv::UV_ESRCH,
-                    syscall: BunString::static_("uv_os_getpriority"),
+                    syscall: BunString::from_static("uv_os_getpriority"),
                     ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance_with_info_object(global)))
             }
             bun_sys::E::EACCES => {
                 let err = SystemError {
-                    message: BunString::static_("permission denied"),
-                    code: BunString::static_("EACCES"),
+                    message: BunString::from_static("permission denied"),
+                    code: BunString::from_static("EACCES"),
                     #[cfg(not(windows))]
                     errno: -(bun_sys::posix::E::EACCES as c_int),
                     #[cfg(windows)]
                     errno: libuv::UV_EACCES,
-                    syscall: BunString::static_("uv_os_getpriority"),
+                    syscall: BunString::from_static("uv_os_getpriority"),
                     ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance_with_info_object(global)))
             }
             bun_sys::E::EPERM => {
                 let err = SystemError {
-                    message: BunString::static_("operation not permitted"),
-                    code: BunString::static_("EPERM"),
+                    message: BunString::from_static("operation not permitted"),
+                    code: BunString::from_static("EPERM"),
                     #[cfg(not(windows))]
                     errno: -(bun_sys::posix::E::ESRCH as c_int),
                     #[cfg(windows)]
                     errno: libuv::UV_ESRCH,
-                    syscall: BunString::static_("uv_os_getpriority"),
+                    syscall: BunString::from_static("uv_os_getpriority"),
                     ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance_with_info_object(global)))
@@ -1471,10 +1471,10 @@ mod _impl {
             let err = unsafe { libuv::uv_uptime(&mut uptime_value) };
             if err != 0 {
                 let sys_err = SystemError {
-                    message: BunString::static_("failed to get system uptime").into(),
-                    code: BunString::static_("ERR_SYSTEM_ERROR").into(),
+                    message: BunString::from_static("failed to get system uptime").into(),
+                    code: BunString::from_static("ERR_SYSTEM_ERROR").into(),
                     errno: err,
-                    syscall: BunString::static_("uv_uptime").into(),
+                    syscall: BunString::from_static("uv_uptime").into(),
                     ..Default::default()
                 };
                 return Err(global.throw_value(sys_err.to_error_instance(global)));

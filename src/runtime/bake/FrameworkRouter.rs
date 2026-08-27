@@ -2029,7 +2029,7 @@ impl JSFrameworkRouter {
         obj.put(
             global,
             b"kind",
-            bun_core::String::static_(<&'static str>::from(parsed.kind)).to_js(global)?,
+            bun_core::String::from_static(<&'static str>::from(parsed.kind)).to_js(global)?,
         );
         obj.put(global, b"pattern", out.into_js(global)?);
         Ok(obj)

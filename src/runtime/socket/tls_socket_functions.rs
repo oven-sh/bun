@@ -1031,7 +1031,7 @@ pub(super) fn get_ephemeral_key_info(
 
     match kid {
         ffi::EVP_PKEY_DH => {
-            result.put(global, b"type", BunString::static_("DH").to_js(global)?);
+            result.put(global, b"type", BunString::from_static("DH").to_js(global)?);
             result.put(global, b"size", JSValue::js_number(f64::from(bits)));
         }
         ffi::EVP_PKEY_EC | ffi::EVP_PKEY_X25519 | ffi::EVP_PKEY_X448 => {
@@ -1059,7 +1059,11 @@ pub(super) fn get_ephemeral_key_info(
                     curve_name = b"";
                 }
             }
-            result.put(global, b"type", BunString::static_("ECDH").to_js(global)?);
+            result.put(
+                global,
+                b"type",
+                BunString::from_static("ECDH").to_js(global)?,
+            );
             result.put(
                 global,
                 b"name",
@@ -1092,10 +1096,10 @@ pub(super) fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResul
     // SAFETY: SSL_get0_alpn_selected guarantees alpn_proto points to alpn_proto_len bytes owned by the SSL.
     let slice = unsafe { bun_core::ffi::slice(alpn_proto, alpn_proto_len as usize) };
     if strings::eql(slice, b"h2") {
-        return BunString::static_("h2").to_js(global);
+        return BunString::from_static("h2").to_js(global);
     }
     if strings::eql(slice, b"http/1.1") {
-        return BunString::static_("http/1.1").to_js(global);
+        return BunString::from_static("http/1.1").to_js(global);
     }
     bun_string_jsc::create_utf8_for_js(global, slice)
 }

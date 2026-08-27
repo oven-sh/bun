@@ -94,7 +94,7 @@ impl IniTestingAPIs {
         ) = 'brk: {
             let Some(default_registry) = install.default_registry.as_ref() else {
                 break 'brk (
-                    StringView::static_(Registry::DEFAULT_URL),
+                    StringView::from_static(Registry::DEFAULT_URL),
                     StringView::EMPTY,
                     StringView::EMPTY,
                     StringView::EMPTY,

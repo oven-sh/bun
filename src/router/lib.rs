@@ -202,7 +202,7 @@ pub struct Routes {
     /// Corresponds to "index.js" on the filesystem.
     /// A raw pointer co-owned with `list` (points into a `Box<Route>` owned by
     /// `list.route`). Stored as `NonNull` (not `&'a Route`) so `Routes` claims
-    /// no borrow it doesn't actually take; matches `static_` above.
+    /// no borrow it doesn't actually take; matches `from_static` above.
     pub(crate) index: Option<NonNull<Route>>,
 }
 

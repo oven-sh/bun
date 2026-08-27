@@ -372,13 +372,13 @@ impl Error {
 
         let mut err = SystemError {
             errno: js_errno,
-            syscall: BunString::static_(<&'static str>::from(self.syscall).as_bytes()),
+            syscall: BunString::from_static(<&'static str>::from(self.syscall).as_bytes()),
             ..Default::default()
         };
 
         // both maps are total (`initFull("unknown error")`).
         let looked_up = self.get_error_code_tag_name().map(|(code, system_errno)| {
-            err.code = BunString::static_(code.as_bytes());
+            err.code = BunString::from_static(code.as_bytes());
             (code, map[system_errno])
         });
 
@@ -410,7 +410,7 @@ impl Error {
         let (mut err, looked_up) =
             self.fill_system_error_common(&coreutils_error_map::COREUTILS_ERROR_MAP);
         if let Some((_, label)) = looked_up {
-            err.message = BunString::static_(label.as_bytes());
+            err.message = BunString::from_static(label.as_bytes());
         }
         err
     }

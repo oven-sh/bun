@@ -69,7 +69,7 @@ impl JSFunction {
     ) -> JSValue {
         JSFunction__createFromZig(
             global,
-            &BunString::static_(fn_name),
+            &BunString::from_static(fn_name),
             implementation,
             function_length,
             options.implementation_visibility,

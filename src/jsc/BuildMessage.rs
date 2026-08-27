@@ -97,7 +97,7 @@ impl BuildMessage {
         object.put(
             global,
             b"name",
-            bun_core::String::static_("BuildMessage").to_js(global)?,
+            bun_core::String::from_static("BuildMessage").to_js(global)?,
         );
         object.put(global, b"position", self.get_position(global)?);
         object.put(global, b"message", self.get_message(global)?);
@@ -171,6 +171,6 @@ impl BuildMessage {
 
     #[crate::host_fn(getter)]
     pub fn get_level(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_core::String::static_(self.msg.kind.string()).to_js(global)
+        bun_core::String::from_static(self.msg.kind.string()).to_js(global)
     }
 }

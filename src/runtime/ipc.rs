@@ -1397,8 +1397,8 @@ impl SendQueue {
             }
             // too many retries; give up - emit warning if possible
             let warning =
-                BunString::static_("Handle did not reach the receiving process correctly");
-            let warning_name = BunString::static_("SentHandleNotReceivedWarning");
+                BunString::from_static("Handle did not reach the receiving process correctly");
+            let warning_name = BunString::from_static("SentHandleNotReceivedWarning");
             if let Ok(warning_js) = warning.into_js(global) {
                 if let Ok(warning_name_js) = warning_name.into_js(global) {
                     let _ = global.emit_warning(

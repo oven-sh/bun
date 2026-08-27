@@ -348,7 +348,7 @@ BunString toStringRef(WTF::StringImpl* wtfString);
 // This creates a detached string view, which cannot be ref/unref.
 // Be very careful using this, and ensure the memory owner does not get destroyed.
 BunString borrowStringView(WTF::StringView view);
-// A `'static` ASCII literal (`String::static_` on the Rust side): never copied or freed.
+// A `'static` ASCII literal (`String::from_static` on the Rust side): never copied or freed.
 BunString staticString(WTF::ASCIILiteral literal);
 }
 

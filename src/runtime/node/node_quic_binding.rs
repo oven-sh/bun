@@ -79,7 +79,7 @@ fn put_num(obj: JSValue, global: &JSGlobalObject, key: &str, value: u64) {
 }
 
 fn put_str(obj: JSValue, global: &JSGlobalObject, key: &str, value: &'static [u8]) -> JsResult<()> {
-    let value = bun_core::String::static_(value).to_js(global)?;
+    let value = bun_core::String::from_static(value).to_js(global)?;
     obj.put(global, key.as_bytes(), value);
     Ok(())
 }

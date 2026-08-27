@@ -661,7 +661,7 @@ impl FileSystemRouter {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_style(_this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_core::String::static_("nextjs").to_js(global_this)
+        bun_core::String::from_static("nextjs").to_js(global_this)
     }
 
     // Codegen's `host_fn_finalize` calls this via `|b| FileSystemRouter::finalize(b)`
@@ -846,7 +846,7 @@ impl MatchedRoute {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_kind(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        BunString::static_(kind_enum::classify(this.route().name)).to_js(global_this)
+        BunString::from_static(kind_enum::classify(this.route().name)).to_js(global_this)
     }
 
     pub(crate) fn create_query_object(

@@ -468,7 +468,7 @@ pub(crate) fn handle_template_value(
                     depth + 1,
                 )?;
                 if i < last {
-                    let str = BunString::static_(" ");
+                    let str = BunString::from_static(" ");
                     let mut b = ShellSrcBuilder::init(global, out_script, jsstrings);
                     if !b.append_bun_str::<false>(str)? {
                         return Err(global

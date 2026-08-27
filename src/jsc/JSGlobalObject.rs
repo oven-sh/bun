@@ -306,7 +306,7 @@ impl JSGlobalObject {
             debug_assert!(self.has_exception());
             return JsError::Thrown;
         }
-        let name_value = match BunString::static_("TODOError").to_js(self) {
+        let name_value = match BunString::from_static("TODOError").to_js(self) {
             Ok(v) => v,
             Err(_) => return JsError::Thrown,
         };
@@ -740,7 +740,7 @@ impl JSGlobalObject {
         buf
     }
 
-    /// An argument-free ASCII literal is atomized (`String::static_`);
+    /// An argument-free ASCII literal is atomized (`String::from_static`);
     /// anything else is formatted/copied once.
     fn error_instance(&self, kind: ErrorKind, args: Arguments<'_>) -> JSValue {
         match args.as_str() {

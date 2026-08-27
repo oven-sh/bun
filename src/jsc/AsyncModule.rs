@@ -767,7 +767,7 @@ impl AsyncModule {
             error_instance.put(
                 global_this,
                 b"name",
-                BunString::static_(name).to_js(global_this)?,
+                BunString::from_static(name).to_js(global_this)?,
             );
             error_instance.put(
                 global_this,
@@ -963,7 +963,7 @@ impl AsyncModule {
             error_instance.put(
                 global_this,
                 b"name",
-                BunString::static_(name).to_js(global_this)?,
+                BunString::from_static(name).to_js(global_this)?,
             );
             error_instance.put(
                 global_this,

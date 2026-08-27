@@ -6459,7 +6459,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
         let _ = self.ensure_promise();
         let global = self.global;
         self.promise_mut()
-            .reject(global, BunString::static_("Plugin error").to_js(global))?;
+            .reject(global, BunString::from_static("Plugin error").to_js(global))?;
         // SAFETY: dev.vm is JSC_BORROW — valid for DevServer lifetime
         self.dev_mut().vm_mut().drain_microtasks();
         Ok(())

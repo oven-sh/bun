@@ -1593,7 +1593,7 @@ fn named_imports_to_js(
 
         array.ensure_still_alive();
         let path = bun_string_jsc::create_utf8_for_js(global, record.path.text)?;
-        let kind = BunString::static_(record.kind.label()).to_js(global)?;
+        let kind = BunString::from_static(record.kind.label()).to_js(global)?;
         let entry = JSValue::create_object2(global, &path_label, &kind_label, path, kind)?;
         array.put_index(global, i, entry)?;
         i += 1;

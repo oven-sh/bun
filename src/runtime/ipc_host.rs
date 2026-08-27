@@ -288,7 +288,7 @@ pub(crate) fn do_send(
         ex.put(
             global_object,
             b"syscall",
-            BunString::static_("write").to_js(global_object)?,
+            BunString::from_static("write").to_js(global_object)?,
         );
         return do_send_err(global_object, callback, ex, from);
     }

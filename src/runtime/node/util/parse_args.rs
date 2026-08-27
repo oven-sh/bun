@@ -415,7 +415,7 @@ fn parse_option_definitions<'a>(
 
         // type field is required
         let option_type: JSValue = obj
-            .get_own(global, &String::static_("type"))?
+            .get_own(global, &String::from_static("type"))?
             .unwrap_or(JSValue::UNDEFINED);
         option.r#type = validators::validate_string_enum::<OptionValueType>(
             global,
@@ -423,7 +423,7 @@ fn parse_option_definitions<'a>(
             format_args!("options.{}.type", option.long_name),
         )?;
 
-        if let Some(short_option) = obj.get_own(global, &String::static_("short"))? {
+        if let Some(short_option) = obj.get_own(global, &String::from_static("short"))? {
             validators::validate_string(
                 global,
                 short_option,
@@ -443,7 +443,7 @@ fn parse_option_definitions<'a>(
             option.short_name = short_option_str;
         }
 
-        if let Some(multiple_value) = obj.get_own(global, &String::static_("multiple"))? {
+        if let Some(multiple_value) = obj.get_own(global, &String::from_static("multiple"))? {
             if !multiple_value.is_undefined() {
                 option.multiple = validators::validate_boolean(
                     global,
@@ -453,7 +453,7 @@ fn parse_option_definitions<'a>(
             }
         }
 
-        if let Some(default_value) = obj.get_own(global, &String::static_("default"))? {
+        if let Some(default_value) = obj.get_own(global, &String::from_static("default"))? {
             if !default_value.is_undefined() {
                 match option.r#type {
                     OptionValueType::String => {
@@ -500,7 +500,7 @@ fn parse_option_definitions<'a>(
             if !option.short_name.is_empty() {
                 option.short_name.as_view()
             } else {
-                StringView::static_("none")
+                StringView::from_static("none")
             },
             option.multiple as u8,
             if option.default_value.is_some() {
@@ -834,7 +834,7 @@ impl<'a> ParseArgsState<'a> {
             let kind_jsvalue = match self.kinds_jsvalues[kind_idx] {
                 Some(v) => v,
                 None => {
-                    let val = String::static_(<&'static str>::from(kind)).to_js(global)?;
+                    let val = String::from_static(<&'static str>::from(kind)).to_js(global)?;
                     self.kinds_jsvalues[kind_idx] = Some(val);
                     val
                 }
@@ -900,7 +900,7 @@ fn parse_args_impl(
     // Phase 0.A: Get and validate type of input args
     let config_args: JSValue = match config {
         Some(c) => c
-            .get_own(global, &String::static_("args"))?
+            .get_own(global, &String::from_static("args"))?
             .unwrap_or(JSValue::UNDEFINED),
         None => JSValue::UNDEFINED,
     };
@@ -920,32 +920,32 @@ fn parse_args_impl(
     // Node coalesces each top-level flag with `?? default`, so an explicit `null`
     // behaves like an absent key. Apply the default before `validate_boolean`.
     let config_strict: JSValue = match config {
-        Some(c) => c.get_own(global, &String::static_("strict"))?,
+        Some(c) => c.get_own(global, &String::from_static("strict"))?,
         None => None,
     }
     .filter(|v| !v.is_undefined_or_null())
     .unwrap_or(JSValue::TRUE);
     let config_allow_positionals: JSValue = match config {
-        Some(c) => c.get_own(global, &String::static_("allowPositionals"))?,
+        Some(c) => c.get_own(global, &String::from_static("allowPositionals"))?,
         None => None,
     }
     .filter(|v| !v.is_undefined_or_null())
     .unwrap_or_else(|| JSValue::from(!config_strict.to_boolean()));
     let config_return_tokens: JSValue = match config {
-        Some(c) => c.get_own(global, &String::static_("tokens"))?,
+        Some(c) => c.get_own(global, &String::from_static("tokens"))?,
         None => None,
     }
     .filter(|v| !v.is_undefined_or_null())
     .unwrap_or(JSValue::FALSE);
     let config_allow_negative: JSValue = match config {
-        Some(c) => c.get_own(global, &String::static_("allowNegative"))?,
+        Some(c) => c.get_own(global, &String::from_static("allowNegative"))?,
         None => None,
     }
     .filter(|v| !v.is_undefined_or_null())
     .unwrap_or(JSValue::FALSE);
     let config_options: JSValue = match config {
         Some(c) => c
-            .get_own(global, &String::static_("options"))?
+            .get_own(global, &String::from_static("options"))?
             .unwrap_or(JSValue::UNDEFINED),
         None => JSValue::UNDEFINED,
     };

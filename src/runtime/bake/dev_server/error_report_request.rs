@@ -221,7 +221,7 @@ impl ErrorReportRequest {
             if generated_mappings.len() <= 1
                 || frame.position.line.zero_based() < generated_mappings[1].lines.zero_based()
             {
-                frame.source_url = BunString::static_(RUNTIME_NAME); // matches value in source map
+                frame.source_url = BunString::from_static(RUNTIME_NAME); // matches value in source map
                 frame.position = ZigStackFramePosition::INVALID;
                 continue;
             }
@@ -265,7 +265,7 @@ impl ErrorReportRequest {
                     }
                 } else if index == 0 {
                     // Should be picked up by above but just in case.
-                    frame.source_url = BunString::static_(RUNTIME_NAME);
+                    frame.source_url = BunString::from_static(RUNTIME_NAME);
                     frame.position = ZigStackFramePosition::INVALID;
                 }
             }

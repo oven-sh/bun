@@ -1993,8 +1993,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 bstr::BStr::new(host),
                                 port
                             )),
-                            code: bun_core::String::static_("EACCES"),
-                            syscall: bun_core::String::static_("listen"),
+                            code: bun_core::String::from_static("EACCES"),
+                            syscall: bun_core::String::from_static("listen"),
                             ..Default::default()
                         };
                         let _ = global.throw_value(err.to_error_instance(global));
@@ -2017,8 +2017,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         "Failed to start server. Is port {} in use?",
                         port
                     )),
-                    code: bun_core::String::static_("EADDRINUSE"),
-                    syscall: bun_core::String::static_("listen"),
+                    code: bun_core::String::from_static("EADDRINUSE"),
+                    syscall: bun_core::String::from_static("listen"),
                     ..Default::default()
                 }
                 .to_error_instance(global)
@@ -2031,8 +2031,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             "Failed to listen on unix socket {}",
                             bun_core::fmt::QuotedFormatter { text: unix }
                         )),
-                        code: bun_core::String::static_("EADDRINUSE"),
-                        syscall: bun_core::String::static_("listen"),
+                        code: bun_core::String::from_static("EADDRINUSE"),
+                        syscall: bun_core::String::from_static("listen"),
                         ..Default::default()
                     }
                     .to_error_instance(global),

@@ -766,7 +766,7 @@ impl Expect {
 
             value.to_bun_string(global_this)?
         } else {
-            bun_core::String::static_("passes by .pass() assertion")
+            bun_core::String::from_static("passes by .pass() assertion")
         };
 
         this.increment_expect_call_counter();
@@ -807,7 +807,7 @@ impl Expect {
 
             value.to_bun_string(global_this)?
         } else {
-            bun_core::String::static_("fails by .fail() assertion")
+            bun_core::String::from_static("fails by .fail() assertion")
         };
 
         this.increment_expect_call_counter();
@@ -1357,7 +1357,7 @@ impl Expect {
 
                 if !matcher_fn.js_type().is_function() {
                     let type_name = if matcher_fn.is_null() {
-                        bun_core::StringView::static_("null")
+                        bun_core::StringView::from_static("null")
                     } else {
                         matcher_fn.js_type_string(global_this)
                     };
@@ -1426,7 +1426,7 @@ impl Expect {
             matcher_name,
             result.to_fmt(&mut formatter),
         ));
-        match bun_core::String::static_("InvalidMatcherError").to_js(global_this) {
+        match bun_core::String::from_static("InvalidMatcherError").to_js(global_this) {
             Ok(name) => err.put(global_this, b"name", name),
             // An exception (e.g. OOM) is already pending from to_js; propagate it
             // instead of throwing the partially-constructed error.
@@ -1513,7 +1513,7 @@ impl Expect {
 
         // handle failure
         let message_text: bun_core::String = if message.is_undefined() {
-            bun_core::String::static_("No message was specified for this matcher.")
+            bun_core::String::from_static("No message was specified for this matcher.")
         } else if message.is_string() {
             message.to_bun_string(global_this)?
         } else {
@@ -1742,13 +1742,13 @@ impl Expect {
 
         if arg.is_empty_or_undefined_or_null() {
             let error_value = global_this.create_error_instance(format_args!("reached unreachable code"));
-            error_value.put(global_this, b"name", bun_core::String::static_("UnreachableError").to_js(global_this)?);
+            error_value.put(global_this, b"name", bun_core::String::from_static("UnreachableError").to_js(global_this)?);
             return Err(global_this.throw_value(error_value));
         }
 
         if arg.is_string() {
             let error_value = arg.to_bun_string(global_this)?.to_error_instance(global_this);
-            error_value.put(global_this, b"name", bun_core::String::static_("UnreachableError").to_js(global_this)?);
+            error_value.put(global_this, b"name", bun_core::String::from_static("UnreachableError").to_js(global_this)?);
             return Err(global_this.throw_value(error_value));
         }
 
@@ -2707,8 +2707,8 @@ impl ExpectMatcherContext {
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_promise(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         match this.flags.promise() {
-            Promise::Rejects => bun_core::String::static_("rejects").to_js(global_this),
-            Promise::Resolves => bun_core::String::static_("resolves").to_js(global_this),
+            Promise::Rejects => bun_core::String::from_static("rejects").to_js(global_this),
+            Promise::Resolves => bun_core::String::from_static("resolves").to_js(global_this),
             _ => Ok(JSValue::js_empty_string(global_this)),
         }
     }
@@ -2800,8 +2800,8 @@ impl ExpectMatcherUtils {
         }
         let matcher_name = arguments[0].to_bun_string(global_this)?;
 
-        let received = if arguments.len() > 1 { arguments[1] } else { bun_core::String::static_("received").to_js(global_this)? };
-        let expected = if arguments.len() > 2 { arguments[2] } else { bun_core::String::static_("expected").to_js(global_this)? };
+        let received = if arguments.len() > 1 { arguments[1] } else { bun_core::String::from_static("received").to_js(global_this)? };
+        let expected = if arguments.len() > 2 { arguments[2] } else { bun_core::String::from_static("expected").to_js(global_this)? };
         let options = if arguments.len() > 3 { arguments[3] } else { JSValue::UNDEFINED };
 
         let mut is_not = false;

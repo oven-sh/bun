@@ -182,7 +182,7 @@ fn is_node(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
         // still marks the shape.
         if value.get(global, key)?.is_some()
             || value
-                .get_own(global, &BunString::static_(key.as_bytes()))?
+                .get_own(global, &BunString::from_static(key.as_bytes()))?
                 .is_some()
         {
             return Ok(true);

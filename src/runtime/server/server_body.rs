@@ -2614,7 +2614,7 @@ where
                         if let Some(hostname) = hostname {
                             return bun_string_jsc::create_utf8_for_js(global, hostname.as_bytes());
                         } else {
-                            return BunString::static_("localhost").to_js(global);
+                            return BunString::from_static("localhost").to_js(global);
                         }
                     }
                     server_config::Address::Unix(_) => unreachable!(),
@@ -2627,9 +2627,9 @@ where
     pub(crate) fn get_protocol(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let _ = self;
         if SSL {
-            BunString::static_("https").to_js(global)
+            BunString::from_static("https").to_js(global)
         } else {
-            BunString::static_("http").to_js(global)
+            BunString::from_static("http").to_js(global)
         }
     }
 

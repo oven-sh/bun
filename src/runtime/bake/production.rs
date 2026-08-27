@@ -1328,7 +1328,7 @@ extern "C" fn BakeProdResolve(
         bun_ast::Target::Bun,
         bun_resolve_builtins::Cfg::default(),
     ) {
-        return BunString::static_(alias.path.as_bytes());
+        return BunString::from_static(alias.path.as_bytes());
     }
 
     let referrer = a_str.to_utf8();

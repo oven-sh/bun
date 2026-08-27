@@ -66,7 +66,7 @@ impl AlgorithmExt for Algorithm {
         static NAMES: std::sync::OnceLock<[BunString; ALL.len()]> = std::sync::OnceLock::new();
         NAMES
             .get_or_init(|| {
-                core::array::from_fn(|i| BunString::static_(ALL[i].tag_cstr().to_bytes()))
+                core::array::from_fn(|i| BunString::from_static(ALL[i].tag_cstr().to_bytes()))
             })
             .as_slice()
     }

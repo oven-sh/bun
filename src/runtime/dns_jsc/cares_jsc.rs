@@ -680,7 +680,7 @@ impl ErrorDeferred {
         };
         let system_error = SystemError {
             errno: self.errno as i32,
-            code: bstr::String::static_(code),
+            code: bstr::String::from_static(code),
             message,
             syscall: bstr::String::clone_utf8(self.syscall),
             hostname: self.hostname.take().unwrap_or(bstr::String::EMPTY),
@@ -692,7 +692,7 @@ impl ErrorDeferred {
         instance.put(
             global_this,
             b"name",
-            bstr::String::static_("DNSException").to_js(global_this)?,
+            bstr::String::from_static("DNSException").to_js(global_this)?,
         );
 
         // `self` (and thus self.promise / self.hostname) drops at scope exit;
@@ -766,8 +766,8 @@ pub(crate) fn error_to_js_with_syscall(
     let code = this.code();
     let instance = SystemError {
         errno: this as i32,
-        code: bstr::String::static_(&code[4..]),
-        syscall: bstr::String::static_(syscall),
+        code: bstr::String::from_static(&code[4..]),
+        syscall: bstr::String::from_static(syscall),
         message: bstr::String::create_format(format_args!(
             "{} {}",
             BStr::new(syscall),
@@ -779,7 +779,7 @@ pub(crate) fn error_to_js_with_syscall(
     instance.put(
         global_this,
         b"name",
-        bstr::String::static_("DNSException").to_js(global_this)?,
+        bstr::String::from_static("DNSException").to_js(global_this)?,
     );
     Ok(instance)
 }
@@ -797,14 +797,14 @@ pub(crate) fn system_error_with_syscall_and_hostname(
     let code = this.code();
     SystemError {
         errno: this as i32,
-        code: bstr::String::static_(&code[4..]),
+        code: bstr::String::from_static(&code[4..]),
         message: bstr::String::create_format(format_args!(
             "{} {} {}",
             BStr::new(syscall),
             BStr::new(&code[4..]),
             BStr::new(hostname)
         )),
-        syscall: bstr::String::static_(syscall),
+        syscall: bstr::String::from_static(syscall),
         hostname: bstr::String::clone_utf8(hostname),
         ..Default::default()
     }
@@ -821,7 +821,7 @@ pub(crate) fn error_to_js_with_syscall_and_hostname(
     instance.put(
         global_this,
         b"name",
-        bstr::String::static_("DNSException").to_js(global_this)?,
+        bstr::String::from_static("DNSException").to_js(global_this)?,
     );
     Ok(instance)
 }

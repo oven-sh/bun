@@ -15,7 +15,7 @@ impl HostedGitInfoJsc for bun_install::hosted_git_info::HostedGitInfo {
         obj.put(
             go,
             b"type",
-            BunString::static_(self.host_provider.type_str()).to_js(go)?,
+            BunString::from_static(self.host_provider.type_str()).to_js(go)?,
         );
         obj.put(
             go,
@@ -48,7 +48,7 @@ impl HostedGitInfoJsc for bun_install::hosted_git_info::HostedGitInfo {
         obj.put(
             go,
             b"default",
-            BunString::static_(<&'static str>::from(self.default_representation)).to_js(go)?,
+            BunString::from_static(<&'static str>::from(self.default_representation)).to_js(go)?,
         );
 
         Ok(obj)

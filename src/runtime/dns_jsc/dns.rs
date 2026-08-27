@@ -3808,7 +3808,7 @@ trait OrderJscExt {
 impl OrderJscExt for Order {
     fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         use jsc::StrJsc as _;
-        bun::String::static_(<&'static str>::from(self)).to_js(global_this)
+        bun::String::from_static(<&'static str>::from(self)).to_js(global_this)
     }
 }
 
@@ -4619,8 +4619,8 @@ impl Resolver {
             ChannelResult::Err(err) => {
                 let system_error = SystemError {
                     errno: -1,
-                    code: bun_core::String::static_(err.code()),
-                    message: bun_core::String::static_(err.label()),
+                    code: bun_core::String::from_static(err.code()),
+                    message: bun_core::String::from_static(err.label()),
                     ..Default::default()
                 };
                 Err(global_this.throw_value(system_error.to_error_instance(global_this)))
@@ -5366,8 +5366,8 @@ impl Resolver {
                 let syscall = bun_core::String::create_atom(&query.name);
                 let system_error = SystemError {
                     errno: -1,
-                    code: bun_core::String::static_(err.code()),
-                    message: bun_core::String::static_(err.label()),
+                    code: bun_core::String::from_static(err.code()),
+                    message: bun_core::String::from_static(err.label()),
                     syscall,
                     ..Default::default()
                 };

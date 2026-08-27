@@ -85,7 +85,7 @@ requires a real encoder, not a cast.
 
 `String` / `&Str` / `StringView<'a>` mirror `std::string::String` / `&str` /
 a by-value `&'a str`, all the same 24 bytes as C++ `BunString`. `String` owns
-(a WTF ref, incl. adopted buffers; `'static` bytes via `static_`; or
+(a WTF ref, incl. adopted buffers; `'static` bytes via `from_static`; or
 `Empty`/`Dead`) and `clone()` never allocates. `&Str` is the borrow and
 carries the read API (`len()`, `latin1_slice()`/`utf16_slice()`/`byte_slice()`,
 `to_utf8()`, `eql*`); `String`, `StringView` and `JSStringView` deref to it,
@@ -98,7 +98,7 @@ by-value `String` transfers ownership.
 
 C++ consumes a `BunString`/`EncodedSlice` through exactly one of:
 
-- `toWTFString()` / `transferToWTFString()` / `Zig::toStringCopy(slice)` — result may be retained (shares the WTF impl, atomizes `static_`, copies borrowed bytes, adopts a globally-allocated buffer).
+- `toWTFString()` / `transferToWTFString()` / `Zig::toStringCopy(slice)` — result may be retained (shares the WTF impl, atomizes `from_static`, copies borrowed bytes, adopts a globally-allocated buffer).
 - `view()` / `Zig::toStringView(slice)` — borrows in place; call-scoped only.
 - `Bun::toIdentifier(vm, s)` / `Zig::toIdentifier(vm, slice)` — property key from the bytes.
 
@@ -106,7 +106,7 @@ C++ consumes a `BunString`/`EncodedSlice` through exactly one of:
 use bun_core::{EncodedSlice, Str, String, StringView, Utf8Bytes};   // the only import path
 
 let s = String::clone_utf8(utf8_bytes);        // copies into a WTFStringImpl
-let s = String::static_("literal");            // 'static ASCII slice, never freed
+let s = String::from_static("literal");            // 'static ASCII slice, never freed
 f(&s);                                         // `&String` coerces to a `&Str` parameter
 f(&StringView::utf8(utf8_bytes));              // borrow caller bytes for the call (`from_bytes` scans and
 f(&StringView::latin1(ascii_or_latin1));       //   tags UTF-8 if non-ASCII; `utf16(units)` for UTF-16)
@@ -140,7 +140,7 @@ async call; `StringOrBuffer`: borrowed for a sync call) and
 `StringOrBuffer::PinnedBuffer` (pinned and GC-rooted, parsed for an async
 call). Values parsed from JS for an async call, stored, or sent to another thread (the
 `from_js_async` parsers, which return `ThreadIsolated<T>`;
-`PathLike::thread_isolated_copy` for a `Blob` store) is `'static`.
+`PathLike::thread_isolated_copy` for a `Blob` store) are `'static`.
 
 `EncodedSlice<'a>` is the `{ptr, len}` + encoding-bits (Latin-1/UTF-8/UTF-16)
 borrowed view handed to C++. Constructors name the encoding of the bytes:
@@ -159,7 +159,7 @@ Bytes → JS string: `bun_string_jsc::create_utf8_for_js(global, bytes)?`
 `bun_string_jsc::owned_utf8_into_js(global, vec)?`; an owned `Vec<u16>`:
 `bun_string_jsc::owned_utf16_into_js(global, vec)?` (or `owned_latin1_into_js` for a
 known-Latin-1/ASCII `Vec<u8>`); all three hand the allocation to JSC in one call. An ASCII literal or
-`&'static` ASCII: `String::static_("lit").to_js(global)?`. → `Error` (each
+`&'static` ASCII: `String::from_static("lit").to_js(global)?`. → `Error` (each
 with `type_error`/`range_error`/`syntax_error` siblings, one C++ entry):
 `global.create_error_instance(format_args!(..))` (argument-free ASCII
 literal → atomized; formatted → copied once), `string.to_error_instance(global)`

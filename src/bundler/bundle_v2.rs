@@ -841,7 +841,7 @@ pub mod bv2_impl {
                 ) {
                     let _tracer = bun_core::perf::trace("JSBundler.matchOnLoad");
                     let mut namespace_string = if namespace.is_empty() {
-                        BunString::static_("file")
+                        BunString::from_static("file")
                     } else {
                         BunString::clone_utf8(namespace)
                     };
@@ -866,7 +866,7 @@ pub mod bv2_impl {
                 ) {
                     let _tracer = bun_core::perf::trace("JSBundler.matchOnResolve");
                     let mut namespace_string = if namespace.is_empty() || namespace == b"file" {
-                        BunString::static_("file")
+                        BunString::from_static("file")
                     } else {
                         BunString::clone_utf8(namespace)
                     };

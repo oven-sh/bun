@@ -18,7 +18,7 @@ pub(crate) fn internal_error_name(global: &JSGlobalObject, frame: &CallFrame) ->
 
     let err_int = arguments[0].to_int32();
     if let Some(name) = UV_E::name(err_int) {
-        return BunString::static_(name).to_js(global);
+        return BunString::from_static(name).to_js(global);
     }
     BunString::create_format(format_args!("Unknown system error {}", err_int)).into_js(global)
 }
@@ -36,7 +36,7 @@ pub(crate) fn internal_error_entries(
         if i % 2 == 0 {
             Ok(JSValue::js_number_from_int32(code))
         } else {
-            BunString::static_(name).to_js(global)
+            BunString::from_static(name).to_js(global)
         }
     })
 }

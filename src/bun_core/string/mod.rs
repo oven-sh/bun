@@ -48,7 +48,7 @@ pub use wtf::{WTFStringImpl, WTFStringImplExt, WTFStringImplStruct};
 // EncodedSlice, 24 bytes on 64-bit, ABI-identical to C++ `BunString`.
 //
 // - `String` owns (like `std::string::String`): one ref when WTF-backed,
-//   otherwise `'static` bytes (`static_`) or `Empty`/`Dead`. `Drop` =
+//   otherwise `'static` bytes (`from_static`) or `Empty`/`Dead`. `Drop` =
 //   `deref()`; `Clone` never allocates. A by-value `String` in an
 //   `extern "C"` signature means ownership crosses, exactly like `Box<T>`.
 // - `&Str` is the borrow (like `&str`) and carries the read API; `String`,
@@ -169,9 +169,9 @@ impl<'a> StringView<'a> {
         },
     };
 
-    /// View of a `'static` ASCII literal (see [`String::static_`]).
+    /// View of a `'static` ASCII literal (see [`String::from_static`]).
     #[inline]
-    pub fn static_<S: ?Sized + AsRef<[u8]>>(s: &'static S) -> StringView<'static> {
+    pub fn from_static<S: ?Sized + AsRef<[u8]>>(s: &'static S) -> StringView<'static> {
         debug_assert!(s.as_ref().is_ascii());
         StringView {
             tag: Tag::StaticEncodedSlice,
@@ -255,12 +255,12 @@ impl Str {
         // (refcount ≥ 1) for at least as long as `&self`.
         unsafe { &*self.value.wtf_string_impl }
     }
-    /// `static_` stores an ASCII `'static` literal with no encoding tag.
+    /// `from_static` stores an ASCII `'static` literal with no encoding tag.
     #[inline]
     fn static_bytes(&self) -> &'static [u8] {
         debug_assert_eq!(self.tag, Tag::StaticEncodedSlice);
         // SAFETY: `StaticEncodedSlice` ⇒ `encoded` is active and was built by
-        // `static_` from `'static` bytes.
+        // `from_static` from `'static` bytes.
         unsafe { self.value.encoded }.detach_lifetime().slice()
     }
 
@@ -424,7 +424,7 @@ impl Str {
                     String::clone_latin1(encoded.slice())
                 }
             }
-            Tag::StaticEncodedSlice => String::static_(self.static_bytes()),
+            Tag::StaticEncodedSlice => String::from_static(self.static_bytes()),
             Tag::Empty => String::EMPTY,
             Tag::Dead => String::DEAD,
         }
@@ -684,8 +684,8 @@ impl String {
     /// borrow the bytes directly. Generic over `str`/`[u8]` so call sites may
     /// pass either `"lit"` or `b"lit"`.
     #[inline]
-    pub fn static_<S: ?Sized + AsRef<[u8]>>(s: &'static S) -> Self {
-        let v = StringView::static_(s);
+    pub fn from_static<S: ?Sized + AsRef<[u8]>>(s: &'static S) -> Self {
+        let v = StringView::from_static(s);
         Self {
             tag: v.tag,
             value: v.value,
@@ -840,12 +840,12 @@ impl String {
         unsafe { BunString__createStaticExternalUTF16(units.as_ptr(), units.len()) }
     }
     /// Formats `args` into a WTF-backed string; an argument-free ASCII
-    /// literal is returned as `static_` without copying.
+    /// literal is returned as `from_static` without copying.
     pub fn create_format(args: core::fmt::Arguments<'_>) -> Self {
         use core::fmt::Write;
         if let Some(s) = args.as_str() {
             return if s.is_ascii() {
-                Self::static_(s)
+                Self::from_static(s)
             } else {
                 Self::clone_utf8(s.as_bytes())
             };
@@ -986,12 +986,12 @@ impl String {
             core::ptr::null_mut()
         }
     }
-    /// Zero-copy `[start, start + len)` of a WTF-backed string: a +1 impl that
-    /// shares `self`'s buffer and keeps it alive.
-    pub fn substring_shared(&self, start: usize, len: usize) -> String {
+    /// Zero-copy `start..end` of a WTF-backed string: a +1 impl that shares
+    /// `self`'s buffer and keeps it alive (cf. [`Str::substring_with_len`], a view).
+    pub fn substring_shared(&self, start: usize, end: usize) -> String {
         debug_assert!(self.tag == Tag::WTFStringImpl);
-        debug_assert!(start.checked_add(len).is_some_and(|end| end <= self.len()));
-        BunString__substring(self, start, len)
+        debug_assert!(start <= end && end <= self.len());
+        BunString__substring(self, start, end - start)
     }
     /// An isolated copy of a WTF-backed impl (+1, `clone()` for other tags),
     /// for handing the value to one other thread; not for sharing one impl

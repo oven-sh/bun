@@ -52,8 +52,8 @@ type RawEndTag = lol_html::html_content::EndTag<'static>;
 /// Construct a `SystemError` with code+message and remaining fields defaulted.
 fn system_error(code: &'static str, message: &'static str) -> SystemError {
     SystemError {
-        code: BunString::static_(code),
-        message: BunString::static_(message),
+        code: BunString::from_static(code),
+        message: BunString::from_static(message),
         ..Default::default()
     }
 }
@@ -860,7 +860,7 @@ impl RewriterPipe {
             this.phase.set(RewritePhase::Done);
             this.done.set(true);
         } else {
-            this.fail(webcore::body::ValueError::Message(BunString::static_(
+            this.fail(webcore::body::ValueError::Message(BunString::from_static(
                 "HTMLRewriter content handler returned a Promise that will never settle",
             )));
         }

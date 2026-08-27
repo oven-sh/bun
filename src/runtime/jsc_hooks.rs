@@ -2880,7 +2880,7 @@ fn transpile_source_code_inner(
                     let ext = bun_paths::extension(source.path.text);
                     if ext == b".cjs" || ext == b".cts" {
                         return Ok(ResolvedSource {
-                            source_code: bun_core::String::static_("(function(){})"),
+                            source_code: bun_core::String::from_static("(function(){})"),
                             source_url: input_specifier.create_if_different(path.text),
                             is_commonjs_module: true,
                             tag: ResolvedSourceTag::Javascript,
@@ -3592,7 +3592,7 @@ export default db;
 fn js_synthetic_module(name: &'static [u8]) -> ResolvedSource {
     use bun_jsc::resolved_source::Tag;
     ResolvedSource {
-        source_url: bun_core::String::static_(name),
+        source_url: bun_core::String::from_static(name),
         tag: Tag::from_name(name),
         ..ResolvedSource::default()
     }
@@ -3804,7 +3804,7 @@ export default db;
         return Some(ResolvedSource {
             source_code: file.to_wtf_string(),
             source_url: specifier.to_owned(),
-            // Copied once per load: the path is `'static` but may be non-ASCII, so not `static_`.
+            // Copied once per load: the path is `'static` but may be non-ASCII, so not `from_static`.
             bytecode_origin_path: bun_core::String::clone_utf8(file.bytecode_origin_path),
             bytecode_cache: Bytecode::persistent(bytecode),
             source_code_hash: file.source_hash,

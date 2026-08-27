@@ -36,7 +36,7 @@ impl DoneCallback {
             1,
             Default::default(),
         );
-        call_fn.bind(global, value, &BunString::static_("done"), 1.0, &[])
+        call_fn.bind(global, value, &BunString::from_static("done"), 1.0, &[])
     }
 }
 

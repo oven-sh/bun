@@ -546,11 +546,11 @@ impl BlobExt for Blob {
                 }
                 fn cancel(c: *mut H) {
                     let err = jsc::SystemError {
-                        code: BunString::static_("ECANCELED"),
-                        message: BunString::static_(
+                        code: BunString::from_static("ECANCELED"),
+                        message: BunString::from_static(
                             "The file read did not complete before its thread stopped",
                         ),
-                        syscall: BunString::static_("read"),
+                        syscall: BunString::from_static("read"),
                         ..Default::default()
                     };
                     // The read's thread stopped; this runs at teardown (the unrun job's release,
@@ -603,7 +603,7 @@ impl BlobExt for Blob {
                                 path: BunString::clone_utf8(
                                     t.blob.store().and_then(|s| s.get_path()).unwrap_or(b""),
                                 ),
-                                syscall: BunString::static_("fetch"),
+                                syscall: BunString::from_static("fetch"),
                                 ..Default::default()
                             };
                             t.done(ReadBytesResult::Err(Box::new(err)))

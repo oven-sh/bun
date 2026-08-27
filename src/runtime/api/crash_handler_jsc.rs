@@ -233,13 +233,13 @@ pub(crate) mod js_bindings {
         let obj = JSValue::create_empty_object(global, 5);
         let list = analytics::PACKED_FEATURES_LIST;
         let array = JSValue::create_array_from_iter(global, list.iter(), |feature| {
-            BunString::static_(feature).to_js(global)
+            BunString::from_static(feature).to_js(global)
         })?;
         obj.put(global, "features", array);
         obj.put(
             global,
             "version",
-            BunString::static_(Global::package_json_version).to_js(global)?,
+            BunString::from_static(Global::package_json_version).to_js(global)?,
         );
         obj.put(
             global,
@@ -252,7 +252,7 @@ pub(crate) mod js_bindings {
         obj.put(
             global,
             "revision",
-            BunString::static_(Environment::GIT_SHA).to_js(global)?,
+            BunString::from_static(Environment::GIT_SHA).to_js(global)?,
         );
 
         obj.put(

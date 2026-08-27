@@ -86,7 +86,7 @@ impl All {
                     ))
                 } else {
                     // -Infinity is handled by TimeoutNegativeWarning
-                    BunString::static_(const_format::concatcp!(
+                    BunString::from_static(const_format::concatcp!(
                         "Infinity does not fit into a 32-bit signed integer",
                         SUFFIX
                     ))
@@ -98,7 +98,7 @@ impl All {
                         "{countdown} is a negative number{SUFFIX}"
                     ))
                 } else {
-                    BunString::static_(const_format::concatcp!(
+                    BunString::from_static(const_format::concatcp!(
                         "-Infinity is a negative number",
                         SUFFIX
                     ))
@@ -106,7 +106,7 @@ impl All {
             }
             TimeoutWarning::TimeoutNaNWarning => {
                 debug_assert!(countdown.is_nan());
-                BunString::static_(const_format::concatcp!("NaN is not a number", SUFFIX))
+                BunString::from_static(const_format::concatcp!("NaN is not a number", SUFFIX))
             }
         };
         let warning_type_string =

@@ -870,14 +870,14 @@ impl<'a> TablePrinter<'a> {
 
         // create the first column " " which is always present
         columns.push(Column {
-            name: BunString::static_("\u{0020}"),
+            name: BunString::from_static("\u{0020}"),
             width: 1,
         });
 
         // special case for Map: create the special "Key" column at index 1
         if self.jstype.is_map() {
             columns.push(Column {
-                name: BunString::static_("Key"),
+                name: BunString::from_static("Key"),
                 width: 1,
             });
         }
@@ -979,7 +979,7 @@ impl<'a> TablePrinter<'a> {
         if let Some(width) = self.values_col_width {
             self.values_col_idx = columns.len();
             columns.push(Column {
-                name: BunString::static_("Values"),
+                name: BunString::from_static("Values"),
                 width,
             });
         }
@@ -3160,7 +3160,9 @@ pub mod formatter {
         if !name_str.eq_ascii(b"Object") {
             return Ok(Some(name_str));
         } else if value.get_prototype(global_this)?.eql_value(JSValue::NULL) {
-            return Ok(Some(bun_core::String::static_("[Object: null prototype]")));
+            return Ok(Some(bun_core::String::from_static(
+                "[Object: null prototype]",
+            )));
         }
         Ok(None)
     }
@@ -5395,7 +5397,7 @@ pub mod formatter {
 
             let mut display_name = value.get_name(self.global_this)?;
             if display_name.is_empty() {
-                display_name = BunString::static_("Object");
+                display_name = BunString::from_static("Object");
             }
             let _ = write!(
                 writer_,

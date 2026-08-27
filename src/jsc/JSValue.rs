@@ -879,7 +879,7 @@ impl JSValue {
     /// JS `typeof`, or `"array"` for arrays.
     pub fn type_name<'a>(self, global: &'a JSGlobalObject) -> bun_core::StringView<'a> {
         if self.js_type().is_array() {
-            return bun_core::StringView::static_("array");
+            return bun_core::StringView::from_static("array");
         }
         self.js_type_string(global)
     }
@@ -2293,7 +2293,7 @@ impl JSValue {
     /// `JSValue.getClassName`.
     pub fn get_class_name(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
         if !self.is_cell() {
-            return Ok(bun_core::String::static_("[not a class]"));
+            return Ok(bun_core::String::from_static("[not a class]"));
         }
         host_fn::from_js_host_call_generic(global, || JSC__JSValue__getClassName(self, global))
     }
@@ -2304,7 +2304,7 @@ impl JSValue {
     }
     /// `JSValue.symbolFor(global, key)` — `Symbol.for(key)`.
     pub fn symbol_for(global: &JSGlobalObject, key: &'static [u8]) -> JSValue {
-        JSC__JSValue__symbolFor(global, &bun_core::StringView::static_(key))
+        JSC__JSValue__symbolFor(global, &bun_core::String::from_static(key))
     }
 
     // ── Property access. ──────────────────────────

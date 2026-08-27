@@ -118,19 +118,19 @@ impl PluginResolver for PluginRunner {
 
                 let namespace_str = namespace_value.to_bun_string(global).map_err(js_err)?;
                 if namespace_str.is_empty() {
-                    break 'brk BunString::static_("file");
+                    break 'brk BunString::from_static("file");
                 }
 
                 if namespace_str.eq_ascii(b"file") {
-                    break 'brk BunString::static_("file");
+                    break 'brk BunString::from_static("file");
                 }
 
                 if namespace_str.eq_ascii(b"bun") {
-                    break 'brk BunString::static_("bun");
+                    break 'brk BunString::from_static("bun");
                 }
 
                 if namespace_str.eq_ascii(b"node") {
-                    break 'brk BunString::static_("node");
+                    break 'brk BunString::from_static("node");
                 }
 
                 static_namespace = false;
@@ -138,7 +138,7 @@ impl PluginResolver for PluginRunner {
                 break 'brk namespace_str;
             }
 
-            break 'brk BunString::static_("file");
+            break 'brk BunString::from_static("file");
         };
 
         // `FsPath<'static>` borrows, so the formatted buffer is leaked to

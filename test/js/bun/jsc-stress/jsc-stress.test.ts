@@ -8,7 +8,7 @@ const wasmFixturesDir = path.join(fixturesDir, "wasm");
 
 /** One run of a fixture: the JSC options it runs under, as environment variables. */
 interface FixtureRun {
-  /** The run directive's own flags, for the test name. Empty for a bare `runDefault`. */
+  /** The run directive (unless it is `runDefault`) and its flags, for the test name. Empty for a bare `runDefault`. */
   label: string;
   env: Record<string, string>;
 }
@@ -52,18 +52,18 @@ function parseJSCFlags(filePath: string): FixtureRun[] {
     }
 
     // Parse explicit flags: "--key=value"
-    const flags: string[] = [];
+    const label: string[] = mode === "runDefault" ? [] : [mode];
     const flagPattern = /"--(\w+)=([^"]+)"/g;
     let flagMatch;
     while ((flagMatch = flagPattern.exec(argsStr)) !== null) {
       env[`BUN_JSC_${flagMatch[1]}`] = flagMatch[2];
-      flags.push(`--${flagMatch[1]}=${flagMatch[2]}`);
+      label.push(`--${flagMatch[1]}=${flagMatch[2]}`);
     }
 
     if (mode === "requireOptions") {
       Object.assign(required, env);
     } else {
-      runs.push({ label: flags.join(" "), env });
+      runs.push({ label: label.join(" "), env });
     }
   }
 
@@ -323,24 +323,32 @@ describe.concurrent("JSC JIT Stress Tests", () => {
   // value of the option must load and run under the other.
   describe("bytecode cache (generator locals)", () => {
     const fixture = "generator-save-restore-locals.js";
+    // The fixture builds its 70- and 300-local generators with `new Function`,
+    // which the bundler cannot compile into the cache. This second entry writes
+    // them out in full: 70 locals need an out-of-line liveness bit vector and
+    // 300 need wide operands, so both encodings reach the cache.
+    const wideEntry = "wide-locals.js";
+    const entries = {
+      [fixture]: fs.readFileSync(path.join(fixturesDir, fixture), "utf8"),
+      [wideEntry]: [
+        `function check(actual, expected) {`,
+        `  if (actual !== expected) throw new Error(\`bad value: \${actual}, expected \${expected}\`);`,
+        `}`,
+        wideGeneratorSource(70),
+        wideGeneratorSource(300),
+      ].join("\n"),
+    };
     const option = "BUN_JSC_useGeneratorBulkSaveRestoreLocals";
     for (const buildValue of ["1", "0"]) {
       for (const runValue of ["1", "0"]) {
         test(
-          `${fixture} built with ${option}=${buildValue}, run with ${option}=${runValue}`,
+          `built with ${option}=${buildValue}, run with ${option}=${runValue}`,
           async () => {
-            using dir = tempDir("jsc-stress-bytecode", {});
+            using dir = tempDir("jsc-stress-bytecode", entries);
             await using build = Bun.spawn({
-              cmd: [
-                bunExe(),
-                "build",
-                "--bytecode",
-                "--target=bun",
-                "--outdir",
-                String(dir),
-                path.join(fixturesDir, fixture),
-              ],
+              cmd: [bunExe(), "build", "--bytecode", "--target=bun", "--outdir", "out", fixture, wideEntry],
               env: { ...fixtureEnv, [option]: buildValue },
+              cwd: String(dir),
               stdout: "pipe",
               stderr: "pipe",
             });
@@ -351,15 +359,17 @@ describe.concurrent("JSC JIT Stress Tests", () => {
             ]);
             expect(buildStderr).toBe("");
             expect(buildExitCode).toBe(0);
-            expect(fs.existsSync(path.join(String(dir), `${fixture}.jsc`))).toBe(true);
 
-            const stderr = await runFixture(path.join(String(dir), fixture), {
-              ...fixtureEnv,
-              [option]: runValue,
-              BUN_JSC_verboseDiskCache: "1",
-            });
-            // The preload is loaded from source (one miss). The bundle must hit.
-            expect(stderr).toContain("[Disk Cache] Cache hit for sourceCode");
+            for (const entry of Object.keys(entries)) {
+              expect(fs.existsSync(path.join(String(dir), "out", `${entry}.jsc`))).toBe(true);
+              const stderr = await runFixture(path.join(String(dir), "out", entry), {
+                ...fixtureEnv,
+                [option]: runValue,
+                BUN_JSC_verboseDiskCache: "1",
+              });
+              // The preload is loaded from source (one miss). The bundle must hit.
+              expect(stderr).toContain("[Disk Cache] Cache hit for sourceCode");
+            }
           },
           fixtureTimeout,
         );
@@ -367,3 +377,29 @@ describe.concurrent("JSC JIT Stress Tests", () => {
     }
   });
 });
+
+/**
+ * A generator with `count` locals live across two yields, written out in
+ * full, and a check of its values over three runs. `check` is defined by the
+ * caller.
+ */
+function wideGeneratorSource(count: number): string {
+  const names = Array.from({ length: count }, (_, i) => `v${i}`);
+  // Each local starts at its index and is incremented once: the sum is 1 + 2 + ... + count.
+  const expected = (count * (count + 1)) / 2;
+  return [
+    `function* wide${count}() {`,
+    ...names.map((name, i) => `  let ${name} = ${i};`),
+    `  yield 0;`,
+    ...names.map(name => `  ${name} += 1;`),
+    `  yield 1;`,
+    `  return ${names.join(" + ")};`,
+    `}`,
+    `for (let round = 0; round < 3; ++round) {`,
+    `  const iterator = wide${count}();`,
+    `  check(iterator.next().value, 0);`,
+    `  check(iterator.next().value, 1);`,
+    `  check(iterator.next().value, ${expected});`,
+    `}`,
+  ].join("\n");
+}

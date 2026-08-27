@@ -329,6 +329,10 @@ run_test() {
     # flakes under full-run network load
     */node/dns/node-dns.test.js)
       _retry_on_fail=1 ;;
+    # test-dev-peer-dependency-priority: verdaccio-serial, passes solo
+    # (4/0), one case flaked in the full run
+    */install/test-dev-peer-dependency-priority.test.ts)
+      _retry_on_fail=1 ;;
   esac
 
   # ── 串行标记：这些测试并行跑会冲突导致 subshell 死 ──

@@ -429,20 +429,14 @@ impl<'a> LinkerContext<'a> {
         true
     }
 
-    /// Whether a live part of this file prints something when its chunk is
-    /// generated. `convert_stmts_for_chunk` drops, with nothing in its place, an
-    /// `import`, `export … from` or `export *` of a bundled file that is not
-    /// wrapped (the importer's bindings are rewritten to the target's symbols;
-    /// see `should_remove_import_export_stmt`), a statement whose import record
-    /// the barrel optimization marked unused, and an `export {}` clause (exports
-    /// are stripped while bundling). The wrapper part of a wrapped file prints
-    /// the `__esm` / `__commonJS` closure. Anything else counts as printing,
-    /// including the imports of wrapped files that become `init_foo()` /
-    /// `require_foo()` calls.
+    /// Whether a live part of this file prints anything into its chunk. Mirrors
+    /// what `convert_stmts_for_chunk` drops outright: imports and re-exports of
+    /// unwrapped bundled files, unused import records, and `export {}` clauses.
     pub(crate) fn file_prints_code(&self, source_index: crate::IndexInt) -> bool {
         let i = source_index as usize;
         let flags = self.graph.meta.items_flags();
         let records = self.graph.ast.items_import_records()[i].as_slice();
+        // The wrapper part prints the `__esm` / `__commonJS` closure.
         let wrapper_part_index = if flags[i].wrap != WrapKind::None {
             self.graph.meta.items_wrapper_part_index()[i].get()
         } else {
@@ -465,8 +459,7 @@ impl<'a> LinkerContext<'a> {
             }
             !record.source_index.is_valid()
                 || flags[record.source_index.get() as usize].wrap != WrapKind::None
-                // "export * from 'path'" of a module with dynamic exports is
-                // printed as a `__reExport(...)` call.
+                // `export * from` a module with dynamic exports prints `__reExport(...)`.
                 || (is_export_star
                     && record
                         .flags

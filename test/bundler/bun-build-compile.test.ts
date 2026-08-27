@@ -95,7 +95,12 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
       "app.js": `require("bun:internal-for-testing").crash_handler.panic();`,
     });
     const outfile = join(dir + "", "app");
-    const result = await Bun.build({ entrypoints: [join(dir + "", "app.js")], compile: { outfile }, bytecode: true, target: "bun" });
+    const result = await Bun.build({
+      entrypoints: [join(dir + "", "app.js")],
+      compile: { outfile },
+      bytecode: true,
+      target: "bun",
+    });
     expect(result.success).toBe(true);
     await using proc = Bun.spawn({
       cmd: [outfile],
@@ -108,7 +113,9 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
     const compiledBy = stderr.match(/^Compiled by: (.*)$/m)?.[1] ?? "";
     expect(compiledBy).toStartWith(`bun-v${Bun.version}`);
     expect(compiledBy).toContain(Bun.revision.slice(0, 9));
-    expect(compiledBy).toEndWith(` ${isWindows ? "windows" : process.platform}-${isArm64 ? "aarch64" : "x64"}${isMusl ? "-musl" : ""}`);
+    expect(compiledBy).toEndWith(
+      ` ${isWindows ? "windows" : process.platform}-${isArm64 ? "aarch64" : "x64"}${isMusl ? "-musl" : ""}`,
+    );
     // Compiled and run on the same platform: not the Windows<->non-Windows bytecode case crash reports flag.
     expect(stderr).toMatch(/^Features: /m);
     expect(stderr).not.toContain("bytecode_cross_abi");

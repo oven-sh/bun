@@ -637,9 +637,8 @@ impl InternalSourceMap {
     }
 }
 
-/// Stateful forward cursor. `move_to` is cheap when successive targets are
-/// monotonically non-decreasing in generated position; otherwise it reseeks via
-/// the sync index.
+/// Stateful forward cursor over the mapping stream. Each seek is bounded by
+/// one `locate_window` plus <= `SYNC_INTERVAL` delta decodes.
 ///
 /// Invariant: when `has_state`, `reader` is positioned such that calling
 /// `advance_one()` produces the mapping immediately after `peek orelse state`.
@@ -664,26 +663,53 @@ impl Cursor {
         }
     }
 
-    pub fn move_to(&mut self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
-        let target_line = line.zero_based();
-        let target_col = column.zero_based();
-
+    #[inline]
+    fn should_reseek(&self, target_line: i32, target_col: i32) -> bool {
         if !self.has_state || !self.state.less_or_equal(target_line, target_col) {
-            if !self.reseek(target_line, target_col) {
-                return None;
-            }
+            return true;
+        }
+        let next = self.sync_idx as usize + 1;
+        next < self.map.sync_count() as usize
+            && self
+                .map
+                .sync_entry(next)
+                .less_or_equal(target_line, target_col)
+    }
+
+    /// Call `each(original_line, width)` for every mapping segment on
+    /// generated `line` whose column span intersects `[col_lo, col_hi)`.
+    /// Forward-only when called with non-decreasing `(line, col_lo)`.
+    pub fn for_each_segment_on_line(
+        &mut self,
+        line: i32,
+        col_lo: i32,
+        col_hi: i32,
+        mut each: impl FnMut(i32, u32),
+    ) {
+        if col_lo >= col_hi {
+            return;
         }
 
+        if self.should_reseek(line, col_lo) && !self.reseek(line, col_lo) {
+            // first sync entry is already past target; seed from window 0
+            if self.map.sync_count() == 0 {
+                return;
+            }
+            self.sync_idx = 0;
+            self.map.seed_window(0, &mut self.state, &mut self.reader);
+            self.peek = None;
+            self.has_state = true;
+        }
         loop {
             if let Some(p) = self.peek {
-                if !p.less_or_equal(target_line, target_col) {
+                if !p.less_or_equal(line, col_lo) {
                     break;
                 }
                 self.state = p;
                 self.peek = None;
             }
             let Some(nxt) = self.advance_one() else { break };
-            if nxt.less_or_equal(target_line, target_col) {
+            if nxt.less_or_equal(line, col_lo) {
                 self.state = nxt;
             } else {
                 self.peek = Some(nxt);
@@ -691,10 +717,32 @@ impl Cursor {
             }
         }
 
-        if self.state.generated_line != target_line {
-            return None;
+        let mut seg = (self.state.generated_line == line).then_some(self.state);
+        loop {
+            if self.peek.is_none() {
+                self.peek = self.advance_one();
+            }
+            let nxt = self.peek;
+            let span_end = match nxt {
+                Some(n) if n.generated_line == line => n.generated_column,
+                _ => col_hi,
+            };
+            if let Some(s) = seg {
+                let lo = col_lo.max(s.generated_column);
+                let hi = col_hi.min(span_end);
+                if lo < hi {
+                    each(s.original_line, (hi - lo) as u32);
+                }
+            }
+            match nxt {
+                Some(n) if n.generated_line == line && n.generated_column < col_hi => {
+                    self.state = n;
+                    self.peek = None;
+                    seg = Some(n);
+                }
+                _ => break,
+            }
         }
-        Some(self.state.to_mapping())
     }
 
     fn advance_one(&mut self) -> Option<State> {

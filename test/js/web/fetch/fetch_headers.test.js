@@ -34,6 +34,30 @@ describe("Headers", async () => {
     expect(() => fetch(url, { headers: { "x-test": "❤️" } })).toThrow("Header 'x-test' has invalid value: '❤️'");
   });
 
+  it("Header values in the latin-1 range are valid regardless of internal string representation", async () => {
+    const eightBit = "Operação realizada com sucesso!";
+    // normalize() returns a 16-bit string even when every char fits in latin-1;
+    // the validator used to reject it while accepting the identical 8-bit literal.
+    const sixteenBit = "Operação realizada com sucesso!".normalize("NFC");
+    expect(sixteenBit).toBe(eightBit);
+
+    const headers = new Headers();
+    expect(() => headers.set("message-summary", sixteenBit)).not.toThrow();
+    expect(headers.get("message-summary")).toBe(eightBit);
+    expect(() => new Headers({ "message-summary": sixteenBit })).not.toThrow();
+
+    // parser-produced 16-bit strings (the real-world path: values from response.json())
+    const parsed = JSON.parse(Buffer.from(JSON.stringify({ v: eightBit })).toString("utf8")).v;
+    expect(() => headers.set("x-parsed", parsed)).not.toThrow();
+
+    // chars above 0xFF stay invalid in either representation
+    expect(() => headers.set("x-test", "okĀ")).toThrow("Header 'x-test' has invalid value: 'okĀ'");
+    expect(() => headers.set("x-test", "okĀ".normalize("NFC"))).toThrow();
+
+    // round-trips through the wire like the equivalent 8-bit value
+    expect(await fetchContent({ "x-test": sixteenBit })).toBe(eightBit);
+  });
+
   it("isomorphic-encodes latin-1 (obs-text) request header values on the wire", async () => {
     // https://fetch.spec.whatwg.org/#concept-header-value
     // Values are ByteStrings: U+00E9 must go out as the single byte 0xE9, not UTF-8 0xC3 0xA9.

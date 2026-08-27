@@ -78,22 +78,25 @@ pub struct Slot {
     pub stub: SpanStub,
     pub scope: ScopeId,
     pub kind: SpanKind,
-    pub status: StatusCode,
-    pub n_attrs: u16,
-    pub dropped_attrs: u16,
+    status: StatusCode,
+    n_attrs: u16,
+    dropped_attrs: u16,
     /// One bit per `key_bit(key)` of the attributes pushed so far, so
     /// `set_attribute` only scans for a duplicate when there may be one.
     attr_keys: u64,
-    pub n_events: u16,
-    pub n_links: u16,
-    pub dropped_events: u16,
-    pub dropped_links: u16,
+    /// An `error.type` attribute is among `attrs` (the HTTP encoder then does
+    /// not derive one).
+    has_error_type: bool,
+    n_events: u16,
+    n_links: u16,
+    dropped_events: u16,
+    dropped_links: u16,
     pub name: Vec<u8>,
     /// Pre-encoded `Span.attributes` entries, append-only.
-    pub attrs: Vec<u8>,
+    attrs: Vec<u8>,
     /// Pre-encoded `Span.events` / `Span.links` entries.
-    pub extra: Vec<u8>,
-    pub status_message: Vec<u8>,
+    extra: Vec<u8>,
+    status_message: Vec<u8>,
     pub trace_state: Vec<u8>,
     pub baggage: Vec<u8>,
     /// HTTP server request facts (record mode; see http_record.rs).
@@ -113,6 +116,7 @@ impl Slot {
             n_attrs: 0,
             dropped_attrs: 0,
             attr_keys: 0,
+            has_error_type: false,
             n_events: 0,
             n_links: 0,
             dropped_events: 0,
@@ -143,6 +147,7 @@ impl Slot {
         self.n_attrs = 0;
         self.dropped_attrs = 0;
         self.attr_keys = 0;
+        self.has_error_type = false;
         self.n_events = 0;
         self.n_links = 0;
         self.dropped_events = 0;
@@ -168,6 +173,12 @@ impl Slot {
         self.stub.is_recording()
     }
 
+    /// An attribute with this key has been recorded on the span.
+    #[inline]
+    pub fn has_attribute(&self, key: &[u8]) -> bool {
+        self.attr_keys & key_bit(key) != 0 && otlp::find_attribute(&self.attrs, key).is_some()
+    }
+
     #[inline]
     pub fn set_name(&mut self, name: &[u8]) {
         self.name.clear();
@@ -186,7 +197,7 @@ impl Slot {
         self.n_attrs += 1;
         self.attr_keys |= key_bit(key);
         if key == b"error.type" {
-            self.http.flags |= crate::http_record::FLAG_HAS_ERROR_TYPE;
+            self.has_error_type = true;
         }
         otlp::write_key_value_limited(
             &mut self.attrs,
@@ -204,7 +215,7 @@ impl Slot {
                 self.attrs.drain(off..off + len);
                 self.n_attrs -= 1;
                 if key == b"error.type" {
-                    self.http.flags &= !crate::http_record::FLAG_HAS_ERROR_TYPE;
+                    self.has_error_type = false;
                 }
             }
         }
@@ -235,7 +246,12 @@ impl Slot {
         }
         self.n_events += 1;
         let t = clock::or_now(time_ns);
-        Some(otlp::EntryWriter::event(&mut self.extra, name, t))
+        Some(otlp::EntryWriter::event(
+            &mut self.extra,
+            name,
+            t,
+            limits.attribute_value_length as usize,
+        ))
     }
 
     /// `None` when the link limit is reached (counted as dropped).
@@ -250,7 +266,12 @@ impl Slot {
             return None;
         }
         self.n_links += 1;
-        Some(otlp::EntryWriter::link(&mut self.extra, ctx, trace_state))
+        Some(otlp::EntryWriter::link(
+            &mut self.extra,
+            ctx,
+            trace_state,
+            limits.attribute_value_length as usize,
+        ))
     }
 
     fn write(
@@ -272,6 +293,7 @@ impl Slot {
                     trace_state: &self.trace_state,
                     attrs: &self.attrs,
                     n_attrs: self.n_attrs,
+                    has_error_type: self.has_error_type,
                     dropped_attrs: self.dropped_attrs,
                     dropped_events: self.dropped_events,
                     dropped_links: self.dropped_links,
@@ -283,12 +305,17 @@ impl Slot {
             );
             return;
         }
-        let mut w = SpanWriter::begin(out, &self.stub, &self.name, self.kind, end_ns);
+        let mut w = SpanWriter::begin(
+            out,
+            &self.stub,
+            &self.name,
+            self.kind,
+            end_ns,
+            crate::state().limits.attribute_value_length,
+        );
         w.trace_state(&self.trace_state);
         w.raw(&self.attrs);
-        // (begin-time attributes above were truncated by push_attribute; end-time
-        // ones written by `extra` — db.query.text etc. — get the same limit)
-        w.limit_values(crate::state().limits.attribute_value_length);
+        // (end-time attributes from `extra` get the same value limit as begin-time ones)
         extra(&mut w);
         w.raw(&self.extra);
         if self.dropped_attrs != 0 {
@@ -353,7 +380,9 @@ impl Pool {
 }
 
 /// Claim a slot for a span that has started and run `init` on it. Returns
-/// `NONE` for `SpanStub::NONE`.
+/// `NONE` for `SpanStub::NONE`. `trace_state`: the W3C tracestate this span
+/// carries (its parent's, or the inbound header's for a server span); empty
+/// for none.
 #[inline]
 pub fn begin_with(
     p: &mut Pool,
@@ -361,6 +390,7 @@ pub fn begin_with(
     scope: ScopeId,
     name: &[u8],
     kind: SpanKind,
+    trace_state: &[u8],
     init: impl FnOnce(&mut Slot),
 ) -> NativeSpan {
     if !stub.is_some() {
@@ -380,6 +410,7 @@ pub fn begin_with(
     slot.scope = scope;
     slot.kind = kind;
     slot.name.extend_from_slice(name);
+    slot.trace_state.extend_from_slice(trace_state);
     init(slot);
     NativeSpan::pack(index, slot.generation)
 }
@@ -398,6 +429,7 @@ pub fn with_ref<R>(p: &Pool, handle: NativeSpan, f: impl FnOnce(&Slot) -> R) -> 
 
 /// Result of [`end`]: whether a span was recorded, and the JS cell that had
 /// been materialized for it so the caller can release it.
+#[must_use = "the materialized js_cell must be released (rt::end_pooled / Hooks::release_cell)"]
 pub struct Ended {
     pub recorded: bool,
     pub js_cell: JsCellRef,
@@ -421,19 +453,14 @@ pub fn end(
         ..
     } = l;
     let slot = pool.live_slot(handle)?;
-    let mut full = false;
     let js_cell = slot.js_cell;
     let recording = slot.is_recording();
     if recording {
-        let buf = batch.buffer(slot.scope);
-        let start = buf.len();
-        slot.write(http_templates, buf, end_ns, extra);
-        full = batch.committed(slot.scope, start);
+        crate::batch::record(batch, slot.scope, &mut |buf: &mut Vec<u8>| {
+            slot.write(http_templates, buf, end_ns, extra)
+        });
     }
     pool.release(handle);
-    if full {
-        crate::batch::flush_local(batch);
-    }
     Some(Ended {
         recorded: recording,
         js_cell,
@@ -442,6 +469,7 @@ pub fn end(
 
 /// Release without recording (e.g. the owner was torn down mid-flight and
 /// the integration has nothing truthful to say about the outcome).
+#[must_use = "the returned js_cell must be released"]
 pub fn discard(p: &mut Pool, handle: NativeSpan) -> JsCellRef {
     let Some(slot) = p.live_slot(handle) else {
         return JsCellRef::NONE;

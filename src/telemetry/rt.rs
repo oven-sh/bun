@@ -5,6 +5,7 @@ use core::cell::RefCell;
 use core::ffi::c_void;
 use std::sync::OnceLock;
 
+use crate::pool::{self, JsCellRef, NativeSpan, Slot};
 use crate::{
     Instrument, Local, ScopeId, SpanContext, SpanKind, SpanStub, SpanWriter, batch, clock,
 };
@@ -19,37 +20,15 @@ pub struct Hooks {
     pub after_record: fn(global: *mut c_void),
     /// A pooled span that had a JS cell materialized for it ended: release it.
     pub release_cell: fn(js_cell: crate::pool::JsCellRef),
-    /// `f(tracestate)` with the active span's W3C `tracestate` (empty if none).
+    /// `f(tracestate)` once, with the active span's W3C `tracestate` (empty if
+    /// none); `f` may call [`with_local`]. Used by [`begin_pooled`].
     pub active_trace_state: fn(global: *mut c_void, f: &mut dyn FnMut(&[u8])),
-}
-
-/// Copy the active (parent) span's `tracestate` onto a freshly begun pooled
-/// span so the exported child carries it like JS-created children do.
-pub fn inherit_trace_state(global: *mut c_void, span: crate::pool::NativeSpan) {
-    let Some(h) = HOOKS.get() else { return };
-    (h.active_trace_state)(global, &mut |ts: &[u8]| {
-        if ts.is_empty() {
-            return;
-        }
-        with_local(global, |l| {
-            crate::pool::with(&mut l.pool, span, |s| {
-                if s.trace_state.is_empty() {
-                    s.trace_state.extend_from_slice(ts);
-                }
-            });
-        });
-    });
 }
 
 static HOOKS: OnceLock<Hooks> = OnceLock::new();
 
 pub fn install(h: Hooks) {
     let _ = HOOKS.set(h);
-}
-
-#[inline]
-pub fn hooks() -> Option<&'static Hooks> {
-    HOOKS.get()
 }
 
 /// Run `f` with `global`'s per-VM state. `None` before the runtime installed
@@ -98,6 +77,90 @@ pub fn start_leaf(global: *mut c_void, i: Instrument) -> SpanStub {
     .unwrap_or(SpanStub::NONE)
 }
 
+/// Claim a pool slot for `stub` (normally from [`start_leaf`]) as a child of the
+/// active span: the slot starts out carrying the active span's W3C `tracestate`,
+/// then `init` runs. `NativeSpan::NONE` for `SpanStub::NONE`, before the runtime
+/// installed its hooks, or once the VM is exiting. Must not be nested inside
+/// [`with_local`]; `init` must not run JS.
+pub fn begin_pooled(
+    global: *mut c_void,
+    i: Instrument,
+    stub: SpanStub,
+    name: &[u8],
+    kind: SpanKind,
+    init: impl FnOnce(&mut Slot),
+) -> NativeSpan {
+    if !stub.is_some() {
+        return NativeSpan::NONE;
+    }
+    let Some(h) = HOOKS.get() else {
+        return NativeSpan::NONE;
+    };
+    let mut init = Some(init);
+    let mut span = NativeSpan::NONE;
+    (h.active_trace_state)(global, &mut |trace_state: &[u8]| {
+        span = with_local(global, |l| {
+            pool::begin_with(
+                &mut l.pool,
+                stub,
+                ScopeId::from(i),
+                name,
+                kind,
+                trace_state,
+                init.take()
+                    .expect("Hooks::active_trace_state calls f exactly once"),
+            )
+        })
+        .unwrap_or(NativeSpan::NONE);
+    });
+    span
+}
+
+/// End a pooled span into the VM's batch (`extra` adds end-time attributes),
+/// release the JS cell that was materialized for it, and arm the flush timer.
+/// Returns whether the handle was still live. `NONE`/stale handles are a no-op.
+pub fn end_pooled(
+    global: *mut c_void,
+    span: NativeSpan,
+    end_ns: u64,
+    extra: &mut dyn FnMut(&mut SpanWriter<'_>),
+) -> bool {
+    if !span.is_some() {
+        return false;
+    }
+    let ended = with_local(global, |l| pool::end(l, span, end_ns, extra)).flatten();
+    let live = ended.is_some();
+    if let Some(e) = ended {
+        release_cell(e.js_cell);
+        if e.recorded {
+            if let Some(h) = HOOKS.get() {
+                (h.after_record)(global);
+            }
+        }
+    }
+    live
+}
+
+/// Release a pooled span without recording it (the operation never produced
+/// an outcome worth reporting).
+pub fn discard_pooled(global: *mut c_void, span: NativeSpan) {
+    if !span.is_some() {
+        return;
+    }
+    if let Some(cell) = with_local(global, |l| pool::discard(&mut l.pool, span)) {
+        release_cell(cell);
+    }
+}
+
+fn release_cell(cell: JsCellRef) {
+    if !cell.is_some() {
+        return;
+    }
+    if let Some(h) = HOOKS.get() {
+        (h.release_cell)(cell);
+    }
+}
+
 /// End a leaf span started with [`start_leaf`]; `write` adds attributes.
 #[inline]
 pub fn end_leaf(
@@ -129,8 +192,14 @@ pub fn end_leaf_at(
     let end_ns = clock::or_now(end_ns);
     let recorded = with_local(global, |l| {
         batch::record(&mut l.batch, ScopeId::from(i), &mut |buf: &mut Vec<u8>| {
-            let mut w = SpanWriter::begin(buf, stub, name, kind, end_ns);
-            w.limit_values(crate::state().limits.attribute_value_length);
+            let mut w = SpanWriter::begin(
+                buf,
+                stub,
+                name,
+                kind,
+                end_ns,
+                crate::state().limits.attribute_value_length,
+            );
             write(&mut w);
             w.finish();
         });

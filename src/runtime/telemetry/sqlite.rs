@@ -25,7 +25,7 @@ pub extern "C" fn Bun__Telemetry__sqliteBegin(
     };
     // `db.namespace` for SQLite is the main database file's base name.
     let name = bun_paths::basename(file);
-    let span = db::begin(
+    db::begin(
         global.as_ptr().cast(),
         System::Sqlite,
         &ConnectionInfo {
@@ -33,14 +33,8 @@ pub extern "C" fn Bun__Telemetry__sqliteBegin(
             port: 0,
             namespace: name,
         },
-    );
-    let recording = super::local(global)
-        .and_then(|l| bun_telemetry::pool::with_ref(&l.pool, span, |s| s.is_recording()));
-    if recording != Some(true) {
-        crate::telemetry::discard_native(global, span);
-        return 0;
-    }
-    span.0
+    )
+    .0
 }
 
 /// Finish a span from `Bun__Telemetry__sqliteBegin`. `errcode == 0` ⇒ ok.

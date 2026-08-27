@@ -189,31 +189,12 @@ pub fn end_native(
     end_ns: u64,
     mut extra: impl FnMut(&mut SpanWriter<'_>),
 ) {
-    let Some(mut l) = local(global) else { return };
-    let ended = pool::end(&mut l, span, end_ns, &mut extra);
-    drop(l);
-    finish_ended(global, ended);
-}
-
-#[inline]
-pub(super) fn finish_ended(global: &JSGlobalObject, ended: Option<pool::Ended>) {
-    if let Some(e) = ended {
-        release_cell(e.js_cell);
-        if e.recorded {
-            super::after_record(global);
-        }
-    }
+    bun_telemetry::rt::end_pooled(global.as_ptr().cast(), span, end_ns, &mut extra);
 }
 
 /// Drop a native-owned span without recording it.
 pub fn discard_native(global: &JSGlobalObject, span: NativeSpan) {
-    if !span.is_some() {
-        return;
-    }
-    let Some(mut l) = local(global) else { return };
-    let cell = pool::discard(&mut l.pool, span);
-    drop(l);
-    release_cell(cell);
+    bun_telemetry::rt::discard_pooled(global.as_ptr().cast(), span);
 }
 
 // ───────────────────── ABI for JSTelemetrySpan.cpp ─────────────────────
@@ -420,12 +401,9 @@ impl Scalar {
             _ => return None,
         })
     }
-    fn value<'a>(&self, bytes: &'a [u8], value_limit: usize) -> Value<'a> {
+    fn value<'a>(&self, bytes: &'a [u8]) -> Value<'a> {
         match *self {
-            Scalar::Str(s, e) => Value::Str(bun_telemetry::otlp::truncate_utf8(
-                &bytes[s..e],
-                value_limit,
-            )),
+            Scalar::Str(s, e) => Value::Str(&bytes[s..e]),
             Scalar::Bool(b) => Value::Bool(b),
             Scalar::Int(i) => Value::Int(i),
             Scalar::Double(d) => Value::Double(d),
@@ -435,13 +413,13 @@ impl Scalar {
 
 /// Decode `refs` and hand each `(key, value)` to `emit`, in order. Top-level
 /// strings borrow the JS characters directly when they are ASCII; `scratch`
-/// ([key, value, array bytes]) absorbs the rest so nothing allocates per call
-/// once warm.
+/// ([key, value, array bytes]) absorbs the rest so a scalar attribute does not
+/// allocate once warm (an array attribute allocates two small `Vec`s). The
+/// sinks apply `attributeValueLengthLimit`; values arrive here untruncated.
 #[inline]
 fn each_attr(
     refs: &[AttrRef],
     pool: &AttrPool,
-    value_limit: usize,
     scratch: &mut [Vec<u8>; 3],
     mut emit: impl FnMut(&[u8], &Value<'_>),
 ) {
@@ -455,10 +433,7 @@ fn each_attr(
             attr_kind::STRING => {
                 // SAFETY: `kind` selects the live union member (TelemetryAttrGatherer::fill).
                 let s = utf8(unsafe { &a.value.string }, val_buf);
-                emit(
-                    key,
-                    &Value::Str(bun_telemetry::otlp::truncate_utf8(s, value_limit)),
-                );
+                emit(key, &Value::Str(s));
             }
             // SAFETY: as above.
             attr_kind::BOOL => emit(key, &Value::Bool(unsafe { a.value.integer } != 0)),
@@ -474,10 +449,7 @@ fn each_attr(
                     .iter()
                     .filter_map(|it| Scalar::read(it, arr_buf))
                     .collect();
-                let values: Vec<Value<'_>> = scalars
-                    .iter()
-                    .map(|s| s.value(arr_buf, value_limit))
-                    .collect();
+                let values: Vec<Value<'_>> = scalars.iter().map(|s| s.value(arr_buf)).collect();
                 emit(key, &Value::Array(&values));
             }
             _ => {}
@@ -490,10 +462,9 @@ fn entry_attrs(
     mut w: EntryWriter<'_>,
     refs: &[AttrRef],
     pool: &AttrPool,
-    value_limit: usize,
     scratch: &mut [Vec<u8>; 3],
 ) {
-    each_attr(refs, pool, value_limit, scratch, |k, v| w.attr(k, v));
+    each_attr(refs, pool, scratch, |k, v| w.attr(k, v));
 }
 
 fn status_code(api: u8) -> StatusCode {
@@ -532,8 +503,7 @@ pub extern "C" fn Bun__Telemetry__stubStart(
     };
     if parent.is_some_and(|c| c.flags.suppressed()) {
         // Under suppressTracing(): a no-op span that keeps suppressing.
-        *out = carrier(SpanStub::NONE.ctx, false);
-        out.ctx.flags = Flags(out.ctx.flags.0 | Flags::SUPPRESSED);
+        *out = suppressed_stub();
         return;
     }
     let now = clock::or_now(start_ns);
@@ -574,9 +544,20 @@ pub fn with_active_trace_state<R>(global: &JSGlobalObject, f: impl FnOnce(&[u8])
 
 /// A non-recording carrier cell with the SUPPRESSED bit (see VmState::enter_suppressed).
 pub(crate) fn suppressed_carrier_cell(global: &JSGlobalObject) -> JSValue {
+    Bun__TelemetrySpan__createNative(global, &suppressed_stub(), 0, 0, 0)
+}
+
+/// The carrier `context.with(suppressTracing(ctx), …)` activates: no span
+/// (root or child) starts under it.
+fn suppressed_stub() -> SpanStub {
     let mut stub = carrier(SpanStub::NONE.ctx, false);
     stub.ctx.flags = Flags(stub.ctx.flags.0 | Flags::SUPPRESSED);
-    Bun__TelemetrySpan__createNative(global, &stub, 0, 0, 0)
+    stub
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Telemetry__suppressedStub(out: &mut SpanStub) {
+    *out = suppressed_stub();
 }
 
 fn carrier(ctx: SpanContext, remote: bool) -> SpanStub {
@@ -594,27 +575,34 @@ fn carrier(ctx: SpanContext, remote: bool) -> SpanStub {
     }
 }
 
-/// A non-recording carrier for a (possibly remote) span context given as hex ids.
+/// A non-recording carrier for a (possibly remote) span context given as hex
+/// ids. Either id null or not valid hex: `*out` is the all-invalid carrier and
+/// the result is false. Always writes `*out`.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Telemetry__stubFromHexIds(
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn Bun__Telemetry__carrierStub(
     out: &mut SpanStub,
-    trace_id: &JsString,
-    span_id: &JsString,
+    trace_id: *const JsString,
+    span_id: *const JsString,
     trace_flags: u8,
     remote: bool,
 ) -> bool {
-    let Some(trace_id) = TraceId::from_hex(trace_id.to_utf8().slice()) else {
+    // SAFETY: C++ passes null or a borrowed string that outlives the call.
+    let ids = unsafe { trace_id.as_ref().zip(span_id.as_ref()) }.and_then(|(t, s)| {
+        Some((
+            TraceId::from_hex(t.to_utf8().slice())?,
+            SpanId::from_hex(s.to_utf8().slice())?,
+        ))
+    });
+    let Some((trace_id, span_id)) = ids else {
+        *out = carrier(SpanStub::NONE.ctx, false);
         return false;
     };
-    let Some(span_id) = SpanId::from_hex(span_id.to_utf8().slice()) else {
-        return false;
-    };
-    let flags = Flags(trace_flags);
     *out = carrier(
         SpanContext {
             trace_id,
             span_id,
-            flags,
+            flags: Flags(trace_flags),
         },
         remote,
     );
@@ -675,7 +663,6 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(global: &JSGlobalObject, desc: &End
         return;
     }
     let lim = limits();
-    let value_limit = lim.attribute_value_length as usize;
     let end_ns = clock::or_now(desc.end_ns);
     let attrs = desc.pool.slice(desc.attrs);
     let kept_attrs = &attrs[..attrs.len().min(lim.attributes as usize)];
@@ -701,24 +688,31 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(global: &JSGlobalObject, desc: &End
         let [sc @ .., name_buf] = sc;
         let name = utf8(&desc.name, name_buf);
         batch::record(batch, ScopeId(desc.scope), &mut |buf: &mut Vec<u8>| {
-            let mut w = SpanWriter::begin(buf, stub, name, SpanKind::from_api(desc.kind), end_ns);
+            let mut w = SpanWriter::begin(
+                buf,
+                stub,
+                name,
+                SpanKind::from_api(desc.kind),
+                end_ns,
+                lim.attribute_value_length,
+            );
             if !desc.trace_state.is_empty() {
                 w.trace_state(desc.trace_state.to_utf8().slice());
             }
-            each_attr(kept_attrs, &desc.pool, value_limit, sc, |k, v| {
+            each_attr(kept_attrs, &desc.pool, sc, |k, v| {
                 w.attr_bytes_key(k, *v);
             });
             for e in kept_events {
                 let time_ns = if e.time_ns == 0 { end_ns } else { e.time_ns };
                 let ev = w.begin_event(e.name.to_utf8().slice(), time_ns);
-                entry_attrs(ev, desc.pool.slice(e.attrs), &desc.pool, value_limit, sc);
+                entry_attrs(ev, desc.pool.slice(e.attrs), &desc.pool, sc);
             }
             for lk in kept_links {
                 let Some(ctx) = link_context(lk) else {
                     continue;
                 };
                 let lw = w.begin_link(&ctx, lk.trace_state.to_utf8().slice());
-                entry_attrs(lw, desc.pool.slice(lk.attrs), &desc.pool, value_limit, sc);
+                entry_attrs(lw, desc.pool.slice(lk.attrs), &desc.pool, sc);
             }
             let dropped_attrs = desc.dropped_attrs + (attrs.len() - kept_attrs.len()) as u32;
             if dropped_attrs != 0 {
@@ -755,14 +749,12 @@ pub extern "C" fn Bun__Telemetry__nativeEnd(
     handle: u64,
     end_ns: u64,
 ) -> bool {
-    let Some(mut l) = local(global) else {
-        return false;
-    };
-    let ended = pool::end(&mut l, NativeSpan(handle), end_ns, &mut |_| {});
-    drop(l);
-    let live = ended.is_some();
-    finish_ended(global, ended);
-    live
+    bun_telemetry::rt::end_pooled(
+        global.as_ptr().cast(),
+        NativeSpan(handle),
+        end_ns,
+        &mut |_| {},
+    )
 }
 
 /// Identity of a live pooled span; false (and `out` untouched) once it has ended.
@@ -799,10 +791,17 @@ pub extern "C" fn Bun__Telemetry__poolMaterialize(global: &JSGlobalObject, handl
         }
         let v = Bun__TelemetrySpan__createNative(global, &stub, scope.0, kind.to_api(), native.0);
         v.protect();
-        if let Some(mut l) = local(global) {
-            pool::with(&mut l.pool, native, |s| {
-                s.js_cell = bun_telemetry::JsCellRef(v.0)
-            });
+        // Pin only a cell the slot now owns; an unowned pinned cell would never be released.
+        let stored = local(global)
+            .and_then(|mut l| {
+                pool::with(&mut l.pool, native, |s| {
+                    s.js_cell = bun_telemetry::JsCellRef(v.0)
+                })
+            })
+            .is_some();
+        if !stored {
+            release_cell(bun_telemetry::JsCellRef(v.0));
+            return JSValue::UNDEFINED;
         }
         return v;
     }
@@ -826,15 +825,9 @@ pub extern "C" fn Bun__Telemetry__nativeSetAttributes(
         return false;
     }
     let [scratch @ .., _] = scratch;
-    each_attr(
-        attrs.items(),
-        attrs,
-        lim.attribute_value_length as usize,
-        scratch,
-        |k, v| {
-            pool::with(pool, NativeSpan(handle), |s| s.set_attribute(k, v, lim));
-        },
-    );
+    each_attr(attrs.items(), attrs, scratch, |k, v| {
+        pool::with(pool, NativeSpan(handle), |s| s.set_attribute(k, v, lim));
+    });
     true
 }
 
@@ -873,14 +866,13 @@ pub extern "C" fn Bun__Telemetry__nativeAddEvent(
     attrs: &AttrPool,
 ) {
     let lim = limits();
-    let value_limit = lim.attribute_value_length as usize;
     let Some(mut l) = local(global) else { return };
     let Local { pool, scratch, .. } = &mut *l;
     let [scratch @ .., name_buf] = scratch;
     let name = utf8(&event.name, name_buf);
     pool::with(pool, NativeSpan(handle), |s| {
         if let Some(ev) = s.begin_event(name, event.time_ns, lim) {
-            entry_attrs(ev, attrs.slice(event.attrs), attrs, value_limit, scratch);
+            entry_attrs(ev, attrs.slice(event.attrs), attrs, scratch);
         }
     });
 }
@@ -896,13 +888,12 @@ pub extern "C" fn Bun__Telemetry__nativeAddLink(
     let Some(ctx) = link_context(link) else {
         return;
     };
-    let value_limit = lim.attribute_value_length as usize;
     let Some(mut l) = local(global) else { return };
     let Local { pool, scratch, .. } = &mut *l;
     let [scratch @ .., _] = scratch;
     pool::with(pool, NativeSpan(handle), |s| {
         if let Some(lw) = s.begin_link(&ctx, link.trace_state.to_utf8().slice(), lim) {
-            entry_attrs(lw, attrs.slice(link.attrs), attrs, value_limit, scratch);
+            entry_attrs(lw, attrs.slice(link.attrs), attrs, scratch);
         }
     });
 }
@@ -969,6 +960,12 @@ pub fn record_exception(
     span: NativeSpan,
     err: JSValue,
 ) -> bun_jsc::JsResult<()> {
+    // Describing the error runs its getters; a span that records nothing must not.
+    if !local(global)
+        .is_some_and(|l| pool::with_ref(&l.pool, span, |s| s.is_recording()).unwrap_or(false))
+    {
+        return Ok(());
+    }
     let mut ty_s = None;
     let mut msg_s = None;
     let mut stack_s = None;

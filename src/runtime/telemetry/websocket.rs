@@ -1,10 +1,10 @@
-//! WebSocket spans: server message handling and client connect.
+//! Server-side WebSocket message spans (client connect spans live in http_jsc WebSocketUpgradeClient).
 
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_telemetry::pool::{self, NativeSpan};
-use bun_telemetry::{Instrument, ScopeId, SpanContext, SpanKind, SpanStub, Value, clock};
+use bun_telemetry::{Instrument, SpanContext, SpanKind, Value};
 
-use super::{Entered, local, state};
+use super::{Entered, local};
 
 unsafe extern "C" {
     safe fn Bun__Telemetry__observeSettlement(
@@ -22,12 +22,11 @@ pub fn begin_message(
     link: &SpanContext,
     binary: bool,
     size: usize,
-    server: bool,
 ) -> Option<(NativeSpan, Entered)> {
     if !bun_telemetry::enabled(Instrument::WebSocket) {
         return None;
     }
-    begin_message_enabled(global, link, binary, size, server)
+    begin_message_enabled(global, link, binary, size)
 }
 
 #[cold]
@@ -37,30 +36,19 @@ fn begin_message_enabled(
     link: &SpanContext,
     binary: bool,
     size: usize,
-    server: bool,
 ) -> Option<(NativeSpan, Entered)> {
-    let parent = super::active_context(global);
-    if parent.is_none() && !bun_telemetry::allows_root(Instrument::WebSocket) {
+    let g = global.as_ptr().cast();
+    let stub = bun_telemetry::rt::start_leaf(g, Instrument::WebSocket);
+    if !stub.is_some() {
         return None;
     }
-    let mut lo = local(global)?;
-    let stub = SpanStub::start(
-        &mut lo.rng,
-        parent.as_ref(),
-        &state().sampler,
-        clock::now_unix_nanos(),
-    );
-    let kind = if server {
-        SpanKind::Server
-    } else {
-        SpanKind::Client
-    };
-    let span = pool::begin_with(
-        &mut lo.pool,
+    // A non-recording message span still takes a slot: it is the handler's active parent.
+    let span = bun_telemetry::rt::begin_pooled(
+        g,
+        Instrument::WebSocket,
         stub,
-        ScopeId::from(Instrument::WebSocket),
         b"websocket.message",
-        kind,
+        SpanKind::Server,
         |s| {
             if !stub.is_recording() {
                 return;
@@ -78,7 +66,9 @@ fn begin_message_enabled(
             }
         },
     );
-    drop(lo);
+    if !span.is_some() {
+        return None;
+    }
     Some((
         span,
         Entered::new(global, super::native_context_value(span)),
@@ -98,9 +88,16 @@ pub fn end_message(
                 // An async handler: the span covers the promise and records its
                 // rejection, like Bun.otel.span(name, async fn).
                 let cell = super::span::Bun__Telemetry__poolMaterialize(global, span.0);
-                let derived = bun_jsc::host_fn::from_js_host_call(global, || {
+                let derived = match bun_jsc::host_fn::from_js_host_call(global, || {
                     Bun__Telemetry__observeSettlement(global, result, cell)
-                })?;
+                }) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        // The cell was just pinned; an exception here must not strand the slot.
+                        super::end_native(global, span, 0, |_| {});
+                        return Err(e);
+                    }
+                };
                 if !derived.is_undefined() {
                     // Observing marks the handler's promise handled; the derived
                     // promise rethrows the same reason and nobody handles it, so

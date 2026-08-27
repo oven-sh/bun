@@ -4,7 +4,7 @@
 use core::ffi::c_void;
 
 use crate::pool::{self, NativeSpan};
-use crate::{Instrument, ScopeId, SpanKind, Value, rt};
+use crate::{Instrument, SpanKind, Value, rt};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum System {
@@ -55,43 +55,37 @@ pub struct DbError<'a> {
 /// Start a CLIENT span for one query/command. `NativeSpan::NONE` when disabled.
 pub fn begin(global: *mut c_void, system: System, conn: &ConnectionInfo<'_>) -> NativeSpan {
     let stub = rt::start_leaf(global, system.instrument());
-    if !stub.is_some() {
+    // A query span is a leaf that is never made active: one that does not
+    // record has nothing to propagate either, so it takes no slot.
+    if !stub.is_recording() {
         return NativeSpan::NONE;
     }
-    let span = rt::with_local(global, |local| {
-        pool::begin_with(
-            &mut local.pool,
-            stub,
-            ScopeId::from(system.instrument()),
-            // semconv span name is `{operation} {target}`; the operation is
-            // prepended at end(). Target: namespace, else the system name.
-            if conn.namespace.is_empty() {
-                system.name().as_bytes()
-            } else {
-                conn.namespace
-            },
-            SpanKind::Client,
-            |s| {
-                if !stub.is_recording() {
-                    return;
+    rt::begin_pooled(
+        global,
+        system.instrument(),
+        stub,
+        // semconv span name is `{operation} {target}`; the operation is
+        // prepended at end(). Target: namespace, else the system name.
+        if conn.namespace.is_empty() {
+            system.name().as_bytes()
+        } else {
+            conn.namespace
+        },
+        SpanKind::Client,
+        |s| {
+            let l = &crate::state().limits;
+            s.push_attribute(b"db.system.name", &Value::Str(system.name().as_bytes()), l);
+            if !conn.namespace.is_empty() {
+                s.push_attribute(b"db.namespace", &Value::Str(conn.namespace), l);
+            }
+            if !conn.host.is_empty() {
+                s.push_attribute(b"server.address", &Value::Str(conn.host), l);
+                if conn.port != 0 {
+                    s.push_attribute(b"server.port", &Value::Int(conn.port as i64), l);
                 }
-                let l = &crate::state().limits;
-                s.push_attribute(b"db.system.name", &Value::Str(system.name().as_bytes()), l);
-                if !conn.namespace.is_empty() {
-                    s.push_attribute(b"db.namespace", &Value::Str(conn.namespace), l);
-                }
-                if !conn.host.is_empty() {
-                    s.push_attribute(b"server.address", &Value::Str(conn.host), l);
-                    if conn.port != 0 {
-                        s.push_attribute(b"server.port", &Value::Int(conn.port as i64), l);
-                    }
-                }
-            },
-        )
-    })
-    .unwrap_or(NativeSpan::NONE);
-    rt::inherit_trace_state(global, span);
-    span
+            }
+        },
+    )
 }
 
 bun_core::comptime_string_map! {
@@ -206,15 +200,7 @@ pub fn sql_operation(sql: &[u8]) -> Option<&'static str> {
 
 /// Drop a query span without recording it (the query never got a reply).
 pub fn discard(global: *mut c_void, span: NativeSpan) {
-    if !span.is_some() {
-        return;
-    }
-    let cell = rt::with_local(global, |local| pool::discard(&mut local.pool, span));
-    if let (Some(h), Some(cell)) = (rt::hooks(), cell) {
-        if cell.is_some() {
-            (h.release_cell)(cell);
-        }
-    }
+    rt::discard_pooled(global, span)
 }
 
 /// Finish a query span. `statement` is recorded as `db.query.text` when
@@ -225,12 +211,11 @@ pub fn end(global: *mut c_void, span: NativeSpan, statement: &[u8], error: Optio
     }
     let op = sql_operation(statement).map(str::as_bytes);
     let capture = crate::capture_db_statement();
-    let ended = rt::with_local(global, |local| {
-        if let Some(o) = op {
+    if let Some(o) = op {
+        rt::with_local(global, |local| {
             pool::with(&mut local.pool, span, |s| {
                 // `{operation} {target}` when there is a namespace, else the operation.
-                let has_target = crate::otlp::find_attribute(&s.attrs, b"db.namespace").is_some();
-                if has_target {
+                if s.has_attribute(b"db.namespace") {
                     // prefix in place: the slot's name buffer is reused across spans
                     s.name
                         .splice(0..0, o.iter().copied().chain(core::iter::once(b' ')));
@@ -239,40 +224,31 @@ pub fn end(global: *mut c_void, span: NativeSpan, statement: &[u8], error: Optio
                     s.name.extend_from_slice(o);
                 }
             });
-        }
-        pool::end(local, span, 0, &mut |w| {
-            if let Some(o) = op {
-                w.attr("db.operation.name", o);
-            }
-            if capture && !statement.is_empty() {
-                // Cap very large statements; collectors reject multi-MB attributes.
-                w.attr(
-                    "db.query.text",
-                    crate::otlp::truncate_utf8(statement, 16 * 1024),
-                );
-            }
-            if let Some(DbError {
-                ty,
-                message,
-                from_server,
-            }) = error
-            {
-                if from_server {
-                    w.attr_opt("db.response.status_code", ty);
-                }
-                w.fail(if ty.is_empty() { b"_OTHER" } else { ty }, message);
-            }
-        })
-    })
-    .flatten();
-    if let (Some(h), Some(e)) = (rt::hooks(), &ended) {
-        if e.js_cell.is_some() {
-            (h.release_cell)(e.js_cell);
-        }
-        if e.recorded {
-            (h.after_record)(global);
-        }
+        });
     }
+    rt::end_pooled(global, span, 0, &mut |w| {
+        if let Some(o) = op {
+            w.attr("db.operation.name", o);
+        }
+        if capture && !statement.is_empty() {
+            // Cap very large statements; collectors reject multi-MB attributes.
+            w.attr(
+                "db.query.text",
+                crate::otlp::truncate_utf8(statement, 16 * 1024),
+            );
+        }
+        if let Some(DbError {
+            ty,
+            message,
+            from_server,
+        }) = error
+        {
+            if from_server {
+                w.attr_opt("db.response.status_code", ty);
+            }
+            w.fail(if ty.is_empty() { b"_OTHER" } else { ty }, message);
+        }
+    });
 }
 
 #[cfg(test)]

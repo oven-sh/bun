@@ -64,10 +64,8 @@ pub fn begin(
         ScopeId::from(Instrument::HttpServer),
         b"",
         SpanKind::Server,
+        trace_state,
         |s| {
-            if !trace_state.is_empty() {
-                s.trace_state.extend_from_slice(trace_state);
-            }
             if let Some(b) = baggage {
                 s.baggage.extend_from_slice(b);
             }
@@ -214,17 +212,16 @@ pub fn end_with(
     aborted: bool,
     handler_error: bool,
 ) {
-    let Some(mut l) = local(global) else { return };
-    pool::with(&mut l.pool, span, |s| {
-        s.http.status = status;
-        if aborted {
-            s.http.flags |= R::FLAG_ABORTED;
-        }
-        if handler_error {
-            s.http.flags |= R::FLAG_HANDLER_ERROR;
-        }
-    });
-    let ended = pool::end(&mut l, span, 0, &mut |_| {});
-    drop(l);
-    super::span::finish_ended(global, ended);
+    if let Some(mut l) = local(global) {
+        pool::with(&mut l.pool, span, |s| {
+            s.http.status = status;
+            if aborted {
+                s.http.flags |= R::FLAG_ABORTED;
+            }
+            if handler_error {
+                s.http.flags |= R::FLAG_HANDLER_ERROR;
+            }
+        });
+    }
+    super::end_native(global, span, 0, |_| {});
 }

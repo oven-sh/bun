@@ -243,9 +243,6 @@ impl Promise {
             return;
         };
         bun_telemetry::pool::with(&mut local.pool, span, |s| {
-            if !s.is_recording() {
-                return;
-            }
             let mut upper = [0u8; 24];
             let n = command.command.len().min(upper.len());
             for (dst, c) in upper.iter_mut().zip(&command.command[..n]) {

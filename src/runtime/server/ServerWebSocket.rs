@@ -550,7 +550,6 @@ impl ServerWebSocket {
             &self.otel_link,
             opcode == Opcode::Binary,
             message.len(),
-            true,
         );
         ws.cork(&mut corker, Corker::run);
         let result = match corker.result {

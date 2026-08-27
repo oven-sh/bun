@@ -63,6 +63,7 @@ import {
   isWindows,
   isX64,
   markBuildkiteStepReported,
+  parseJunitFileSuites,
   printEnvironment,
   reportAnnotationToBuildKite,
   startGroup,
@@ -1018,32 +1019,9 @@ async function runTests() {
       );
       if (crashes) process.stderr.write(crashes);
 
-      const suites = new Map(); // repo-relative path -> { failures, seconds, cases: [{name, message}] }
-      const unescapeXml = str =>
-        str
-          .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
-          .replace(/&quot;/g, '"')
-          .replace(/&apos;/g, "'")
-          .replace(/&lt;/g, "<")
-          .replace(/&gt;/g, ">")
-          .replace(/&amp;/g, "&");
+      let suites = new Map(); // repo-relative path -> { failures, seconds, cases: [{name, message}] }
       try {
-        const xml = readFileSync(junitPath, "utf-8");
-        for (const [, attrs] of xml.matchAll(/<testsuite\b([^>]*)>/g)) {
-          const file = /\bfile="([^"]+)"/.exec(attrs)?.[1];
-          const failures = Number(/\bfailures="(\d+)"/.exec(attrs)?.[1] ?? 0);
-          const seconds = Number(/\btime="([\d.]+)"/.exec(attrs)?.[1] ?? 0);
-          if (file) suites.set(unescapeXml(file).replaceAll("\\", "/"), { failures, seconds, cases: [] });
-        }
-        for (const [, caseAttrs, failureAttrs] of xml.matchAll(/<testcase\b([^>]*)>\s*<failure\b([^>]*)>/g)) {
-          const file = /\bfile="([^"]+)"/.exec(caseAttrs)?.[1];
-          const entry = file && suites.get(unescapeXml(file).replaceAll("\\", "/"));
-          if (!entry) continue;
-          entry.cases.push({
-            name: unescapeXml(/\bname="([^"]*)"/.exec(caseAttrs)?.[1] ?? "(unnamed)"),
-            message: unescapeXml(/\bmessage="([^"]*)"/.exec(failureAttrs)?.[1] ?? ""),
-          });
-        }
+        suites = parseJunitFileSuites(readFileSync(junitPath, "utf-8"));
       } catch {}
       if (suites.size && isBuildkite) uploadArtifactsToBuildKite(junitPath);
       else rmSync(junitPath, { force: true });

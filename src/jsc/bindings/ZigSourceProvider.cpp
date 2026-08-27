@@ -16,6 +16,7 @@
 #include <JavaScriptCore/SourceCodeKey.h>
 #include <mimalloc.h>
 #include <JavaScriptCore/CodeCache.h>
+#include "BunBuiltinNames.h"
 
 namespace Zig {
 
@@ -170,17 +171,37 @@ extern "C" void CachedBytecode__deref(JSC::CachedBytecode* cachedBytecode)
 }
 
 JSC::VM& vmForBytecodeCache();
+static thread_local JSC::VM* s_vmForBytecodeCache = nullptr;
+// The builtins parse with private @names; this VM has no JSVMClientData to register Bun's, so it owns them directly.
+static thread_local std::unique_ptr<WebCore::BunBuiltinNames> s_builtinNamesForBytecodeCache;
+
 JSC::VM& vmForBytecodeCache()
 {
-    static thread_local JSC::VM* vmForBytecodeCache = nullptr;
-    if (!vmForBytecodeCache) {
+    if (!s_vmForBytecodeCache) {
         const auto heapSize = JSC::HeapType::Small;
         auto vmPtr = JSC::VM::tryCreate(heapSize);
         vmPtr->refSuppressingSaferCPPChecking();
-        vmForBytecodeCache = vmPtr.get();
+        s_vmForBytecodeCache = vmPtr.get();
         vmPtr->heap.acquireAccess();
     }
-    return *vmForBytecodeCache;
+    return *s_vmForBytecodeCache;
+}
+
+void ensureBuiltinNamesForBytecodeCache(JSC::VM& vm)
+{
+    ASSERT(&vm == s_vmForBytecodeCache);
+    if (!s_builtinNamesForBytecodeCache)
+        s_builtinNamesForBytecodeCache = WebCore::BunBuiltinNames::createStandalone(vm);
+}
+
+extern "C" void Bun__destroyBytecodeCacheVM()
+{
+    JSC::VM* vm = std::exchange(s_vmForBytecodeCache, nullptr);
+    if (!vm)
+        return;
+    JSC::JSLockHolder locker(*vm);
+    s_builtinNamesForBytecodeCache = nullptr;
+    vm->derefSuppressingSaferCPPChecking();
 }
 
 extern "C" JSC::EncoderStringTable* Bun__EncoderStringTable__create()
@@ -205,7 +226,7 @@ extern "C" void Bun__DecoderStringTable__install(JSC::VM* vm, const uint8_t* byt
     static_cast<WebCore::JSVMClientData*>(vm->clientData)->setDecoderStringTable(std::span<const uint8_t>(bytes, len));
 }
 
-extern "C" bool generateCachedModuleByteCodeFromSourceCode(const BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, JSC::EncoderStringTable* externalStrings)
+extern "C" bool generateCachedModuleByteCodeFromSourceCode(const BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, uint32_t depth, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, JSC::EncoderStringTable* externalStrings)
 {
     std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
     JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
@@ -218,7 +239,7 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(const BunString* sour
     EvalContextType evalContextType = EvalContextType::None;
 
     ParserError parserError;
-    UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = JSC::recursivelyGenerateUnlinkedCodeBlockForModuleProgram(vm, sourceCode, lexicallyScopedFeatures, scriptMode, {}, parserError, evalContextType);
+    UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = JSC::recursivelyGenerateUnlinkedCodeBlockForModuleProgram(vm, sourceCode, lexicallyScopedFeatures, scriptMode, {}, parserError, evalContextType, depth);
     if (parserError.isValid())
         return false;
     if (!unlinkedCodeBlock)
@@ -228,7 +249,9 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(const BunString* sour
 
     dataLogLnIf(JSC::Options::verboseDiskCache(), "[Bytecode Build] generateModule url=", sourceProviderURL->toWTFString(), " origin=", sourceCode.provider()->sourceOrigin().url().string(), " sourceSize=", inputSourceCodeSize, " keyHash=", key.hash());
 
-    RefPtr<JSC::CachedBytecode> cachedBytecode = JSC::encodeCodeBlock(vm, key, unlinkedCodeBlock, externalStrings);
+    // A --compile payload is a section of the executable: no per-record checksums, no patchable records.
+    auto checksums = externalStrings ? JSC::BytecodeCacheChecksums::No : JSC::BytecodeCacheChecksums::Yes;
+    RefPtr<JSC::CachedBytecode> cachedBytecode = JSC::encodeCodeBlock(vm, key, unlinkedCodeBlock, externalStrings, checksums, JSC::BytecodeCacheUpdatable::No);
     if (!cachedBytecode)
         return false;
 
@@ -240,7 +263,7 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(const BunString* sour
     return true;
 }
 
-extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(const BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, JSC::EncoderStringTable* externalStrings)
+extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(const BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, uint32_t depth, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, JSC::EncoderStringTable* externalStrings)
 {
     std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
 
@@ -253,7 +276,7 @@ extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(const BunStr
     EvalContextType evalContextType = EvalContextType::None;
 
     ParserError parserError;
-    UnlinkedProgramCodeBlock* unlinkedCodeBlock = JSC::recursivelyGenerateUnlinkedCodeBlockForProgram(vm, sourceCode, lexicallyScopedFeatures, scriptMode, {}, parserError, evalContextType);
+    UnlinkedProgramCodeBlock* unlinkedCodeBlock = JSC::recursivelyGenerateUnlinkedCodeBlockForProgram(vm, sourceCode, lexicallyScopedFeatures, scriptMode, {}, parserError, evalContextType, depth);
     if (parserError.isValid())
         return false;
     if (!unlinkedCodeBlock)
@@ -263,7 +286,9 @@ extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(const BunStr
 
     dataLogLnIf(JSC::Options::verboseDiskCache(), "[Bytecode Build] generateCJS url=", sourceProviderURL->toWTFString(), " origin=", sourceCode.provider()->sourceOrigin().url().string(), " sourceSize=", inputSourceCodeSize, " keyHash=", key.hash());
 
-    RefPtr<JSC::CachedBytecode> cachedBytecode = JSC::encodeCodeBlock(vm, key, unlinkedCodeBlock, externalStrings);
+    // A --compile payload is a section of the executable: no per-record checksums, no patchable records.
+    auto checksums = externalStrings ? JSC::BytecodeCacheChecksums::No : JSC::BytecodeCacheChecksums::Yes;
+    RefPtr<JSC::CachedBytecode> cachedBytecode = JSC::encodeCodeBlock(vm, key, unlinkedCodeBlock, externalStrings, checksums, JSC::BytecodeCacheUpdatable::No);
     if (!cachedBytecode)
         return false;
 

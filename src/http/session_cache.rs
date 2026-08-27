@@ -182,7 +182,7 @@ unsafe extern "C" {
 pub(crate) fn eligible(client: &crate::HTTPClient<'_>) -> bool {
     client.flags.reject_unauthorized
         && !client.signals.get(signals::Field::CertErrors)
-        && client.unix_socket_path.slice().is_empty()
+        && client.unix_socket_path.is_empty()
         && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE
             .get()
             .unwrap_or(false)

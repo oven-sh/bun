@@ -114,26 +114,30 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
       throw exception;
     }
 
-    // If we can pull out a ModuleNamespaceObject, let's do it.
-    const namespace = $esmNamespaceForCjs(id);
-    if (namespace !== undefined) {
-      // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
-      // Various libraries expect __esModule to be set when using ESM from require().
-      // We don't want to always inject the __esModule export into every module,
-      // And creating an Object wrapper causes the actual exports to not be own properties.
-      // So instead of either of those, we make it so that the __esModule property can be set at runtime.
-      // It only supports "true" and undefined. Anything non-truthy is treated as undefined.
-      // https://github.com/oven-sh/bun/issues/14411
-      if (namespace.__esModule === undefined) {
-        try {
-          namespace.__esModule = true;
-        } catch {
-          // https://github.com/oven-sh/bun/issues/17816
-        }
+    const namespace = out;
+    // In a require cycle the namespace is live while the module body is still
+    // running, so an export named `__esModule` / `module.exports` may be in TDZ.
+    let esModule, moduleExports;
+    try {
+      esModule = namespace.__esModule;
+      moduleExports = namespace["module.exports"];
+    } catch {}
+    // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
+    // Various libraries expect __esModule to be set when using ESM from require().
+    // We don't want to always inject the __esModule export into every module,
+    // And creating an Object wrapper causes the actual exports to not be own properties.
+    // So instead of either of those, we make it so that the __esModule property can be set at runtime.
+    // It only supports "true" and undefined. Anything non-truthy is treated as undefined.
+    // https://github.com/oven-sh/bun/issues/14411
+    if (esModule === undefined) {
+      try {
+        namespace.__esModule = true;
+      } catch {
+        // https://github.com/oven-sh/bun/issues/17816
       }
-
-      return (mod.exports = namespace["module.exports"] ?? namespace);
     }
+
+    return (mod.exports = moduleExports ?? namespace);
   }
 
   const c = $evaluateCommonJSModule(mod, this);
@@ -179,10 +183,10 @@ export function loadEsmIntoCjs(resolvedSpecifier: string) {
 
 $visibility = "Private";
 export function requireESM(this, resolved: string) {
-  var exports = $esmNamespaceForCjs(resolved);
-  if (exports === undefined) {
-    exports = $loadEsmIntoCjs(resolved);
-  }
+  // `$esmLoadSync` answers from the registry for a record that is already
+  // Evaluated, or still Evaluating because this require() sits inside its own
+  // evaluation (a require cycle), before it loads anything.
+  const exports = $loadEsmIntoCjs(resolved);
   if (exports === undefined) {
     throw new TypeError(`require() failed to evaluate module "${resolved}". This is an internal consistentency error.`);
   }
@@ -191,35 +195,37 @@ export function requireESM(this, resolved: string) {
 
 export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: string) {
   $assert(this);
+  let namespace;
   try {
-    $requireESM(id);
+    namespace = $requireESM(id);
   } catch (exception) {
     // Since the ESM code is mostly JS, we need to handle exceptions here.
     $requireMap.$delete(id);
     throw exception;
   }
 
-  // If we can pull out a ModuleNamespaceObject, let's do it.
-  const namespace = $esmNamespaceForCjs(id);
-  if (namespace !== undefined) {
-    // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
-    // Various libraries expect __esModule to be set when using ESM from require().
-    // We don't want to always inject the __esModule export into every module,
-    // And creating an Object wrapper causes the actual exports to not be own properties.
-    // So instead of either of those, we make it so that the __esModule property can be set at runtime.
-    // It only supports "true" and undefined. Anything non-truthy is treated as undefined.
-    // https://github.com/oven-sh/bun/issues/14411
-    if (namespace.__esModule === undefined) {
-      try {
-        namespace.__esModule = true;
-      } catch {
-        // https://github.com/oven-sh/bun/issues/17816
-      }
+  // See `overridableRequire`: TDZ-safe reads for the require-cycle case.
+  let esModule, moduleExports;
+  try {
+    esModule = namespace.__esModule;
+    moduleExports = namespace["module.exports"];
+  } catch {}
+  // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
+  // Various libraries expect __esModule to be set when using ESM from require().
+  // We don't want to always inject the __esModule export into every module,
+  // And creating an Object wrapper causes the actual exports to not be own properties.
+  // So instead of either of those, we make it so that the __esModule property can be set at runtime.
+  // It only supports "true" and undefined. Anything non-truthy is treated as undefined.
+  // https://github.com/oven-sh/bun/issues/14411
+  if (esModule === undefined) {
+    try {
+      namespace.__esModule = true;
+    } catch {
+      // https://github.com/oven-sh/bun/issues/17816
     }
-
-    this.exports = namespace["module.exports"] ?? namespace;
-    return;
   }
+
+  this.exports = moduleExports ?? namespace;
 }
 
 $visibility = "Private";

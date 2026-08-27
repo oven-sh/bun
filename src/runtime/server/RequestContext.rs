@@ -902,7 +902,7 @@ where
 
         self.request_body_buf.set(Vec::new());
         self.response_buf_owned.set(Vec::new());
-        self.response_weakref.with_mut(|w| w.deref());
+        self.response_weakref.set(response::WeakRef::EMPTY);
 
         self.request_body_take_unref();
 
@@ -1426,7 +1426,7 @@ where
 
         if let Some(request) = this.request_mut() {
             request.request_context = AnyRequestContext::NULL;
-            this.request_weakref.with_mut(|w| w.deref());
+            this.request_weakref.set(request::WeakRef::EMPTY);
         }
         // if signal is not aborted, abort the signal
         if let Some(signal) = this.signal.take() {
@@ -1524,7 +1524,7 @@ where
             }
             self.response_jsvalue.set(JSValue::ZERO);
         }
-        self.response_weakref.with_mut(|w| w.deref());
+        self.response_weakref.set(response::WeakRef::EMPTY);
 
         self.detach_request_body_producer();
         self.request_body_readable_stream_ref
@@ -1535,7 +1535,7 @@ where
 
         if let Some(request) = self.request_mut() {
             request.request_context = AnyRequestContext::NULL;
-            self.request_weakref.with_mut(|w| w.deref());
+            self.request_weakref.set(request::WeakRef::EMPTY);
         }
 
         // if signal is not aborted, abort the signal
@@ -3829,7 +3829,7 @@ where
         // 2. The content-disposition header is not present
         if !has_content_disposition && content_type.category.autoset_filename() {
             if let Some(filename) = blob.get_file_name() {
-                let basename = bun_paths::basename(filename);
+                let basename = bun_paths::basename(&filename);
                 if !basename.is_empty() {
                     let mut filename_buf = [0u8; 1024];
                     let truncated = &basename[..basename.len().min(1024 - 32)];
@@ -3944,14 +3944,16 @@ where
     /// [`as_response`]), carrying the allocation's provenance — `WeakPtr` keeps
     /// it past any reborrow.
     unsafe fn set_response(&self, response: *mut Response) {
-        self.response_weakref.with_mut(|weak| {
-            if weak.get().map(std::ptr::from_mut::<Response>) == Some(response) {
-                return;
-            }
-            weak.deref();
-            // SAFETY: caller contract — `response` is live and root-provenanced.
-            *weak = unsafe { response::WeakRef::init_ref(response) };
-        });
+        if self
+            .response_weakref
+            .with_mut(|weak| weak.get().map(std::ptr::from_mut::<Response>))
+            == Some(response)
+        {
+            return;
+        }
+        // SAFETY: caller contract — `response` is live and root-provenanced.
+        self.response_weakref
+            .set(unsafe { response::WeakRef::init_ref(response) });
     }
 
     /// # Safety

@@ -72,6 +72,11 @@ bitflags::bitflags! {
 
         const WAS_ORIGINALLY_REQUIRE = 1 << 9;
 
+        /// A split `require()` (code splitting, target bun): the target is a chunk
+        /// of its own; `path` is pointed at that chunk and the call is printed as
+        /// `import.meta.require(path)`.
+        const CROSS_CHUNK_REQUIRE = 1 << 10;
+
         /// If true, this import can be removed if it's unused
         const IS_EXTERNAL_WITHOUT_SIDE_EFFECTS = 1 << 11;
 

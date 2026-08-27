@@ -1,4 +1,18 @@
+use std::sync::OnceLock;
+
+use bun_threading::ThreadPool;
+use bun_threading::thread_pool::{Config, DEFAULT_THREAD_STACK_SIZE};
+
 use crate::{JSGlobalObject, JSValue, JsResult, Strong};
+
+/// Threads for the platform credential calls. Such a call can block without
+/// bound on something outside the process: a locked keyring whose unlock
+/// prompt nobody answers, or a Secret Service that stopped replying. On the
+/// shared `WorkPool` (one thread per core) that many stuck calls would queue
+/// every file read and hash behind them for good, so the calls get a pool of
+/// their own. The keyring daemon serializes them anyway, so a few threads are
+/// enough.
+const SECRETS_POOL_THREADS: u32 = 4;
 
 // Opaque pointer to C++ SecretsJobOptions struct
 bun_opaque::opaque_ffi! { pub struct SecretsJobOptions; }
@@ -37,6 +51,16 @@ pub(crate) struct SecretsJob {
 impl crate::JobContext for SecretsJob {
     type OffThread = Self;
     type Js = Strong;
+
+    fn pool() -> &'static ThreadPool {
+        static POOL: OnceLock<ThreadPool> = OnceLock::new();
+        POOL.get_or_init(|| {
+            ThreadPool::init(Config {
+                max_threads: SECRETS_POOL_THREADS,
+                stack_size: DEFAULT_THREAD_STACK_SIZE,
+            })
+        })
+    }
 
     fn run(this: &mut Self, done: crate::Completion<Self>) -> Option<crate::Completion<Self>> {
         Bun__SecretsJobOptions__runTask(SecretsJobOptions::opaque_mut(this.options.0));

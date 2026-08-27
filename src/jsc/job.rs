@@ -1,7 +1,8 @@
 //! Work that leaves the JS thread and comes back.
 //!
 //! A [`Job`] is created on the JS thread, does its heavy part on the
-//! [`WorkPool`], and completes on the JS thread again. It holds a
+//! [`WorkPool`] (or the pool its [`JobContext::pool`] names), and completes
+//! on the JS thread again. It holds a
 //! [`Ticket`](crate::Ticket) for the whole trip, so its VM is guaranteed to be
 //! alive throughout and its completion is always delivered: `then` runs while
 //! the VM may still run script, and a completion that lands after the VM began
@@ -23,7 +24,8 @@ use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
 use bun_io::KeepAlive;
-use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
+use bun_threading::ThreadPool;
+use bun_threading::work_pool::{Batch, Task as WorkPoolTask, WorkPool};
 
 use crate::debugger::AsyncTaskTracker;
 use crate::virtual_machine::VirtualMachine;
@@ -185,6 +187,15 @@ pub trait JobContext: Sized + 'static {
     /// can wait on something external. Only such jobs are tracked by the VM.
     const CANCELLABLE: bool = false;
 
+    /// The pool [`run`](Self::run) executes on. The shared [`WorkPool`] (one
+    /// thread per core; file I/O, hashing, DNS, everything) unless `run` can
+    /// block without bound on something outside the process, such as a
+    /// keychain prompt nobody answers. Such a job names a small pool of its
+    /// own, so the instances of it that hang hold up only each other.
+    fn pool() -> &'static ThreadPool {
+        WorkPool::get()
+    }
+
     /// Pool thread, VM not yet in its final wait when the pool reached the job
     /// (a job reached later is handed back unrun, as Node's environment
     /// cleanup `uv_cancel`s queued work). Return `done` to complete now; keep
@@ -331,7 +342,7 @@ impl<C: JobContext> Job<C> {
             if C::CANCELLABLE {
                 cx.vm().jobs.with_mut(|j| j.push(&raw mut (*job).header));
             }
-            WorkPool::schedule(&raw mut (*job).task);
+            C::pool().schedule(Batch::from(&raw mut (*job).task));
         }
     }
 

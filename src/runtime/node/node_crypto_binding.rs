@@ -968,7 +968,7 @@ mod _impl {
             // An option getter may have changed the buffers.
             for input in [&mut ctx.password, &mut ctx.salt] {
                 if IS_ASYNC {
-                    input.make_thread_isolated_copy(global);
+                    input.make_thread_isolated_copy(global)?;
                 } else if let StringOrBuffer::Buffer(buffer) = input {
                     buffer.buffer = ArrayBuffer::from_typed_array(global, buffer.buffer.value);
                 }

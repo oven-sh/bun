@@ -229,8 +229,8 @@ impl PBKDF2 {
                 }
             }
             Flavor::Async => {
-                out.salt.make_thread_isolated_copy(global_this);
-                out.password.make_thread_isolated_copy(global_this);
+                out.salt.make_thread_isolated_copy(global_this)?;
+                out.password.make_thread_isolated_copy(global_this)?;
             }
         }
 

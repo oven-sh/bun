@@ -342,13 +342,17 @@ impl StringOrBuffer<'static> {
     }
 
     /// For a work-pool job without a pin: copies a buffer's current bytes, isolates a string.
-    pub(crate) fn make_thread_isolated_copy(&mut self, global: &JSGlobalObject) {
+    pub(crate) fn make_thread_isolated_copy(&mut self, global: &JSGlobalObject) -> JsResult<()> {
         match self {
             Self::Buffer(buffer) => {
                 if let Some(current) = buffer.buffer.value.as_array_buffer(global) {
                     buffer.buffer = current;
                 }
-                let bytes = buffer.slice().to_vec();
+                let mut bytes = Vec::new();
+                if bytes.try_reserve_exact(buffer.slice().len()).is_err() {
+                    return Err(global.throw_out_of_memory());
+                }
+                bytes.extend_from_slice(buffer.slice());
                 global.vm().report_extra_memory(bytes.len());
                 *self = Self::owned(bytes);
             }
@@ -358,6 +362,7 @@ impl StringOrBuffer<'static> {
             }
             Self::ThreadIsolatedString(_) | Self::Utf8(_) | Self::PinnedBuffer(_) => {}
         }
+        Ok(())
     }
 
     /// `value` is ArrayBuffer-like (the caller checked): borrowed for `Sync`,

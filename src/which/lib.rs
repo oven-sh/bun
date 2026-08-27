@@ -80,7 +80,8 @@ pub fn which_for_spawn<'a>(
             && !cwd.is_empty()
             && std::env::var_os("NoDefaultCurrentDirectoryInExePath").is_none()
         {
-            // Probed like one more `$PATH` directory, without `.com`.
+            // The cwd is one more `$PATH` directory: `.exe`/`.cmd`/`.bat` before the
+            // walk, `.com` after it.
             let mut convert_buf = w_path_buffer_pool::get();
             let mut path_buf = path_buffer_pool::get();
             let spells_executable_extension = ends_with_extension(bin);
@@ -100,6 +101,22 @@ pub fn which_for_spawn<'a>(
                 posix_to_platform_in_place(found);
                 return Some(utf16_result_into(buf, found));
             }
+            if let Some(found) = which_win(&mut *convert_buf, path, cwd, bin) {
+                return Some(utf16_result_into(buf, found));
+            }
+            if spells_executable_extension {
+                return None;
+            }
+            let found = search_bin_in_path(
+                &mut *convert_buf,
+                &mut *path_buf,
+                cwd,
+                bin,
+                false,
+                &WIN_COM_EXTENSION_W,
+            )?;
+            posix_to_platform_in_place(found);
+            return Some(utf16_result_into(buf, found));
         }
     }
     which(buf, path, cwd, bin)
@@ -205,10 +222,8 @@ static WIN_EXTENSIONS_W: [&[u16]; 3] = [w!("exe"), w!("cmd"), w!("bat")];
 static WIN_COM_EXTENSION_W: [&[u16]; 1] = [w!("com")];
 #[cfg(windows)]
 static WIN_ALL_EXTENSIONS_W: [&[u16]; 4] = [w!("exe"), w!("cmd"), w!("bat"), w!("com")];
-#[cfg(windows)]
 const WIN_EXTENSIONS: [&[u8]; 4] = [b"exe", b"cmd", b"bat", b"com"];
 
-#[cfg(windows)]
 pub(crate) fn ends_with_extension(str: &[u8]) -> bool {
     if str.len() < 4 {
         return false;
@@ -227,6 +242,7 @@ pub(crate) fn ends_with_extension(str: &[u8]) -> bool {
 }
 
 /// libuv's `name_has_ext`: a `.` in the last component with something after it.
+#[cfg(windows)]
 fn has_extension(bin: &[u8]) -> bool {
     let name_start = strings::last_index_of_any(bin, b"/\\:").map_or(0, |i| i + 1);
     let name = &bin[name_start..];
@@ -237,8 +253,8 @@ fn has_extension(bin: &[u8]) -> bool {
 }
 
 /// `C:\Windows\System32\chcp.com`: nothing to complete, spawn skips the lookup.
-pub fn is_windows_path_with_extension(bin: &[u8]) -> bool {
-    strings::contains_any(bin, b"/\\") && has_extension(bin)
+pub fn is_windows_path_with_executable_extension(bin: &[u8]) -> bool {
+    strings::contains_any(bin, b"/\\") && ends_with_extension(bin)
 }
 
 /// Returns true when `path` names a Windows batch script (`.cmd` / `.bat`).

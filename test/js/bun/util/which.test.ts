@@ -2,7 +2,7 @@ import { $, which } from "bun";
 import { dlopen, ptr } from "bun:ffi";
 import { expect, test } from "bun:test";
 import { isArm64, isIntelMacOS, isWindows, tempDir, tmpdirSync } from "harness";
-import { chmodSync, existsSync, mkdirSync, realpathSync, rmdirSync, rmSync, symlinkSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, realpathSync, rmdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -90,6 +90,27 @@ if (isWindows) {
       com_alone: join(base, "both.com"),
       missing: null,
       system: join(process.env.SystemRoot ?? "C:\\Windows", "System32", "chcp.com").toLowerCase(),
+    });
+  });
+
+  // Spawn resolves like which: a dotted `\` path without an executable
+  // extension still completes to `.cmd`, and a `.com` in the cwd is found
+  // once the $PATH walk failed.
+  test("spawn completes a dotted path to .cmd and finds a .com in the cwd", () => {
+    const chcp = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "chcp.com");
+    using dir = tempDir("which-spawn", { "deploy.prod.cmd": "@echo cmd-ok\r\n" });
+    const base = String(dir);
+    copyFileSync(chcp, join(base, "whichtest.com"));
+    const run = (cmd: string[]) =>
+      Bun.spawnSync(cmd, { cwd: base, stdout: "pipe", stderr: "pipe" }).stdout.toString().trim();
+    expect({
+      which_dotted: which(join(base, "deploy.prod")),
+      spawn_dotted: run([join(base, "deploy.prod")]),
+      spawn_com_in_cwd: run(["whichtest"]),
+    }).toEqual({
+      which_dotted: join(base, "deploy.prod.cmd"),
+      spawn_dotted: "cmd-ok",
+      spawn_com_in_cwd: expect.stringMatching(/\d+$/),
     });
   });
 

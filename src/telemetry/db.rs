@@ -161,41 +161,81 @@ bun_core::comptime_string_map! {
     };
 }
 
+/// A Latin-1/UTF-8 byte or a UTF-16 code unit read as ASCII. [`sql_operation`]
+/// only matches ASCII, so every other unit reads as one opaque byte.
+pub trait CodeUnit: Copy {
+    fn ascii(self) -> u8;
+    /// Index of the first `*/` in `s`.
+    fn comment_close(s: &[Self]) -> Option<usize>;
+}
+impl CodeUnit for u8 {
+    #[inline]
+    fn ascii(self) -> u8 {
+        self
+    }
+    fn comment_close(s: &[u8]) -> Option<usize> {
+        bun_core::strings::index_of(s, b"*/")
+    }
+}
+impl CodeUnit for u16 {
+    #[inline]
+    fn ascii(self) -> u8 {
+        if self < 0x80 { self as u8 } else { 0xFF }
+    }
+    fn comment_close(s: &[u16]) -> Option<usize> {
+        let mut i = 0;
+        loop {
+            i += bun_core::strings::index_of_any16(&s[i..], &[u16::from(b'*')])?;
+            if s.get(i + 1) == Some(&u16::from(b'/')) {
+                return Some(i);
+            }
+            i += 1;
+        }
+    }
+}
+
 /// The leading SQL verb (`SELECT`, `INSERT`, …) if the statement starts with
 /// one; used for the span name and `db.operation.name`.
-pub fn sql_operation(sql: &[u8]) -> Option<&'static str> {
+pub fn sql_operation<C: CodeUnit>(sql: &[C]) -> Option<&'static str> {
+    let at = |i: usize| sql.get(i).map(|c| c.ascii());
     let mut i = 0;
     // Skip whitespace and `(`; skip `--` line and `/* */` block comments.
     loop {
-        while i < sql.len() && matches!(sql[i], b' ' | b'\t' | b'\n' | b'\r' | b'(') {
+        while matches!(at(i), Some(b' ' | b'\t' | b'\n' | b'\r' | b'(')) {
             i += 1;
         }
-        // `--` (and MySQL's `#`) line comments
-        if sql[i..].starts_with(b"--") || sql.get(i) == Some(&b'#') {
-            while i < sql.len() && sql[i] != b'\n' {
-                i += 1;
+        match (at(i), at(i + 1)) {
+            // `--` (and MySQL's `#`) line comments
+            (Some(b'-'), Some(b'-')) | (Some(b'#'), _) => {
+                while i < sql.len() && at(i) != Some(b'\n') {
+                    i += 1;
+                }
             }
-            continue;
+            (Some(b'/'), Some(b'*')) => {
+                i += 2;
+                i += C::comment_close(&sql[i..])? + 2;
+            }
+            _ => break,
         }
-        if sql[i..].starts_with(b"/*") {
-            i += 2;
-            i += bun_core::strings::index_of(&sql[i..], b"*/")? + 2;
-            continue;
-        }
-        break;
     }
-    let start = i;
-    while i < sql.len() && sql[i].is_ascii_alphabetic() && i - start <= 10 {
-        i += 1;
+    let mut word = [0u8; 10];
+    let mut n = 0;
+    while n < word.len()
+        && let Some(c) = at(i + n)
+        && c.is_ascii_alphabetic()
+    {
+        word[n] = c;
+        n += 1;
     }
-    let word = &sql[start..i];
-    if !(2..=10).contains(&word.len()) {
+    if n < 2 {
         return None;
     }
-    if i < sql.len() && !matches!(sql[i], b' ' | b'\t' | b'\n' | b'\r' | b';' | b'(') {
+    if let Some(next) = at(i + n)
+        && !matches!(next, b' ' | b'\t' | b'\n' | b'\r' | b';' | b'(')
+    {
         return None;
     }
-    SQL_VERBS.get_ascii_case_insensitive(word).copied()
+    SQL_VERBS.get_ascii_case_insensitive(&word[..n]).copied()
 }
 
 /// Drop a query span without recording it (the query never got a reply).
@@ -205,13 +245,10 @@ pub fn discard(global: *mut c_void, span: NativeSpan) {
 
 /// `db.query.text` cap; collectors reject multi-MB attributes.
 const QUERY_TEXT_MAX: usize = 16 * 1024;
-/// Leading text scanned for the verb when the statement is not captured:
-/// room for a prepended comment.
-const VERB_SCAN_MAX: usize = 1024;
 
-/// [`end`] for a statement held as a JS string. Only the leading code units
-/// `end` reads are transcoded, so a Latin-1/UTF-16 statement costs
-/// O(min(len, cap)) per query rather than a whole-text copy.
+/// [`end`] for a statement held as a JS string. The verb is read off the
+/// string's own storage; only the `db.query.text` prefix is transcoded, and
+/// only when statements are captured.
 pub fn end_string(
     global: *mut c_void,
     span: NativeSpan,
@@ -221,30 +258,46 @@ pub fn end_string(
     if !span.is_some() {
         return;
     }
-    let units = if crate::capture_db_statement() {
-        // A code unit is at least one UTF-8 byte, so one unit past the cap
-        // keeps a longer statement longer than QUERY_TEXT_MAX bytes and
-        // `truncate_utf8` still trims it (split trailing sequence included).
-        QUERY_TEXT_MAX + 1
+    let op = if statement.is_utf16() {
+        sql_operation(statement.utf16())
     } else {
-        VERB_SCAN_MAX
+        sql_operation(statement.byte_slice())
     };
-    end(
+    // A code unit is at least one UTF-8 byte, so one unit past the cap keeps
+    // a longer statement longer than QUERY_TEXT_MAX bytes and `truncate_utf8`
+    // still trims it (split trailing sequence included).
+    let text = crate::capture_db_statement().then(|| statement.trunc(QUERY_TEXT_MAX + 1).to_utf8());
+    finish(
         global,
         span,
-        statement.trunc(units).to_utf8().slice(),
+        op,
+        text.as_ref().map_or(&b""[..], |t| t.slice()),
         error,
     );
 }
 
-/// Finish a query span. `statement` is recorded as `db.query.text` when
-/// statement capture is on.
+/// Finish a query span. `statement` is UTF-8 and is recorded as
+/// `db.query.text` when statement capture is on.
 pub fn end(global: *mut c_void, span: NativeSpan, statement: &[u8], error: Option<DbError<'_>>) {
     if !span.is_some() {
         return;
     }
-    let op = sql_operation(statement).map(str::as_bytes);
-    let capture = crate::capture_db_statement();
+    let text: &[u8] = if crate::capture_db_statement() {
+        statement
+    } else {
+        b""
+    };
+    finish(global, span, sql_operation(statement), text, error);
+}
+
+fn finish(
+    global: *mut c_void,
+    span: NativeSpan,
+    op: Option<&'static str>,
+    query_text: &[u8],
+    error: Option<DbError<'_>>,
+) {
+    let op = op.map(str::as_bytes);
     if let Some(o) = op {
         rt::with_local(global, |local| {
             pool::with(&mut local.pool, span, |s| {
@@ -264,10 +317,10 @@ pub fn end(global: *mut c_void, span: NativeSpan, statement: &[u8], error: Optio
         if let Some(o) = op {
             w.attr("db.operation.name", o);
         }
-        if capture && !statement.is_empty() {
+        if !query_text.is_empty() {
             w.attr(
                 "db.query.text",
-                crate::otlp::truncate_utf8(statement, QUERY_TEXT_MAX),
+                crate::otlp::truncate_utf8(query_text, QUERY_TEXT_MAX),
             );
         }
         if let Some(DbError {
@@ -318,6 +371,30 @@ mod tests {
         ];
         for (sql, want) in cases {
             assert_eq!(sql_operation(sql.as_bytes()), *want, "{sql:?}");
+            let wide: Vec<u16> = sql.encode_utf16().collect();
+            assert_eq!(sql_operation(&wide), *want, "utf16 {sql:?}");
         }
+    }
+
+    #[test]
+    fn long_leading_comment() {
+        let comment = format!("/* {} */\n", "x".repeat(20 * 1024));
+        let sql = format!("{comment}CREATE TABLE t (a int)");
+        assert_eq!(sql_operation(sql.as_bytes()), Some("CREATE"));
+        let wide: Vec<u16> = sql.encode_utf16().collect();
+        assert_eq!(sql_operation(&wide), Some("CREATE"));
+        // an identifier that only starts like a verb is not one, however far in
+        let sql = format!("{comment}DO_maintenance(1)");
+        assert_eq!(sql_operation(sql.as_bytes()), None);
+    }
+
+    #[test]
+    fn non_ascii_units_are_not_verbs() {
+        // U+0153 (œ) has low byte 0x53 'S': must not read as ASCII
+        let wide: Vec<u16> = "\u{153}ELECT 1".encode_utf16().collect();
+        assert_eq!(sql_operation(&wide), None);
+        assert_eq!(sql_operation("\u{a0}SELECT 1".as_bytes()), None);
+        let wide: Vec<u16> = "/* \u{1F600} */ select 1".encode_utf16().collect();
+        assert_eq!(sql_operation(&wide), Some("SELECT"));
     }
 }

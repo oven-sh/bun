@@ -267,7 +267,6 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
       // exists for cargo's dep-info on $shim_dest, not for restat.
     });
   }
-
 }
 
 // ───────────────────────────────────────────────────────────────────────────

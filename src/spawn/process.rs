@@ -210,7 +210,7 @@ impl ProcessHandle {
     /// process.
     pub unsafe fn release_in_exit_handler(self, process: *mut Process) {
         debug_assert!(core::ptr::eq(self.0.as_ptr(), process));
-        core::mem::forget(self);
+        let _ = core::mem::ManuallyDrop::new(self);
         // SAFETY: fn contract — live for the callback; this releases the
         // handle's ref through the callback's pointer.
         unsafe {

@@ -500,9 +500,8 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--bundle                         Bundle dependencies into the output. This is the default behavior"
         ),
         parse_param!("--no-bundle                      Transpile file only, do not bundle"),
-        // Hidden compat flags. Old docs showed `bun build --entrypoints ./a.ts`.
-        // `--experimental-css` and `--experimental-html` were the 1.1 opt-ins
-        // for what is now always on.
+        // Hidden compat flags: old docs showed `--entrypoints ./a.ts`, and 1.1
+        // scripts pass the `--experimental-*` opt-ins for what is now always on.
         parse_param!("--entrypoints <STR>..."),
         parse_param!("--experimental-css"),
         parse_param!("--experimental-html"),
@@ -792,13 +791,11 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,
                 _ => &[],
             },
-            // `bun build` has no argv passthrough after the `build` keyword, so
-            // an unknown flag there is a typo that would otherwise ship wrong
-            // output in silence (#40558).
+            // `bun build` has no argv passthrough, so an unknown flag after the
+            // keyword is a typo that would otherwise ship wrong output (#40558).
             reject_unrecognized_flags: cmd == CommandTag::BuildCommand,
-            // esbuild spellings whose value format bun's flag also accepts.
-            // In-tree build scripts use two of them: the react `bun init`
-            // template has `--define:K=V`, node-fallbacks `--external:M`.
+            // esbuild spellings bun's value parsers also accept. The react `bun
+            // init` template uses `--define:K=V`, node-fallbacks `--external:M`.
             colon_value_flags: match cmd {
                 CommandTag::BuildCommand => &[b"define", b"external", b"loader", b"drop"],
                 _ => &[],

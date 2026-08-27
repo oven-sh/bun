@@ -59,8 +59,7 @@ pub struct StreamingClap<'p, 'a, Id, ArgIterator> {
     pub(crate) positional: Option<&'p clap::Param<Id>>,
     pub(crate) diagnostic: Option<&'p mut clap::Diagnostic>,
     pub(crate) short_aliases: &'static [(&'static [u8], &'static [u8])],
-    /// Error on unknown long flags after the first positional instead of the
-    /// default silent skip.
+    /// Error on unknown long flags after the first positional.
     pub(crate) reject_unrecognized_flags: bool,
     /// Long names that also accept esbuild's `--name:VALUE` spelling.
     pub(crate) colon_value_flags: &'static [&'static [u8]],
@@ -935,8 +934,7 @@ mod tests {
             value: Some(b"build"),
         };
 
-        // Unknown flags before the first positional are runtime flags and
-        // are still skipped.
+        // Unknown flags before the first positional are still skipped.
         test_no_err_ex(
             &params,
             &[b"--q", b"build", b"--aa"],

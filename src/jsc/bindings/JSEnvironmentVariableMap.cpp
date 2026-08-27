@@ -921,7 +921,8 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
                 String key(uid);
                 String existing = store->get(key);
                 if (!existing.isNull()) {
-                    syncOSEnv(globalObject, store, key, nullptr);
+                    // A move onto Base, not a delete: the variable stays defined,
+                    // so the OS environment keeps it.
                     store->remove(key);
                     object->putDirect(vm, propertyName, jsString(vm, existing), 0);
                 }

@@ -4481,13 +4481,17 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         newargv.push(core::ptr::null());
 
         // We clone envp so that the memory address of environment variables isn't
-        // the same as the libc one.
+        // the same as the libc one. The watcher thread gets here while the main
+        // thread may be inside a `process.env` write.
         let mut dupe_env: Vec<ZBox> = Vec::new();
-        let mut p = c_environ();
-        while !p.is_null() && !(*p).is_null() {
-            let s = crate::ffi::cstr(*p);
-            dupe_env.push(ZBox::from_vec_with_nul(s.to_bytes().to_vec()));
-            p = p.add(1);
+        {
+            let _environ_guard = ENVIRON_LOCK.read();
+            let mut p = c_environ();
+            while !p.is_null() && !(*p).is_null() {
+                let s = crate::ffi::cstr(*p);
+                dupe_env.push(ZBox::from_vec_with_nul(s.to_bytes().to_vec()));
+                p = p.add(1);
+            }
         }
         let mut envp: Vec<*const core::ffi::c_char> = dupe_env.iter().map(|z| z.as_ptr()).collect();
         envp.push(core::ptr::null());

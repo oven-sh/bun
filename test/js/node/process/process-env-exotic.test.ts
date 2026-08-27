@@ -294,11 +294,38 @@ describe.skipIf(!isPosix)("process.env writes reach the OS environment", () => {
         process.env.PATH = process.env.ENVFIX_TOOL_DIR + ":" + process.env.PATH;
         const after = Bun.which("envfix-tool") !== null;
         const ran = Bun.spawnSync({ cmd: ["envfix-tool"] }).stdout.toString();
-        process.stdout.write(JSON.stringify({ child, before, after, ran }));
+        // An option getter that rewrites PATH while the call is reading its
+        // options must not leave the call holding the replaced value.
+        const long = Buffer.alloc(4096, "p").toString();
+        const rewriting = {
+          get cwd() {
+            for (let i = 0; i < 64; i++) process.env.PATH = long + i + ":" + process.env.ENVFIX_TOOL_DIR;
+            return undefined;
+          },
+        };
+        const whichAfterRewrite = Bun.which("envfix-tool", rewriting) !== null;
+        const spawnAfterRewrite = Bun.spawnSync({
+          cmd: ["envfix-tool"],
+          get onExit() {
+            for (let i = 0; i < 64; i++) process.env.PATH = long + i + ":" + process.env.ENVFIX_TOOL_DIR;
+            return undefined;
+          },
+        }).stdout.toString();
+        process.stdout.write(JSON.stringify({ child, before, after, ran, whichAfterRewrite, spawnAfterRewrite }));
       `,
       { ENVFIX_SPAWN_DEL: "startup", ENVFIX_TOOL_DIR: String(dir) },
     );
-    expect(out).toEqual({ out: { child: "via-js,unset", before: null, after: true, ran: "found" }, exitCode: 0 });
+    expect(out).toEqual({
+      out: {
+        child: "via-js,unset",
+        before: null,
+        after: true,
+        ran: "found",
+        whichAfterRewrite: true,
+        spawnAfterRewrite: "found",
+      },
+      exitCode: 0,
+    });
   });
 
   test.concurrent("a worker_threads Worker starts from the parent's current process.env", async () => {

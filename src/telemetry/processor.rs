@@ -121,8 +121,8 @@ impl OwnerKey {
     }
 }
 
-/// Every payload taken before this point (see [`Processor::reached`]).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// Every payload taken before this point (see [`Processor::settled_before`]).
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct FlushTarget(u64);
 
 /// A destination for span batches. Implemented by the runtime for OTLP/HTTP,
@@ -361,8 +361,8 @@ impl Processor {
             due_ns,
         });
         self.finish_one();
-        // Wake forceFlush() waiters: a flush waiting on this payload
-        // re-dispatches it now (`reached`) instead of waiting out the backoff.
+        // Wake forceFlush() waiters: a flush waiting on this payload sends it
+        // again now (`hurry_retries_before`) instead of waiting out the backoff.
         for (_, h) in self.settle_hooks.read().iter() {
             h();
         }
@@ -591,12 +591,15 @@ impl Processor {
         FlushTarget(self.next_seq.load(Ordering::Acquire))
     }
 
-    /// Re-dispatch parked retries older than `t` now (a live collector gets
+    /// Send parked retries older than `t` again now: a live collector gets
     /// the retry at once, a dead one exhausts its attempts instead of holding
-    /// the flush for the whole backoff schedule); true once no payload older
-    /// than `t` is outstanding.
-    pub fn reached(&'static self, t: FlushTarget) -> bool {
+    /// a flush for the whole backoff schedule.
+    pub fn hurry_retries_before(&'static self, t: FlushTarget) {
         self.dispatch_retries(RetryFilter::OlderThan(t.0));
+    }
+
+    /// True once no payload older than `t` is outstanding.
+    pub fn settled_before(&self, t: FlushTarget) -> bool {
         self.outstanding.lock().iter().all(|s| *s >= t.0)
     }
 

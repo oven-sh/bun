@@ -1029,9 +1029,10 @@ pub fn force_flush(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVa
     bun_telemetry::batch::flush_local(&mut s.local.borrow_mut().batch);
     // Everything recorded so far goes out now (`export_all`); the promise
     // resolves once those payloads and anything older, in flight or parked,
-    // have settled (`reached`), not when the pipeline is idle.
+    // have settled (`settled_before`), not when the pipeline is idle.
     let target = processor().export_all();
-    if processor().reached(target) {
+    processor().hurry_retries_before(target);
+    if processor().settled_before(target) {
         return Ok(bun_jsc::JSPromise::resolved_promise_value(
             global,
             JSValue::UNDEFINED,
@@ -1054,14 +1055,15 @@ pub(crate) fn resolve_flush_waiters() -> JsResult<()> {
     let Some(s) = current_vm_state() else {
         return Ok(());
     };
-    if s.flush_waiters.borrow().is_empty() {
+    let Some(newest) = s.flush_waiters.borrow().iter().map(|w| w.0).max() else {
         return Ok(());
-    }
+    };
+    // Parked retries the waiters depend on go out now instead of after their backoff.
+    processor().hurry_retries_before(newest);
     let ready: Vec<bun_jsc::JSPromiseStrong> = {
         let mut waiters = s.flush_waiters.borrow_mut();
-        // `reached` also sends parked retries a waiter depends on now, skipping their backoff.
         let ready: Vec<_> = waiters
-            .extract_if(.., |w| processor().reached(w.0))
+            .extract_if(.., |w| processor().settled_before(w.0))
             .map(|w| w.1)
             .collect();
         if waiters.is_empty() && !ready.is_empty() {

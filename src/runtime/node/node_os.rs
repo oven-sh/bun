@@ -895,15 +895,16 @@ mod _impl {
 
             // mac <string> The MAC address of the network interface
             {
-                // We need to search for the link-layer interface whose name matches this one
+                // The link-layer entry for this interface; a Linux alias
+                // (`eth0:1`) takes its base interface's (`eth0`), as in libuv.
                 let maybe_ll_addr: Option<&[u8]> = interfaces
                     .iter()
                     .filter(|&ll_iface| !skip(ll_iface))
                     .filter(|ll_iface| {
                         let ll_name = ll_iface.name();
-                        strings::has_prefix(ll_name, interface_name)
-                            && (ll_name.len() <= interface_name.len()
-                                || ll_name[interface_name.len()] == b':')
+                        strings::has_prefix(interface_name, ll_name)
+                            && (interface_name.len() == ll_name.len()
+                                || interface_name[ll_name.len()] == b':')
                     })
                     .find_map(InterfaceAddress::link_layer_address);
 

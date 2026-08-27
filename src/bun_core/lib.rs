@@ -506,36 +506,31 @@ pub mod vec {
         unsafe { v.set_len(v.len() + n) };
     }
 
-    /// One-shot "reserve → hand spare bytes to producer → commit" combinator.
+    /// One-shot "reserve → hand spare capacity to producer → commit" combinator.
     ///
     /// If `min_spare > 0`, reserves at least that many spare bytes first.
-    /// Calls `f` with the spare-capacity slice; `f` must return
+    /// Calls `f` with `v.spare_capacity_mut()`; `f` must return
     /// `(bytes_written, payload)` — `bytes_written` is committed via
     /// [`commit_spare`] and `payload` is returned to the caller. Return
     /// `(0, payload)` to commit nothing (e.g. on a producer error).
     ///
     /// # Safety
-    /// Same as [`spare_bytes_mut`]: `f` receives a slice over uninitialized
-    /// bytes and must treat it as write-only. The `bytes_written` it reports
-    /// must not exceed the slice length and must cover only bytes `f`
-    /// actually initialized.
+    /// The `bytes_written` `f` reports must not exceed the slice length and
+    /// must cover only leading slots `f` actually initialized.
     #[inline]
     pub unsafe fn fill_spare<R>(
         v: &mut Vec<u8>,
         min_spare: usize,
-        f: impl FnOnce(&mut [u8]) -> (usize, R),
+        f: impl FnOnce(&mut [core::mem::MaybeUninit<u8>]) -> (usize, R),
     ) -> R {
         if min_spare > 0 {
             v.reserve(min_spare);
         }
-        // SAFETY: caller upholds the `spare_bytes_mut` write-only contract via
-        // `f`; `n` is `f`'s reported written-byte count, which by contract is
+        let (n, r) = f(v.spare_capacity_mut());
+        // SAFETY: `n` is `f`'s reported written-byte count, which by contract is
         // ≤ the spare slice length and covers only initialized bytes.
-        unsafe {
-            let (n, r) = f(spare_bytes_mut(v));
-            commit_spare(v, n);
-            r
-        }
+        unsafe { commit_spare(v, n) };
+        r
     }
 
     /// The stack-array form of [`spare_bytes_mut`]: `N` uninitialized bytes for a producer that reports how many it wrote.
@@ -1191,11 +1186,11 @@ pub use crate::string::immutable::{
     CodePoint, DecodeHexError, LineRange, PercentEncodeError, QuoteEscapeFormatFlags,
     SplitIterator, StringOrTinyString, UNICODE_REPLACEMENT, WHITESPACE_CHARS, append, cat,
     concat_with_length, contains_char, copy, count_char, decode_hex_to_bytes,
-    decode_hex_to_bytes_truncate, encode_bytes_to_hex, ends_with_any, ends_with_char,
-    ends_with_char_or_is_zero_length, eql_any_comptime, eql_comptime, eql_comptime_utf16,
-    format_escapes, has_prefix, has_prefix_case_insensitive, has_prefix_comptime,
-    has_prefix_comptime_utf16, has_suffix_comptime, index_of, index_of_scalar, is_all_whitespace,
-    is_npm_package_name, is_npm_package_name_ignore_length, is_on_char_boundary,
+    decode_hex_to_bytes_truncate, decode_hex_to_uninit, encode_bytes_to_hex, ends_with_any,
+    ends_with_char, ends_with_char_or_is_zero_length, eql_any_comptime, eql_comptime,
+    eql_comptime_utf16, format_escapes, has_prefix, has_prefix_case_insensitive,
+    has_prefix_comptime, has_prefix_comptime_utf16, has_suffix_comptime, index_of, index_of_scalar,
+    is_all_whitespace, is_npm_package_name, is_npm_package_name_ignore_length, is_on_char_boundary,
     is_utf8_char_boundary, is_valid_utf8, last_index_of, last_index_of_t,
     length_of_leading_whitespace_ascii, memmem, order, order_t, percent_encode_write, sort_asc,
     sort_desc, split, starts_with_case_insensitive_ascii, starts_with_char, str_utf8,
@@ -1660,7 +1655,7 @@ pub(crate) mod strings_impl {
                 let r = simdutf::simdutf__convert_utf16le_to_utf8_with_errors(
                     utf16.as_ptr(),
                     utf16.len(),
-                    spare.as_mut_ptr(),
+                    spare.as_mut_ptr().cast::<u8>(),
                 );
                 (
                     if r.status == simdutf::Status::SURROGATE {
@@ -2493,9 +2488,9 @@ pub mod ffi {
         #[inline]
         pub fn copy_to(self, dst: &mut [T]) -> usize {
             let n = self.len.min(dst.len());
-            // SAFETY: `ptr[..n]` is readable (type invariant); `dst` is a distinct
-            // Rust-owned buffer of at least `n` elements.
-            unsafe { core::ptr::copy_nonoverlapping(self.ptr, dst.as_mut_ptr(), n) };
+            // SAFETY: `ptr[..n]` is readable (type invariant) and `dst` is valid for
+            // `n` writes; `from_raw` does not rule out `dst` overlapping it, so memmove.
+            unsafe { core::ptr::copy(self.ptr, dst.as_mut_ptr(), n) };
             n
         }
 

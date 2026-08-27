@@ -551,7 +551,7 @@ impl AsyncInput {
     }
 
     /// Pool thread, under the job's ticket: the bytes to feed the codec.
-    pub(crate) fn ffi_slice<'a>(&'a self, ticket: &bun_jsc::Ticket) -> FfiSlice<'a> {
+    pub(crate) fn ffi_slice<'a>(&'a self, ticket: &'a bun_jsc::Ticket) -> FfiSlice<'a> {
         match self {
             Self::Pinned(pinned) => pinned.ffi_slice(ticket),
             Self::Owned(v) => FfiSlice::new(v),

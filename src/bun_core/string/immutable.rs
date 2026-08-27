@@ -1589,6 +1589,15 @@ pub fn decode_hex_to_bytes_truncate<Char: HexChar>(
     _decode_hex_to_bytes::<Char, true>(as_uninit_mut(destination), source).unwrap_or(0)
 }
 
+/// [`decode_hex_to_bytes`] into uninitialized storage; on `Ok(n)` the leading
+/// `n` slots of `destination` are initialized.
+pub fn decode_hex_to_uninit<Char: HexChar>(
+    destination: &mut [MaybeUninit<u8>],
+    source: &[Char],
+) -> Result<usize, DecodeHexError> {
+    _decode_hex_to_bytes::<Char, false>(destination, source)
+}
+
 /// [`decode_hex_to_bytes_truncate`] appended to `out` (reserving
 /// `source.len() / 2` itself, no zero-fill); returns the number of bytes appended.
 pub fn decode_hex_append<Char: HexChar>(out: &mut Vec<u8>, source: &[Char]) -> usize {

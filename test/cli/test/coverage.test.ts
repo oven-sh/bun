@@ -383,6 +383,8 @@ test("should call both functions", () => {
   expect(lcovContent).toMatchInlineSnapshot(`
 "TN:
 SF:include-me.ts
+FN:2,(anonymous_2)
+FNDA:1,(anonymous_2)
 FNF:1
 FNH:1
 DA:2,11
@@ -392,6 +394,8 @@ LH:2
 end_of_record
 TN:
 SF:test.test.ts
+FN:6,(anonymous_6)
+FNDA:1,(anonymous_6)
 FNF:1
 FNH:1
 DA:2,40
@@ -638,6 +642,62 @@ test("only imports the function", () => {
   expect(record).not.toContain("DA:5,");
   expect(record).toMatch(/LF:4\nLH:4\n/);
 
+  expect(stderr).toMatch(/ subject\.ts +\| +100\.00 +\| +100\.00 +\| +\n/);
+  expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/40586
+// Each worker executes a different function of the same module. The merge
+// must union per-function FNDA hits across workers. Taking one worker's FNH
+// under-reported % Funcs and failed a 100% coverageThreshold with zero test
+// failures.
+test("--parallel merges function coverage across workers", async () => {
+  using dir = tempDir("cov-parallel-fn-merge", {
+    "bunfig.toml": `[test]
+coverageThreshold = { lines = 1.0, functions = 1.0 }
+`,
+    "subject.ts": `await Bun.sleep(250);
+export function first() {
+  return 1;
+}
+export function second() {
+  return 2;
+}
+`,
+    "first.test.ts": `
+import { expect, test } from "bun:test";
+import { first } from "./subject.ts";
+
+test("calls first", () => {
+  expect(first()).toBe(1);
+});
+`,
+    "second.test.ts": `
+import { expect, test } from "bun:test";
+import { second } from "./subject.ts";
+
+test("calls second", () => {
+  expect(second()).toBe(2);
+});
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", "--parallel=2"],
+    // Spawn both workers at once so each takes one test file. The 250ms
+    // top-level sleep in subject.ts keeps the first worker busy so the
+    // second file is not picked up by the same worker.
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("2 pass");
+  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+  const record = lcov.split("end_of_record").find(r => r.includes("SF:subject.ts"));
+  expect(record).toBeDefined();
+  // Both functions are hit once the per-worker FNDA records are unioned.
+  expect(record).toMatch(/FNF:2\nFNH:2\n/);
   expect(stderr).toMatch(/ subject\.ts +\| +100\.00 +\| +100\.00 +\| +\n/);
   expect(exitCode).toBe(0);
 });

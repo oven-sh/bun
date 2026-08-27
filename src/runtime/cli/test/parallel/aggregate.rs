@@ -123,6 +123,14 @@ struct LineAgg {
     fragments: u32,
 }
 
+#[derive(Default, Clone, Copy)]
+struct FnAgg {
+    /// 1-based start line from the FN record.
+    line: u32,
+    /// Summed FNDA hits across fragments.
+    hits: u32,
+}
+
 #[derive(Default)]
 struct FileCoverage {
     path: Box<[u8]>,
@@ -132,6 +140,8 @@ struct FileCoverage {
     fragments: u32,
     /// 1-based line number → aggregate.
     da: ArrayHashMap<u32, LineAgg>,
+    /// Function name → aggregate, unioned from FN/FNDA records.
+    fns: StringArrayHashMap<FnAgg>,
 }
 
 impl FileCoverage {
@@ -152,15 +162,42 @@ impl FileCoverage {
         index_sort::sort_slice_unstable_by(&mut out, |a, b| a.0.cmp(&b.0));
         out
     }
+
+    /// FNF/FNH for the merged report, derived from the unioned FN/FNDA
+    /// records. Falls back to the per-fragment max when no fragment carried
+    /// per-function records.
+    fn fn_totals(&self) -> (u32, u32) {
+        if self.fns.count() == 0 {
+            return (self.fnf, self.fnh);
+        }
+        let fnf = self.fns.count() as u32;
+        let fnh = self.fns.values().iter().filter(|f| f.hits > 0).count() as u32;
+        (fnf, fnh)
+    }
+
+    /// Indices into `self.fns`, sorted by start line for stable output.
+    fn sorted_fn_indices(&self) -> Vec<usize> {
+        let mut out: Vec<usize> = (0..self.fns.count()).collect();
+        let vals = self.fns.values();
+        let keys = self.fns.keys();
+        index_sort::sort_slice_unstable_by(&mut out, |&a, &b| {
+            vals[a]
+                .line
+                .cmp(&vals[b].line)
+                .then_with(|| keys[a].as_ref().cmp(keys[b].as_ref()))
+        });
+        out
+    }
 }
 
 /// Merge per-worker LCOV fragments into a single report. Line-level (DA) merge
 /// sums hits, and keeps a zero-hit line only when every fragment covering the
-/// file agrees it is executable (see `FileCoverage::merged_lines`). FNF/FNH
-/// take the per-worker max since Bun's LCOV writer doesn't
-/// emit per-function FN/FNDA records yet, so disjoint per-worker function hits
-/// can't be unioned; this under-reports % Funcs when workers cover different
-/// functions of the same file. The non-parallel path has the same FN/FNDA gap.
+/// file agrees it is executable (see `FileCoverage::merged_lines`). Function
+/// coverage is unioned from the per-function FN/FNDA records: hits for the
+/// same function name are summed across fragments, and FNF/FNH derive from
+/// the merged set, so disjoint per-worker function hits add up instead of
+/// under-reporting % Funcs (#40586). Fragments without FN/FNDA records fall
+/// back to the per-fragment FNF/FNH max.
 pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     chunks: &[&[u8]],
     opts: &mut CodeCoverageOptions,
@@ -212,6 +249,26 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                             fragments: 1,
                         }
                     };
+                } else if line.starts_with(b"FN:") {
+                    // FN:<line>,<name>
+                    let Some((ln_s, name)) = strings::split_once_char(&line[3..], b',') else {
+                        continue;
+                    };
+                    let Ok(ln) = strings::parse_int::<u32>(ln_s, 10) else {
+                        continue;
+                    };
+                    let gop = bun_core::handle_oom(fc.fns.get_or_put(name));
+                    gop.value_ptr.line = ln;
+                } else if line.starts_with(b"FNDA:") {
+                    // FNDA:<hits>,<name>
+                    let Some((cnt_s, name)) = strings::split_once_char(&line[5..], b',') else {
+                        continue;
+                    };
+                    let Ok(cnt) = strings::parse_int::<u32>(cnt_s, 10) else {
+                        continue;
+                    };
+                    let gop = bun_core::handle_oom(fc.fns.get_or_put(name));
+                    gop.value_ptr.hits = gop.value_ptr.hits.saturating_add(cnt);
                 } else if line.starts_with(b"FNF:") {
                     fc.fnf = fc
                         .fnf
@@ -274,13 +331,26 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                 for &i in &order {
                     let fc = &by_file.values()[i];
                     let lines = &merged[i];
-                    let _ = write!(
-                        &mut w,
-                        "TN:\nSF:{}\nFNF:{}\nFNH:{}\n",
-                        BStr::new(&fc.path),
-                        fc.fnf,
-                        fc.fnh
-                    );
+                    let _ = write!(&mut w, "TN:\nSF:{}\n", BStr::new(&fc.path));
+                    let fn_order = fc.sorted_fn_indices();
+                    for &j in &fn_order {
+                        let _ = writeln!(
+                            &mut w,
+                            "FN:{},{}",
+                            fc.fns.values()[j].line,
+                            BStr::new(&fc.fns.keys()[j])
+                        );
+                    }
+                    for &j in &fn_order {
+                        let _ = writeln!(
+                            &mut w,
+                            "FNDA:{},{}",
+                            fc.fns.values()[j].hits,
+                            BStr::new(&fc.fns.keys()[j])
+                        );
+                    }
+                    let (fnf, fnh) = fc.fn_totals();
+                    let _ = write!(&mut w, "FNF:{}\nFNH:{}\n", fnf, fnh);
                     let mut lh: u32 = 0;
                     for &(ln, hits) in lines {
                         lh += (hits > 0) as u32;
@@ -306,11 +376,12 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     debug_assert_eq!(order.len(), fracs.len());
     for (&i, frac) in order.iter().zip(fracs.iter_mut()) {
         let fc = &by_file.values()[i];
+        let (fnf, fnh) = fc.fn_totals();
         let lf: f64 = merged[i].len() as f64;
         let lh_: f64 = merged[i].iter().filter(|&&(_, hits)| hits > 0).count() as f64;
         *frac = CoverageFraction {
-            functions: if fc.fnf > 0 {
-                fc.fnh as f64 / fc.fnf as f64
+            functions: if fnf > 0 {
+                fnh as f64 / fnf as f64
             } else {
                 1.0
             },

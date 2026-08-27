@@ -5,6 +5,7 @@ use core::ptr::NonNull;
 use bun_ast::Loc;
 use bun_collections::VecExt;
 use bun_collections::bit_set::DynamicBitSet;
+use bun_collections::index_sort;
 use bun_core::{self, Utf8Bytes};
 use bun_jsc::{JSGlobalObject, JSValue, VM, bun_string_jsc};
 use bun_sourcemap::{
@@ -33,7 +34,7 @@ pub struct Report<'a> {
     pub(crate) executable_lines: Bitset,
     pub(crate) lines_which_have_executed: Bitset,
     pub(crate) line_hits: LinesHits,
-    pub(crate) functions: Vec<Block>,
+    pub(crate) functions: Vec<FunctionBlock>,
     pub(crate) functions_which_have_executed: Bitset,
     pub(crate) stmts_which_have_executed: Bitset,
     pub(crate) stmts: Vec<Block>,
@@ -311,17 +312,44 @@ pub mod lcov {
         }
         writer.write_all(b"\n")?;
 
-        // ** Per-function coverage not supported yet, since JSC does not support function names yet. **
+        // JSC does not expose function names, so synthesize one from the
+        // 1-based start line. Ranges that start on the same line collapse into
+        // one record. The parallel merge unions FNDA hits across workers by
+        // name, so disjoint per-worker function coverage adds up (#40586).
+        let mut fn_records: Vec<(u32, bool)> = Vec::with_capacity(report.functions.len());
+        for function in &report.functions {
+            if function.start_line != u32::MAX {
+                fn_records.push((function.start_line + 1, function.executed));
+            }
+        }
+        index_sort::sort_slice_unstable_by(&mut fn_records, |a, b| a.0.cmp(&b.0));
+        fn_records.dedup_by(|next, prev| {
+            if next.0 == prev.0 {
+                prev.1 |= next.1;
+                true
+            } else {
+                false
+            }
+        });
+
         // FN: line number,function name
+        for &(line, _) in &fn_records {
+            writeln!(writer, "FN:{},(anonymous_{})", line, line)?;
+        }
+
+        // FNDA: execution count,function name
+        for &(line, executed) in &fn_records {
+            writeln!(writer, "FNDA:{},(anonymous_{})", u32::from(executed), line)?;
+        }
 
         // FNF: functions found
-        writeln!(writer, "FNF:{}", report.functions.len())?;
+        writeln!(writer, "FNF:{}", fn_records.len())?;
 
         // FNH: functions hit
         writeln!(
             writer,
             "FNH:{}",
-            report.functions_which_have_executed.count()
+            fn_records.iter().filter(|&&(_, executed)| executed).count()
         )?;
 
         // ** Track all executable lines **
@@ -490,7 +518,7 @@ impl ByteRangeMapping {
                 .get(source_url);
         let mut line_hits: LinesHits;
 
-        let mut functions: Vec<Block> = Vec::new();
+        let mut functions: Vec<FunctionBlock> = Vec::new();
         functions.reserve_exact(function_blocks.len());
         let mut functions_which_have_executed: Bitset = Bitset::init_empty(function_blocks.len())?;
         let mut stmts_which_have_executed: Bitset = Bitset::init_empty(blocks.len())?;
@@ -599,7 +627,10 @@ impl ByteRangeMapping {
                     }
                 }
 
-                functions.push(Block {});
+                functions.push(FunctionBlock {
+                    start_line: min_line,
+                    executed: did_fn_execute,
+                });
 
                 if did_fn_execute {
                     functions_which_have_executed.set(i);
@@ -774,7 +805,10 @@ impl ByteRangeMapping {
                     }
                 }
 
-                functions.push(Block {});
+                functions.push(FunctionBlock {
+                    start_line: min_line,
+                    executed: did_fn_execute,
+                });
                 if did_fn_execute {
                     functions_which_have_executed.set(i);
                 }
@@ -905,3 +939,13 @@ pub use bun_options_types::code_coverage_options::Fraction;
 
 #[derive(Clone, Copy, Default)]
 pub struct Block {}
+
+/// Per-function coverage for the LCOV writer. JSC reports byte ranges only
+/// (no names), so the start line doubles as the function's identity when the
+/// parallel merge unions hits across workers.
+#[derive(Clone, Copy)]
+pub struct FunctionBlock {
+    /// 0-based start line; `u32::MAX` when the range maps to no line.
+    pub(crate) start_line: u32,
+    pub(crate) executed: bool,
+}

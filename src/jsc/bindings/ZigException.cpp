@@ -138,8 +138,8 @@ static BunString sourceLine(JSC::SourceProvider* provider, std::span<const Latin
         return Zig::BunStringEmpty;
     provider->ref();
     return { BunStringTag::WTFStringImpl, { .wtf = &WTF::ExternalStringImpl::create(line, provider, [](void* ctx, void*, unsigned) {
-        static_cast<JSC::SourceProvider*>(ctx)->deref();
-    }).leakRef() } };
+                static_cast<JSC::SourceProvider*>(ctx)->deref();
+            }).leakRef() } };
 }
 
 static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunString* source_lines,

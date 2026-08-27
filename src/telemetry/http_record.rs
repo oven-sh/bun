@@ -11,37 +11,83 @@ use crate::proto::Nested;
 use crate::span::{SpanKind, SpanStub};
 use crate::{Limits, StatusCode};
 
-pub const FLAG_HTTPS: u8 = 1;
-pub const FLAG_ABORTED: u8 = 2;
-pub const FLAG_HANDLER_ERROR: u8 = 4;
+/// `http.request.method` per semconv: the known set by name; anything else
+/// is `_OTHER` (the request's own token recorded as
+/// `http.request.method_original` at begin) and names the span `HTTP`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SemconvMethod {
+    Get,
+    Head,
+    Post,
+    Put,
+    Delete,
+    Connect,
+    Options,
+    Trace,
+    Patch,
+    Query,
+    Other,
+}
 
-/// `http.request.method`: the canonical token for known methods, `_OTHER`
-/// otherwise (semconv requires a bounded set).
-#[inline]
-pub const fn method_name(m: Method) -> &'static str {
-    match m {
-        Method::GET
-        | Method::HEAD
-        | Method::POST
-        | Method::PUT
-        | Method::DELETE
-        | Method::CONNECT
-        | Method::OPTIONS
-        | Method::TRACE
-        | Method::PATCH
-        | Method::QUERY => m.as_str(),
-        _ => "_OTHER",
+impl SemconvMethod {
+    #[inline]
+    pub const fn of(m: Option<Method>) -> SemconvMethod {
+        match m {
+            Some(Method::GET) => Self::Get,
+            Some(Method::HEAD) => Self::Head,
+            Some(Method::POST) => Self::Post,
+            Some(Method::PUT) => Self::Put,
+            Some(Method::DELETE) => Self::Delete,
+            Some(Method::CONNECT) => Self::Connect,
+            Some(Method::OPTIONS) => Self::Options,
+            Some(Method::TRACE) => Self::Trace,
+            Some(Method::PATCH) => Self::Patch,
+            Some(Method::QUERY) => Self::Query,
+            _ => Self::Other,
+        }
+    }
+
+    /// The `http.request.method` attribute value.
+    pub const fn attr_value(self) -> &'static str {
+        match self {
+            Self::Get => "GET",
+            Self::Head => "HEAD",
+            Self::Post => "POST",
+            Self::Put => "PUT",
+            Self::Delete => "DELETE",
+            Self::Connect => "CONNECT",
+            Self::Options => "OPTIONS",
+            Self::Trace => "TRACE",
+            Self::Patch => "PATCH",
+            Self::Query => "QUERY",
+            Self::Other => "_OTHER",
+        }
+    }
+
+    /// The span-name prefix: the method, or `HTTP` for `Other` (semconv).
+    pub const fn span_name(self) -> &'static [u8] {
+        match self {
+            Self::Other => b"HTTP",
+            m => m.attr_value().as_bytes(),
+        }
+    }
+
+    #[inline]
+    pub const fn is_other(self) -> bool {
+        matches!(self, Self::Other)
     }
 }
 
-/// `None`: the request's method token is not one `Method` can name at all;
-/// the original went out as `http.request.method_original` at begin.
-#[inline]
-fn method_token(m: Option<Method>) -> &'static str {
-    match m {
-        Some(m) => method_name(m),
-        None => "_OTHER",
-    }
+/// How the server finished the request (set once, at end).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Termination {
+    /// A status line went out (or the exchange completed normally).
+    Completed,
+    /// The client went away / the response was never finished.
+    Aborted,
+    /// The JS handler threw or rejected (node:http): an error even when the
+    /// status that went out was not 5xx.
+    HandlerError,
 }
 
 /// The peer address as captured on the request path; formatted by
@@ -135,16 +181,17 @@ pub struct Facts {
     lens: Lens,
     /// Length of the path part of the url (`lens.url` if no query).
     path_len: u32,
-    /// `None`: the request's method token is not one `Method` can name; the
-    /// original went out as `http.request.method_original` at begin.
-    pub method: Option<Method>,
+    /// `Other`: the request's token went out as
+    /// `http.request.method_original` at begin.
+    pub method: SemconvMethod,
     /// Length of the encoded `network.peer.*` bytes at the front of `raw`
     /// ([`encode_peer_attrs`], written by [`Facts::set_request`]).
     peer_encoded_len: u8,
     /// How many attributes those bytes hold ([`encode_peer_attrs`]'s count).
     peer_encoded_attrs: u8,
     pub version: HttpVersion,
-    pub flags: u8,
+    pub https: bool,
+    pub termination: Termination,
     pub status: u16,
     /// This slot holds an HTTP server span rather than a generic one.
     pub active: bool,
@@ -190,11 +237,12 @@ impl Facts {
             raw: Vec::new(),
             lens: Lens::ZERO,
             path_len: 0,
-            method: None,
+            method: SemconvMethod::Other,
             peer_encoded_len: 0,
             peer_encoded_attrs: 0,
             version: HttpVersion::Unknown,
-            flags: 0,
+            https: false,
+            termination: Termination::Completed,
             status: 0,
             active: false,
         }
@@ -205,9 +253,10 @@ impl Facts {
         self.raw.clear();
         self.lens = Lens::ZERO;
         self.path_len = 0;
-        self.method = None;
+        self.method = SemconvMethod::Other;
         self.active = false;
-        self.flags = 0;
+        self.https = false;
+        self.termination = Termination::Completed;
         self.status = 0;
         self.peer_encoded_len = 0;
         self.peer_encoded_attrs = 0;
@@ -362,12 +411,13 @@ pub struct SpanParts<'a> {
 /// What a cached encoding depends on besides `Template::pieces`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct TemplateKey {
-    flags: u8,
+    https: bool,
+    termination: Termination,
     has_error_type: bool,
     status: u16,
     status_code: StatusCode,
     has_parent: bool,
-    method: Option<Method>,
+    method: SemconvMethod,
     version: HttpVersion,
     /// Per-request (tail) attribute count; shapes droppedAttributesCount.
     tail_n: u8,
@@ -381,7 +431,8 @@ impl TemplateKey {
     #[inline]
     fn of(facts: &Facts, p: &SpanParts<'_>) -> TemplateKey {
         TemplateKey {
-            flags: facts.flags,
+            https: facts.https,
+            termination: facts.termination,
             has_error_type: p.has_error_type,
             status: facts.status,
             status_code: p.status,
@@ -707,10 +758,7 @@ const NAME_MAX: usize = 8 + 256;
 /// `{METHOD} {route}`; the method alone when there is no route (or one over
 /// 256 bytes), `HTTP` for methods outside the known set (semconv).
 fn span_name<'b>(facts: &Facts, route: &[u8], buf: &'b mut [u8; NAME_MAX]) -> &'b [u8] {
-    let m: &[u8] = match method_token(facts.method) {
-        "_OTHER" => b"HTTP",
-        m => m.as_bytes(),
-    };
+    let m = facts.method.span_name();
     buf[..m.len()].copy_from_slice(m);
     if route.is_empty() || route.len() > 256 {
         return &buf[..m.len()];
@@ -730,9 +778,7 @@ fn encode_head(
     limits: &Limits,
 ) {
     let start = out.len();
-    let method = method_token(facts.method).as_bytes();
     let (host, ua, route) = (s.host, s.user_agent, s.route);
-    let flags = facts.flags;
     let status = facts.status;
     let mut name_buf = [0u8; NAME_MAX];
     let name: &[u8] = if p.name_override.is_empty() {
@@ -772,22 +818,13 @@ fn encode_head(
         n: u32::from(p.n_attrs) + tail_attr_count(facts),
         budget,
     };
-    a.put("http.request.method", Value::Str(method));
-    if let Some(m) = facts.method {
-        if method == b"_OTHER" {
-            a.put(
-                "http.request.method_original",
-                Value::Str(m.as_str().as_bytes()),
-            );
-        }
-    }
+    a.put(
+        "http.request.method",
+        Value::Str(facts.method.attr_value().as_bytes()),
+    );
     a.put(
         "url.scheme",
-        Value::Str(if flags & FLAG_HTTPS != 0 {
-            b"https"
-        } else {
-            b"http"
-        }),
+        Value::Str(if facts.https { b"https" } else { b"http" }),
     );
     if !host.is_empty() {
         let (hname, port) = split_host_port(host);
@@ -798,7 +835,7 @@ fn encode_head(
             .unwrap_or(hname);
         a.put("server.address", Value::Str(hname));
         // semconv: required when server.address is set; the scheme default when Host has none.
-        let port = port.unwrap_or(if flags & FLAG_HTTPS != 0 { 443 } else { 80 });
+        let port = port.unwrap_or(if facts.https { 443 } else { 80 });
         a.put("server.port", Value::Int(port as i64));
     }
     if facts.version != HttpVersion::Unknown {
@@ -831,21 +868,25 @@ fn encode_head(
         }
     }
     if status < 500 && span_status != StatusCode::Ok {
-        if flags & FLAG_ABORTED != 0 {
-            if !has_error_type {
-                a.put("error.type", Value::Str(b"aborted"));
+        match facts.termination {
+            Termination::Aborted => {
+                if !has_error_type {
+                    a.put("error.type", Value::Str(b"aborted"));
+                }
+                if span_status == StatusCode::Unset {
+                    span_status = StatusCode::Error;
+                    msg = b"request aborted";
+                }
             }
-            if span_status == StatusCode::Unset {
-                span_status = StatusCode::Error;
-                msg = b"request aborted";
+            Termination::HandlerError => {
+                if !has_error_type {
+                    a.put("error.type", Value::Str(b"_OTHER"));
+                }
+                if span_status == StatusCode::Unset {
+                    span_status = StatusCode::Error;
+                }
             }
-        } else if flags & FLAG_HANDLER_ERROR != 0 {
-            if !has_error_type {
-                a.put("error.type", Value::Str(b"_OTHER"));
-            }
-            if span_status == StatusCode::Unset {
-                span_status = StatusCode::Error;
-            }
+            Termination::Completed => {}
         }
     }
     let n_attrs = a.n;

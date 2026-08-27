@@ -21,6 +21,7 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional};
 use bun_sys::FdExt;
+use bun_telemetry::http_record::SemconvMethod;
 use bun_threading::Mutex;
 use bun_url::URL as ZigURL;
 
@@ -502,7 +503,8 @@ impl FetchTasklet {
         crate::telemetry::fetch::end(
             &self.global_this,
             &stub,
-            crate::telemetry::fetch::MethodName::Known(self.otel_method),
+            SemconvMethod::of(Some(self.otel_method)),
+            self.otel_method.as_str().as_bytes(),
             url,
             status,
             minor_version,

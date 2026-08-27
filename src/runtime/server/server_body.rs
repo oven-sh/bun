@@ -32,6 +32,7 @@ use bun_ptr::RefPtr;
 use bun_resolver::fs::FileSystem;
 use bun_standalone_graph::StandaloneModuleGraph;
 use bun_sys as sys;
+use bun_telemetry::http_record::Termination;
 use bun_url::URL;
 use bun_uws::{self as uws, AnyWebSocket, ResponseKind, WebSocketUpgradeContext};
 use bun_uws_sys as uws_sys;
@@ -2082,7 +2083,7 @@ where
         // request span now rather than when the pooled context is recycled.
         let span = upgrader.otel_span.replace(bun_telemetry::NativeSpan::NONE);
         if span.is_some() {
-            crate::telemetry::server::end(global, span, 101, false);
+            crate::telemetry::server::end(global, span, 101, Termination::Completed);
         }
         upgrader.deref();
 

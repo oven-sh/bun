@@ -16,6 +16,7 @@ use bun_http_types::Method::Method;
 use bun_jsc::JsCell;
 use bun_jsc::bun_string_jsc;
 use bun_ptr::{RefCount, RefPtr, ThisPtr};
+use bun_telemetry::http_record::Termination;
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::api::js_bundle_completion_task::JSBundleCompletionTask;
@@ -315,7 +316,12 @@ impl Route {
                         Some((span, entered)) => {
                             drop(entered);
                             respond_build_failed(resp);
-                            crate::telemetry::server::end(global, span, 500, false);
+                            crate::telemetry::server::end(
+                                global,
+                                span,
+                                500,
+                                Termination::Completed,
+                            );
                         }
                         None => respond_build_failed(resp),
                     }
@@ -701,14 +707,14 @@ impl Route {
                     } else {
                         StaticRoute::on(html.this_ptr(), resp);
                     }
-                    pending_response.otel_end(html.status_code, false);
+                    pending_response.otel_end(html.status_code, Termination::Completed);
                 }
                 None => {
                     // TODO: in development, use the code from DevServer.rs to
                     // render the error. In production, to protect privacy, do
                     // not show errors to end users (TODO: a generic error page).
                     respond_build_failed(resp);
-                    pending_response.otel_end(500, false);
+                    pending_response.otel_end(500, Termination::Completed);
                 }
             }
         }
@@ -750,17 +756,22 @@ pub struct PendingResponse {
 }
 
 impl PendingResponse {
-    fn otel_end(&self, status: u16, aborted: bool) {
+    fn otel_end(&self, status: u16, termination: Termination) {
         let span = self.otel.replace(bun_telemetry::NativeSpan::NONE);
         if span.is_some() {
-            crate::telemetry::server::end(self.route.bundle.global.get(), span, status, aborted);
+            crate::telemetry::server::end(
+                self.route.bundle.global.get(),
+                span,
+                status,
+                termination,
+            );
         }
     }
 }
 
 impl Drop for PendingResponse {
     fn drop(&mut self) {
-        self.otel_end(0, true);
+        self.otel_end(0, Termination::Aborted);
         if self.is_response_pending.get() {
             self.resp.clear_aborted();
             self.resp.clear_on_writable();
@@ -786,7 +797,7 @@ impl Route {
         if let Some(pending_response) = removed {
             debug_assert!(pending_response.is_response_pending.get());
             pending_response.is_response_pending.set(false);
-            pending_response.otel_end(0, true);
+            pending_response.otel_end(0, Termination::Aborted);
             drop(pending_response);
         }
     }

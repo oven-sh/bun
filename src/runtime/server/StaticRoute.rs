@@ -9,6 +9,7 @@ use bun_http::headers::append_etag;
 use bun_http::{Headers, Method};
 use bun_http_types::ETag;
 use bun_ptr::{RefPtr, ThisPtr};
+use bun_telemetry::http_record::Termination;
 
 use bun_http_types::MimeType::MimeType;
 use bun_jsc::HTTPHeaderName;
@@ -324,7 +325,7 @@ impl StaticRoute {
         let status = f(req);
         if let Some((span, entered, global)) = span {
             drop(entered);
-            crate::telemetry::server::end(global, span, status, false);
+            crate::telemetry::server::end(global, span, status, Termination::Completed);
         }
     }
 

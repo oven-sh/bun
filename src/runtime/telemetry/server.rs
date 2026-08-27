@@ -13,10 +13,8 @@ use super::{Entered, local, state};
 /// Returns the span (stored on the request context and finished with
 /// [`end`]) and the activation guard the dispatching frame must hold across
 /// the JS handler call.
-/// `method`: `None` when bun's `Method` cannot name the request's method.
 pub fn begin(
     global: &JSGlobalObject,
-    method: Option<Method>,
     req: &bun_uws::AnyRequest,
     resp: bun_uws::AnyResponse,
 ) -> Option<(NativeSpan, Entered)> {
@@ -24,6 +22,8 @@ pub fn begin(
         return None;
     }
     let st = state();
+    let known = Method::find(req.method());
+    let method = R::SemconvMethod::of(known);
     let h = req.telemetry_headers();
     let mut parent = None;
     let mut raw_ts = None;
@@ -71,15 +71,17 @@ pub fn begin(
             }
             s.http.active = true;
             s.http.method = method;
-            s.http.flags = if https { R::FLAG_HTTPS } else { 0 };
+            s.http.https = https;
             if !stub.is_recording() {
                 return;
             }
-            if method.is_none() {
-                // semconv: `_OTHER` plus the original text.
+            if method.is_other() {
+                // (uWS lower-cases the request line's token; a method bun's
+                // `Method` knows keeps its canonical spelling)
+                let original = known.map_or(req.method(), |m| m.as_str().as_bytes());
                 s.push_attribute(
                     b"http.request.method_original",
-                    &Value::Str(req.method()),
+                    &Value::Str(original),
                     &st.limits,
                 );
             }
@@ -172,7 +174,7 @@ pub fn begin_static(
     req: &bun_uws::AnyRequest,
     resp: bun_uws::AnyResponse,
 ) -> Option<(NativeSpan, Entered)> {
-    let (span, entered) = begin(global, Method::find(req.method()), req, resp)?;
+    let (span, entered) = begin(global, req, resp)?;
     if let Some(mut l) = local(global) {
         pool::with(&mut l.pool, span, |s| {
             if s.is_recording() {
@@ -199,28 +201,11 @@ pub fn set_route(global: &JSGlobalObject, span: NativeSpan, route: &[u8]) {
 
 /// Finish the request span. `status == 0` means no status line was written
 /// (aborted before headers).
-pub fn end(global: &JSGlobalObject, span: NativeSpan, status: u16, aborted: bool) {
-    end_with(global, span, status, aborted, false)
-}
-
-/// `handler_error`: the JS handler threw or rejected (node:http), which is an
-/// error even when the status line that went out was not 5xx.
-pub fn end_with(
-    global: &JSGlobalObject,
-    span: NativeSpan,
-    status: u16,
-    aborted: bool,
-    handler_error: bool,
-) {
+pub fn end(global: &JSGlobalObject, span: NativeSpan, status: u16, termination: R::Termination) {
     if let Some(mut l) = local(global) {
         pool::with(&mut l.pool, span, |s| {
             s.http.status = status;
-            if aborted {
-                s.http.flags |= R::FLAG_ABORTED;
-            }
-            if handler_error {
-                s.http.flags |= R::FLAG_HANDLER_ERROR;
-            }
+            s.http.termination = termination;
         });
     }
     super::end_native(global, span, 0, |_| {});

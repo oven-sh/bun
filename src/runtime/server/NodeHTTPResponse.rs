@@ -10,6 +10,7 @@ use bun_core::scoped_log;
 use bun_http::Method as HttpMethod;
 use bun_jsc::JsCell;
 use bun_ptr::AsCtxPtr;
+use bun_telemetry::http_record::Termination;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
@@ -2562,13 +2563,19 @@ impl NodeHTTPResponse {
         let span = self.otel_span.replace(bun_telemetry::NativeSpan::NONE);
         if span.is_some() {
             let flags = self.flags.get();
-            let aborted = flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::ENDED);
-            crate::telemetry::server::end_with(
+            let termination =
+                if flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::ENDED) {
+                    Termination::Aborted
+                } else if self.otel_handler_error.get() {
+                    Termination::HandlerError
+                } else {
+                    Termination::Completed
+                };
+            crate::telemetry::server::end(
                 self.server.global_this(),
                 span,
                 self.otel_status.get(),
-                aborted,
-                self.otel_handler_error.get(),
+                termination,
             );
         }
     }

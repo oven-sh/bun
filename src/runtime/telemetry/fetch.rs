@@ -4,14 +4,12 @@
 use bun_http::Method;
 use bun_http_types::ETag::Headers;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, bun_string_jsc};
+use bun_telemetry::http_record::SemconvMethod;
 use bun_telemetry::{Instrument, SpanKind, SpanStub, propagation};
 use bun_url::URL;
 
 use super::{local, state};
 
-/// Start a CLIENT span for an outgoing request and inject `traceparent`
-/// (+ `tracestate` / `baggage`) into `headers` unless the caller already set
-/// one. Returns `SpanStub::NONE` when disabled.
 /// The request's propagation headers, as fetch (`Headers`) or node:http
 /// (`NodeHeaders`) holds them.
 pub trait PropagationHeaders {
@@ -219,11 +217,8 @@ pub fn http_client_end(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
     let Some(stub) = SpanStub::from_bytes(buf.byte_slice()) else {
         return Ok(JSValue::UNDEFINED);
     };
-    let method = frame.argument(1).to_utf8(global)?;
-    let method = match Method::which(method.slice()) {
-        Some(m) => MethodName::Known(m),
-        None => MethodName::Other(method.slice()),
-    };
+    let token = frame.argument(1).to_utf8(global)?;
+    let method = SemconvMethod::of(Method::which(token.slice()));
     let url = frame.argument(2).to_utf8(global)?;
     let status = frame.argument(3).as_number() as u16;
     let minor = frame.argument(4);
@@ -254,6 +249,7 @@ pub fn http_client_end(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
         global,
         &stub,
         method,
+        token.slice(),
         url.slice(),
         status,
         minor_version,
@@ -263,23 +259,18 @@ pub fn http_client_end(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
     Ok(JSValue::UNDEFINED)
 }
 
-/// Finish the client span. `url` is the request URL as originally given
-/// (before redirects); `status == 0` means no response was received.
+/// Finish the client span. `method_token`: the request method as sent
+/// (recorded as `http.request.method_original` only when `method` is outside
+/// semconv's known set). `url` is the request URL as originally given (before
+/// redirects); `status == 0` means no response was received.
 /// `minor_version`: HTTP/1.x minor version of the response, if one arrived.
-/// `error`: the `(code, message)` the request rejected with.
-/// The request method as `(http.request.method, http.request.method_original)`:
-/// semconv's known set by name; anything else (incl. tokens `bun_http::Method`
-/// does not know) is `_OTHER` with the original alongside.
-#[derive(Clone, Copy)]
-pub enum MethodName<'a> {
-    Known(Method),
-    Other(&'a [u8]),
-}
-
+/// `error`: the `(code, message)` the request rejected with. `end_ns == 0`
+/// means now.
 pub fn end(
     global: &JSGlobalObject,
     stub: &SpanStub,
-    method: MethodName<'_>,
+    method: SemconvMethod,
+    method_token: &[u8],
     url: &[u8],
     status: u16,
     minor_version: Option<u8>,
@@ -289,29 +280,17 @@ pub fn end(
     if !stub.is_recording() {
         return;
     }
-    let (name, original): (&str, &[u8]) = match method {
-        MethodName::Known(m) => (
-            bun_telemetry::http_record::method_name(m),
-            m.as_str().as_bytes(),
-        ),
-        MethodName::Other(o) => ("_OTHER", o),
-    };
     super::end_leaf_at(
         global,
         Instrument::HttpClient,
         stub,
-        // semconv: `HTTP` names a span whose method is outside the known set.
-        if name == "_OTHER" {
-            b"HTTP"
-        } else {
-            name.as_bytes()
-        },
+        method.span_name(),
         SpanKind::Client,
         end_ns,
         |w| {
-            w.attr("http.request.method", name);
-            if name == "_OTHER" {
-                w.attr("http.request.method_original", original);
+            w.attr("http.request.method", method.attr_value());
+            if method.is_other() {
+                w.attr("http.request.method_original", method_token);
             }
             let u = URL::parse(url);
             // url.full MUST NOT contain credentials. (`bun_url` does not

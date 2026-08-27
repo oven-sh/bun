@@ -33,6 +33,7 @@ use bun_uws_sys as uws_sys;
 use bun_uws_sys::app::c as uws_app_c;
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_telemetry::http_record::Termination;
 
 // ─── httplog ─────────────────────────────────────────────────────────────────
 // Output.scoped(.Server, .visible) — debug-build no-op until bun_output wires.
@@ -1285,7 +1286,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             if bun_telemetry::enabled(bun_telemetry::Instrument::HttpServer) {
                 match crate::telemetry::server::begin(
                     global,
-                    method,
                     &uws::AnyRequest::H1(std::ptr::from_mut::<uws_sys::Request>(req)),
                     any_response_from::<SSL>(std::ptr::from_mut(resp)),
                 ) {
@@ -1344,12 +1344,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         if otel_span.is_some() {
             if node_http_response.is_null() {
-                crate::telemetry::server::end(global, otel_span, 503, false);
+                crate::telemetry::server::end(global, otel_span, 503, Termination::Completed);
             } else {
                 // SAFETY: out-param written by `on_request_ffi`; live for this frame.
                 let nhr = unsafe { &*node_http_response };
                 if nhr.flags.get().contains(NhrFlags::REQUEST_HAS_COMPLETED) {
-                    crate::telemetry::server::end(global, otel_span, nhr.otel_status.get(), false);
+                    crate::telemetry::server::end(
+                        global,
+                        otel_span,
+                        nhr.otel_status.get(),
+                        Termination::Completed,
+                    );
                 } else {
                     nhr.otel_span.set(otel_span);
                 }

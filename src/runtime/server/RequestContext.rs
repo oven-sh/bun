@@ -7,6 +7,7 @@ use bun_sys::FdExt as _;
 use bun_core::String as BunString;
 use bun_http_types::Method::Method;
 use bun_jsc::JsCell;
+use bun_telemetry::http_record::Termination;
 use bun_uws::{self as uws, WebSocketUpgradeContext};
 
 use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult};
@@ -1397,13 +1398,7 @@ where
             return None;
         };
         let any_req = Self::any_request(req);
-        let (span, entered) = crate::telemetry::server::begin(
-            global,
-            // `self.method` fell back to GET when the text was not a known method.
-            Method::find(any_req.method()),
-            &any_req,
-            resp,
-        )?;
+        let (span, entered) = crate::telemetry::server::begin(global, &any_req, resp)?;
         self.otel_span.set(span);
         Some(entered)
     }
@@ -1543,7 +1538,11 @@ where
                 self.server().global_this(),
                 span,
                 self.otel_status.get(),
-                self.flags.aborted(),
+                if self.flags.aborted() {
+                    Termination::Aborted
+                } else {
+                    Termination::Completed
+                },
             );
         }
         self.blob.with_mut(|b| b.detach());

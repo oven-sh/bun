@@ -2653,6 +2653,53 @@ describe("bundler", () => {
     target: "bun",
     run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
   });
+  // https://github.com/oven-sh/bun/issues/40626
+  // A wildcard --external must not apply to a macro import: the macro runs at
+  // build time and is inlined. The entry lives in a subdirectory because the
+  // bug only showed when the cwd was not the importing file's directory.
+  itBundled("edgecase/MacroWithWildcardExternal", {
+    files: {
+      "/src/entry.ts": /* js */ `
+        import { identity } from "./macro.ts" with { type: "macro" };
+        console.log(identity("abc"));
+      `,
+      "/src/macro.ts": /* js */ `
+        export function identity(arg: any) {
+          return arg;
+        }
+      `,
+    },
+    entryPoints: ["/src/entry.ts"],
+    target: "bun",
+    external: ["*"],
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toContain("macro");
+    },
+    run: { stdout: "abc" },
+  });
+  // https://github.com/oven-sh/bun/issues/40626
+  // A macro module that fails to load must produce a build error, not crash.
+  // A resolution failure rejects the macro load with a ResolveMessage, and
+  // handling that rejection allocates a JSC Weak, so the handler must hold
+  // the JSC API lock (debug builds asserted without it).
+  itBundled("edgecase/MacroLoadErrorDoesNotCrash", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { identity } from "./macro.ts" with { type: "macro" };
+        console.log(identity("abc"));
+      `,
+      "/macro.ts": /* js */ `
+        import { x } from "./missing.ts";
+        export function identity(arg: any) {
+          return x ?? arg;
+        }
+      `,
+    },
+    target: "bun",
+    bundleErrors: {
+      "/entry.ts": ['"MacroLoadError" error in macro'],
+    },
+  });
   itBundled("edgecase/NodeBuiltinWithoutPrefix", {
     files: {
       "/entry.ts": `

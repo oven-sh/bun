@@ -273,7 +273,12 @@ const bundledTogether = [
   "v8-heapsnapshot",
   "xml2js",
 ];
-const librariesSource = bundledTogether.map((lib, i) => `try { globalThis.lib${i} = require(${JSON.stringify(lib)}); loaded++; } catch (e) { failed.push(${JSON.stringify(lib)} + ": " + e); }`).join("\n");
+const librariesSource = bundledTogether
+  .map(
+    (lib, i) =>
+      `try { globalThis.lib${i} = require(${JSON.stringify(lib)}); loaded++; } catch (e) { failed.push(${JSON.stringify(lib)} + ": " + e); }`,
+  )
+  .join("\n");
 const librariesOutput = `${bundledTogether.length} libraries, failed: []`;
 
 const corpusBuilds = [
@@ -322,7 +327,10 @@ const bigPath = join(corpusDir, "big.js");
 writeFileSync(bigPath, bigSource());
 writeFileSync(join(corpusDir, "shapes.js"), shapesSource());
 writeFileSync(join(corpusDir, "all.js"), allSource);
-writeFileSync(join(corpusDir, "libraries.js"), `var loaded = 0, failed = [];\n${librariesSource}\nconsole.log(loaded + " libraries, failed: " + JSON.stringify(failed));\n`);
+writeFileSync(
+  join(corpusDir, "libraries.js"),
+  `var loaded = 0, failed = [];\n${librariesSource}\nconsole.log(loaded + " libraries, failed: " + JSON.stringify(failed));\n`,
+);
 
 async function bundle(
   outdir: string,

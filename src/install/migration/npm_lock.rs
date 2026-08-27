@@ -765,9 +765,15 @@ impl<'a> Migrator<'a> {
                 }
 
                 let version_tag = version.tag;
+                // A `file:` path in a `file:` package's own package.json is user authored
+                // (`Lockfile::is_trusted_folder_dependency`); a bare folder npm found
+                // beside the package for a registry spec is not.
+                let declares_folder =
+                    res_tag == resolution::Tag::Folder && version_tag == DepTag::Folder;
                 let mut found = self.find_target(key, name);
                 if let Some((t, through_link)) = found
                     && !is_local
+                    && !declares_folder
                     && self.is_external_folder(t, through_link)
                 {
                     self.skip_external(t, name);

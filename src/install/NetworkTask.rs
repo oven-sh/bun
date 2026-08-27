@@ -310,7 +310,7 @@ impl NetworkTask {
         }
 
         // Stash this callback's body bytes into our own accumulation buffer
-        // before `detach_lifetime` clears `result.body` to `&[]`. Covers the
+        // before `into_owned` drops `result.body`. Covers the
         // non-streaming manifest path and the tarball fall-through above.
         if result.metadata.is_some() {
             // First callback of a fresh attempt on the non-streaming path —

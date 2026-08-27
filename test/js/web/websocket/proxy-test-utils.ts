@@ -142,15 +142,10 @@ export function createConnectProxy(options: ConnectProxyOptions = {}): net.Serve
     : net.createServer(onClient);
 }
 
-/** An HTTPS CONNECT proxy: `createConnectProxy` behind TLS. */
-export function createTLSConnectProxy(options: Omit<ConnectProxyOptions, "tls"> = {}): tls.Server {
-  return createConnectProxy({ ...options, tls: true }) as tls.Server;
-}
-
 /**
  * Helper to start a proxy server and get its port.
  */
-export async function startProxy(server: net.Server | tls.Server): Promise<number> {
+export async function startProxy(server: net.Server): Promise<number> {
   return new Promise<number>(resolve => {
     server.listen(0, "127.0.0.1", () => {
       const addr = server.address() as net.AddressInfo;

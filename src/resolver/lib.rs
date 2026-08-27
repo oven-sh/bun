@@ -122,6 +122,12 @@ pub mod fs {
                     // SAFETY: see `append_slice`.
                     unsafe { &*$backing() }.exists(value)
                 }
+                /// `value` with the store's lifetime, if it already points into the store.
+                #[inline]
+                pub fn as_interned(&self, value: &[u8]) -> Option<&'static [u8]> {
+                    // SAFETY: see `append_slice`; the singleton is `'static`.
+                    unsafe { &*$backing() }.as_interned(value)
+                }
             }
         };
     }
@@ -574,10 +580,16 @@ pub mod fs {
                 if is_interned(self.text) && is_interned(self.pretty) {
                     return return_self_static();
                 }
+                // `text` may already be interned from an earlier pass over this
+                // file (only `pretty` is per-build); reuse it instead of growing
+                // the append-only store.
+                let text = match FilenameStore::instance().as_interned(self.text) {
+                    Some(text) => text,
+                    None => FilenameStore::instance().append_slice(self.text)?,
+                };
                 let mut new_path =
                     if let Some(offset) = bun_core::strings::index_of(self.text, self.pretty) {
-                        // `text` contains `pretty`; intern `text` once and re-slice.
-                        let text = FilenameStore::instance().append_slice(self.text)?;
+                        // `text` contains `pretty`; re-slice the interned copy.
                         let mut p = Path::<'static>::init(text);
                         p.pretty = &text[offset..][..self.pretty.len()];
                         p
@@ -589,7 +601,6 @@ pub mod fs {
                         // per-build arena. Only `pretty` — a display path recomputed
                         // every build — goes in the arena, so repeated `Bun.build()`
                         // calls don't grow `FilenameStore` by it.
-                        let text = FilenameStore::instance().append_slice(self.text)?;
                         let pretty: &mut [u8] = alloc.alloc_slice_copy(self.pretty);
                         // SAFETY: arena memory lives for the whole bundle pass; the
                         // consuming `Path` (graph/import-record) never outlives it.

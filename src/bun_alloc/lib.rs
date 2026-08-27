@@ -2016,6 +2016,17 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         base <= p && p + value.len() <= end
     }
 
+    /// `value` with the store's lifetime, if it already points into the store.
+    pub fn as_interned(&'static self, value: &[u8]) -> Option<&'static [u8]> {
+        if !self.exists(value) {
+            return None;
+        }
+        // SAFETY: `exists` proved `value` lies inside `backing_buf`, which is
+        // never freed or moved (process-lifetime singleton) and whose written
+        // prefix is immutable once appended.
+        Some(unsafe { core::slice::from_raw_parts(value.as_ptr(), value.len()) })
+    }
+
     /// Append `value` and return a mutable slice over the freshly-reserved bytes.
     ///
     /// Takes `*mut Self` (not `&mut self`) so callers can pass the raw

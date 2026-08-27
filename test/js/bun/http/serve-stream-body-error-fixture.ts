@@ -33,6 +33,15 @@ function chunkReachedClient(): Promise<void> {
   return promise;
 }
 
+// Set by the variants that fail after the status line but before any body byte
+// (pending-error-after-headers, proxied-fetch-after-status) so they only error
+// once the status line has provably reached the client socket. (uWS terminates
+// the header block only with the first body byte, so a blank line never
+// arrives for these variants.) The forced close that follows sends a RST, and
+// a RST can discard data the peer has not read yet (Windows always does), so
+// the error must not race the client's read.
+let statusLineReceivedResolve: (() => void) | undefined;
+
 // Set by the cancel variants: resolved once the source's cancel() has run, so
 // the test observes any resulting rejection before declaring success.
 const cancelRan = Promise.withResolvers<void>();
@@ -78,6 +87,17 @@ const sources: Record<string, () => ReadableStream> = {
       },
       { highWaterMark: 0 },
     ),
+  // The first pull() is pending when the server flushes the headers; the
+  // source then errors without ever producing a chunk.
+  "pending-error-after-headers": () =>
+    new ReadableStream({
+      async pull(c) {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        statusLineReceivedResolve = resolve;
+        await promise;
+        c.error(new Error("boom"));
+      },
+    }),
   // Errors only after a chunk has already been flushed to the client.
   "mid-stream-reject": () =>
     new ReadableStream({
@@ -176,15 +196,10 @@ async function fetchFromFailingUpstream(firstWrite: string) {
   };
 }
 
-// Set by the after-status variant: called as soon as anything of the response
-// is on the client's wire, i.e. once Bun.serve has committed the status line.
-let statusOnWire: (() => void) | undefined;
-
 // Bodies Bun.serve streams natively (no JS ReadableStream pump) whose producer
 // fails after the status line is committed. error() can no longer answer, so
-// the contract is that of "mid-stream-reject": the body is terminated (without
-// the terminating chunk once body bytes went out) and, in development mode, the
-// failure is reported on stderr.
+// the failure is reported and the connection is closed without the terminating
+// chunk, whether or not a body byte went out first.
 const nativeBodies: Record<string, () => Response | Promise<Response>> = {
   "rewriter-mid-stream-throw": () =>
     rewriterResponse(() => {
@@ -204,12 +219,13 @@ const nativeBodies: Record<string, () => Response | Promise<Response>> = {
     return res;
   },
   // Same, but the upstream dies before producing a single body byte. Bun.serve
-  // commits the status as soon as it attaches to a fetch() body, so the error
-  // still arrives after the status; with nothing written there is nothing to
-  // force-close and the body is ended empty.
+  // commits the status as soon as it attaches to a fetch() body, so the client
+  // has the status line and then the connection closes with no body at all.
   "proxied-fetch-after-status": async () => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    statusLineReceivedResolve = resolve;
     const { res, fail } = await fetchFromFailingUpstream("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n");
-    statusOnWire = fail;
+    promise.then(fail);
     return res;
   },
 };
@@ -239,7 +255,10 @@ await using server = Bun.serve({
     errorCb++;
     return new Response("err-body", { status: 500 });
   },
-  fetch() {
+  fetch(req) {
+    if (new URL(req.url).pathname === "/ok") {
+      return new Response("ok");
+    }
     return nativeBody ? nativeBody() : new Response(source());
   },
 });
@@ -247,18 +266,21 @@ await using server = Bun.serve({
 // Sends one request over a raw socket and returns everything received before
 // the server closed the connection, so the test can assert on the HTTP
 // framing. A forced close (ECONNRESET) is an expected, asserted-on outcome
-// for the mid-stream variants, so socket errors are not fatal.
-function rawRequest(abort: boolean): Promise<string> {
+// for the erroring variants, so socket errors are not fatal.
+function rawRequest(path: string, abort: boolean): Promise<string> {
   const chunks: Buffer[] = [];
   return new Promise(resolve => {
     const sock = net.connect(server.port, "127.0.0.1", () => {
-      sock.write("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+      sock.write(`GET ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`);
     });
     sock.on("data", d => {
       chunks.push(d);
-      statusOnWire?.();
-      statusOnWire = undefined;
-      if (Buffer.concat(chunks).includes("chunk-a")) {
+      const received = Buffer.concat(chunks);
+      if (received.includes("\r\n")) {
+        statusLineReceivedResolve?.();
+        statusLineReceivedResolve = undefined;
+      }
+      if (received.includes("chunk-a")) {
         midStreamResolve?.();
         // The cancel variants tear down the socket once a body chunk has
         // provably reached the client, so the server's onAborted path fires
@@ -271,12 +293,11 @@ function rawRequest(abort: boolean): Promise<string> {
   });
 }
 
-const wire = await rawRequest(clientAborts);
+const wire = await rawRequest("/", clientAborts);
 if (clientAborts) await cancelRan.promise;
-// A second request proves the server is still accepting and answering. For the
-// cancel variants the body stream never self-terminates, so abort that one too;
-// only the status line is asserted.
-const secondWire = await rawRequest(clientAborts);
+// A second request to a healthy route proves the server is still accepting
+// and answering; only its status line is asserted.
+const secondWire = await rawRequest("/ok", false);
 
 // Cycle the event loop so any stray rejected promise reaches the
 // unhandledRejection reporter before we declare success.

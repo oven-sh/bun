@@ -1281,12 +1281,16 @@ where
         }
     }
 
-    /// After body bytes went out, close without the chunked terminator so the
-    /// client sees an incomplete message (RFC 9112 section 7); else end normally.
+    /// Closes a response whose body failed after the status line was committed.
+    /// HTTP/1.1 never writes the terminating chunk (RFC 9112 section 7): an
+    /// empty chunked body with a terminator is as complete as a truncated one.
+    /// An HTTP/3 force-close is a FIN, so before any body byte it would be a
+    /// response without HEADERS, which the client answers by re-sending the
+    /// request. HTTP/3 keeps the normal end until body bytes went out.
     fn close_failed_body(&self) {
         if let Some(resp) = self.resp.get() {
             let state = resp.state();
-            if state.is_http_write_called() && state.is_response_pending() {
+            if state.is_response_pending() && (!HTTP3 || state.is_http_write_called()) {
                 self.force_close();
                 return;
             }
@@ -3342,9 +3346,9 @@ where
                 this.run_error_handler(js_err);
                 return;
             }
-            // Committed status: same policy as handle_reject_stream.
+            // Committed status: report in both modes, then close.
             let global_this = this.server().global_this();
-            if DEBUG_MODE && this.report_committed_body_error(err.to_js(global_this), true) {
+            if this.report_committed_body_error(err.to_js(global_this), true) {
                 return;
             }
             this.close_failed_body();

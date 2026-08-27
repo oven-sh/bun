@@ -1,6 +1,6 @@
 import { dlopen } from "bun:ffi";
-import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, compileFixture, isCI, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, compileFixture, isCI, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { copyFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -350,18 +350,19 @@ function canLoadGlib(): boolean {
 describe.skipIf(!canLoadGlib() || !(Bun.which("cc") || Bun.which("clang") || Bun.which("gcc")))(
   "Bun.secrets with a stalled Secret Service",
   () => {
-    let libDir: string;
+    let libDir: ReturnType<typeof tempDir>;
 
     beforeAll(() => {
-      libDir = tmpdirSync("bun-secrets-stub-");
+      libDir = tempDir("bun-secrets-stub", {});
       copyFileSync(
         compileFixture(join(import.meta.dir, "secrets-stub", "libsecret-stub.c"), { flags: ["-ldl"] }),
-        join(libDir, "libsecret-1.so.0"),
+        join(String(libDir), "libsecret-1.so.0"),
       );
     });
+    afterAll(() => libDir[Symbol.dispose]());
 
     function stubEnv(mode: "hang" | "never" | "return") {
-      return { ...bunEnv, LD_LIBRARY_PATH: libDir, BUN_SECRETS_STUB_MODE: mode };
+      return { ...bunEnv, LD_LIBRARY_PATH: String(libDir), BUN_SECRETS_STUB_MODE: mode };
     }
 
     // A build without the deadline never exits these children, and a test
@@ -370,6 +371,10 @@ describe.skipIf(!canLoadGlib() || !(Bun.which("cc") || Bun.which("clang") || Bun
     const watchdog = `setTimeout(() => process.exit(99), 15_000).unref();`;
 
     test.concurrent("a fire-and-forget call does not keep the process alive past its deadline", async () => {
+      // The stub ignores the cancel, so only the released loop ref lets the
+      // process exit. That is the normal exit path. The leak-checking teardown
+      // the ASAN runner turns on (BUN_DESTRUCT_VM_ON_EXIT) waits for every
+      // pool thread by design and would wait on this one forever.
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
@@ -378,7 +383,7 @@ describe.skipIf(!canLoadGlib() || !(Bun.which("cc") || Bun.which("clang") || Bun
            Bun.secrets.get({ service: "s", name: "n", timeout: 100 }).catch(e => console.log(e.code));
            console.log("script end");`,
         ],
-        env: stubEnv("never"),
+        env: { ...stubEnv("never"), BUN_DESTRUCT_VM_ON_EXIT: undefined },
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

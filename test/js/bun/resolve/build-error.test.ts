@@ -240,11 +240,14 @@ test.concurrent("JSX next to module.exports is not blamed on a runtime import", 
     stderr: "pipe",
   });
 
-  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  // The file still fails to load: the generated import is printed inside the
+  // CommonJS wrapper, and JSC rejects that. The error must not name it.
   expect(stdout).toBe("");
   expect(stderr).not.toContain("Cannot use import statement with CommonJS-only features");
   expect(stderr).not.toContain("Try require(");
+  expect(exitCode).toBe(1);
 });
 
 // The lexer reads the first token while the parser is constructed. An error it

@@ -56,9 +56,7 @@ pub struct Chunk {
     /// `AtomicUsize` rather than `usize` to avoid materializing aliased `&mut`.
     pub(crate) files_with_parts_in_chunk: ArrayHashMap<IndexInt, core::sync::atomic::AtomicUsize>,
 
-    /// The entry points that load this chunk: the `File.entry_bits` of its
-    /// files (an entry chunk that keeps its entry point's module: that file's).
-    ///
+    /// The entry points that load this chunk (an entry chunk keeping its entry's module: that file's).
     /// We must not keep pointers to this type until all chunks have been allocated.
     pub(crate) entry_bits: AutoBitSet,
 
@@ -1541,8 +1539,7 @@ pub(crate) type ImportsFromOtherChunks = ArrayHashMap<IndexInt, cross_chunk_impo
 #[derive(Default, Clone)]
 pub struct CrossChunkImportItem {
     pub(crate) r#ref: Ref,
-    /// The export name to import by when the declaring chunk's entry point
-    /// exports the binding itself; empty: its bundle-wide `cross_chunk_names` name.
+    /// The declaring entry point's export name to import by; empty: the bundle-wide name.
     pub(crate) alias: bun_ast::StoreStr,
 }
 pub type CrossChunkImportItemList = Vec<CrossChunkImportItem>;

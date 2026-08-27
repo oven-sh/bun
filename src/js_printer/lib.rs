@@ -1356,8 +1356,7 @@ pub struct Options<'a> {
     pub inline_require_and_import_errors: bool,
     pub has_run_symbol_renamer: bool,
 
-    /// Prints `EImportMetaMain` as this literal instead of `import.meta.main`
-    /// (the bundler: an entry point's module inside another entry's bundle).
+    /// Prints `EImportMetaMain` as this literal (an entry point's module inside another entry's bundle).
     pub import_meta_main_value: Option<bool>,
 
     pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback,

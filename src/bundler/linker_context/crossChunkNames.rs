@@ -231,8 +231,7 @@ pub(crate) fn assign_minified(
     Ok(())
 }
 
-/// Writes the names into the cross-chunk `export {}` / `import {}` clause items;
-/// an import by an entry point's own export name keeps that alias.
+/// Writes the names into the cross-chunk clause items; an import by an entry's export name keeps its alias.
 pub(crate) fn apply_to_clauses(c: &LinkerContext, chunks: &mut [Chunk]) {
     if c.cross_chunk_names.is_empty() {
         return;

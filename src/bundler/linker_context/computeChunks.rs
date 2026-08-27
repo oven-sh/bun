@@ -20,19 +20,13 @@ use super::find_imported_css_files_in_js_order::find_imported_css_files_in_js_or
 use super::find_imported_files_in_css_order::find_imported_files_in_css_order;
 use super::merge_small_chunks::merge_small_chunks;
 
-/// Whether user entry point `source_index`, which other entry points reach,
-/// prints its own module into its entry chunk (so `import.meta.main` and the
-/// other `import.meta` fields in it describe the entry's output file) instead
-/// of the chunk those entry points share. Their chunks then import from the
-/// entry chunk by the entry's export names, so every binding another file
-/// takes from the module must be an export of it, bound directly: no wrapper,
-/// no namespace object, no CommonJS re-export printed as a property access.
-/// `--compile` renames the entry point's module after linking, so nothing may
-/// import from its chunk.
+/// Whether user entry point `source_index` keeps its own module in its entry chunk while other entry points reach it.
 fn entry_point_keeps_own_module(this: &LinkerContext, source_index: u32) -> bool {
+    // `--compile` renames the entry point's module after linking; nothing may import from its chunk.
     if this.options.compile_mode.is_executable() {
         return false;
     }
+    // Importers of a wrapped module need its wrapper; of a dynamic export fallback, its namespace object.
     let flags = this.graph.meta.items_flags()[source_index as usize];
     if flags.wrap != crate::WrapKind::None
         || this.graph.ast.items_exports_kind()[source_index as usize].is_esm_with_dynamic_fallback()
@@ -50,6 +44,7 @@ fn entry_point_keeps_own_module(this: &LinkerContext, source_index: u32) -> bool
         }
     }
 
+    // Other chunks import by the entry's export names, so each binding they take must be one, bound directly.
     let imports_to_bind = this.graph.meta.items_imports_to_bind();
     let css_asts = this.graph.ast.items_css();
     for other in this.graph.reachable_files.iter() {
@@ -65,6 +60,7 @@ fn entry_point_keeps_own_module(this: &LinkerContext, source_index: u32) -> bool
             if !ref_.is_valid() || ref_.source_index() != source_index {
                 continue;
             }
+            // A `namespace_alias` import prints as a property access off a CommonJS namespace object.
             if !exported.contains(&ref_)
                 || this
                     .graph
@@ -381,8 +377,7 @@ pub(crate) fn compute_chunks(
         bits
     };
 
-    // Index into `js_chunks` of the entry chunk that keeps its user entry point's
-    // module although other entry points reach it; `u32::MAX` for other files.
+    // Index into `js_chunks` of the entry chunk that keeps its entry point's module; `u32::MAX` otherwise.
     let own_module_chunk: &mut [u32] = temp.alloc_slice_fill_copy(this.graph.files.len(), u32::MAX);
     if code_splitting {
         let kinds = this.graph.files.items_entry_point_kind();

@@ -920,8 +920,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         });
     }
 
-    // An entry point's module (the only kind that still has `import.meta.main`
-    // as written) printed into another entry point's bundle is a dependency there.
+    // An entry point's module printed into another entry point's bundle is a dependency there.
     let import_meta_main_value = if chunk.entry_point.is_entry_point()
         && chunk.entry_point.source_index() as usize != source_index
     {

@@ -18,9 +18,7 @@ pub(crate) fn find_all_imported_parts_in_js_order(
         return Ok(());
     }
 
-    // With code splitting a live JS file prints in exactly one chunk, the one
-    // `compute_chunks` put it in; files that print nowhere (and every file
-    // without code splitting) map to `u32::MAX`.
+    // With code splitting a live JS file prints in exactly one chunk; `u32::MAX`: none, or no code splitting.
     let mut chunk_of_file: Vec<u32> = vec![u32::MAX; this.graph.files.len()];
     let mut runs_when_loaded: Vec<bool> = vec![false; this.graph.files.len()];
     if this.graph.code_splitting {
@@ -361,8 +359,7 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                     let is_file_in_chunk = if WITH_CODE_SPLITTING
                         && self.c.graph.ast.items_css()[source_index as usize].is_none()
                     {
-                        // when code splitting, the chunk that prints the file; a file that
-                        // prints nowhere counts for the chunk keyed by its entry points
+                        // when code splitting, the chunk that prints the file (none: the one keyed by its entry points)
                         match self.chunk_of_file[source_index as usize] {
                             u32::MAX => self
                                 .entry_bits

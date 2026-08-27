@@ -126,10 +126,10 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // (stdout is not asserted: ASAN builds print the symbolized crash trace there.)
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("panic");
     expect(stderr.includes("cross_compiled_bytecode")).toBe(expected);
-    expect(stdout).toBe("");
     expect(exitCode).not.toBe(0);
   });
 

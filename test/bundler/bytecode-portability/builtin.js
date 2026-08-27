@@ -26,7 +26,7 @@
   var profiled = @idWithProfile(num, "SpecInt32Only");
   // Promise machinery: internal fields and the link-time @Promise constructor.
   var promise = @newPromise();
-  var created = @createPromise(@Promise, /* isInternalPromise */ false);
+  var created = @createPromise(@Promise);
   var flags = @getInternalField(promise, 0);
   @putInternalField(promise, 1, arr);
   var linkTime = [@Promise, @Object, @Array, @String, @Number, @Map, @Set, @RegExp, @undefined, @promiseResolve];

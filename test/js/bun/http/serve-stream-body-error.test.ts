@@ -44,37 +44,33 @@ test.concurrent.each([
   "deferred-pull-throw",
 ])("%s: the connection is closed without a complete response and the error is reported", async variant => {
   const { stdout, stderr, exitCode } = await runFixture(variant);
-  expect({ result: JSON.parse(stdout), exitCode }).toEqual({
-    result: {
-      statusLine: "",
-      cleanChunkedTerminator: false,
-      body: "",
-      errorCb: 0,
-      unhandled: 0,
-      secondStatusLine: "HTTP/1.1 200 OK",
-    },
-    exitCode: 0,
+  expect(JSON.parse(stdout)).toEqual({
+    statusLine: "",
+    cleanChunkedTerminator: false,
+    body: "",
+    errorCb: 0,
+    unhandled: 0,
+    secondStatusLine: "HTTP/1.1 200 OK",
   });
   // With `development: false` the unhandledRejection report used to be the
   // only place the error surfaced; it must still reach stderr without it.
   expect(stderr).toContain("boom");
+  expect(exitCode).toBe(0);
 });
 
 // Same under `development: true` (the DEBUG RequestContext monomorphization).
 test.concurrent("pull-throw in development mode: the connection is closed without a complete response", async () => {
   const { stdout, stderr, exitCode } = await runFixture("pull-throw", "development");
-  expect({ result: JSON.parse(stdout), exitCode }).toEqual({
-    result: {
-      statusLine: "",
-      cleanChunkedTerminator: false,
-      body: "",
-      errorCb: 0,
-      unhandled: 0,
-      secondStatusLine: "HTTP/1.1 200 OK",
-    },
-    exitCode: 0,
+  expect(JSON.parse(stdout)).toEqual({
+    statusLine: "",
+    cleanChunkedTerminator: false,
+    body: "",
+    errorCb: 0,
+    unhandled: 0,
+    secondStatusLine: "HTTP/1.1 200 OK",
   });
   expect(stderr).toContain("boom");
+  expect(exitCode).toBe(0);
 });
 
 // The headers are already on the wire (the first pull() was still pending
@@ -86,17 +82,15 @@ test.concurrent("pull-throw in development mode: the connection is closed withou
 // quiet with `development: false`.
 test.concurrent("pending-error-after-headers: headers go out, the body is not terminated as complete", async () => {
   const { stdout, exitCode } = await runFixture("pending-error-after-headers");
-  expect({ result: JSON.parse(stdout), exitCode }).toEqual({
-    result: {
-      statusLine: "HTTP/1.1 200 OK",
-      cleanChunkedTerminator: false,
-      body: "",
-      errorCb: 0,
-      unhandled: 0,
-      secondStatusLine: "HTTP/1.1 200 OK",
-    },
-    exitCode: 0,
+  expect(JSON.parse(stdout)).toEqual({
+    statusLine: "HTTP/1.1 200 OK",
+    cleanChunkedTerminator: false,
+    body: "",
+    errorCb: 0,
+    unhandled: 0,
+    secondStatusLine: "HTTP/1.1 200 OK",
   });
+  expect(exitCode).toBe(0);
 });
 
 // A native byte stream body (here: a proxied upstream fetch body) whose
@@ -164,17 +158,15 @@ test.concurrent("proxied upstream body that fails before its first chunk is not 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // The proxy's status and headers are flushed as soon as the upstream headers
   // arrive, so they are on the wire; the body must then end incomplete.
-  expect({ result: JSON.parse(stdout), exitCode }).toEqual({
-    result: {
-      statusLine: "HTTP/1.1 200 OK",
-      proxied: true,
-      body: "",
-      cleanChunkedTerminator: false,
-    },
-    exitCode: 0,
+  expect(JSON.parse(stdout)).toEqual({
+    statusLine: "HTTP/1.1 200 OK",
+    proxied: true,
+    body: "",
+    cleanChunkedTerminator: false,
   });
   // The upstream failure is reported instead of being swallowed.
   expect(stderr).toContain("ECONNRESET");
+  expect(exitCode).toBe(0);
 });
 
 // The body errors after a chunk has already been flushed to the client. The
@@ -345,9 +337,10 @@ test.concurrent("a stream body error does not kill the server process", async ()
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, exitCode }).toEqual({ stdout: "alive rejected ECONNRESET 200\n", exitCode: 0 });
+  expect(stdout).toBe("alive rejected ECONNRESET 200\n");
   // The error must still be surfaced to the operator.
   expect(stderr).toContain("boom");
+  expect(exitCode).toBe(0);
 });
 
 // An already-rejected async fetch handler reaches handle_reject synchronously

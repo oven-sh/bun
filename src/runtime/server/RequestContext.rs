@@ -1000,9 +1000,8 @@ where
         // SAFETY: FFI handle, just checked Some
         let has_responded = resp.has_responded();
 
-        // The status line is already committed (a direct ReadableStream's
-        // pull() threw synchronously after do_render_stream wrote headers), so
-        // error() cannot replace it: report the failure and close instead.
+        // The status line is already committed (a direct stream's pull() threw
+        // synchronously after the headers were written): report and close.
         if !has_responded && self.flags.has_written_status() {
             if !value.is_empty_or_undefined_or_null()
                 && let Some(server) = self.server.get()
@@ -1282,10 +1281,8 @@ where
         }
     }
 
-    /// The body failed after the status line was committed. A terminating
-    /// chunk would make the truncated body look complete (RFC 9112 section 7),
-    /// so close the connection while the response is still pending. Once the
-    /// sink already ended it, `end_stream()` only releases the context.
+    /// Closes a response whose body failed after the status line was committed.
+    /// Never the terminating chunk: it would make a truncated body look complete.
     pub(crate) fn close_incomplete_stream(&self) {
         if let Some(resp) = self.resp.get() {
             if resp.state().is_response_pending() {

@@ -1005,14 +1005,14 @@ describe("USVString conversion of lone surrogates", () => {
   });
 });
 
-// The entries live in a WTF::Vector, which aborts the process when a growth step
-// asks for a capacity over its INT32_MAX-byte cap. Bun throws a RangeError at the
-// last size the Vector can hold instead. The limit follows the synthetic
-// allocation limit (1 MiB is its floor), so 43690 entries of 24 bytes reach it.
+// The entries live in a WTF::Vector, which aborted the process when a growth step
+// asked for a capacity over its INT32_MAX-byte cap. Bun throws a RangeError once
+// the Vector cannot grow instead. The limit follows the synthetic allocation
+// limit (1 MiB is its floor), so 43690 entries of 24 bytes reach it.
 describe("entry count limit", () => {
   const LIMIT = 1024 * 1024;
   const MAX = Math.floor(LIMIT / 24);
-  const tooMany = `FormData cannot hold more than ${MAX} entries.`;
+  const tooMany = "FormData maximum size exceeded";
   // Each child parses 43690 entries, 3 to 7 s in a debug build, past the 5 s default.
   // The work cannot shrink: 1 MiB is the smallest synthetic limit.
   const TIMEOUT = 60_000;

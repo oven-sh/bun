@@ -43,20 +43,30 @@ DOMFormData::DOMFormData(ScriptExecutionContext* context)
 {
 }
 
+static size_t maxItems()
+{
+    return Bun::maxVectorSize<DOMFormData::Item>();
+}
+
+static Exception tooManyItems()
+{
+    return Exception { RangeError, "FormData maximum size exceeded"_s };
+}
+
 Ref<DOMFormData> DOMFormData::create(ScriptExecutionContext* context)
 {
     return adoptRef(*new DOMFormData(context));
 }
 
-// WTF::URLParser::parseURLEncodedForm would fill an unbounded Vector first.
 ExceptionOr<Ref<DOMFormData>> DOMFormData::create(ScriptExecutionContext* context, StringView urlEncodedString)
 {
+    auto form = WTF::URLParser::tryParseURLEncodedForm(urlEncodedString, maxItems());
+    if (!form) [[unlikely]]
+        return tooManyItems();
+
     auto newFormData = adoptRef(*new DOMFormData(context));
-    for (StringView bytes : urlEncodedString.split('&')) {
-        auto nameAndValue = WTF::URLParser::parseQueryNameAndValue(bytes);
-        if (!nameAndValue)
-            continue;
-        auto result = newFormData->append(nameAndValue->key, nameAndValue->value);
+    for (auto& entry : *form) {
+        auto result = newFormData->append(entry.key, entry.value);
         if (result.hasException()) [[unlikely]]
             return result.releaseException();
     }
@@ -101,9 +111,8 @@ static auto createStringEntry(const String& name, const String& value) -> DOMFor
 
 ExceptionOr<void> DOMFormData::appendItem(Item&& item)
 {
-    size_t maxSize = Bun::maxVectorSize<Item>();
-    if (!Bun::appendWithinLimit(m_items, WTF::move(item), maxSize)) [[unlikely]]
-        return Exception { RangeError, makeString("FormData cannot hold more than "_s, maxSize, " entries."_s) };
+    if (m_items.size() >= maxItems() || !m_items.tryAppend(WTF::move(item))) [[unlikely]]
+        return tooManyItems();
     return {};
 }
 

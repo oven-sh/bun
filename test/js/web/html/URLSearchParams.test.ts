@@ -308,14 +308,14 @@ it(".has second argument", () => {
   expect(params.has("b", 4)).toBe(false);
 });
 
-// The pairs live in a WTF::Vector, which aborts the process when a growth step
-// asks for a capacity over its INT32_MAX-byte cap. Bun throws a RangeError at
-// the last size the Vector can hold instead. The limit follows the synthetic
-// allocation limit (1 MiB is its floor), so 65536 pairs of 16 bytes reach it.
+// The pairs live in a WTF::Vector, which aborted the process when a growth step
+// asked for a capacity over its INT32_MAX-byte cap. Bun throws a RangeError once
+// the Vector cannot grow instead. The limit follows the synthetic allocation
+// limit (1 MiB is its floor), so 65536 pairs of 16 bytes reach it.
 describe("entry count limit", () => {
   const LIMIT = 1024 * 1024;
   const MAX = LIMIT / 16;
-  const tooMany = `URLSearchParams cannot hold more than ${MAX} entries.`;
+  const tooMany = "URLSearchParams maximum size exceeded";
   // Each child parses 65536 pairs, 3 to 7 s in a debug build, past the 5 s default.
   // The work cannot shrink: 1 MiB is the smallest synthetic limit.
   const TIMEOUT = 60_000;
@@ -446,6 +446,28 @@ describe("entry count limit", () => {
         searchParams: tooMany,
         searchParamsAgain: tooMany,
         size: 1,
+      });
+    },
+    TIMEOUT,
+  );
+
+  it.concurrent(
+    "url.search throws when the new query has too many pairs",
+    async () => {
+      const out = await run(`
+        const url = new URL("http://example.com/?a=1");
+        const params = url.searchParams;
+        out.search = threw(() => { url.search = pairs(MAX + 1); });
+        out.searchLength = url.search.length;
+        out.sizeAfterFailedSearch = params.size;
+        url.search = "b=2";
+        out.getAfterSearch = params.get("b");
+      `);
+      expect(out).toEqual({
+        search: tooMany,
+        searchLength: 1 + 2 * (MAX + 1),
+        sizeAfterFailedSearch: 0,
+        getAfterSearch: "2",
       });
     },
     TIMEOUT,

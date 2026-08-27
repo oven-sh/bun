@@ -7,9 +7,8 @@ extern "C" size_t Bun__stringSyntheticAllocationLimit;
 
 namespace Bun {
 
-// Vector::append CRASH()es once a 1.5x growth step passes isValidCapacityForVector<T>. These bound the size instead.
-
-// Follows Bun__stringSyntheticAllocationLimit so tests reach the limit with small inputs.
+// The most elements a Vector<T> can hold (INT32_MAX bytes), lowered with
+// Bun__stringSyntheticAllocationLimit so tests reach the bound with small inputs.
 template<typename T>
 size_t maxVectorSize()
 {
@@ -17,18 +16,6 @@ size_t maxVectorSize()
     static_assert(WTF::isValidCapacityForVector<T>(maxBytes / sizeof(T)));
     static_assert(!WTF::isValidCapacityForVector<T>(maxBytes / sizeof(T) + 1));
     return std::min(maxBytes, Bun__stringSyntheticAllocationLimit) / sizeof(T);
-}
-
-// The growth step of Vector::expandCapacity, capped at maxSize.
-template<typename T, size_t inlineCapacity, typename OverflowHandler, size_t minCapacity, typename Malloc, typename U>
-[[nodiscard]] bool appendWithinLimit(WTF::Vector<T, inlineCapacity, OverflowHandler, minCapacity, Malloc>& vector, U&& item, size_t maxSize)
-{
-    if (vector.size() >= maxSize) [[unlikely]]
-        return false;
-    if (vector.size() == vector.capacity())
-        vector.reserveCapacity(std::min(maxSize, std::max(minCapacity, Malloc::nextCapacity(vector.capacity()))));
-    vector.append(std::forward<U>(item));
-    return true;
 }
 
 } // namespace Bun

@@ -63,11 +63,11 @@ String URLDecomposition::protocol() const
     return makeString(fullURL.protocol(), ':');
 }
 
-void URLDecomposition::setProtocol(StringView value)
+ExceptionOr<void> URLDecomposition::setProtocol(StringView value)
 {
     URL copy = fullURL();
     copy.setProtocol(value);
-    setFullURL(copy);
+    return setFullURL(copy);
 }
 
 String URLDecomposition::username() const
@@ -75,13 +75,13 @@ String URLDecomposition::username() const
     return fullURL().encodedUser().toString();
 }
 
-void URLDecomposition::setUsername(StringView user)
+ExceptionOr<void> URLDecomposition::setUsername(StringView user)
 {
     auto fullURL = this->fullURL();
     if (fullURL.host().isEmpty() || fullURL.protocolIsFile())
-        return;
+        return {};
     fullURL.setUser(user);
-    setFullURL(fullURL);
+    return setFullURL(fullURL);
 }
 
 String URLDecomposition::password() const
@@ -89,13 +89,13 @@ String URLDecomposition::password() const
     return fullURL().encodedPassword().toString();
 }
 
-void URLDecomposition::setPassword(StringView password)
+ExceptionOr<void> URLDecomposition::setPassword(StringView password)
 {
     auto fullURL = this->fullURL();
     if (fullURL.host().isEmpty() || fullURL.protocolIsFile())
-        return;
+        return {};
     fullURL.setPassword(password);
-    setFullURL(fullURL);
+    return setFullURL(fullURL);
 }
 
 String URLDecomposition::host() const
@@ -113,18 +113,18 @@ static unsigned countASCIIDigits(StringView string)
     return length;
 }
 
-void URLDecomposition::setHost(StringView value)
+ExceptionOr<void> URLDecomposition::setHost(StringView value)
 {
     auto fullURL = this->fullURL();
     if (value.isEmpty() && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
-        return;
+        return {};
 
     size_t separator = value.reverseFind(':');
     if (!separator)
-        return;
+        return {};
 
     if (fullURL.hasOpaquePath())
-        return;
+        return {};
 
     // No port if no colon or rightmost colon is within the IPv6 section.
     size_t ipv6Separator = value.reverseFind(']');
@@ -133,7 +133,7 @@ void URLDecomposition::setHost(StringView value)
     else {
         // Multiple colons are acceptable only in case of IPv6.
         if (value.find(':') != separator && ipv6Separator == notFound)
-            return;
+            return {};
         unsigned portLength = countASCIIDigits(value.substring(separator + 1));
         if (!portLength) {
             fullURL.setHost(value.left(separator));
@@ -146,7 +146,8 @@ void URLDecomposition::setHost(StringView value)
         }
     }
     if (fullURL.isValid() && hasAcceptableHost(fullURL))
-        setFullURL(fullURL);
+        return setFullURL(fullURL);
+    return {};
 }
 
 String URLDecomposition::hostname() const
@@ -154,16 +155,17 @@ String URLDecomposition::hostname() const
     return fullURL().host().toString();
 }
 
-void URLDecomposition::setHostname(StringView host)
+ExceptionOr<void> URLDecomposition::setHostname(StringView host)
 {
     auto fullURL = this->fullURL();
     if (host.isEmpty() && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
-        return;
+        return {};
     if (fullURL.hasOpaquePath())
-        return;
+        return {};
     fullURL.setHost(host);
     if (fullURL.isValid() && hasAcceptableHost(fullURL))
-        setFullURL(fullURL);
+        return setFullURL(fullURL);
+    return {};
 }
 
 String URLDecomposition::port() const
@@ -201,16 +203,16 @@ std::optional<std::optional<uint16_t>> URLDecomposition::parsePort(StringView st
     return { { static_cast<uint16_t>(port) } };
 }
 
-void URLDecomposition::setPort(StringView value)
+ExceptionOr<void> URLDecomposition::setPort(StringView value)
 {
     auto fullURL = this->fullURL();
     if (fullURL.host().isEmpty() || fullURL.protocolIsFile())
-        return;
+        return {};
     auto port = parsePort(value, fullURL.protocol());
     if (!port)
-        return;
+        return {};
     fullURL.setPort(*port);
-    setFullURL(fullURL);
+    return setFullURL(fullURL);
 }
 
 String URLDecomposition::pathname() const
@@ -218,13 +220,13 @@ String URLDecomposition::pathname() const
     return fullURL().path().toString();
 }
 
-void URLDecomposition::setPathname(StringView value)
+ExceptionOr<void> URLDecomposition::setPathname(StringView value)
 {
     auto fullURL = this->fullURL();
     if (fullURL.hasOpaquePath())
-        return;
+        return {};
     fullURL.setPath(value);
-    setFullURL(fullURL);
+    return setFullURL(fullURL);
 }
 
 String URLDecomposition::search() const
@@ -233,7 +235,7 @@ String URLDecomposition::search() const
     return fullURL.query().isEmpty() ? emptyString() : fullURL.queryWithLeadingQuestionMark().toString();
 }
 
-void URLDecomposition::setSearch(const String& value)
+ExceptionOr<void> URLDecomposition::setSearch(const String& value)
 {
     auto fullURL = this->fullURL();
     if (value.isEmpty()) {
@@ -243,7 +245,7 @@ void URLDecomposition::setSearch(const String& value)
         // Make sure that '#' in the query does not leak to the hash.
         fullURL.setQuery(makeStringByReplacingAll(value, '#', "%23"_s));
     }
-    setFullURL(fullURL);
+    return setFullURL(fullURL);
 }
 
 String URLDecomposition::hash() const
@@ -252,14 +254,14 @@ String URLDecomposition::hash() const
     return fullURL.fragmentIdentifier().isEmpty() ? emptyString() : fullURL.fragmentIdentifierWithLeadingNumberSign().toString();
 }
 
-void URLDecomposition::setHash(StringView value)
+ExceptionOr<void> URLDecomposition::setHash(StringView value)
 {
     auto fullURL = this->fullURL();
     if (value.isEmpty())
         fullURL.removeFragmentIdentifier();
     else
         fullURL.setFragmentIdentifier(value.startsWith('#') ? value.substring(1) : value);
-    setFullURL(fullURL);
+    return setFullURL(fullURL);
 }
 
 }

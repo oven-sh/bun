@@ -162,7 +162,21 @@ ExceptionOr<void> DOMURL::setHref(const String& url)
     URL completeURL { URL {}, url };
     if (!completeURL.isValid() || !hasValidParsedHost(completeURL, url))
         return Exception { InvalidURLError, url };
-    m_url = WTF::move(completeURL);
+    return setURL(WTF::move(completeURL));
+}
+
+// The URL component setters ignore a value that does not give a valid URL, per the URL spec.
+ExceptionOr<void> DOMURL::setFullURL(const URL& fullURL)
+{
+    URL completeURL { URL {}, fullURL.string() };
+    if (!completeURL.isValid() || !hasValidParsedHost(completeURL, fullURL.string()))
+        return {};
+    return setURL(WTF::move(completeURL));
+}
+
+ExceptionOr<void> DOMURL::setURL(URL&& url)
+{
+    m_url = WTF::move(url);
     m_searchParamsDirty = false;
     if (m_searchParams)
         return m_searchParams->updateFromAssociatedURL();

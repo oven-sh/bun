@@ -77,7 +77,8 @@ private:
         flushPendingSearchParamsUpdate();
         return m_url;
     }
-    void setFullURL(const URL& fullURL) final { setHref(fullURL.string()); }
+    ExceptionOr<void> setFullURL(const URL&) final;
+    ExceptionOr<void> setURL(URL&&);
     void flushPendingSearchParamsUpdate() const;
 
     URL m_url;

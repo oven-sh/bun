@@ -74,7 +74,13 @@ fn entry_point_keeps_own_module(this: &LinkerContext, source_index: u32) -> bool
             if !ref_.is_valid() || ref_.source_index() != source_index {
                 continue;
             }
-            if !exported.contains(&ref_) || this.graph.symbol(ref_).namespace_alias.is_some() {
+            if !exported.contains(&ref_)
+                || this
+                    .graph
+                    .symbols
+                    .get_const(ref_)
+                    .is_some_and(|symbol| symbol.namespace_alias.is_some())
+            {
                 return false;
             }
         }

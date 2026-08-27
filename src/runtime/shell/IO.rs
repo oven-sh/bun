@@ -3,11 +3,12 @@
 //! `IO` is a plain `Clone` value; `IOReader`/`IOWriter` are `Rc`-refcounted.
 
 use bun_collections::VecExt;
+use bun_ptr::RefPtr;
 
 use crate::api::bun_spawn::stdio::Stdio;
 use crate::shell::interpreter::{CapturedBuf, OutputNeedsIOSafeGuard};
-use crate::shell::io_reader::IOReaderRef;
-use crate::shell::io_writer::IOWriterRef;
+use crate::shell::io_reader::IOReader;
+use crate::shell::io_writer::IOWriter;
 use crate::shell::shell_body::subproc::ShellIO;
 
 #[derive(Clone, Default)]
@@ -40,7 +41,7 @@ impl IO {
 
 #[derive(Clone, Default)]
 pub enum InKind {
-    Fd(IOReaderRef),
+    Fd(RefPtr<IOReader>),
     #[default]
     Ignore,
 }
@@ -57,7 +58,7 @@ pub enum OutKind {
 
 #[derive(Clone)]
 pub struct OutFd {
-    pub(crate) writer: IOWriterRef,
+    pub(crate) writer: RefPtr<IOWriter>,
     /// If set, also append every chunk to this buffer (the JS-side captured
     /// stdout/stderr, shared with `ShellExecEnv::buffered_{stdout,stderr}`).
     pub(crate) captured: Option<CapturedBuf>,
@@ -110,7 +111,7 @@ impl OutKind {
     /// Retains the `IOWriter` on
     /// `shellio` so the subprocess's `PipeReader::captured_writer` can drain
     /// captured bytes into it after the spawn returns.
-    fn to_subproc_stdio(&self, shellio: &mut Option<IOWriterRef>) -> Stdio {
+    fn to_subproc_stdio(&self, shellio: &mut Option<RefPtr<IOWriter>>) -> Stdio {
         match self {
             OutKind::Fd(val) => {
                 *shellio = Some(val.writer.clone());

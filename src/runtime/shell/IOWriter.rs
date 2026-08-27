@@ -190,14 +190,14 @@ pub(crate) fn on_poll(writer: &mut Poll, size_hint: isize, hup: bool) {
     let parent = writer.parent.expect("IOWriter writer.parent unset");
     // `parent` is the backref stashed via `set_parent` in `IOWriter::init`;
     // `writer` is a field of `*parent`, so the pointee is live.
-    let _keepalive = parent.this_ptr().ref_guard();
+    let _keepalive = RefPtr::from_this(parent.this_ptr());
     writer.on_poll(size_hint, hup);
 }
 
 /// Multiple state nodes share one writer and its chunk callbacks re-enter it
 /// (`enqueue` from inside `on_io_writer_chunk`), so every field is
 /// interior-mutable behind `&self` and no borrow is held across a callback.
-/// Intrusively refcounted: holders own an [`IOWriterRef`]; the io layer's
+/// Intrusively refcounted: holders own a `RefPtr<IOWriter>`; the io layer's
 /// per-write `ref_`/`deref` hooks and the keep-alive brackets below use the
 /// same count.
 #[derive(bun_ptr::CellRefCounted)]
@@ -256,7 +256,7 @@ impl IOWriter {
         self.flags.get().is_socket
     }
 
-    pub(crate) fn init(fd: Fd, flags: Flags, evtloop: EventLoopHandle) -> IOWriterRef {
+    pub(crate) fn init(fd: Fd, flags: Flags, evtloop: EventLoopHandle) -> RefPtr<IOWriter> {
         let mut writer = WriterImpl::default();
         // Tell the PipeWriter impl to *not* close the file descriptor.
         #[cfg(not(windows))]
@@ -288,7 +288,7 @@ impl IOWriter {
         let parent: *mut IOWriter = this.as_ptr();
         this.writer.with_mut(|w| w.set_parent(parent));
         crate::shell_log!("IOWriter(0x{:x}, fd={}) init", parent as usize, fd);
-        IOWriterRef(this)
+        this
     }
 
     /// Stash the interpreter backref so async poll callbacks can drive
@@ -724,7 +724,7 @@ impl IOWriter {
     /// The `BufferedWriter.onWrite` hook. Runs on the event loop when the fd
     /// is writable.
     fn on_write_pollable(this: ThisPtr<Self>, amount: usize, status: bun_io::WriteStatus) {
-        let _keepalive = this.ref_guard();
+        let _keepalive = RefPtr::from_this(this);
         let me: &Self = &this;
         me.on_write_pollable_impl(amount, status);
     }
@@ -852,7 +852,7 @@ impl IOWriter {
     /// the enqueuing child may be called back from inside its own `enqueue`;
     /// callers therefore hold no node borrow across `enqueue`.
     fn on_error(this: ThisPtr<Self>, err: &sys::Error) {
-        let _keepalive = this.ref_guard();
+        let _keepalive = RefPtr::from_this(this);
         let me: &Self = &this;
         me.on_error_impl(err);
     }
@@ -881,7 +881,7 @@ impl IOWriter {
     /// re-registration fails while other children are still queued, those are
     /// dispatched the way the async path dispatches them.
     fn on_sync_error(&self, child: ChildPtr, err: &sys::Error) -> Yield {
-        let _keepalive = self.this_ptr().ref_guard();
+        let _keepalive = RefPtr::from_this(self.this_ptr());
         let mut completion = None;
         for ptr in self.fail_pending_writers(err) {
             // `SystemError` owns `bun_core::String`s by value (no shared
@@ -1101,29 +1101,6 @@ bun_io::impl_buffered_writer_parent! {
     get_buffer = |this| this.get_buffer(),
     event_loop = |this| this.io_evtloop(),
     uv_loop    = |this| this.evtloop().uv_loop(),
-}
-
-/// One owned ref on an [`IOWriter`]; clone takes another, drop releases it.
-pub struct IOWriterRef(RefPtr<IOWriter>);
-
-impl Clone for IOWriterRef {
-    fn clone(&self) -> Self {
-        IOWriterRef(self.0.dupe_ref())
-    }
-}
-
-impl Drop for IOWriterRef {
-    fn drop(&mut self) {
-        self.0.deref();
-    }
-}
-
-impl core::ops::Deref for IOWriterRef {
-    type Target = IOWriter;
-    #[inline]
-    fn deref(&self) -> &IOWriter {
-        self.0.data()
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

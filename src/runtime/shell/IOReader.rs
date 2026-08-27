@@ -74,7 +74,7 @@ impl IOReader {
         self.self_root.this_ptr(self)
     }
 
-    pub(crate) fn init(fd: Fd, evtloop: EventLoopHandle) -> IOReaderRef {
+    pub(crate) fn init(fd: Fd, evtloop: EventLoopHandle) -> RefPtr<IOReader> {
         let mut reader = ReaderImpl::init::<IOReader>();
         #[cfg(not(windows))]
         {
@@ -102,7 +102,7 @@ impl IOReader {
         let parent: *mut IOReader = this.as_ptr();
         this.reader.with_mut(|r| r.set_parent(parent.cast()));
         crate::shell_log!("IOReader(0x{:x}, fd={}) create", parent as usize, fd);
-        IOReaderRef(this)
+        this
     }
 
     /// Stash the interpreter backref so async read callbacks can drive
@@ -203,7 +203,7 @@ impl IOReader {
         // `dispatch_read_chunk` → `Cat::on_io_reader_chunk` may drop the last
         // external ref; hold one across the whole body so the trailing field
         // accesses (and `run_yield`'s re-read of `interp`) see live memory.
-        let _keepalive = self.this_ptr().ref_guard();
+        let _keepalive = RefPtr::from_this(self.this_ptr());
         self.set_reading(false);
         // The interpreter callback may re-enter `add_reader`/`remove_reader`,
         // so `readers` is re-borrowed per access rather than held across the
@@ -247,7 +247,7 @@ impl IOReader {
     fn on_reader_error(&self, err: &sys::Error) {
         // `dispatch_reader_done` may drop the last external ref; keep `self`
         // alive across the loop.
-        let _keepalive = self.this_ptr().ref_guard();
+        let _keepalive = RefPtr::from_this(self.this_ptr());
         self.set_reading(false);
         *self.raw_err.borrow_mut() = Some(err.clone());
         // Copy out before dispatching (callbacks may re-enter `remove_reader`).
@@ -265,7 +265,7 @@ impl IOReader {
         // `dispatch_reader_done` → `Cat::on_io_reader_done` drops Cat's
         // `Rc<IOReader>`; if that was the last external ref, `self` would be
         // freed mid-loop. Hold a strong ref across the body.
-        let _keepalive = self.this_ptr().ref_guard();
+        let _keepalive = RefPtr::from_this(self.this_ptr());
         self.set_reading(false);
         let readers: Vec<ChildPtr> = self.readers.borrow().clone();
         let interp = self.interp.get();
@@ -311,29 +311,6 @@ bun_io::impl_buffered_reader_parent! {
     event_loop      = |this| this.io_evtloop();
     ref_            = |this| this.ref_();
     deref           = |this| IOReader::deref_nn(this.into());
-}
-
-/// One owned ref on an [`IOReader`]; clone takes another, drop releases it.
-pub struct IOReaderRef(RefPtr<IOReader>);
-
-impl Clone for IOReaderRef {
-    fn clone(&self) -> Self {
-        IOReaderRef(self.0.dupe_ref())
-    }
-}
-
-impl Drop for IOReaderRef {
-    fn drop(&mut self) {
-        self.0.deref();
-    }
-}
-
-impl core::ops::Deref for IOReaderRef {
-    type Target = IOReader;
-    #[inline]
-    fn deref(&self) -> &IOReader {
-        self.0.data()
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@
 
 use bun_collections::VecExt;
 use bun_jsc::PinnedArrayBuffer;
-use bun_ptr::{JsCellRef, JsCellRefMut};
+use bun_ptr::{JsCellRef, JsCellRefMut, RefPtr};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -14,8 +14,8 @@ use crate::shell::interpreter::{
     shell_openat,
 };
 use crate::shell::io::{InKind, OutFd, OutKind};
-use crate::shell::io_reader::{IOReader, IOReaderRef};
-use crate::shell::io_writer::{self, IOWriter, IOWriterRef};
+use crate::shell::io_reader::IOReader;
+use crate::shell::io_writer::{self, IOWriter};
 use crate::shell::states::cmd::{Cmd, CmdState};
 use crate::shell::yield_::Yield;
 
@@ -278,7 +278,7 @@ pub enum BuiltinIO {
 
 /// Input stream of a builtin.
 pub enum BuiltinInput {
-    Fd(IOReaderRef),
+    Fd(RefPtr<IOReader>),
     ArrayBuf { buf: PinnedArrayBuffer, i: u32 },
     Blob(Arc<BuiltinBlob>),
     Ignore,
@@ -382,7 +382,10 @@ impl BuiltinIO {
 
     /// The writer and tee buffer, for callers holding the
     /// [`OutputNeedsIOSafeGuard`] that proves this is `Fd`.
-    fn out_fd(&self, _safeguard: OutputNeedsIOSafeGuard) -> (IOWriterRef, Option<CapturedBuf>) {
+    fn out_fd(
+        &self,
+        _safeguard: OutputNeedsIOSafeGuard,
+    ) -> (RefPtr<IOWriter>, Option<CapturedBuf>) {
         match self {
             BuiltinIO::Fd(fd) => (fd.writer.clone(), fd.captured.clone()),
             _ => unreachable!("non-fd output; caller must check needs_io()"),
@@ -396,7 +399,7 @@ impl Builtin {
         cmd: NodeId,
         to: IoKind,
         safeguard: OutputNeedsIOSafeGuard,
-    ) -> (IOWriterRef, Option<CapturedBuf>) {
+    ) -> (RefPtr<IOWriter>, Option<CapturedBuf>) {
         let me = Self::of(interp, cmd);
         match to {
             IoKind::Stdout => me.stdout.out_fd(safeguard),

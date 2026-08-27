@@ -1,9 +1,11 @@
+use bun_ptr::RefPtr;
+
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinIO, BuiltinInput, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     FlagParser, Interpreter, NodeId, ParseFlagResult, shell_openat, unsupported_flag,
 };
-use crate::shell::io_reader::{ChildPtr as ReaderChildPtr, IOReader, IOReaderRef, ReaderTag};
+use crate::shell::io_reader::{ChildPtr as ReaderChildPtr, IOReader, ReaderTag};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
@@ -28,7 +30,7 @@ pub enum CatState {
         /// Current index into the filepath args.
         idx: usize,
         /// Per-file reader.
-        reader: Option<IOReaderRef>,
+        reader: Option<RefPtr<IOReader>>,
         chunks_queued: usize,
         chunks_done: usize,
         out_done: bool,

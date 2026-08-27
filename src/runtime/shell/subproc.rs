@@ -9,7 +9,7 @@ use crate::api::bun::process::{
 use crate::api::bun::process::{WindowsOptions, WindowsStdioResult};
 use crate::api::bun::subprocess as JscSubprocess;
 use crate::shell::interpreter::{ExitCode, Interpreter, NodeId};
-use crate::shell::io_writer::{self, IOWriterRef};
+use crate::shell::io_writer::{self, IOWriter};
 use crate::shell::states::cmd::Cmd as ShellCmd;
 use crate::shell::{self as sh, Yield};
 use crate::webcore::{self, FileSink};
@@ -60,8 +60,8 @@ bun_output::define_scoped_log!(log, SHELL_SUBPROC, visible);
 /// Used for captured writer
 #[derive(Default)]
 pub struct ShellIO {
-    pub(crate) stdout: Option<IOWriterRef>,
-    pub(crate) stderr: Option<IOWriterRef>,
+    pub(crate) stdout: Option<RefPtr<IOWriter>>,
+    pub(crate) stderr: Option<RefPtr<IOWriter>>,
 }
 
 // Note: with `Rc<IOWriter>` the only correct way to
@@ -905,7 +905,7 @@ impl Readable {
         out_type: OutKind,
         stdio: Stdio,
         redirect_buf: Option<jsc::PinnedArrayBuffer>,
-        shellio: Option<IOWriterRef>,
+        shellio: Option<RefPtr<IOWriter>>,
         event_loop: EventLoopHandle,
         process: ThisPtr<ShellSubprocess>,
         result: StdioResult,
@@ -1218,7 +1218,7 @@ impl BufferedOutput {
 pub struct CapturedWriter {
     pub(crate) dead: Cell<bool>,
     /// `None` iff `dead == true`.
-    pub(crate) writer: JsCell<Option<IOWriterRef>>,
+    pub(crate) writer: JsCell<Option<RefPtr<IOWriter>>>,
     pub(crate) written: Cell<usize>,
     pub(crate) err: JsCell<Option<SystemError>>,
 }
@@ -1374,7 +1374,7 @@ impl PipeReader {
         event_loop: EventLoopHandle,
         process: ThisPtr<ShellSubprocess>,
         result: StdioResult,
-        capture: Option<IOWriterRef>,
+        capture: Option<RefPtr<IOWriter>>,
         buffered_output: BufferedOutput,
         out_type: OutKind,
         interp: Option<ParentRef<Interpreter>>,

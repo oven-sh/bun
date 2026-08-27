@@ -154,7 +154,8 @@ extern "C" fn select_alpn_callback(
                 tls_socket_functions::ffi::us_internal_ssl_loop_state_slots(),
                 "loop-state snapshot size drifted from US_SSL_LOOP_STATE_SLOTS in internal.h"
             );
-            let mut saved_loop_state: [*mut c_void; LOOP_STATE_SLOTS] = [core::ptr::null_mut(); LOOP_STATE_SLOTS];
+            let mut saved_loop_state: [*mut c_void; LOOP_STATE_SLOTS] =
+                [core::ptr::null_mut(); LOOP_STATE_SLOTS];
             if matches!(this.socket.get().socket, uws::InternalSocket::Connected(_)) {
                 tls_socket_functions::ffi::us_internal_ssl_loop_state_save(
                     boringssl_sys::SSL::opaque_ref(ssl),

@@ -695,28 +695,31 @@ impl Builtin {
 
                 if jsval.js_type().is_array_buffer_like() {
                     // Each slot gets its own pin + GC root.
-                    let root = |wanted: bool| {
-                        wanted
-                            .then(|| PinnedArrayBuffer::root(global, jsval).ok_or(()))
-                            .transpose()
-                    };
-                    let (Ok(stdin), Ok(stdout), Ok(stderr)) = (
-                        root(redirect.stdin()),
-                        root(redirect.stdout()),
-                        root(redirect.stderr()),
-                    ) else {
-                        let _ = global.throw_out_of_memory();
-                        return Some(Yield::failed());
+                    let root = || match PinnedArrayBuffer::root(global, jsval) {
+                        Some(buf) => Ok(buf),
+                        None => {
+                            let _ = global.throw_out_of_memory();
+                            Err(Yield::failed())
+                        }
                     };
                     let me = Self::of_mut(interp, cmd);
-                    if let Some(buf) = stdin {
-                        me.stdin = BuiltinInput::ArrayBuf { buf, i: 0 };
+                    if redirect.stdin() {
+                        match root() {
+                            Ok(buf) => me.stdin = BuiltinInput::ArrayBuf { buf, i: 0 },
+                            Err(y) => return Some(y),
+                        }
                     }
-                    if let Some(buf) = stdout {
-                        me.stdout = BuiltinIO::ArrayBuf { buf, i: 0 };
+                    if redirect.stdout() {
+                        match root() {
+                            Ok(buf) => me.stdout = BuiltinIO::ArrayBuf { buf, i: 0 },
+                            Err(y) => return Some(y),
+                        }
                     }
-                    if let Some(buf) = stderr {
-                        me.stderr = BuiltinIO::ArrayBuf { buf, i: 0 };
+                    if redirect.stderr() {
+                        match root() {
+                            Ok(buf) => me.stderr = BuiltinIO::ArrayBuf { buf, i: 0 },
+                            Err(y) => return Some(y),
+                        }
                     }
                 } else if let Some(body) =
                     crate::webcore::body::Value::from_request_or_response(jsval)

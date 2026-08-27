@@ -18,9 +18,9 @@ using namespace JSC;
 //  - native-owned (createNative: Bun.serve request spans, …): `m_native` is a
 //    live bun_telemetry::pool handle; name/attributes/events live in that
 //    slot, JS mutators forward to it and the owning integration ends it.
-class JSTelemetrySpan final : public JSC::JSInternalFieldObjectImpl<11> {
+class JSTelemetrySpan final : public JSC::JSInternalFieldObjectImpl<12> {
 public:
-    using Base = JSC::JSInternalFieldObjectImpl<11>;
+    using Base = JSC::JSInternalFieldObjectImpl<12>;
     // A type byte of its own in the embedder range (JSDOMWrapper.h), so the
     // builtins' `$isTelemetrySpan` brand check before `@getInternalField` is
     // one exact type compare.
@@ -49,8 +49,10 @@ public:
         Restore = 9,
         // cached spanContext() object; empty until asked for
         Context = 10,
+        // null | JSMap key → index into Attributes, once Attributes is long (kAttributeIndexFrom)
+        AttributeIndex = 11,
     };
-    static_assert(static_cast<unsigned>(Field::Context) + 1 == numberOfInternalFields);
+    static_assert(static_cast<unsigned>(Field::AttributeIndex) + 1 == numberOfInternalFields);
 
     enum State : int32_t {
         Recording = 1,

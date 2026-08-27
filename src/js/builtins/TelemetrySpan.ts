@@ -15,6 +15,7 @@ const enum Field {
   Links = 4,
   StatusCode = 5,
   StatusMessage = 6,
+  AttributeIndex = 11,
 }
 
 // JSTelemetrySpan::State
@@ -28,6 +29,13 @@ const enum State {
 // kTelemetryMaxGather); the configured limits are lower and applied natively.
 const enum MaxBuffered {
   LinkValues = 16384,
+}
+
+// Fewer buffered attribute elements than this: a repeated key is found by a
+// scan. From this many on: by Field.AttributeIndex (JSTelemetrySpan.cpp
+// kAttributeIndexFrom).
+const enum Attributes {
+  IndexFrom = 32,
 }
 
 export function setAttribute(this: unknown, key: unknown, value: unknown) {
@@ -44,8 +52,12 @@ export function setAttribute(this: unknown, key: unknown, value: unknown) {
     $putInternalField(this, Field.Attributes, [key, value]);
     return this;
   }
-  // Keys stay unique: a repeated key overwrites in place (keys are few).
+  // Keys stay unique: a repeated key overwrites in place.
   const n = attrs.length;
+  if (n >= Attributes.IndexFrom) {
+    $telemetrySpanSetAttributeIndexed(this, attrs, key, value);
+    return this;
+  }
   for (let i = 0; i < n; i += 2) {
     if (attrs[i] === key) {
       attrs[i + 1] = value;
@@ -55,6 +67,29 @@ export function setAttribute(this: unknown, key: unknown, value: unknown) {
   $arrayPush(attrs, key);
   $arrayPush(attrs, value);
   return this;
+}
+
+// setAttribute once the span buffers Attributes.IndexFrom elements: the key's
+// position comes from a key → index Map kept beside the flat array, so n
+// distinct keys cost O(n), not O(n²) compares. Built on first use from the
+// (unique) keys already buffered; whoever appends from then on keeps it whole.
+$visibility = "Private";
+export function telemetrySpanSetAttributeIndexed(span: any, attrs: unknown[], key: string, value: unknown) {
+  let index = $getInternalField(span, Field.AttributeIndex) as Map<unknown, number> | null;
+  if (index === null) {
+    index = new $Map();
+    const n = attrs.length;
+    for (let i = 0; i < n; i += 2) index.$set(attrs[i], i);
+    $putInternalField(span, Field.AttributeIndex, index);
+  }
+  const at = index.$get(key);
+  if (at !== undefined) {
+    attrs[at + 1] = value;
+    return;
+  }
+  index.$set(key, attrs.length);
+  $arrayPush(attrs, key);
+  $arrayPush(attrs, value);
 }
 
 // = setAttribute without the brand check, for the builtins below (setAttributes, fail).
@@ -74,6 +109,10 @@ export function telemetrySpanSetAttributeImpl(span: any, key: unknown, value: un
     return span;
   }
   const n = attrs.length;
+  if (n >= Attributes.IndexFrom) {
+    $telemetrySpanSetAttributeIndexed(span, attrs, key as string, value);
+    return span;
+  }
   for (let i = 0; i < n; i += 2) {
     if (attrs[i] === key) {
       attrs[i + 1] = value;
@@ -191,6 +230,10 @@ export function set(this: any, keyOrAttributes: unknown, value?: unknown) {
     return this;
   }
   const n = attrs.length;
+  if (n >= Attributes.IndexFrom) {
+    $telemetrySpanSetAttributeIndexed(this, attrs, keyOrAttributes, value);
+    return this;
+  }
   for (let i = 0; i < n; i += 2) {
     if (attrs[i] === keyOrAttributes) {
       attrs[i + 1] = value;

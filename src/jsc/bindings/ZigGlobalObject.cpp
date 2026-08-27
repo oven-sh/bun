@@ -2895,6 +2895,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectBuiltinFunction(vm, this, builtinNames.telemetryTraceSettledPrivateName(), telemetrySpanTelemetryTraceSettledCodeGenerator(vm), 0);
     putDirectBuiltinFunction(vm, this, builtinNames.telemetryErrorTypePrivateName(), telemetrySpanTelemetryErrorTypeCodeGenerator(vm), 0);
     putDirectBuiltinFunction(vm, this, builtinNames.telemetrySpanSetAttributeImplPrivateName(), telemetrySpanTelemetrySpanSetAttributeImplCodeGenerator(vm), 0);
+    putDirectBuiltinFunction(vm, this, builtinNames.telemetrySpanSetAttributeIndexedPrivateName(), telemetrySpanTelemetrySpanSetAttributeIndexedCodeGenerator(vm), 0);
     putDirectBuiltinFunction(vm, this, builtinNames.telemetrySpanSetAttributesImplPrivateName(), telemetrySpanTelemetrySpanSetAttributesImplCodeGenerator(vm), 0);
     putDirectBuiltinFunction(vm, this, builtinNames.telemetrySpanSetStatusImplPrivateName(), telemetrySpanTelemetrySpanSetStatusImplCodeGenerator(vm), 0);
 

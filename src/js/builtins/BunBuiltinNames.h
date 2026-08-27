@@ -197,6 +197,7 @@ using namespace JSC;
     macro(telemetryFlattenAttributes) \
     macro(telemetrySpanRecordExceptionImpl) \
     macro(telemetrySpanSetAttributeImpl) \
+    macro(telemetrySpanSetAttributeIndexed) \
     macro(telemetrySpanSetAttributesImpl) \
     macro(telemetrySpanSetStatusImpl) \
     macro(isTelemetrySpan) \

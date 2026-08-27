@@ -12,6 +12,8 @@
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSBigInt.h>
 #include <JavaScriptCore/JSInternalFieldObjectImplInlines.h>
+#include <JavaScriptCore/JSMap.h>
+#include <JavaScriptCore/JSMapInlines.h>
 #include <JavaScriptCore/Lookup.h>
 #include <JavaScriptCore/MathCommon.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -71,6 +73,7 @@ void JSTelemetrySpan::finishCreation(VM& vm, const TelemetrySpanStub& stub, uint
     field(Field::Baggage).setWithoutWriteBarrier(jsNull());
     field(Field::Restore).setWithoutWriteBarrier(JSValue());
     field(Field::Context).setWithoutWriteBarrier(JSValue());
+    field(Field::AttributeIndex).setWithoutWriteBarrier(jsNull());
 }
 
 template<typename Visitor>
@@ -354,6 +357,7 @@ void telemetryEndSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, ui
     Bun__Telemetry__encodeSpan(globalObject, &desc);
 
     span->field(Field::Attributes).setWithoutWriteBarrier(jsNull());
+    span->field(Field::AttributeIndex).setWithoutWriteBarrier(jsNull());
     span->field(Field::Events).setWithoutWriteBarrier(jsNull());
     span->field(Field::Links).setWithoutWriteBarrier(jsNull());
 }
@@ -523,6 +527,10 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetrySpanProtoFuncEnd, (JSGlobalObject * lexicalG
     return JSValue::encode(jsUndefined());
 }
 
+// = TelemetrySpan.ts Attributes.IndexFrom: below this many buffered attribute
+// elements a repeated key is found by a scan, from it on by Field::AttributeIndex.
+static constexpr unsigned kAttributeIndexFrom = 32;
+
 // span.setAttribute(key, value) from C++ (what the TelemetrySpan.ts builtin does).
 // Throws only on OOM.
 void telemetrySpanSetAttribute(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, JSString* key, JSValue value)
@@ -541,9 +549,8 @@ void telemetrySpanSetAttribute(Zig::GlobalObject* globalObject, JSTelemetrySpan*
         attrs = constructEmptyArray(globalObject, nullptr, 0);
         RETURN_IF_EXCEPTION(scope, );
         span->field(Field::Attributes).set(vm, span, attrs);
-    } else {
+    } else if (unsigned n = attrs->length(); n < kAttributeIndexFrom) {
         // Keys stay unique: last write wins.
-        unsigned n = attrs->length();
         for (unsigned i = 0; i + 1 < n; i += 2) {
             JSValue k = attrs->tryGetIndexQuickly(i);
             if (!k || !k.isString())
@@ -556,6 +563,30 @@ void telemetrySpanSetAttribute(Zig::GlobalObject* globalObject, JSTelemetrySpan*
                 return;
             }
         }
+    } else {
+        // TelemetrySpan.ts telemetrySpanSetAttributeIndexed
+        JSValue indexValue = span->get(Field::AttributeIndex);
+        auto* index = indexValue.isCell() ? dynamicDowncast<JSMap>(indexValue.asCell()) : nullptr;
+        if (!index) {
+            index = JSMap::create(vm, globalObject->mapStructure());
+            for (unsigned i = 0; i + 1 < n; i += 2) {
+                JSValue k = attrs->tryGetIndexQuickly(i);
+                if (!k || !k.isString())
+                    continue;
+                index->set(globalObject, k, jsNumber(i));
+                RETURN_IF_EXCEPTION(scope, );
+            }
+            span->field(Field::AttributeIndex).set(vm, span, index);
+        }
+        JSValue at = index->get(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, );
+        if (at.isNumber()) {
+            attrs->putDirectIndex(globalObject, static_cast<unsigned>(at.asNumber()) + 1, value);
+            RETURN_IF_EXCEPTION(scope, );
+            return;
+        }
+        index->set(globalObject, key, jsNumber(n));
+        RETURN_IF_EXCEPTION(scope, );
     }
     attrs->push(globalObject, key);
     RETURN_IF_EXCEPTION(scope, );

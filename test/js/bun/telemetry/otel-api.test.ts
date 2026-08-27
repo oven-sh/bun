@@ -553,6 +553,46 @@ describe("Bun.otel", () => {
     expect(s.resource.attributes["telemetry.sdk.name"]).toBe("bun");
   });
 
+  test("many attributes on one span: order kept, a repeated key overwrites in place", async () => {
+    Bun.otel.start({
+      exporters: [{ export: (b: any[]) => spans.push(...b) }],
+      instrumentations: [],
+      limits: { attributeCountLimit: 1000 },
+    });
+    const expected: Record<string, unknown> = {};
+    // startSpan({ attributes }) with more keys than the scan threshold, then setAttribute/set past it.
+    const initial: Record<string, number> = {};
+    for (let i = 0; i < 40; i++) initial["init." + i] = expected["init." + i] = i;
+    const span = Bun.otel.tracer("wide").startSpan("wide", { attributes: initial });
+    for (let i = 0; i < 150; i++) {
+      span.setAttribute("k." + i, i);
+      expected["k." + i] = i;
+    }
+    // Overwrites: keys from before and after the index existed, through every entry point.
+    span.setAttribute("init.3", "a");
+    span.set("k.0", "b");
+    span.setAttributes({ "k.149": "c", "init.39": "d", "new.1": 1 });
+    span.set({ "k.75": "e", "new.2": 2 });
+    Bun.otel.with(span, () => Bun.otel.set("k.1", "f"));
+    span.fail(Object.assign(new Error("x"), { code: "E_WIDE" }));
+    Object.assign(expected, {
+      "init.3": "a",
+      "k.0": "b",
+      "k.149": "c",
+      "init.39": "d",
+      "new.1": 1,
+      "k.75": "e",
+      "new.2": 2,
+      "k.1": "f",
+      "error.type": "E_WIDE",
+    });
+    span.end();
+    const [got] = await collect();
+    expect(got.attributes).toEqual(expected);
+    expect(Object.keys(got.attributes)).toEqual(Object.keys(expected));
+    expect(got.droppedAttributesCount ?? 0).toBe(0);
+  });
+
   test("events, links, status, exceptions, updateName", async () => {
     const other = tracer.startSpan("other");
     const span = tracer.startSpan("rich", { links: [{ context: other.spanContext(), attributes: { l: 1 } }] });

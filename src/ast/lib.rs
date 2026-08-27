@@ -639,7 +639,8 @@ pub struct Location {
     // arena-owned source text.
     pub file: Cow<'static, [u8]>,
     pub namespace: Str,
-    /// Text on the line, avoiding the need to refetch the source code
+    /// Text on the line (possibly a window of a long one, per
+    /// `line_text_column_offset`), avoiding a source refetch.
     pub line_text: Option<Cow<'static, [u8]>>,
     /// Number of bytes this location should highlight.
     /// 0 to just point at a single character
@@ -655,6 +656,10 @@ pub struct Location {
     // original docs: 0-based, in bytes.
     // but there is a place where this is emitted in output, implying one based character offset
     pub column: i32,
+    /// Columns (in `column`'s units) of the line preceding `line_text`;
+    /// `column` stays relative to the whole line, so subtract this to draw
+    /// a caret under `line_text`.
+    pub line_text_column_offset: u32,
 }
 
 // NOT `#[derive(Clone)]`. `file` / `line_text` are
@@ -671,6 +676,7 @@ impl Clone for Location {
             namespace: self.namespace,
             line: self.line,
             column: self.column,
+            line_text_column_offset: self.line_text_column_offset,
             length: self.length,
             line_text: self.line_text.as_deref().map(|t| Cow::Owned(t.to_vec())),
             offset: self.offset,
@@ -688,6 +694,7 @@ impl Default for Location {
             offset: 0,
             line: 0,
             column: 0,
+            line_text_column_offset: 0,
         }
     }
 }
@@ -730,6 +737,7 @@ impl Location {
             namespace: self.namespace,
             line: self.line,
             column: self.column,
+            line_text_column_offset: self.line_text_column_offset,
             length: self.length,
             line_text: self.line_text.as_deref().map(|t| Cow::Owned(t.to_vec())),
             offset: self.offset,
@@ -751,6 +759,7 @@ impl Location {
             namespace,
             line,
             column,
+            line_text_column_offset: 0,
             length: length as usize,
             line_text: line_text.map(Cow::Borrowed),
             offset: length as usize,
@@ -784,6 +793,7 @@ impl Location {
                     namespace: source.path.namespace,
                     line: -1,
                     column: -1,
+                    line_text_column_offset: 0,
                     length: 0,
                     line_text: Some(Cow::Borrowed(b"")),
                     offset: 0,
@@ -793,25 +803,32 @@ impl Location {
                 Some(tracker) => tracker.error_position(source, r.loc),
                 None => source.init_error_position(r.loc),
             };
-            let mut full_line = &source.contents[data.line_start..data.line_end];
-            // Window a long line to ~120 bytes around the error. Bounds are
-            // BYTE offsets; the gate keeps the original shape (no left trim for
-            // an error in the last 80 bytes) so `write_format`'s caret aligns.
+            let line = &source.contents[data.line_start..data.line_end];
             let offset_in_line = clamp_error_offset(&source.contents, r.loc)
                 .saturating_sub(data.line_start)
-                .min(full_line.len());
-            if full_line.len() > 80 + offset_in_line {
+                .min(line.len());
+            let mut line_text = line;
+            let mut line_text_column_offset: u32 = 0;
+            // Window a long line to ~120 bytes around the error, snapped to
+            // UTF-8 char boundaries.
+            if line.len() > 80 + offset_in_line {
                 let mut lo = offset_in_line.saturating_sub(40);
-                let mut hi = (offset_in_line + 80).min(full_line.len());
-                while lo > 0 && !bun_core::strings::is_utf8_char_boundary(full_line[lo]) {
+                let mut hi = (offset_in_line + 80).min(line.len());
+                while lo > 0 && !bun_core::strings::is_utf8_char_boundary(line[lo]) {
                     lo -= 1;
                 }
-                while hi < full_line.len()
-                    && !bun_core::strings::is_utf8_char_boundary(full_line[hi])
-                {
+                while hi < line.len() && !bun_core::strings::is_utf8_char_boundary(line[hi]) {
                     hi += 1;
                 }
-                full_line = &full_line[lo..hi];
+                line_text = &line[lo..hi];
+                // Columns before `lo` = the error's column minus the width of
+                // `line[lo..offset_in_line]`; measuring those ≤ 40 bytes avoids
+                // rescanning the whole prefix for every diagnostic.
+                let mut kept = ErrorPositionState::default();
+                kept.advance(line, lo, offset_in_line);
+                line_text_column_offset =
+                    u32::try_from(data.column_count.saturating_sub(kept.column_number))
+                        .expect("int cast");
             }
 
             return Some(Location {
@@ -819,18 +836,15 @@ impl Location {
                 namespace: source.path.namespace,
                 line: usize2loc(data.line_count).start,
                 column: usize2loc(data.column_count).start,
+                line_text_column_offset,
                 length: if r.len > -1 {
                     u32::try_from(r.len).expect("int cast") as usize
                 } else {
                     1
                 },
-                // `source_backing` in `Transpiler::parse_*` is RAII and
-                // drops on the parse-error path *before* `process_fetch_log`
-                // clones the `Msg` into a `BuildMessage`, so own the bytes here
-                // instead of borrowing `source.contents`. `full_line` is
-                // bounded (≤ ~120 bytes) and only materialized on diagnostic
-                // paths.
-                line_text: Some(Cow::Owned(bun_core::trim_left(full_line, b"\n\r").to_vec())),
+                // Own the bytes: `source.contents` can drop before this `Msg`
+                // is cloned into a `BuildMessage` (`Transpiler::parse_*`).
+                line_text: Some(Cow::Owned(line_text.to_vec())),
                 offset: usize::try_from(r.loc.start.max(0)).expect("int cast"),
             });
         }
@@ -977,7 +991,9 @@ impl Data {
                 let line_text = bun_core::trim_left(line_text_right_trimmed, b"\n\r");
                 if location.column > 0 && !line_text.is_empty() {
                     let mut line_offset_for_second_line: usize =
-                        usize::try_from(location.column - 1).expect("int cast");
+                        usize::try_from(location.column - 1)
+                            .expect("int cast")
+                            .saturating_sub(location.line_text_column_offset as usize);
 
                     if location.line > -1 {
                         let bold = matches!(kind, Kind::Err | Kind::Warn);
@@ -2456,11 +2472,7 @@ impl ErrorPositionState {
 
     fn to_error_position(self, line_end: usize) -> ErrorPosition {
         ErrorPosition {
-            line_start: if self.line_start > 0 {
-                self.line_start - 1
-            } else {
-                self.line_start
-            },
+            line_start: self.line_start,
             line_end,
             line_count: self.line_count,
             column_count: self.column_number,

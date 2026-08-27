@@ -263,13 +263,17 @@ describe.concurrent("event loop routing around macros", () => {
       "m.ts": macroSource,
       "index.ts": `import { m } from "./m.ts" with { type: "macro" };\nconsole.log("value", m());\n`,
     });
-    const { stdout, stderr, exitCode } = await runBun(String(dir), ["run", "index.ts"], {
+    const { stdout, ...rest } = await runBun(String(dir), ["run", "index.ts"], {
       MACRO_TEST_URL: server.url.href,
     });
     // The continuation runs on the macro loop if the work finishes while the macro is still being waited
     // on and on the regular loop otherwise, so its position relative to the entry module's output varies.
-    expect({ lines: stdout.trim().split("\n").sort(), stderr }).toEqual({ lines: ["settled", "value 1"], stderr: "" });
-    expect(exitCode).toBe(0);
+    expect({ lines: stdout.trim().split("\n").sort(), ...rest }).toEqual({
+      lines: ["settled", "value 1"],
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 
   // The program's digest finishes (microseconds, on the work queue) while the macro is parked in its

@@ -1,12 +1,12 @@
 //! `DevServer.RouteBundle` — per-navigatable-route bundling state.
 
+use bun_ptr::RefPtr;
+
 use super::incremental_graph;
 use super::jsc;
 use super::source_map_store;
 use crate::bake::framework_router;
-use crate::server::static_route::InitFromBytesOptions;
 use crate::server::{StaticRoute, html_bundle::HTMLBundleRoute};
-use crate::webcore::AnyBlob;
 
 /// `bun.GenericIndex(u30, RouteBundle)`.
 pub enum RouteBundleMarker {}
@@ -32,55 +32,16 @@ pub struct Framework {
     pub(crate) cached_css_file_array: jsc::StrongOptional,
 }
 
-/// The one ref DevServer holds on a [`StaticRoute`] it built (client bundle,
-/// rendered HTML page, asset, source map response); released on drop. The
-/// `StaticRoute::on*` handlers take their own ref per in-flight response, so
-/// the route itself may outlive this handle.
-pub(crate) struct StaticRouteRef(bun_ptr::RefPtr<StaticRoute>);
-
-impl StaticRouteRef {
-    pub(crate) fn init_from_any_blob(blob: AnyBlob, options: InitFromBytesOptions<'_>) -> Self {
-        Self(StaticRoute::init_from_any_blob(blob, options))
-    }
-
-    /// For the `StaticRoute::on*` handlers, which register the route as uws
-    /// userdata.
-    #[inline]
-    pub(crate) fn this_ptr(&self) -> bun_ptr::ThisPtr<StaticRoute> {
-        self.0.this_ptr()
-    }
-}
-
-impl core::ops::Deref for StaticRouteRef {
-    type Target = StaticRoute;
-    #[inline]
-    fn deref(&self) -> &StaticRoute {
-        &self.0
-    }
-}
-
-impl Drop for StaticRouteRef {
-    #[inline]
-    fn drop(&mut self) {
-        self.0.deref();
-    }
-}
-
 pub struct Html {
-    /// Ref taken in `get_or_put_route_bundle`; `RefPtr` has no `Drop`, so
-    /// `Drop for Html` releases it.
-    pub(crate) html_bundle: bun_ptr::RefPtr<HTMLBundleRoute>,
+    /// Ref taken in `get_or_put_route_bundle`.
+    pub(crate) html_bundle: RefPtr<HTMLBundleRoute>,
     pub(crate) bundled_file: incremental_graph::ClientFileIndex,
     pub(crate) script_injection_offset: Option<ByteOffset>,
     pub(crate) bundled_html_text: Option<Box<[u8]>>,
-    /// The rendered page, built on first request.
-    pub(crate) cached_response: Option<StaticRouteRef>,
-}
-
-impl Drop for Html {
-    fn drop(&mut self) {
-        self.html_bundle.deref();
-    }
+    /// The rendered page, built on first request. The `StaticRoute::on*`
+    /// handlers take their own ref per in-flight response, so the route may
+    /// outlive this handle.
+    pub(crate) cached_response: Option<RefPtr<StaticRoute>>,
 }
 
 pub enum Data {
@@ -147,7 +108,7 @@ pub struct RouteBundle {
     pub(crate) server_state: State,
     pub(crate) data: Data,
     /// The route's client-side script, built on first request.
-    pub(crate) client_bundle: Option<StaticRouteRef>,
+    pub(crate) client_bundle: Option<RefPtr<StaticRoute>>,
     pub(crate) client_script_generation: u32,
     pub(crate) active_viewers: u32,
 }

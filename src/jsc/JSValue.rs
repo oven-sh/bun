@@ -695,11 +695,11 @@ impl JSValue {
         keys: &mut [bun_core::EncodedSlice],
         values: &mut [bun_core::EncodedSlice],
         clone: bool,
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         debug_assert_eq!(keys.len(), values.len());
         // SAFETY: `global` is live; `keys`/`values` are valid for `keys.len()`
         // elements; the C++ binding only reads (and optionally clones) them.
-        unsafe {
+        crate::call_zero_is_throw(global, || unsafe {
             JSC__JSValue__fromEntries(
                 global,
                 keys.as_mut_ptr(),
@@ -707,7 +707,7 @@ impl JSValue {
                 keys.len(),
                 clone,
             )
-        }
+        })
     }
 }
 
@@ -1350,13 +1350,18 @@ impl JSValue {
         }
         Ok(Some(prop))
     }
+    /// Own property lookup by key value (index or `toPropertyKey`). `None` when
+    /// absent; the C++ side also returns empty when a getter or `toPropertyKey`
+    /// throws, so the exception state is what tells the two apart.
     pub fn get_own_by_value(
         self,
         global: &JSGlobalObject,
         property_value: JSValue,
-    ) -> Option<JSValue> {
-        let v = JSC__JSValue__getOwnByValue(self, global, property_value);
-        if v.is_empty() { None } else { Some(v) }
+    ) -> JsResult<Option<JSValue>> {
+        let v = crate::call_check_slow(global, || {
+            JSC__JSValue__getOwnByValue(self, global, property_value)
+        })?;
+        Ok(if v.is_empty() { None } else { Some(v) })
     }
     /// `Object.hasOwnProperty(key)`. `self` **must** be an object — the C++ side
     /// `uncheckedDowncast`s. `key.toPropertyKey()` and Proxy `ownKeys` traps
@@ -1467,10 +1472,12 @@ impl JSValue {
         }
         Ok(())
     }
-    /// `JSValue.deleteProperty` — delete an own property by name.
-    pub fn delete_property(self, global: &JSGlobalObject, key: impl AsRef<[u8]>) -> bool {
+    /// `JSValue.deleteProperty` — delete an own property by name. `false` is
+    /// both "not deleted" and the C++ side's return on throw (a Proxy
+    /// `deleteProperty` trap), so the exception state is checked explicitly.
+    pub fn delete_property(self, global: &JSGlobalObject, key: impl AsRef<[u8]>) -> JsResult<bool> {
         let key = bun_core::EncodedSlice::latin1(key.as_ref());
-        JSC__JSValue__deleteProperty(self, global, &key)
+        crate::call_check_slow(global, || JSC__JSValue__deleteProperty(self, global, &key))
     }
     /// `JSValue.putMayBeIndex` — same as [`put`] but accepts
     /// both non-numeric and numeric keys. Prefer [`put`] when the key is
@@ -2295,12 +2302,7 @@ impl JSValue {
     }
     /// `JSValue.toObject` — ECMA `ToObject`; throws on null/undefined.
     pub fn to_object(self, global: &JSGlobalObject) -> JsResult<*mut JSObject> {
-        let p = JSC__JSValue__toObject(self, global);
-        if p.is_null() {
-            Err(JsError::Thrown)
-        } else {
-            Ok(p)
-        }
+        Ok(crate::call_null_is_throw(global, || JSC__JSValue__toObject(self, global))?.as_ptr())
     }
     /// `JSValue.unwrapBoxedPrimitive` — unwraps Number,
     /// Boolean, String, and BigInt objects to their primitive forms.
@@ -2526,10 +2528,11 @@ impl JSValue {
         }
         JSBuffer__isBuffer(global, self)
     }
-    /// `JSValue.getDirectIndex` — read the `i`th indexed
-    /// own-property slot directly (no prototype walk, no getters). Returns
-    /// the empty value for holes.
-    pub fn get_direct_index(self, global: &JSGlobalObject, i: u32) -> JSValue {
+    /// `JSValue.getDirectIndex` — read the `i`th indexed own-property slot
+    /// (no prototype walk). Returns the empty value for holes; an own
+    /// accessor or a Proxy trap runs (and may throw), so empty is not a
+    /// throw sentinel here.
+    pub fn get_direct_index(self, global: &JSGlobalObject, i: u32) -> JsResult<JSValue> {
         unsafe extern "C" {
             safe fn JSC__JSValue__getDirectIndex(
                 this: JSValue,
@@ -2537,7 +2540,7 @@ impl JSValue {
                 i: u32,
             ) -> JSValue;
         }
-        JSC__JSValue__getDirectIndex(self, global, i)
+        crate::call_check_slow(global, || JSC__JSValue__getDirectIndex(self, global, i))
     }
     /// Smallest own present index of a `JSArray` that is `>= start`, or
     /// `None` when every index from `start` to the end of the array is a

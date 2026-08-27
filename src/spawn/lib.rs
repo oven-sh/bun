@@ -182,9 +182,8 @@ pub mod subprocess {
         Detached,
     }
 
-    /// Type-erased payload for [`Source::Any`]. JSC-tier callers wrap
-    /// `webcore::AnyBlob` / `jsc::ArrayBufferStrong` in a thin adaptor that
-    /// implements this trait. The vtable travels with the value, so no global
+    /// Type-erased payload for [`Source::Any`]. JSC-tier callers implement it
+    /// for `webcore::AnyBlob`. The vtable travels with the value, so no global
     /// hook registration is needed.
     pub trait SourceData {
         fn slice(&self) -> &[u8];

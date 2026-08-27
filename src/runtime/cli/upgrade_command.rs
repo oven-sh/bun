@@ -265,7 +265,6 @@ impl UpgradeCommand {
             headers_buf,
             b"",
             http_proxy,
-            None,
             HTTP::FetchRedirect::Follow,
         ));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
@@ -657,7 +656,6 @@ impl UpgradeCommand {
                 b"",
                 b"",
                 http_proxy,
-                None,
                 HTTP::FetchRedirect::Follow,
             ));
             // `progress` is intentionally leaked (process-lifetime), so the

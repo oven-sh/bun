@@ -2105,6 +2105,7 @@ fn enqueue_local_tarball(
                     .expect("unreachable"),
                     skip_verify: false,
                     in_trusted_dependencies: false,
+                    github_resolved: StringOrTinyString::init(b""),
                 },
                 tarball_path: StringOrTinyString::init_append_if_needed(
                     tarball_path,

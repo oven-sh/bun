@@ -259,6 +259,7 @@ dependencies = [
  "bun_dotenv",
  "bun_errno",
  "bun_event_loop",
+ "bun_exe_format",
  "bun_hash",
  "bun_http_types",
  "bun_io",
@@ -300,7 +301,6 @@ dependencies = [
  "bun_jsc",
  "bun_opaque",
  "bun_options_types",
- "scopeguard",
 ]
 
 [[package]]

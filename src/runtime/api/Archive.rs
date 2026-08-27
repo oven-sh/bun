@@ -4,7 +4,7 @@ use std::ffi::CString;
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
-use crate::webcore::blob::{Store as BlobStore, StoreRef};
+use crate::webcore::blob::Store;
 use bun_core::{self, EncodedSlice, Output, Utf8Bytes, ZBox, strings};
 use bun_glob as glob;
 use bun_jsc::{
@@ -12,6 +12,7 @@ use bun_jsc::{
 };
 use bun_jsc::{EncodedSliceJsc as _, StringJsc as _, SysErrorJsc as _};
 use bun_libarchive as libarchive;
+use bun_ptr::RefPtr;
 use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
 
 /// libarchive `AE_IFREG` (== `S_IFREG`). The Rust `bun_libarchive::lib` port
@@ -33,20 +34,19 @@ pub(crate) struct GzipOptions {
 }
 
 // Hand-written JS class glue (not the `#[bun_jsc::JsClass]` derive): Archive
-// needs a custom `finalize` and no constructor, which the proc-macro does not
-// expose.
+// has no constructor, which the proc-macro does not expose.
 #[repr(C)]
 pub struct Archive {
     /// The underlying data for the archive - uses Blob.Store for thread-safe ref counting
-    store: StoreRef,
+    store: RefPtr<Store>,
     /// Compression settings for this archive
     compress: Compression,
 }
 
 impl Archive {
-    /// Borrow the backing `StoreRef`.
+    /// Borrow the backing `RefPtr<Store>`.
     #[inline]
-    pub(crate) fn store_ref(&self) -> &StoreRef {
+    pub(crate) fn store_ref(&self) -> &RefPtr<Store> {
         &self.store
     }
 }
@@ -63,12 +63,6 @@ impl Archive {
     #[inline]
     pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         self::write(global, callframe)
-    }
-
-    pub fn finalize(self: Box<Self>) {
-        jsc::mark_binding();
-        drop(self);
-        // store.deref() happens via Arc<BlobStore>::drop
     }
 
     /// Pretty-print for console.log
@@ -182,7 +176,6 @@ impl Archive {
         // For Blob/Archive, ref the existing store (zero-copy)
         if let Some(blob) = blob_from_js(data_arg) {
             if let Some(store) = blob.store.get().as_ref() {
-                // StoreRef::clone == store.ref()
                 return Ok(Box::new(Archive {
                     store: store.clone(),
                     compress,
@@ -267,7 +260,7 @@ fn parse_compression_options(
 }
 
 fn create_archive(data: Vec<u8>, compress: Compression) -> Box<Archive> {
-    let store = BlobStore::init(data);
+    let store = Store::init(data);
     Box::new(Archive { store, compress })
 }
 
@@ -719,7 +712,7 @@ pub enum ExtractResult {
 }
 
 pub struct ExtractContext {
-    store: StoreRef,
+    store: RefPtr<Store>,
     path: Box<[u8]>,
     glob_patterns: Option<Vec<Box<[u8]>>>,
     result: ExtractResult,
@@ -781,7 +774,7 @@ pub(crate) type ExtractTask = AsyncTask<ExtractContext>;
 
 fn start_extract_task(
     global: &JSGlobalObject,
-    store: &StoreRef,
+    store: &RefPtr<Store>,
     path: &[u8],
     glob_patterns: Option<Vec<Box<[u8]>>>,
 ) -> JsResult<JSValue> {
@@ -815,7 +808,7 @@ enum BlobResult {
 }
 
 pub struct BlobContext {
-    store: StoreRef,
+    store: RefPtr<Store>,
     compress: Compression,
     output_type: BlobOutputType,
     result: BlobResult,
@@ -881,7 +874,7 @@ pub(crate) type BlobTask = AsyncTask<BlobContext>;
 
 fn start_blob_task(
     global: &JSGlobalObject,
-    store: &StoreRef,
+    store: &RefPtr<Store>,
     compress: Compression,
     output_type: BlobOutputType,
 ) -> JsResult<JSValue> {
@@ -907,7 +900,7 @@ enum WriteResult {
 
 enum WriteData {
     Owned(Vec<u8>),
-    Store(StoreRef),
+    Store(RefPtr<Store>),
 }
 
 pub struct WriteContext {
@@ -1016,7 +1009,7 @@ enum FilesResult {
 // freeEntries deleted — Vec<FileEntry> drops each entry; FileEntry fields drop their boxes.
 
 pub struct FilesContext {
-    store: StoreRef,
+    store: RefPtr<Store>,
     glob_patterns: Option<Vec<Box<[u8]>>>,
     result: FilesResult,
 }
@@ -1165,7 +1158,7 @@ pub(crate) type FilesTask = AsyncTask<FilesContext>;
 
 fn start_files_task(
     global: &JSGlobalObject,
-    store: &StoreRef,
+    store: &RefPtr<Store>,
     glob_patterns: Option<Vec<Box<[u8]>>>,
 ) -> JsResult<JSValue> {
     let store = store.clone();

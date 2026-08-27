@@ -716,15 +716,15 @@ impl ShellCpTask {
             _copying_many = true;
         }
 
-        let args = crate::node::fs::args::Cp {
-            src: PathLike::owned(src.as_bytes().to_vec()),
-            dest: PathLike::owned(tgt.as_bytes().to_vec()),
-            flags: crate::node::fs::args::CpFlags {
+        let args = crate::node::fs::args::Cp::owned(
+            src.as_bytes().to_vec(),
+            tgt.as_bytes().to_vec(),
+            crate::node::fs::args::CpFlags {
                 recursive: self.opts.recursive,
                 force: true,
                 error_on_exist: false,
             },
-        };
+        );
 
         // Pool thread: hand the copy to an fs.cp task bound to the loop and
         // poster this shell task captured on its own thread.

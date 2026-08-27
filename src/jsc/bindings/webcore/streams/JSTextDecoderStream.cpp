@@ -198,7 +198,9 @@ JSC_DEFINE_HOST_FUNCTION(jsTextDecoderStreamPrototype_inspectCustom, (JSGlobalOb
     if (!thisObject) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextDecoderStream"_s);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
-    Bun::putDirectNamed(vm, data, "encoding"_s, Bun::toJS(lexicalGlobalObject, thisObject->m_encodingLabel));
+    auto* encoding = Bun::toJS(lexicalGlobalObject, thisObject->m_encodingLabel);
+    RETURN_IF_EXCEPTION(scope, {});
+    Bun::putDirectNamed(vm, data, "encoding"_s, encoding);
     Bun::putDirectNamed(vm, data, "fatal"_s, jsBoolean(thisObject->m_fatal));
     Bun::putDirectNamed(vm, data, "ignoreBOM"_s, jsBoolean(thisObject->m_ignoreBOM));
     Bun::putDirectNamed(vm, data, "readable"_s, thisObject->m_readable.get() ? JSValue(thisObject->m_readable.get()) : jsUndefined());
@@ -276,7 +278,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextDecoderStreamPrototypeGetter_encoding, (JSGlobalO
     const auto* stream = dynamicDowncast<JSTextDecoderStream>(JSValue::decode(thisValue));
     if (!stream) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, scope, "TextDecoderStream"_s, "encoding"_s);
-    return JSValue::encode(Bun::toJS(lexicalGlobalObject, stream->m_encodingLabel));
+    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::toJS(lexicalGlobalObject, stream->m_encodingLabel)));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsTextDecoderStreamPrototypeGetter_fatal, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))

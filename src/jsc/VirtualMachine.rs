@@ -2841,7 +2841,12 @@ impl VirtualMachine {
                     if let Some(stored) = self.pending_internal_promise {
                         return Ok(stored);
                     }
-                    let resolved = JSC__JSInternalPromise__resolvedPromise(global_ref, ret);
+                    // `Promise.resolve(ret)` reads `ret.constructor` / `ret.then`,
+                    // which may throw.
+                    let resolved = jsc::call_check_slow(global_ref, || {
+                        JSC__JSInternalPromise__resolvedPromise(global_ref, ret)
+                    })
+                    .map_err(|_| crate::CrateError::JSError)?;
                     self.pending_internal_promise = Some(resolved);
                     self.pending_internal_promise_is_protected = false;
                     return Ok(resolved);
@@ -2948,6 +2953,15 @@ pub fn process_fetch_log(
     // we must convert to UTF-8 here.
     let referrer_utf8 = referrer.to_utf8();
 
+    let msg_to_js = |msg: bun_ast::Msg| -> JSValue {
+        take(match msg.metadata {
+            bun_ast::Metadata::Build => BuildMessage::create(global_this, msg),
+            bun_ast::Metadata::Resolve(_) => {
+                ResolveMessage::create(global_this, &msg, referrer_utf8.slice())
+            }
+        })
+    };
+
     match log.msgs.len() {
         0 => {
             let msg = if err == crate::CrateError::UnexpectedPendingResolution {
@@ -2985,14 +2999,7 @@ pub fn process_fetch_log(
             // Note: `Msg` is not `Copy`, so move it out — the caller deinits
             // the log immediately after, so consuming the vec is sound.
             let msg = log.msgs.swap_remove(0);
-            match msg.metadata {
-                bun_ast::Metadata::Build => take(BuildMessage::create(global_this, msg)),
-                bun_ast::Metadata::Resolve(_) => take(ResolveMessage::create(
-                    global_this,
-                    &msg,
-                    referrer_utf8.slice(),
-                )),
-            }
+            msg_to_js(msg)
         }
 
         _ => {
@@ -3005,14 +3012,7 @@ pub fn process_fetch_log(
             let mut errors_stack: [JSValue; 256] = [JSValue::default(); 256];
             let len = log.msgs.len().min(errors_stack.len());
             for (i, msg) in log.msgs.drain(..len).enumerate() {
-                errors_stack[i] = match msg.metadata {
-                    bun_ast::Metadata::Build => take(BuildMessage::create(global_this, msg)),
-                    bun_ast::Metadata::Resolve(_) => take(ResolveMessage::create(
-                        global_this,
-                        &msg,
-                        referrer_utf8.slice(),
-                    )),
-                };
+                errors_stack[i] = msg_to_js(msg);
             }
 
             take(global_this.create_aggregate_error(

@@ -811,7 +811,6 @@ impl PublishCommand {
             headers.content.written_slice(),
             b"",
             None,
-            None,
             http::FetchRedirect::Follow,
         );
 
@@ -937,7 +936,6 @@ impl PublishCommand {
             publish_headers.content.written_slice(),
             publish_req_body,
             None,
-            None,
             http::FetchRedirect::Follow,
         );
 
@@ -1030,7 +1028,6 @@ impl PublishCommand {
                     otp_headers.entries,
                     otp_headers.content.written_slice(),
                     publish_req_body,
-                    None,
                     None,
                     http::FetchRedirect::Follow,
                 );
@@ -1260,7 +1257,6 @@ impl PublishCommand {
                         auth_headers.entries.clone()?,
                         auth_headers.content.written_slice(),
                         b"",
-                        None,
                         None,
                         http::FetchRedirect::Follow,
                     );

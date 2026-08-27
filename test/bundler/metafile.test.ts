@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 // Type definitions for metafile structure
 interface MetafileImport {
@@ -416,10 +416,11 @@ describe("bundler metafile", () => {
     expect(requireImport!.kind).toBe("require-call");
   });
 
-  test("metafile tracks dynamic-import imports", async () => {
+  test("metafile tracks dynamic-import imports with code splitting", async () => {
     using dir = tempDir("metafile-dynamic-import-test", {
-      "entry.js": `import("./dynamic.js").then(m => console.log(m));`,
+      "entry.js": `import("./dynamic.js").then(m => console.log(m)); import("./styles.css");`,
       "dynamic.js": `export const value = 123;`,
+      "styles.css": `.dynamic { color: red; }`,
     });
 
     const result = await Bun.build({
@@ -429,33 +430,85 @@ describe("bundler metafile", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.metafile).toBeDefined();
+    const metafile = result.metafile as Metafile;
+    const inputKeys = Object.keys(metafile.inputs);
+    const entryKey = inputKeys.find(k => k.endsWith("entry.js"))!;
+    const dynamicKey = inputKeys.find(k => k.endsWith("dynamic.js"))!;
+    const stylesKey = entryKey.replace(/entry\.js$/, "styles.css");
 
-    // Find the entry file in inputs
-    const inputs = (result.metafile as Metafile).inputs as Record<string, MetafileInput>;
-    let dynamicImport: MetafileImport | null = null;
-    for (const [path, input] of Object.entries(inputs)) {
-      if (path.includes("entry.js")) {
-        for (const imp of input.imports) {
-          if (imp.kind === "dynamic-import" && imp.original === "./dynamic.js") {
-            dynamicImport = imp;
-            break;
-          }
-        }
-        break;
+    // Splitting gives each import() target a chunk of its own (a JS chunk for dynamic.js,
+    // a CSS chunk for styles.css), but the inputs graph still links source files to
+    // source files: the import resolves to the "inputs" key of the imported file and is
+    // not external (esbuild reports it the same way).
+    expect(metafile.inputs[entryKey].imports).toEqual([
+      { path: dynamicKey, kind: "dynamic-import", original: "./dynamic.js" },
+      { path: stylesKey, kind: "dynamic-import", original: "./styles.css" },
+    ]);
+
+    // The chunk itself is what the outputs graph links to.
+    const [dynamicChunkPath] = Object.entries(metafile.outputs).find(([, output]) => output.entryPoint === dynamicKey)!;
+    const entryOutput = Object.values(metafile.outputs).find(output => output.entryPoint === entryKey)!;
+    expect(entryOutput.imports).toContainEqual({ path: dynamicChunkPath, kind: "dynamic-import" });
+  });
+
+  test("metafile inputs are the same with and without --splitting", async () => {
+    const files = {
+      "entry.js": `
+        import { shared } from "./shared.js";
+        console.log(shared, import("./data.json"), import("./other.js"), import("./lazy.js"));
+      `,
+      // A second user entry point that entry.js also import()s.
+      "other.js": `export const other = "other";`,
+      // Only reachable through import(), so splitting makes it an entry point of its own.
+      "lazy.js": `import { shared } from "./shared.js"; export const lazy = shared + "!";`,
+      "shared.js": `export const shared = "shared";`,
+      "data.json": `{ "answer": 42 }`,
+    };
+
+    async function buildMetafile(...extraArgs: string[]): Promise<Metafile> {
+      using dir = tempDir("metafile-splitting-inputs", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "entry.js", "other.js", "--outdir=out", "--metafile=meta.json", ...extraArgs],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return await Bun.file(`${dir}/meta.json`).json();
+    }
+
+    const [withSplitting, withoutSplitting] = await Promise.all([buildMetafile("--splitting"), buildMetafile()]);
+
+    expect(withSplitting.inputs["entry.js"].imports).toEqual([
+      { path: "shared.js", kind: "import-statement", original: "./shared.js" },
+      { path: "data.json", kind: "dynamic-import", original: "./data.json", with: { type: "json" } },
+      { path: "other.js", kind: "dynamic-import", original: "./other.js" },
+      { path: "lazy.js", kind: "dynamic-import", original: "./lazy.js" },
+    ]);
+    expect(withSplitting.inputs).toEqual(withoutSplitting.inputs);
+
+    // Everything this fixture imports ends up in the bundle, so every import edge in the
+    // inputs graph points at another input, splitting or not.
+    const inputKeys = Object.keys(withSplitting.inputs);
+    for (const input of Object.values(withSplitting.inputs)) {
+      for (const imp of input.imports) {
+        expect(inputKeys).toContain(imp.path);
       }
     }
 
-    expect(dynamicImport).not.toBeNull();
-    expect(dynamicImport!.kind).toBe("dynamic-import");
-    expect(dynamicImport!.original).toBe("./dynamic.js");
-    // The path should be the final chunk path (e.g., "./chunk-xxx.js"), not the internal unique_key
-    expect(dynamicImport!.path).toMatch(/^\.\/chunk-[a-z0-9]+\.js$/);
-
-    // Verify the path corresponds to an actual output chunk
-    const outputs = (result.metafile as Metafile).outputs as Record<string, MetafileOutput>;
-    const outputPaths = Object.keys(outputs);
-    expect(outputPaths).toContain(dynamicImport!.path);
+    // The chunks the dynamic imports load are listed in the outputs graph.
+    const outputPathOf = (entryPoint: string) =>
+      Object.entries(withSplitting.outputs).find(([, output]) => output.entryPoint === entryPoint)![0];
+    expect(withSplitting.outputs[outputPathOf("entry.js")].imports).toEqual(
+      expect.arrayContaining([
+        { path: outputPathOf("data.json"), kind: "dynamic-import" },
+        { path: outputPathOf("other.js"), kind: "dynamic-import" },
+        { path: outputPathOf("lazy.js"), kind: "dynamic-import" },
+      ]),
+    );
   });
 
   test("metafile includes cssBundle for CSS outputs", async () => {
@@ -800,8 +853,6 @@ describe("Bun.build metafile option variants", () => {
 });
 
 // CLI tests for --metafile-md
-import { bunEnv, bunExe } from "harness";
-
 describe("bun build --metafile-md", () => {
   test("generates markdown metafile with default name", async () => {
     using dir = tempDir("metafile-md-test", {
@@ -1086,6 +1137,31 @@ describe("bun build --metafile-md", () => {
     expect(content).toContain("import-statement");
     expect(content).toContain("dynamic-import");
     expect(content).toContain("require-call");
+  });
+
+  test("markdown links dynamically imported modules to their importers with --splitting", async () => {
+    using dir = tempDir("metafile-md-splitting-dynamic-import", {
+      "entry.js": `import("./dynamic.js").then(m => console.log(m));`,
+      "dynamic.js": `export const dynamic_value = 2;`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "entry.js", "--metafile-md", "--outdir=dist", "--splitting"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const content = await Bun.file(`${dir}/meta.md`).text();
+    expect(content).toContain("[IMPORT: entry.js -> dynamic.js]");
+    expect(content).toContain("[IMPORTED_BY: dynamic.js <- entry.js]");
+    expect(content).not.toContain("[EXTERNAL: entry.js");
+    expect(content).not.toContain("| External imports |");
   });
 
   test("markdown shows commonly imported modules", async () => {

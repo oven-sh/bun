@@ -35,6 +35,8 @@ describeWithContainer(
     });
 
     afterAll(async () => {
+      // afterAll still runs when beforeAll failed before it assigned `url`.
+      if (!url) return;
       await using sql = new SQL({ url, max: 1 });
       await sql.unsafe(`DROP TABLE IF EXISTS leak_test_28632`);
     });

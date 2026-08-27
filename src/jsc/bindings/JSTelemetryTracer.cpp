@@ -648,6 +648,16 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryPropagationHeaders, (JSGlobalObject * lexica
     return JSValue::encode(out);
 }
 
+// spanBaggage(span) → the W3C `baggage` header the span carries, or undefined; honours OTEL_PROPAGATORS.
+JSC_DEFINE_HOST_FUNCTION(jsTelemetrySpanBaggage, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto* span = toTelemetrySpan(callFrame->argument(0));
+    if (!span || !Bun__Telemetry__propagators().baggage)
+        return JSValue::encode(jsUndefined());
+    JSString* baggage = telemetryPropagationOf(defaultGlobalObject(lexicalGlobalObject), span).baggage;
+    return JSValue::encode(baggage ? JSValue(baggage) : jsUndefined());
+}
+
 } // namespace Bun
 
 extern "C" JSC::EncodedJSValue Bun__Telemetry__processEnv(Zig::GlobalObject* globalObject)

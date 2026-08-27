@@ -38,5 +38,6 @@ JSC_DECLARE_HOST_FUNCTION(jsTelemetryWrapSpanContext);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetrySuppressedCarrier);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetryParseTraceparent);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetryPropagationHeaders);
+JSC_DECLARE_HOST_FUNCTION(jsTelemetrySpanBaggage);
 
 } // namespace Bun

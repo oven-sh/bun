@@ -27,6 +27,7 @@ const enum Propagator {
   Baggage = 1 << 1,
 }
 const propagationHeaders = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetryPropagationHeaders", 1);
+const spanBaggage = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetrySpanBaggage", 1);
 const enterContext = $newCppFunction("TelemetryContext.cpp", "jsTelemetryEnterContext", 2);
 const exitContext = $newCppFunction("TelemetryContext.cpp", "jsTelemetryExitContext", 1);
 const activeExtras = $newCppFunction("TelemetryContext.cpp", "jsTelemetryActiveExtras", 0);
@@ -98,7 +99,7 @@ class BunContext {
     // (a null BAGGAGE_KEY entry means "deleted": the request's inbound baggage is masked)
     if (extras !== undefined && extras.$has(key)) return extras.$get(key) ?? undefined;
     // Baggage a request carried in lives on its span, not in extras.
-    if (key === BAGGAGE_KEY && this.#span !== undefined) return inboundBaggage(propagationHeaders(this.#span)[2]);
+    if (key === BAGGAGE_KEY && this.#span !== undefined) return inboundBaggage(spanBaggage(this.#span));
     return undefined;
   }
 

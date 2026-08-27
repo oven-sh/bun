@@ -738,8 +738,8 @@ pub(crate) fn peer_text_of(encoded: &[u8]) -> &[u8] {
 /// Derived attributes appended per request rather than templated (see
 /// `append_tail`).
 fn tail_attr_count(facts: &Facts) -> u32 {
-    // [user_agent.original +] url.path [+ url.query] [+ client.address]
-    // [+ network.peer.address [+ .port]]
+    // [client.address +] [network.peer.address [+ .port] +] url.path
+    // [+ url.query] [+ user_agent.original]
     let peer_attrs = facts.peer_encoded_attrs as u32;
     // client.address: the forwarded hop or else the peer.
     let has_client = facts.lens.client != 0 || peer_attrs != 0;
@@ -781,15 +781,6 @@ fn append_tail(
     // `room`: how many more attributes fit under attributeCountLimit after the
     // ones the span already carries (`p.attrs`).
     let mut room = (limits.attributes as u32).saturating_sub(u32::from(p.n_attrs));
-    if facts.derives_user_agent() && room != 0 {
-        otlp::write_str_kv_small(
-            out,
-            f::ATTRIBUTES,
-            "user_agent.original",
-            otlp::truncate_utf8(s.user_agent, max),
-        );
-        room -= 1;
-    }
     let (encoded, n) = (s.peer_encoded, facts.peer_encoded_attrs as u32);
     // semconv: client.address is the client behind any proxies (X-Forwarded-For
     // / Forwarded) — also the only identity on a unix-socket listener — and
@@ -837,6 +828,17 @@ fn append_tail(
             f::ATTRIBUTES,
             "url.query",
             otlp::truncate_utf8(&query, max),
+        );
+        room -= 1;
+    }
+    // Last: under attributeCountLimit pressure the addresses and the URL
+    // (semconv-required) outrank the user agent.
+    if facts.derives_user_agent() && room != 0 {
+        otlp::write_str_kv_small(
+            out,
+            f::ATTRIBUTES,
+            "user_agent.original",
+            otlp::truncate_utf8(s.user_agent, max),
         );
     }
     Nested::<SPAN_LEN_RESERVE>::at(span_start + OFF_LEN).finish(out);

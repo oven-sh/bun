@@ -185,9 +185,7 @@ pub struct PooledSocket<const SSL: bool> {
     pub(crate) hostname_buf: [u8; MAX_KEEPALIVE_HOSTNAME],
     pub(crate) hostname_len: u8,
     pub(crate) port: u16,
-    /// AF_UNIX connection. `hostname_buf` holds the socket path, `port` is 0.
-    /// Keeps TCP and unix pool entries from colliding even when the path
-    /// happens to equal some hostname string.
+    /// AF_UNIX connection: `hostname_buf` holds the socket path and `port` is 0.
     pub(crate) is_unix: bool,
     /// If you set `rejectUnauthorized` to `false`, the connection fails to verify,
     pub(crate) did_have_handshaking_error_while_reject_unauthorized_is_false: bool,
@@ -832,8 +830,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
         client.flags.reused_socket_verification = PeerVerification::None;
         if client.is_keep_alive_possible() {
-            // No proxy tunnel and no h2 over a unix socket (`can_offer_h2`
-            // refuses), so the pool key is the path plus the TLS config.
             if let Some(found) = self.existing_socket(
                 client.socket_verification(),
                 client.target_verification(),

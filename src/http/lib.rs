@@ -2605,8 +2605,7 @@ impl<'a> HTTPClient<'a> {
         } else {
             GenHttpContext::<IS_SSL>::close_socket(socket);
         }
-        // The redirect target is dialed over TCP. Cleared only after the pool
-        // decision above, which keys a unix connection on this path.
+        // Cleared after `release_socket` above, which keys the pool entry on it.
         self.unix_socket_path = b"";
         self.connected_url = URL::default();
         // connected_url was the last borrower of the previous hop's URL buffer

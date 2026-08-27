@@ -60,9 +60,8 @@ function activeDomain(): Domain | undefined {
 }
 
 // The stack array the innermost enter() still in effect installed. A context
-// restored for an async callback holds the array that was current when the
-// callback was created, never this one, which tells a throw inside run() from
-// a throw in a callback that only inherited its stack.
+// restored for an async callback never holds this array, which tells a throw
+// inside run() from a throw in a callback that only inherited its stack.
 let syncStack: Domain[] | undefined;
 // One record per enter() still in effect: what exit() puts back.
 const syncEntries: { domain: Domain; stack: Domain[] | undefined; syncStack: Domain[] | undefined }[] = [];

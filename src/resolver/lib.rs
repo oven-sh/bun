@@ -580,10 +580,14 @@ pub mod fs {
                 if is_interned(self.text) && is_interned(self.pretty) {
                     return return_self_static();
                 }
-                // `text` may already be interned from an earlier pass over this
-                // file (only `pretty` is per-build); reuse it instead of growing
-                // the append-only store.
-                let text = match FilenameStore::instance().as_interned(self.text) {
+                // `text` is normally already interned (the resolver caches file
+                // abs paths in `DirnameStore`; an earlier pass may have put it in
+                // `FilenameStore`); only `pretty` is per-build. Reuse it instead
+                // of growing the append-only store on every rebuild.
+                let text = match DirnameStore::instance()
+                    .as_interned(self.text)
+                    .or_else(|| FilenameStore::instance().as_interned(self.text))
+                {
                     Some(text) => text,
                     None => FilenameStore::instance().append_slice(self.text)?,
                 };

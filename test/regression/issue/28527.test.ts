@@ -75,7 +75,7 @@ function startRegistry(requests: string[]) {
   return registry;
 }
 
-test.concurrent("Bun.build auto-installs dependencies without package.json", { timeout: 30_000 }, async () => {
+test.concurrent("Bun.build auto-installs dependencies without package.json", async () => {
   const requests: string[] = [];
   using registry = startRegistry(requests);
 
@@ -124,7 +124,7 @@ console.log("BUILD_OK");
   expect(runExit).toBe(0);
 });
 
-test.concurrent("bun build CLI auto-installs dependencies without package.json", { timeout: 30_000 }, async () => {
+test.concurrent("bun build CLI auto-installs dependencies without package.json", async () => {
   const requests: string[] = [];
   using registry = startRegistry(requests);
 

@@ -103,18 +103,41 @@ describe("AsyncLocalStorage", () => {
         expect(arrayStore.getStore()).toBe(arr);
         expect(spreadableStore.getStore()).toBe(spreadable);
         expect(emptyArrayStore.getStore()).toBe(empty);
+      });
+      // enterWith() is not scoped: the entries survive the enclosing run()
+      expect(stores()).toEqual([undefined, arr, obj, spreadable, empty]);
 
-        // replacing an existing entry with an array
+      // replacing an existing entry with an array
+      outer.run("outer", () => {
         outer.enterWith([3, 4]);
         expect(stores()).toEqual([[3, 4], arr, obj, spreadable, empty]);
       });
-      // enterWith() is not scoped: the entries survive the enclosing run()
       expect(stores()).toEqual([undefined, arr, obj, spreadable, empty]);
     } finally {
       arrayStore.disable();
       objectStore.disable();
       spreadableStore.disable();
       emptyArrayStore.disable();
+    }
+  });
+
+  // The frame is immutable: enterWith() must append to a copy. A snapshot that
+  // captured the old frame by reference must not see the new entry, and run()
+  // must still restore from a frame it did not hand out. Verified against Node
+  // v26.3.0.
+  test("enterWith() appends to a copy of the frame", () => {
+    const a = new AsyncLocalStorage();
+    const b = new AsyncLocalStorage();
+    try {
+      a.run("A", () => {
+        const snap = AsyncLocalStorage.snapshot();
+        b.enterWith("B");
+        expect(snap(() => [a.getStore(), b.getStore()])).toEqual(["A", undefined]);
+        expect([a.getStore(), b.getStore()]).toEqual(["A", "B"]);
+      });
+      expect([a.getStore(), b.getStore()]).toEqual([undefined, "B"]);
+    } finally {
+      b.disable();
     }
   });
 

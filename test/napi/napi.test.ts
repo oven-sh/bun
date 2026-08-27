@@ -714,6 +714,15 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("finalized: true");
     });
 
+    // An abort finalizes from its own dispatch, like Node: it does not wait for
+    // the references other threads still hold (they are told to make no further
+    // calls, so they may never release). The late release of such a reference
+    // reports napi_ok (0) and frees the function.
+    it("runs the finalizer on abort while another thread still holds a reference", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_abort_with_outstanding_ref", []);
+      expect(result).toContain("finalized: true\nrelease after finalize: 0");
+    });
+
     // A full bounded queue must not hide that the function is closing: the call
     // reports napi_closing (16) and consumes the caller's thread reference, so
     // the finalizer still runs. napi_queue_full (17) would strand it forever.

@@ -127,6 +127,32 @@ nativeTests.test_threadsafe_function_abort_blocked_producers = async () => {
   console.log("finalized:", nativeTests.test_napi_threadsafe_function_abort_blocked_producers_finalized());
 };
 
+nativeTests.test_threadsafe_function_abort_with_outstanding_ref = async () => {
+  // create (thread_count=2) with the second reference held by a thread that
+  // makes no calls, then abort from this thread
+  nativeTests.test_napi_threadsafe_function_abort_with_outstanding_ref();
+  // the finalizer runs from the abort's dispatch on this thread, so a bounded
+  // number of turns is enough; it must not wait for the other thread
+  for (let i = 0; i < 1000; i++) {
+    if (nativeTests.test_napi_threadsafe_function_abort_with_outstanding_ref_finalized()) break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  console.log("finalized:", nativeTests.test_napi_threadsafe_function_abort_with_outstanding_ref_finalized());
+  // the other thread releases once it has seen the finalizer run; that is the
+  // one step here that depends on OS scheduling, so wait for it by deadline
+  const deadline = Date.now() + 10_000;
+  while (
+    nativeTests.test_napi_threadsafe_function_abort_with_outstanding_ref_release_status() === -1 &&
+    Date.now() < deadline
+  ) {
+    await new Promise(resolve => setTimeout(resolve, 1));
+  }
+  console.log(
+    "release after finalize:",
+    nativeTests.test_napi_threadsafe_function_abort_with_outstanding_ref_release_status(),
+  );
+};
+
 nativeTests.test_get_exception = (_, value) => {
   function thrower() {
     throw value;

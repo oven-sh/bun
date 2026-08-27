@@ -1139,11 +1139,9 @@ impl<'a> Formatter<'a> {
                             writer.write_all(pretty_fmt_const!(true, "<r><green>").as_bytes());
                         }
 
-                        // A top-level multiline value is wrapped in newlines
-                        // (like the Array/Object branches, and jest's
-                        // addExtraLineBreaks). A nested string prints inline
-                        // after its key, with the literal newlines inside the
-                        // quotes, exactly as jest does.
+                        // Only a top-level multiline value gets the newline
+                        // wrap (jest's addExtraLineBreaks); nested strings
+                        // print inline.
                         let wrap = self.indent == 0 && str.index_of_any(b"\n\r").is_some();
                         if wrap {
                             writer.write_all(b"\n");
@@ -2024,9 +2022,7 @@ impl<'a> Formatter<'a> {
 
                             let old_quote_strings = self.quote_strings;
                             self.quote_strings = true;
-                            // The key is nested inside the tag even when the
-                            // element itself is the root value, so it must
-                            // never get the top-level newline wrap.
+                            // The key is nested even on a root element.
                             self.indent += 1;
 
                             let inner: JsResult<()> = (|| {

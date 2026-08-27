@@ -48,7 +48,7 @@ function collector(respond?: (n: number) => Response | undefined) {
 // The runner's own environment must not configure the child (OTEL_* /
 // BUN_OTEL* would change endpoints, samplers, service names).
 const cleanEnv: Record<string, string> = Object.fromEntries(
-  Object.entries(bunEnv).filter(([k]) => !/^(OTEL_|BUN_OTEL)/.test(k)),
+  Object.entries(bunEnv).filter(([k]) => !/^(OTEL_|BUN_OTEL|HTTPS?_PROXY$|NO_PROXY$|https?_proxy$|no_proxy$)/.test(k)),
 ) as Record<string, string>;
 
 async function run(script: string, env: Record<string, string>) {
@@ -246,6 +246,38 @@ describe.concurrent("OTLP/HTTP exporter", () => {
       c.received[0].body.resourceSpans[0].resource.attributes.map((a: any) => [a.key, a.value.stringValue]),
     );
     expect([attrs["service.name"], attrs["team"]]).toEqual(["set-late", "core"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("OTLP exports go through HTTP_PROXY and honour NO_PROXY, as fetch() does", async () => {
+    using proxy = collector(); // a plain-http endpoint is proxied in absolute form, so a collector can play the proxy
+    using direct = collector();
+    let r = await run(`Bun.otel.start(); Bun.otel.tracer("t").startSpan("via-proxy").end();`, {
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector.invalid:4318",
+      HTTP_PROXY: proxy.url,
+    });
+    expect(r.stderr).toBe("");
+    expect(proxy.spans().map((s: any) => s.name)).toEqual(["via-proxy"]);
+    expect(new URL(proxy.received[0].url).pathname).toBe("/v1/traces");
+    r = await run(`Bun.otel.start(); Bun.otel.tracer("t").startSpan("direct").end();`, {
+      OTEL_EXPORTER_OTLP_ENDPOINT: direct.url,
+      HTTP_PROXY: proxy.url,
+      NO_PROXY: "localhost",
+    });
+    expect(r.stderr).toBe("");
+    expect(direct.spans().map((s: any) => s.name)).toEqual(["direct"]);
+    expect(proxy.received).toHaveLength(1);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("client-certificate OTEL_EXPORTER_OTLP_* variables are reported as not supported yet", async () => {
+    using c = collector();
+    const { stderr, exitCode } = await run(`Bun.otel.start(); Bun.otel.tracer("t").startSpan("s").end();`, {
+      OTEL_EXPORTER_OTLP_ENDPOINT: c.url,
+      OTEL_EXPORTER_OTLP_CLIENT_KEY: "/nope.pem",
+    });
+    expect(stderr).toContain("OTEL_EXPORTER_OTLP_CLIENT_KEY is not supported yet");
+    expect(c.spans().map((s: any) => s.name)).toEqual(["s"]);
     expect(exitCode).toBe(0);
   });
 

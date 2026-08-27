@@ -87,7 +87,7 @@ Once enabled, Bun reads the standard OpenTelemetry environment variables:
 | `OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT`, `OTEL_ATTRIBUTE_COUNT_LIMIT`, `OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT`, `OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT`, `OTEL_SPAN_EVENT_COUNT_LIMIT`, `OTEL_SPAN_LINK_COUNT_LIMIT` | Span limits (the `limits` option).                                                                                                                                                                                         |
 | `BUN_OTEL_DISABLE`                                                                                                                                                                                          | Deny-list, e.g. `fs,dns`.                                                                                                                                                                                                  |
 
-The OTLP/HTTP protobuf protocol is supported. `grpc` is not.
+The OTLP/HTTP protobuf protocol is supported. `grpc` is not. Export requests use `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`, `NODE_EXTRA_CA_CERTS` and `NODE_TLS_REJECT_UNAUTHORIZED` the way `fetch()` does; the `OTEL_EXPORTER_OTLP_CERTIFICATE` / `CLIENT_KEY` / `CLIENT_CERTIFICATE` variables are not supported yet.
 
 ---
 

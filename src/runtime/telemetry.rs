@@ -400,7 +400,7 @@ pub fn configure(
     global: &JSGlobalObject,
     cfg: &bun_telemetry_cold::Config,
 ) -> Result<(), exporter::InvalidEndpoint> {
-    let exporters = exporter::build(&cfg.exporters)?;
+    let exporters = exporter::build(global, &cfg.exporters)?;
     configure_with(global, cfg, exporters, None);
     Ok(())
 }
@@ -807,7 +807,7 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // to duplicate destinations.
     // Validate (construct) the new exporters before dropping the old ones, so
     // a bad URL leaves the previous pipeline intact.
-    let built = match exporter::build(&cfg.exporters) {
+    let built = match exporter::build(global, &cfg.exporters) {
         Ok(v) => v,
         Err(e) => return Err(global.throw_invalid_arguments(format_args!("{e}"))),
     };

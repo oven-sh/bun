@@ -37,6 +37,11 @@ pub struct OtlpHttpExporter {
     /// The idle timeout re-arms on every body read, so a collector trickling
     /// its response could otherwise hold the one export slot indefinitely.
     inflight: bun_threading::Guarded<Vec<InflightRequest>>,
+    /// `HTTP(S)_PROXY` / `NO_PROXY` and `NODE_TLS_REJECT_UNAUTHORIZED` as they
+    /// were when the exporter was configured, applied to every export the way
+    /// fetch() applies them.
+    proxy: Option<Box<bun_http::ProxySettings>>,
+    reject_unauthorized: bool,
 }
 
 struct InflightRequest {
@@ -148,13 +153,22 @@ impl fmt::Display for InvalidEndpoint {
     }
 }
 
-/// Construct the configured exporters (`console` included).
+/// Construct the configured exporters (`console` included). OTLP exporters
+/// take the proxy and TLS-verification environment from `global`'s VM.
 #[optimize(size)]
-pub fn build(cfgs: &[ExporterConfig]) -> Result<Vec<Arc<dyn Exporter>>, InvalidEndpoint> {
+pub fn build(
+    global: &JSGlobalObject,
+    cfgs: &[ExporterConfig],
+) -> Result<Vec<Arc<dyn Exporter>>, InvalidEndpoint> {
+    let vm = global.bun_vm();
+    let proxy = bun_http::ProxySettings::from_env(vm.as_mut().transpiler.env_mut());
+    let reject_unauthorized = vm.get_tls_reject_unauthorized();
     cfgs.iter()
         .map(|c| {
             Ok(match c {
-                ExporterConfig::Otlp(c) => Arc::new(OtlpHttpExporter::new(c)?) as Arc<dyn Exporter>,
+                ExporterConfig::Otlp(c) => {
+                    Arc::new(OtlpHttpExporter::new(c, proxy.clone(), reject_unauthorized)?) as Arc<dyn Exporter>
+                }
                 ExporterConfig::Console => Arc::new(ConsoleExporter),
             })
         })
@@ -162,7 +176,11 @@ pub fn build(cfgs: &[ExporterConfig]) -> Result<Vec<Arc<dyn Exporter>>, InvalidE
 }
 
 impl OtlpHttpExporter {
-    pub fn new(cfg: &OtlpExporterConfig) -> Result<OtlpHttpExporter, InvalidEndpoint> {
+    pub fn new(
+        cfg: &OtlpExporterConfig,
+        proxy: Option<Box<bun_http::ProxySettings>>,
+        reject_unauthorized: bool,
+    ) -> Result<OtlpHttpExporter, InvalidEndpoint> {
         let url = URL::parse(cfg.url.as_bytes());
         if url.hostname.is_empty() || !(url.is_http() || url.is_https()) {
             return Err(InvalidEndpoint {
@@ -201,6 +219,8 @@ impl OtlpHttpExporter {
             timeout_seconds: cfg.timeout_ms.div_ceil(1000).max(1),
             warned: core::sync::atomic::AtomicBool::new(false),
             inflight: bun_threading::Guarded::new(Vec::new()),
+            proxy,
+            reject_unauthorized,
         })
     }
 
@@ -233,9 +253,19 @@ impl OtlpHttpExporter {
         timeout_seconds: u32,
         signals: Option<bun_http::Signals>,
     ) -> AsyncHTTP<'a> {
+        let url = URL::parse(&self.url);
+        // As fetch(): the request borrows the hop-0 proxy URL out of its own
+        // boxed copy of the settings, which it then owns.
+        let proxy_settings = self.proxy.clone();
+        let http_proxy = proxy_settings.as_deref().and_then(|s| {
+            let href: *const [u8] = s.resolve(&url)?;
+            // SAFETY: `href` points into `proxy_settings`' heap box, moved into
+            // the request below and kept for its lifetime.
+            Some(URL::parse(unsafe { &*href }))
+        });
         AsyncHTTP::init(
             Method::POST,
-            URL::parse(&self.url),
+            url,
             bun_core::handle_oom(self.headers.entries.clone()),
             self.headers.content.written_slice(),
             body,
@@ -243,7 +273,12 @@ impl OtlpHttpExporter {
             // A 3xx is a failed export (as in the SDK): following it would resend
             // the credentials in `headers` to whatever origin it names.
             FetchRedirect::Error,
-            self.options(timeout_seconds, signals),
+            HttpOptions {
+                http_proxy,
+                proxy_settings,
+                reject_unauthorized: Some(self.reject_unauthorized),
+                ..self.options(timeout_seconds, signals)
+            },
         )
     }
 

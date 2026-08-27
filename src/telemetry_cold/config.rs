@@ -540,6 +540,23 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
             ));
         }
     }
+    // Client certificates / a custom CA for the exporter are not wired up yet;
+    // say so rather than silently exporting without them. (NODE_EXTRA_CA_CERTS,
+    // NODE_TLS_REJECT_UNAUTHORIZED and HTTPS_PROXY / NO_PROXY do apply.)
+    for unsupported in [
+        "OTEL_EXPORTER_OTLP_CERTIFICATE",
+        "OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE",
+        "OTEL_EXPORTER_OTLP_CLIENT_KEY",
+        "OTEL_EXPORTER_OTLP_TRACES_CLIENT_KEY",
+        "OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE",
+        "OTEL_EXPORTER_OTLP_TRACES_CLIENT_CERTIFICATE",
+    ] {
+        if get(unsupported).is_some() {
+            warnings.push(format!(
+                "{unsupported} is not supported yet and is ignored"
+            ));
+        }
+    }
 
     EnvConfig {
         activation,

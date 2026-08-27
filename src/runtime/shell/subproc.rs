@@ -509,13 +509,13 @@ impl ShellSubprocess {
     }
 
     /// `Heap::lastChanceToFinalize` deletes the `JSC::ArrayBuffer` impls
-    /// before the sweep that reaches us, so the `> ${arraybuffer}` unpin in
-    /// `BufferedOutput::drop` would write to a freed impl. Clear the value
-    /// so the drop skips it; the `Strong` handle still releases normally.
+    /// before the sweep that reaches us, so dropping the redirect target's
+    /// [`PinnedArrayBuffer`](jsc::PinnedArrayBuffer) would write to a
+    /// freed impl; defuse it.
     ///
     /// # Safety
     /// Same contract as [`Self::deinit_in_flight_io`]; VM-shutdown finalizer
-    /// only (on a live heap this would leak the pin).
+    /// only (on a live heap this would leak the pin and GC root).
     #[cfg(not(windows))]
     pub(crate) unsafe fn defuse_array_buffer_unpins(this: *mut Self) {
         // SAFETY: disjoint field projections of the live subprocess.
@@ -530,9 +530,7 @@ impl ShellSubprocess {
             // borrow of the `PipeReader` is live.
             unsafe {
                 if let BufferedOutput::ArrayBuffer { buf, .. } = &mut (*pipe).buffered_output {
-                    // `Default` has `value: JSValue::ZERO`, which
-                    // `BufferedOutput::drop` reads as "nothing to unpin".
-                    let _ = core::mem::take(&mut buf.array_buffer);
+                    buf.defuse();
                 }
             }
         }
@@ -603,8 +601,9 @@ impl ShellSubprocess {
         let _ = &inherited_env_storage;
 
         // Until ownership transfers into Writable/Readable, deinit any caller-provided
-        // stdio resources (memfd, ArrayBuffer.Strong, Blob) on early return so they
-        // aren't leaked. Defused via `ScopeGuard::into_inner` once consumed.
+        // stdio resources (memfd, Blob) on early return so they aren't leaked
+        // (`redirect_stdout`/`redirect_stderr` drop with `spawn_args`). Defused via
+        // `ScopeGuard::into_inner` once consumed.
         let mut stdio_guard = scopeguard::guard(&mut spawn_args.stdio, |stdio| {
             for s in stdio.iter_mut() {
                 // Stdio's Drop impl handles resource teardown.
@@ -763,6 +762,7 @@ impl ShellSubprocess {
         let stdout = Readable::init(
             OutKind::Stdout,
             stdio1,
+            spawn_args.redirect_stdout.take(),
             shellio.stdout.clone(),
             event_loop,
             subprocess,
@@ -774,6 +774,7 @@ impl ShellSubprocess {
         let stderr = Readable::init(
             OutKind::Stderr,
             stdio2,
+            spawn_args.redirect_stderr.take(),
             shellio.stderr.clone(),
             event_loop,
             subprocess,
@@ -1051,14 +1052,6 @@ impl Writable {
                         JscSubprocess::source_from_blob(blob),
                     )));
                 }
-                Stdio::ArrayBuffer(array_buffer) => {
-                    return Ok(Writable::Buffer(StaticPipeWriter::create(
-                        event_loop,
-                        subprocess,
-                        result,
-                        JscSubprocess::source_from_array_buffer(core::mem::take(array_buffer)),
-                    )));
-                }
                 Stdio::Fd(fd) => {
                     return Ok(Writable::Fd(*fd));
                 }
@@ -1112,12 +1105,6 @@ impl Writable {
                         JscSubprocess::source_from_blob(blob),
                     )))
                 }
-                Stdio::ArrayBuffer(array_buffer) => Ok(Writable::Buffer(StaticPipeWriter::create(
-                    event_loop,
-                    subprocess,
-                    result,
-                    JscSubprocess::source_from_array_buffer(core::mem::take(array_buffer)),
-                ))),
                 Stdio::Memfd(memfd) => {
                     debug_assert!(memfd.is_valid());
                     let fd = *memfd;
@@ -1248,6 +1235,7 @@ impl Readable {
     pub(crate) fn init(
         out_type: OutKind,
         stdio: Stdio,
+        redirect_buf: Option<jsc::PinnedArrayBuffer>,
         shellio: Option<Arc<IOWriter>>,
         event_loop: EventLoopHandle,
         process: *mut ShellSubprocess,
@@ -1258,8 +1246,12 @@ impl Readable {
     ) -> Readable {
         assert_stdio_result!(result);
 
-        // Note: `Stdio` impls Drop, so dispatch on `&mut` and `mem::take`
-        // Default-able payloads instead of partial moves (E0509).
+        debug_assert!(redirect_buf.is_none() || matches!(stdio, Stdio::Pipe | Stdio::Capture(_)));
+        let buffered_output = match redirect_buf {
+            Some(buf) => BufferedOutput::ArrayBuffer { buf, i: 0 },
+            None => BufferedOutput::default(),
+        };
+        // Note: `Stdio` impls Drop, so dispatch on `&mut` instead of partial moves (E0509).
         let mut stdio = stdio;
         #[cfg(windows)]
         {
@@ -1273,24 +1265,22 @@ impl Readable {
                 Stdio::Blob(_) => Readable::Ignore,
                 Stdio::Memfd(_) => Readable::Ignore,
                 Stdio::Pipe => Readable::Pipe(PipeReader::create(
-                    event_loop, process, result, None, out_type, interp,
+                    event_loop,
+                    process,
+                    result,
+                    None,
+                    buffered_output,
+                    out_type,
+                    interp,
                 )),
-                Stdio::ArrayBuffer(array_buffer) => {
-                    let mut pipe =
-                        PipeReader::create(event_loop, process, result, None, out_type, interp);
-                    // The Arc was just created by `PipeReader::create` and is
-                    // uniquely held (strong=1, weak=0) — `get_mut` is the
-                    // safe route to set `buffered_output` before it's shared.
-                    Arc::get_mut(&mut pipe)
-                        .expect("fresh PipeReader Arc")
-                        .buffered_output = BufferedOutput::ArrayBuffer {
-                        buf: core::mem::take(array_buffer),
-                        i: 0,
-                    };
-                    Readable::Pipe(pipe)
-                }
                 Stdio::Capture(_) => Readable::Pipe(PipeReader::create(
-                    event_loop, process, result, shellio, out_type, interp,
+                    event_loop,
+                    process,
+                    result,
+                    shellio,
+                    buffered_output,
+                    out_type,
+                    interp,
                 )),
                 Stdio::ReadableStream(_) => Readable::Ignore, // Shell doesn't use readable_stream
                 // The shell never uses this; rejected at i < 3 anyway.
@@ -1318,24 +1308,22 @@ impl Readable {
                     Readable::Memfd(fd)
                 }
                 Stdio::Pipe => Readable::Pipe(PipeReader::create(
-                    event_loop, process, result, None, out_type, interp,
+                    event_loop,
+                    process,
+                    result,
+                    None,
+                    buffered_output,
+                    out_type,
+                    interp,
                 )),
-                Stdio::ArrayBuffer(array_buffer) => {
-                    let mut pipe =
-                        PipeReader::create(event_loop, process, result, None, out_type, interp);
-                    // The Arc was just created by `PipeReader::create` and is
-                    // uniquely held (strong=1, weak=0) — `get_mut` is the safe
-                    // route to set `buffered_output` before it's shared.
-                    Arc::get_mut(&mut pipe)
-                        .expect("fresh PipeReader Arc")
-                        .buffered_output = BufferedOutput::ArrayBuffer {
-                        buf: core::mem::take(array_buffer),
-                        i: 0,
-                    };
-                    Readable::Pipe(pipe)
-                }
                 Stdio::Capture(_) => Readable::Pipe(PipeReader::create(
-                    event_loop, process, result, shellio, out_type, interp,
+                    event_loop,
+                    process,
+                    result,
+                    shellio,
+                    buffered_output,
+                    out_type,
+                    interp,
                 )),
                 Stdio::ReadableStream(_) => Readable::Ignore, // Shell doesn't use readable_stream
                 // The shell never uses this; rejected at i < 3 anyway.
@@ -1390,6 +1378,9 @@ pub struct SpawnArgs<'a> {
     pub(crate) env_array: Vec<*const c_char>,
     pub(crate) cwd: &'a [u8],
     pub(crate) stdio: [Stdio; 3],
+    /// `> ${arraybuffer}` redirect targets; the matching `stdio` slot is `Pipe`.
+    pub(crate) redirect_stdout: Option<jsc::PinnedArrayBuffer>,
+    pub(crate) redirect_stderr: Option<jsc::PinnedArrayBuffer>,
     pub(crate) lazy: bool,
     pub path: &'a [u8],
     // ipc_mode: IPCMode,
@@ -1411,6 +1402,8 @@ impl<'a> SpawnArgs<'a> {
             env_array: Vec::new(),
             cwd: event_loop.top_level_dir(),
             stdio: [Stdio::Ignore, Stdio::Pipe, Stdio::Inherit],
+            redirect_stdout: None,
+            redirect_stderr: None,
             lazy: false,
             // PATH unset → fall back to _PATH_DEFPATH on POSIX (Android often
             // has no PATH). PATH="" (explicit empty) is preserved — that's a
@@ -1515,10 +1508,7 @@ pub struct PipeReader {
 
 pub enum BufferedOutput {
     Bytelist(Vec<u8>),
-    ArrayBuffer {
-        buf: jsc::array_buffer::ArrayBufferStrong,
-        i: u32,
-    },
+    ArrayBuffer { buf: jsc::PinnedArrayBuffer, i: u32 },
 }
 
 impl Default for BufferedOutput {
@@ -1558,21 +1548,6 @@ impl BufferedOutput {
                 let length = (array_buf_slice.len() - idx).min(bytes.len());
                 array_buf_slice[idx..idx + length].copy_from_slice(&bytes[..length]);
                 *i += u32::try_from(length).expect("int cast");
-            }
-        }
-    }
-}
-
-impl Drop for BufferedOutput {
-    fn drop(&mut self) {
-        match self {
-            BufferedOutput::Bytelist(_b) => {
-                // Vec<u8> drops its own storage.
-            }
-            BufferedOutput::ArrayBuffer { buf, .. } => {
-                if !buf.array_buffer.value.is_empty() {
-                    buf.array_buffer.unpin();
-                }
             }
         }
     }
@@ -1745,6 +1720,7 @@ impl PipeReader {
         process: *mut ShellSubprocess,
         result: StdioResult,
         capture: Option<Arc<IOWriter>>,
+        buffered_output: BufferedOutput,
         out_type: OutKind,
         interp: *mut crate::shell::interpreter::Interpreter,
     ) -> Arc<PipeReader> {
@@ -1793,7 +1769,7 @@ impl PipeReader {
             out_type,
             state: PipeReaderState::Pending,
             captured_writer,
-            buffered_output: BufferedOutput::default(),
+            buffered_output,
             interp,
         });
         let this_ptr: *mut PipeReader = Arc::as_ptr(&arc).cast_mut();

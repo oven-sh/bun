@@ -2188,11 +2188,7 @@ impl BlobExt for Blob {
                         Ok(crate::node::fs::async_::Stat::create(
                             global_this,
                             binding,
-                            crate::node::fs::args::Stat {
-                                path: PathLike::owned(path_like.slice().to_vec()),
-                                big_int: false,
-                                throw_if_no_entry: true,
-                            },
+                            crate::node::fs::args::Stat::owned(path_like.slice().to_vec()),
                             vm,
                         ))
                     }
@@ -2206,10 +2202,7 @@ impl BlobExt for Blob {
                         Ok(crate::node::fs::async_::Fstat::create(
                             global_this,
                             binding,
-                            crate::node::fs::args::Fstat {
-                                fd: *fd,
-                                big_int: false,
-                            },
+                            crate::node::fs::args::Fstat::for_fd(*fd),
                             vm,
                         ))
                     }
@@ -4855,27 +4848,27 @@ pub(crate) fn write_file_internal(
                 let len = data.get_length(global_this)?;
                 if len < 256 * 1024 {
                     let str = data.to_bun_string(global_this)?;
-                    let pathlike: PathOrFileDescriptor = match &*path_or_blob {
-                        PathOrBlob::Path(p) => p.clone(),
-                        PathOrBlob::Blob(b) => b
-                            .store()
-                            .expect("infallible: store present")
-                            .data
-                            .as_file()
-                            .pathlike
-                            .clone(),
+                    let pathlike: &PathOrFileDescriptor = match &*path_or_blob {
+                        PathOrBlob::Path(p) => p,
+                        PathOrBlob::Blob(b) => {
+                            &b.store()
+                                .expect("infallible: store present")
+                                .data
+                                .as_file()
+                                .pathlike
+                        }
                     };
                     let result = if matches!(pathlike, PathOrFileDescriptor::Path(_)) {
                         write_string_to_file_fast::<true>(
                             global_this,
-                            &pathlike,
+                            pathlike,
                             &str,
                             &mut needs_async,
                         )
                     } else {
                         write_string_to_file_fast::<false>(
                             global_this,
-                            &pathlike,
+                            pathlike,
                             &str,
                             &mut needs_async,
                         )
@@ -4886,27 +4879,27 @@ pub(crate) fn write_file_internal(
                 }
             } else if let Some(buffer_view) = data.as_array_buffer(global_this) {
                 if buffer_view.byte_len < 256 * 1024 {
-                    let pathlike: PathOrFileDescriptor = match &*path_or_blob {
-                        PathOrBlob::Path(p) => p.clone(),
-                        PathOrBlob::Blob(b) => b
-                            .store()
-                            .expect("infallible: store present")
-                            .data
-                            .as_file()
-                            .pathlike
-                            .clone(),
+                    let pathlike: &PathOrFileDescriptor = match &*path_or_blob {
+                        PathOrBlob::Path(p) => p,
+                        PathOrBlob::Blob(b) => {
+                            &b.store()
+                                .expect("infallible: store present")
+                                .data
+                                .as_file()
+                                .pathlike
+                        }
                     };
                     let result = if matches!(pathlike, PathOrFileDescriptor::Path(_)) {
                         write_bytes_to_file_fast::<true>(
                             global_this,
-                            &pathlike,
+                            pathlike,
                             buffer_view.byte_slice(),
                             &mut needs_async,
                         )
                     } else {
                         write_bytes_to_file_fast::<false>(
                             global_this,
-                            &pathlike,
+                            pathlike,
                             buffer_view.byte_slice(),
                             &mut needs_async,
                         )
@@ -5612,14 +5605,10 @@ pub(crate) fn construct_bun_file(
 
     if let PathOrFileDescriptor::Path(ref p) = path {
         if p.slice().starts_with(b"s3://") {
-            // `webcore::node_types::PathLike` re-exports
-            // `crate::node::types::PathLike`, so no conversion is needed —
-            // clone the path (`path` drops at scope exit).
+            // The clone owns a copy of a buffer's bytes; `path` unpins at scope exit.
             return S3File::construct_internal_js(global_object, p.clone(), options);
         }
     }
-    // The sync path took no `protect()`, so `Drop for PathOrFileDescriptor`
-    // suffices to release `path`.
 
     let blob = Blob::find_or_create_file_from_path(&mut path, global_object, false);
 

@@ -229,9 +229,7 @@ impl FileExt for File {
                 Ok(node_fs::async_::Unlink::create(
                     global_this,
                     &binding,
-                    node_fs::args::Unlink {
-                        path: PathLike::owned(path_like.slice().to_vec()),
-                    },
+                    node_fs::args::Unlink::owned(path_like.slice().to_vec()),
                     global_this.bun_vm().as_mut(),
                 ))
             }

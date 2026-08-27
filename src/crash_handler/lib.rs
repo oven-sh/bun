@@ -2206,6 +2206,11 @@ mod draft {
                 writeln!(writer, "CPU: {}", cpu_features).map_err(fmt_err)?;
             }
 
+            if let Some(compiled_by) = bun_analytics::features::COMPILED_BY.get() {
+                writer.write_all(b"Compiled by: ")?;
+                writer.write_all(compiled_by)?;
+                writer.write_all(b"\n")?;
+            }
             write!(writer, "Args: ").map_err(fmt_err)?;
             let mut arg_chars_left: usize = if cfg!(debug_assertions) { 4096 } else { 196 };
             for (i, arg) in bun_core::argv().iter().enumerate() {

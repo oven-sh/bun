@@ -54,6 +54,34 @@ pub struct StandaloneModuleGraph {
     /// The first `startup_module_count` of `files` (table order = load order) are the entry
     /// point's static import closure, i.e. what loads before the first `import()`.
     pub startup_module_count: u32,
+    /// The `bun` that ran `bun build --compile`: its platform, and e.g. "bun-v1.4.1+abcdef123 linux-x64" for crash reports.
+    pub compile_host: CompileHost,
+    pub compile_host_description: &'static [u8],
+}
+
+/// The platform of the `bun` that wrote a standalone module graph (not necessarily the one running it: `--compile --target`).
+#[repr(C)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub struct CompileHost {
+    /// `bun_core::Environment::OperatingSystem as u8 + 1`; 0 = not recorded.
+    pub os: u8,
+    /// `bun_core::Environment::Architecture as u8 + 1`; 0 = not recorded.
+    pub arch: u8,
+    pub is_musl: u8,
+    pub _reserved: u8,
+}
+
+impl CompileHost {
+    pub const CURRENT: CompileHost = CompileHost {
+        os: Environment::OS as u8 + 1,
+        arch: Environment::ARCH as u8 + 1,
+        is_musl: Environment::IS_MUSL as u8,
+        _reserved: 0,
+    };
+
+    pub fn is_windows(self) -> Option<bool> {
+        (self.os != 0).then(|| self.os == Environment::OperatingSystem::Windows as u8 + 1)
+    }
 }
 
 // We never want to hit the filesystem for these files
@@ -746,6 +774,8 @@ pub(crate) struct Offsets {
     pub entry_point_id: u32,
     pub compile_exec_argv_ptr: StringPointer,
     pub flags: Flags,
+    pub compile_host: CompileHost,
+    pub compile_host_description_ptr: StringPointer,
 }
 
 bitflags::bitflags! {
@@ -780,6 +810,11 @@ bitflags::bitflags! {
 
 const TRAILER: &[u8] = b"\n---- Bun! ----\n";
 
+/// e.g. "bun-v1.4.1-canary.1+abcdef123 linux-x64", as recorded in every executable this bun compiles.
+fn compile_host_description() -> String {
+    format!("bun-v{} {}-{}{}", bun_core::Global::package_json_version_with_revision, Environment::OS_NAME_NPM, Environment::ARCH.npm_name(), if Environment::IS_MUSL { "-musl" } else { "" })
+}
+
 unsafe extern "C" {
     fn Bun__WTFStringHashLatin1(ptr: *const u8, len: usize) -> u32;
 }
@@ -807,6 +842,8 @@ impl StandaloneModuleGraph {
                 bytecode_string_table: &[],
                 module_info_string_table: &[],
                 startup_module_count: 0,
+                compile_host: CompileHost::default(),
+                compile_host_description: b"",
             });
         }
 
@@ -1027,7 +1064,17 @@ impl StandaloneModuleGraph {
             bytecode_string_table,
             module_info_string_table,
             startup_module_count: startup_module_count.min(module_count as u32),
+            compile_host: offsets.compile_host,
+            // SAFETY: read-only string subrange, disjoint from writable regions.
+            compile_host_description: unsafe { slice_to(raw_const, raw_len, offsets.compile_host_description_ptr) },
         })
+    }
+
+    /// The one cross-compile the bytecode format is sensitive to: written under one C++ ABI (MSVC vs Itanium), read
+    /// under the other. Reported with crash reports as a feature flag so such crashes stand out.
+    pub fn bytecode_crosses_abi(&self) -> bool {
+        let Some(host_is_windows) = self.compile_host.is_windows() else { return false };
+        host_is_windows != Environment::IS_WINDOWS && self.files.values().iter().any(|file| !file.bytecode.is_empty())
     }
 
     /// Ahead-of-time bytecode for internal module `id`, if the executable carries it.
@@ -1210,6 +1257,7 @@ pub(crate) fn to_bytes(
     string_builder.cap += 16 + 2 * size_of::<u32>();
     string_builder.cap += size_of::<Offsets>();
     string_builder.count_z(compile_exec_argv);
+    string_builder.count(compile_host_description().as_bytes());
 
     string_builder.allocate()?;
 
@@ -1499,6 +1547,7 @@ pub(crate) fn to_bytes(
         flags |= Flags::HAS_MODULE_INFO_STRING_TABLE;
     }
     let compile_exec_argv_ptr = string_builder.append_count_z(compile_exec_argv);
+    let compile_host_description_ptr = string_builder.append_count(compile_host_description().as_bytes());
 
     let offsets = Offsets {
         entry_point_id: entry_point_id as u32,
@@ -1506,6 +1555,8 @@ pub(crate) fn to_bytes(
         compile_exec_argv_ptr,
         byte_count: string_builder.len,
         flags,
+        compile_host: CompileHost::CURRENT,
+        compile_host_description_ptr,
     };
 
     // SAFETY: `Offsets` is `#[repr(C)]` POD; same `modules_as_bytes` rationale as above.

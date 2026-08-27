@@ -114,11 +114,11 @@ const bigOutput = "160307 70000";
 const shapesOutput = "16257";
 function shapesSource() {
   const lines = ["var acc = 0, s;"];
-  for (let n = 0; n <= 64; n++) lines.push(`s = "${Buffer.alloc(n, "x")}"; acc += s.length; s = "${"é".repeat(n)}"; acc += s.length; s = "${"字".repeat(n)}"; acc += s.length;`);
+  for (let n = 0; n <= 64; n++) lines.push(`s = "${Buffer.alloc(n, "x").toString()}"; acc += s.length; s = "${"é".repeat(n)}"; acc += s.length; s = "${"字".repeat(n)}"; acc += s.length;`);
   for (const b of [7, 8, 14, 15, 16, 21, 22, 28, 29, 31, 32, 33, 52]) for (const d of [-1, 0, 1]) lines.push(`acc += ${2 ** b + d} % 7; acc -= ${-(2 ** b) + d} % 5;`);
   for (let n = 1; n <= 24; n++) {
     lines.push(`function sw${n}(v) { switch (v) { ${Array.from({ length: n }, (_, i) => `case ${i * (n % 3 + 1)}: return ${i};`).join(" ")} default: return -1; } } acc += sw${n}(${n - 1});`);
-    lines.push(`function ss${n}(v) { switch (v) { ${Array.from({ length: n }, (_, i) => `case "k${Buffer.alloc(i, "q")}": return ${i};`).join(" ")} default: return -1; } } acc += ss${n}("k${Buffer.alloc(n - 1, "q")}");`);
+    lines.push(`function ss${n}(v) { switch (v) { ${Array.from({ length: n }, (_, i) => `case "k${Buffer.alloc(i, "q").toString()}": return ${i};`).join(" ")} default: return -1; } } acc += ss${n}("k${Buffer.alloc(n - 1, "q").toString()}");`);
     lines.push(`function p${n}(${Array.from({ length: n }, (_, i) => "a" + i).join(", ")}) { return arguments.length + a${n - 1}; } acc += p${n}(${Array.from({ length: n }, (_, i) => i).join(", ")});`);
     lines.push(`class C${n} { ${Array.from({ length: n }, (_, i) => `f${i} = ${i}; #p${i} = ${i};`).join(" ")} sum() { return ${Array.from({ length: n }, (_, i) => `this.f${i} + this.#p${i}`).join(" + ")}; } } acc += new C${n}().sum();`);
     lines.push(`acc += [${Array.from({ length: n }, (_, i) => i).join(", ")}].length + [${Array.from({ length: n }, (_, i) => i + 0.5).join(", ")}].length + [${Array.from({ length: n }, (_, i) => `"e${i}"`).join(", ")}].length;`);
@@ -184,10 +184,12 @@ async function bundle(
 // cacheVersion is a hash of the WebKit version string and headerChecksum covers it, so both change on every WebKit
 // upgrade whether or not the format did; mask them so the snapshot only moves when the serialized bytes do.
 const payloads: Record<string, Uint8Array> = {};
-function fingerprint(name: string, bytecode: Uint8Array) {
+function fingerprint(name: string, bytecode: Uint8Array, isPayload = true) {
   const copy = new Uint8Array(bytecode);
-  copy.fill(0, 0, 4);
-  copy.fill(0, 8, 12);
+  if (isPayload) {
+    copy.fill(0, 0, 4);
+    copy.fill(0, 8, 12);
+  }
   payloads[name] = copy;
   return { sha256: Bun.CryptoHasher.hash("sha256", copy, "hex"), bytes: copy.byteLength };
 }
@@ -220,7 +222,9 @@ describe("bytecode cache portability", () => {
     // A builtin (what `bun build --compile --bytecode` embeds for node:* / bun:* modules): @-intrinsics and the
     // builtin-executable entry, which user source never produces. Bun's own internal modules are not hashed here because
     // their source is per-OS (process.platform is inlined); the next test covers them.
-    outputs["builtin corpus"] = fingerprint("builtin corpus", internalModuleBytecode(builtinSource, "corpus:builtin").bytecode);
+    const builtin = internalModuleBytecode(builtinSource, "corpus:builtin");
+    outputs["builtin corpus"] = fingerprint("builtin corpus", builtin.bytecode);
+    outputs["builtin corpus strings"] = fingerprint("builtin corpus strings", builtin.strings, false); // the external string table --compile embeds beside it
     outputs["vm.SourceTextModule module.js"] = fingerprint(
       "vm.SourceTextModule module.js",
       new vm.SourceTextModule(moduleSource, { identifier: "module.js" }).createCachedData(),
@@ -257,8 +261,12 @@ describe("bytecode cache portability", () => {
     ).toMatchInlineSnapshot(`
       {
         "builtin corpus": {
-          "bytes": 6144,
-          "sha256": "0b549d456059c9a9fcda414a3c3ea691eeb9f53cfee59df5e4a1b83fe00fdff0",
+          "bytes": 5312,
+          "sha256": "12824b34db18698014ade574dc61b75d46244786b5f14689fd03fa163066dce7",
+        },
+        "builtin corpus strings": {
+          "bytes": 836,
+          "sha256": "e4821b3ff0c554e5ca10612c06adf999f5f4f8c639122f1284163b0c6ce87e11",
         },
         "bun build --bytecode --minify features.js": {
           "js": "9f5f15dbd326293b6805304febe9fb19f9d26531d2bb8c10e80d80e126f19a2d",
@@ -394,22 +402,24 @@ describe("bytecode cache portability", () => {
   test("encoder output does not depend on the encoding process", async () => {
     using dir = tempDir("bytecode-portable-process", {
       "api.js": `
+        import { internalModuleBytecode } from "bun:internal-for-testing";
+        import { mkdirSync, readFileSync, writeFileSync } from "fs";
+        import vm from "node:vm";
         for (let i = 0; i < 1000; i++) Symbol("s" + i); // symbol hash counter
         const wide = s => (s + "\u1234").slice(0, -1).split("\u1234").join("");
         globalThis.o = { [wide("classify")]: 1, [wide("literals")]: 2, [wide("ab")]: 3 }; // 16-bit atoms for corpus names
-        const vm = require("node:vm");
         const [entry, outdir, source] = process.argv.slice(2);
-        const script = new vm.Script(require("fs").readFileSync(source, "utf8"), { filename: "features.js" });
+        const script = new vm.Script(readFileSync(source, "utf8"), { filename: "features.js" });
         script.runInNewContext({ console: { log() {} } }); // the corpus itself, parsed and run in this VM first
-        require("fs").mkdirSync(outdir, { recursive: true });
-        require("fs").writeFileSync(outdir + "/vm.cached", script.createCachedData()); // produced after running it
+        mkdirSync(outdir, { recursive: true });
+        writeFileSync(outdir + "/vm.cached", script.createCachedData()); // produced after running it
         const result = await Bun.build({ entrypoints: [entry], outdir, target: "bun", format: "cjs", bytecode: true });
         if (!result.success) throw new AggregateError(result.logs);
-        const { internalModuleBytecode } = require("bun:internal-for-testing");
         const mask = b => { b = new Uint8Array(b); b.fill(0, 0, 4); b.fill(0, 8, 12); return b; }; // as fingerprint() does
+        const sha = b => new Bun.CryptoHasher("sha256").update(b).digest("hex");
         const internalModules = {};
-        for (let i = 0, m; (m = internalModuleBytecode(i)); i++) internalModules[m.name] = new Bun.CryptoHasher("sha256").update(mask(m.bytecode)).digest("hex");
-        require("fs").writeFileSync(outdir + "/internal-modules.json", JSON.stringify(internalModules));
+        for (let i = 0, m; (m = internalModuleBytecode(i)); i++) internalModules[m.name] = sha(mask(m.bytecode)) + " " + sha(m.strings);
+        writeFileSync(outdir + "/internal-modules.json", JSON.stringify(internalModules));
       `,
     });
     const { entry, args } = bundlerBuilds[0];
@@ -439,7 +449,7 @@ describe("bytecode cache portability", () => {
 
     // Every one of Bun's internal modules as builtin bytecode, in this process and in the busy one: same bytes.
     const internalModules: Record<string, string> = {};
-    for (let i = 0, m; (m = internalModuleBytecode(i)); i++) internalModules[m.name] = hash(m.bytecode);
+    for (let i = 0, m; (m = internalModuleBytecode(i)); i++) internalModules[m.name] = hash(m.bytecode) + " " + fingerprint("", m.strings, false).sha256;
     expect(Object.keys(internalModules).length).toBeGreaterThan(100);
     expect(JSON.parse(readFileSync(join(String(dir), "api", "internal-modules.json"), "utf8"))).toEqual(internalModules);
 

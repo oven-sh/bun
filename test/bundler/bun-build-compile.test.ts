@@ -90,6 +90,31 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
     60_000,
   );
 
+  test("the executable records which bun compiled it, and crash reports say so", async () => {
+    using dir = tempDir("build-compile-compiled-by", {
+      "app.js": `require("bun:internal-for-testing").crash_handler.panic();`,
+    });
+    const outfile = join(dir + "", "app");
+    const result = await Bun.build({ entrypoints: [join(dir + "", "app.js")], compile: { outfile }, bytecode: true, target: "bun" });
+    expect(result.success).toBe(true);
+    await using proc = Bun.spawn({
+      cmd: [outfile],
+      env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    // e.g. "Compiled by: bun-v1.4.1-canary.1+4274120ab linux-x64"; the same bun compiled it, so its revision and platform.
+    const compiledBy = stderr.match(/^Compiled by: (.*)$/m)?.[1] ?? "";
+    expect(compiledBy).toStartWith(`bun-v${Bun.version}`);
+    expect(compiledBy).toContain(Bun.revision.slice(0, 9));
+    expect(compiledBy).toEndWith(` ${isWindows ? "windows" : process.platform}-${isArm64 ? "aarch64" : "x64"}${isMusl ? "-musl" : ""}`);
+    // Compiled and run on the same platform: not the Windows<->non-Windows bytecode case crash reports flag.
+    expect(stderr).toMatch(/^Features: /m);
+    expect(stderr).not.toContain("bytecode_cross_abi");
+    expect(exitCode).not.toBe(0);
+  });
+
   test.each([false, true])(
     "--bytecode=%p: internal modules the app imports come from embedded bytecode",
     async bytecode => {

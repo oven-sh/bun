@@ -67,14 +67,14 @@ static UnlinkedFunctionExecutable* createInternalModuleExecutable(JSC::VM& vm, c
     return createBuiltinExecutable(vm, source, Identifier::fromString(vm, moduleName), ImplementationVisibility::Public, ConstructorKind::None, ConstructAbility::CannotConstruct, InlineAttribute::None);
 }
 
-static RefPtr<JSC::CachedBytecode> encodeInternalModule(JSC::VM& vm, const SourceCode& source, const String& moduleName, unsigned sourceStamp)
+static RefPtr<JSC::CachedBytecode> encodeInternalModule(JSC::VM& vm, const SourceCode& source, const String& moduleName, unsigned sourceStamp, unsigned depth, JSC::EncoderStringTable* externalStrings)
 {
     UnlinkedFunctionExecutable* executable = createInternalModuleExecutable(vm, source, moduleName);
     ParserError error;
-    JSC::recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, executable, source, error, std::numeric_limits<unsigned>::max());
+    JSC::recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, executable, source, error, depth);
     if (error.isValid())
         return nullptr;
-    return JSC::encodeBuiltinFunction(vm, executable, source.length(), sourceStamp, nullptr, JSC::BytecodeCacheChecksums::No, JSC::BytecodeCacheUpdatable::No);
+    return JSC::encodeBuiltinFunction(vm, executable, source.length(), sourceStamp, externalStrings, JSC::BytecodeCacheChecksums::No, JSC::BytecodeCacheUpdatable::No);
 }
 
 JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, const String& SOURCE, const String& moduleName, const String& urlString, uint32_t id)
@@ -270,14 +270,7 @@ extern "C" bool Bun__generateInternalModuleBytecode(uint32_t id, uint32_t depth,
     JSC::VM& vm = Zig::vmForBytecodeCache();
     JSC::JSLockHolder locker(vm);
     Zig::ensureBuiltinNamesForBytecodeCache(vm);
-    String text = INTERNAL_MODULE_SOURCE(m);
-    SourceCode source = makeInternalModuleSource(text, m.moduleId, m.url);
-    UnlinkedFunctionExecutable* executable = createInternalModuleExecutable(vm, source, m.moduleId);
-    ParserError error;
-    JSC::recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, executable, source, error, depth);
-    if (error.isValid())
-        return false;
-    RefPtr<JSC::CachedBytecode> result = JSC::encodeBuiltinFunction(vm, executable, source.length(), InternalModuleRegistryConstants::sourceStamp, externalStrings, JSC::BytecodeCacheChecksums::No, JSC::BytecodeCacheUpdatable::No);
+    RefPtr<JSC::CachedBytecode> result = encodeInternalModule(vm, makeInternalModuleSource(INTERNAL_MODULE_SOURCE(m), m.moduleId, m.url), m.moduleId, InternalModuleRegistryConstants::sourceStamp, depth, externalStrings);
     if (!result)
         return false;
     result->ref();
@@ -297,8 +290,9 @@ extern "C" size_t Bun__internalModuleDependencies(uint32_t id, const uint16_t** 
     return dependencyOffsets[id + 1] - dependencyOffsets[id];
 }
 
-// bun:internal-for-testing: the bytecode `bun build --compile --bytecode` would embed for a builtin module -- either for
-// internal module number `index` (null past the last one), or for `source` written in builtin syntax under `name`.
+// bun:internal-for-testing: the bytecode `bun build --compile --bytecode` would embed for a builtin module, and the
+// external string table it would embed beside it -- either for internal module number `index` (null past the last
+// one), or for `source` written in builtin syntax under `name`.
 JSC_DEFINE_HOST_FUNCTION(jsInternalModuleBytecode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     using namespace Bun;
@@ -309,6 +303,8 @@ JSC_DEFINE_HOST_FUNCTION(jsInternalModuleBytecode, (JSC::JSGlobalObject * global
     if (callFrame->argument(0).isString()) {
         text = callFrame->argument(0).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+        if (!callFrame->argument(1).isString())
+            return throwVMTypeError(globalObject, scope, "internalModuleBytecode(source, name): name must be a string"_s);
         name = callFrame->argument(1).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         url = makeString("builtin://"_s, name);
@@ -323,14 +319,18 @@ JSC_DEFINE_HOST_FUNCTION(jsInternalModuleBytecode, (JSC::JSGlobalObject * global
         url = m.url;
         stamp = InternalModuleRegistryConstants::sourceStamp;
     }
-    RefPtr<JSC::CachedBytecode> bytecode = encodeInternalModule(vm, makeInternalModuleSource(text, name, url), name, stamp);
+    JSC::EncoderStringTable externalStrings;
+    RefPtr<JSC::CachedBytecode> bytecode = encodeInternalModule(vm, makeInternalModuleSource(text, name, url), name, stamp, std::numeric_limits<unsigned>::max(), &externalStrings);
     if (!bytecode)
         return throwVMError(globalObject, scope, makeString("could not generate bytecode for "_s, name));
     JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, bytecode->span());
     RETURN_IF_EXCEPTION(scope, {});
+    JSC::JSUint8Array* strings = WebCore::createBuffer(globalObject, externalStrings.serialize().span());
+    RETURN_IF_EXCEPTION(scope, {});
     JSObject* result = constructEmptyObject(globalObject);
     result->putDirect(vm, Identifier::fromString(vm, "name"_s), jsString(vm, name));
     result->putDirect(vm, Identifier::fromString(vm, "bytecode"_s), buffer);
+    result->putDirect(vm, Identifier::fromString(vm, "strings"_s), strings);
     return JSValue::encode(result);
 }
 

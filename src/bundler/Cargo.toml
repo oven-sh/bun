@@ -23,6 +23,7 @@ thiserror.workspace = true
 bun_base64.workspace = true
 bun_alloc.workspace = true
 bun_errno.workspace = true
+bun_exe_format.workspace = true
 bun_analytics.workspace = true
 bun_resolver.workspace = true
 # `bun_resolve_builtins` only depends on `bun_options_types` + `bun_string`

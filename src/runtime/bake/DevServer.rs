@@ -1539,7 +1539,7 @@ fn on_report_error_request(dev: &mut DevServer, req: &mut Request, resp: AnyResp
         AnyResponse::TCP(r) => {
             ErrorReportRequest::run(dev, req, bun_uws_sys::response::TCPResponse::as_handle(r))
         }
-        AnyResponse::H3(_) => not_found(resp),
+        AnyResponse::H3(_) | AnyResponse::H2(_) => not_found(resp),
     }
 }
 
@@ -1552,7 +1552,7 @@ fn on_unref_source_map_request(dev: &mut DevServer, req: &mut Request, resp: Any
         AnyResponse::TCP(r) => {
             UnrefSourceMapRequest::run(dev, req, bun_uws_sys::response::TCPResponse::as_handle(r))
         }
-        AnyResponse::H3(_) => not_found(resp),
+        AnyResponse::H3(_) | AnyResponse::H2(_) => not_found(resp),
     }
 }
 
@@ -1728,7 +1728,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
                 Ok(b) => b,
                 Err(e) => bun_core::handle_oom(Err(e)),
             };
-        let response = route_bundle::StaticRouteRef::init_from_any_blob(
+        let response = StaticRoute::init_from_any_blob(
             crate::webcore::blob::Any::from_array_list(json_bytes),
             crate::server::static_route::InitFromBytesOptions {
                 server: dev.server,
@@ -2664,7 +2664,7 @@ impl DevServer {
         // this fn; the shared reborrow ends with this statement.
         let cached: Option<bun_ptr::ThisPtr<StaticRoute>> =
             unsafe { (*route_bundle).data.html().cached_response.as_ref() }
-                .map(route_bundle::StaticRouteRef::this_ptr);
+                .map(bun_ptr::RefPtr::this_ptr);
         let blob: bun_ptr::ThisPtr<StaticRoute> = match cached {
             Some(blob) => blob,
             None => 'generate: {
@@ -2677,7 +2677,7 @@ impl DevServer {
                 }
                 .expect("oom");
 
-                let response = route_bundle::StaticRouteRef::init_from_any_blob(
+                let response = StaticRoute::init_from_any_blob(
                     crate::webcore::AnyBlob::from_owned_slice(payload),
                     crate::server::static_route::InitFromBytesOptions {
                         mime_type: Some(&MimeType::HTML),
@@ -2875,8 +2875,7 @@ impl DevServer {
         // SAFETY: `route_bundle` points into `self.route_bundles`, not resized in
         // this fn; the shared reborrow ends with this statement.
         let cached: Option<bun_ptr::ThisPtr<StaticRoute>> =
-            unsafe { (*route_bundle).client_bundle.as_ref() }
-                .map(route_bundle::StaticRouteRef::this_ptr);
+            unsafe { (*route_bundle).client_bundle.as_ref() }.map(bun_ptr::RefPtr::this_ptr);
         let client_bundle: bun_ptr::ThisPtr<StaticRoute> = match cached {
             Some(client_bundle) => client_bundle,
             None => 'generate: {
@@ -2886,7 +2885,7 @@ impl DevServer {
                 let payload =
                     unsafe { Self::generate_client_bundle(&mut *self_ptr, &*route_bundle) }
                         .expect("oom");
-                let bundle = route_bundle::StaticRouteRef::init_from_any_blob(
+                let bundle = StaticRoute::init_from_any_blob(
                     crate::webcore::AnyBlob::from_owned_slice(payload),
                     crate::server::static_route::InitFromBytesOptions {
                         mime_type: Some(&MimeType::JAVASCRIPT),

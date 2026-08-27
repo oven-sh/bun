@@ -8,7 +8,7 @@ use crate::jsc::{
 };
 use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_jsc::JsCell;
-use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
+use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
 use bun_sql::postgres::command_tag::CommandTag;
@@ -53,15 +53,11 @@ pub struct JSMySQLQuery {
 // struct-level `#[ref_count(destroy = …)]` attribute.
 
 impl JSMySQLQuery {
-    /// RAII `ref()`/`deref()` bracket around `self`. One audited
-    /// `ScopedRef::new` here replaces N per-site
-    /// `unsafe { ScopedRef::new(self.as_ctx_ptr()) }` — `&self` is the live
-    /// m_ctx payload by construction, so the [`ScopedRef::new`] precondition
-    /// (live, non-null) is always satisfied.
+    /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
     #[inline]
-    pub(crate) fn ref_guard(&self) -> bun_ptr::ScopedRef<Self> {
-        // SAFETY: `&self` ⇒ the allocation is live and non-null.
-        unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) }
+    pub(crate) fn ref_guard(&self) -> RefPtr<Self> {
+        // SAFETY: `self` is the live heap allocation.
+        unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
     }
 
     pub fn estimated_size(&self) -> usize {

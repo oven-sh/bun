@@ -806,6 +806,8 @@ impl WTFStringImplStruct {
     // These details must stay in sync with WTFStringImpl.h in WebKit!
     // ---------------------------------------------------------------------
     pub(crate) const S_HASH_FLAG_8BIT_BUFFER: u32 = 1 << 2;
+    pub(crate) const S_HASH_FLAG_STRING_KIND_IS_ATOM: u32 = 1 << 4;
+    pub(crate) const S_HASH_FLAG_STRING_KIND_IS_SYMBOL: u32 = 1 << 5;
     /// The bottom bit in the ref count indicates a static (immortal) string.
     pub(crate) const S_REF_COUNT_FLAG_IS_STATIC_STRING: u32 = 0x1;
     /// This allows us to ref / deref without disturbing the static string flag.
@@ -926,8 +928,20 @@ impl WTFStringImplStruct {
         }
     }
     #[inline]
-    pub fn is_thread_safe(&self) -> bool {
-        WTFStringImpl__isThreadSafe(self)
+    pub fn is_atom(&self) -> bool {
+        (self.m_hash_and_flags.get() & Self::S_HASH_FLAG_STRING_KIND_IS_ATOM) != 0
+    }
+    #[inline]
+    pub fn is_symbol(&self) -> bool {
+        (self.m_hash_and_flags.get() & Self::S_HASH_FLAG_STRING_KIND_IS_SYMBOL) != 0
+    }
+    #[inline]
+    pub fn is_thread_isolated(&self) -> bool {
+        WTFStringImpl__isThreadIsolated(self)
+    }
+    #[inline]
+    pub fn is_thread_shareable(&self) -> bool {
+        WTFStringImpl__isThreadShareable(self)
     }
     /// Compute the hash() if necessary
     #[inline]
@@ -946,7 +960,8 @@ unsafe extern "C" {
     // `destroy` path crosses FFI. `*const` + `unsafe`: it frees the
     // allocation backing the pointer.
     pub fn Bun__WTFStringImpl__destroy(this: *const WTFStringImplStruct);
-    safe fn WTFStringImpl__isThreadSafe(this: &WTFStringImplStruct) -> bool;
+    safe fn WTFStringImpl__isThreadIsolated(this: &WTFStringImplStruct) -> bool;
+    safe fn WTFStringImpl__isThreadShareable(this: &WTFStringImplStruct) -> bool;
     safe fn Bun__WTFStringImpl__ensureHash(this: &WTFStringImplStruct);
 }
 

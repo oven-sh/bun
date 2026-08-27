@@ -15,6 +15,7 @@ use bun_event_loop::EventLoopHandle;
 use bun_io::ParentDeathWatchdog;
 #[cfg(unix)]
 use bun_io::{FilePoll, KeepAlive};
+use bun_ptr::RefPtr;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
@@ -151,7 +152,7 @@ impl Drop for Process {
 /// allocation, event-loop thread only); none escapes this type. Dropping the
 /// handle from inside the exit handler re-enters the `Process` whose `on_exit`
 /// is dispatching, exactly as the raw-pointer owners do.
-pub struct ProcessHandle(bun_ptr::RefPtr<Process>);
+pub struct ProcessHandle(RefPtr<Process>);
 
 impl ProcessHandle {
     #[inline]
@@ -181,14 +182,13 @@ impl ProcessHandle {
     }
 
     pub fn has_exited(&self) -> bool {
-        self.0.data().has_exited()
+        self.0.has_exited()
     }
 }
 
 impl Drop for ProcessHandle {
     fn drop(&mut self) {
         self.process_mut().detach();
-        self.0.deref();
     }
 }
 
@@ -317,7 +317,7 @@ impl Process {
 
     /// # Safety
     /// `this` carries the +1 ref taken when the waiter-thread task was queued.
-    /// `ScopedRef::adopt` releases it on return — which may free `this` — so
+    /// `RefPtr::from_raw` releases it on return — which may free `this` — so
     /// this takes `*mut Self`, not `&mut self` (a `&mut` argument's
     /// Stacked-Borrows protector outliving the allocation is UB; see :215).
     #[cfg(unix)]
@@ -327,8 +327,8 @@ impl Process {
         rusage: &Rusage,
     ) {
         // SAFETY: caller contract — adopts the queued +1 ref.
-        let _g = unsafe { bun_ptr::ScopedRef::<Process>::adopt(this) };
-        // SAFETY: `_g` keeps `this` live; `&mut` scoped to the poller unref.
+        let _guard = unsafe { RefPtr::from_raw(this) };
+        // SAFETY: `_guard` keeps `this` live; `&mut` scoped to the poller unref.
         unsafe {
             if let Poller::WaiterThread(waiter) = &mut (*this).poller {
                 let ctx = event_loop_handle_to_ctx((*this).event_loop);
@@ -336,7 +336,7 @@ impl Process {
                 (*this).poller = Poller::Detached;
             }
         }
-        // SAFETY: `_g` keeps `this` live; `&mut` scoped to this call (which
+        // SAFETY: `_guard` keeps `this` live; `&mut` scoped to this call (which
         // can fire the JS exit handler).
         unsafe { (*this).on_wait_pid(waitpid_result, rusage) };
     }
@@ -346,8 +346,8 @@ impl Process {
     #[cfg(unix)]
     pub unsafe fn on_wait_pid_from_event_loop_task(this: *mut Self) {
         // SAFETY: caller contract — adopts the queued +1 ref.
-        let _g = unsafe { bun_ptr::ScopedRef::<Process>::adopt(this) };
-        // SAFETY: `_g` keeps `this` live.
+        let _guard = unsafe { RefPtr::from_raw(this) };
+        // SAFETY: `_guard` keeps `this` live.
         unsafe { (*this).wait(false) };
     }
 
@@ -597,13 +597,13 @@ impl Process {
         // `Poller::Uv` payload inside `*this` (see `on_exit_uv`).
         let _pid = unsafe { (*uv_handle).pid };
         // SAFETY: `*mut Process` back-pointer stashed in `data` at spawn. Stay
-        // raw — `ScopedRef::Drop` may free the allocation, so never bind a
+        // raw — `RefPtr::drop` may free the allocation, so never bind a
         // `&mut Process` whose tag would have to outlive that.
         let this: *mut Process = unsafe { (*uv_handle).data.cast() };
         // SAFETY: adopts the +1 ref taken at `uv_spawn`.
-        let _g = unsafe { bun_ptr::ScopedRef::<Process>::adopt(this) };
+        let _guard = unsafe { RefPtr::from_raw(this) };
         bun_sys::windows::libuv::log!("Process.onClose({})", _pid);
-        // SAFETY: `_g` keeps `this` live for this block.
+        // SAFETY: `_guard` keeps `this` live for this block.
         unsafe {
             if matches!((*this).poller, Poller::Uv(_)) {
                 (*this).poller = Poller::Detached;
@@ -1578,7 +1578,7 @@ impl WindowsSpawnResult {
         // SAFETY: `to_process` returns the live heap `Process` allocated by
         // `spawn_process_windows` with its initial ref; that ref moves into
         // the handle.
-        ProcessHandle(unsafe { bun_ptr::RefPtr::from_raw(self.to_process(event_loop)) })
+        ProcessHandle(unsafe { RefPtr::from_raw(self.to_process(event_loop)) })
     }
 }
 
@@ -1744,7 +1744,7 @@ pub trait SpawnResultExt: Sized {
     fn to_process_handle(self, event_loop: EventLoopHandle) -> ProcessHandle {
         // SAFETY: `to_process` returns a live heap `Process` whose initial ref
         // the caller owns; that ref moves into the handle.
-        ProcessHandle(unsafe { bun_ptr::RefPtr::from_raw(self.to_process(event_loop)) })
+        ProcessHandle(unsafe { RefPtr::from_raw(self.to_process(event_loop)) })
     }
 }
 

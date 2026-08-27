@@ -249,23 +249,13 @@ impl LinuxMemFdAllocator {
             }
         }
 
-        // `Self::new` returns refcount=1; `into_raw()` extracts the
-        // `heap::alloc` pointer and transfers the +1 to us (RefPtr has no
-        // `Drop`). On `Ok` that ref moves into `res.allocator`; on `Err`
-        // we `deref` it explicitly.
-        let memfd: *mut Self = Self::new(fd, bytes.len()).into_raw();
-
-        // SAFETY: `memfd` is the `heap::alloc` pointer
-        // (full provenance) with one live ref — required by `Self::alloc`.
-        match unsafe { Self::alloc(memfd, bytes.len(), 0, libc::MAP_SHARED) } {
-            Ok(res) => Ok(res),
-            Err(err) => {
-                // SAFETY: we still own the +1 from `into_raw()`; release it
-                // (closes the fd and frees the Box on hitting zero).
-                unsafe { Self::deref(memfd) };
-                Err(err)
-            }
-        }
+        let memfd = Self::new(fd, bytes.len());
+        // SAFETY: `memfd` is the `heap::alloc` pointer (full provenance) with
+        // one live ref — required by `Self::alloc`.
+        let res = unsafe { Self::alloc(memfd.as_ptr(), bytes.len(), 0, libc::MAP_SHARED) }?;
+        // That ref now lives in `res.allocator`.
+        let _ = memfd.into_raw();
+        Ok(res)
     }
 }
 

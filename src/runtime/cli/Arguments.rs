@@ -464,6 +464,12 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!("--splitting                      Enable code splitting"),
         parse_param!(
+            "--no-split-require               With --splitting and --target bun: keep a require()'d ESM file in the calling chunk instead of emitting a chunk loaded at the call"
+        ),
+        parse_param!(
+            "--min-chunk-size <INT>           With --splitting, also fold side-effect-free chunks smaller than this many source bytes into a chunk more entry points load"
+        ),
+        parse_param!(
             "--public-path <STR>              A prefix to be appended to any import paths in bundled code"
         ),
         parse_param!(
@@ -2534,6 +2540,27 @@ fn parse_build_command_options(
 
     if args.flag(b"--splitting") {
         ctx.bundler_options.code_splitting = true;
+    }
+    if args.flag(b"--no-split-require") {
+        ctx.bundler_options.split_require = false;
+    }
+
+    if let Some(size_str) = args.option(b"--min-chunk-size") {
+        let min_chunk_size = match strings::parse_int::<u64>(size_str, 10) {
+            Ok(v) => v,
+            Err(_) => {
+                Output::err_generic(
+                    "Invalid value for --min-chunk-size: \"{}\". Must be a non-negative integer\n",
+                    format_args!("{}", BStr::new(size_str)),
+                );
+                Global::exit(1);
+            }
+        };
+        if min_chunk_size > 0 && !ctx.bundler_options.code_splitting {
+            Output::err_generic("--min-chunk-size requires --splitting", ());
+            Global::crash();
+        }
+        ctx.bundler_options.min_chunk_size = min_chunk_size;
     }
 
     for (flag, slot) in [

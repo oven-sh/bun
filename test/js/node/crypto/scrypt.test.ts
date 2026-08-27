@@ -145,6 +145,39 @@ test("scrypt does not read a resizable ArrayBuffer that shrinks after the call",
   expect(exitCode).toBe(0);
 });
 
+test("scrypt copies its buffers after an option getter resized them to 0", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const crypto = require("crypto");
+        const expected = crypto.scryptSync("", "", 16, { N: 1024 }).toString("hex");
+        const password = new Uint8Array(new ArrayBuffer(65536, { maxByteLength: 65536 })).fill(0x41);
+        const salt = new Uint8Array(new ArrayBuffer(65536, { maxByteLength: 65536 })).fill(0x42);
+        const options = {
+          get N() {
+            password.buffer.resize(0);
+            salt.buffer.resize(0);
+            return 1024;
+          },
+        };
+        crypto.scrypt(password, salt, 16, options, (err, key) => {
+          if (err) throw err;
+          console.log(key.toString("hex") === expected ? "ok" : "wrong");
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("ok\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 test("scryptSync reads its buffers only after every argument has been coerced", () => {
   const passwordBytes = new Uint8Array(64).fill(97);
   const key = scryptSync(passwordBytes, "salt", 16, {

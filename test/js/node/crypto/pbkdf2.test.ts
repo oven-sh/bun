@@ -327,6 +327,36 @@ test("pbkdf2 does not read a resizable ArrayBuffer that shrinks after the call",
   expect(exitCode).toBe(0);
 });
 
+test("pbkdf2 copies the salt buffer after a later argument's toString resized it to 0", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const crypto = require("crypto");
+        const expected = crypto.pbkdf2Sync("password", new Uint8Array(0), 1, 32, "sha256").toString("hex");
+        const salt = new Uint8Array(new ArrayBuffer(65536, { maxByteLength: 65536 })).fill(0x41);
+        const password = new String("password");
+        password.toString = () => {
+          salt.buffer.resize(0);
+          return "password";
+        };
+        crypto.pbkdf2(password, salt, 1, 32, "sha256", (err, key) => {
+          if (err) throw err;
+          console.log(key.toString("hex") === expected ? "ok" : "wrong");
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("ok\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 test("pbkdf2 works with util.promisify", async () => {
   const key = await promisify(crypto.pbkdf2)("pw", "salt", 1, 8, "sha256");
   expect(Buffer.isBuffer(key)).toBe(true);

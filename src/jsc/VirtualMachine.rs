@@ -464,13 +464,14 @@ pub unsafe extern "C" fn Bun__standaloneModuleKey(
     len: usize,
     out_len: *mut usize,
 ) -> *const u8 {
-    // SAFETY: `name[..len]` is the caller's live 8-bit string buffer; `out_len` is writable.
+    // SAFETY: `name[..len]` is the caller's live 8-bit string buffer.
     let name = unsafe { bun_core::ffi::slice(name, len) };
     if !bun_options_types::standalone_path::is_bun_standalone_file_path(name) {
         return core::ptr::null();
     }
     match standalone_module_graph().and_then(|graph| graph.find_assume_standalone_path(name)) {
         Some(canonical) => {
+            // SAFETY: `out_len` is the caller's writable out-parameter.
             unsafe { *out_len = canonical.len() };
             canonical.as_ptr()
         }

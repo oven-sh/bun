@@ -25,11 +25,13 @@ function strings() {
 emit("strings", ...strings());
 
 // -- CachedJSValue (constant registers) and SourceCodeRepresentation ------------------------------------------------
-// Every kind a constant register can hold, and for numbers both the Integer and Double source representations.
+// Every kind a constant register can hold, and for numbers both the Integer and Double source representations. The
+// NaNs are folded by the parser using the host's arithmetic (x86 and ARM disagree on the sign of 0 / 0); the constant
+// must not carry that.
 function constants() {
   const ints = [0, 1, -1, 42, 255, 256, 65535, 65536, 2147483647, -2147483648, 0x7f, 0o17, 0b1011, 1_000_000];
   const doubles = [0.5, -0.5, 1.0, 1e21, 1e-7, 2147483648, -2147483649, 4294967295, 9007199254740991, 9007199254740993, 1.7976931348623157e308, 5e-324, -0, 0.1 + 0.2, 3.141592653589793];
-  const special = [1 / 0, -1 / 0, undefined, null, true, false];
+  const special = [1 / 0, -1 / 0, 0 / 0, -(0 / 0), 0 * (1 / 0), 1 / 0 - 1 / 0, (1 / 0) * 0, undefined, null, true, false];
   const strs = ["", "s", "st", "str", "string", "ストリング"];
   let u; // an uninitialized let reads the Undefined constant
   const viaVoid = void 0;

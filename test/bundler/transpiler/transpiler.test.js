@@ -4765,23 +4765,27 @@ describe("await can only be used inside an async function message", () => {
       transpiler.transformSync(code);
       expect.unreachable();
     } catch (e) {
-      function handle(error) {
-        expect(error.message).toBe('"await" can only be used inside an "async" function');
+      // https://github.com/oven-sh/bun/issues/13097: the friendly await diagnostic must
+      // not be followed by a cascading error, and its range must cover "await" itself.
+      const errors = e instanceof AggregateError ? e.errors : [e];
+      expect(errors).toHaveLength(1);
+      const error = errors[0];
+      expect(error.message).toBe('"await" can only be used inside an "async" function');
+      expect(error.position.offset).toBe(code.indexOf("await"));
+      expect(error.position.length).toBe("await".length);
 
-        if (hasNote) {
-          expect(error.notes).toHaveLength(1);
-          expect(error.notes[0].message).toBe('Consider adding the "async" keyword here');
-          expect(error.notes[0].position.lineText).toContain("foo");
-        } else {
-          expect(error.notes).toHaveLength(0);
-        }
-      }
-      if (e instanceof AggregateError) {
-        handle(e.errors[0]);
+      if (hasNote) {
+        expect(error.notes).toHaveLength(1);
+        expect(error.notes[0].message).toBe('Consider adding the "async" keyword here');
+        expect(error.notes[0].position.lineText).toContain("foo");
       } else {
-        expect.unreachable();
+        expect(error.notes).toHaveLength(0);
       }
     }
+  }
+
+  function assertNoError(code) {
+    expect(() => transpiler.transformSync(code)).not.toThrow();
   }
   it("in object method", () => {
     assertError(
@@ -4843,6 +4847,24 @@ describe("await can only be used inside an async function message", () => {
 
   it("in arrow function with expression body", () => {
     assertError(`const foo = () => await bar();`, false);
+  });
+
+  // https://github.com/oven-sh/bun/issues/13097
+  it.each([
+    "setInterval(() => { await console.log(); }, 500);",
+    "() => { await a.b.c.d(); }",
+    "() => { await new Foo(); }",
+    "() => { await 1 + 2; }",
+    "() => { await using x = y; }",
+  ])("does not cascade into a second error for %p", code => {
+    assertError(code, false);
+  });
+
+  it("'await' followed by a call/index/template suffix is a valid identifier reference", () => {
+    assertNoError("() => { await (1 + 2); }");
+    assertNoError("() => { await(foo); }");
+    assertNoError("() => { await[0]; }");
+    assertNoError("() => { await`tpl`; }");
   });
 });
 

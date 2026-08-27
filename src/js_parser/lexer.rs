@@ -200,6 +200,7 @@ pub struct LexerSnapshot<'a> {
     pub(crate) rescan_close_brace_as_template_token: bool,
     pub(crate) prev_error_loc: Loc,
     pub(crate) prev_token_was_await_keyword: bool,
+    pub(crate) await_keyword_loc: Loc,
     pub(crate) fn_or_arrow_start_loc: Loc,
     pub(crate) regex_flags_start: Option<u16>,
     pub(crate) string_literal_raw_content: &'a [u8],
@@ -283,6 +284,7 @@ pub struct LexerType<
     pub(crate) rescan_close_brace_as_template_token: bool,
     pub(crate) prev_error_loc: Loc,
     pub(crate) prev_token_was_await_keyword: bool,
+    pub(crate) await_keyword_loc: Loc,
     pub(crate) fn_or_arrow_start_loc: Loc,
     pub(crate) regex_flags_start: Option<u16>,
     pub(crate) arena: &'a Arena,
@@ -452,6 +454,7 @@ lexer_impl_header! {
             rescan_close_brace_as_template_token: self.rescan_close_brace_as_template_token,
             prev_error_loc: self.prev_error_loc,
             prev_token_was_await_keyword: self.prev_token_was_await_keyword,
+            await_keyword_loc: self.await_keyword_loc,
             fn_or_arrow_start_loc: self.fn_or_arrow_start_loc,
             regex_flags_start: self.regex_flags_start,
             string_literal_raw_content: self.string_literal_raw_content,
@@ -492,6 +495,7 @@ lexer_impl_header! {
             original.rescan_close_brace_as_template_token;
         self.prev_error_loc = original.prev_error_loc;
         self.prev_token_was_await_keyword = original.prev_token_was_await_keyword;
+        self.await_keyword_loc = original.await_keyword_loc;
         self.fn_or_arrow_start_loc = original.fn_or_arrow_start_loc;
         self.regex_flags_start = original.regex_flags_start;
         self.string_literal_raw_content = original.string_literal_raw_content;
@@ -2165,13 +2169,13 @@ lexer_impl_header! {
                 &notes[0..(!self.fn_or_arrow_start_loc.is_empty()) as usize];
 
             self.add_range_error_with_notes(
-                self.range(),
+                range_of_identifier(self.source, self.await_keyword_loc),
                 format_args!(
                     "\"await\" can only be used inside an \"async\" function"
                 ),
                 notes_ptr,
             )?;
-            return Ok(());
+            return Err(Error::SyntaxError);
         }
         if self.contents.len() != self.start {
             self.add_range_error(
@@ -2581,6 +2585,7 @@ lexer_impl_header! {
             rescan_close_brace_as_template_token: false,
             prev_error_loc: Loc::EMPTY,
             prev_token_was_await_keyword: false,
+            await_keyword_loc: Loc::EMPTY,
             fn_or_arrow_start_loc: Loc::EMPTY,
             regex_flags_start: None,
             arena,

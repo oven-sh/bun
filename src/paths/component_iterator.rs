@@ -184,7 +184,8 @@ pub enum MakePathStep<E> {
     /// Directory already exists (`EEXIST`). Walk advances forward.
     Exists,
     /// A parent is missing (`ENOENT`). Walk steps back one component;
-    /// if there is no previous component the carried error is returned.
+    /// if there is no previous component, or the parent already reported
+    /// `Created`/`Exists` on this walk, the carried error is returned.
     NotFound(E),
 }
 
@@ -197,6 +198,12 @@ pub enum MakePathStep<E> {
 /// `previous()` (returning `Err(e)` when there is none — i.e. the very first
 /// component's parent does not exist).
 ///
+/// Once the walk has advanced forward, a `NotFound` is final: the parent just
+/// reported `Created`/`Exists`, so stepping back would only repeat the same
+/// pair of results forever. This is what a dangling symlink (EEXIST for the
+/// link, ENOENT below it), procfs, or on Windows a regular file in place of a
+/// directory produce.
+///
 /// `mkdir` is invoked with `component.path`: a borrowed prefix slice into the
 /// original input, never NUL-terminated. Callers that need a sentinel must
 /// copy into a scratch buffer.
@@ -207,14 +214,17 @@ pub fn make_path_with<'a, T: PathChar, E>(
     let Some(mut comp) = it.last() else {
         return Ok(());
     };
+    let mut advanced = false;
     loop {
         match mkdir(comp.path)? {
             MakePathStep::Created | MakePathStep::Exists => {
+                advanced = true;
                 comp = match it.next() {
                     Some(c) => c,
                     None => return Ok(()),
                 };
             }
+            MakePathStep::NotFound(e) if advanced => return Err(e),
             MakePathStep::NotFound(e) => {
                 comp = match it.previous() {
                     Some(c) => c,
@@ -375,5 +385,86 @@ mod tests {
         assert_eq!(it.next().unwrap().name, b"b");
         assert_eq!(it.next().unwrap().name, b"c");
         assert!(it.next().is_none());
+    }
+
+    #[test]
+    fn make_path_creates_missing_parents() {
+        // Only the cwd exists: the walk backs up to `a`, then creates forward.
+        let it = ComponentIterator::init(&b"a/b/c"[..], PathFormat::Posix).unwrap();
+        let mut created: Vec<&[u8]> = vec![];
+        let mut attempts: Vec<&[u8]> = vec![];
+        let r = make_path_with::<u8, ()>(it, |p| {
+            attempts.push(p);
+            let parent: &[u8] = match p {
+                b"a" => b"",
+                b"a/b" => b"a",
+                b"a/b/c" => b"a/b",
+                _ => unreachable!(),
+            };
+            if parent.is_empty() || created.contains(&parent) {
+                created.push(p);
+                Ok(MakePathStep::Created)
+            } else {
+                Ok(MakePathStep::NotFound(()))
+            }
+        });
+        assert_eq!(r, Ok(()));
+        assert_eq!(
+            attempts,
+            vec![
+                &b"a/b/c"[..],
+                &b"a/b"[..],
+                &b"a"[..],
+                &b"a/b"[..],
+                &b"a/b/c"[..]
+            ]
+        );
+        assert_eq!(created, vec![&b"a"[..], &b"a/b"[..], &b"a/b/c"[..]]);
+    }
+
+    #[test]
+    fn make_path_stops_when_parent_exists_but_child_is_not_found() {
+        // `/a/b` is a dangling symlink: EEXIST for itself, ENOENT for any
+        // child. The walk must not bounce between the two forever.
+        let it = ComponentIterator::init(&b"/a/b/c"[..], PathFormat::Posix).unwrap();
+        let mut attempts: Vec<&[u8]> = vec![];
+        let r = make_path_with(it, |p| {
+            attempts.push(p);
+            assert!(attempts.len() < 100, "runaway loop");
+            match p {
+                b"/a" | b"/a/b" => Ok(MakePathStep::Exists),
+                b"/a/b/c" => Ok(MakePathStep::NotFound(p)),
+                _ => unreachable!(),
+            }
+        });
+        assert_eq!(r, Err(&b"/a/b/c"[..]));
+        assert_eq!(attempts, vec![&b"/a/b/c"[..], &b"/a/b"[..], &b"/a/b/c"[..]]);
+    }
+
+    #[test]
+    fn make_path_stops_when_open_if_parent_succeeds_but_child_is_not_found() {
+        // `NtCreateFile(FILE_OPEN_IF)` reports `Created` for an existing
+        // directory too, so the guard must not depend on `Exists`.
+        let it = ComponentIterator::init(&b"x\\link\\out"[..], PathFormat::Windows).unwrap();
+        let mut attempts = 0u32;
+        let r = make_path_with(it, |p| {
+            attempts += 1;
+            assert!(attempts < 100, "runaway loop");
+            match p {
+                b"x" | b"x\\link" => Ok(MakePathStep::Created),
+                b"x\\link\\out" => Ok(MakePathStep::NotFound(())),
+                _ => unreachable!(),
+            }
+        });
+        assert_eq!(r, Err(()));
+        assert_eq!(attempts, 3);
+    }
+
+    #[test]
+    fn make_path_reports_missing_root_parent() {
+        // Nothing under the cwd exists: the first component's error comes back.
+        let it = ComponentIterator::init(&b"a/b"[..], PathFormat::Posix).unwrap();
+        let r = make_path_with(it, |p| Ok(MakePathStep::NotFound(p)));
+        assert_eq!(r, Err(&b"a"[..]));
     }
 }

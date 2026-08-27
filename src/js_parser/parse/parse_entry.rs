@@ -1555,9 +1555,7 @@ impl<'a> Parser<'a> {
             p.symbols.as_slice()[p.module_ref.inner_index() as usize].use_count_estimate > 0;
 
         let mut wrap_mode: WrapMode = WrapMode::None;
-        // An `import` statement cannot be printed inside Bun's CommonJS wrapper.
-        // Checked after `to_ast`, once the import scanner has marked
-        // TypeScript type-only imports as unused.
+        // Checked after `to_ast`, which marks TypeScript type-only imports unused.
         let mut reject_import_statements = false;
 
         if p.is_deoptimized_commonjs() {
@@ -2231,8 +2229,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // Errors logged during `to_ast` (duplicate export names) or just above
-        // halt here too, like the parse-phase and visit-phase checks.
+        // If there were errors during to_ast, also halt here
         if p.log().errors > orig_error_count {
             return Err(crate::Error::SyntaxError);
         }

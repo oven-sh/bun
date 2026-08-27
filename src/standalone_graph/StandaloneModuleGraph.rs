@@ -309,10 +309,6 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
         self.lookup_file(name).map(|f| f.name)
     }
 
-    fn find(&self, name: &[u8]) -> Option<&'static [u8]> {
-        self.find_ref(name).map(|f| f.name)
-    }
-
     fn base_public_path_with_default_suffix(&self) -> &'static [u8] {
         BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes()
     }

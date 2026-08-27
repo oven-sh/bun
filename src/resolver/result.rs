@@ -179,7 +179,7 @@ impl ResultFlags {
         );
     }
     #[inline]
-    pub fn is_standalone_module(self) -> bool {
+    pub(crate) fn is_standalone_module(self) -> bool {
         self.contains(Self::IS_STANDALONE_MODULE)
     }
     #[inline]

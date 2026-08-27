@@ -1293,8 +1293,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
     // (`new URL("./w.ts", import.meta.url)`).
     // SAFETY: per fn contract; `standalone_module_graph` is a read-only field.
     if let Some(graph) = unsafe { (*parent).standalone_module_graph }
-        && let Some(name) =
-            bun_resolver::resolve_embedded(graph, graph.base_public_path_with_default_suffix(), str)
+        && let Some(name) = graph.resolve(graph.base_public_path_with_default_suffix(), str)
     {
         return Some(name);
     }

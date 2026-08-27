@@ -1300,7 +1300,7 @@ impl<'a> Resolver<'a> {
                 if specifier_is_embedded_path
                     || ::bun_options_types::standalone_path::is_bun_standalone_file_path(source_dir)
                 {
-                    if let Some(file_name) = resolve_embedded(graph, source_dir, import_path) {
+                    if let Some(file_name) = graph.resolve(source_dir, import_path) {
                         self.extension_order = original_order;
                         return ResultUnion::Success(Result {
                             import_kind: kind,
@@ -6727,45 +6727,6 @@ fn primary_side_effects(
     }
 }
 
-/// The module embedded in a `bun build --compile` executable that `specifier` names, imported from `source_dir`:
-/// an absolute embedded path (in either path syntax) or a `./` / `../` specifier joined onto `source_dir`, looked up
-/// as spelled and then -- since every entry point is embedded under a `.js` name -- under the `.js` name for a source
-/// extension or no extension (`./w.ts` -> `/$bunfs/root/w.js`). Returns the graph's own name for the module, which is
-/// what the module loader keys on; `None` for anything else (bare specifiers, other absolute paths, misses).
-pub fn resolve_embedded(
-    graph: &dyn StandaloneModuleGraph,
-    source_dir: &[u8],
-    specifier: &[u8],
-) -> Option<&'static [u8]> {
-    let mut buf = bun_paths::path_buffer_pool::get();
-    let path_len = if ::bun_options_types::standalone_path::is_bun_standalone_file_path(specifier) {
-        if specifier.len() > buf.len() {
-            return None;
-        }
-        buf[..specifier.len()].copy_from_slice(specifier);
-        specifier.len()
-    } else if specifier.starts_with(b"./") || specifier.starts_with(b"../") {
-        bun_paths::join_abs_string_buf(source_dir, &mut buf[..], &[specifier], bun_paths::Platform::Loose).len()
-    } else {
-        return None;
-    };
-    if let Some(name) = graph.find_assume_standalone_path(&buf[..path_len]) {
-        return Some(name);
-    }
-    let extension_len = bun_paths::extension(&buf[..path_len]).len();
-    if !matches!(
-        &buf[path_len - extension_len..path_len],
-        b"" | b".ts" | b".tsx" | b".jsx" | b".mjs" | b".mts" | b".cjs" | b".cts"
-    ) {
-        return None;
-    }
-    let stem_len = path_len - extension_len;
-    if stem_len + 3 > buf.len() {
-        return None;
-    }
-    buf[stem_len..stem_len + 3].copy_from_slice(b".js");
-    graph.find_assume_standalone_path(&buf[..stem_len + 3])
-}
 
 #[inline]
 fn is_dot_slash(path: &[u8]) -> bool {

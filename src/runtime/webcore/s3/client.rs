@@ -1040,7 +1040,9 @@ pub(crate) fn readable_stream(
     reader.context.setup();
     let readable_value = reader.to_readable_stream(global_this)?;
 
-    let sink = S3DownloadStreamWrapper::new(reader, path, GlobalRef::from(global_this));
+    let sink = S3DownloadStreamWrapper::new(path, GlobalRef::from(global_this));
+    // SAFETY: `reader` is the live `Source::new_mut` allocation made above.
+    unsafe { sink.stream.hold(&raw mut reader.context) };
     // The task drops the wrapper once the download is over, and the wrapper
     // lets go of the source (clearing this handle) first (holder obligation).
     reader

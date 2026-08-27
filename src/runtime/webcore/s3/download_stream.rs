@@ -13,7 +13,7 @@ use bun_ptr::{RefPtr, ThisPtr};
 use bun_s3_signing::error::S3Error;
 use bun_threading::Guarded;
 
-use crate::webcore::byte_stream::{AfterDelivery, ByteStream, ProducerHold, Source};
+use crate::webcore::byte_stream::{AfterDelivery, ByteStream, ProducerHold};
 use crate::webcore::s3::client::s3_error_to_js;
 use crate::webcore::s3::simple_request::RequestStorage;
 use crate::webcore::s3::xml_response;
@@ -407,7 +407,8 @@ impl DownloadControl {
 /// Owned by the task; the source holds a back-reference to it
 /// (`SourceHandle::S3DownloadBody`) that [`ProducerHold`] clears.
 pub struct S3DownloadStreamWrapper {
-    stream: ProducerHold,
+    /// The stream this download produces into, from `readable_stream` on.
+    pub(crate) stream: ProducerHold,
     pub path: Box<[u8]>,
     pub global: GlobalRef,
     /// Set once the request is in flight; taken by `on_stream_cancelled`.
@@ -418,21 +419,15 @@ pub struct S3DownloadStreamWrapper {
 }
 
 impl S3DownloadStreamWrapper {
-    /// A wrapper producing into `source` (it takes the producer ref on it).
-    pub(crate) fn new(
-        source: &mut Source,
-        path: &[u8],
-        global: GlobalRef,
-    ) -> bun_ptr::OwnedThis<Self> {
-        let this = bun_ptr::OwnedThis::new(Self {
+    /// A wrapper not yet producing into a stream (see `stream`).
+    pub(crate) fn new(path: &[u8], global: GlobalRef) -> bun_ptr::OwnedThis<Self> {
+        bun_ptr::OwnedThis::new(Self {
             stream: ProducerHold::default(),
             path: Box::<[u8]>::from(path),
             global,
             control: JsCell::new(None),
             poll_ref: JsCell::new(KeepAlive::init()),
-        });
-        this.stream.hold_source(source);
-        this
+        })
     }
 
     pub(crate) fn on_chunk(

@@ -738,6 +738,23 @@ describe("bundler", () => {
       ].join("\n"),
     },
   });
+  // An entry that uses none of `require` / `module` / `exports` / `import` is
+  // classified as ESM by the parser. The CJS wrapper is applied per chunk by
+  // the linker, so `__dirname` / `__filename` still bind to its parameters.
+  itBundled("compile/DirnameFilenameCJSEntryWithoutRequire", {
+    compile: true,
+    format: "cjs",
+    files: {
+      "/entry.ts": /* js */ `
+        console.log(__dirname);
+        console.log(__filename);
+        console.log(import.meta.dir === __dirname && import.meta.path === __filename);
+      `,
+    },
+    run: {
+      stdout: [bunfsCjs[0], bunfsCjs[1], "true"].join("\n"),
+    },
+  });
   // Browser-side chunks produced by the client transpiler for HTML imports
   // must keep the string-literal lowering for `__dirname`/`__filename`;
   // `import.meta.dir`/`.path` are Bun-only and undefined in a real browser.
@@ -779,6 +796,7 @@ describe("bundler", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
       if (exitCode !== 0) console.error(stdout, stderr);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     }
     await using proc = Bun.spawn({

@@ -651,7 +651,7 @@ impl ArrayBuffer {
 pub struct PinnedArrayBuffer {
     buffer: ArrayBuffer,
     rooted: bool,
-    /// The bytes `buffer.ptr` points at when [`root_read_only`](Self::root_read_only) took a copy.
+    /// The bytes `buffer.ptr` points at when [`copy_if_resizable`](Self::copy_if_resizable) took a copy.
     copy: Option<Vec<u8>>,
 }
 
@@ -689,7 +689,7 @@ impl PinnedArrayBuffer {
         this.copy_if_resizable(global).then_some(this)
     }
 
-    /// A pin stops a detach but not a shrink, which unmaps pages: a resizable non-shared buffer is copied so a job that reads the bytes itself cannot fault (a syscall reader gets `EFAULT` and needs no copy). `false` if the copy cannot be allocated.
+    /// A pin stops a detach but not a shrink, which unmaps pages: a resizable non-shared buffer is copied so a later read of the bytes in user space cannot fault (a syscall reader gets `EFAULT` and needs no copy). `false` if the copy cannot be allocated.
     pub fn copy_if_resizable(&mut self, global: &JSGlobalObject) -> bool {
         if !self.buffer.resizable
             || self.buffer.shared

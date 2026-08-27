@@ -1105,12 +1105,17 @@ impl PathLikeExt for PathLike<'_> {
         use jsc::JSType;
         let path = match arg.js_type() {
             JSType::Uint8Array | JSType::DataView | JSType::ArrayBuffer => {
-                let buffer = if arguments.will_be_async {
-                    PinnedArrayBuffer::root_read_only(ctx, arg)
+                let mut buffer = if arguments.will_be_async {
+                    PinnedArrayBuffer::root(ctx, arg)
                 } else {
                     PinnedArrayBuffer::pin(ctx, arg)
                 }
                 .ok_or_else(|| ctx.throw_out_of_memory())?;
+                // Read later than this call: on the pool thread, after another argument's getter
+                // ran (sync), or from a `Blob` store. A `resize(0)` in between unmaps the pages.
+                if !buffer.copy_if_resizable(ctx) {
+                    return Err(ctx.throw_out_of_memory());
+                }
                 Valid::path_buffer(buffer.slice(), ctx)?;
                 Valid::path_null_bytes(buffer.slice(), ctx)?;
                 arguments.eat();

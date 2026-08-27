@@ -2868,7 +2868,8 @@ impl ThreadSafeFunction {
 
         if orphaned {
             // SAFETY: the lock is dropped, we dropped the last thread reference
-            // and `env_teardown` already released everything it owned.
+            // and the JS thread (`finalize` or `env_teardown`) already released
+            // everything it owned.
             unsafe { ThreadSafeFunction::free_orphaned(this) };
         }
         status
@@ -3008,7 +3009,8 @@ impl ThreadSafeFunction {
 
     /// Frees the allocation and nothing else: no finalizer, no registry entry,
     /// no event loop. Every JS-thread-owned resource must already be released
-    /// (`env_teardown`) or be safe to drop here (a creation that failed).
+    /// (`finalize`, `env_teardown`) or be safe to drop here (a creation that
+    /// failed).
     ///
     /// SAFETY: `this` is a live allocation from `new`, the caller holds no
     /// lock on it, and no other thread holds a reference.
@@ -3144,7 +3146,8 @@ impl ThreadSafeFunction {
 
         if orphaned {
             // SAFETY: the lock is dropped, we dropped the last thread reference
-            // and `env_teardown` already released everything it owned.
+            // and the JS thread (`finalize` or `env_teardown`) already released
+            // everything it owned.
             unsafe { ThreadSafeFunction::free_orphaned(this) };
         }
         status
@@ -3202,7 +3205,7 @@ impl ThreadSafeFunction {
 #[unsafe(no_mangle)]
 extern "C" fn napi_internal_threadsafe_function_env_teardown(tsfn: *mut c_void) {
     let this = tsfn.cast::<ThreadSafeFunction>();
-    // SAFETY: the registry only holds live TSFN pointers — `destroy` and
+    // SAFETY: the registry only holds live TSFN pointers — `finalize` and
     // `env_teardown` both remove the entry before freeing. Exclusive borrow
     // scoped to this call.
     if unsafe { (*this).env_teardown() } {

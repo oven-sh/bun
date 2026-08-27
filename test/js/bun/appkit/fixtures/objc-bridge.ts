@@ -246,14 +246,16 @@ await run(async () => {
     true,
   );
   const newWindow = NSWindow.new();
-  // A panel AppKit owns is left as it is (panels already default to NO). The
-  // font panel rather than the color panel: making that one saves its toolbar
-  // configuration in the user defaults.
-  const sharedPanel = objc.classes.NSFontPanel.sharedFontPanel();
+  // The third arm is a class method of a window class. Not one of AppKit's
+  // shared panels: the color panel saves its toolbar configuration and the
+  // font panel its attributes in the user defaults on first use.
+  const controller = objc.classes.NSViewController.new();
+  controller.setView_(objc.classes.NSView.new());
+  const factoryWindow = NSWindow.windowWithContentViewController_(controller);
   const releasedWhenClosed = [
     rawWindow.isReleasedWhenClosed(),
     newWindow.isReleasedWhenClosed(),
-    sharedPanel.isReleasedWhenClosed(),
+    factoryWindow.isReleasedWhenClosed(),
   ];
   rawWindow.setTitle_("raw");
   newWindow.setTitle_("new");
@@ -268,6 +270,7 @@ await run(async () => {
   });
   rawWindow.release();
   newWindow.release();
+  factoryWindow.release();
 
   // NSProxy receivers: NSUndoManager's invocation-target proxy records the
   // first message it is sent, so the bridge must not probe it with

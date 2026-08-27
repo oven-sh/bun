@@ -2387,6 +2387,39 @@ impl NetworkSink {
         bun_sys::Result::Ok(())
     }
 
+    /// JS-pump terminator for a source that failed. Unlike `end()`, the upload
+    /// is aborted, not committed; the stashed reason becomes the caller's
+    /// rejection. The pump's reject reaction still releases the pump ref, so
+    /// no wrapper deref here.
+    ///
+    /// Raw `*mut Self`: `task.fail()` synchronously fires
+    /// `S3UploadStreamWrapper::resolve`, which re-borrows this sink.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub(crate) fn fail_from_js_pump(this: *mut Self, global: &JSGlobalObject, reason: JSValue) {
+        // SAFETY: `this` is the live Box<NetworkSink> the wrapper owns; the
+        // borrow ends before `fail` re-enters.
+        let task_ref = unsafe {
+            if (*this).ended {
+                return;
+            }
+            (*this).ended = true;
+            (*this).done = true;
+            (*this).pending.result = Writable::Done;
+            (*this).pending.run();
+            if !reason.is_empty_or_undefined_or_null() {
+                (*this).upstream_error.set(global, reason);
+            }
+            (*this).task
+        };
+        let Some(task_ref) = task_ref else {
+            return;
+        };
+        let _ = task_ref.get().fail(bun_s3_signing::error::S3Error {
+            code: b"UnknownError",
+            message: b"ReadableStream ended with an error",
+        });
+    }
+
     /// Native-path terminator called from `SinkHandle::end`. Unlike `end()`
     /// (clean EOF / commit), an upstream error on the ByteStream fast-path must
     /// abort the upload and surface the original JS error to the caller.
@@ -2502,6 +2535,14 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
             (*this).finalize();
             Self::release_writer_holder(this);
         }
+    }
+    unsafe fn close_with_error(
+        this: *mut Self,
+        global: &JSGlobalObject,
+        reason: JSValue,
+    ) -> bun_sys::Result<()> {
+        Self::fail_from_js_pump(this, global, reason);
+        bun_sys::Result::Ok(())
     }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, global)

@@ -793,7 +793,7 @@ describe("sync pull() throw after status is written does not re-render error()",
     expect(exitCode).toBe(0);
   });
 
-  test("no body bytes flushed: stream is ended without splicing error() headers", async () => {
+  test("no body bytes flushed: connection is force-closed without splicing error() headers", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture(`throw new Error("boom");`)],
       env: bunEnv,
@@ -803,11 +803,12 @@ describe("sync pull() throw after status is written does not re-render error()",
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("error: boom");
     const { wire, errorHandlerCalls } = JSON.parse(stdout);
-    // Status 200 was already written; the stream is ended empty. The error()
-    // response's status (500), headers, and body must not appear on the wire.
-    expect(wire).not.toContain("x-err");
-    expect(wire).not.toContain("FROM-ERROR-HANDLER");
-    expect(wire.startsWith("HTTP/1.1 200 OK\r\n")).toBe(true);
+    // Status 200 was already written to the corked response, so error() cannot
+    // replace it. Ending the stream here would send that 200 with an empty
+    // chunked body and a clean terminator: a complete-looking response for a
+    // body that failed. The connection is closed instead, and since the status
+    // never left the cork buffer the client sees an empty reply.
+    expect(wire).toBe("");
     expect(errorHandlerCalls).toBe(0);
     expect(exitCode).toBe(0);
   });

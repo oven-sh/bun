@@ -135,7 +135,10 @@ await using server = Bun.serve({
     errorCb++;
     return new Response("err-body", { status: 500 });
   },
-  fetch() {
+  fetch(req) {
+    if (new URL(req.url).pathname === "/ok") {
+      return new Response("ok");
+    }
     return new Response(source());
   },
 });
@@ -143,12 +146,12 @@ await using server = Bun.serve({
 // Sends one request over a raw socket and returns everything received before
 // the server closed the connection, so the test can assert on the HTTP
 // framing. A forced close (ECONNRESET) is an expected, asserted-on outcome
-// for the mid-stream variant, so socket errors are not fatal.
-function rawRequest(abort: boolean): Promise<string> {
+// for the erroring variants, so socket errors are not fatal.
+function rawRequest(path: string, abort: boolean): Promise<string> {
   const chunks: Buffer[] = [];
   return new Promise(resolve => {
     const sock = net.connect(server.port, "127.0.0.1", () => {
-      sock.write("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+      sock.write(`GET ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`);
     });
     sock.on("data", d => {
       chunks.push(d);
@@ -165,12 +168,11 @@ function rawRequest(abort: boolean): Promise<string> {
   });
 }
 
-const wire = await rawRequest(clientAborts);
+const wire = await rawRequest("/", clientAborts);
 if (clientAborts) await cancelRan.promise;
-// A second request proves the server is still accepting and answering. For the
-// cancel variants the body stream never self-terminates, so abort that one too;
-// only the status line is asserted.
-const secondWire = await rawRequest(clientAborts);
+// A second request to a healthy route proves the server is still accepting
+// and answering; only its status line is asserted.
+const secondWire = await rawRequest("/ok", false);
 
 // Cycle the event loop so any stray rejected promise reaches the
 // unhandledRejection reporter before we declare success.

@@ -1003,21 +1003,16 @@ where
         // The status line is already committed (a direct ReadableStream's
         // pull() threw synchronously after do_render_stream wrote headers).
         // error() cannot replace a response whose status is on the wire;
-        // report the failure and terminate the body so the client observes an
-        // incomplete message instead of a second header block spliced into
-        // the chunked body.
+        // report the failure and close without the terminating chunk so the
+        // client observes an incomplete message instead of a second header
+        // block spliced into the chunked body.
         if !has_responded && self.flags.has_written_status() {
             if !value.is_empty_or_undefined_or_null()
                 && let Some(server) = self.server.get()
             {
                 server.vm().as_mut().run_error_handler(value, None);
             }
-            let state = resp.state();
-            if state.is_http_write_called() && state.is_response_pending() {
-                self.force_close();
-            } else {
-                self.end_stream(self.should_close_connection());
-            }
+            self.close_incomplete_stream();
             return;
         }
 
@@ -1288,6 +1283,24 @@ where
             self.end_request_streaming_and_drain();
             self.deref();
         }
+    }
+
+    /// The body source failed after the status line was committed. The
+    /// terminating chunk would turn the truncated body into a complete,
+    /// successful-looking message (RFC 9112 section 7), so while the response
+    /// is still pending close the connection instead and let the client see
+    /// an incomplete message. Whether any body bytes went out first does not
+    /// matter: an empty chunked body with a terminator is just as complete.
+    /// Once the sink already ended the response there is nothing left to
+    /// signal and `end_stream()` only releases the context.
+    pub(crate) fn close_incomplete_stream(&self) {
+        if let Some(resp) = self.resp.get() {
+            if resp.state().is_response_pending() {
+                self.force_close();
+                return;
+            }
+        }
+        self.end_stream(self.should_close_connection());
     }
 
     fn on_writable_complete_response_buffer(
@@ -3054,17 +3067,7 @@ where
             self.end_already_responded_stream();
             return;
         }
-        // Body bytes were already written: close without the terminating chunk
-        // (RFC 9112 section 7) so the client sees an incomplete message, not a
-        // truncated body that looks like a complete, successful response.
-        if let Some(resp) = self.resp.get() {
-            let state = resp.state();
-            if state.is_http_write_called() && state.is_response_pending() {
-                self.force_close();
-                return;
-            }
-        }
-        self.end_stream(self.should_close_connection());
+        self.close_incomplete_stream();
     }
 
     pub(crate) fn do_render_with_body(
@@ -3353,13 +3356,16 @@ where
                 this.run_error_handler(js_err);
                 return;
             }
-            if let Some(resp) = this.resp.get() {
-                let state = resp.state();
-                if state.is_http_write_called() && state.is_response_pending() {
-                    this.force_close();
-                    return;
-                }
+            // Same as handle_reject_stream: error() cannot replace a
+            // committed status, so report the failure and close without the
+            // terminating chunk.
+            let global_this = this.server().global_this();
+            let js_err = err.to_js(global_this);
+            if !js_err.is_empty_or_undefined_or_null() {
+                this.server().vm().as_mut().run_error_handler(js_err, None);
             }
+            this.close_incomplete_stream();
+            return;
         } else if !this.flags.has_written_status() {
             // Upstream ended cleanly before any chunk: flush the deferred
             // status/headers so the client sees them before the terminator.

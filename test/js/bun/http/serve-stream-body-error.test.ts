@@ -1,5 +1,6 @@
 // A `Response` body backed by a `ReadableStream` whose source errors must not
-// take the whole server down. Before the fix:
+// take the whole server down, and must never reach the client as a complete
+// message. Before the fixes:
 //   1. The rejection from the stream pump was never given a handler, so it
 //      reached the global unhandledRejection reporter, whose default policy
 //      exits the process: one bad request was a whole-process outage.
@@ -8,6 +9,10 @@
 //   3. A body that errored after chunks were already sent was still terminated
 //      with a clean `0\r\n\r\n`, so the client could not tell the truncated
 //      body apart from a complete one.
+//   4. A body that errored before any chunk was sent went out as the
+//      Response's status and headers plus an empty chunked body with a clean
+//      terminator: a complete, successful-looking response for a body that
+//      failed.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN } from "harness";
 import { join } from "node:path";
@@ -25,25 +30,25 @@ async function runFixture(variant: string, ...extra: string[]) {
   return { stdout, stderr, exitCode };
 }
 
-// The wire-level contract for a stream source that errors before producing any
-// body bytes is unchanged: the Response's own status and headers go out with
-// an empty chunked body and the server `error()` callback is NOT invoked (see
-// "throw on pull renders headers, does not call error handler" in
-// serve.test.ts). What changes is that the rejection no longer reaches the
-// unhandledRejection reporter; it is reported directly instead.
+// A stream source that errors before producing any body bytes. The status and
+// headers were already handed to uWS (corked) when the error arrives, so the
+// server `error()` callback cannot supply a replacement and is NOT invoked.
+// The connection is closed before anything reaches the wire: the client sees
+// an empty reply, never a complete 200 with an empty body. The rejection does
+// not reach the unhandledRejection reporter; it is reported directly instead.
 test.concurrent.each([
   "pull-throw",
   "pull-async-reject",
   "controller-error",
   "start-async-reject",
   "deferred-pull-throw",
-])("%s: the rejection is handled and the error is still reported", async variant => {
+])("%s: the connection is closed without a complete response and the error is reported", async variant => {
   const { stdout, stderr, exitCode } = await runFixture(variant);
   expect({ result: JSON.parse(stdout), exitCode }).toEqual({
     result: {
-      statusLine: "HTTP/1.1 200 OK",
-      cleanChunkedTerminator: true,
-      body: "0\r\n\r\n",
+      statusLine: "",
+      cleanChunkedTerminator: false,
+      body: "",
       errorCb: 0,
       unhandled: 0,
       secondStatusLine: "HTTP/1.1 200 OK",
@@ -56,13 +61,13 @@ test.concurrent.each([
 });
 
 // Same under `development: true` (the DEBUG RequestContext monomorphization).
-test.concurrent("pull-throw in development mode: the rejection is handled", async () => {
+test.concurrent("pull-throw in development mode: the connection is closed without a complete response", async () => {
   const { stdout, stderr, exitCode } = await runFixture("pull-throw", "development");
   expect({ result: JSON.parse(stdout), exitCode }).toEqual({
     result: {
-      statusLine: "HTTP/1.1 200 OK",
-      cleanChunkedTerminator: true,
-      body: "0\r\n\r\n",
+      statusLine: "",
+      cleanChunkedTerminator: false,
+      body: "",
       errorCb: 0,
       unhandled: 0,
       secondStatusLine: "HTTP/1.1 200 OK",
@@ -70,6 +75,134 @@ test.concurrent("pull-throw in development mode: the rejection is handled", asyn
     exitCode: 0,
   });
   expect(stderr).toContain("boom");
+});
+
+// The headers are already on the wire (the first pull() was still pending
+// when the server flushed them) and the source then errors without ever
+// producing a chunk. The 200 is irrevocable, so the connection is closed
+// without the terminating chunk: headers, then an incomplete body.
+test.concurrent(
+  "async error before the first chunk: headers go out, the body is not terminated as complete",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import net from "node:net";
+      const server = Bun.serve({
+        port: 0,
+        development: false,
+        error() { return new Response("err-body", { status: 500 }); },
+        fetch() {
+          return new Response(new ReadableStream({
+            async pull(c) { await Bun.sleep(20); c.error(new Error("boom")); },
+          }), { headers: { "x-marker": "1" } });
+        },
+      });
+      const wire = await new Promise(resolve => {
+        let buf = "";
+        const sock = net.connect(server.port, "127.0.0.1", () => {
+          sock.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+        });
+        sock.on("data", d => (buf += d.toString("latin1")));
+        sock.on("error", () => {});
+        sock.on("close", () => resolve(buf));
+      });
+      const [head, ...body] = wire.split("\\r\\n\\r\\n");
+      console.log(JSON.stringify({
+        statusLine: head.split("\\r\\n")[0],
+        marker: /x-marker: 1/i.test(head),
+        body: body.join("\\r\\n\\r\\n"),
+        cleanChunkedTerminator: wire.endsWith("0\\r\\n\\r\\n"),
+      }));
+      server.stop(true);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // No stderr assertion: see the mid-stream test below for why this path is
+    // quiet with `development: false`.
+    expect({ result: JSON.parse(stdout), exitCode }).toEqual({
+      result: {
+        statusLine: "HTTP/1.1 200 OK",
+        marker: true,
+        body: "",
+        cleanChunkedTerminator: false,
+      },
+      exitCode: 0,
+    });
+  },
+);
+
+// A native byte stream body (here: a proxied upstream fetch body) whose
+// producer fails before the first chunk. The downstream client used to get a
+// clean, empty 200 and nothing was reported. Now the upstream failure is
+// reported and the downstream connection is closed without the terminator.
+test.concurrent("proxied upstream body that fails before its first chunk is not forwarded as complete", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import net from "node:net";
+      // The upstream answers with headers only; the proxy drops the connection
+      // once fetch() has parsed them, so the body fails before its first chunk.
+      let dropUpstream;
+      const upstream = net.createServer(sock => {
+        sock.once("data", () => {
+          sock.write("HTTP/1.1 200 OK\\r\\nContent-Type: text/plain\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n");
+          dropUpstream = () => sock.destroy();
+        });
+      });
+      await new Promise(resolve => upstream.listen(0, "127.0.0.1", resolve));
+      const server = Bun.serve({
+        port: 0,
+        development: false,
+        error() { return new Response("err-body", { status: 500 }); },
+        async fetch() {
+          const up = await fetch("http://127.0.0.1:" + upstream.address().port + "/");
+          dropUpstream();
+          return new Response(up.body, { status: up.status, headers: { "x-proxied": "1" } });
+        },
+      });
+      const wire = await new Promise(resolve => {
+        let buf = "";
+        const sock = net.connect(server.port, "127.0.0.1", () => {
+          sock.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+        });
+        sock.on("data", d => (buf += d.toString("latin1")));
+        sock.on("error", () => {});
+        sock.on("close", () => resolve(buf));
+      });
+      const [head, ...body] = wire.split("\\r\\n\\r\\n");
+      console.log(JSON.stringify({
+        statusLine: head.split("\\r\\n")[0],
+        proxied: /x-proxied: 1/i.test(head),
+        body: body.join("\\r\\n\\r\\n"),
+        cleanChunkedTerminator: wire.endsWith("0\\r\\n\\r\\n"),
+      }));
+      server.stop(true);
+      upstream.close();`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // The proxy's status and headers are flushed as soon as the upstream headers
+  // arrive, so they are on the wire; the body must then end incomplete.
+  expect({ result: JSON.parse(stdout), exitCode }).toEqual({
+    result: {
+      statusLine: "HTTP/1.1 200 OK",
+      proxied: true,
+      body: "",
+      cleanChunkedTerminator: false,
+    },
+    exitCode: 0,
+  });
+  // The upstream failure is reported instead of being swallowed.
+  expect(stderr).toContain("ECONNRESET");
 });
 
 // The body errors after a chunk has already been flushed to the client. The
@@ -218,16 +351,21 @@ test.concurrent("a stream body error does not kill the server process", async ()
       `const server = Bun.serve({
         port: 0,
         development: false,
-        fetch() {
+        fetch(req) {
+          if (new URL(req.url).pathname === "/ok") return new Response("ok");
           return new Response(new ReadableStream({ pull() { throw new Error("boom"); } }));
         },
       });
-      const res = await fetch(server.url);
-      await res.arrayBuffer();
+      // The failed body closes the connection without a complete response.
+      const first = await fetch(server.url).then(
+        res => res.arrayBuffer().then(() => "complete"),
+        () => "rejected",
+      );
       // Tick the event loop past the unhandledRejection checkpoint that used
       // to exit the process before this line was reached.
       for (let i = 0; i < 10; i++) await Bun.sleep(0);
-      console.log("alive", res.status);
+      const res = await fetch(new URL("/ok", server.url));
+      console.log("alive", first, res.status);
       server.stop(true);`,
     ],
     env: bunEnv,
@@ -235,7 +373,7 @@ test.concurrent("a stream body error does not kill the server process", async ()
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, exitCode }).toEqual({ stdout: "alive 200\n", exitCode: 0 });
+  expect({ stdout, exitCode }).toEqual({ stdout: "alive rejected 200\n", exitCode: 0 });
   // The error must still be surfaced to the operator.
   expect(stderr).toContain("boom");
 });

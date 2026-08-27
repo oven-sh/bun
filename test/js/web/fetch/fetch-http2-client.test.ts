@@ -1571,7 +1571,14 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
           "-e",
           `console.log(await fetch("https://localhost:${port}", { tls: { rejectUnauthorized: false } }).then(r => r.text()));`,
         ],
-        env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+        // A leaked BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT=1 in the
+        // environment (e.g. a shell profile) would make this 'flag off' leg
+        // actually use h2 — strip it explicitly.
+        env: {
+          ...bunEnv,
+          NODE_TLS_REJECT_UNAUTHORIZED: "0",
+          BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT: undefined,
+        },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -1605,7 +1612,14 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
             `const r = await fetch("${url}", { tls: { rejectUnauthorized: false } });
              console.log(r.status, await r.text());`,
           ],
-          env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+          // A leaked BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT=1 in the
+        // environment (e.g. a shell profile) would make this 'flag off' leg
+        // actually use h2 — strip it explicitly.
+        env: {
+          ...bunEnv,
+          NODE_TLS_REJECT_UNAUTHORIZED: "0",
+          BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT: undefined,
+        },
           stdout: "pipe",
           stderr: "pipe",
         });
@@ -1633,7 +1647,14 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
             `const r = await fetch("${url}", { protocol: "http2", tls: { rejectUnauthorized: false } });
              console.log(r.status, await r.text());`,
           ],
-          env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+          // A leaked BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT=1 in the
+        // environment (e.g. a shell profile) would make this 'flag off' leg
+        // actually use h2 — strip it explicitly.
+        env: {
+          ...bunEnv,
+          NODE_TLS_REJECT_UNAUTHORIZED: "0",
+          BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT: undefined,
+        },
           stdout: "pipe",
           stderr: "pipe",
         });
@@ -1685,7 +1706,14 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
                match: decoded.equals(payload),
              }));`,
           ],
-          env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+          // A leaked BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT=1 in the
+        // environment (e.g. a shell profile) would make this 'flag off' leg
+        // actually use h2 — strip it explicitly.
+        env: {
+          ...bunEnv,
+          NODE_TLS_REJECT_UNAUTHORIZED: "0",
+          BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT: undefined,
+        },
           stdout: "pipe",
           stderr: "pipe",
         });
@@ -1717,7 +1745,14 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
              console.log("unexpected-ok");
            } catch (e) { console.log(e.code || String(e)); }`,
         ],
-        env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+        // A leaked BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT=1 in the
+        // environment (e.g. a shell profile) would make this 'flag off' leg
+        // actually use h2 — strip it explicitly.
+        env: {
+          ...bunEnv,
+          NODE_TLS_REJECT_UNAUTHORIZED: "0",
+          BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT: undefined,
+        },
         stdout: "pipe",
         stderr: "pipe",
       });

@@ -586,7 +586,11 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     // Backpressure parks after ~tens of pulls (a few MB of socket+sink buffer /
     // 64KB); 200 is enough headroom to distinguish "parked" from "ran away"
     // without pushing ~32MB through gzip+HTTP under debug+ASAN.
-    const TOTAL = 200;
+    // OHOS network buffers are larger than Linux's, so the sink parks later
+    // (200 x 64KB stalls never parked there); 4096 keeps the test meaningful
+    // (~256MB through gzip under debug) while still bounding a runaway pull
+    // loop.
+    const TOTAL = 4096;
     await using server = Bun.serve({
       port: 0,
       fetch() {

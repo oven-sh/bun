@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isOhos } from "harness";
 import { createTestBuilder } from "./util";
 
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -74,23 +74,30 @@ describe("pipeline stack edge cases", () => {
   });
 
   describe("cd builtin in pipelines", () => {
-    TestBuilder.command`cd / | pwd`
+    // OHOS: the app sandbox denies cd / (EACCES), which the builder reports
+    // as unexpected stderr; the cd-doesn't-leak semantics are still covered
+    // by the mkdir/cd foo legs below.
+    const cdRoot = TestBuilder.command`cd / | pwd`
       .stdout(s => s.includes("$TEMP_DIR"))
-      .ensureTempDir()
-      .runAsTest("cd | pwd - cd doesn't affect next command in pipeline");
+      .ensureTempDir();
+    (isOhos ? cdRoot.todo("sandbox denies cd /") : cdRoot).runAsTest(
+      "cd | pwd - cd doesn't affect next command in pipeline",
+    );
 
     TestBuilder.command`mkdir foo; mkdir foo/bar; cd foo | cd foo/bar | pwd`
       .stdout(s => s.includes("$TEMP_DIR"))
       .ensureTempDir()
       .runAsTest("cd | cd | pwd - multiple cd's don't affect");
 
-    TestBuilder.command`pwd | cd / | pwd`
+    const cdRoot2 = TestBuilder.command`pwd | cd / | pwd`
       .stdout(s => {
         const lines = s.trim().split("\n");
         return lines.length === 2 && lines[0].includes("$TEMP_DIR") && lines[1].includes("$TEMP_DIR");
       })
-      .ensureTempDir()
-      .runAsTest("pwd | cd | pwd - cd in middle doesn't affect");
+      .ensureTempDir();
+    (isOhos ? cdRoot2.todo("sandbox denies cd /") : cdRoot2).runAsTest(
+      "pwd | cd | pwd - cd in middle doesn't affect",
+    );
   });
 
   describe("mixed builtin and subprocess pipelines", () => {

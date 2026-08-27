@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "ZigGlobalObject.h"
+#include "BuiltinModuleKeys.h"
 #include "MessagePort.h"
 #include "helpers.h"
 #include "JavaScriptCore/ArgList.h"
@@ -467,6 +468,8 @@ extern "C" size_t Bun__reported_memory_size;
 // executionContextId: -1 for main thread
 // executionContextId: maxInt32 for macros
 // executionContextId: >-1 for workers
+extern "C" bool Bun__hasStandaloneModuleGraph();
+
 extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
@@ -521,7 +524,8 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
             return Zig::GlobalObject::create(
                 vm,
                 structure,
-                static_cast<ScriptExecutionContextIdentifier>(executionContextId));
+                static_cast<ScriptExecutionContextIdentifier>(executionContextId),
+                Bun__hasStandaloneModuleGraph() ? &Zig::StandaloneGlobalObject::globalObjectMethodTable() : &Zig::GlobalObject::globalObjectMethodTable());
         } else if (evalMode) {
             auto* structure = Zig::EvalGlobalObject::createStructure(vm);
             if (!structure) [[unlikely]] {
@@ -537,6 +541,8 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
             if (!structure) [[unlikely]] {
                 return nullptr;
             }
+            if (Bun__hasStandaloneModuleGraph())
+                return Zig::GlobalObject::create(vm, structure, &Zig::StandaloneGlobalObject::globalObjectMethodTable());
             return Zig::GlobalObject::create(
                 vm,
                 structure);
@@ -989,6 +995,34 @@ const JSC::GlobalObjectMethodTable& EvalGlobalObject::globalObjectMethodTable()
         &moduleLoaderImportModule, // moduleLoaderImportModule
         &moduleLoaderResolve, // moduleLoaderResolve
         &moduleLoaderFetch, // moduleLoaderFetch
+        &moduleLoaderCreateImportMetaProperties, // moduleLoaderCreateImportMetaProperties
+        &moduleLoaderEvaluate, // moduleLoaderEvaluate
+        &promiseRejectionTracker, // promiseRejectionTracker
+        &reportUncaughtExceptionAtEventLoop,
+        &currentScriptExecutionOwner,
+        &scriptExecutionStatus,
+        &unsafeEvalNoop, // reportViolationForUnsafeEval
+        nullptr, // defaultLanguage
+        &compileStreaming,
+        &instantiateStreaming,
+        &deriveShadowRealmGlobalObject,
+        &codeForEval, // codeForEval
+        &canCompileStrings, // canCompileStrings
+        &trustedScriptStructure, // trustedScriptStructure
+    };
+    return table;
+}
+
+const JSC::GlobalObjectMethodTable& StandaloneGlobalObject::globalObjectMethodTable()
+{
+    static const JSC::GlobalObjectMethodTable table = {
+        &supportsRichSourceInfo,
+        &shouldInterruptScript,
+        &javaScriptRuntimeFlags,
+        nullptr, // &shouldInterruptScriptBeforeTimeout,
+        &moduleLoaderImportModule, // moduleLoaderImportModule
+        &StandaloneGlobalObject::moduleLoaderResolve,
+        &StandaloneGlobalObject::moduleLoaderFetch,
         &moduleLoaderCreateImportMetaProperties, // moduleLoaderCreateImportMetaProperties
         &moduleLoaderEvaluate, // moduleLoaderEvaluate
         &promiseRejectionTracker, // promiseRejectionTracker
@@ -3380,6 +3414,11 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
     globalObject->vm().queueMicrotask(WTF::move(task));
 }
 
+extern "C" bool Bun__isStandaloneModuleKey(const Latin1Character*, size_t);
+extern "C" bool Bun__standaloneModuleHasModuleInfo(const Latin1Character*, size_t);
+extern "C" bool Bun__hasStandaloneModuleGraph();
+extern "C" int ModuleLoader__builtinAliasIndex(const Latin1Character*, size_t);
+extern "C" bool Bun__hasPluginRunner(void*);
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
     JSModuleLoader* loader, JSValue key,
     JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool)
@@ -3392,6 +3431,20 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     if (key.isString()) {
         auto moduleName = uncheckedDowncast<JSString>(key)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+        if (!globalObject->onLoadPlugins.hasVirtualModules() && !Bun__hasPluginRunner(globalObject->bunVM())) {
+            CString narrowed;
+            std::span<const Latin1Character> chars;
+            if (moduleName->is8Bit())
+                chars = moduleName->span8();
+            else if (moduleName->containsOnlyLatin1()) {
+                narrowed = moduleName->latin1();
+                chars = { std::bit_cast<const Latin1Character*>(narrowed.data()), narrowed.length() };
+            }
+            if (chars.data()) {
+                if (int index = ModuleLoader__builtinAliasIndex(chars.data(), chars.size()); index >= 0)
+                    return Identifier::fromString(vm, Bun::builtinModuleKeys[index]);
+            }
+        }
         if (moduleName->startsWith("file://"_s)) {
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
@@ -3460,6 +3513,25 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         return Identifier::fromString(vm, makeString(resolved, query));
     }
     return Identifier::fromString(vm, resolved);
+}
+
+
+JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSModuleLoader* loader, JSValue key, JSValue referrer, RefPtr<JSC::ScriptFetcher> fetcher, bool b)
+{
+    // Embedded modules import each other by their final `/$bunfs/` key; hand it straight back (unless a plugin could claim it).
+    auto* zigGlobalObject = static_cast<Zig::GlobalObject*>(globalObject);
+    if (key.isString() && !zigGlobalObject->onLoadPlugins.hasVirtualModules() && !Bun__hasPluginRunner(zigGlobalObject->bunVM())) {
+        auto* string = uncheckedDowncast<JSString>(key);
+        if (!string->isRope()) {
+            auto view = string->tryGetValue();
+            if (view->is8Bit()) {
+                auto span = view->span8();
+                if (Bun__isStandaloneModuleKey(span.data(), span.size()))
+                    return Identifier::fromString(globalObject->vm(), string->tryGetValue());
+            }
+        }
+    }
+    return GlobalObject::moduleLoaderResolve(globalObject, loader, key, referrer, WTF::move(fetcher), b);
 }
 
 JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
@@ -3649,6 +3721,154 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
         return promise;
     }
     return rejectedInternalPromise(globalObject, result);
+}
+
+extern "C" JSModuleRecord* zig__ModuleInfoDeserialized__toJSModuleRecord(JSGlobalObject*, VM&, const Identifier&, const SourceCode&, bun_ModuleInfoDeserialized*);
+extern "C" void zig__ModuleInfoDeserialized__deinit(bun_ModuleInfoDeserialized*);
+
+// Source for an embedded module: bytecode-backed, never needs the transpiler thread, so always the synchronous fetch.
+static JSSourceCode* fetchStandaloneSource(Zig::GlobalObject* globalObject, JSString* keyJS, const String& key)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ErrorableResolvedSource res;
+    auto keyBun = Bun::toString(key);
+    auto source = Bun::toString(String("undefined"_s));
+    JSValue result = Bun::fetchESMSourceCodeSync(globalObject, keyJS, &res, &keyBun, &source, nullptr);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return result ? dynamicDowncast<JSSourceCode>(result) : nullptr;
+}
+
+// The module_info-carrying provider of an embedded ES module, or null (CommonJS wrappers, JSON, etc. take the normal path).
+static Zig::SourceProvider* transpiledModuleProvider(JSSourceCode* jsSourceCode)
+{
+    auto* provider = jsSourceCode->sourceCode().provider();
+    if (!provider || provider->sourceType() != JSC::SourceProviderSourceType::BunTranspiledModule)
+        return nullptr;
+    auto* zigProvider = static_cast<Zig::SourceProvider*>(provider);
+    return zigProvider->m_moduleInfo ? zigProvider : nullptr;
+}
+
+static JSModuleRecord* createStandaloneRecord(Zig::GlobalObject* globalObject, const Identifier& key, JSSourceCode* jsSourceCode)
+{
+    auto* provider = transpiledModuleProvider(jsSourceCode);
+    if (!provider)
+        return nullptr;
+    auto* record = zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, globalObject->vm(), key, jsSourceCode->sourceCode(), provider->m_moduleInfo);
+    zig__ModuleInfoDeserialized__deinit(provider->m_moduleInfo);
+    provider->m_moduleInfo = nullptr;
+    return record;
+}
+
+// Register every embedded ES module in `root`'s static-import closure as already fetched, with its module record and
+// its embedded edges in [[LoadedModules]], so JSC's graph walk costs one ModuleLoadStep per module instead of a fetch
+// promise, makeModule and a ModuleLoadStep microtask per (importer, request) edge. `root` itself is left to the caller's
+// pipeline so its loadPromise settles only once the whole graph has loaded.
+static void provideStandaloneImportClosure(Zig::GlobalObject* globalObject, JSModuleLoader* loader, const Identifier& rootKey, const Vector<AbstractModuleRecord::ModuleRequest>& rootRequests)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Vector<JSModuleRecord*, 64> worklist;
+    MarkedArgumentBuffer keepAlive;
+    auto visit = [&](const Vector<AbstractModuleRecord::ModuleRequest>& requests) -> bool {
+        for (auto& request : requests) {
+            if (request.m_attributes && request.m_attributes->type() != ScriptFetchParameters::Type::JavaScript)
+                continue;
+            auto* impl = request.m_specifier.impl();
+            if (!impl || impl == rootKey.impl() || !impl->is8Bit() || !Bun__standaloneModuleHasModuleInfo(impl->span8().data(), impl->length()))
+                continue;
+            if (loader->registryEntry(request.m_specifier))
+                continue;
+            JSString* keyJS = jsString(vm, request.m_specifier.string());
+            JSSourceCode* jsSourceCode = fetchStandaloneSource(globalObject, keyJS, request.m_specifier.string());
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!jsSourceCode)
+                continue;
+            keepAlive.append(jsSourceCode);
+            JSModuleRecord* record = createStandaloneRecord(globalObject, request.m_specifier, jsSourceCode);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!record)
+                continue;
+            keepAlive.append(record);
+
+            // Leave the entry exactly as JSC's own fetch -> makeModule chain would: fetched, module promise settled, no
+            // loadPromise yet. The first edge to reach it runs ModuleLoadStep for it (which loads its non-embedded
+            // requests and settles loadPromise); every later edge completes inline in HostLoadImportedModule.
+            auto* entry = loader->ensureRegistered(globalObject, request.m_specifier, ScriptFetchParameters::Type::JavaScript);
+            RETURN_IF_EXCEPTION(scope, false);
+            entry->setStatus(ModuleRegistryEntry::Status::Fetching);
+            JSPromise* fetchPromise = entry->ensureFetchPromise(globalObject);
+            JSPromise* modulePromise = entry->ensureModulePromise(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            fetchPromise->fulfill(vm, jsSourceCode);
+            entry->setRecord(vm, record);
+            entry->setStatus(ModuleRegistryEntry::Status::Fetched);
+            modulePromise->fulfill(vm, record);
+
+            worklist.append(record);
+        }
+        return true;
+    };
+    if (!visit(rootRequests))
+        return;
+    Vector<JSModuleRecord*, 64> provided;
+    while (!worklist.isEmpty()) {
+        JSModuleRecord* record = worklist.takeLast();
+        provided.append(record);
+        if (!visit(record->requestedModules()))
+            return;
+    }
+    // [[LoadedModules]] for every edge between the records just provided, so InnerModuleLoading finds them without
+    // calling HostLoadImportedModule at all.
+    for (JSModuleRecord* record : provided) {
+        for (auto& request : record->requestedModules()) {
+            if (request.m_attributes && request.m_attributes->type() != ScriptFetchParameters::Type::JavaScript)
+                continue;
+            auto* entry = loader->registryEntry(request.m_specifier);
+            if (!entry || !entry->record())
+                continue;
+            record->setImportedModule(globalObject, request, entry->record());
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+    }
+}
+
+JSC::JSPromise* StandaloneGlobalObject::moduleLoaderFetch(JSGlobalObject* jsGlobalObject, JSModuleLoader* loader, JSValue key, RefPtr<JSC::ScriptFetchParameters> parameters, RefPtr<JSC::ScriptFetcher> fetcher)
+{
+    auto* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    bool plainJS = !parameters || parameters->type() == ScriptFetchParameters::Type::JavaScript;
+    if (!plainJS || globalObject->onLoadPlugins.hasVirtualModules() || Bun__hasPluginRunner(globalObject->bunVM()))
+        RELEASE_AND_RETURN(scope, GlobalObject::moduleLoaderFetch(jsGlobalObject, loader, key, WTF::move(parameters), WTF::move(fetcher)));
+
+    JSString* keyJS = key.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    String keyString = keyJS->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!keyString.is8Bit() || keyString.endsWith(".node"_s) || !Bun__standaloneModuleHasModuleInfo(keyString.span8().data(), keyString.length()))
+        RELEASE_AND_RETURN(scope, GlobalObject::moduleLoaderFetch(jsGlobalObject, loader, key, WTF::move(parameters), WTF::move(fetcher)));
+
+    JSSourceCode* jsSourceCode = fetchStandaloneSource(globalObject, keyJS, keyString);
+    RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
+    if (!jsSourceCode)
+        RELEASE_AND_RETURN(scope, GlobalObject::moduleLoaderFetch(jsGlobalObject, loader, key, WTF::move(parameters), WTF::move(fetcher)));
+
+    // The requested list lives in module_info; building a record is how we read it. makeModule builds this module's own
+    // record again from the same provider afterwards, so leave its module_info in place and only prefetch its children.
+    if (auto* provider = transpiledModuleProvider(jsSourceCode)) {
+        Identifier keyIdent = Identifier::fromString(vm, keyString);
+        JSModuleRecord* probe = zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, keyIdent, jsSourceCode->sourceCode(), provider->m_moduleInfo);
+        RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
+        if (probe) {
+            EnsureStillAliveScope keepProbe(probe);
+            provideStandaloneImportClosure(globalObject, loader, keyIdent, probe->requestedModules());
+            RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
+        }
+    }
+    RELEASE_AND_RETURN(scope, resolvedInternalPromise(globalObject, jsSourceCode));
 }
 
 JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObject* globalObject,

@@ -21,12 +21,14 @@ const registry = new VerdaccioRegistry();
 // share a cache (concurrent installs into one cache race on Windows). A manifest is fresh for 300s after its fetch.
 let cacheFiles: DirectoryTree = {};
 
-// The cache's per-name index entries are links that installs write and never read, so only plain files are captured.
+// The cache's per-name index entries are links that installs write and never read, and `.tmp` holds files still
+// being written, so only the plain files outside it are captured.
 function captureCache(cacheDir: string) {
   const files: DirectoryTree = {};
   const capture = (dir: string) => {
     for (const entry of readdirSync(join(cacheDir, dir), { withFileTypes: true })) {
       const path = dir === "" ? entry.name : `${dir}/${entry.name}`;
+      if (path === ".tmp") continue;
       if (entry.isDirectory()) capture(path);
       else if (entry.isFile()) files[`.bun-cache/${path}`] = readFileSync(join(cacheDir, path));
     }
@@ -35,24 +37,34 @@ function captureCache(cacheDir: string) {
   return files;
 }
 
+// One workspace that depends on every registry version the cases below resolve: four package names, so four
+// manifests.
+const WARM_FILES = {
+  "package.json": JSON.stringify({ name: "warm", workspaces: ["packages/*"] }),
+  "packages/a/package.json": JSON.stringify({
+    name: "a",
+    dependencies: { "no-deps": "2.0.0", "a-dep": "1.0.10", "dep-with-tags": "1.0.1", "@types/no-deps": "2.0.0" },
+  }),
+  "packages/b/package.json": JSON.stringify({ name: "b", dependencies: { "no-deps": "1.1.0", "a-dep": "1.0.1" } }),
+  "packages/c/package.json": JSON.stringify({ name: "c", dependencies: { "no-deps": "1.0.0" } }),
+  "packages/d/package.json": JSON.stringify({ name: "d", dependencies: { "no-deps": "1.0.1" } }),
+};
+const WARM_MANIFESTS = 4;
+
 beforeAll(async () => {
   await registry.start();
-  const { packageDir } = await registry.createTestDir({
-    bunfigOpts: { linker: "hoisted", saveTextLockfile: true },
-    files: {
-      "package.json": JSON.stringify({ name: "warm", workspaces: ["packages/*"] }),
-      "packages/a/package.json": JSON.stringify({
-        name: "a",
-        dependencies: { "no-deps": "2.0.0", "a-dep": "1.0.10", "dep-with-tags": "1.0.1", "@types/no-deps": "2.0.0" },
-      }),
-      "packages/b/package.json": JSON.stringify({ name: "b", dependencies: { "no-deps": "1.1.0", "a-dep": "1.0.1" } }),
-      "packages/c/package.json": JSON.stringify({ name: "c", dependencies: { "no-deps": "1.0.0" } }),
-      "packages/d/package.json": JSON.stringify({ name: "d", dependencies: { "no-deps": "1.0.1" } }),
-    },
-  });
-  await runBunInstall(envFor(packageDir), packageDir);
-  cacheFiles = captureCache(join(packageDir, ".bun-cache"));
-  expect(Object.keys(cacheFiles).filter(path => path.endsWith(".npm"))).toHaveLength(4);
+  // A manifest is written to the cache from a thread pool after resolution, so an install that exits first leaves
+  // that manifest out. A case whose manifest is missing fetches it again and asserts the same output, so a warm-up
+  // that still misses one after three attempts is used as it is.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted", saveTextLockfile: true },
+      files: WARM_FILES,
+    });
+    await runBunInstall(envFor(packageDir), packageDir);
+    cacheFiles = captureCache(join(packageDir, ".bun-cache"));
+    if (Object.keys(cacheFiles).filter(path => path.endsWith(".npm")).length === WARM_MANIFESTS) break;
+  }
 });
 
 afterAll(() => {

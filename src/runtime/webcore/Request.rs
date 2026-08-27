@@ -981,6 +981,23 @@ impl Request {
         <Self as BodyMixin>::check_body_stream_ref(self, global_object)
     }
 
+    /// Fetch Request constructor step 45.1: the `input` Request's body is
+    /// about to become the new request's body, so it must be usable. Node's
+    /// message, since this is the constructor and not `clone()`.
+    fn throw_if_input_body_unusable(&self, global_this: &JSGlobalObject) -> JsResult<()> {
+        if self.body_is_unusable(global_this) {
+            return Err(global_this
+                .err(
+                    crate::webcore::jsc::ErrorCode::BODY_ALREADY_USED,
+                    format_args!(
+                        "Cannot construct a Request with a Request object that has already been used."
+                    ),
+                )
+                .throw());
+        }
+        Ok(())
+    }
+
     pub(crate) fn construct_into(
         global_this: &JSGlobalObject,
         arguments: &[JSValue],
@@ -1045,7 +1062,9 @@ impl Request {
         let url_or_object = arguments[0];
         let url_or_object_type = url_or_object.js_type();
         let mut fields: EnumSet<Fields> = EnumSet::empty();
-        let mut input_body_to_transfer: Option<*mut Request> = None;
+        // Set by the two-arg Request-input arm; the transfer itself runs after
+        // URL validation so a later `bail!` leaves the input body untouched.
+        let mut transfer_input_body = false;
 
         let is_first_argument_a_url =
             // fastest path:
@@ -1102,7 +1121,7 @@ impl Request {
                     let is_input = value == url_or_object;
                     if values_to_try.len() == 1 {
                         if is_input {
-                            if let Err(e) = request.throw_if_body_unusable(global_this) {
+                            if let Err(e) = request.throw_if_input_body_unusable(global_this) {
                                 bail!(Err(e));
                             }
                         }
@@ -1160,14 +1179,10 @@ impl Request {
                         match request.body_value() {
                             BodyValue::Null => {}
                             _ if is_input => {
-                                if let Err(e) = request.throw_if_body_unusable(global_this) {
+                                if let Err(e) = request.throw_if_input_body_unusable(global_this) {
                                     bail!(Err(e));
                                 }
-                                // Deferred until after URL validation so a
-                                // later bail! doesn't drop an already-taken
-                                // body. `request` stays live via arguments[0].
-                                input_body_to_transfer =
-                                    Some(std::ptr::from_ref(request).cast_mut());
+                                transfer_input_body = true;
                                 fields.insert(Fields::Body);
                             }
                             BodyValue::Used => {}
@@ -1432,10 +1447,13 @@ impl Request {
 
         req.url.set(href);
 
-        if let Some(input) = input_body_to_transfer {
-            // SAFETY: `input` is the live `*mut Request` payload of a
-            // DOMWrapper in `arguments`, rooted for this call.
-            match unsafe { &*input }.transfer_body_value(global_this) {
+        if transfer_input_body {
+            // The arm that set the flag matched `url_or_object` with the stricter
+            // `as_direct::<Request>()`, and nothing since could change the cell.
+            let input = url_or_object
+                .as_class_ref::<Request>()
+                .expect("arguments[0] matched as a Request in the loop above");
+            match input.transfer_body_value(global_this) {
                 Ok(v) => *req.body_value_mut() = v,
                 Err(e) => bail!(Err(e)),
             }

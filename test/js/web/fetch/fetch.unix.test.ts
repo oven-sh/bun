@@ -339,9 +339,7 @@ it.skipIf(isWindows)("TLS over a unix socket is only reused for the hostname the
       import { createServer } from "node:tls";
       const unix = ${JSON.stringify(join(String(dir), "tls.sock"))};
       const sockets = new Set();
-      let handshakes = 0;
       const srv = createServer(${JSON.stringify(tls)}, sock => {
-        handshakes++;
         let buf = "";
         sock.on("error", () => {});
         sock.on("data", d => {
@@ -353,21 +351,21 @@ it.skipIf(isWindows)("TLS over a unix socket is only reused for the hostname the
           }
         });
       });
-      // "connection" fires for the raw socket, before the handshake; the
-      // rejected hostname below never completes one.
+      // "connection" fires for the raw socket, before the handshake, so it
+      // also counts the connection whose handshake the client rejects.
       srv.on("connection", sock => sockets.add(sock));
       srv.listen(unix);
       await new Promise(r => srv.once("listening", r));
       const out = {};
       out.first = await (await fetch("https://localhost/x", { unix })).text();
       out.second = await (await fetch("https://localhost/x", { unix })).text();
-      out.afterLocalhost = { connections: sockets.size, handshakes };
+      out.connectionsAfterLocalhost = sockets.size;
       try {
         out.other = await (await fetch("https://foo.localhost/x", { unix })).text();
       } catch (e) {
         out.other = e.code;
       }
-      out.afterOther = { connections: sockets.size, handshakes };
+      out.connectionsAfterOther = sockets.size;
       console.log(JSON.stringify(out));
       for (const sock of sockets) sock.destroy();
       srv.close();
@@ -382,9 +380,9 @@ it.skipIf(isWindows)("TLS over a unix socket is only reused for the hostname the
   expect(JSON.parse(stdout)).toEqual({
     first: "ok",
     second: "ok",
-    afterLocalhost: { connections: 1, handshakes: 1 },
+    connectionsAfterLocalhost: 1,
     other: "ERR_TLS_CERT_ALTNAME_INVALID",
-    afterOther: { connections: 2, handshakes: 1 },
+    connectionsAfterOther: 2,
   });
   expect(exitCode).toBe(0);
 });

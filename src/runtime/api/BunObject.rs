@@ -2121,13 +2121,22 @@ pub(crate) mod environment_variables {
         Some(EncodedSlice::from_bytes(value))
     }
 
-    /// setenv(3) takes C strings: a key or value ends at its first NUL.
+    /// setenv(3) takes C strings: a value ends at its first NUL.
     #[inline]
     fn truncate_at_nul(s: &[u8]) -> &[u8] {
         match bun_core::strings::index_of_char_usize(s, 0) {
             Some(i) => &s[..i],
             None => s,
         }
+    }
+
+    /// The names the C++ setter drops; kept here too so the SHARE_ENV
+    /// write-through cannot hand putenv an invalid name.
+    #[inline]
+    fn is_rejected_env_name(key: &[u8]) -> bool {
+        key.is_empty()
+            || bun_core::strings::contains_char(key, b'=')
+            || bun_core::strings::contains_char(key, 0)
     }
 
     /// `process.env[name] = value`: the env map, plus the OS environment on the
@@ -2140,8 +2149,8 @@ pub(crate) mod environment_variables {
     ) {
         let vm = global_object.bun_vm().as_mut();
         let name_slice = name.to_utf8();
-        let key = truncate_at_nul(name_slice.slice());
-        if key.is_empty() || bun_core::strings::contains_char(key, b'=') {
+        let key = name_slice.slice();
+        if is_rejected_env_name(key) {
             return;
         }
         let value_slice = value.to_utf8();
@@ -2165,8 +2174,8 @@ pub(crate) mod environment_variables {
     extern "C" fn Bun__ProcessEnv__delete(global_object: &JSGlobalObject, name: &BunString) {
         let vm = global_object.bun_vm().as_mut();
         let name_slice = name.to_utf8();
-        let key = truncate_at_nul(name_slice.slice());
-        if key.is_empty() {
+        let key = name_slice.slice();
+        if is_rejected_env_name(key) {
             return;
         }
 

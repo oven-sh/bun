@@ -1,9 +1,10 @@
 // Node's process.env is an exotic object over the OS environment
 // (src/node_env_var.cc RealEnvStore): writes coerce to string, symbol keys and
 // values throw, a name that is empty or contains '=' is silently dropped, a
-// key or value is cut at its first NUL, defineProperty rejects accessors and
+// value is cut at its first NUL, defineProperty rejects accessors and
 // non-permissive descriptors, freeze/seal/preventExtensions throw, and every
-// set/delete reaches setenv/unsetenv so native getenv() stays in sync.
+// set/delete reaches setenv/unsetenv so native getenv() stays in sync. Bun
+// also drops a name that contains a NUL (Node cuts it at the NUL).
 //
 // On Windows process.env is a Proxy (case-insensitive keys,
 // SetEnvironmentVariableW write-through) that applies the same rules in its
@@ -79,18 +80,18 @@ describe("process.env node semantics", () => {
     expect(process.env.ENVFIX_DPNUL).toBe("a");
   });
 
-  test("NUL in key truncates at NUL", () => {
+  test("NUL in key drops the write", () => {
     process.env["ENVFIX_K\x00TAIL"] = "v";
-    expect(process.env.ENVFIX_K).toBe("v");
-    expect(Object.keys(process.env).filter(k => k.startsWith("ENVFIX_K"))).toEqual(["ENVFIX_K"]);
+    expect(process.env["ENVFIX_K\x00TAIL"]).toBeUndefined();
+    expect(Object.keys(process.env).filter(k => k.startsWith("ENVFIX_K"))).toEqual([]);
 
-    // A name that is nothing but a NUL tail is an empty name.
     process.env["\x00ENVFIX_LEAD"] = "y";
     expect("" in process.env).toBe(false);
     expect(process.env["\x00ENVFIX_LEAD"]).toBeUndefined();
 
-    delete process.env["ENVFIX_K\x00TAIL"];
-    expect("ENVFIX_K" in process.env).toBe(false);
+    process.env.ENVFIX_K = "kept";
+    expect(delete process.env["ENVFIX_K\x00TAIL"]).toBe(true);
+    expect(process.env.ENVFIX_K).toBe("kept");
   });
 
   test("Object.freeze / seal / preventExtensions throw TypeError", async () => {
@@ -178,19 +179,18 @@ describe("process.env node semantics", () => {
   test("coerced and NUL-cut values reach a spawned child's inherited env", async () => {
     process.env.ENVFIX_SPAWN = 3000 as unknown as string;
     process.env.ENVFIX_SPAWN_NUL = "ab\x00cd";
-    process.env["ENVFIX_SPAWN_K\x00TAIL"] = "k";
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
-        `process.stdout.write(JSON.stringify([typeof process.env.ENVFIX_SPAWN, process.env.ENVFIX_SPAWN, process.env.ENVFIX_SPAWN_NUL, process.env.ENVFIX_SPAWN_K]))`,
+        `process.stdout.write(JSON.stringify([typeof process.env.ENVFIX_SPAWN, process.env.ENVFIX_SPAWN, process.env.ENVFIX_SPAWN_NUL]))`,
       ],
       env: { ...process.env },
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual(["string", "3000", "ab", "k"]);
+    expect(JSON.parse(stdout)).toEqual(["string", "3000", "ab"]);
     expect(exitCode).toBe(0);
   });
 });
@@ -277,7 +277,7 @@ describe.skipIf(!isPosix)("process.env writes reach the OS environment", () => {
         keyNul: read("ENVFIX_KEYNUL"),
       }));
     `);
-    expect(out).toEqual({ out: { eq: null, nul: "ab", keyNul: "k" }, exitCode: 0 });
+    expect(out).toEqual({ out: { eq: null, nul: "ab", keyNul: null }, exitCode: 0 });
   });
 
   test.concurrent("Bun.spawn and Bun.which without an env option observe runtime writes", async () => {
@@ -338,7 +338,7 @@ describe.skipIf(!isPosix)("process.env writes reach the OS environment", () => {
         js: process.env.ENVFIX_SNUL,
         eq: "ENVFIX_SEQ=X" in process.env,
         deleted: read("ENVFIX_SWAPDEL"),
-        keyNulDeleted: [read("ENVFIX_SKEY"), "ENVFIX_SKEY" in process.env],
+        keyNulDeleteIgnored: [read("ENVFIX_SKEY"), process.env.ENVFIX_SKEY],
         freeze: probe(() => Object.freeze(process.env)),
         stillWritable: (process.env.ENVFIX_SAFTER = "x", process.env.ENVFIX_SAFTER),
       }));
@@ -352,7 +352,7 @@ describe.skipIf(!isPosix)("process.env writes reach the OS environment", () => {
         js: "ab",
         eq: false,
         deleted: null,
-        keyNulDeleted: [null, false],
+        keyNulDeleteIgnored: ["v", "v"],
         freeze: "TypeError",
         stillWritable: "x",
       },

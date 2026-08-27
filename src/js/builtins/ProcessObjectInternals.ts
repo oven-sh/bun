@@ -502,12 +502,10 @@ export function windowsEnv(
     }
   }
 
-  // The name as the OS holds it (cut at NUL), or null when Node drops the write
-  // (empty or contains '=', https://github.com/nodejs/node/issues/32920).
+  // null when the write is dropped: Node rejects an empty name or one with '='
+  // (https://github.com/nodejs/node/issues/32920); a NUL cannot reach the OS.
   function envName(p: string): string | null {
-    const nul = p.indexOf("\0");
-    if (nul !== -1) p = p.slice(0, nul);
-    if (p === "" || p.includes("=")) return null;
+    if (p === "" || p.includes("=") || p.includes("\0")) return null;
     return p;
   }
 

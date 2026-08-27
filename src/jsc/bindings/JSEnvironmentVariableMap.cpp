@@ -47,8 +47,9 @@ extern "C" bool Bun__Node__ProcessPendingDeprecation;
 
 namespace Bun {
 
-// setenv(3) takes C strings: Node cuts a key or value at its first NUL and
-// drops a write whose name is empty or contains '=' (EINVAL).
+// setenv(3) takes C strings: Node cuts a value at its first NUL and drops a
+// write whose name is empty or contains '=' (EINVAL). A name with a NUL is
+// dropped too, rather than stored under a different name than written.
 static ALWAYS_INLINE String truncateAtNUL(const String& s)
 {
     size_t nul = s.find('\0');
@@ -57,7 +58,7 @@ static ALWAYS_INLINE String truncateAtNUL(const String& s)
 
 static ALWAYS_INLINE bool isRejectedEnvName(const String& key)
 {
-    return key.isEmpty() || key.contains('=');
+    return key.isEmpty() || key.contains('=') || key.contains('\0');
 }
 
 // Mirror a process.env write into Bun's env map and the OS environment.
@@ -187,16 +188,9 @@ bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, P
 
     // Node silently ignores assignments to an empty variable name
     // (https://github.com/nodejs/node/issues/32920) or one containing '='.
-    String key = truncateAtNUL(String(uid));
+    String key(uid);
     if (isRejectedEnvName(key))
         return true;
-
-    // A NUL in the name: store under the name the OS environment will hold.
-    if (key.length() != uid->length()) [[unlikely]] {
-        slot.disableCaching();
-        PutPropertySlot truncatedSlot(cell, slot.isStrictMode());
-        RELEASE_AND_RETURN(scope, put(cell, globalObject, Identifier::fromString(vm, key), value, truncatedSlot));
-    }
 
     String stringValue;
     JSString* string = coerceEnvValueForStore(globalObject, scope, value, stringValue);
@@ -414,13 +408,8 @@ bool JSEnvironmentVariableMap::deleteProperty(JSCell* cell, JSGlobalObject* glob
     }
 
     if (uid) {
-        String key = truncateAtNUL(String(uid));
-        if (key.length() != uid->length()) [[unlikely]] {
-            slot.disableCaching();
-            DeletePropertySlot truncatedSlot;
-            RELEASE_AND_RETURN(scope, deleteProperty(cell, globalObject, Identifier::fromString(vm, key), truncatedSlot));
-        }
-        if (!key.isEmpty())
+        String key(uid);
+        if (!isRejectedEnvName(key))
             writeThroughEnv(globalObject, key, nullptr);
     }
 
@@ -859,7 +848,7 @@ bool JSSharedEnvMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNam
     RETURN_IF_EXCEPTION(scope, false);
     stringValue = truncateAtNUL(stringValue);
 
-    String keyStr = truncateAtNUL(String(uid));
+    String keyStr(uid);
     if (isRejectedEnvName(keyStr))
         return true;
     applySharedEnvSideEffects(globalObject, keyStr, stringValue);
@@ -884,7 +873,7 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
     // Mirror JSEnvironmentVariableMap::deleteProperty: put() applies the TZ
     // side effect via applySharedEnvSideEffects, so delete has to undo it or
     // existing Date instances keep the deleted zone's offset.
-    String key = truncateAtNUL(String(uid));
+    String key(uid);
     String normalizedKey = SharedEnvStore::normalizeKey(key);
     if (normalizedKey == "TZ"_s && shouldApplyTZSideEffect(globalObject)) {
         WTF::setTimeZoneOverride(String());
@@ -929,7 +918,7 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
         // map does); tightening SHARE_ENV is a separate behavior change with its own tests.
         if (!propertyName.isSymbol() && uid) {
             if (auto* store = sharedEnvStoreFor(object)) {
-                String key = truncateAtNUL(String(uid));
+                String key(uid);
                 String existing = store->get(key);
                 if (!existing.isNull()) {
                     syncOSEnv(globalObject, store, key, nullptr);
@@ -953,7 +942,7 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
     }
 
-    String keyStr = truncateAtNUL(String(uid));
+    String keyStr(uid);
     if (isRejectedEnvName(keyStr))
         return true;
     applySharedEnvSideEffects(globalObject, keyStr, stringValue);

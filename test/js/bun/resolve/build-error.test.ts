@@ -209,16 +209,18 @@ test.concurrent("a type-only import next to module.exports loads on every path",
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode, directStderr, directExitCode] = await Promise.all([
+  const [stdout, stderr, exitCode, directStdout, directStderr, directExitCode] = await Promise.all([
     proc.stdout.text(),
     proc.stderr.text(),
     proc.exited,
+    direct.stdout.text(),
     direct.stderr.text(),
     direct.exited,
   ]);
 
   if (exitCode !== 0) console.error(stderr);
   expect(JSON.parse(stdout)).toEqual({ import: { f: { x: 1 } }, require: { f: { x: 1 } } });
+  expect(directStdout).toBe("");
   expect(directStderr).toBe("");
   expect(exitCode).toBe(0);
   expect(directExitCode).toBe(0);

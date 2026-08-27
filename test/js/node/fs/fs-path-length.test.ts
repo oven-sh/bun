@@ -240,8 +240,10 @@ describe.if(isWindows)("Buffer paths containing malformed byte sequences", () =>
 // produces the ENAMETOOLONG itself. Node gets that error from the syscall, so
 // it arrives through the callback like any other syscall error, and the
 // callback APIs (which call the native binding directly, unlike fs.promises'
-// async wrappers) must not throw it synchronously. The lengths clear
-// MAX_PATH_BYTES on every platform: 4096 Linux, 1024 macOS, 98302 Windows.
+// async wrappers) must not throw it synchronously. It also names the syscall
+// the operation would have issued, in `err.syscall` and in the message, the
+// same one the operation's ENOENT names. The lengths clear MAX_PATH_BYTES on
+// every platform: 4096 Linux, 1024 macOS, 98302 Windows.
 describe("callback APIs report a path longer than MAX_PATH_BYTES through the callback", () => {
   const tooLongLength = isWindows ? 100_000 : 5_000;
   const tooLong = (isWindows ? "C:\\" : "/") + Buffer.alloc(tooLongLength, "a").toString();
@@ -251,42 +253,44 @@ describe("callback APIs report a path longer than MAX_PATH_BYTES through the cal
 
   type Callback = (err: unknown) => void;
   // [name, call, whether node reports `tooLong` as `err.path` (it is the
-  // `dest` of the two-operand calls, and mkdtemp appends its suffix)]
-  const calls: [string, (cb: Callback) => void, boolean][] = [
-    ["access", cb => fs.access(tooLong, cb), true],
-    ["appendFile", cb => fs.appendFile(tooLong, "x", cb), true],
-    ["chmod", cb => fs.chmod(tooLong, 0o644, cb), true],
-    ["chown", cb => fs.chown(tooLong, 0, 0, cb), true],
-    ["copyFile", cb => fs.copyFile(tooLong, other, cb), true],
-    ["cp", cb => fs.cp(tooLong, other, cb), true],
-    ["lstat", cb => fs.lstat(tooLong, cb), true],
-    ["mkdir", cb => fs.mkdir(tooLong, cb), true],
-    ["mkdir recursive", cb => fs.mkdir(tooLong, { recursive: true }, cb), true],
-    ["mkdtemp", cb => fs.mkdtemp(tooLong, cb), false],
-    ["open", cb => fs.open(tooLong, "r", cb), true],
-    ["opendir", cb => fs.opendir(tooLong, cb), true],
-    ["readdir", cb => fs.readdir(tooLong, cb), true],
-    ["readdir recursive", cb => fs.readdir(tooLong, { recursive: true }, cb), true],
-    ["readFile", cb => fs.readFile(tooLong, cb), true],
-    ["readlink", cb => fs.readlink(tooLong, cb), true],
-    ["realpath", cb => fs.realpath(tooLong, cb), true],
-    ["realpath.native", cb => fs.realpath.native(tooLong, cb), true],
-    ["rename oldPath", cb => fs.rename(tooLong, other, cb), true],
-    ["rename newPath", cb => fs.rename(other, tooLong, cb), false],
-    ["rm", cb => fs.rm(tooLong, cb), true],
-    ["rmdir", cb => fs.rmdir(tooLong, cb), true],
-    ["stat", cb => fs.stat(tooLong, cb), true],
-    ["stat with a Buffer path", cb => fs.stat(Buffer.from(tooLong), cb), true],
-    ["stat with a file: URL path", cb => fs.stat(pathToFileURL(tooLong), cb), true],
-    ["statfs", cb => fs.statfs(tooLong, cb), true],
-    ["symlink", cb => fs.symlink(other, tooLong, cb), false],
-    ["truncate", cb => fs.truncate(tooLong, cb), true],
-    ["unlink", cb => fs.unlink(tooLong, cb), true],
-    ["utimes", cb => fs.utimes(tooLong, 0, 0, cb), true],
-    ["writeFile", cb => fs.writeFile(tooLong, "x", cb), true],
+  // `dest` of the two-operand calls, and mkdtemp appends its suffix), the
+  // `err.syscall` node reports. Exception: node's truncate is open + ftruncate
+  // and reports `open`; bun issues truncate(2) and reports that for ENOENT too]
+  const calls: [string, (cb: Callback) => void, boolean, string][] = [
+    ["access", cb => fs.access(tooLong, cb), true, "access"],
+    ["appendFile", cb => fs.appendFile(tooLong, "x", cb), true, "open"],
+    ["chmod", cb => fs.chmod(tooLong, 0o644, cb), true, "chmod"],
+    ["chown", cb => fs.chown(tooLong, 0, 0, cb), true, "chown"],
+    ["copyFile", cb => fs.copyFile(tooLong, other, cb), true, "copyfile"],
+    ["cp", cb => fs.cp(tooLong, other, cb), true, "lstat"],
+    ["lstat", cb => fs.lstat(tooLong, cb), true, "lstat"],
+    ["mkdir", cb => fs.mkdir(tooLong, cb), true, "mkdir"],
+    ["mkdir recursive", cb => fs.mkdir(tooLong, { recursive: true }, cb), true, "mkdir"],
+    ["mkdtemp", cb => fs.mkdtemp(tooLong, cb), false, "mkdtemp"],
+    ["open", cb => fs.open(tooLong, "r", cb), true, "open"],
+    ["opendir", cb => fs.opendir(tooLong, cb), true, "opendir"],
+    ["readdir", cb => fs.readdir(tooLong, cb), true, "scandir"],
+    ["readdir recursive", cb => fs.readdir(tooLong, { recursive: true }, cb), true, "scandir"],
+    ["readFile", cb => fs.readFile(tooLong, cb), true, "open"],
+    ["readlink", cb => fs.readlink(tooLong, cb), true, "readlink"],
+    ["realpath", cb => fs.realpath(tooLong, cb), true, "lstat"],
+    ["realpath.native", cb => fs.realpath.native(tooLong, cb), true, "realpath"],
+    ["rename oldPath", cb => fs.rename(tooLong, other, cb), true, "rename"],
+    ["rename newPath", cb => fs.rename(other, tooLong, cb), false, "rename"],
+    ["rm", cb => fs.rm(tooLong, cb), true, "lstat"],
+    ["rmdir", cb => fs.rmdir(tooLong, cb), true, "rmdir"],
+    ["stat", cb => fs.stat(tooLong, cb), true, "stat"],
+    ["stat with a Buffer path", cb => fs.stat(Buffer.from(tooLong), cb), true, "stat"],
+    ["stat with a file: URL path", cb => fs.stat(pathToFileURL(tooLong), cb), true, "stat"],
+    ["statfs", cb => fs.statfs(tooLong, cb), true, "statfs"],
+    ["symlink", cb => fs.symlink(other, tooLong, cb), false, "symlink"],
+    ["truncate", cb => fs.truncate(tooLong, cb), true, "truncate"],
+    ["unlink", cb => fs.unlink(tooLong, cb), true, "unlink"],
+    ["utimes", cb => fs.utimes(tooLong, 0, 0, cb), true, "utime"],
+    ["writeFile", cb => fs.writeFile(tooLong, "x", cb), true, "open"],
   ];
 
-  it.each(calls)("fs.%s", async (_, call, pathIsReported) => {
+  it.each(calls)("fs.%s", async (_, call, pathIsReported, syscall) => {
     const { promise, resolve } = Promise.withResolvers<unknown>();
     let returned = false;
     let calledBeforeReturning = false;
@@ -298,8 +302,14 @@ describe("callback APIs report a path longer than MAX_PATH_BYTES through the cal
     const err = (await promise) as NodeJS.ErrnoException;
     expect(calledBeforeReturning).toBe(false);
     expect(err.code).toBe("ENAMETOOLONG");
+    expect(err.syscall).toBe(syscall);
     if (pathIsReported) {
       expect(err.path).toBe(tooLong);
+    }
+    // opendir reshapes the stat error's message in JS; the others are the
+    // formatter's own, cut off at 4096 bytes for a path this long.
+    if (syscall !== "opendir") {
+      expect(err.message).toStartWith(`ENAMETOOLONG: name too long, ${syscall} '`);
     }
   });
 
@@ -334,11 +344,46 @@ describe("callback APIs report a path longer than MAX_PATH_BYTES through the cal
     );
   });
 
-  it("the sync variants throw it, naming the path", () => {
-    expect(() => fs.statSync(tooLong)).toThrow(expect.objectContaining({ code: "ENAMETOOLONG", path: tooLong }));
-    expect(() => fs.statSync(Buffer.from(tooLong))).toThrow(
-      expect.objectContaining({ code: "ENAMETOOLONG", path: tooLong }),
+  it("the sync variants throw it, naming the path and the syscall", () => {
+    expect(() => fs.statSync(tooLong)).toThrow(
+      expect.objectContaining({ code: "ENAMETOOLONG", path: tooLong, syscall: "stat" }),
     );
-    expect(() => fs.renameSync(other, tooLong)).toThrow(expect.objectContaining({ code: "ENAMETOOLONG" }));
+    expect(() => fs.statSync(Buffer.from(tooLong))).toThrow(
+      expect.objectContaining({ code: "ENAMETOOLONG", path: tooLong, syscall: "stat" }),
+    );
+    expect(() => fs.renameSync(other, tooLong)).toThrow(
+      expect.objectContaining({ code: "ENAMETOOLONG", syscall: "rename" }),
+    );
+    expect(() => fs.readdirSync(tooLong)).toThrow(
+      expect.objectContaining({ code: "ENAMETOOLONG", path: tooLong, syscall: "scandir" }),
+    );
+    expect(() => fs.realpathSync(tooLong)).toThrow(
+      expect.objectContaining({ code: "ENAMETOOLONG", path: tooLong, syscall: "lstat" }),
+    );
+    expect(() => fs.realpathSync.native(tooLong)).toThrow(
+      expect.objectContaining({ code: "ENAMETOOLONG", path: tooLong, syscall: "realpath" }),
+    );
+    expect(() => fs.cpSync(tooLong, other)).toThrow(
+      expect.objectContaining({ code: "ENAMETOOLONG", path: tooLong, syscall: "lstat" }),
+    );
+  });
+
+  it("fs.promises rejects with it, naming the syscall", async () => {
+    await expect(fs.promises.readFile(tooLong)).rejects.toMatchObject({
+      code: "ENAMETOOLONG",
+      path: tooLong,
+      syscall: "open",
+    });
+    await expect(fs.promises.readdir(tooLong)).rejects.toMatchObject({
+      code: "ENAMETOOLONG",
+      path: tooLong,
+      syscall: "scandir",
+    });
+  });
+
+  it("fs.watch throws it synchronously, as node does", () => {
+    expect(() => fs.watch(tooLong, () => {})).toThrow(
+      expect.objectContaining({ code: "ENAMETOOLONG", path: tooLong, syscall: "watch" }),
+    );
   });
 });

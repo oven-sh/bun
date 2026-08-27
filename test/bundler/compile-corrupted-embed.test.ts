@@ -198,7 +198,10 @@ async function run(exe: string, args: string[] = []) {
 
 async function expectGracefulFallback(exe: string) {
   // With the embedded graph rejected, the binary behaves like a plain `bun`.
-  const { stdout, exitCode } = await run(exe, ["-e", "console.log('fallback-ok')"]);
+  const { stdout, stderr, exitCode } = await run(exe, ["-e", "console.log('fallback-ok')"]);
+  // Debug builds announce the rejected graph with a `debug_warn!` line on
+  // stderr; that diagnostic is the only output the fallback may produce.
+  expect(stderr.split("\n").filter(line => line !== "" && !line.startsWith("debug warn:"))).toEqual([]);
   expect(stdout).toContain("fallback-ok");
   expect(exitCode).toBe(0);
 }

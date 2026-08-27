@@ -266,7 +266,6 @@ const bundledTogether = [
   "strip-ansi",
   "stripe",
   "superagent",
-  "svelte",
   "tsyringe",
   "tunnel",
   "uuid",
@@ -523,10 +522,10 @@ describe("bytecode cache portability", () => {
           },
         },
         "bun build --bytecode libraries.js": {
-          "js": "8a550fca8ad83ffc38623766a66bdc04206dc49c1b478af8feb2d2f5a2e30021",
+          "js": "dee946ae6d528d46132370198202a8e4c93d52b9c29164a990164990bc7e4ab0",
           "jsc": {
-            "bytes": 25857816,
-            "sha256": "9929c5f18915441965cb5f07db0fa3fe18a4c17db1545fabfb329fb66fdd9621",
+            "bytes": 25721064,
+            "sha256": "ec54f0408cbbabc9525fae3fd6e1a97cb5f64c8580e19a66bed42682b58ae2d6",
           },
         },
         "bun build --bytecode lodash/lodash.js": {

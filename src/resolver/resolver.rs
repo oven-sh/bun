@@ -1828,22 +1828,20 @@ impl<'a> Resolver<'a> {
         let check_package = is_package_path_;
 
         if check_relative {
-            if let Some(custom_paths) = self.custom_dir_paths.clone() {
+            if let Some(custom_paths) = self.custom_dir_paths.take() {
                 // @branchHint(.unlikely)
                 bun_core::hint::cold();
+                let mut found = ResultUnion::NotFound;
                 for custom_path in &*custom_paths {
                     let custom_utf8 = custom_path.to_utf8();
-                    match self.check_relative_path(
-                        custom_utf8.slice(),
-                        import_path,
-                        kind,
-                        global_cache,
-                    ) {
-                        ResultUnion::Success(res) => return ResultUnion::Success(res),
-                        ResultUnion::Pending(p) => return ResultUnion::Pending(p),
-                        ResultUnion::Failure(p) => return ResultUnion::Failure(p),
-                        ResultUnion::NotFound => {}
+                    found = self.check_relative_path(custom_utf8.slice(), import_path, kind, global_cache);
+                    if !matches!(found, ResultUnion::NotFound) {
+                        break;
                     }
+                }
+                self.custom_dir_paths = Some(custom_paths);
+                if !matches!(found, ResultUnion::NotFound) {
+                    return found;
                 }
                 debug_assert!(!check_package); // always from JavaScript
                 return ResultUnion::NotFound; // bail out now since there isn't anywhere else to check
@@ -1969,21 +1967,19 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            if let Some(custom_paths) = self.custom_dir_paths.clone() {
+            if let Some(custom_paths) = self.custom_dir_paths.take() {
                 bun_core::hint::cold();
+                let mut found = ResultUnion::NotFound;
                 for custom_path in &*custom_paths {
                     let custom_utf8 = custom_path.to_utf8();
-                    match self.check_package_path(
-                        custom_utf8.slice(),
-                        import_path,
-                        kind,
-                        global_cache,
-                    ) {
-                        ResultUnion::Success(res) => return ResultUnion::Success(res),
-                        ResultUnion::Pending(p) => return ResultUnion::Pending(p),
-                        ResultUnion::Failure(p) => return ResultUnion::Failure(p),
-                        ResultUnion::NotFound => {}
+                    found = self.check_package_path(custom_utf8.slice(), import_path, kind, global_cache);
+                    if !matches!(found, ResultUnion::NotFound) {
+                        break;
                     }
+                }
+                self.custom_dir_paths = Some(custom_paths);
+                if !matches!(found, ResultUnion::NotFound) {
+                    return found;
                 }
             } else {
                 match self.check_package_path(source_dir, import_path, kind, global_cache) {

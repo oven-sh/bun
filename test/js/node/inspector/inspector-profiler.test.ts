@@ -711,12 +711,18 @@ await session.post("Profiler.stopPreciseCoverage");
 session.disconnect();
 
 const entry = coverage.result.find(s => s.url.endsWith("classes.mjs"));
-const counts = entry.functions.map(f => f.ranges[0].count);
-console.log(JSON.stringify({ counts }));
+const source = await Bun.file(new URL("./classes.mjs", import.meta.url)).text();
+console.log(
+  JSON.stringify({
+    unusedBody: source.indexOf("return 2"),
+    functions: entry.functions.map(f => ({ ...f.ranges[0] })),
+  }),
+);
 `,
         "classes.mjs": `
 export class Base {
   get x() { return 1; }
+  unused() { return 2; }
 }
 export class Derived extends Base {}
 `,
@@ -731,11 +737,14 @@ export class Derived extends Base {}
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
-      // Everything the file defines ran (the script, the module body, the getter), so no entry has
-      // a count of 0. Before the fix the two template ranges were reported with count 0.
-      const { counts } = JSON.parse(stdout);
-      expect(counts.length).toBeGreaterThanOrEqual(2);
-      expect(counts).toEqual(counts.map(() => 1));
+      const { unusedBody, functions } = JSON.parse(stdout);
+      // The only function that did not run is `unused`. Before the fix the two template ranges,
+      // [1, 15] and [1, 38], were reported with count 0 as well.
+      const uncovered = functions.filter((range: { count: number }) => range.count === 0);
+      expect(uncovered).toHaveLength(1);
+      expect(uncovered[0].startOffset).toBeLessThanOrEqual(unusedBody);
+      expect(uncovered[0].endOffset).toBeGreaterThan(unusedBody);
+      expect(functions.length).toBeGreaterThanOrEqual(3);
     });
 
     // V8 never emits startOffset === endOffset; @bcoe/v8-coverage (vitest/c8

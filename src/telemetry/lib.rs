@@ -40,7 +40,26 @@ pub struct State {
     pub propagate_trace_context: bool,
     pub propagate_baggage: bool,
     pub capture_db_statement: bool,
-    pub capture_request_headers: Vec<Box<[u8]>>,
+    pub capture_request_headers: Vec<CapturedHeader>,
+}
+
+/// A request header to record, stored as its attribute key
+/// `http.request.header.<name>` so the per-request path formats nothing.
+pub struct CapturedHeader(Box<[u8]>);
+
+impl CapturedHeader {
+    const PREFIX: &'static [u8] = b"http.request.header.";
+
+    /// `name` is lower-case.
+    pub fn new(name: &[u8]) -> Self {
+        CapturedHeader([Self::PREFIX, name].concat().into_boxed_slice())
+    }
+    pub fn name(&self) -> &[u8] {
+        &self.0[Self::PREFIX.len()..]
+    }
+    pub fn attribute_key(&self) -> &[u8] {
+        &self.0
+    }
 }
 
 impl State {

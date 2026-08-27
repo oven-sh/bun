@@ -133,18 +133,16 @@ pub fn begin(
                 h.host().unwrap_or(b""),
                 h.user_agent().unwrap_or(b""),
             );
-            if !st.capture_request_headers.is_empty() {
-                let l = &st.limits;
-                for name in &st.capture_request_headers {
-                    // semconv: string[]; a repeated header's values are joined
-                    // with ", " (one element), as Request.headers.get() shows them.
-                    if let Some(v) = req.header_joined(name) {
-                        let v = bun_telemetry::otlp::utf8_lossy(&v);
-                        let mut key = Vec::with_capacity(20 + name.len());
-                        key.extend_from_slice(b"http.request.header.");
-                        key.extend_from_slice(name);
-                        s.push_attribute(&key, &Value::Array(&[Value::Str(&v)]), l);
-                    }
+            for header in &st.capture_request_headers {
+                // semconv: string[]; a repeated header's values are joined
+                // with ", " (one element), as Request.headers.get() shows them.
+                if let Some(v) = req.header_joined(header.name()) {
+                    let v = bun_telemetry::otlp::utf8_lossy(&v);
+                    s.push_attribute(
+                        header.attribute_key(),
+                        &Value::Array(&[Value::Str(&v)]),
+                        &st.limits,
+                    );
                 }
             }
         },
@@ -159,14 +157,14 @@ pub fn begin(
 /// A list-valued header: the single field, or every field joined with ", "
 /// when it repeats (W3C: several fields are one list, in order).
 fn list_header<'a>(
-    req: &bun_uws::AnyRequest,
+    req: &'a bun_uws::AnyRequest,
     name: &[u8],
     single: Option<&'a [u8]>,
     repeated: u8,
 ) -> Option<std::borrow::Cow<'a, [u8]>> {
     let single = single?;
     if repeated != 0 {
-        req.header_joined(name).map(std::borrow::Cow::Owned)
+        req.header_joined(name)
     } else {
         Some(std::borrow::Cow::Borrowed(single))
     }

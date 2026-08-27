@@ -3,7 +3,7 @@
 //! https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/
 
 use bun_telemetry::processor::BatchConfig;
-use bun_telemetry::{Instrument, InstrumentSet, Limits, Sampler, State};
+use bun_telemetry::{CapturedHeader, Instrument, InstrumentSet, Limits, Sampler, State};
 
 /// The OTLP/HTTP collector a bare `BUN_OTEL=1` / `Bun.otel.start()` exports to.
 pub const DEFAULT_COLLECTOR: &str = "http://localhost:4318";
@@ -142,7 +142,7 @@ impl Config {
             capture_request_headers: self
                 .capture_request_headers
                 .iter()
-                .map(|s| s.as_bytes().into())
+                .map(|s| CapturedHeader::new(s.as_bytes()))
                 .collect(),
         }
     }

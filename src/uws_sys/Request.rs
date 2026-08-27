@@ -1,4 +1,5 @@
 use core::ffi::c_ushort;
+use std::borrow::Cow;
 
 use crate::h3::Request as H3Request;
 
@@ -20,7 +21,7 @@ impl AnyRequest {
             Self::H3(r) => bun_opaque::opaque_deref_mut(*r).header(name),
         }
     }
-    pub fn header_joined(&self, name: &[u8]) -> Option<Vec<u8>> {
+    pub fn header_joined(&self, name: &[u8]) -> Option<Cow<'_, [u8]>> {
         match self {
             Self::H1(r) => bun_opaque::opaque_deref_mut(*r).header_joined(name),
             Self::H3(r) => bun_opaque::opaque_deref_mut(*r).header_joined(name),
@@ -159,16 +160,18 @@ pub(crate) unsafe extern "C" fn push_joined_header_value(
     len: usize,
     user: *mut core::ffi::c_void,
 ) {
-    // SAFETY: `user` is the `&mut Option<Vec<u8>>` the caller passed alongside this callback.
-    let out = unsafe { &mut *user.cast::<Option<Vec<u8>>>() };
-    // SAFETY: value/len is a request-owned slice valid for the call.
+    // SAFETY: `user` is the `&mut Option<Cow<[u8]>>` the caller passed alongside this callback.
+    let out = unsafe { &mut *user.cast::<Option<Cow<'_, [u8]>>>() };
+    // SAFETY: value/len is a slice owned by the request for its lifetime (the
+    // same storage `header()` borrows from).
     let v = unsafe { bun_core::ffi::slice(value, len) };
     match out {
-        Some(buf) => {
+        None => *out = Some(Cow::Borrowed(v)),
+        Some(joined) => {
+            let buf = joined.to_mut();
             buf.extend_from_slice(b", ");
             buf.extend_from_slice(v);
         }
-        None => *out = Some(v.to_vec()),
     }
 }
 
@@ -208,10 +211,10 @@ impl Request {
         c::uws_req_telemetry_headers(self, &mut out);
         out
     }
-    /// Every value of `name` (lower-case) joined with `", "`, for headers that
-    /// may repeat; `None` when absent.
-    pub fn header_joined(&self, name: &[u8]) -> Option<Vec<u8>> {
-        let mut out: Option<Vec<u8>> = None;
+    /// Every value of `name` (lower-case): the field itself when it occurs
+    /// once, every field joined with `", "` when it repeats; `None` when absent.
+    pub fn header_joined(&self, name: &[u8]) -> Option<Cow<'_, [u8]>> {
+        let mut out: Option<Cow<'_, [u8]>> = None;
         // SAFETY: name is a valid slice; the callback only runs during the call with `out` alive.
         unsafe {
             c::uws_req_for_each_header_value(

@@ -2,30 +2,26 @@
 
 exports[`sass source maps 1`] = `
 {
-  "css": 
-".ruleGroup {
+  "css": ".ruleGroup {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
   padding: 0.5rem;
   border-width: 1px;
-}"
-,
+}",
   "loadedUrls": [],
 }
 `;
 
 exports[`sass source maps 2`] = `
 {
-  "css": 
-".ruleGroup {
+  "css": ".ruleGroup {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
   padding: 0.5rem;
   border-width: 1px;
-}"
-,
+}",
   "loadedUrls": [],
   "sourceMap": {
     "mappings": "AAAA;EACI;EACA;EACA;EACA;EACA",

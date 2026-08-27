@@ -43,10 +43,8 @@ describe.skipIf(!isEnabled)("Valkey: Protocol Handling", () => {
           "field1": "value1",
           "field2": "value2",
           "number": "42",
-          "special": 
-        "hello
-        world"
-        ,
+          "special": "hello
+        world",
         }
       `);
     });

@@ -1139,10 +1139,13 @@ impl<'a> Formatter<'a> {
                             writer.write_all(pretty_fmt_const!(true, "<r><green>").as_bytes());
                         }
 
-                        let mut has_newline = false;
-
-                        if str.index_of_any(b"\n\r").is_some() {
-                            has_newline = true;
+                        // A top-level multiline value is wrapped in newlines
+                        // (like the Array/Object branches, and jest's
+                        // addExtraLineBreaks). A nested string prints inline
+                        // after its key, with the literal newlines inside the
+                        // quotes, exactly as jest does.
+                        let wrap = self.indent == 0 && str.index_of_any(b"\n\r").is_some();
+                        if wrap {
                             writer.write_all(b"\n");
                         }
 
@@ -1186,7 +1189,7 @@ impl<'a> Formatter<'a> {
                         writer.print(format_args!("{}", remaining));
                         writer.write_all(b"\"");
 
-                        if has_newline {
+                        if wrap {
                             writer.write_all(b"\n");
                         }
                         // The `<r>` reset must come AFTER the trailing `\n`

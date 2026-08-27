@@ -402,8 +402,6 @@ pub mod registry {
             bun_semver::semver_string::Builder::string_hash(str)
         }
 
-        /// The `Authorization` value for this registry, or `None` when it has no
-        /// credentials. Raw bytes: a credential need not be UTF-8.
         /// The `Authorization` header as `(scheme, value)`, unallocated; a token
         /// outranks a Basic credential, as in npm.
         pub fn authorization_parts(&self) -> Option<(&'static [u8], &[u8])> {
@@ -416,6 +414,8 @@ pub mod registry {
             }
         }
 
+        /// The `Authorization` value for this registry, or `None` when it has no
+        /// credentials. Raw bytes: a credential need not be UTF-8.
         pub fn authorization(&self) -> Option<Vec<u8>> {
             self.authorization_parts()
                 .map(|(scheme, value)| [scheme, value].concat())

@@ -346,8 +346,6 @@ fn spawn_maybe_sync(
     let mut lazy = false;
     let mut on_exit_callback = JSValue::ZERO;
     let mut on_disconnect_callback = JSValue::ZERO;
-    // Populated from the explicit `env:` option or, when absent, the live
-    // `process.env` object; both via `append_envp_from_js` below.
     let mut path: &[u8] = b"";
     let mut argv: Vec<CStrPtr> = Vec::new();
     let cmd_value: JSValue;
@@ -2050,8 +2048,7 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
     global_this.throw_value(err.to_error_instance(global_this))
 }
 
-/// Populate `envp` / `path` from the live `process.env` JS object so runtime
-/// mutations (set/delete/PATH edits) reach the child.
+/// Default env for a child: the live `process.env` object, not the startup snapshot.
 fn inherit_process_env(
     global_this: &JSGlobalObject,
     envp: &mut Vec<CStrPtr>,

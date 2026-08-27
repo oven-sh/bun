@@ -2390,9 +2390,10 @@ impl NetworkSink {
     /// JS-pump terminator for a source that failed (`controller.close(error)`
     /// from the pump's abrupt path). Unlike `end()`, the upload is not
     /// committed: `task.fail` aborts it, and the stashed error makes the
-    /// caller's promise reject with the source's own error. The pump promise's
-    /// reject reaction (`S3UploadStreamWrapper::handle_reject_stream`) still
-    /// runs afterwards and releases the pump ref, so no wrapper deref here.
+    /// caller's promise reject with the source's own error (a nullish reason
+    /// falls back to the generic S3 error). The pump promise's reject reaction
+    /// (`S3UploadStreamWrapper::handle_reject_stream`) still runs afterwards
+    /// and releases the pump ref, so no wrapper deref here.
     ///
     /// Raw `*mut Self`: `task.fail()` synchronously fires
     /// `S3UploadStreamWrapper::resolve`, which re-borrows this sink.
@@ -2408,7 +2409,9 @@ impl NetworkSink {
             (*this).done = true;
             (*this).pending.result = Writable::Done;
             (*this).pending.run();
-            (*this).upstream_error.set(global, reason);
+            if !reason.is_empty_or_undefined_or_null() {
+                (*this).upstream_error.set(global, reason);
+            }
             (*this).task
         };
         let Some(task_ref) = task_ref else {

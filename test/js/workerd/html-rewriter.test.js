@@ -504,16 +504,25 @@ describe("HTMLRewriter", () => {
     // read throws, so `controller.close(error)` and the pump rejection both
     // happen inside transform(), before any reject reaction is attached. The
     // close must carry the error to the pipe, or the body resolves to "".
-    it("a JS ReadableStream input that is already errored rejects the body", async () => {
+    // `error()` with no reason errors the stream with `undefined`; that must
+    // not read as a clean close either.
+    it.each([
+      ["an Error", new Error("upstream boom")],
+      ["undefined", undefined],
+    ])("a JS ReadableStream input that is already errored (%s) rejects the body", async (_, reason) => {
       const encoder = new TextEncoder();
       const stream = new ReadableStream({
         start(controller) {
           controller.enqueue(encoder.encode("<p>partial"));
-          controller.error(new Error("upstream boom"));
+          controller.error(reason);
         },
       });
       const res = new HTMLRewriter().on("p", { element() {} }).transform(new Response(stream));
-      await expect(res.text()).rejects.toThrow("upstream boom");
+      const settled = await res.text().then(
+        text => ({ resolved: text }),
+        err => ({ rejected: err }),
+      );
+      expect(settled).toEqual({ rejected: reason });
     });
 
     // A `type: 'direct'` source whose `pull()` throws synchronously leaves the

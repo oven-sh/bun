@@ -729,9 +729,9 @@ pub struct RewriterPipe {
     /// from calling `end_rewrite()`; run it once unblocked.
     input_ended: Cell<bool>,
     /// `true` while a JS-pump `.then()` reaction (attached in
-    /// [`Self::wire_input`]) is still owed. The generated `${controller}__close`
-    /// drops its error argument, so `end_from_stream` defers terminal work to
-    /// the reaction (which carries the real error) while this is set.
+    /// [`Self::wire_input`]) is still owed. The pump closes the sink before
+    /// its promise settles, so `end_from_stream` defers terminal work to the
+    /// reaction while this is set.
     js_pump_reaction_pending: Cell<bool>,
     /// Bytes accepted from the input while suspended or output-backpressured.
     pending_input: JsCell<Vec<u8>>,

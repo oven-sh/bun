@@ -1866,9 +1866,21 @@ describe("s3 upload stream body error", () => {
     [
       "async pull",
       "await Bun.sleep(1); if (n++ < 2) controller.enqueue(new Uint8Array(1024)); else controller.error(new Error('boom'));",
+      "rejected boom",
     ],
-    ["sync pull", "if (n++ < 2) controller.enqueue(new Uint8Array(1024)); else controller.error(new Error('boom'));"],
-  ])("does not commit a PUT when a ReadableStream body errors after enqueue (%s)", async (_, pullBody) => {
+    [
+      "sync pull",
+      "if (n++ < 2) controller.enqueue(new Uint8Array(1024)); else controller.error(new Error('boom'));",
+      "rejected boom",
+    ],
+    // error() with no reason still errors the stream; the sink must not read
+    // the undefined reason as a clean close.
+    [
+      "error() without a reason",
+      "if (n++ < 2) controller.enqueue(new Uint8Array(1024)); else controller.error();",
+      "rejected ReadableStream ended with an error",
+    ],
+  ])("does not commit a PUT when a ReadableStream body errors after enqueue (%s)", async (_, pullBody, expected) => {
     const fixture = `
       const puts = {};
       const server = Bun.serve({
@@ -1911,7 +1923,7 @@ describe("s3 upload stream body error", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(JSON.parse(stdout.trim())).toEqual({
-      outcome: "rejected boom",
+      outcome: expected,
       after: 1,
       puts: { "/my_bucket/ok": 1 },
     });

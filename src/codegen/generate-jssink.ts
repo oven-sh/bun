@@ -394,9 +394,12 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlo
     ${name}__controllerDetached(ptr, JSC::JSValue::encode(controller));
     controller->m_sinkPtr = nullptr;
 
-    // close(reason): the pump (rsisAbrupt) passes the source's error, a clean
-    // close passes nothing. The sink tells the two apart.
-    ${name}__close(lexicalGlobalObject, ptr, JSC::JSValue::encode(callFrame->argument(0)));
+    // close(reason): the pump's abrupt path passes the source's error, which
+    // can itself be undefined (controller.error() with no argument); a clean
+    // close passes no argument. "No argument" is encoded as the empty value so
+    // the sink can tell the two apart.
+    ${name}__close(lexicalGlobalObject, ptr,
+        callFrame->argumentCount() > 0 ? JSC::JSValue::encode(callFrame->argument(0)) : JSC::JSValue::encode(JSC::JSValue()));
 
     // detach() must still fire onClose (it transitions the direct
     // ReadableStream to closed/errored and calls underlyingSource.cancel())
@@ -507,7 +510,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
     }
 
     sink->detach();
-    ${name}__close(lexicalGlobalObject, ptr, JSC::JSValue::encode(JSC::jsUndefined()));
+    ${name}__close(lexicalGlobalObject, ptr, JSC::JSValue::encode(JSC::JSValue()));
     // detach() nulled m_sinkPtr so ~${className} won't finalize ptr; do the
     // destructor's teardown (onDestroy first so Subprocess clears its weak
     // back-pointer, then __finalize) here instead, even if __close threw.

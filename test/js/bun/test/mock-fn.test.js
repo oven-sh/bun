@@ -1264,6 +1264,27 @@ describe("spyOn", () => {
       expect(fn).not.toHaveBeenCalled();
     });
 
+    // A plain object has no indexed storage at all, so the spy creates it.
+    test("spyOn works with a missing indexed property on a plain object", () => {
+      const obj = {};
+
+      const fn = spyOn(obj, 169);
+      expect(Object.getOwnPropertyDescriptor(obj, 169)).toEqual({
+        get: fn,
+        set: fn,
+        enumerable: true,
+        configurable: true,
+      });
+      expect(obj[169]).toBeUndefined();
+      obj[169] = "x";
+      expect(obj[169]).toBeUndefined();
+      expect(fn.mock.calls).toEqual([[], ["x"], []]);
+
+      fn.mockRestore();
+      expect(obj[169]).toBeUndefined();
+      expect(fn).not.toHaveBeenCalled();
+    });
+
     // The engine serves a function's `prototype` property specially, so it cannot be
     // replaced with a getter/setter spy; historically this crashed the process.
     test("spyOn on a function's prototype property throws instead of crashing", () => {

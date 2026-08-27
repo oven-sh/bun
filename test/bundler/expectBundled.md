@@ -156,6 +156,8 @@ itBundled("default/ThisOutsideFunctionRenamedToExports", {
 
 Check the `BundlerTestBundleAPI` typedef for all available methods. Note that `api.readFile` is cached so you can call it multiple times without worrying about anything.
 
+Paths passed to the `api` methods (and to `outputPaths`) are resolved from the test's root directory, the same place `files` are written to, so outputs are `"/out.js"`, `"/out/entry.js"`, and so on. Passing the path of one of the test's own `files` throws, because the assertion would otherwise be checking the fixture instead of the bundle.
+
 This callback is run before `run`, so you can use tricks like `appendFile` to add extra data, useful when testing IIFE bundles in combination with `globalName`
 
 ```ts

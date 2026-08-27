@@ -897,12 +897,10 @@ describe("bundler", () => {
       });
     },
     onAfterBundle(api) {
-      // Verify the build succeeded and files were created
-      api.assertFileExists("index.html");
-      // The image should be copied with a hashed name
-      const html = api.readFile("index.html");
-      expect(html).toContain('src="');
-      expect(html).toContain('.jpeg"');
+      // The image is emitted under a hashed name, with the contents the plugin returned.
+      const [, image] = api.readFile("out/index.html").match(/src="\.\/(image-[a-z0-9]+\.jpeg)"/) ?? [];
+      expect(image).toBeDefined();
+      expect(api.readFile(join("out", image!))).toBe("custom image contents");
     },
   });
 
@@ -929,15 +927,16 @@ describe("bundler", () => {
       });
     },
     run: {
-      stdout: /\.(png|wasm)/,
+      stdout: /^\.\/image-[a-z0-9]+\.png \.\/module-[a-z0-9]+\.wasm$/,
     },
     onAfterBundle(api) {
-      // Verify the build succeeded and files were created
-      api.assertFileExists("index.js");
-      const js = api.readFile("index.js");
-      // Should contain references to the copied files
-      expect(js).toContain('.png"');
-      expect(js).toContain('.wasm"');
+      const js = api.readFile("out/index.js");
+      const [, image] = js.match(/"\.\/(image-[a-z0-9]+\.png)"/) ?? [];
+      const [, wasm] = js.match(/"\.\/(module-[a-z0-9]+\.wasm)"/) ?? [];
+      expect(image).toBeDefined();
+      expect(wasm).toBeDefined();
+      expect(api.readFile(join("out", image!))).toBe("custom png contents");
+      expect(api.readFile(join("out", wasm!))).toBe("custom wasm contents");
     },
   });
 

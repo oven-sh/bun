@@ -844,12 +844,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         bun_http::http_thread::init(&Default::default());
 
         for url_str in preconnect {
-            // SAFETY: `ctx.runtime_options.preconnect` is process-lifetime
-            // (CLI argv-derived, never freed); erase the borrow lifetime so
-            // `URL<'static>` (which `AsyncHTTP::preconnect` requires) can hold
-            // a backref into it.
-            let url_str: &'static [u8] =
-                unsafe { ::core::slice::from_raw_parts(url_str.as_ptr(), url_str.len()) };
             let url = bun_url::URL::parse(url_str);
 
             if !url.is_http() && !url.is_https() {

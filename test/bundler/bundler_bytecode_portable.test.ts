@@ -191,6 +191,18 @@ const sourceFormsOutput = `[true,2,true,"ABC",2,3,3,3,42,65,3,14,-1,8,"after htm
 
 const esmOutput = `["main",3,1,"worker:2:2",true,"string"]`;
 
+const allSource = [
+  `require("./big.js");`,
+  `require("./shapes.js");`,
+  `require("./features.js");`,
+  `require("./records.js");`,
+  `const libs = [require("../../node_modules/lodash/lodash.js"), require("../../node_modules/acorn/dist/acorn.js"), require("../../node_modules/react-dom/cjs/react-dom.development.js")];`,
+  `console.log("libs", libs.map(lib => typeof lib).join());`,
+  ``,
+].join("\n");
+// big and shapes print synchronously while required; features then records print from promise callbacks, in that order.
+const allOutput = [bigOutput, shapesOutput, "libs function,object,object", featuresOutput, recordsOutput].join("\n");
+
 const corpusBuilds = [
   { name: "bun build --bytecode features.js", entry: "./features.js", args: [] as string[], output: featuresOutput },
   {
@@ -208,6 +220,10 @@ const corpusBuilds = [
   },
   { name: "bun build --bytecode big.js", entry: "./big.js", args: [] as string[], output: bigOutput },
   { name: "bun build --bytecode shapes.js", entry: "./shapes.js", args: [] as string[], output: shapesOutput },
+  // Everything above plus a few libraries in ONE payload: string, identifier-set and environment sharing across many
+  // code blocks, and a multi-megabyte payload spanning hundreds of encoder pages.
+  { name: "bun build --bytecode all.js", entry: "./all.js", args: [] as string[], output: allOutput },
+  { name: "bun build --bytecode --minify all.js", entry: "./all.js", args: ["--minify"], output: allOutput },
 ];
 // Entries are relative to the corpus directory so the module paths the bundler writes into its output are the same on
 // every machine. (A library that uses __dirname / __filename cannot be here: the bundler inlines them as absolute paths.)
@@ -231,6 +247,7 @@ const bundlerBuilds = [...corpusBuilds, ...libraryBuilds];
 const bigPath = join(corpusDir, "big.js");
 writeFileSync(bigPath, bigSource());
 writeFileSync(join(corpusDir, "shapes.js"), shapesSource());
+writeFileSync(join(corpusDir, "all.js"), allSource);
 
 async function bundle(
   outdir: string,
@@ -353,6 +370,13 @@ describe("bytecode cache portability", () => {
           "bytes": 836,
           "sha256": "e4821b3ff0c554e5ca10612c06adf999f5f4f8c639122f1284163b0c6ce87e11",
         },
+        "bun build --bytecode --minify all.js": {
+          "js": "d642fe66dcdf90ed78845e06290ea8a6108b4eaf018a74ebf5e5ac3abd69e362",
+          "jsc": {
+            "bytes": 1997280,
+            "sha256": "33ffc7a6eb66de561ae96d52e353a79d74e007d21f96220852ed32e28a720363",
+          },
+        },
         "bun build --bytecode --minify features.js": {
           "js": "d49da0aa39824bf9eba2af5d3a010525ad14ca5c1cedc0d8adcfdd5f4984a0d0",
           "jsc": {
@@ -372,6 +396,13 @@ describe("bytecode cache portability", () => {
           "jsc": {
             "bytes": 266064,
             "sha256": "4b431a514916bb73e8daba7977ca1ca8d3cdec350c57e45222ff9b0a56691498",
+          },
+        },
+        "bun build --bytecode all.js": {
+          "js": "c912da2f11b4ab198419941ec8882d90f21ecfc4d3b66d3857d26ef29f6c5588",
+          "jsc": {
+            "bytes": 2177424,
+            "sha256": "083d01ffe0cc2a69e85c3d5e8d4fdf21bd805b0bb6cfae23d7991bd1cfa257d4",
           },
         },
         "bun build --bytecode big.js": {

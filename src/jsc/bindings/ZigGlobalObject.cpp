@@ -785,7 +785,7 @@ static void dropFailedEntryThatNeverEvaluated(Zig::GlobalObject* globalObject, c
 
     // ModuleLoadTopRejected looks the key up by name one microtask after the
     // failure is recorded; a fresh entry there would inherit the stale error.
-    if (globalObject->pendingModuleLoads.contains(impl))
+    if (globalObject->pendingModuleLoad(key))
         return;
 
     auto* loader = globalObject->moduleLoader();
@@ -809,7 +809,8 @@ static void dropFailedEntryThatNeverEvaluated(Zig::GlobalObject* globalObject, c
     loader->removeEntry(key);
 }
 
-// Argument 1 is the resolved key passed by trackPendingModuleLoad.
+// Reaction on a tracked load's promise. Argument 1 is the resolved key passed
+// by trackPendingModuleLoad.
 BUN_DEFINE_HOST_FUNCTION(Bun__onModuleLoadSettled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -819,14 +820,18 @@ BUN_DEFINE_HOST_FUNCTION(Bun__onModuleLoadSettled, (JSC::JSGlobalObject * global
         return JSValue::encode(jsUndefined());
     auto key = JSC::Identifier::fromString(vm, keyString->value(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
-    static_cast<Zig::GlobalObject*>(globalObject)->pendingModuleLoads.remove(key.impl());
+    auto* thisObject = static_cast<Zig::GlobalObject*>(globalObject);
+    // Module.runMain may have started a newer load of the key: keep that one.
+    auto* pending = thisObject->pendingModuleLoad(key);
+    if (!pending || pending->status() != JSC::JSPromise::Status::Pending)
+        thisObject->pendingModuleLoads.remove(key.impl());
     return JSValue::encode(jsUndefined());
 }
 
 void GlobalObject::trackPendingModuleLoad(const JSC::Identifier& key, JSC::JSPromise* promise)
 {
     auto& vm = this->vm();
-    pendingModuleLoads.add(key.impl());
+    pendingModuleLoads.set(key.impl(), JSC::Weak<JSC::JSPromise>(promise));
     // The string shares the Identifier's atom, so the handler gets the same impl back.
     JSFunction* onSettled = thenable(Bun__onModuleLoadSettled);
     promise->performPromiseThenWithContext(vm, this, onSettled, onSettled, jsUndefined(), jsString(vm, key.string()));
@@ -837,6 +842,16 @@ static JSC::JSPromise* importResolvedModule(Zig::GlobalObject* globalObject, con
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // A load of this key is in flight: join it, as Node shares the in-flight
+    // job. A second top-level load would fetch again, and the loader reports
+    // the first load's failure by key one microtask later, onto whatever entry
+    // the second load registered in between.
+    if (auto* pending = globalObject->pendingModuleLoad(key)) {
+        auto* joined = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+        joined->pipeFrom(vm, pending);
+        return joined;
+    }
 
     dropFailedEntryThatNeverEvaluated(globalObject, key);
     auto* result = JSC::importModule(globalObject, key, JSC::Identifier(), WTF::move(parameters), nullptr, /* deferred */ false, referrerAsyncOrder);
@@ -1153,6 +1168,7 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::Gl
     , m_builtinInternalFunctions(makeUnique<WebCore::JSBuiltinInternalFunctions>(vm))
     , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this))
     , globalEventScope(adoptRef(*new Bun::GlobalEventScope(m_scriptExecutionContext)))
+    , pendingModuleLoads(vm)
 {
     // m_scriptExecutionContext = globalEventScope.m_context;
     mockModule = Bun::JSMockModule::create(this);
@@ -1167,6 +1183,7 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
     , m_builtinInternalFunctions(makeUnique<WebCore::JSBuiltinInternalFunctions>(vm))
     , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this, contextId))
     , globalEventScope(adoptRef(*new Bun::GlobalEventScope(m_scriptExecutionContext)))
+    , pendingModuleLoads(vm)
 {
     // m_scriptExecutionContext = globalEventScope.m_context;
     mockModule = Bun::JSMockModule::create(this);

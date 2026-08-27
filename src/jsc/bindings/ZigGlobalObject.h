@@ -56,7 +56,8 @@ struct node_module;
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/Identifier.h>
-#include <wtf/HashCountedSet.h>
+#include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/WeakGCMap.h>
 #include <JavaScriptCore/JSTypeInfo.h>
 #include <JavaScriptCore/Structure.h>
 #include "DOMConstructors.h"
@@ -731,10 +732,13 @@ public:
     BunPlugin::OnLoad onLoadPlugins {};
     BunPlugin::OnResolve onResolvePlugins {};
 
-    // Resolved keys of the top-level module loads (import(), Module.runMain)
-    // whose promise has not settled; moduleLoaderResolve keeps their failed
-    // registry entries until then.
-    WTF::HashCountedSet<RefPtr<UniquedStringImpl>, JSC::IdentifierRepHash> pendingModuleLoads;
+    // The top-level module loads (import(), Module.runMain) whose promise has
+    // not settled, by resolved key. A second import() of the key joins the load
+    // instead of starting another, and moduleLoaderResolve keeps the key's
+    // failed registry entry until then. Weak: a load that can still settle is
+    // reachable from its own reaction chain.
+    JSC::WeakGCMap<RefPtr<UniquedStringImpl>, JSC::JSPromise, JSC::IdentifierRepHash> pendingModuleLoads;
+    JSC::JSPromise* pendingModuleLoad(const JSC::Identifier& key) const { return pendingModuleLoads.get(key.impl()); }
     void trackPendingModuleLoad(const JSC::Identifier& key, JSC::JSPromise* promise);
 
     // This increases the cache hit rate for JSC::VM's SourceProvider cache

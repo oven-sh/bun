@@ -292,7 +292,7 @@ const trees = {
 // Every entry of a node_modules folder, as paths relative to it: a package folder (scope folders flattened), a file,
 // a bin as `.bin/<name>` (one row on Windows too, where it is a shim pair), a store entry, and a link with its
 // target relative to the link. Recurses into each package's own node_modules and into the store, so one list covers
-// the whole tree a prune touches.
+// the whole tree a prune touches. A scope, `.bin` or store folder that is left empty is listed by its own name.
 function layout(dir: string, folder = "node_modules") {
   const rows: string[] = [];
   const pkg = (entry: Dirent, parent: string, prefix: string) => {
@@ -309,23 +309,38 @@ function layout(dir: string, folder = "node_modules") {
       rows.push(rel);
     }
   };
+  const orEmpty = (rel: string, list: () => void) => {
+    const before = rows.length;
+    list();
+    if (rows.length === before) rows.push(rel);
+  };
   const walk = (nm: string, prefix: string) => {
     if (!lstatSync(nm, { throwIfNoEntry: false })?.isDirectory()) return;
     for (const entry of readdirSync(nm, { withFileTypes: true })) {
       const path = join(nm, entry.name);
+      const rel = prefix + entry.name;
       if (!entry.isDirectory()) {
         pkg(entry, nm, prefix);
       } else if (entry.name.startsWith("@")) {
-        for (const scoped of readdirSync(path, { withFileTypes: true })) pkg(scoped, path, `${prefix}${entry.name}/`);
+        orEmpty(rel, () => {
+          for (const scoped of readdirSync(path, { withFileTypes: true })) pkg(scoped, path, `${rel}/`);
+        });
       } else if (entry.name === ".bin") {
-        for (const bin of new Set(readdirSync(path).map(name => name.replace(/\.(exe|bunx)$/, "")))) {
-          rows.push(`${prefix}.bin/${bin}`);
-        }
+        orEmpty(rel, () => {
+          for (const bin of new Set(readdirSync(path).map(name => name.replace(/\.(exe|bunx)$/, "")))) {
+            rows.push(`${rel}/${bin}`);
+          }
+        });
       } else if (entry.name === ".bun") {
-        for (const stored of readdirSync(path, { withFileTypes: true })) {
-          if (stored.name === "node_modules") walk(join(path, stored.name), `${prefix}.bun/node_modules/`);
-          else pkg(stored, path, `${prefix}.bun/`);
-        }
+        orEmpty(rel, () => {
+          for (const stored of readdirSync(path, { withFileTypes: true })) {
+            if (stored.name === "node_modules") {
+              orEmpty(`${rel}/node_modules`, () => walk(join(path, stored.name), `${rel}/node_modules/`));
+            } else {
+              pkg(stored, path, `${rel}/`);
+            }
+          }
+        });
       } else {
         pkg(entry, nm, prefix);
       }
@@ -1227,7 +1242,8 @@ test.concurrent(
   `);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
-    expect(layout(dir)).toEqual(["no-deps"]);
+    // The emptied scope folder goes with its package; the emptied .bin folder is a dot entry and stays.
+    expect(layout(dir)).toEqual([".bin", "no-deps"]);
     expect(await file(join(nm, "no-deps", "package.json")).json()).toMatchObject({ version: "2.0.0" });
     const { out: installOut } = await runBunInstall(installEnv(dir), dir, { savesLockfile: false });
     expect(installOut).toContain("no changes");
@@ -1251,7 +1267,7 @@ test.concurrent("hoisted: removing only a scoped package also removes its bin li
   `);
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
-  expect(layout(dir)).toEqual(["no-deps"]);
+  expect(layout(dir)).toEqual([".bin", "no-deps"]);
 });
 
 test.concurrent(
@@ -1301,6 +1317,7 @@ test.concurrent(
     expect(exitCode).toBe(0);
     expect(layout(dir)).toMatchInlineSnapshot(`
       [
+        ".bin",
         ".bun/no-deps@2.0.0",
         ".bun/no-deps@2.0.0/node_modules/no-deps",
         ".bun/node_modules/no-deps -> ../no-deps@2.0.0/node_modules/no-deps",
@@ -2394,6 +2411,7 @@ test.concurrent("isolated + publicHoistPattern: hoisted links follow their store
     [
       ".bun/no-deps@1.0.0",
       ".bun/no-deps@1.0.0/node_modules/no-deps",
+      ".bun/node_modules",
       "no-deps -> .bun/no-deps@1.0.0/node_modules/no-deps",
     ]
   `);
@@ -2942,6 +2960,7 @@ test.concurrent(
     const pruned = layout(dir);
     expect(pruned).toMatchInlineSnapshot(`
       [
+        ".bin",
         ".bun/node_modules/uses-what-bin -> ../uses-what-bin@1.0.0/node_modules/uses-what-bin",
         ".bun/node_modules/what-bin -> ../what-bin@1.0.0/node_modules/what-bin",
         ".bun/uses-what-bin@1.0.0",
@@ -3061,7 +3080,7 @@ test.concurrent("refuses to prune an isolated install with the hoisted linker", 
   `);
   expect(same.stderr).toBe("");
   expect(same.exitCode).toBe(0);
-  expect(layout(dir)).toEqual([]);
+  expect(layout(dir)).toEqual([".bun/node_modules"]);
 });
 
 // pnpm#5960
@@ -3077,25 +3096,31 @@ test.concurrent.each(["hoisted", "isolated"] as Linker[])(
     expect(await file(join(nm, "aliased", "package.json")).json()).toMatchObject({ version: "1.0.0" });
     expect(await file(join(nm, "no-deps", "package.json")).json()).toMatchObject({ version: "2.0.0" });
     const installed = layout(dir);
-    const hoistLink = ".bun/node_modules/no-deps -> ../no-deps@1.0.0/node_modules/no-deps";
+    const hoistLink = (version: string) => `.bun/node_modules/no-deps -> ../no-deps@${version}/node_modules/no-deps`;
     // Both versions are direct dependencies under the real name, so which one the hidden-hoist `no-deps` link points at
-    // depends on the install's order. Prune only removes entries: a link at the dev 2.0.0 goes with it, one at the
-    // alias's 1.0.0 stays, and the production install that follows is what points a new link at 1.0.0.
+    // depends on the install's order. Prune only removes entries: a link at the dev 2.0.0 goes with it and leaves the
+    // hidden hoist folder empty, one at the alias's 1.0.0 stays, and the production install that follows is what
+    // points a new link at 1.0.0.
     const hoisted = linker === "hoisted";
-    const pruned = hoisted ? ["aliased"] : installed.filter(row => !row.includes("no-deps@2.0.0"));
+    const kept = [
+      ".bun/no-deps@1.0.0",
+      ".bun/no-deps@1.0.0/node_modules/no-deps",
+      "aliased -> .bun/no-deps@1.0.0/node_modules/no-deps",
+    ];
     expect(installed).toEqual(
       hoisted
         ? ["aliased", "no-deps"]
         : [
-            ".bun/no-deps@1.0.0",
-            ".bun/no-deps@1.0.0/node_modules/no-deps",
+            ...kept,
             ".bun/no-deps@2.0.0",
             ".bun/no-deps@2.0.0/node_modules/no-deps",
-            expect.stringMatching(/^\.bun\/node_modules\/no-deps -> \.\.\/no-deps@[12]\.0\.0\/node_modules\/no-deps$/),
-            "aliased -> .bun/no-deps@1.0.0/node_modules/no-deps",
+            installed.includes(hoistLink("2.0.0")) ? hoistLink("2.0.0") : hoistLink("1.0.0"),
             "no-deps -> .bun/no-deps@2.0.0/node_modules/no-deps",
-          ],
+          ].toSorted(),
     );
+    const pruned = hoisted
+      ? ["aliased"]
+      : [...kept, installed.includes(hoistLink("2.0.0")) ? ".bun/node_modules" : hoistLink("1.0.0")].toSorted();
 
     const { stdout, stderr, exitCode } = await prune(dir, "--production", "--linker", linker);
     expect(lines(stdout)).toStrictEqual([BANNER, "", "- no-deps@2.0.0", REMOVED(1, hoisted ? 2 : 4)]);
@@ -3104,7 +3129,7 @@ test.concurrent.each(["hoisted", "isolated"] as Linker[])(
     expect(layout(dir)).toEqual(pruned);
     expect(await file(join(nm, "aliased", "package.json")).json()).toMatchObject({ version: "1.0.0" });
     await expectProductionInstallIsNoop(dir);
-    expect(layout(dir)).toEqual(hoisted ? pruned : [...new Set([...pruned, hoistLink])].toSorted());
+    expect(layout(dir)).toEqual(hoisted ? pruned : [...kept, hoistLink("1.0.0")].toSorted());
   },
 );
 

@@ -177,6 +177,8 @@ pub struct SymbolSlot {
     pub(crate) name: TinyString,
     pub(crate) count: u32,
     pub(crate) needs_capital_for_jsx: bool,
+    /// Named ahead of `assign_names_by_frequency` (`MinifyRenamer::pin`).
+    pub(crate) pinned: bool,
 }
 
 impl Default for SymbolSlot {
@@ -185,6 +187,7 @@ impl Default for SymbolSlot {
             name: TinyString::String(name_str_empty()),
             count: 0,
             needs_capital_for_jsx: false,
+            pinned: false,
         }
     }
 }
@@ -258,6 +261,9 @@ pub struct MinifyRenamer {
     pub(crate) owns_symbols: bool,
     /// Backs `TinyString::String` slot-name allocations.
     pub(crate) arena: Bump,
+    /// Set once use counts are in; `finish` names the slots with it. Kept
+    /// here so the bundler can pin cross-chunk names between the two steps.
+    pub name_minifier: Option<js_ast::NameMinifier>,
 }
 
 impl Drop for MinifyRenamer {
@@ -296,6 +302,7 @@ impl MinifyRenamer {
             slots,
             top_level_symbol_to_slot: TopLevelSymbolSlotMap::default(),
             arena: Bump::new(),
+            name_minifier: None,
         }))
     }
 
@@ -386,6 +393,11 @@ impl MinifyRenamer {
         &mut self,
         top_level_symbols: &[StableSymbolCount],
     ) -> Result<(), bun_alloc::AllocError> {
+        // Upper bound (a ref can repeat across files); sizes the map and the
+        // default namespace, where nearly all top-level symbols live, once.
+        self.top_level_symbol_to_slot
+            .ensure_total_capacity(top_level_symbols.len())?;
+        self.slots[SlotNamespace::Default].reserve(top_level_symbols.len());
         for stable in top_level_symbols {
             let symbol: &Symbol = self.symbols.get_const(stable.ref_).unwrap();
             // Reshaped for borrowck — capture symbol fields before mut-borrowing slots
@@ -406,10 +418,52 @@ impl MinifyRenamer {
                     name: TinyString::String(name_str_empty()),
                     count: stable.count,
                     needs_capital_for_jsx: must_start_with_capital,
+                    pinned: false,
                 });
             }
         }
         Ok(())
+    }
+
+    /// Names this renamer will not hand out (keywords, unbound globals, pinned names).
+    pub fn reserved_names(&self) -> &StringHashMap<u32> {
+        &self.reserved_names
+    }
+
+    /// The accumulated use count of a top-level symbol in this chunk, if it has one.
+    pub fn top_level_count(&self, ref_: Ref) -> Option<u32> {
+        let ref_ = self.symbols.follow(ref_);
+        let slot = *self.top_level_symbol_to_slot.get(&ref_)?;
+        let ns = self.symbols.get_const(ref_).unwrap().slot_namespace();
+        Some(self.slots[ns][slot].count)
+    }
+
+    /// Gives top-level symbol `ref_` the name `name` ahead of
+    /// `assign_names_by_frequency`, which then hands `name` to nothing else.
+    /// Used for bindings that cross chunks, so every chunk calls them the same.
+    pub fn pin(&mut self, ref_: Ref, name: &[u8]) -> Result<(), bun_alloc::AllocError> {
+        let ref_ = self.symbols.follow(ref_);
+        let Some(&slot) = self.top_level_symbol_to_slot.get(&ref_) else {
+            return Ok(());
+        };
+        let ns = self.symbols.get_const(ref_).unwrap().slot_namespace();
+        let slot = &mut self.slots[ns][slot];
+        slot.name = TinyString::init(name, &self.arena)?;
+        slot.pinned = true;
+        self.reserved_names.put(name, 1)?;
+        Ok(())
+    }
+
+    /// Names every slot not already pinned, using the `name_minifier` stored
+    /// by the accumulate step.
+    pub fn finish(&mut self) -> Result<(), crate::Error> {
+        let name_minifier = self
+            .name_minifier
+            .take()
+            .expect("name_minifier set before finish");
+        let result = self.assign_names_by_frequency(&name_minifier);
+        self.name_minifier = Some(name_minifier);
+        result
     }
 
     pub fn assign_names_by_frequency(
@@ -423,10 +477,16 @@ impl MinifyRenamer {
         for &ns in SLOT_NAMESPACES.iter() {
             let slots = &mut self.slots[ns];
             sorted.clear();
-            sorted.extend(slots.iter().enumerate().map(|(i, slot)| SlotAndCount {
-                slot: u32::try_from(i).expect("int cast"),
-                count: slot.count,
-            }));
+            sorted.extend(
+                slots
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, slot)| !slot.pinned)
+                    .map(|(i, slot)| SlotAndCount {
+                        slot: u32::try_from(i).expect("int cast"),
+                        count: slot.count,
+                    }),
+            );
             sorted.sort_unstable_by(|a, b| SlotAndCount::less_than(*a, *b));
 
             let mut next_name: isize = 0;
@@ -700,6 +760,25 @@ impl NumberRenamer {
             unsafe { self.number_scope_pool.put(s) };
             s = parent;
         }
+    }
+
+    /// Gives top-level symbol `ref_` the name `name` (taken to be free in the
+    /// root scope) so later symbols are numbered around it. Used for bindings
+    /// that cross chunks, so every chunk calls them the same.
+    pub fn pin_top_level_symbol(&mut self, ref_: Ref, name: &[u8]) {
+        let ref_ = self.symbols.follow(ref_);
+        if self.symbols.get_const(ref_).unwrap().slot_namespace() != SlotNamespace::Default {
+            return;
+        }
+        let duped: &[u8] = self.arena.alloc_slice_copy(name);
+        let name = NameStr::new(duped);
+        self.root.name_counts.insert(NameKey(name), 1);
+        let inner: &mut Vec<NameStr> = &mut self.names[ref_.source_index() as usize];
+        let new_len = inner.len().max(ref_.inner_index() as usize + 1);
+        if inner.len() < new_len {
+            inner.resize(new_len, name_str_empty());
+        }
+        inner[ref_.inner_index() as usize] = name;
     }
 
     pub fn add_top_level_symbol(&mut self, ref_: Ref) {

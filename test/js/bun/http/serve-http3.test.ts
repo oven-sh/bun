@@ -1327,6 +1327,8 @@ async function h3Exchange(
   port: number,
   headers: Record<string, string>,
   options: Record<string, unknown> = {},
+  /* When given, every received :status (interim and final) is appended. */
+  statuses?: string[],
 ): Promise<string> {
   await using endpoint = new QuicEndpoint();
   const client = await connect(`127.0.0.1:${port}`, {
@@ -1350,6 +1352,7 @@ async function h3Exchange(
         headers,
         onheaders(received: Record<string, string>) {
           status = received[":status"];
+          statuses?.push(status);
         },
       });
       stream.closed.catch(() => {});
@@ -1389,21 +1392,29 @@ describe("Bun.serve HTTP/3 request validation", () => {
       },
     });
 
-    const results: Record<string, string> = {};
+    const results: Record<string, { result: string; statuses: string[] }> = {};
     for (const value of ["100-continue", "100-Continue", "100-CONTINUE"]) {
-      results[value] = await h3Exchange(server.port, requestHeaders("/", { expect: value }));
+      const statuses: string[] = [];
+      const result = await h3Exchange(server.port, requestHeaders("/", { expect: value }), {}, statuses);
+      results[value] = { result, statuses };
     }
     const dispatchedAfterAccepted = dispatched;
     for (const value of ["muffins", "x100-continue"]) {
-      results[value] = await h3Exchange(server.port, requestHeaders("/", { expect: value }));
+      const statuses: string[] = [];
+      const result = await h3Exchange(server.port, requestHeaders("/", { expect: value }), {}, statuses);
+      results[value] = { result, statuses };
     }
 
+    // node:quic's h3 client does not deliver interim responses to onheaders,
+    // so only the final status is observable here; the 100-before-dispatch
+    // ordering is asserted byte-exact on the HTTP/1 path and via the client
+    // "headers" event on the HTTP/2 path.
     expect(results).toEqual({
-      "100-continue": "200 ok:1",
-      "100-Continue": "200 ok:2",
-      "100-CONTINUE": "200 ok:3",
-      "muffins": "417 ",
-      "x100-continue": "417 ",
+      "100-continue": { result: "200 ok:1", statuses: ["200"] },
+      "100-Continue": { result: "200 ok:2", statuses: ["200"] },
+      "100-CONTINUE": { result: "200 ok:3", statuses: ["200"] },
+      "muffins": { result: "417 ", statuses: ["417"] },
+      "x100-continue": { result: "417 ", statuses: ["417"] },
     });
     expect(dispatchedAfterAccepted).toBe(3);
     expect(dispatched).toBe(3);

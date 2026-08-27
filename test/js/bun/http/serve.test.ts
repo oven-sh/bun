@@ -3042,7 +3042,11 @@ describe.concurrent("Expect header handling (RFC 9110 §10.1.1)", () => {
         },
       });
 
-      const output = await rawPost(server.port, expectValue, s => /\b417\b|echo:/.test(s));
+      // Withhold the body: the 417 must come from the headers alone, not
+      // after the server consumed the declared content.
+      const output = await rawPost(server.port, expectValue, s => /\b417\b|echo:/.test(s), {
+        bodyAfterContinue: true,
+      });
       expect(output).toStartWith("HTTP/1.1 417 Expectation Failed\r\n");
       expect(output).not.toContain("100 Continue");
       expect(output).not.toContain("echo:");

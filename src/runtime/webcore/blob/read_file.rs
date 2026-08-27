@@ -405,66 +405,65 @@ impl ReadFile {
     ) -> Option<usize> {
         let cap = (self.max_length.saturating_sub(self.read_off)) as usize;
         let is_socket = bun_sys::S::ISSOCK(self.file_store.mode);
-        let result: bun_sys::Result<usize> = if buffer.spare_capacity_mut().len() < stack.len() {
-            let room = stack.len().min(cap);
-            let stack = &mut stack[..room];
-            let filled = if is_socket {
-                bun_sys::recv_non_block_uninit(self.opened_fd, stack)
-            } else {
-                bun_sys::read_uninit(self.opened_fd, stack)
-            };
-            // We read into the stack buffer, so we need to copy it into the heap.
-            filled.map(|read| {
-                if buffer.capacity() == 0 {
-                    // We need to allocate a new buffer
-                    // In this case, we want to use `ensureTotalCapacityPrecise` so that it's an exact amount
-                    // We want to avoid over-allocating incase it's a large amount of data sent in a single chunk followed by a 0 byte chunk.
-                    buffer.reserve_exact(read.len());
-                } else {
-                    buffer.reserve(read.len());
-                }
-                buffer.extend_from_slice(read);
-                read.len()
-            })
-        } else if is_socket {
-            bun_sys::recv_non_block_to_spare(self.opened_fd, buffer, cap)
-        } else {
-            bun_sys::read_to_spare(self.opened_fd, buffer, cap)
-        };
-
         loop {
-            match &result {
-                Ok(res) => {
-                    self.read_eof = *res == 0;
-                    return Some(*res);
-                }
-                Err(err) => {
-                    match err.get_errno() {
-                        e if e == io::RETRY => {
-                            if !self.could_block {
-                                // regular files cannot use epoll.
-                                // this is fine on kqueue, but not on epoll.
-                                continue;
-                            }
-                            *retry = true;
-                            self.read_eof = false;
-                            return Some(0);
-                        }
-                        _ => {
-                            self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
-                            self.system_error = Some(err.to_system_error().into());
-                            if self.system_error.as_ref().unwrap().path.is_empty() {
-                                let path = if self.file_store.pathlike.is_path() {
-                                    BunString::clone_utf8(self.file_store.pathlike.path().slice())
-                                } else {
-                                    BunString::EMPTY
-                                };
-                                self.system_error.as_mut().unwrap().path = path;
-                            }
-                            return None;
-                        }
+            let result: bun_sys::Result<usize> = if buffer.spare_capacity_mut().len() < stack.len()
+            {
+                let room = stack.len().min(cap);
+                let stack = &mut stack[..room];
+                let filled = if is_socket {
+                    bun_sys::recv_non_block_uninit(self.opened_fd, stack)
+                } else {
+                    bun_sys::read_uninit(self.opened_fd, stack)
+                };
+                // We read into the stack buffer, so we need to copy it into the heap.
+                filled.map(|read| {
+                    if buffer.capacity() == 0 {
+                        // We need to allocate a new buffer
+                        // In this case, we want to use `ensureTotalCapacityPrecise` so that it's an exact amount
+                        // We want to avoid over-allocating incase it's a large amount of data sent in a single chunk followed by a 0 byte chunk.
+                        buffer.reserve_exact(read.len());
+                    } else {
+                        buffer.reserve(read.len());
                     }
+                    buffer.extend_from_slice(read);
+                    read.len()
+                })
+            } else if is_socket {
+                bun_sys::recv_non_block_to_spare(self.opened_fd, buffer, cap)
+            } else {
+                bun_sys::read_to_spare(self.opened_fd, buffer, cap)
+            };
+
+            match result {
+                Ok(res) => {
+                    self.read_eof = res == 0;
+                    return Some(res);
                 }
+                Err(err) => match err.get_errno() {
+                    e if e == io::RETRY => {
+                        if !self.could_block {
+                            // regular files cannot use epoll.
+                            // this is fine on kqueue, but not on epoll.
+                            continue;
+                        }
+                        *retry = true;
+                        self.read_eof = false;
+                        return Some(0);
+                    }
+                    _ => {
+                        self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
+                        let mut system_error = err.to_system_error();
+                        if system_error.path.is_empty() {
+                            system_error.path = if self.file_store.pathlike.is_path() {
+                                BunString::clone_utf8(self.file_store.pathlike.path().slice())
+                            } else {
+                                BunString::EMPTY
+                            };
+                        }
+                        self.system_error = Some(system_error.into());
+                        return None;
+                    }
+                },
             }
         }
     }

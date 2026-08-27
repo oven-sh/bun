@@ -5,13 +5,9 @@ use bun_threading::thread_pool::{Config, DEFAULT_THREAD_STACK_SIZE};
 
 use crate::{JSGlobalObject, JSValue, JsResult, Strong};
 
-/// Threads for the platform credential calls. Such a call can block without
-/// bound on something outside the process: a locked keyring whose unlock
-/// prompt nobody answers, or a Secret Service that stopped replying. On the
-/// shared `WorkPool` (one thread per core) that many stuck calls would queue
-/// every file read and hash behind them for good, so the calls get a pool of
-/// their own. The keyring daemon serializes them anyway, so a few threads are
-/// enough.
+/// A keyring call can wait without bound (an unlock prompt nobody answers), so
+/// the calls run on their own pool and never hold up the shared `WorkPool`.
+/// The keyring daemon serializes them, so a few threads are enough.
 const SECRETS_POOL_THREADS: u32 = 4;
 
 // Opaque pointer to C++ SecretsJobOptions struct

@@ -975,12 +975,9 @@ pub mod get_addr_info_request {
         type OffThread = Self;
         type Js = LibcRequest;
 
-        /// `getaddrinfo` holds its thread until the resolver answers, which
-        /// against one that does not is the whole resolver timeout, per
-        /// lookup. The lookups get a pool of their own, the size of the shared
-        /// one so their throughput does not change. A stream of them against a
-        /// dead resolver then occupies only this pool, and file I/O on the
-        /// shared `WorkPool` keeps flowing.
+        /// `getaddrinfo` holds its thread for the whole resolver timeout when the
+        /// resolver does not answer. Lookups run on their own pool, sized like
+        /// the shared one, so they never hold up the `WorkPool`'s file I/O.
         fn pool() -> &'static ThreadPool {
             static POOL: OnceLock<ThreadPool> = OnceLock::new();
             POOL.get_or_init(|| {

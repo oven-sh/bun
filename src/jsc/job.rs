@@ -187,12 +187,9 @@ pub trait JobContext: Sized + 'static {
     /// can wait on something external. Only such jobs are tracked by the VM.
     const CANCELLABLE: bool = false;
 
-    /// The pool [`run`](Self::run) executes on. The shared [`WorkPool`] (one
-    /// thread per core; file I/O, hashing, compression, everything) unless
-    /// `run` waits on something outside the process for as long as that
-    /// takes: a keychain prompt nobody answers, a DNS resolver that does not
-    /// reply. Such a job names a pool of its own, so the instances of it that
-    /// hang hold up only each other.
+    /// The pool [`run`](Self::run) executes on: the shared [`WorkPool`], unless
+    /// `run` waits on something outside the process for as long as that takes
+    /// (a keychain prompt, a DNS resolver). Such a job names its own pool.
     fn pool() -> &'static ThreadPool {
         WorkPool::get()
     }

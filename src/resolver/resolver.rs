@@ -6727,7 +6727,6 @@ fn primary_side_effects(
     }
 }
 
-
 #[inline]
 fn is_dot_slash(path: &[u8]) -> bool {
     #[cfg(not(windows))]

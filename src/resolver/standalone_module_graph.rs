@@ -19,8 +19,10 @@ pub trait StandaloneModuleGraph: Send + Sync {
     /// (`./w.ts` -> `/$bunfs/root/w.js`). Returns the graph's own name for the module, which is what the module
     /// loader keys on; `None` for anything else (bare specifiers, other absolute paths, misses).
     fn resolve(&self, source_dir: &[u8], specifier: &[u8]) -> Option<&'static [u8]> {
-        let is_relative = matches!(specifier, [b'.', s, ..] | [b'.', b'.', s, ..] if bun_paths::is_sep_any(*s));
-        let is_embedded_path = bun_options_types::standalone_path::is_bun_standalone_file_path(specifier);
+        let is_relative =
+            matches!(specifier, [b'.', s, ..] | [b'.', b'.', s, ..] if bun_paths::is_sep_any(*s));
+        let is_embedded_path =
+            bun_options_types::standalone_path::is_bun_standalone_file_path(specifier);
         if !is_relative && !is_embedded_path {
             return None;
         }
@@ -46,9 +48,17 @@ pub trait StandaloneModuleGraph: Send + Sync {
         let extension = bun_paths::extension(&buf[..path_len]);
         let extension_len = extension.len();
         let is_source_extension = extension.is_empty()
-            || [b"ts".as_slice(), b"tsx", b"jsx", b"mjs", b"mts", b"cjs", b"cts"]
-                .iter()
-                .any(|source| extension[1..].eq_ignore_ascii_case(source));
+            || [
+                b"ts".as_slice(),
+                b"tsx",
+                b"jsx",
+                b"mjs",
+                b"mts",
+                b"cjs",
+                b"cts",
+            ]
+            .iter()
+            .any(|source| extension[1..].eq_ignore_ascii_case(source));
         if !is_source_extension {
             return None;
         }

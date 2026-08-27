@@ -1163,28 +1163,27 @@ fn spawn_maybe_sync(
     let otel_stub =
         crate::telemetry::start_leaf(global_this, bun_telemetry::Instrument::ChildProcess);
     // process.executable.name is the resolved executable, not a pretend `argv0`.
-    let otel_cmd = crate::telemetry::spawn::SpawnedCommand {
+    let otel_cmd = otel_stub.is_some().then(|| crate::telemetry::spawn::SpawnedCommand {
         // SAFETY: both pointers are NUL-terminated strings kept alive in `cstr_storage` for this call.
         exe: bun_paths::basename(
             unsafe { core::ffi::CStr::from_ptr(argv0.unwrap_or(argv[0])) }.to_bytes(),
         ),
         argc: argv.iter().take_while(|p| !p.is_null()).count(),
-    };
+    });
     // SAFETY: `argv`/`env_array` are local null-terminated C-string arrays
     // with argv[0] non-null; valid for this call.
     let spawn_result =
         unsafe { spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr()) };
-    match &spawn_result {
-        Err(err) => crate::telemetry::spawn::failed(
-            global_this,
-            &otel_stub,
-            &otel_cmd,
-            err.name().as_bytes(),
-        ),
-        Ok(Err(err)) => {
-            crate::telemetry::spawn::failed(global_this, &otel_stub, &otel_cmd, err.name())
+    if let Some(cmd) = &otel_cmd {
+        match &spawn_result {
+            Err(err) => {
+                crate::telemetry::spawn::failed(global_this, &otel_stub, cmd, err.name().as_bytes())
+            }
+            Ok(Err(err)) => {
+                crate::telemetry::spawn::failed(global_this, &otel_stub, cmd, err.name())
+            }
+            Ok(Ok(_)) => {}
         }
-        Ok(Ok(_)) => {}
     }
     let mut spawned = match spawn_result {
         Err(err)
@@ -1349,12 +1348,15 @@ fn spawn_maybe_sync(
         )),
         exited_due_to_maxbuf: Cell::new(None),
         // SAFETY: `process` is the live Box from `to_process` above.
-        otel: Cell::new(crate::telemetry::spawn::begin(
-            global_this,
-            otel_stub,
-            &otel_cmd,
-            i64::from(unsafe { (*process).pid }),
-        )),
+        otel: Cell::new(match &otel_cmd {
+            Some(cmd) => crate::telemetry::spawn::begin(
+                global_this,
+                otel_stub,
+                cmd,
+                i64::from(unsafe { (*process).pid }),
+            ),
+            None => bun_telemetry::NativeSpan::NONE,
+        }),
     }));
     // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
     let subprocess = unsafe { &mut *subprocess_ptr };

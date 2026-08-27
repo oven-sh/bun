@@ -1,8 +1,9 @@
 //! HTTP server spans: the request path captures raw facts (a few copies) and
-//! the span is encoded at `end()` from a per-VM template. Consecutive
-//! requests usually differ only in ids, times and path, so the
-//! encoding of everything else is cached and a hit is one copy plus
-//! fixed-offset patches and a short per-request tail.
+//! the span is encoded at `end()` from a per-VM template. The template is
+//! keyed on the low-cardinality shape of a request (method, status, host,
+//! route, ...), so consecutive requests usually hit: one copy, id and time
+//! patches at fixed offsets, then the per-request tail (path, user-agent,
+//! JS-set attributes, events, tracestate).
 
 use bun_http_types::Method::Method;
 
@@ -174,9 +175,9 @@ impl Lens {
 
 /// Request facts captured at begin; lives in the pool slot.
 pub struct Facts {
-    /// The encoded peer attributes, then url | client | host | user-agent |
-    /// route back to back (see [`Lens`]). url and client (the forwarded-for
-    /// address) vary per request; the rest key the template.
+    /// The encoded peer attributes, then url | client | user-agent | host |
+    /// route back to back (see [`Lens`]). url, client (the forwarded-for
+    /// address) and user-agent vary per request; host | route key the template.
     raw: Vec<u8>,
     lens: Lens,
     /// Length of the path part of the url (`lens.url` if no query).
@@ -271,10 +272,10 @@ struct Strings<'a> {
     url: &'a [u8],
     /// First `X-Forwarded-For` / `Forwarded for=` hop, if any.
     client: &'a [u8],
-    /// host | user-agent | route (part of the template key).
+    user_agent: &'a [u8],
+    /// host | route (part of the template key).
     keyed: &'a [u8],
     host: &'a [u8],
-    user_agent: &'a [u8],
     route: &'a [u8],
 }
 
@@ -357,11 +358,14 @@ impl Facts {
             otlp::extend_utf8_lossy(&mut self.raw, s);
             (self.raw.len() - at) as u32
         };
+        let client = put(client);
+        let user_agent = put(ua);
+        let host = put(host);
         self.lens = Lens {
             url,
-            client: put(client),
-            host: put(host),
-            user_agent: put(ua),
+            client,
+            host,
+            user_agent,
             route: 0,
         };
     }
@@ -414,26 +418,26 @@ impl Facts {
         let [a, cl, b, c, d] = [a, cl, b, c, d].map(|x| x as usize);
         let pe = (self.peer_encoded_len as usize).min(self.raw.len());
         let (peer_encoded, r) = self.raw.split_at(pe);
-        if r.len() < a + cl + b + c + d {
+        if r.len() < a + cl + c + b + d {
             return Strings {
                 peer_encoded: b"",
                 url: b"",
                 client: b"",
+                user_agent: b"",
                 keyed: b"",
                 host: b"",
-                user_agent: b"",
                 route: b"",
             };
         }
-        let k = a + cl;
+        let k = a + cl + c;
         Strings {
             peer_encoded,
             url: &r[..a],
-            client: &r[a..k],
+            client: &r[a..a + cl],
+            user_agent: &r[a + cl..k],
             keyed: &r[k..],
             host: &r[k..k + b],
-            user_agent: &r[k + b..k + b + c],
-            route: &r[k + b + c..k + b + c + d],
+            route: &r[k + b..k + b + d],
         }
     }
 }
@@ -455,7 +459,9 @@ pub struct SpanParts<'a> {
     pub status_message: &'a [u8],
 }
 
-/// What a cached encoding depends on besides `Template::pieces`.
+/// What a cached encoding depends on besides `Template::pieces`: only
+/// low-cardinality facts, so real traffic (diverse user-agents, per-request
+/// JS-set attributes) still hits.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct TemplateKey {
     https: bool,
@@ -466,12 +472,14 @@ struct TemplateKey {
     has_parent: bool,
     method: SemconvMethod,
     version: HttpVersion,
-    /// Per-request (tail) attribute count; shapes droppedAttributesCount.
+    /// Attributes already on the span and the per-request (tail) count: both
+    /// take budget before the templated set and shape droppedAttributesCount.
+    n_attrs: u16,
     tail_n: u8,
     dropped: u16,
     dropped_events: u16,
     dropped_links: u16,
-    lens: [u32; 3],
+    lens: [u32; 2],
 }
 
 impl TemplateKey {
@@ -486,27 +494,30 @@ impl TemplateKey {
             has_parent: p.stub.parent.is_valid(),
             method: facts.method,
             version: facts.version,
+            n_attrs: p.n_attrs,
             tail_n: tail_attr_count(facts) as u8,
             dropped: p.dropped_attrs,
             dropped_events: p.dropped_events,
             dropped_links: p.dropped_links,
-            lens: [facts.lens.host, facts.lens.user_agent, facts.lens.route],
+            lens: [facts.lens.host, facts.lens.route],
         }
     }
 }
 
+const PIECES: usize = 3;
+
 struct Template {
     key: TemplateKey,
-    /// keyed strings | attrs | extra | trace_state | name_override | status_message
+    /// keyed strings | name_override | status_message
     pieces: Vec<u8>,
-    piece_len: [u32; 6],
+    piece_len: [u32; PIECES],
     /// Encoded span up to (not including) the per-request tail.
     bytes: Vec<u8>,
 }
 
 impl Template {
     #[inline]
-    fn matches(&self, key: &TemplateKey, pieces: &[&[u8]; 6]) -> bool {
+    fn matches(&self, key: &TemplateKey, pieces: &[&[u8]; PIECES]) -> bool {
         if self.key != *key {
             return false;
         }
@@ -573,14 +584,7 @@ pub fn encode(c: &mut Cache, out: &mut Vec<u8>, facts: &Facts, p: &SpanParts<'_>
     }
     let s = facts.strings();
     let key = TemplateKey::of(facts, p);
-    let pieces: [&[u8]; 6] = [
-        s.keyed,
-        p.attrs,
-        p.extra,
-        p.trace_state,
-        p.name_override,
-        p.status_message,
-    ];
+    let pieces: [&[u8]; PIECES] = [s.keyed, p.name_override, p.status_message];
     let Some(i) = c.entries.iter().position(|t| t.matches(&key, &pieces)) else {
         return encode_miss(c, out, facts, p, limits, &s, key, &pieces);
     };
@@ -589,7 +593,15 @@ pub fn encode(c: &mut Cache, out: &mut Vec<u8>, facts: &Facts, p: &SpanParts<'_>
     }
     let t = &c.entries[0];
     let start = out.len();
-    out.reserve(t.bytes.len() + 64 + s.url.len());
+    out.reserve(
+        t.bytes.len()
+            + 96
+            + s.url.len()
+            + s.user_agent.len()
+            + p.attrs.len()
+            + p.extra.len()
+            + p.trace_state.len(),
+    );
     out.extend_from_slice(&t.bytes);
     out[start + OFF_TRACE_ID..start + OFF_TRACE_ID + 16].copy_from_slice(&p.stub.ctx.trace_id.0);
     out[start + OFF_SPAN_ID..start + OFF_SPAN_ID + 8].copy_from_slice(&p.stub.ctx.span_id.0);
@@ -623,31 +635,33 @@ fn encode_miss(
     limits: &Limits,
     s: &Strings<'_>,
     key: TemplateKey,
-    pieces: &[&[u8]; 6],
+    pieces: &[&[u8]; PIECES],
 ) {
     let start = out.len();
     encode_head(out, facts, p, s, limits);
-    // (captured before the tail: patching a long span's length can shift the body)
-    let bytes = out[start..].to_vec();
-    append_tail(out, start, s, facts, p, limits);
-    let mut piece_len = [0u32; 6];
-    let mut all = Vec::with_capacity(pieces.iter().map(|x| x.len()).sum());
-    for (i, piece) in pieces.iter().enumerate() {
-        piece_len[i] = piece.len() as u32;
-        all.extend_from_slice(piece);
-    }
-    if c.entries.len() >= TEMPLATES {
-        c.entries.pop();
-    }
-    c.entries.insert(
-        0,
+    // The evicted entry's buffers are reused.
+    let mut t = if c.entries.len() >= TEMPLATES {
+        let mut t = c.entries.pop().unwrap();
+        t.key = key;
+        t
+    } else {
         Template {
             key,
-            pieces: all,
-            piece_len,
-            bytes,
-        },
-    );
+            pieces: Vec::new(),
+            piece_len: [0; PIECES],
+            bytes: Vec::new(),
+        }
+    };
+    // (captured before the tail: patching a long span's length can shift the body)
+    t.bytes.clear();
+    t.bytes.extend_from_slice(&out[start..]);
+    append_tail(out, start, s, facts, p, limits);
+    t.pieces.clear();
+    for (i, piece) in pieces.iter().enumerate() {
+        t.piece_len[i] = piece.len() as u32;
+        t.pieces.extend_from_slice(piece);
+    }
+    c.entries.insert(0, t);
 }
 
 /// The originating client per RFC 7239 `Forwarded: for=` (first element) or,
@@ -721,17 +735,33 @@ pub(crate) fn peer_text_of(encoded: &[u8]) -> &[u8] {
     encoded.get(PEER_TEXT_OFF..PEER_TEXT_OFF + n).unwrap_or(b"")
 }
 
-/// Attributes appended per request rather than templated (see `append_tail`).
+/// Derived attributes appended per request rather than templated (see
+/// `append_tail`).
 fn tail_attr_count(facts: &Facts) -> u32 {
-    // url.path [+ url.query] [+ client.address] [+ network.peer.address [+ .port]]
+    // [user_agent.original +] url.path [+ url.query] [+ client.address]
+    // [+ network.peer.address [+ .port]]
     let peer_attrs = facts.peer_encoded_attrs as u32;
     // client.address: the forwarded hop or else the peer.
     let has_client = facts.lens.client != 0 || peer_attrs != 0;
-    1 + u32::from(facts.has_query()) + u32::from(has_client) + peer_attrs
+    u32::from(facts.derives_user_agent())
+        + 1
+        + u32::from(facts.has_query())
+        + u32::from(has_client)
+        + peer_attrs
 }
 
-/// Per-request attributes after the templated part (as many as still fit
-/// under `attributeCountLimit`), then the span length.
+impl Facts {
+    #[inline]
+    fn derives_user_agent(&self) -> bool {
+        self.lens.user_agent != 0 && !self.user_keys.has(UserSetKeys::USER_AGENT)
+    }
+}
+
+/// Everything per-request after the templated part: tracestate, the
+/// attributes already encoded on the slot (captured headers, JS-set), events
+/// and links, then the derived per-request attributes (as many as still fit
+/// under `attributeCountLimit`), then the span length. `Span` field order
+/// is free, so these may follow the templated status.
 #[inline]
 fn append_tail(
     out: &mut Vec<u8>,
@@ -741,13 +771,25 @@ fn append_tail(
     p: &SpanParts<'_>,
     limits: &Limits,
 ) {
+    crate::proto::write_bytes_opt(out, f::TRACE_STATE, p.trace_state);
+    out.extend_from_slice(p.attrs);
+    out.extend_from_slice(p.extra);
     let max = limits.attribute_value_length as usize;
     let url = s.url;
     let pl = (facts.path_len as usize).min(url.len());
     let (path, query) = (&url[..pl], url.get(pl + 1..).unwrap_or(b""));
     // `room`: how many more attributes fit under attributeCountLimit after the
-    // ones the span already carries (captured headers, JS-set).
+    // ones the span already carries (`p.attrs`).
     let mut room = (limits.attributes as u32).saturating_sub(u32::from(p.n_attrs));
+    if facts.derives_user_agent() && room != 0 {
+        otlp::write_str_kv_small(
+            out,
+            f::ATTRIBUTES,
+            "user_agent.original",
+            otlp::truncate_utf8(s.user_agent, max),
+        );
+        room -= 1;
+    }
     let (encoded, n) = (s.peer_encoded, facts.peer_encoded_attrs as u32);
     // semconv: client.address is the client behind any proxies (X-Forwarded-For
     // / Forwarded) — also the only identity on a unix-socket listener — and
@@ -825,7 +867,7 @@ fn encode_head(
     limits: &Limits,
 ) {
     let start = out.len();
-    let (host, ua, route) = (s.host, s.user_agent, s.route);
+    let (host, route) = (s.host, s.route);
     let status = facts.status;
     let mut name_buf = [0u8; NAME_MAX];
     let name: &[u8] = if p.name_override.is_empty() {
@@ -841,7 +883,6 @@ fn encode_head(
         p.end_ns,
         limits.attribute_value_length,
     );
-    w.trace_state(p.trace_state);
     let budget = limits.attributes as u32;
     struct Attrs<'w, 'a> {
         w: &'w mut SpanWriter<'a>,
@@ -858,7 +899,8 @@ fn encode_head(
         }
     }
     // Attributes already on the span (captured headers, JS-set) and the
-    // per-request tail come first; the semconv set below fills what is left.
+    // per-request tail take budget first; the semconv set below fills what
+    // is left.
     let mut a = Attrs {
         w: &mut w,
         // (unclamped: tail attributes that did not fit count as dropped)
@@ -897,14 +939,9 @@ fn encode_head(
     if facts.version != HttpVersion::Unknown && !user.has(UserSetKeys::PROTOCOL_VERSION) {
         a.put("network.protocol.version", Value::Str(facts.version.text()));
     }
-    if !ua.is_empty() && !user.has(UserSetKeys::USER_AGENT) {
-        a.put("user_agent.original", Value::Str(ua));
-    }
     if !route.is_empty() {
         a.put("http.route", Value::Str(route));
     }
-    // Attributes encoded on the request path (counted in `p.n_attrs` above).
-    a.w.raw(p.attrs);
     let mut span_status = p.status;
     let mut msg: &[u8] = p.status_message;
     let has_error_type = user.has(UserSetKeys::ERROR_TYPE);
@@ -948,7 +985,6 @@ fn encode_head(
         }
     }
     let n_attrs = a.n;
-    w.raw(p.extra);
     let dropped = p.dropped_attrs as u32 + n_attrs.saturating_sub(budget);
     if dropped != 0 {
         w.dropped_attributes(dropped);

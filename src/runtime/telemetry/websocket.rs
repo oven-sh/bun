@@ -74,7 +74,7 @@ fn begin_message_enabled(
             );
             s.push_attribute(b"websocket.message.length", &Value::Int(size as i64), l);
             if link.is_valid() {
-                s.add_link(link, b"", &[], l);
+                s.begin_link(link, b"", l);
             }
         },
     );

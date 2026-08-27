@@ -247,18 +247,6 @@ impl Slot {
         Some(otlp::EntryWriter::link(&mut self.extra, ctx, trace_state))
     }
 
-    pub fn add_link(
-        &mut self,
-        ctx: &crate::SpanContext,
-        trace_state: &[u8],
-        attrs: &[(&[u8], Value<'_>)],
-        limits: &Limits,
-    ) {
-        if let Some(mut w) = self.begin_link(ctx, trace_state, limits) {
-            w.attrs(attrs);
-        }
-    }
-
     fn write(
         &self,
         templates: &mut crate::http_record::Cache,

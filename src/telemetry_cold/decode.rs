@@ -566,10 +566,9 @@ mod tests {
         let mut spans = Vec::new();
         let list = [V::Int(1), V::Int(2)];
         let mut w = SpanWriter::begin(&mut spans, &stub, b"s", SpanKind::Server, 22);
-        w.attr("k", "v")
-            .attr("list", V::Array(&list))
-            .event(b"e", 33, &[(b"x", V::Bool(false))])
-            .status(StatusCode::Error, b"bad");
+        w.attr("k", "v").attr("list", V::Array(&list));
+        w.begin_event(b"e", 33).attrs(&[(b"x", V::Bool(false))]);
+        w.status(StatusCode::Error, b"bad");
         w.finish();
         let scope = otlp::encode_scope(b"scope", b"1.0");
         let resource = otlp::encode_resource(&[(b"service.name", V::Str(b"svc"))]);

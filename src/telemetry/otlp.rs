@@ -559,7 +559,7 @@ impl<'a> SpanWriter<'a> {
     }
 
     /// Splice already-encoded `Span` fields (attributes/events/links produced
-    /// by `write_key_value(.., ATTRIBUTES, ..)` / [`encode_event`]).
+    /// by `write_key_value(.., ATTRIBUTES, ..)` / [`EntryWriter`]).
     #[inline]
     pub fn raw(&mut self, encoded: &[u8]) -> &mut Self {
         self.out.extend_from_slice(encoded);
@@ -580,12 +580,6 @@ impl<'a> SpanWriter<'a> {
     }
 
     #[inline]
-    pub fn event(&mut self, name: &[u8], time_ns: u64, attrs: &[(&[u8], Value<'_>)]) -> &mut Self {
-        encode_event(self.out, name, time_ns, attrs);
-        self
-    }
-
-    #[inline]
     pub fn begin_event(&mut self, name: &[u8], time_ns: u64) -> EntryWriter<'_> {
         EntryWriter::event(self.out, name, time_ns)
     }
@@ -600,7 +594,8 @@ impl<'a> SpanWriter<'a> {
         stack: &[u8],
     ) -> &mut Self {
         with_exception_attrs(ty, message, stack, |attrs| {
-            encode_event(self.out, b"exception", crate::clock::or_now(time_ns), attrs)
+            self.begin_event(b"exception", crate::clock::or_now(time_ns))
+                .attrs(attrs);
         });
         self
     }
@@ -616,17 +611,6 @@ impl<'a> SpanWriter<'a> {
                 self.error(bun_core::fmt::itoa(&mut buf, status), b"");
             }
         }
-        self
-    }
-
-    #[inline]
-    pub fn link(
-        &mut self,
-        ctx: &SpanContext,
-        trace_state: &[u8],
-        attrs: &[(&[u8], Value<'_>)],
-    ) -> &mut Self {
-        encode_link(self.out, ctx, trace_state, attrs);
         self
     }
 
@@ -753,21 +737,6 @@ impl Drop for EntryWriter<'_> {
     fn drop(&mut self) {
         Nested::<2>::at(self.nested.len_at()).finish(self.out);
     }
-}
-
-/// Append a `Span.events` entry.
-pub fn encode_event(out: &mut Vec<u8>, name: &[u8], time_ns: u64, attrs: &[(&[u8], Value<'_>)]) {
-    EntryWriter::event(out, name, time_ns).attrs(attrs);
-}
-
-/// Append a `Span.links` entry.
-pub fn encode_link(
-    out: &mut Vec<u8>,
-    ctx: &SpanContext,
-    trace_state: &[u8],
-    attrs: &[(&[u8], Value<'_>)],
-) {
-    EntryWriter::link(out, ctx, trace_state).attrs(attrs);
 }
 
 /// Encoded `InstrumentationScope` message body.

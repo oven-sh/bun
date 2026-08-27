@@ -218,7 +218,7 @@ impl VmState {
 /// errors): flush this VM's spans; on the main thread also drain every
 /// exporter synchronously — even when only a worker configured tracing.
 #[optimize(size)]
-fn flush_at_exit(vm: Option<&mut bun_jsc::VirtualMachineRef>, reload: bool) {
+pub(crate) fn flush_at_exit(vm: Option<&mut bun_jsc::VirtualMachineRef>, reload: bool) {
     if reload {
         // --watch is about to execve (possibly from the watcher thread): push
         // out what is buffered, but never stall the dev loop on a collector.
@@ -449,17 +449,7 @@ fn configure_with(
         });
     p.set_resource(resource);
     p.install_exporters(replace_owner, exporters);
-    bun_telemetry::rt::install(bun_telemetry::rt::Hooks {
-        active_span: span::active_hook,
-        local: local_hook,
-        after_record: |g| after_record(JSGlobalObject::opaque_ref(g.cast::<JSGlobalObject>())),
-        release_cell: span::release_cell,
-        active_trace_state: |g, f| {
-            span::with_active_trace_state(JSGlobalObject::opaque_ref(g.cast::<JSGlobalObject>()), f)
-        },
-    });
     bun_telemetry::activate(cfg.instruments, cfg.roots);
-    let _ = bun_jsc::virtual_machine::TELEMETRY_EXIT_HOOK.set(flush_at_exit);
     let s = vm_state_or_init(global);
     s.arm_timer();
 }
@@ -481,6 +471,19 @@ unsafe extern "C" {
     /// The `process.env` object (JSTelemetryTracer.cpp).
     safe fn Bun__Telemetry__processEnv(global: &JSGlobalObject) -> JSValue;
 }
+
+/// The one instance of [`bun_telemetry::rt::Hooks`] (resolved at link time by
+/// the lower-tier crates that record spans without depending on this one).
+#[unsafe(no_mangle)]
+static __BUN_TELEMETRY_HOOKS: bun_telemetry::rt::Hooks = bun_telemetry::rt::Hooks {
+    active_span: span::active_hook,
+    local: local_hook,
+    after_record: |g| after_record(JSGlobalObject::opaque_ref(g.cast::<JSGlobalObject>())),
+    release_cell: span::release_cell,
+    active_trace_state: |g, f| {
+        span::with_active_trace_state(JSGlobalObject::opaque_ref(g.cast::<JSGlobalObject>()), f)
+    },
+};
 
 // ─────────────────────────── span helpers for integrations ───────────────────────────
 

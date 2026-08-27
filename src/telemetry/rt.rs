@@ -1,9 +1,12 @@
-//! Hooks the runtime installs so lower-tier crates (sql, http_jsc, C++) can
-//! start/end leaf spans without depending on `bun_runtime`.
+//! The runtime's side of span recording, for the lower-tier crates (sql,
+//! http_jsc, the C++ bindings) that start/end spans without depending on
+//! `bun_runtime`: a fn-pointer table this crate declares and `bun_runtime`
+//! defines once as the `#[no_mangle]` static `__BUN_TELEMETRY_HOOKS`, resolved
+//! at link time (the same shape as `SqlRuntimeHooks` / `RuntimeHooks`), so
+//! there is no install step and no "before install" state.
 
 use core::cell::RefCell;
 use core::ffi::c_void;
-use std::sync::OnceLock;
 
 use crate::pool::{self, JsCellRef, NativeSpan, Slot};
 use crate::{
@@ -13,8 +16,8 @@ use crate::{
 pub struct Hooks {
     /// The active span's identity for `global` (a `JSGlobalObject*`), by value.
     pub active_span: fn(global: *mut c_void) -> Option<SpanStub>,
-    /// The per-VM state for `global` (null once the VM is exiting); lives as
-    /// long as the VM.
+    /// The per-VM state for `global`: null until tracing is configured on that
+    /// VM and once it is exiting; otherwise lives as long as the VM.
     pub local: fn(global: *mut c_void) -> *const RefCell<Local>,
     /// Called after a span is recorded on `global`'s VM (arms the flush timer).
     pub after_record: fn(global: *mut c_void),
@@ -25,18 +28,24 @@ pub struct Hooks {
     pub active_trace_state: fn(global: *mut c_void, f: &mut dyn FnMut(&[u8])),
 }
 
-static HOOKS: OnceLock<Hooks> = OnceLock::new();
-
-pub fn install(h: Hooks) {
-    let _ = HOOKS.set(h);
+unsafe extern "Rust" {
+    /// Defined `#[no_mangle]` in `bun_runtime::telemetry`. An immutable table of
+    /// fn pointers with a single definition, so reading it needs nothing but a
+    /// successful link → `safe static`.
+    safe static __BUN_TELEMETRY_HOOKS: Hooks;
 }
 
-/// Run `f` with `global`'s per-VM state. `None` before the runtime installed
-/// its hooks (telemetry never configured) or once the VM is exiting. Must not
-/// be nested, and `f` must not run JS.
+#[inline(always)]
+fn hooks() -> &'static Hooks {
+    &__BUN_TELEMETRY_HOOKS
+}
+
+/// Run `f` with `global`'s per-VM state. `None` when tracing was never
+/// configured on this VM or it is exiting. Must not be nested, and `f` must
+/// not run JS.
 #[inline]
 pub fn with_local<R>(global: *mut c_void, f: impl FnOnce(&mut Local) -> R) -> Option<R> {
-    let p = (HOOKS.get()?.local)(global);
+    let p = (hooks().local)(global);
     if p.is_null() {
         return None;
     }
@@ -48,7 +57,7 @@ pub fn with_local<R>(global: *mut c_void, f: impl FnOnce(&mut Local) -> R) -> Op
 /// The active span's identity.
 #[inline]
 pub fn active_span(global: *mut c_void) -> Option<SpanStub> {
-    (HOOKS.get()?.active_span)(global)
+    (hooks().active_span)(global)
 }
 
 /// Start a leaf span for `i` under the active span. `SpanStub::NONE` when
@@ -93,9 +102,7 @@ pub fn begin_pooled(
     if !stub.is_some() {
         return NativeSpan::NONE;
     }
-    let Some(h) = HOOKS.get() else {
-        return NativeSpan::NONE;
-    };
+    let h = hooks();
     let mut init = Some(init);
     let mut span = NativeSpan::NONE;
     (h.active_trace_state)(global, &mut |trace_state: &[u8]| {
@@ -133,9 +140,7 @@ pub fn end_pooled(
     if let Some(e) = ended {
         release_cell(e.js_cell);
         if e.recorded {
-            if let Some(h) = HOOKS.get() {
-                (h.after_record)(global);
-            }
+            (hooks().after_record)(global);
         }
     }
     live
@@ -153,11 +158,8 @@ pub fn discard_pooled(global: *mut c_void, span: NativeSpan) {
 }
 
 fn release_cell(cell: JsCellRef) {
-    if !cell.is_some() {
-        return;
-    }
-    if let Some(h) = HOOKS.get() {
-        (h.release_cell)(cell);
+    if cell.is_some() {
+        (hooks().release_cell)(cell);
     }
 }
 
@@ -204,7 +206,7 @@ pub fn end_leaf_at(
             w.finish();
         });
     });
-    if let (Some(()), Some(h)) = (recorded, HOOKS.get()) {
-        (h.after_record)(global);
+    if recorded.is_some() {
+        (hooks().after_record)(global);
     }
 }

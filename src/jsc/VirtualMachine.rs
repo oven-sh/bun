@@ -133,18 +133,12 @@ impl Default for InitOptions {
     }
 }
 
-/// Installed by `bun_runtime::telemetry` once tracing is configured; run from
-/// [`VirtualMachine::on_exit`] on every exit path (see there), and with
-/// `reload = true` (bounded to ~1 s so a dead collector cannot stall the dev
-/// loop) before `--watch` re-execs. `vm` is None off the JS thread.
-pub static TELEMETRY_EXIT_HOOK: std::sync::OnceLock<fn(Option<&mut VirtualMachine>, bool)> =
-    std::sync::OnceLock::new();
-
 /// Flush native telemetry before the process image is replaced or exits
-/// without `on_exit` (watch-mode execve, `bun test --bail`).
+/// without `on_exit` (watch-mode execve, `bun test --bail`). See
+/// [`RuntimeHooks::telemetry_flush_at_exit`].
 pub fn telemetry_flush_now(vm: Option<&mut VirtualMachine>, reload: bool) {
-    if let Some(hook) = TELEMETRY_EXIT_HOOK.get() {
-        hook(vm, reload);
+    if let Some(h) = runtime_hooks() {
+        (h.telemetry_flush_at_exit)(vm, reload);
     }
 }
 
@@ -1759,9 +1753,7 @@ impl VirtualMachine {
         // Native telemetry: flush this VM's spans (and on the main thread drain
         // the exporters) on every way out — process.exit() and fatal errors
         // skip the cleanup-hook list below on the main thread.
-        if let Some(hook) = TELEMETRY_EXIT_HOOK.get() {
-            hook(Some(self), false);
-        }
+        telemetry_flush_now(Some(self), false);
 
         // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here.
         if !self.is_inside_deferred_task_queue.get() {
@@ -2324,6 +2316,12 @@ pub struct RuntimeHooks {
     /// # Safety
     /// JS thread; `runtime_state` installed.
     pub close_timer_loop_handles_after_vm_destroyed: unsafe fn(vm: *mut VirtualMachine),
+    /// Native OpenTelemetry: flush `vm`'s spans (and on the main thread drain
+    /// the exporters). Run from [`VirtualMachine::on_exit`] on every exit
+    /// path, and with `reload = true` (bounded to ~1 s so a dead collector
+    /// cannot stall the dev loop) before `--watch` re-execs. `vm` is None off
+    /// the JS thread. A no-op until tracing was configured.
+    pub telemetry_flush_at_exit: fn(vm: Option<&mut VirtualMachine>, reload: bool),
 }
 
 /// Canonical `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — the JS

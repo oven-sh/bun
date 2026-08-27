@@ -306,9 +306,9 @@ pub static ENABLED: AtomicU32 = AtomicU32::new(0);
 static ROOTS: AtomicU32 = AtomicU32::new(0);
 
 /// The one check integrations make before doing any telemetry work.
-/// Acquire pairs with the Release in [`activate`], which runs after
-/// `rt::install`/STATE are published: a thread that sees its bit set also
-/// sees the hooks (same cost as a plain load on x86; `ldar` on ARM).
+/// Acquire pairs with the Release in [`activate`], which runs after STATE is
+/// published: a thread that sees its bit set also sees the configuration
+/// (same cost as a plain load on x86; `ldar` on ARM).
 #[inline(always)]
 pub fn enabled(i: Instrument) -> bool {
     ENABLED.load(Ordering::Acquire) & i.bit() != 0

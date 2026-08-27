@@ -1544,6 +1544,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     stop_active_handles_for_vm_teardown: stop_active_handles_for_vm_teardown_hook,
     disarm_all_timers_for_vm_teardown,
     close_timer_loop_handles_after_vm_destroyed,
+    telemetry_flush_at_exit: crate::telemetry::flush_at_exit,
 };
 
 // ════════════════════════════════════════════════════════════════════════════

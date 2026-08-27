@@ -217,6 +217,12 @@ impl FileSink {
     pub(crate) fn this_ptr(&self) -> ThisPtr<FileSink> {
         self.self_ref.this_ptr(self)
     }
+
+    /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
+    #[inline]
+    fn ref_guard(&self) -> RefPtr<FileSink> {
+        RefPtr::from_this(self.this_ptr())
+    }
 }
 
 /// `process.stdout`/`process.stderr` must write synchronously (see

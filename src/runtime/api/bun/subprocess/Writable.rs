@@ -151,7 +151,9 @@ impl<'a> Writable<'a> {
                                 return Err(crate::Error::UnexpectedCreatingStdin);
                             }
                         }
-                        subprocess.weak_file_sink_stdin_ptr.set(Some(pipe.as_non_null()));
+                        subprocess
+                            .weak_file_sink_stdin_ptr
+                            .set(Some(pipe.as_non_null()));
                         subprocess.ref_();
                         subprocess.update_flags(|f| {
                             f.set(Flags::DEREF_ON_STDIN_DESTROYED, true);
@@ -248,7 +250,9 @@ impl<'a> Writable<'a> {
                     }
                 });
 
-                subprocess.weak_file_sink_stdin_ptr.set(Some(pipe.as_non_null()));
+                subprocess
+                    .weak_file_sink_stdin_ptr
+                    .set(Some(pipe.as_non_null()));
                 subprocess.ref_();
                 subprocess.update_flags(|f| {
                     f.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false);
@@ -359,7 +363,9 @@ impl<'a> Writable<'a> {
                     pipe.to_js(global_this)
                 } else {
                     subprocess.update_flags(|f| f.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false));
-                    subprocess.weak_file_sink_stdin_ptr.set(Some(pipe.as_non_null()));
+                    subprocess
+                        .weak_file_sink_stdin_ptr
+                        .set(Some(pipe.as_non_null()));
                     if !subprocess
                         .flags
                         .get()

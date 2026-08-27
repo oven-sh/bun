@@ -1302,7 +1302,12 @@ describe.concurrent("bun-install", () => {
     // secret ships in the request path, where proxies and logs can see it.
     describe("credentials embedded in the registry URL", () => {
       // Returns the Authorization header and the request path the registry saw.
-      async function probeEmbedded(registryPath: string, authLines: (host: string) => string, userinfo = "") {
+      async function probeEmbedded(
+        registryPath: string,
+        authLines: (host: string) => string,
+        userinfo = "",
+        { cli = false }: { cli?: boolean } = {},
+      ) {
         const seen: Array<{ path: string; auth: string | null }> = [];
         await using registry = Bun.serve({
           port: 0,
@@ -1313,14 +1318,15 @@ describe.concurrent("bun-install", () => {
           },
         });
         const host = `127.0.0.1:${registry.port}`;
+        const registryUrl = `http://${userinfo}${host}${registryPath}`;
         using dir = tempDir("npmrc-embedded-auth", {
-          ".npmrc": `@myorg:registry=http://${userinfo}${host}${registryPath}\n${authLines(host)}\n`,
+          ".npmrc": cli ? `${authLines(host)}\n` : `@myorg:registry=${registryUrl}\n${authLines(host)}\n`,
           "package.json": JSON.stringify({ name: "probe", version: "0.0.0", dependencies: { "@myorg/pkg": "1.0.0" } }),
           "home/.gitkeep": "",
         });
         const home = join(String(dir), "home");
         await using proc = Bun.spawn({
-          cmd: [bunExe(), "install", "--no-cache"],
+          cmd: [bunExe(), "install", "--no-cache", ...(cli ? ["--registry", registryUrl] : [])],
           cwd: String(dir),
           env: { ...env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
           stdout: "pipe",
@@ -1335,6 +1341,87 @@ describe.concurrent("bun-install", () => {
         });
         return seen[0]!;
       }
+
+      // The bunfig object form is the one way into the scope builder with a token already
+      // set, so it pins that the strip does not depend on the credential being adopted.
+      async function probeBunfig(registryPath: string, token: string) {
+        const seen: Array<{ path: string; auth: string | null }> = [];
+        await using registry = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          fetch(req) {
+            seen.push({ path: new URL(req.url).pathname, auth: req.headers.get("authorization") });
+            return new Response("not found", { status: 404 });
+          },
+        });
+        const host = `127.0.0.1:${registry.port}`;
+        using dir = tempDir("bunfig-embedded-auth", {
+          "bunfig.toml": `[install.scopes]\nmyorg = { url = "http://${host}${registryPath}", token = "${token}" }\n`,
+          "package.json": JSON.stringify({ name: "probe", version: "0.0.0", dependencies: { "@myorg/pkg": "1.0.0" } }),
+          "home/.gitkeep": "",
+        });
+        const home = join(String(dir), "home");
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "install", "--no-cache"],
+          cwd: String(dir),
+          env: { ...env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: "ignore",
+        });
+        const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ requests: seen.length, exitCode }).toEqual({ requests: 1, exitCode: 1 });
+        return seen[0]!;
+      }
+
+      // Bun's JFrog guide writes the credential as a path segment, `/npm/_auth=<base64>`.
+      // Base64 holds `/`, so the marker, not the last slash, must anchor the strip.
+      it("strips a slash-form _auth whose base64 value contains a slash", async () => {
+        const seen = await probeEmbedded("/api/npm/_auth=YWJj/ZGVm", () => "");
+        expect(seen).toEqual({ path: "/api/npm/@myorg%2fpkg", auth: "Basic YWJj/ZGVm" });
+      });
+
+      it("strips a slash-form _authToken whose value contains a slash", async () => {
+        const seen = await probeEmbedded("/api/_authToken=a/b", () => "");
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer a/b" });
+      });
+
+      it("strips slash-form username and _password segments", async () => {
+        const seen = await probeEmbedded("/api/username=u/_password=p/q", () => "");
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: `Basic ${Buffer.from("u:p/q").toString("base64")}` });
+      });
+
+      it("leaves a plain `=` in a path segment alone", async () => {
+        const seen = await probeEmbedded("/a=b/c/", () => "");
+        expect(seen).toEqual({ path: "/a=b/c/@myorg%2fpkg", auth: null });
+      });
+
+      // `--registry` used to bypass the scope builder; with a trailing slash after the
+      // marker the token went out in every request path.
+      it("strips an embedded _authToken from a --registry URL with a trailing slash", async () => {
+        const seen = await probeEmbedded("/api/:_authToken=S/", () => "", "", { cli: true });
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer S" });
+      });
+
+      it("keeps the .npmrc token of the same host over a --registry URL's embedded one", async () => {
+        const seen = await probeEmbedded(
+          "/api/:_authToken=S/",
+          host => `registry=http://${host}/\n//${host}/:_authToken=T`,
+          "",
+          { cli: true },
+        );
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer T" });
+      });
+
+      it("strips an embedded _auth when bunfig already supplies a token", async () => {
+        const seen = await probeBunfig("/api/:_auth=opaque-blob", "T");
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer T" });
+      });
+
+      it("keeps bunfig's token over an embedded _authToken", async () => {
+        const seen = await probeBunfig("/api/:_authToken=EMBEDDED", "T");
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer T" });
+      });
 
       it("strips an embedded _authToken from the path and uses it when .npmrc has none", async () => {
         const seen = await probeEmbedded("/api/:_authToken=EMBEDDED", () => "");

@@ -13,6 +13,7 @@ interface NativeCall {
   filename: string;
   symbol: string;
   is_wrapped: boolean;
+  cfg?: string;
 }
 
 interface WrapperCall {
@@ -23,6 +24,7 @@ interface WrapperCall {
   display_name: string;
   call_length: number;
   filename: string;
+  cfg?: string;
 }
 
 type NativeCallType = "rust" | "cpp" | "bind";
@@ -102,6 +104,14 @@ const rustIdentifierPaths: Record<string, string> = {
   "virtual_machine_exports.rs": "jsc/virtual_machine_exports.rs",
 };
 
+// $rust() modules that compile on one target. Their call sites are in
+// platform-only builtins (platformOnlyModules in bundle-modules.ts), so other
+// targets never register these calls; the `#[cfg]` on the thunk keeps one
+// codegen directory checkable with `cargo check --target <other>`.
+const rustIdentifierCfg: Record<string, string> = {
+  "appkit.rs": `target_os = "macos"`,
+};
+
 function callBaseName(x: string) {
   return x.split(/[^A-Za-z0-9]/g).pop()!;
 }
@@ -140,6 +150,7 @@ export function registerNativeCall(
   create_fn_len: null | number,
 ) {
   const resolved_filename = resolveNativeFileId(call_type, filename);
+  const cfg = call_type === "rust" ? rustIdentifierCfg[filename] : undefined;
 
   const maybe_wrapped_symbol = create_fn_len != null ? "js2native_wrap_" + symbol.replace(/[^A-Za-z]/g, "_") : symbol;
 
@@ -160,6 +171,7 @@ export function registerNativeCall(
     filename: resolved_filename,
     symbol: maybe_wrapped_symbol,
     is_wrapped: create_fn_len != null,
+    cfg,
   });
   if (create_fn_len != null) {
     wrapperCalls.push({
@@ -170,6 +182,7 @@ export function registerNativeCall(
       display_name: callBaseName(symbol),
       call_length: create_fn_len,
       filename: resolved_filename,
+      cfg,
     });
   }
   return id;
@@ -344,7 +357,7 @@ export function getJS2NativeRust() {
     const target = rustTarget(call.filename, call.symbol);
     thunks.push(
       `// $rust(${path.basename(call.filename)}, ${call.symbol})`,
-      `bun_jsc::jsc_host_abi! {`,
+      `${call.cfg ? `#[cfg(${call.cfg})]\n` : ""}bun_jsc::jsc_host_abi! {`,
       `    #[allow(dead_code, unreachable_pub, unused)]`,
       `    #[unsafe(no_mangle)]`,
       `    pub unsafe fn ${sym}(global: &JSGlobalObject) -> JSValue {`,
@@ -366,7 +379,7 @@ export function getJS2NativeRust() {
     const target = rustTarget(x.filename, x.symbol_target);
     thunks.push(
       `// $rust(${path.basename(x.filename)}, ${x.symbol_target})`,
-      `bun_jsc::jsc_host_abi! {`,
+      `${x.cfg ? `#[cfg(${x.cfg})]\n` : ""}bun_jsc::jsc_host_abi! {`,
       `    #[allow(dead_code, unreachable_pub, unused)]`,
       `    #[unsafe(no_mangle)]`,
       `    pub unsafe fn ${sym}(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue {`,

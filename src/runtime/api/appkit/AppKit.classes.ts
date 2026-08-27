@@ -35,7 +35,8 @@ const fn = (name: string, length: number) => ({ fn: name, length });
 const chained = (...entries: [string, number][]) =>
   Object.fromEntries(entries.map(([name, length]) => [name, fn(name, length)]));
 
-export default [
+// macOS only: other targets generate none of these classes.
+const classes = [
   // The dynamic Objective-C bridge. Objects and classes come from message
   // sends, `objcLookupClass` and `.native`; `new ObjCSelector(name)` is
   // `objc.sel()`. An object's `keeper` slot points at the ObjCKeeper of the
@@ -245,3 +246,6 @@ export default [
     commitAndWait: fn("commitAndWait", 0),
   }),
 ];
+for (const def of classes) def.platform = "darwin";
+
+export default classes;

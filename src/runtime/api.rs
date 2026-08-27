@@ -29,6 +29,7 @@ pub use bun_jsc::BuildMessage;
 pub use bun_jsc::ResolveMessage;
 
 // ─── compiling submodules (api/ dir) ─────────────────────────────────────────
+#[cfg(target_os = "macos")]
 #[path = "api/appkit/mod.rs"]
 pub mod appkit;
 #[path = "api/Archive.rs"]

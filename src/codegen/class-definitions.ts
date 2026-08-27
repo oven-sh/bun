@@ -239,6 +239,12 @@ export class ClassDefinition {
   enumerable?: boolean;
   structuredClone?: { transferable: boolean; tag: number; storable: boolean };
   inspectCustom?: boolean;
+  /**
+   * The class only exists on this target (`TARGET_PLATFORM`, node-style). Other
+   * targets generate nothing for it, and the Rust thunks are `#[cfg]`-gated so
+   * one codegen directory still checks with `cargo check --target <other>`.
+   */
+  platform?: "darwin" | "linux" | "win32";
 
   constructor(options: Partial<ClassDefinition>) {
     this.name = options.name ?? "";

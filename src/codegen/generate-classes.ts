@@ -7,6 +7,10 @@ import { writeIfNotChanged } from "./helpers";
 
 const files = process.argv.slice(2);
 const outBase = files.pop();
+// Node-style platform of the binary being built (scripts/build/codegen.ts sets
+// it); classes with a `platform` are generated for that target only.
+const targetPlatform = process.env.TARGET_PLATFORM ?? process.platform;
+const rustCfgForPlatform = { darwin: `target_os = "macos"`, linux: `target_os = "linux"`, win32: `windows` };
 let externs = "";
 const CommonIdentifiers = {
   "name": true,
@@ -1889,8 +1893,10 @@ function generateRust(
     structuredClone = false,
     rustPath,
     sharedThis = true,
+    platform,
   } = {} as ClassDefinition,
 ) {
+  const cfg = platform ? `#[cfg(${rustCfgForPlatform[platform]})]\n` : "";
   const gc_fields = Object.entries({
     ...proto,
     ...Object.fromEntries((values || []).map(a => [a, { internal: true }])),
@@ -2212,12 +2218,12 @@ ${gcAccessors}
 /// Native backing type for \`JS${typeName}.m_ctx\`. Re-export of the real
 /// struct so the thunks below call its inherent methods directly. A missing
 /// method is a compile error — fix it in \`${rustPath}\`, not here.
-#[allow(dead_code, unreachable_pub, unused)]
+${cfg}#[allow(dead_code, unreachable_pub, unused)]
 pub use ${rustPath} as ${typeName};
 
-${thunks.join("\n\n")}
+${thunks.map(t => cfg + t).join("\n\n")}
 
-${jsModule}
+${cfg}${jsModule}
 `,
   };
 }
@@ -2526,16 +2532,20 @@ const classes: ClassDefinition[] = [];
     }
 
     console.log("Found", result.default.length, "classes from", file);
-    for (let { name, proto = {}, klass = {} } of result.default) {
+    for (let { name, proto = {}, klass = {}, platform } of result.default) {
+      if (platform && !(platform in rustCfgForPlatform)) {
+        errors.push(new TypeError(`Class "${name}" has unknown platform ${JSON.stringify(platform)}`));
+      }
       let protoProps = Object.keys(proto).length ? `${Object.keys(proto).length} fields` : "";
       let klassProps = Object.keys(klass).length ? `${Object.keys(klass).length} class fields` : "";
       let props = [protoProps, klassProps].filter(Boolean).join(", ");
       if (props.length) props = ` (${props})`;
+      if (platform && platform !== targetPlatform) props += ` (skipped: ${platform} only)`;
       console.log(`  - ${name}` + props);
     }
 
     for (const def of result.default) def._classesFilePath = filepath;
-    classes.push(...result.default);
+    classes.push(...result.default.filter(def => !def.platform || def.platform === targetPlatform));
   }
 
   if (errors.length) {

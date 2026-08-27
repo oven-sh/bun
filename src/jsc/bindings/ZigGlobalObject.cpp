@@ -3733,7 +3733,8 @@ static JSSourceCode* fetchStandaloneSource(Zig::GlobalObject* globalObject, JSSt
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorableResolvedSource res;
     auto keyBun = Bun::toString(key);
-    auto source = Bun::toString(String("undefined"_s));
+    auto referrer = String("undefined"_s); // Bun::toString borrows the impl
+    auto source = Bun::toString(referrer);
     JSValue result = Bun::fetchESMSourceCodeSync(globalObject, keyJS, &res, &keyBun, &source, nullptr);
     RETURN_IF_EXCEPTION(scope, nullptr);
     return result ? dynamicDowncast<JSSourceCode>(result) : nullptr;

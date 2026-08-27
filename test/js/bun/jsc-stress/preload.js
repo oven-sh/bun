@@ -32,3 +32,7 @@ globalThis.fullGC = jsc.fullGC;
 globalThis.edenGC = jsc.edenGC;
 globalThis.numberOfDFGCompiles = jsc.numberOfDFGCompiles;
 globalThis.noDFG = jsc.noFTL;
+
+// drainMicrotasks: run the pending microtasks now, so a fixture can check the
+// result of its async work before the script ends.
+globalThis.drainMicrotasks = jsc.drainMicrotasks;

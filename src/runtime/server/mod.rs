@@ -3179,15 +3179,6 @@ pub type DebugHTTPServer = NewServer<false, true>;
 pub type DebugHTTPSServer = NewServer<true, true>;
 
 // ─── AnyServer ───────────────────────────────────────────────────────────────
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub enum AnyServerTag {
-    HTTPServer = 0,
-    HTTPSServer = 1,
-    DebugHTTPServer = 2,
-    DebugHTTPSServer = 3,
-}
-
 /// The VM's `--hot` registry: running servers by `ServerConfig::id`. A server
 /// removes itself in [`NewServer::stop`] / [`NewServer::teardown`], before it
 /// can be freed.

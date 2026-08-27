@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use core::sync::atomic::Ordering;
 
 use bun_core::MutableString;
-use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
+use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_http::async_http::Options as HttpOptions;
 use bun_http::{
@@ -288,7 +288,7 @@ impl S3HttpSimpleTask {
         crate::jsc_hooks::ActiveHandle::S3Request(core::ptr::NonNull::new(this).expect("task"))
             .unregister();
         // SAFETY: `this` was produced by `S3HttpSimpleTask::new` (heap::alloc) and ownership is
-        // reclaimed here exactly once via the ConcurrentTask `AutoDeinit::ManualDeinit` contract;
+        // reclaimed here exactly once via the intrusive (container-owned) ConcurrentTask;
         // `this` is dropped at scope exit.
         let mut this = unsafe { bun_core::heap::take(this) };
 
@@ -434,9 +434,7 @@ impl S3HttpSimpleTask {
             // JS thread may free `this` the moment it is queued.
             unsafe {
                 let ticket = (*this).http_ticket.take().expect(Self::HOLDS_TICKET);
-                let queued = core::ptr::NonNull::from(
-                    (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
-                );
+                let queued = core::ptr::NonNull::from((*this).concurrent_task.from(this));
                 ticket.post(queued);
             }
         }
@@ -455,9 +453,7 @@ impl S3HttpSimpleTask {
             (*this).result.fail = Some(bun_http::Error::Aborted);
             (*this).result.has_more = false;
             let ticket = (*this).http_ticket.take().expect(Self::HOLDS_TICKET);
-            let queued = core::ptr::NonNull::from(
-                (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
-            );
+            let queued = core::ptr::NonNull::from((*this).concurrent_task.from(this));
             ticket.post(queued);
         }
     }

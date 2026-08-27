@@ -648,9 +648,15 @@ impl ArrayBuffer {
 /// GC-roots the cell. `Drop` releases what was taken. Constructed on the JS
 /// thread; a `root()`ed value is dropped there too, while a `pin()`-only value
 /// held by a `Blob` store drops wherever the store's last ref goes.
+///
+/// A pin does not stop `ArrayBuffer.prototype.resize()`: a shrink unmaps the
+/// trimmed pages under the borrow. [`root_read_only`](Self::root_read_only)
+/// is the constructor for a job that only reads a buffer it cannot watch.
 pub struct PinnedArrayBuffer {
     buffer: ArrayBuffer,
     rooted: bool,
+    /// The bytes `buffer.ptr` points at when [`root_read_only`](Self::root_read_only) took a copy.
+    copy: Option<Vec<u8>>,
 }
 
 impl PinnedArrayBuffer {
@@ -669,6 +675,7 @@ impl PinnedArrayBuffer {
         Some(Self {
             buffer,
             rooted: false,
+            copy: None,
         })
     }
 
@@ -680,8 +687,28 @@ impl PinnedArrayBuffer {
         Some(this)
     }
 
+    /// [`root`](Self::root) for a job that only reads the bytes. A resizable
+    /// non-shared buffer can shrink while the job runs, so its current bytes are
+    /// copied and the view reads the copy. A fixed-length buffer cannot shrink
+    /// and a growable `SharedArrayBuffer` only grows in place, so both stay
+    /// borrowed. `None` also when the copy cannot be allocated.
+    pub fn root_read_only(global: &JSGlobalObject, value: JSValue) -> Option<Self> {
+        let mut this = Self::root(global, value)?;
+        if this.buffer.resizable && !this.buffer.shared && this.buffer.byte_len > 0 {
+            let bytes = this.buffer.byte_slice();
+            let mut copy = Vec::new();
+            copy.try_reserve_exact(bytes.len()).ok()?;
+            copy.extend_from_slice(bytes);
+            global.vm().report_extra_memory(copy.len());
+            this.buffer.ptr = copy.as_mut_ptr();
+            this.copy = Some(copy);
+        }
+        Some(this)
+    }
+
     #[inline]
     pub fn slice_mut(&mut self) -> &mut [u8] {
+        debug_assert!(self.copy.is_none(), "a read-only root is not writable");
         self.buffer.byte_slice_mut()
     }
 
@@ -690,6 +717,7 @@ impl PinnedArrayBuffer {
     pub fn defuse(&mut self) {
         self.buffer = ArrayBuffer::default();
         self.rooted = false;
+        self.copy = None;
     }
 }
 

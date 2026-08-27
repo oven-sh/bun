@@ -342,7 +342,7 @@ impl StringOrBuffer<'static> {
     }
 
     /// `value` is ArrayBuffer-like (the caller checked): borrowed for `Sync`,
-    /// pinned and GC-rooted for `Async`.
+    /// pinned and GC-rooted for `Async` (a resizable buffer is copied, the job only reads it).
     pub(crate) fn buffer_from_js(
         global: &JSGlobalObject,
         value: JSValue,
@@ -351,7 +351,7 @@ impl StringOrBuffer<'static> {
         if flavor == Flavor::Sync {
             return Ok(Self::Buffer(Buffer::from_array_buffer(global, value)));
         }
-        match PinnedArrayBuffer::root(global, value) {
+        match PinnedArrayBuffer::root_read_only(global, value) {
             Some(buffer) => Ok(Self::PinnedBuffer(buffer)),
             None => Err(global.throw_out_of_memory()),
         }
@@ -1100,7 +1100,7 @@ impl PathLikeExt for PathLike<'_> {
         let path = match arg.js_type() {
             JSType::Uint8Array | JSType::DataView | JSType::ArrayBuffer => {
                 let buffer = if arguments.will_be_async {
-                    PinnedArrayBuffer::root(ctx, arg)
+                    PinnedArrayBuffer::root_read_only(ctx, arg)
                 } else {
                     PinnedArrayBuffer::pin(ctx, arg)
                 }

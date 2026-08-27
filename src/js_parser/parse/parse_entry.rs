@@ -2157,8 +2157,7 @@ impl<'a> Parser<'a> {
         let ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?;
 
         if reject_import_statements {
-            // An empty range marks a record the parser generated (the JSX runtime
-            // import). Only an import the user wrote gets this error.
+            // An empty range marks a parser-generated record, like the JSX runtime import.
             let import_record: Option<&ImportRecord> =
                 ast.import_records.as_slice().iter().find(|import_record| {
                     !import_record

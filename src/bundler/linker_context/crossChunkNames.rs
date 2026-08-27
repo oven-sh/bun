@@ -221,14 +221,20 @@ pub(crate) fn assign_minified(
         }
         for items in js.imports_from_other_chunks.values() {
             for item in items.iter() {
-                r.pin(item.r#ref, *c.cross_chunk_names.get(&item.r#ref).unwrap())?;
+                // A binding imported by the name its entry point exports it
+                // under has no bundle-wide name; each chunk names it alone.
+                if let Some(name) = c.cross_chunk_names.get(&item.r#ref) {
+                    r.pin(item.r#ref, *name)?;
+                }
             }
         }
     }
     Ok(())
 }
 
-/// Writes the names into the cross-chunk `export {}` / `import {}` clause items.
+/// Writes the names into the cross-chunk `export {}` / `import {}` clause
+/// items. An import clause item that already names the export it binds to
+/// (an entry point's own export, see `CrossChunkImportItem::alias`) is kept.
 pub(crate) fn apply_to_clauses(c: &LinkerContext, chunks: &mut [Chunk]) {
     if c.cross_chunk_names.is_empty() {
         return;
@@ -248,8 +254,9 @@ pub(crate) fn apply_to_clauses(c: &LinkerContext, chunks: &mut [Chunk]) {
                 _ => continue,
             };
             for item in items {
-                item.alias =
-                    bun_ast::StoreStr::new(*c.cross_chunk_names.get(&item.name.ref_).unwrap());
+                if let Some(name) = c.cross_chunk_names.get(&item.name.ref_) {
+                    item.alias = bun_ast::StoreStr::new(*name);
+                }
             }
         }
     }

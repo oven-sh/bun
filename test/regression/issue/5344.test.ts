@@ -17,7 +17,8 @@ test("code splitting with re-exports between entry points should not produce dup
   });
 
   expect(result.success).toBe(true);
-  expect(result.outputs.length).toBe(3); // entry-a.js, entry-b.js, chunk-*.js
+  // entry-b.js keeps its own module; entry-a.js imports `b` from it.
+  expect(result.outputs.map(o => o.path.split(/[\\/]/).pop()).sort()).toEqual(["entry-a.js", "entry-b.js"]);
 
   const entryB = result.outputs.find(o => o.path.endsWith("entry-b.js"));
   expect(entryB).toBeDefined();
@@ -26,6 +27,9 @@ test("code splitting with re-exports between entry points should not produce dup
 
   const exportMatches = entryBContent.match(/^export\s*\{/gm);
   expect(exportMatches?.length).toBe(1);
+
+  const entryA = result.outputs.find(o => o.path.endsWith("entry-a.js"));
+  expect(await entryA!.text()).toMatch(/import\s*\{\s*b\s*\}\s*from "\.\/entry-b\.js"/);
 
   const entryAUrl = Bun.pathToFileURL(`${dir}/dist/entry-a.js`);
   const entryBUrl = Bun.pathToFileURL(`${dir}/dist/entry-b.js`);

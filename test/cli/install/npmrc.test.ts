@@ -1437,6 +1437,10 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     publicManifest?: boolean;
     /** Serve over https with the harness certificate (`install` passes it as `--ca`). */
     secure?: boolean;
+    /** The package the manifest describes (default `no-deps`); a scoped name is served at `@scope%2fname`. */
+    packageName?: string;
+    /** A query string appended to the advertised `dist.tarball` URL. */
+    tarballQuery?: string;
   };
 
   // Serves no-deps@1.0.0 and answers 401 to any request that does not carry
@@ -1448,6 +1452,8 @@ describe.concurrent("//host/ credential lines are matched against the request UR
       tarballPath = "/no-deps/-/no-deps-1.0.0.tgz",
       publicManifest,
       secure,
+      packageName = "no-deps",
+      tarballQuery = "",
     } = options;
     const requests: Req[] = [];
     const server = Bun.serve({
@@ -1458,7 +1464,7 @@ describe.concurrent("//host/ credential lines are matched against the request UR
         const url = new URL(req.url);
         const auth = req.headers.get("authorization");
         requests.push({ path: url.pathname, auth });
-        const isManifest = url.pathname === `${registryPath}/no-deps`;
+        const isManifest = url.pathname === `${registryPath}/${packageName.replace("/", "%2f")}`;
         if (auth !== expectedAuth && !(isManifest && publicManifest)) {
           return new Response("unauthorized", { status: 401 });
         }
@@ -1466,13 +1472,13 @@ describe.concurrent("//host/ credential lines are matched against the request UR
         if (isManifest) {
           const origin = tarballOrigin ? tarballOrigin() : `${secure ? "https" : "http"}://127.0.0.1:${server.port}`;
           return Response.json({
-            name: "no-deps",
+            name: packageName,
             "dist-tags": { latest: "1.0.0" },
             versions: {
               "1.0.0": {
-                name: "no-deps",
+                name: packageName,
                 version: "1.0.0",
-                dist: { tarball: `${origin}${tarballPath}` },
+                dist: { tarball: `${origin}${tarballPath}${tarballQuery}` },
               },
             },
           });
@@ -1875,8 +1881,7 @@ describe.concurrent("//host/ credential lines are matched against the request UR
   // npm's fallback: a tarball with no `.npmrc` line of its own gets the registry's
   // credentials when it is on the registry's origin, whatever its path. GitLab's
   // instance-level registry serves tarballs under a project path, so this is the
-  // documented setup (#30513). A path the server would resolve elsewhere (`..`,
-  // `%2e%2e`, backslash) still matches nothing.
+  // documented setup (#30513).
   test("registry credentials follow a tarball on a sibling path of the same origin", async () => {
     const registryPath = "/npm/team-a";
     const tarballPath = "/npm/team-b/no-deps/-/no-deps-1.0.0.tgz";
@@ -2060,8 +2065,11 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     expect(tarballRequests).toEqual([null]);
   });
 
+  // On the registry's own origin a dot segment cannot change who receives the
+  // credential, so the registry's token follows the tarball as it does on main and in
+  // npm; the guard below only applies to a `.npmrc` line looked up for another host.
   test.each(["/npm/team-a/../team-b/x.tgz", "/npm/team-a/%2e%2e/team-b/x.tgz", "/npm/team-a/..%2fteam-b/x.tgz"])(
-    "a dist.tarball of %s carries no credentials",
+    "a dist.tarball of %s on the registry's origin still carries the registry's credentials",
     async tarballPath => {
       const registryPath = "/npm/team-a";
       using registry = mockRegistry("Bearer team-a-token", { registryPath, tarballPath });
@@ -2074,14 +2082,184 @@ describe.concurrent("//host/ credential lines are matched against the request UR
         ].join("\n"),
       });
 
-      const { exitCode } = await install(String(dir));
+      await install(String(dir));
 
-      // Bun's URL parser may normalise the path before sending; either way no token goes.
       expect(registry.requests[0]).toEqual({ path: `${registryPath}/no-deps`, auth: "Bearer team-a-token" });
-      expect(registry.requests.slice(1).map(r => r.auth)).not.toContain("Bearer team-a-token");
+      expect(registry.requests.length).toBeGreaterThan(1);
+      expect(registry.requests.slice(1).map(r => r.auth)).toEqual(
+        registry.requests.slice(1).map(() => "Bearer team-a-token"),
+      );
+    },
+  );
+
+  // A `.npmrc` line is looked up for the tarball's own path only when the server would
+  // resolve that path as written. A `%2f` that splits a dot segment, or a `%5c`, is
+  // left for the server to decode, so the walk matches nothing; the plain and `%2e`
+  // spellings are normalised away before the walk, so they match the resolved path.
+  test.each([
+    "/npm/team-a/../team-b/x.tgz",
+    "/npm/team-a/./x.tgz",
+    "/npm/team-a/%2e%2e/team-b/x.tgz",
+    "/npm/team-a/%2E%2E/team-b/x.tgz",
+    "/npm/team-a/%2e./team-b/x.tgz",
+    "/npm/team-a/.%2e/team-b/x.tgz",
+    "/npm/team-a/..%2Fteam-b/x.tgz",
+    "/npm/team-a/%2f../team-b/x.tgz",
+    "/npm/team-a/a%2f..%2fteam-b/x.tgz",
+    "/npm/team-a/%5c..%5cteam-b/x.tgz",
+    "/npm/team-a/%5C..%5Cteam-b/x.tgz",
+  ])("a line scoped to another host's path is not applied to its tarball at %s", async tarballPath => {
+    using cdn = mockRegistry("Bearer cdn-a", { secure: true, tarballPath });
+    using registry = mockRegistry("Bearer registry-token", { tarballOrigin: () => cdn.origin, tarballPath });
+    using dir = tempDir("npmrc-url-auth-cdn-dot-segments", {
+      "package.json": packageJson,
+      ".npmrc": [
+        `registry=${registry.origin}/`,
+        `//${registry.host}/:_authToken=registry-token`,
+        `//${cdn.host}/npm/team-a/:_authToken=cdn-a`,
+        "",
+      ].join("\n"),
+    });
+
+    await install(String(dir));
+
+    expect(registry.requests[0]).toEqual({ path: "/no-deps", auth: "Bearer registry-token" });
+    expect(cdn.requests.map(r => r.auth)).not.toContain("Bearer cdn-a");
+    expect(cdn.requests.map(r => r.auth)).not.toContain("Bearer registry-token");
+  });
+
+  // The `..` in the new URL resolves to a sibling of the default registry, so the
+  // default's token must not follow it.
+  test.each([
+    ["--registry", (origin: string) => [["--registry", `${origin}/npm/team-a/../team-b/`], {}] as const],
+    [
+      "NPM_CONFIG_REGISTRY",
+      (origin: string) => [[], { NPM_CONFIG_REGISTRY: `${origin}/npm/team-a/../team-b/` }] as const,
+    ],
+  ])(
+    "a registry from %s that dot-segments to a sibling path does not inherit the default's token",
+    async (_source, overrideFor) => {
+      using registry = mockRegistry("Bearer team-a-token", { registryPath: "/npm/team-b" });
+      using dir = tempDir("npmrc-url-auth-dot-segment-registry", {
+        "package.json": packageJson,
+        ".npmrc": [
+          `registry=${registry.origin}/npm/team-a/`,
+          `//${registry.host}/npm/team-a/:_authToken=team-a-token`,
+          "",
+        ].join("\n"),
+        "home/.gitkeep": "",
+      });
+      const [args, extraEnv] = overrideFor(registry.origin);
+
+      const { exitCode } = await install(String(dir), [...args], { ...extraEnv });
+
+      expect(registry.requests[0]).toEqual({ path: "/npm/team-b/no-deps", auth: null });
       expect(exitCode).toBe(1);
     },
   );
+
+  // A bare `$VAR` registry URL is expanded only when the scope is built, so its
+  // `.npmrc` line can only be found by the walk that runs after every source.
+  test("a scoped registry written as $VAR picks up its .npmrc line", async () => {
+    using registry = mockRegistry("Bearer corp-token", { registryPath: "/npm", packageName: "@corp/no-deps" });
+    using dir = tempDir("npmrc-url-auth-env-var-scope", {
+      "package.json": JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "@corp/no-deps": "1.0.0" } }),
+      ".npmrc": [`@corp:registry=$CORP_REG`, `//${registry.host}/npm/:_authToken=corp-token`, ""].join("\n"),
+      "home/.gitkeep": "",
+    });
+
+    const { exitCode } = await install(String(dir), [], { CORP_REG: `${registry.origin}/npm/` });
+
+    expect(registry.requests.map(r => r.auth)).toEqual(["Bearer corp-token", "Bearer corp-token"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a bunfig registry written as $VAR picks up its .npmrc line", async () => {
+    using registry = mockRegistry("Bearer corp-token", { registryPath: "/npm" });
+    using dir = tempDir("npmrc-url-auth-env-var-bunfig", {
+      "package.json": packageJson,
+      "bunfig.toml": `[install]\nregistry = "$MY_REG"\n`,
+      ".npmrc": [`//${registry.host}/npm/:_authToken=corp-token`, ""].join("\n"),
+      "home/.gitkeep": "",
+    });
+
+    const { exitCode } = await install(String(dir), [], { MY_REG: `${registry.origin}/npm/` });
+
+    expect(registry.requests.map(r => r.auth)).toEqual(["Bearer corp-token", "Bearer corp-token"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // `_auth` goes out as `Basic <value>` verbatim at request time too.
+  test("an _auth line applies to a --registry registry and its tarball", async () => {
+    const blob = "opaque-blob";
+    using registry = mockRegistry(`Basic ${blob}`);
+    using dir = tempDir("npmrc-url-auth-basic-cli", {
+      "package.json": packageJson,
+      ".npmrc": [`//${registry.host}/:_auth=${blob}`, ""].join("\n"),
+      "home/.gitkeep": "",
+    });
+
+    const { exitCode } = await install(String(dir), ["--registry", `${registry.origin}/`]);
+
+    expect(registry.requests.map(r => r.auth)).toEqual([`Basic ${blob}`, `Basic ${blob}`]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("an _auth line keyed to the tarball host applies to the tarball", async () => {
+    const blob = "opaque-blob";
+    using cdn = mockRegistry(`Basic ${blob}`, { secure: true });
+    using registry = mockRegistry("Bearer registry-token", { tarballOrigin: () => cdn.origin });
+    using dir = tempDir("npmrc-url-auth-basic-cdn", {
+      "package.json": packageJson,
+      ".npmrc": [
+        `registry=${registry.origin}/`,
+        `//${registry.host}/:_authToken=registry-token`,
+        `//${cdn.host}/:_auth=${blob}`,
+        "",
+      ].join("\n"),
+    });
+
+    const { exitCode } = await install(String(dir));
+
+    expect(cdn.requests).toEqual([{ path: "/no-deps/-/no-deps-1.0.0.tgz", auth: `Basic ${blob}` }]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The query string is not part of the path the key or the guard look at.
+  test("a query on a same-origin dist.tarball does not disturb the registry's credentials", async () => {
+    using registry = mockRegistry("Bearer registry-token", { tarballQuery: "?p=/../x&q=%5c" });
+    using dir = tempDir("npmrc-url-auth-query-same-origin", {
+      "package.json": packageJson,
+      ".npmrc": [`registry=${registry.origin}/`, `//${registry.host}/:_authToken=registry-token`, ""].join("\n"),
+    });
+
+    const { exitCode } = await install(String(dir));
+
+    expect(registry.requests.map(r => r.auth)).toEqual(["Bearer registry-token", "Bearer registry-token"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a query on a cross-host dist.tarball still resolves the deeper line", async () => {
+    using cdn = mockRegistry("Bearer cdn-token", { secure: true, tarballPath: "/npm/x.tgz", tarballQuery: "?sig=abc" });
+    using registry = mockRegistry("Bearer registry-token", {
+      tarballOrigin: () => cdn.origin,
+      tarballPath: "/npm/x.tgz",
+    });
+    using dir = tempDir("npmrc-url-auth-query-cdn", {
+      "package.json": packageJson,
+      ".npmrc": [
+        `registry=${registry.origin}/`,
+        `//${registry.host}/:_authToken=registry-token`,
+        `//${cdn.host}/npm/:_authToken=cdn-token`,
+        "",
+      ].join("\n"),
+    });
+
+    const { exitCode } = await install(String(dir));
+
+    expect(cdn.requests).toEqual([{ path: "/npm/x.tgz", auth: "Bearer cdn-token" }]);
+    expect(exitCode).toBe(0);
+  });
 
   // Bun's docs long showed the key with a scheme; npm never writes one, but it must keep
   // working. The scheme is dropped when the line is read.

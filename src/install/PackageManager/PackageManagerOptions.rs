@@ -293,16 +293,16 @@ impl Options {
     /// registry URL resolved to, that key is already reflected in `scope`, behind any
     /// bunfig, env or CLI credential, so `scope` wins; any other key is the tarball's
     /// own and wins as in npm.
-    /// A path the server would resolve elsewhere (`..`, `%2e`, a backslash) gets
-    /// nothing, and an `http://` tarball on another host never gets a key's credential.
+    /// A `.npmrc` line is only looked up for a path the server would resolve as
+    /// written (no `%2f`-split dot segment, no `%5c`); on the registry's own origin a
+    /// dot segment changes nothing about who receives the credential, so the
+    /// registry's credentials follow such a tarball as they do in npm. An `http://`
+    /// tarball on another host never gets a key's credential.
     pub fn tarball_credentials<'a>(
         &'a self,
         scope: &'a Npm::registry::Scope,
         tarball: &bun_url::URL,
     ) -> Option<&'a Npm::registry::Scope> {
-        if !Npm::registry::path_is_canonical(tarball.pathname) {
-            return None;
-        }
         // `dist.tarball` is registry-controlled and `.npmrc` keys carry no scheme, so a
         // key's credential goes over plaintext only back to the registry's own origin,
         // which already sees the registry's credentials that way; never to another host.
@@ -341,15 +341,17 @@ impl Options {
     }
 
     /// Give every scope that ended up without credentials the ones `.npmrc`
-    /// configures for its registry URL. `--registry` and `$NPM_CONFIG_REGISTRY` are
-    /// applied after the `.npmrc` files were read, so only this pass can serve them.
+    /// configures for its registry URL, by npm's key walk. A registry from
+    /// `bunfig.toml`, `--registry` or `$NPM_CONFIG_REGISTRY` is only known here, and
+    /// a credential from any of those sources outranks a `.npmrc` line; one written
+    /// into a `.npmrc` `registry=` URL does not.
     fn fill_credentials_from_url_auth(&mut self) {
         if self.url_auth.is_empty() {
             return;
         }
         let url_auth = &self.url_auth;
         for scope in core::iter::once(&mut self.scope).chain(self.registries.values_mut()) {
-            if scope.has_credentials() {
+            if scope.has_credentials() && !scope.credentials_from_url {
                 continue;
             }
             if let Some(credentials) = Npm::registry::UrlAuth::find(url_auth, &scope.url.url()) {
@@ -375,8 +377,8 @@ fn same_origin(url: &bun_url::URL, base: &bun_url::URL) -> bool {
 fn registry_under(url: &bun_url::URL, base: &bun_url::URL) -> bool {
     bun_core::without_trailing_slash(url.host) == bun_core::without_trailing_slash(base.host)
         && (url.is_https() || !base.is_https())
-        && Npm::registry::path_is_canonical(url.pathname)
-        && path_under(url.pathname, base.pathname)
+        && Npm::registry::path_is_canonical(url.path)
+        && path_under(url.path, base.path)
 }
 
 /// `base`'s path is a segment-wise prefix of `path`, so `/npm/team-ab/x` is not under
@@ -526,25 +528,6 @@ fn leak_static(s: &[u8]) -> &'static [u8] {
 }
 
 impl Options {
-    /// Give every scope that ended up without credentials the ones `.npmrc`
-    /// configures for its registry URL, by npm's key walk. A registry from
-    /// `bunfig.toml`, `--registry` or `$NPM_CONFIG_REGISTRY` is only known here, and
-    /// a credential from any of those sources outranks a `.npmrc` line.
-    fn fill_credentials_from_url_auth(&mut self) {
-        if self.url_auth.is_empty() {
-            return;
-        }
-        let url_auth = &self.url_auth;
-        for scope in core::iter::once(&mut self.scope).chain(self.registries.values_mut()) {
-            if scope.has_credentials() && !scope.credentials_from_url {
-                continue;
-            }
-            if let Some(credentials) = Npm::registry::UrlAuth::find(url_auth, &scope.url.url()) {
-                scope.copy_credentials_from(credentials);
-            }
-        }
-    }
-
     pub(crate) fn load(
         &mut self,
         log: &mut bun_ast::Log,
@@ -1246,11 +1229,4 @@ impl Enable {
     pub(crate) fn global_virtual_store(self) -> bool {
         self.contains(Enable::GLOBAL_VIRTUAL_STORE)
     }
-}
-
-/// `new` is on `base`'s host and does not downgrade https to http, so `base`'s
-/// credentials may follow it: the shape `npm_config_registry` and `--registry` share.
-fn same_host_not_downgraded(new: &bun_url::URL, base: &bun_url::URL) -> bool {
-    bun_core::without_trailing_slash(new.host) == bun_core::without_trailing_slash(base.host)
-        && (new.is_https() || !base.is_https())
 }

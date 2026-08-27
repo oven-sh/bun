@@ -154,10 +154,8 @@ macro_rules! dispatch {
 impl AnyRequestContext {
     pub(crate) fn set_additional_on_abort_callback(self, cb: Option<AdditionalOnAbortCallback>) {
         dispatch!(self, (), |_T, ctx| {
-            if let Some(old) = ctx.additional_on_abort.replace(cb) {
-                debug_assert!(false, "additional_on_abort set twice");
-                old.deref();
-            }
+            let old = ctx.additional_on_abort.replace(cb);
+            debug_assert!(old.is_none(), "additional_on_abort set twice");
         })
     }
 

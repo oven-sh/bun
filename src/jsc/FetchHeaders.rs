@@ -344,8 +344,8 @@ impl HeadersRef {
         global: &JSGlobalObject,
         names: &[StringPointer],
         values: &[StringPointer],
-        buf: &ZigString,
-    ) -> Option<Self> {
+        buf: &EncodedSlice,
+    ) -> JsResult<Self> {
         assert_eq!(names.len(), values.len());
         // C++ only reads the columns.
         FetchHeaders::create(

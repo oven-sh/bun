@@ -327,9 +327,7 @@ pub trait WebSocketHandler: Sized + 'static {
 /// fresh ref guard (so `ws.close()` from inside a handler — which dispatches
 /// `on_close` synchronously — cannot free the object under the running
 /// handler); the socket's own ref is released after `on_close` returns.
-pub trait WebSocketHandlerRef:
-    bun_ptr::AnyRefCounted<DestructorCtx = ()> + Sized + 'static
-{
+pub trait WebSocketHandlerRef: bun_ptr::AnyRefCounted + Sized + 'static {
     const HAS_ON_MESSAGE: bool = true;
     const HAS_ON_DRAIN: bool = true;
     const HAS_ON_PING: bool = true;
@@ -352,31 +350,31 @@ impl<T: WebSocketHandlerRef> WebSocketHandler for T {
     unsafe fn on_open(this: *mut Self, ws: AnyWebSocket) {
         // SAFETY: trait contract — `this` is the socket's user-data, which holds a ref (`upgrade_ref`).
         let this = unsafe { bun_ptr::ThisPtr::new(this) };
-        let _keep = this.ref_guard();
+        let _keep = bun_ptr::RefPtr::from_this(this);
         <T as WebSocketHandlerRef>::on_open(this, ws)
     }
     unsafe fn on_message(this: *mut Self, ws: AnyWebSocket, message: &[u8], opcode: Opcode) {
         // SAFETY: see `on_open`.
         let this = unsafe { bun_ptr::ThisPtr::new(this) };
-        let _keep = this.ref_guard();
+        let _keep = bun_ptr::RefPtr::from_this(this);
         <T as WebSocketHandlerRef>::on_message(this, ws, message, opcode)
     }
     unsafe fn on_drain(this: *mut Self, ws: AnyWebSocket) {
         // SAFETY: see `on_open`.
         let this = unsafe { bun_ptr::ThisPtr::new(this) };
-        let _keep = this.ref_guard();
+        let _keep = bun_ptr::RefPtr::from_this(this);
         <T as WebSocketHandlerRef>::on_drain(this, ws)
     }
     unsafe fn on_ping(this: *mut Self, ws: AnyWebSocket, message: &[u8]) {
         // SAFETY: see `on_open`.
         let this = unsafe { bun_ptr::ThisPtr::new(this) };
-        let _keep = this.ref_guard();
+        let _keep = bun_ptr::RefPtr::from_this(this);
         <T as WebSocketHandlerRef>::on_ping(this, ws, message)
     }
     unsafe fn on_pong(this: *mut Self, ws: AnyWebSocket, message: &[u8]) {
         // SAFETY: see `on_open`.
         let this = unsafe { bun_ptr::ThisPtr::new(this) };
-        let _keep = this.ref_guard();
+        let _keep = bun_ptr::RefPtr::from_this(this);
         <T as WebSocketHandlerRef>::on_pong(this, ws, message)
     }
     unsafe fn on_close(this: *mut Self, ws: AnyWebSocket, code: i32, message: &[u8]) {
@@ -384,7 +382,7 @@ impl<T: WebSocketHandlerRef> WebSocketHandler for T {
         // calls back into this user-data afterwards, so the socket's ref is released here.
         let socket_ref = unsafe { bun_ptr::RefPtr::<T>::from_raw(this) };
         <T as WebSocketHandlerRef>::on_close(socket_ref.this_ptr(), ws, code, message);
-        socket_ref.deref();
+        drop(socket_ref);
     }
 }
 

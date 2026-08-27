@@ -538,7 +538,7 @@ describe("bundler", () => {
         w2.terminate();
         const root = process.platform === "win32" ? "B:/~BUN/root/" : "/$bunfs/root/";
         console.log(require.resolve(s("./both.ts")) === root + "both.js", Bun.resolveSync("./both", import.meta.dir) === root + "both.js");
-        console.log(import.meta.path.replaceAll("\\\\", "/") === root + "out" + (process.platform === "win32" ? ".exe" : ""));
+        console.log(import.meta.path.replaceAll("\\\\", "/") === root + "out");
       `,
       "/both.js": `export default "both:embedded"; if (!Bun.isMainThread) postMessage("both:embedded worker");`,
     },
@@ -575,7 +575,7 @@ describe("bundler", () => {
           }
         };
         console.log(await outcome(s("./mod.ts")));          // maps to mod.js
-        console.log(await outcome(s("./UP.ts")), await outcome(s("./up.TS"))); // extension is case-insensitive; the name is not (posix)
+        console.log(await outcome(s("./UP.ts")), await outcome(s("./up.TS"))); // the extension is case-insensitive, the name is not
         console.log(await outcome(s("./mod.css")));         // not a source extension: no mapping
         console.log(await outcome(s("./mod.js/")));         // trailing slash
         console.log(await outcome(s("../mod.ts")));         // escapes the embedded root
@@ -590,7 +590,7 @@ describe("bundler", () => {
     run: {
       stdout: [
         "mod",
-        `UP ${isWindows ? "UP" : "ResolveMessage"}`,
+        "UP ResolveMessage",
         "ResolveMessage",
         "ResolveMessage",
         "ResolveMessage",

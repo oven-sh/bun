@@ -22,7 +22,7 @@ pub trait StandaloneModuleGraph: Send + Sync {
         let is_relative = matches!(specifier, [b'.', s, ..] | [b'.', b'.', s, ..] if bun_paths::is_sep_native(*s));
         let is_embedded_path =
             bun_options_types::standalone_path::is_bun_standalone_file_path(specifier);
-        if !is_relative && !is_embedded_path {
+        if (!is_relative && !is_embedded_path) || bun_paths::is_sep_native(specifier[specifier.len() - 1]) {
             return None;
         }
         let mut buf = bun_paths::path_buffer_pool::get();

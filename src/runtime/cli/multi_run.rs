@@ -259,10 +259,13 @@ impl<'a> ProcessHandle<'a> {
             end_time: None,
         });
         let self_ptr = std::ptr::from_mut::<Self>(self);
-        let process = &self.process.as_ref().unwrap().process;
+        // The exit handler re-borrows `self.process`, so go through the
+        // `Process` allocation itself rather than a borrow of the slot.
+        // SAFETY: just spawned; the slot's handle keeps it live.
+        let process = unsafe { &mut *self.process.as_ref().unwrap().process.as_ptr() };
         // SAFETY: `self` is the live `ProcessHandle` slot in `State.handles`;
         // it lives for the whole event loop and outlives `process`.
-        process.process_mut().set_exit_handler(unsafe {
+        process.set_exit_handler(unsafe {
             bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::MultiRunHandle, self_ptr)
         });
 

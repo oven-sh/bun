@@ -179,12 +179,15 @@ impl ProcessHandle {
         self.process_mut().set_exit_handler(h);
     }
 
-    /// See [`Process::watch_or_reap`]; may synchronously run the exit handler.
+    /// See [`Process::watch_or_reap`]; may synchronously run the exit handler,
+    /// so call this on a handle the handler does not re-borrow (a local, not
+    /// the owner's slot).
     pub fn watch_or_reap(&self) -> bun_sys::Result<bool> {
         self.process_mut().watch_or_reap()
     }
 
-    /// See [`Process::on_exit`]; runs the exit handler.
+    /// See [`Process::on_exit`]; runs the exit handler (same rule as
+    /// [`watch_or_reap`](Self::watch_or_reap)).
     pub fn on_exit(&self, status: Status, rusage: &Rusage) {
         self.process_mut().on_exit(status, rusage)
     }

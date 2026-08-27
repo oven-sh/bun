@@ -861,7 +861,6 @@ impl Lockfile {
     }
 
     /// Is dependency `id` declared by a local package ([`resolution::Tag::is_local_package`])?
-    /// Its `file:` path is then trusted like a root dependency's.
     ///
     /// A `Folder` parent is itself always declared by the root or a workspace: a
     /// folder dependency of any other package is recorded without dependencies
@@ -873,6 +872,20 @@ impl Lockfile {
         self.packages.items_resolution()[parent_id as usize]
             .tag
             .is_local_package()
+    }
+
+    /// May the folder path of dependency `id` leave its package directory? Yes
+    /// when a local package declares the dependency, or when a plain override or
+    /// resolution supplies the path (those are only ever parsed from the root
+    /// package.json). Both are user authored, like a root `file:` dependency.
+    pub(crate) fn is_trusted_folder_dependency(&self, id: DependencyID) -> bool {
+        if self.is_dependency_of_local_package(id) {
+            return true;
+        }
+        let buf = self.buffers.string_bytes.as_slice();
+        let dep = &self.buffers.dependencies[id as usize];
+        self.overrides
+            .contains_name(dep.name_hash, dep.name.slice(buf), buf)
     }
 
     /// Does this tree id belong to a workspace (including workspace root)?

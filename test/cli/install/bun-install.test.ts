@@ -10665,11 +10665,15 @@ for (const field of ["resolutions", "overrides"]) {
       }
 
       // The registry package's dependency resolved to the override's file: path
-      // (no registry request for it was made).
+      // (no registry request for it was made) and is linked under baz, since
+      // transitive folder dependencies are not hoisted.
       expect(urls.filter(url => url.includes("shared"))).toEqual([]);
       const lock = (await file(join(ctx.package_dir, "bun.lock")).text()).replaceAll("\\\\", "/");
       expect(lock).toContain('"baz/shared"');
       expect(lock).toContain("shared@file:");
+      expect(await exists(join(ctx.package_dir, "node_modules", "baz", "node_modules", "shared", "index.js"))).toBe(
+        true,
+      );
     });
   });
 

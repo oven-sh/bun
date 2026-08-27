@@ -232,6 +232,11 @@ static JSValue writeToArraySink(JSGlobalObject* globalObject, JSDirectStreamCont
 
 static JSValue writeToDirectSink(JSGlobalObject* globalObject, JSDirectStreamController* controller, JSValue chunk)
 {
+    if (Bun::WebStreams::isDetachedBufferSource(chunk)) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+        Bun::WebStreams::throwDetachedChunkError(globalObject, scope);
+        return {};
+    }
     switch (controller->m_sinkKind) {
     case DirectSinkKind::ArrayBuffer:
         return writeToArrayBufferSink(globalObject, controller, chunk);

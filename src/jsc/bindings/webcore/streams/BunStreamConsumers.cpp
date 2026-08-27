@@ -1699,8 +1699,13 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundOneShotDirectWrite, (JSGlobalO
     const auto* sink = uncheckedDowncast<JSOneShotDirectSink>(callFrame->uncheckedArgument(0));
     if (sink->m_closed)
         return JSValue::encode(jsUndefined());
+    JSValue chunk = callFrame->argument(1);
+    if (Bun::WebStreams::isDetachedBufferSource(chunk)) [[unlikely]] {
+        Bun::WebStreams::throwDetachedChunkError(globalObject, scope);
+        return {};
+    }
     MarkedArgumentBuffer arguments;
-    arguments.append(callFrame->argument(1));
+    arguments.append(chunk);
     RELEASE_AND_RETURN(scope, JSValue::encode(Bun::WebStreams::invokeMethod(vm, globalObject, sink->m_arrayBufferSink.get(), builtinNames(vm).writePublicName(), arguments)));
 }
 

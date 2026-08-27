@@ -1417,6 +1417,25 @@ describe("a chunk whose ArrayBuffer is detached after it was enqueued", () => {
     await expect(Bun.readableStreamToText(stream)).rejects.toThrow(detachedError);
   });
 
+  it("a direct stream's controller.write() rejects a chunk that is already detached", async () => {
+    const directSource = () => {
+      const chunk = new Uint8Array([104, 105]);
+      structuredClone(chunk.buffer, { transfer: [chunk.buffer] });
+      return new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          controller.write(chunk);
+          controller.close();
+        },
+      });
+    };
+    await expect(Bun.readableStreamToText(directSource())).rejects.toThrow(detachedError);
+    await expect(Bun.readableStreamToArrayBuffer(directSource())).rejects.toThrow(detachedError);
+    await expect(Bun.readableStreamToBytes(directSource())).rejects.toThrow(detachedError);
+    await expect(Bun.readableStreamToBlob(directSource())).rejects.toThrow(detachedError);
+    await expect(new Response(directSource()).text()).rejects.toThrow(detachedError);
+  });
+
   it("Bun.serve reports the error instead of silently sending an empty body", async () => {
     await using proc = Bun.spawn({
       cmd: [

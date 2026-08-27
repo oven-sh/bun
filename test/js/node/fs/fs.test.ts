@@ -6724,7 +6724,7 @@ it("fs.promises.stat reads a Buffer path captured at call time when its resizabl
       bunExe(),
       "-e",
       `
-        const fs = require("node:fs");
+        import fs from "node:fs";
         const encoded = new TextEncoder().encode(process.execPath);
         let wrong = 0;
         for (let i = 0; i < 20; i++) {
@@ -6758,8 +6758,8 @@ it("sync fs calls and Bun.file read a Buffer path captured at call time when its
       bunExe(),
       "-e",
       `
-        const fs = require("node:fs");
-        const path = require("node:path");
+        import fs from "node:fs";
+        import path from "node:path";
         const dir = process.cwd();
         function resizablePath(p) {
           const bytes = new TextEncoder().encode(p);

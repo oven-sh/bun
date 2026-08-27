@@ -1111,8 +1111,7 @@ impl PathLikeExt for PathLike<'_> {
                     PinnedArrayBuffer::pin(ctx, arg)
                 }
                 .ok_or_else(|| ctx.throw_out_of_memory())?;
-                // Read later than this call: on the pool thread, after another argument's getter
-                // ran (sync), or from a `Blob` store. A `resize(0)` in between unmaps the pages.
+                // Read after this call (pool thread, a later argument's getter, a `Blob` store): a shrink in between unmaps the pages.
                 if !buffer.copy_if_resizable(ctx) {
                     return Err(ctx.throw_out_of_memory());
                 }

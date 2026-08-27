@@ -1289,6 +1289,58 @@ it("RSA importKey with an unsupported usage names the algorithm", async () => {
   });
 });
 
+// WebIDL 2.7.1: the SyntaxError a WebCrypto operation rejects with is a
+// DOMException named "SyntaxError" (legacy code 12), not the ECMAScript
+// SyntaxError. Code that switches on `err.code` or `err instanceof
+// DOMException` (the documented WebCrypto idiom) relies on that identity.
+describe("usage-validation rejections are a SyntaxError DOMException", () => {
+  const identity = (p: Promise<unknown>) =>
+    p.then(
+      () => ({ resolved: true }),
+      e => ({
+        constructor: e.constructor.name,
+        isDOMException: e instanceof DOMException,
+        name: e.name,
+        code: e.code,
+      }),
+    );
+  const domSyntaxError = { constructor: "DOMException", isDOMException: true, name: "SyntaxError", code: 12 };
+
+  it("generateKey", async () => {
+    expect({
+      aesGcmSign: await identity(crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["sign"])),
+      hmacEncrypt: await identity(crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, true, ["encrypt"])),
+      ed25519Encrypt: await identity(crypto.subtle.generateKey({ name: "Ed25519" }, true, ["encrypt"])),
+      ecdsaEncrypt: await identity(
+        crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["encrypt"]),
+      ),
+      aesGcmEmpty: await identity(crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, [])),
+    }).toEqual({
+      aesGcmSign: domSyntaxError,
+      hmacEncrypt: domSyntaxError,
+      ed25519Encrypt: domSyntaxError,
+      ecdsaEncrypt: domSyntaxError,
+      aesGcmEmpty: domSyntaxError,
+    });
+  });
+
+  it("importKey", async () => {
+    expect({
+      hmacEncrypt: await identity(
+        crypto.subtle.importKey("raw", new Uint8Array(32), { name: "HMAC", hash: "SHA-256" }, true, ["encrypt"]),
+      ),
+      aesGcmSign: await identity(crypto.subtle.importKey("raw", new Uint8Array(32), "AES-GCM", true, ["sign"])),
+      pbkdf2Extractable: await identity(
+        crypto.subtle.importKey("raw", new Uint8Array(16), "PBKDF2", true, ["deriveBits"]),
+      ),
+    }).toEqual({
+      hmacEncrypt: domSyntaxError,
+      aesGcmSign: domSyntaxError,
+      pbkdf2Extractable: domSyntaxError,
+    });
+  });
+});
+
 // CryptoKey.usages and the JWK key_ops it is built from are ordered by the
 // KeyUsage enum in https://w3c.github.io/webcrypto/#dfn-KeyUsage, not
 // alphabetically, and not by the order the caller passed them in.

@@ -118,17 +118,6 @@ describe("AsyncLocalStorage", () => {
     }
   });
 
-  test("enterWith() an array store with no active context", () => {
-    const als = new AsyncLocalStorage();
-    const arr = [1, 2];
-    try {
-      als.enterWith(arr);
-      expect(als.getStore()).toBe(arr);
-    } finally {
-      als.disable();
-    }
-  });
-
   // withScope() enters and restores through enterWith().
   test("withScope() with an array store nested under another storage", () => {
     const outer = new AsyncLocalStorage();

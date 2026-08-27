@@ -737,33 +737,49 @@ module.exports = function isOdd(i) {
     expect(stdout.toString()).toContain("hi\nhello\n");
   });
 
-  // https://github.com/oven-sh/bun/issues/19327
-  test("should not leak .bun-tag sentinel or accumulate tags across patch cycles", async () => {
-    await using tempdir = tempDir("buntag", {
-      "package.json": JSON.stringify({
-        "name": "bun-patch-test",
-        "version": "1.0.0",
-        "dependencies": { "is-odd": "3.0.1" },
-      }),
+  describe(".bun-tag sentinel leak test", () => {
+    const registry = new VerdaccioRegistry();
+
+    beforeAll(async () => {
+      await registry.start();
     });
 
-    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(tempdir), ".bun-cache") };
-    await $`${bunExe()} i`.env(env).cwd(tempdir);
+    afterAll(() => {
+      registry.stop();
+    });
 
-    const pkgDir = join(String(tempdir), "node_modules/is-odd");
-    const patchfilePath = join(String(tempdir), "patches/is-odd@3.0.1.patch");
-    const sentinels = () => readdirSync(pkgDir).filter(name => name.startsWith(".bun-tag-"));
+    // https://github.com/oven-sh/bun/issues/19327
+    test("should not leak .bun-tag sentinel or accumulate tags across patch cycles", async () => {
+      await using tempdir = tempDir("buntag", {
+        "package.json": JSON.stringify({
+          "name": "bun-patch-test",
+          "version": "1.0.0",
+          "dependencies": { "basic-1": "1.0.0" },
+        }),
+      });
 
-    for (const cycle of [0, 1]) {
-      expectNoError(await $`${bunExe()} patch is-odd@3.0.1`.env(env).cwd(tempdir));
-      appendFileSync(join(pkgDir, "index.js"), `console.log(${cycle})\n`);
-      expectNoError(await $`${bunExe()} patch --commit ${pkgDir}`.env(env).cwd(tempdir));
-
-      expect(readFileSync(patchfilePath, "utf8")).not.toMatch(/\.bun-tag-[0-9a-f]+/);
-
+      const env = {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: join(String(tempdir), ".bun-cache"),
+        BUN_CONFIG_REGISTRY: registry.registryUrl(),
+      };
       await $`${bunExe()} i`.env(env).cwd(tempdir);
-      expect(sentinels()).toHaveLength(1);
-    }
+
+      const pkgDir = join(String(tempdir), "node_modules/basic-1");
+      const patchfilePath = join(String(tempdir), "patches/basic-1@1.0.0.patch");
+      const sentinels = () => readdirSync(pkgDir).filter(name => name.startsWith(".bun-tag-"));
+
+      for (const cycle of [0, 1]) {
+        expectNoError(await $`${bunExe()} patch basic-1@1.0.0`.env(env).cwd(tempdir));
+        appendFileSync(join(pkgDir, "index.js"), `console.log(${cycle})\n`);
+        expectNoError(await $`${bunExe()} patch --commit ${pkgDir}`.env(env).cwd(tempdir));
+
+        expect(readFileSync(patchfilePath, "utf8")).not.toMatch(/\.bun-tag-[0-9a-f]+/);
+
+        await $`${bunExe()} i`.env(env).cwd(tempdir);
+        expect(sentinels()).toHaveLength(1);
+      }
+    });
   });
 
   test("bad patch arg", async () => {

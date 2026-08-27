@@ -452,7 +452,9 @@ where
             // not the wss:// target.
             if !display_host.is_empty() {
                 this.hostname
-                    .set(ZBox::from_bytes(bun_http::strip_ipv6_brackets(display_host)));
+                    .set(ZBox::from_bytes(bun_http::strip_ipv6_brackets(
+                        display_host,
+                    )));
             }
         }
 

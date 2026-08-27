@@ -40,6 +40,9 @@ pub struct Options {
     pub scope: Npm::registry::Scope,
 
     pub(crate) registries: Npm::registry::Map,
+    /// Every `.npmrc` credential key, for the registries whose URL is only known
+    /// after the config files were read.
+    pub(crate) url_auth: Vec<Npm::registry::UrlAuth>,
     pub(crate) cache_directory: &'static [u8],
     pub enable: Enable,
     pub do_: Do,
@@ -127,6 +130,7 @@ impl Default for Options {
             // Always assigned in `load()` before read.
             scope: Npm::registry::Scope::default(),
             registries: Npm::registry::Map::default(),
+            url_auth: Vec::new(),
             cache_directory: b"",
             enable: Enable::default(),
             do_: Do::default(),
@@ -418,6 +422,25 @@ fn leak_static(s: &[u8]) -> &'static [u8] {
 }
 
 impl Options {
+    /// Give every scope that ended up without credentials the ones `.npmrc`
+    /// configures for its registry URL, by npm's key walk. A registry from
+    /// `bunfig.toml`, `--registry` or `$NPM_CONFIG_REGISTRY` is only known here, and
+    /// a credential from any of those sources outranks a `.npmrc` line.
+    fn fill_credentials_from_url_auth(&mut self) {
+        if self.url_auth.is_empty() {
+            return;
+        }
+        let url_auth = &self.url_auth;
+        for scope in core::iter::once(&mut self.scope).chain(self.registries.values_mut()) {
+            if scope.has_credentials() && !scope.credentials_from_url {
+                continue;
+            }
+            if let Some(credentials) = Npm::registry::UrlAuth::find(url_auth, &scope.url.url()) {
+                scope.copy_credentials_from(credentials);
+            }
+        }
+    }
+
     pub(crate) fn load(
         &mut self,
         log: &mut bun_ast::Log,
@@ -465,6 +488,12 @@ impl Options {
                         Npm::registry::Scope::hash(name),
                         Npm::registry::Scope::from_api(name, registry, env)?,
                     )?;
+                }
+            }
+
+            for url_auth in &config.url_auth {
+                if let Some(url_auth) = Npm::registry::UrlAuth::from_api(url_auth, env)? {
+                    self.url_auth.push(url_auth);
                 }
             }
 
@@ -636,6 +665,7 @@ impl Options {
                             if same_host_not_downgraded(&new_url, &self.scope.url.url()) {
                                 api_registry.token = core::mem::take(&mut self.scope.token);
                                 api_registry.auth = core::mem::take(&mut self.scope.auth);
+                                api_registry.credentials_from_url = self.scope.credentials_from_url;
                             }
                         }
                         self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
@@ -654,6 +684,7 @@ impl Options {
                     if same_host_not_downgraded(&new_url, &self.scope.url.url()) {
                         api_registry.token = core::mem::take(&mut self.scope.token);
                         api_registry.auth = core::mem::take(&mut self.scope.auth);
+                        api_registry.credentials_from_url = self.scope.credentials_from_url;
                     }
                 }
                 // Through the same builder as every other registry, so a credential
@@ -673,6 +704,7 @@ impl Options {
                 if let Some(token) = env.get(token_key) {
                     if !token.is_empty() {
                         self.scope.token = token.into();
+                        self.scope.credentials_from_url = false;
                         break;
                     }
                 }
@@ -728,6 +760,7 @@ impl Options {
 
             if !cli.token.is_empty() {
                 self.scope.token = cli.token.into();
+                self.scope.credentials_from_url = false;
             }
 
             if cli.no_save {
@@ -924,6 +957,10 @@ impl Options {
         }
 
         // moved from `defer { ... }` after scope assignment (see note above).
+        // After every source that can set a registry URL (bunfig, .npmrc, environment,
+        // command line) has been applied.
+        self.fill_credentials_from_url_auth();
+
         self.did_override_default_scope = self.scope.url_hash != *Npm::registry::DEFAULT_URL_HASH;
 
         // The manifest cache is the data source for --prefer-offline/--offline; keep it on

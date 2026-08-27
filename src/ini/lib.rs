@@ -126,7 +126,7 @@ bun_core::comptime_string_map! {
 }
 
 pub use draft::{
-    ConfigIterator, Parser, ScopeItem, ScopeIterator, ToStringFormatter, load_npmrc,
+    ConfigIterator, Parser, RegistryKey, ScopeItem, ScopeIterator, ToStringFormatter, load_npmrc,
     load_npmrc_config,
 };
 
@@ -136,7 +136,7 @@ mod draft {
     use core::ptr;
 
     use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
-    use bun_api::{self, BunInstall, NpmRegistry, npm_registry};
+    use bun_api::{self, BunInstall, NpmRegistry, NpmUrlAuth, npm_registry};
     use bun_ast::E::Rope;
     use bun_ast::{E, Expr, ExprData, StoreRef};
     use bun_ast::{Loc, Log, Source};
@@ -1077,15 +1077,29 @@ mod draft {
                                 return Some(IniOption::None);
                             }
                         }
-                        // `//host/...:word=` where `word` is none of the seven options: npm
-                        // warns here, and silence would hide a typo like `_authtoken`.
+                        // `//host/...:word=` where `word` is none of the seven options: a
+                        // typo like `_authtoken` would otherwise be silent and its credential
+                        // dropped. Only an option-shaped word with a string value qualifies,
+                        // so a bare `//host:port` line or a missing `=` never names a value.
                         if let Some(colon) = bun_core::strings::last_index_of_char(key, b':')
                             .filter(|&colon| !bun_core::strings::contains_char(&key[colon..], b'/'))
                         {
-                            return Some(IniOption::Unknown {
-                                suffix: Box::from(&key[colon + 1..]),
-                                loc: keyexpr.loc,
-                            });
+                            let word = &key[colon + 1..];
+                            let option_shaped = word
+                                .first()
+                                .is_some_and(|&c| c == b'_' || c.is_ascii_alphabetic())
+                                && word
+                                    .iter()
+                                    .all(|&c| c == b'_' || c == b'-' || c.is_ascii_alphanumeric());
+                            let has_string_value = prop
+                                .value
+                                .is_some_and(|value| value.as_utf8_string_literal().is_some());
+                            if option_shaped && has_string_value {
+                                return Some(IniOption::Unknown {
+                                    suffix: Box::from(word),
+                                    loc: keyexpr.loc,
+                                });
+                            }
                         }
                     }
                 }
@@ -1168,7 +1182,10 @@ mod draft {
                                             log: &mut *self.log,
                                             source: self.source,
                                         };
-                                        break 'brk parser.parse_registry_url_string_impl(str_)?;
+                                        let mut registry =
+                                            parser.parse_registry_url_string_impl(str_)?;
+                                        registry.credentials_from_url = true;
+                                        break 'brk registry;
                                     }
                                 }
                                 return Ok(Some(IniOption::None));
@@ -1195,7 +1212,7 @@ mod draft {
     /// with its own credentials keeps them: project config beats `.npmrc`.
     pub fn load_npmrc_config(
         install: &mut BunInstall,
-        bunfig: &mut BunInstall,
+        bunfig: &BunInstall,
         env: &DotEnvLoader,
         auto_loaded: bool,
         npmrc_paths: &[&ZStr],
@@ -1240,20 +1257,11 @@ mod draft {
             report_log(&mut log);
         }
 
-        let mut registries = resolve_credentials(install, &configs);
+        install.url_auth = collapse_url_auth(&configs);
         if !configs.is_empty() {
-            for registry in bunfig
-                .default_registry
-                .iter_mut()
-                .chain(bunfig.scoped.iter_mut().flat_map(|s| s.scopes.values_mut()))
-            {
-                if let Some(key) = RegistryKey::for_bunfig(registry) {
-                    credentials(&configs, &key).apply(registry);
-                    registries.push(key);
-                }
-            }
+            let registries = declared_registry_keys(install, bunfig);
+            diagnose_config(&configs, &sources, &registries, &mut log);
         }
-        diagnose_config(&configs, &sources, &registries, &mut log);
         report_log(&mut log);
     }
 
@@ -1298,17 +1306,6 @@ mod draft {
         }
     }
 
-    /// The port a WHATWG URL drops from `host` for this scheme.
-    fn default_port_for(protocol: &[u8]) -> Option<&'static [u8]> {
-        if protocol.eq_ignore_ascii_case(b"https") {
-            Some(b"443")
-        } else if protocol.eq_ignore_ascii_case(b"http") {
-            Some(b"80")
-        } else {
-            None
-        }
-    }
-
     fn url_or_default(url: &[u8]) -> &[u8] {
         if url.is_empty() {
             bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL.as_bytes()
@@ -1317,33 +1314,29 @@ mod draft {
         }
     }
 
-    /// A registry as the walk sees it. npm builds the key from a WHATWG URL, whose
-    /// `host` is lowercased and drops a default port; `bun_url` does neither, so the
-    /// authority is normalized here, the same way `normalize_key` folds config keys.
-    struct RegistryKey {
-        /// `<host><pathname>/`: npm's key for the registry itself, and where the walk
+    /// A registry as the walk sees it. npm builds the key from a WHATWG URL: the host
+    /// lowercased, a default port dropped, the query left out. Built from the same
+    /// serialisation `Scope::set_url` stores, so the key and the request agree on the
+    /// authority; a URL WHATWG rejects (`$VAR`) falls back to the raw text.
+    pub struct RegistryKey {
+        /// `<host><path>/`: npm's key for the registry itself, and where the walk
         /// starts (`regFetch` appends `/<pkg>` to the registry URL and the first
         /// iteration of the walk strips it right back off).
         key: Box<[u8]>,
     }
 
     impl RegistryKey {
-        fn from_url(url_bytes: &[u8]) -> RegistryKey {
-            Self::from_parsed(&URL::parse(url_bytes))
-        }
-
-        fn from_parsed(url: &URL<'_>) -> RegistryKey {
-            let default_port = default_port_for(url.protocol);
-            let host = if default_port.is_some_and(|port| url.port == port) {
-                url.hostname
-            } else {
-                url.host
+        pub fn from_url(url_bytes: &[u8]) -> RegistryKey {
+            let owned = URL::from_string(&bun_core::String::borrow_utf8(url_bytes)).ok();
+            let url = match &owned {
+                Some(owned) => owned.url(),
+                None => URL::parse(url_bytes),
             };
-            let pathname = url.pathname.strip_suffix(b"/").unwrap_or(url.pathname);
-            let mut key = Vec::with_capacity(host.len() + pathname.len() + 1);
-            key.extend_from_slice(host);
-            key[..host.len()].make_ascii_lowercase();
-            key.extend_from_slice(pathname);
+            let path = url.path.strip_suffix(b"/").unwrap_or(url.path);
+            let mut key = Vec::with_capacity(url.host.len() + path.len() + 1);
+            key.extend_from_slice(url.host);
+            key[..url.host.len()].make_ascii_lowercase();
+            key.extend_from_slice(path);
             key.push(b'/');
             RegistryKey {
                 key: key.into_boxed_slice(),
@@ -1352,7 +1345,7 @@ mod draft {
 
         /// npm's `regFromURI`: this key, then one component shorter each time, down
         /// to the bare host. For `h/a/` that is `h/a/`, `h/a`, `h/`, `h`.
-        fn walk(&self) -> impl Iterator<Item = Vec<u8>> {
+        pub fn walk(&self) -> impl Iterator<Item = Vec<u8>> {
             let mut next = Some(self.key.to_vec());
             core::iter::from_fn(move || {
                 let current = next.take()?;
@@ -1407,11 +1400,6 @@ mod draft {
             username: &'a ConfigItem,
             password: &'a ConfigItem,
         },
-        /// Bun-only: a half pair on the registry's own key layers over the URL's userinfo.
-        Partial {
-            username: Option<&'a ConfigItem>,
-            password: Option<&'a ConfigItem>,
-        },
     }
 
     /// npm's `hasAuth`, keyed on byte equality with the config key.
@@ -1427,32 +1415,6 @@ mod draft {
         Some(Auth::UserPass { username, password })
     }
 
-    /// Every line that applies to one registry.
-    struct Credentials<'a> {
-        auth: Option<Auth<'a>>,
-        /// `email` is not part of npm's auth at all, so it never walks.
-        email: Option<&'a ConfigItem>,
-    }
-
-    /// npm's `regFromURI`: walk the registry's config keys deepest-first until one
-    /// supplies auth. For `host=h, pathname=/a/` that is `h/a/`, `h/a`, `h/`, `h`.
-    fn credentials<'a>(configs: &'a [ConfigItem], registry: &RegistryKey) -> Credentials<'a> {
-        let mut auth = registry.walk().find_map(|key| has_auth(configs, &key));
-        if auth.is_none() {
-            for key in [&registry.key[..], registry.unslashed()] {
-                let username = lookup_truthy(configs, key, ConfigOpt::Username);
-                let password = lookup_truthy(configs, key, ConfigOpt::_Password);
-                if username.is_some() || password.is_some() {
-                    auth = Some(Auth::Partial { username, password });
-                    break;
-                }
-            }
-        }
-        let email = lookup_truthy(configs, &registry.key, ConfigOpt::Email)
-            .or_else(|| lookup_truthy(configs, registry.unslashed(), ConfigOpt::Email));
-        Credentials { auth, email }
-    }
-
     /// npm's `Buffer.from(value, "base64")` never fails: invalid bytes are skipped and
     /// as much as possible is decoded.
     fn decode_password(value: &[u8]) -> Box<[u8]> {
@@ -1462,76 +1424,67 @@ mod draft {
         decoded.into_boxed_slice()
     }
 
-    impl<'a> Credentials<'a> {
-        fn items(&self) -> impl Iterator<Item = &'a ConfigItem> {
-            let (a, b) = match &self.auth {
-                Some(Auth::Token(item) | Auth::Basic(item)) => (Some(*item), None),
-                Some(Auth::UserPass { username, password }) => (Some(*username), Some(*password)),
-                Some(Auth::Partial { username, password }) => (*username, *password),
-                None => (None, None),
-            };
-            a.into_iter().chain(b).chain(self.email)
-        }
-
-        fn apply(&self, v: &mut NpmRegistry) {
-            match &self.auth {
-                Some(Auth::Token(token)) => v.token.clone_from(&token.value),
-                // npm forwards `_auth` verbatim as `Basic <value>`; `Scope::from_api`
-                // decodes it only to derive a username for `bun pm whoami`.
-                Some(Auth::Basic(auth)) => v.auth.clone_from(&auth.value),
-                Some(Auth::UserPass { username, password }) => {
-                    v.username.clone_from(&username.value);
-                    v.password = decode_password(&password.value);
-                }
-                Some(Auth::Partial { username, password }) => {
-                    if let Some(username) = username {
-                        v.username.clone_from(&username.value);
-                    }
-                    if let Some(password) = password {
-                        v.password = decode_password(&password.value);
-                    }
-                }
-                None => {}
-            }
-            if let Some(email) = self.email {
-                v.email.clone_from(&email.value);
+    /// What one config key supplies, in the shape `Scope::from_api` consumes.
+    fn apply_auth(auth: &Auth<'_>, v: &mut NpmRegistry) {
+        match auth {
+            Auth::Token(token) => v.token.clone_from(&token.value),
+            // npm forwards `_auth` verbatim as `Basic <value>`; `Scope::from_api`
+            // decodes it only to derive a username for `bun pm whoami`.
+            Auth::Basic(auth) => v.auth.clone_from(&auth.value),
+            Auth::UserPass { username, password } => {
+                v.username.clone_from(&username.value);
+                v.password = decode_password(&password.value);
             }
         }
     }
 
-    /// Resolve the registries `.npmrc` itself declares (or npm's default, when it
-    /// declares none) against the fully-accumulated `configs`, exactly once. Returns
-    /// the registries resolved, for `diagnose_config`.
-    fn resolve_credentials(install: &mut BunInstall, configs: &[ConfigItem]) -> Vec<RegistryKey> {
-        let mut registries: Vec<RegistryKey> = Vec::new();
-        if configs.is_empty() {
-            return registries;
+    /// npm's config map, reduced to one entry per key that carries a complete
+    /// credential. The package manager walks it for every registry it ends up with.
+    fn collapse_url_auth(configs: &[ConfigItem]) -> Vec<NpmUrlAuth> {
+        let mut out: Vec<NpmUrlAuth> = Vec::new();
+        for conf_item in configs {
+            if out
+                .iter()
+                .any(|entry| *entry.key == *conf_item.registry_url)
+            {
+                continue;
+            }
+            let Some(auth) = has_auth(configs, &conf_item.registry_url) else {
+                continue;
+            };
+            let mut credentials = NpmRegistry::default();
+            apply_auth(&auth, &mut credentials);
+            out.push(NpmUrlAuth {
+                key: conf_item.registry_url.clone(),
+                credentials,
+            });
         }
+        out
+    }
 
+    /// The keys of the registries `.npmrc` and `bunfig.toml` declare (or npm's default,
+    /// when neither declares one), for the diagnostics that name a registry.
+    fn declared_registry_keys(install: &BunInstall, bunfig: &BunInstall) -> Vec<RegistryKey> {
         let default_url: &[u8] = match &install.default_registry {
             Some(registry) => &registry.url,
             None => b"",
         };
-        let default_key = RegistryKey::from_url(url_or_default(default_url));
-        let default_credentials = credentials(configs, &default_key);
-        if default_credentials.items().next().is_some() {
-            default_credentials.apply(install.default_registry.get_or_insert_with(|| {
-                NpmRegistry {
-                    url: bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL
-                        .as_bytes()
-                        .into(),
-                    ..Default::default()
-                }
-            }));
+        let mut registries = vec![RegistryKey::from_url(url_or_default(default_url))];
+        if let Some(scoped) = &install.scoped {
+            registries.extend(
+                scoped
+                    .scopes
+                    .values()
+                    .iter()
+                    .map(|v| RegistryKey::from_url(&v.url)),
+            );
         }
-        registries.push(default_key);
-
-        if let Some(scoped) = install.scoped.as_mut() {
-            for v in scoped.scopes.values_mut() {
-                let key = RegistryKey::from_url(&v.url);
-                credentials(configs, &key).apply(v);
-                registries.push(key);
-            }
+        for registry in bunfig
+            .default_registry
+            .iter()
+            .chain(bunfig.scoped.iter().flat_map(|s| s.scopes.values()))
+        {
+            registries.extend(RegistryKey::for_bunfig(registry));
         }
         registries
     }
@@ -1578,8 +1531,11 @@ mod draft {
     ) -> OOM<()> {
         let mut configs: Vec<ConfigItem> = Vec::new();
         parse_npmrc_into(install, env, log, source, 0, &mut configs)?;
-        let registries = resolve_credentials(install, &configs);
-        diagnose_config(&configs, std::slice::from_ref(source), &registries, log);
+        install.url_auth = collapse_url_auth(&configs);
+        if !configs.is_empty() {
+            let registries = declared_registry_keys(install, &BunInstall::default());
+            diagnose_config(&configs, std::slice::from_ref(source), &registries, log);
+        }
         Ok(())
     }
 
@@ -1608,8 +1564,9 @@ mod draft {
                     log: &mut *log,
                     source,
                 };
-                install.default_registry =
-                    Some(p.parse_registry_url_string_impl(&Box::<[u8]>::from(str_))?);
+                let mut registry = p.parse_registry_url_string_impl(&Box::<[u8]>::from(str_))?;
+                registry.credentials_from_url = true;
+                install.default_registry = Some(registry);
             }
         }
 
@@ -1836,17 +1793,11 @@ mod draft {
                     IniOption::Unknown { suffix, loc } => {
                         // No source excerpt: the value after `=` may be a secret under a
                         // misspelt name the redactor cannot recognise (`:authToken=`).
-                        let line = 1 + bun_core::strings::count_char(
-                            &source.contents[..usize::try_from(loc.start).unwrap_or(0)],
-                            b'\n',
-                        );
-                        iter.log.add_warning_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
+                        iter.log.add_warning_fmt_no_excerpt(
+                            source,
+                            loc,
                             format_args!(
-                                "{}:{}: {} is not a known .npmrc option; ignoring this line",
-                                bstr::BStr::new(source.path.text),
-                                line,
+                                "{} is not a known .npmrc option; ignoring this line",
                                 bstr::BStr::new(&suffix),
                             ),
                         );

@@ -298,6 +298,12 @@ pub mod registry {
 
         // username and password combo, `user:pass`
         pub user: Box<[u8]>,
+
+        /// The registry came from a `.npmrc` `registry=` line, so any credential in
+        /// its URL (userinfo, a `:_authToken=` segment) is the weakest source: a
+        /// `.npmrc` line for the URL replaces it, where a bunfig, env or CLI credential
+        /// stands. Cleared when an explicit token is set later.
+        pub credentials_from_url: bool,
     }
 
     /// yarn-style credentials embedded in a registry URL's pathname, e.g.
@@ -428,6 +434,19 @@ pub mod registry {
             self.url_hash = Self::hash(strings::without_trailing_slash(self.url.href()));
         }
 
+        /// Whether requests to this scope carry an `Authorization` header.
+        pub(crate) fn has_credentials(&self) -> bool {
+            !self.token.is_empty() || !self.auth.is_empty()
+        }
+
+        /// Take `other`'s credentials, leaving this scope's registry URL as is.
+        pub(crate) fn copy_credentials_from(&mut self, other: &Scope) {
+            self.token.clone_from(&other.token);
+            self.auth.clone_from(&other.auth);
+            self.user.clone_from(&other.user);
+            self.credentials_from_url = other.credentials_from_url;
+        }
+
         pub(crate) fn get_name(name: &[u8]) -> &[u8] {
             if name.is_empty() || name[0] != b'@' {
                 return name;
@@ -555,6 +574,7 @@ pub mod registry {
                 token: registry.token,
                 auth,
                 user,
+                credentials_from_url: registry.credentials_from_url,
                 ..Default::default()
             };
             scope.set_url(final_href);
@@ -564,6 +584,45 @@ pub mod registry {
 
     // Keys are pre-hashed (`Scope::hash`), so don't re-hash them.
     pub type Map = HashMap<u64, Scope, bun_collections::IdentityContext<u64>>;
+
+    /// One `.npmrc` credential key with the credential it collapsed to, matched
+    /// against registry URLs with npm's walk (`regFromURI`): build the URL's own key,
+    /// then try it and every shorter key down to the bare host. Keys carry no scheme,
+    /// so a key applies to `http` and `https` alike.
+    pub(crate) struct UrlAuth {
+        /// npm's config key, already normalized by `bun_ini` (`host/path/`).
+        key: Box<[u8]>,
+        /// Only the credential fields are meaningful; `url` is empty.
+        credentials: Scope,
+    }
+
+    impl UrlAuth {
+        pub(crate) fn from_api(
+            api: &api::NpmUrlAuth,
+            env: &mut DotEnv,
+        ) -> Result<Option<UrlAuth>, AllocError> {
+            let credentials = Scope::from_api(b"", api.credentials.clone(), env)?;
+            if !credentials.has_credentials() {
+                return Ok(None);
+            }
+            Ok(Some(UrlAuth {
+                key: api.key.clone(),
+                credentials,
+            }))
+        }
+
+        /// The credentials `.npmrc` configures for `url`: the first key on npm's walk
+        /// from `url` that has an entry, so `//host/a/b/` beats `//host/`.
+        pub(crate) fn find<'a>(list: &'a [UrlAuth], url: &URL) -> Option<&'a Scope> {
+            if list.is_empty() {
+                return None;
+            }
+            bun_ini::RegistryKey::from_url(url.href)
+                .walk()
+                .find_map(|key| list.iter().find(|entry| *entry.key == *key))
+                .map(|entry| &entry.credentials)
+        }
+    }
 
     pub(crate) enum PackageVersionResponse {
         Cached(PackageManifest),

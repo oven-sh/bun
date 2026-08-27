@@ -24,7 +24,7 @@ import { Glob, GlobScanOptions } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { execSync } from "child_process";
 import fg from "fast-glob";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isOhos, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import * as fs from "node:fs";
 import * as path from "path";
 import { createTempDirectoryWithBrokenSymlinks, prepareEntries, tempFixturesDir } from "./util";
@@ -681,7 +681,10 @@ describe("absolute path pattern", async () => {
     expect(entries.sort()).toEqual(files.slice(0, files.length - 1).sort());
   });
 
-  test("non-special path as first component", async () => {
+  test.skipIf(isOhos)("non-special path as first component", async () => {
+    // OHOS: the pattern resolves from the filesystem root, which the app
+    // sandbox cannot open (EACCES) — the scan throws instead of returning
+    // []. Not a glob regression.
     const glob = new Glob("/**lol");
     const entries = await Array.fromAsync(glob.scan({ onlyFiles: false }));
     expect(entries).toEqual([]);

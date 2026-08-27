@@ -382,7 +382,7 @@ describe.concurrent("--no-macros", () => {
       { macros: false },
       {
         success: false,
-        logs: [{ message: "Macros are disabled", file: "entry.ts", line: 2, column: 13 }],
+        logs: [{ message: "Macros are disabled", position: { file: "entry.ts", line: 2, column: 13 } }],
         outputs: [],
         macroRan: false,
       },
@@ -410,9 +410,11 @@ describe.concurrent("--no-macros", () => {
       success: result.success,
       logs: result.logs.map(log => ({
         message: log.message,
-        file: path.basename(log.position!.file),
-        line: log.position!.line,
-        column: log.position!.column,
+        position: log.position && {
+          file: path.basename(log.position.file),
+          line: log.position.line,
+          column: log.position.column,
+        },
       })),
       outputs: await Promise.all(result.outputs.map(output => output.text())),
       macroRan: existsSync(path.join(String(dir), "MACRO_RAN")),

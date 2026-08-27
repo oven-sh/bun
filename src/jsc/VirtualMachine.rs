@@ -4814,9 +4814,7 @@ impl VirtualMachine {
         let mut formatter = crate::console_object::Formatter::new(self.global());
         let colors = bun_core::Output::enable_ansi_colors_stderr();
         let exception_cell = exception.to_js();
-        // Only an ErrorInstance has a stack, properties and a cause of its own to print. Any other
-        // thrown value (a string, a plain object, a DOMException) has nothing but the throw-site
-        // stack the cell recorded, so it keeps printing from the cell.
+        // Print the thrown Error itself; non-Error values only have the cell's throw-site stack.
         let value = match exception_cell.to_error() {
             Some(error) if error.is_error() => error,
             _ => exception_cell,

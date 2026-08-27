@@ -478,8 +478,7 @@ static JSC::JSValue getNonObservable(JSC::VM& vm, JSC::JSGlobalObject* global, J
     return {};
 }
 
-// An Error always prints the stack it captured when it was constructed, never the stack of the
-// `throw` that delivered it: that is what `error.stack` shows and what Node prints.
+// An Error prints the stack it captured at construction, matching `error.stack` and Node.
 __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
     JSC::ErrorInstance* err, JSC::JSValue val, PopulateStackTraceFlags flags)
 {
@@ -845,8 +844,7 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::Enc
         return;
     }
 
-    // The throw-site stack a JSC::Exception records is only used for a thrown value that has no
-    // stack of its own (a string, a plain object, a DOMException).
+    // The cell's throw-site stack is used only for a thrown value with no stack of its own.
     JSC::Exception* jscException = nullptr;
     if (value.classInfoOrNull() == JSC::Exception::info()) {
         jscException = uncheckedDowncast<JSC::Exception>(value);
@@ -872,8 +870,7 @@ extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException
         return;
     }
 
-    // Same selection as JSC__JSValue__toZigException: OnlySourceLines indexes the frame vector
-    // OnlyPosition chose through jsc_stack_frame_index.
+    // Must pick the same frame vector as JSC__JSValue__toZigException (see jsc_stack_frame_index).
     JSC::Exception* jscException = nullptr;
     if (value.classInfoOrNull() == JSC::Exception::info()) {
         jscException = uncheckedDowncast<JSC::Exception>(value);

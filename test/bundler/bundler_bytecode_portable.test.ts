@@ -610,8 +610,20 @@ describe("bytecode cache portability", () => {
     { name: "features.js", entries: ["./features.js"], args: [], output: featuresOutput, modules: 1 },
     { name: "--minify records.js", entries: ["./records.js"], args: ["--minify"], output: recordsOutput, modules: 1 },
     { name: "--format=esm big.js", entries: ["./big.js"], args: ["--format=esm"], output: bigOutput, modules: 1 },
-    { name: "--format=esm esm/main.js + worker", entries: ["./esm/main.js", "./esm/worker.js"], args: ["--format=esm"], output: esmOutput, modules: 2 },
-    { name: "--format=esm --minify esm/main.js + worker", entries: ["./esm/main.js", "./esm/worker.js"], args: ["--format=esm", "--minify"], output: esmOutput, modules: 2 },
+    {
+      name: "--format=esm esm/main.js + worker",
+      entries: ["./esm/main.js", "./esm/worker.js"],
+      args: ["--format=esm"],
+      output: esmOutput,
+      modules: 2,
+    },
+    {
+      name: "--format=esm --minify esm/main.js + worker",
+      entries: ["./esm/main.js", "./esm/worker.js"],
+      args: ["--format=esm", "--minify"],
+      output: esmOutput,
+      modules: 2,
+    },
   ]) {
     test.concurrent(`\`bun build --compile --bytecode ${name}\` runs from the embedded bytecode`, async () => {
       using dir = tempDir("bytecode-portable-compile", {});

@@ -109,12 +109,14 @@ pub fn begin(
                     ),
                     None => (R::PeerIp::None, 0, R::HttpVersion::Http3),
                 },
-                bun_uws::AnyResponse::TCP(_) | bun_uws::AnyResponse::SSL(_) => match resp.get_remote_address_raw() {
-                    Some((RawIp::V4(b), port)) => (R::PeerIp::V4(b), port, h1),
-                    // (a v4-mapped `::ffff:a.b.c.d` stays as such, like requestIP() / net.Socket.remoteAddress)
-                    Some((RawIp::V6(b), port)) => (R::PeerIp::V6(b), port, h1),
-                    None => (R::PeerIp::None, 0, h1),
-                },
+                bun_uws::AnyResponse::TCP(_) | bun_uws::AnyResponse::SSL(_) => {
+                    match resp.get_remote_address_raw() {
+                        Some((RawIp::V4(b), port)) => (R::PeerIp::V4(b), port, h1),
+                        // (a v4-mapped `::ffff:a.b.c.d` stays as such, like requestIP() / net.Socket.remoteAddress)
+                        Some((RawIp::V6(b), port)) => (R::PeerIp::V6(b), port, h1),
+                        None => (R::PeerIp::None, 0, h1),
+                    }
+                }
             };
             f.version = version;
 

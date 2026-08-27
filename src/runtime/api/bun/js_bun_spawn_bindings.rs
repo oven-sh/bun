@@ -1163,13 +1163,15 @@ fn spawn_maybe_sync(
     let otel_stub =
         crate::telemetry::start_leaf(global_this, bun_telemetry::Instrument::ChildProcess);
     // process.executable.name is the resolved executable, not a pretend `argv0`.
-    let otel_cmd = otel_stub.is_some().then(|| crate::telemetry::spawn::SpawnedCommand {
-        // SAFETY: both pointers are NUL-terminated strings kept alive in `cstr_storage` for this call.
-        exe: bun_paths::basename(
-            unsafe { core::ffi::CStr::from_ptr(argv0.unwrap_or(argv[0])) }.to_bytes(),
-        ),
-        argc: argv.iter().take_while(|p| !p.is_null()).count(),
-    });
+    let otel_cmd = otel_stub
+        .is_some()
+        .then(|| crate::telemetry::spawn::SpawnedCommand {
+            // SAFETY: both pointers are NUL-terminated strings kept alive in `cstr_storage` for this call.
+            exe: bun_paths::basename(
+                unsafe { core::ffi::CStr::from_ptr(argv0.unwrap_or(argv[0])) }.to_bytes(),
+            ),
+            argc: argv.iter().take_while(|p| !p.is_null()).count(),
+        });
     // SAFETY: `argv`/`env_array` are local null-terminated C-string arrays
     // with argv[0] non-null; valid for this call.
     let spawn_result =

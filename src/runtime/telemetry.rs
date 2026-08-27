@@ -713,8 +713,14 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             let arg = match opts.get(global, "samplerArg")? {
                 Some(a) => Some(a),
                 None => {
-                    let env = bun_jsc::from_js_host_call(global, || Bun__Telemetry__processEnv(global))?;
-                    if env.is_object() { env.get(global, "OTEL_TRACES_SAMPLER_ARG")?.filter(|v| v.is_string()) } else { None }
+                    let env =
+                        bun_jsc::from_js_host_call(global, || Bun__Telemetry__processEnv(global))?;
+                    if env.is_object() {
+                        env.get(global, "OTEL_TRACES_SAMPLER_ARG")?
+                            .filter(|v| v.is_string())
+                    } else {
+                        None
+                    }
                 }
             };
             cfg.sampler = sampler_from_js(global, v, arg)?;

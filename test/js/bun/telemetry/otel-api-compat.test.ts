@@ -432,7 +432,10 @@ describe("@opentelemetry/api", () => {
 
   test("a tracer obtained before Bun.otel.start() records once tracing starts (require and import)", async () => {
     // Libraries take `trace.getTracer()` at module scope; the app calls start() later.
-    for (const load of [`const { trace } = require("@opentelemetry/api");`, `import { trace } from "@opentelemetry/api";`]) {
+    for (const load of [
+      `const { trace } = require("@opentelemetry/api");`,
+      `import { trace } from "@opentelemetry/api";`,
+    ]) {
       using dir = tempDir("otel-early-tracer", {
         "index.mjs": `
           ${load}

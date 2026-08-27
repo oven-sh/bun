@@ -621,11 +621,7 @@ impl Keys {
     }
 }
 
-fn scope_to_js(
-    global: &JSGlobalObject,
-    k: &Keys,
-    scope: Option<&Scope<'_>>,
-) -> JsResult<JSValue> {
+fn scope_to_js(global: &JSGlobalObject, k: &Keys, scope: Option<&Scope<'_>>) -> JsResult<JSValue> {
     let o = JSValue::create_empty_object(global, 2);
     let (name, version) = scope.map_or((&b""[..], &b""[..]), |s| (s.name, s.version));
     o.put(global, &k.name, str_js(global, name)?);

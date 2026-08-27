@@ -2690,10 +2690,26 @@ pub mod args {
     }
 
     fs_args_path!(
-        Rename.old_path, Truncate.path, Chown.path, Lutimes.path, Chmod.path, StatFS.path,
-        Stat.path, Link.old_path, Symlink.target_path, Readlink.path, Realpath.path,
-        Unlink.path, RmDir.path, Mkdir.path, MkdirTemp.prefix, Readdir.path, Open.path,
-        Access.path, CopyFile.src, Cp.src,
+        Rename.old_path,
+        Truncate.path,
+        Chown.path,
+        Lutimes.path,
+        Chmod.path,
+        StatFS.path,
+        Stat.path,
+        Link.old_path,
+        Symlink.target_path,
+        Readlink.path,
+        Realpath.path,
+        Unlink.path,
+        RmDir.path,
+        Mkdir.path,
+        MkdirTemp.prefix,
+        Readdir.path,
+        Open.path,
+        Access.path,
+        CopyFile.src,
+        Cp.src,
     );
 
     pub struct Rename<'a> {

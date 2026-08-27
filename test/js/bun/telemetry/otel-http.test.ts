@@ -1,4 +1,9 @@
-import { ROOT_CONTEXT as API_ROOT, context as apiContext, propagation as apiPropagation, trace as apiTrace } from "@opentelemetry/api";
+import {
+  ROOT_CONTEXT as API_ROOT,
+  context as apiContext,
+  propagation as apiPropagation,
+  trace as apiTrace,
+} from "@opentelemetry/api";
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -225,7 +230,10 @@ describe("Bun.serve", () => {
 
   test("a semconv attribute set from JS replaces the derived one instead of being exported twice", async () => {
     let bytes: Uint8Array | undefined;
-    Bun.otel.start({ instrumentations: { http: true, fetch: false }, exporters: [{ exportProtobuf: (b: Uint8Array) => (bytes = b) }] });
+    Bun.otel.start({
+      instrumentations: { http: true, fetch: false },
+      exporters: [{ exportProtobuf: (b: Uint8Array) => (bytes = b) }],
+    });
     using server = Bun.serve({
       port: 0,
       fetch() {
@@ -250,13 +258,15 @@ describe("Bun.serve", () => {
     const raw = Buffer.from(bytes!);
     const count = (key: string) => raw.toString("latin1").split(key).length - 1;
     // one SERVER span only (fetch spans are off): every key exactly once in the wire bytes
-    expect(["http.response.status_code", "server.address", "error.type", "url.path", "client.address"].map(count)).toEqual([
-      1, 1, 1, 1, 1,
-    ]);
+    expect(
+      ["http.response.status_code", "server.address", "error.type", "url.path", "client.address"].map(count),
+    ).toEqual([1, 1, 1, 1, 1]);
     expect(raw.includes("/secret/path")).toBe(false);
     const [srv] = Bun.otel.decode(bytes!);
     expect(
-      ["http.response.status_code", "server.address", "error.type", "url.path", "client.address"].map(k => srv.attributes[k]),
+      ["http.response.status_code", "server.address", "error.type", "url.path", "client.address"].map(
+        k => srv.attributes[k],
+      ),
     ).toEqual([299, "front.example", "UpstreamDown", "/redacted", "hidden"]);
     expect(srv.status.code).toBe(2); // still an error: the response was a 500
     expect(srv.droppedAttributesCount ?? 0).toBe(0);

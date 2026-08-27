@@ -154,7 +154,10 @@ describe("node:fs / Bun.file / Bun.write", () => {
     // proto3 `string` must be UTF-8; one raw 0xff makes a collector reject the whole export request.
     const raw = Buffer.from([0x2f, 0xff, 0xfe, 0x6f, 0x74, 0x65, 0x6c]); // "/\xff\xfeotel"
     let bytes: Uint8Array | undefined;
-    Bun.otel.start({ instrumentations: { fs: "always" }, exporters: [{ exportProtobuf: (b: Uint8Array) => (bytes = b) }] });
+    Bun.otel.start({
+      instrumentations: { fs: "always" },
+      exporters: [{ exportProtobuf: (b: Uint8Array) => (bytes = b) }],
+    });
     expect(() => fs.statSync(raw)).toThrow();
     await Bun.otel.forceFlush();
     expect(bytes).toBeDefined();

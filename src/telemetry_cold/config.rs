@@ -552,9 +552,7 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
         "OTEL_EXPORTER_OTLP_TRACES_CLIENT_CERTIFICATE",
     ] {
         if get(unsupported).is_some() {
-            warnings.push(format!(
-                "{unsupported} is not supported yet and is ignored"
-            ));
+            warnings.push(format!("{unsupported} is not supported yet and is ignored"));
         }
     }
 

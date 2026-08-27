@@ -59,25 +59,25 @@ const featuresOutput = [
 ].join("\n");
 
 const recordsOutput = [
-  "strings: \"aababcabcd\" 46 48 47 49 13 1 \"zero\" \"one point five\" \"neg\" 19 12",
-  "constants: 1131776 \"0.5,-0.5,1,1e+21,1e-7,2147483648,-2147483649,4294967295,9007199254740991,9007199254740992,1.7976931348623157e+308,5e-324,-0,0.30000000000000004,3.141592653589793\" \"Infinity,-Infinity,undefined,null,true,false\" \"|s|st|str|string|ストリング\" true \"undefined\"",
-  "arrays: 12 1.5 2.5 true \"xyyzzzwwww\" \"number,string,number,boolean,object,undefined\" 4 6 false 2 3 0 64 32 11 8",
-  "regexps: \"|g|i|m|s|u|y|d|v|dgimsy||||u|u|||u|v|\" \"0,0,0,0,0,0,0,0,0,0,2,3,0,5,6,0,3,9,1,0\" true \"yy\" \"c\"",
-  "templates: [1,\"\",\"\",0] [1,\"one\",\"one\",0] [4,\"a|b|c|d\",\"a|b|c|d\",3] [2,2,\"\\n\\t\\\\|ABC\",1] [1,1,\"U\",0] [2,2,\"日本|テキスト\",1] [4,\"|||\",\"|||\",3] [1,1,\"\\nmulti\\nline\",0] \"one\" true",
-  "bigints: \"0,1,-1,127,128,255,256,65535,4294967295,4294967296,18446744073709551615,18446744073709551616,-18446744073709551616,31,15,5,1000000,123456789012345678901234567890123456789012345678901234567890\" 123456789012345678901234567890123456789030792422983535120448n 61",
-  "switches: \"b-daxy2B5snb\" \"-c--28?4m\" \"--b-0?5m\" \"---d27J5m\"",
-  "handlers: \"t1\" \"c2:1\" \"t3\" \"f3\" \"c4:d\" \"f4\" \"f5\" \"c5:3\" \"fi1\" \"i2\" \"fi2\" \"fi3\" \"fr\" \"r\" \"fg\" 3 \"ff\" \"TypeError:inner!\"",
-  "spread/rest: [2,3,3,9,6,3] [2,3,3,9,6,3] \"qrst日\" \"rst日\" \"pq\" 6 28 [6,7,7,6]",
-  "scopes: 6 10 3 104 5 3 190 15 10 \"0,1,10,11,20,21\" \"ib\"",
+  'strings: "aababcabcd" 46 48 47 49 13 1 "zero" "one point five" "neg" 19 12',
+  'constants: 1131776 "0.5,-0.5,1,1e+21,1e-7,2147483648,-2147483649,4294967295,9007199254740991,9007199254740992,1.7976931348623157e+308,5e-324,-0,0.30000000000000004,3.141592653589793" "Infinity,-Infinity,undefined,null,true,false" "|s|st|str|string|ストリング" true "undefined"',
+  'arrays: 12 1.5 2.5 true "xyyzzzwwww" "number,string,number,boolean,object,undefined" 4 6 false 2 3 0 64 32 11 8',
+  'regexps: "|g|i|m|s|u|y|d|v|dgimsy||||u|u|||u|v|" "0,0,0,0,0,0,0,0,0,0,2,3,0,5,6,0,3,9,1,0" true "yy" "c"',
+  'templates: [1,"","",0] [1,"one","one",0] [4,"a|b|c|d","a|b|c|d",3] [2,2,"\\n\\t\\\\|ABC",1] [1,1,"U",0] [2,2,"日本|テキスト",1] [4,"|||","|||",3] [1,1,"\\nmulti\\nline",0] "one" true',
+  'bigints: "0,1,-1,127,128,255,256,65535,4294967295,4294967296,18446744073709551615,18446744073709551616,-18446744073709551616,31,15,5,1000000,123456789012345678901234567890123456789012345678901234567890" 123456789012345678901234567890123456789030792422983535120448n 61',
+  'switches: "b-daxy2B5snb" "-c--28?4m" "--b-0?5m" "---d27J5m"',
+  'handlers: "t1" "c2:1" "t3" "f3" "c4:d" "f4" "f5" "c5:3" "fi1" "i2" "fi2" "fi3" "fr" "r" "fg" 3 "ff" "TypeError:inner!"',
+  'spread/rest: [2,3,3,9,6,3] [2,3,3,9,6,3] "qrst日" "rst日" "pq" 6 28 [6,7,7,6]',
+  'scopes: 6 10 3 104 5 3 190 15 10 "0,1,10,11,20,21" "ib"',
   "tdz: 15 3 2 7 8",
-  "functions: \"|||||\" \"1|prop|arrowProp|computed\" \"[sym]\" true \"assigned\" [9,9,1,2,4,3,0] [0,1,8,0,1,2] 6 4 \"col\" 9 25 \"DerivedModes\" 4 4 2 1 6",
-  "rareData: \"U,1,2,3,U,4,U,5,U,6,7,8,11,12\" \"function\" 1 7 4 3 2 1 2 true \"Elements\"",
-  "objects: \"0,1,2,9,4,3,1,1,1,1,5,1,0,1,3,1,1\" 7 \"[object Object]\" null 2",
-  "control: \"b\" \"a\" 2 4 0 21 \"a\" \"b\" \"1m\" \"x\" \"y\" \"0\" \"1\" \"called\" \"idx\" undefined \"called\" \"d\" \"e\" \"f\" 3 \"f\" \"or\" 0 0 true false \"undefined\" \"undefined\" false true true true true true true \"comma\" undefined 3 4 7 \"t0e1mnested0p\" \"r\\\\n0\" true undefined \"|\" 2 4 0 21 \"a\" \"b\" \"1m\" \"x\" \"y\" \"0\" \"1\" \"called\" \"idx\" undefined \"called\" \"d\" \"e\" \"f\" 3 \"t\" 1 \"and\" 1 false true \"undefined\" \"undefined\" false true true true true true true \"comma\" undefined 3 4 7 \"t1e2mnested1p\" \"r\\\\n1\" \"elif\" true undefined",
-  "generators: 1 2 3 \"i\" 4 5 \"sent\"",
+  'functions: "|||||" "1|prop|arrowProp|computed" "[sym]" true "assigned" [9,9,1,2,4,3,0] [0,1,8,0,1,2] 6 4 "col" 9 25 "DerivedModes" 4 4 2 1 6',
+  'rareData: "U,1,2,3,U,4,U,5,U,6,7,8,11,12" "function" 1 7 4 3 2 1 2 true "Elements"',
+  'objects: "0,1,2,9,4,3,1,1,1,1,5,1,0,1,3,1,1" 7 "[object Object]" null 2',
+  'control: "b" "a" 2 4 0 21 "a" "b" "1m" "x" "y" "0" "1" "called" "idx" undefined "called" "d" "e" "f" 3 "f" "or" 0 0 true false "undefined" "undefined" false true true true true true true "comma" undefined 3 4 7 "t0e1mnested0p" "r\\\\n0" true undefined "|" 2 4 0 21 "a" "b" "1m" "x" "y" "0" "1" "called" "idx" undefined "called" "d" "e" "f" 3 "t" 1 "and" 1 false true "undefined" "undefined" false true true true true true true "comma" undefined 3 4 7 "t1e2mnested1p" "r\\\\n1" "elif" true undefined',
+  'generators: 1 2 3 "i" 4 5 "sent"',
   "expressionInfo: 177 178",
-  "sloppy: 2 \"w\" \"function\" 1 \"function\" \"function\" \"object\"",
-  "async: 12 2 1 3 6 \"1,2,3,4,2\"",
+  'sloppy: 2 "w" "function" 1 "function" "function" "object"',
+  'async: 12 2 1 3 6 "1,2,3,4,2"',
 ].join("\n");
 
 // One function large enough to need what small ones never do: >255 locals (wide16 operands), a metadata table past
@@ -114,27 +114,55 @@ const bigOutput = "160307 70000";
 const shapesOutput = "16257";
 function shapesSource() {
   const lines = ["var acc = 0, s;"];
-  for (let n = 0; n <= 64; n++) lines.push(`s = "${"x".repeat(n)}"; acc += s.length; s = "${"é".repeat(n)}"; acc += s.length; s = "${"字".repeat(n)}"; acc += s.length;`);
-  for (const b of [7, 8, 14, 15, 16, 21, 22, 28, 29, 31, 32, 33, 52]) for (const d of [-1, 0, 1]) lines.push(`acc += ${2 ** b + d} % 7; acc -= ${-(2 ** b) + d} % 5;`);
+  for (let n = 0; n <= 64; n++)
+    lines.push(
+      `s = "${"x".repeat(n)}"; acc += s.length; s = "${"é".repeat(n)}"; acc += s.length; s = "${"字".repeat(n)}"; acc += s.length;`,
+    );
+  for (const b of [7, 8, 14, 15, 16, 21, 22, 28, 29, 31, 32, 33, 52])
+    for (const d of [-1, 0, 1]) lines.push(`acc += ${2 ** b + d} % 7; acc -= ${-(2 ** b) + d} % 5;`);
   for (let n = 1; n <= 24; n++) {
-    lines.push(`function sw${n}(v) { switch (v) { ${Array.from({ length: n }, (_, i) => `case ${i * (n % 3 + 1)}: return ${i};`).join(" ")} default: return -1; } } acc += sw${n}(${n - 1});`);
-    lines.push(`function ss${n}(v) { switch (v) { ${Array.from({ length: n }, (_, i) => `case "k${"q".repeat(i)}": return ${i};`).join(" ")} default: return -1; } } acc += ss${n}("k${"q".repeat(n - 1)}");`);
-    lines.push(`function p${n}(${Array.from({ length: n }, (_, i) => "a" + i).join(", ")}) { return arguments.length + a${n - 1}; } acc += p${n}(${Array.from({ length: n }, (_, i) => i).join(", ")});`);
-    lines.push(`class C${n} { ${Array.from({ length: n }, (_, i) => `f${i} = ${i}; #p${i} = ${i};`).join(" ")} sum() { return ${Array.from({ length: n }, (_, i) => `this.f${i} + this.#p${i}`).join(" + ")}; } } acc += new C${n}().sum();`);
-    lines.push(`acc += [${Array.from({ length: n }, (_, i) => i).join(", ")}].length + [${Array.from({ length: n }, (_, i) => i + 0.5).join(", ")}].length + [${Array.from({ length: n }, (_, i) => `"e${i}"`).join(", ")}].length;`);
-    lines.push(`acc += ${Array.from({ length: n }, (_, i) => i).reduceRight((inner, i) => `(v${i} => ${inner})(${i})`, Array.from({ length: n }, (_, i) => "v" + i).join(" + "))};`); // n nested arrows, the innermost capturing every parameter
+    lines.push(
+      `function sw${n}(v) { switch (v) { ${Array.from({ length: n }, (_, i) => `case ${i * ((n % 3) + 1)}: return ${i};`).join(" ")} default: return -1; } } acc += sw${n}(${n - 1});`,
+    );
+    lines.push(
+      `function ss${n}(v) { switch (v) { ${Array.from({ length: n }, (_, i) => `case "k${"q".repeat(i)}": return ${i};`).join(" ")} default: return -1; } } acc += ss${n}("k${"q".repeat(n - 1)}");`,
+    );
+    lines.push(
+      `function p${n}(${Array.from({ length: n }, (_, i) => "a" + i).join(", ")}) { return arguments.length + a${n - 1}; } acc += p${n}(${Array.from({ length: n }, (_, i) => i).join(", ")});`,
+    );
+    lines.push(
+      `class C${n} { ${Array.from({ length: n }, (_, i) => `f${i} = ${i}; #p${i} = ${i};`).join(" ")} sum() { return ${Array.from({ length: n }, (_, i) => `this.f${i} + this.#p${i}`).join(" + ")}; } } acc += new C${n}().sum();`,
+    );
+    lines.push(
+      `acc += [${Array.from({ length: n }, (_, i) => i).join(", ")}].length + [${Array.from({ length: n }, (_, i) => i + 0.5).join(", ")}].length + [${Array.from({ length: n }, (_, i) => `"e${i}"`).join(", ")}].length;`,
+    );
+    lines.push(
+      `acc += ${Array.from({ length: n }, (_, i) => i).reduceRight((inner, i) => `(v${i} => ${inner})(${i})`, Array.from({ length: n }, (_, i) => "v" + i).join(" + "))};`,
+    ); // n nested arrows, the innermost capturing every parameter
   }
-  for (let depth = 1; depth <= 12; depth++) lines.push(`acc += (function d${depth}_0() { let v0 = ${depth}; ${Array.from({ length: depth }, (_, i) => `return (function d${depth}_${i + 1}() { let v${i + 1} = v${i} + 1;`).join(" ")} return ${Array.from({ length: depth + 1 }, (_, i) => "v" + i).join(" + ")}; ${"})();".repeat(depth)} })();`);
+  for (let depth = 1; depth <= 12; depth++)
+    lines.push(
+      `acc += (function d${depth}_0() { let v0 = ${depth}; ${Array.from({ length: depth }, (_, i) => `return (function d${depth}_${i + 1}() { let v${i + 1} = v${i} + 1;`).join(" ")} return ${Array.from({ length: depth + 1 }, (_, i) => "v" + i).join(" + ")}; ${"})();".repeat(depth)} })();`,
+    );
   lines.push("console.log(acc);");
   return lines.join("\n") + "\n";
 }
 
-
 const corpusBuilds = [
   { name: "bun build --bytecode features.js", entry: "./features.js", args: [] as string[], output: featuresOutput },
-  { name: "bun build --bytecode --minify features.js", entry: "./features.js", args: ["--minify"], output: featuresOutput },
+  {
+    name: "bun build --bytecode --minify features.js",
+    entry: "./features.js",
+    args: ["--minify"],
+    output: featuresOutput,
+  },
   { name: "bun build --bytecode records.js", entry: "./records.js", args: [] as string[], output: recordsOutput },
-  { name: "bun build --bytecode --minify records.js", entry: "./records.js", args: ["--minify"], output: recordsOutput },
+  {
+    name: "bun build --bytecode --minify records.js",
+    entry: "./records.js",
+    args: ["--minify"],
+    output: recordsOutput,
+  },
   { name: "bun build --bytecode big.js", entry: "./big.js", args: [] as string[], output: bigOutput },
   { name: "bun build --bytecode shapes.js", entry: "./shapes.js", args: [] as string[], output: shapesOutput },
 ];
@@ -149,7 +177,11 @@ const libraries = [
   "happy-dom/lib/index.js",
   "immutable/dist/immutable.es.js",
 ];
-const libraryBuilds = libraries.map(lib => ({ name: `bun build --bytecode ${lib}`, entry: `../../node_modules/${lib}`, args: [] as string[] }));
+const libraryBuilds = libraries.map(lib => ({
+  name: `bun build --bytecode ${lib}`,
+  entry: `../../node_modules/${lib}`,
+  args: [] as string[],
+}));
 const bundlerBuilds = [...corpusBuilds, ...libraryBuilds];
 
 // big.js is generated next to the checked-in corpus once per run (same bytes every time).
@@ -212,7 +244,10 @@ describe("bytecode cache portability", () => {
       "vm.Script features.js",
       new vm.Script(featuresSource, { filename: "features.js", produceCachedData: true }).cachedData!,
     );
-    outputs["vm.Script shapes.js"] = fingerprint("vm.Script shapes.js", new vm.Script(shapesSource(), { filename: "shapes.js", produceCachedData: true }).cachedData!);
+    outputs["vm.Script shapes.js"] = fingerprint(
+      "vm.Script shapes.js",
+      new vm.Script(shapesSource(), { filename: "shapes.js", produceCachedData: true }).cachedData!,
+    );
     outputs["vm.Script records.js"] = fingerprint(
       "vm.Script records.js",
       new vm.Script(recordsSource, { filename: "records.js", produceCachedData: true }).cachedData!,
@@ -220,7 +255,10 @@ describe("bytecode cache portability", () => {
     // A builtin (what `bun build --compile --bytecode` embeds for node:* / bun:* modules): @-intrinsics and the
     // builtin-executable entry, which user source never produces. Bun's own internal modules are not hashed here because
     // their source is per-OS (process.platform is inlined); the next test covers them.
-    outputs["builtin corpus"] = fingerprint("builtin corpus", internalModuleBytecode(builtinSource, "corpus:builtin").bytecode);
+    outputs["builtin corpus"] = fingerprint(
+      "builtin corpus",
+      internalModuleBytecode(builtinSource, "corpus:builtin").bytecode,
+    );
     outputs["vm.SourceTextModule module.js"] = fingerprint(
       "vm.SourceTextModule module.js",
       new vm.SourceTextModule(moduleSource, { identifier: "module.js" }).createCachedData(),
@@ -236,7 +274,10 @@ describe("bytecode cache portability", () => {
     );
     outputs["vm.Script typescript.js"] = fingerprint(
       "vm.Script typescript.js",
-      new vm.Script(librarySource("typescript/lib/typescript.js"), { filename: "typescript.js", produceCachedData: true }).cachedData!,
+      new vm.Script(librarySource("typescript/lib/typescript.js"), {
+        filename: "typescript.js",
+        produceCachedData: true,
+      }).cachedData!,
     );
     outputs["vm.SourceTextModule acorn.mjs"] = fingerprint(
       "vm.SourceTextModule acorn.mjs",
@@ -441,7 +482,9 @@ describe("bytecode cache portability", () => {
     const internalModules: Record<string, string> = {};
     for (let i = 0, m; (m = internalModuleBytecode(i)); i++) internalModules[m.name] = hash(m.bytecode);
     expect(Object.keys(internalModules).length).toBeGreaterThan(100);
-    expect(JSON.parse(readFileSync(join(String(dir), "api", "internal-modules.json"), "utf8"))).toEqual(internalModules);
+    expect(JSON.parse(readFileSync(join(String(dir), "api", "internal-modules.json"), "utf8"))).toEqual(
+      internalModules,
+    );
 
     const vmExpected = hash(
       new vm.Script(featuresSource, { filename: "features.js", produceCachedData: true }).cachedData!,
@@ -471,14 +514,24 @@ describe("bytecode cache portability", () => {
     });
   }
 
-  for (const [file, source, output] of [["features.js", featuresSource, featuresOutput], ["records.js", recordsSource, recordsOutput]] as const) {
+  for (const [file, source, output] of [
+    ["features.js", featuresSource, featuresOutput],
+    ["records.js", recordsSource, recordsOutput],
+  ] as const) {
     test(`vm.Script cachedData for ${file} is accepted and runs`, async () => {
       const { cachedData } = new vm.Script(source, { filename: file, produceCachedData: true });
       const script = new vm.Script(source, { filename: file, cachedData });
       expect(script.cachedDataRejected).toBe(false);
       const lines: string[] = [];
       const done = Promise.withResolvers<void>();
-      const context = vm.createContext({ console: { log: (...args: unknown[]) => { lines.push(args.join(" ")); done.resolve(); } } });
+      const context = vm.createContext({
+        console: {
+          log: (...args: unknown[]) => {
+            lines.push(args.join(" "));
+            done.resolve();
+          },
+        },
+      });
       script.runInContext(context);
       await done.promise; // both scripts print once, after their async parts settle
       expect(lines.join("\n")).toBe(output);

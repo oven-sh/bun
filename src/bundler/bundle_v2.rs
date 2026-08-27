@@ -4961,6 +4961,8 @@ pub mod bv2_impl {
                                 loader: Some(loader),
                                 tree_shaking: this.linker.options.tree_shaking,
                                 known_target: resolve.import_record.original_target,
+                                is_entry_point: resolve.import_record.kind
+                                    == ImportKind::EntryPointBuild,
                                 ..Default::default()
                             };
                             // Arena-owned.

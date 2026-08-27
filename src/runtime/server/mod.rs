@@ -322,7 +322,6 @@ impl<const SSL: bool, const DEBUG: bool> Drop for NewServer<SSL, DEBUG> {
         // user_routes, all_closed_promise) drop automatically.
         if let Some(p) = self.plugins.replace(None) {
             p.forget_server(AnyServer::from(&*self));
-            p.deref();
         }
     }
 }
@@ -853,8 +852,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         let global = server.global_this();
-        let is_transfer_encoding =
-            request_body_length.is_some() && req.has_transfer_encoding();
+        let is_transfer_encoding = request_body_length.is_some() && req.has_transfer_encoding();
         let expects_body =
             matches!(request_body_length, Some(len) if len > 0 || is_transfer_encoding);
         let mut prepared = Self::create_request_context::<ServerRequestContext<SSL, DEBUG>>(
@@ -1435,7 +1433,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // (`node_http_request_on_resolve` / `_on_reject` release it).
             let _ = nhr.into_raw();
         } else {
-            nhr.deref();
+            drop(nhr);
         }
     }
 
@@ -1821,7 +1819,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             .get()
             .as_ref()
             .expect("server app is live")
-            .dupe_ref();
+            .clone();
         vm.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new_boxed(
             Box::new(DeinitTask(this)),
         ));
@@ -1949,9 +1947,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     // ─── teardown ────────────────────────────────────────────────────────────
     /// Destroy the uws app handles and hand back the ref they held (if still
-    /// held), for the caller to release. Called from `schedule_deinit`'s task,
-    /// on listen-failure, or from `finalize()` at VM shutdown.
-    #[must_use = "the returned ref must be released"]
+    /// held); dropping it releases it, which may free `self`. Called from
+    /// `schedule_deinit`'s task, on listen-failure, or from `finalize()` at VM
+    /// shutdown.
     pub(super) fn teardown(&self) -> Option<RefPtr<Self>> {
         httplog!("teardown");
         // This should've already been handled in stop_listening; however, when
@@ -2045,7 +2043,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         match dev {
             Ok(dev) => server.dev_server.set(dev),
             Err(e) => {
-                server.deref();
+                drop(server);
                 return Err(e);
             }
         }
@@ -2436,9 +2434,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if !global.has_exception() && !(check_ssl_error && throw_ssl_error_if_necessary(global)) {
             let _ = global.throw(msg);
         }
-        if let Some(r) = this.teardown() {
-            r.deref();
-        }
+        drop(this.teardown());
         JSValue::ZERO
     }
 
@@ -2806,9 +2802,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         if global.has_exception() {
-            if let Some(r) = this.teardown() {
-                r.deref();
-            }
+            drop(this.teardown());
             return JSValue::ZERO;
         }
 
@@ -2846,10 +2840,8 @@ impl<const SSL: bool, const DEBUG: bool> bun_event_loop::ManagedTask::RunOnce
     for DeinitTask<SSL, DEBUG>
 {
     fn run(self) -> JsResult<()> {
-        if let Some(extra) = self.0.teardown() {
-            extra.deref();
-        }
-        self.0.deref();
+        drop(self.0.teardown());
+        drop(self.0);
         Ok(())
     }
 

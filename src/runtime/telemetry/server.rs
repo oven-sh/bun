@@ -55,7 +55,12 @@ pub fn begin(
     let baggage: Option<&[u8]> = raw_bg
         .as_deref()
         .filter(|b| propagation::baggage_is_reasonable(b));
-    let https = !matches!(resp, bun_uws::AnyResponse::TCP(_));
+    // Exhaustive on purpose: a new transport must decide its scheme and
+    // protocol version here rather than silently inherit HTTP/1.1's.
+    let https = match resp {
+        bun_uws::AnyResponse::TCP(_) => false,
+        bun_uws::AnyResponse::SSL(_) | bun_uws::AnyResponse::H3(_) => true,
+    };
     // Facts only; attributes are encoded when the batch is exported
     // (bun_telemetry::http_record).
     let span = pool::begin_with(
@@ -104,7 +109,7 @@ pub fn begin(
                     ),
                     None => (R::PeerIp::None, 0, R::HttpVersion::Http3),
                 },
-                _ => match resp.get_remote_address_raw() {
+                bun_uws::AnyResponse::TCP(_) | bun_uws::AnyResponse::SSL(_) => match resp.get_remote_address_raw() {
                     Some((RawIp::V4(b), port)) => (R::PeerIp::V4(b), port, h1),
                     // (a v4-mapped `::ffff:a.b.c.d` stays as such, like requestIP() / net.Socket.remoteAddress)
                     Some((RawIp::V6(b), port)) => (R::PeerIp::V6(b), port, h1),

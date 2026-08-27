@@ -323,7 +323,10 @@ fn read_env_config(vm: &VirtualMachine) -> config::EnvConfig {
 /// for the SDK's `NodeSDK`.
 #[optimize(size)]
 fn read_live_env_config(global: &JSGlobalObject) -> JsResult<config::EnvConfig> {
-    let env = Bun__Telemetry__processEnv(global);
+    let env = bun_jsc::from_js_host_call(global, || Bun__Telemetry__processEnv(global))?;
+    if !env.is_object() {
+        return Ok(config::from_env(&|_| None));
+    }
     let failed: core::cell::Cell<Option<bun_jsc::JsError>> = core::cell::Cell::new(None);
     let cfg = config::from_env(&|k: &str| {
         // After a getter threw, stop reading: the exception is pending.
@@ -468,7 +471,7 @@ fn install_api_global(global: &JSGlobalObject) {
 }
 
 unsafe extern "C" {
-    /// The `process.env` object (JSTelemetryTracer.cpp).
+    /// `process.env` as it is now (JSTelemetryTracer.cpp); empty ⟺ threw.
     safe fn Bun__Telemetry__processEnv(global: &JSGlobalObject) -> JSValue;
 }
 
@@ -709,9 +712,10 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             // samplerArg falls back to OTEL_TRACES_SAMPLER_ARG like every other option.
             let arg = match opts.get(global, "samplerArg")? {
                 Some(a) => Some(a),
-                None => Bun__Telemetry__processEnv(global)
-                    .get(global, "OTEL_TRACES_SAMPLER_ARG")?
-                    .filter(|v| v.is_string()),
+                None => {
+                    let env = bun_jsc::from_js_host_call(global, || Bun__Telemetry__processEnv(global))?;
+                    if env.is_object() { env.get(global, "OTEL_TRACES_SAMPLER_ARG")?.filter(|v| v.is_string()) } else { None }
+                }
             };
             cfg.sampler = sampler_from_js(global, v, arg)?;
         }

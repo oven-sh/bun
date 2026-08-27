@@ -234,8 +234,9 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     const { exitCode, stderr } = await run(
       `process.env.OTEL_EXPORTER_OTLP_ENDPOINT = process.env.LATE_ENDPOINT;
        process.env.OTEL_SERVICE_NAME = "set-late";
-       process.env.OTEL_RESOURCE_ATTRIBUTES = "team=core";
        delete process.env.OTEL_TRACES_SAMPLER; // was "always_off" at startup
+       // a replaced process.env object counts too (test runners reset it that way)
+       process.env = { ...process.env, OTEL_RESOURCE_ATTRIBUTES: "team=core" };
        Bun.otel.start();
        Bun.otel.tracer("t").startSpan("s").end();`,
       { LATE_ENDPOINT: c.url, OTEL_TRACES_SAMPLER: "always_off" },

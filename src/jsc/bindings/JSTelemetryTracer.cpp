@@ -9,6 +9,7 @@
 #include "TelemetryContext.h"
 #include "TelemetryInternal.h"
 #include "BunClientData.h"
+#include "BunProcess.h"
 #include "InternalModuleRegistry.h"
 #include <JavaScriptCore/DOMJITSignature.h>
 #include <JavaScriptCore/FrameTracers.h>
@@ -660,9 +661,15 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetrySpanBaggage, (JSGlobalObject * lexicalGlobal
 
 } // namespace Bun
 
+/// `process.env` as JS sees it now (the property, so a reassigned `process.env = {…}`
+/// counts too). Empty on exception.
 extern "C" JSC::EncodedJSValue Bun__Telemetry__processEnv(Zig::GlobalObject* globalObject)
 {
-    return JSC::JSValue::encode(globalObject->processEnvObject());
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue env = JSC::JSValue(globalObject->processObject()).get(globalObject, JSC::Identifier::fromString(vm, "env"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::encode(env);
 }
 
 /// Pre-populate the @opentelemetry/api global registry with the native

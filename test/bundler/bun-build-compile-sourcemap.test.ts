@@ -2,10 +2,24 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
+// `Bun.build({compile: true})` copies the whole runtime into the output, so each
+// call dominates wall time. In-process Bun.build calls share bundler state and
+// gain nothing from `test.concurrent`, so these stay sequential and instead fold
+// what used to be separate compiles into shared builds. 30s per-test matches the
+// `compile` budget in expectBundled.ts; the default 5s is too tight under
+// debug+ASAN where the binary copy alone approaches it.
+const compileTimeout = 30_000;
+
 describe("Bun.build compile with sourcemap", () => {
+  // Three-deep import chain so one stack trace exercises mapping across
+  // every source file in the bundle.
   const helperFiles = {
-    "helper.js": `export function helperFunction() {
-  throw new Error("Error from helper module");
+    "utils.js": `export function utilError() {
+  throw new Error("Error from utils");
+}`,
+    "helper.js": `import { utilError } from "./utils.js";
+export function helperFunction() {
+  utilError();
 }`,
     "app.js": `import { helperFunction } from "./helper.js";
 
@@ -16,293 +30,199 @@ function main() {
 main();`,
   };
 
-  async function testSourcemapOption(sourcemapValue: "inline" | "external" | true, testName: string) {
-    using dir = tempDir(`build-compile-sourcemap-${testName}`, helperFiles);
-
-    const result = await Bun.build({
-      entrypoints: [join(String(dir), "app.js")],
-      compile: true,
-      sourcemap: sourcemapValue,
-    });
-
-    expect(result.success).toBe(true);
-
-    const executableOutput = result.outputs.find((o: any) => o.kind === "entry-point")!;
-    const executablePath = executableOutput.path;
-    expect(await Bun.file(executablePath).exists()).toBe(true);
-
-    // Run the compiled executable and capture the error
+  async function runExecutable(executablePath: string, cwd: string) {
     await using proc = Bun.spawn({
       cmd: [executablePath],
       env: bunEnv,
-      cwd: String(dir),
+      cwd,
       stdout: "pipe",
       stderr: "pipe",
     });
-
-    const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    // With sourcemaps working, we should see the actual file names
-    expect(stderr).toContain("helper.js");
-    expect(stderr).toContain("app.js");
-
-    // Should NOT see the bundled virtual path (/$bunfs/root/ on Unix, B:/~BUN/root/ on Windows)
-    expect(stderr).not.toMatch(/(\$bunfs|~BUN)\/root\//);
-
-    // Verify it failed (the error was thrown)
-    expect(exitCode).not.toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
   }
 
   test.each([
-    ["inline" as const, "inline"],
-    [true as const, "true"],
-    ["external" as const, "external"],
-  ])("compile with sourcemap: %s should work", async (sourcemapValue, testName) => {
-    await testSourcemapOption(sourcemapValue, testName);
-  });
+    ["inline", "inline" as const],
+    ["true", true as const],
+    ["external", "external" as const],
+  ])(
+    "compile with sourcemap: %s maps the stack trace back to source files",
+    async (testName, sourcemapValue) => {
+      using dir = tempDir(`build-compile-sourcemap-${testName}`, helperFiles);
 
-  test("compile without sourcemap should show bundled paths", async () => {
-    using dir = tempDir("build-compile-no-sourcemap", helperFiles);
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "app.js")],
+        compile: true,
+        sourcemap: sourcemapValue,
+      });
 
-    const result = await Bun.build({
-      entrypoints: [join(String(dir), "app.js")],
-      compile: true,
-      // No sourcemap option
-    });
+      expect(result.success).toBe(true);
 
-    expect(result.success).toBe(true);
-    expect(result.outputs.length).toBe(1);
+      const executableOutput = result.outputs.find((o: any) => o.kind === "entry-point")!;
+      const executablePath = executableOutput.path;
+      expect(await Bun.file(executablePath).exists()).toBe(true);
 
-    const executablePath = result.outputs[0].path;
-    expect(await Bun.file(executablePath).exists()).toBe(true);
+      if (sourcemapValue === "external") {
+        // The .map file must land on disk next to the executable with real
+        // mappings back to every input file.
+        const sourcemapOutputs = result.outputs.filter((o: any) => o.kind === "sourcemap");
+        expect(sourcemapOutputs.length).toBe(1);
+        const mapPath = sourcemapOutputs[0].path;
+        expect(mapPath).toEndWith(".map");
+        expect(await Bun.file(mapPath).exists()).toBe(true);
 
-    // Run the compiled executable and capture the error
-    await using proc = Bun.spawn({
-      cmd: [executablePath],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+        const mapContent = JSON.parse(await Bun.file(mapPath).text());
+        expect(mapContent.version).toBe(3);
+        expect(mapContent.mappings.length).toBeGreaterThan(0);
+        const sources = mapContent.sources.map((s: string) => s.split(/[\\/]/).pop());
+        expect(sources).toEqual(expect.arrayContaining(["utils.js", "helper.js", "app.js"]));
+      }
 
-    const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const { stderr, exitCode } = await runExecutable(executablePath, String(dir));
 
-    // Without sourcemaps, we should see the bundled virtual path (/$bunfs/root/ on Unix, B:/~BUN/root/ on Windows)
-    expect(stderr).toMatch(/(\$bunfs|~BUN)\/root\//);
+      // Every frame must be remapped to its original file AND line.
+      expect(stderr).toContain("Error from utils");
+      expect(stderr).toContain("utils.js:2");
+      expect(stderr).toContain("helper.js:3");
+      expect(stderr).toContain("app.js:4");
+      // Should NOT see the bundled virtual path (/$bunfs/root/ on Unix, B:/~BUN/root/ on Windows)
+      expect(stderr).not.toMatch(/(\$bunfs|~BUN)\/root\//);
+      expect(exitCode).not.toBe(0);
+    },
+    compileTimeout,
+  );
 
-    // Verify it failed (the error was thrown)
-    expect(exitCode).not.toBe(0);
-  });
+  test(
+    "compile without sourcemap shows bundled paths and writes no .map file",
+    async () => {
+      using dir = tempDir("build-compile-no-sourcemap", helperFiles);
 
-  test("compile with sourcemap: external writes .map file to disk", async () => {
-    using dir = tempDir("build-compile-sourcemap-external-file", helperFiles);
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "app.js")],
+        compile: true,
+        // No sourcemap option
+      });
 
-    const result = await Bun.build({
-      entrypoints: [join(String(dir), "app.js")],
-      compile: true,
-      sourcemap: "external",
-    });
+      expect(result.success).toBe(true);
+      expect(result.outputs.filter((o: any) => o.kind === "sourcemap").length).toBe(0);
 
-    expect(result.success).toBe(true);
+      const executableOutput = result.outputs.find((o: any) => o.kind === "entry-point")!;
+      const executablePath = executableOutput.path;
+      expect(await Bun.file(executablePath).exists()).toBe(true);
+      expect(await Bun.file(`${executablePath}.map`).exists()).toBe(false);
 
-    const executableOutput = result.outputs.find((o: any) => o.kind === "entry-point")!;
-    const executablePath = executableOutput.path;
-    expect(await Bun.file(executablePath).exists()).toBe(true);
+      const { stderr, exitCode } = await runExecutable(executablePath, String(dir));
 
-    // The sourcemap output should appear in build result outputs
-    const sourcemapOutputs = result.outputs.filter((o: any) => o.kind === "sourcemap");
-    expect(sourcemapOutputs.length).toBe(1);
+      // Without sourcemaps, the bundled virtual path (/$bunfs/root/ on Unix, B:/~BUN/root/ on Windows) is what shows.
+      expect(stderr).toContain("Error from utils");
+      expect(stderr).toMatch(/(\$bunfs|~BUN)\/root\//);
+      expect(exitCode).not.toBe(0);
+    },
+    compileTimeout,
+  );
 
-    // The .map file should exist next to the executable
-    const mapPath = sourcemapOutputs[0].path;
-    expect(mapPath).toEndWith(".map");
-    expect(await Bun.file(mapPath).exists()).toBe(true);
-
-    // Validate the sourcemap is valid JSON with expected fields
-    const mapContent = JSON.parse(await Bun.file(mapPath).text());
-    expect(mapContent.version).toBe(3);
-    expect(mapContent.sources).toBeArray();
-    expect(mapContent.sources.length).toBeGreaterThan(0);
-    expect(mapContent.mappings).toBeString();
-  });
-
-  test("compile without sourcemap does not write .map file", async () => {
-    using dir = tempDir("build-compile-no-sourcemap-file", {
-      "nosourcemap_entry.js": helperFiles["app.js"],
-      "helper.js": helperFiles["helper.js"],
-    });
-
-    const result = await Bun.build({
-      entrypoints: [join(String(dir), "nosourcemap_entry.js")],
-      compile: true,
-    });
-
-    expect(result.success).toBe(true);
-
-    const executableOutput = result.outputs.find((o: any) => o.kind === "entry-point")!;
-    const executablePath = executableOutput.path;
-    // No .map file should exist next to the executable
-    expect(await Bun.file(`${executablePath}.map`).exists()).toBe(false);
-    // No sourcemap outputs should be in the result
-    const sourcemapOutputs = result.outputs.filter((o: any) => o.kind === "sourcemap");
-    expect(sourcemapOutputs.length).toBe(0);
-  });
-
-  test("compile with splitting and external sourcemap writes multiple .map files", async () => {
-    using dir = tempDir("build-compile-sourcemap-splitting", {
-      "entry.js": `
+  test(
+    "compile with splitting and external sourcemap writes multiple .map files",
+    async () => {
+      using dir = tempDir("build-compile-sourcemap-splitting", {
+        "entry.js": `
 const mod = await import("./lazy.js");
 mod.greet();
 `,
-      "lazy.js": `
+        "lazy.js": `
 export function greet() {
   console.log("hello from lazy module");
 }
 `,
-    });
+      });
 
-    const result = await Bun.build({
-      entrypoints: [join(String(dir), "entry.js")],
-      compile: true,
-      splitting: true,
-      sourcemap: "external",
-    });
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "entry.js")],
+        compile: true,
+        splitting: true,
+        sourcemap: "external",
+      });
 
-    expect(result.success).toBe(true);
+      expect(result.success).toBe(true);
 
-    const executableOutput = result.outputs.find((o: any) => o.kind === "entry-point")!;
-    const executablePath = executableOutput.path;
-    expect(await Bun.file(executablePath).exists()).toBe(true);
+      const executableOutput = result.outputs.find((o: any) => o.kind === "entry-point")!;
+      const executablePath = executableOutput.path;
+      expect(await Bun.file(executablePath).exists()).toBe(true);
 
-    // With splitting and a dynamic import, there should be at least 2 sourcemaps
-    // (one for the entry chunk, one for the lazy-loaded chunk)
-    const sourcemapOutputs = result.outputs.filter((o: any) => o.kind === "sourcemap");
-    expect(sourcemapOutputs.length).toBeGreaterThanOrEqual(2);
+      // With splitting and a dynamic import, there should be at least 2 sourcemaps
+      // (one for the entry chunk, one for the lazy-loaded chunk)
+      const sourcemapOutputs = result.outputs.filter((o: any) => o.kind === "sourcemap");
+      expect(sourcemapOutputs.length).toBeGreaterThanOrEqual(2);
 
-    // Each sourcemap should be a valid .map file on disk
-    const mapPaths = new Set<string>();
-    for (const sm of sourcemapOutputs) {
-      expect(sm.path).toEndWith(".map");
-      expect(await Bun.file(sm.path).exists()).toBe(true);
+      // Each sourcemap should be a valid .map file on disk
+      const mapPaths = new Set<string>();
+      for (const sm of sourcemapOutputs) {
+        expect(sm.path).toEndWith(".map");
+        expect(await Bun.file(sm.path).exists()).toBe(true);
 
-      // Each map file should have a unique path (no overwrites)
-      expect(mapPaths.has(sm.path)).toBe(false);
-      mapPaths.add(sm.path);
+        // Each map file should have a unique path (no overwrites)
+        expect(mapPaths.has(sm.path)).toBe(false);
+        mapPaths.add(sm.path);
 
-      // Validate the sourcemap is valid JSON
-      const mapContent = JSON.parse(await Bun.file(sm.path).text());
+        const mapContent = JSON.parse(await Bun.file(sm.path).text());
+        expect(mapContent.version).toBe(3);
+        expect(mapContent.mappings).toBeString();
+      }
+
+      const { stdout, exitCode } = await runExecutable(executablePath, String(dir));
+
+      expect(stdout).toContain("hello from lazy module");
+      expect(exitCode).toBe(0);
+    },
+    compileTimeout,
+  );
+
+  test(
+    "compile with --outfile subdir/myapp writes .map next to executable",
+    async () => {
+      using dir = tempDir("build-compile-sourcemap-outfile-subdir", helperFiles);
+
+      const subdirPath = join(String(dir), "subdir");
+      const exeSuffix = process.platform === "win32" ? ".exe" : "";
+
+      // Use CLI: bun build --compile --outfile subdir/myapp --sourcemap=external
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          "--compile",
+          join(String(dir), "app.js"),
+          "--outfile",
+          join(subdirPath, "myapp"),
+          "--sourcemap=external",
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+
+      // The executable should be at subdir/myapp (with .exe on Windows)
+      expect(await Bun.file(join(subdirPath, `myapp${exeSuffix}`)).exists()).toBe(true);
+
+      // The .map file should be in subdir/ (next to the executable)
+      const glob = new Bun.Glob("*.map");
+      const mapFiles = Array.from(glob.scanSync({ cwd: subdirPath }));
+      expect(mapFiles.length).toBe(1);
+
+      const mapContent = JSON.parse(await Bun.file(join(subdirPath, mapFiles[0])).text());
       expect(mapContent.version).toBe(3);
-      expect(mapContent.mappings).toBeString();
-    }
+      expect(mapContent.mappings.length).toBeGreaterThan(0);
 
-    // Run the compiled executable to ensure it works
-    await using proc = Bun.spawn({
-      cmd: [executablePath],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(stdout).toContain("hello from lazy module");
-    expect(exitCode).toBe(0);
-  });
-
-  test("compile with --outfile subdir/myapp writes .map next to executable", async () => {
-    using dir = tempDir("build-compile-sourcemap-outfile-subdir", helperFiles);
-
-    const subdirPath = join(String(dir), "subdir");
-    const exeSuffix = process.platform === "win32" ? ".exe" : "";
-
-    // Use CLI: bun build --compile --outfile subdir/myapp --sourcemap=external
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "build",
-        "--compile",
-        join(String(dir), "app.js"),
-        "--outfile",
-        join(subdirPath, "myapp"),
-        "--sourcemap=external",
-      ],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-
-    // The executable should be at subdir/myapp (with .exe on Windows)
-    expect(await Bun.file(join(subdirPath, `myapp${exeSuffix}`)).exists()).toBe(true);
-
-    // The .map file should be in subdir/ (next to the executable)
-    const glob = new Bun.Glob("*.map");
-    const mapFiles = Array.from(glob.scanSync({ cwd: subdirPath }));
-    expect(mapFiles.length).toBe(1);
-
-    // Validate the sourcemap is valid JSON
-    const mapContent = JSON.parse(await Bun.file(join(subdirPath, mapFiles[0])).text());
-    expect(mapContent.version).toBe(3);
-    expect(mapContent.mappings).toBeString();
-
-    // Verify no .map was written into the doubled path subdir/subdir/
-    expect(await Bun.file(join(String(dir), "subdir", "subdir", "myapp.map")).exists()).toBe(false);
-  });
-
-  test("compile with multiple source files", async () => {
-    using dir = tempDir("build-compile-sourcemap-multiple-files", {
-      "utils.js": `export function utilError() {
-  throw new Error("Error from utils");
-}`,
-      "helper.js": `import { utilError } from "./utils.js";
-export function helperFunction() {
-  utilError();
-}`,
-      "app.js": `import { helperFunction } from "./helper.js";
-
-function main() {
-  helperFunction();
-}
-
-main();`,
-    });
-
-    const result = await Bun.build({
-      entrypoints: [join(String(dir), "app.js")],
-      compile: true,
-      sourcemap: "inline",
-    });
-
-    expect(result.success).toBe(true);
-    const executable = result.outputs[0].path;
-    expect(await Bun.file(executable).exists()).toBe(true);
-
-    // Run the executable
-    await using proc = Bun.spawn({
-      cmd: [executable],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    // With sourcemaps, should show all three source file names
-    expect(stderr).toContain("utils.js");
-    expect(stderr).toContain("helper.js");
-    expect(stderr).toContain("app.js");
-
-    // Should NOT show bundled paths (/$bunfs/root/ on Unix, B:/~BUN/root/ on Windows)
-    expect(stderr).not.toMatch(/(\$bunfs|~BUN)\/root\//);
-
-    // Verify it failed (the error was thrown)
-    expect(exitCode).not.toBe(0);
-  });
+      // Verify no .map was written into the doubled path subdir/subdir/
+      expect(await Bun.file(join(String(dir), "subdir", "subdir", "myapp.map")).exists()).toBe(false);
+    },
+    compileTimeout,
+  );
 });

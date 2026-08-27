@@ -1153,6 +1153,7 @@ fn module_dest_path(output_file: &OutputFile) -> std::borrow::Cow<'_, [u8]> {
 }
 
 pub(crate) fn to_bytes(
+    target: &CompileTarget,
     prefix: &[u8],
     output_files: &[OutputFile],
     output_format: Format,
@@ -1500,6 +1501,13 @@ pub(crate) fn to_bytes(
         record[4..8].copy_from_slice(&module_info_string_table_ptr.length.to_le_bytes());
         let _ = string_builder.append_count(&record);
         flags |= Flags::HAS_MODULE_INFO_STRING_TABLE;
+    }
+    if !target.is_host_platform()
+        && output_files
+            .iter()
+            .any(|file| file.output_kind == options::OutputKind::Bytecode)
+    {
+        flags |= Flags::CROSS_COMPILED_BYTECODE;
     }
     let compile_exec_argv_ptr = string_builder.append_count_z(compile_exec_argv);
 
@@ -2433,18 +2441,12 @@ pub fn to_executable(
     windows_options: &WindowsOptions,
     compile_exec_argv: &[u8],
     self_exe_path: Option<&[u8]>,
-    mut flags: Flags,
+    flags: Flags,
 ) -> crate::Result<CompileResult> {
     #[cfg(windows)]
     let _ = root_dir;
-    if !target.is_host_platform()
-        && output_files
-            .iter()
-            .any(|file| file.output_kind == options::OutputKind::Bytecode)
-    {
-        flags |= Flags::CROSS_COMPILED_BYTECODE;
-    }
     let bytes = match to_bytes(
+        target,
         module_prefix,
         output_files,
         output_format,

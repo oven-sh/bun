@@ -6,8 +6,7 @@
 
 use bun_http_types::Method::Method;
 
-use crate::StatusCode;
-use crate::data::Limits;
+use crate::{Limits, StatusCode};
 use crate::otlp::{self, SPAN_LEN_RESERVE, SpanWriter, Value, field as f};
 use crate::proto::Nested;
 use crate::span::{SpanKind, SpanStub};

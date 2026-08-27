@@ -8,11 +8,13 @@ use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 use std::sync::Arc;
 
+use bun_event_loop::ConcurrentTask::ConcurrentTask;
+use bun_event_loop::ManagedTask::ManagedTask;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult, VmHandle};
 use bun_telemetry::processor::{self, Processor};
-use bun_telemetry::{Instrument, Sampler};
-use bun_telemetry_cold::config::{self, Compression, OtlpExporterConfig};
+use bun_telemetry::{Instrument, InstrumentSet, Sampler};
+use bun_telemetry_cold::config::{self, Compression, ExporterConfig, OtlpExporterConfig};
 
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerTag};
 
@@ -50,10 +52,9 @@ pub struct VmState {
     timer_armed: Cell<bool>,
     /// JS function exporters registered from this VM.
     js_exporters: RefCell<Vec<Arc<exporter::JsExporter>>>,
-    /// Promises from `forceFlush()` waiting for in-flight exports to drain.
-    /// `forceFlush()` promises and the payload sequence number each waits
-    /// for (everything taken before it must have settled).
-    flush_waiters: RefCell<Vec<(u64, bun_jsc::JSPromiseStrong)>>,
+    /// `forceFlush()` promises and the target each waits for (every payload
+    /// taken before it must have settled).
+    flush_waiters: RefCell<Vec<(bun_telemetry::FlushTarget, bun_jsc::JSPromiseStrong)>>,
     /// Keeps this event loop alive while `flush_waiters` is non-empty (the
     /// export completes on the HTTP thread; nothing else holds a worker open).
     flush_keep_alive: RefCell<bun_io::KeepAlive>,
@@ -96,7 +97,7 @@ fn vm_state_or_init(global: &JSGlobalObject) -> &'static VmState {
     // (a worker spawned before main's `start()`): give it the api global too —
     // on the next tick, since this can be reached from inside an integration.
     if configured() && !s.api_installed.get() {
-        exporter::post_to_vm(&global.bun_vm().handle(), |_| {
+        post_to_vm(&global.bun_vm().handle(), |_| {
             if let Some(s) = current_vm_state() {
                 install_api_global(s.global());
             }
@@ -158,8 +159,8 @@ fn local_hook(global: *mut c_void) -> *const RefCell<bun_telemetry::Local> {
 }
 
 impl VmState {
-    fn idle_hook_key(&self) -> usize {
-        core::ptr::from_ref(self) as usize
+    pub(crate) fn owner_key(&self) -> bun_telemetry::OwnerKey {
+        bun_telemetry::OwnerKey::of(self)
     }
 
     #[inline]
@@ -246,10 +247,10 @@ fn flush_at_exit(vm: Option<&mut bun_jsc::VirtualMachineRef>, reload: bool) {
                 // Workers: this VM's own function exporters get the batch now
                 // (their loop is going away); everything else exports async /
                 // from the main thread at process exit.
-                processor().flush_for_owner(s.idle_hook_key());
+                processor().flush_for_owner(s.owner_key());
             }
             exporter::JsExporter::detach_all_for_vm(s);
-            processor().remove_idle_hooks(s.idle_hook_key());
+            processor().remove_settle_hooks(s.owner_key());
             // A JS exporter callback above may have recorded spans and re-armed the timer.
             s.disarm_timer();
         }
@@ -345,11 +346,11 @@ pub fn init_for_vm(global: &JSGlobalObject) {
     for w in &env.warnings {
         bun_core::warn!("[otel] {}", w);
     }
-    if !env.enabled {
+    if env.activation != config::Activation::On {
         return;
     }
     if let Err(e) = configure(global, &env.config) {
-        bun_core::warn!("[otel] {}", bstr::BStr::new(&e));
+        bun_core::warn!("[otel] {}", e);
     }
     drop(configuring);
     install_api_global(global);
@@ -359,27 +360,22 @@ pub fn init_for_vm(global: &JSGlobalObject) {
 /// additive; `start()` clears them first when it is given an explicit list.
 /// The enable mask replaces the previous one.
 #[optimize(size)]
-pub fn configure(global: &JSGlobalObject, cfg: &bun_telemetry_cold::Config) -> Result<(), Vec<u8>> {
-    let otlp_exporters = exporter::OtlpHttpExporter::from_configs(&cfg.otlp_exporters)?;
-    configure_with(
-        global,
-        cfg,
-        otlp_exporters
-            .into_iter()
-            .map(|e| e as Arc<dyn bun_telemetry::processor::Exporter>)
-            .collect(),
-        None,
-    );
+pub fn configure(
+    global: &JSGlobalObject,
+    cfg: &bun_telemetry_cold::Config,
+) -> Result<(), exporter::InvalidEndpoint> {
+    let exporters = exporter::build(&cfg.exporters)?;
+    configure_with(global, cfg, exporters, None);
     Ok(())
 }
 
-/// Apply `cfg` with already-constructed OTLP exporters (infallible part).
+/// Apply `cfg` with already-constructed exporters (infallible part).
 #[optimize(size)]
 fn configure_with(
     global: &JSGlobalObject,
     cfg: &bun_telemetry_cold::Config,
-    mut exporters: Vec<Arc<dyn bun_telemetry::processor::Exporter>>,
-    replace_owner: Option<usize>,
+    exporters: Vec<Arc<dyn bun_telemetry::processor::Exporter>>,
+    replace_owner: Option<bun_telemetry::OwnerKey>,
 ) {
     let vm = global.bun_vm();
     let p = processor();
@@ -389,24 +385,9 @@ fn configure_with(
         if let Some(s) = vm_state(global) {
             bun_telemetry::batch::flush_local(&mut s.local.borrow_mut().batch);
         }
-        while p.pending_count() != 0 && p.exporter_count() != 0 {
-            if !p.export() {
-                break;
-            }
-        }
+        p.export_all();
     }
-    bun_telemetry::set_state(State {
-        sampler: cfg.sampler,
-        limits: cfg.limits,
-        propagate_trace_context: cfg.propagate_trace_context,
-        propagate_baggage: cfg.propagate_baggage,
-        capture_db_statement: cfg.capture_db_statement,
-        capture_request_headers: cfg
-            .capture_request_headers
-            .iter()
-            .map(|s| s.as_bytes().into())
-            .collect(),
-    });
+    bun_telemetry::set_state(cfg.state());
     *p.config.write() = cfg.batch;
     let host_name = crate::node::node_os::hostname_string();
     let os_version = crate::node::node_os::release();
@@ -431,12 +412,9 @@ fn configure_with(
             os_version: os_version.to_utf8().slice(),
         });
     p.set_resource(resource);
-    if cfg.console_exporter {
-        exporters.push(Arc::new(exporter::ConsoleExporter));
-    }
     p.install_exporters(replace_owner, exporters);
     bun_telemetry::rt::install(bun_telemetry::rt::Hooks {
-        active_span: |g| span::active_ptr(g),
+        active_span: span::active_hook,
         local: local_hook,
         after_record: |g| after_record(JSGlobalObject::opaque_ref(g.cast::<JSGlobalObject>())),
         release_cell: span::release_cell,
@@ -444,8 +422,7 @@ fn configure_with(
             span::with_active_trace_state(JSGlobalObject::opaque_ref(g.cast::<JSGlobalObject>()), f)
         },
     });
-    bun_telemetry::set_enabled_mask(cfg.instruments, cfg.roots);
-    bun_telemetry::set_shut_down(false);
+    bun_telemetry::activate(cfg.instruments, cfg.roots);
     let _ = bun_jsc::virtual_machine::TELEMETRY_EXIT_HOOK.set(flush_at_exit);
     let s = vm_state_or_init(global);
     s.arm_timer();
@@ -527,16 +504,18 @@ fn arg_string(global: &JSGlobalObject, v: JSValue) -> JsResult<Option<String>> {
 }
 
 /// `start(options?)` — configure and enable. Options mirror the env vars:
-/// `{ serviceName, resourceAttributes, endpoint, headers, exporters: [{url, headers, compression} | {export(spans), format, }],
-///    sampler: number | "always_on" | …, instrumentations: { fetch: false, fs: "always" }, batch: { delayMs, maxQueue, maxBatch, timeoutMs },
-///    captureDbStatement, propagators: ["tracecontext","baggage"] }`
+/// `{ serviceName, resourceAttributes, endpoint, headers,
+///    exporters: [{ url, headers?, compression?, timeoutMs? } | "console" | { export(spans) } | { exportProtobuf(bytes) } | { exportJSON(string) }],
+///    sampler: number | "always_on" | …, samplerArg, instrumentations: ["http", …] | { fetch: false, fs: "always" },
+///    batch: { delayMs, timeoutMs, maxQueueSize, maxExportBatchSize }, limits: { attributeCountLimit, … },
+///    captureDbStatement, propagators: ["tracecontext", "baggage"] }`
 #[bun_jsc::host_fn]
 #[optimize(size)]
 pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let opts = frame.argument(0);
     let vm = global.bun_vm();
     let env = read_env_config(vm);
-    if env.sdk_disabled {
+    if env.activation == config::Activation::SdkDisabled {
         // OTEL_SDK_DISABLED wins over code, as with the SDK's NodeSDK.start().
         static WARNED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
         if !WARNED.swap(true, core::sync::atomic::Ordering::Relaxed) {
@@ -553,6 +532,7 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // Base: the environment/bunfig configuration. A repeat start() (from any
     // thread) is a reconfiguration: options it omits go back to these
     // defaults process-wide; only the exporter list is kept unless given.
+    let exporters_chosen_by_env = env.exporters_chosen_by_env;
     let mut cfg = env.config;
     let mut js_exporters: Vec<Arc<exporter::JsExporter>> = Vec::new();
     let mut replaces_exporters = false;
@@ -563,10 +543,12 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         if let Some(v) = explicit_service_name {
             cfg.service_name = Some(v);
         }
-        if let Some(o) = opts
-            .get(global, "resourceAttributes")?
-            .and_then(|v| v.get_object())
-        {
+        if let Some(v) = opts.get(global, "resourceAttributes")? {
+            let Some(o) = v.get_object() else {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "resourceAttributes must be an object"
+                )));
+            };
             use bun_telemetry_cold::config::ResourceValue as R;
             let iter = bun_jsc::JSPropertyIterator::init(
                 global,
@@ -611,14 +593,13 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let endpoint = opt_str(global, opts, "endpoint")?;
         let explicit_exporters = opts.get(global, "exporters")?;
         if endpoint.is_some() || explicit_exporters.is_some() {
-            cfg.otlp_exporters.clear();
-            cfg.console_exporter = false;
+            cfg.exporters.clear();
             replaces_exporters = true;
         }
         if let Some(url) = endpoint {
             let mut x = OtlpExporterConfig::new(config::normalize_traces_url(&url));
             read_exporter_headers(global, opts, &mut x)?;
-            cfg.otlp_exporters.push(x);
+            cfg.exporters.push(ExporterConfig::Otlp(x));
         }
         if let Some(list) = explicit_exporters {
             if !list.is_array() {
@@ -630,12 +611,13 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             while let Some(item) = it.next()? {
                 if item.is_string() {
                     let s = arg_string(global, item)?.unwrap_or_default();
-                    if s == "console" {
-                        cfg.console_exporter = true;
+                    cfg.exporters.push(if s == "console" {
+                        ExporterConfig::Console
                     } else {
-                        cfg.otlp_exporters
-                            .push(OtlpExporterConfig::new(config::normalize_traces_url(&s)));
-                    }
+                        ExporterConfig::Otlp(OtlpExporterConfig::new(config::normalize_traces_url(
+                            &s,
+                        )))
+                    });
                     continue;
                 }
                 if !item.is_object() {
@@ -676,7 +658,7 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                 };
                 let mut x = OtlpExporterConfig::new(config::normalize_traces_url(&url));
                 read_exporter_extras(global, item, &mut x)?;
-                cfg.otlp_exporters.push(x);
+                cfg.exporters.push(ExporterConfig::Otlp(x));
             }
         }
         if let Some(v) = opts.get(global, "sampler")? {
@@ -695,67 +677,71 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             read_instrumentations(global, v, &mut cfg)?;
         }
         if let Some(b) = opts.get(global, "batch")? {
-            if b.is_object() {
-                if let Some(v) = match b.get_optional_int::<u32>(global, "delayMs")? {
-                    Some(v) => Some(v),
-                    None => b.get_optional_int::<u32>(global, "scheduledDelayMillis")?,
-                } {
-                    cfg.batch.scheduled_delay_ms = v;
-                }
-                if let Some(v) = match b.get_optional_int::<u32>(global, "timeoutMs")? {
-                    Some(v) => Some(v),
-                    None => b.get_optional_int::<u32>(global, "exportTimeoutMillis")?,
-                } {
-                    cfg.batch.export_timeout_ms = v;
-                }
-                if let Some(v) = b.get_optional_int::<u32>(global, "maxQueueSize")? {
-                    cfg.batch.max_queue_size = v.max(1);
-                }
-                if let Some(v) = b.get_optional_int::<u32>(global, "maxExportBatchSize")? {
-                    cfg.batch.max_export_batch_size = v.max(1);
-                }
-                cfg.batch.max_export_batch_size = cfg
-                    .batch
-                    .max_export_batch_size
-                    .min(cfg.batch.max_queue_size);
+            if !b.is_object() {
+                return Err(global.throw_invalid_arguments(format_args!("batch must be an object")));
             }
+            if let Some(v) = match b.get_optional_int::<u32>(global, "delayMs")? {
+                Some(v) => Some(v),
+                None => b.get_optional_int::<u32>(global, "scheduledDelayMillis")?,
+            } {
+                cfg.batch.scheduled_delay_ms = v;
+            }
+            if let Some(v) = match b.get_optional_int::<u32>(global, "timeoutMs")? {
+                Some(v) => Some(v),
+                None => b.get_optional_int::<u32>(global, "exportTimeoutMillis")?,
+            } {
+                cfg.batch.export_timeout_ms = v;
+            }
+            if let Some(v) = b.get_optional_int::<u32>(global, "maxQueueSize")? {
+                cfg.batch.max_queue_size = v;
+            }
+            if let Some(v) = b.get_optional_int::<u32>(global, "maxExportBatchSize")? {
+                cfg.batch.max_export_batch_size = v;
+            }
+            cfg.batch = cfg.batch.normalized();
         }
         if let Some(v) = opts.get(global, "captureDbStatement")? {
             cfg.capture_db_statement = v.to_boolean();
         }
         if let Some(v) = opts.get(global, "propagators")? {
-            if v.is_array() {
-                cfg.propagate_trace_context = false;
-                cfg.propagate_baggage = false;
-                let mut it = JSArrayIterator::init(v, global)?;
-                while let Some(item) = it.next()? {
-                    match arg_string(global, item)?.as_deref() {
-                        Some("tracecontext") => cfg.propagate_trace_context = true,
-                        Some("baggage") => cfg.propagate_baggage = true,
-                        other => {
-                            return Err(global.throw_invalid_arguments(format_args!(
-                                "unknown propagator {:?} (expected \"tracecontext\" or \"baggage\")",
-                                other.unwrap_or("")
-                            )));
-                        }
+            if !v.is_array() {
+                return Err(
+                    global.throw_invalid_arguments(format_args!("propagators must be an array"))
+                );
+            }
+            cfg.propagate_trace_context = false;
+            cfg.propagate_baggage = false;
+            let mut it = JSArrayIterator::init(v, global)?;
+            while let Some(item) = it.next()? {
+                match arg_string(global, item)?.as_deref() {
+                    Some("tracecontext") => cfg.propagate_trace_context = true,
+                    Some("baggage") => cfg.propagate_baggage = true,
+                    other => {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "unknown propagator {:?} (expected \"tracecontext\" or \"baggage\")",
+                            other.unwrap_or("")
+                        )));
                     }
                 }
             }
         }
         if let Some(l) = opts.get(global, "limits")? {
-            if l.is_object() {
-                if let Some(v) = l.get_optional_int::<u16>(global, "attributeCountLimit")? {
-                    cfg.limits.attributes = v;
-                }
-                if let Some(v) = l.get_optional_int::<u16>(global, "eventCountLimit")? {
-                    cfg.limits.events = v;
-                }
-                if let Some(v) = l.get_optional_int::<u16>(global, "linkCountLimit")? {
-                    cfg.limits.links = v;
-                }
-                if let Some(v) = l.get_optional_int::<u32>(global, "attributeValueLengthLimit")? {
-                    cfg.limits.attribute_value_length = v;
-                }
+            if !l.is_object() {
+                return Err(
+                    global.throw_invalid_arguments(format_args!("limits must be an object"))
+                );
+            }
+            if let Some(v) = l.get_optional_int::<u16>(global, "attributeCountLimit")? {
+                cfg.limits.attributes = v;
+            }
+            if let Some(v) = l.get_optional_int::<u16>(global, "eventCountLimit")? {
+                cfg.limits.events = v;
+            }
+            if let Some(v) = l.get_optional_int::<u16>(global, "linkCountLimit")? {
+                cfg.limits.links = v;
+            }
+            if let Some(v) = l.get_optional_int::<u32>(global, "attributeValueLengthLimit")? {
+                cfg.limits.attribute_value_length = v;
             }
         }
     }
@@ -766,14 +752,13 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // earlier start) behaves like BUN_OTEL=1: the local collector default.
     if !replaces_exporters
         && !configured()
-        && !cfg.exporters_from_env
-        && cfg.otlp_exporters.is_empty()
-        && !cfg.console_exporter
+        && !exporters_chosen_by_env
+        && cfg.exporters.is_empty()
         && js_exporters.is_empty()
     {
-        cfg.otlp_exporters
-            .push(OtlpExporterConfig::new(config::traces_endpoint(
-                "http://localhost:4318",
+        cfg.exporters
+            .push(ExporterConfig::Otlp(OtlpExporterConfig::new(
+                config::traces_endpoint(config::DEFAULT_COLLECTOR),
             )));
     }
     // An explicit exporter list replaces whatever was configured before
@@ -781,30 +766,22 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // to duplicate destinations.
     // Validate (construct) the new exporters before dropping the old ones, so
     // a bad URL leaves the previous pipeline intact.
-    let otlp = match exporter::OtlpHttpExporter::from_configs(&cfg.otlp_exporters) {
+    let built = match exporter::build(&cfg.exporters) {
         Ok(v) => v,
-        Err(e) => {
-            return Err(global.throw_invalid_arguments(format_args!("{}", bstr::BStr::new(&e))));
-        }
+        Err(e) => return Err(global.throw_invalid_arguments(format_args!("{e}"))),
     };
     let mut new_exporters: Vec<Arc<dyn bun_telemetry::processor::Exporter>> = Vec::new();
+    // No exporters given to a repeat start(): keep the pipeline env/bunfig/an
+    // earlier start() already set up rather than adding the env-derived ones again.
     if replaces_exporters || !configured() {
-        new_exporters.extend(
-            otlp.into_iter()
-                .map(|e| e as Arc<dyn bun_telemetry::processor::Exporter>),
-        );
+        new_exporters.extend(built);
     }
     let replace_owner = if replaces_exporters {
         if let Some(s) = vm_state(global) {
             exporter::JsExporter::detach_all_for_vm(s);
         }
-        Some(core::ptr::from_ref(vm_state_or_init(global)) as usize)
+        Some(vm_state_or_init(global).owner_key())
     } else {
-        if configured() {
-            // No exporters given: keep the pipeline that env/bunfig/an earlier
-            // start() already set up rather than adding the env-derived ones again.
-            cfg.console_exporter = false;
-        }
         None
     };
     if !js_exporters.is_empty() {
@@ -933,12 +910,12 @@ fn read_instrumentations(
 ) -> JsResult<()> {
     if v.is_array() {
         // Allow-list form: ["http", "fetch"].
-        let mut mask = Instrument::User.bit();
+        let mut mask = InstrumentSet::of(Instrument::User);
         let mut it = JSArrayIterator::init(v, global)?;
         while let Some(item) = it.next()? {
             if let Some(n) = arg_string(global, item)? {
                 match Instrument::from_name(n.as_bytes()) {
-                    Some(i) => mask |= i.bit(),
+                    Some(i) => mask.insert(i),
                     None => {
                         return Err(global.throw_invalid_arguments(format_args!(
                             "unknown instrumentation \"{n}\""
@@ -950,11 +927,10 @@ fn read_instrumentations(
         cfg.instruments = mask;
         return Ok(());
     }
-    if !v.is_object() {
-        return Ok(());
-    }
     let Some(o) = v.get_object() else {
-        return Ok(());
+        return Err(global.throw_invalid_arguments(format_args!(
+            "instrumentations must be an array or an object"
+        )));
     };
     let iter = bun_jsc::JSPropertyIterator::init(
         global,
@@ -976,19 +952,19 @@ fn read_instrumentations(
         // false → off; true → on (default root policy); "always" → on + roots; "nested" → on, parent required.
         if val.is_boolean() {
             if val.as_boolean() {
-                cfg.instruments |= i.bit();
+                cfg.instruments.insert(i);
             } else {
-                cfg.instruments &= !i.bit();
+                cfg.instruments.remove(i);
             }
         } else if let Some(s) = arg_string(global, val)? {
             match s.as_str() {
                 "always" => {
-                    cfg.instruments |= i.bit();
-                    cfg.roots |= i.bit();
+                    cfg.instruments.insert(i);
+                    cfg.roots.insert(i);
                 }
                 "nested" => {
-                    cfg.instruments |= i.bit();
-                    cfg.roots &= !i.bit();
+                    cfg.instruments.insert(i);
+                    cfg.roots.remove(i);
                 }
                 other => return Err(global.throw_invalid_arguments(format_args!("instrumentations.{}: expected boolean, \"always\" or \"nested\", got \"{other}\"", i.name()))),
             }
@@ -1050,17 +1026,11 @@ pub fn with_context(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 pub fn force_flush(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let s = vm_state_or_init(global);
     bun_telemetry::batch::flush_local(&mut s.local.borrow_mut().batch);
-    // Everything recorded so far goes out now (looping past the batch-size
-    // cap); the promise resolves when those payloads — and anything older,
-    // in flight or parked — have settled, not when the pipeline is idle.
-    while processor().pending_count() != 0 && processor().exporter_count() != 0 {
-        if !processor().export() {
-            break;
-        }
-    }
-    let target = processor().next_seq();
-    processor().retry_older_than(target);
-    if processor().oldest_outstanding().is_none_or(|o| o >= target) {
+    // Everything recorded so far goes out now (`export_all`); the promise
+    // resolves once those payloads and anything older, in flight or parked,
+    // have settled (`reached`), not when the pipeline is idle.
+    let target = processor().export_all();
+    if processor().reached(target) {
         return Ok(bun_jsc::JSPromise::resolved_promise_value(
             global,
             JSValue::UNDEFINED,
@@ -1072,41 +1042,27 @@ pub fn force_flush(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVa
     s.flush_keep_alive.borrow_mut().ref_(bun_io::js_vm_ctx());
     if !s.flush_hook_installed.replace(true) {
         let handle = global.bun_vm().handle();
-        processor().on_idle(
-            s.idle_hook_key(),
-            Box::new(move || {
-                exporter::post_flush_wake(&handle);
-            }),
-        );
+        processor().on_settle(s.owner_key(), Box::new(move || post_flush_wake(&handle)));
     }
     // A settlement may have already happened between the check and the hook.
-    resolve_flush_waiters();
+    resolve_flush_waiters()?;
     Ok(value)
 }
 
-pub(crate) fn resolve_flush_waiters() {
-    let Some(s) = current_vm_state() else { return };
+pub(crate) fn resolve_flush_waiters() -> JsResult<()> {
+    let Some(s) = current_vm_state() else {
+        return Ok(());
+    };
     if s.flush_waiters.borrow().is_empty() {
-        return;
+        return Ok(());
     }
-    // Payloads a flush is waiting on skip their backoff: a live collector gets
-    // the retry now, a dead one exhausts its attempts quickly instead of
-    // holding the flush (and process exit) for the whole backoff schedule.
-    if let Some(newest) = s.flush_waiters.borrow().iter().map(|(t, _)| *t).max() {
-        processor().retry_older_than(newest);
-    }
-    let oldest = processor().oldest_outstanding();
     let ready: Vec<bun_jsc::JSPromiseStrong> = {
         let mut waiters = s.flush_waiters.borrow_mut();
-        let mut ready = Vec::new();
-        let mut i = 0;
-        while i < waiters.len() {
-            if oldest.is_none_or(|o| o >= waiters[i].0) {
-                ready.push(waiters.swap_remove(i).1);
-            } else {
-                i += 1;
-            }
-        }
+        // `reached` also sends parked retries a waiter depends on now, skipping their backoff.
+        let ready: Vec<_> = waiters
+            .extract_if(.., |w| processor().reached(w.0))
+            .map(|w| w.1)
+            .collect();
         if waiters.is_empty() && !ready.is_empty() {
             s.flush_keep_alive.borrow_mut().unref(bun_io::js_vm_ctx());
         }
@@ -1114,7 +1070,23 @@ pub(crate) fn resolve_flush_waiters() {
     };
     let global = s.global();
     for mut w in ready {
-        let _ = w.resolve(global, JSValue::UNDEFINED);
+        w.resolve(global, JSValue::UNDEFINED)?;
+    }
+    Ok(())
+}
+
+/// Settle hook target: wake the VM that has `forceFlush()` waiters.
+fn post_flush_wake(handle: &VmHandle) {
+    post_to_vm(handle, |_| resolve_flush_waiters());
+}
+
+/// Run `f` on `handle`'s event loop (dropped if that loop is gone).
+fn post_to_vm(handle: &VmHandle, f: fn(*mut u8) -> JsResult<()>) {
+    let managed = ManagedTask::new(core::ptr::NonNull::<u8>::dangling().as_ptr(), f);
+    let ct = ConcurrentTask::create(managed);
+    if let bun_jsc::Posted::Refused(ct) = handle.post(bun_jsc::LoopKind::Regular, ct) {
+        // SAFETY: `ct` was refused unqueued; we still own it.
+        unsafe { ConcurrentTask::release_refused(ct) };
     }
 }
 
@@ -1139,7 +1111,7 @@ pub fn export_settled(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     Ok(JSValue::UNDEFINED)
 }
 
-/// `stats()` → { spansExported, spansDropped, exportsOk, exportsFailed, pending, inflight }
+/// `stats()` → { spansExported, spansDropped, exportsSucceeded, exportsFailed, spansPending, exportsInflight }
 #[bun_jsc::host_fn]
 pub fn stats(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     use core::sync::atomic::Ordering::Relaxed;
@@ -1173,26 +1145,11 @@ pub fn decode(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     exporter::decode_to_js(global, buf.byte_slice())
 }
 
-/// `setEnabled(mask, roots)` — testing hook / `Bun.otel.disable()`.
+/// internal `shutdown()` (after forceFlush): nothing records or is delivered
+/// until the next start().
 #[bun_jsc::host_fn]
-pub fn set_enabled(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let m = frame.argument(0);
-    let r = frame.argument(1);
-    if m.is_number() {
-        let roots = if r.is_number() {
-            r.as_number() as u32
-        } else {
-            m.as_number() as u32
-        };
-        bun_telemetry::set_enabled_mask(m.as_number() as u32, roots);
-        if m.as_number() != 0.0 {
-            vm_state_or_init(global).arm_timer();
-        } else if r.is_undefined_or_null() {
-            // `shutdown()`: beyond masking instrumentations, stop recording
-            // and delivering altogether until a later start().
-            bun_telemetry::set_shut_down(true);
-        }
-    }
+pub fn shutdown(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    bun_telemetry::shut_down();
     Ok(JSValue::UNDEFINED)
 }
 
@@ -1221,7 +1178,7 @@ pub fn http_client_end(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
     fetch::http_client_end(global, frame)
 }
 
-/// `propagationFlags()` → bit 0: W3C trace context, bit 1: baggage.
+/// `propagationFlags()` → internal/telemetry.ts `Propagator` bits: bit 0 W3C trace context, bit 1 baggage.
 #[bun_jsc::host_fn]
 pub fn propagation_flags(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let st = state();

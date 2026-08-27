@@ -16,8 +16,8 @@ use bun_http::{
     AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, HeaderBuilder, Method,
 };
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, Strong, VmHandle, bun_string_jsc};
-use bun_telemetry::processor::{ExportPayload, ExportResult, Exporter, Processor};
-use bun_telemetry_cold::config::{Compression, OtlpExporterConfig};
+use bun_telemetry::processor::{ExportAttempt, ExportPayload, ExportResult, Exporter, OwnerKey};
+use bun_telemetry_cold::config::{Compression, ExporterConfig, OtlpExporterConfig};
 use bun_telemetry_cold::decode::{self, AnyValue, KeyValue, Repeated, Scope, Span, TraceRequest};
 use bun_threading::thread_pool;
 use bun_url::URL;
@@ -30,10 +30,16 @@ pub struct OtlpHttpExporter {
     compression: Compression,
     timeout_seconds: u32,
     warned: core::sync::atomic::AtomicBool,
-    /// In-flight requests (`async_http_id`, abort flag, deadline): the idle
-    /// timeout re-arms on every body read, so a collector trickling its
-    /// response could otherwise hold the one export slot indefinitely.
-    inflight: bun_threading::Guarded<Vec<(u32, Arc<bun_http::signals::Store>, u64)>>,
+    /// The idle timeout re-arms on every body read, so a collector trickling
+    /// its response could otherwise hold the one export slot indefinitely.
+    inflight: bun_threading::Guarded<Vec<InflightRequest>>,
+}
+
+struct InflightRequest {
+    async_http_id: u32,
+    abort: Arc<bun_http::signals::Store>,
+    /// `clock::mono_now()` domain.
+    deadline_ns: u64,
 }
 
 const MAX_ATTEMPTS: u32 = 5;
@@ -122,22 +128,43 @@ fn display_url(url: &[u8]) -> Vec<u8> {
     out
 }
 
-impl OtlpHttpExporter {
-    #[optimize(size)]
-    pub fn from_configs(
-        cfgs: &[OtlpExporterConfig],
-    ) -> Result<Vec<Arc<OtlpHttpExporter>>, Vec<u8>> {
-        cfgs.iter().map(|c| Self::new(c).map(Arc::new)).collect()
-    }
+/// An OTLP exporter URL that is not `http(s)://host…`.
+#[derive(Debug)]
+pub struct InvalidEndpoint {
+    /// As [`display_url`] renders it (userinfo redacted, query dropped).
+    pub url: Vec<u8>,
+}
 
-    pub fn new(cfg: &OtlpExporterConfig) -> Result<OtlpHttpExporter, Vec<u8>> {
+impl fmt::Display for InvalidEndpoint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "invalid OTLP endpoint URL {:?} (expected http:// or https://)",
+            bstr::BStr::new(&self.url)
+        )
+    }
+}
+
+/// Construct the configured exporters (`console` included).
+#[optimize(size)]
+pub fn build(cfgs: &[ExporterConfig]) -> Result<Vec<Arc<dyn Exporter>>, InvalidEndpoint> {
+    cfgs.iter()
+        .map(|c| {
+            Ok(match c {
+                ExporterConfig::Otlp(c) => Arc::new(OtlpHttpExporter::new(c)?) as Arc<dyn Exporter>,
+                ExporterConfig::Console => Arc::new(ConsoleExporter),
+            })
+        })
+        .collect()
+}
+
+impl OtlpHttpExporter {
+    pub fn new(cfg: &OtlpExporterConfig) -> Result<OtlpHttpExporter, InvalidEndpoint> {
         let url = URL::parse(cfg.url.as_bytes());
         if url.hostname.is_empty() || !(url.is_http() || url.is_https()) {
-            return Err(format!(
-                "invalid OTLP endpoint URL {:?} (expected http:// or https://)",
-                bstr::BStr::new(&display_url(cfg.url.as_bytes()))
-            )
-            .into_bytes());
+            return Err(InvalidEndpoint {
+                url: display_url(cfg.url.as_bytes()),
+            });
         }
         // The HTTP client adds Bun's User-Agent itself.
         let fixed: [(&[u8], &[u8]); 2] = [
@@ -159,7 +186,7 @@ impl OtlpHttpExporter {
         for (k, v) in all() {
             headers.count(k, v);
         }
-        headers.allocate().map_err(|_| b"out of memory".to_vec())?;
+        bun_core::handle_oom(headers.allocate());
         for (k, v) in all() {
             headers.append(k, v);
         }
@@ -219,33 +246,25 @@ impl OtlpHttpExporter {
     /// Abort in-flight exports that have run past the export timeout; they
     /// then complete with an error and take the retry path.
     fn abort_overdue(&self, now_ns: u64) {
-        let overdue: Vec<(u32, Arc<bun_http::signals::Store>)> = {
-            let mut list = self.inflight.lock();
-            let mut out = Vec::new();
-            list.retain(|(id, store, deadline)| {
-                if now_ns >= *deadline {
-                    out.push((*id, Arc::clone(store)));
-                    false
-                } else {
-                    true
-                }
-            });
-            out
-        };
-        for (id, store) in overdue {
+        let overdue: Vec<InflightRequest> = self
+            .inflight
+            .lock()
+            .extract_if(.., |r| now_ns >= r.deadline_ns)
+            .collect();
+        for r in overdue {
             // The abort tracker only knows requests whose `aborted` signal is
             // wired; set it, then have the HTTP thread act on it.
-            store
+            r.abort
                 .aborted
                 .store(true, core::sync::atomic::Ordering::Relaxed);
-            bun_http::http_thread().schedule_shutdown_by_id(id);
+            bun_http::http_thread().schedule_shutdown_by_id(r.async_http_id);
         }
     }
 
     fn finished(&self, async_http_id: u32) {
         self.inflight
             .lock()
-            .retain(|(id, _, _)| *id != async_http_id);
+            .retain(|r| r.async_http_id != async_http_id);
     }
 
     fn send_blocking(&self, payload: &ExportPayload, deadline_ns: u64) -> Result<(), SendError> {
@@ -263,22 +282,16 @@ impl OtlpHttpExporter {
         check_response(&meta.response, response.list.as_slice())
     }
 
-    fn failed(
-        self: Arc<Self>,
-        processor: &'static Processor,
-        payload: Arc<ExportPayload>,
-        attempt: u32,
-        err: &SendError,
-    ) {
-        if err.retryable() && attempt + 1 < MAX_ATTEMPTS {
-            let mut backoff = Duration::from_secs(1u64 << attempt.min(4));
+    fn failed(self: Arc<Self>, attempt: ExportAttempt, err: &SendError) {
+        if err.retryable() && attempt.attempt() + 1 < MAX_ATTEMPTS {
+            let mut backoff = Duration::from_secs(1u64 << attempt.attempt().min(4));
             if let SendError::Status(_, Some(secs)) = err {
                 backoff = Duration::from_secs(u64::from(*secs).clamp(1, 120));
             }
-            processor.retry_later(self, payload, attempt + 1, backoff);
+            attempt.retry_later(self, backoff);
         } else {
-            self.warn_once(&payload, "", err);
-            processor.export_done(&payload, ExportResult::Failure);
+            self.warn_once(attempt.payload(), "", err);
+            attempt.done(ExportResult::Failure);
         }
     }
 
@@ -304,9 +317,7 @@ impl OtlpHttpExporter {
 struct InflightExport {
     http: RequestSlot,
     exporter: Arc<OtlpHttpExporter>,
-    processor: &'static Processor,
-    payload: Arc<ExportPayload>,
-    attempt: u32,
+    attempt: ExportAttempt,
     /// Backs the request's `Signals.aborted` (export timeout).
     signals: Arc<bun_http::signals::Store>,
 }
@@ -351,8 +362,6 @@ impl InflightExport {
         let InflightExport {
             http,
             exporter,
-            processor,
-            payload,
             attempt,
             signals,
         } = *unsafe { Box::from_raw(this) };
@@ -361,39 +370,32 @@ impl InflightExport {
         drop(http);
         drop(signals);
         match outcome {
-            Ok(()) => processor.export_done(&payload, ExportResult::Success),
-            Err(err) => exporter.failed(processor, payload, attempt, &err),
+            Ok(()) => attempt.done(ExportResult::Success),
+            Err(err) => exporter.failed(attempt, &err),
         }
     }
 
     /// HTTP thread parked at process exit; the request will never complete.
     unsafe fn release_at_shutdown(this: *mut ()) {
         // SAFETY: allocated in `export`; the HTTP thread hands ownership back exactly once.
-        let me = unsafe { Box::from_raw(this.cast::<Self>()) };
-        me.processor.export_done(&me.payload, ExportResult::Failure);
+        let InflightExport { attempt, .. } = *unsafe { Box::from_raw(this.cast::<Self>()) };
+        attempt.done(ExportResult::Failure);
     }
 }
 
 impl Exporter for OtlpHttpExporter {
-    fn export(
-        self: Arc<Self>,
-        processor: &'static Processor,
-        payload: Arc<ExportPayload>,
-        attempt: u32,
-    ) {
-        // SAFETY: the request borrows `self` and `payload.body`; both Arcs are
-        // moved into `task`, a heap allocation freed only in
-        // `InflightExport::callback`/`release_at_shutdown` after the HTTP
-        // thread's final use of the request.
+    fn export(self: Arc<Self>, attempt: ExportAttempt) {
+        // SAFETY: the request borrows `self` and the payload body; `self` and
+        // `attempt` (which owns the payload Arc) are moved into `task`, a heap
+        // allocation freed only in `InflightExport::callback`/
+        // `release_at_shutdown` after the HTTP thread's final use of the request.
         unsafe {
             let me: &'static OtlpHttpExporter = bun_ptr::detach_lifetime_ref(&*self);
-            let body: &'static [u8] = bun_ptr::detach_lifetime(payload.body.as_slice());
+            let body: &'static [u8] = bun_ptr::detach_lifetime(attempt.payload().body.as_slice());
             let signals: Arc<bun_http::signals::Store> = Arc::new(Default::default());
             let task = Box::into_raw(Box::new(InflightExport {
                 http: RequestSlot(MaybeUninit::uninit()),
                 exporter: self,
-                processor,
-                payload,
                 attempt,
                 signals: Arc::clone(&signals),
             }));
@@ -413,11 +415,11 @@ impl Exporter for OtlpHttpExporter {
             );
             let now = bun_telemetry::clock::mono_now();
             me.abort_overdue(now);
-            me.inflight.lock().push((
-                http.async_http_id,
-                signals,
-                now + u64::from(me.timeout_seconds) * 1_000_000_000,
-            ));
+            me.inflight.lock().push(InflightRequest {
+                async_http_id: http.async_http_id,
+                abort: signals,
+                deadline_ns: now + u64::from(me.timeout_seconds) * 1_000_000_000,
+            });
             (*task).http.0.write(http);
             bun_http::http_thread::init(&Default::default());
             let mut batch = thread_pool::Batch::default();
@@ -426,8 +428,8 @@ impl Exporter for OtlpHttpExporter {
         }
     }
 
-    fn tick(&self, now_ns: u64) {
-        self.abort_overdue(now_ns);
+    fn tick(&self, now_mono_ns: u64) {
+        self.abort_overdue(now_mono_ns);
     }
 
     fn export_blocking(&self, payload: &ExportPayload, deadline_ns: u64) -> ExportResult {
@@ -451,14 +453,9 @@ impl Exporter for OtlpHttpExporter {
 pub struct ConsoleExporter;
 
 impl Exporter for ConsoleExporter {
-    fn export(
-        self: Arc<Self>,
-        processor: &'static Processor,
-        payload: Arc<ExportPayload>,
-        _attempt: u32,
-    ) {
-        let result = self.export_blocking(&payload, u64::MAX);
-        processor.export_done(&payload, result);
+    fn export(self: Arc<Self>, attempt: ExportAttempt) {
+        let result = self.export_blocking(attempt.payload(), u64::MAX);
+        attempt.done(result);
     }
 
     fn export_blocking(&self, payload: &ExportPayload, _deadline_ns: u64) -> ExportResult {
@@ -702,18 +699,25 @@ pub struct JsExporter {
     /// Identity of the owning `VmState`: `callback` is only touched while
     /// that is the current thread's state.
     owner: *const super::VmState,
+    owner_key: OwnerKey,
     /// Payloads posted to the owner's event loop and not yet delivered. At
     /// VM exit those tasks can never run (the loop is gone), so they are
     /// settled as abandoned instead of letting shutdown wait for them.
-    queued: bun_threading::Guarded<Vec<Arc<ExportPayload>>>,
+    queued: bun_threading::Guarded<Vec<ExportAttempt>>,
     /// Payloads whose `export()` returned a still-pending promise (owner
-    /// thread only), with their ticket and deadline; settled by
-    /// `export_settled`, failed by `tick` past the export timeout, or
-    /// abandoned at VM exit.
-    awaiting: RefCell<Vec<(u64, u64, Arc<ExportPayload>)>>,
+    /// thread only); settled by `export_settled`, failed by `tick` past the
+    /// export timeout, or abandoned at VM exit.
+    awaiting: RefCell<Vec<AwaitingExport>>,
     next_ticket: core::cell::Cell<u64>,
     /// Identity for `exportSettled` (never an address: exporters come and go).
     pub(crate) id: u64,
+}
+
+struct AwaitingExport {
+    ticket: u64,
+    /// `clock::mono_now()` domain.
+    deadline_ns: u64,
+    attempt: ExportAttempt,
 }
 
 static NEXT_JS_EXPORTER_ID: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
@@ -727,7 +731,7 @@ unsafe impl Sync for JsExporter {}
 
 struct JsExportTask {
     exporter: Arc<JsExporter>,
-    processor: &'static Processor,
+    /// Identity for `take_queued`.
     payload: Arc<ExportPayload>,
 }
 
@@ -735,10 +739,18 @@ struct JsExportTask {
 /// settles its payload as abandoned instead of leaving it in flight.
 impl Drop for JsExportTask {
     fn drop(&mut self) {
-        if self.exporter.take_queued(&self.payload) {
-            self.processor.export_abandoned(&self.payload);
+        if let Some(attempt) = self.exporter.take_queued(&self.payload) {
+            attempt.abandoned();
         }
     }
+}
+
+/// What running a JS exporter callback came to.
+enum Delivery {
+    Exported,
+    /// The exporter's promise, still pending.
+    Pending(JSValue),
+    Failed,
 }
 
 impl JsExporter {
@@ -748,6 +760,7 @@ impl JsExporter {
         this: JSValue,
         format: JsFormat,
     ) -> Arc<JsExporter> {
+        let state = super::vm_state_or_init(global);
         Arc::new(JsExporter {
             callback: RefCell::new(Some(JsCallback {
                 function: Strong::create(function, global),
@@ -755,7 +768,8 @@ impl JsExporter {
             })),
             format,
             vm: global.bun_vm().handle(),
-            owner: core::ptr::from_ref(super::vm_state_or_init(global)),
+            owner: core::ptr::from_ref(state),
+            owner_key: state.owner_key(),
             queued: bun_threading::Guarded::new(Vec::new()),
             awaiting: RefCell::new(Vec::new()),
             next_ticket: core::cell::Cell::new(1),
@@ -766,12 +780,13 @@ impl JsExporter {
     /// Settle every still-queued payload as abandoned.
     fn abandon_queued(&self) {
         let queued = core::mem::take(&mut *self.queued.lock());
-        for p in queued {
-            super::processor().export_abandoned(&p);
+        for attempt in queued {
+            attempt.abandoned();
         }
         // (owner thread: settle_stranded_for_vm / detach_all_for_vm run there)
-        for (_, _, p) in core::mem::take(&mut *self.awaiting.borrow_mut()) {
-            super::processor().export_abandoned(&p);
+        let awaiting = core::mem::take(&mut *self.awaiting.borrow_mut());
+        for w in awaiting {
+            w.attempt.abandoned();
         }
     }
 
@@ -795,16 +810,15 @@ impl JsExporter {
 
     /// Run the callback if the current thread is the owner VM's. A throw is
     /// reported as a warning and counts as a failed export (the batch moves to
-    /// the retry/backoff path like a failed OTLP request). `Ok(Some(promise))`
-    /// when an async exporter returned a still-pending promise.
-    fn deliver(&self, payload: &ExportPayload) -> Result<Option<JSValue>, ()> {
+    /// the retry/backoff path like a failed OTLP request).
+    fn deliver(&self, payload: &ExportPayload) -> Delivery {
         let Some(s) = super::current_vm_state().filter(|s| core::ptr::eq(*s, self.owner)) else {
-            return Err(());
+            return Delivery::Failed;
         };
         let global = s.global();
         let (function, this) = match &*self.callback.borrow() {
             Some(cb) => (cb.function.get(), cb.this.get()),
-            None => return Err(()),
+            None => return Delivery::Failed,
         };
         // Under suppression: an exporter that fetch()es the collector must not
         // trace its own export (one span per batch, forever).
@@ -827,20 +841,20 @@ impl JsExporter {
         match result {
             Ok(v) => match v.as_any_promise() {
                 Some(p) => match p.status() {
-                    bun_jsc::js_promise::Status::Pending => Ok(Some(v)),
-                    bun_jsc::js_promise::Status::Fulfilled => Ok(None),
+                    bun_jsc::js_promise::Status::Pending => Delivery::Pending(v),
+                    bun_jsc::js_promise::Status::Fulfilled => Delivery::Exported,
                     bun_jsc::js_promise::Status::Rejected => {
                         p.set_handled(global.vm());
                         Self::report_failure(global, p.result(global.vm()));
-                        Err(())
+                        Delivery::Failed
                     }
                 },
-                None => Ok(None),
+                None => Delivery::Exported,
             },
             Err(e) => {
                 let err = global.take_error(e);
                 Self::report_failure(global, err);
-                Err(())
+                Delivery::Failed
             }
         }
     }
@@ -871,34 +885,33 @@ impl JsExporter {
         // the callback (only `release` of an unrun task drops it itself).
         let task = unsafe { Box::from_raw(task) };
         // Already settled (abandoned at VM exit) if no longer queued.
-        if task.exporter.take_queued(&task.payload) {
-            match task.exporter.deliver(&task.payload) {
-                Ok(None) => task
-                    .processor
-                    .export_done(&task.payload, ExportResult::Success),
-                Err(()) => task
-                    .processor
-                    .export_done(&task.payload, ExportResult::Failure),
-                Ok(Some(promise)) => task
-                    .exporter
-                    .await_settlement(promise, Arc::clone(&task.payload)),
+        if let Some(attempt) = task.exporter.take_queued(&task.payload) {
+            match task.exporter.deliver(attempt.payload()) {
+                Delivery::Exported => attempt.done(ExportResult::Success),
+                Delivery::Failed => attempt.done(ExportResult::Failure),
+                Delivery::Pending(promise) => task.exporter.await_settlement(promise, attempt),
             }
         }
         Ok(())
     }
 
-    /// Keep `payload` in flight until the exporter's promise settles
+    /// Keep `attempt` in flight until the exporter's promise settles
     /// (`export_settled`), via internal/telemetry's `awaitExport`.
-    fn await_settlement(self: &Arc<Self>, promise: JSValue, payload: Arc<ExportPayload>) {
+    fn await_settlement(self: &Arc<Self>, promise: JSValue, attempt: ExportAttempt) {
         let Some(s) = super::current_vm_state() else {
+            attempt.done(ExportResult::Failure);
             return;
         };
         let global = s.global();
         let ticket = self.next_ticket.get();
         self.next_ticket.set(ticket + 1);
         let timeout_ms = u64::from(super::processor().config().export_timeout_ms);
-        let deadline = bun_telemetry::clock::mono_now() + timeout_ms * 1_000_000;
-        self.awaiting.borrow_mut().push((ticket, deadline, payload));
+        let deadline_ns = bun_telemetry::clock::mono_now() + timeout_ms * 1_000_000;
+        self.awaiting.borrow_mut().push(AwaitingExport {
+            ticket,
+            deadline_ns,
+            attempt,
+        });
         // Both ids ride as f64 (counters, well inside 53 bits).
         if Bun__Telemetry__awaitExport(global, promise, self.id as f64, ticket as f64) {
             return;
@@ -910,21 +923,18 @@ impl JsExporter {
     /// `awaitExport`'s continuation: the async exporter's promise settled.
     /// A ticket already failed by `tick` (timeout) is ignored.
     pub(crate) fn export_settled(&self, ticket: u64, ok: bool) {
-        let payload = {
+        let attempt = {
             let mut a = self.awaiting.borrow_mut();
-            match a.iter().position(|(t, _, _)| *t == ticket) {
-                Some(i) => a.swap_remove(i).2,
+            match a.iter().position(|w| w.ticket == ticket) {
+                Some(i) => a.swap_remove(i).attempt,
                 None => return,
             }
         };
-        super::processor().export_done(
-            &payload,
-            if ok {
-                ExportResult::Success
-            } else {
-                ExportResult::Failure
-            },
-        );
+        attempt.done(if ok {
+            ExportResult::Success
+        } else {
+            ExportResult::Failure
+        });
     }
 
     /// Fail exports whose promise outlived the export timeout (owner thread),
@@ -933,69 +943,51 @@ impl JsExporter {
         if !super::current_vm_state().is_some_and(|s| core::ptr::eq(s, self.owner)) {
             return;
         }
-        let overdue: Vec<Arc<ExportPayload>> = {
-            let mut a = self.awaiting.borrow_mut();
-            let mut out = Vec::new();
-            a.retain(|(_, deadline, p)| {
-                if now_ns >= *deadline {
-                    out.push(Arc::clone(p));
-                    false
-                } else {
-                    true
-                }
-            });
-            out
-        };
-        for p in overdue {
+        let overdue: Vec<AwaitingExport> = self
+            .awaiting
+            .borrow_mut()
+            .extract_if(.., |w| now_ns >= w.deadline_ns)
+            .collect();
+        for w in overdue {
             bun_core::warn!(
                 "[otel] an async exporter did not settle within the export timeout; counting the batch as failed"
             );
-            super::processor().export_done(&p, ExportResult::Failure);
+            w.attempt.done(ExportResult::Failure);
         }
     }
 
-    /// Claim `payload`'s queued entry; false if it was already settled.
-    fn take_queued(&self, payload: &Arc<ExportPayload>) -> bool {
+    /// Claim `payload`'s queued attempt; `None` if it was already settled.
+    fn take_queued(&self, payload: &Arc<ExportPayload>) -> Option<ExportAttempt> {
         let mut q = self.queued.lock();
-        match q.iter().position(|p| Arc::ptr_eq(p, payload)) {
-            Some(i) => {
-                q.swap_remove(i);
-                true
-            }
-            None => false,
-        }
+        let i = q.iter().position(|a| Arc::ptr_eq(a.payload(), payload))?;
+        Some(q.swap_remove(i))
     }
 }
 
 impl Exporter for JsExporter {
-    fn export(
-        self: Arc<Self>,
-        processor: &'static Processor,
-        payload: Arc<ExportPayload>,
-        _attempt: u32,
-    ) {
+    fn export(self: Arc<Self>, attempt: ExportAttempt) {
         // Even on the owner thread, defer to a task so exporters never run
         // re-entrantly inside whatever ended the span.
         let vm = self.vm.clone();
-        self.queued.lock().push(Arc::clone(&payload));
+        let payload = Arc::clone(attempt.payload());
+        self.queued.lock().push(attempt);
         let task = Box::into_raw(Box::new(JsExportTask {
             exporter: self,
-            processor,
             payload,
         }));
         let ct = ConcurrentTask::create(ManagedTask::new_owned(task, JsExporter::run_task));
         if let bun_jsc::Posted::Refused(ct) = vm.post(bun_jsc::LoopKind::Regular, ct) {
             // SAFETY: VM gone; `ct` was refused unqueued. Releasing it drops
-            // the task, which abandons the payload (see Drop for JsExportTask).
+            // the task, which abandons the attempt (see Drop for JsExportTask).
             unsafe { ConcurrentTask::release_refused(ct) };
         }
     }
 
     fn export_blocking(&self, payload: &ExportPayload, deadline_ns: u64) -> ExportResult {
         match self.deliver(payload) {
-            Ok(None) => ExportResult::Success,
-            Err(()) => ExportResult::Failure,
-            Ok(Some(promise)) => {
+            Delivery::Exported => ExportResult::Success,
+            Delivery::Failed => ExportResult::Failure,
+            Delivery::Pending(promise) => {
                 // Exit-time flush of an async exporter. Like Node after 'exit',
                 // nothing asynchronous runs any more: microtasks are drained
                 // (an `async export()` that only awaits already-settled work
@@ -1030,29 +1022,11 @@ impl Exporter for JsExporter {
         }
     }
 
-    fn owner(&self) -> Option<usize> {
-        Some(self.owner as usize)
+    fn owner(&self) -> Option<OwnerKey> {
+        Some(self.owner_key)
     }
 
-    fn tick(&self, now_ns: u64) {
-        self.fail_overdue(now_ns);
-    }
-}
-
-/// Idle hook target: wake the VM that has `forceFlush()` waiters.
-pub(crate) fn post_flush_wake(handle: &VmHandle) {
-    post_to_vm(handle, |_| {
-        super::resolve_flush_waiters();
-        Ok(())
-    });
-}
-
-/// Run `f` on `handle`'s event loop (dropped if that loop is gone).
-pub(crate) fn post_to_vm(handle: &VmHandle, f: fn(*mut u8) -> JsResult<()>) {
-    let managed = ManagedTask::new(core::ptr::NonNull::<u8>::dangling().as_ptr(), f);
-    let ct = ConcurrentTask::create(managed);
-    if let bun_jsc::Posted::Refused(ct) = handle.post(bun_jsc::LoopKind::Regular, ct) {
-        // SAFETY: `ct` was refused unqueued; we still own it.
-        unsafe { ConcurrentTask::release_refused(ct) };
+    fn tick(&self, now_mono_ns: u64) {
+        self.fail_overdue(now_mono_ns);
     }
 }

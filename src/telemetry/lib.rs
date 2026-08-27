@@ -7,9 +7,9 @@
 
 pub mod batch;
 pub mod clock;
-pub mod data;
 pub mod db;
 pub mod http_record;
+pub mod limits;
 pub mod otlp;
 pub mod pool;
 pub mod processor;
@@ -24,10 +24,10 @@ mod native_test_shims;
 
 use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
 
-pub use data::{DEFAULT_LIMITS, Limits};
+pub use limits::{DEFAULT_LIMITS, Limits};
 pub use otlp::{SpanWriter, Value};
 pub use pool::{JsCellRef, NativeSpan};
-pub use processor::{ExportPayload, Exporter, Processor};
+pub use processor::{ExportAttempt, ExportPayload, Exporter, FlushTarget, OwnerKey, Processor};
 pub use sampler::Sampler;
 pub use span::{Flags, SpanContext, SpanId, SpanKind, SpanStub, StatusCode, TraceId};
 
@@ -42,18 +42,23 @@ pub struct State {
     pub capture_request_headers: Vec<Box<[u8]>>,
 }
 
+impl State {
+    pub const DEFAULT: State = State {
+        sampler: Sampler::ParentBasedAlwaysOn,
+        limits: DEFAULT_LIMITS,
+        propagate_trace_context: true,
+        propagate_baggage: true,
+        capture_db_statement: true,
+        capture_request_headers: Vec::new(),
+    };
+}
+
 static STATE: AtomicPtr<State> = AtomicPtr::new(core::ptr::null_mut());
 /// Replaced values are retired, not freed (a few hundred bytes per
 /// `Bun.otel.start()`), so `state()` can hand out `&'static`.
-static RETIRED_STATES: bun_threading::Guarded<Vec<usize>> = bun_threading::Guarded::new(Vec::new());
-static DEFAULT_STATE: State = State {
-    sampler: Sampler::ParentBasedAlwaysOn,
-    limits: DEFAULT_LIMITS,
-    propagate_trace_context: true,
-    propagate_baggage: true,
-    capture_db_statement: true,
-    capture_request_headers: Vec::new(),
-};
+static RETIRED_STATES: bun_threading::Guarded<Vec<&'static State>> =
+    bun_threading::Guarded::new(Vec::new());
+static DEFAULT_STATE: State = State::DEFAULT;
 
 #[inline]
 pub fn state() -> &'static State {
@@ -61,7 +66,7 @@ pub fn state() -> &'static State {
     if p.is_null() {
         &DEFAULT_STATE
     } else {
-        // SAFETY: non-null values come from `Box::into_raw` in `set_state` and are never freed.
+        // SAFETY: non-null values come from `Box::leak` in `set_state` and are never freed.
         unsafe { &*p }
     }
 }
@@ -72,9 +77,11 @@ pub fn configured() -> bool {
 }
 
 pub fn set_state(s: State) {
-    let old = STATE.swap(Box::into_raw(Box::new(s)), Ordering::AcqRel);
+    let new: &'static State = Box::leak(Box::new(s));
+    let old = STATE.swap(core::ptr::from_ref(new).cast_mut(), Ordering::AcqRel);
     if !old.is_null() {
-        RETIRED_STATES.lock().push(old as usize);
+        // SAFETY: every non-null STATE came from `Box::leak` above.
+        RETIRED_STATES.lock().push(unsafe { &*old });
     }
 }
 
@@ -132,7 +139,7 @@ pub enum Instrument {
 }
 
 impl Instrument {
-    pub const COUNT: usize = 11;
+    pub const COUNT: usize = Instrument::User as usize + 1;
     pub const ALL: [Instrument; Self::COUNT] = [
         Instrument::HttpServer,
         Instrument::HttpClient,
@@ -204,6 +211,74 @@ impl Instrument {
     }
 }
 
+const _: () = {
+    let mut i = 0;
+    while i < Instrument::COUNT {
+        assert!(Instrument::ALL[i] as usize == i);
+        i += 1;
+    }
+};
+
+/// A set of [`Instrument`]s; bit i = `Instrument` i.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[repr(transparent)]
+pub struct InstrumentSet(u32);
+
+impl InstrumentSet {
+    pub const EMPTY: InstrumentSet = InstrumentSet(0);
+    pub const ALL: InstrumentSet = InstrumentSet((1u32 << Instrument::COUNT) - 1);
+
+    #[inline]
+    pub const fn of(i: Instrument) -> Self {
+        InstrumentSet(i.bit())
+    }
+    #[inline]
+    pub const fn contains(self, i: Instrument) -> bool {
+        self.0 & i.bit() != 0
+    }
+    #[inline]
+    pub const fn with(self, i: Instrument) -> Self {
+        InstrumentSet(self.0 | i.bit())
+    }
+    #[inline]
+    pub const fn without(self, i: Instrument) -> Self {
+        InstrumentSet(self.0 & !i.bit())
+    }
+    #[inline]
+    pub fn insert(&mut self, i: Instrument) {
+        *self = self.with(i);
+    }
+    #[inline]
+    pub fn remove(&mut self, i: Instrument) {
+        *self = self.without(i);
+    }
+    #[inline]
+    pub const fn bits(self) -> u32 {
+        self.0
+    }
+    #[inline]
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+    /// Instruments that may start root spans unless configured otherwise.
+    pub fn default_roots() -> Self {
+        Instrument::ALL
+            .into_iter()
+            .filter(|i| !i.requires_parent_by_default())
+            .collect()
+    }
+}
+
+impl FromIterator<Instrument> for InstrumentSet {
+    fn from_iter<I: IntoIterator<Item = Instrument>>(it: I) -> Self {
+        let mut s = Self::EMPTY;
+        for i in it {
+            s.insert(i);
+        }
+        s
+    }
+}
+
 /// Instrumentation scope handle. Values `< Instrument::COUNT` are the
 /// built-ins; larger values index user tracers registered via
 /// [`Processor::register_scope`].
@@ -227,7 +302,7 @@ pub static ENABLED: AtomicU32 = AtomicU32::new(0);
 static ROOTS: AtomicU32 = AtomicU32::new(0);
 
 /// The one check integrations make before doing any telemetry work.
-/// Acquire pairs with the Release in `set_enabled_mask`, which runs after
+/// Acquire pairs with the Release in [`activate`], which runs after
 /// `rt::install`/STATE are published: a thread that sees its bit set also
 /// sees the hooks (same cost as a plain load on x86; `ldar` on ARM).
 #[inline(always)]
@@ -245,9 +320,9 @@ pub fn allows_root(i: Instrument) -> bool {
     ROOTS.load(Ordering::Relaxed) & i.bit() != 0
 }
 
-pub fn set_enabled_mask(enabled: u32, roots: u32) {
-    ROOTS.store(roots, Ordering::Relaxed);
-    ENABLED.store(enabled, Ordering::Release);
+#[inline]
+pub fn capture_db_statement() -> bool {
+    state().capture_db_statement
 }
 
 /// `Bun.otel.shutdown()` / `tracerProvider.shutdown()` ran (and no `start()`
@@ -260,6 +335,18 @@ pub fn is_shut_down() -> bool {
     SHUT_DOWN.load(Ordering::Relaxed)
 }
 
-pub fn set_shut_down(v: bool) {
-    SHUT_DOWN.store(v, Ordering::Release);
+/// `configure`: these instruments record from now on. The Release store pairs
+/// with the Acquire in [`enabled`], publishing STATE and the rt hooks.
+pub fn activate(instruments: InstrumentSet, roots: InstrumentSet) {
+    SHUT_DOWN.store(false, Ordering::Relaxed);
+    ROOTS.store(roots.bits(), Ordering::Relaxed);
+    ENABLED.store(instruments.bits(), Ordering::Release);
+}
+
+/// `Bun.otel.shutdown()`: nothing records and nothing is delivered until the
+/// next [`activate`].
+pub fn shut_down() {
+    ROOTS.store(0, Ordering::Relaxed);
+    ENABLED.store(0, Ordering::Release);
+    SHUT_DOWN.store(true, Ordering::Release);
 }

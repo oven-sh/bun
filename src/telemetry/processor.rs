@@ -55,29 +55,93 @@ enum RetryFilter {
     OlderThan(u64),
 }
 
+/// One exporter's obligation for one payload. The Processor issues it when it
+/// hands a payload out; exactly one of `done`, `retry_later`, `abandoned`
+/// finishes it (each consumes the token).
+#[must_use = "finish with done(), retry_later() or abandoned()"]
+pub struct ExportAttempt {
+    processor: &'static Processor,
+    payload: Option<Arc<ExportPayload>>,
+    /// 0-based delivery attempt.
+    attempt: u32,
+}
+
+impl ExportAttempt {
+    pub fn payload(&self) -> &Arc<ExportPayload> {
+        self.payload.as_ref().expect("unfinished ExportAttempt")
+    }
+
+    pub fn attempt(&self) -> u32 {
+        self.attempt
+    }
+
+    /// The exporter's verdict.
+    pub fn done(mut self, result: ExportResult) {
+        let p = self.payload.take().expect("unfinished ExportAttempt");
+        self.processor.record_result(&p, result);
+        self.processor.finish_one();
+    }
+
+    /// Hand the payload back to go through `exporter` again after `backoff`,
+    /// as the next attempt.
+    pub fn retry_later(mut self, exporter: Arc<dyn Exporter>, backoff: Duration) {
+        let p = self.payload.take().expect("unfinished ExportAttempt");
+        self.processor.park(exporter, p, self.attempt + 1, backoff);
+    }
+
+    /// The owning event loop is gone; stop waiting (not a failure: the
+    /// remaining exporters' verdicts count the spans).
+    pub fn abandoned(mut self) {
+        let p = self.payload.take().expect("unfinished ExportAttempt");
+        self.processor.settle(&p);
+        self.processor.finish_one();
+    }
+}
+
+impl Drop for ExportAttempt {
+    fn drop(&mut self) {
+        if let Some(p) = self.payload.take() {
+            debug_assert!(false, "ExportAttempt dropped unfinished");
+            self.processor.record_result(&p, ExportResult::Failure);
+            self.processor.finish_one();
+        }
+    }
+}
+
+/// Identity of the VM (JS thread) an exporter or settle hook belongs to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct OwnerKey(core::num::NonZeroUsize);
+
+impl OwnerKey {
+    /// Keyed on the address of the owner's per-VM state.
+    pub fn of<T>(owner: &T) -> OwnerKey {
+        OwnerKey(
+            core::num::NonZeroUsize::new(core::ptr::from_ref(owner) as usize).expect("non-null"),
+        )
+    }
+}
+
+/// Every payload taken before this point (see [`Processor::reached`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct FlushTarget(u64);
+
 /// A destination for span batches. Implemented by the runtime for OTLP/HTTP,
 /// `console` and JS callback exporters.
 pub trait Exporter: Send + Sync {
-    /// Deliver `payload` (delivery attempt `attempt`, 0-based) without
-    /// blocking the calling thread. Finish by calling exactly one of
-    /// [`Processor::export_done`] or [`Processor::retry_later`].
-    fn export(
-        self: Arc<Self>,
-        processor: &'static Processor,
-        payload: Arc<ExportPayload>,
-        attempt: u32,
-    );
+    /// Deliver `attempt.payload()` without blocking the caller; finish the
+    /// attempt exactly once.
+    fn export(self: Arc<Self>, attempt: ExportAttempt);
     /// Synchronous best-effort delivery during process exit. Return once the
-    /// payload is sent or `deadline_ns` (clock::now_unix_nanos domain) passes.
+    /// payload is sent or `deadline_ns` (`clock::mono_now()` domain) passes.
     fn export_blocking(&self, payload: &ExportPayload, deadline_ns: u64) -> ExportResult;
     /// Identity of the VM (thread) this exporter is bound to, if any: a
     /// reconfigure on one thread leaves other threads' bound exporters alone.
-    fn owner(&self) -> Option<usize> {
+    fn owner(&self) -> Option<OwnerKey> {
         None
     }
     /// Periodic housekeeping from [`Processor::tick`] (e.g. aborting an
     /// export that has outlived its timeout).
-    fn tick(&self, _now_ns: u64) {}
+    fn tick(&self, _now_mono_ns: u64) {}
 }
 
 /// A payload an exporter handed back for a later attempt. Parked payloads
@@ -106,6 +170,15 @@ impl Default for BatchConfig {
             max_queue_size: 2048,
             max_export_batch_size: 512,
         }
+    }
+}
+
+impl BatchConfig {
+    /// Enforce `1 <= max_export_batch_size <= max_queue_size`.
+    pub fn normalized(mut self) -> BatchConfig {
+        self.max_queue_size = self.max_queue_size.max(1);
+        self.max_export_batch_size = self.max_export_batch_size.clamp(1, self.max_queue_size);
+        self
     }
 }
 
@@ -150,8 +223,10 @@ pub struct Processor {
     idle: Condvar,
     idle_lock: Guarded<()>,
     pub stats: Stats,
-    /// `(owner key, hook)`; owners remove theirs with [`Processor::remove_idle_hooks`].
-    idle_hooks: RwLock<Vec<(usize, Box<dyn Fn() + Send + Sync>)>>,
+    /// Run whenever a payload settles or is parked for retry; forceFlush()
+    /// waiters re-check then. Owners remove theirs with
+    /// [`Processor::remove_settle_hooks`].
+    settle_hooks: RwLock<Vec<(OwnerKey, Box<dyn Fn() + Send + Sync>)>>,
 }
 
 #[derive(Default)]
@@ -205,7 +280,15 @@ impl Processor {
             idle: Condvar::new(),
             idle_lock: Guarded::new(()),
             stats: Stats::default(),
-            idle_hooks: RwLock::new(Vec::new()),
+            settle_hooks: RwLock::new(Vec::new()),
+        }
+    }
+
+    fn issue(&'static self, payload: Arc<ExportPayload>, attempt: u32) -> ExportAttempt {
+        ExportAttempt {
+            processor: self,
+            payload: Some(payload),
+            attempt,
         }
     }
 
@@ -238,7 +321,7 @@ impl Processor {
     /// Add `new`; with `replace_owner`, first drop every exporter not owned by
     /// another VM — in the same write, so a concurrent `export()` never sees
     /// an empty list in between.
-    pub fn install_exporters(&self, replace_owner: Option<usize>, new: Vec<Arc<dyn Exporter>>) {
+    pub fn install_exporters(&self, replace_owner: Option<OwnerKey>, new: Vec<Arc<dyn Exporter>>) {
         let Some(owner) = replace_owner else {
             self.exporters.write().extend(new);
             return;
@@ -256,10 +339,10 @@ impl Processor {
         self.exporters.read().len()
     }
 
-    /// Instead of [`Processor::export_done`]: hand `payload` back to be
-    /// exported through `exporter` again after `backoff`, as attempt `attempt`.
-    pub fn retry_later(
-        &self,
+    /// [`ExportAttempt::retry_later`]: `payload` goes through `exporter` again
+    /// after `backoff`, as attempt `attempt`.
+    fn park(
+        &'static self,
         exporter: Arc<dyn Exporter>,
         payload: Arc<ExportPayload>,
         attempt: u32,
@@ -278,15 +361,11 @@ impl Processor {
             due_ns,
         });
         self.finish_one();
-        // A forceFlush() waiting on this payload stops waiting once it is parked.
-        for (_, h) in self.idle_hooks.read().iter() {
+        // Wake forceFlush() waiters: a flush waiting on this payload
+        // re-dispatches it now (`reached`) instead of waiting out the backoff.
+        for (_, h) in self.settle_hooks.read().iter() {
             h();
         }
-    }
-
-    /// `forceFlush()`: parked retries the flush is waiting on go now.
-    pub fn retry_older_than(&'static self, seq: u64) {
-        self.dispatch_retries(RetryFilter::OlderThan(seq));
     }
 
     /// `Due`: retries whose backoff has elapsed; `OlderThan`: the parked
@@ -321,7 +400,7 @@ impl Processor {
         self.inflight.fetch_add(due.len(), Ordering::AcqRel);
         for r in due {
             self.unpark(&r.payload);
-            r.exporter.export(self, r.payload, r.attempt);
+            r.exporter.export(self.issue(r.payload, r.attempt));
         }
     }
 
@@ -332,12 +411,12 @@ impl Processor {
         }
     }
 
-    pub fn on_idle(&self, owner: usize, f: Box<dyn Fn() + Send + Sync>) {
-        self.idle_hooks.write().push((owner, f));
+    pub fn on_settle(&self, owner: OwnerKey, f: Box<dyn Fn() + Send + Sync>) {
+        self.settle_hooks.write().push((owner, f));
     }
 
-    pub fn remove_idle_hooks(&self, owner: usize) {
-        self.idle_hooks.write().retain(|(o, _)| *o != owner);
+    pub fn remove_settle_hooks(&self, owner: OwnerKey) {
+        self.settle_hooks.write().retain(|(o, _)| *o != owner);
     }
 
     /// Instrumentation scope for a user tracer (`Bun.otel.tracer(name, version)`).
@@ -407,9 +486,8 @@ impl Processor {
     }
 
     /// Periodic driver; call from each event loop every ~`scheduled_delay`
-    /// after flushing its VM's local batch. Returns true if an export was
-    /// started.
-    pub fn tick(&'static self) -> bool {
+    /// after flushing its VM's local batch.
+    pub fn tick(&'static self) {
         let now = clock::mono_now();
         for e in self.exporters.read().iter() {
             e.tick(now);
@@ -426,7 +504,6 @@ impl Processor {
         if due {
             self.export();
         }
-        due
     }
 
     /// The next export request: at most `max_export_batch_size` spans (the
@@ -503,18 +580,29 @@ impl Processor {
         Some(Arc::new(ExportPayload::with_seq(body, count, seq)))
     }
 
-    /// The sequence number the next payload will get: a flush that has just
-    /// exported everything pending waits until `oldest_outstanding()` reaches it.
-    pub fn next_seq(&self) -> u64 {
-        self.next_seq.load(Ordering::Acquire)
+    /// Export everything pending now, looping past `max_export_batch_size`
+    /// (non-blocking); the target a flush then waits for.
+    pub fn export_all(&'static self) -> FlushTarget {
+        while self.pending_count() != 0 && self.exporter_count() != 0 {
+            if !self.export() {
+                break;
+            }
+        }
+        FlushTarget(self.next_seq.load(Ordering::Acquire))
     }
 
-    /// Oldest payload not yet settled by every exporter (in flight or parked).
-    pub fn oldest_outstanding(&self) -> Option<u64> {
-        self.outstanding.lock().iter().copied().min()
+    /// Re-dispatch parked retries older than `t` now (a live collector gets
+    /// the retry at once, a dead one exhausts its attempts instead of holding
+    /// the flush for the whole backoff schedule); true once no payload older
+    /// than `t` is outstanding.
+    pub fn reached(&'static self, t: FlushTarget) -> bool {
+        self.dispatch_retries(RetryFilter::OlderThan(t.0));
+        self.outstanding.lock().iter().all(|s| *s >= t.0)
     }
 
-    /// Export everything pending now (non-blocking).
+    /// Export the next batch now (at most `max_export_batch_size` spans; the
+    /// remainder chains). False when nothing was pending or no exporter is
+    /// installed.
     pub fn export(&'static self) -> bool {
         let Some(payload) = self.take_payload() else {
             return false;
@@ -534,7 +622,7 @@ impl Processor {
             self.inflight.fetch_add(exporters.len(), Ordering::AcqRel);
             payload.expect(exporters.len());
             for e in exporters.drain(..) {
-                e.export(self, Arc::clone(&payload), 0);
+                e.export(self.issue(Arc::clone(&payload), 0));
             }
             // Only the outermost dispatcher chains; and only if asked to.
             if self.dispatching.fetch_sub(1, Ordering::AcqRel) != 1
@@ -601,28 +689,12 @@ impl Processor {
                 o.swap_remove(i);
             }
         }
-        // forceFlush() waiters re-check on every settled payload.
-        for (_, h) in self.idle_hooks.read().iter() {
+        for (_, h) in self.settle_hooks.read().iter() {
             h();
         }
     }
 
-    /// Exporters call this exactly once per `export` call.
-    pub fn export_done(&self, payload: &ExportPayload, result: ExportResult) {
-        self.record_result(payload, result);
-        self.finish_one();
-    }
-
-    /// An export handed to an exporter whose event loop is exiting can no
-    /// longer run; stop waiting for it. Not an export failure (the owner is
-    /// being torn down deliberately); the payload's spans are counted by the
-    /// verdicts of the remaining exporters (dropped if there are none).
-    pub fn export_abandoned(&self, payload: &ExportPayload) {
-        self.settle(payload);
-        self.finish_one();
-    }
-
-    fn finish_one(&self) {
+    fn finish_one(&'static self) {
         if self.inflight.fetch_sub(1, Ordering::AcqRel) == 1 {
             {
                 let _g = self.idle_lock.lock();
@@ -638,8 +710,8 @@ impl Processor {
                     // Inside export()'s dispatch (synchronous exporter): let
                     // its loop run the next batch instead of recursing.
                     self.chain_requested.store(true, Ordering::Release);
-                } else if let Some(p) = global() {
-                    p.export();
+                } else {
+                    self.export();
                 }
             }
         }
@@ -675,7 +747,7 @@ impl Processor {
     /// Worker-exit path: the pending batch goes synchronously to exporters
     /// owned by `owner` (their event loop is about to disappear) and through
     /// the normal async path to everyone else.
-    pub fn flush_for_owner(&'static self, owner: usize) {
+    pub fn flush_for_owner(&'static self, owner: OwnerKey) {
         let deadline =
             clock::mono_now() + (self.config.read().export_timeout_ms as u64) * 1_000_000;
         self.drain_pending(None, |e, payload| {
@@ -683,7 +755,7 @@ impl Processor {
                 return Some(e.export_blocking(payload, deadline));
             }
             self.inflight.fetch_add(1, Ordering::AcqRel);
-            e.export(self, Arc::clone(payload), 0);
+            e.export(self.issue(Arc::clone(payload), 0));
             None
         });
     }

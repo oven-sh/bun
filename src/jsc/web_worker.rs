@@ -1320,7 +1320,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
             &pathbuf[path_len - extension_len..path_len],
             b"" | b".ts" | b".tsx" | b".jsx" | b".mjs" | b".mts" | b".cjs" | b".cts"
         );
-        if is_source_extension {
+        if is_source_extension && path_len - extension_len + 3 <= pathbuf.len() {
             let stem_len = path_len - extension_len;
             pathbuf[stem_len..stem_len + 3].copy_from_slice(b".js");
             if let Some(name) = graph.find(&pathbuf[..stem_len + 3]) {

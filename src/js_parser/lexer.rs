@@ -1578,8 +1578,7 @@ impl<'a> Lexer<'a> {
                             // out of line so it doesn't bloat the hot ASCII
                             // identifier / whitespace / punctuator arms of
                             // `next()` (`scan_single_line_comment` is outlined the
-                            // same way). The JSON-comments error path stays here
-                            // because it must `return` from `next()`.
+                            // same way).
                             self.scan_multi_line_comment_body()?;
                             self.scan_comment_text(true);
                             continue;
@@ -2086,12 +2085,8 @@ impl<'a> Lexer<'a> {
                     } // EOF? Stop.
 
                     0x23 | 0x40 => {
-                        // `remaining()` borrows `self.contents` and `scan_pragma` needs
-                        // `&mut self`, so detach the slice into the arena first.
                         let pragma_trigger_pos = self.end;
                         let chunk = js_ast::StoreStr::new(self.remaining());
-                        // 0 when this `#`/`@` starts no pragma. The character after the
-                        // pragma argument is left for the main loop.
                         self.current += self.scan_pragma(pragma_trigger_pos, chunk.slice(), true);
                         continue;
                     }

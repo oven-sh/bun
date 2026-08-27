@@ -913,8 +913,6 @@ impl ReadFile {
             if self.buffer.len() + 16_000 < self.buffer.capacity() {
                 self.buffer.shrink_to_fit();
             }
-            // `Bytes` is owning, and `then()` delivers `self.buffer` directly,
-            // so do not also stash it in `byte_store` — that would double-free.
             self.on_finish();
         }
     }

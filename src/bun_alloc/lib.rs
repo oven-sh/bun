@@ -61,9 +61,7 @@ pub struct AllocatorVTable {
     pub free: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize),
 }
 impl AllocatorVTable {
-    /// Vtable for a buffer produced elsewhere (mmap, plugin memory, foreign
-    /// string). Each call site keeps its own `static`: the address is the
-    /// `is_instance` identity tag.
+    /// Each call site keeps its own `static`: the vtable address is the `is_instance` tag.
     pub const fn free_only(
         free: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize),
     ) -> Self {

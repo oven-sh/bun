@@ -48,8 +48,6 @@ pub enum Error {
     ThreadSpawnFailed,
     #[error("MissingDebugInfo")]
     MissingDebugInfo,
-    #[error("InvalidDebugInfo")]
-    InvalidDebugInfo,
     #[error("EndOfFile")]
     EndOfFile,
     #[error("FailedToOpenSocket")]
@@ -114,7 +112,6 @@ impl Error {
             Self::JSErrorObject => "JSErrorObject",
             Self::ThreadSpawnFailed => "ThreadSpawnFailed",
             Self::MissingDebugInfo => "MissingDebugInfo",
-            Self::InvalidDebugInfo => "InvalidDebugInfo",
             Self::EndOfFile => "EndOfFile",
             Self::FailedToOpenSocket => "FailedToOpenSocket",
             Self::Sys(e) => <&'static str>::from(e),

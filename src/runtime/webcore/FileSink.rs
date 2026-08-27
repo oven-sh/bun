@@ -721,8 +721,7 @@ impl FileSink {
         // SAFETY(JsCell): `start` is pure I/O setup; no JS.
         match self.writer.with_mut(|w| w.start(fd, self.pollable.get())) {
             sys::Result::Err(err) => {
-                // POSIX: the writer's poll holds `fd` and closes it with the writer
-                // (see `Terminal::init`). Windows: `start` left no source, so the fd is ours.
+                // The POSIX writer keeps `fd` in its poll after a failed `start` and closes it on Drop.
                 #[cfg(windows)]
                 fd.close();
                 return sys::Result::Err(err);

@@ -287,7 +287,7 @@ run_test() {
     # ── napi：harness expect import 修复后全绿，单跑实测 napi.test
     # 529s / uv_stub 408s（曾 120s fast-fail）──
     */napi/napi.test.ts)
-      WT=$((TMOUT * 3))       # 900s
+      WT=$((TMOUT * 4))       # 1200s
       BT="--expose-internals --smol --timeout ${BUN_TIMEOUT}"
       ;;
     */napi/uv_stub.test.ts)
@@ -336,6 +336,10 @@ run_test() {
     # body.test.ts textStream ECONNRESET case: passes solo; the connection
     # sometimes drops before the first chunk decodes under full-run load
     */web/fetch/body.test.ts)
+      _retry_on_fail=1 ;;
+    # napi.test.ts: the tsfn-orphan leg hangs under full-run + concurrent
+    # CI load (passes solo in 4.6s); retry once on case failure
+    */napi/napi.test.ts)
       _retry_on_fail=1 ;;
   esac
 

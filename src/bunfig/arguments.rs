@@ -177,7 +177,14 @@ pub fn load_config(
                         || (!ctx.positionals.is_empty()
                             && options::DEFAULT_LOADERS
                                 .contains_key(bun_paths::extension(&ctx.positionals[0])))
-                )))
+                ))
+            // "bun [run] --filter/--workspaces/--parallel/--sequential": these
+            // dispatch to their own runners right after argument parsing and
+            // never reach the lazy load in `RunCommand::exec_with_cfg`. Loading
+            // here keeps the `[run]` flags applied later in `Arguments::parse`
+            // (`--bun`, `--elide-lines`, ...) ahead of the file.
+            || (matches!(cmd, CommandTag::RunCommand | CommandTag::AutoCommand)
+                && (ctx.parallel || ctx.sequential || ctx.workspaces || !ctx.filters.is_empty())))
     {
         config_path_ = b"bunfig.toml";
         auto_loaded = true;

@@ -12,10 +12,8 @@
 // TLS consumer (native cert check, SNI's is_ip_address check, and the
 // user-supplied checkServerIdentity callback) sees the bare address `::1`.
 //
-// This test lives in its own file rather than fetch.tls.test.ts because the
-// subprocess approach is sensitive to environment setup (HTTP_PROXY,
-// NO_PROXY) and we want a clean top-level env rather than sharing one with
-// other concurrent tests in that file.
+// A standalone file for this single TLS-verification concern, following the
+// fetch.tls.wildcard.test.ts precedent.
 
 import { expect, it } from "bun:test";
 import { bunEnv, bunExe, isIPv6, tls as validTls } from "harness";
@@ -26,6 +24,7 @@ import { bunEnv, bunExe, isIPv6, tls as validTls } from "harness";
 it.skipIf(!isIPv6())("fetch with IPv6 literal hostname verifies the certificate", async () => {
   using server = Bun.serve({
     port: 0,
+    hostname: "::1",
     tls: validTls,
     fetch() {
       return new Response("Hello World");
@@ -33,10 +32,16 @@ it.skipIf(!isIPv6())("fetch with IPv6 literal hostname verifies the certificate"
   });
   const port = server.port;
 
-  // Drop HTTP_PROXY/HTTPS_PROXY so the container-level egress proxy doesn't
-  // intercept a request to [::1] (NO_PROXY doesn't match the bracketed form
-  // in some fetch paths).
-  const { HTTP_PROXY, HTTPS_PROXY, http_proxy, https_proxy, ...cleanEnv } = bunEnv;
+  // Drop HTTP_PROXY/HTTPS_PROXY so an egress proxy doesn't intercept a
+  // request to [::1] (NO_PROXY doesn't match the bracketed form in some
+  // fetch paths).
+  const cleanEnv = {
+    ...bunEnv,
+    HTTP_PROXY: undefined,
+    HTTPS_PROXY: undefined,
+    http_proxy: undefined,
+    https_proxy: undefined,
+  };
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

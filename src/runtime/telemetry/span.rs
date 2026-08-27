@@ -339,7 +339,11 @@ fn utf8<'a>(s: &'a JsString, scratch: &'a mut Vec<u8>) -> &'a [u8] {
 fn append_utf8(s: &JsString, out: &mut Vec<u8>) -> core::ops::Range<usize> {
     let start = out.len();
     if s.is_utf16() {
-        strings::convert_utf16_to_utf8_append(out, s.utf16());
+        let utf16 = s.utf16();
+        out.reserve(bun_simdutf_sys::simdutf::length::utf8::from::utf16::le(
+            utf16,
+        ));
+        strings::convert_utf16_to_utf8_append(out, utf16);
     } else {
         *out =
             strings::allocate_latin1_into_utf8_with_list(core::mem::take(out), start, s.latin1());
@@ -702,7 +706,11 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(global: &JSGlobalObject, desc: &End
 // ─────────────── native-owned (pooled) spans ───────────────
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Telemetry__nativeEnd(global: &JSGlobalObject, handle: NativeSpan, end_ns: u64) {
+pub extern "C" fn Bun__Telemetry__nativeEnd(
+    global: &JSGlobalObject,
+    handle: NativeSpan,
+    end_ns: u64,
+) {
     bun_telemetry::rt::end_pooled(global.as_ptr().cast(), handle, end_ns, &mut |_| {});
 }
 
@@ -725,7 +733,10 @@ pub extern "C" fn Bun__Telemetry__poolStub(
 /// The JS cell for a pooled span, creating (and pinning) it on first use;
 /// undefined once the span has ended.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Telemetry__poolMaterialize(global: &JSGlobalObject, native: NativeSpan) -> JSValue {
+pub extern "C" fn Bun__Telemetry__poolMaterialize(
+    global: &JSGlobalObject,
+    native: NativeSpan,
+) -> JSValue {
     let Some(mut l) = local(global) else {
         return JSValue::UNDEFINED;
     };

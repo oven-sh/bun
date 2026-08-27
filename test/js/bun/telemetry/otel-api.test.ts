@@ -593,6 +593,17 @@ describe("Bun.otel", () => {
     expect(got.droppedAttributesCount ?? 0).toBe(0);
   });
 
+  test("non-Latin-1 attribute keys and long non-Latin-1 values are exported as UTF-8", async () => {
+    const span = tracer.startSpan("unicode");
+    const long = "值".repeat(4000);
+    span.setAttribute("ключ🎉0", 1);
+    span.setAttribute("big", long);
+    span.setAttributes({ "キー": "値", ascii: "плохо" });
+    span.end();
+    const [got] = await collect();
+    expect(got.attributes).toEqual({ "ключ🎉0": 1, big: long, "キー": "値", ascii: "плохо" });
+  });
+
   test("events, links, status, exceptions, updateName", async () => {
     const other = tracer.startSpan("other");
     const span = tracer.startSpan("rich", { links: [{ context: other.spanContext(), attributes: { l: 1 } }] });

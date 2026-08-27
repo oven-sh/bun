@@ -529,7 +529,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetrySpanProtoFuncEnd, (JSGlobalObject * lexicalG
 
 // = TelemetrySpan.ts Attributes.IndexFrom: below this many buffered attribute
 // elements a repeated key is found by a scan, from it on by Field::AttributeIndex.
-static constexpr unsigned kAttributeIndexFrom = 32;
+static constexpr unsigned kAttributeIndexFrom = 64;
 
 // span.setAttribute(key, value) from C++ (what the TelemetrySpan.ts builtin does).
 // Throws only on OOM.

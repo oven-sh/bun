@@ -31,11 +31,12 @@ const enum MaxBuffered {
   LinkValues = 16384,
 }
 
-// Fewer buffered attribute elements than this: a repeated key is found by a
-// scan. From this many on: by Field.AttributeIndex (JSTelemetrySpan.cpp
-// kAttributeIndexFrom).
+// Fewer buffered attribute elements (2 per key) than this: a repeated key is
+// found by a scan. From this many on: by Field.AttributeIndex (JSTelemetrySpan.cpp
+// kAttributeIndexFrom). 32 keys is about where the scan stops beating a Map
+// lookup; below it the Map would only add an allocation per span.
 const enum Attributes {
-  IndexFrom = 32,
+  IndexFrom = 64,
 }
 
 export function setAttribute(this: unknown, key: unknown, value: unknown) {

@@ -166,9 +166,11 @@ pub fn build(
     cfgs.iter()
         .map(|c| {
             Ok(match c {
-                ExporterConfig::Otlp(c) => {
-                    Arc::new(OtlpHttpExporter::new(c, proxy.clone(), reject_unauthorized)?) as Arc<dyn Exporter>
-                }
+                ExporterConfig::Otlp(c) => Arc::new(OtlpHttpExporter::new(
+                    c,
+                    proxy.clone(),
+                    reject_unauthorized,
+                )?) as Arc<dyn Exporter>,
                 ExporterConfig::Console => Arc::new(ConsoleExporter),
             })
         })
@@ -306,7 +308,11 @@ impl OtlpHttpExporter {
             .retain(|r| r.async_http_id != async_http_id);
     }
 
-    fn send_blocking(&self, payload: &ExportPayload, deadline: MonoInstant) -> Result<(), SendError> {
+    fn send_blocking(
+        &self,
+        payload: &ExportPayload,
+        deadline: MonoInstant,
+    ) -> Result<(), SendError> {
         // Bound the request by whichever is sooner: the exporter timeout or the deadline.
         let left_secs = u32::try_from(deadline.remaining().as_secs()).unwrap_or(u32::MAX);
         let timeout = self.timeout_seconds.min(left_secs.max(1));
@@ -547,7 +553,11 @@ fn attributes_to_js<'a>(
 ) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global, 0);
     for kv in attrs {
-        obj.put(global, kv.key, any_value_to_js(global, kv.value)?);
+        obj.put(
+            global,
+            bun_core::EncodedSlice::utf8(kv.key),
+            any_value_to_js(global, kv.value)?,
+        );
     }
     Ok(obj)
 }

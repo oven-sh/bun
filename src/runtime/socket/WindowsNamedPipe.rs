@@ -213,8 +213,8 @@ impl WindowsNamedPipe {
     /// `release_resources`): a ref taken at zero would queue the free twice.
     ///
     /// [`on_close`]: Self::on_close
-    fn keep_alive(&self) -> bun_ptr::ScopedRef<Owner> {
-        self.owner().ref_guard()
+    fn keep_alive(&self) -> bun_ptr::RefPtr<Owner> {
+        bun_ptr::RefPtr::from_this(self.owner())
     }
 
     pub(crate) fn on_writable(&self) {
@@ -546,11 +546,7 @@ impl WindowsNamedPipe {
     fn on_connect(&self, status: uv::ReturnCode) {
         // Released once this returns: the ref `connect`/`open` took for the
         // in-flight connect.
-        let _connect_ref = scopeguard::guard(self.connect_ref.take(), |r| {
-            if let Some(r) = r {
-                r.deref();
-            }
-        });
+        let _connect_ref = self.connect_ref.take();
         let _ = self.with_pipe(|pipe| pipe.unref());
 
         if let Some(err) = status.to_error(bun_sys::Tag::connect) {

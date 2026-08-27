@@ -13,7 +13,7 @@ pub use libc::sockaddr_storage;
 
 /// Callbacks for a UDP socket created with [`UdpSocket::create`], whose
 /// user slot is the intrusively-refcounted owner `Self`.
-pub trait UdpHandler: bun_ptr::AnyRefCounted<DestructorCtx = ()> + Sized + 'static {
+pub trait UdpHandler: bun_ptr::AnyRefCounted + Sized + 'static {
     fn on_data(this: ThisPtr<Self>, socket: &mut Socket, buf: &mut PacketBuffer, packets: c_int);
     fn on_drain(this: ThisPtr<Self>, socket: &mut Socket);
     /// uSockets closed the socket: either the owner's [`UdpSocket::close`],
@@ -46,7 +46,7 @@ extern "C" fn udp_on_drain<U: UdpHandler>(s: *mut Socket) {
 }
 extern "C" fn udp_on_close<U: UdpHandler>(s: *mut Socket) {
     if let Some((this, socket)) = udp_owner::<U>(s) {
-        let _keep = this.ref_guard();
+        let _keep = bun_ptr::RefPtr::from_this(this);
         U::on_close(this, socket);
     }
 }
@@ -60,7 +60,8 @@ extern "C" fn udp_on_recv_error<U: UdpHandler>(s: *mut Socket, errno: c_int, err
 /// owner for as long as uSockets can call back through it.
 pub struct UdpSocket<U: UdpHandler> {
     socket: NonNull<Socket>,
-    owner: bun_ptr::RefPtr<U>,
+    /// `None` only inside [`UdpSocket::closed`], so `Drop` skips the close.
+    owner: Option<bun_ptr::RefPtr<U>>,
 }
 
 impl<U: UdpHandler> UdpSocket<U> {
@@ -86,11 +87,11 @@ impl<U: UdpHandler> UdpSocket<U> {
             Some(&mut err),
             owner.as_ptr().cast(),
         )) {
-            Some(socket) => Ok(UdpSocket { socket, owner }),
-            None => {
-                owner.deref();
-                Err(err)
-            }
+            Some(socket) => Ok(UdpSocket {
+                socket,
+                owner: Some(owner),
+            }),
+            None => Err(err),
         }
     }
 
@@ -111,11 +112,11 @@ impl<U: UdpHandler> UdpSocket<U> {
             Some(&mut err),
             owner.as_ptr().cast(),
         )) {
-            Some(socket) => Ok(UdpSocket { socket, owner }),
-            None => {
-                owner.deref();
-                Err(err)
-            }
+            Some(socket) => Ok(UdpSocket {
+                socket,
+                owner: Some(owner),
+            }),
+            None => Err(err),
         }
     }
 
@@ -132,23 +133,21 @@ impl<U: UdpHandler> UdpSocket<U> {
     /// release the owner ref. Take the handle out of the owner first so
     /// `on_close` finds none.
     pub fn close(self) {
-        let this = core::mem::ManuallyDrop::new(self);
-        this.get().close();
-        this.owner.deref();
+        drop(self);
     }
 
     /// Dispose of a handle whose socket uSockets already closed (from
     /// [`UdpHandler::on_close`]): releases the owner ref without closing.
-    pub fn closed(self) {
-        let this = core::mem::ManuallyDrop::new(self);
-        this.owner.deref();
+    pub fn closed(mut self) {
+        self.owner = None;
     }
 }
 
 impl<U: UdpHandler> Drop for UdpSocket<U> {
     fn drop(&mut self) {
-        self.get().close();
-        self.owner.deref();
+        if self.owner.is_some() {
+            self.get().close();
+        }
     }
 }
 

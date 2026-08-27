@@ -1643,6 +1643,7 @@ impl WaitingEntry {
                 // SAFETY: `sequence` points into `execution.sequences` and its `active_entry` is a
                 // live arena node; both outlive this call, which re-enters nothing.
                 let sequence = unsafe { &mut *sequence.as_ptr() };
+                // SAFETY: as above.
                 let entry = unsafe { sequence.active_entry?.as_ref() };
                 if entry.evaluate_timeout(sequence, &now) {
                     return Some(GaveUp::TimedOut);

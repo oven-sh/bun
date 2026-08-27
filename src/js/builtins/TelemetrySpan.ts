@@ -57,6 +57,34 @@ export function setAttribute(this: unknown, key: unknown, value: unknown) {
   return this;
 }
 
+// = setAttribute without the brand check, for the builtins below (setAttributes, fail).
+// setAttribute and set keep their own inlined copy: they are the per-attribute hot path.
+$visibility = "Private";
+export function telemetrySpanSetAttributeImpl(span: any, key: unknown, value: unknown) {
+  const state = $getInternalField(span, Field.State) as number;
+  if (!(state & State.Recording) || value == null) return span;
+  key = key + "";
+  if (state & State.Native) {
+    $telemetrySetAttribute(span, key as string, value);
+    return span;
+  }
+  const attrs = $getInternalField(span, Field.Attributes) as unknown[] | null;
+  if (attrs === null) {
+    $putInternalField(span, Field.Attributes, [key, value]);
+    return span;
+  }
+  const n = attrs.length;
+  for (let i = 0; i < n; i += 2) {
+    if (attrs[i] === key) {
+      attrs[i + 1] = value;
+      return span;
+    }
+  }
+  $arrayPush(attrs, key);
+  $arrayPush(attrs, value);
+  return span;
+}
+
 export function setAttributes(this: unknown, attributes: unknown) {
   if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
   return $telemetrySpanSetAttributesImpl(this, attributes);
@@ -74,30 +102,8 @@ export function telemetrySpanSetAttributesImpl(span: any, attributes: unknown) {
     }
     return span;
   }
-  let attrs = $getInternalField(span, Field.Attributes) as unknown[] | null;
-  const existing = attrs === null ? 0 : attrs.length;
   const keys = Object.keys(attributes as object);
-  for (let k = 0; k < keys.length; k++) {
-    const key = keys[k];
-    const value = attributes[key];
-    if (value == null) continue;
-    if (attrs === null) {
-      attrs = [key, value];
-      $putInternalField(span, Field.Attributes, attrs);
-      continue;
-    }
-    let i = 0;
-    for (; i < existing; i += 2) {
-      if (attrs[i] === key) {
-        attrs[i + 1] = value;
-        break;
-      }
-    }
-    if (i >= existing) {
-      $arrayPush(attrs, key);
-      $arrayPush(attrs, value);
-    }
-  }
+  for (let k = 0; k < keys.length; k++) $telemetrySpanSetAttributeImpl(span, keys[k], attributes[keys[k]]);
   return span;
 }
 
@@ -196,11 +202,34 @@ export function set(this: any, keyOrAttributes: unknown, value?: unknown) {
   return this;
 }
 
-// fail(error) — record the exception and mark the span failed with its message
+// The one rule for `exception.type` / `error.type` of a thrown value (also used by
+// node:http and mirrored by telemetryFailSpanNoJS in JSTelemetrySpan.cpp): a non-empty
+// string `code` (node style; a DOMException's numeric code is not one), else a non-empty
+// string `name`, else "Error". Primitives have no type.
+$visibility = "Private";
+export function telemetryErrorType(error: unknown): string | undefined {
+  if (error === null || (typeof error !== "object" && typeof error !== "function")) return undefined;
+  const code = (error as any).code;
+  if (typeof code === "string" && code !== "") return code;
+  const name = (error as any).name;
+  if (typeof name === "string" && name !== "") return name;
+  return "Error";
+}
+
+// fail(error) — record the exception and mark the span failed with its message;
+// the same attributes/status/event as a throw out of `Bun.otel.span(name, fn)`.
 export function fail(this: any, error: any) {
   if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
+  const state = $getInternalField(this, Field.State) as number;
+  if (!(state & State.Recording)) return this;
   $telemetrySpanRecordExceptionImpl(this, error, undefined);
-  const message = error == null ? undefined : typeof error === "string" ? error : error.message;
+  if (error != null) $telemetrySpanSetAttributeImpl(this, "error.type", $telemetryErrorType(error) ?? "Error");
+  const message =
+    error == null || typeof error === "symbol"
+      ? undefined
+      : typeof error === "object" || typeof error === "function"
+        ? error.message
+        : error + "";
   return $telemetrySpanSetStatusImpl(this, 2, message);
 }
 
@@ -238,28 +267,27 @@ export function telemetrySpanRecordExceptionImpl(span: any, exception: any, time
   const state = $getInternalField(span, Field.State) as number;
   if (!(state & State.Recording) || exception == null) return span;
   const flat: unknown[] = [];
-  if (typeof exception === "string") {
+  const type = $telemetryErrorType(exception);
+  if (type === undefined) {
+    // string / number / boolean / bigint: the value is the message (sdk-trace-base does the same for strings)
+    if (typeof exception === "symbol") return span;
     $arrayPush(flat, "exception.message");
-    $arrayPush(flat, exception);
+    $arrayPush(flat, typeof exception === "string" ? exception : exception + "");
   } else {
-    const code = exception.code;
-    const name = exception.name;
+    $arrayPush(flat, "exception.type");
+    $arrayPush(flat, type);
     const message = exception.message;
-    const stack = exception.stack;
-    const type = code != null ? code + "" : name ? name + "" : undefined;
-    if (type !== undefined) {
-      $arrayPush(flat, "exception.type");
-      $arrayPush(flat, type);
-    }
-    if (message) {
+    if (message != null && message !== "") {
       $arrayPush(flat, "exception.message");
-      $arrayPush(flat, message + "");
+      $arrayPush(flat, typeof message === "string" ? message : message + "");
     }
+    const stack = exception.stack;
     if (stack) {
       $arrayPush(flat, "exception.stacktrace");
       $arrayPush(flat, stack + "");
     }
   }
+  // flat is never empty here: OTel requires exception.type or exception.message on the event.
   $telemetryAddEvent(span, "exception", flat, time);
   return span;
 }

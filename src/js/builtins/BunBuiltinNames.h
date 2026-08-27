@@ -193,8 +193,10 @@ using namespace JSC;
     macro(telemetryAddEvent) \
     macro(telemetryAddLink) \
     macro(telemetryAddOneLink) \
+    macro(telemetryErrorType) \
     macro(telemetryFlattenAttributes) \
     macro(telemetrySpanRecordExceptionImpl) \
+    macro(telemetrySpanSetAttributeImpl) \
     macro(telemetrySpanSetAttributesImpl) \
     macro(telemetrySpanSetStatusImpl) \
     macro(isTelemetrySpan) \

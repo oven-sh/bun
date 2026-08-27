@@ -75,10 +75,10 @@ static JSTelemetrySpan* createChildSpan(Zig::GlobalObject* globalObject, const T
 {
     auto& vm = globalObject->vm();
     TelemetrySpanStub parentStub;
-    bool hasParent = parent.parentStub(globalObject, &parentStub);
+    bool hasParent = parent.stubAsParent(globalObject, &parentStub);
     TelemetrySpanStub stub;
     Bun__Telemetry__stubStart(globalObject, &stub, hasParent ? &parentStub : nullptr, startNs);
-    auto* span = JSTelemetrySpan::create(vm, globalObject, stub, scopeId, kind, name, 0);
+    auto* span = JSTelemetrySpan::createOwned(vm, globalObject, stub, scopeId, kind, name);
     if (hasParent)
         inheritPropagation(vm, globalObject, span, parent);
     return span;
@@ -464,7 +464,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryEnabledMask, (JSGlobalObject * globalObject,
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     // Static storage: nothing to free.
-    auto buffer = ArrayBuffer::createFromBytes(std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(&Bun__Telemetry__enabled), sizeof(uint32_t) }, createSharedTask<void(void*)>([](void*) {}));
+    auto buffer = ArrayBuffer::createFromBytes(std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(telemetryEnabledMaskAddress()), sizeof(uint32_t) }, createSharedTask<void(void*)>([](void*) {}));
     auto* view = JSUint32Array::create(globalObject, globalObject->typedArrayStructure(TypeUint32, false), WTF::move(buffer), 0, 1);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(view);
@@ -514,10 +514,12 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryOtelSet, (JSGlobalObject * lexicalGlobalObje
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue keyOrAttributes = callFrame->argument(0), value = callFrame->argument(1);
+    if (!keyOrAttributes.isString() && !keyOrAttributes.isObject())
+        return JSValue::encode(jsBoolean(false));
     auto active = TelemetryContextSlot::current(globalObject);
     if (!active.header)
         return JSValue::encode(jsBoolean(false));
-    if (uint64_t handle = active.poolHandle(); handle && keyOrAttributes.isString()) {
+    if (auto handle = active.poolHandle(); handle && keyOrAttributes.isString()) {
         // A request span and one attribute: straight into the slot, no Span object.
         // False once the request span has ended, or when it is not recording.
         return JSValue::encode(jsBoolean(telemetryNativeSetAttribute(globalObject, handle, asString(keyOrAttributes), value)));
@@ -547,7 +549,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryCreateTracer, (JSGlobalObject * lexicalGloba
 static JSTelemetrySpan* createCarrier(Zig::GlobalObject* globalObject, const TelemetrySpanStub& stub, JSValue traceState)
 {
     auto& vm = globalObject->vm();
-    auto* span = JSTelemetrySpan::create(vm, globalObject, stub, Bun__Telemetry__userScope(), 0, jsEmptyString(vm), 0);
+    auto* span = JSTelemetrySpan::createOwned(vm, globalObject, stub, Bun__Telemetry__userScope(), 0, jsEmptyString(vm));
     if (traceState.isString() && asString(traceState)->length())
         span->field(JSTelemetrySpan::Field::TraceState).set(vm, span, telemetryResolve(asString(traceState)));
     return span;
@@ -575,12 +577,16 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryWrapSpanContext, (JSGlobalObject * lexicalGl
 
 // suppressedCarrier() — the header `context.with(suppressTracing(ctx), …)`
 // activates: no span (root or child) starts under it.
-JSC_DEFINE_HOST_FUNCTION(jsTelemetrySuppressedCarrier, (JSGlobalObject * lexicalGlobalObject, CallFrame*))
+extern "C" JSC::EncodedJSValue Bun__TelemetrySpan__createSuppressedCarrier(Zig::GlobalObject* globalObject)
 {
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     TelemetrySpanStub stub;
     Bun__Telemetry__suppressedStub(&stub);
     return JSValue::encode(createCarrier(globalObject, stub, jsUndefined()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsTelemetrySuppressedCarrier, (JSGlobalObject * lexicalGlobalObject, CallFrame*))
+{
+    return Bun__TelemetrySpan__createSuppressedCarrier(defaultGlobalObject(lexicalGlobalObject));
 }
 
 // parseTraceparent(traceparent, tracestate?) — remote carrier, or undefined if the header is invalid.
@@ -622,23 +628,6 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryPropagationHeaders, (JSGlobalObject * lexica
     if (propagators.traceContext && traceState) {
         out->putDirectIndex(globalObject, 1, traceState);
         RETURN_IF_EXCEPTION(scope, {});
-    }
-    // Only when the caller is injecting for the *active* span (node:http):
-    // baggage set via the api Context (propagation.extract / setBaggage) wins
-    // over what the request carried in, like fetch and propagator.inject().
-    bool includeAmbient = callFrame->argument(1).isTrue();
-    if (propagators.baggage && includeAmbient) {
-        BunString header { BunStringTag::Empty, {} };
-        switch (Bun__Telemetry__activeExtrasBaggage(globalObject, &header)) {
-        case TelemetryBaggageOverride::Inherit:
-            break;
-        case TelemetryBaggageOverride::Masked:
-            baggage = JSValue();
-            break;
-        case TelemetryBaggageOverride::Header:
-            baggage = jsString(vm, header.transferToWTFString());
-            break;
-        }
     }
     if (propagators.baggage && baggage) {
         out->putDirectIndex(globalObject, 2, baggage);

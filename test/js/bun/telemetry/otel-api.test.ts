@@ -346,6 +346,44 @@ describe("Bun.otel", () => {
     expect([got.s3.kind, got.s3.status]).toEqual([0, { code: 0 }]);
   });
 
+  test("span.fail(error) describes the error like a throw out of Bun.otel.span; recordException takes primitives", async () => {
+    tracer.startSpan("manual").fail(new RangeError("x")).end();
+    expect(() =>
+      Bun.otel.span("auto", () => {
+        throw new RangeError("x");
+      }),
+    ).toThrow("x");
+    const dom = new DOMException("nope", "AbortError"); // numeric .code (20): the name is the type, not "20"
+    tracer.startSpan("dom").fail(dom).end();
+    tracer
+      .startSpan("coded")
+      .fail(Object.assign(new Error("e"), { code: "E_CODE" }))
+      .end();
+    tracer.startSpan("prim").recordException(42).recordException(false).recordException("s").end();
+    const got = Object.fromEntries((await collect()).map(s => [s.name, s]));
+    for (const name of ["manual", "auto"]) {
+      expect(got[name]).toMatchObject({
+        status: { code: 2, message: "x" },
+        attributes: { "error.type": "RangeError" },
+        events: [{ name: "exception", attributes: { "exception.type": "RangeError", "exception.message": "x" } }],
+      });
+    }
+    expect(got.manual.events[0].attributes["exception.stacktrace"]).toEqual(expect.any(String));
+    expect([got.dom.attributes["error.type"], got.dom.events[0].attributes["exception.type"]]).toEqual([
+      "AbortError",
+      "AbortError",
+    ]);
+    expect([got.coded.attributes["error.type"], got.coded.events[0].attributes["exception.type"]]).toEqual([
+      "E_CODE",
+      "E_CODE",
+    ]);
+    expect(got.prim.events.map((e: any) => e.attributes)).toEqual([
+      { "exception.message": "42" },
+      { "exception.message": "false" },
+      { "exception.message": "s" },
+    ]);
+  });
+
   test("a span with its prototype removed still takes attributes through Bun.otel.set (no crash)", async () => {
     {
       using span = Bun.otel.span("noproto");

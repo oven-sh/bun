@@ -677,6 +677,31 @@ describe("node:http", () => {
     expect([res.errored, sawErrorEvent]).toEqual([null, false]);
   });
 
+  test("node:http: a request the agent fails itself (proxy tunnel error) still ends its CLIENT span, once", async () => {
+    // https.Agent behind a proxy: the agent emits 'error' on the request and
+    // hands it the connection error, so the client skips its own error path.
+    const agent = new http.Agent();
+    (agent as any).createConnection = (_opts: unknown, oncreate: Function) => {
+      process.nextTick(oncreate, Object.assign(new Error("tunnel"), { code: "ERR_PROXY_TUNNEL" }));
+    };
+    const req = http.get({ host: "127.0.0.1", port: 1, agent });
+    const { promise, resolve } = Promise.withResolvers<any>();
+    req.on("error", resolve);
+    const err = await promise;
+    await new Promise<void>(r => (req.destroyed && (req as any)._closed ? r() : req.once("close", r)));
+    // a DOMException-style numeric .code is not a type: error.type is the code only when it is a string
+    const failed = http.get({ host: "127.0.0.1", port: 1, agent });
+    failed.on("error", () => {});
+    failed.destroy(new DOMException("gone", "AbortError"));
+    await new Promise<void>(r => ((failed as any)._closed ? r() : failed.once("close", r)));
+    const clients = byName(await collect(2), "bun.http.client");
+    expect(err.code).toBe("ERR_PROXY_TUNNEL");
+    expect(clients.map(s => [s.status.code, s.attributes["error.type"]])).toEqual([
+      [2, "ERR_PROXY_TUNNEL"],
+      [2, "AbortError"],
+    ]);
+  });
+
   test("node:http server: a ws upgrade ends the SERVER span with 101", async () => {
     const { WebSocketServer } = require("ws");
     const httpServer = http.createServer((req, res) => res.end("no"));

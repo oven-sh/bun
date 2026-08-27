@@ -595,5 +595,8 @@ declare function $telemetryAddOneLink(span: unknown, state: number, link: unknow
 /** TelemetrySpan.ts: `{k: v}` → `[k, v, …]` without null/undefined values; null if not an object. */
 declare function $telemetryFlattenAttributes(attributes: unknown): unknown[] | null;
 declare function $telemetrySpanRecordExceptionImpl(span: unknown, exception: unknown, time: unknown): unknown;
+/** TelemetrySpan.ts: the exception.type / error.type of a thrown value; undefined for primitives. */
+declare function $telemetryErrorType(error: unknown): string | undefined;
+declare function $telemetrySpanSetAttributeImpl(span: unknown, key: unknown, value: unknown): unknown;
 declare function $telemetrySpanSetAttributesImpl(span: unknown, attributes: unknown): unknown;
 declare function $telemetrySpanSetStatusImpl(span: unknown, status: unknown, message?: unknown): unknown;

@@ -39,7 +39,7 @@ const onClientRequestStartChannel = dc.channel("http.client.request.start");
 const onClientRequestErrorChannel = dc.channel("http.client.request.error");
 const onClientResponseFinishChannel = dc.channel("http.client.response.finish");
 const otelHttpClientEnabled = $newRustFunction("telemetry.rs", "httpClientEnabled", 0);
-// bun_telemetry::ENABLED viewed from JS: bit 1 = Instrument::HttpClient.
+// bun_telemetry::ENABLED viewed from JS: bit 1 = Instrument::HttpClient (const-asserted in src/telemetry/lib.rs).
 const otelMask = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetryEnabledMask", 0)() as Uint32Array;
 const otelHttpClientBegin = $newRustFunction("telemetry.rs", "httpClientBegin", 2);
 const otelHttpClientEnd = $newRustFunction("telemetry.rs", "httpClientEnd", 7);
@@ -52,9 +52,8 @@ function emitErrorEvent(request, error) {
     });
   }
   // Every request-error path funnels here (ECONNREFUSED, DNS, parse error,
-  // reset): close the trace span; deduped by the per-request flag.
-  traceClientResponseEnd(request);
-  otelClientRequestEnd(request, undefined, error);
+  // reset): close the request's spans; deduped per request.
+  endRequestSpans(request, undefined, error);
   request.emit("error", error);
 }
 
@@ -163,7 +162,7 @@ function rewriteForProxiedHttp(req, reqOptions) {
 const kHttpTraceCat = "node,node.http";
 const kTraceRequestActive = Symbol("kTraceRequestActive");
 let traceEvents = null;
-function traceClientResponseEnd(req) {
+function traceClientRequestEnd(req) {
   if (req[kTraceRequestActive]) {
     req[kTraceRequestActive] = false;
     traceEvents.emitEvent("e", kHttpTraceCat, "http.client.request");
@@ -268,7 +267,7 @@ function otelEnd(req, res, err?) {
     req[kOtelUrl],
     res ? res.statusCode : 0,
     res ? (res.httpVersionMajor === 1 ? res.httpVersionMinor : undefined) : undefined,
-    err ? String(err?.code || err?.name || "Error") : undefined,
+    err ? ($telemetryErrorType(err) ?? "Error") : undefined,
     err ? (typeof err?.message === "string" ? err.message : undefined) : undefined,
   );
 }
@@ -306,6 +305,12 @@ function otelClientRequestEnd(req, res, err) {
     return;
   }
   otelEnd(req, undefined, err);
+}
+// The only way a ClientRequest's per-request spans end (trace_events 'http.client.request'
+// and the Bun.otel CLIENT span); both are idempotent per request.
+function endRequestSpans(req, res, err) {
+  traceClientRequestEnd(req);
+  otelClientRequestEnd(req, res, err);
 }
 
 function ClientRequest(input, options, cb) {
@@ -660,10 +665,9 @@ ClientRequest.prototype.destroy = function destroy(err) {
   }
   this.destroyed = true;
 
-  // Close the http.client.request trace span if no response ever arrived
-  // (req.destroy()/abort before headers); deduped by the per-request flag.
-  traceClientResponseEnd(this);
-  otelClientRequestEnd(this, undefined, err ?? { code: "aborted" });
+  // Close the request's spans if no response ever arrived
+  // (req.destroy()/abort before headers); deduped per request.
+  endRequestSpans(this, undefined, err ?? { code: "aborted" });
 
   // If we're aborting, we don't care about any more response data.
   const res = this.res;
@@ -709,9 +713,8 @@ function socketCloseListenerInner() {
 
   req.destroyed = true;
   // Socket-level close without a response (connection reset, abort):
-  // close the trace span so it doesn't stay open forever.
-  traceClientResponseEnd(req);
-  otelClientRequestEnd(req, undefined, { code: "ECONNRESET" });
+  // close the request's spans so they don't stay open forever.
+  endRequestSpans(req, undefined, { code: "ECONNRESET" });
   if (res) {
     // Socket closed before we emitted 'end' below.
     if (!res.complete) {
@@ -994,9 +997,9 @@ function parserOnIncomingClient(res, shouldKeepAlive) {
     });
   }
   // The response arrived: close the 'http.client.request' span (Node ends it
-  // here, in parserOnIncomingClient, before handing the response to the user).
-  traceClientResponseEnd(req);
-  otelClientRequestEnd(req, res, undefined);
+  // here, in parserOnIncomingClient, before handing the response to the user);
+  // the Bun.otel CLIENT span follows the response body from here.
+  endRequestSpans(req, res, undefined);
   req.res = res;
   res.req = req;
 
@@ -1217,9 +1220,10 @@ function destroyRequestOnSocketNT(req, socket, err) {
   if (err && err.code !== "ERR_PROXY_TUNNEL" && !socket?._hadError) {
     emitErrorEvent(req, err);
   }
-  // The request is dead with no parser: close the trace span on the paths
-  // that skip emitErrorEvent above (proxy tunnel; error already emitted).
-  traceClientResponseEnd(req);
+  // The request is dead with no parser: close both spans on the paths that
+  // skip emitErrorEvent above (proxy tunnel error emitted by the agent; error
+  // already emitted).
+  endRequestSpans(req, undefined, err ?? { code: "aborted" });
   closeRequest(req);
 }
 

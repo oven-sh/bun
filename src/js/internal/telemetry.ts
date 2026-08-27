@@ -26,7 +26,7 @@ const enum Propagator {
   TraceContext = 1 << 0,
   Baggage = 1 << 1,
 }
-const propagationHeaders = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetryPropagationHeaders", 2);
+const propagationHeaders = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetryPropagationHeaders", 1);
 const enterContext = $newCppFunction("TelemetryContext.cpp", "jsTelemetryEnterContext", 2);
 const exitContext = $newCppFunction("TelemetryContext.cpp", "jsTelemetryExitContext", 1);
 const activeExtras = $newCppFunction("TelemetryContext.cpp", "jsTelemetryActiveExtras", 0);
@@ -184,7 +184,7 @@ function suppressedPlaceholder() {
 function runWithContext(ctx: any, fn: Function, thisArg: unknown, args: any[]) {
   const [span, extras] = unpackContext(ctx);
   const header =
-    extras?.get(SUPPRESS_TRACING_KEY) === true
+    extras?.$get(SUPPRESS_TRACING_KEY) === true
       ? suppressedPlaceholder()
       : (span ?? (extras ? placeholderSpan() : undefined));
   const prev = enterContext(header, extras);
@@ -240,14 +240,13 @@ type Tracer = {
 };
 
 const tracers = new Map<string, Tracer>();
-function getTracer(name?: string, version?: string): Tracer {
-  // No name = the default scope Bun.otel.span/wrap use, exported as "bun".
-  name = name ? name + "" : "bun";
-  // NUL cannot appear in a package name, so "a@1" + undefined ≠ "a" + "1".
-  const key = version ? name + "\0" + version : name;
+function getTracer(name?: unknown, version?: unknown): Tracer {
+  const n = name ? name + "" : "bun"; // no name = the default scope Bun.otel.span/wrap use, exported as "bun"
+  const v = version == null || version === "" ? undefined : version + "";
+  const key = v === undefined ? n : n + "\0" + v; // NUL cannot appear in a package name
   let t = tracers.$get(key);
   if (!t) {
-    t = createTracer(createScope(name, version), name, version === undefined ? undefined : version + "");
+    t = createTracer(createScope(n, v), n, v);
     tracers.$set(key, t);
   }
   return t;
@@ -601,16 +600,15 @@ const bunOtel = {
   },
 };
 
-// The module's exports: `Bun.otel` plus helpers for node:http,
-// JSTelemetrySpan.cpp and JSTelemetryTracer.cpp (not user-reachable).
+// The module's exports: `Bun.otel` (BunObject.cpp) plus the helpers
+// JSTelemetrySpan.cpp, JSTelemetryTracer.cpp and TelemetryContext.cpp call
+// (not user-reachable).
 export default {
   bunOtel,
   installGlobal,
   awaitExport,
-  propagationHeaders,
   unpackContext,
   toNativeSpan,
   makeTraceState,
   baggageHeaderFromExtras,
-  TraceState,
 };

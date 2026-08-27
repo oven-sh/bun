@@ -138,7 +138,7 @@ pub fn install_with_manager(
     manager.progress = Default::default();
 
     match &load_result {
-        lockfile::LoadResult::Err(cause) => report_lockfile_load_error(manager, cause, log_level)?,
+        lockfile::LoadResult::Err(cause) => report_lockfile_load_error(manager, cause, log_level),
         lockfile::LoadResult::Ok(ok) => {
             if manager.subcommand == Subcommand::Update {
                 record_updating_package_versions(manager);
@@ -163,7 +163,7 @@ pub fn install_with_manager(
                 let mut lockfile = Lockfile::default();
                 let mut maybe_root = lockfile::Package::default();
 
-                let source_copy = root_package_json_source(manager, root_package_json_path)?;
+                let source_copy = root_package_json_source(manager, root_package_json_path);
 
                 let mut resolver: () = ();
                 // `parse` needs `manager`, `manager.log` and a fresh
@@ -659,9 +659,9 @@ pub fn install_with_manager(
     print_kept_patched(manager);
 
     let had_errors_before_cleaning_lockfile = manager.log_mut().has_errors();
-    manager
+    let _ = manager
         .log_mut()
-        .print(std::ptr::from_mut(Output::error_writer()))?;
+        .print(std::ptr::from_mut(Output::error_writer()));
     manager.log_mut().reset();
     super::add_catalog::refuse_declared_positionals(manager);
 
@@ -801,15 +801,11 @@ pub fn install_with_manager(
                     )) {
                         break 'frozen_lockfile;
                     }
-                } else if !(manager
-                    .lockfile
-                    .has_meta_hash_changed(
-                        PackageManager::verbose_install()
-                            || manager.options.do_.print_meta_hash_string(),
-                        packages_len_before_install,
-                    )
-                    .unwrap_or(false))
-                {
+                } else if !manager.lockfile.has_meta_hash_changed(
+                    PackageManager::verbose_install()
+                        || manager.options.do_.print_meta_hash_string(),
+                    packages_len_before_install,
+                ) {
                     break 'frozen_lockfile;
                 }
             }
@@ -918,9 +914,9 @@ pub fn install_with_manager(
     };
 
     if log_level != Options::LogLevel::Silent {
-        manager
+        let _ = manager
             .log_mut()
-            .print(std::ptr::from_mut(Output::error_writer()))?;
+            .print(std::ptr::from_mut(Output::error_writer()));
     }
     if had_errors_before_cleaning_lockfile || manager.log_mut().has_errors() {
         Global::crash();
@@ -938,7 +934,7 @@ pub fn install_with_manager(
                 manager.lockfile.has_meta_hash_changed(
                     PackageManager::verbose_install() || manager.options.do_.print_meta_hash_string(),
                     packages_len_before_install.min(manager.lockfile.packages.len()),
-                )?
+                )
             };
 
     // It's unnecessary work to re-save the lockfile if there are no changes.
@@ -992,7 +988,7 @@ pub fn install_with_manager(
             did_meta_hash_change,
             requests_removed_from_lockfile,
             log_level,
-        )?;
+        );
     }
 
     if install_summary.fail > 0 {
@@ -1141,7 +1137,7 @@ fn print_install_summary(
     did_meta_hash_change: bool,
     requests_removed_from_lockfile: u32,
     log_level: Options::LogLevel,
-) -> crate::Result<()> {
+) {
     let _flush_guard = Output::flush_guard();
 
     let mut printed_timestamp = false;
@@ -1151,12 +1147,12 @@ fn print_install_summary(
             if install_summary.fail > 0 {
                 print_summary_failed(install_summary);
             }
-            return Ok(());
+            return;
         }
         if this.subcommand == Subcommand::Update && this.options.dry_run {
-            return Ok(());
+            return;
         }
-        print_summary_tree(this, install_summary, log_level)?;
+        print_summary_tree(this, install_summary, log_level);
 
         let print_removed = this.subcommand == Subcommand::Remove
             && this.summary.remove > 0
@@ -1226,17 +1222,17 @@ fn print_install_summary(
     if this.options.do_.summary() && !printed_timestamp {
         print_summary_timing_fallback(ctx.start_time);
     }
-
-    Ok(())
 }
 
+/// Best-effort: node_modules and the lockfile are already on disk, so a closed
+/// stdout must not turn the install into an error.
 #[cold]
 #[inline(never)]
 fn print_summary_tree(
     this: &mut PackageManager,
     install_summary: &PackageInstallSummary,
     log_level: Options::LogLevel,
-) -> crate::Result<()> {
+) {
     // `Tree::print` reads `manager.{subcommand, workspace_name_hash, update_target_workspaces, updating_packages}` and writes `manager.{track_installed_bin, kept_patched_text, manifests}`, none overlapping the `Printer`'s `lockfile` / `options` / `update_requests` borrows.
     let mgr: *mut PackageManager = this;
     // `mgr` is the sole provenance root from here through the `Tree::print`
@@ -1262,7 +1258,7 @@ fn print_summary_tree(
     Output::enable_buffering();
     let writer = Output::writer_buffered();
     // Runtime bool → const-generic dispatch.
-    if Output::enable_ansi_colors_stdout() {
+    let printed = if Output::enable_ansi_colors_stdout() {
         LockfilePrinter::Tree::print::<_, true>(
             &printer,
             // SAFETY: `mgr` is the sole provenance root; `Tree::print` writes only fields
@@ -1270,7 +1266,7 @@ fn print_summary_tree(
             unsafe { &mut *mgr },
             writer,
             log_level,
-        )?;
+        )
     } else {
         LockfilePrinter::Tree::print::<_, false>(
             &printer,
@@ -1279,9 +1275,11 @@ fn print_summary_tree(
             unsafe { &mut *mgr },
             writer,
             log_level,
-        )?;
+        )
+    };
+    if let Err(crate::Error::Alloc(bun_alloc::AllocError)) = printed {
+        bun_core::out_of_memory();
     }
-    Ok(())
 }
 
 #[cold]
@@ -1515,7 +1513,7 @@ fn report_lockfile_load_error(
     manager: &mut PackageManager,
     cause: &lockfile::LoadResultErr,
     log_level: Options::LogLevel,
-) -> crate::Result<()> {
+) {
     if log_level != Options::LogLevel::Silent
         && !crate::migration::reported_unsupported_lockfile_version(cause)
     {
@@ -1531,9 +1529,9 @@ fn report_lockfile_load_error(
         }
 
         if manager.log_mut().errors > 0 {
-            manager
+            let _ = manager
                 .log_mut()
-                .print(std::ptr::from_mut(Output::error_writer()))?;
+                .print(std::ptr::from_mut(Output::error_writer()));
             manager.log_mut().reset();
         }
         Output::flush();
@@ -1542,7 +1540,6 @@ fn report_lockfile_load_error(
     if manager.options.enable.fail_early() {
         Global::crash();
     }
-    Ok(())
 }
 
 /// Returns the rows the plan re-resolved so the overrides/catalogs invalidation loops that follow leave them pinned; only tracked when those loops will run.
@@ -1867,23 +1864,20 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
     }
 }
 
-fn root_package_json_source(
-    manager: &mut PackageManager,
-    root_package_json_path: &ZStr,
-) -> crate::Result<Source> {
+fn root_package_json_source(manager: &mut PackageManager, root_package_json_path: &ZStr) -> Source {
     let (verb, err) = match manager.workspace_package_json_cache.get_with_path(
         manager.log_mut(),
         root_package_json_path.as_bytes(),
         Default::default(),
     ) {
-        WorkspacePackageJsonCacheResult::Entry(entry) => return Ok(entry.source.clone()),
+        WorkspacePackageJsonCacheResult::Entry(entry) => return entry.source.clone(),
         WorkspacePackageJsonCacheResult::ReadErr(err) => ("read", err),
         WorkspacePackageJsonCacheResult::ParseErr(err) => ("parse", err),
     };
     if manager.log_mut().errors > 0 {
-        manager
+        let _ = manager
             .log_mut()
-            .print(std::ptr::from_mut(Output::error_writer()))?;
+            .print(std::ptr::from_mut(Output::error_writer()));
     }
     Output::err(
         err,
@@ -1930,7 +1924,7 @@ fn create_new_lockfile_and_enqueue(
         Global::crash();
     }
 
-    let source_copy = root_package_json_source(manager, root_package_json_path)?;
+    let source_copy = root_package_json_source(manager, root_package_json_path);
 
     let mut resolver: () = ();
     {
@@ -2202,7 +2196,7 @@ fn save_lockfile_only(
     manager.lockfile.meta_hash = manager.lockfile.generate_meta_hash(
         PackageManager::verbose_install() || manager.options.do_.print_meta_hash_string(),
         packages_len_before_install,
-    )?;
+    );
 
     let saved = save_lockfile(
         manager,

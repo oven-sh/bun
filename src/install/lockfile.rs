@@ -1685,7 +1685,7 @@ impl<'a> Printer<'a> {
                     // `IntoLogWrite` is implemented for `*mut bun_core::io::Writer`,
                     // not `&mut &mut Writer` — pass the raw vtable pointer.
                     let ew: *mut bun_core::io::Writer = Output::error_writer();
-                    log.print(ew)?;
+                    let _ = log.print(ew);
                 }
                 Global::crash();
             }
@@ -2897,26 +2897,45 @@ impl Lockfile {
         &mut self,
         print_name_version_string: bool,
         packages_len: usize,
-    ) -> Result<bool, BunError> {
+    ) -> bool {
         let previous_meta_hash = self.meta_hash;
-        self.meta_hash = self.generate_meta_hash(print_name_version_string, packages_len)?;
-        Ok(!strings::eql_long(
-            &previous_meta_hash,
-            &self.meta_hash,
-            false,
-        ))
+        self.meta_hash = self.generate_meta_hash(print_name_version_string, packages_len);
+        !strings::eql_long(&previous_meta_hash, &self.meta_hash, false)
     }
 
     pub(crate) fn generate_meta_hash(
         &self,
         print_name_version_string: bool,
         packages_len: usize,
-    ) -> Result<MetaHash, BunError> {
+    ) -> MetaHash {
         if packages_len <= 1 {
-            return Ok(ZERO_HASH);
+            return ZERO_HASH;
         }
 
+        let input = self.meta_hash_input(packages_len);
+        let input = input.written_slice();
+        if print_name_version_string {
+            // The `--verbose` dump is best-effort; `bun pm hash-string` prints
+            // `meta_hash_input()` itself so it can report a failed write.
+            Output::flush();
+            let _buffering = Output::disable_buffering_scope();
+            let _ = Output::writer().write_all(input);
+        }
+
+        let mut digest = ZERO_HASH;
+        // SAFETY: engine is null (default).
+        unsafe { Crypto::SHA512_256::hash(input, &mut digest, core::ptr::null_mut()) };
+        digest
+    }
+
+    /// The text `generate_meta_hash` digests; empty when the lockfile holds at
+    /// most the root package.
+    pub fn meta_hash_input(&self, packages_len: usize) -> bun_core::StringBuilder {
         let mut string_builder = bun_core::StringBuilder::default();
+        if packages_len <= 1 {
+            return string_builder;
+        }
+
         let names: &[SemverString] = &self.packages.items_name()[..packages_len];
         let resolutions: &[Resolution] = &self.packages.items_resolution()[..packages_len];
         let bytes = self.buffers.string_bytes.as_slice();
@@ -3046,29 +3065,7 @@ impl Lockfile {
         }
 
         let _ = string_builder.append(HASH_SUFFIX);
-
-        let len = string_builder.len;
-        let alphabetized_name_version_string = &string_builder.allocated_slice()[..len];
-        if print_name_version_string {
-            Output::flush();
-            Output::disable_buffering();
-            Output::writer()
-                .write_all(alphabetized_name_version_string)
-                .expect("unreachable");
-            Output::enable_buffering();
-        }
-
-        let mut digest = ZERO_HASH;
-        // SAFETY: engine is null (default).
-        unsafe {
-            Crypto::SHA512_256::hash(
-                alphabetized_name_version_string,
-                &mut digest,
-                core::ptr::null_mut(),
-            )
-        };
-
-        Ok(digest)
+        string_builder
     }
 
     pub(crate) fn resolve_package_from_name_and_version(

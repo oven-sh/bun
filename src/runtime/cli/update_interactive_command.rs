@@ -549,9 +549,9 @@ impl UpdateInteractiveCommand {
                     // for every subcommand and is non-null for the command's
                     // lifetime.
                     if unsafe { (*ctx_log_ptr).has_errors() } {
-                        manager
+                        let _ = manager
                             .log_mut()
-                            .print(std::ptr::from_mut(Output::error_writer()))?;
+                            .print(std::ptr::from_mut(Output::error_writer()));
                     }
                 }
                 Global::crash();
@@ -583,7 +583,7 @@ impl UpdateInteractiveCommand {
             manager,
             populate_manifest_cache::Packages::Ids(&workspace_pkg_ids),
         )?;
-        if populate_manifest_cache::print_fetch_failures(manager)? {
+        if populate_manifest_cache::print_fetch_failures(manager) {
             Global::crash();
         }
 

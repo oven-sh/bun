@@ -2586,7 +2586,7 @@ impl bun_jsc::ConsoleFormatter for Formatter<'_> {
     fn indent_dec(&mut self) { self.indent = self.indent.saturating_sub(1); }
     #[inline]
     fn reset_line(&mut self) { Formatter::reset_line(self) }
-    fn write_indent<W: core::fmt::Write>(&self, writer: &mut W) -> core::fmt::Result {
+    fn write_indent<W: core::fmt::Write>(&mut self, writer: &mut W) -> core::fmt::Result {
         let mut sink = bun_io::FmtAdapter::new(writer);
         Formatter::write_indent(self, &mut sink).map_err(|_| core::fmt::Error)
     }
@@ -2888,10 +2888,13 @@ impl JestPrettyFormat {
             )?;
             *this.amf_quote_strings() = original_quote_strings;
         } else if let Some(instance) = value.as_class_ref::<expect::ExpectCustomAsymmetricMatcher>() {
-            let printed = expect::ExpectCustomAsymmetricMatcher::custom_print(
+            // With `dont_throw` the only error left is the writer's.
+            let Ok(printed) = expect::ExpectCustomAsymmetricMatcher::custom_print(
                 instance, value, this.amf_global_this(), &mut *writer.ctx, true,
-            )
-            .expect("unreachable");
+            ) else {
+                writer.failed = true;
+                return Ok(true);
+            };
             if !printed {
                 // default print (non-overridden by user)
                 let flags = instance.flags;

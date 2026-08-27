@@ -1,7 +1,8 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { exists } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, tempDir } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { closeSync, openSync } from "node:fs";
 import { join } from "path";
 
 // Registry: no-deps 1.0.0/1.0.1/1.1.0/2.0.0, a-dep 1.0.1..1.0.10, @types/no-deps 1.0.0/2.0.0, one-range-dep@1.0.0 -> no-deps ^1.0.0, one-fixed-dep@1.0.0 -> no-deps 1.0.0, dep-with-tags latest=3.0.0, pre-2=2.0.1, 3.0.1 published above latest.
@@ -1836,6 +1837,33 @@ test.concurrent(
     expectHeaderOnly(stdout, "outdated");
     expectWarnings(stderr, `warn: ${manifestFailure(server, 502)}\n`);
     expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent.skipIf(isWindows)(
+  "`bun outdated` still exits 0 when the manifest warning cannot be written to stderr",
+  async () => {
+    const knobs: RegistryKnobs = { status: {} };
+    using server = await serveRegistry(TAGGED_FREE, {}, knobs);
+    const dir = await staleDirectLeaf(server, { leaf: "optionalDependencies" });
+    knobs.status!.leaf = 502;
+    // A read-only descriptor as stderr makes the warning's write(2) fail with EBADF.
+    const stderrFd = openSync("/dev/null", "r");
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "outdated"],
+        cwd: dir,
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") },
+        stdout: "pipe",
+        stderr: stderrFd,
+        stdin: "ignore",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expectHeaderOnly(stdout, "outdated");
+      expect(exitCode).toBe(0);
+    } finally {
+      closeSync(stderrFd);
+    }
   },
 );
 

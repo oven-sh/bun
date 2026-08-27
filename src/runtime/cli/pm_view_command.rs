@@ -155,7 +155,7 @@ pub(crate) fn view(
         }
     };
     if log.errors > 0 {
-        log.print(std::ptr::from_mut(Output::error_writer()))?;
+        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
         Global::crash();
     }
 

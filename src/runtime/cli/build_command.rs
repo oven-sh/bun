@@ -623,9 +623,9 @@ impl BuildCommand {
                 let result = this_transpiler.transform(ctx.log, ctx.args.clone())?;
 
                 if log_ref.has_errors() {
-                    log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                    let _ = log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
                         Output::error_writer(),
-                    ))?;
+                    ));
 
                     if !result.errors.is_empty() || result.output_files.is_empty() {
                         Output::flush();
@@ -673,11 +673,11 @@ impl BuildCommand {
                 Ok(r) => r,
                 Err(err) => {
                     if !log_ref.msgs.is_empty() {
-                        log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                        let _ = log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
                             Output::error_writer(),
-                        ))?;
+                        ));
                     } else {
-                        write!(Output::error_writer(), "error: {}", err.name())?;
+                        let _ = write!(Output::error_writer(), "error: {}", err.name());
                     }
 
                     Output::flush();
@@ -821,9 +821,10 @@ impl BuildCommand {
                 {
                     // if --no-bundle is passed, it won't have an output dir
                     if let options::OutputFileValue::Buffer { bytes } = &output_files[0].value {
-                        writer.write_all(bytes)?;
+                        // The bundle is the result: write it unbuffered so a failed write is reported.
+                        Output::flush();
+                        Output::writer().write_all(bytes)?;
                     }
-                    Output::flush();
                     break 'dump;
                 }
             }
@@ -1103,93 +1104,106 @@ impl BuildCommand {
 
                 debug_assert!(!bun_paths::is_absolute(&f.dest_path));
 
-                let rel_path = strings::trim_prefix(&f.dest_path, b"./");
-
-                // Print summary
-                let padding_count = 2usize.max(rel_path.len().max(max_path_len) - rel_path.len());
-                splat_byte_all(writer, b' ', 2)?;
-
-                if Output::enable_ansi_colors_stdout() {
-                    writer.write_all(&Output::pretty_fmt::<true>(match f.output_kind {
-                        options::OutputKind::EntryPoint => "<blue>",
-                        options::OutputKind::Chunk => "<cyan>",
-                        options::OutputKind::Asset => "<magenta>",
-                        options::OutputKind::Sourcemap => "<d>",
-                        options::OutputKind::Bytecode => "<d>",
-                        options::OutputKind::ModuleInfo
-                        | options::OutputKind::BuiltinBytecode
-                        | options::OutputKind::BytecodeStringTable
-                        | options::OutputKind::ModuleInfoStringTable => "<d>",
-                        options::OutputKind::MetafileJson
-                        | options::OutputKind::MetafileMarkdown => "<green>",
-                    }))?;
-                }
-
-                writer.write_all(rel_path)?;
-                if Output::enable_ansi_colors_stdout() {
-                    // highlight big files
-                    let warn_threshold: usize = match f.output_kind {
-                        options::OutputKind::EntryPoint | options::OutputKind::Chunk => 128 * 1024,
-                        options::OutputKind::Asset => 16 * 1024 * 1024,
-                        _ => usize::MAX,
-                    };
-                    if f.size > warn_threshold {
-                        writer.write_all(&Output::pretty_fmt::<true>("<yellow>"))?;
-                    } else {
-                        writer.write_all(b"\x1b[0m")?;
-                    }
-                }
-
-                splat_byte_all(writer, b' ', padding_count)?;
-                write!(writer, "{}  ", bun_fmt::size(f.size, Default::default()))?;
-                splat_byte_all(
-                    writer,
-                    b' ',
-                    size_padding
-                        - bun_fmt::count(format_args!(
-                            "{}",
-                            bun_fmt::size(f.size, Default::default())
-                        )),
-                )?;
-
-                if Output::enable_ansi_colors_stdout() {
-                    writer.write_all(b"\x1b[2m")?;
-                }
-                write!(
-                    writer,
-                    "({})",
-                    match f.output_kind {
-                        options::OutputKind::EntryPoint => "entry point",
-                        options::OutputKind::Chunk => "chunk",
-                        options::OutputKind::Asset => "asset",
-                        options::OutputKind::Sourcemap => "source map",
-                        options::OutputKind::Bytecode => "bytecode",
-                        options::OutputKind::ModuleInfo => "module info",
-                        options::OutputKind::BuiltinBytecode => "builtin bytecode",
-                        options::OutputKind::BytecodeStringTable => "bytecode strings",
-                        options::OutputKind::ModuleInfoStringTable => "module info strings",
-                        options::OutputKind::MetafileJson => "metafile json",
-                        options::OutputKind::MetafileMarkdown => "metafile markdown",
-                    }
-                )?;
-                if Output::enable_ansi_colors_stdout() {
-                    writer.write_all(b"\x1b[0m")?;
-                }
-                writer.write_all(b"\n")?;
+                // The summary line is best-effort; every remaining file is still written.
+                let _ = print_output_file_line(writer, f, max_path_len, size_padding);
             }
 
             bun_core::prettyln!("\n");
             Output::flush();
         }
 
-        log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
+        let _ = log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
             Output::error_writer(),
-        ))?;
+        ));
+        // `exit_or_watch` never returns and runs no destructors, so free the
+        // option snapshots here rather than leave them to LeakSanitizer's
+        // stack scan.
+        drop(opt_output_dir);
+        drop(opt_public_path);
         exit_or_watch(
             if had_err { 1 } else { 0 },
             ctx.debug.hot_reload == HotReload::Watch,
         );
     }
+}
+
+fn print_output_file_line(
+    writer: &mut bun_core::io::Writer,
+    f: &options::OutputFile,
+    max_path_len: usize,
+    size_padding: usize,
+) -> Result<(), crate::Error> {
+    let rel_path = strings::trim_prefix(&f.dest_path, b"./");
+    let padding_count = 2usize.max(rel_path.len().max(max_path_len) - rel_path.len());
+    splat_byte_all(writer, b' ', 2)?;
+
+    if Output::enable_ansi_colors_stdout() {
+        writer.write_all(&Output::pretty_fmt::<true>(match f.output_kind {
+            options::OutputKind::EntryPoint => "<blue>",
+            options::OutputKind::Chunk => "<cyan>",
+            options::OutputKind::Asset => "<magenta>",
+            options::OutputKind::Sourcemap => "<d>",
+            options::OutputKind::Bytecode => "<d>",
+            options::OutputKind::ModuleInfo
+            | options::OutputKind::BuiltinBytecode
+            | options::OutputKind::BytecodeStringTable
+            | options::OutputKind::ModuleInfoStringTable => "<d>",
+            options::OutputKind::MetafileJson | options::OutputKind::MetafileMarkdown => "<green>",
+        }))?;
+    }
+
+    writer.write_all(rel_path)?;
+    if Output::enable_ansi_colors_stdout() {
+        // highlight big files
+        let warn_threshold: usize = match f.output_kind {
+            options::OutputKind::EntryPoint | options::OutputKind::Chunk => 128 * 1024,
+            options::OutputKind::Asset => 16 * 1024 * 1024,
+            _ => usize::MAX,
+        };
+        if f.size > warn_threshold {
+            writer.write_all(&Output::pretty_fmt::<true>("<yellow>"))?;
+        } else {
+            writer.write_all(b"\x1b[0m")?;
+        }
+    }
+
+    splat_byte_all(writer, b' ', padding_count)?;
+    write!(writer, "{}  ", bun_fmt::size(f.size, Default::default()))?;
+    splat_byte_all(
+        writer,
+        b' ',
+        size_padding
+            - bun_fmt::count(format_args!(
+                "{}",
+                bun_fmt::size(f.size, Default::default())
+            )),
+    )?;
+
+    if Output::enable_ansi_colors_stdout() {
+        writer.write_all(b"\x1b[2m")?;
+    }
+    write!(
+        writer,
+        "({})",
+        match f.output_kind {
+            options::OutputKind::EntryPoint => "entry point",
+            options::OutputKind::Chunk => "chunk",
+            options::OutputKind::Asset => "asset",
+            options::OutputKind::Sourcemap => "source map",
+            options::OutputKind::Bytecode => "bytecode",
+            options::OutputKind::ModuleInfo => "module info",
+            options::OutputKind::BuiltinBytecode => "builtin bytecode",
+            options::OutputKind::BytecodeStringTable => "bytecode strings",
+            options::OutputKind::ModuleInfoStringTable => "module info strings",
+            options::OutputKind::MetafileJson => "metafile json",
+            options::OutputKind::MetafileMarkdown => "metafile markdown",
+        }
+    )?;
+    if Output::enable_ansi_colors_stdout() {
+        writer.write_all(b"\x1b[0m")?;
+    }
+    writer.write_all(b"\n")?;
+    Ok(())
 }
 
 fn exit_or_watch(code: u8, watch: bool) -> ! {

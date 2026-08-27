@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
-import { existsSync, symlinkSync } from "node:fs";
+import { closeSync, existsSync, openSync, symlinkSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { join } from "path";
 
@@ -1209,4 +1209,33 @@ describe("output timing", () => {
     // Waiting out the grandchild's 30s sleep means the abort bypass regressed.
     expect(Date.now() - start).toBeLessThan(15000);
   });
+});
+
+test.skipIf(isWindows)("--parallel keeps running the scripts when stdout cannot be written", async () => {
+  using dir = tempDir("parallel-ebadf", {
+    "package.json": JSON.stringify({
+      name: "root",
+      scripts: { a: "echo a-out && echo a-err 1>&2", b: "echo b-out && echo b-err 1>&2" },
+    }),
+  });
+  // A read-only descriptor as stdout makes the parent's write(2) fail with EBADF.
+  const stdoutFd = openSync("/dev/null", "r");
+  try {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--parallel", "a", "b"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: stdoutFd,
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    // Both scripts ran to completion and reported their status on stderr.
+    expect(stderr).toContain("a-err");
+    expect(stderr).toContain("b-err");
+    expect(stderr.match(/Done in/g)?.length).toBe(2);
+    expect(exitCode).toBe(0);
+  } finally {
+    closeSync(stdoutFd);
+  }
 });

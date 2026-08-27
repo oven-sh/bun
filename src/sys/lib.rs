@@ -9249,17 +9249,17 @@ fn qw_set_fd(qw: &mut bun_core::output::QuietWriter, fd: Fd) {
     }
 }
 
-/// Best-effort write-all loop. Returns `false` on I/O error / zero-write so
-/// `ScopedLogger::log` can disable the scope; "quiet" callers discard the bool.
-fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
+/// Write-all behind `Output::writer()`/`error_writer()` and the scoped-debug
+/// `QuietWriter`. Nothing is logged on failure; the error is returned so the
+/// adapter can surface it and `ScopedLogger::log` can disable the scope.
+fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> Maybe<()> {
     while !bytes.is_empty() {
-        match write(fd, bytes) {
-            Ok(0) => return false, // short write → give up
-            Ok(n) => bytes = &bytes[n..],
-            Err(_) => return false,
+        match write(fd, bytes)? {
+            0 => return Err(Error::from_code(E::EIO, Tag::write)),
+            n => bytes = &bytes[n..],
         }
     }
-    true
+    Ok(())
 }
 
 /// Concrete repr behind the opaque `bun_core::output::QuietWriterAdapter`
@@ -9305,19 +9305,18 @@ unsafe fn adapter_write_all(
     // SAFETY: `w` points at the first field of a SysQuietWriterAdapter (repr(C)).
     let this = unsafe { &mut *w.cast::<SysQuietWriterAdapter>() };
     if this.cap == 0 {
-        let _ = fd_write_all_quiet(this.fd, bytes);
-        return Ok(());
+        return fd_write_all_quiet(this.fd, bytes).map_err(|_| bun_core::Error::WriteFailed);
     }
     if this.pos + bytes.len() > this.cap {
         // Drain buffered bytes first.
         if this.pos > 0 {
-            let _ = fd_write_all_quiet(this.fd, this.buffered());
+            let drained = fd_write_all_quiet(this.fd, this.buffered());
             this.pos = 0;
+            drained.map_err(|_| bun_core::Error::WriteFailed)?;
         }
         // Large writes bypass the buffer so the next small write still coalesces.
         if bytes.len() >= this.cap {
-            let _ = fd_write_all_quiet(this.fd, bytes);
-            return Ok(());
+            return fd_write_all_quiet(this.fd, bytes).map_err(|_| bun_core::Error::WriteFailed);
         }
     }
     // SAFETY: `this.buf` has capacity `this.cap`; the branch above ensures
@@ -9333,8 +9332,9 @@ unsafe fn adapter_flush(w: *mut bun_core::io::Writer) -> core::result::Result<()
     // SAFETY: `w` points at the first field of a SysQuietWriterAdapter (repr(C)).
     let this = unsafe { &mut *w.cast::<SysQuietWriterAdapter>() };
     if this.pos > 0 {
-        let _ = fd_write_all_quiet(this.fd, this.buffered());
+        let drained = fd_write_all_quiet(this.fd, this.buffered());
         this.pos = 0;
+        return drained.map_err(|_| bun_core::Error::WriteFailed);
     }
     Ok(())
 }
@@ -9411,7 +9411,7 @@ bun_core::link_impl_OutputSink! {
         },
         // QuietWriter itself is unbuffered (buffering lives in the Adapter).
         quiet_writer_flush(_qw) => (),
-        quiet_writer_write_all(qw, bytes) => fd_write_all_quiet(qw_fd(qw), bytes),
+        quiet_writer_write_all(qw, bytes) => fd_write_all_quiet(qw_fd(qw), bytes).is_ok(),
         quiet_writer_fd(qw) => qw_fd(qw),
         tty_winsize(fd) => sink_tty_winsize(fd),
         is_terminal(fd) => isatty(fd),

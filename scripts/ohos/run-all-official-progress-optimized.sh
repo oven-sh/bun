@@ -325,6 +325,10 @@ run_test() {
     */websocket/websocket-server.test.ts|*/test/fake-timers/fake-timers.test.ts|\
     */bundler/transpiler/transpiler.test.js|*/http/proxy.test.ts)
       _retry_on_fail=1 ;;
+    # node-dns queries public DNS (socketify.dev etc.); passes solo but
+    # flakes under full-run network load
+    */node/dns/node-dns.test.js)
+      _retry_on_fail=1 ;;
   esac
 
   # ── 串行标记：这些测试并行跑会冲突导致 subshell 死 ──

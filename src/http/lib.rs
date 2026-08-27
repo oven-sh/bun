@@ -1221,7 +1221,7 @@ pub(crate) fn get_tls_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: 
 }
 
 /// "[::1]" -> "::1"; non-bracketed hostnames pass through unchanged.
-fn strip_ipv6_brackets(host: &[u8]) -> &[u8] {
+pub fn strip_ipv6_brackets(host: &[u8]) -> &[u8] {
     if host.len() >= 2 && host[0] == b'[' && host[host.len() - 1] == b']' {
         &host[1..host.len() - 1]
     } else {

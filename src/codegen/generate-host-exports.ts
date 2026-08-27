@@ -578,6 +578,7 @@ const importCandidates: Array<[string, string]> = [
   ["core::mem", "ManuallyDrop"],
   ["core::mem", "MaybeUninit"],
   ["bun_ptr", "ThisPtr"],
+  ["bun_ptr", "RefPtr"],
   ["bun_jsc", "JSPromiseStrong"],
   ["bun_jsc", "NapiEnv"],
   ["bun_jsc", "NapiHandleScope"],

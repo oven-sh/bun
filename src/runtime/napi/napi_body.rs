@@ -14,7 +14,6 @@ use core::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU32, AtomicUsize
 
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
-use bun_event_loop::ConcurrentTask::AutoDeinit;
 use bun_event_loop::{BoxedTask, TaskHop};
 use bun_io::KeepAlive;
 use bun_jsc::StringJsc;
@@ -30,7 +29,7 @@ use bun_jsc::{
 use bun_ptr::{JsCell, RefPtr, ThisPtr};
 use bun_threading::Condition as Condvar;
 use bun_threading::Guarded;
-use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
+use bun_threading::work_pool::WorkPool;
 
 bun_output::declare_scope!(napi, visible);
 
@@ -1143,19 +1142,24 @@ pub enum AsyncWorkStatus {
     Cancelled = 3,
 }
 
-/// Owned by the addon from `napi_create_async_work` until
-/// `napi_delete_async_work`: it keeps the work alive across
-/// `napi_queue_async_work` → `execute` (pool) → `complete` (JS thread), as
-/// Node requires, and every side reaches it shared. While it is out on the pool
-/// (`schedule` → `run_work_task`), the pool side takes `ticket`, runs `execute`
-/// with `env`/`data`, updates `status` (atomic; `cancel` races it from the JS
+/// The addon holds a reference from `napi_create_async_work` until
+/// `napi_delete_async_work`; the pool holds one while the work is out on it
+/// (`schedule` → `run_work_task`), which then rides the completion back to the
+/// JS thread (`completion_ref`) so the work is only ever freed there. While it
+/// is out on the pool, the pool side takes `ticket`, runs `execute` with
+/// `env`/`data`, updates `status` (atomic; `cancel` races it from the JS
 /// thread) and posts through `concurrent_task`; the JS thread leaves those be
 /// until the completion arrives and owns `scheduled` / `poll_ref` throughout.
+#[derive(bun_ptr::ThreadSafeRefCounted)]
 pub struct napi_async_work {
+    ref_count: bun_ptr::ThreadSafeRefCount<napi_async_work>,
     /// The pool's node while the work is out on it.
-    task: Cell<WorkPoolTask>,
+    task: bun_threading::SharedWorkNode,
     /// The completion's node (pool → JS thread).
     concurrent_task: Cell<ConcurrentTask>,
+    /// The queued completion's reference (the one the pool held), dropped on
+    /// the JS thread once `complete` has run.
+    completion_ref: Cell<Option<RefPtr<napi_async_work>>>,
     /// Held while the work is out on the pool (`schedule` until it is posted
     /// back): how the pool thread delivers completion / cancellation, and what
     /// makes the VM wait for it.
@@ -1171,13 +1175,13 @@ pub struct napi_async_work {
     poll_ref: Cell<KeepAlive>,
 }
 
-// Pool side / JS side split as documented on the struct; the addon keeps the
-// work allocated until `complete` has run (N-API contract).
+// Pool side / JS side split as documented on the struct; the pool's reference
+// is dropped on the JS thread (`run_from_js` / `release_unrun`).
 bun_threading::shared_work_task!(napi_async_work, task);
 
 bun_event_loop::task_hop! {
     /// `task_tag::NapiAsyncWork`: the pool is done with a queued work; run its
-    /// `complete` on the JS thread. The addon keeps the work alive until then.
+    /// `complete` on the JS thread. The queued task holds `completion_ref`.
     pub(crate) AsyncWorkCompletion for napi_async_work => NapiAsyncWork;
     run = napi_async_work::run_from_js;
     release_unrun = napi_async_work::release_unrun;
@@ -1189,10 +1193,12 @@ impl napi_async_work {
         execute: napi_async_execute_callback,
         complete: Option<napi_async_complete_callback>,
         data: *mut c_void,
-    ) -> Box<napi_async_work> {
-        Box::new(napi_async_work {
-            task: bun_threading::shared_work_task_node::<Self>(),
+    ) -> RefPtr<napi_async_work> {
+        RefPtr::new(napi_async_work {
+            ref_count: bun_ptr::ThreadSafeRefCount::init(),
+            task: bun_threading::SharedWorkNode::new::<Self>(),
             concurrent_task: Cell::new(ConcurrentTask::default()),
+            completion_ref: Cell::new(None),
             env: env.to_ref(),
             execute,
             ticket: Cell::new(None),
@@ -1213,11 +1219,10 @@ impl napi_async_work {
         let mut poll_ref = this.poll_ref.take();
         poll_ref.ref_(bun_io::js_vm_ctx());
         this.poll_ref.set(poll_ref);
-        // The work object belongs to the addon and `execute` receives this
-        // env, so the VM waits for it (Node likewise settles its threadpool
-        // requests before an environment is freed).
+        // `execute` receives this env, so the VM waits for it (Node likewise
+        // settles its threadpool requests before an environment is freed).
         this.ticket.set(Some(this.env.to_js().bun_vm().ticket()));
-        WorkPool::schedule_shared(this);
+        WorkPool::schedule_shared(RefPtr::from_this(this));
     }
 
     pub(crate) fn cancel(&self) -> bool {
@@ -1239,10 +1244,9 @@ impl napi_async_work {
         let _ = Self::run_from_js(this);
     }
 
-    /// JS thread: run `complete`. The addon may free the work (this
-    /// allocation) from inside `complete`, so nothing of `this` is touched
-    /// after that call.
+    /// JS thread: run `complete`, then drop the completion's reference.
     fn run_from_js(this: ThisPtr<Self>) -> JsResult<()> {
+        let _completion = this.completion_ref.take();
         let mut poll_ref = this.poll_ref.take();
         // KeepAlive::unref needs an event-loop ctx so it cannot impl Drop
         // generically; this is a genuine one-off cleanup.
@@ -1268,9 +1272,11 @@ impl napi_async_work {
 
     /// Pool thread: run `execute` (unless the VM is already stopping, which
     /// cancels work it has not started, as Node's environment cleanup does
-    /// with `uv_cancel`) and post the work back to the JS thread for `complete`.
-    fn run_work_task(this: ThisPtr<Self>) {
-        // Moved out: the JS thread may free the work the moment it is posted back.
+    /// with `uv_cancel`) and post the work back to the JS thread for
+    /// `complete`, handing the pool's reference over to that completion.
+    fn run_work_task(this: RefPtr<Self>) {
+        // Moved out: the JS thread may consume the completion the moment it is
+        // posted.
         let ticket = this
             .ticket
             .take()
@@ -1295,9 +1301,12 @@ impl napi_async_work {
         // A VM tearing down runs `complete` from its queue release (status
         // cancelled if `execute` never ran), as Node does at environment cleanup.
         let mut node = ConcurrentTask::default();
-        node.from_task(AsyncWorkCompletion::task(this), AutoDeinit::ManualDeinit);
+        node.from_task(AsyncWorkCompletion::task(this.this_ptr()));
         this.concurrent_task.set(node);
-        ticket.post(NonNull::new(this.concurrent_task.as_ptr()).expect("field address"));
+        let work = this.this_ptr();
+        let carrier = NonNull::new(work.concurrent_task.as_ptr()).expect("field address");
+        work.completion_ref.set(Some(this));
+        ticket.post(carrier);
     }
 }
 
@@ -1429,8 +1438,8 @@ pub fn napi_create_async_work(
     let Some(execute) = execute_ else {
         return env.invalid_arg();
     };
-    // Owned by the addon until `napi_delete_async_work`.
-    result.write(bun_core::heap::into_raw(napi_async_work::new(
+    // The addon's reference, until `napi_delete_async_work`.
+    result.write(RefPtr::into_raw(napi_async_work::new(
         env, execute, complete, data,
     )));
     env.ok()
@@ -1439,7 +1448,7 @@ pub fn napi_create_async_work(
 // HOST_EXPORT(napi_delete_async_work, c)
 pub fn napi_delete_async_work(
     env_: Option<&NapiEnv>,
-    work_: Option<ManuallyDrop<Box<napi_async_work>>>,
+    work_: Option<ManuallyDrop<RefPtr<napi_async_work>>>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_delete_async_work");
     let env = get_env!(env_);
@@ -2589,6 +2598,7 @@ bun_event_loop::boxed_task! {
     NapiFinalizerTask => NapiFinalizerTask;
     run = |task: Box<NapiFinalizerTask>| (*task).run_finalizer();
     release_unrun = |task: Box<NapiFinalizerTask>| { let _ = (*task).run_finalizer(); };
+    refused = |task: Box<NapiFinalizerTask>| (*task).refused();
 }
 
 impl OwnedCleanupHook for NapiFinalizerTask {
@@ -2604,6 +2614,16 @@ impl NapiFinalizerTask {
         self.finalizer.run()
     }
 
+    /// The VM is already torn down, so the finalizer can never run: free the
+    /// task but not the env ref — the env's count is not atomic and the env
+    /// goes with its VM — as the cleanup-hooks-already-ran case in `schedule`
+    /// does.
+    fn refused(self) {
+        let NapiFinalizerTask { finalizer } = self;
+        let Finalizer { env, .. } = finalizer;
+        let _ = ManuallyDrop::new(env);
+    }
+
     pub(crate) fn schedule(self: Box<Self>) {
         // Inline of `JSGlobalObject::try_bun_vm`: the VM pointer is fetched
         // unconditionally from C++; "main thread" is determined by whether the
@@ -2612,16 +2632,10 @@ impl NapiFinalizerTask {
 
         if !is_main_thread {
             // Off the JS thread (e.g. an external buffer finalized from a GC
-            // helper thread): post through the env's VM handle. If the VM is
-            // already torn down the finalizer can never run; free the task but
-            // not the env ref — the env's count is not atomic and the env goes
-            // with its VM — as the cleanup-hooks-already-ran case below does.
+            // helper thread): post through the env's VM handle (`refused` if
+            // the VM is already torn down).
             let handle: VmHandle = self.finalizer.env.vm_handle();
-            if let Err(task) = handle.post_boxed(LoopKind::Regular, self) {
-                let NapiFinalizerTask { finalizer } = *task;
-                let Finalizer { env, .. } = finalizer;
-                let _ = ManuallyDrop::new(env);
-            }
+            handle.post_boxed(LoopKind::Regular, self);
             return;
         }
 

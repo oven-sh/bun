@@ -2337,7 +2337,11 @@ pub fn to_executable(
     #[cfg(windows)]
     let _ = root_dir;
     let mut flags = flags;
-    if !target.is_host_platform() && output_files.iter().any(|file| file.output_kind == options::OutputKind::Bytecode) {
+    if !target.is_host_platform()
+        && output_files
+            .iter()
+            .any(|file| file.output_kind == options::OutputKind::Bytecode)
+    {
         flags |= Flags::CROSS_COMPILED_BYTECODE;
     }
     let bytes = match to_bytes(

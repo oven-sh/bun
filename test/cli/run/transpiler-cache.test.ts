@@ -81,6 +81,28 @@ describe("transpiler cache", () => {
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("a");
     expect(!existsSync(cache_dir)).toBeTrue();
   });
+  test("does not cache a file whose parse logged an error", async () => {
+    // The parser reports the `import` next to `module.exports` after it has
+    // built the AST. Nothing may be printed or cached for such a file, or a
+    // later run would serve the broken output from the cache without the error.
+    const filler = "\n//" + Buffer.alloc(5 * 1024, "f").toString();
+    writeFileSync(join(temp_dir, "dep.js"), `export const x = 1;`);
+    writeFileSync(join(temp_dir, "mixed.js"), `import { x } from "./dep.js";\nmodule.exports = { x };` + filler);
+    writeFileSync(
+      join(temp_dir, "main.js"),
+      `const out = {};
+       try { await import("./mixed.js"); } catch (e) { out.import = [e.name, e.message]; }
+       try { require("./mixed.js"); } catch (e) { out.require = [e.name, e.message]; }
+       console.log(JSON.stringify(out));`,
+    );
+    const expected = JSON.stringify({
+      import: ["BuildMessage", "Cannot use import statement with CommonJS-only features"],
+      require: ["BuildMessage", "Cannot use import statement with CommonJS-only features"],
+    });
+    expect(await bunRun(join(temp_dir, "main.js"), env)).toSpawn(expected);
+    expect(await bunRun(join(temp_dir, "main.js"), env)).toSpawn(expected);
+    expect(!existsSync(cache_dir)).toBeTrue();
+  });
   test("it is indeed content addressable", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("b");

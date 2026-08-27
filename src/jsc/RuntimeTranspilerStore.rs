@@ -926,12 +926,6 @@ impl TranspilerJob {
             }
         }
 
-        // The parser can log errors and still return an AST.
-        if transpiler.log().errors > 0 {
-            self.parse_error = Some(crate::CrateError::ParseError);
-            return;
-        }
-
         // SAFETY: leaf scalar field read; see `vm` note above. Inlined
         // `VirtualMachine::use_isolation_source_provider_cache` to avoid forming
         // `&VirtualMachine`.

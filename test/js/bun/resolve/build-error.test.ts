@@ -182,6 +182,48 @@ test("import whose transpile log holds a resolve error rejects with a ResolveMes
   ]);
 });
 
+// TypeScript drops an import whose bindings are only used as types. Such a file
+// is plain CommonJS after transpilation, so the `import` must not be reported
+// as a conflict with `module.exports`.
+test.concurrent("a type-only import next to module.exports loads on every path", async () => {
+  using dir = tempDir("build-error-type-only-import", {
+    "types.ts": `export interface Foo { x: number }`,
+    "mixed.ts": `import { Foo } from "./types";\nconst f: Foo = { x: 1 };\nmodule.exports = { f };`,
+    "main.ts": `
+      const viaImport = (await import("./mixed.ts")).default;
+      const viaRequire = require("./mixed.ts");
+      console.log(JSON.stringify({ import: viaImport, require: viaRequire }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  await using direct = Bun.spawn({
+    cmd: [bunExe(), "mixed.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode, directStderr, directExitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+    direct.stderr.text(),
+    direct.exited,
+  ]);
+
+  if (exitCode !== 0) console.error(stderr);
+  expect(JSON.parse(stdout)).toEqual({ import: { f: { x: 1 } }, require: { f: { x: 1 } } });
+  expect(exitCode).toBe(0);
+  expect(directStderr).toBe("");
+  expect(directExitCode).toBe(0);
+});
+
 test("BuildMessage finalize frees with the same allocator it was created with", async () => {
   // BuildMessage.create() clones the message with the passed allocator
   // but finalize() was freeing it with bun.default_allocator and never

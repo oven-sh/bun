@@ -6772,7 +6772,7 @@ fn find_in_standalone_graph(graph: &dyn StandaloneModuleGraph, path: &[u8]) -> O
     buf[stem.len()..stem.len() + 3].copy_from_slice(b".js");
     graph
         .find_assume_standalone_path(&buf[..stem.len() + 3])
-        .map(|name| intern(name))
+        .map(intern)
 }
 
 fn is_dot_slash(path: &[u8]) -> bool {

@@ -35,11 +35,15 @@ const STOP_ON_STDIN_END = `process.stdin.on("end", () => { server.stop(true); pr
 
 const md5 = (b: Uint8Array | ArrayBuffer) => createHash("md5").update(Buffer.from(b)).digest("hex");
 
+// Payloads the standard fixture serves; the cases compare against the same buffers.
+const BIG_BODY = Buffer.alloc(512 * 1024, "abcdefghijklmnop");
+const BIG_FILE_BYTES = Buffer.alloc(200 * 1024, "FILEfile");
+const HUGE_FILE_BYTES = Buffer.alloc(2 * 1024 * 1024, "0123456789abcdef");
+
 /** The standard fixture: an in-process server with every route the
- * request/response cases below use. `dir` holds big.bin (200 KB) and huge.bin
- * (2 MB). */
+ * request/response cases below use. `dir` holds big.bin (BIG_FILE_BYTES) and
+ * huge.bin (HUGE_FILE_BYTES). */
 function serveFixture(dir: string, { http1 = true } = {}) {
-  const big = Buffer.alloc(512 * 1024, "abcdefghijklmnop");
   const bigFile = join(dir, "big.bin");
   const hugeFile = join(dir, "huge.bin");
   return Bun.serve({
@@ -157,7 +161,7 @@ function serveFixture(dir: string, { http1 = true } = {}) {
         return Response.json(out);
       }
       if (url.pathname === "/big") {
-        return new Response(big, { headers: { "content-type": "application/octet-stream" } });
+        return new Response(BIG_BODY, { headers: { "content-type": "application/octet-stream" } });
       }
       if (url.pathname === "/status") {
         return new Response(null, { status: 204 });
@@ -206,8 +210,8 @@ let fixtureDir: ReturnType<typeof tempDir>;
 let fixture: ReturnType<typeof serveFixture>;
 beforeAll(() => {
   fixtureDir = tempDir("serve-http3", {
-    "big.bin": Buffer.alloc(200 * 1024, "FILEfile"),
-    "huge.bin": Buffer.alloc(2 * 1024 * 1024, "0123456789abcdef"),
+    "big.bin": BIG_FILE_BYTES,
+    "huge.bin": HUGE_FILE_BYTES,
   });
   fixture = serveFixture(String(fixtureDir));
 });
@@ -275,7 +279,7 @@ describe.concurrent("Bun.serve HTTP/3", () => {
       expect(res.headers.get("content-length")).toBe("524288");
       const raw = await res.bytes();
       expect(raw.length).toBe(512 * 1024);
-      expect(md5(raw)).toBe(md5(Buffer.alloc(512 * 1024, "abcdefghijklmnop")));
+      expect(md5(raw)).toBe(md5(BIG_BODY));
     });
   });
 
@@ -451,7 +455,7 @@ describe.concurrent("Bun.serve HTTP/3", () => {
       expect(res.headers.get("content-length")).toBe("204800");
       const raw = await res.bytes();
       expect(raw.length).toBe(200 * 1024);
-      expect(md5(raw)).toBe(md5(Buffer.alloc(200 * 1024, "FILEfile")));
+      expect(md5(raw)).toBe(md5(BIG_FILE_BYTES));
     });
   });
 
@@ -504,7 +508,7 @@ describe.concurrent("Bun.serve HTTP/3", () => {
       expect(res.headers.get("content-length")).toBe("204800");
       const raw = await res.bytes();
       expect(raw.length).toBe(200 * 1024);
-      expect(md5(raw)).toBe(md5(Buffer.alloc(200 * 1024, "FILEfile")));
+      expect(md5(raw)).toBe(md5(BIG_FILE_BYTES));
       // Range request over H3 hits the same FileResponseStream path
       const ranged = await fetchH3(port, "/file-route", { headers: { range: "bytes=4-11" } });
       expect(ranged.status).toBe(206);
@@ -806,7 +810,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
       expect(res.headers.get("content-length")).toBe("204800");
       const raw = await res.bytes();
       expect(raw.length).toBe(200 * 1024);
-      expect(md5(raw)).toBe(md5(Buffer.alloc(200 * 1024, "FILEfile")));
+      expect(md5(raw)).toBe(md5(BIG_FILE_BYTES));
     });
   });
 
@@ -819,7 +823,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
       expect(res.headers.get("content-length")).toBe("2097152");
       const raw = await res.bytes();
       expect(raw.length).toBe(2 * 1024 * 1024);
-      expect(md5(raw)).toBe(md5(Buffer.alloc(2 * 1024 * 1024, "0123456789abcdef")));
+      expect(md5(raw)).toBe(md5(HUGE_FILE_BYTES));
     });
   });
 

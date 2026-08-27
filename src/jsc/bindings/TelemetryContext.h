@@ -22,7 +22,7 @@ extern "C" {
 JSC::EncodedJSValue Bun__Telemetry__enterWithExtras(Zig::GlobalObject*, JSC::EncodedJSValue header, JSC::EncodedJSValue extras);
 JSC::EncodedJSValue Bun__Telemetry__enter(Zig::GlobalObject*, JSC::EncodedJSValue header);
 void Bun__Telemetry__exit(Zig::GlobalObject*, JSC::EncodedJSValue prev);
-// The active span as a cell (materializing one for a pooled span), or undefined.
+// The active span as a cell (materializing — and caching in the pool slot — one for a pooled span), or undefined.
 JSC::EncodedJSValue Bun__Telemetry__activeSpanCell(Zig::GlobalObject*);
 JSC::EncodedJSValue Bun__Telemetry__activeExtras(Zig::GlobalObject*);
 Bun::TelemetryBaggageOverride Bun__Telemetry__activeExtrasBaggage(Zig::GlobalObject*, BunString* outHeader);

@@ -32,29 +32,26 @@ JSValue TelemetryContextSlot::build(JSGlobalObject* globalObject, JSValue header
     return constructArray(globalObject, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), values);
 }
 
+// An empty api Context (ROOT_CONTEXT): no active span, ALS stores kept.
+static JSValue clearActiveSpanKeepingStores(Zig::GlobalObject* globalObject)
+{
+    auto* data = globalObject->m_asyncContextData.get();
+    JSValue prev = data->getInternalField(0);
+    data->putInternalField(globalObject->vm(), 0, TelemetryContextSlot::build(globalObject, JSValue(), JSValue(), TelemetryContextSlot::read(prev)));
+    return prev;
+}
+
 // enterContext(header | undefined, extras | undefined) → previous slot value.
-// An empty api Context (e.g. ROOT_CONTEXT) clears the header but keeps ALS stores.
 JSC_DEFINE_HOST_FUNCTION(jsTelemetryEnterContext, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     JSValue header = callFrame->argument(0);
     JSValue extras = callFrame->argument(1);
-    if (!TelemetryContextSlot::isHeader(header)) {
-        // Extras with no span ride on a placeholder header (telemetry.ts placeholderSpan).
-        ASSERT(!extras.isCell());
-        header = JSValue();
-        extras = JSValue();
-    }
-    auto& vm = globalObject->vm();
-    auto* data = globalObject->m_asyncContextData.get();
-    JSValue prev = data->getInternalField(0);
-    if (header)
-        globalObject->setAsyncContextTrackingEnabled(true);
-    auto stores = TelemetryContextSlot::read(prev);
-    if (header && extras.isUndefined())
-        extras = stores.extras; // a bare Span keeps the ambient extras
-    data->putInternalField(vm, 0, TelemetryContextSlot::build(globalObject, header, extras, stores));
-    return JSValue::encode(prev);
+    if (TelemetryContextSlot::isHeader(header))
+        return Bun__Telemetry__enterWithExtras(globalObject, JSValue::encode(header), JSValue::encode(extras));
+    // Extras with no span ride on a placeholder header (telemetry.ts placeholderSpan).
+    ASSERT(!extras.isCell());
+    return JSValue::encode(clearActiveSpanKeepingStores(globalObject));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsTelemetryExitContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -147,15 +144,10 @@ extern "C" JSC::EncodedJSValue Bun__Telemetry__activeSpanCell(Zig::GlobalObject*
         return JSValue::encode(jsUndefined());
     if (slot.header.isCell())
         return JSValue::encode(slot.header);
+    // Slot values are immutable (async_hooks.ts); the pool caches the cell,
+    // so every later call sees the same object anyway.
     JSValue cell = JSValue::decode(Bun__Telemetry__poolMaterialize(globalObject, slot.poolHandle()));
-    if (!cell.isCell())
-        return JSValue::encode(jsUndefined());
-    // Swap the cell in so this continuation keeps seeing the same object.
-    if (slot.array)
-        slot.array->putDirectIndex(globalObject, 0, cell);
-    else
-        data->putInternalField(globalObject->vm(), 0, cell);
-    return JSValue::encode(cell);
+    return JSValue::encode(cell.isCell() ? cell : jsUndefined());
 }
 
 extern "C" uint64_t Bun__Telemetry__activeNativeHandle(Zig::GlobalObject* globalObject)

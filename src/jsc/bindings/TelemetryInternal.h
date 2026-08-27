@@ -98,15 +98,31 @@ ALWAYS_INLINE uint16_t telemetryScopeId(JSValue v)
 
 // `require("internal/telemetry")[name]` — the module's JS helpers.
 JSValue telemetryInternalFunction(Zig::GlobalObject*, const Identifier&);
-// End `span` at `endNs` (0 = now). Never runs JS.
+// End `span` at `endNs` (0 = now). Never runs JS and never throws.
 void telemetryEndSpan(Zig::GlobalObject*, JSTelemetrySpan*, uint64_t endNs);
-// One attribute onto a pooled span.
+// One attribute onto a pooled span; false once the pooled span has ended or
+// when it is not recording.
 bool telemetryNativeSetAttribute(Zig::GlobalObject*, uint64_t handle, JSString* key, JSValue value);
+// Make `span` the active span of this async frame and arm Field::Restore
+// with the slot value it displaced (`extras`: see Bun__Telemetry__enterWithExtras).
+// No-op when this Span object is already entered.
+void telemetryEnterSpan(Zig::GlobalObject*, JSTelemetrySpan*, JSValue extras = JSValue());
 // Restore the context `span.enter()` displaced (no-op if not entered).
 void telemetryExitSpan(Zig::GlobalObject*, JSTelemetrySpan*);
-// span.setAttribute / span.setAttributes({...}) without calling into JS for the common cases.
+// W3C `tracestate` / `baggage` a span carries (inherited from its parent, or
+// received with the request for a pooled server span); nullptr when absent
+// or empty. Never runs JS.
+struct TelemetryPropagation {
+    JSString* traceState { nullptr };
+    JSString* baggage { nullptr };
+};
+TelemetryPropagation telemetryPropagationOf(Zig::GlobalObject*, const JSTelemetrySpan*);
+TelemetryPropagation telemetryPropagationOfPooled(Zig::GlobalObject*, uint64_t poolHandle);
+// span.setAttribute(key, value) without calling into JS. Throws only on OOM.
 void telemetrySpanSetAttribute(Zig::GlobalObject*, JSTelemetrySpan*, JSString* key, JSValue value);
-bool telemetrySpanSetAttributes(Zig::GlobalObject*, JSTelemetrySpan*, JSValue attributes);
+// span.setAttributes(object); throws (exception left pending) only if a
+// property read or the builtin throws.
+void telemetrySpanSetAttributes(Zig::GlobalObject*, JSTelemetrySpan*, JSValue attributes);
 // `span.fail(error)` without running any JS (for use while unwinding).
 void telemetryFailSpanNoJS(Zig::GlobalObject*, JSTelemetrySpan*, JSValue error);
 

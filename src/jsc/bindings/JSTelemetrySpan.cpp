@@ -79,11 +79,16 @@ extern "C" JSC::EncodedJSValue Bun__TelemetrySpan__createNative(Zig::GlobalObjec
     return JSValue::encode(JSTelemetrySpan::create(globalObject->vm(), globalObject, *stub, scope, kind, jsNull(), native));
 }
 
-/// A pooled span with a materialized cell ended natively.
+static void markEnded(Zig::GlobalObject*, JSTelemetrySpan*);
+
+/// A pooled span with a materialized cell ended natively: the same Ended
+/// transition as end().
 extern "C" void Bun__TelemetrySpan__nativeEnded(JSC::EncodedJSValue v)
 {
-    if (auto* span = toTelemetrySpan(JSValue::decode(v)))
-        span->setState((span->state() | JSTelemetrySpan::Ended) & ~JSTelemetrySpan::Recording);
+    if (auto* span = toTelemetrySpan(JSValue::decode(v))) {
+        if (!span->ended())
+            markEnded(defaultGlobalObject(span->globalObject()), span);
+    }
 }
 
 extern "C" void* Bun__TelemetrySpan__fromJS(JSC::EncodedJSValue v)
@@ -239,33 +244,46 @@ TelemetryAttrSlice TelemetryAttrGatherer::gather(JSValue flatValue)
 
 // ─── end ───
 
+// The Ended transition. A span that made itself active (`span(name)`,
+// `startActiveSpan(name)`, `enter()`) and still is — in this async frame —
+// stops being active here when it ends. Activation is per frame, so
+// `Restore` is kept for the owning frame's `[Symbol.dispose]` / `exit()` (an
+// `end()` from a timer or a Promise.all branch must not disarm it), minus any
+// AsyncLocalStorage stores it captured: from here on only the previous span
+// header/extras are needed, and the stores would otherwise stay reachable for
+// as long as the span object does. Never runs JS and never leaves an
+// exception pending (an OOM while trimming keeps the untrimmed Restore).
+static void markEnded(Zig::GlobalObject* globalObject, JSTelemetrySpan* span)
+{
+    auto& vm = globalObject->vm();
+    span->setState((span->state() | JSTelemetrySpan::Ended) & ~JSTelemetrySpan::Recording);
+    JSValue prev = span->get(JSTelemetrySpan::Field::Restore);
+    if (!prev)
+        return;
+    if (TelemetryContextSlot::current(globalObject).denotes(span))
+        Bun__Telemetry__exit(globalObject, JSValue::encode(prev));
+    auto before = TelemetryContextSlot::read(prev);
+    if (!before.storeValueCount())
+        return;
+    SuspendExceptionScope suspend(vm); // may run while unwinding (Symbol.dispose)
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue trimmed = TelemetryContextSlot::build(globalObject, before.header, before.extras, TelemetryContextSlot {});
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        return;
+    }
+    span->field(JSTelemetrySpan::Field::Restore).set(vm, span, trimmed ? trimmed : jsUndefined());
+}
+
 // Ends `span` at `endNs` (0 = now): JS-owned spans are gathered and encoded,
 // native-owned spans end their pool slot. No-op if already ended. Never runs
-// JS and never throws.
+// JS and never throws (see markEnded).
 void telemetryEndSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, uint64_t endNs)
 {
     int32_t state = span->state();
     if (state & JSTelemetrySpan::Ended)
         return;
-    span->setState((state | JSTelemetrySpan::Ended) & ~JSTelemetrySpan::Recording);
-    // A span that made itself active (`span(name)`, `startActiveSpan(name)`,
-    // `enter()`) and still is — in this async frame — stops being active here
-    // when it ends. Activation is per frame, so `Restore` is kept for the
-    // owning frame's `[Symbol.dispose]` / `exit()` (an `end()` from a timer
-    // or a Promise.all branch must not disarm it), minus any
-    // AsyncLocalStorage stores it captured: from here on only the previous
-    // span header/extras are needed, and the stores would otherwise stay
-    // reachable for as long as the span object does.
-    if (JSValue prev = span->get(JSTelemetrySpan::Field::Restore)) {
-        auto current = TelemetryContextSlot::current(globalObject);
-        if (current.denotes(span))
-            Bun__Telemetry__exit(globalObject, JSValue::encode(prev));
-        auto before = TelemetryContextSlot::read(prev);
-        if (before.storeValueCount()) {
-            JSValue trimmed = TelemetryContextSlot::build(globalObject, before.header, before.extras, TelemetryContextSlot {});
-            span->field(JSTelemetrySpan::Field::Restore).set(globalObject->vm(), span, trimmed ? trimmed : jsUndefined());
-        }
-    }
+    markEnded(globalObject, span);
     if (span->m_native) {
         Bun__Telemetry__nativeEnd(globalObject, span->m_native, endNs);
         return;
@@ -439,7 +457,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryAddEvent, (JSGlobalObject * lexicalGlobalObj
     return JSValue::encode(jsUndefined());
 }
 
-// $telemetryAddLink(span, traceId: string, spanId: string, traceFlags: int32, flatAttributes: unknown[] | null)
+// $telemetryAddLink(span, traceId: string, spanId: string, traceFlags: int32, flatAttributes: unknown[] | null, traceState: string)
 JSC_DEFINE_HOST_FUNCTION(jsTelemetryAddLink, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -536,14 +554,13 @@ void telemetrySpanSetAttribute(Zig::GlobalObject* globalObject, JSTelemetrySpan*
 }
 
 // span.setAttributes(object) from C++. Plain objects take a direct walk of
-// their own enumerable properties; anything exotic goes through the builtin.
-// Returns false (with an exception pending) on error.
-bool telemetrySpanSetAttributes(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, JSValue attributes)
+// their own enumerable properties.
+void telemetrySpanSetAttributes(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, JSValue attributes)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!attributes.isObject() || !(span->state() & JSTelemetrySpan::Recording))
-        return true;
+        return;
     JSObject* object = asObject(attributes);
     Structure* structure = object->structure();
     if (object->type() == FinalObjectType && structure->canPerformFastPropertyEnumeration() && !hasIndexedProperties(object->indexingType())) {
@@ -567,23 +584,22 @@ bool telemetrySpanSetAttributes(Zig::GlobalObject* globalObject, JSTelemetrySpan
             telemetrySpanSetAttribute(globalObject, span, key, value);
             return !scope.exception();
         });
-        RETURN_IF_EXCEPTION(scope, false);
+        RETURN_IF_EXCEPTION(scope, );
         if (fresh && flat.size()) {
             // A new span's attributes in one contiguous array (keys of one object are unique).
             JSArray* array = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), flat);
-            RETURN_IF_EXCEPTION(scope, false);
+            RETURN_IF_EXCEPTION(scope, );
             span->field(Field::Attributes).set(vm, span, array);
         }
-        return true;
+        return;
     }
+    // Anything exotic goes through the private builtin (not the user-writable prototype method).
+    JSObject* impl = globalObject->getDirect(vm, WebCore::builtinNames(vm).telemetrySpanSetAttributesImplPrivateName()).getObject();
     MarkedArgumentBuffer args;
+    args.append(span);
     args.append(attributes);
-    // (the class prototype, not the instance's — that one is user-mutable)
-    JSValue fn = globalObject->JSTelemetrySpanStructure()->storedPrototypeObject()->get(globalObject, WebCore::builtinNames(vm).setAttributesPublicName());
-    RETURN_IF_EXCEPTION(scope, false);
-    call(globalObject, fn, span, args, "setAttributes"_s);
-    RETURN_IF_EXCEPTION(scope, false);
-    return true;
+    call(globalObject, impl, jsUndefined(), args, "setAttributes"_s);
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 // `exit()` / `[Symbol.dispose]` / the end of `span(name, fn)`: put back what
@@ -597,7 +613,14 @@ void telemetryExitSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span)
     Bun__Telemetry__exit(globalObject, JSValue::encode(prev));
     span->field(JSTelemetrySpan::Field::Restore).setWithoutWriteBarrier(JSValue());
 }
-static ALWAYS_INLINE void exitSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span) { telemetryExitSpan(globalObject, span); }
+
+void telemetryEnterSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, JSValue extras)
+{
+    if (span->get(JSTelemetrySpan::Field::Restore))
+        return;
+    JSValue prev = JSValue::decode(Bun__Telemetry__enterWithExtras(globalObject, JSValue::encode(span), JSValue::encode(extras)));
+    span->field(JSTelemetrySpan::Field::Restore).set(globalObject->vm(), span, prev ? prev : jsUndefined());
+}
 
 // span.fail(error) without running JS (getters, toString): for exceptions seen
 // while unwinding. ErrorInstance name/message/code are read directly; other
@@ -684,10 +707,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetrySpanProtoFuncEnter, (JSGlobalObject * lexica
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* span = thisSpan(globalObject, callFrame, scope);
     RETURN_IF_EXCEPTION(scope, {});
-    if (!span->get(JSTelemetrySpan::Field::Restore)) {
-        JSValue prev = JSValue::decode(Bun__Telemetry__enter(globalObject, JSValue::encode(span)));
-        span->field(JSTelemetrySpan::Field::Restore).set(vm, span, prev ? prev : jsUndefined());
-    }
+    telemetryEnterSpan(globalObject, span);
     return JSValue::encode(span);
 }
 
@@ -698,7 +718,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetrySpanProtoFuncExit, (JSGlobalObject * lexical
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* span = thisSpan(globalObject, callFrame, scope);
     RETURN_IF_EXCEPTION(scope, {});
-    exitSpan(globalObject, span);
+    telemetryExitSpan(globalObject, span);
     return JSValue::encode(span);
 }
 
@@ -711,7 +731,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetrySpanProtoFuncDispose, (JSGlobalObject * lexi
     RETURN_IF_EXCEPTION(scope, {});
     // Leave the scope (lexical restore, disarms Restore), then end: end() has
     // no context work left to do.
-    exitSpan(globalObject, span);
+    telemetryExitSpan(globalObject, span);
     telemetryEndSpan(globalObject, span, 0);
     return JSValue::encode(jsUndefined());
 }
@@ -724,19 +744,33 @@ static JSString* hexId(VM& vm, std::span<const uint8_t> bytes)
     return jsString(vm, WTF::move(s));
 }
 
-// The W3C tracestate header this span carries (inherited from its parent), or null.
-static JSString* traceStateHeader(Zig::GlobalObject* globalObject, JSTelemetrySpan* span)
+TelemetryPropagation telemetryPropagationOfPooled(Zig::GlobalObject* globalObject, uint64_t handle)
 {
-    if (JSString* s = span->string(JSTelemetrySpan::Field::TraceState))
-        return s->length() ? s : nullptr;
-    if (!span->m_native)
-        return nullptr;
+    TelemetryPropagation out;
+    if (!handle)
+        return out;
     BunString traceState = { BunStringTag::Empty, {} }, baggage = { BunStringTag::Empty, {} };
-    if (!Bun__Telemetry__nativePropagation(globalObject, span->m_native, &traceState, &baggage))
-        return nullptr;
-    baggage.deref();
-    WTF::String s = traceState.transferToWTFString();
-    return s.isEmpty() ? nullptr : jsString(globalObject->vm(), WTF::move(s));
+    if (!Bun__Telemetry__nativePropagation(globalObject, handle, &traceState, &baggage))
+        return out;
+    auto& vm = globalObject->vm();
+    if (auto s = traceState.transferToWTFString(); !s.isEmpty())
+        out.traceState = jsString(vm, WTF::move(s));
+    if (auto s = baggage.transferToWTFString(); !s.isEmpty())
+        out.baggage = jsString(vm, WTF::move(s));
+    return out;
+}
+
+TelemetryPropagation telemetryPropagationOf(Zig::GlobalObject* globalObject, const JSTelemetrySpan* span)
+{
+    if (span->m_native)
+        return telemetryPropagationOfPooled(globalObject, span->m_native);
+    using Field = JSTelemetrySpan::Field;
+    TelemetryPropagation out;
+    if (JSString* s = span->string(Field::TraceState); s && s->length())
+        out.traceState = s;
+    if (JSString* s = span->string(Field::Baggage); s && s->length())
+        out.baggage = s;
+    return out;
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsTelemetrySpanProtoFuncSpanContext, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -755,7 +789,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetrySpanProtoFuncSpanContext, (JSGlobalObject * 
     ctx->putDirect(vm, names.traceFlagsPublicName(), jsNumber(span->m_stub.flags & TelemetrySpanStub::Sampled));
     if (span->m_stub.flags & TelemetrySpanStub::Remote)
         ctx->putDirect(vm, names.isRemotePublicName(), jsBoolean(true));
-    if (JSString* header = traceStateHeader(globalObject, span)) {
+    if (JSString* header = telemetryPropagationOf(globalObject, span).traceState) {
         // Hand out an api-shaped TraceState (get/set/unset/serialize), not the raw header.
         JSValue make = telemetryInternalFunction(globalObject, names.makeTraceStatePublicName());
         RETURN_IF_EXCEPTION(scope, {});

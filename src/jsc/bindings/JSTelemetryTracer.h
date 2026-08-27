@@ -17,13 +17,15 @@ public:
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
     static JSTelemetryTracer* create(VM&, Zig::GlobalObject*, uint16_t scope, JSValue name, JSValue version);
 
-    uint16_t m_scope { 0 };
+    uint16_t scope() const { return m_scope; }
 
 private:
-    JSTelemetryTracer(VM& vm, Structure* structure)
+    JSTelemetryTracer(VM& vm, Structure* structure, uint16_t scope)
         : Base(vm, structure)
+        , m_scope(scope)
     {
     }
+    const uint16_t m_scope;
 };
 
 // $cpp / $newCppFunction("JSTelemetryTracer.cpp", …) targets for internal/telemetry.ts.

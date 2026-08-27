@@ -196,8 +196,11 @@ extern const uint32_t Bun__Telemetry__SQLITE_MASK;
 extern uint32_t Bun__Telemetry__enabled;
 
 void Bun__Telemetry__stubStart(JSC::JSGlobalObject*, Bun::TelemetrySpanStub* out, const Bun::TelemetrySpanStub* parent, uint64_t startNs);
-// Non-recording carrier for hex ids; false if either id is not valid hex / all zero.
-bool Bun__Telemetry__stubFromHexIds(Bun::TelemetrySpanStub* out, const BunString* traceId, const BunString* spanId, uint8_t traceFlags, bool remote);
+// Non-recording carrier for hex ids: true when both parse; otherwise (false)
+// *out is the all-invalid carrier. Always writes *out. `traceId`/`spanId` may be null.
+bool Bun__Telemetry__carrierStub(Bun::TelemetrySpanStub* out, const BunString* traceId, const BunString* spanId, uint8_t traceFlags, bool remote);
+// The carrier `context.with(suppressTracing(ctx), …)` activates: no span (root or child) starts under it.
+void Bun__Telemetry__suppressedStub(Bun::TelemetrySpanStub* out);
 // W3C traceparent (bun_telemetry::propagation).
 void Bun__Telemetry__formatTraceparent(const Bun::TelemetrySpanStub*, uint8_t (*out)[Bun::kTraceparentLength]);
 bool Bun__Telemetry__parseTraceparent(const BunString* header, Bun::TelemetrySpanStub* out);

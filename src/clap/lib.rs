@@ -376,8 +376,7 @@ pub struct ParseOptions<'a> {
     /// flag, never to an option's value or a `--` target. Node keeps its own
     /// aliases on exactly that branch (node_options-inl.h).
     pub short_aliases: &'static [(&'static [u8], &'static [u8])],
-    /// Error on unknown `--long` flags after the first positional (the subcommand
-    /// keyword). Off by default: node-mode and `bun run` pass unknown argv through.
+    /// Error on unknown `--long` flags after the first positional (the subcommand keyword).
     pub reject_unrecognized_flags: bool,
     /// Long names that also accept esbuild's `--name:VALUE` spelling
     /// (`--define:K=V` hands `K=V` to `--define`).

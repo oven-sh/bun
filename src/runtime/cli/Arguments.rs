@@ -500,8 +500,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--bundle                         Bundle dependencies into the output. This is the default behavior"
         ),
         parse_param!("--no-bundle                      Transpile file only, do not bundle"),
-        // Hidden compat flags: old docs showed `--entrypoints ./a.ts`, and 1.1
-        // scripts pass the `--experimental-*` opt-ins for what is now always on.
+        // Hidden compat flags: `--entrypoints` from old docs, `--experimental-*` from 1.1 scripts.
         parse_param!("--entrypoints <STR>..."),
         parse_param!("--experimental-css"),
         parse_param!("--experimental-html"),
@@ -791,11 +790,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,
                 _ => &[],
             },
-            // `bun build` has no argv passthrough, so an unknown flag after the
-            // keyword is a typo that would otherwise ship wrong output (#40558).
+            // No argv passthrough after the keyword, so an unknown flag is a typo (#40558).
             reject_unrecognized_flags: cmd == CommandTag::BuildCommand,
-            // esbuild spellings bun's value parsers also accept. The react `bun
-            // init` template uses `--define:K=V`, node-fallbacks `--external:M`.
+            // esbuild spellings in-tree scripts (react init template, node-fallbacks) still use.
             colon_value_flags: match cmd {
                 CommandTag::BuildCommand => &[b"define", b"external", b"loader", b"drop"],
                 _ => &[],

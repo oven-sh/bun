@@ -1588,6 +1588,12 @@ impl CompileErrorReason {
 }
 
 impl CompileError {
+    pub fn fmt(args: core::fmt::Arguments<'_>) -> CompileError {
+        let mut v = Vec::new();
+        let _ = write!(&mut v, "{}", args);
+        CompileError::Message(v)
+    }
+
     pub fn slice(&self) -> &[u8] {
         match self {
             CompileError::Message(m) => m,
@@ -1602,9 +1608,7 @@ impl CompileResult {
     }
 
     pub fn fail_fmt(args: core::fmt::Arguments<'_>) -> CompileResult {
-        let mut v = Vec::new();
-        let _ = write!(&mut v, "{}", args);
-        CompileResult::Err(CompileError::Message(v))
+        CompileResult::Err(CompileError::fmt(args))
     }
 }
 
@@ -2203,7 +2207,6 @@ pub(crate) fn download_to_path(
                 b"",
                 b"",
                 http_proxy,
-                None,
                 bun_http::FetchRedirect::Follow,
             ));
             async_http.client.progress_node =
@@ -2319,6 +2322,103 @@ pub(crate) fn download_to_path(
     Ok(())
 }
 
+/// The bun executable a `--compile` build for `target` injects into: `self_exe_path` if given, this process for the
+/// host target, otherwise the cached download of that platform's bun at this version (fetched now if missing).
+pub fn target_executable(
+    target: &CompileTarget,
+    env: &mut bun_dotenv::Loader,
+    self_exe_path: Option<&[u8]>,
+) -> Result<bun_core::ZBox, CompileError> {
+    Ok(if let Some(path) = self_exe_path {
+        bun_core::ZBox::from_vec_with_nul(path.to_vec())
+    } else if target.is_default() {
+        match bun_core::self_exe_path() {
+            Ok(p) => bun_core::ZBox::from_vec_with_nul(p.as_bytes().to_vec()),
+            Err(e) => {
+                return Err(CompileError::fmt(format_args!(
+                    "failed to get self executable path: {}",
+                    bstr::BStr::new(e.name())
+                )));
+            }
+        }
+    } else {
+        let mut exe_path_buf = PathBuffer::uninit();
+        let mut version_str: Vec<u8> = Vec::new();
+        let _ = write!(&mut version_str, "{}", target);
+        version_str.push(0);
+        // SAFETY: trailing 0 byte appended above.
+        let version_zstr = ZStr::from_slice_with_nul(&version_str[..]);
+
+        let mut needs_download: bool = true;
+        let dest_z = target.exe_path(&mut exe_path_buf, version_zstr, env, &mut needs_download);
+
+        if needs_download {
+            if let Err(e) = download_to_path(target, env, dest_z) {
+                return Err(match e {
+                    crate::Error::TargetNotFound => CompileError::fmt(format_args!(
+                        "Target platform '{}' is not available for download. Check if this version of Bun supports this target.",
+                        target
+                    )),
+                    crate::Error::NetworkError => CompileError::fmt(format_args!(
+                        "Network error downloading executable for '{}'. Check your internet connection and proxy settings.",
+                        target
+                    )),
+                    crate::Error::InvalidResponse => CompileError::fmt(format_args!(
+                        "Downloaded file for '{}' appears to be corrupted. Please try again.",
+                        target
+                    )),
+                    crate::Error::ExtractionFailed => CompileError::fmt(format_args!(
+                        "Failed to extract executable for '{}'. The download may be incomplete.",
+                        target
+                    )),
+                    _ => CompileError::fmt(format_args!(
+                        "Failed to download '{}': {}",
+                        target,
+                        bstr::BStr::new(e.name())
+                    )),
+                });
+            }
+        }
+
+        bun_core::ZBox::from_vec_with_nul(dest_z.as_bytes().to_vec())
+    })
+}
+
+/// `--compile --bytecode` for another platform: that executable's builtins section (`bun_exe_format::builtins`), so
+/// the bundler can generate bytecode for *its* internal modules. `Ok(None)` when the executable has no section this bun
+/// can read; builtin bytecode is skipped then.
+pub fn target_builtins(
+    target: &CompileTarget,
+    env: &mut bun_dotenv::Loader,
+    self_exe_path: Option<&[u8]>,
+) -> Result<Option<std::sync::Arc<[u8]>>, CompileError> {
+    use bun_exe_format::builtins::{Builtins, BuiltinsError, find_section};
+    let exe = target_executable(target, env, self_exe_path)?;
+    let file = match bun_sys::File::read_from(Fd::cwd(), exe.as_bytes()) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            return Err(CompileError::fmt(format_args!(
+                "failed to read executable for '{}': {}",
+                target, e
+            )));
+        }
+    };
+    match find_section(&file).and_then(|section| Builtins::parse(section).map(|_| section)) {
+        Ok(section) => Ok(Some(std::sync::Arc::from(section))),
+        // No section (a bun from before there was one), a newer layout than this bun reads, or a container this reader
+        // doesn't handle: its internal modules load from source. A section that is there but malformed is an error.
+        Err(
+            BuiltinsError::MissingSection
+            | BuiltinsError::UnsupportedVersion
+            | BuiltinsError::UnrecognizedExecutable,
+        ) => Ok(None),
+        Err(e) => Err(CompileError::fmt(format_args!(
+            "failed to read the builtin modules of the executable for '{}': {}",
+            target, e
+        ))),
+    }
+}
+
 pub fn to_executable(
     target: &CompileTarget,
     output_files: &[OutputFile],
@@ -2354,60 +2454,9 @@ pub fn to_executable(
     }
     // bytes drops at end of scope
 
-    // `ZBox` always owns its bytes and drops on scope exit, so no
-    // ownership flag is needed.
-    let self_exe: bun_core::ZBox = if let Some(path) = self_exe_path {
-        bun_core::ZBox::from_vec_with_nul(path.to_vec())
-    } else if target.is_default() {
-        match bun_core::self_exe_path() {
-            Ok(p) => bun_core::ZBox::from_vec_with_nul(p.as_bytes().to_vec()),
-            Err(e) => {
-                return Ok(CompileResult::fail_fmt(format_args!(
-                    "failed to get self executable path: {}",
-                    bstr::BStr::new(e.name())
-                )));
-            }
-        }
-    } else {
-        let mut exe_path_buf = PathBuffer::uninit();
-        let mut version_str: Vec<u8> = Vec::new();
-        let _ = write!(&mut version_str, "{}", target);
-        version_str.push(0);
-        // SAFETY: trailing 0 byte appended above.
-        let version_zstr = ZStr::from_slice_with_nul(&version_str[..]);
-
-        let mut needs_download: bool = true;
-        let dest_z = target.exe_path(&mut exe_path_buf, version_zstr, env, &mut needs_download);
-
-        if needs_download {
-            if let Err(e) = download_to_path(target, env, dest_z) {
-                return Ok(match e {
-                    crate::Error::TargetNotFound => CompileResult::fail_fmt(format_args!(
-                        "Target platform '{}' is not available for download. Check if this version of Bun supports this target.",
-                        target
-                    )),
-                    crate::Error::NetworkError => CompileResult::fail_fmt(format_args!(
-                        "Network error downloading executable for '{}'. Check your internet connection and proxy settings.",
-                        target
-                    )),
-                    crate::Error::InvalidResponse => CompileResult::fail_fmt(format_args!(
-                        "Downloaded file for '{}' appears to be corrupted. Please try again.",
-                        target
-                    )),
-                    crate::Error::ExtractionFailed => CompileResult::fail_fmt(format_args!(
-                        "Failed to extract executable for '{}'. The download may be incomplete.",
-                        target
-                    )),
-                    _ => CompileResult::fail_fmt(format_args!(
-                        "Failed to download '{}': {}",
-                        target,
-                        bstr::BStr::new(e.name())
-                    )),
-                });
-            }
-        }
-
-        bun_core::ZBox::from_vec_with_nul(dest_z.as_bytes().to_vec())
+    let self_exe = match target_executable(target, env, self_exe_path) {
+        Ok(p) => p,
+        Err(e) => return Ok(CompileResult::Err(e)),
     };
 
     let mut temp_path_buf = bun_paths::path_buffer_pool::get();

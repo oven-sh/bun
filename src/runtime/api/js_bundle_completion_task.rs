@@ -988,10 +988,6 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.output_format = config.format;
         transpiler.options.bytecode = config.bytecode;
         transpiler.options.bytecode_depth = config.bytecode_depth;
-        transpiler.options.compile_target_is_host = config
-            .compile
-            .as_ref()
-            .is_none_or(|compile| compile.compile_target.is_default());
         transpiler.options.compile_mode = if config.compile.is_some() {
             options::CompileMode::Executable
         } else {
@@ -1025,6 +1021,7 @@ impl CompletionStruct for JSBundleCompletionTask {
             None => options::AllowUnresolved::All,
         };
         transpiler.options.code_splitting = config.code_splitting;
+        transpiler.options.split_require = config.split_require;
         transpiler.options.emit_dce_annotations = config
             .emit_dce_annotations
             .unwrap_or(!config.minify.whitespace);
@@ -1086,6 +1083,34 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         transpiler.configure_linker();
         transpiler.configure_defines()?;
+
+        // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.
+        transpiler.options.compile_target_builtins = match &config.compile {
+            Some(compile)
+                if config.bytecode
+                    && (!compile.compile_target.is_default()
+                        || !compile.executable_path.list.is_empty()) =>
+            {
+                match bun_standalone_graph::StandaloneModuleGraph::target_builtins(
+                    &compile.compile_target,
+                    // SAFETY: `self.env` is the per-VM `DotEnv.Loader` stashed at construction; see `to_executable` below.
+                    unsafe { &mut *self.env },
+                    Some(&compile.executable_path.list[..]).filter(|p| !p.is_empty()),
+                ) {
+                    Ok(Some(section)) => options::CompileTargetBuiltins::Target(section),
+                    Ok(None) => options::CompileTargetBuiltins::None,
+                    Err(err) => {
+                        self.log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!("{}", bstr::BStr::new(err.slice())),
+                        );
+                        return Err(bun_bundler::Error::BuildFailed);
+                    }
+                }
+            }
+            _ => options::CompileTargetBuiltins::Host,
+        };
 
         if !transpiler.options.production {
             transpiler

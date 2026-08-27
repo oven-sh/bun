@@ -752,7 +752,6 @@ fn send_audit_request(
         headers_buf,
         &final_compressed_body,
         http_proxy,
-        None,
         http::FetchRedirect::Follow,
     );
     let reason = match req.send_sync(&mut response_buf) {

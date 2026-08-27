@@ -798,6 +798,24 @@ impl Tree {
                 }
 
                 if pkg_resolutions[pkg_id as usize].tag == crate::resolution::Tag::Folder {
+                    // A peer an ancestor edge already provides dedupes instead of nesting
+                    // a second copy of the folder (#40561).
+                    if dependency.behavior.is_peer()
+                        && matches!(
+                            Tree::hoist_dependency::<true, METHOD>(
+                                next_id,
+                                hoist_root_id,
+                                pkg_id,
+                                dep_id,
+                                resolution_list,
+                                builder,
+                            ),
+                            HoistDependencyResult::Hoisted
+                        )
+                    {
+                        break 'hoisted HoistDependencyResult::Hoisted;
+                    }
+
                     // Folder packages never hoist, so a cycle between them would nest forever.
                     let mut tree_id = next_id;
                     while tree_id != INVALID_ID {

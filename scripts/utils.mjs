@@ -1276,6 +1276,68 @@ export function escapePowershell(string) {
 }
 
 /**
+ * @param {string} string
+ * @returns {string}
+ */
+function unescapeXml(string) {
+  return string
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+/**
+ * @typedef {object} JunitFileSuite
+ * @property {number} failures failed tests in the whole file, describe blocks included
+ * @property {number} seconds wall clock of the whole file, loading it included
+ * @property {{ name: string, message: string }[]} cases the failed tests, in report order
+ */
+
+/**
+ * Reads the report written by `bun test --reporter=junit` into one entry per test file,
+ * keyed by the path the reporter printed (relative to the directory `bun test` ran in)
+ * with `/` separators.
+ *
+ * The reporter writes one `<testsuite>` named after each file and, nested inside it, one
+ * more `<testsuite>` per describe block. All of them carry the same `file` attribute, but
+ * only the file's own suite counts the failures of the whole file (the describe blocks'
+ * counts roll up into it) and times the file as a whole (a describe block's `time` is the
+ * sum of its tests, which over-counts `describe.concurrent`), so the nested suites are
+ * skipped.
+ *
+ * @param {string} xml
+ * @returns {Map<string, JunitFileSuite>}
+ */
+export function parseJunitFileSuites(xml) {
+  const attribute = (attributes, name) => new RegExp(`\\s${name}="([^"]*)"`).exec(attributes)?.[1];
+  const keyOf = file => unescapeXml(file).replaceAll("\\", "/");
+  /** @type {Map<string, JunitFileSuite>} */
+  const files = new Map();
+  for (const [, attributes] of xml.matchAll(/<testsuite\b([^>]*)>/g)) {
+    const file = attribute(attributes, "file");
+    if (!file || attribute(attributes, "name") !== file) continue;
+    files.set(keyOf(file), {
+      failures: Number(attribute(attributes, "failures") ?? 0),
+      seconds: Number(attribute(attributes, "time") ?? 0),
+      cases: [],
+    });
+  }
+  for (const [, caseAttributes, failureAttributes] of xml.matchAll(/<testcase\b([^>]*)>\s*<failure\b([^>]*)>/g)) {
+    const file = attribute(caseAttributes, "file");
+    const entry = file && files.get(keyOf(file));
+    if (!entry) continue;
+    entry.cases.push({
+      name: unescapeXml(attribute(caseAttributes, "name") ?? "(unnamed)"),
+      message: unescapeXml(attribute(failureAttributes, "message") ?? ""),
+    });
+  }
+  return files;
+}
+
+/**
  * @returns {string}
  */
 export function homedir() {

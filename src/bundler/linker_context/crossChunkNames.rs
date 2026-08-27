@@ -93,12 +93,20 @@ pub(crate) fn assign_unminified(
             .slice();
         let base = bun_core::MutableString::ensure_valid_identifier(original)?;
         let mut name: &[u8] = &base;
-        let mut tries = 1u32;
-        while used.contains_key(name) {
-            tries += 1;
-            buf.clear();
-            buf.extend_from_slice(&base);
-            write!(&mut buf, "{tries}").expect("Vec<u8> write");
+        // `used[base]` remembers the last suffix handed out for `base`, so a
+        // run of bindings sharing one name does not re-probe 2, 3, ... each time.
+        if let Some(last) = used.get(&*base).copied() {
+            let mut tries = last.max(1);
+            loop {
+                tries += 1;
+                buf.clear();
+                buf.extend_from_slice(&base);
+                write!(&mut buf, "{tries}").expect("Vec<u8> write");
+                if !used.contains_key(buf.as_slice()) {
+                    break;
+                }
+            }
+            used.put(&base, tries)?;
             name = &buf;
         }
         used.put(name, 1)?;

@@ -2968,8 +2968,7 @@ it("combines duplicate response headers per the Fetch spec", async () => {
 
 it("drops a custom Host header when following a cross-origin redirect", async () => {
   // A per-request Host override must not survive a change of origin: the
-  // follow-up request's Host header (and the TLS SNI / certificate identity
-  // derived from the same field) has to be re-computed from the redirect
+  // follow-up request's Host header has to be re-computed from the redirect
   // target's URL, not carried over from the previous origin.
   await using target = Bun.serve({
     port: 0,

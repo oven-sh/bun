@@ -242,8 +242,9 @@ void Bun__Telemetry__nativeAddEvent(JSC::JSGlobalObject*, Bun::TelemetryNativeHa
 void Bun__Telemetry__nativeAddLink(JSC::JSGlobalObject*, Bun::TelemetryNativeHandle, const Bun::TelemetryLinkRef*, const Bun::TelemetryAttrPool*);
 // Owned (+1) copies; empty when the slot is gone or the value is empty.
 BunString Bun__Telemetry__nativeName(JSC::JSGlobalObject*, Bun::TelemetryNativeHandle);
-// False (and both outputs Empty) when the span carries neither.
-bool Bun__Telemetry__nativePropagation(JSC::JSGlobalObject*, Bun::TelemetryNativeHandle, BunString* traceState, BunString* baggage);
+// The span's cell (materialized; its TraceState/Baggage fields hold the W3C
+// headers it received), or undefined when it carries neither or has ended.
+JSC::EncodedJSValue Bun__Telemetry__nativePropagation(JSC::JSGlobalObject*, Bun::TelemetryNativeHandle);
 // Identity of a live pooled span; false (and *out untouched) once it has ended.
 bool Bun__Telemetry__poolStub(JSC::JSGlobalObject*, Bun::TelemetryNativeHandle, Bun::TelemetrySpanStub* out);
 JSC::EncodedJSValue Bun__Telemetry__poolMaterialize(Zig::GlobalObject*, Bun::TelemetryNativeHandle);

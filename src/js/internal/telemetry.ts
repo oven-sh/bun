@@ -98,7 +98,7 @@ class BunContext {
     // (a null BAGGAGE_KEY entry means "deleted": the request's inbound baggage is masked)
     if (extras !== undefined && extras.$has(key)) return extras.$get(key) ?? undefined;
     // Baggage a request carried in lives on its span, not in extras.
-    if (key === BAGGAGE_KEY && this.#span !== undefined) return parseBaggage(propagationHeaders(this.#span)[2]);
+    if (key === BAGGAGE_KEY && this.#span !== undefined) return inboundBaggage(propagationHeaders(this.#span)[2]);
     return undefined;
   }
 
@@ -286,6 +286,19 @@ class Baggage {
   clear() {
     return new Baggage();
   }
+}
+
+// The last inbound `baggage` header parsed: every span under one request
+// carries the same string, and Baggage is immutable.
+let inboundBaggageHeader: string | undefined;
+let inboundBaggageParsed: Baggage | undefined;
+function inboundBaggage(header: string | undefined): Baggage | undefined {
+  if (!header) return undefined;
+  if (header !== inboundBaggageHeader) {
+    inboundBaggageParsed = parseBaggage(header);
+    inboundBaggageHeader = header;
+  }
+  return inboundBaggageParsed;
 }
 
 function parseBaggage(header: string): Baggage | undefined {

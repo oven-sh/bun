@@ -87,9 +87,16 @@ DEFINE_VISIT_CHILDREN(JSTelemetrySpan);
 
 // ─── entry points for src/runtime/telemetry/span.rs ───
 
-extern "C" JSC::EncodedJSValue Bun__TelemetrySpan__createNative(Zig::GlobalObject* globalObject, const TelemetrySpanStub* stub, uint16_t scope, uint8_t kind, TelemetryNativeHandle native)
+extern "C" JSC::EncodedJSValue Bun__TelemetrySpan__createNative(Zig::GlobalObject* globalObject, const TelemetrySpanStub* stub, uint16_t scope, uint8_t kind, TelemetryNativeHandle native, BunString* traceState, BunString* baggage)
 {
-    return JSValue::encode(JSTelemetrySpan::createNative(globalObject->vm(), globalObject, *stub, scope, kind, native));
+    auto& vm = globalObject->vm();
+    auto* span = JSTelemetrySpan::createNative(vm, globalObject, *stub, scope, kind, native);
+    using Field = JSTelemetrySpan::Field;
+    if (auto s = traceState->transferToWTFString(); !s.isEmpty())
+        span->field(Field::TraceState).set(vm, span, jsString(vm, WTF::move(s)));
+    if (auto s = baggage->transferToWTFString(); !s.isEmpty())
+        span->field(Field::Baggage).set(vm, span, jsString(vm, WTF::move(s)));
+    return JSValue::encode(span);
 }
 
 static void markEnded(Zig::GlobalObject*, JSTelemetrySpan*);
@@ -824,24 +831,15 @@ static JSString* hexId(VM& vm, std::span<const uint8_t> bytes)
 
 TelemetryPropagation telemetryPropagationOfPooled(Zig::GlobalObject* globalObject, TelemetryNativeHandle handle)
 {
-    TelemetryPropagation out;
     if (!handle)
-        return out;
-    BunString traceState = { BunStringTag::Empty, {} }, baggage = { BunStringTag::Empty, {} };
-    if (!Bun__Telemetry__nativePropagation(globalObject, handle, &traceState, &baggage))
-        return out;
-    auto& vm = globalObject->vm();
-    if (auto s = traceState.transferToWTFString(); !s.isEmpty())
-        out.traceState = jsString(vm, WTF::move(s));
-    if (auto s = baggage.transferToWTFString(); !s.isEmpty())
-        out.baggage = jsString(vm, WTF::move(s));
-    return out;
+        return {};
+    // Materializes the cell only for a span that received headers; its fields hold them.
+    auto* span = toTelemetrySpan(JSValue::decode(Bun__Telemetry__nativePropagation(globalObject, handle)));
+    return span ? telemetryPropagationOf(globalObject, span) : TelemetryPropagation {};
 }
 
-TelemetryPropagation telemetryPropagationOf(Zig::GlobalObject* globalObject, const JSTelemetrySpan* span)
+TelemetryPropagation telemetryPropagationOf(Zig::GlobalObject*, const JSTelemetrySpan* span)
 {
-    if (span->m_native)
-        return telemetryPropagationOfPooled(globalObject, span->m_native);
     using Field = JSTelemetrySpan::Field;
     TelemetryPropagation out;
     if (JSString* s = span->string(Field::TraceState); s && s->length())

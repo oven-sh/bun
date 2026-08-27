@@ -23,13 +23,16 @@ unsafe extern "C" {
     safe fn Bun__Telemetry__activeSpanCell(global: &JSGlobalObject) -> JSValue;
     safe fn Bun__Telemetry__enter(global: &JSGlobalObject, span: JSValue) -> JSValue;
     safe fn Bun__Telemetry__exit(global: &JSGlobalObject, prev: JSValue);
-    /// `native` must be a live (non-zero) handle.
+    /// `native` must be a live (non-zero) handle. Adopts `trace_state` /
+    /// `baggage` (the W3C headers the span received) into the cell's fields.
     safe fn Bun__TelemetrySpan__createNative(
         global: &JSGlobalObject,
         stub: &SpanStub,
         scope: u16,
         kind: u8,
         native: NativeSpan,
+        trace_state: &mut OwnedJsString,
+        baggage: &mut OwnedJsString,
     ) -> JSValue;
     safe fn Bun__TelemetrySpan__createSuppressedCarrier(global: &JSGlobalObject) -> JSValue;
     safe fn Bun__TelemetrySpan__is(value: JSValue) -> bool;
@@ -741,14 +744,37 @@ pub extern "C" fn Bun__Telemetry__poolMaterialize(
         return JSValue::UNDEFINED;
     };
     let live = pool::with(&mut l.pool, native, |s| {
-        (s.js_cell, s.stub, s.scope, s.kind)
+        // The W3C headers the span received go into a new cell's fields, once.
+        let header = |h: &[u8]| {
+            if s.js_cell.is_some() || h.is_empty() {
+                OwnedJsString::EMPTY
+            } else {
+                OwnedJsString::clone_utf8(h)
+            }
+        };
+        (
+            s.js_cell,
+            s.stub,
+            s.scope,
+            s.kind,
+            header(&s.trace_state),
+            header(&s.baggage),
+        )
     });
-    if let Some((cell, stub, scope, kind)) = live {
+    if let Some((cell, stub, scope, kind, mut trace_state, mut baggage)) = live {
         drop(l);
         if cell.is_some() {
             return JSValue::from_encoded(cell.0);
         }
-        let v = Bun__TelemetrySpan__createNative(global, &stub, scope.0, kind.to_api(), native);
+        let v = Bun__TelemetrySpan__createNative(
+            global,
+            &stub,
+            scope.0,
+            kind.to_api(),
+            native,
+            &mut trace_state,
+            &mut baggage,
+        );
         v.protect();
         // Pin only a cell the slot now owns; an unowned pinned cell would never be released.
         let stored = local(global)
@@ -878,29 +904,25 @@ pub extern "C" fn Bun__Telemetry__nativeName(
     .unwrap_or(OwnedJsString::EMPTY)
 }
 
-/// W3C `tracestate` / `baggage` a native-owned span received (+1 refs, caller
-/// adopts). False, with both Empty, when it carries neither.
+/// The JS cell of a native-owned span that received W3C `tracestate` /
+/// `baggage` (its TraceState/Baggage fields hold them, materialized once);
+/// undefined when it carries neither or has ended.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__nativePropagation(
     global: &JSGlobalObject,
     handle: NativeSpan,
-    trace_state: &mut OwnedJsString,
-    baggage: &mut OwnedJsString,
-) -> bool {
-    *trace_state = OwnedJsString::EMPTY;
-    *baggage = OwnedJsString::EMPTY;
-    let Some(l) = local(global) else {
-        return false;
-    };
-    pool::with_ref(&l.pool, handle, |s| {
-        if s.trace_state.is_empty() && s.baggage.is_empty() {
-            return false;
-        }
-        *trace_state = OwnedJsString::clone_utf8(&s.trace_state);
-        *baggage = OwnedJsString::clone_utf8(&s.baggage);
-        true
-    })
-    .unwrap_or(false)
+) -> JSValue {
+    let carries = local(global)
+        .and_then(|l| {
+            pool::with_ref(&l.pool, handle, |s| {
+                !(s.trace_state.is_empty() && s.baggage.is_empty())
+            })
+        })
+        .unwrap_or(false);
+    if !carries {
+        return JSValue::UNDEFINED;
+    }
+    Bun__Telemetry__poolMaterialize(global, handle)
 }
 
 #[unsafe(no_mangle)]

@@ -3841,7 +3841,7 @@ static void collectStandaloneClosure(Zig::GlobalObject* globalObject, JSModuleLo
             }
             keepAlive.append(record);
             closure.records.add(key.impl(), record);
-            closure.modules.append({ key, source, record, { } });
+            closure.modules.append({ key, source, record, {} });
         }
         closure.modules[index].resolvedRequests = WTF::move(resolved);
     }
@@ -3931,7 +3931,7 @@ JSC::JSPromise* StandaloneGlobalObject::moduleLoaderFetch(JSGlobalObject* jsGlob
     keepAlive.append(rootRecord);
 
     StandaloneClosure closure;
-    closure.modules.append({ rootKey, rootSource, rootRecord, { } });
+    closure.modules.append({ rootKey, rootSource, rootRecord, {} });
     collectStandaloneClosure(globalObject, loader, closure, keepAlive);
     RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
     // When HostLoadImportedModule already created the root's entry it sets the root's status and loadPromise itself

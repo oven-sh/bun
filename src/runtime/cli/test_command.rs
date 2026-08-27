@@ -2263,7 +2263,7 @@ impl TestCommand {
                 // Clone (not take): ParallelRunner::run_as_coordinator → build_worker_argv
                 // reads ctx.args.{conditions,define,loaders,tsconfig_override,drop,
                 // main_fields,extension_order,env_files,feature_flags,preserve_symlinks,
-                // allow_addons,disable_default_env_files,jsx} after this point to forward
+                // allow_addons,allow_ffi_cc,disable_default_env_files,jsx} after this point to forward
                 // them to workers.
                 transform_options: ctx.args.clone(),
                 debugger: core::mem::take(&mut ctx.runtime_options.debugger),

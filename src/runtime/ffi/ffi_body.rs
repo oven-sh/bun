@@ -14,8 +14,8 @@ use bun_core::{EncodedSlice, ZStr};
 use bun_core::{ZBox, env_var, fmt as bun_fmt, zstr};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    self as jsc, CallFrame, EncodedSliceJsc, JSGlobalObject, JSObject, JSPropertyIterator, JSValue,
-    JsCell, JsClass, JsError, JsResult, SystemError,
+    self as jsc, CallFrame, EncodedSliceJsc, ErrorCode, JSGlobalObject, JSObject,
+    JSPropertyIterator, JSValue, JsCell, JsClass, JsError, JsResult, SystemError,
 };
 #[cfg(target_os = "macos")]
 use bun_paths as path;
@@ -985,6 +985,16 @@ impl FFI {
     // `bun_ffi_cc(__g, __f)` call, which doesn't resolve inside `impl FFI`.
     // The C-ABI shim (`Bun__FFI__cc`) is supplied by the `.classes.ts` codegen.
     pub fn bun_ffi_cc(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        if !global_this.bun_vm().allow_ffi_cc() {
+            return Err(global_this
+                .err(
+                    ErrorCode::FFI_CC_DISABLED,
+                    format_args!(
+                        "Cannot compile C code because the bun:ffi C compiler is disabled."
+                    ),
+                )
+                .throw());
+        }
         if !bun_core::Environment::ENABLE_TINYCC {
             return Err(global_this.throw(format_args!(
                 "bun:ffi cc() is not available in this build (TinyCC is disabled)"

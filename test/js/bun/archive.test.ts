@@ -819,7 +819,7 @@ describe("Bun.Archive", () => {
           { name: "ok.txt", data: "ok" },
         ]),
         "extract.ts": `
-          const fs = require("node:fs");
+          import fs from "node:fs";
           const archive = new Bun.Archive(new Uint8Array(fs.readFileSync("input.tar")));
           const results = {};
           for (const [out, options] of [["out", undefined], ["out-glob", { glob: "**" }]]) {

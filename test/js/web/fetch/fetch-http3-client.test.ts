@@ -685,10 +685,12 @@ describe("response stream ends without FIN", () => {
   const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
   const cert = readFileSync(join(keysDir, "agent1-cert.pem"));
 
-  // A node:quic HTTP/3 server whose response is "200", the body "partial",
-  // then `end(stream)`. The body is flushed before `end` runs: the server
-  // yields to the event loop, which is where lsquic packetizes writes.
+  // A node:quic HTTP/3 server whose response is "200" and the body "partial".
+  // It runs `end(stream, session)` only once the client, which by then holds
+  // the status and that chunk, requests /release. No timing assumption orders
+  // the wire.
   async function fetchFromServerThat(end: (stream: any, session: any) => void) {
+    const { promise: released, resolve: release } = Promise.withResolvers<void>();
     await using server = await listen(
       async session => {
         session.onstream = (stream: any) => stream.closed.catch(() => {});
@@ -697,32 +699,45 @@ describe("response stream ends without FIN", () => {
       {
         sni: { "*": { keys: [key], certs: [cert] } },
         transportParams: { maxIdleTimeout: 1 },
-        async onheaders(this: any) {
+        async onheaders(this: any, headers: Record<string, string>) {
           this.sendHeaders({ ":status": "200" });
+          if (headers[":path"] === "/release") {
+            this.writer.endSync();
+            release();
+            return;
+          }
           this.writer.writeSync(new TextEncoder().encode("partial"));
-          await Bun.sleep(10);
+          await released;
           end(this, this.session);
         },
       },
     );
-    const res = await fetch(`https://127.0.0.1:${server.address.port}/`, h3);
-    const body = await res.text().then(
-      text => ({ resolved: text }),
+    const base = `https://127.0.0.1:${server.address.port}`;
+    const res = await fetch(`${base}/`, h3);
+    const reader = res.body!.getReader();
+    const first = await reader.read();
+    // Its response can be lost to the CONNECTION_CLOSE case, so it is not
+    // awaited: the first stream's read is what reports the outcome.
+    fetch(`${base}/release`, h3)
+      .then(r => r.text())
+      .catch(() => {});
+    const rest = await reader.read().then(
+      ({ done }) => ({ resolved: done ? "done" : "chunk" }),
       (e: Error & { code?: string }) => ({ rejected: e.code }),
     );
-    return { status: res.status, body };
+    return { status: res.status, first: new TextDecoder().decode(first.value), rest };
   }
 
   test("RESET_STREAM mid-body rejects the body read with HTTP3StreamReset", async () => {
     const result = await fetchFromServerThat(stream =>
       stream.destroy(new QuicError("body failed", { errorCode: 0x102 })),
     );
-    expect(result).toEqual({ status: 200, body: { rejected: "HTTP3StreamReset" } });
+    expect(result).toEqual({ status: 200, first: "partial", rest: { rejected: "HTTP3StreamReset" } });
   });
 
   test("CONNECTION_CLOSE mid-body rejects the body read with ECONNRESET", async () => {
     const result = await fetchFromServerThat((_stream, session) => session.close({ code: 0x100, type: "application" }));
-    expect(result).toEqual({ status: 200, body: { rejected: "ECONNRESET" } });
+    expect(result).toEqual({ status: 200, first: "partial", rest: { rejected: "ECONNRESET" } });
   });
 });
 

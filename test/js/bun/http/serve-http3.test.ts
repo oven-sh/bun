@@ -1457,21 +1457,30 @@ describe("Bun.serve HTTP/3 request validation", () => {
 // HTTP/3 a FIN is a complete message, so the stream has to end with
 // RESET_STREAM(H3_INTERNAL_ERROR) instead.
 describe("Bun.serve HTTP/3 response body error after the first chunk", () => {
+  // The body source sends one chunk and then waits. It errors only once the
+  // client, which by then holds the status and that chunk, requests
+  // /release. No timing assumption orders the wire.
   const script = `
     const tls = ${JSON.stringify(tls)};
+    const { promise: released, resolve: release } = Promise.withResolvers();
     const server = Bun.serve({
       port: 0, tls, http3: true, http1: false,
       routes: {
         "/ok": () => new Response("ok"),
+        "/release": () => {
+          release();
+          return new Response("released");
+        },
         "/mid-body-error": () => {
           let pulls = 0;
           return new Response(new ReadableStream({
             async pull(c) {
-              // Yield to the event loop so the previous chunk is on the wire
-              // before the next one (or the error) is produced.
-              await Bun.sleep(10);
-              if (pulls++ < 2) c.enqueue(new Uint8Array(1024).fill(65));
-              else c.error(new Error("boom"));
+              if (pulls++ === 0) {
+                c.enqueue(new Uint8Array(1024).fill(65));
+                return;
+              }
+              await released;
+              c.error(new Error("boom"));
             },
           }));
         },
@@ -1482,7 +1491,10 @@ describe("Bun.serve HTTP/3 response body error after the first chunk", () => {
     ${STOP_ON_STDIN_END}
   `;
 
-  // Raw HTTP/3 client: reports how the response stream ended on the wire.
+  const release = (port: number) => fetchH3(port, "/release").then(r => r.text());
+
+  // Raw HTTP/3 client: reads the first chunk, asks the server to fail the
+  // body, and reports how the response stream ended on the wire.
   async function h3ReadBody(port: number, path: string) {
     await using endpoint = new QuicEndpoint();
     const client = await connect(`127.0.0.1:${port}`, {
@@ -1500,34 +1512,46 @@ describe("Bun.serve HTTP/3 response body error after the first chunk", () => {
         status = received[":status"];
       },
     });
-    stream.closed.catch(() => {});
-    // A reset discards body bytes the reader has not consumed yet (RFC 9000
-    // section 3.2), so only how the stream ended is deterministic.
-    let end = "fin";
+    // `closed` rejects with the RESET_STREAM error code when the peer resets.
+    const closed = stream.closed.then(
+      () => "fin",
+      (e: Error & { code?: string; errorCode?: bigint }) => ({ code: e.code, errorCode: Number(e.errorCode) }),
+    );
+    let firstChunkReceived = false;
+    let read = "fin";
     try {
       for await (const _ of stream as AsyncIterable<Uint8Array[]>) {
+        if (!firstChunkReceived) {
+          firstChunkReceived = true;
+          await release(port);
+        }
       }
     } catch (e) {
-      end = `${(e as Error & { code?: string }).code}: ${(e as Error).message}`;
+      read = (e as Error & { code?: string }).code ?? "unknown";
     }
+    const result = { status, firstChunkReceived, read, closed: await closed };
     client.close().catch(() => {});
-    return { status, end };
+    return result;
   }
 
   test("fetch() sees the status, then the body read rejects", async () => {
     await withCustomServer(script, async (port, _send, waitForStderr) => {
       const res = await fetchH3(port, "/mid-body-error");
-      const body = await res.text().then(
-        text => ({ resolved: text.length }),
+      const reader = res.body!.getReader();
+      const first = await reader.read();
+      await release(port);
+      const rest = await reader.read().then(
+        ({ done }) => ({ resolved: done ? "done" : "chunk" }),
         (e: Error & { code?: string }) => ({ rejected: e.code }),
       );
       // The handler's error still reaches the server's error reporting.
       await waitForStderr(/boom/);
       // Only the one stream was reset; the connection stays usable.
-      const after = await fetchH3(port, "/ok");
-      expect({ status: res.status, body, after: await after.text() }).toEqual({
+      const after = await fetchH3(port, "/ok").then(r => r.text());
+      expect({ status: res.status, firstChunkReceived: !first.done, rest, after }).toEqual({
         status: 200,
-        body: { rejected: "HTTP3StreamReset" },
+        firstChunkReceived: true,
+        rest: { rejected: "HTTP3StreamReset" },
         after: "ok",
       });
     });
@@ -1538,7 +1562,9 @@ describe("Bun.serve HTTP/3 response body error after the first chunk", () => {
       const result = await h3ReadBody(port, "/mid-body-error");
       expect(result).toEqual({
         status: "200",
-        end: "ERR_QUIC_STREAM_RESET: The QUIC stream was reset by the peer with error code 258",
+        firstChunkReceived: true,
+        read: "ERR_QUIC_STREAM_RESET",
+        closed: { code: "ERR_QUIC_APPLICATION_ERROR", errorCode: 258 },
       });
     });
   });

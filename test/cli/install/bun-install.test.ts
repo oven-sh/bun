@@ -1521,7 +1521,7 @@ describe.concurrent("bun-install", () => {
     // one the registry already stores (from its URL's userinfo) is Bun-only and stays
     // exact-path: an ancestor's stray `username=` must not rebind a deeper registry's
     // stored password to a new identity.
-    describe("a partial credential only layers over stored credentials at the registry's own path", () => {
+    describe("a lone username or _password supplies nothing, as in npm's hasAuth", () => {
       const stored = { registry: "default", userinfo: "url-user:url-pass@" } as const;
       const storedBasic = `Basic ${Buffer.from("url-user:url-pass").toString("base64")}`;
 
@@ -1544,11 +1544,6 @@ describe.concurrent("bun-install", () => {
           userinfo: `:${token}@`,
         });
         expect(auth).toBe(`Bearer ${token}`);
-      });
-
-      it("the registry's own path still layers a lone username over the stored password", async () => {
-        const auth = await probeAuthorization(host => `//${host}${registryPath}:username=npmrc-user`, stored);
-        expect(auth).toBe(`Basic ${Buffer.from("npmrc-user:url-pass").toString("base64")}`);
       });
     });
 

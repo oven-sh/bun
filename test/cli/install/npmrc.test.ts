@@ -289,7 +289,6 @@ registry=http://localhost:\${PORT}/
       default_registry_token: string;
       default_registry_username: string;
       default_registry_password: string;
-      default_registry_email: string;
     }) => void,
   ) {
     const optionName = await Promise.all(options.map(async ([name, val]) => `${name} = ${val}`));
@@ -553,22 +552,15 @@ ${Object.keys(opts)
     });
   });
 
-  await makeTest([["email", "user@example.com"]], result => {
-    expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
-    expect(result.default_registry_email).toEqual("user@example.com");
-  });
-
   await makeTest(
     [
       ["username", "testuser"],
       ["_password", "testpass"],
-      ["email", "test@example.com"],
     ],
     result => {
       expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
       expect(result.default_registry_username).toEqual("testuser");
       expect(result.default_registry_password).toEqual("testpass");
-      expect(result.default_registry_email).toEqual("test@example.com");
     },
   );
 
@@ -619,7 +611,6 @@ registry=https://somehost.com/org1/npm/registry/
         default_registry_token: "v6-token",
         default_registry_username: "",
         default_registry_password: "",
-        default_registry_email: "",
         default_registry_auth: "",
       });
     });
@@ -633,7 +624,6 @@ registry=https://somehost.com/org1/npm/registry/
         default_registry_token: "",
         default_registry_username: "v6-user",
         default_registry_password: "v6-password",
-        default_registry_email: "",
         default_registry_auth: "",
       });
 
@@ -643,7 +633,6 @@ registry=https://somehost.com/org1/npm/registry/
         default_registry_token: "",
         default_registry_username: "",
         default_registry_password: "",
-        default_registry_email: "",
         default_registry_auth: auth,
       });
     });
@@ -776,43 +765,27 @@ registry=https://somehost.com/org1/npm/registry/
       expect(result.default_registry_username).toBe("bilbo");
       expect(result.default_registry_password).toBe("verysecure");
     });
-
-    // `email` is not part of npm's auth (`npm-registry-fetch`'s `getAuth` never reads
-    // it), so it does not walk: only a line naming the registry's own path applies.
-    test("an ancestor's email does not apply to a deeper registry", () => {
-      const result = loadNpmrc(`
-registry=https://somehost.com/org1/npm/registry/
-//somehost.com/:email=bilbo@example.com
-`);
-      expect(result.default_registry_email).toBe("");
-    });
-
-    test("the registry's own email applies", () => {
-      const result = loadNpmrc(`
-registry=https://somehost.com/org1/npm/registry/
-//somehost.com/:email=gandalf@example.com
-//somehost.com/org1/npm/registry/:email=bilbo@example.com
-`);
-      expect(result.default_registry_email).toBe("bilbo@example.com");
-    });
   });
 
   describe("credentials that did not come from .npmrc survive resolution", () => {
-    test("an invalid _auth does not discard the registry URL's token", () => {
+    // A credential written into the registry URL is the weakest source: npm's
+    // `getAuth` never reads it, so any complete `.npmrc` line for the key replaces it.
+    test("an .npmrc _auth replaces the registry URL's token", () => {
       const result = loadNpmrc(`
 registry=https://:TOK@somehost.com/
 //somehost.com/:_auth=not-valid-base64
 `);
-      expect(result.default_registry_token).toBe("TOK");
+      expect(result.default_registry_token).toBe("");
+      expect(result.default_registry_auth).toBe("not-valid-base64");
     });
 
-    test("an .npmrc username/_password does not discard the registry URL's token", () => {
+    test("an .npmrc username/_password replaces the registry URL's token", () => {
       const result = loadNpmrc(`
 registry=https://:TOK@somehost.com/
 //somehost.com/:username=gandalf
 //somehost.com/:_password=${Buffer.from("verysecure").toString("base64")}
 `);
-      expect(result.default_registry_token).toBe("TOK");
+      expect(result.default_registry_token).toBe("");
       expect(result.default_registry_username).toBe("gandalf");
       expect(result.default_registry_password).toBe("verysecure");
     });
@@ -944,7 +917,9 @@ registry=https://:TOK@somehost.com/
     expect({ authorizations, stdout }).toEqual({ authorizations: [`Basic ${blob}`], stdout: "1.0.0\n" });
     expect(exitCode).toBe(0);
   });
-  test("an env registry that downgrades https to http drops the .npmrc _auth", async () => {
+  // A `.npmrc` key carries no scheme, so the line applies to the http registry too, as
+  // in npm; only a credential carried over from another registry refuses a downgrade.
+  test("an env registry that downgrades https to http still gets the .npmrc _auth", async () => {
     const blob = Buffer.from("alice:hunter2").toString("base64");
     const authorizations: (string | null)[] = [];
     await using registry = Bun.serve({
@@ -980,7 +955,7 @@ registry=https://:TOK@somehost.com/
       stderr: "pipe",
     });
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ authorizations, stdout }).toEqual({ authorizations: [null], stdout: "1.0.0\n" });
+    expect({ authorizations, stdout }).toEqual({ authorizations: [`Basic ${blob}`], stdout: "1.0.0\n" });
     expect(exitCode).toBe(0);
   });
 
@@ -1218,7 +1193,7 @@ describe("the config key's authority is normalized like a WHATWG URL", () => {
 
 // Diagnostics printed while reading .npmrc must never echo a credential.
 describe(".npmrc diagnostics", () => {
-  async function stderrOf(npmrc: string, bunfig?: object) {
+  async function stderrOf(npmrc: string, bunfig?: object, args: string[] = []) {
     using dir = tempDir("npmrc-diagnostics", {
       ".npmrc": npmrc,
       "package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
@@ -1227,7 +1202,7 @@ describe(".npmrc diagnostics", () => {
     });
     const home = join(String(dir), "home");
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "install", "--no-cache"],
+      cmd: [bunExe(), "install", "--no-cache", ...args],
       cwd: String(dir),
       env: { ...env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
       stdout: "pipe",
@@ -1241,6 +1216,20 @@ describe(".npmrc diagnostics", () => {
   it("warns about an unknown option name without printing its value", async () => {
     const stderr = await stderrOf(`registry=https://example.com/\n//example.com/:_authtoken=SECRETTOKEN\n`);
     expect(stderr).toContain("_authtoken is not a known .npmrc option");
+    expect(stderr).not.toContain("SECRETTOKEN");
+  });
+
+  it("names the file and line of an unknown option", async () => {
+    const stderr = await stderrOf(`registry=https://example.com/\n\n//example.com/:_authtoken=SECRETTOKEN\n`);
+    expect(stderr).toMatch(/_authtoken is not a known .npmrc option[^\n]*\n\s+at .npmrc:3:/);
+    expect(stderr).not.toContain("SECRETTOKEN");
+  });
+
+  it("says nothing about an unknown option under --silent", async () => {
+    const stderr = await stderrOf(`registry=https://example.com/\n//example.com/:_authtoken=SECRETTOKEN\n`, undefined, [
+      "--silent",
+    ]);
+    expect(stderr).not.toContain("not a known .npmrc option");
     expect(stderr).not.toContain("SECRETTOKEN");
   });
 

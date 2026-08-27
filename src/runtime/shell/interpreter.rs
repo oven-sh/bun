@@ -2325,7 +2325,7 @@ pub(crate) fn shell_lstatat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<
     #[cfg(windows)]
     {
         let mut buf = bun_paths::path_buffer_pool::get();
-        let p = shell_get_path(dir, path_, &mut buf)?;
+        let p = shell_get_path(dir, path_, &mut buf, bun_sys::Tag::lstat)?;
         return bun_sys::lstat(p).map_err(|e| e.with_path(path_.as_bytes()));
     }
     #[cfg(not(windows))]

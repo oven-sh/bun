@@ -3314,6 +3314,7 @@ test.if(isWindows)("operands longer than the path buffer fail with ENAMETOOLONG"
           relative: await run($\`cat \${long}\`),
           rooted: await run($\`cat \${"/" + long}\`),
           stat: await run($\`[[ -f \${long} ]]\`),
+          lstat: await run($\`ls \${long}\`),
           redirect: await run($\`echo hi > \${long}\`),
           collapsing: await run($\`cat \${collapsing}\`),
         }),
@@ -3335,6 +3336,7 @@ test.if(isWindows)("operands longer than the path buffer fail with ENAMETOOLONG"
     relative: { exitCode: 1, stdout: "", stderr: "cat: <long>: File name too long\n" },
     rooted: { exitCode: 1, stdout: "", stderr: "cat: /<long>: File name too long\n" },
     stat: { exitCode: 1, stdout: "", stderr: "" },
+    lstat: { exitCode: 1, stdout: "", stderr: "ls: <long>: File name too long\n" },
     redirect: { exitCode: 1, stdout: "", stderr: "bun: File name too long: <long>" },
     collapsing: { exitCode: 0, stdout: "content\n", stderr: "" },
   });

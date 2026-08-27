@@ -11,7 +11,7 @@ use std::sync::Arc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult};
 use bun_telemetry::processor::{self, Processor};
-use bun_telemetry::{Instrument, Limits, Sampler, SpanContext, propagation};
+use bun_telemetry::{Instrument, Limits, Sampler};
 use bun_telemetry_cold::config::{self, Compression, OtlpExporterConfig};
 
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerTag};
@@ -27,8 +27,8 @@ pub mod websocket;
 
 pub use bun_telemetry::pool::{self, NativeSpan};
 pub use span::{
-    Entered, active, active_context, active_js, active_native, create_native_cell, discard_native,
-    end_native, native_context_value, with_active_propagation,
+    Entered, active, active_context, active_js, active_native, discard_native, end_native,
+    native_context_value, with_active_propagation,
 };
 
 /// Process-wide, immutable after `configure()`. Read on hot paths without
@@ -515,18 +515,6 @@ fn install_api_global(global: &JSGlobalObject) {
 
 // ─────────────────────────── span helpers for integrations ───────────────────────────
 
-/// Parent for a new native span: the active span's context, if any.
-#[inline]
-pub fn current_parent(global: &JSGlobalObject) -> Option<SpanContext> {
-    active_context(global)
-}
-
-/// Should instrumentation `i` record a span given `parent`?
-#[inline]
-pub fn should_start(i: Instrument, parent: Option<&SpanContext>) -> bool {
-    bun_telemetry::enabled(i) && (parent.is_some() || bun_telemetry::allows_root(i))
-}
-
 /// Start a leaf `SpanStub` for instrumentation `i` under the active span.
 /// Returns `SpanStub::NONE` when disabled / parent-required-but-absent.
 #[inline]
@@ -567,8 +555,6 @@ pub fn end_leaf_at(
         &mut write,
     )
 }
-
-pub use propagation::{format_traceparent, parse_traceparent};
 
 // ─────────────────────────── host functions (`$newRustFunction("telemetry.rs", …)`) ───────────────────────────
 
@@ -659,7 +645,7 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             replaces_exporters = true;
         }
         if let Some(url) = endpoint {
-            let mut x = OtlpExporterConfig::new(normalize_traces_url(&url));
+            let mut x = OtlpExporterConfig::new(config::normalize_traces_url(&url));
             read_exporter_headers(global, opts, &mut x)?;
             cfg.otlp_exporters.push(x);
         }
@@ -677,7 +663,7 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                         cfg.console_exporter = true;
                     } else {
                         cfg.otlp_exporters
-                            .push(OtlpExporterConfig::new(normalize_traces_url(&s)));
+                            .push(OtlpExporterConfig::new(config::normalize_traces_url(&s)));
                     }
                     continue;
                 }
@@ -717,7 +703,7 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                         "exporter needs a url or an export() function"
                     )));
                 };
-                let mut x = OtlpExporterConfig::new(normalize_traces_url(&url));
+                let mut x = OtlpExporterConfig::new(config::normalize_traces_url(&url));
                 read_exporter_extras(global, item, &mut x)?;
                 cfg.otlp_exporters.push(x);
             }
@@ -865,10 +851,6 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     drop(configuring);
     install_api_global(global);
     Ok(JSValue::UNDEFINED)
-}
-
-fn normalize_traces_url(url: &str) -> String {
-    config::normalize_traces_url(url)
 }
 
 #[optimize(size)]
@@ -1194,37 +1176,18 @@ pub fn stats(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         bun_telemetry::batch::flush_local(&mut s.local.borrow_mut().batch);
     }
     let p = processor();
+    let st = &p.stats;
     let o = JSValue::create_empty_object(global, 6);
-    o.put(
-        global,
-        b"spansExported",
-        JSValue::js_number(p.stats.spans_exported.load(Relaxed) as f64),
-    );
-    o.put(
-        global,
-        b"spansDropped",
-        JSValue::js_number(p.stats.spans_dropped.load(Relaxed) as f64),
-    );
-    o.put(
-        global,
-        b"exportsSucceeded",
-        JSValue::js_number(p.stats.exports_ok.load(Relaxed) as f64),
-    );
-    o.put(
-        global,
-        b"exportsFailed",
-        JSValue::js_number(p.stats.exports_failed.load(Relaxed) as f64),
-    );
-    o.put(
-        global,
-        b"spansPending",
-        JSValue::js_number(p.pending_count() as f64),
-    );
-    o.put(
-        global,
-        b"exportsInflight",
-        JSValue::js_number(p.inflight() as f64),
-    );
+    for (key, value) in [
+        ("spansExported", st.spans_exported.load(Relaxed) as f64),
+        ("spansDropped", st.spans_dropped.load(Relaxed) as f64),
+        ("exportsSucceeded", st.exports_ok.load(Relaxed) as f64),
+        ("exportsFailed", st.exports_failed.load(Relaxed) as f64),
+        ("spansPending", p.pending_count() as f64),
+        ("exportsInflight", p.inflight() as f64),
+    ] {
+        o.put(global, key, JSValue::js_number(value));
+    }
     Ok(o)
 }
 

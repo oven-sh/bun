@@ -28,7 +28,6 @@ unsafe extern "C" {
         native: u64,
     ) -> JSValue;
     safe fn Bun__TelemetrySpan__fromJS(value: JSValue) -> *mut c_void;
-    safe fn Bun__TelemetrySpan__stub(cell: *mut c_void) -> *const SpanStub;
     safe fn Bun__Telemetry__activeNativeHandle(global: &JSGlobalObject) -> u64;
     safe fn Bun__TelemetrySpan__nativeEnded(cell: JSValue);
     /// Borrowed (not ref'd) header strings of a JS-owned span; Empty otherwise.
@@ -131,34 +130,10 @@ pub fn with_active_propagation<R>(global: &JSGlobalObject, f: impl FnOnce(&[u8],
     f(ts.slice(), pick(masked, from_context, bg.slice()))
 }
 
-/// Create the JS cell for a native-owned span (request spans etc.). The
-/// cell stores the @opentelemetry/api SpanKind numbering (INTERNAL=0..).
-#[inline]
-pub fn create_native_cell(
-    global: &JSGlobalObject,
-    stub: &SpanStub,
-    scope: ScopeId,
-    kind: SpanKind,
-    native: NativeSpan,
-) -> JSValue {
-    Bun__TelemetrySpan__createNative(global, stub, scope.0, kind.to_api(), native.0)
-}
-
 /// Is `value` a JSTelemetrySpan?
 #[inline]
 pub fn is_span(value: JSValue) -> bool {
     !Bun__TelemetrySpan__fromJS(value).is_null()
-}
-
-/// Identity of a JSTelemetrySpan value.
-#[inline]
-pub fn stub_of(value: JSValue) -> Option<SpanStub> {
-    let cell = Bun__TelemetrySpan__fromJS(value);
-    if cell.is_null() {
-        return None;
-    }
-    // SAFETY: `cell` is a live JSTelemetrySpan; its stub is inline storage.
-    Some(unsafe { *Bun__TelemetrySpan__stub(cell) })
 }
 
 /// RAII activation of a span cell for the duration of a native → JS call.
@@ -841,7 +816,7 @@ pub extern "C" fn Bun__Telemetry__poolMaterialize(global: &JSGlobalObject, handl
         if cell.is_some() {
             return JSValue::from_encoded(cell.0);
         }
-        let v = create_native_cell(global, &stub, scope, kind, native);
+        let v = Bun__TelemetrySpan__createNative(global, &stub, scope.0, kind.to_api(), native.0);
         v.protect();
         if let Some(mut l) = local(global) {
             pool::with(&mut l.pool, native, |s| {

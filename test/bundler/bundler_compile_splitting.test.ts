@@ -58,6 +58,17 @@ describe("bundler", () => {
         },
         run: {
           stdout: "static abfunctionfunction true\ndynamic xs18functionfunction ys18functionfunction s18function",
+          // JSC logs one line per host-hook call. The graph has 7 source modules, 6 distinct builtins and 4 roots
+          // (entry + 3 dynamic imports). With --bytecode each chunk carries its module record, so loading must cost a
+          // host fetch per root (plus the shared chunk reached first by import()) rather than per module, and a host
+          // resolve per root/builtin rather than per import edge.
+          env: { BUN_JSC_dumpModuleLoadingState: "1" },
+          validate({ stderr }) {
+            const count = (kind: string) => stderr.split("\n").filter(l => l.startsWith(`Loader [${kind}] `)).length;
+            expect(count("evaluate")).toBe(7);
+            expect(count("fetch")).toBeLessThanOrEqual(bytecode ? 5 : 13);
+            expect(count("resolve")).toBeLessThanOrEqual(bytecode ? 14 : 23);
+          },
         },
       });
     }

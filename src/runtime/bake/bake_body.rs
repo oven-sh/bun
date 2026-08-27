@@ -10,8 +10,8 @@ use std::borrow::Cow;
 use bun_alloc::Arena;
 use bun_collections::StringArrayHashMap;
 use bun_core::Output;
-use bun_core::{ZStr, strings};
 use bun_core::Utf8Bytes;
+use bun_core::{ZStr, strings};
 use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult};
 use bun_paths::PathBuffer;
 
@@ -682,9 +682,7 @@ impl Framework {
                             let mut it_2 = exts_js.array_iterator(global)?;
                             let mut dirs = Vec::with_capacity(exts_js.get_length(global)? as usize);
                             while let Some(array_item) = it_2.next()? {
-                                dirs.push(Cow::Owned(
-                                    array_item.to_utf8(global)?.slice().to_vec(),
-                                ));
+                                dirs.push(Cow::Owned(array_item.to_utf8(global)?.slice().to_vec()));
                             }
                             break 'exts dirs;
                         }

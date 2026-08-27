@@ -330,12 +330,11 @@ function writeCorpusFile(name: string, contents: string) {
   writeFileSync(temp, contents);
   renameSync(temp, path);
 }
-const bigPath = join(corpusDir, "big.js");
 writeCorpusFile("big.js", bigSource());
 writeCorpusFile("shapes.js", shapesSource());
 writeCorpusFile("all.js", allSource);
-writeFileSync(
-  join(corpusDir, "libraries.js"),
+writeCorpusFile(
+  "libraries.js",
   `var loaded = 0, failed = [];\n${librariesSource}\nconsole.log(loaded + " libraries, failed: " + JSON.stringify(failed));\n`,
 );
 

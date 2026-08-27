@@ -70,8 +70,9 @@ pub(crate) struct SharedState {
     /// buffer used to stream response to JS
     pub(crate) scheduled_response_buffer: MutableString,
     /// The HTTP thread is done with the fetch (terminal result delivered): the
-    /// progress update that sees this releases `http_ref` too. Fetches with a
-    /// streaming request body post a `HandBackHop` instead (see `on_result`).
+    /// next progress hop to be consumed (run, or released unrun at teardown)
+    /// releases `http_ref` too. Fetches with a streaming request body post a
+    /// `HandBackHop` instead (see `on_result`).
     handed_back: bool,
     /// `process.exit()` interrupted the request on the HTTP thread
     /// (`release_at_shutdown`): nothing more will arrive, so the next progress
@@ -141,7 +142,7 @@ impl http::HTTPClientResultHandler for FetchShared {
     /// already queued, post a progress update to the JS thread. The terminal
     /// result also hands the tasklet back: through `handed_back`, which the
     /// progress update that sees it acts on, or — when request-body drain hops
-    /// may be queued — as a `HandBackHop` queued after them.
+    /// may be queued — as a `HandBackHop` queued after them and after that update.
     fn on_result(&self, mut result: HTTPClientResult<'_>) {
         let is_done = !result.has_more;
         let mut state = self.state.lock();
@@ -231,10 +232,10 @@ impl http::HTTPClientResultHandler for FetchShared {
             }
         }
 
+        self.post_progress_update();
         if is_done {
             self.hand_back(&mut state);
         }
-        self.post_progress_update();
         drop(state);
         if is_done {
             // The HTTP thread is done with this fetch.
@@ -244,11 +245,11 @@ impl http::HTTPClientResultHandler for FetchShared {
 
     /// Called from `dealloc_in_flight_for_exit` on the HTTP thread for each
     /// request still in flight when `process.exit()` interrupts it. The
-    /// terminal `on_result` will never run, so post what it would have: the
-    /// hand-back, and — unless one is already queued — a last progress update,
-    /// which `released_at_shutdown` turns into just the release of the JS
-    /// side's reference. A queued update's VM releases it from its queue if it
-    /// never runs.
+    /// terminal `on_result` will never run, so post what it would have: unless
+    /// one is already queued, a last progress update — which
+    /// `released_at_shutdown` turns into just the release of the JS side's
+    /// reference — and then the hand-back. A queued update's VM releases it
+    /// from its queue if it never runs.
     ///
     /// Only reachable for a request whose VM has *not* torn down (a worker
     /// still running when the main thread exits): a VM's teardown waits for its
@@ -260,21 +261,22 @@ impl http::HTTPClientResultHandler for FetchShared {
             // No JS-thread drain will reclaim it.
             state.scheduled_response_buffer = MutableString::default();
             state.released_at_shutdown = true;
+            self.post_progress_update();
             self.hand_back(&mut state);
         }
-        self.post_progress_update();
         // The HTTP thread is done with this fetch.
         self.ticket.hand_back();
     }
 }
 
 impl FetchShared {
-    /// HTTP thread, `state` locked, nothing more to deliver: let the JS thread
-    /// release `http_ref`.
+    /// HTTP thread, `state` locked, nothing more to deliver and the last progress
+    /// update posted: let the JS thread release `http_ref`.
     fn hand_back(&self, state: &mut SharedState) {
         if self.posts_drain_hops {
-            // Its own hop: FIFO after every `RequestBodyDrainHop` this thread
-            // posted, which is what keeps the tasklet alive for those.
+            // Its own hop, the last one to name the tasklet: FIFO after every
+            // `RequestBodyDrainHop` and progress hop this thread posted, which
+            // is what keeps the tasklet alive for those.
             let task = self.hop(task_tag::FetchTaskletHandBack);
             let node = self
                 .hand_back_task
@@ -306,14 +308,22 @@ impl TaskHop for ProgressHop {
     fn run(this: ThisPtr<FetchTasklet>) -> JsResult<()> {
         FetchTasklet::on_progress_update(this)
     }
-    /// The VM is tearing down (its wait for the ticket is over, so the fetch was
-    /// handed back): release what the update would have.
+    /// The VM is tearing down: release what the update would have. Consumes the
+    /// hop like `on_progress_update` does, so a terminal result still on its way
+    /// posts a fresh one (released here in turn) that carries the hand-back.
     fn release_unrun(this: ThisPtr<FetchTasklet>) {
-        let handed_back = this.shared.state.lock().handed_back;
+        let _guard = RefPtr::from_this(this);
+        let handed_back = {
+            let state = this.shared.state.lock();
+            this.shared
+                .has_schedule_callback
+                .store(false, Ordering::Relaxed);
+            state.handed_back
+        };
+        FetchTasklet::release(this, |t| &t.progress_ref);
         if handed_back {
             FetchTasklet::release(this, |t| &t.http_ref);
         }
-        FetchTasklet::release(this, |t| &t.progress_ref);
     }
 }
 

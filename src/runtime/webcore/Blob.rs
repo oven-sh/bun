@@ -5002,7 +5002,12 @@ pub(crate) fn write_file_internal(
                         let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
                             unreachable!()
                         };
-                        locked.readable.has() || locked.on_start_streaming.is_some()
+                        locked.readable.has()
+                            || locked.on_start_streaming.is_some()
+                            || matches!(
+                                locked.producer,
+                                crate::webcore::streams::SourceHandle::FetchResponseBody(_)
+                            )
                     };
                     if streamable {
                         // SAFETY: exclusive borrow scoped to the call (may run JS).

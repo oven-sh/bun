@@ -229,6 +229,8 @@ Everything in this table except `MetalView` is written in JavaScript on the [`ob
 
 A `TextField`'s `onBlur` (and, with `continuous: false`, the pending `onChange`) fires whenever editing ends, including when your own code ends it: hiding or removing the field, replacing the window's content, closing the window (ahead of the window's `onClose`). It is then delivered as that call returns, after the change it made is complete, so the handler may freely read and change the field, its container and the window. Return in a text field calls `onSubmit`; a field without one presses the window's default button (the one whose `keyEquivalent` is `"\r"`) instead, as a native dialog does.
 
+A `TextEditor` holds plain text and keeps what is typed as typed: smart quotes, smart dashes and text replacement are off on its `NSTextView`. That is a setting of the one view; it writes nothing to the application's user defaults, so it neither follows nor changes what the user chose in System Settings.
+
 `Radio` buttons that are direct children of the same container act as one group: turning one on (by click or from code) turns the others in that container off, and only the one that was clicked fires `onChange`. Radios in different containers are independent.
 
 `click()` on a `Button`, `Checkbox`, `Radio` or `Switch` performs a real click (`performClick:`), which is how tests drive the UI without a mouse.

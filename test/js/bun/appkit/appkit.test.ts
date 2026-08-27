@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isCI, isDebug, isMacOS, tempDir } from "harness";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { existsSync, readFileSync, readdirSync, symlinkSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 
 const fixtures = join(import.meta.dir, "fixtures");
 
@@ -36,8 +36,15 @@ async function runFixture(
       : bunEnv),
     ...opts.env,
   };
+  // The binary runs through a symlink with a name of its own. That name is the
+  // process's NSUserDefaults domain, so the fixture starts from an empty domain
+  // instead of the bun.plist every `bun` script shares, and _util.ts run()
+  // reports at exit what was written there, then deletes it.
+  using dir = tempDir("appkit-fixture", {});
+  const exe = join(String(dir), `bun-appkit-fixture-${basename(name, ".ts")}-${crypto.randomUUID().slice(0, 8)}`);
+  symlinkSync(resolve(opts.exe ?? bunExe()), exe);
   await using proc = Bun.spawn({
-    cmd: [opts.exe ?? bunExe(), join(fixtures, name), ...(opts.args ?? [])],
+    cmd: [exe, join(fixtures, name), ...(opts.args ?? [])],
     env,
     cwd: fixtures,
     stdout: "pipe",
@@ -56,6 +63,10 @@ async function runFixture(
     console.error(`${name} exited with ${exitCode ?? proc.signalCode}\n${stderr}`);
   }
   const events = lines.filter(l => l.startsWith("{")).map(l => JSON.parse(l));
+  // Nothing a fixture does may persist in the user defaults (see _util.ts run()).
+  const defaults = events.find(e => e.step === "user defaults");
+  if (!skipped && exitCode === 0) expect(defaults, `${name} gave no user defaults report`).toBeDefined();
+  if (defaults) expect(defaults.added, `${name} wrote to its NSUserDefaults domain`).toEqual([]);
   return { events, skipped, stdout, stderr, exitCode, signal: proc.signalCode };
 }
 
@@ -907,7 +918,7 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
         reads: { symbol: "star.fill", font: { size: 18, weight: "bold", design: "rounded" }, tint: "red" },
         cleared: { image: null, position: 0, pointSize: true, tint: null },
         badSymbol: {
-          message: 'Button.symbol: no system symbol named "no.such.symbol.anywhere"',
+          message: "The property 'Button.symbol' names no system symbol. Received 'no.such.symbol.anywhere'",
           code: "ERR_INVALID_ARG_VALUE",
           isTypeError: true,
         },
@@ -917,11 +928,15 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
           isTypeError: true,
         },
         badTint: {
-          message: 'Button.tint: invalid color "rgb(nan,0,0)"',
+          message: "The property 'Button.tint' is not a color. Received 'rgb(nan,0,0)'",
           code: "ERR_INVALID_ARG_VALUE",
           isTypeError: true,
         },
-        badTitle: { message: "Button.title must be a string or null", code: "ERR_INVALID_ARG_TYPE", isTypeError: true },
+        badTitle: {
+          message: 'The "Button.title" property must be of type string or null. Received type number (3)',
+          code: "ERR_INVALID_ARG_TYPE",
+          isTypeError: true,
+        },
       });
       const events = step(r, "events");
       expect(events).toEqual({
@@ -1102,7 +1117,10 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
       expect(step(r, "native view")).toEqual({
         step: "native view",
         same: true,
-        unknownProp: { code: "ERR_INVALID_ARG_VALUE", message: 'Unknown property "title" for NSView' },
+        unknownProp: {
+          code: "ERR_INVALID_ARG_VALUE",
+          message: "The property 'options.title' is not a property of NSView. Received 'x'",
+        },
         width: [180, 180],
         tooltip: "when",
         parent: true,
@@ -1147,7 +1165,8 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
           scrollBars: { horizontal: true, vertical: true },
           second: { message: expect.stringContaining("ScrollView takes a single child"), code: "ERR_INVALID_STATE" },
           badBars: {
-            message: 'ScrollView.scrollBars must be "none", "horizontal", "vertical" or "both", got "sideways"',
+            message:
+              'The "ScrollView.scrollBars" property must be one of "none", "horizontal", "vertical", or "both". Received type string (\'sideways\')',
             ...badType,
           },
         },
@@ -1300,7 +1319,10 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
             'Text.textAlign must be an NSTextAlignment name ("left", "center", "right", "justified" or "natural") or value',
           ...badType,
         },
-        badLines: { message: "Text.lineLimit must be a non-negative integer or null", ...badType },
+        badLines: {
+          message: "The \"Text.lineLimit\" property must be of type number or null. Received type string ('3')",
+          ...badType,
+        },
         negativeLines: { message: "Text.lineLimit must be a non-negative integer or null", ...badType },
         fractionalLines: { message: "Text.lineLimit must be a non-negative integer or null", ...badType },
         shorthand: "short",
@@ -1319,7 +1341,7 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
         imageByHandle: true,
         imageChanged: true,
         windowBackground: [true, true],
-        notAColor: { message: 'Text.color: invalid color "noSuchColorEver"', ...badValue },
+        notAColor: { message: "The property 'Text.color' is not a color. Received 'noSuchColorEver'", ...badValue },
         notAColorClass: { message: "Text.color must be a color string, an NSColor handle or null", ...badType },
         wrongHandle: {
           message: "Text.font must be a number, a { size, weight, design, italic } object, an NSFont handle or null",
@@ -1357,7 +1379,10 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
           textAlign: "natural",
           continuous: true,
         },
-        badValue: { message: "TextField.value must be a string or null", ...badType },
+        badValue: {
+          message: 'The "TextField.value" property must be of type string or null. Received type number (7)',
+          ...badType,
+        },
       });
       // Editing a setter ends is delivered as the setter returns (pending change first), the
       // handler sees settled state and may change the view; its throw is reported.
@@ -1398,7 +1423,10 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
         enabled: [false, false],
         defaults: { value: 0, min: 0, max: 1, step: 0, continuous: true, enabled: true },
         badStep: { message: "Slider.step must be a positive number or null", ...badType },
-        badValue: { message: "Slider.value must be a number or null", ...badType },
+        badValue: {
+          message: "The \"Slider.value\" property must be of type number or null. Received type string ('1')",
+          ...badType,
+        },
       });
       expect(step(r, "choices")).toEqual({
         step: "choices",
@@ -1412,7 +1440,10 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
         after: [0, 0],
         titles: ["A,B,C", "y"],
         enabled: [false, false, true],
-        badItems: { message: "Picker.items[0] must be a string", ...badType },
+        badItems: {
+          message: 'The "Picker.items[0]" property must be of type string. Received an instance of Object',
+          ...badType,
+        },
       });
       expect(step(r, "progress")).toEqual({
         step: "progress",
@@ -1459,7 +1490,10 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
           message: 'Image.scaling must be "down", "fit", "fill" or "none", or an NSImageScaling name or value',
           ...badType,
         },
-        badSymbol: { message: 'Image.image: no system symbol named "no.such.symbol.anywhere"', ...badValue },
+        badSymbol: {
+          message: "The property 'Image.image' names no system symbol. Received 'no.such.symbol.anywhere'",
+          ...badValue,
+        },
       });
       expect(step(r, "axis")).toEqual({
         step: "axis",
@@ -1635,31 +1669,32 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
         badRows: {
           threw: true,
           isTypeError: true,
-          message: "Table.rows[0] must be an array of cell strings",
+          message: 'The "Table.rows[0]" property must be an Array of cell strings. Received an instance of Object',
           code: "ERR_INVALID_ARG_TYPE",
         },
         badColumns: {
           threw: true,
           isTypeError: true,
-          message: "Table.columns[0] must be a string or a { id, title, width } object",
+          message:
+            'The "Table.columns[0]" property must be of type string or a { id, title, width } object. Received type number (5)',
           code: "ERR_INVALID_ARG_TYPE",
         },
         badColumnTitle: {
           threw: true,
           isTypeError: true,
-          message: "Table.columns[0].title must be a string",
+          message: 'The "Table.columns[0].title" property must be of type string. Received undefined',
           code: "ERR_INVALID_ARG_TYPE",
         },
         badIndexes: {
           threw: true,
           isTypeError: true,
-          message: "Table.selectedIndexes[] must be a number",
+          message: "The \"Table.selectedIndexes[]\" property must be of type number. Received type string ('a')",
           code: "ERR_INVALID_ARG_TYPE",
         },
         badIndexesShape: {
           threw: true,
           isTypeError: true,
-          message: "Table.selectedIndexes must be an array of row indexes",
+          message: 'The "Table.selectedIndexes" property must be an Array of row indexes. Received type number (3)',
           code: "ERR_INVALID_ARG_TYPE",
         },
         uncaught: [],
@@ -1754,7 +1789,8 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
           separator: {
             threw: true,
             isTypeError: true,
-            message: "app.menuItem() expects an item or menu object from app.menu",
+            message:
+              "The \"item\" argument must be an item or menu object from app.menu. Received type string ('separator')",
           },
           copy: null,
           after: "Done|false",
@@ -1851,7 +1887,10 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
       });
       expect(step(r, "selectedIndex=string")).toEqual({
         step: "selectedIndex=string",
-        threw: { isTypeError: true, message: "Picker.selectedIndex must be a number or null" },
+        threw: {
+          isTypeError: true,
+          message: "The \"Picker.selectedIndex\" property must be of type number or null. Received type string ('1')",
+        },
       });
       expect(r.exitCode).toBe(0);
     },
@@ -1956,7 +1995,7 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
         badgeCleared: [null, null],
         isDark: "boolean",
         hasDisplay: true,
-        events: 'Unknown app event "menu"',
+        events: "The argument 'event' must be one of beforequit, willquit, reopen. Received 'menu'",
       });
       // NSTerminateLater from a subclass that calls up: listeners asked first (cancel 0 on veto, else 2 stands), nothing scheduled.
       expect(step(r, "deferred quit")).toEqual({
@@ -2099,7 +2138,8 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
     expect(sections).not.toContain("__objc_imageinfo");
     expect(sections).toMatch(/__gcc_except_tab: [1-9]/);
     expect(sections).toMatch(/__eh_frame: [1-9]/);
-    const symbols = tool("nm", exe) ?? "";
+    // -p: symbol-table order; sorting a debug build's symbols takes seconds.
+    const symbols = tool("nm", "-p", exe) ?? "";
     const catchFrames = ["_Bun__NSInvocation__tryInvoke", "_Bun__ffi__tryCall", "_Bun__objc__recognizesException"];
     const found = catchFrames.map(name => {
       const at = symbols.indexOf(" " + name + "\n");
@@ -2239,6 +2279,48 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
       expect(r.stderr).not.toContain("unrecognized selector");
     },
   );
+
+  // The exit-1 ending is only for a script's exception let out through the
+  // bridge. In a process that never loaded bun:objc (a napi addon's
+  // exception, bun's own framework calls) it is still described, then goes to
+  // the crash reporter as before.
+  test.concurrent("an NSException in a process that never loaded bun:objc is described, then crashes", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { dlopen } = require("bun:ffi");
+         const cf = dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", {
+           CFStringCreateWithCString: { args: ["ptr", "cstring", "u32"], returns: "ptr" },
+         });
+         const objc = dlopen("/usr/lib/libobjc.A.dylib", {
+           objc_getClass: { args: ["cstring"], returns: "ptr" },
+           sel_registerName: { args: ["cstring"], returns: "ptr" },
+           objc_msgSend: { args: ["ptr", "ptr", "ptr", "ptr", "ptr"], returns: "ptr" },
+         });
+         const c = s => Buffer.from(s + "\\0");
+         const str = s => cf.symbols.CFStringCreateWithCString(null, c(s), 0x08000100);
+         const exception = objc.symbols.objc_msgSend(
+           objc.symbols.objc_getClass(c("NSException")),
+           objc.symbols.sel_registerName(c("exceptionWithName:reason:userInfo:")),
+           str("BunTestException"),
+           str("raised without the bridge"),
+           null,
+         );
+         objc.symbols.objc_msgSend(exception, objc.symbols.sel_registerName(c("raise")), null, null, null);
+         console.log("not reached");`,
+      ],
+      // A deliberate crash: nothing to upload where CI sets BUN_CRASH_REPORT_URL.
+      env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).not.toContain("not reached");
+    expect(stderr).toContain("error: uncaught Objective-C exception BunTestException: raised without the bridge");
+    expect(stderr).toContain("A C++ exception occurred");
+    expect(exitCode).not.toBe(1);
+  });
 
   test.concurrent("app.quit() with no window open ends a process that only keepAlive started and holds", async () => {
     const r = await runFixture("quit.ts", { timeoutMs: 5_000, args: ["no-windows"] });
@@ -3550,11 +3632,11 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
       });
       expect(step(r, "not a function")).toMatchObject({
         ...typeError,
-        message: "objc.block(fn, types): fn must be a function",
+        message: "The \"fn\" argument must be of type function. Received type string ('nope')",
       });
       expect(step(r, "types not a string")).toMatchObject({
         ...typeError,
-        message: "objc.block(fn, types): types must be a string",
+        message: 'The "types" argument must be of type string. Received type number (3)',
       });
       expect(step(r, "unknown selector")).toMatchObject({
         ...typeError,
@@ -3975,8 +4057,7 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
         badTypes: {
           ...typeError,
           code: "ERR_INVALID_ARG_TYPE",
-          message:
-            "objc.fn(name, { returns, args }): returns must be a type encoding and args an array of type encodings",
+          message: 'The "types.args" property must be an Array of type encoding strings. Received an instance of Array',
         },
         badEncoding: {
           ...typeError,
@@ -4050,23 +4131,23 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
         badReturnsRetained: {
           ...typeError,
           code: "ERR_INVALID_ARG_TYPE",
-          message: "objc.fn(name, { returnsRetained }): returnsRetained must be a boolean",
+          message: "The \"types.returnsRetained\" property must be of type boolean. Received type string ('yes')",
         },
         badRetainedOuts: {
           ...typeError,
           code: "ERR_INVALID_ARG_VALUE",
-          message: "objc.fn(name, { retainedOuts }): retainedOuts must be an array of indexes among args",
+          message: "The property 'types.retainedOuts' must be an array of indexes among args. Received [ 0 ]",
         },
         // A fraction is not an index: it would be truncated to argument 0.
         fractionalOut: {
           ...typeError,
           code: "ERR_INVALID_ARG_VALUE",
-          message: "objc.fn(name, { retainedOuts }): retainedOuts must be an array of indexes among args",
+          message: "The property 'types.retainedOuts' must be an array of indexes among args. Received [ 0.5 ]",
         },
         fractionalFormat: {
           ...typeError,
           code: "ERR_INVALID_ARG_VALUE",
-          message: "objc.fn(name, { format }): format must be the index of the format string among args",
+          message: "The property 'types.format' must be the index of the format string among args. Received 0.5",
         },
         notAnOut: {
           ...typeError,
@@ -4339,13 +4420,13 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
       isTypeError: true,
       code: "ERR_INVALID_ARG_TYPE",
     });
-    expect(step(r, "button.width=string").message).toStartWith("Button.width must be");
+    expect(step(r, "button.width=string").message).toStartWith('The "Button.width" property must be');
     expect(step(r, "switch.hidden=string")).toMatchObject({
       threw: true,
       isTypeError: true,
       code: "ERR_INVALID_ARG_TYPE",
     });
-    expect(step(r, "switch.hidden=string").message).toStartWith("Switch.hidden must be");
+    expect(step(r, "switch.hidden=string").message).toStartWith('The "Switch.hidden" property must be');
     expect(step(r, "text.background=badcolor")).toMatchObject({ threw: true });
     expect(step(r, "text.background=badcolor").message).toMatch(/colou?r/i);
     expect(step(r, "text.background=rgb(nan)")).toMatchObject({
@@ -4360,11 +4441,17 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
     expect(step(r, "text.font.size=Infinity").message).toMatch(/positive/);
     expect(step(r, "abstract View")).toMatchObject({ threw: true });
     expect(step(r, "method as prop")).toMatchObject({ threw: true, isTypeError: true });
-    expect(step(r, "method as prop").message).toBe('Unknown property "click" for Button');
+    expect(step(r, "method as prop").message).toBe(
+      "The property 'options.click' is not a property of Button. Received [Function: click]",
+    );
     expect(step(r, "unregistered prop")).toMatchObject({ threw: true, isTypeError: true });
-    expect(step(r, "unregistered prop").message).toBe('Unknown property "kind" for Text');
+    expect(step(r, "unregistered prop").message).toBe(
+      "The property 'options.kind' is not a property of Text. Received 'x'",
+    );
     expect(step(r, "getter as prop")).toMatchObject({ threw: true, isTypeError: true });
-    expect(step(r, "getter as prop").message).toBe('Unknown property "frame" for Text');
+    expect(step(r, "getter as prop").message).toBe(
+      "The property 'options.frame' is not a property of Text. Received 1",
+    );
     expect(step(r, "subclass props")).toEqual({ step: "subclass props", threw: false });
     // Tree state (wrong parent, not a child) is ERR_INVALID_STATE; a wrong argument is a TypeError.
     const badState = { threw: true, isTypeError: false, code: "ERR_INVALID_STATE" };
@@ -4398,15 +4485,23 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
     expect(step(r, "window x without y").message).toMatch(/together/);
     expect(step(r, "restoreName after close")).toMatchObject({ threw: false });
     expect(step(r, "window show option")).toMatchObject({ threw: true, isTypeError: true });
-    expect(step(r, "window show option").message).toBe('Unknown Window option "show"');
+    expect(step(r, "window show option").message).toBe(
+      "The property 'options.show' is not a Window option. Received false",
+    );
     expect(step(r, "unknown window option")).toMatchObject({ threw: true, isTypeError: true });
-    expect(step(r, "unknown window option").message).toBe('Unknown Window option "bogus"');
+    expect(step(r, "unknown window option").message).toBe(
+      "The property 'options.bogus' is not a Window option. Received 1",
+    );
     expect(step(r, "unknown window option leak")).toEqual({ step: "unknown window option leak", leaked: 0 });
     expect(step(r, "window bad handler")).toMatchObject({ threw: true, isTypeError: true });
-    expect(step(r, "window bad handler").message).toBe("Window.onClose must be a function");
+    expect(step(r, "window bad handler").message).toBe(
+      'The "Window.onClose" property must be of type function or null. Received type number (42)',
+    );
     expect(step(r, "window bad handler leak")).toEqual({ step: "window bad handler leak", leaked: 0 });
     expect(step(r, "window bad content")).toMatchObject({ threw: true, isTypeError: true });
-    expect(step(r, "window bad content").message).toBe("Window.content must be a View or null");
+    expect(step(r, "window bad content").message).toBe(
+      'The "Window.content" property must be an instance of View or null. Received an instance of Object',
+    );
     expect(step(r, "window bad content leak")).toEqual({ step: "window bad content leak", leaked: 0 });
     expect(step(r, "window width NaN")).toMatchObject({ threw: true, isTypeError: true });
     expect(step(r, "window width NaN").message).toMatch(/finite/);
@@ -4429,7 +4524,7 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
       isTypeError: true,
       code: "ERR_INVALID_ARG_TYPE",
     });
-    expect(step(r, "window resizable=string").message).toStartWith("Window.resizable must be");
+    expect(step(r, "window resizable=string").message).toStartWith('The "Window.resizable" property must be');
     const closedWindow = { threw: true, isTypeError: false, code: "ERR_INVALID_STATE" };
     expect(step(r, "hide after close")).toMatchObject(closedWindow);
     expect(step(r, "hide after close").message).toMatch(/closed/);
@@ -4453,7 +4548,7 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
     });
     expect(step(r, "metal.clearColor=bogus")).toMatchObject({
       ...badValue,
-      message: 'MetalView.clearColor: invalid color "bogus"',
+      message: "The property 'MetalView.clearColor' is not a color. Received 'bogus'",
     });
     expect(step(r, "metal.clearColor=rgb(nan)")).toMatchObject(badValue);
     expect(step(r, "metal.running=string")).toMatchObject(badType);
@@ -4463,7 +4558,7 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
     expect(step(r, "metal.onFrame=number")).toMatchObject({
       threw: true,
       isTypeError: true,
-      message: "MetalView.onFrame must be a function",
+      message: 'The "MetalView.onFrame" property must be of type function or null. Received type number (42)',
     });
     expect(step(r, "metal props")).toEqual({
       step: "metal props",
@@ -4478,7 +4573,7 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
       running: true,
       preferredFPS: 30,
       onFrame: null,
-      unknown: 'Unknown property "colour" for MetalView',
+      unknown: "The property 'options.colour' is not a property of MetalView. Received 'red'",
     });
     expect(r.exitCode).toBe(0);
   });
@@ -4542,12 +4637,12 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
         m3: [1, 4, 7],
       });
       for (const [name, pattern] of [
-        ["unknown type", /"a".*float5/],
+        ["unknown type", /'fields\.a'.*float5/],
         ["no fields", /at least one field/],
         ["bad name", /identifier/],
-        ["wrong length", /Uniforms\.b .*3.*float3.*got 2/],
+        ["wrong length", /'Uniforms\.b'.*3.*float3.*Received \[ 1, 2 \]/],
         ["unknown field", /nope/],
-        ["scalar as string", /Uniforms\.a must be a number/],
+        ["scalar as string", /"Uniforms\.a" property must be of type number/],
       ] as const) {
         expect(step(r, name)).toMatchObject({ step: name, threw: true, isTypeError: true });
         expect(step(r, name).message).toMatch(pattern);
@@ -4626,7 +4721,7 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
         threw: true,
         isTypeError: true,
         code: "ERR_INVALID_ARG_VALUE",
-        message: 'frame.renderPass() clear: invalid color "nope"',
+        message: "The argument 'clear' is not a color. Received 'nope'",
       });
       expect(step(r, "attribute described twice")).toMatchObject({ threw: true, isCompileError: true });
       expect(step(r, "bind offset equal to length")).toMatchObject({ threw: true, isRangeError: true });
@@ -4708,7 +4803,10 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
         passes: {
           white: "ok",
           "rgba(255, 0, 0, 0.5)": "ok",
-          nope: { message: 'frame.renderPass() clear: invalid color "nope"', code: "ERR_INVALID_ARG_VALUE" },
+          nope: {
+            message: "The argument 'clear' is not a color. Received 'nope'",
+            code: "ERR_INVALID_ARG_VALUE",
+          },
           7: {
             message: expect.stringMatching(/clear must be an \[r, g, b, a\] array or a color string/),
             code: "ERR_INVALID_ARG_TYPE",

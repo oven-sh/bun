@@ -88,7 +88,7 @@ await run(async () => {
   emit({
     step: "processName",
     type: typeof processName,
-    matchesExecutable: processName === basename(process.execPath),
+    matchesExecutable: processName === basename(process.argv0),
   });
 
   const strings = NSMutableArray.new();
@@ -246,8 +246,10 @@ await run(async () => {
     true,
   );
   const newWindow = NSWindow.new();
-  // A panel AppKit owns is left as it is (panels already default to NO).
-  const sharedPanel = objc.classes.NSColorPanel.sharedColorPanel();
+  // A panel AppKit owns is left as it is (panels already default to NO). The
+  // font panel rather than the color panel: making that one saves its toolbar
+  // configuration in the user defaults.
+  const sharedPanel = objc.classes.NSFontPanel.sharedFontPanel();
   const releasedWhenClosed = [
     rawWindow.isReleasedWhenClosed(),
     newWindow.isReleasedWhenClosed(),

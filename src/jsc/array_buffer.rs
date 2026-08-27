@@ -172,12 +172,16 @@ impl ArrayBuffer {
 /// an [`FfiSlice`](bun_core::ffi::FfiSlice) for C code (a codec) to read,
 /// under the job's [`Ticket`](crate::Ticket). Made on the JS thread and
 /// released there when the job comes back.
-pub struct JobPinnedArrayBuffer(PinnedArrayBuffer);
+pub struct JobPinnedArrayBuffer {
+    buffer: PinnedArrayBuffer,
+    /// The VM whose heap owns `buffer`: the only thread that may unpin/unroot it.
+    owner: *const crate::virtual_machine::VirtualMachine,
+}
 
 // SAFETY: the only off-thread operation is `ffi_slice`, which demands a
 // `Ticket` (VM alive) and lends memory that is pinned in place and rooted for
 // as long as `self` lives, never as a `&[u8]`; `Drop` releases pin/root only
-// on a JS thread (see there) and is a leak, not a race, anywhere else.
+// on the owning VM's thread (see there) and is a leak, not a race, anywhere else.
 unsafe impl Send for JobPinnedArrayBuffer {}
 
 impl JobPinnedArrayBuffer {
@@ -191,11 +195,14 @@ impl JobPinnedArrayBuffer {
         if buffer.resizable || buffer.shared || buffer.ptr.is_null() {
             return None;
         }
-        Some(Self(buffer))
+        Some(Self {
+            buffer,
+            owner: global.bun_vm_ptr().cast_const(),
+        })
     }
 
     pub fn byte_len(&self) -> usize {
-        self.0.byte_len
+        self.buffer.byte_len
     }
 
     /// The bytes, for C code to read from any thread that holds a job's
@@ -206,17 +213,20 @@ impl JobPinnedArrayBuffer {
         // while `self` lives, and the heap outlives the ticket: the `byte_len`
         // bytes at `ptr` stay allocated for `'a`. May be concurrently written
         // by JS; `FfiSlice` never forms a `&[u8]` over it.
-        unsafe { bun_core::ffi::FfiSlice::from_raw(self.0.ptr.cast_const(), self.0.byte_len) }
+        unsafe {
+            bun_core::ffi::FfiSlice::from_raw(self.buffer.ptr.cast_const(), self.buffer.byte_len)
+        }
     }
 }
 
 impl Drop for JobPinnedArrayBuffer {
     fn drop(&mut self) {
-        // Pin count and the protected-values table belong to the JS thread. A
-        // job always comes back to its VM's thread to drop this; a thread with
-        // no VM (nothing else should hold one) leaks the pin instead of racing.
-        if crate::virtual_machine::VirtualMachine::get_or_null().is_none() {
-            self.0.defuse();
+        // Pin count and the protected-values table belong to the owning VM's
+        // thread. A job always comes back there to drop this; any other thread
+        // (no VM, or another VM's) leaks the pin instead of racing.
+        let here = crate::virtual_machine::VirtualMachine::get_or_null();
+        if here.map(<*mut _>::cast_const) != Some(self.owner) {
+            self.buffer.defuse();
         }
     }
 }

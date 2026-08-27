@@ -2860,6 +2860,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         { BuiltinName::k_telemetrySpanEnd, 1, Bun::jsTelemetrySpanEndPrivate },
         { BuiltinName::k_telemetrySpanFailNoJS, 2, Bun::jsTelemetrySpanFailNoJSPrivate },
         { BuiltinName::k_telemetrySetAttribute, 3, Bun::jsTelemetrySetAttribute },
+        { BuiltinName::k_telemetrySetAttributes, 3, Bun::jsTelemetrySetAttributes },
         { BuiltinName::k_telemetrySetName, 2, Bun::jsTelemetrySetName },
         { BuiltinName::k_telemetrySetStatus, 3, Bun::jsTelemetrySetStatus },
         { BuiltinName::k_telemetryAddEvent, 4, Bun::jsTelemetryAddEvent },

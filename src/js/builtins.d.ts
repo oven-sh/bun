@@ -578,6 +578,8 @@ declare function $isPromise<T>(value: unknown): value is Promise<T>;
 declare function $isTelemetrySpan(value: unknown): boolean;
 // JSTelemetrySpan.cpp: mutators for native-owned spans (state lives in a bun_telemetry::pool slot).
 declare function $telemetrySetAttribute(span: unknown, key: string, value: unknown): void;
+// Plain `attributes` in one call; false = pass `$telemetryFlattenAttributes(attributes)` as `flat` instead.
+declare function $telemetrySetAttributes(span: unknown, attributes: object | null, flat: unknown[] | null): boolean;
 declare function $telemetrySetName(span: unknown, name: string): void;
 declare function $telemetrySetStatus(span: unknown, code: number, message: string): void;
 /** JS-owned spans too: buffers the event (timestamped now if `time` is absent) until end(). */

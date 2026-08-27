@@ -165,6 +165,13 @@ describe("Bun.serve", () => {
         const active = Bun.otel.activeSpan()!;
         expect(active.kind).toBe(1); // api SpanKind.SERVER
         active.setAttribute("app.user", "u1");
+        active.setAttributes({ "app.plain": 1, "app.list": ["a", 2], "app.skip": undefined });
+        active.setAttributes({
+          get "app.getter"() {
+            return "g";
+          },
+        });
+        Bun.otel.set({ "app.set": true, "app.キー": "値" });
         await Bun.sleep(1);
         expect(Bun.otel.activeSpan()).toBe(active);
         const child = tracer.startSpan("work");
@@ -177,6 +184,14 @@ describe("Bun.serve", () => {
     const [srv] = byName(got, "bun.http.server");
     const [work] = byName(got, "app");
     expect(srv.attributes["app.user"]).toBe("u1");
+    expect(srv.attributes).toMatchObject({
+      "app.plain": 1,
+      "app.list": ["a", 2],
+      "app.getter": "g",
+      "app.set": true,
+      "app.キー": "値",
+    });
+    expect(srv.attributes).not.toHaveProperty("app.skip");
     expect(work.parentSpanId).toBe(srv.spanId);
     expect(work.traceId).toBe(srv.traceId);
   });

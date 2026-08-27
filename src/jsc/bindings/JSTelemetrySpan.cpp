@@ -124,10 +124,17 @@ extern "C" BunString Bun__TelemetrySpan__baggage(JSC::EncodedJSValue v)
 
 // ─── attribute gathering ───
 //
-// Turns the builtins' flat `[key0, value0, …]` arrays into TelemetryAttrRefs
-// for one Rust call. Only own, already-present array elements are read; no JS
-// runs and nothing throws, so the borrowed strings stay valid until the call
-// returns.
+// Turns the builtins' flat `[key0, value0, …]` arrays (or a plain object's
+// own properties) into TelemetryAttrRefs for one Rust call. Only own,
+// already-present elements are read; no JS runs and nothing throws, so the
+// borrowed strings stay valid until the call returns.
+
+// A `{ key: value, … }` whose own enumerable properties can be walked off its
+// Structure without running JS (no getters, proxies or indexed storage).
+static bool isPlainAttributesObject(JSObject* object)
+{
+    return object->type() == FinalObjectType && object->structure()->canPerformFastPropertyEnumeration() && !hasIndexedProperties(object->indexingType());
+}
 
 class TelemetryAttrGatherer {
 public:
@@ -140,6 +147,8 @@ public:
     // null | JSArray [key0, value0, …] → the slice of pool().items it fills.
     TelemetryAttrSlice gather(JSValue flat);
     TelemetryAttrSlice gatherOne(JSString* key, JSValue value);
+    // An isPlainAttributesObject's own enumerable properties, keys borrowed from its Structure.
+    TelemetryAttrSlice gatherPlainObject(VM&, JSObject*);
 
 private:
     bool fill(TelemetryAttrRef&, JSValue, bool allowArray);
@@ -252,6 +261,31 @@ TelemetryAttrSlice TelemetryAttrGatherer::gather(JSValue flatValue)
         }
         m_items.last().key = telemetryBorrow(key);
     }
+    return { start, static_cast<uint32_t>(m_items.size() - start) };
+}
+
+TelemetryAttrSlice TelemetryAttrGatherer::gatherPlainObject(VM& vm, JSObject* object)
+{
+    ASSERT(isPlainAttributesObject(object));
+    uint32_t start = m_items.size();
+    object->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+        if ((entry.attributes() & PropertyAttribute::DontEnum) || entry.key()->isSymbol())
+            return true;
+        JSValue v = object->getDirect(entry.offset());
+        if (v.isUndefinedOrNull())
+            return true;
+        if (m_items.size() - start >= kTelemetryMaxGather) {
+            ++m_dropped;
+            return true;
+        }
+        m_items.grow(m_items.size() + 1);
+        if (!fill(m_items.last(), v, true)) {
+            m_items.shrink(m_items.size() - 1);
+            return true;
+        }
+        m_items.last().key = Bun::toString(static_cast<WTF::StringImpl*>(entry.key()));
+        return true;
+    });
     return { start, static_cast<uint32_t>(m_items.size() - start) };
 }
 
@@ -406,6 +440,41 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetrySetAttribute, (JSGlobalObject * lexicalGloba
     TelemetryAttrPool pool = gatherer.pool();
     Bun__Telemetry__nativeSetAttributes(globalObject, span->m_native, &pool);
     return JSValue::encode(jsUndefined());
+}
+
+// Every attribute of a plain `object` onto a pooled span in one call. False
+// (nothing set) when `object` needs JS to enumerate.
+static bool telemetryNativeSetAttributesOf(Zig::GlobalObject* globalObject, TelemetryNativeHandle handle, JSObject* object)
+{
+    if (!isPlainAttributesObject(object))
+        return false;
+    TelemetryAttrGatherer gatherer;
+    if (gatherer.gatherPlainObject(globalObject->vm(), object).length) {
+        TelemetryAttrPool pool = gatherer.pool();
+        Bun__Telemetry__nativeSetAttributes(globalObject, handle, &pool);
+    }
+    return true;
+}
+
+// $telemetrySetAttributes(span, attributes: object | null, flat: [key0, value0, …] | null):
+// false when `attributes` needs JS to enumerate — flatten it and pass `flat` instead.
+JSC_DEFINE_HOST_FUNCTION(jsTelemetrySetAttributes, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto* span = toTelemetrySpan(callFrame->argument(0));
+    if (!span || !span->m_native)
+        return JSValue::encode(jsBoolean(true));
+    JSValue flat = callFrame->argument(2);
+    if (flat.isCell()) {
+        TelemetryAttrGatherer gatherer;
+        if (gatherer.gather(flat).length) {
+            TelemetryAttrPool pool = gatherer.pool();
+            Bun__Telemetry__nativeSetAttributes(globalObject, span->m_native, &pool);
+        }
+        return JSValue::encode(jsBoolean(true));
+    }
+    JSValue attributes = callFrame->argument(1);
+    return JSValue::encode(jsBoolean(attributes.isObject() && telemetryNativeSetAttributesOf(globalObject, span->m_native, asObject(attributes))));
 }
 
 // $telemetrySetName(span, name: string)
@@ -603,12 +672,14 @@ void telemetrySpanSetAttributes(Zig::GlobalObject* globalObject, JSTelemetrySpan
     if (!attributes.isObject() || !(span->state() & JSTelemetrySpan::Recording))
         return;
     JSObject* object = asObject(attributes);
-    Structure* structure = object->structure();
-    if (object->type() == FinalObjectType && structure->canPerformFastPropertyEnumeration() && !hasIndexedProperties(object->indexingType())) {
+    if (span->m_native) {
+        if (telemetryNativeSetAttributesOf(globalObject, span->m_native, object))
+            return;
+    } else if (isPlainAttributesObject(object)) {
         using Field = JSTelemetrySpan::Field;
-        bool fresh = !span->m_native && !span->get(Field::Attributes).isCell();
+        bool fresh = !span->get(Field::Attributes).isCell();
         MarkedArgumentBuffer flat;
-        structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+        object->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
             if (entry.attributes() & PropertyAttribute::DontEnum)
                 return true;
             if (entry.key()->isSymbol())

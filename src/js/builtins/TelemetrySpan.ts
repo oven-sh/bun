@@ -135,11 +135,8 @@ export function telemetrySpanSetAttributesImpl(span: any, attributes: unknown) {
   const state = $getInternalField(span, Field.State) as number;
   if (!(state & State.Recording) || attributes == null || typeof attributes !== "object") return span;
   if (state & State.Native) {
-    const keys = Object.keys(attributes as object);
-    for (let i = 0; i < keys.length; i++) {
-      const value = attributes[keys[i]];
-      if (value != null) $telemetrySetAttribute(span, keys[i], value);
-    }
+    if (!$telemetrySetAttributes(span, attributes as object, null))
+      $telemetrySetAttributes(span, null, $telemetryFlattenAttributes(attributes));
     return span;
   }
   const keys = Object.keys(attributes as object);

@@ -207,6 +207,7 @@ using namespace JSC;
     macro(telemetryWrapTarget) \
     macro(telemetryWrapName) \
     macro(telemetrySetAttribute) \
+    macro(telemetrySetAttributes) \
     macro(telemetrySetName) \
     macro(telemetrySetStatus) \
     macro(text) \

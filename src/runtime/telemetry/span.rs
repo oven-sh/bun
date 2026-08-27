@@ -780,14 +780,17 @@ pub extern "C" fn Bun__Telemetry__nativeSetAttributes(
         return false;
     };
     let Local { pool, scratch, .. } = &mut *l;
-    if !pool::with_ref(pool, handle, |s| s.stub.is_recording()).unwrap_or(false) {
-        return false;
-    }
     let [scratch @ .., _] = scratch;
-    each_attr(attrs.items(), attrs, scratch, |k, v| {
-        pool::with(pool, handle, |s| s.set_attribute(k, v, lim));
-    });
-    true
+    pool::with(pool, handle, |s| {
+        if !s.stub.is_recording() {
+            return false;
+        }
+        each_attr(attrs.items(), attrs, scratch, |k, v| {
+            s.set_attribute(k, v, lim)
+        });
+        true
+    })
+    .unwrap_or(false)
 }
 
 #[unsafe(no_mangle)]

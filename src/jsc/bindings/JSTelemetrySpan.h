@@ -113,6 +113,7 @@ JSC_DECLARE_HOST_FUNCTION(jsIsTelemetrySpan);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetrySpanEndPrivate);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetrySpanFailNoJSPrivate);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetrySetAttribute);
+JSC_DECLARE_HOST_FUNCTION(jsTelemetrySetAttributes);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetrySetName);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetrySetStatus);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetryAddEvent);

@@ -166,6 +166,7 @@ const IMAGE_DIRECTORY_ENTRY_IMPORT: usize = 1;
 const IMAGE_DIRECTORY_ENTRY_EXCEPTION: usize = 3;
 const IMAGE_DIRECTORY_ENTRY_SECURITY: usize = 4;
 const IMAGE_DIRECTORY_ENTRY_BASERELOC: usize = 5;
+const IMAGE_DIRECTORY_ENTRY_DEBUG: usize = 6;
 const IMAGE_DIRECTORY_ENTRY_TLS: usize = 9;
 const IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT: usize = 13;
 const IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY: u16 = 0x0080;
@@ -527,9 +528,10 @@ impl PEFile {
         Ok(())
     }
 
-    /// Checks `count` more section headers fit (section cap, header area ending before the data).
+    /// Makes room for `count` more section headers: checks the section cap, and when the header
+    /// area ends too close to the first section's data, grows it (`grow_headers`).
     fn reserve_section_headers(
-        &self,
+        &mut self,
         count: usize,
         file_alignment: u32,
     ) -> Result<HeaderSlack, Error> {
@@ -543,18 +545,115 @@ impl PEFile {
             file_alignment,
         )?;
         let mut first_raw: u32 = u32::try_from(self.data.len()).expect("int cast");
+        let mut first_va: u32 = u32::MAX;
         for section in self.get_section_headers()? {
             if section.size_of_raw_data > 0 && section.pointer_to_raw_data < first_raw {
                 first_raw = section.pointer_to_raw_data;
             }
+            first_va = first_va.min(section.virtual_address);
         }
         if size_of_headers > first_raw {
-            return Err(Error::InsufficientHeaderSpace);
+            self.grow_headers(first_raw, size_of_headers, first_va, file_alignment)?;
+            first_raw = size_of_headers;
         }
         Ok(HeaderSlack {
             size_of_headers,
             first_raw,
         })
+    }
+
+    /// Moves every section's raw data up so that the header area ends at `size_of_headers`
+    /// instead of `first_raw`, and fixes up the file offsets that point into it: the section
+    /// headers, the debug directory entries and the COFF symbol table. Everything else in a PE
+    /// image is an RVA, which does not change. The headers share their page with nothing until
+    /// the first section's address, so that is how far they can grow.
+    fn grow_headers(
+        &mut self,
+        first_raw: u32,
+        size_of_headers: u32,
+        first_va: u32,
+        file_alignment: u32,
+    ) -> Result<(), Error> {
+        if size_of_headers > first_va
+            || !first_raw.is_multiple_of(file_alignment)
+            || first_raw as usize > self.data.len()
+        {
+            return Err(Error::InsufficientHeaderSpace);
+        }
+        // The certificate table is the one other structure addressed by file offset.
+        self.strip_authenticode()?;
+
+        // IMAGE_DEBUG_DIRECTORY is 28 bytes; PointerToRawData, the file offset of the entry's
+        // data, is at +24. Located before the move, in the current layout.
+        const DEBUG_ENTRY_SIZE: usize = 28;
+        let debug_entries: Vec<usize> = {
+            let view = AddonView::init(&self.data)?;
+            let dir = view.dir(IMAGE_DIRECTORY_ENTRY_DEBUG);
+            if dir.size == 0 {
+                Vec::new()
+            } else {
+                let Ok(first) = view.rva_to_off(dir.virtual_address) else {
+                    return Err(Error::InsufficientHeaderSpace);
+                };
+                if view.slice_at_rva(dir.virtual_address, dir.size).is_err() {
+                    return Err(Error::InsufficientHeaderSpace);
+                }
+                (0..dir.size as usize / DEBUG_ENTRY_SIZE)
+                    .map(|i| first as usize + i * DEBUG_ENTRY_SIZE)
+                    .collect()
+            }
+        };
+
+        let grow = size_of_headers - first_raw;
+        let shift = |offset: u32| -> u32 {
+            if offset >= first_raw {
+                offset + grow
+            } else {
+                offset
+            }
+        };
+        self.data.splice(
+            first_raw as usize..first_raw as usize,
+            core::iter::repeat_n(0u8, grow as usize),
+        );
+
+        for i in 0..self.num_sections as usize {
+            let header = view_at_mut::<SectionHeader>(
+                &mut self.data,
+                self.section_headers_offset + i * size_of::<SectionHeader>(),
+            )?;
+            // SAFETY: header points into self.data at a bounds-checked offset; the struct is
+            // packed, so the field goes through its raw address.
+            unsafe {
+                let field = ptr::addr_of_mut!((*header).pointer_to_raw_data);
+                field.write_unaligned(shift(field.read_unaligned()));
+            }
+        }
+
+        let pe_header = self.get_pe_header_mut()?;
+        // SAFETY: pe_header points into self.data at a validated offset.
+        unsafe {
+            let field = ptr::addr_of_mut!((*pe_header).pointer_to_symbol_table);
+            let pointer = field.read_unaligned();
+            if pointer != 0 {
+                field.write_unaligned(shift(pointer));
+            }
+        }
+
+        let opt = self.get_optional_header_mut()?;
+        // SAFETY: opt points into self.data at a validated offset.
+        unsafe {
+            (*opt).size_of_headers = size_of_headers;
+        }
+
+        for entry in debug_entries {
+            let at = shift(u32::try_from(entry).map_err(|_| Error::Overflow)?) as usize + 24;
+            let pointer = read_u32_le(&self.data, at);
+            if pointer != 0 {
+                self.data[at..at + 4].copy_from_slice(&shift(pointer).to_le_bytes());
+            }
+        }
+        Ok(())
     }
 
     /// Add a new section to the PE file for storing Bun module data
@@ -578,14 +677,15 @@ impl PEFile {
             }
         }
 
-        // 4. Compute header slack requirement
+        // 4. Compute header slack requirement (may move the raw data to make room)
         let HeaderSlack {
             size_of_headers: new_size_of_headers,
             first_raw,
         } = self.reserve_section_headers(1, file_alignment)?;
 
         // 5. Placement calculations
-        // Recompute last_file_end and last_va_end after strip
+        // Recompute last_file_end and last_va_end after strip and reserve
+        let section_headers = self.get_section_headers()?;
         let mut last_file_end: u32 = 0;
         let mut last_va_end: u32 = 0;
         for section in section_headers {
@@ -1193,7 +1293,7 @@ impl PEFile {
         })
     }
 
-    /// Appends `payload` at `place` (still the next free placement); strips any signature first.
+    /// Appends `payload` at `place.va` (still the next free placement); strips any signature first.
     fn append_section(
         &mut self,
         place: SectionPlacement,
@@ -1212,18 +1312,21 @@ impl PEFile {
             opt.section_alignment,
         )?;
         self.reserve_section_headers(1, opt.file_alignment)?;
+        // Reserving may have moved the raw data; the address side of `place` is unaffected.
+        let raw = self.next_section_placement()?.raw;
+        debug_assert_eq!(self.next_section_placement()?.va, place.va);
 
-        let new_file_size = place.raw as usize + raw_size as usize;
+        let new_file_size = raw as usize + raw_size as usize;
         self.data.resize(new_file_size, 0);
-        self.data[place.raw as usize..new_file_size].fill(0);
-        self.data[place.raw as usize..][..payload.len()].copy_from_slice(payload);
+        self.data[raw as usize..new_file_size].fill(0);
+        self.data[raw as usize..][..payload.len()].copy_from_slice(payload);
 
         let sh = SectionHeader {
             name,
             virtual_size,
             virtual_address: place.va,
             size_of_raw_data: raw_size,
-            pointer_to_raw_data: place.raw,
+            pointer_to_raw_data: raw,
             pointer_to_relocations: 0,
             pointer_to_line_numbers: 0,
             number_of_relocations: 0,

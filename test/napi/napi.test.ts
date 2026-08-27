@@ -182,17 +182,16 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
             const count = extractedCount();
             if (isWindows) {
               // On Windows the addons are merged into the exe instead of being
-              // extracted. The merge is best-effort: bun.exe has a fixed number
-              // of spare section-header slots, so with ~11 addons in this
-              // fixture assert that it engaged (.bunL/.bn0 present) and that
-              // fewer than the 5 top-level addons were extracted, not that
-              // every addon merged (x64 CI currently leaves 2 unmerged, aarch64 3).
+              // extracted: all of this fixture's node-gyp addons qualify, so
+              // none reaches the temp dir. (The merge grows the exe's header
+              // area when bun.exe has fewer spare section-header slots than
+              // the addons need.)
               expect(
                 peHasSection(exe, ".bunL"),
                 ".node addon should be statically linked into the compiled exe",
               ).toBeTrue();
               expect(peHasSection(exe, ".bn0")).toBeTrue();
-              expect(count, `extracted to temp: ${JSON.stringify(readdirSync(String(tmpdir)))}`).toBeLessThan(5);
+              expect(count, `extracted to temp: ${JSON.stringify(readdirSync(String(tmpdir)))}`).toBe(0);
             } else {
               expect(count).toBeGreaterThan(0);
             }

@@ -638,13 +638,85 @@ describe("pe.addLinkedAddon adversarial input", () => {
   // Host-side resource limits — not attacker-controlled in practice, but
   // worth pinning down the behaviour.
 
-  test("host with no spare section-header slots returns InsufficientHeaderSpace", () => {
+  // makeHost with its header area cut down to one file-alignment unit: room for two more
+  // section headers, one short of what a merge appends (.bn0, .bunL, .bun). bun.exe's own
+  // header area is this tight. Optionally carries a debug directory entry and a COFF symbol
+  // table pointer, the two other file offsets the merge has to move along with the data.
+  function makeTightHost(withFileOffsets: boolean): Buffer {
+    const TEXT_RVA = SECT_ALIGN;
+    const DEBUG_DIR_RVA = TEXT_RVA + 0x100;
+    const host = makeHost(b => {
+      b.writeUInt32LE(FILE_ALIGN, OPTOFF + 60); // SizeOfHeaders
+      b.writeUInt32LE(FILE_ALIGN, SHOFF + 20); // .text PointerToRawData
+      if (withFileOffsets) {
+        b.writeUInt32LE(FILE_ALIGN + 0x180, PEOFF + 12); // PointerToSymbolTable, inside .text
+        b.writeUInt32LE(DEBUG_DIR_RVA, DDOFF + 6 * 8); // IMAGE_DIRECTORY_ENTRY_DEBUG
+        b.writeUInt32LE(28, DDOFF + 6 * 8 + 4);
+      }
+    });
+    // .text's bytes now live at FILE_ALIGN; fill them so the move below is observable.
+    const text = Buffer.alloc(FILE_ALIGN);
+    for (let i = 0; i < text.length; i++) text[i] = (i * 7 + 3) & 0xff;
+    if (withFileOffsets) {
+      const entry = 0x100; // the debug directory entry, at DEBUG_DIR_RVA
+      text.writeUInt32LE(2, entry + 12); // Type: IMAGE_DEBUG_TYPE_CODEVIEW
+      text.writeUInt32LE(16, entry + 16); // SizeOfData
+      text.writeUInt32LE(TEXT_RVA + 0x140, entry + 20); // AddressOfRawData (an RVA, stays)
+      text.writeUInt32LE(FILE_ALIGN + 0x140, entry + 24); // PointerToRawData (a file offset, moves)
+    }
+    return Buffer.concat([host.subarray(0, FILE_ALIGN), text]);
+  }
+
+  test("a host with too few spare section-header slots gets a larger header area", () => {
+    const host = makeTightHost(false);
+    const r = peLinkAddon(host, makeAddon(), "x");
+    expect(expectSafe(r)).toBe("merged");
+    const out = Buffer.from(r.output!);
+    // One section header plus the three appended ones end at 0x228, so the header area grows
+    // to the next file-alignment boundary and every section's data moves up by the same amount.
+    expect(out.readUInt32LE(OPTOFF + 60)).toBe(2 * FILE_ALIGN);
+    const text = sectionHeaders(out).find(s => s.name === ".text")!;
+    expect(text.rawPtr).toBe(2 * FILE_ALIGN);
+    expect(out.subarray(text.rawPtr, text.rawPtr + text.rawSize).equals(host.subarray(FILE_ALIGN))).toBe(true);
+    // Addresses do not move: the merge still lands where it would have in the roomy host.
+    expect(r.rvaBase).toBe(peLinkAddon(makeHost(), makeAddon(), "x").rvaBase);
+  });
+
+  test("growing the header area moves the debug directory and symbol table file offsets too", () => {
+    const r = peLinkAddon(makeTightHost(true), makeAddon(), "x");
+    expect(expectSafe(r)).toBe("merged");
+    const out = Buffer.from(r.output!);
+    expect(out.readUInt32LE(PEOFF + 12)).toBe(2 * FILE_ALIGN + 0x180);
+    const entry = fileOffset(out, SECT_ALIGN + 0x100);
+    expect(entry).toBe(2 * FILE_ALIGN + 0x100);
+    expect(out.readUInt32LE(entry + 20)).toBe(SECT_ALIGN + 0x140);
+    expect(out.readUInt32LE(entry + 24)).toBe(2 * FILE_ALIGN + 0x140);
+  });
+
+  test("the header area cannot grow into the first section", () => {
+    // 92 sections fill the header area right up to .text's address, so the three appended
+    // headers have nowhere to go: the merge is refused rather than overlapping the section.
     const r = peLinkAddon(
-      // SizeOfHeaders leaves room for exactly the one existing section
-      // header and nothing more: first_raw sits right after it.
       makeHost(b => {
-        const firstRaw = SHOFF + 40; // one section header
-        b.writeUInt32LE(firstRaw, SHOFF + 20); // .text PointerToRawData
+        const extra = 91;
+        b.writeUInt16LE(1 + extra, PEOFF + 6);
+        for (let i = 1; i <= extra; i++) {
+          const h = SHOFF + i * 40;
+          b.write(`.e${i}`, h, "latin1");
+          b.writeUInt32LE(SECT_ALIGN, h + 12); // VirtualAddress, empty section
+          b.writeUInt32LE(0x40000040, h + 36);
+        }
+      }),
+      makeAddon(),
+      "x",
+    );
+    expect(r.error).toContain("InsufficientHeaderSpace");
+  });
+
+  test("a host whose first section's data is not file-aligned cannot grow its header area", () => {
+    const r = peLinkAddon(
+      makeHost(b => {
+        b.writeUInt32LE(SHOFF + 40, SHOFF + 20); // .text PointerToRawData right after its header
       }),
       makeAddon(),
       "x",

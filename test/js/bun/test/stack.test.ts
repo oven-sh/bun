@@ -176,18 +176,20 @@ test("Async functions frame should be included in stack trace", async () => {
   `);
 });
 
-test("error.stack is formatted lazily with live frames when a GC runs between creation and the first read", async () => {
-  // Every error here is created inside a function object that is unreachable by the time
-  // Bun.gc runs: the module's top-level callee before its first await, an IIFE, a .then
-  // callback, an async function prologue, and Error.captureStackTrace inside an IIFE.
-  // JSC used to hold the captured frames weakly and pre-render a frames-only string from the
-  // GC end phase once one of them died. That string had no message and skipped
-  // Error.prepareStackTrace.
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const tla = new Error("tla message");
+test.concurrent(
+  "error.stack is formatted lazily with live frames when a GC runs between creation and the first read",
+  async () => {
+    // Every error here is created inside a function object that is unreachable by the time
+    // Bun.gc runs: the module's top-level callee before its first await, an IIFE, a .then
+    // callback, an async function prologue, and Error.captureStackTrace inside an IIFE.
+    // JSC used to hold the captured frames weakly and pre-render a frames-only string from the
+    // GC end phase once one of them died. That string had no message and skipped
+    // Error.prepareStackTrace.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const tla = new Error("tla message");
        await 0;
 
        let iife;
@@ -226,28 +228,29 @@ test("error.stack is formatted lazily with live frames when a GC runs between cr
          "PST " + err.name + ": " + err.message + " | " + callSites.length + ":" + callSites[0].getFunctionName();
        results.pst = head(pst.stack);
        console.log(JSON.stringify(results));`,
-    ],
-    env: bunEnv,
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({
-    tla: "Error: tla message",
-    iife: "RangeError: iife message",
-    iifeFrame: "at dies",
-    then: "Error: then message",
-    prologue: "TypeError: prologue message",
-    prologueFrame: "at prologue",
-    captured: "Error: captured message",
-    capturedFrame: "at capturer",
-    inspect: "RangeError: iife message",
-    pst: "PST Error: pst message | 2:pstFn",
-  });
-  expect(exitCode).toBe(0);
-});
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      tla: "Error: tla message",
+      iife: "RangeError: iife message",
+      iifeFrame: "at dies",
+      then: "Error: then message",
+      prologue: "TypeError: prologue message",
+      prologueFrame: "at prologue",
+      captured: "Error: captured message",
+      capturedFrame: "at capturer",
+      inspect: "RangeError: iife message",
+      pst: "PST Error: pst message | 2:pstFn",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
-test("frames stored into an old error are kept alive across an eden collection", async () => {
+test.concurrent("frames stored into an old error are kept alive across an eden collection", async () => {
   // Two full collections promote the errors before any frame is stored into them. The frames
   // stored afterwards are young and belong to function objects that die at once, so only the
   // write barrier fired by the store keeps them marked through the next eden collection. A
@@ -297,7 +300,7 @@ test("frames stored into an old error are kept alive across an eden collection",
 // An error keeps its captured frames alive until the first .stack read, as in V8. JSC used to hold
 // them weakly: once a frame's callee died, the GC rendered the stack string itself, where
 // Error.prepareStackTrace cannot run. A GC between the throw and the first read must not be observable.
-describe("Error.prepareStackTrace when a GC runs before the first .stack read", () => {
+describe.concurrent("Error.prepareStackTrace when a GC runs before the first .stack read", () => {
   async function runScript(script: string, args: string[] = []) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script, ...args],

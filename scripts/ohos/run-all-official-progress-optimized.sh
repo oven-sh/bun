@@ -244,7 +244,6 @@ run_test() {
     # 单跑实测 4-10 分钟（bun-install 386s / bun-add-filter 599s / bun-add
     # 226s），并行 5 worker 时资源竞争使耗时膨胀超过默认 TMOUT=300s。
     # 给足 2×TMOUT 让它们按单跑速度完成，而非超时误杀。
-    */cli/install/bun-run.test.ts|\
     */cli/install/bun-update.test.ts|\
     */cli/install/bun-update-lockfile-sync.test.ts|*/cli/install/bun-dedupe.test.ts|\
     */cli/install/bun-prune.test.ts|\
@@ -256,9 +255,10 @@ run_test() {
       WT=$((TMOUT * 2))       # 600s
       BT="--expose-internals --smol --timeout ${BUN_TIMEOUT}"
       ;;
-    # bun-install / nested-overrides：单跑 373-528s，全量串行竞争下曾
-    # 1201s 超时；给 900s
-    */cli/install/bun-install.test.ts|*/cli/install/nested-overrides.test.ts)
+    # bun-install / nested-overrides / bun-run / bun-add-filter：单跑
+    # 373-599s，全量串行竞争（+其他 session 负载）下超时轮转；给 900s
+    */cli/install/bun-install.test.ts|*/cli/install/nested-overrides.test.ts|\
+    */cli/install/bun-run.test.ts|*/cli/install/bun-add-filter.test.ts)
       WT=$((TMOUT * 3))       # 900s
       BT="--expose-internals --smol --timeout ${BUN_TIMEOUT}"
       ;;
@@ -291,7 +291,7 @@ run_test() {
       BT="--expose-internals --smol --timeout ${BUN_TIMEOUT}"
       ;;
     */napi/uv_stub.test.ts)
-      WT=$((TMOUT * 2))       # 600s
+      WT=$((TMOUT * 4))       # 1200s
       BT="--expose-internals --smol --timeout ${BUN_TIMEOUT}"
       ;;
     # ── 泄漏/长时间测试 ──

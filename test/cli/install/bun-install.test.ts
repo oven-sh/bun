@@ -10673,11 +10673,82 @@ for (const field of ["resolutions", "overrides"]) {
     });
   });
 
-  const nestedRule = (value: string) =>
-    field === "overrides" ? { "pkg-a": { shared: value } } : { "pkg-a/shared": value };
+  const nestedRule = (parent: string, value: string) =>
+    field === "overrides" ? { [parent]: { shared: value } } : { [`${parent}/shared`]: value };
 
-  it(`rejects a nested "${field}" rule pointing at a file: path outside the project`, async () => {
-    using dir = tempDir("nested-override-file-dep-outside", {
+  it(`rejects a nested "${field}" rule pointing at a file: path outside the project for a registry package's dependency`, async () => {
+    // A nested rule only replaces one parent -> child edge, so it does not
+    // make every edge of that name root authored. The trust checks therefore
+    // only consult plain rules, and a nested file: path that escapes the
+    // project is still rejected when the parent is a registry package.
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, urls, {
+          "0.0.3": {
+            dependencies: {
+              shared: "1.0.0",
+            },
+          },
+        }),
+      );
+      // The project is a subdirectory so that `../shared` exists and is outside it.
+      const projectDir = join(ctx.package_dir, "project");
+      await write(
+        join(ctx.package_dir, "shared", "package.json"),
+        JSON.stringify({ name: "shared", version: "1.0.0" }),
+      );
+      await write(join(ctx.package_dir, "shared", "index.js"), "module.exports = 'shared';");
+      await write(
+        join(projectDir, "bunfig.toml"),
+        `
+[install]
+cache = false
+registry = "${ctx.registry_url}"
+`,
+      );
+      await write(
+        join(projectDir, "package.json"),
+        JSON.stringify({
+          name: "my-app",
+          version: "1.0.0",
+          dependencies: {
+            baz: "0.0.3",
+          },
+          [field]: nestedRule("baz", "file:../shared"),
+        }),
+      );
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: projectDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+
+      // stderr also carries the progress lines of the registry fetch of `baz`.
+      expect(err.split(/\r?\n/).filter(line => line.startsWith("error:"))).toEqual([
+        'error: Could not find package.json for "file:../shared" dependency "shared"',
+        "error: shared@1.0.0 failed to resolve",
+      ]);
+      expect(out).not.toContain("packages installed");
+      expect(await exists(join(projectDir, "node_modules", "shared"))).toBe(false);
+      expect(await exists(join(projectDir, "node_modules", "baz", "node_modules", "shared"))).toBe(false);
+      expect(await exists(join(projectDir, "bun.lock"))).toBe(false);
+      expect(urls.filter(url => url.includes("shared"))).toEqual([]);
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  it(`installs a nested "${field}" rule pointing at a file: path outside the project for a local file: package's dependency`, async () => {
+    // The parent is a file: package of the root, so its dependencies' file:
+    // paths are trusted like root dependencies (see the transitive file: tests
+    // above), nested rule or not.
+    using dir = tempDir("nested-override-file-dep-outside-local", {
       "shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0" }),
       "shared/index.js": "module.exports = 'shared';",
       "project/package.json": JSON.stringify({
@@ -10686,7 +10757,7 @@ for (const field of ["resolutions", "overrides"]) {
         dependencies: {
           "pkg-a": "file:./pkg-a",
         },
-        [field]: nestedRule("file:../shared"),
+        [field]: nestedRule("pkg-a", "file:../shared"),
       }),
       "project/pkg-a/package.json": JSON.stringify({
         name: "pkg-a",
@@ -10699,25 +10770,44 @@ for (const field of ["resolutions", "overrides"]) {
     });
     const projectDir = join(String(dir), "project");
 
-    await using proc = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: projectDir,
-      stdout: "pipe",
-      stdin: "ignore",
-      stderr: "pipe",
-      env,
-    });
-    const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    // The first pass resolves the rule (enqueue path); the second installs
+    // from the lockfile it wrote (package installer path).
+    for (const args of [["install"], ["install", "--frozen-lockfile"]]) {
+      await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
 
-    expect(normalizeBunSnapshot(err, projectDir)).toMatchInlineSnapshot(`
-      "error: Could not find package.json for "file:../shared" dependency "shared"
-      error: shared@1.0.0 failed to resolve"
-    `);
-    expect(out).not.toContain("packages installed");
-    expect(await exists(join(projectDir, "node_modules", "shared"))).toBe(false);
-    expect(await exists(join(projectDir, "node_modules", "pkg-a", "node_modules", "shared"))).toBe(false);
-    expect(await exists(join(projectDir, "bun.lock"))).toBe(false);
-    expect(exitCode).toBe(1);
+      await using proc = spawn({
+        cmd: [bunExe(), ...args],
+        cwd: projectDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+
+      expect(err).not.toContain("error:");
+      expect(out).toContain("2 packages installed");
+      expect(exitCode).toBe(0);
+
+      await using runProc = spawn({
+        cmd: [bunExe(), "-e", "console.log(require('pkg-a'))"],
+        cwd: projectDir,
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [runOut, runErr, runExit] = await Promise.all([
+        runProc.stdout.text(),
+        runProc.stderr.text(),
+        runProc.exited,
+      ]);
+      expect(runErr).toBe("");
+      expect(runOut).toBe("shared\n");
+      expect(runExit).toBe(0);
+    }
+
+    const lock = (await file(join(projectDir, "bun.lock")).text()).replaceAll("\\\\", "/");
+    expect(lock).toContain('"pkg-a/shared": ["shared@file:../shared", {}]');
   });
 
   it(`installs a nested "${field}" rule pointing at a file: path inside the project`, async () => {
@@ -10728,7 +10818,7 @@ for (const field of ["resolutions", "overrides"]) {
         dependencies: {
           "pkg-a": "file:./pkg-a",
         },
-        [field]: nestedRule("file:./vendor/shared"),
+        [field]: nestedRule("pkg-a", "file:./vendor/shared"),
       }),
       "vendor/shared/package.json": JSON.stringify({ name: "shared", version: "2.0.0" }),
       "vendor/shared/index.js": "module.exports = 'vendored shared';",

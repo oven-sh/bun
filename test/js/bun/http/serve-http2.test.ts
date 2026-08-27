@@ -84,7 +84,10 @@ for (const secure of [true, false]) {
 
       const results: Record<string, { interims: number[]; status: number; body: string }> = {};
       for (const value of ["100-continue", "100-Continue", "100-CONTINUE", "muffins", "x100-continue"]) {
-        results[value] = await requestRecordingInterims({ ":path": "/echo", ":method": "POST", expect: value }, "hello");
+        results[value] = await requestRecordingInterims(
+          { ":path": "/echo", ":method": "POST", expect: value },
+          "hello",
+        );
       }
       expect(results).toEqual({
         "100-continue": { interims: [100], status: 201, body: "hello" },

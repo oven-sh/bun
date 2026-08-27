@@ -2022,8 +2022,10 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
             return None;
         }
         // SAFETY: `exists` proved `value` lies inside `backing_buf`, which is
-        // never freed or moved (process-lifetime singleton) and whose written
-        // prefix is immutable once appended.
+        // never freed or moved (process-lifetime singleton). The caller already
+        // holds these bytes as a `&[u8]`, so they are past construction: the only
+        // `&mut` into the buffer (`append_mutable`, crate-private) covers freshly
+        // reserved bytes and ends before `append`/`print` return them shared.
         Some(unsafe { core::slice::from_raw_parts(value.as_ptr(), value.len()) })
     }
 

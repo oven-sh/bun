@@ -188,7 +188,7 @@ impl AppKitApp {
             // Every compiled Objective-C binding checked against the loaded
             // frameworks; one string per mismatch.
             "verifyBindings" => {
-                let problems = conv::check(global, bun_appkit::verify_bindings())?;
+                let problems = conv::check(global, bun_appkit::verify_bindings_in_bun())?;
                 let array = JSValue::create_empty_array(global, problems.len())?;
                 for (i, p) in problems.iter().enumerate() {
                     let s = bun_jsc::StringJsc::to_js(

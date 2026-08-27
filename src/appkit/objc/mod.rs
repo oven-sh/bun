@@ -1612,7 +1612,7 @@ impl Runtime {
     ///
     /// # Safety
     /// `obj` points at an object that has not finished deallocating.
-    unsafe fn class_of_raw(&self, obj: Obj) -> Class {
+    pub(super) unsafe fn class_of_raw(&self, obj: Obj) -> Class {
         // SAFETY: per contract; such an object always has a class.
         match NonNull::new(unsafe { (self.object_getClass)(obj) }) {
             Some(c) => Class(c),
@@ -1921,6 +1921,14 @@ pub(crate) use binding_row;
 /// not affect the calling convention. Returns one line per problem. Also
 /// registers the run-time classes in [`delegate`], whose IMPs are asserted
 /// against their declarations as they are added (a mismatch there panics).
+/// [`verify_bindings`] plus the checks that go through a script's own send
+/// path; only bun links what those need.
+pub(crate) fn verify_bindings_in_bun() -> Result<Vec<String>> {
+    let mut problems = verify_bindings()?;
+    dynamic::verify_send_signatures(&mut problems);
+    Ok(problems)
+}
+
 pub(crate) fn verify_bindings() -> Result<Vec<String>> {
     let rt = load()?;
     metal()?;

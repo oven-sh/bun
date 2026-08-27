@@ -68,3 +68,8 @@ pub use view::{MetalSurface, PIXEL_FORMAT, View, ViewSink};
 pub fn verify_bindings() -> Result<Vec<String>> {
     objc::verify_bindings()
 }
+
+/// [`verify_bindings`] plus the checks only the bun binary can link.
+pub fn verify_bindings_in_bun() -> Result<Vec<String>> {
+    objc::verify_bindings_in_bun()
+}

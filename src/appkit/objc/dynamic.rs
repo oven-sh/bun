@@ -730,9 +730,14 @@ impl DynClass {
     /// method's encoding, which also reads forms `signatureWithObjCTypes:`
     /// refuses, such as the nameless `{?}` x86_64 writes for a nested struct.
     fn method_signature(self, sel: super::Sel, class_method: bool) -> Option<NSMethodSignature> {
-        if class_method {
-            return self.target().method_signature_for_selector(sel);
-        }
+        // A class method is an instance method of the metaclass, so the
+        // same table read answers it without messaging the class object.
+        let class = if class_method {
+            // SAFETY: a registered class object never deallocates.
+            unsafe { rt().class_of_raw(self.0.as_obj()) }
+        } else {
+            self.0
+        };
         // `+[NSObject instanceMethodSignatureForSelector:]`, a class method
         // of every class, so sent to this class object rather than bound on
         // a wrapper type.
@@ -741,7 +746,7 @@ impl DynClass {
         // this thread.
         unsafe {
             let raw: Obj = rt().send(
-                self.0.as_obj(),
+                class.as_obj(),
                 super::sel!("instanceMethodSignatureForSelector:"),
                 (sel,),
             );
@@ -2307,8 +2312,14 @@ pub fn signature(receiver: Receiver<'_>, sel: &str) -> Result<Rc<Signature>> {
         )));
     }
     let in_table = types.is_some();
+    // A method the class's table declares is read from that table:
+    // Foundation parses the method's own encoding there, and never raises.
+    // `-methodSignatureForSelector:` sent to the object rebuilds the
+    // signature from the encoding string instead, which on x86_64 raises for
+    // a nameless struct (`{?}` for `NSDecimal`) with no catch frame around
+    // the send; so the object is only asked when it forwards.
     let ns = match () {
-        () if from_table => types.and_then(|_| owner.method_signature(raw_sel, class_method)),
+        () if in_table => owner.method_signature(raw_sel, class_method),
         () if proxy => proxy_method_signature(receiver, sel)?,
         () => receiver.with_target(|t| t.method_signature_for_selector(raw_sel))?,
     }
@@ -4310,6 +4321,22 @@ pub(super) fn verify_signatures(problems: &mut Vec<String>) {
                 sel.to_string_lossy()
             ));
         }
+    }
+}
+
+/// Part of `verify_bindings` inside bun only: the same lookup a script's send
+/// takes. On a live `NSNumber`, `decimalValue` resolves to a typed refusal of
+/// its `NSDecimal` return rather than raising out of Foundation, which the
+/// x86_64 spelling `{?}` did when the object was asked for the signature.
+/// (`signature` reaches string helpers only the bun binary links, so the
+/// standalone `cargo test --test bindings` cannot run this.)
+pub(super) fn verify_send_signatures(problems: &mut Vec<String>) {
+    let number = DynObject::from_object(&NSNumber::with_i64(1));
+    match signature(Receiver::Object(&number), "decimalValue").and_then(|sig| sig.check_return()) {
+        Err(Error::UnsupportedSignature { what, .. }) if what.ends_with("is not supported yet") => {}
+        other => problems.push(format!(
+            "-[NSNumber decimalValue] through signature(): expected the typed refusal, got {other:?}"
+        )),
     }
 }
 

@@ -79,6 +79,9 @@ test.concurrent.each([false, true])(
           () => "resolved",
           (e: Error) => e.name,
         );
+        // The handler never responds, so a fetch that settles before it ran
+        // failed (TLS, ALPN, the h2 session). After that this is a no-op.
+        outcome.then(name => failHandler(new Error(`fetch settled before the handler ran: ${name}`)));
         await handlerEntered;
         ac.abort();
         expect(await outcome).toBe("AbortError");

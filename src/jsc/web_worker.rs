@@ -1290,71 +1290,41 @@ unsafe fn resolve_entry_point_specifier<'s>(
 ) -> Option<&'s [u8]> {
     // SAFETY: per fn contract; read-only field.
     if let Some(graph) = unsafe { (*parent).standalone_module_graph } {
-        if graph.find(str).is_some() {
-            return Some(str);
+        // A relative specifier is relative to the embedded root; an absolute one (spelled out, or from
+        // `new URL("./w.js", import.meta.url)`) may arrive in the platform's path syntax. Either way the
+        // graph's own name for the file is what the module loader recognizes, so return that. Entry
+        // points are embedded under a `.js` name whatever their source extension was, so also try the
+        // name `bun build --compile` would have given the file:
+        //
+        //   new Worker("./foo")     -> /$bunfs/root/foo.js
+        //   new Worker("./foo.ts")  -> /$bunfs/root/foo.js   (also .tsx .jsx .mjs .mts .cjs .cts)
+        //   new Worker(new URL("./foo.mjs", import.meta.url)) -> the same
+        let mut pathbuf = bun_paths::path_buffer_pool::get();
+        let path: &[u8] = if str.starts_with(b"./") || str.starts_with(b"../") {
+            bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Loose>(
+                graph.base_public_path_with_default_suffix(),
+                &mut pathbuf[..],
+                &[str],
+            )
+        } else {
+            let len = str.len().min(pathbuf.len() - 3);
+            pathbuf[..len].copy_from_slice(&str[..len]);
+            &pathbuf[..len]
+        };
+        let path_len = path.len();
+        if let Some(name) = graph.find(&pathbuf[..path_len]) {
+            return Some(name);
         }
-
-        // Since `bun build --compile` renames files to `.js` by default, we
-        // need to do the reverse of our file extension mapping.
-        //
-        //   new Worker("./foo")     -> new Worker("./foo.js")
-        //   new Worker("./foo.ts")  -> new Worker("./foo.js")
-        //   new Worker("./foo.jsx") -> new Worker("./foo.js")
-        //   new Worker("./foo.mjs") -> new Worker("./foo.js")
-        //   new Worker("./foo.mts") -> new Worker("./foo.js")
-        //   new Worker("./foo.cjs") -> new Worker("./foo.js")
-        //   new Worker("./foo.cts") -> new Worker("./foo.js")
-        //   new Worker("./foo.tsx") -> new Worker("./foo.js")
-        //
-        if str.starts_with(b"./") || str.starts_with(b"../") {
-            'try_from_extension: {
-                let mut pathbuf = bun_paths::path_buffer_pool::get();
-                let base_path = graph.base_public_path_with_default_suffix();
-                let base = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Loose>(
-                    base_path,
-                    &mut pathbuf[..],
-                    &[str],
-                );
-                let base_len = base.len();
-                let extname_len = bun_paths::extension(base).len();
-                // `extname` cannot be held as a sub-slice of `pathbuf` while
-                // writing into `pathbuf` — compare
-                // by re-slicing after dropping the mutable borrow.
-                let extname = &pathbuf[base_len - extname_len..base_len];
-
-                // ./foo -> ./foo.js
-                if extname.is_empty() {
-                    pathbuf[base_len..base_len + 3].copy_from_slice(b".js");
-                    if let Some(js_file) = graph.find(&pathbuf[0..base_len + 3]) {
-                        return Some(js_file);
-                    }
-                    break 'try_from_extension;
-                }
-
-                // ./foo.ts -> ./foo.js
-                if extname == b".ts" {
-                    pathbuf[base_len - 3..base_len].copy_from_slice(b".js");
-                    if let Some(js_file) = graph.find(&pathbuf[0..base_len]) {
-                        return Some(js_file);
-                    }
-                    break 'try_from_extension;
-                }
-
-                if extname.len() == 4 {
-                    const EXTS: [&[u8]; 6] = [b".tsx", b".jsx", b".mjs", b".mts", b".cts", b".cjs"];
-                    for ext in EXTS {
-                        if extname == ext {
-                            let js_len = b".js".len();
-                            pathbuf[base_len - ext.len()..base_len - ext.len() + js_len]
-                                .copy_from_slice(b".js");
-                            let as_js = &pathbuf[0..base_len - ext.len() + js_len];
-                            if let Some(js_file) = graph.find(as_js) {
-                                return Some(js_file);
-                            }
-                            break 'try_from_extension;
-                        }
-                    }
-                }
+        let extension_len = bun_paths::extension(&pathbuf[..path_len]).len();
+        let is_source_extension = matches!(
+            &pathbuf[path_len - extension_len..path_len],
+            b"" | b".ts" | b".tsx" | b".jsx" | b".mjs" | b".mts" | b".cjs" | b".cts"
+        );
+        if is_source_extension {
+            let stem_len = path_len - extension_len;
+            pathbuf[stem_len..stem_len + 3].copy_from_slice(b".js");
+            if let Some(name) = graph.find(&pathbuf[..stem_len + 3]) {
+                return Some(name);
             }
         }
     }

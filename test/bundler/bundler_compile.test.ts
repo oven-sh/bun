@@ -423,6 +423,42 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!\nWorker loaded!\n", file: "dist/out", setCwd: true },
   });
+  // Every way of naming an embedded worker entry point resolves against the executable, not the cwd: a relative
+  // specifier with the source extension, with the embedded `.js` extension, or with none, and a `file:` URL made from
+  // import.meta.url with either extension (absolute, and in the platform's path syntax on Windows).
+  itBundled("compile/WorkerSpecifierForms", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { rmSync } from "fs";
+        rmSync("./wjs.js", { force: true });
+        rmSync("./wts.ts", { force: true });
+        rmSync("./wmjs.mjs", { force: true });
+        process.chdir(require("os").tmpdir());
+        const specs = [
+          "./wjs.js", "./wjs", "./wts.ts", "./wts", "./wmjs.mjs",
+          new URL("./wjs.js", import.meta.url), new URL("./wts.ts", import.meta.url), new URL("./wmjs.mjs", import.meta.url),
+          new URL("./wts.ts", import.meta.url).href,
+        ];
+        for (const spec of specs) {
+          const w = new Worker(spec);
+          const msg = await new Promise(resolve => {
+            w.onmessage = e => resolve(e.data);
+            w.onerror = e => resolve("error: " + e.message);
+          });
+          w.terminate();
+          console.log(msg);
+        }
+      `,
+      "/wjs.js": `postMessage("wjs");`,
+      "/wts.ts": `postMessage("wts" as string);`,
+      "/wmjs.mjs": `postMessage("wmjs");`,
+    },
+    entryPointsRaw: ["./entry.ts", "./wjs.js", "./wts.ts", "./wmjs.mjs"],
+    outfile: "dist/out",
+    run: { stdout: "wjs\nwjs\nwts\nwts\nwmjs\nwjs\nwts\nwmjs\nwts\n", file: "dist/out", setCwd: true },
+  });
   itBundled("compile/WorkerRelativePathTSExtension", {
     backend: "cli",
     compile: true,

@@ -1263,6 +1263,58 @@ describe("bundler", () => {
     run: { file: "/out/b.js", stdout: "b\nd 42" },
   });
 
+  // `cmd` is import()ed from main and from `sub`, which only repl loads, so
+  // whichever way it loads, main or repl came first: the {main, repl, cmd}
+  // chunk is loaded exactly when the {main, repl} chunk is and folds into it,
+  // even though no single entry precedes `cmd` on every path.
+  itBundled("splitting/FoldsChunkWhoseImportersTheKeyCovers", {
+    files: {
+      "/main.js": /* js */ `
+        import { shared } from './shared.js'
+        import { common } from './common.js'
+        console.log('main', shared(), common())
+        import('./cmd.js').then(m => console.log('cmd', m.cmd()))
+      `,
+      "/repl.js": /* js */ `
+        import { shared } from './shared.js'
+        import { common } from './common.js'
+        console.log('repl', shared(), common())
+        import('./sub.js')
+      `,
+      "/sub.js": /* js */ `
+        console.log('sub')
+        import('./cmd.js').then(m => console.log('cmd', m.cmd()))
+      `,
+      "/cmd.js": /* js */ `
+        import { shared } from './shared.js'
+        export function cmd() { return shared() + 1 }
+      `,
+      "/shared.js": /* js */ `
+        console.log('shared evaluated')
+        export function shared() { return 41 }
+      `,
+      "/common.js": /* js */ `
+        export function common() { return 'common' }
+      `,
+    },
+    entryPoints: ["/main.js", "/repl.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      // main, repl, sub, cmd, and one {main, repl} chunk holding common.js
+      // and shared.js.
+      expect(jsFilesIn(api)).toHaveLength(5);
+      const sharedChunk = jsFilesIn(api).find(f => api.readFile("/out/" + f).includes("shared evaluated"))!;
+      api.expectFile("/out/" + sharedChunk).toContain("common");
+      expect(jsOutput(api, "cmd")).toContain(`from "./${sharedChunk}"`);
+    },
+    run: [
+      { file: "/out/main.js", stdout: "shared evaluated\nmain 41 common\ncmd 42" },
+      { file: "/out/repl.js", stdout: "shared evaluated\nrepl 41 common\nsub\ncmd 42" },
+    ],
+  });
+
   // Folding a chunk with side effects into a pure one (rule 1) makes the
   // result impure, so it may not then move into a superset chunk (rule 2).
   itBundled("splitting/MinChunkSizeFoldedImpurityBlocksSupersetFold", {

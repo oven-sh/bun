@@ -73,6 +73,7 @@ What is the answer to the universe? 42
 | f64        | `double`       | `double`                    |
 | bool       | `bool`         |                             |
 | char       | `char`         |                             |
+| void       | `void`         | `returns` only              |
 | napi_env   | `napi_env`     |                             |
 | napi_value | `napi_value`   |                             |
 
@@ -198,6 +199,25 @@ cc({
   source: "hello.c",
   define: {
     NDEBUG: "1",
+  },
+});
+```
+
+#### `include: string | string[]`
+
+`include` is an optional list of directories to search for headers, equivalent to `-I` in gcc/clang. Relative paths are resolved from the current working directory.
+
+```ts
+type Include = string | string[];
+
+cc({
+  source: "hello.c",
+  include: ["./vendor/include"],
+  symbols: {
+    hello: {
+      args: [],
+      returns: "int",
+    },
   },
 });
 ```

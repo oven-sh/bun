@@ -301,8 +301,6 @@ mod v8_api {
         pub(super) fn _ZNK2v814CpuProfileNode8GetChildEi();
         pub(super) fn _ZN2v83Map3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_();
         pub(super) fn _ZN2v83Map6DeleteENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE();
-        pub(super) fn uv_os_getpid();
-        pub(super) fn uv_os_getppid();
     }
 }
 #[cfg(windows)]
@@ -1654,8 +1652,6 @@ pub(super) fn keep() {
             _ZNK2v814CpuProfileNode8GetChildEi,
             _ZN2v83Map3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_,
             _ZN2v83Map6DeleteENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE,
-            uv_os_getpid,
-            uv_os_getppid,
         );
     }
     #[cfg(windows)]

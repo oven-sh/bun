@@ -38,55 +38,76 @@ pub unsafe trait IntrusiveWorkTask: bun_core::IntrusiveField<Task> {
     }
 }
 
-/// A `T` that stays shared (`&T` / [`ThisPtr`](bun_ptr::ThisPtr)) while the
-/// pool holds its embedded task node: the node sits in a [`Cell`](core::cell::Cell)
-/// (built by [`shared_work_task_node`]) and the pool re-enters `T` through a
-/// `ThisPtr`, on a pool thread, concurrently with whatever the scheduling
-/// thread still does to `T`. Implement via [`shared_work_task!`], which
-/// carries the contract; schedule with [`WorkPool::schedule_shared`].
+/// A refcounted `T` that stays shared (`&T`) while the pool holds its embedded
+/// [`SharedWorkNode`]: [`WorkPool::schedule_shared`] moves one reference into
+/// the pool, and the pool hands that reference to
+/// [`run_work_task`](Self::run_work_task) on a pool thread, concurrently with
+/// whatever other holders still do to `T`. Implement via [`shared_work_task!`],
+/// which carries the contract.
 ///
 /// # Safety
-/// Whoever calls `schedule_shared` keeps `T` allocated, and its node
-/// untouched, until `run_work_task` is done with it; and every field of `T`
-/// is either confined to one side (the pool's `run_work_task`, or the
-/// scheduling thread) for that span or synchronized — `T` need not be `Sync`
-/// otherwise, so the type system does not check this.
-pub unsafe trait SharedWorkTask: bun_core::IntrusiveField<core::cell::Cell<Task>> {
-    /// Pool thread.
-    fn run_work_task(this: bun_ptr::ThisPtr<Self>);
+/// Every field of `T` is either confined to one side (the pool's
+/// `run_work_task`, or the other holders) while the node is queued, or
+/// synchronized — `T` need not be `Sync` otherwise, so the type system does not
+/// check this; and wherever `run_work_task` lets its reference go must be a
+/// thread `T` may be freed on.
+pub unsafe trait SharedWorkTask:
+    bun_ptr::AnyRefCounted + bun_core::IntrusiveField<SharedWorkNode>
+{
+    /// Pool thread. `this` is the reference `schedule_shared` was given.
+    fn run_work_task(this: bun_ptr::RefPtr<Self>);
 }
 
-/// The task node for a [`SharedWorkTask`], to store in the field its
+/// The pool's node inside a [`SharedWorkTask`], stored in the field its
 /// `IntrusiveField` impl names.
-pub fn shared_work_task_node<T: SharedWorkTask>() -> core::cell::Cell<Task> {
-    /// # Safety
-    /// Only installed by [`shared_work_task_node`], so `task` is the node
-    /// embedded in a live `T` that [`WorkPool::schedule_shared`] handed to the pool.
-    unsafe fn run<T: SharedWorkTask>(task: *mut Task) {
-        // SAFETY: fn contract (`Cell<Task>` is `repr(transparent)` over `Task`).
-        let this = unsafe { T::from_field_ptr(task.cast::<core::cell::Cell<Task>>()) };
-        // SAFETY: fn contract — the scheduler keeps `T` live for this call.
-        T::run_work_task(unsafe { bun_ptr::ThisPtr::new(this) });
-    }
-    core::cell::Cell::new(Task {
-        node: Default::default(),
-        callback: run::<T>,
-    })
+#[repr(C)]
+pub struct SharedWorkNode {
+    task: core::cell::UnsafeCell<Task>,
+    /// Set from `schedule_shared` until the pool thread picks the node up.
+    queued: core::sync::atomic::AtomicBool,
 }
 
-/// Implements [`SharedWorkTask`] for a struct that embeds a
-/// `$field: Cell<Task>` node and has an inherent
-/// `fn run_work_task(this: ThisPtr<Self>)` (pool thread). The invocation is
+impl SharedWorkNode {
+    pub fn new<T: SharedWorkTask>() -> SharedWorkNode {
+        /// # Safety
+        /// Only installed by [`SharedWorkNode::new`], so `task` is the node
+        /// embedded in a live `T` that [`WorkPool::schedule_shared`] queued
+        /// together with one reference.
+        unsafe fn run<T: SharedWorkTask>(task: *mut Task) {
+            // SAFETY: fn contract (`UnsafeCell<Task>` is `repr(transparent)`
+            // over `Task`, and `task` is `SharedWorkNode`'s first field).
+            let (node, this) = unsafe {
+                let node = task.cast::<SharedWorkNode>();
+                (&*node, T::from_field_ptr(node))
+            };
+            node.queued
+                .store(false, core::sync::atomic::Ordering::Release);
+            // SAFETY: fn contract — `schedule_shared` moved this reference into the pool.
+            T::run_work_task(unsafe { bun_ptr::RefPtr::from_raw(this) });
+        }
+        SharedWorkNode {
+            task: core::cell::UnsafeCell::new(Task {
+                node: Default::default(),
+                callback: run::<T>,
+            }),
+            queued: core::sync::atomic::AtomicBool::new(false),
+        }
+    }
+}
+
+/// Implements [`SharedWorkTask`] for a refcounted struct that embeds a
+/// `$field: SharedWorkNode` and has an inherent
+/// `fn run_work_task(this: RefPtr<Self>)` (pool thread). The invocation is
 /// where the trait's contract is vouched for: say next to it which fields the
-/// pool side touches and what keeps the value alive while it is scheduled.
+/// pool side touches and where the pool's reference is dropped.
 #[macro_export]
 macro_rules! shared_work_task {
     ($ty:ty, $field:ident) => {
-        ::bun_core::intrusive_field!($ty, $field: ::core::cell::Cell<$crate::work_pool::Task>);
-        // SAFETY: see macro doc — the invoker states the confinement / liveness at the call site.
+        ::bun_core::intrusive_field!($ty, $field: $crate::work_pool::SharedWorkNode);
+        // SAFETY: see macro doc — the invoker states the confinement at the call site.
         unsafe impl $crate::work_pool::SharedWorkTask for $ty {
             #[inline]
-            fn run_work_task(this: ::bun_ptr::ThisPtr<Self>) {
+            fn run_work_task(this: ::bun_ptr::RefPtr<Self>) {
                 <$ty>::run_work_task(this)
             }
         }
@@ -205,12 +226,21 @@ impl WorkPool {
         Self::get().schedule(Batch::from(task));
     }
 
-    /// Hand `this`'s embedded [`SharedWorkTask`] node to the pool (see the
-    /// trait's contract).
-    pub fn schedule_shared<T: SharedWorkTask>(this: bun_ptr::ThisPtr<T>) {
-        // SAFETY: `ThisPtr` invariant — `this` is a live `T`, so projecting to its
-        // node stays in bounds; `Cell<Task>` is `repr(transparent)` over `Task`.
-        Self::schedule(unsafe { T::field_of(this.as_ptr()) }.cast::<Task>());
+    /// Queue `this`'s embedded [`SharedWorkNode`]; the pool owns `this` until
+    /// [`SharedWorkTask::run_work_task`] receives it. Scheduling a node that is
+    /// already queued is a bug: it asserts in debug and is otherwise a no-op.
+    pub fn schedule_shared<T: SharedWorkTask>(this: bun_ptr::RefPtr<T>) {
+        let this = bun_ptr::RefPtr::into_raw(this);
+        // SAFETY: `this` is live (we hold the reference just unwrapped), so the
+        // projection is in bounds.
+        let node: &SharedWorkNode = unsafe { &*T::field_of(this) };
+        if node.queued.swap(true, core::sync::atomic::Ordering::AcqRel) {
+            debug_assert!(false, "SharedWorkTask scheduled while already queued");
+            // SAFETY: the reference unwrapped above, not handed to the pool.
+            drop(unsafe { bun_ptr::RefPtr::from_raw(this) });
+            return;
+        }
+        Self::schedule(node.task.get());
     }
 
     /// Schedule a heap-allocated task by value. The pool takes ownership of

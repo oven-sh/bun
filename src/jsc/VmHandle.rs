@@ -379,24 +379,22 @@ impl VmHandle {
     }
 
     /// Queue a [`BoxedTask`](bun_event_loop::BoxedTask) on the VM's `kind`
-    /// loop and wake it, or hand it back if the VM is closed.
-    pub fn post_boxed<T: bun_event_loop::BoxedTask>(
-        &self,
-        kind: LoopKind,
-        task: Box<T>,
-    ) -> Result<(), Box<T>> {
+    /// loop and wake it, or hand it to
+    /// [`BoxedTask::refused`](bun_event_loop::BoxedTask::refused) if the VM is
+    /// closed. Whether it was queued.
+    pub fn post_boxed<T: bun_event_loop::BoxedTask>(&self, kind: LoopKind, task: Box<T>) -> bool {
         let mut task = Some(task);
-        self.post_with(
+        let queued = self.post_with(
             || T::TAG,
             |s| {
-                let task = task.take().expect("posted once").into_task();
-                s.deliver(kind, ConcurrentTaskItem::create(task));
+                let task = task.take().expect("posted once");
+                s.deliver(kind, ConcurrentTaskItem::create_boxed(task));
             },
         );
-        match task {
-            None => Ok(()),
-            Some(task) => Err(task),
+        if let Some(task) = task {
+            T::refused(task);
         }
+        queued
     }
 
     /// Queue a C++ `EventLoopTask` on the VM's `kind` loop from another

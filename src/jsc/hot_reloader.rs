@@ -615,10 +615,9 @@ where
         }));
         // SAFETY: `that` was just allocated above and is exclusively owned here.
         unsafe {
-            let concurrent = (*that).concurrent_task.insert(ConcurrentTask {
-                task: JscTask::init(that),
-                ..Default::default()
-            });
+            let concurrent = (*that)
+                .concurrent_task
+                .insert(ConcurrentTask::intrusive(JscTask::init(that)));
             // `&that.concurrent_task` is an interior pointer into the
             // Box-allocated Task. `RELOAD_IMMEDIATELY` already diverged above, so
             // a handle is always present here.

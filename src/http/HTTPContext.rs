@@ -759,7 +759,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 if !required_for_target.admits(socket.proxy_tunnel.as_ref().unwrap().verification) {
                     continue;
                 }
-            } else if is_unix && !strings::eql_long(&socket.target_hostname, target_hostname, true) {
+            } else if is_unix && !strings::eql_long(&socket.target_hostname, target_hostname, true)
+            {
                 continue;
             }
             if SSL && !required_for_socket.admits(socket.verification) {

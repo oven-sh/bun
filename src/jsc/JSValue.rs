@@ -980,6 +980,15 @@ impl JSValue {
         self.as_::<T>().map(|p| unsafe { &*p })
     }
 
+    /// [`as_class_ref`](Self::as_class_ref) without the prototype-chain walk
+    /// ([`as_direct`](Self::as_direct)): subclasses are not matched. Caller must
+    /// have verified `is_cell()`.
+    #[inline]
+    pub fn as_direct_class_ref<T: JsClass>(self) -> Option<&'static T> {
+        // SAFETY: as for `as_class_ref`.
+        self.as_direct::<T>().map(|p| unsafe { &*p })
+    }
+
     /// [`as_class_ref`](Self::as_class_ref) as a [`ThisPtr`](bun_ptr::ThisPtr),
     /// for `m_ctx` payloads that are intrusively refcounted: lets the caller
     /// take its own ref (`RefPtr::from_this`) or dispatch into a

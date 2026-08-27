@@ -632,6 +632,10 @@ impl EventLoop {
             // LinearFifo's fields are private — `write_item` is the
             // public path (single-slot copy, same complexity).
             let _ = self.tasks.write_item(task_ref.task);
+            if to_destroy != Some(task) {
+                // SAFETY: `task` is live; this loop is done reading it.
+                unsafe { ConcurrentTask::ConcurrentTask::consumed(NonNull::new_unchecked(task)) };
+            }
         }
 
         if let Some(dest) = to_destroy {

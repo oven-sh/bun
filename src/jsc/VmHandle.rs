@@ -262,6 +262,28 @@ impl Ticket {
     pub fn cancelled(&self) -> bool {
         self.shared.state() >= State::Draining
     }
+
+    /// This ticket in a form that can be handed back through `&self`
+    /// ([`InFlightTicket::hand_back`]), for work whose state is shared.
+    pub fn in_flight(self) -> InFlightTicket {
+        let this = core::mem::ManuallyDrop::new(self);
+        InFlightTicket {
+            // SAFETY: `this` is never dropped; its one `shared` moves here.
+            shared: unsafe { core::ptr::read(&raw const this.shared) },
+            kind: this.kind,
+            #[cfg(debug_assertions)]
+            id: this.id,
+            returned: core::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    fn give_back(shared: &Shared, #[cfg(debug_assertions)] id: u64) {
+        #[cfg(debug_assertions)]
+        shared.debug.live.lock().at.remove(&id);
+        if shared.tickets.fetch_sub(1, Ordering::SeqCst) == 1 && shared.state() >= State::Draining {
+            shared.notify();
+        }
+    }
 }
 
 impl Clone for Ticket {
@@ -274,13 +296,54 @@ impl Clone for Ticket {
 
 impl Drop for Ticket {
     fn drop(&mut self) {
-        #[cfg(debug_assertions)]
-        self.shared.debug.live.lock().at.remove(&self.id);
-        if self.shared.tickets.fetch_sub(1, Ordering::SeqCst) == 1
-            && self.shared.state() >= State::Draining
-        {
-            self.shared.notify();
+        Ticket::give_back(
+            &self.shared,
+            #[cfg(debug_assertions)]
+            self.id,
+        );
+    }
+}
+
+/// A [`Ticket`] kept in state shared with the JS thread: the other thread
+/// posts through it and hands it back, once, through `&self` when its last
+/// touch of the VM is done. Dropping it unreturned hands it back.
+pub struct InFlightTicket {
+    shared: Arc<Shared>,
+    kind: LoopKind,
+    #[cfg(debug_assertions)]
+    id: u64,
+    returned: core::sync::atomic::AtomicBool,
+}
+
+impl InFlightTicket {
+    /// [`Ticket::post`]. Not after [`hand_back`](Self::hand_back).
+    pub fn post(&self, task: NonNull<ConcurrentTaskItem>) {
+        debug_assert!(
+            !self.returned.load(Ordering::Relaxed),
+            "post after hand_back"
+        );
+        debug_assert!(
+            self.shared.state() != State::Closed,
+            "ticket post after its VM closed (a ticket was created after the wait)"
+        );
+        self.shared.deliver(self.kind, task);
+    }
+
+    /// Give the ticket back (what dropping a [`Ticket`] does); later calls do nothing.
+    pub fn hand_back(&self) {
+        if !self.returned.swap(true, Ordering::SeqCst) {
+            Ticket::give_back(
+                &self.shared,
+                #[cfg(debug_assertions)]
+                self.id,
+            );
         }
+    }
+}
+
+impl Drop for InFlightTicket {
+    fn drop(&mut self) {
+        self.hand_back();
     }
 }
 

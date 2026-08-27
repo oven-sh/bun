@@ -305,6 +305,37 @@ impl Drop for OwnedSslCtx {
     }
 }
 
+/// Owns one `X509`; `X509_free`s it on drop.
+#[repr(transparent)]
+pub struct OwnedX509(core::ptr::NonNull<X509>);
+
+impl OwnedX509 {
+    /// Parses one DER-encoded certificate; `None` if it does not parse.
+    pub fn from_der(der: &[u8]) -> Option<Self> {
+        let len = c_long::try_from(der.len()).ok()?;
+        let mut ptr = der.as_ptr();
+        // SAFETY: `d2i_X509` reads at most `len` bytes from `ptr`, which `der` covers.
+        let raw = unsafe { d2i_X509(core::ptr::null_mut(), &raw mut ptr, len) };
+        core::ptr::NonNull::new(raw).map(Self)
+    }
+
+    pub fn as_ptr(&self) -> *mut X509 {
+        self.0.as_ptr()
+    }
+
+    pub fn as_mut(&mut self) -> &mut X509 {
+        // SAFETY: we own the live `X509` for as long as `self` is borrowed.
+        unsafe { self.0.as_mut() }
+    }
+}
+
+impl Drop for OwnedX509 {
+    fn drop(&mut self) {
+        // SAFETY: we own exactly one reference, released once.
+        unsafe { X509_free(self.0.as_ptr()) }
+    }
+}
+
 /// Owns the `STACK_OF(GENERAL_NAME)` that `X509V3_EXT_d2i` returns for a
 /// subjectAltName extension. Frees every `GENERAL_NAME` and then the stack.
 pub struct GeneralNames(core::ptr::NonNull<struct_stack_st_GENERAL_NAME>);

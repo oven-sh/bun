@@ -1,5 +1,5 @@
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use bun_ast::{Loc, Log};
 use bun_core::FeatureFlags;
@@ -51,6 +51,12 @@ pub struct AsyncHTTP<'a> {
     pub elapsed: u64,
 
     pub(crate) signals: Signals,
+
+    /// Set (release) by the HTTP thread on the caller's original right before
+    /// the terminal result callback / shutdown release
+    /// ([`HTTPClientResultCallback::hand_back`]): from then on the HTTP thread
+    /// never touches the original again ([`crate::InFlight::reclaim`]).
+    pub(crate) handed_back: AtomicBool,
 }
 
 bun_threading::intrusive_work_task!(['a] AsyncHTTP<'a>, task);
@@ -81,22 +87,6 @@ const fn noop_callback() -> HTTPClientResultCallback {
         ctx: core::ptr::null_mut(),
         function: noop_result_callback,
         release_at_shutdown: None,
-    }
-}
-
-/// Free a `URL.href` slice that the caller marked as owned.
-///
-/// # Safety
-/// `href` must have been allocated via the global allocator as a `Box<[u8]>`
-/// and ownership ceded to this module via `is_url_owned = true`.
-#[inline]
-unsafe fn free_owned_href(href: &'static [u8]) {
-    if !href.is_empty() {
-        // SAFETY: caller guarantees `href` is the sole reference to a
-        // global-allocator `Box<[u8]>` allocation. The fat `*mut [u8]` is
-        // obtained directly from the borrowed slice — no need to round-trip
-        // through `(ptr, len)` + `from_raw_parts`.
-        unsafe { bun_core::heap::destroy(core::ptr::from_ref(href).cast_mut()) };
     }
 }
 
@@ -293,23 +283,6 @@ impl<'a> AsyncHTTP<'a> {
         );
     }
 
-    /// Copy HTTP-thread progress state into the JS-thread "real" instance.
-    ///
-    /// Copy exactly the fields the JS side observes between progress
-    /// callbacks: the post-redirect `url`, response/timing fields written by
-    /// `on_async_http_callback`, and the `client` flags/counters used for
-    /// shutdown decisions and error formatting. Owned allocations stay with
-    /// `src` (the HTTP-thread copy keeps running while `has_more`).
-    pub fn sync_progress_from(&mut self, src: &AsyncHTTP<'a>) {
-        self.url = src.url.clone();
-        self.elapsed = src.elapsed;
-        self.err = src.err;
-        self.response = src.response;
-        self.client.url = src.client.url.clone();
-        self.client.flags = src.client.flags;
-        self.client.remaining_redirect_count = src.client.remaining_redirect_count;
-    }
-
     pub fn clear_data(&mut self) {
         self.response = None;
     }
@@ -319,79 +292,106 @@ impl<'a> AsyncHTTP<'a> {
 // Preconnect
 // ──────────────────────────────────────────────────────────────────────────
 
-struct Preconnect {
-    // `Option` so we can write the field after the heap address is fixed
-    // (late-init); `None` is never observed after `preconnect()` populates it.
+/// A `fetch.preconnect()` warm-up request: parses `href` once
+/// ([`PreparedPreconnect::url`], for the caller to validate) and owns it for the
+/// request's lifetime once [`start`](PreparedPreconnect::start)ed.
+pub struct PreparedPreconnect {
+    // Late-init: written by `start` once the heap address is what the HTTP
+    // thread will see; dropped before `_owned_href`.
     async_http: Option<AsyncHTTP<'static>>,
     url: URL<'static>,
-    is_url_owned: bool,
+    _owned_href: Option<Box<[u8]>>,
 }
 
-impl Preconnect {
-    fn on_result(this: *mut Preconnect, _: *mut AsyncHTTP<'static>, _: HTTPClientResult<'_>) {
-        // SAFETY: `this` was produced by `heap::alloc` in `preconnect()` and is
-        // uniquely owned here; `async_http` was fully written before scheduling.
+impl PreparedPreconnect {
+    pub fn new(href: Box<[u8]>) -> Box<Self> {
+        // SAFETY: `href`'s heap bytes move into the same box as the `URL` that
+        // borrows them and are freed after it and after `async_http` (field order).
+        let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&href) });
+        Box::new(Self {
+            async_http: None,
+            url,
+            _owned_href: Some(href),
+        })
+    }
+
+    pub fn url(&self) -> &URL<'_> {
+        &self.url
+    }
+
+    fn on_result(this: *mut Self, _: *mut AsyncHTTP<'static>, _: HTTPClientResult<'_>) {
+        // SAFETY: `this` is the box `start` leaked and is uniquely owned here;
+        // `async_http` was fully written before scheduling.
         unsafe {
             (*this)
                 .async_http
                 .as_mut()
-                .expect("Preconnect.async_http set in preconnect()")
+                .expect("PreparedPreconnect.async_http set in start()")
                 .clear_data();
-            if (*this).is_url_owned {
-                // SAFETY: `is_url_owned` is the caller's promise that `url.href`
-                // is a global-allocator `Box<[u8]>` we now own.
-                free_owned_href((*this).url.href);
-            }
-            // Reclaim and drop the heap allocation (runs Drop on `async_http`
-            // — which in turn drops `HTTPClient`).
             drop(bun_core::heap::take(this));
+        }
+    }
+
+    /// `HTTPClientResultCallback::release_at_shutdown`: the HTTP thread is
+    /// parking with this request still out; `on_result` will never run.
+    ///
+    /// # Safety
+    /// `this` is the box `start` leaked; nothing touches it afterwards.
+    unsafe fn release_at_shutdown(this: *mut ()) {
+        // SAFETY: fn contract.
+        drop(unsafe { bun_core::heap::take(this.cast::<Self>()) });
+    }
+
+    pub fn start(self: Box<Self>) {
+        if !FeatureFlags::IS_FETCH_PRECONNECT_SUPPORTED {
+            return;
+        }
+
+        // Write-before-read: `Bun__fetchPreconnect` reaches here without going
+        // through any path that calls `HTTPThread::init`, so `schedule()` below
+        // would deref the uninitialized `HTTP_THREAD` static (UB on niche-bearing
+        // fields) if `fetch.preconnect()` is the process's first HTTP operation.
+        // `init` is idempotent (`Once`) and every other JS-side entry point
+        // (`send_sync`, `FetchTasklet::queue`, S3) passes default opts too.
+        crate::http_thread::init(&Default::default());
+
+        let this: *mut Self = bun_core::heap::into_raw(self);
+
+        // SAFETY: `this` is a freshly Box-allocated, uniquely-owned pointer; we
+        // in-place write `async_http` before any read and before it can be observed
+        // by another thread.
+        unsafe {
+            let url = (*this).url.clone();
+            let async_http = (*this).async_http.insert(AsyncHTTP::init(
+                Method::GET,
+                url,
+                headers::EntryList::default(),
+                b"",
+                b"",
+                HTTPClientResultCallback::new_with_release::<Self>(
+                    this,
+                    Self::on_result,
+                    Self::release_at_shutdown,
+                ),
+                FetchRedirect::Manual,
+                Options::default(),
+            ));
+            async_http.client.flags.is_preconnect_only = true;
+
+            crate::HTTPThread::schedule(Batch::from(core::ptr::addr_of_mut!(async_http.task)));
         }
     }
 }
 
-pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
-    if !FeatureFlags::IS_FETCH_PRECONNECT_SUPPORTED {
-        if is_url_owned {
-            // SAFETY: `is_url_owned` is the caller's promise that `url.href` is a
-            // global-allocator `Box<[u8]>` we now own.
-            unsafe { free_owned_href(url.href) };
-        }
-        return;
-    }
-
-    // Write-before-read: `Bun__fetchPreconnect` reaches here without going
-    // through any path that calls `HTTPThread::init`, so `schedule()` below
-    // would deref the uninitialized `HTTP_THREAD` static (UB on niche-bearing
-    // fields) if `fetch.preconnect()` is the process's first HTTP operation.
-    // `init` is idempotent (`Once`) and every other JS-side entry point
-    // (`send_sync`, `FetchTasklet::start`, S3) passes default opts too.
-    crate::http_thread::init(&Default::default());
-
-    let this: *mut Preconnect = bun_core::heap::into_raw(Box::new(Preconnect {
+/// Warm up a connection to `url`, whose href the caller keeps alive for the
+/// process (`--fetch-preconnect`).
+pub fn preconnect(url: URL<'static>) {
+    Box::new(PreparedPreconnect {
         async_http: None,
         url,
-        is_url_owned,
-    }));
-
-    // SAFETY: `this` is a freshly Box-allocated, uniquely-owned pointer; we
-    // in-place write `async_http` before any read and before it can be observed
-    // by another thread.
-    unsafe {
-        let url = (*this).url.clone();
-        let async_http = (*this).async_http.insert(AsyncHTTP::init(
-            Method::GET,
-            url,
-            headers::EntryList::default(),
-            b"",
-            b"",
-            HTTPClientResultCallback::new::<Preconnect>(this, Preconnect::on_result),
-            FetchRedirect::Manual,
-            Options::default(),
-        ));
-        async_http.client.flags.is_preconnect_only = true;
-
-        crate::HTTPThread::schedule(Batch::from(core::ptr::addr_of_mut!(async_http.task)));
-    }
+        _owned_href: None,
+    })
+    .start();
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -422,6 +422,19 @@ impl<'a> AsyncHTTP<'a> {
 
         let signals = options.signals.unwrap_or_default();
 
+        // Hop 0 resolves from the same settings later hops do
+        // (`HTTPClient::reevaluate_proxy_for_redirect`).
+        let http_proxy = match (options.http_proxy, options.proxy_settings.as_deref()) {
+            (Some(proxy), _) => Some(proxy),
+            (None, Some(settings)) => settings.resolve(&url).map(|href| {
+                // SAFETY: self-borrow, as in `reevaluate_proxy_for_redirect`:
+                // `href` points into `proxy_settings`' boxed storage, which moves
+                // into `client` below and lives as long as it (>= `'a`).
+                unsafe { URL::parse(href).erase_lifetime() }
+            }),
+            (None, None) => None,
+        };
+
         let client = make_client(
             method,
             url.clone(),
@@ -431,7 +444,7 @@ impl<'a> AsyncHTTP<'a> {
             headers_buf,
             signals,
             async_http_id,
-            options.http_proxy,
+            http_proxy,
             options.proxy_headers,
             redirect_type,
         );
@@ -454,6 +467,7 @@ impl<'a> AsyncHTTP<'a> {
             async_http_id,
             elapsed: 0,
             signals,
+            handed_back: AtomicBool::new(false),
         };
         if let Some(val) = options.unix_socket_path {
             this.client.unix_socket_path = val;
@@ -597,7 +611,7 @@ fn send_sync_callback(
     // `read_item`.
     unsafe {
         result.body_into(&mut (*(*this).response_buffer).list);
-        (*this).write_item(result.detach_lifetime());
+        (*this).write_item(result.into_owned());
     }
 }
 
@@ -750,7 +764,7 @@ impl<'a> AsyncHTTP<'a> {
                 }
                 let elapsed = (*this).elapsed;
                 bun_core::scoped_log!(AsyncHTTP, "onAsyncHTTPCallback: {:?}", elapsed);
-                callback.run(async_http, result);
+                callback.hand_back(async_http, result);
 
                 // SAFETY: `async_http` is the `async_http` field of a
                 // `ThreadlocalAsyncHTTP` heap-allocated by HTTPThread via

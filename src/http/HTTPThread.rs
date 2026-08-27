@@ -876,22 +876,21 @@ impl HttpThread {
         self.wakeup();
     }
 
-    pub fn schedule_cert_check_resume(&mut self, http: &AsyncHttp) {
-        bun_core::scoped_log!(HTTPThread, "scheduleCertCheckResume {}", http.async_http_id);
+    pub fn schedule_cert_check_resume(&mut self, async_http_id: u32) {
+        bun_core::scoped_log!(HTTPThread, "scheduleCertCheckResume {}", async_http_id);
         {
             let _guard = self.queued_cert_check_resumes_lock.lock_guard();
-            self.queued_cert_check_resumes.push(CertCheckResumeMessage {
-                async_http_id: http.async_http_id,
-            });
+            self.queued_cert_check_resumes
+                .push(CertCheckResumeMessage { async_http_id });
         }
         self.wakeup();
     }
 
-    pub fn schedule_request_write(&mut self, http: &AsyncHttp, kind: WriteMessageType) {
+    pub fn schedule_request_write(&mut self, async_http_id: u32, kind: WriteMessageType) {
         {
             let _guard = self.queued_writes_lock.lock_guard();
             self.queued_writes.push(WriteMessage {
-                async_http_id: http.async_http_id,
+                async_http_id,
                 kind,
             });
         }
@@ -930,11 +929,11 @@ impl HttpThread {
         let release_unstarted = |http: NonNull<AsyncHttp<'static>>| {
             // SAFETY: heap-owned by the caller, alive until its completion,
             // and never touched by us again after this.
-            let release = unsafe { (*http.as_ptr()).result_callback };
-            if let Some(f) = release.release_at_shutdown {
-                // SAFETY: paired ctx/fn from `HTTPClientResultCallback::new_with_release`.
-                unsafe { f(release.ctx) };
-            }
+            unsafe {
+                (*http.as_ptr())
+                    .result_callback
+                    .hand_back_at_shutdown(http.as_ptr())
+            };
         };
         for http in core::mem::take(&mut self.deferred_tasks) {
             release_unstarted(http);
@@ -965,9 +964,11 @@ impl HttpThread {
                 client.close_proxy_tunnel(false);
                 drop(core::mem::take(&mut client.custom_ssl_ctx));
                 drop(core::mem::take(&mut client.state));
-                if let Some(f) = release.release_at_shutdown {
-                    f(release.ctx);
-                }
+                let real = (*nn.as_ptr())
+                    .async_http
+                    .real
+                    .expect("in-flight copy has an original");
+                release.hand_back_at_shutdown(real.as_ptr());
                 std::alloc::dealloc(
                     nn.as_ptr().cast::<u8>(),
                     std::alloc::Layout::new::<crate::ThreadlocalAsyncHttp<'static>>(),

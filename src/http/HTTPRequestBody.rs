@@ -24,6 +24,15 @@ pub struct Stream {
 }
 
 impl Stream {
+    /// The HTTP side of `buffer`: takes its own reference, released in
+    /// [`detach`](Self::detach).
+    pub fn attach(buffer: &bun_ptr::RefPtr<ThreadSafeStreamBuffer>) -> Stream {
+        Stream {
+            buffer: core::ptr::NonNull::new(buffer.clone().into_raw()),
+            ended: false,
+        }
+    }
+
     /// Mutable access to the JS-side `ThreadSafeStreamBuffer` while attached.
     ///
     /// INVARIANT: while `buffer` is `Some`, this `Stream` holds an intrusive
@@ -41,7 +50,7 @@ impl Stream {
     pub(crate) fn detach(&mut self) {
         if let Some(buffer) = self.buffer.take() {
             // Intrusive refcount decrement.
-            // `buffer` is a live `ThreadSafeStreamBuffer::new` heap allocation;
+            // `buffer` is a live `ThreadSafeStreamBuffer::create` heap allocation;
             // this side holds the intrusive ref taken at attach, released here.
             ThreadSafeStreamBuffer::deref(buffer);
         }

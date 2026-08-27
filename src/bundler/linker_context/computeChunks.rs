@@ -78,6 +78,7 @@ pub(crate) fn compute_chunks(
     let css_asts = this.graph.ast.items_css();
     let mut html_chunks: ArrayHashMap<&[u8], Chunk> = ArrayHashMap::new();
     let loaders = parse_graph.input_files.items_loader();
+    let sources = parse_graph.input_files.items_source();
     let ast_targets = this.graph.ast.items_target();
 
     let code_splitting = this.graph.code_splitting;
@@ -169,7 +170,7 @@ pub(crate) fn compute_chunks(
                 let mut hasher = Wyhash::init(5);
                 bun_core::write_any_to_hasher(&mut hasher, order.len());
                 for x in order.slice() {
-                    x.hash(&mut hasher);
+                    x.hash(&mut hasher, sources);
                 }
                 hasher.final_()
             };
@@ -243,7 +244,7 @@ pub(crate) fn compute_chunks(
                     let mut hasher = Wyhash::init(5);
                     bun_core::write_any_to_hasher(&mut hasher, order.len());
                     for x in order.slice() {
-                        x.hash(&mut hasher);
+                        x.hash(&mut hasher, sources);
                     }
                     hasher.final_()
                 };

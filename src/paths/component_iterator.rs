@@ -199,6 +199,8 @@ pub enum MakePathStep<E> {
 /// component's parent does not exist). After the walk has advanced, a
 /// `NotFound` returns `Err(e)` at once: the parent exists but cannot hold
 /// children (a dangling symlink, procfs), so stepping back cannot make progress.
+/// That `e` belongs to the component the walk stalled on, which is the first
+/// missing component, not always the original target.
 ///
 /// `mkdir` is invoked with `component.path`: a borrowed prefix slice into the
 /// original input, never NUL-terminated. Callers that need a sentinel must
@@ -434,6 +436,30 @@ mod tests {
         });
         assert_eq!(r, Err(&b"/a/b/c"[..]));
         assert_eq!(attempts, vec![&b"/a/b/c"[..], &b"/a/b"[..], &b"/a/b/c"[..]]);
+    }
+
+    #[test]
+    fn make_path_stops_on_a_middle_component_after_two_steps_back() {
+        // `/proc/nonexistent/out`, or `dangling/cc/<tag>`: the target's parent
+        // is missing too, and the first existing ancestor cannot hold it. The
+        // guard fires on the middle component, not on the original target, so
+        // the returned error is the one for `/a/b`.
+        let it = ComponentIterator::init(&b"/a/b/c"[..], PathFormat::Posix).unwrap();
+        let mut attempts: Vec<&[u8]> = vec![];
+        let r = make_path_with(it, |p| {
+            attempts.push(p);
+            assert!(attempts.len() < 100, "runaway loop");
+            match p {
+                b"/a" => Ok(MakePathStep::Exists),
+                b"/a/b" | b"/a/b/c" => Ok(MakePathStep::NotFound(p)),
+                _ => unreachable!(),
+            }
+        });
+        assert_eq!(r, Err(&b"/a/b"[..]));
+        assert_eq!(
+            attempts,
+            vec![&b"/a/b/c"[..], &b"/a/b"[..], &b"/a"[..], &b"/a/b"[..]]
+        );
     }
 
     #[test]

@@ -1572,6 +1572,39 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     },
   );
 
+  // A deeper line wins over inheritance, as npm resolves it from the request URL.
+  test.each([
+    ["--registry", (origin: string) => [["--registry", `${origin}/npm/team-a/sub/`], {}] as const],
+    ["NPM_CONFIG_REGISTRY", (origin: string) => [[], { NPM_CONFIG_REGISTRY: `${origin}/npm/team-a/sub/` }] as const],
+  ])("a registry from %s below the default registry uses its own deeper line", async (_source, overrideFor) => {
+    using registry = mockRegistry("Bearer sub-token", {
+      registryPath: "/npm/team-a/sub",
+      tarballPath: "/npm/team-a/sub/no-deps/-/no-deps-1.0.0.tgz",
+    });
+    using dir = tempDir("npmrc-url-auth-deeper-line", {
+      "package.json": packageJson,
+      ".npmrc": [
+        `registry=${registry.origin}/npm/team-a/`,
+        `//${registry.host}/npm/team-a/:_authToken=team-a-token`,
+        `//${registry.host}/npm/team-a/sub/:_authToken=sub-token`,
+        "",
+      ].join("\n"),
+      "home/.gitkeep": "",
+    });
+    const [args, extraEnv] = overrideFor(registry.origin);
+
+    const { stderr, exitCode } = await install(String(dir), [...args], { ...extraEnv });
+
+    expect({ requests: registry.requests, exitCode, stderr }).toEqual({
+      requests: [
+        { path: "/npm/team-a/sub/no-deps", auth: "Bearer sub-token" },
+        { path: "/npm/team-a/sub/no-deps/-/no-deps-1.0.0.tgz", auth: "Bearer sub-token" },
+      ],
+      exitCode: 0,
+      stderr: expect.not.stringContaining("401"),
+    });
+  });
+
   test("--registry below the default registry keeps its token", async () => {
     using registry = mockRegistry("Bearer team-a-token", {
       registryPath: "/npm/team-a/sub",

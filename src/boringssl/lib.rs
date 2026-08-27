@@ -12,7 +12,7 @@ use bun_core::strings;
 
 /// BoringSSL's translated C API
 pub use boring as c;
-pub use boring::rand_bytes;
+pub use boring::{rand_bytes, rand_bytes_uninit};
 
 pub fn load() {
     // Callers are expected to invoke this on a single thread during startup

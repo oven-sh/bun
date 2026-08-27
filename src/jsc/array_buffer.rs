@@ -205,14 +205,17 @@ impl JobPinnedArrayBuffer {
         self.buffer.byte_len
     }
 
-    /// The bytes, for C code to read from any thread that holds a job's
-    /// ticket. The owning JS thread may store into them concurrently; a
+    /// The bytes, for C code to read while both `self` and the job's ticket
+    /// are held. The owning JS thread may store into them concurrently; a
     /// reader sees each byte's old or new value.
-    pub fn ffi_slice<'a>(&'a self, _vm_alive: &crate::Ticket) -> bun_core::ffi::FfiSlice<'a, u8> {
+    pub fn ffi_slice<'a>(
+        &'a self,
+        _vm_alive: &'a crate::Ticket,
+    ) -> bun_core::ffi::FfiSlice<'a, u8> {
         // SAFETY: pinned (no detach/transfer, not resizable/shared) and rooted
-        // while `self` lives, and the heap outlives the ticket: the `byte_len`
-        // bytes at `ptr` stay allocated for `'a`. May be concurrently written
-        // by JS; `FfiSlice` never forms a `&[u8]` over it.
+        // while `self` lives, and the heap is alive while the ticket is borrowed:
+        // the `byte_len` bytes at `ptr` stay allocated for `'a`, which both bound.
+        // May be concurrently written by JS; `FfiSlice` never forms a `&[u8]` over it.
         unsafe {
             bun_core::ffi::FfiSlice::from_raw(self.buffer.ptr.cast_const(), self.buffer.byte_len)
         }

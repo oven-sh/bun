@@ -243,10 +243,10 @@ pub mod random {
             match this {
                 RandomFillJob::Scratch { scratch, size, .. } => {
                     let size = *size;
-                    // SAFETY: `rand_bytes` only writes, and fills every byte of the slice it is given.
+                    // SAFETY: `rand_bytes_uninit` initializes every slot of the slice it is given.
                     unsafe {
                         bun_core::vec::fill_spare(scratch, 0, |spare| {
-                            boringssl::rand_bytes(&mut spare[..size]);
+                            boringssl::rand_bytes_uninit(&mut spare[..size]);
                             (size, ())
                         })
                     }

@@ -20,6 +20,18 @@ pub fn rand_bytes(buf: &mut [u8]) {
     }
 }
 
+/// [`rand_bytes`] into uninitialized storage; every slot of `buf` is initialized on return.
+#[inline]
+pub fn rand_bytes_uninit(buf: &mut [core::mem::MaybeUninit<u8>]) {
+    if buf.is_empty() {
+        return;
+    }
+    // SAFETY: `buf` is valid for `buf.len()` writes; `RAND_bytes` stores every byte and never reads them.
+    unsafe {
+        boringssl::RAND_bytes(buf.as_mut_ptr().cast::<u8>(), buf.len());
+    }
+}
+
 /// Constant-time byte-slice equality via BoringSSL `CRYPTO_memcmp`.
 ///
 /// Returns `false` when lengths differ (the length comparison itself is NOT

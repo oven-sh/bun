@@ -1,12 +1,14 @@
 /**
- * Reads the module graph that `bun build --compile` embeds in an executable,
- * without reading the whole executable (hundreds of MB in a debug build).
+ * Reads the module graph that `bun build --compile` embeds in an executable.
+ * Only the section that holds it is read (ELF `.bun`, Mach-O `__BUN,__bun`,
+ * PE `.bun`), not the whole executable (hundreds of MB in a debug build).
  *
  * The layout is `to_bytes` in src/standalone_graph/StandaloneModuleGraph.rs.
- * The payload ends with `Offsets { byte_count: usize, modules_ptr:
- * StringPointer, entry_point_id: u32, compile_exec_argv_ptr: StringPointer,
- * flags: u32 }` (32 bytes) and the `---- Bun! ----` trailer. A `StringPointer`
- * is `{ offset: u32, length: u32 }` relative to the payload.
+ * The section starts with a u64 payload length. The payload ends with
+ * `Offsets { byte_count: usize, modules_ptr: StringPointer, entry_point_id:
+ * u32, compile_exec_argv_ptr: StringPointer, flags: u32 }` (32 bytes) and the
+ * `---- Bun! ----` trailer. A `StringPointer` is `{ offset: u32, length: u32 }`
+ * relative to the payload.
  */
 import { expect } from "bun:test";
 import { isWindows } from "harness";
@@ -51,10 +53,13 @@ export const Flags = {
 
 const TRAILER = Buffer.from("\n---- Bun! ----\n", "latin1");
 
-/**
- * On Linux the graph is the ELF `.bun` section, far from the end of the file.
- * Returns null for any other executable format.
- */
+function readAt(fd: number, offset: number, size: number): Buffer {
+  const buf = Buffer.alloc(size);
+  readSync(fd, buf, 0, size, offset);
+  return buf;
+}
+
+/** The ELF `.bun` section, through the section header table. Null for another format. */
 export function readBunSectionELF(fd: number): Buffer | null {
   const ehdr = Buffer.alloc(64);
   readSync(fd, ehdr, 0, 64, 0);
@@ -64,8 +69,8 @@ export function readBunSectionELF(fd: number): Buffer | null {
   const shentsize = ehdr.readUInt16LE(0x3a);
   const shnum = ehdr.readUInt16LE(0x3c);
   const shstrndx = ehdr.readUInt16LE(0x3e);
-  const shdrs = Buffer.alloc(shentsize * shnum);
-  readSync(fd, shdrs, 0, shdrs.length, shoff);
+  const shdrs = readAt(fd, shoff, shentsize * shnum);
+  // Elf64_Shdr: sh_name u32, sh_type u32, sh_flags u64, sh_addr u64, sh_offset u64, sh_size u64, ...
   const header = (i: number) => {
     const sh = shdrs.subarray(i * shentsize, (i + 1) * shentsize);
     return {
@@ -74,29 +79,66 @@ export function readBunSectionELF(fd: number): Buffer | null {
       size: Number(sh.readBigUInt64LE(0x20)),
     };
   };
-  const read = ({ offset, size }: { offset: number; size: number }) => {
-    const buf = Buffer.alloc(size);
-    readSync(fd, buf, 0, size, offset);
-    return buf;
-  };
-  const names = read(header(shstrndx));
+  const strtab = header(shstrndx);
+  const names = readAt(fd, strtab.offset, strtab.size);
   for (let i = 0; i < shnum; i++) {
     const sh = header(i);
-    if (names.toString("latin1", sh.name, names.indexOf(0, sh.name)) === ".bun") return read(sh);
+    if (names.toString("latin1", sh.name, names.indexOf(0, sh.name)) === ".bun") return readAt(fd, sh.offset, sh.size);
+  }
+  return null;
+}
+
+/** The Mach-O `__bun` section of the `__BUN` segment, through the load commands. Null for another format. */
+export function readBunSectionMachO(fd: number): Buffer | null {
+  // mach_header_64: magic, cputype, cpusubtype, filetype, ncmds, sizeofcmds, flags, reserved (32 bytes)
+  const header = readAt(fd, 0, 32);
+  if (header.readUInt32LE(0) !== 0xfeedfacf) return null;
+  const ncmds = header.readUInt32LE(16);
+  const commands = readAt(fd, 32, header.readUInt32LE(20));
+  for (let at = 0, i = 0; i < ncmds; i++, at += commands.readUInt32LE(at + 4)) {
+    // segment_command_64 (72 bytes): cmd, cmdsize, segname[16], vmaddr, vmsize, fileoff, filesize,
+    // maxprot, initprot, nsects, flags. LC_SEGMENT_64 is 0x19.
+    if (commands.readUInt32LE(at) !== 0x19 || commands.toString("latin1", at + 8, at + 14) !== "__BUN\0") continue;
+    const nsects = commands.readUInt32LE(at + 64);
+    for (let section = at + 72, j = 0; j < nsects; j++, section += 80) {
+      // section_64 (80 bytes): sectname[16], segname[16], addr u64, size u64, offset u32, ...
+      if (commands.toString("latin1", section, section + 6) !== "__bun\0") continue;
+      return readAt(fd, commands.readUInt32LE(section + 48), Number(commands.readBigUInt64LE(section + 40)));
+    }
+  }
+  return null;
+}
+
+/** The PE `.bun` section, through the section table. Null for another format. */
+export function readBunSectionPE(fd: number): Buffer | null {
+  const dos = readAt(fd, 0, 64);
+  if (dos.toString("latin1", 0, 2) !== "MZ") return null;
+  const pe = dos.readUInt32LE(0x3c);
+  // "PE\0\0", then the COFF header: Machine u16, NumberOfSections u16, TimeDateStamp u32,
+  // PointerToSymbolTable u32, NumberOfSymbols u32, SizeOfOptionalHeader u16, Characteristics u16.
+  const coff = readAt(fd, pe, 24);
+  if (coff.toString("latin1", 0, 4) !== "PE\0\0") return null;
+  const sectionCount = coff.readUInt16LE(6);
+  const sections = readAt(fd, pe + 24 + coff.readUInt16LE(20), sectionCount * 40);
+  for (let at = 0, i = 0; i < sectionCount; i++, at += 40) {
+    // IMAGE_SECTION_HEADER (40 bytes): Name[8], VirtualSize u32, VirtualAddress u32, SizeOfRawData u32, PointerToRawData u32, ...
+    if (sections.toString("latin1", at, at + 5) !== ".bun\0") continue;
+    return readAt(fd, sections.readUInt32LE(at + 20), sections.readUInt32LE(at + 16));
   }
   return null;
 }
 
 /**
- * Parses the module graph embedded in the executable at `outfile`. On Linux
- * only the `.bun` section is read. Other formats read the whole file.
+ * Parses the module graph embedded in the executable at `outfile`. Only the
+ * section that holds it is read; an executable of a format the readers above
+ * do not know is read whole.
  */
 export function readModuleGraph(outfile: string): ModuleGraph {
   // A Windows target gets `.exe` appended to the outfile it was asked for.
   const fd = openSync(isWindows ? `${outfile}.exe` : outfile, "r");
   let data: Buffer;
   try {
-    data = readBunSectionELF(fd) ?? readFileSync(fd);
+    data = readBunSectionELF(fd) ?? readBunSectionMachO(fd) ?? readBunSectionPE(fd) ?? readFileSync(fd);
   } finally {
     closeSync(fd);
   }
@@ -154,6 +196,17 @@ export function readModuleGraph(outfile: string): ModuleGraph {
   if (flags & Flags.HAS_MODULE_INFO_STRING_TABLE) {
     const strings = span(at);
     moduleInfoStringTable = { ...strings, text: text(strings) };
+  }
+
+  // JSC reads the bytecode in place and expects it 128-byte aligned once
+  // mapped. The section is page aligned and starts with the 8-byte length, so
+  // every bytecode region sits at 120 mod 128 (`append_bytecode_aligned`).
+  // Module records and their string table are not aligned.
+  const aligned: Span[] = [...modules.map(m => m.bytecode), ...builtinBytecode];
+  if (bytecodeStringTable) aligned.push(bytecodeStringTable);
+  for (const region of aligned) {
+    if (region.length > 0)
+      expect(region.offset % 128, `bytecode at payload offset ${region.offset} is aligned`).toBe(120);
   }
 
   return { modules, entryPointId, flags, startupCount, builtinBytecode, bytecodeStringTable, moduleInfoStringTable };

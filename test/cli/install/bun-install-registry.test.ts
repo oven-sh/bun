@@ -4744,64 +4744,45 @@ describe("hoisting", async () => {
 });
 
 describe("transitive file dependencies", () => {
+  // The nested copy of a transitive `file:` folder is linked or copied like any
+  // other package. Only a package that depends on itself (`file:.`) is symlinked.
+  const files = {
+    "name": "files",
+    "version": "1.1.1",
+    "dependencies": {
+      "no-deps": "2.0.0",
+    },
+  };
+
   async function checkHoistedFiles() {
-    const aliasedFileDepFilesPackageJson = join(
-      packageDir,
-      "node_modules",
-      "aliased-file-dep",
-      "node_modules",
-      "files",
-      "the-files",
-      "package.json",
-    );
     const results = await Promise.all([
-      (
-        await lstat(join(packageDir, "node_modules", "file-dep", "node_modules", "files", "package.json"))
-      ).isSymbolicLink(),
+      file(join(packageDir, "node_modules", "file-dep", "node_modules", "files", "package.json")).json(),
       readdirSorted(join(packageDir, "node_modules", "missing-file-dep", "node_modules")),
       exists(join(packageDir, "node_modules", "aliased-file-dep", "package.json")),
-      isWindows
-        ? file(await readlink(aliasedFileDepFilesPackageJson)).json()
-        : file(aliasedFileDepFilesPackageJson).json(),
-      (
-        await lstat(
-          join(packageDir, "node_modules", "@scoped", "file-dep", "node_modules", "@scoped", "files", "package.json"),
-        )
-      ).isSymbolicLink(),
-      (
-        await lstat(
-          join(
-            packageDir,
-            "node_modules",
-            "@another-scope",
-            "file-dep",
-            "node_modules",
-            "@scoped",
-            "files",
-            "package.json",
-          ),
-        )
-      ).isSymbolicLink(),
+      file(
+        join(packageDir, "node_modules", "aliased-file-dep", "node_modules", "files", "the-files", "package.json"),
+      ).json(),
+      file(
+        join(packageDir, "node_modules", "@scoped", "file-dep", "node_modules", "@scoped", "files", "package.json"),
+      ).json(),
+      file(
+        join(
+          packageDir,
+          "node_modules",
+          "@another-scope",
+          "file-dep",
+          "node_modules",
+          "@scoped",
+          "files",
+          "package.json",
+        ),
+      ).json(),
       (
         await lstat(join(packageDir, "node_modules", "self-file-dep", "node_modules", "self-file-dep", "package.json"))
       ).isSymbolicLink(),
     ]);
 
-    expect(results).toEqual([
-      true,
-      [],
-      true,
-      {
-        "name": "files",
-        "version": "1.1.1",
-        "dependencies": {
-          "no-deps": "2.0.0",
-        },
-      },
-      true,
-      true,
-      true,
-    ]);
+    expect(results).toEqual([files, [], true, files, files, files, true]);
   }
 
   async function checkUnhoistedFiles() {
@@ -4814,46 +4795,41 @@ describe("transitive file dependencies", () => {
       file(join(packageDir, "node_modules", "@another-scope", "file-dep", "package.json")).json(),
       file(join(packageDir, "node_modules", "self-file-dep", "package.json")).json(),
 
-      (
-        await lstat(join(packageDir, "pkg1", "node_modules", "file-dep", "node_modules", "files", "package.json"))
-      ).isSymbolicLink(),
+      file(join(packageDir, "pkg1", "node_modules", "file-dep", "node_modules", "files", "package.json")).json(),
       readdirSorted(join(packageDir, "pkg1", "node_modules", "missing-file-dep", "node_modules")), // []
       file(join(packageDir, "pkg1", "node_modules", "aliased-file-dep", "package.json")).json(),
+      // `aliased-file-dep` depends on itself: `files: "file:."`.
       (
         await lstat(
           join(packageDir, "pkg1", "node_modules", "aliased-file-dep", "node_modules", "files", "package.json"),
         )
       ).isSymbolicLink(),
-      (
-        await lstat(
-          join(
-            packageDir,
-            "pkg1",
-            "node_modules",
-            "@scoped",
-            "file-dep",
-            "node_modules",
-            "@scoped",
-            "files",
-            "package.json",
-          ),
-        )
-      ).isSymbolicLink(),
-      (
-        await lstat(
-          join(
-            packageDir,
-            "pkg1",
-            "node_modules",
-            "@another-scope",
-            "file-dep",
-            "node_modules",
-            "@scoped",
-            "files",
-            "package.json",
-          ),
-        )
-      ).isSymbolicLink(),
+      file(
+        join(
+          packageDir,
+          "pkg1",
+          "node_modules",
+          "@scoped",
+          "file-dep",
+          "node_modules",
+          "@scoped",
+          "files",
+          "package.json",
+        ),
+      ).json(),
+      file(
+        join(
+          packageDir,
+          "pkg1",
+          "node_modules",
+          "@another-scope",
+          "file-dep",
+          "node_modules",
+          "@scoped",
+          "files",
+          "package.json",
+        ),
+      ).json(),
       (
         await lstat(
           join(packageDir, "pkg1", "node_modules", "self-file-dep", "node_modules", "self-file-dep", "package.json"),
@@ -4864,12 +4840,12 @@ describe("transitive file dependencies", () => {
 
     const expected = [
       ...(Array(7).fill({ name: "a-dep", version: "1.0.1" }) as any),
-      true,
+      files,
       [] as string[],
       { name: "file-dep", version: "1.0.1", dependencies: { files: "file:." } },
       true,
-      true,
-      true,
+      files,
+      files,
       true,
       [
         "@another-scope",

@@ -2336,7 +2336,11 @@ pub fn to_executable(
 ) -> crate::Result<CompileResult> {
     #[cfg(windows)]
     let _ = root_dir;
-    if !target.is_host_platform() && output_files.iter().any(|file| file.output_kind == options::OutputKind::Bytecode) {
+    if !target.is_host_platform()
+        && output_files
+            .iter()
+            .any(|file| file.output_kind == options::OutputKind::Bytecode)
+    {
         flags |= Flags::CROSS_COMPILED_BYTECODE;
     }
     let bytes = match to_bytes(

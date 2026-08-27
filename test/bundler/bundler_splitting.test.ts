@@ -1719,7 +1719,7 @@ describe("bundler", () => {
         console.log('other', main(), util(), count, 'main=' + import.meta.main)
       `,
       "/check.js": /* js */ `
-        const m = await import('./out/entry.js')
+        import * as m from './out/entry.js'
         console.log(Object.keys(m).sort().join(','))
       `,
     },
@@ -1799,7 +1799,7 @@ describe("bundler", () => {
         console.log(JSON.stringify(ns))
       `,
       "/check.js": /* js */ `
-        const m = await import('./out/entry.js')
+        import * as m from './out/entry.js'
         console.log(Object.keys(m).sort().join(','))
       `,
     },

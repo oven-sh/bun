@@ -7,8 +7,7 @@ extern "C" size_t Bun__stringSyntheticAllocationLimit;
 
 namespace Bun {
 
-// The most elements a Vector<T> can hold (INT32_MAX bytes), lowered with
-// Bun__stringSyntheticAllocationLimit so tests reach the bound with small inputs.
+// The most elements a Vector<T> can hold, lowered by Bun__stringSyntheticAllocationLimit so tests reach it cheaply.
 template<typename T>
 size_t maxVectorSize()
 {

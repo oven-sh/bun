@@ -203,6 +203,79 @@ const allSource = [
 // big and shapes print synchronously while required; features then records print from promise callbacks, in that order.
 const allOutput = [bigOutput, shapesOutput, "libs function,object,object", featuresOutput, recordsOutput].join("\n");
 
+// Every dependency in test/package.json that bundles to one file whose text is the same on every platform (no inlined
+// absolute paths, no per-platform optional packages), all in one payload.
+const bundledTogether = [
+  "@astrojs/node",
+  "@azure/service-bus",
+  "@bufbuild/protobuf",
+  "@connectrpc/connect",
+  "@connectrpc/connect-node",
+  "@fastify/websocket",
+  "@grpc/proto-loader",
+  "@happy-dom/global-registrator",
+  "@remix-run/node",
+  "@remix-run/react",
+  "@testing-library/react",
+  "@vitest/coverage-v8",
+  "acorn",
+  "ansi-regex",
+  "axios",
+  "body-parser",
+  "bun-plugin-svelte",
+  "bun-plugin-yaml",
+  "comlink",
+  "commander",
+  "detect-libc",
+  "devalue",
+  "es-module-lexer",
+  "express",
+  "fast-glob",
+  "filenamify",
+  "happy-dom",
+  "hono",
+  "http2-wrapper",
+  "https-proxy-agent",
+  "iconv-lite",
+  "immutable",
+  "isbot",
+  "jest-extended",
+  "jimp",
+  "jsonwebtoken",
+  "jws",
+  "lodash",
+  "mongodb",
+  "msw",
+  "mysql2",
+  "nodemailer",
+  "p-queue",
+  "pg",
+  "pg-connection-string",
+  "pg-gateway",
+  "pino-pretty",
+  "postgres",
+  "prompts",
+  "react",
+  "react-dom",
+  "reflect-metadata",
+  "sinon",
+  "socket.io-adapter",
+  "socket.io-client",
+  "st",
+  "string-width",
+  "strip-ansi",
+  "stripe",
+  "superagent",
+  "svelte",
+  "tsyringe",
+  "tunnel",
+  "uuid",
+  "v8-heapsnapshot",
+  "xml2js",
+];
+const librariesSource = bundledTogether.map((lib, i) => `try { globalThis.lib${i} = require(${JSON.stringify(lib)}); loaded++; } catch (e) { failed.push(${JSON.stringify(lib)} + ": " + e); }`).join("\n");
+const librariesOutput = `${bundledTogether.length} libraries, failed: []`;
+
 const corpusBuilds = [
   { name: "bun build --bytecode features.js", entry: "./features.js", args: [] as string[], output: featuresOutput },
   {
@@ -223,6 +296,7 @@ const corpusBuilds = [
   // Everything above plus a few libraries in ONE payload: string, identifier-set and environment sharing across many
   // code blocks, and a multi-megabyte payload spanning hundreds of encoder pages.
   { name: "bun build --bytecode all.js", entry: "./all.js", args: [] as string[], output: allOutput },
+  { name: "bun build --bytecode libraries.js", entry: "./libraries.js", args: [] as string[], output: librariesOutput },
   { name: "bun build --bytecode --minify all.js", entry: "./all.js", args: ["--minify"], output: allOutput },
 ];
 // Entries are relative to the corpus directory so the module paths the bundler writes into its output are the same on
@@ -248,6 +322,7 @@ const bigPath = join(corpusDir, "big.js");
 writeFileSync(bigPath, bigSource());
 writeFileSync(join(corpusDir, "shapes.js"), shapesSource());
 writeFileSync(join(corpusDir, "all.js"), allSource);
+writeFileSync(join(corpusDir, "libraries.js"), `var loaded = 0, failed = [];\n${librariesSource}\nconsole.log(loaded + " libraries, failed: " + JSON.stringify(failed));\n`);
 
 async function bundle(
   outdir: string,
@@ -431,6 +506,13 @@ describe("bytecode cache portability", () => {
           "jsc": {
             "bytes": 280016,
             "sha256": "2a99c33a2516e2d41187bc322ddd4523318530b51c60c3d9a8bd566d4f2929a1",
+          },
+        },
+        "bun build --bytecode libraries.js": {
+          "js": "8a550fca8ad83ffc38623766a66bdc04206dc49c1b478af8feb2d2f5a2e30021",
+          "jsc": {
+            "bytes": 25860840,
+            "sha256": "2c2953d3088b8d23154e8863cb256cc03b53fcf2b64269e0e03cfe3759458985",
           },
         },
         "bun build --bytecode lodash/lodash.js": {

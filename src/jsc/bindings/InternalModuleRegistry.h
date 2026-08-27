@@ -58,4 +58,6 @@ private:
     void finishCreation(VM&);
 };
 
+JSC_DECLARE_HOST_FUNCTION(jsInternalModulesLoadedFromBytecode);
+
 } // namespace Bun

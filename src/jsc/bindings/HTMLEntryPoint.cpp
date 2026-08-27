@@ -30,7 +30,7 @@ extern "C" JSPromise* Bun__loadHTMLEntryPoint(Zig::GlobalObject* globalObject)
     }
 
     if (result.isUndefined()) {
-        return JSPromise::resolvedPromise(globalObject, result);
+        RELEASE_AND_RETURN(scope, JSPromise::resolvedPromise(globalObject, result));
     }
 
     JSPromise* promise = dynamicDowncast<JSC::JSPromise>(result);

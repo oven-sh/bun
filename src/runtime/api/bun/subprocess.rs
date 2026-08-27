@@ -479,17 +479,11 @@ impl Subprocess<'_> {
     pub(crate) fn on_close_io(&self, kind: StdioKind) {
         match kind {
             StdioKind::Stdin => self.stdin.with_mut(|stdin| match stdin {
-                Writable::Pipe(pipe) => {
-                    let pipe = *pipe;
-                    // `source` is a `JsCell`, so the shared `&FileSink` from the
-                    // centralised `pipe_sink` accessor suffices for `with_mut`.
-                    Writable::pipe_sink(pipe).source.with_mut(|s| s.clear());
-                    *stdin = Writable::Ignore;
-                    // `Writable::Pipe` owns one intrusive ref; release it now
-                    // that the variant has been overwritten. Ordered after the
-                    // assignment so any re-entrant `on_stdin_destroyed` from
-                    // `deinit` observes `.Ignore`.
-                    Writable::pipe_release(pipe);
+                Writable::Pipe(_) => {
+                    let Writable::Pipe(pipe) = core::mem::replace(stdin, Writable::Ignore) else {
+                        unreachable!()
+                    };
+                    pipe.source.with_mut(|s| s.clear());
                 }
                 Writable::Buffer(_) => {
                     let Writable::Buffer(buffer) = core::mem::replace(stdin, Writable::Ignore)
@@ -497,7 +491,6 @@ impl Subprocess<'_> {
                         unreachable!()
                     };
                     Writable::buffer_writer_mut(&buffer).source.detach();
-                    buffer.deref();
                 }
                 _ => {}
             }),
@@ -522,8 +515,6 @@ impl Subprocess<'_> {
                         // pipe.state was emptied via take()
                     }
                     // else: *out stays Readable::Ignore (set by replace above).
-                    // RefPtr has no Drop — release the ref this Readable held.
-                    pipe.deref();
                 }
             }
         }
@@ -741,10 +732,6 @@ impl Subprocess<'_> {
         // If signal is 0, then no actual signal is sent, but error checking
         // is still performed.
         let sig: SignalCode = bun_sys_jsc::signal_code_jsc::from_js(signal_arg, global_this)?;
-
-        if global_this.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
 
         match this.try_kill(sig) {
             bun_sys::Result::Ok(()) => {}
@@ -1019,8 +1006,7 @@ impl Subprocess<'_> {
             && self.flags.get().contains(Flags::IS_STDIN_A_READABLE_STREAM)
         {
             if let Writable::Pipe(pipe) = self.stdin.get() {
-                // Writable::Pipe already stores `NonNull<FileSink>`; just copy it.
-                Some(*pipe)
+                Some(pipe.as_non_null())
             } else {
                 unreachable!()
             }
@@ -1446,8 +1432,8 @@ impl Subprocess<'_> {
             // `bun_sys::SignalCode`.
             let sys_sig = bun_sys::SignalCode(signal as u8);
             if let Some(name) = sys_sig.name() {
-                use bun_jsc::ZigStringJsc as _;
-                return bun_jsc::zig_string::ZigString::init(name.as_bytes()).to_js(global);
+                use bun_jsc::EncodedSliceJsc as _;
+                return bun_core::EncodedSlice::latin1(name.as_bytes()).to_js(global);
             } else {
                 return JSValue::js_number(signal as u32 as f64);
             }
@@ -1456,7 +1442,11 @@ impl Subprocess<'_> {
         JSValue::NULL
     }
 
-    pub(crate) fn handle_ipc_message(&self, message: &IPC::DecodedIPCMessage, handle: JSValue) {
+    pub(crate) fn handle_ipc_message(
+        &self,
+        message: &IPC::DecodedIPCMessage,
+        handle: JSValue,
+    ) -> JsResult<()> {
         bun_output::scoped_log!(IPC, "Subprocess#handleIPCMessage");
         match message {
             // In future versions we can read this in order to detect version mismatches,
@@ -1488,13 +1478,14 @@ impl Subprocess<'_> {
             IPC::DecodedIPCMessage::Internal(data) => {
                 bun_output::scoped_log!(IPC, "Received IPC internal message from child");
                 let global_this = self.global_this;
-                let _ = node_cluster_binding::handle_internal_message_primary(
+                node_cluster_binding::handle_internal_message_primary(
                     global_this.get(),
                     self,
                     *data,
-                );
+                )?;
             }
         }
+        Ok(())
     }
 
     pub(crate) fn handle_ipc_close(&self) {
@@ -1548,27 +1539,9 @@ impl SourceData for webcore::AnyBlob {
         webcore::AnyBlob::memory_cost(self)
     }
 }
-/// Local newtype so the [`SourceData`] impl satisfies coherence —
-/// `ArrayBufferStrong` lives in `bun_jsc` and the trait in `bun_spawn`, so
-/// implementing it directly would be an orphan.
-struct ArrayBufferSource(jsc::array_buffer::ArrayBufferStrong);
-impl SourceData for ArrayBufferSource {
-    fn slice(&self) -> &[u8] {
-        self.0.slice()
-    }
-    fn detach(&mut self) { /* GC-owned; Drop releases the Strong handle */
-    }
-    fn memory_cost(&self) -> usize {
-        0
-    }
-}
 #[inline]
 pub(crate) fn source_from_blob(b: webcore::AnyBlob) -> Source {
     Source::Any(Box::new(b))
-}
-#[inline]
-pub(crate) fn source_from_array_buffer(ab: jsc::array_buffer::ArrayBufferStrong) -> Source {
-    Source::Any(Box::new(ArrayBufferSource(ab)))
 }
 
 /// Windows: the extra stdio pipes (`stdio_pipes`) are uv handles this
@@ -1638,11 +1611,11 @@ pub mod testing_apis {
         // SAFETY: `from_js` returned a live `*mut Subprocess` owned by the JS wrapper.
         // R-2: deref as shared (`&*const`) — fields are interior-mutable.
         let subprocess = unsafe { &*subprocess_ptr };
-        let kind_str = bun_core::OwnedString::new(kind_value.to_bun_string(global_this)?);
+        let kind_str = kind_value.to_bun_string(global_this)?;
 
-        let out: &JsCell<Readable> = if kind_str.eql_comptime(b"stdout") {
+        let out: &JsCell<Readable> = if kind_str.eq_ascii(b"stdout") {
             &subprocess.stdout
-        } else if kind_str.eql_comptime(b"stderr") {
+        } else if kind_str.eq_ascii(b"stderr") {
             &subprocess.stderr
         } else {
             return Err(

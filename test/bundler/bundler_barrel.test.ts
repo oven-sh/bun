@@ -1914,4 +1914,37 @@ describe("bundler", () => {
     },
     run: { stdout: "gamma BETA_STAR_MARKER" },
   });
+
+  // --- Entry points are never barrels ---
+  // An entry point's exports are the public interface of the build. Nothing
+  // imports an entry point, so a deferred record would never be un-deferred
+  // and the output would export bindings that were shaken away.
+  // https://github.com/oven-sh/bun/issues/40578
+
+  itBundled("barrel/EntryPointPureReExportSideEffectsFalse", {
+    files: {
+      "/entry.ts": /* ts */ `export { a } from './a';`,
+      "/a.ts": /* ts */ `export const a = 1;`,
+      "/package.json": JSON.stringify({ name: "repro", sideEffects: false }),
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("a = 1");
+    },
+  });
+
+  itBundled("barrel/EntryPointImportThenExportSideEffectsFalse", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { a } from './a';
+        export { a };
+      `,
+      "/a.ts": /* ts */ `export const a = 1;`,
+      "/package.json": JSON.stringify({ name: "repro", sideEffects: false }),
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("a = 1");
+    },
+  });
 });

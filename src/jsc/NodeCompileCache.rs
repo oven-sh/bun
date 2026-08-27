@@ -106,6 +106,11 @@ impl AlignedBlob {
         })
     }
 
+    fn as_slice(&self) -> &[u8] {
+        // SAFETY: `ptr` is valid for `len` bytes for the lifetime of `self`.
+        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+    }
+
     fn as_mut_slice(&mut self) -> &mut [u8] {
         // SAFETY: `ptr` is valid for `len` bytes for the lifetime of `self`.
         unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
@@ -292,6 +297,11 @@ pub fn init_from_env_once() {
         if let Some(dir) = env_var::NODE_COMPILE_CACHE::get_not_empty() {
             if env_var::NODE_DISABLE_COMPILE_CACHE::get().is_some() {
                 cclog!("[compile cache] Disabled by NODE_DISABLE_COMPILE_CACHE.\n");
+                ENABLED.store(1, Ordering::Relaxed);
+                return;
+            }
+            if crate::virtual_machine::standalone_module_graph().is_some() {
+                cclog!("[compile cache] Disabled in standalone executables.\n");
                 ENABLED.store(1, Ordering::Relaxed);
                 return;
             }
@@ -542,7 +552,11 @@ pub fn get_dir() -> Option<Vec<u8>> {
 /// Module-fetch hook: register/refresh the entry for `filename`; returns the
 /// validated bytecode blob when the on-disk cache matches `code` (post-
 /// transpile text). The pointer stays valid for the process (entry map owns it).
-pub fn fetch(filename: &[u8], is_cjs: bool, code: &[u8]) -> Option<(*mut u8, usize)> {
+pub fn fetch(
+    filename: &[u8],
+    is_cjs: bool,
+    code: &[u8],
+) -> Option<crate::resolved_source::Bytecode> {
     if !is_enabled() || filename.is_empty() || !bun_paths::is_absolute(filename) {
         return None;
     }
@@ -558,7 +572,10 @@ pub fn fetch(filename: &[u8], is_cjs: bool, code: &[u8]) -> Option<(*mut u8, usi
     if let Some(entry) = state.entries.get(&key) {
         if entry.code_hash == code_hash && entry.code_size == code_size {
             // Same module, unchanged code (e.g. re-required): reuse.
-            return entry.blob.as_ref().map(|b| (b.ptr.as_ptr(), b.len));
+            return entry
+                .blob
+                .as_ref()
+                .map(|b| crate::resolved_source::Bytecode::persistent(b.as_slice()));
         }
     }
 
@@ -580,7 +597,10 @@ pub fn fetch(filename: &[u8], is_cjs: bool, code: &[u8]) -> Option<(*mut u8, usi
             type_name(is_cjs),
             display_name(filename, is_cjs)
         );
-        entry.blob.as_ref().map(|b| (b.ptr.as_ptr(), b.len))
+        entry
+            .blob
+            .as_ref()
+            .map(|b| crate::resolved_source::Bytecode::persistent(b.as_slice()))
     } else {
         cclog!(
             "[compile cache] code cache for {} {} was not initialized, initializing the in-memory entry\n",
@@ -890,11 +910,14 @@ fn generate_bytecode(format: Format, code: &[u8], url: &[u8]) -> Option<Box<[u8]
                 .stack_size(16 * 1024 * 1024)
                 .spawn(move || {
                     for job in rx {
-                        let mut url = BunString::clone_utf8(&job.url);
+                        let url = BunString::clone_utf8(&job.url);
                         let result = crate::cached_bytecode::__bun_jsc_generate_cached_bytecode(
-                            job.format, &job.code, &mut url,
+                            job.format,
+                            &job.code,
+                            &url,
+                            u32::MAX,
+                            None,
                         );
-                        url.deref();
                         let _ = job.resp.send(result);
                     }
                 });
@@ -1207,20 +1230,21 @@ pub unsafe extern "C" fn Bun__NodeCompileCache__enable(
     );
     if let Some(directory) = result.directory {
         // SAFETY: out-param is valid for write per fn contract.
-        unsafe { *out_directory = BunString::clone_utf8(&directory) };
+        unsafe { out_directory.write(BunString::clone_utf8(&directory)) };
     }
     if let Some(message) = result.message {
         // SAFETY: out-param is valid for write per fn contract.
-        unsafe { *out_message = BunString::clone_utf8(message.as_bytes()) };
+        unsafe { out_message.write(BunString::clone_utf8(message.as_bytes())) };
     }
     result.status
 }
 
+/// The C++ caller `transferToJS()`s the result.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__NodeCompileCache__getDir() -> BunString {
     match get_dir() {
         Some(dir) => BunString::clone_utf8(&dir),
-        None => BunString::empty(),
+        None => BunString::EMPTY,
     }
 }
 

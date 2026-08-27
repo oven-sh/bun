@@ -124,6 +124,7 @@ private:
 
 namespace JSC {
 struct HashTableValue;
+class DecoderStringTable;
 }
 
 namespace Bun {
@@ -252,6 +253,11 @@ public:
     ALWAYS_INLINE bool isStoppingOrStopped(const JSC::VM& vm) const { return !scriptAllowed() || vm.executionForbidden(); }
     Bun::JSCTaskScheduler deferredWorkTimer;
 
+    // One slot per string of the executable's module-info string table,
+    // filled on first use so each name is atomized once however many chunks
+    // import or export it (BunAnalyzeTranspiledModule.cpp).
+    Vector<JSC::Identifier> sharedModuleInfoIdentifiers;
+
     // Linked list of StrongRootBlock cells backing bun_jsc::Strong handles
     // (see StrongRootBlock.h). Raw pointers into the GC heap: they are rooted
     // by a SimpleMarkingConstraint registered in JSVMClientData::create(), so
@@ -272,8 +278,12 @@ public:
     // after every swap.
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
 
+    JSC::DecoderStringTable* decoderStringTable() final { return m_decoderStringTable.get(); }
+    void setDecoderStringTable(std::span<const uint8_t>);
+
 private:
     bool isWebCoreJSClientData() const final { return true; }
+    std::unique_ptr<JSC::DecoderStringTable> m_decoderStringTable;
 
     // Frees a per-VM `JSHeapData` but leaves the process-wide `useGlobalGC`
     // singleton alone (it is shared by every VM). On the default `!useGlobalGC`

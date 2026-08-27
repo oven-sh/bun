@@ -4,7 +4,7 @@ import { tls as tlsCerts } from "harness";
 import type { HttpsProxyAgent as HttpsProxyAgentType } from "https-proxy-agent";
 import net from "net";
 import tls from "tls";
-import { createConnectProxy, createTLSConnectProxy, startProxy } from "./proxy-test-utils";
+import { type ConnectProxyOptions, createConnectProxy, createTLSConnectProxy, startProxy } from "./proxy-test-utils";
 // Use dynamic require to avoid linter removing the import
 const { HttpsProxyAgent } = require("https-proxy-agent") as {
   HttpsProxyAgent: typeof HttpsProxyAgentType;
@@ -102,6 +102,123 @@ afterAll(() => {
   if (prevNoProxyLower !== undefined) process.env.no_proxy = prevNoProxyLower;
 });
 
+type ClientEvent = string | { error: string } | { code: number; reason: string; wasClean: boolean };
+
+/**
+ * Everything the client observes, in order: each message as a string, each
+ * error event as `{ error }` and the close event last. Resolves on close.
+ */
+function clientEvents(ws: WebSocket): Promise<ClientEvent[]> {
+  const events: ClientEvent[] = [];
+  const { promise, resolve } = Promise.withResolvers<ClientEvent[]>();
+  ws.addEventListener("message", event => {
+    events.push(String(event.data));
+  });
+  ws.addEventListener("error", event => {
+    events.push({ error: (event as ErrorEvent).message });
+  });
+  ws.addEventListener("close", event => {
+    events.push({ code: event.code, reason: event.reason, wasClean: event.wasClean });
+    resolve(events);
+  });
+  return promise;
+}
+
+function closeCodeOf(events: ClientEvent[]): number | undefined {
+  const last = events[events.length - 1];
+  return typeof last === "object" && "code" in last ? last.code : undefined;
+}
+
+/**
+ * Connects to one of the echo servers, sends `message` once open and closes
+ * after the echo arrives. A working tunnel produces `echoed(message)`.
+ */
+function echoSession(url: string, options: Bun.WebSocketOptions, message: string): Promise<ClientEvent[]> {
+  const ws = new WebSocket(url, options);
+  ws.addEventListener("open", () => ws.send(message));
+  ws.addEventListener("message", event => {
+    if (String(event.data) === message) ws.close(1000);
+  });
+  return clientEvents(ws);
+}
+
+/** The echo server greets first, echoes the message, then the client closes cleanly. */
+function echoed(message: string): ClientEvent[] {
+  return ["connected", message, { code: 1000, reason: "", wasClean: true }];
+}
+
+/**
+ * Connects where the connection must fail and returns the client's events once
+ * it closes. Should it open after all, it is closed at once so the assertion
+ * reports the open instead of the test timing out.
+ */
+function failingSession(url: string, options: Bun.WebSocketOptions): Promise<ClientEvent[]> {
+  const ws = new WebSocket(url, options);
+  ws.addEventListener("open", () => ws.close(1000));
+  return clientEvents(ws);
+}
+
+/** A connection the proxy refused, or whose TLS handshake with the proxy failed. */
+function failed(url: string, reason: string, code: number): ClientEvent[] {
+  return [
+    { error: `WebSocket connection to '${new URL(url).href}' failed: ${reason}` },
+    { code, reason, wasClean: false },
+  ];
+}
+
+interface ConnectRequest {
+  requestLine: string;
+  headers: Record<string, string>;
+}
+
+/** The CONNECT request the client has to send to tunnel to the echo server on `port`. */
+function connectRequest(port: number, headers: Record<string, string> = {}): ConnectRequest {
+  return {
+    requestLine: `CONNECT 127.0.0.1:${port} HTTP/1.1`,
+    headers: { host: `127.0.0.1:${port}`, "proxy-connection": "Keep-Alive", ...headers },
+  };
+}
+
+/**
+ * Starts an HTTP CONNECT proxy for one test and records every connection it
+ * accepts and every CONNECT request it reads, so a test can assert what the
+ * client sent to the proxy and not only that the tunnel came up.
+ */
+async function startRecordingProxy(options: ConnectProxyOptions = {}) {
+  const proxy = createConnectProxy(options);
+  const requests: ConnectRequest[] = [];
+  let connections = 0;
+  proxy.on("connection", socket => {
+    connections++;
+    let head = "";
+    const onData = (chunk: Buffer) => {
+      head += chunk.toString("latin1");
+      const end = head.indexOf("\r\n\r\n");
+      if (end === -1) return;
+      socket.off("data", onData);
+      const [requestLine, ...headerLines] = head.slice(0, end).split("\r\n");
+      const headers: Record<string, string> = {};
+      for (const line of headerLines) {
+        const colon = line.indexOf(":");
+        headers[line.slice(0, colon).toLowerCase()] = line.slice(colon + 1).trim();
+      }
+      requests.push({ requestLine, headers });
+    };
+    socket.on("data", onData);
+  });
+  const port = await startProxy(proxy);
+  return {
+    port,
+    requests,
+    get connections() {
+      return connections;
+    },
+    [Symbol.dispose]() {
+      proxy.close();
+    },
+  };
+}
+
 describe("WebSocket proxy API", () => {
   test("accepts proxy option as string (HTTP proxy)", () => {
     const ws = new WebSocket("ws://example.com", {
@@ -186,7 +303,7 @@ describe("WebSocket proxy API", () => {
       new WebSocket("ws://example.com", {
         proxy: "not-a-valid-url",
       });
-    }).toThrow(SyntaxError);
+    }).toThrow(expect.objectContaining({ name: "SyntaxError", message: "Invalid proxy URL: not-a-valid-url" }));
   });
 
   test.each(["socks5", "socks4", "socks5h", "ftp", "ws", "gopher"])(
@@ -217,177 +334,93 @@ describe("WebSocket proxy API", () => {
 
 describe("WebSocket through HTTP CONNECT proxy", () => {
   test("ws:// through HTTP proxy", async () => {
-    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
-
-    const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
-      proxy: `http://127.0.0.1:${proxyPort}`,
-    });
-
-    const receivedMessages: string[] = [];
-
-    ws.onopen = () => {
-      ws.send("hello from client");
-    };
-
-    ws.onmessage = event => {
-      receivedMessages.push(String(event.data));
-      if (receivedMessages.length === 2) {
-        ws.close();
-      }
-    };
-
-    ws.onclose = () => {
-      resolve(receivedMessages);
-    };
-
-    ws.onerror = event => {
-      reject(event);
-    };
-
-    const messages = await promise;
-    expect(messages).toContain("connected");
-    expect(messages).toContain("hello from client");
+    const events = await echoSession(
+      `ws://127.0.0.1:${wsPort}`,
+      { proxy: `http://127.0.0.1:${proxyPort}` },
+      "hello from client",
+    );
+    expect(events).toEqual(echoed("hello from client"));
     gc();
   });
 
   test("ws:// through HTTP proxy with auth", async () => {
-    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
-
-    const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
-      proxy: `http://proxy_user:proxy_pass@127.0.0.1:${authProxyPort}`,
+    using recorded = await startRecordingProxy({ requireAuth: true });
+    const events = await echoSession(
+      `ws://127.0.0.1:${wsPort}`,
+      { proxy: `http://proxy_user:proxy_pass@127.0.0.1:${recorded.port}` },
+      "hello with auth",
+    );
+    expect({ events, requests: recorded.requests }).toEqual({
+      events: echoed("hello with auth"),
+      requests: [connectRequest(wsPort, { "proxy-authorization": `Basic ${btoa("proxy_user:proxy_pass")}` })],
     });
-
-    const receivedMessages: string[] = [];
-
-    ws.onopen = () => {
-      ws.send("hello with auth");
-    };
-
-    ws.onmessage = event => {
-      receivedMessages.push(String(event.data));
-      if (receivedMessages.length === 2) {
-        ws.close();
-      }
-    };
-
-    ws.onclose = () => {
-      resolve(receivedMessages);
-    };
-
-    ws.onerror = event => {
-      reject(event);
-    };
-
-    const messages = await promise;
-    expect(messages).toContain("connected");
-    expect(messages).toContain("hello with auth");
     gc();
   });
 
   test("ws:// through proxy with custom headers", async () => {
-    const { promise, resolve, reject } = Promise.withResolvers<void>();
-
-    const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
-      proxy: {
-        url: `http://127.0.0.1:${proxyPort}`,
-        headers: { "X-Custom-Proxy-Header": "test-value" },
+    using recorded = await startRecordingProxy();
+    const events = await echoSession(
+      `ws://127.0.0.1:${wsPort}`,
+      {
+        proxy: {
+          url: `http://127.0.0.1:${recorded.port}`,
+          headers: { "X-Custom-Proxy-Header": "test-value" },
+        },
       },
+      "hello with a proxy header",
+    );
+    expect({ events, requests: recorded.requests }).toEqual({
+      events: echoed("hello with a proxy header"),
+      requests: [connectRequest(wsPort, { "x-custom-proxy-header": "test-value" })],
     });
-
-    ws.onopen = () => {
-      ws.close();
-      resolve();
-    };
-
-    ws.onerror = event => {
-      reject(event);
-    };
-
-    await promise;
     gc();
   });
 
   test("ws:// through proxy with Headers class instance", async () => {
-    const { promise, resolve, reject } = Promise.withResolvers<void>();
-
+    using recorded = await startRecordingProxy();
     const headers = new Headers({ "X-Custom-Proxy-Header": "test-value-from-headers-class" });
-    const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
-      proxy: {
-        url: `http://127.0.0.1:${proxyPort}`,
-        headers: headers,
+    const events = await echoSession(
+      `ws://127.0.0.1:${wsPort}`,
+      {
+        proxy: {
+          url: `http://127.0.0.1:${recorded.port}`,
+          headers: headers,
+        },
       },
+      "hello with a Headers instance",
+    );
+    expect({ events, requests: recorded.requests }).toEqual({
+      events: echoed("hello with a Headers instance"),
+      requests: [connectRequest(wsPort, { "x-custom-proxy-header": "test-value-from-headers-class" })],
     });
-
-    ws.onopen = () => {
-      ws.close();
-      resolve();
-    };
-
-    ws.onerror = event => {
-      reject(event);
-    };
-
-    await promise;
     gc();
   });
 
   test("proxy auth failure returns error", async () => {
-    const { promise, resolve, reject } = Promise.withResolvers<void>();
-    let sawError = false;
-
-    const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
-      proxy: `http://127.0.0.1:${authProxyPort}`, // No auth provided
+    using recorded = await startRecordingProxy({ requireAuth: true });
+    const url = `ws://127.0.0.1:${wsPort}`;
+    const events = await failingSession(url, {
+      proxy: `http://127.0.0.1:${recorded.port}`, // No auth provided
     });
-
-    ws.onopen = () => {
-      ws.close();
-      reject(new Error("Expected proxy auth failure, but connection opened"));
-    };
-
-    ws.onerror = () => {
-      sawError = true;
-      ws.close();
-    };
-
-    ws.onclose = () => {
-      if (sawError) {
-        resolve();
-      } else {
-        reject(new Error("Expected proxy auth failure (error event), got clean close instead"));
-      }
-    };
-
-    await promise;
+    // The proxy answered 407 to a CONNECT without credentials.
+    expect({ events, requests: recorded.requests }).toEqual({
+      events: failed(url, "Proxy connection failed", 1006),
+      requests: [connectRequest(wsPort)],
+    });
     gc();
   });
 
   test("proxy wrong credentials returns error", async () => {
-    const { promise, resolve, reject } = Promise.withResolvers<void>();
-    let sawError = false;
-
-    const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
-      proxy: `http://wrong_user:wrong_pass@127.0.0.1:${authProxyPort}`,
+    using recorded = await startRecordingProxy({ requireAuth: true });
+    const url = `ws://127.0.0.1:${wsPort}`;
+    const events = await failingSession(url, {
+      proxy: `http://wrong_user:wrong_pass@127.0.0.1:${recorded.port}`,
     });
-
-    ws.onopen = () => {
-      ws.close();
-      reject(new Error("Expected proxy auth failure, but connection opened"));
-    };
-
-    ws.onerror = () => {
-      sawError = true;
-      ws.close();
-    };
-
-    ws.onclose = () => {
-      if (sawError) {
-        resolve();
-      } else {
-        reject(new Error("Expected proxy auth failure (error event), got clean close instead"));
-      }
-    };
-
-    await promise;
+    // The credentials were sent, and the proxy answered 403.
+    expect({ events, requests: recorded.requests }).toEqual({
+      events: failed(url, "Proxy connection failed", 1006),
+      requests: [connectRequest(wsPort, { "proxy-authorization": `Basic ${btoa("wrong_user:wrong_pass")}` })],
+    });
     gc();
   });
 });
@@ -398,41 +431,13 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
   // negotiated inside the tunnel to the wss:// target server.
 
   test("wss:// through HTTP proxy", async () => {
-    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
-
-    // Use local wss:// server with self-signed cert
-    const ws = new WebSocket(`wss://127.0.0.1:${wssPort}`, {
-      proxy: `http://127.0.0.1:${proxyPort}`,
-      tls: {
-        // Trust the self-signed certificate used by the wss:// server
-        rejectUnauthorized: false,
-      },
-    });
-
-    const receivedMessages: string[] = [];
-
-    ws.onopen = () => {
-      ws.send("hello via tls tunnel");
-    };
-
-    ws.onmessage = event => {
-      receivedMessages.push(String(event.data));
-      if (receivedMessages.length === 2) {
-        ws.close();
-      }
-    };
-
-    ws.onclose = () => {
-      resolve(receivedMessages);
-    };
-
-    ws.onerror = event => {
-      reject(event);
-    };
-
-    const messages = await promise;
-    expect(messages).toContain("connected");
-    expect(messages).toContain("hello via tls tunnel");
+    // Local wss:// server with a self-signed certificate, so verification is off.
+    const events = await echoSession(
+      `wss://127.0.0.1:${wssPort}`,
+      { proxy: `http://127.0.0.1:${proxyPort}`, tls: { rejectUnauthorized: false } },
+      "hello via tls tunnel",
+    );
+    expect(events).toEqual(echoed("hello via tls tunnel"));
     gc();
   });
 
@@ -443,6 +448,8 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
     // through proxy_tunnel). Detached sockets return true for isClosed(), so
     // sendPong would immediately dispatch a 1006 close instead of sending the
     // pong through the tunnel.
+    let pongs = 0;
+    const serverClosed = Promise.withResolvers<number>();
     using pingServer = Bun.serve({
       port: 0,
       tls: {
@@ -465,39 +472,34 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
             ws.send("after-ping");
           }
         },
+        pong() {
+          pongs++;
+        },
+        close(_ws, code) {
+          serverClosed.resolve(code);
+        },
       },
     });
-
-    const { promise, resolve, reject } = Promise.withResolvers<void>();
 
     const ws = new WebSocket(`wss://127.0.0.1:${pingServer.port}`, {
       proxy: `http://127.0.0.1:${proxyPort}`,
       tls: { rejectUnauthorized: false },
     });
+    ws.addEventListener("open", () => ws.send("ready"));
+    ws.addEventListener("message", event => {
+      if (String(event.data) === "after-ping") ws.close(1000);
+    });
 
-    ws.onopen = () => {
-      ws.send("ready");
-    };
-
-    ws.onmessage = event => {
-      if (String(event.data) === "after-ping") {
-        ws.close(1000);
-      }
-    };
-
-    ws.onclose = event => {
-      if (event.code === 1000) {
-        resolve();
-      } else {
-        reject(new Error(`Unexpected close code: ${event.code}`));
-      }
-    };
-
-    ws.onerror = event => {
-      reject(event);
-    };
-
-    await promise;
+    const events = await clientEvents(ws);
+    // A client that failed the connection itself never tells the server
+    // anything, so the server's close is only awaited after a clean close.
+    const serverCloseCode = closeCodeOf(events) === 1000 ? await serverClosed.promise : "client did not close cleanly";
+    // The pong reached the server before the close frame did.
+    expect({ events, pongs, serverCloseCode }).toEqual({
+      events: ["after-ping", { code: 1000, reason: "", wasClean: true }],
+      pongs: 1,
+      serverCloseCode: 1000,
+    });
     gc();
   });
 
@@ -721,108 +723,39 @@ describe("WebSocket through HTTPS proxy (TLS proxy)", () => {
   });
 
   test("ws:// through HTTPS proxy with CA certificate", async () => {
-    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
-
-    const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
-      proxy: `https://127.0.0.1:${httpsProxyPort}`,
-      tls: {
+    const events = await echoSession(
+      `ws://127.0.0.1:${wsPort}`,
+      {
+        proxy: `https://127.0.0.1:${httpsProxyPort}`,
         // Trust the self-signed certificate used by the proxy
-        ca: tlsCerts.cert,
+        tls: { ca: tlsCerts.cert },
       },
-    });
-
-    const receivedMessages: string[] = [];
-
-    ws.onopen = () => {
-      ws.send("hello via https proxy");
-    };
-
-    ws.onmessage = event => {
-      receivedMessages.push(String(event.data));
-      if (receivedMessages.length === 2) {
-        ws.close();
-      }
-    };
-
-    ws.onclose = () => {
-      resolve(receivedMessages);
-    };
-
-    ws.onerror = event => {
-      reject(event);
-    };
-
-    const messages = await promise;
-    expect(messages).toContain("connected");
-    expect(messages).toContain("hello via https proxy");
+      "hello via https proxy",
+    );
+    expect(events).toEqual(echoed("hello via https proxy"));
     gc();
   });
 
   test("ws:// through HTTPS proxy fails without CA certificate", async () => {
-    const { promise, resolve, reject } = Promise.withResolvers<void>();
-    let sawError = false;
-
-    const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
+    const url = `ws://127.0.0.1:${wsPort}`;
+    const events = await failingSession(url, {
       proxy: `https://127.0.0.1:${httpsProxyPort}`,
-      // No CA certificate - should fail (self-signed cert not trusted)
+      // No CA certificate: the proxy's self-signed certificate is not trusted.
     });
-
-    ws.onopen = () => {
-      ws.close();
-      reject(new Error("Expected TLS verification failure, but connection opened"));
-    };
-
-    ws.onerror = () => {
-      sawError = true;
-      ws.close();
-    };
-
-    ws.onclose = () => {
-      if (sawError) {
-        resolve();
-      } else {
-        reject(new Error("Expected TLS verification failure (error event), got clean close instead"));
-      }
-    };
-
-    await promise;
+    expect(events).toEqual(failed(url, "TLS handshake failed", 1015));
     gc();
   });
 
   test("ws:// through HTTPS proxy with rejectUnauthorized: false", async () => {
-    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
-
-    const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
-      proxy: `https://127.0.0.1:${httpsProxyPort}`,
-      tls: {
-        rejectUnauthorized: false, // Skip TLS verification for proxy
+    const events = await echoSession(
+      `ws://127.0.0.1:${wsPort}`,
+      {
+        proxy: `https://127.0.0.1:${httpsProxyPort}`,
+        tls: { rejectUnauthorized: false }, // Skip TLS verification for the proxy
       },
-    });
-
-    const receivedMessages: string[] = [];
-
-    ws.onopen = () => {
-      ws.send("hello via https proxy no verify");
-    };
-
-    ws.onmessage = event => {
-      receivedMessages.push(String(event.data));
-      if (receivedMessages.length === 2) {
-        ws.close();
-      }
-    };
-
-    ws.onclose = () => {
-      resolve(receivedMessages);
-    };
-
-    ws.onerror = event => {
-      reject(event);
-    };
-
-    const messages = await promise;
-    expect(messages).toContain("connected");
-    expect(messages).toContain("hello via https proxy no verify");
+      "hello via https proxy no verify",
+    );
+    expect(events).toEqual(echoed("hello via https proxy no verify"));
     gc();
   });
 });
@@ -930,118 +863,73 @@ describe("ws module with HttpsProxyAgent", () => {
   const WS = require("ws");
 
   test("ws module passes agent to native WebSocket", async () => {
-    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
-
-    const agent = new HttpsProxyAgent(`http://127.0.0.1:${proxyPort}`);
+    using recorded = await startRecordingProxy();
+    const agent = new HttpsProxyAgent(`http://127.0.0.1:${recorded.port}`);
     const ws = new WS(`ws://127.0.0.1:${wsPort}`, { agent });
 
-    const receivedMessages: string[] = [];
-
-    ws.on("open", () => {
-      ws.send("hello from ws module via agent");
-    });
-
+    const events: unknown[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    ws.on("open", () => ws.send("hello from ws module via agent"));
     ws.on("message", (data: Buffer) => {
-      receivedMessages.push(data.toString());
-      if (receivedMessages.length === 2) {
-        ws.close();
-      }
+      events.push(data.toString());
+      if (events.length === 2) ws.close(1000);
     });
-
-    ws.on("close", () => {
-      resolve(receivedMessages);
+    ws.on("error", (err: Error) => events.push({ error: err.message }));
+    ws.on("close", (code: number, reason: Buffer) => {
+      events.push({ code, reason: String(reason) });
+      resolve();
     });
+    await promise;
 
-    ws.on("error", (err: Error) => {
-      reject(err);
+    // The CONNECT request proves the connection went through the agent's proxy.
+    expect({ events, requests: recorded.requests }).toEqual({
+      events: ["connected", "hello from ws module via agent", { code: 1000, reason: "" }],
+      requests: [connectRequest(wsPort)],
     });
-
-    const messages = await promise;
-    expect(messages).toContain("connected");
-    expect(messages).toContain("hello from ws module via agent");
     gc();
   });
 });
 
 describe.concurrent("WebSocket NO_PROXY bypass", () => {
-  test("NO_PROXY matching hostname bypasses explicit proxy for ws://", async () => {
-    // authProxy requires credentials; if NO_PROXY works, the WebSocket bypasses
-    // the proxy and connects directly. If NO_PROXY doesn't work, the proxy
-    // rejects with 407 and the WebSocket errors.
+  // Each child connects to the echo server through an auth proxy it has no
+  // credentials for. When NO_PROXY applies, the proxy never sees a connection
+  // and the echo server greets the child. When it does not apply, the proxy
+  // answers the CONNECT with 407 and the child reports the failure.
+  const childScript = (proxyPort: number) => `
+    const ws = new WebSocket("ws://127.0.0.1:${wsPort}", { proxy: "http://127.0.0.1:${proxyPort}" });
+    ws.onmessage = event => { console.log("message:", event.data); ws.close(1000); };
+    ws.onerror = event => console.log("error:", event.message);
+    ws.onclose = event => console.log("close:", event.code, JSON.stringify(event.reason));
+  `;
+
+  test.each([
+    ["NO_PROXY matching hostname bypasses explicit proxy for ws://", () => "127.0.0.1", "direct"],
+    ["NO_PROXY matching host:port bypasses proxy for ws://", () => `127.0.0.1:${wsPort}`, "direct"],
+    ["NO_PROXY not matching still uses proxy (auth fails)", () => "other.host.com", "proxied"],
+    ["NO_PROXY=* bypasses all proxies", () => "*", "direct"],
+  ] as const)("%s", async (_, noProxy, outcome) => {
+    using recorded = await startRecordingProxy({ requireAuth: true });
     await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const ws = new WebSocket("ws://127.0.0.1:${wsPort}", { proxy: "http://127.0.0.1:${authProxyPort}" });
-         ws.onopen = () => { ws.close(); process.exit(0); };
-         ws.onerror = () => { process.exit(1); };`,
-      ],
-      env: { ...bunEnv, NO_PROXY: "127.0.0.1" },
+      cmd: [bunExe(), "-e", childScript(recorded.port)],
+      // The lowercase variable takes precedence over NO_PROXY, so an ambient
+      // no_proxy=127.0.0.1 must not reach the child.
+      env: { ...bunEnv, NO_PROXY: noProxy(), no_proxy: undefined },
       stdout: "pipe",
       stderr: "pipe",
     });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    if (exitCode !== 0) console.error("stderr:", stderr);
-    expect(exitCode).toBe(0);
-  });
-
-  test("NO_PROXY matching host:port bypasses proxy for ws://", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const ws = new WebSocket("ws://127.0.0.1:${wsPort}", { proxy: "http://127.0.0.1:${authProxyPort}" });
-         ws.onopen = () => { ws.close(); process.exit(0); };
-         ws.onerror = () => { process.exit(1); };`,
-      ],
-      env: { ...bunEnv, NO_PROXY: `127.0.0.1:${wsPort}` },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    if (exitCode !== 0) console.error("stderr:", stderr);
-    expect(exitCode).toBe(0);
-  });
-
-  test("NO_PROXY not matching still uses proxy (auth fails)", async () => {
-    // NO_PROXY doesn't match the target, so the WebSocket should go through
-    // the auth proxy without credentials, which rejects with 407.
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const ws = new WebSocket("ws://127.0.0.1:${wsPort}", { proxy: "http://127.0.0.1:${authProxyPort}" });
-         ws.onopen = () => { process.exit(1); };
-         ws.onerror = () => { process.exit(0); };`,
-      ],
-      env: { ...bunEnv, NO_PROXY: "other.host.com" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const exitCode = await proc.exited;
-    // exit(0) means onerror fired, proving the proxy was used (and auth failed)
-    expect(exitCode).toBe(0);
-  });
-
-  test("NO_PROXY=* bypasses all proxies", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const ws = new WebSocket("ws://127.0.0.1:${wsPort}", { proxy: "http://127.0.0.1:${authProxyPort}" });
-         ws.onopen = () => { ws.close(); process.exit(0); };
-         ws.onerror = () => { process.exit(1); };`,
-      ],
-      env: { ...bunEnv, NO_PROXY: "*" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    if (exitCode !== 0) console.error("stderr:", stderr);
-    expect(exitCode).toBe(0);
+    expect({ stdout, stderr, exitCode, proxyConnections: recorded.connections }).toEqual(
+      outcome === "direct"
+        ? { stdout: `message: connected\nclose: 1000 ""\n`, stderr: "", exitCode: 0, proxyConnections: 0 }
+        : {
+            stdout:
+              `error: WebSocket connection to 'ws://127.0.0.1:${wsPort}/' failed: Proxy connection failed\n` +
+              `close: 1006 "Proxy connection failed"\n`,
+            stderr: "",
+            exitCode: 0,
+            proxyConnections: 1,
+          },
+    );
   });
 });

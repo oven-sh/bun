@@ -26,10 +26,10 @@ use std::io::Write as _;
 
 use bun_boringssl as boringssl;
 use bun_collections::StringSet;
+use bun_core::StringView;
 use bun_core::ZBox;
 use bun_core::fmt::HostFormatter;
 use bun_core::strings;
-use bun_core::StringView;
 use bun_core::{String as BunString, Utf8Bytes};
 use bun_http::{HeaderValueIterator, Headers};
 use bun_io::KeepAlive;

@@ -61,6 +61,7 @@ js/bun/io/fetch/fetch-abort-slow-connect.test.ts
 js/bun/jsc/string-noAtomize.test.ts
 js/bun/md/md-edge-cases.test.ts
 js/bun/net/socket-retention.test.ts
+js/bun/net/tcp-server.test.ts
 js/bun/plugin/plugins.test.ts
 js/bun/resolve/bun-main-entry-point.test.ts
 js/bun/resolve/import-custom-condition.test.ts
@@ -100,6 +101,7 @@ js/bun/util/filesystem_router.test.ts
 js/bun/util/inspect-error-leak.test.js
 js/bun/util/text-loader.test.ts
 js/bun/websocket/websocket-server-rsv-frames.test.ts
+js/bun/websocket/websocket-server.test.ts
 js/bun/xml/xml-test-suite.test.ts
 js/bun/yaml/yaml.test.ts
 js/node/assert/deep-equal.test.ts
@@ -170,6 +172,7 @@ js/web/fetch/fetch-proxy-tls-intern-race.test.ts
 js/web/fetch/fetch-tls-abortsignal-timeout.test.ts
 js/web/fetch/utf8-bom.test.ts
 js/web/streams/streams-leak.test.ts
+js/web/workers/structuredClone-classes.test.ts
 js/web/workers/worker-late-completion.test.ts
 js/web/workers/worker-terminate-funnels.test.ts
 js/web/workers/worker.test.ts

@@ -4866,7 +4866,7 @@ pub(crate) fn write_file_internal(
                 bun_telemetry::SpanKind::Internal,
                 |w| {
                     if let PathOrFileDescriptor::Path(p) = pathlike {
-                        w.attr_bytes_opt("file.path", p.slice());
+                        w.attr_opt("file.path", p.slice());
                     }
                     if failed {
                         w.status(bun_telemetry::StatusCode::Error, b"");

@@ -51,20 +51,20 @@ pub fn encode(info: &ResourceInfo<'_>) -> Vec<u8> {
         Value::Str(info.runtime_version.as_bytes()),
     ));
     attrs.push((b"process.pid", Value::Int(info.pid as i64)));
-    attrs.push((b"process.executable.name", Value::Bytes(exe_name)));
+    attrs.push((b"process.executable.name", Value::Str(exe_name)));
     if !info.executable_path.is_empty() {
-        attrs.push((b"process.executable.path", Value::Bytes(info.executable_path)));
+        attrs.push((b"process.executable.path", Value::Str(info.executable_path)));
     }
     if !info.command.is_empty() {
-        attrs.push((b"process.command", Value::Bytes(info.command)));
+        attrs.push((b"process.command", Value::Str(info.command)));
     }
     if !info.host_name.is_empty() {
-        attrs.push((b"host.name", Value::Bytes(info.host_name)));
+        attrs.push((b"host.name", Value::Str(info.host_name)));
     }
     attrs.push((b"host.arch", Value::Str(info.host_arch.as_bytes())));
     attrs.push((b"os.type", Value::Str(info.os_type.as_bytes())));
     if !info.os_version.is_empty() {
-        attrs.push((b"os.version", Value::Bytes(info.os_version)));
+        attrs.push((b"os.version", Value::Str(info.os_version)));
     }
     for (k, v) in info.extra {
         let k = k.as_bytes();

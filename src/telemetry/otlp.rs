@@ -85,12 +85,11 @@ use field as f;
 /// the OTel spec but the wire format doesn't care, so neither do we.
 #[derive(Clone, Copy, Debug)]
 pub enum Value<'a> {
-    /// UTF-8 text: a literal, or a string that came from JS.
+    /// Written as a proto3 `string`: valid UTF-8 goes out as is (an ASCII
+    /// check, nearly always), anything else with invalid sequences replaced
+    /// by U+FFFD — one invalid `string` makes a receiver drop the whole
+    /// export request, and paths, Buffer keys and OS strings need not be UTF-8.
     Str(&'a [u8]),
-    /// Bytes that need not be UTF-8 (a path, a Buffer key, an OS string):
-    /// written as a `string` with invalid sequences replaced by U+FFFD,
-    /// because one invalid proto3 `string` makes receivers drop the request.
-    Bytes(&'a [u8]),
     Int(i64),
     Bool(bool),
     Double(f64),
@@ -126,8 +125,7 @@ impl From<u16> for Value<'_> {
 #[inline]
 fn any_value_body_len(v: &Value<'_>) -> usize {
     match *v {
-        Value::Str(s) => len_field_len(f::AV_STRING, s.len()),
-        Value::Bytes(s) => len_field_len(f::AV_STRING, utf8_lossy_len(s)),
+        Value::Str(s) => len_field_len(f::AV_STRING, utf8_lossy_len(s)),
         Value::Bool(_) => tag_len(f::AV_BOOL) + 1,
         Value::Int(i) => tag_len(f::AV_INT) + varint_len(i as u64),
         Value::Double(_) => tag_len(f::AV_DOUBLE) + 8,
@@ -147,11 +145,7 @@ fn array_body_len(items: &[Value<'_>]) -> usize {
 #[inline]
 fn write_any_value_body(out: &mut Vec<u8>, v: &Value<'_>) {
     match *v {
-        Value::Str(s) => proto::write_bytes(out, f::AV_STRING, s),
-        Value::Bytes(s) => {
-            write_len_prefix(out, f::AV_STRING, utf8_lossy_len(s));
-            extend_utf8_lossy(out, s);
-        }
+        Value::Str(s) => write_string(out, f::AV_STRING, s),
         Value::Bool(b) => proto::write_bool(out, f::AV_BOOL, b),
         Value::Int(i) => {
             write_tag(out, f::AV_INT, WireType::Varint);
@@ -182,7 +176,6 @@ pub fn write_key_value_limited(
         Value::Str(s) if s.len() > max => {
             write_key_value(out, field, key, &Value::Str(truncate_utf8(s, max)))
         }
-        Value::Bytes(s) if s.len() > max => write_key_value(out, field, key, &Value::Bytes(&s[..max])),
         Value::Array(items)
             if items
                 .iter()
@@ -218,13 +211,15 @@ pub fn write_key_value(out: &mut Vec<u8>, field: u32, key: &[u8], v: &Value<'_>)
         let value_tag = (f::KV_VALUE << 3 | 2) as u8;
         match *v {
             Value::Str(s) => {
+                // (`av` was computed from the lossy length, so this holds for
+                // invalid input too)
                 out.extend_from_slice(&[
                     value_tag,
                     av as u8,
                     (f::AV_STRING << 3 | 2) as u8,
-                    s.len() as u8,
+                    (av - 2) as u8,
                 ]);
-                out.extend_from_slice(s);
+                extend_utf8_lossy(out, s);
             }
             Value::Bool(x) => {
                 out.extend_from_slice(&[value_tag, av as u8, (f::AV_BOOL << 3) as u8, x as u8]);
@@ -372,6 +367,14 @@ pub fn extend_utf8_lossy(out: &mut Vec<u8>, s: &[u8]) {
     }
 }
 
+/// A proto3 `string` field: `s` if it is valid UTF-8, else a lossy copy
+/// (see [`Value::Str`]).
+#[inline]
+pub fn write_string(out: &mut Vec<u8>, field: u32, s: &[u8]) {
+    write_len_prefix(out, field, utf8_lossy_len(s));
+    extend_utf8_lossy(out, s);
+}
+
 /// Length of what [`extend_utf8_lossy`] writes for `s`.
 #[inline]
 pub fn utf8_lossy_len(s: &[u8]) -> usize {
@@ -502,7 +505,7 @@ impl<'a> SpanWriter<'a> {
         b[n + 2..n + 6].copy_from_slice(&stub.ctx.flags.otlp().to_le_bytes());
         n += 6;
         out.extend_from_slice(&b[..n]);
-        proto::write_bytes(out, f::NAME, name);
+        write_string(out, f::NAME, name);
         SpanWriter {
             out,
             nested,
@@ -531,21 +534,6 @@ impl<'a> SpanWriter<'a> {
     #[inline]
     pub fn attr_bytes_key<'v>(&mut self, key: &[u8], v: impl Into<Value<'v>>) -> &mut Self {
         write_key_value_limited(self.out, f::ATTRIBUTES, key, &v.into(), self.value_limit);
-        self
-    }
-
-    /// [`Value::Bytes`] attribute (a path or other OS bytes), skipped when empty.
-    #[inline]
-    pub fn attr_bytes_opt(&mut self, key: &str, v: &[u8]) -> &mut Self {
-        if !v.is_empty() {
-            write_key_value_limited(
-                self.out,
-                f::ATTRIBUTES,
-                key.as_bytes(),
-                &Value::Bytes(v),
-                self.value_limit,
-            );
-        }
         self
     }
 
@@ -650,11 +638,13 @@ impl<'a> SpanWriter<'a> {
         let body = if message.is_empty() {
             0
         } else {
-            len_field_len(f::STATUS_MESSAGE, message.len())
+            len_field_len(f::STATUS_MESSAGE, utf8_lossy_len(message))
         } + tag_len(f::STATUS_CODE)
             + 1;
         write_len_prefix(self.out, f::STATUS, body);
-        proto::write_bytes_opt(self.out, f::STATUS_MESSAGE, message);
+        if !message.is_empty() {
+            write_string(self.out, f::STATUS_MESSAGE, message);
+        }
         proto::write_uint(self.out, f::STATUS_CODE, code as u64);
         self
     }
@@ -726,7 +716,7 @@ impl<'a> EntryWriter<'a> {
     ) -> EntryWriter<'a> {
         let nested = Nested::begin(out, f::EVENTS);
         proto::write_fixed64(out, f::EV_TIME, time_ns);
-        proto::write_bytes(out, f::EV_NAME, name);
+        write_string(out, f::EV_NAME, name);
         EntryWriter {
             out,
             nested,

@@ -125,9 +125,9 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
         drop(handler);
         if otel.is_some() {
             let path = blob_path(&blob);
-            let (code, msg): (&[u8], &[u8]) = match &maybe_bytes {
-                ReadFileResultType::Err(e) => (e.code.byte_slice(), e.message.byte_slice()),
-                ReadFileResultType::Result(_) => (b"", b""),
+            let (code, msg) = match &maybe_bytes {
+                ReadFileResultType::Err(e) => (e.code.to_utf8(), e.message.to_utf8()),
+                ReadFileResultType::Result(_) => Default::default(),
             };
             crate::telemetry::end_leaf(
                 global_this,
@@ -137,11 +137,11 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
                 bun_telemetry::SpanKind::Internal,
                 |w| {
                     if let Some(p) = &path {
-                        w.attr_bytes_opt("file.path", p);
+                        w.attr_opt("file.path", p);
                     }
                     if !code.is_empty() || !msg.is_empty() {
-                        w.attr_opt("error.type", code);
-                        w.status(bun_telemetry::StatusCode::Error, msg);
+                        w.attr_opt("error.type", &code);
+                        w.status(bun_telemetry::StatusCode::Error, &msg);
                     }
                 },
             );

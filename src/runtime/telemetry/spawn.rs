@@ -19,7 +19,7 @@ fn set_command_attrs(s: &mut Slot, cmd: &SpawnedCommand<'_>) {
     s.name.clear();
     s.name.extend_from_slice(b"spawn ");
     s.name.extend_from_slice(cmd.exe);
-    s.push_attribute(b"process.executable.name", &Value::Bytes(cmd.exe), l);
+    s.push_attribute(b"process.executable.name", &Value::Str(cmd.exe), l);
     s.push_attribute(b"process.args_count", &Value::Int(cmd.argc as i64), l);
 }
 

@@ -1242,9 +1242,9 @@ impl WriteFilePromise {
             let promise = std::ptr::from_mut::<JSPromise>(h.promise.swap());
             let global_this = &*h.global_this;
             if h.otel.is_some() {
-                let (code, msg): (&[u8], &[u8]) = match &count {
-                    WriteFileResultType::Err(e) => (e.code.byte_slice(), e.message.byte_slice()),
-                    WriteFileResultType::Result(_) => (b"", b""),
+                let (code, msg) = match &count {
+                    WriteFileResultType::Err(e) => (e.code.to_utf8(), e.message.to_utf8()),
+                    WriteFileResultType::Result(_) => Default::default(),
                 };
                 crate::telemetry::end_leaf(
                     global_this,
@@ -1254,14 +1254,14 @@ impl WriteFilePromise {
                     bun_telemetry::SpanKind::Internal,
                     |w| {
                         if let Some(p) = &h.otel_path {
-                            w.attr_bytes_opt("file.path", p);
+                            w.attr_opt("file.path", p);
                         }
                         if let WriteFileResultType::Result(n) = &count {
                             w.attr("file.size", *n as i64);
                         }
                         if !code.is_empty() || !msg.is_empty() {
-                            w.attr_opt("error.type", code);
-                            w.status(bun_telemetry::StatusCode::Error, msg);
+                            w.attr_opt("error.type", &code);
+                            w.status(bun_telemetry::StatusCode::Error, &msg);
                         }
                     },
                 );

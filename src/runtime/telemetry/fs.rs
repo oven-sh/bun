@@ -24,7 +24,7 @@ pub fn end(
         end_ns,
         |w| {
             if let Some(p) = path {
-                w.attr_bytes_opt("file.path", p);
+                w.attr_opt("file.path", p);
             }
             if let Some(e) = err {
                 w.fail(e.name(), e.msg().unwrap_or(b""));

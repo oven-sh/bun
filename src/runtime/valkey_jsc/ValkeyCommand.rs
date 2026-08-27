@@ -279,7 +279,7 @@ impl Promise {
                     text.extend_from_slice(b" ...");
                 }
             }
-            s.push_attribute(b"db.query.text", &bun_telemetry::Value::Bytes(&text), limits);
+            s.push_attribute(b"db.query.text", &bun_telemetry::Value::Str(&text), limits);
         });
     }
 

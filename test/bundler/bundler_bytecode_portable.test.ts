@@ -453,11 +453,11 @@ describe("bytecode cache portability", () => {
       {
         "builtin corpus": {
           "bytes": 5304,
-          "sha256": "8dec39ead4c3ba3c2d309407fa29090727aeae4a24949d02bb56cb38cbe86b58",
+          "sha256": "6af9fa4a4a6181c7c78743ea807bd12de95a0772503872207de28c218e252167",
         },
         "builtin corpus strings": {
-          "bytes": 836,
-          "sha256": "e4821b3ff0c554e5ca10612c06adf999f5f4f8c639122f1284163b0c6ce87e11",
+          "bytes": 1044,
+          "sha256": "2a5d62fb4ca9d107e3a5bb2abe6a73f3c859a6f1a91c6c3d77653cb8c2053361",
         },
         "bun build --bytecode --minify all.js": {
           "js": "e3c606da9d38edc94d8cda67f5e99c7f672bf0dafa039df7b85433261168336a",

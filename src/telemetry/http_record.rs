@@ -216,6 +216,12 @@ impl UserSetKeys {
     const USER_AGENT: u16 = 1 << 5;
     const STATUS_CODE: u16 = 1 << 6;
     const ERROR_TYPE: u16 = 1 << 7;
+    const ROUTE: u16 = 1 << 8;
+    const URL_PATH: u16 = 1 << 9;
+    const URL_QUERY: u16 = 1 << 10;
+    const CLIENT_ADDRESS: u16 = 1 << 11;
+    const PEER_ADDRESS: u16 = 1 << 12;
+    const PEER_PORT: u16 = 1 << 13;
 
     #[inline]
     fn bit(key: &[u8]) -> u16 {
@@ -228,6 +234,12 @@ impl UserSetKeys {
             b"user_agent.original" => Self::USER_AGENT,
             b"http.response.status_code" => Self::STATUS_CODE,
             b"error.type" => Self::ERROR_TYPE,
+            b"http.route" => Self::ROUTE,
+            b"url.path" => Self::URL_PATH,
+            b"url.query" => Self::URL_QUERY,
+            b"client.address" => Self::CLIENT_ADDRESS,
+            b"network.peer.address" => Self::PEER_ADDRESS,
+            b"network.peer.port" => Self::PEER_PORT,
             _ => 0,
         }
     }
@@ -739,21 +751,34 @@ pub(crate) fn peer_text_of(encoded: &[u8]) -> &[u8] {
 /// `append_tail`).
 fn tail_attr_count(facts: &Facts) -> u32 {
     // [client.address +] [network.peer.address [+ .port] +] url.path
-    // [+ url.query] [+ user_agent.original]
-    let peer_attrs = facts.peer_encoded_attrs as u32;
+    // [+ url.query] [+ user_agent.original], each unless JS set it itself
+    let user = facts.user_keys;
+    let (peer_addr, peer_port) = facts.derived_peer_attrs();
     // client.address: the forwarded hop or else the peer.
-    let has_client = facts.lens.client != 0 || peer_attrs != 0;
+    let has_client = (facts.lens.client != 0 || facts.peer_encoded_attrs != 0)
+        && !user.has(UserSetKeys::CLIENT_ADDRESS);
     u32::from(facts.derives_user_agent())
-        + 1
-        + u32::from(facts.has_query())
+        + u32::from(!user.has(UserSetKeys::URL_PATH))
+        + u32::from(facts.has_query() && !user.has(UserSetKeys::URL_QUERY))
         + u32::from(has_client)
-        + peer_attrs
+        + u32::from(peer_addr)
+        + u32::from(peer_port)
 }
 
 impl Facts {
     #[inline]
     fn derives_user_agent(&self) -> bool {
         self.lens.user_agent != 0 && !self.user_keys.has(UserSetKeys::USER_AGENT)
+    }
+    /// (network.peer.address, network.peer.port): encoded for this request and
+    /// not overridden from JS.
+    #[inline]
+    fn derived_peer_attrs(&self) -> (bool, bool) {
+        let n = self.peer_encoded_attrs;
+        (
+            n >= 1 && !self.user_keys.has(UserSetKeys::PEER_ADDRESS),
+            n >= 2 && !self.user_keys.has(UserSetKeys::PEER_PORT),
+        )
     }
 }
 
@@ -781,7 +806,8 @@ fn append_tail(
     // `room`: how many more attributes fit under attributeCountLimit after the
     // ones the span already carries (`p.attrs`).
     let mut room = (limits.attributes as u32).saturating_sub(u32::from(p.n_attrs));
-    let (encoded, n) = (s.peer_encoded, facts.peer_encoded_attrs as u32);
+    let user = facts.user_keys;
+    let encoded = s.peer_encoded;
     // semconv: client.address is the client behind any proxies (X-Forwarded-For
     // / Forwarded) — also the only identity on a unix-socket listener — and
     // network.peer.* the socket peer.
@@ -790,7 +816,7 @@ fn append_tail(
     } else {
         s.client
     };
-    if !client.is_empty() && room != 0 {
+    if !client.is_empty() && !user.has(UserSetKeys::CLIENT_ADDRESS) && room != 0 {
         otlp::write_str_kv_small(
             out,
             f::ATTRIBUTES,
@@ -799,20 +825,20 @@ fn append_tail(
         );
         room -= 1;
     }
-    if !encoded.is_empty() && room != 0 {
-        // Strictly in order, so the head's dropped_attributes_count (which
-        // assumes the first `room` tail attributes are written) stays exact:
-        // with room for one, keep network.peer.address and drop the port.
-        if room >= n {
-            out.extend_from_slice(encoded);
-            room -= n;
-        } else {
-            let first = PEER_TEXT_OFF + peer_text_of(encoded).len();
-            out.extend_from_slice(&encoded[..first.min(encoded.len())]);
-            room -= 1;
-        }
+    // Strictly in order, so the head's dropped_attributes_count (which assumes
+    // the first `room` tail attributes are written) stays exact: with room for
+    // one, keep network.peer.address and drop the port.
+    let (peer_addr, peer_port) = facts.derived_peer_attrs();
+    let addr_end = PEER_TEXT_OFF + peer_text_of(encoded).len();
+    if peer_addr && room != 0 {
+        out.extend_from_slice(&encoded[..addr_end.min(encoded.len())]);
+        room -= 1;
     }
-    if room != 0 {
+    if peer_port && room != 0 {
+        out.extend_from_slice(&encoded[addr_end.min(encoded.len())..]);
+        room -= 1;
+    }
+    if !user.has(UserSetKeys::URL_PATH) && room != 0 {
         otlp::write_str_kv_small(
             out,
             f::ATTRIBUTES,
@@ -821,7 +847,7 @@ fn append_tail(
         );
         room -= 1;
     }
-    if !query.is_empty() && room != 0 {
+    if !query.is_empty() && !user.has(UserSetKeys::URL_QUERY) && room != 0 {
         let query = otlp::redact_query(query);
         otlp::write_str_kv_small(
             out,
@@ -941,7 +967,7 @@ fn encode_head(
     if facts.version != HttpVersion::Unknown && !user.has(UserSetKeys::PROTOCOL_VERSION) {
         a.put("network.protocol.version", Value::Str(facts.version.text()));
     }
-    if !route.is_empty() {
+    if !route.is_empty() && !user.has(UserSetKeys::ROUTE) {
         a.put("http.route", Value::Str(route));
     }
     let mut span_status = p.status;

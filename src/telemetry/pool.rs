@@ -205,7 +205,9 @@ impl Slot {
 
     /// Last-write-wins variant for keys that may repeat (user code).
     pub fn set_attribute(&mut self, key: &[u8], v: &Value<'_>, limits: &Limits) {
-        // `http.route` on a request span is the route, which also names the span.
+        // `http.route` on a request span is the route, which also names the
+        // span; a non-string value is just an attribute (and the derived
+        // `http.route` then stays off, like any other key set from JS).
         if self.http.active && key == b"http.route" {
             if let Value::Str(route) = *v {
                 self.http.set_route(route);
@@ -429,11 +431,15 @@ pub fn with_ref<R>(p: &Pool, handle: NativeSpan, f: impl FnOnce(&Slot) -> R) -> 
 }
 
 /// Result of [`end`]: whether a span was recorded, and the JS cell that had
-/// been materialized for it so the caller can release it.
+/// been materialized for it so the caller can release it — with the W3C
+/// `tracestate` / `baggage` the span carried, which the cell keeps answering
+/// for (`spanContext().traceState`, `propagation.inject`) after the slot is gone.
 #[must_use = "the materialized js_cell must be released (rt::end_pooled / Hooks::release_cell)"]
 pub struct Ended {
     pub recorded: bool,
     pub js_cell: JsCellRef,
+    /// `(trace_state, baggage)`; only when `js_cell` is some and either is non-empty.
+    pub propagation: Option<Box<(Vec<u8>, Vec<u8>)>>,
 }
 
 /// End the span: encode it into the VM's batch (if recording) and release
@@ -455,6 +461,9 @@ pub fn end(
     } = l;
     let slot = pool.live_slot(handle)?;
     let js_cell = slot.js_cell;
+    let propagation = (js_cell.is_some()
+        && !(slot.trace_state.is_empty() && slot.baggage.is_empty()))
+    .then(|| Box::new((slot.trace_state.clone(), slot.baggage.clone())));
     let recording = slot.is_recording();
     if recording {
         crate::batch::record(batch, slot.scope, &mut |buf: &mut Vec<u8>| {
@@ -465,6 +474,7 @@ pub fn end(
     Some(Ended {
         recorded: recording,
         js_cell,
+        propagation,
     })
 }
 

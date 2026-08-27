@@ -560,7 +560,6 @@ fn entry_attrs(
     scratch: &mut [Vec<u8>; 3],
 ) {
     each_attr(refs, pool, value_limit, scratch, |k, v| w.attr(k, v));
-    w.finish();
 }
 
 fn status_code(api: u8) -> StatusCode {
@@ -1065,8 +1064,10 @@ pub fn record_exception(
     if let Some(mut l) = super::local(global) {
         let lim = limits();
         pool::with(&mut l.pool, span, |s| {
-            if let Some(ev) = s.begin_event(b"exception", 0, lim) {
-                bun_telemetry::otlp::with_exception_attrs(ty, msg, stack, |a| ev.attrs(a).finish());
+            if let Some(mut ev) = s.begin_event(b"exception", 0, lim) {
+                bun_telemetry::otlp::with_exception_attrs(ty, msg, stack, |a| {
+                    ev.attrs(a);
+                });
             }
             s.set_attribute(b"error.type", &Value::Str(ty), lim);
             s.http.flags |= bun_telemetry::http_record::FLAG_HAS_ERROR_TYPE;

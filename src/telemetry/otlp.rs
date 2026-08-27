@@ -702,6 +702,7 @@ fn attrs_len(field: u32, attrs: &[(&[u8], Value<'_>)]) -> usize {
 
 /// Streams one `Span.events` / `Span.links` entry: the fixed fields are
 /// written by [`event`](Self::event) / [`link`](Self::link), then `attr`s.
+/// The entry's length prefix is patched when the writer drops.
 pub struct EntryWriter<'a> {
     out: &'a mut Vec<u8>,
     nested: Nested<2>,
@@ -739,21 +740,24 @@ impl<'a> EntryWriter<'a> {
         write_key_value(self.out, self.field, key, v);
     }
     #[inline]
-    pub fn attrs(mut self, attrs: &[(&[u8], Value<'_>)]) -> Self {
+    pub fn attrs(&mut self, attrs: &[(&[u8], Value<'_>)]) -> &mut Self {
         for (k, v) in attrs {
             self.attr(k, v);
         }
         self
     }
+}
+
+impl Drop for EntryWriter<'_> {
     #[inline]
-    pub fn finish(self) {
-        self.nested.finish(self.out);
+    fn drop(&mut self) {
+        Nested::<2>::at(self.nested.len_at()).finish(self.out);
     }
 }
 
 /// Append a `Span.events` entry.
 pub fn encode_event(out: &mut Vec<u8>, name: &[u8], time_ns: u64, attrs: &[(&[u8], Value<'_>)]) {
-    EntryWriter::event(out, name, time_ns).attrs(attrs).finish();
+    EntryWriter::event(out, name, time_ns).attrs(attrs);
 }
 
 /// Append a `Span.links` entry.
@@ -763,9 +767,7 @@ pub fn encode_link(
     trace_state: &[u8],
     attrs: &[(&[u8], Value<'_>)],
 ) {
-    EntryWriter::link(out, ctx, trace_state)
-        .attrs(attrs)
-        .finish();
+    EntryWriter::link(out, ctx, trace_state).attrs(attrs);
 }
 
 /// Encoded `InstrumentationScope` message body.

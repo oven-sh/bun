@@ -254,8 +254,8 @@ impl Slot {
         attrs: &[(&[u8], Value<'_>)],
         limits: &Limits,
     ) {
-        if let Some(w) = self.begin_link(ctx, trace_state, limits) {
-            w.attrs(attrs).finish();
+        if let Some(mut w) = self.begin_link(ctx, trace_state, limits) {
+            w.attrs(attrs);
         }
     }
 

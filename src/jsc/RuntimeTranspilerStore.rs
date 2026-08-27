@@ -926,12 +926,6 @@ impl TranspilerJob {
             }
         }
 
-        // The parser can log errors and still return an AST.
-        if transpiler.log().errors > 0 {
-            self.parse_error = Some(crate::CrateError::ParseError);
-            return;
-        }
-
         let use_module_info_for_esm = VirtualMachine::use_module_info_for_esm();
 
         if let Some(entry_ptr) = cache.entry.take() {

@@ -81,6 +81,36 @@ describe("transpiler cache", () => {
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("a");
     expect(!existsSync(cache_dir)).toBeTrue();
   });
+  test("does not cache a file whose parse logged an error", async () => {
+    // The parser reports the `import` next to `module.exports` after it has
+    // built the AST, and the lexer reports `0foo` while the parser is being
+    // constructed. Nothing may be printed or cached for such a file, or a
+    // later run would serve the broken output from the cache without the error.
+    const filler = "\n//" + Buffer.alloc(5 * 1024, "f").toString();
+    writeFileSync(join(temp_dir, "dep.js"), `export const x = 1;`);
+    writeFileSync(join(temp_dir, "mixed.js"), `import { x } from "./dep.js";\nmodule.exports = { x };` + filler);
+    writeFileSync(join(temp_dir, "first.js"), `\\u0030foo = 1;` + filler);
+    writeFileSync(
+      join(temp_dir, "main.js"),
+      `const out = {};
+       for (const file of ["./mixed.js", "./first.js"]) {
+         try { await import(file); } catch (e) { out["import " + file] = [e.name, e.message]; }
+         try { require(file); } catch (e) { out["require " + file] = [e.name, e.message]; }
+       }
+       console.log(JSON.stringify(out));`,
+    );
+    const mixed = ["BuildMessage", "Cannot use import statement with CommonJS-only features"];
+    const first = ["BuildMessage", 'Invalid identifier: "0foo"'];
+    const expected = JSON.stringify({
+      "import ./mixed.js": mixed,
+      "require ./mixed.js": mixed,
+      "import ./first.js": first,
+      "require ./first.js": first,
+    });
+    expect(await bunRun(join(temp_dir, "main.js"), env)).toSpawn(expected);
+    expect(await bunRun(join(temp_dir, "main.js"), env)).toSpawn(expected);
+    expect(!existsSync(cache_dir)).toBeTrue();
+  });
   test("it is indeed content addressable", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("b");

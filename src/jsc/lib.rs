@@ -188,7 +188,7 @@ pub use self::js_value::{
 // and is wired into `event_loop::tick` directly at link time. No fn-pointer
 // hook is re-exported from the crate root.
 pub use self::array_buffer::{
-    ArrayBuffer, BinaryType, JSCArrayBuffer, MarkedArrayBuffer, TypedArrayType,
+    ArrayBuffer, BinaryType, JSCArrayBuffer, MarkedArrayBuffer, PinnedArrayBuffer, TypedArrayType,
 };
 pub use self::console_object as ConsoleObject;
 pub use self::console_object::Formatter;
@@ -876,6 +876,17 @@ pub mod resolved_source_tag {
         "/generated_resolved_source_tag.rs"
     ));
 }
+
+/// Index into the codegen'd `BuiltinModuleKeys.h` table for a canonical builtin key (`node:fs`, `bun:sqlite`, `bun`...).
+pub mod builtin_module_key_index {
+    include!(concat!(
+        env!("BUN_CODEGEN_DIR"),
+        "/generated_builtin_module_key_index.rs"
+    ));
+    pub fn get(name: &[u8]) -> Option<u16> {
+        BUILTIN_MODULE_KEY_INDEX.get(name).copied()
+    }
+}
 pub use self::resolved_source_tag::ResolvedSourceTag;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1251,9 +1262,6 @@ pub use self::array_buffer::JSTypedArrayBytesDeallocator;
 pub mod node_path;
 #[path = "webcore_types.rs"]
 pub mod webcore_types;
-// RAII pair for `make_thread_isolated()`/`unprotect()` — re-exported at crate root
-// so `bun_runtime` callers don't reach through `node_path`.
-pub use self::node_path::{ThreadIsolated, Unprotect};
 
 /// `jsc.WebCore` (deprecated alias) — only the data-shape subset
 /// that was hoisted to this tier. Reach for `bun_runtime::webcore` for the

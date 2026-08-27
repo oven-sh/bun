@@ -74,9 +74,10 @@ extern "C" void JSC__IdentifierArray__destroy(Identifier* identifiers, size_t co
     WTF::fastFree(identifiers);
 }
 
-extern "C" JSModuleRecord* JSC_JSModuleRecord__create(JSGlobalObject* globalObject, VM& vm, const Identifier* moduleKey, const SourceCode& sourceCode, bool hasImportMeta, bool isTypescript, bool hasTLA)
+extern "C" JSModuleRecord* JSC_JSModuleRecord__create(JSGlobalObject* globalObject, VM& vm, const Identifier* moduleKey, const SourceCode& sourceCode, bool hasImportMeta, bool isTypescript, bool hasTLA, uint32_t requestedModuleCount, uint32_t importCount, uint32_t exportCount)
 {
     JSModuleRecord* result = JSModuleRecord::create(globalObject, vm, globalObject->moduleRecordStructure(), *moduleKey, sourceCode, hasImportMeta ? ImportMetaFeature : 0);
+    result->reserveCapacity(requestedModuleCount, importCount, exportCount);
     result->m_isTypeScript = isTypescript;
     result->setHasTLA(hasTLA);
     return result;

@@ -3303,6 +3303,35 @@ it("realpath async", async () => {
 }, 30_000);
 
 describe("stat", () => {
+  it("async calls do not keep a Buffer path alive after they complete", async () => {
+    using dir = tempDir("fs-async-buffer-path", { x: "hello" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("fs");
+        const file = Buffer.from(require("path").join(process.argv[1], "x"));
+        const missing = Buffer.from(require("path").join(process.argv[1], "missing"));
+        for (let i = 0; i < 200; i++) {
+          await fs.promises.stat(Buffer.from(file));
+          await fs.promises.readFile(Buffer.from(file));
+          await fs.promises.writeFile(Buffer.from(file), Buffer.from("hello"));
+          await fs.promises.stat(Buffer.from(missing)).catch(() => {});
+        }
+        Bun.gc(true);
+        console.log(require("bun:jsc").heapStats().objectTypeCounts.Uint8Array);`,
+        String(dir),
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const live = Number(stdout);
+    expect(Number.isFinite(live)).toBe(true);
+    expect(live).toBeLessThan(200);
+    expect(exitCode).toBe(0);
+  });
+
   it("file metadata is correct", () => {
     const fileStats = statSync(join(import.meta.dir, "fs-stream.js"));
     expect(fileStats.isSymbolicLink()).toBe(false);
@@ -6684,6 +6713,104 @@ it("fs.promises.writeFile keeps the source buffer attached while the write is in
   expect(buf.buffer.detached).toBe(true);
 
   expect(readFileSync(file, "latin1")).toBe("EEEEEEEE");
+});
+
+// A pin stops a detach but not `ArrayBuffer.prototype.resize()`. The pool thread copies the path into
+// its own buffer, so it must read the bytes captured at call time, not the shrunk buffer.
+it("fs.promises.stat reads a Buffer path captured at call time when its resizable ArrayBuffer shrinks in flight", async () => {
+  // The unfixed build segfaults on the pool thread, so this runs in a child process.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        import fs from "node:fs";
+        const encoded = new TextEncoder().encode(process.execPath);
+        let wrong = 0;
+        for (let i = 0; i < 20; i++) {
+          const ab = new ArrayBuffer(encoded.length, { maxByteLength: 1 << 16 });
+          const path = new Uint8Array(ab);
+          path.set(encoded);
+          const pending = fs.promises.stat(path);
+          ab.resize(0);
+          if (!((await pending).size > 0)) wrong++;
+        }
+        console.log("wrong:", wrong);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("wrong: 0\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// A sync call reads the path after the option getters ran. It reads the bytes captured at call time
+// when a getter shrinks the buffer.
+it("sync fs calls read a Buffer path captured at call time when an option getter shrinks its resizable ArrayBuffer", async () => {
+  using dir = tempDir("fs-resizable-path", {});
+  // The unfixed build segfaults on the main thread, so this runs in a child process.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        import fs from "node:fs";
+        import path from "node:path";
+        const dir = process.cwd();
+        function resizablePath(p) {
+          const bytes = new TextEncoder().encode(p);
+          const ab = new ArrayBuffer(bytes.length, { maxByteLength: 1 << 16 });
+          new Uint8Array(ab).set(bytes);
+          return ab;
+        }
+
+        const written = path.join(dir, "written.txt");
+        {
+          const ab = resizablePath(written);
+          fs.writeFileSync(new Uint8Array(ab), "sync-write", {
+            get flag() {
+              ab.resize(0);
+              return "w";
+            },
+          });
+          console.log("writeFileSync:", fs.readFileSync(written, "utf8"));
+        }
+        {
+          const ab = resizablePath(written);
+          const text = fs.readFileSync(new DataView(ab), {
+            get encoding() {
+              ab.resize(0);
+              return "utf8";
+            },
+          });
+          console.log("readFileSync:", text);
+        }
+        {
+          const made = path.join(dir, "made");
+          const ab = resizablePath(made);
+          fs.mkdirSync(ab, {
+            get recursive() {
+              ab.resize(0);
+              return true;
+            },
+          });
+          console.log("mkdirSync:", fs.statSync(made).isDirectory());
+        }
+      `,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("writeFileSync: sync-write\nreadFileSync: sync-write\nmkdirSync: true\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 it.if(isPosix)("realpathSync reports ENAMETOOLONG when cwd plus the path exceeds the system path limit", async () => {

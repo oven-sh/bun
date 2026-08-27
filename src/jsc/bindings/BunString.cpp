@@ -451,6 +451,13 @@ extern "C" BunString BunString__createStaticExternal(const char* bytes, size_t l
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
 
+extern "C" BunString BunString__createStaticExternalLatin1WithHash(const char* bytes, size_t length, unsigned hash)
+{
+    Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::createStatic({ reinterpret_cast<const Latin1Character*>(bytes), length }, hash);
+    impl->setNeverAtomize();
+    return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
+}
+
 extern "C" BunString BunString__createExternal(const char* bytes, size_t length, bool isLatin1, void* ctx, void (*callback)(void* arg0, void* arg1, size_t arg2))
 {
     Ref<WTF::ExternalStringImpl> impl = isLatin1 ? WTF::ExternalStringImpl::create({ reinterpret_cast<const Latin1Character*>(bytes), length }, ctx, callback) :

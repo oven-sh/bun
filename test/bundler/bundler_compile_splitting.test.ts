@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { readdirSync } from "node:fs";
 import { itBundled } from "./expectBundled";
 import { EmbeddedModule, Flags, ModuleGraph, readModuleGraph, Span } from "./standalone-graph";
 
@@ -459,45 +460,65 @@ describe("bundler", () => {
     }
 
     // The executable keys the entry point's module at `/$bunfs/root/<outfile>`,
-    // so nothing may fold into the entry's own chunk. `shared` is loaded
+    // so nothing may fold into the entry's own chunk: `shared` is loaded
     // whenever the entry is, and the same graph without --compile folds it into
-    // the entry (see splitting/FoldsSharedIntoEntry). The entry must not use
-    // top-level await: an awaiting entry guarantees nothing to its `import()`
-    // targets, no fold is possible, and the pin has nothing to block.
-    // `helper` stays in a chunk of its own because a.ts has exports, so its
-    // chunk absorbs nothing either.
+    // the entry, which the uncompiled twin pins. An `import()` target's chunk
+    // still absorbs the chunks only it and its own `import()` targets load:
+    // `helper2` lands in c's chunk and d imports it from there, compiled or not.
+    // The entry must not use top-level await: an awaiting entry guarantees
+    // nothing to its `import()` targets, no fold is possible, and the pin has
+    // nothing to block. `helper` stays in a chunk of its own because a.ts has
+    // exports, so its chunk absorbs nothing.
+    const minChunkSizeFiles = {
+      "/entry.ts": /* js */ `
+        import { shared } from "./shared";
+        console.log("entry", shared());
+        import("./a").then(a => {
+          console.log("a", a.a());
+          return import("./c");
+        });
+      `,
+      "/a.ts": /* js */ `
+        import { shared } from "./shared";
+        import { helper } from "./helper";
+        export function a() { return shared() + helper() }
+        export const b = import("./b").then(m => m.b());
+      `,
+      "/b.ts": /* js */ `
+        import { helper } from "./helper";
+        export function b() { return helper() * 2 }
+      `,
+      "/shared.ts": /* js */ `
+        export function shared() { return 40 }
+      `,
+      "/helper.ts": /* js */ `
+        export function helper() { return 1 }
+      `,
+      "/c.ts": /* js */ `
+        import { helper2 } from "./helper2";
+        console.log("c", helper2());
+        import("./d");
+      `,
+      "/d.ts": /* js */ `
+        import { helper2 } from "./helper2";
+        console.log("d", helper2() * 2);
+      `,
+      "/helper2.ts": /* js */ `
+        export function helper2() { return 2 }
+      `,
+    };
+    const minChunkSizeStdout = "entry 40\na 41\nc 2\nd 4";
+
     itBundled("compile/splitting/MinChunkSizeKeepsEntryChunkImportable", {
       compile: true,
       splitting: true,
       bytecode: true,
       format: "esm",
       minChunkSize: 1024 * 1024,
-      files: {
-        "/entry.ts": /* js */ `
-          import { shared } from "./shared";
-          console.log("entry", shared());
-          import("./a").then(a => console.log("a", a.a()));
-        `,
-        "/a.ts": /* js */ `
-          import { shared } from "./shared";
-          import { helper } from "./helper";
-          export function a() { return shared() + helper() }
-          export const b = import("./b").then(m => m.b());
-        `,
-        "/b.ts": /* js */ `
-          import { helper } from "./helper";
-          export function b() { return helper() * 2 }
-        `,
-        "/shared.ts": /* js */ `
-          export function shared() { return 40 }
-        `,
-        "/helper.ts": /* js */ `
-          export function helper() { return 1 }
-        `,
-      },
+      files: minChunkSizeFiles,
       onAfterBundle(api) {
-        // `shared` stays out of the entry's chunk, in a chunk the entry and a's chunk import.
         const graph = readModuleGraph(api.outfile);
+        // `shared` stays out of the entry's chunk, in a chunk the entry and a's chunk import.
         const entry = graph.modules[graph.entryPointId];
         expect(entry.name).toMatch(entryName);
         expect(entry.source).not.toContain("function shared");
@@ -505,13 +526,45 @@ describe("bundler", () => {
         expect(shared.name).toMatch(chunkName);
         expect(importedPaths(entry.source)).toContain(shared.name);
         expect(importedPaths(moduleContaining(graph, "function a()").source)).toContain(shared.name);
-        const helper = moduleContaining(graph, "function helper");
+        const helper = moduleContaining(graph, "function helper()");
         expect(helper.name).toMatch(chunkName);
         expect(importedPaths(moduleContaining(graph, "function b()").source)).toEqual([helper.name]);
+        // `helper2` folds into c's chunk, which d imports.
+        const c = moduleContaining(graph, "function helper2");
+        expect(c.name).toMatch(chunkName);
+        expect(c.source).toContain('console.log("c"');
+        expect(importedPaths(moduleContaining(graph, 'console.log("d"').source)).toEqual([c.name]);
         expectImportsResolve(graph);
       },
       run: {
-        stdout: "entry 40\na 41",
+        stdout: minChunkSizeStdout,
+      },
+    });
+
+    itBundled("splitting/MinChunkSizeFoldsSharedIntoEntryWithoutCompile", {
+      splitting: true,
+      format: "esm",
+      target: "bun",
+      minChunkSize: 1024 * 1024,
+      outdir: "/out",
+      files: minChunkSizeFiles,
+      onAfterBundle(api) {
+        const outputs = readdirSync(api.outdir).filter(file => file.endsWith(".js"));
+        const outputContaining = (text: string) => {
+          const found = outputs.filter(file => api.readFile(`/out/${file}`).includes(text));
+          expect(found, `exactly one output contains ${JSON.stringify(text)}`).toHaveLength(1);
+          return found[0];
+        };
+        // Without the pin, `shared` folds into the entry and a's chunk imports it from there.
+        expect(outputContaining("function shared")).toBe("entry.js");
+        expect(api.readFile(`/out/${outputContaining("function a()")}`)).toContain('from "./entry.js"');
+        expect(outputContaining("function helper()")).not.toBe("entry.js");
+        const c = outputContaining("function helper2");
+        expect(api.readFile(`/out/${c}`)).toContain('console.log("c"');
+        expect(api.readFile(`/out/${outputContaining('console.log("d"')}`)).toContain(`from "./${c}"`);
+      },
+      run: {
+        stdout: minChunkSizeStdout,
       },
     });
 

@@ -12,7 +12,7 @@
  */
 import { expect } from "bun:test";
 import { isWindows } from "harness";
-import { closeSync, openSync, readFileSync, readSync } from "node:fs";
+import { closeSync, openSync, readSync } from "node:fs";
 
 export interface Span {
   offset: number;
@@ -130,18 +130,19 @@ export function readBunSectionPE(fd: number): Buffer | null {
 
 /**
  * Parses the module graph embedded in the executable at `outfile`. Only the
- * section that holds it is read; an executable of a format the readers above
- * do not know is read whole.
+ * section that holds it is read.
  */
 export function readModuleGraph(outfile: string): ModuleGraph {
   // A Windows target gets `.exe` appended to the outfile it was asked for.
-  const fd = openSync(isWindows ? `${outfile}.exe` : outfile, "r");
-  let data: Buffer;
+  const path = isWindows ? `${outfile}.exe` : outfile;
+  const fd = openSync(path, "r");
+  let data: Buffer | null;
   try {
-    data = readBunSectionELF(fd) ?? readBunSectionMachO(fd) ?? readBunSectionPE(fd) ?? readFileSync(fd);
+    data = readBunSectionELF(fd) ?? readBunSectionMachO(fd) ?? readBunSectionPE(fd);
   } finally {
     closeSync(fd);
   }
+  if (!data) throw new Error(`${path} has no module graph section: not an ELF, Mach-O or PE executable`);
   const trailer = data.lastIndexOf(TRAILER);
   expect(trailer).toBeGreaterThan(0);
   const offsets = trailer - 32;

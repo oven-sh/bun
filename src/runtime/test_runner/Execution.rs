@@ -103,6 +103,10 @@ pub struct Execution {
     /// `bun_test::WaitingEntry`s on the stack holding `on_stack_entry`'s callback blocked,
     /// so that while non-zero, JS reaching a matcher is a continuation, not that callback.
     pub(crate) blocking_matcher_waits: core::cell::Cell<u32>,
+    /// `bun_test::WaitingEntry`s on the stack reached from a continuation (the runner live). While
+    /// non-zero, the timeout timer leaves the one running entry's deadline to them
+    /// (`defers_timeout_to_matcher_wait`).
+    pub(crate) continuation_matcher_waits: core::cell::Cell<u32>,
 }
 
 pub struct ConcurrentGroup {
@@ -286,6 +290,7 @@ impl Execution {
             on_stack_entry: core::cell::Cell::new(None),
             on_stack_entry_data: core::cell::Cell::new(None),
             blocking_matcher_waits: core::cell::Cell::new(0),
+            continuation_matcher_waits: core::cell::Cell::new(0),
         }
     }
 
@@ -306,6 +311,27 @@ impl Execution {
         // SAFETY: deref parent at point-of-use; `self` is not accessed while this `&mut BunTest` is live.
         unsafe { (*buntest).add_result(RefDataValue::Start) };
         Ok(())
+    }
+
+    /// Whether the timeout that is due is the one running entry's, with a matcher wait reached from
+    /// a continuation of that entry on the stack. That wait gives up at the same deadline and fails
+    /// the entry through its completion, so stepping the runner past the entry here would only turn
+    /// that failure into an outdated one (`Unhandled error between tests`, and a spurious error for a
+    /// test that passes on retry).
+    pub(crate) fn defers_timeout_to_matcher_wait(&self, now: &Timespec) -> bool {
+        if self.continuation_matcher_waits.get() == 0 {
+            return false;
+        }
+        let Some(group) = self.active_group_ref() else { return false };
+        let mut executing = group.sequences(self).iter().filter(|sequence| sequence.executing);
+        let Some(sequence) = executing.next() else { return false };
+        if executing.next().is_some() {
+            return false;
+        }
+        sequence.active_entry.is_some_and(|entry| {
+            // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
+            unsafe { entry.as_ref() }.has_timed_out(now)
+        })
     }
 
     /// The kill-only half of [`handle_timeout`]: reaps a timed-out test's spawned processes without touching the runner's queue, so it may run from inside `spawnSync`'s isolated loop.

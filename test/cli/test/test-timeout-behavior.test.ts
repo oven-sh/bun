@@ -246,12 +246,6 @@ describe("a matcher blocked on a promise that never settles fails with the test 
         "exitCode": 1,
         "stderr": 
       "blocked.test.ts:
-      (fail) resolves after an await
-        ^ this test timed out after 200ms.
-      (pass) the next test runs
-
-      # Unhandled error between tests
-      -------------------------------
       4 |     const soon = () => new Promise(resolve => setTimeout(resolve, 0, "settled"));
       5 |     const timeout = 200;
       6 | 
@@ -263,12 +257,12 @@ describe("a matcher blocked on a promise that never settles fails with the test 
 
       Expected promise that resolves
       Received promise that was still pending when the test timed out: Promise { <pending> }
-      -------------------------------
-
+      (fail) resolves after an await
+        ^ this test timed out after 200ms.
+      (pass) the next test runs
 
        1 pass
        1 fail
-       1 error
       Ran 2 tests across 1 file."
       ,
         "stdout": "bun test <version> (<revision>)",
@@ -277,7 +271,8 @@ describe("a matcher blocked on a promise that never settles fails with the test 
   });
 
   // The test overruns its timeout synchronously, so by the time its continuation reaches the
-  // matcher the runner has already given the test up, run the rest of the file and finished it.
+  // matcher the runner has already given the test up, run the rest of the file and finished it:
+  // the wait gives up at once, and its error can only be reported as a late one.
   test("reached from a continuation of a test the runner already gave up on", async () => {
     const result = await runTestFile(`
       test("resolves after an await", async () => {
@@ -311,7 +306,7 @@ describe("a matcher blocked on a promise that never settles fails with the test 
       error: expect(received).resolves.toBe(expected)
 
       Expected promise that resolves
-      Received promise that was still pending when the test timed out: Promise { <pending> }
+      Received promise that was still pending when the test ended: Promise { <pending> }
       -------------------------------
 
 
@@ -368,7 +363,8 @@ describe("a matcher blocked on a promise that never settles fails with the test 
   });
 
   // Inside a concurrent group the runner cannot tell which test a continuation belongs to, so the
-  // matcher gives up once the whole group is over.
+  // matcher gives up once every test still executing in the group has timed out (here, once the
+  // sibling is done, only the blocked test), or once the group is over.
   test("reached from a continuation inside a concurrent group", async () => {
     const result = await runTestFile(`
       test.concurrent("resolves after an await", async () => {
@@ -385,12 +381,6 @@ describe("a matcher blocked on a promise that never settles fails with the test 
         "stderr": 
       "blocked.test.ts:
       (pass) sibling of the blocked test
-      (fail) resolves after an await
-        ^ this test timed out after 200ms.
-      (pass) the next test runs
-
-      # Unhandled error between tests
-      -------------------------------
       4 |     const soon = () => new Promise(resolve => setTimeout(resolve, 0, "settled"));
       5 |     const timeout = 200;
       6 | 
@@ -402,12 +392,12 @@ describe("a matcher blocked on a promise that never settles fails with the test 
 
       Expected promise that resolves
       Received promise that was still pending when the test timed out: Promise { <pending> }
-      -------------------------------
-
+      (fail) resolves after an await
+        ^ this test timed out after 200ms.
+      (pass) the next test runs
 
        2 pass
        1 fail
-       1 error
       Ran 3 tests across 1 file."
       ,
         "stdout": "bun test <version> (<revision>)",
@@ -471,6 +461,109 @@ describe("a matcher blocked on a promise that never settles fails with the test 
       Ran 3 tests across 1 file."
       ,
         "stdout": "bun test <version> (<revision>)",
+      }
+    `);
+  });
+
+  // The failure lands on the attempt that timed out, not on the run: the retry's own result decides.
+  test("a test that passes on retry after a blocked attempt passes", async () => {
+    const result = await runTestFile(`
+      let attempt = 0;
+      test("passes on retry", async () => {
+        attempt++;
+        await soon();
+        await expect(attempt === 1 ? never() : soon()).resolves.toBe("settled");
+      }, { retry: 1, timeout });
+      test("the next test runs", () => {});
+    `);
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": 
+      "blocked.test.ts:
+       6 | 
+       7 |       let attempt = 0;
+       8 |       test("passes on retry", async () => {
+       9 |         attempt++;
+      10 |         await soon();
+      11 |         await expect(attempt === 1 ? never() : soon()).resolves.toBe("settled");
+                                                                           ^
+      error: expect(received).resolves.toBe(expected)
+
+      Expected promise that resolves
+      Received promise that was still pending when the test timed out: Promise { <pending> }
+      (pass) passes on retry (attempt 2)
+      (pass) the next test runs
+
+       2 pass
+       0 fail
+       1 expect() calls
+      Ran 2 tests across 1 file."
+      ,
+        "stdout": "bun test <version> (<revision>)",
+      }
+    `);
+  });
+
+  // A wait the test never awaited outlives the test. While the file runs, the promise can still
+  // settle and the matcher runs as before; at the end of the file nothing else can settle it, so the
+  // wait gives up, and says why (the test ended, nothing timed out). The leaks are immediates: a wait
+  // reached from a timer callback runs inside the timer drain, where on Windows no other timer fires
+  // (#40023), and the third test's timer has to.
+  test("a wait the test did not await ends with the file", async () => {
+    const result = await runTestFile(`
+      const later = () => new Promise(resolve => setTimeout(resolve, timeout, "settled"));
+      test("leaks a wait that settles while the file runs", () => {
+        setImmediate(async () => {
+          await expect(later()).resolves.toBe("settled");
+          console.log("leaked matcher settled");
+        });
+      });
+      test("leaks a wait that never settles", () => {
+        setImmediate(async () => {
+          await expect(never()).resolves.toBe("settled");
+          console.log("unreachable: leaked matcher");
+        });
+      });
+      test("outlives the first leaked wait", async () => {
+        await new Promise(resolve => setTimeout(resolve, timeout * 2));
+      });
+    `);
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "exitCode": 1,
+        "stderr": 
+      "blocked.test.ts:
+      (pass) leaks a wait that settles while the file runs
+      (pass) leaks a wait that never settles
+      (pass) outlives the first leaked wait
+
+      # Unhandled error between tests
+      -------------------------------
+      11 |           console.log("leaked matcher settled");
+      12 |         });
+      13 |       });
+      14 |       test("leaks a wait that never settles", () => {
+      15 |         setImmediate(async () => {
+      16 |           await expect(never()).resolves.toBe("settled");
+                                                    ^
+      error: expect(received).resolves.toBe(expected)
+
+      Expected promise that resolves
+      Received promise that was still pending when the test ended: Promise { <pending> }
+      -------------------------------
+
+
+       3 pass
+       0 fail
+       1 error
+       1 expect() calls
+      Ran 3 tests across 1 file."
+      ,
+        "stdout": 
+      "bun test <version> (<revision>)
+      leaked matcher settled"
+      ,
       }
     `);
   });

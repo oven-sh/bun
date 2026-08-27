@@ -1105,8 +1105,9 @@ impl EventLoop {
             .map(|_settled| ())
     }
 
-    /// [`Self::wait_for_promise`] that also returns `Ok(false)` once `give_up`,
-    /// asked before each tick, says so; `Ok(true)` means the promise settled.
+    /// [`Self::wait_for_promise`] that also returns `Ok(false)` once `give_up` says so. It is asked
+    /// after each tick, before the poll that may park: what the tick ran may be what ends the wait.
+    /// `Ok(true)` means the promise settled.
     pub fn wait_for_promise_or_give_up(
         &mut self,
         promise: jsc::AnyPromise,
@@ -1120,13 +1121,14 @@ impl EventLoop {
             {
                 return Err(jsc::Stopped);
             }
+            self.tick();
+            if promise.status() != PromiseStatus::Pending {
+                break;
+            }
             if give_up() {
                 return Ok(false);
             }
-            self.tick();
-            if promise.status() == PromiseStatus::Pending {
-                self.auto_tick();
-            }
+            self.auto_tick();
         }
         Ok(true)
     }

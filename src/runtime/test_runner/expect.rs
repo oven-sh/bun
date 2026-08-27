@@ -471,18 +471,26 @@ impl Expect {
         }
     }
 
-    /// `VirtualMachine::wait_for_promise` that returns `false` instead once the entry the matcher runs
-    /// in is over ([`bun_test::WaitingEntry`]), so a promise that never settles fails the test instead
-    /// of hanging `bun test`. Throws only for a VM stop.
-    fn wait_for_promise(global_this: &JSGlobalObject, promise: bun_jsc::AnyPromise) -> JsResult<bool> {
+    /// `VirtualMachine::wait_for_promise` that returns why it gave up instead once the entry the matcher
+    /// runs in is over ([`bun_test::WaitingEntry`]), so a promise that never settles fails the test
+    /// instead of hanging `bun test`. `Ok(None)`: the promise settled. Throws only for a VM stop.
+    fn wait_for_promise(
+        global_this: &JSGlobalObject,
+        promise: bun_jsc::AnyPromise,
+    ) -> JsResult<Option<bun_test::GaveUp>> {
         let waiting_entry = bun_test::WaitingEntry::current();
-        global_this
+        let gave_up = Cell::new(None);
+        let settled = global_this
             .bun_vm()
             .event_loop_mut()
             .wait_for_promise_or_give_up(promise, || {
-                waiting_entry.as_ref().is_some_and(|waiting| waiting.timed_out(global_this))
+                let Some(waiting) = waiting_entry.as_ref() else { return false };
+                let reason = waiting.gave_up(global_this);
+                gave_up.set(reason);
+                reason.is_some()
             })
-            .map_err(|stopped| stopped.throw(global_this))
+            .map_err(|stopped| stopped.throw(global_this))?;
+        Ok(if settled { None } else { gave_up.get() })
     }
 
     /// Processes the async flags (resolves/rejects), waiting for the async value if needed.
@@ -503,7 +511,7 @@ impl Expect {
                     let vm = global_this.vm();
                     promise.set_handled(vm);
 
-                    if !Self::wait_for_promise(global_this, promise)? {
+                    if let Some(gave_up) = Self::wait_for_promise(global_this, promise)? {
                         if !silent {
                             let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
                             return Err(Self::throw_promise_matcher_error(
@@ -513,7 +521,10 @@ impl Expect {
                                 } else {
                                     "Expected promise that rejects"
                                 },
-                                "Received promise that was still pending when the test timed out: ",
+                                match gave_up {
+                                    bun_test::GaveUp::TimedOut => "Received promise that was still pending when the test timed out: ",
+                                    bun_test::GaveUp::TestEnded => "Received promise that was still pending when the test ended: ",
+                                },
                                 value.to_fmt(&mut formatter),
                             ));
                         }
@@ -896,11 +907,12 @@ impl Expect {
             // As in `process_promise`: the matcher owns this promise's outcome, including a rejection
             // that arrives after the wait gave up on it.
             promise.set_handled(global_this.vm());
-            let settled = Self::wait_for_promise(global_this, promise);
+            let waited = Self::wait_for_promise(global_this, promise);
             scope.apply(vm);
-            if !settled? {
+            if let Some(gave_up) = waited? {
                 return Err(global_this.throw(format_args!(
-                    "Received function returned a promise that was still pending when the test timed out"
+                    "Received function returned a promise that was still pending when the test {}",
+                    gave_up.when()
                 )));
             }
             match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
@@ -1489,10 +1501,11 @@ impl Expect {
             let vm = global_this.vm();
             promise.set_handled(vm);
 
-            if !Self::wait_for_promise(global_this, promise)? {
+            if let Some(gave_up) = Self::wait_for_promise(global_this, promise)? {
                 return Err(global_this.throw(format_args!(
-                    "Matcher `{}` returned a promise that was still pending when the test timed out",
+                    "Matcher `{}` returned a promise that was still pending when the test {}",
                     matcher_name,
+                    gave_up.when(),
                 )));
             }
 

@@ -749,23 +749,21 @@ impl Watcher {
             Ok(FdOwnership::Watcher) => {}
         }
 
-        if true {
-            let cwd_len_with_slash = if self.cwd[self.cwd.len() - 1] == b'/' {
-                self.cwd.len()
+        let cwd_len_with_slash = if self.cwd[self.cwd.len() - 1] == b'/' {
+            self.cwd.len()
+        } else {
+            self.cwd.len() + 1
+        };
+        let display_path =
+            if file_path.len() > cwd_len_with_slash && file_path.starts_with(self.cwd) {
+                &file_path[cwd_len_with_slash..]
             } else {
-                self.cwd.len() + 1
+                file_path
             };
-            let display_path =
-                if file_path.len() > cwd_len_with_slash && file_path.starts_with(self.cwd) {
-                    &file_path[cwd_len_with_slash..]
-                } else {
-                    file_path
-                };
-            log!(
-                "<d>Added <b>{}<r><d> to watch list.<r>",
-                bstr::BStr::new(display_path)
-            );
-        }
+        log!(
+            "<d>Added <b>{}<r><d> to watch list.<r>",
+            bstr::BStr::new(display_path)
+        );
 
         Ok(FdOwnership::Watcher)
     }

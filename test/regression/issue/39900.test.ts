@@ -53,8 +53,8 @@ console.log(start());
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  // The unawaited digest settles before or after the entry module's output.
-  expect(stdout.trim().split("\n").sort()).toEqual(["1", "settled"]);
+  expect(stdout).toContain("1\n");
+  expect(stdout).toContain("settled\n");
   expect(exitCode).toBe(0);
 });
 

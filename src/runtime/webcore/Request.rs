@@ -948,6 +948,14 @@ impl Request {
     }
 }
 
+/// How `clone_into` takes the source body: `Tee` (non-consuming, `request.clone()`)
+/// or `Transfer` (fetch step 45, `new Request(request)` consumes the input).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BodyCloneMode {
+    Tee,
+    Transfer,
+}
+
 #[derive(enumset::EnumSetType)]
 enum Fields {
     Method,
@@ -1103,7 +1111,11 @@ impl Request {
                             &mut req,
                             global_this,
                             fields.contains(Fields::Url),
-                            is_input,
+                            if is_input {
+                                BodyCloneMode::Transfer
+                            } else {
+                                BodyCloneMode::Tee
+                            },
                         ) {
                             Ok(()) => {}
                             Err(e) => bail!(Err(e)),
@@ -1494,17 +1506,16 @@ impl Request {
         req: &mut Request,
         global_this: &JSGlobalObject,
         preserve_url: bool,
-        transfer_body: bool,
+        body_mode: BodyCloneMode,
     ) -> JsResult<()> {
         // allocator param dropped (global mimalloc)
         let _ = self.ensure_url();
         // Headers first: a transfer leaves `self` `Used`, so it must be the
         // last fallible step.
         let headers = self.clone_headers(global_this)?;
-        let body_ = if transfer_body {
-            self.transfer_body_value(global_this)?
-        } else {
-            self.clone_body_value_via_cached_stream(global_this)?
+        let body_ = match body_mode {
+            BodyCloneMode::Transfer => self.transfer_body_value(global_this)?,
+            BodyCloneMode::Tee => self.clone_body_value_via_cached_stream(global_this)?,
         };
         let body = body::hive_alloc(body_);
         let url = if preserve_url {
@@ -1571,7 +1582,7 @@ impl Request {
             reported_estimated_size: Cell::new(0),
         });
         // Box<Request> drops on the error path automatically
-        self.clone_into(&mut req, global_this, false, false)?;
+        self.clone_into(&mut req, global_this, false, BodyCloneMode::Tee)?;
         Ok(req)
     }
 }

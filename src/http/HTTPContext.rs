@@ -180,13 +180,21 @@ impl PeerVerification {
     }
 }
 
+/// What `PooledSocket::hostname_buf` names.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Transport {
+    /// A hostname, paired with `port`.
+    Tcp,
+    /// An AF_UNIX socket path. `port` is 0.
+    Unix,
+}
+
 pub struct PooledSocket<const SSL: bool> {
     pub(crate) http_socket: HTTPSocket<SSL>,
     pub(crate) hostname_buf: [u8; MAX_KEEPALIVE_HOSTNAME],
     pub(crate) hostname_len: u8,
     pub(crate) port: u16,
-    /// AF_UNIX connection: `hostname_buf` holds the socket path and `port` is 0.
-    pub(crate) is_unix: bool,
+    pub(crate) transport: Transport,
     /// If you set `rejectUnauthorized` to `false`, the connection fails to verify,
     pub(crate) did_have_handshaking_error_while_reject_unauthorized_is_false: bool,
     /// A CA-valid but wrong-hostname cert leaves `did_have_handshaking_error`
@@ -601,15 +609,13 @@ impl<const SSL: bool> HTTPContext<SSL> {
         debug_assert!(!socket.is_closed());
         debug_assert!(!socket.is_shutdown());
         debug_assert!(socket.is_established());
-        let is_unix = !unix_path.is_empty();
-        // Unix sockets key on the path (stored in hostname_buf) with port 0.
-        let (hostname, port) = if is_unix {
-            (unix_path, 0)
+        let (transport, hostname, port) = if unix_path.is_empty() {
+            (Transport::Tcp, hostname, port)
         } else {
-            (hostname, port)
+            (Transport::Unix, unix_path, 0)
         };
         debug_assert!(!hostname.is_empty());
-        debug_assert!(is_unix || port > 0);
+        debug_assert!(transport == Transport::Unix || port > 0);
 
         if hostname.len() <= MAX_KEEPALIVE_HOSTNAME
             && !(socket.is_closed() || socket.is_shutdown() || socket.get_error() != 0)
@@ -645,7 +651,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     hostname_buf,
                     hostname_len: hostname.len() as u8, // @truncate
                     port,
-                    is_unix,
+                    transport,
                     did_have_handshaking_error_while_reject_unauthorized_is_false,
                     verification,
                     // Clone a strong ref for the keepalive pool; the caller retains
@@ -654,7 +660,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     owner,
                     // Pool owns the tunnel ref transferred by the caller.
                     proxy_tunnel: tunnel,
-                    target_hostname: if (had_tunnel || is_unix) && !target_hostname.is_empty() {
+                    target_hostname: if (had_tunnel || transport == Transport::Unix)
+                        && !target_hostname.is_empty()
+                    {
                         Box::<[u8]>::from(target_hostname)
                     } else {
                         Box::default()
@@ -697,7 +705,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         target_port: u16,
         proxy_auth_hash: u64,
         want_h2: AlpnOffer,
-        is_unix: bool,
+        transport: Transport,
     ) -> Option<ExistingSocket<SSL>> {
         if hostname.len() > MAX_KEEPALIVE_HOSTNAME {
             return None;
@@ -710,7 +718,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 .pending_sockets
                 .at(u16::try_from(pending_socket_index).expect("int cast"));
             let socket = pooled_socket_mut(socket_ptr);
-            if socket.is_unix != is_unix {
+            if socket.transport != transport {
                 continue;
             }
             if socket.port != port {
@@ -759,7 +767,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 if !required_for_target.admits(socket.proxy_tunnel.as_ref().unwrap().verification) {
                     continue;
                 }
-            } else if is_unix && !strings::eql_long(&socket.target_hostname, target_hostname, true)
+            } else if transport == Transport::Unix
+                && !strings::eql_long(&socket.target_hostname, target_hostname, true)
             {
                 continue;
             }
@@ -843,7 +852,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 0,
                 0,
                 AlpnOffer::H1,
-                true,
+                Transport::Unix,
             ) {
                 let sock = found.socket;
                 debug_assert!(found.tunnel.is_none());
@@ -985,7 +994,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 } else {
                     AlpnOffer::H1
                 },
-                false,
+                Transport::Tcp,
             ) {
                 let sock = found.socket;
                 client.flags.reused_socket_verification = found.verification;

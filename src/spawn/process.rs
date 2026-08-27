@@ -200,6 +200,24 @@ impl ProcessHandle {
     pub fn as_ptr(&self) -> *mut Process {
         self.0.as_ptr()
     }
+
+    /// Drop this handle from *inside* the exit callback: detach and release
+    /// through `process`, the callback's own pointer, instead of re-deriving a
+    /// borrow of the `Process` whose `on_exit` is on the stack.
+    ///
+    /// # Safety
+    /// `process` is the pointer the exit callback received for this handle's
+    /// process.
+    pub unsafe fn release_in_exit_handler(self, process: *mut Process) {
+        debug_assert!(core::ptr::eq(self.0.as_ptr(), process));
+        core::mem::forget(self);
+        // SAFETY: fn contract — live for the callback; this releases the
+        // handle's ref through the callback's pointer.
+        unsafe {
+            (*process).detach();
+            Process::deref(process);
+        }
+    }
 }
 
 impl Drop for ProcessHandle {

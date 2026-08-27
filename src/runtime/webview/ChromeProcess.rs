@@ -50,7 +50,8 @@ use bun_which::which;
 declare_scope!(Chrome, hidden);
 
 pub(crate) struct ChromeProcess {
-    process: ProcessHandle,
+    /// `None` only while the exit callback tears this down.
+    process: Option<ProcessHandle>,
     /// Set by [`Bun__Chrome__retire`]: the exit is reaped but not reported to C++.
     retired: bool,
     #[cfg(windows)]
@@ -90,7 +91,7 @@ extern "C" fn Bun__Chrome__kill() {
     // SAFETY: JS-thread-only global; see INSTANCE decl.
     unsafe {
         if let Some(i) = INSTANCE.load(Ordering::Relaxed).as_mut() {
-            let _ = i.process.kill(9);
+            let _ = i.process.as_ref().map(|p| p.kill(9));
         }
     }
 }
@@ -111,7 +112,7 @@ extern "C" fn Bun__Chrome__retire() {
         GENERATION.fetch_add(1, Ordering::Relaxed);
         chrome.pipes.close();
     }
-    let _ = chrome.process.kill(9);
+    let _ = chrome.process.as_ref().map(|p| p.kill(9));
 }
 
 /// Returns the parent's socketpair fd (POSIX, owned by usockets from then on), 0 (Windows), or -1 on failure.
@@ -186,7 +187,14 @@ impl ChromeProcess {
             INSTANCE.compare_exchange(this, ptr::null_mut(), Ordering::Relaxed, Ordering::Relaxed);
         // SAFETY: caller contract; nothing else references the allocation once INSTANCE is cleared.
         let mut chrome = unsafe { bun_core::heap::take(this) };
-        debug_assert_eq!(process, chrome.process.as_ptr());
+        // SAFETY: `process` is the exit callback's pointer to our process.
+        unsafe {
+            chrome
+                .process
+                .take()
+                .expect("set at spawn")
+                .release_in_exit_handler(process)
+        };
         chrome.close_transport();
         if chrome.retired {
             return;
@@ -674,13 +682,13 @@ impl Endpoints {
     /// Publishes the singleton and returns our fd for C++ to adopt.
     fn attach(mut self, process: ProcessHandle) -> crate::Result<i32> {
         let self_ptr = bun_core::heap::into_raw(Box::new(ChromeProcess {
-            process,
+            process: Some(process),
             retired: false,
         }));
         // SAFETY: `self_ptr` is the freshly-allocated Box that owns `process`
         // and outlives it.
         let process = unsafe {
-            let process = &(*self_ptr).process;
+            let process = (*self_ptr).process.as_ref().expect("just set");
             process
                 .process_mut()
                 .set_exit_handler(ProcessExit::new(ProcessExitKind::ChromeProcess, self_ptr));
@@ -816,13 +824,14 @@ impl Endpoints {
         let reply = pipes.reply;
         let generation = GENERATION.load(Ordering::Relaxed).wrapping_add(1);
         let self_ptr = bun_core::heap::into_raw(Box::new(ChromeProcess {
-            process,
+            process: Some(process),
             retired: false,
             pipes,
             generation,
         }));
         // SAFETY: `self_ptr` is the freshly-allocated Box that owns `process`.
-        let process: *mut Process = unsafe { (*self_ptr).process.as_ptr() };
+        let process: *mut Process =
+            unsafe { (*self_ptr).process.as_ref().expect("just set").as_ptr() };
 
         // Unlike POSIX the exit can't be delivered before we return (it comes
         // through this thread's loop), so the exit handler is installed after.
@@ -841,7 +850,7 @@ impl Endpoints {
             unsafe {
                 let mut chrome = bun_core::heap::take(self_ptr);
                 chrome.pipes.close();
-                let _ = chrome.process.kill(9);
+                let _ = chrome.process.as_ref().map(|p| p.kill(9));
             }
             return Err(err.into());
         }

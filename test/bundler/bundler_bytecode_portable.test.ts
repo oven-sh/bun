@@ -157,7 +157,9 @@ function shapesSource() {
 // undefined this, eval's own scope), here rather than there because the bundler drops function-level "use strict"
 // directives. Line and column bookkeeping for all of these ends up in the cached functions' positions.
 function sourceFormsSource() {
-  const LS = " ", PS = " ", ZWNBSP = "﻿";
+  const LS = " ",
+    PS = " ",
+    ZWNBSP = "﻿";
   const lines = [
     "#!/usr/bin/env not-a-real-interpreter",
     "var out = [];",

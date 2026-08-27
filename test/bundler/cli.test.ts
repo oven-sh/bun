@@ -928,9 +928,51 @@ describe.concurrent("bun build unrecognized flags", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("Unrecognized flag '--totally-bogus-flag'");
+    expect(stderr).not.toContain("did you mean");
     expect(stdout).toContain("Usage:");
     expect(exitCode).toBe(1);
     expect(fs.existsSync(path.join(String(dir), "b.js"))).toBe(false);
+  });
+
+  test("a near miss of a real flag suggests it", async () => {
+    using dir = tempDir("build-unknown-flag-typo", {
+      "a.js": "export const x = { v: 1 };",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "a.js", "--outfile=b.js", "--minif"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Unrecognized flag '--minif'");
+    expect(stderr).toContain("did you mean '--minify'?");
+    expect(stdout).toContain("Usage:");
+    expect(exitCode).toBe(1);
+    expect(fs.existsSync(path.join(String(dir), "b.js"))).toBe(false);
+  });
+
+  test("esbuild-style --external:M keeps the module external", async () => {
+    using dir = tempDir("build-external-colon", {
+      "a.js": 'import { dep } from "some-dep"; export const x = { v: dep };',
+      "node_modules/some-dep/index.js": "export const dep = 1;",
+      "node_modules/some-dep/package.json": JSON.stringify({ name: "some-dep", version: "1.0.0" }),
+    });
+    // `src/node-fallbacks/build-fallbacks.ts` passes `--external:M` to
+    // `bun build`, the same shape as esbuild.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "a.js", "--outfile=b.js", "--external:some-dep"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("b.js");
+    expect(exitCode).toBe(0);
+    expect(await Bun.file(path.join(String(dir), "b.js")).text()).toContain('from "some-dep"');
   });
 
   test("esbuild-style --define:K=V substitutes", async () => {

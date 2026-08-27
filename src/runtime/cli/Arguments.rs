@@ -791,9 +791,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             // `bun build` has no argv passthrough, so an unknown flag is a
             // typo that would otherwise ship wrong output in silence (#40558).
             reject_unrecognized_flags: cmd == CommandTag::BuildCommand,
-            // The react `bun init` template uses esbuild's `--define:K=V`.
+            // esbuild spellings used by in-tree build scripts: the react `bun
+            // init` template has `--define:K=V`, node-fallbacks `--external:M`.
             colon_value_flags: match cmd {
-                CommandTag::BuildCommand => &[b"define"],
+                CommandTag::BuildCommand => &[b"define", b"external"],
                 _ => &[],
             },
         },

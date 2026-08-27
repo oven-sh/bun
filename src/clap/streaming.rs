@@ -173,7 +173,11 @@ where
                 }
 
                 if self.reject_unrecognized_flags {
-                    return Err(self.err(arg, None, Some(name), ArgError::UnrecognizedFlag));
+                    let err = self.err(arg, None, Some(name), ArgError::UnrecognizedFlag);
+                    if let Some(d) = self.diagnostic.as_deref_mut() {
+                        d.suggestion = clap::closest_long_name(params, name);
+                    }
+                    return Err(err);
                 }
 
                 // continue parsing after unrecognized flag
@@ -347,6 +351,7 @@ where
             d.arg = arg.to_vec();
             d.short = short;
             d.long = long.map(|l| l.to_vec());
+            d.suggestion = None;
         }
         e
     }
@@ -897,5 +902,66 @@ mod tests {
         let arg = c.next().expect("parse").expect("arg");
         assert_eq!(arg.value, Some(b"a:b".as_slice()));
         assert!(c.next().expect("parse").is_none());
+    }
+
+    fn unrecognized_suggestion(params: &[clap::Param<u8>], arg: &[u8]) -> Option<&'static [u8]> {
+        let mut diag = clap::Diagnostic::default();
+        let args: &[&[u8]] = &[arg];
+        let mut iter = args::SliceIterator { remain: args };
+        let mut c = StreamingClap::<u8, args::SliceIterator> {
+            short_aliases: &[],
+            params,
+            iter: &mut iter,
+            state: State::Normal,
+            positional: None,
+            diagnostic: Some(&mut diag),
+            reject_unrecognized_flags: true,
+            colon_value_flags: &[],
+        };
+        assert!(matches!(c.next(), Err(ArgError::UnrecognizedFlag)));
+        assert_eq!(diag.long.as_deref(), Some(&arg[2..]));
+        diag.suggestion
+    }
+
+    #[test]
+    fn unrecognized_flag_suggestion() {
+        let params: [clap::Param<u8>; 2] = [
+            clap::Param {
+                id: 0,
+                names: clap::Names {
+                    long: Some(b"minify"),
+                    long_aliases: &[b"compress"],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            clap::Param {
+                id: 1,
+                names: clap::Names {
+                    long: Some(b"sourcemap"),
+                    ..Default::default()
+                },
+                takes_value: clap::Values::One,
+                ..Default::default()
+            },
+        ];
+
+        assert_eq!(
+            unrecognized_suggestion(&params, b"--minif"),
+            Some(b"minify".as_slice())
+        );
+        assert_eq!(
+            unrecognized_suggestion(&params, b"--sourcemaps"),
+            Some(b"sourcemap".as_slice())
+        );
+        assert_eq!(
+            unrecognized_suggestion(&params, b"--compres"),
+            Some(b"compress".as_slice())
+        );
+        assert_eq!(
+            unrecognized_suggestion(&params, b"--totally-bogus-flag"),
+            None
+        );
+        assert_eq!(unrecognized_suggestion(&params, b"--q"), None);
     }
 }

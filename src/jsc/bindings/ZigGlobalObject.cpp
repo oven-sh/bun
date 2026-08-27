@@ -396,11 +396,12 @@ extern "C" JSC::EncodedJSValue BunObject__createBunStdout(JSC::JSGlobalObject*);
 static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 {
     auto* globalObject = defaultGlobalObject();
-    if (auto queue = globalObject->m_nextTickQueue.get()) {
-        globalObject->nextTickQueueHandoffDone = true;
-        globalObject->resetOnEachMicrotaskTick();
-        queue->drain(vm, globalObject);
-    }
+    auto* queue = globalObject->m_nextTickQueue.get();
+    if (!queue || queue->handedOff())
+        return;
+    queue->setHandedOff();
+    globalObject->resetOnEachMicrotaskTick();
+    queue->drain(vm, globalObject);
 }
 
 static void cleanupAsyncHooksData(JSC::VM& vm)
@@ -408,11 +409,10 @@ static void cleanupAsyncHooksData(JSC::VM& vm)
     auto* globalObject = defaultGlobalObject();
     globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
     globalObject->asyncHooksNeedsCleanup = false;
-    // Put back the hook that jsCleanupLater displaced. A still-armed one-shot owns this
-    // microtask boundary too: the queue may have been created since it was displaced.
+    // Put back the hook that jsCleanupLater displaced and give it this microtask boundary:
+    // the queue may have been created since, with the one-shot still armed.
     globalObject->resetOnEachMicrotaskTick();
-    if (!globalObject->nextTickQueueHandoffDone)
-        checkIfNextTickWasCalledDuringMicrotask(vm);
+    checkIfNextTickWasCalledDuringMicrotask(vm);
 }
 
 GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure)
@@ -453,9 +453,10 @@ JSC::Structure* GlobalObject::createStructure(JSC::VM& vm)
 void Zig::GlobalObject::resetOnEachMicrotaskTick()
 {
     auto& vm = this->vm();
+    auto* queue = this->m_nextTickQueue.get();
     if (this->asyncHooksNeedsCleanup) {
         vm.setOnEachMicrotaskTick(&cleanupAsyncHooksData);
-    } else if (this->nextTickQueueHandoffDone) {
+    } else if (queue && queue->handedOff()) {
         vm.setOnEachMicrotaskTick(nullptr);
     } else {
         vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);

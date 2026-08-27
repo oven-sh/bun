@@ -100,8 +100,11 @@ function handleError(er, type) {
     // node: promiseInfo.domain.emit('error', reason), outside every domain.
     if (active.listenerCount("error") === 0) return false;
     setStack([]);
-    active.emit("error", er);
-    setStack(stack);
+    try {
+      active.emit("error", er);
+    } finally {
+      setStack(stack);
+    }
     return true;
   }
 
@@ -213,7 +216,7 @@ Domain.prototype.add = function (ee) {
 
   // A Domain->Domain cycle would make emit('error') recurse forever.
   if (ee instanceof Domain) {
-    for (let d = this.domain; d; d = d.domain) {
+    for (let d = this; d; d = d.domain) {
       if (ee === d) return;
     }
   }

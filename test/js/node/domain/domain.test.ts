@@ -170,9 +170,17 @@ describe.concurrent("node:domain EventEmitter integration", () => {
         d.add(other);
         d.remove(other);
         console.log(ee.domain === d, other.domain, d.members.length, Object.keys(ee).includes("domain"));
+        // a domain cannot be added to itself or to one of its own members
+        const child = domain.create();
+        d.add(child);
+        d.add(d);
+        child.add(d);
+        console.log(d.domain, child.domain === d, d.members.length);
         setTimeout(() => ee.emit("error", new Error("boom")), 1);`,
     );
-    expect(stdout).toBe("true null 1 false\ndomain:boom thrown=false d=true emitter=EventEmitter active=undefined\n");
+    expect(stdout).toBe(
+      "true null 1 false\nnull true 2\ndomain:boom thrown=false d=true emitter=EventEmitter active=undefined\n",
+    );
     expect(exitCode).toBe(0);
   });
 

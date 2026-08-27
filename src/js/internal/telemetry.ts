@@ -469,18 +469,19 @@ const API_ENTRY = /[\\/]@opentelemetry[\\/]api(?:@[^\\/]*)?[\\/]build[\\/](?:src
 /** Every copy of `@opentelemetry/api` this global has already evaluated (CJS
  * or ESM), found by registry key — nothing is resolved or loaded. */
 function loadedApiModules(): any[] {
+  // One copy is usually visible twice (its CJS exports and the ESM namespace
+  // over them): its `trace` singleton is what identifies it.
   const found: any[] = [];
+  const add = (e: any) => {
+    if (e?.trace?.setGlobalTracerProvider && !found.some(f => f.trace === e.trace)) $arrayPush(found, e);
+  };
   for (const key of $requireMap.$keys()) {
-    if (API_ENTRY.test(key)) {
-      const e = $requireMap.$get(key)?.exports;
-      if (e?.trace?.setGlobalTracerProvider) $arrayPush(found, e);
-    }
+    if (API_ENTRY.test(key)) add($requireMap.$get(key)?.exports);
   }
   for (const key of $esmRegistryEvaluatedKeys()) {
     if (API_ENTRY.test(key)) {
       const ns = $esmNamespaceForCjs(key);
-      const e = ns?.trace?.setGlobalTracerProvider ? ns : ns?.default;
-      if (e?.trace?.setGlobalTracerProvider && !found.includes(e)) $arrayPush(found, e);
+      add(ns?.trace?.setGlobalTracerProvider ? ns : ns?.default);
     }
   }
   return found;
@@ -494,9 +495,18 @@ function installGlobal() {
   // trace.setGlobalTracerProvider(), so register through the api. That also
   // stamps the registry with the api's own version.
   for (const api of loadedApiModules()) {
-    api.trace.setGlobalTracerProvider(tracerProvider);
-    api.context?.setGlobalContextManager?.(contextManager);
-    api.propagation?.setGlobalPropagator?.(propagator);
+    // The first copy registers; the registry then refuses another copy's
+    // registerGlobal(), so later copies (and a copy meeting a provider user
+    // code registered) get the provider as their proxy's delegate directly.
+    if (!g[API_KEY]?.trace && api.trace.setGlobalTracerProvider(tracerProvider)) {
+      api.context?.setGlobalContextManager?.(contextManager);
+      api.propagation?.setGlobalPropagator?.(propagator);
+    } else {
+      const registered = g[API_KEY]?.trace;
+      if (registered === tracerProvider || registered?.getDelegate?.() === tracerProvider) {
+        api.trace._proxyTracerProvider?.setDelegate?.(tracerProvider);
+      }
+    }
   }
   // For copies loaded later: the registry they will find. (The setters above
   // made it if they ran; `??=` leaves a provider user code registered alone.)

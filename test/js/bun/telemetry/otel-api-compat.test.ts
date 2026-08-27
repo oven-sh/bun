@@ -436,10 +436,14 @@ describe("@opentelemetry/api", () => {
       using dir = tempDir("otel-early-tracer", {
         "index.mjs": `
           ${load}
+          const { diag } = require("@opentelemetry/api");
+          const diagErrors = [];
+          diag.setLogger({ error: m => diagErrors.push(m), warn() {}, info() {}, debug() {}, verbose() {} });
           const tracer = trace.getTracer("early");
           const before = tracer.startSpan("a").isRecording();
           const spans = [];
           Bun.otel.start({ exporters: [{ export: b => spans.push(...b) }] });
+          if (diagErrors.length) console.error(diagErrors.join(" | "));
           const s = tracer.startSpan("b");
           const during = s.isRecording();
           s.end();

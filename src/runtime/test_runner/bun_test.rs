@@ -191,7 +191,7 @@ pub mod js_fns {
                 }
                 bun_core::scoped_log!(bun_test_group, "genericHook in preload");
 
-                let _ = bun_test_root.hook_scope().append_hook(
+                bun_test_root.hook_scope().append_hook(
                     tag.as_hook_tag().unwrap(),
                     args.callback,
                     cfg,
@@ -209,7 +209,7 @@ pub mod js_fns {
                             tag_name
                         )));
                     }
-                    let _ = bun_test.collection.active_scope().append_hook(
+                    bun_test.collection.active_scope().append_hook(
                         tag.as_hook_tag().unwrap(),
                         args.callback,
                         cfg,
@@ -1629,14 +1629,14 @@ impl DescribeScope {
         cfg: ExecutionEntryCfg,
         base: BaseScopeCfg,
         phase: AddedInPhase,
-    ) -> JsResult<Rc<ExecutionEntry>> {
+    ) -> Rc<ExecutionEntry> {
         let entry = ExecutionEntry::create(name_not_owned, callback, cfg, Some(self), base, phase);
         let has_cb = entry.callback.is_some();
         entry.base.propagate(has_cb);
         self.entries
             .borrow_mut()
             .push(TestScheduleEntry::TestCallback(Rc::clone(&entry)));
-        Ok(entry)
+        entry
     }
 
     pub(crate) fn get_hook_entries(&self, tag: HookTag) -> &RefCell<Vec<Rc<ExecutionEntry>>> {
@@ -1655,12 +1655,12 @@ impl DescribeScope {
         cfg: ExecutionEntryCfg,
         base: BaseScopeCfg,
         phase: AddedInPhase,
-    ) -> JsResult<Rc<ExecutionEntry>> {
+    ) -> Rc<ExecutionEntry> {
         let entry = ExecutionEntry::create(None, callback, cfg, Some(self), base, phase);
         self.get_hook_entries(tag)
             .borrow_mut()
             .push(Rc::clone(&entry));
-        Ok(entry)
+        entry
     }
 }
 

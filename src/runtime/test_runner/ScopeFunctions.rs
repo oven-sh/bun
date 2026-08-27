@@ -419,7 +419,7 @@ impl ScopeFunctions {
                     bstr::BStr::new(bun_test.collection.active_scope().base.name.as_deref().unwrap_or(b"(unnamed)"))
                 ));
 
-                let _ = bun_test.collection.active_scope().append_test(
+                bun_test.collection.active_scope().append_test(
                     description,
                     if matches_filter { callback } else { None },
                     bun_test::ExecutionEntryCfg {
@@ -430,7 +430,7 @@ impl ScopeFunctions {
                     },
                     base,
                     bun_test::AddedInPhase::Collection,
-                )?;
+                );
             }
         }
         Ok(())

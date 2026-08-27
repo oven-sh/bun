@@ -1359,8 +1359,6 @@ impl MySQLConnection {
                 // `on_error_packet` below.
                 self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                 statement.status = mysql_statement::Status::Failed;
-                // err.error_message borrows the socket read buffer, which the next packet
-                // overwrites; queries attached to this statement read error_response later.
                 statement.error_response = ErrorPacket {
                     header: err.header,
                     error_code: err.error_code,

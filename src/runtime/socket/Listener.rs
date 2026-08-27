@@ -7,12 +7,15 @@ use core::ptr::NonNull;
 use std::rc::Rc;
 
 use bun_boringssl_sys as boring_sys;
+use bun_core::{EncodedSlice, String as BunString};
 use bun_io::KeepAlive;
-use bun_jsc::ZigStringJsc as _;
+use bun_jsc::EncodedSliceJsc as _;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::strong::Optional as Strong;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::zig_string::ZigString;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult};
+use bun_jsc::{
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, StringJsc as _,
+};
 use bun_sys::{self, Fd};
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
@@ -520,13 +523,13 @@ impl Listener {
                 err.put(
                     global,
                     b"syscall",
-                    jsc::bun_string_jsc::create_utf8_for_js(global, b"listen")?,
+                    BunString::static_("listen").to_js(global)?,
                 );
                 err.put(global, b"errno", JSValue::js_number(errno as f64));
                 err.put(
                     global,
                     b"address",
-                    ZigString::init_utf8(hostname_bytes).to_js(global),
+                    bun_string_jsc::create_utf8_for_js(global, hostname_bytes)?,
                 );
                 if let Some(p) = port {
                     err.put(global, b"port", JSValue::js_number(p as f64));
@@ -535,7 +538,7 @@ impl Listener {
                     err.put(
                         global,
                         b"code",
-                        ZigString::init(<&'static str>::from(str_).as_bytes()).to_js(global),
+                        BunString::static_(<&'static str>::from(str_)).to_js(global)?,
                     );
                 }
             }
@@ -730,7 +733,7 @@ impl Listener {
                 global.throw_invalid_arguments(format_args!("hostname pattern expects a string"))
             );
         }
-        let host_str = hostname.to_slice(global)?;
+        let host_str = hostname.to_utf8(global)?;
         let server_name_bytes = host_str.slice();
         if server_name_bytes.is_empty() {
             return Err(
@@ -981,19 +984,19 @@ impl Listener {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_unix(this: &Self, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_unix(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let UnixOrHost::Unix(unix) = &this.connection else {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         };
-        ZigString::init(unix).with_encoding().to_js(global)
+        bun_string_jsc::create_utf8_for_js(global, unix)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_hostname(this: &Self, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_hostname(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let UnixOrHost::Host { host, .. } = &this.connection else {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         };
-        ZigString::init(host).with_encoding().to_js(global)
+        bun_string_jsc::create_utf8_for_js(global, host)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1129,7 +1132,7 @@ impl Listener {
             if !local_addr_js.is_string() {
                 break 'lb None;
             }
-            let local_addr_slice = local_addr_js.to_slice(global)?;
+            let local_addr_slice = local_addr_js.to_utf8(global)?;
             let local_addr_bytes = local_addr_slice.slice();
             if local_addr_bytes.is_empty() {
                 break 'lb None;
@@ -1532,7 +1535,7 @@ impl Listener {
             .unwrap(),
             _ => return Ok(JSValue::UNDEFINED),
         };
-        let address_js = ZigString::init(formatted).to_js(global);
+        let address_js = EncodedSlice::latin1(formatted).to_js(global);
         let port_js = match socket_ref.get_local_port() {
             Some(p) => JSValue::js_number(p as f64),
             None => JSValue::UNDEFINED,
@@ -2032,7 +2035,8 @@ pub(crate) extern "C" fn us_dispatch_socket_server_name(
     let this_value = TLSSocket::data_get_cached(socket_handle).unwrap_or(JSValue::UNDEFINED);
     // SAFETY: `hostname` is NUL-terminated per the fn contract.
     let name = unsafe { core::ffi::CStr::from_ptr(hostname) };
-    let js_name = ZigString::init(name.to_bytes()).to_js(&global);
+    // Peer-supplied SNI bytes, decoded as Latin-1 like Node's `OneByteString`.
+    let js_name = EncodedSlice::latin1(name.to_bytes()).to_js(&global);
     let result = match callback.call(&global, this_value, &[this_value, js_name, socket_handle]) {
         Ok(v) => v,
         Err(err) => global.take_exception(err),
@@ -2132,7 +2136,7 @@ extern "C" fn us_dispatch_server_name(
         .unwrap_or(JSValue::UNDEFINED);
     // SAFETY: `hostname` is NUL-terminated per the fn contract.
     let name = unsafe { core::ffi::CStr::from_ptr(hostname) };
-    let js_name = ZigString::init(name.to_bytes()).to_js(&global);
+    let js_name = EncodedSlice::latin1(name.to_bytes()).to_js(&global);
     // The accepted socket processing this ClientHello: its JS wrapper is the
     // resume handle an asynchronous SNICallback uses (`handle.resumeSNI(...)`)
     // to complete the suspended handshake. The wrapper's lifecycle is

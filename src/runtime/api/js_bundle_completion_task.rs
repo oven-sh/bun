@@ -20,18 +20,16 @@ use bun_bundler::bundle_v2::{
 use bun_bundler::options::{self, OutputFile, OutputKind, Side};
 use bun_bundler::output_file::Value as OutputFileValue;
 use bun_bundler::transpiler::Transpiler;
-use bun_core::String as BunString;
 use bun_core::env::OperatingSystem;
 use bun_io::KeepAlive;
 use bun_jsc::WorkPool;
-use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
+use bun_jsc::bun_string_jsc;
+use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, LogJsc as _};
 use bun_options_types::WindowsOptions;
 use bun_options_types::schema::api;
 use bun_paths::resolve_path::{join_abs_string, join_abs_string_buf, platform};
 use bun_paths::{self as paths, PathBuffer, SEP};
-use bun_ptr::BackRef;
-use bun_ptr::RefCount;
-use bun_ptr::RefPtr;
+use bun_ptr::{BackRef, RefCount, RefPtr};
 use bun_standalone_graph::StandaloneModuleGraph::{
     CompileErrorReason, CompileResult, Flags as StandaloneFlags, target_base_public_path,
     to_executable,
@@ -78,8 +76,7 @@ pub struct JSBundleCompletionTask {
     pub(crate) stage: core::sync::atomic::AtomicU8,
 
     /// The route this build is for, kept alive until `on_complete` hands it
-    /// the result (leaked with the rest of the route if the build is cancelled
-    /// at VM teardown).
+    /// the result.
     pub(crate) html_build_task: Option<RefPtr<html_bundle::Route>>,
 
     pub(crate) result: BundleV2Result,
@@ -244,7 +241,7 @@ impl JSBundleCompletionTask {
             Err(e) => return promise.reject(global_this, Err(e)),
         };
         build_result.put(global_this, b"success", JSValue::FALSE);
-        match bun_ast_jsc::log_to_js_array(&self.log, global_this) {
+        match self.log.to_js_array(global_this) {
             Ok(v) => build_result.put(global_this, b"logs", v),
             Err(e) => return promise.reject(global_this, Err(e)),
         };
@@ -253,11 +250,8 @@ impl JSBundleCompletionTask {
             // Compute `rejection` before borrowing the plugin so `&self.log`
             // does not overlap the `&mut self` taken by `plugins_mut()`.
             let rejection = if throw_on_error {
-                bun_ast_jsc::log_to_js_aggregate_error(
-                    &self.log,
-                    global_this,
-                    &BunString::static_(b"Bundle failed"),
-                )
+                self.log
+                    .to_js_aggregate_error(global_this, format_args!("Bundle failed"))
             } else {
                 Ok(JSValue::UNDEFINED)
             };
@@ -274,11 +268,9 @@ impl JSBundleCompletionTask {
 
         if !did_handle_callbacks {
             if throw_on_error {
-                let aggregate_error = bun_ast_jsc::log_to_js_aggregate_error(
-                    &self.log,
-                    global_this,
-                    &BunString::static_(b"Bundle failed"),
-                );
+                let aggregate_error = self
+                    .log
+                    .to_js_aggregate_error(global_this, format_args!("Bundle failed"));
                 return promise.reject(global_this, aggregate_error);
             } else {
                 return promise.resolve(global_this, build_result);
@@ -513,20 +505,19 @@ impl JSBundleCompletionTask {
                         // SAFETY: `Buffer` arm checked above.
                         _ => unsafe { core::hint::unreachable_unchecked() },
                     };
-                    let write_args = fs_args::WriteFile {
-                        flag: FileSystemFlags::W,
-                        mode: node_fs::DEFAULT_PERMISSION,
-                        file: PathOrFileDescriptor::Path(PathLike::String(
-                            bun_ptr::cow_slice::CowSlice::init_unchecked(write_path, false),
-                        )),
-                        flush: false,
-                        data: StringOrBuffer::EncodedSlice(
-                            bun_core::zig_string::Slice::from_utf8_never_free(bytes),
-                        ),
-                        dirfd: root_dir.fd,
-                        signal: None,
-                    };
-                    match NodeFS::write_file_with_path_buffer(&mut pathbuf, &write_args) {
+                    let write_result = NodeFS::write_file_with_path_buffer(
+                        &mut pathbuf,
+                        &fs_args::WriteFile {
+                            flag: FileSystemFlags::W,
+                            mode: node_fs::DEFAULT_PERMISSION,
+                            file: PathOrFileDescriptor::Path(PathLike::borrowed(write_path)),
+                            flush: false,
+                            data: StringOrBuffer::borrowed(bytes),
+                            dirfd: root_dir.fd,
+                            signal: None,
+                        },
+                    );
+                    match write_result {
                         Err(err) => {
                             bun_core::Output::err(
                                 err,
@@ -561,9 +552,9 @@ impl JSBundleCompletionTask {
 
     pub(crate) fn on_complete_anytask(ctx: *mut Self) -> bun_event_loop::JsResult<()> {
         crate::jsc_hooks::ActiveHandle::Bundle(NonNull::new(ctx).expect("completion")).unregister();
-        // For the +1 taken by `complete_on_bundle_thread` enqueue.
-        // SAFETY: `ctx` is the live heap allocation; `adopt` consumes the prior +1 on Drop.
-        let _drop_ref = unsafe { bun_ptr::ScopedRef::<Self>::adopt(ctx) };
+        // SAFETY: `ctx` is the live heap allocation; takes over the +1 taken by
+        // the `complete_on_bundle_thread` enqueue.
+        let _guard = unsafe { RefPtr::from_raw(ctx) };
         // SAFETY: `ctx` is the heap::alloc allocation registered in `task`,
         // dispatched exactly once per task on the JS thread. Exclusive: the
         // task has no JS-visible handle, the bundle thread's access ended when
@@ -607,6 +598,7 @@ impl JSBundleCompletionTask {
                 }
                 (*this).promise = jsc::JSPromiseStrong::default();
                 (*this).bundle_ticket = None;
+                (*this).html_build_task = None;
                 // Publish only now: from here the bundle thread may free `this`.
                 (*this)
                     .stage
@@ -637,7 +629,6 @@ impl JSBundleCompletionTask {
         if let Some(html_build_task) = this.html_build_task.take() {
             this.plugins = None;
             html_build_task.on_complete(this);
-            html_build_task.deref();
             return Ok(());
         }
 
@@ -760,7 +751,7 @@ impl JSBundleCompletionTask {
                 let build_output = JSValue::create_empty_object(global_this, 4);
                 build_output.put(global_this, b"outputs", output_files_js);
                 build_output.put(global_this, b"success", JSValue::TRUE);
-                match bun_ast_jsc::log_to_js_array(&this.log, global_this) {
+                match this.log.to_js_array(global_this) {
                     Ok(v) => build_output.put(global_this, b"logs", v),
                     Err(e) => return promise.reject(global_this, Err(e)),
                 };
@@ -768,17 +759,15 @@ impl JSBundleCompletionTask {
                 // metafile: { json: <lazy parsed>, markdown?: string }
                 if let Some(metafile) = &build.metafile {
                     let metafile_js_str =
-                        match jsc::bun_string_jsc::create_utf8_for_js(global_this, metafile) {
+                        match bun_string_jsc::create_utf8_for_js(global_this, metafile) {
                             Ok(v) => v,
                             Err(e) => return promise.reject(global_this, Err(e)),
                         };
                     let metafile_md_str = match &build.metafile_markdown {
-                        Some(md) => {
-                            match jsc::bun_string_jsc::create_utf8_for_js(global_this, md) {
-                                Ok(v) => v,
-                                Err(e) => return promise.reject(global_this, Err(e)),
-                            }
-                        }
+                        Some(md) => match bun_string_jsc::create_utf8_for_js(global_this, md) {
+                            Ok(v) => v,
+                            Err(e) => return promise.reject(global_this, Err(e)),
+                        },
                         None => JSValue::UNDEFINED,
                     };
                     Bun__setupLazyMetafile(
@@ -998,10 +987,7 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         transpiler.options.output_format = config.format;
         transpiler.options.bytecode = config.bytecode;
-        transpiler.options.compile_target_is_host = config
-            .compile
-            .as_ref()
-            .is_none_or(|compile| compile.compile_target.is_default());
+        transpiler.options.bytecode_depth = config.bytecode_depth;
         transpiler.options.compile_mode = if config.compile.is_some() {
             options::CompileMode::Executable
         } else {
@@ -1035,12 +1021,14 @@ impl CompletionStruct for JSBundleCompletionTask {
             None => options::AllowUnresolved::All,
         };
         transpiler.options.code_splitting = config.code_splitting;
+        transpiler.options.split_require = config.split_require;
         transpiler.options.emit_dce_annotations = config
             .emit_dce_annotations
             .unwrap_or(!config.minify.whitespace);
         transpiler.options.ignore_dce_annotations = config.ignore_dce_annotations;
         transpiler.options.tree_shaking_override = config.tree_shaking;
         transpiler.options.css_chunking = config.css_chunking;
+        transpiler.options.min_chunk_size = config.min_chunk_size;
         let compile_to_standalone_html = 'brk: {
             if config.compile.is_none() || config.target != bun_ast::Target::Browser {
                 break 'brk false;
@@ -1095,6 +1083,34 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         transpiler.configure_linker();
         transpiler.configure_defines()?;
+
+        // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.
+        transpiler.options.compile_target_builtins = match &config.compile {
+            Some(compile)
+                if config.bytecode
+                    && (!compile.compile_target.is_default()
+                        || !compile.executable_path.list.is_empty()) =>
+            {
+                match bun_standalone_graph::StandaloneModuleGraph::target_builtins(
+                    &compile.compile_target,
+                    // SAFETY: `self.env` is the per-VM `DotEnv.Loader` stashed at construction; see `to_executable` below.
+                    unsafe { &mut *self.env },
+                    Some(&compile.executable_path.list[..]).filter(|p| !p.is_empty()),
+                ) {
+                    Ok(Some(section)) => options::CompileTargetBuiltins::Target(section),
+                    Ok(None) => options::CompileTargetBuiltins::None,
+                    Err(err) => {
+                        self.log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!("{}", bstr::BStr::new(err.slice())),
+                        );
+                        return Err(bun_bundler::Error::BuildFailed);
+                    }
+                }
+            }
+            _ => options::CompileTargetBuiltins::Host,
+        };
 
         if !transpiler.options.production {
             transpiler

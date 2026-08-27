@@ -490,17 +490,6 @@ impl DateHeaderTimer {
 // C-ABI export thunks
 // ════════════════════════════════════════════════════════════════════════════
 
-// HOST_EXPORT(Bun__internal_drainTimers, c)
-pub fn drain_timers_export(vm: *mut VirtualMachine) {
-    let all = timer_all();
-    if all.is_null() {
-        return;
-    }
-    // SAFETY: `all` is the live per-thread `All`; `vm` is the erased VM pointer
-    // (mod.rs::All::drain_timers takes `*mut ()`).
-    unsafe { (*all).drain_timers(vm.cast::<()>()) };
-}
-
 // `generate-host-exports.ts`
 // scrapes the `// HOST_EXPORT` markers below and emits the seven thunks into
 // `generated_host_exports.rs`, each routing through `host_fn::host_fn_result`.

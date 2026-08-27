@@ -37,7 +37,6 @@ pub(crate) fn generate_and_write_profile(
         return Ok(());
     }
 
-    // Freed by Drop on ZigStringSlice.
     let profile_slice = profile_string.to_utf8();
 
     // dir/name are unbounded CLI input, so use the length-checked variant.

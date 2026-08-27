@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use bun_collections::ArrayHashMap;
 use bun_core::{self, Output};
-
+use bun_ptr::RefPtr;
 use bun_threading::{Mutex, UnboundedQueue};
 use bun_uws as uws;
 
@@ -409,16 +409,9 @@ impl HttpThread {
             // funnels through here before touching `https_context.{group,secure}`.
             self.ensure_https_context_init();
         }
-        // Note: borrowck — `slice()` borrows `client`; capture into a
-        // `bun_ptr::RawSlice` (encapsulated outlives-holder invariant) so the
-        // borrow of `client` ends before we hand `&mut client` to
-        // `connect_socket`. Backing storage is `client.unix_socket_path`, which
-        // `connect_socket` does not touch.
-        let unix_path = bun_ptr::RawSlice::new(client.unix_socket_path.slice());
+        let unix_path = client.unix_socket_path;
         if !unix_path.is_empty() {
-            return self
-                .context::<IS_SSL>()
-                .connect_socket(client, unix_path.slice());
+            return self.context::<IS_SSL>().connect_socket(client, unix_path);
         }
 
         if IS_SSL {
@@ -769,7 +762,7 @@ impl HttpThread {
                                 // The resume may tear the session down and
                                 // release the socket's ref; hold one across
                                 // the second call.
-                                let _keep_alive = session.ref_guard();
+                                let _guard = RefPtr::from_this(session);
                                 h2::ClientSession::resume_receive_by_http_id(session, id);
                                 h2::ClientSession::drain_response_body_by_http_id(session, id);
                             }
@@ -782,7 +775,7 @@ impl HttpThread {
                             }
                             if let Some(session) = tagged.session() {
                                 // See the Tls arm.
-                                let _keep_alive = session.ref_guard();
+                                let _guard = RefPtr::from_this(session);
                                 h2::ClientSession::resume_receive_by_http_id(session, id);
                                 h2::ClientSession::drain_response_body_by_http_id(session, id);
                             }
@@ -1010,13 +1003,8 @@ impl HttpThread {
                 drop(core::mem::take(&mut client.prev_redirect));
                 drop(core::mem::take(&mut client.compressed_request_body));
                 drop(core::mem::take(&mut client.proxy_authorization));
-                if let Some(tunnel) = client.proxy_tunnel.take() {
-                    (*tunnel.as_ptr()).detach_socket();
-                    tunnel.deref();
-                }
-                if let Some(ctx) = client.custom_ssl_ctx.take() {
-                    ctx.deref();
-                }
+                client.close_proxy_tunnel(false);
+                drop(core::mem::take(&mut client.custom_ssl_ctx));
                 drop(core::mem::take(&mut client.state));
                 if let Some(f) = release.release_at_shutdown {
                     f(release.ctx);

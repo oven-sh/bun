@@ -60,8 +60,8 @@ pub(crate) fn stop_and_write_profile(
     vm: &mut VM,
     config: &CPUProfilerConfig,
 ) -> Result<(), ProfilerError> {
-    let mut json_string = BunString::empty();
-    let mut text_string = BunString::empty();
+    let mut json_string = BunString::EMPTY;
+    let mut text_string = BunString::EMPTY;
 
     // Call the unified C++ function with optional out-params for requested formats.
     Bun__stopCPUProfiler(
@@ -88,7 +88,6 @@ fn write_profile_to_file(
     is_md_format: bool,
 ) -> Result<(), ProfilerError> {
     let profile_slice = profile_string.to_utf8();
-    // (defer profile_slice.deinit() — handled by Drop on Utf8Slice)
 
     // dir/name are unbounded CLI input, so use the length-checked variant.
     let mut path_buf = AutoAbsPathChecked::init_top_level_dir();

@@ -352,6 +352,7 @@ pub fn scan_exec_argv<T: AsRef<[u8]>>(tokens: &[T]) -> ScanOutcome {
     let map = table_map();
     let mut out = ScanOutcome::default();
     let mut saw_no_addons = false;
+    let mut saw_no_ffi_cc = false;
     let mut i = 0usize;
     while i < tokens.len() {
         let tok = tokens[i].as_ref();
@@ -392,6 +393,7 @@ pub fn scan_exec_argv<T: AsRef<[u8]>>(tokens: &[T]) -> ScanOutcome {
         };
         match &key[..] {
             b"--no-addons" => saw_no_addons = true,
+            b"--no-ffi-cc" => saw_no_ffi_cc = true,
             b"--use-system-ca" => out.honored.use_system_ca = Some(true),
             b"--no-use-system-ca" => out.honored.use_system_ca = Some(false),
             b"--expose-gc" => out.honored.expose_gc = true,
@@ -420,6 +422,7 @@ pub fn scan_exec_argv<T: AsRef<[u8]>>(tokens: &[T]) -> ScanOutcome {
         }
     }
     out.honored.allow_addons = Some(!saw_no_addons);
+    out.honored.allow_ffi_cc = Some(!saw_no_ffi_cc);
     out
 }
 

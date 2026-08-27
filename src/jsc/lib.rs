@@ -138,6 +138,9 @@ pub mod decoded_js_value;
 pub mod deprecated_strong;
 #[path = "DOMURL.rs"]
 pub mod dom_url;
+#[path = "EncodedSlice.rs"]
+pub mod encoded_slice;
+pub use encoded_slice::EncodedSliceJsc;
 #[path = "Exception.rs"]
 pub mod exception;
 #[path = "JSArray.rs"]
@@ -170,8 +173,6 @@ pub mod top_exception_scope;
 pub mod uuid;
 #[path = "Weak.rs"]
 pub mod weak;
-#[path = "ZigString.rs"]
-pub mod zig_string;
 
 pub use self::js_value::{
     CoerceTo, ComparisonResult, ForEachCallback, FromAny, FromJsEnum, JSValue,
@@ -187,7 +188,7 @@ pub use self::js_value::{
 // and is wired into `event_loop::tick` directly at link time. No fn-pointer
 // hook is re-exported from the crate root.
 pub use self::array_buffer::{
-    ArrayBuffer, BinaryType, JSCArrayBuffer, MarkedArrayBuffer, TypedArrayType,
+    ArrayBuffer, BinaryType, JSCArrayBuffer, MarkedArrayBuffer, PinnedArrayBuffer, TypedArrayType,
 };
 pub use self::console_object as ConsoleObject;
 pub use self::console_object::Formatter;
@@ -467,6 +468,7 @@ pub mod bun_cpu_profiler;
 pub mod bun_heap_profiler;
 #[path = "bun_string_jsc.rs"]
 pub mod bun_string_jsc;
+pub use bun_string_jsc::{ErrorKind, StringJsc, Utf8WithStringJsc};
 #[path = "comptime_string_map_jsc.rs"]
 pub mod comptime_string_map_jsc;
 #[path = "EventLoopHandle.rs"]
@@ -964,11 +966,6 @@ pub use self::js_promise::Strong as JSPromiseStrong;
 /// it via `jsc::PromiseStatus::{Pending,Fulfilled,Rejected}`).
 pub use self::js_promise::Status as PromiseStatus;
 
-/// `bun_ptr::RefPtr` — intrusive refcounted smart pointer. Re-exported here so
-/// `crate::RefPtr<SourceProvider>` (ZigStackTrace.rs) resolves without every
-/// submodule taking a direct `bun_ptr` dep.
-pub use bun_ptr::RefPtr;
-
 /// `bun.String` — refcounted WTF-backed string. Re-exported at the crate root
 /// so submodules can write `crate::String`.
 pub use bun_core::String;
@@ -990,48 +987,6 @@ pub use self::js_promise::Unwrapped as PromiseResult;
 // `JSPropertyIteratorOptions` / `PropertyIteratorOptions` / `IntoIterObject` are
 // defined in `js_property_iterator` and re-exported below alongside
 // `JSPropertyIterator`.
-
-// `ZigString` → JS bridges used by the `ZigStringJsc` extension trait below
-// (the rest of the `JSGlobalObject` extern surface lives in `JSGlobalObject.rs`).
-unsafe extern "C" {
-    // safe: `ZigString` is `#[repr(C)]` and read-only across the call; `JSGlobalObject` is an
-    // opaque `UnsafeCell`-backed ZST handle. `&T` is ABI-identical to a non-null `*const T`.
-    safe fn ZigString__toErrorInstance(
-        this: &bun_core::ZigString,
-        global: &JSGlobalObject,
-    ) -> JSValue;
-    safe fn ZigString__toTypeErrorInstance(
-        this: &bun_core::ZigString,
-        global: &JSGlobalObject,
-    ) -> JSValue;
-    safe fn ZigString__toSyntaxErrorInstance(
-        this: &bun_core::ZigString,
-        global: &JSGlobalObject,
-    ) -> JSValue;
-    safe fn ZigString__toRangeErrorInstance(
-        this: &bun_core::ZigString,
-        global: &JSGlobalObject,
-    ) -> JSValue;
-    safe fn ZigString__toDOMExceptionInstance(
-        this: &bun_core::ZigString,
-        global: &JSGlobalObject,
-        code: u8,
-    ) -> JSValue;
-    safe fn ZigString__toValueGC(this: &bun_core::ZigString, global: &JSGlobalObject) -> JSValue;
-    // ZigString__toExternalValue: use the generated `cpp::` re-export (canonical signature).
-    // safe: `ZigString`/`JSGlobalObject` are `#[repr(C)]`/opaque-ZST handles (`&`
-    // is ABI-identical to non-null `*const`); `ctx` is an opaque round-trip
-    // pointer C++ stores into the external string's finalizer slot and forwards
-    // to `callback` on GC (never dereferenced as Rust data) — same contract as
-    // `JSC__JSGlobalObject__queueMicrotaskCallback`. The caller-side ownership
-    // transfer is documented at the (already-safe) public wrapper.
-    safe fn ZigString__external(
-        this: &bun_core::ZigString,
-        global: &JSGlobalObject,
-        ctx: *mut core::ffi::c_void,
-        callback: unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, usize),
-    ) -> JSValue;
-}
 
 // `JSGlobalObject` inherent methods that are NOT covered by the dedicated
 // port file (`JSGlobalObject.rs`). The bulk of the surface (throw_*, vm,
@@ -1122,7 +1077,7 @@ impl FromJsEnum for bun_sys::SignalCode {
                 global.throw_invalid_arguments(format_args!("{property_name} must be a string"))
             );
         }
-        let s = bun_string_jsc::from_js(v, global)?;
+        let s = bun_core::String::from_js(v, global)?;
         let hit = bun_sys::signal_code::from_name(s.to_utf8().slice());
         match hit {
             Some(code) => Ok(code),
@@ -1280,11 +1235,6 @@ pub type PlatformEventLoop = bun_uws::Loop;
 pub type PlatformEventLoop = bun_io::Loop;
 
 pub use self::array_buffer::JSTypedArrayBytesDeallocator;
-/// Deprecated: Use `bun_core::ZigString`
-#[deprecated]
-pub(crate) type ZigString = bun_core::ZigString;
-/// `ZigString.Slice` — re-exported under the path dependents expect.
-pub type ZigStringSlice = bun_core::ZigStringSlice;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Core webcore data types (Blob/Store/BuildArtifact) and node path types,
@@ -1301,9 +1251,6 @@ pub type ZigStringSlice = bun_core::ZigStringSlice;
 pub mod node_path;
 #[path = "webcore_types.rs"]
 pub mod webcore_types;
-// RAII pair for `to_thread_safe()`/`unprotect()` — re-exported at crate root
-// so `bun_runtime` callers don't reach through `node_path`.
-pub use self::node_path::{ThreadSafe, Unprotect};
 
 /// `jsc.WebCore` (deprecated alias) — only the data-shape subset
 /// that was hoisted to this tier. Reach for `bun_runtime::webcore` for the
@@ -1377,231 +1324,6 @@ pub mod codegen {
 }
 pub use self::codegen as Codegen;
 
-/// Extension trait providing JSC-aware methods on `bun_core::String`.
-pub trait StringJsc {
-    fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<bun_core::String>;
-    /// Borrow: JSC takes its own ref (or copies borrowed bytes).
-    fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
-    /// Consume: the +1 moves into the `JSString`.
-    fn into_js(self, global: &JSGlobalObject) -> JsResult<JSValue>;
-    fn to_js_by_parse_json(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
-    fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-}
-impl StringJsc for bun_core::String {
-    fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<bun_core::String> {
-        bun_string_jsc::from_js(value, global)
-    }
-    fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::to_js(self, global)
-    }
-    fn into_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::into_js(self, global)
-    }
-    fn to_js_by_parse_json(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::to_js_by_parse_json(self, global)
-    }
-    fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        bun_string_jsc::to_error_instance(self, global)
-    }
-    fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        bun_string_jsc::to_type_error_instance(self, global)
-    }
-    fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        bun_string_jsc::to_range_error_instance(self, global)
-    }
-}
-
-/// Extension trait providing JSC-aware methods on
-/// `bun_core::SliceWithUnderlyingString` (lower-tier, no JSC dep) —
-/// `to_js`, `into_js`, `report_extra_memory`; the free-function bodies
-/// live in [`bun_string_jsc`].
-pub trait SliceWithUnderlyingStringJsc {
-    fn to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
-    fn into_js(self, global: &JSGlobalObject) -> JsResult<JSValue>;
-    fn report_extra_memory(&mut self, vm: &VM);
-}
-impl SliceWithUnderlyingStringJsc for bun_core::SliceWithUnderlyingString {
-    #[inline]
-    fn to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::slice_with_underlying_string_to_js(self, global)
-    }
-    #[inline]
-    fn into_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::slice_with_underlying_string_into_js(self, global)
-    }
-    /// Account `utf8`'s backing allocation against the GC heap unless it is
-    /// already JSC-owned (WTF-backed) or borrowed.
-    fn report_extra_memory(&mut self, vm: &VM) {
-        #[cfg(debug_assertions)]
-        {
-            debug_assert!(!self.did_report_extra_memory_debug);
-            self.did_report_extra_memory_debug = true;
-        }
-        // Don't report it if the memory is actually owned by JSC.
-        if self.utf8.is_allocated() && !self.utf8.is_wtf_allocated() {
-            vm.report_extra_memory(self.utf8.length());
-        }
-    }
-}
-
-/// Extension trait providing JSC-aware methods on `bun_core::ZigString`.
-///
-/// `bun_core::ZigString` is a lower-tier (no JSC dep) `#[repr(C)]` struct;
-/// JSC-side conversions (`toJS`, `toExternalValue`, `external`,
-/// `toJSONObject`, `toErrorInstance`, …) live as inherent methods on the
-/// `bun_jsc::zig_string::ZigString` twin. Higher-tier crates that import
-/// `bun_core::ZigString` (e.g. `bun_runtime::webcore::Blob`) cannot reach those
-/// inherent methods cross-crate, so this trait re-surfaces them on the
-/// canonical type.
-pub trait ZigStringJsc: Sized {
-    fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_syntax_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_dom_exception_instance(&self, global: &JSGlobalObject, code: DOMExceptionCode)
-    -> JSValue;
-    /// `ZigString.toJS` — copies into a GC-managed `JSString` (or hands an
-    /// external value if globally allocated).
-    fn to_js(&self, global: &JSGlobalObject) -> JSValue;
-    /// `ZigString.toExternalValue` — transfers ownership of a globally-allocated
-    /// buffer to JSC's external-string finalizer.
-    fn to_external_value(&self, global: &JSGlobalObject) -> JSValue;
-    /// `ZigString.toJSONObject` — `JSON.parse` over the bytes.
-    fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
-    /// `ZigString.external` — like `to_external_value` but with a caller-supplied
-    /// `ctx` + finalizer callback (used to keep a `Blob::Store` ref alive).
-    ///
-    /// # Safety
-    /// `ctx` and the string's backing buffer must satisfy `callback`'s contract;
-    /// ownership of both transfers to JSC, which invokes `callback` exactly once.
-    unsafe fn external(
-        &self,
-        global: &JSGlobalObject,
-        ctx: *mut core::ffi::c_void,
-        callback: unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, usize),
-    ) -> JSValue;
-    /// `ZigString.withEncoding` — returns `self` tagged UTF-8 if its bytes
-    /// contain non-ASCII (mirrors `setOutputEncoding`'s effect for the value
-    /// case).
-    fn with_encoding(self) -> Self;
-}
-impl ZigStringJsc for bun_core::ZigString {
-    fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        ZigString__toErrorInstance(self, global)
-    }
-    fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        ZigString__toTypeErrorInstance(self, global)
-    }
-    #[inline]
-    fn to_syntax_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        ZigString__toSyntaxErrorInstance(self, global)
-    }
-    #[inline]
-    fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        ZigString__toRangeErrorInstance(self, global)
-    }
-    #[inline]
-    fn to_dom_exception_instance(
-        &self,
-        global: &JSGlobalObject,
-        code: DOMExceptionCode,
-    ) -> JSValue {
-        ZigString__toDOMExceptionInstance(self, global, code as u8)
-    }
-    #[inline]
-    fn to_js(&self, global: &JSGlobalObject) -> JSValue {
-        if self.is_globally_allocated() {
-            return self.to_external_value(global);
-        }
-        ZigString__toValueGC(self, global)
-    }
-    #[inline]
-    fn to_external_value(&self, global: &JSGlobalObject) -> JSValue {
-        if self.len > bun_core::String::max_length() {
-            // SAFETY: contract — bytes were allocated by the default (global)
-            // allocator. `default_alloc::free` agrees with the
-            // `#[global_allocator]` (`mi_free` normally; libc free under ASAN).
-            unsafe {
-                bun_alloc::default_alloc::free(
-                    self.byte_slice()
-                        .as_ptr()
-                        .cast_mut()
-                        .cast::<core::ffi::c_void>(),
-                )
-            };
-            let _ = global
-                .err(
-                    crate::ErrorCode::STRING_TOO_LONG,
-                    format_args!("Cannot create a string longer than 2147483647 characters"),
-                )
-                .throw();
-            return JSValue::ZERO;
-        }
-        // SAFETY: `self` is a valid `&ZigString`; `JSGlobalObject` is an opaque
-        // `UnsafeCell`-backed handle so `&` → `*mut` is its intended FFI shape.
-        unsafe { cpp::ZigString__toExternalValue(self, global.as_ptr()) }
-    }
-    #[inline]
-    fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        // SAFETY: `self` is a live `&ZigString` for the duration of the call.
-        unsafe { crate::cpp::ZigString__toJSONObject(self, global) }
-    }
-    #[inline]
-    unsafe fn external(
-        &self,
-        global: &JSGlobalObject,
-        ctx: *mut core::ffi::c_void,
-        callback: unsafe extern "C" fn(*mut core::ffi::c_void, *mut core::ffi::c_void, usize),
-    ) -> JSValue {
-        if self.len > bun_core::String::max_length() {
-            // SAFETY: invoking the caller-supplied finalizer on the buffer it owns.
-            unsafe {
-                callback(
-                    ctx,
-                    self.byte_slice()
-                        .as_ptr()
-                        .cast_mut()
-                        .cast::<core::ffi::c_void>(),
-                    self.len,
-                )
-            };
-            let _ = global
-                .err(
-                    crate::ErrorCode::STRING_TOO_LONG,
-                    format_args!("Cannot create a string longer than 2147483647 characters"),
-                )
-                .throw();
-            return JSValue::ZERO;
-        }
-        // Ownership of the buffer + `ctx` transfers to JSC's finalizer.
-        ZigString__external(self, global, ctx, callback)
-    }
-    #[inline]
-    fn with_encoding(mut self) -> Self {
-        if !bun_core::is_all_ascii(self.byte_slice()) {
-            self.mark_utf8();
-        }
-        self
-    }
-}
-
-/// Free-function form of `ZigString.toExternalU16` for callers that import
-/// `bun_core::ZigString`. Forwards to the canonical impl in [`zig_string`].
-///
-/// # Safety
-/// See [`zig_string::to_external_u16`].
-#[inline]
-pub unsafe fn zig_string_to_external_u16(
-    ptr: *const u16,
-    len: usize,
-    global: &JSGlobalObject,
-) -> JSValue {
-    // SAFETY: caller upholds `to_external_u16`'s contract.
-    unsafe { crate::zig_string::to_external_u16(ptr, len, global) }
-}
-
 /// Extension trait providing JSC-aware methods on `bun_sys::Error` (`bun.sys.Error`).
 pub trait SysErrorJsc {
     fn to_system_error(&self) -> SystemError;
@@ -1622,8 +1344,18 @@ impl SysErrorJsc for bun_sys::Error {
 
 /// Extension trait providing JSC-aware methods on `bun_ast::Log`.
 pub trait LogJsc {
-    fn to_js(&self, global: &JSGlobalObject, message: &str) -> JsResult<JSValue>;
+    fn to_js(
+        &self,
+        global: &JSGlobalObject,
+        message: core::fmt::Arguments<'_>,
+    ) -> JsResult<JSValue>;
     fn to_js_array(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
+    /// Unlike `to_js`, always produces an `AggregateError`.
+    fn to_js_aggregate_error(
+        &self,
+        global: &JSGlobalObject,
+        message: core::fmt::Arguments<'_>,
+    ) -> JsResult<JSValue>;
 }
 /// Wrap a single `Msg` in
 /// either a `BuildMessage` or `ResolveMessage` JS cell, dispatching on metadata.
@@ -1634,7 +1366,11 @@ fn msg_to_js(msg: &bun_ast::Msg, global: &JSGlobalObject) -> JsResult<JSValue> {
     }
 }
 impl LogJsc for bun_ast::Log {
-    fn to_js(&self, global: &JSGlobalObject, message: &str) -> JsResult<JSValue> {
+    fn to_js(
+        &self,
+        global: &JSGlobalObject,
+        message: core::fmt::Arguments<'_>,
+    ) -> JsResult<JSValue> {
         let msgs = &self.msgs;
         // Cap at 256 — the consumer's stack buffer holds at most 256 JSValues.
         let count = msgs.len().min(256);
@@ -1650,13 +1386,19 @@ impl LogJsc for bun_ast::Log {
                 for (i, msg) in msgs[0..count].iter().enumerate() {
                     errors_stack[i] = msg_to_js(msg, global)?;
                 }
-                let out = bun_core::ZigString::init(message.as_bytes());
-                global.create_aggregate_error(&errors_stack[..count], &out)
+                global.create_aggregate_error(&errors_stack[..count], message)
             }
         }
     }
     fn to_js_array(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         JSValue::create_array_from_iter(global, self.msgs.iter(), |msg| msg_to_js(msg, global))
+    }
+    fn to_js_aggregate_error(
+        &self,
+        global: &JSGlobalObject,
+        message: core::fmt::Arguments<'_>,
+    ) -> JsResult<JSValue> {
+        global.create_aggregate_error_with_array(self.to_js_array(global)?, message)
     }
 }
 

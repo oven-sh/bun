@@ -44,11 +44,11 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 
-use bun_core::{String as BunString, WTFStringImpl};
+use bun_core::{EncodedSlice, String as BunString, WTFStringImpl};
 use bun_io::KeepAlive;
 
 use crate::virtual_machine::{self, VirtualMachine, runtime_hooks};
-use crate::{self as jsc, JSGlobalObject, JSValue, JsError, LogJsc};
+use crate::{self as jsc, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsError, LogJsc};
 
 bun_core::define_scoped_log!(log, Worker, hidden);
 
@@ -410,9 +410,14 @@ impl WebWorker {
         // `--require`/`--import` specifiers join the worker's preload list; `load_preloads`
         // resolves them on the worker thread, so a bad path fails at runtime as in node.
         preloads.extend(core::mem::take(&mut exec_argv.preloads));
+        // A Worker cannot re-enable what its parent disabled.
         if let Some(allow_addons) = exec_argv.allow_addons {
             let parent_allows = transform_options.allow_addons.unwrap_or(true);
             transform_options.allow_addons = Some(parent_allows && allow_addons);
+        }
+        if let Some(allow_ffi_cc) = exec_argv.allow_ffi_cc {
+            let parent_allows = transform_options.allow_ffi_cc.unwrap_or(true);
+            transform_options.allow_ffi_cc = Some(parent_allows && allow_ffi_cc);
         }
         // node_worker.cc: a Worker starts from the parent's resolved option, a custom `env`
         // re-derives it from that env, and then the flags (its own execArgv's, else the parent's)
@@ -437,7 +442,7 @@ impl WebWorker {
             match parent_ref.env_loader().map.clone_with_allocator() {
                 Ok(m) => m,
                 Err(_) => {
-                    *error_message = BunString::static_(b"Out of memory");
+                    *error_message = BunString::static_("Out of memory");
                     return core::ptr::null_mut();
                 }
             }
@@ -555,7 +560,7 @@ impl WebWorker {
                     WebWorker::deref(worker);
                     WebWorker::deref(worker);
                 }
-                *error_message = BunString::static_(b"Failed to spawn worker thread");
+                *error_message = BunString::static_("Failed to spawn worker thread");
                 core::ptr::null_mut()
             }
         }
@@ -961,7 +966,7 @@ impl WebWorker {
         // the raw specifier). The returned slice is BORROWED — every exit from
         // spin() goes through shutdown() which is noreturn, so a `defer free`
         // here would never run anyway.
-        let mut resolve_error = BunString::empty();
+        let mut resolve_error = BunString::EMPTY;
         let vm_log = vm.log_mut().unwrap();
         // SAFETY: `vm_ptr` is the live worker-thread VM.
         let path = match unsafe {
@@ -1305,7 +1310,7 @@ impl WebWorker {
         }
         let global = vm.global();
         let result: jsc::JsResult<(JSValue, BunString)> = (|| {
-            let err = vm_log.to_js(global, "Error in worker")?;
+            let err = vm_log.to_js(global, format_args!("Error in worker"))?;
             let str = err.to_bun_string(global)?;
             Ok((err, str))
         })();
@@ -1354,9 +1359,8 @@ fn on_unhandled_rejection(
     if let Some(bm) = error_instance.as_::<crate::BuildMessage>() {
         // SAFETY: as_ returned a live BuildMessage cell, read-only on the
         // worker (JS) thread that owns it.
-        let text = unsafe { (*bm).msg.data.text.clone() };
-        error_instance =
-            global_object.create_syntax_error_instance(format_args!("{}", bstr::BStr::new(&text)));
+        let text: &[u8] = unsafe { &(*bm).msg.data.text };
+        error_instance = EncodedSlice::utf8(text).to_syntax_error_instance(global_object);
     }
 
     let mut array: Vec<u8> = Vec::new();
@@ -1535,7 +1539,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
         if (hooks.has_blob_url)(&str[b"blob:".len()..]) {
             return Some(str);
         } else {
-            *error_message = BunString::static_(b"Blob URL is missing");
+            *error_message = BunString::static_("Blob URL is missing");
             return None;
         }
     }
@@ -1553,7 +1557,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
             // `global` valid for VM lifetime; safe ZST-handle deref (panics on null).
             let global = JSGlobalObject::opaque_ref(global);
             let out: jsc::JsResult<BunString> = (|| {
-                let out = log.to_js(global, "Error resolving Worker entry point")?;
+                let out = log.to_js(global, format_args!("Error resolving Worker entry point"))?;
                 out.to_bun_string(global)
             })();
             match out {
@@ -1563,7 +1567,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
                 }
                 Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
                 Err(JsError::Thrown | JsError::Terminated) => {
-                    *error_message = BunString::static_(b"unexpected exception");
+                    *error_message = BunString::static_("unexpected exception");
                     return None;
                 }
             }

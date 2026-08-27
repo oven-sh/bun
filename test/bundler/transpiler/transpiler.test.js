@@ -2584,6 +2584,14 @@ console.log(<div {...obj} key="after" />);`),
   });
 
   describe("scanImports", () => {
+    it("decodes non-ASCII specifiers as UTF-8", () => {
+      const imports = transpiler.scanImports(`import a from "./módulo-ü.js"; import b from "pkg-日本";`, "js");
+      expect(imports.map(i => i.path)).toEqual(["./módulo-ü.js", "pkg-日本"]);
+      expect(transpiler.scan(`import a from "./módulo-ü.js";`, "js").imports.map(i => i.path)).toEqual([
+        "./módulo-ü.js",
+      ]);
+    });
+
     it("reports import paths, excluding types", () => {
       const imports = transpiler.scanImports(code, "tsx");
       expect(imports.filter(({ path }) => path === "remix")).toHaveLength(1);

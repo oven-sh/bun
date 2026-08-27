@@ -4,12 +4,13 @@ use crate::node::fs as node_fs;
 use crate::node::types::PathLikeExt as _;
 #[cfg(not(windows))]
 use crate::webcore::blob::{self, Retry};
-use crate::webcore::blob::{MAX_SIZE, MkdirpTarget, SizeType, StoreRef, store};
+use crate::webcore::blob::{MAX_SIZE, MkdirpTarget, SizeType, Store, store};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_io as aio;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
 use bun_paths::PathBuffer;
+use bun_ptr::RefPtr;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(not(windows))]
@@ -33,11 +34,11 @@ pub struct CopyFile {
     #[cfg(not(windows))]
     pub(crate) destination_file_store: store::File,
     pub(crate) source_file_store: store::File,
-    // `StoreRef` is the thread-safe refcounted handle;
+    // `RefPtr<Store>` is the thread-safe refcounted handle;
     // it keeps the stores — and the path slices the `File` clones borrow — alive
     // while this task is on the work pool.
-    pub(crate) store: Option<StoreRef>,
-    pub(crate) source_store: Option<StoreRef>,
+    pub(crate) store: Option<RefPtr<Store>>,
+    pub(crate) source_store: Option<RefPtr<Store>>,
     pub offset: SizeType,
     #[cfg(not(windows))]
     pub(crate) max_length: SizeType,
@@ -92,8 +93,8 @@ impl CopyFile {
     /// Schedule the copy on the work pool; returns its promise.
     #[cfg(not(windows))]
     pub(crate) fn create(
-        store: StoreRef,
-        source_store: StoreRef,
+        store: RefPtr<Store>,
+        source_store: RefPtr<Store>,
         off: SizeType,
         max_len: SizeType,
         global_this: &JSGlobalObject,
@@ -1015,8 +1016,8 @@ fn read_write_loop_capped(
 // droppable — `PathLike::clone` dupes owned string buffers (freed by the
 // clone's own `CowSlice` drop), bumps refs for WTF-backed slices, and only
 // shares the backing for borrowed-string/Buffer variants (whose owner is kept
-// alive by the `source_store` `StoreRef`). Each clone's field `Drop` frees
-// exactly what it owns; the `StoreRef`s release just their Store refcounts on
+// alive by the `source_store` `RefPtr<Store>`). Each clone's field `Drop` frees
+// exactly what it owns; the `RefPtr<Store>`s release just their Store refcounts on
 // drop. No explicit `Drop` impl is needed.
 
 // Kept local until bun_sys exports these; values match crate::node::fs.
@@ -1055,8 +1056,8 @@ impl TryWith {
 
 #[cfg(windows)]
 pub struct CopyFileWindows<'a> {
-    pub(crate) destination_file_store: StoreRef,
-    pub(crate) source_file_store: StoreRef,
+    pub(crate) destination_file_store: RefPtr<Store>,
+    pub(crate) source_file_store: RefPtr<Store>,
 
     pub(crate) io_request: libuv::fs_t,
     pub(crate) promise: jsc::JSPromiseStrong,
@@ -1356,8 +1357,8 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     pub(crate) fn init(
-        destination_file_store: StoreRef,
-        source_file_store: StoreRef,
+        destination_file_store: RefPtr<Store>,
+        source_file_store: RefPtr<Store>,
         event_loop: &'a jsc::event_loop::EventLoop,
         mkdirp_if_not_exists: bool,
         size_: SizeType,
@@ -1435,9 +1436,7 @@ impl<'a> CopyFileWindows<'a> {
         // mkdirp(), we don't spend extra time opening the file handle for
         // the source.
         self.read_write_loop.destination_fd = match Self::prepare_pathlike(
-            &mut self
-                .destination_file_store
-                .data_mut()
+            &mut Store::data_mut(&self.destination_file_store)
                 .as_file_mut()
                 .pathlike,
             &mut self.read_write_loop.must_close_destination_fd,
@@ -1456,7 +1455,9 @@ impl<'a> CopyFileWindows<'a> {
         };
 
         self.read_write_loop.source_fd = match Self::prepare_pathlike(
-            &mut self.source_file_store.data_mut().as_file_mut().pathlike,
+            &mut Store::data_mut(&self.source_file_store)
+                .as_file_mut()
+                .pathlike,
             &mut self.read_write_loop.must_close_source_fd,
             true,
         ) {

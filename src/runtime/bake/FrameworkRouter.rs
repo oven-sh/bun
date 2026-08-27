@@ -11,6 +11,7 @@ use bun_alloc::{AllocError, Arena, ArenaVec};
 use bun_collections::array_hash_map::ArrayHashContext;
 use bun_collections::{ArrayHashMap, BoundedArray, StringArrayHashMap};
 use bun_core::Output;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc, Strong, StrongOptional,
 };
@@ -1785,8 +1786,8 @@ impl JSFrameworkRouter {
             )));
         }
 
-        let root: bun_core::zig_string::Slice = match opts.get(global, "root")? {
-            Some(v) if !v.is_undefined_or_null() => v.to_slice(global)?,
+        let root: bun_core::Utf8Bytes = match opts.get(global, "root")? {
+            Some(v) if !v.is_undefined_or_null() => v.to_utf8(global)?,
             _ => return Err(global.throw_invalid_arguments(format_args!("Missing options.root"))),
         };
 
@@ -1856,8 +1857,8 @@ impl JSFrameworkRouter {
                     )))
                 })?;
             return Err(global.throw_value(global.create_aggregate_error_with_array(
-                &bun_core::String::static_("Errors scanning routes"),
                 arr,
+                format_args!("Errors scanning routes"),
             )?));
         }
 
@@ -1867,7 +1868,7 @@ impl JSFrameworkRouter {
     #[bun_jsc::host_fn(method)]
     pub fn r#match(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let path_value = callframe.arguments_as_array::<1>()[0];
-        let path = path_value.to_slice(global)?;
+        let path = path_value.to_utf8(global)?;
 
         let mut params_out = MatchedParams {
             params: BoundedArray::default(),
@@ -1885,10 +1886,7 @@ impl JSFrameworkRouter {
                         params_obj.put(
                             global,
                             param.key.slice(),
-                            bun_jsc::bun_string_jsc::create_utf8_for_js(
-                                global,
-                                param.value.slice(),
-                            )?,
+                            bun_string_jsc::create_utf8_for_js(global, param.value.slice())?,
                         );
                     }
                     params_obj
@@ -1995,7 +1993,7 @@ impl JSFrameworkRouter {
         }
 
         let [style_js, filepath_js] = frame.arguments_as_array::<2>();
-        let filepath = filepath_js.to_slice(global)?;
+        let filepath = filepath_js.to_utf8(global)?;
         let style = Style::from_js(style_js, global)?;
         // errdefer style.deinit() — Drop handles this
 
@@ -2041,7 +2039,7 @@ impl JSFrameworkRouter {
         let mut rendered: Vec<u8> = Vec::new();
         part.to_string_for_internal_use(&mut ByteFmtWriter::new(&mut rendered))
             .expect("ByteFmtWriter is infallible");
-        bun_jsc::bun_string_jsc::create_utf8_for_js(global, &rendered)
+        bun_string_jsc::create_utf8_for_js(global, &rendered)
     }
 
     pub(crate) fn file_id_to_js(

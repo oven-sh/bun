@@ -1,12 +1,3 @@
-// ──────────────────────────────────────────────────────────────────────────
-// Error message constants
-// ──────────────────────────────────────────────────────────────────────────
-
-pub(crate) const FETCH_ERROR_NO_ARGS: &str = "fetch() expects a string but received no arguments.";
-pub(crate) const FETCH_ERROR_BLANK_URL: &str = "fetch() URL must not be a blank string.";
-const FETCH_ERROR_UNEXPECTED_BODY: &str = "fetch() request with GET/HEAD method cannot have body.";
-const FETCH_ERROR_PROXY_UNIX: &str = "fetch() cannot use a proxy with a unix socket.";
-
 pub(crate) fn fetch_type_error_string(value: bun_jsc::JSValue) -> &'static str {
     if value.is_undefined() {
         "fetch() expects a string, but received Undefined"
@@ -51,7 +42,7 @@ use std::io::Write as _;
 use crate::webcore::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
-use bun_core::{String as BunString, Tag as BunStringTag, ZigStringSlice};
+use bun_core::{String as BunString, Tag as BunStringTag};
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
@@ -182,25 +173,29 @@ impl HTTPRequestBodyExt for HTTPRequestBody {
 // dataURLResponse
 // ──────────────────────────────────────────────────────────────────────────
 
-fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValue {
-    let data_url = data_url_;
-
-    let data = match data_url.decode_data() {
-        Ok(d) => d,
-        Err(_) => {
-            let err =
-                global_this.create_error_instance(format_args!("failed to fetch the data URL"));
-            return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                global_this,
-                err,
-            );
+fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JSValue {
+    let blob = {
+        let url_utf8 = url.to_utf8();
+        match DataURL::parse_without_check(url_utf8.slice())
+            .ok()
+            .and_then(|data_url| {
+                let blob = Blob::init(data_url.decode_data().ok()?, global_this);
+                let mime_type = MimeType::MimeType::init(data_url.mime_type, true, None);
+                blob.content_type
+                    .set(crate::webcore::blob::BlobContentType::from(mime_type));
+                Some(blob)
+            }) {
+            Some(blob) => blob,
+            None => {
+                let err =
+                    global_this.create_error_instance(format_args!("failed to fetch the data URL"));
+                return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                    global_this,
+                    err,
+                );
+            }
         }
     };
-    let blob = Blob::init(data, global_this);
-
-    let mime_type = MimeType::MimeType::init(data_url.mime_type, true, None);
-    blob.content_type
-        .set(crate::webcore::blob::BlobContentType::from(mime_type));
 
     let response = bun_core::heap::into_raw(Box::new(Response::init(
         response::Init {
@@ -209,7 +204,7 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
             ..Default::default()
         },
         Body::new(BodyValue::Blob(blob)),
-        data_url.url,
+        url,
         false,
     )));
 
@@ -258,7 +253,7 @@ fn bun_fetch_preconnect(
         return Err(global_object
             .err(
                 jsc::ErrorCode::INVALID_ARG_TYPE,
-                format_args!("{}", FETCH_ERROR_BLANK_URL),
+                format_args!("fetch() URL must not be a blank string."),
             )
             .throw());
     }
@@ -293,7 +288,7 @@ fn bun_fetch_preconnect(
         return Err(global_object
             .err(
                 jsc::ErrorCode::INVALID_ARG_TYPE,
-                format_args!("{}", FETCH_ERROR_BLANK_URL),
+                format_args!("fetch() URL must not be a blank string."),
             )
             .throw());
     }
@@ -404,7 +399,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     if callframe.arguments_count() == 0 {
         let err = ctx.to_type_error(
             jsc::ErrorCode::MISSING_ARGS,
-            format_args!("{FETCH_ERROR_NO_ARGS}"),
+            format_args!("fetch() expects a string but received no arguments."),
         );
         return Ok(
             JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -448,10 +443,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // `SignalRef`'s Drop on every early-return path, and disarmed via `take()`
     // when ownership is moved into `FetchOptions`.
     let mut signal = SignalRef(None);
-    // Custom Hostname
-    let mut hostname: Option<Box<[u8]>> = None;
     let mut range: Option<bun_core::ZBox> = None;
-    let mut unix_socket_path: ZigStringSlice = ZigStringSlice::empty();
+    let mut unix_socket_path: Box<[u8]> = Box::default();
 
     // `url_proxy_buffer` gets reassigned while `url`/`proxy`
     // still point into it (or into the buffer about to replace it). Detach the
@@ -472,7 +465,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut reject_unauthorized = vm.get_tls_reject_unauthorized();
     let mut check_server_identity: JSValue = JSValue::ZERO;
 
-    // signal/unix_socket_path/url_proxy_buffer/headers/body/hostname/range/
+    // signal/unix_socket_path/url_proxy_buffer/headers/body/range/
     // ssl_config are all owning types whose Drop runs on early return
     // (`signal` via `SignalRef`).
 
@@ -543,13 +536,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         }
 
-        break 'extract_url BunString::empty();
+        break 'extract_url BunString::EMPTY;
     };
 
     if url_str.is_empty() {
         let err = ctx.to_type_error(
             jsc::ErrorCode::INVALID_URL,
-            format_args!("{FETCH_ERROR_BLANK_URL}"),
+            format_args!("fetch() URL must not be a blank string."),
         );
         return Ok(
             JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -559,25 +552,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         );
     }
 
-    if url_str.has_prefix_comptime(b"data:") {
-        let url_slice = url_str.to_utf8_without_ref();
-        // `defer url_slice.deinit()` → Drop.
-
-        let data_url = match DataURL::parse_without_check(url_slice.slice()) {
-            Ok(d) => d,
-            Err(_) => {
-                let err = ctx.create_error_instance(format_args!("failed to fetch the data URL"));
-                return Ok(
-                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                        global_this,
-                        err,
-                    ),
-                );
-            }
-        };
-        let mut data_url = data_url;
-        data_url.url = url_str;
-        return Ok(data_url_response(data_url, global_this));
+    if url_str.starts_with_ascii(b"data:") {
+        return Ok(data_url_response(url_str, global_this));
     }
 
     // `ZigURL::from_string` returns `OwnedURL` (owns href buffer); we
@@ -760,7 +736,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if !obj.is_empty() {
                 if let Some(socket_path) = obj.get(global_this, "unix")? {
                     if socket_path.is_string() && socket_path.get_length(ctx)? > 0 {
-                        break 'extract_unix_socket_path socket_path.to_slice(global_this)?;
+                        break 'extract_unix_socket_path socket_path
+                            .to_bun_string(global_this)?
+                            .to_owned_slice()
+                            .into_boxed_slice();
                     }
                 }
             }
@@ -779,11 +758,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 if let Some(protocol_val) = obj.get(global_this, "protocol")? {
                     if protocol_val.is_string() {
                         let str = protocol_val.to_js_string_view(global_this)?;
-                        if str.eql_comptime(b"http2") || str.eql_comptime(b"h2") {
+                        if str.eq_ascii(b"http2") || str.eq_ascii(b"h2") {
                             forced_protocol = Some(http::Protocol::Http2);
-                        } else if str.eql_comptime(b"http3") || str.eql_comptime(b"h3") {
+                        } else if str.eq_ascii(b"http3") || str.eq_ascii(b"h3") {
                             forced_protocol = Some(http::Protocol::Http3);
-                        } else if str.eql_comptime(b"http1.1") || str.eql_comptime(b"h1") {
+                        } else if str.eq_ascii(b"http1.1") || str.eq_ascii(b"h1") {
                             forced_protocol = Some(http::Protocol::Http1_1);
                         } else {
                             return Err(global_this.throw_invalid_arguments(
@@ -893,7 +872,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if !obj.is_empty() {
                 if let Some(verb) = obj.get(global_this, "verbose")? {
                     if verb.is_string() {
-                        if verb.to_js_string_view(global_this)?.eql_comptime(b"curl") {
+                        if verb.to_js_string_view(global_this)?.eq_ascii(b"curl") {
                             break 'extract_verbose http::HTTPVerboseLevel::Curl;
                         }
                     } else if verb.is_boolean() {
@@ -1256,9 +1235,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // refcounted via `fetch_headers_to_deref` above). `FetchHeaders` is
             // an opaque ZST FFI handle (S008) — safe `*mut → &mut` deref.
             let headers_ref = bun_opaque::opaque_deref_mut(headers_);
-            if let Some(hostname_) = headers_ref.fast_get(HTTPHeaderName::Host) {
-                hostname = Some(hostname_.to_owned_slice().into_boxed_slice());
-            }
             if url.is_s3() {
                 if let Some(range_) = headers_ref.fast_get(HTTPHeaderName::Range) {
                     range = Some(range_.to_owned_slice_z());
@@ -1266,7 +1242,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
 
             if let Some(upgrade_) = headers_ref.fast_get(HTTPHeaderName::Upgrade) {
-                if http::upgrade_header_is_not_h2(upgrade_.to_slice().slice()) {
+                if http::upgrade_header_is_not_h2(upgrade_.to_utf8().slice()) {
                     upgraded_connection = true;
                 }
             }
@@ -1283,10 +1259,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'extract_headers result;
     };
 
-    if proxy.is_some() && !unix_socket_path.slice().is_empty() {
+    if proxy.is_some() && !unix_socket_path.is_empty() {
         let err = ctx.to_type_error(
             jsc::ErrorCode::INVALID_ARG_VALUE,
-            format_args!("{FETCH_ERROR_PROXY_UNIX}"),
+            format_args!("fetch() cannot use a proxy with a unix socket."),
         );
         return Ok(
             JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -1300,7 +1276,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // We don't pass along headers, we ignore method, we ignore status code...
     // But it's better than status quo.
     if url_type != URLType::Remote {
-        // `defer unix_socket_path.deinit()` → Drop on scope exit.
         let mut path_buf = PathBuffer::uninit();
         let mut path_buf2 = PathBuffer::uninit();
         let decoded_len = match PercentEncoding::decode_into(
@@ -1327,7 +1302,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // Support blob: urls
             if url_type == URLType::Blob {
                 if let Some(blob) =
-                    ObjectURLRegistry::singleton().resolve_and_dupe(url_path_decoded)
+                    ObjectURLRegistry::singleton().resolve_and_dupe(url_path_decoded, global_this)
                 {
                     url_string = BunString::create_format(format_args!(
                         "blob:{}",
@@ -1425,9 +1400,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // `crate::webcore::node_types` stub (until it's swapped to a
             // re-export of `crate::node::types`); construct that variant here.
             let mut pathlike = crate::webcore::node_types::PathOrFileDescriptor::Path(
-                crate::webcore::node_types::PathLike::EncodedSlice(ZigStringSlice::init_owned(
-                    temp_file_path.to_vec(),
-                )),
+                crate::webcore::node_types::PathLike::owned(temp_file_path.to_vec()),
             );
 
             break 'blob Blob::find_or_create_file_from_path(&mut pathlike, global_this, true);
@@ -1474,7 +1447,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     if !ALLOW_GET_BODY && !method.has_request_body() && body.has_body() && !upgraded_connection {
         let err = global_this.to_type_error(
             jsc::ErrorCode::INVALID_ARG_VALUE,
-            format_args!("{FETCH_ERROR_UNEXPECTED_BODY}"),
+            format_args!("fetch() request with GET/HEAD method cannot have body."),
         );
         return Ok(
             JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -1949,7 +1922,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         url_proxy_buffer: url_proxy_boxed,
         signal: signal.take(),
         ssl_config: ssl_config.take(),
-        hostname: hostname.take(),
         upgraded_connection,
         forced_protocol,
         is_node_http_client: ALLOW_GET_BODY,
@@ -1959,7 +1931,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         } else {
             jsc::strong::Optional::create(check_server_identity, global_this)
         },
-        unix_socket_path: core::mem::replace(&mut unix_socket_path, ZigStringSlice::empty()),
+        unix_socket_path: core::mem::take(&mut unix_socket_path),
     };
 
     let _ = FetchTasklet::queue(

@@ -1,5 +1,5 @@
 use bun_core::strings::EncodingNonAscii;
-use bun_core::{self as bstr, String as BunString, ZigString, strings};
+use bun_core::{self as bstr, EncodedSlice, String as BunString, strings};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
 use bun_sys::UV_E;
 
@@ -237,7 +237,7 @@ pub(crate) fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
     for (k, v) in p.map.map.iter() {
         obj.put(
             global,
-            ZigString::init_utf8(k),
+            EncodedSlice::from_bytes(k),
             bun_string_jsc::create_utf8_for_js(global, &v.value)?,
         );
     }

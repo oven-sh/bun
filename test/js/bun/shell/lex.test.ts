@@ -224,6 +224,65 @@ describe("lex shell", () => {
     expect(result).toEqual(expected);
   });
 
+  test("asterisk ends the word", () => {
+    expect(JSON.parse(lex`echo * foo`)).toEqual([
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "Asterisk": {} },
+      { "Delimit": {} },
+      { "Text": "foo" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+  });
+
+  test("double asterisk ends the word", () => {
+    expect(JSON.parse(lex`echo ** foo`)).toEqual([
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "DoubleAsterisk": {} },
+      { "Delimit": {} },
+      { "Text": "foo" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+
+    expect(JSON.parse(lex`echo src/** dst`)).toEqual([
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "Text": "src/" },
+      { "DoubleAsterisk": {} },
+      { "Delimit": {} },
+      { "Text": "dst" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+  });
+
+  test("double asterisk ends the word before an operator", () => {
+    expect(JSON.parse(lex`echo ** | cat`)).toEqual([
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "DoubleAsterisk": {} },
+      { "Delimit": {} },
+      { "Pipe": {} },
+      { "Text": "cat" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+
+    expect(JSON.parse(lex`echo ** > f`)).toEqual([
+      { "Text": "echo" },
+      { "Delimit": {} },
+      { "DoubleAsterisk": {} },
+      { "Delimit": {} },
+      { "Redirect": redirect({ stdout: true }) },
+      { "Text": "f" },
+      { "Delimit": {} },
+      { "Eof": {} },
+    ]);
+  });
+
   test("op_and", () => {
     const expected = [
       { "Text": "echo" },

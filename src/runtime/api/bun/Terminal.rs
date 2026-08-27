@@ -816,7 +816,7 @@ fn open_pty(winsize: &Winsize) -> Result<(Fd, Fd), CreatePtyError> {
             master.close();
             return Err(CreatePtyError::OpenPtyFailed);
         }
-        libc::ioctl(slave, libc::TIOCSWINSZ as _, winsize as *const Winsize);
+        libc::ioctl(slave, libc::TIOCSWINSZ as _, core::ptr::from_ref(winsize));
         Ok((master, Fd::from_native(slave)))
     }
 }

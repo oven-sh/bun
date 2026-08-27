@@ -208,6 +208,7 @@ impl BuildCommand {
         this_transpiler.options.inline_entrypoint_import_meta_main =
             ctx.bundler_options.inline_entrypoint_import_meta_main;
         this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;
+        this_transpiler.options.split_require = ctx.bundler_options.split_require;
         this_transpiler.options.minify_syntax = ctx.bundler_options.minify_syntax;
         this_transpiler.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
         this_transpiler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
@@ -251,8 +252,6 @@ impl BuildCommand {
 
         this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
         this_transpiler.options.bytecode_depth = ctx.bundler_options.bytecode_depth;
-        this_transpiler.options.compile_target_is_host =
-            ctx.bundler_options.compile_target.is_default();
         let mut was_renamed_from_index = false;
 
         if ctx.bundler_options.compile {
@@ -456,6 +455,29 @@ impl BuildCommand {
 
         this_transpiler.configure_defines()?;
         this_transpiler.configure_linker();
+
+        // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.
+        this_transpiler.options.compile_target_builtins = if ctx.bundler_options.compile
+            && ctx.bundler_options.bytecode
+            && (!ctx.bundler_options.compile_target.is_default()
+                || ctx.bundler_options.compile_executable_path.is_some())
+        {
+            match bun_standalone_module_graph::StandaloneModuleGraph::target_builtins(
+                &ctx.bundler_options.compile_target,
+                // SAFETY: `env` is a process-lifetime singleton.
+                unsafe { &mut *this_transpiler.env },
+                ctx.bundler_options.compile_executable_path.as_deref(),
+            ) {
+                Ok(Some(section)) => options::CompileTargetBuiltins::Target(section),
+                Ok(None) => options::CompileTargetBuiltins::None,
+                Err(err) => {
+                    Output::print_errorln(format_args!("{}", bstr::BStr::new(err.slice())));
+                    Global::exit(1);
+                }
+            }
+        } else {
+            options::CompileTargetBuiltins::Host
+        };
 
         if !this_transpiler.options.production {
             this_transpiler
@@ -1096,7 +1118,8 @@ impl BuildCommand {
                         options::OutputKind::Bytecode => "<d>",
                         options::OutputKind::ModuleInfo
                         | options::OutputKind::BuiltinBytecode
-                        | options::OutputKind::BytecodeStringTable => "<d>",
+                        | options::OutputKind::BytecodeStringTable
+                        | options::OutputKind::ModuleInfoStringTable => "<d>",
                         options::OutputKind::MetafileJson
                         | options::OutputKind::MetafileMarkdown => "<green>",
                     }))?;
@@ -1144,6 +1167,7 @@ impl BuildCommand {
                         options::OutputKind::ModuleInfo => "module info",
                         options::OutputKind::BuiltinBytecode => "builtin bytecode",
                         options::OutputKind::BytecodeStringTable => "bytecode strings",
+                        options::OutputKind::ModuleInfoStringTable => "module info strings",
                         options::OutputKind::MetafileJson => "metafile json",
                         options::OutputKind::MetafileMarkdown => "metafile markdown",
                     }

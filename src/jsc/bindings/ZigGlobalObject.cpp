@@ -726,6 +726,22 @@ static bool isModuleEvaluated(JSC::AbstractModuleRecord* record)
     return record->moduleEnvironmentMayBeNull() != nullptr;
 }
 
+// A non-TLA record that is mid-evaluation: require() re-entered it from
+// inside its own evaluation (a require cycle). Its namespace is live —
+// hoisted functions callable, bindings not yet initialized in TDZ — the same
+// as a static import in that cycle would see.
+static bool isModuleEvaluatingSync(JSC::AbstractModuleRecord* record)
+{
+    auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
+    return cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluating && !cyclic->hasTLA() && !cyclic->evaluationError();
+}
+
+static bool isModuleEvaluating(JSC::AbstractModuleRecord* record)
+{
+    auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
+    return cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluating;
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionEsmNamespaceForCjs, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -792,11 +808,15 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     bool entryExistedBefore = false;
     if (auto* entry = loader->registryEntry(key)) {
         entryExistedBefore = true;
-        if (isModuleEvaluated(entry->record())) {
+        if (isModuleEvaluated(entry->record()) || isModuleEvaluatingSync(entry->record())) {
             auto* ns = entry->record()->getModuleNamespace(globalObject, false);
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(ns);
         }
+        // Any other Evaluating record (one with top-level await) must not
+        // reach loadModuleSync: Link() and Evaluate() reject that status.
+        if (isModuleEvaluating(entry->record()))
+            return throwVMTypeError(globalObject, scope, makeString("require() async module \""_s, keyString, "\" is unsupported. use \"await import()\" instead."_s));
     }
 
     JSPromise* promise = loader->loadModuleSync(globalObject, key, nullptr, nullptr);
@@ -825,9 +845,11 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
         // still be in TDZ and we must throw the "async module" error instead
         // of returning a half-initialized namespace.
         if (auto* entry = loader->registryEntry(key)) {
-            if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record())) {
-                auto status = cyclic->status();
-                if ((status == JSC::CyclicModuleRecord::Status::Evaluating || status == JSC::CyclicModuleRecord::Status::Evaluated) && !cyclic->hasTLA() && !cyclic->evaluationError())
+            auto* record = entry->record();
+            if (isModuleEvaluatingSync(record))
+                break;
+            if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record)) {
+                if (cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluated && !cyclic->hasTLA() && !cyclic->evaluationError())
                     break;
             }
         }
@@ -2107,14 +2129,6 @@ void GlobalObject::finishCreation(VM& vm)
              auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::NetworkSink);
              auto* structure = JSNetworkSink::createStructure(init.vm, init.global, prototype);
              auto* constructor = JSNetworkSinkConstructor::create(init.vm, init.global, JSNetworkSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-             init.setPrototype(prototype);
-             init.setStructure(structure);
-             init.setConstructor(constructor);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSH3ResponseSinkClassStructure), [](LazyClassStructure::Initializer& init) {
-             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::H3ResponseSink);
-             auto* structure = JSH3ResponseSink::createStructure(init.vm, init.global, prototype);
-             auto* constructor = JSH3ResponseSinkConstructor::create(init.vm, init.global, JSH3ResponseSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
              init.setPrototype(prototype);
              init.setStructure(structure);
              init.setConstructor(constructor);
@@ -3880,22 +3894,38 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__CronJob__onPromiseResolve;
     } else if (handler == Bun__CronJob__onPromiseReject) {
         return GlobalObject::PromiseFunctions::Bun__CronJob__onPromiseReject;
-    } else if (handler == Bun__HTTPRequestContextH3__onReject) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextH3__onReject;
-    } else if (handler == Bun__HTTPRequestContextH3__onRejectStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextH3__onRejectStream;
-    } else if (handler == Bun__HTTPRequestContextH3__onResolve) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextH3__onResolve;
-    } else if (handler == Bun__HTTPRequestContextH3__onResolveStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextH3__onResolveStream;
-    } else if (handler == Bun__HTTPRequestContextDebugH3__onReject) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH3__onReject;
-    } else if (handler == Bun__HTTPRequestContextDebugH3__onRejectStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH3__onRejectStream;
-    } else if (handler == Bun__HTTPRequestContextDebugH3__onResolve) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH3__onResolve;
-    } else if (handler == Bun__HTTPRequestContextDebugH3__onResolveStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH3__onResolveStream;
+    } else if (handler == Bun__HTTPRequestContextMux__onReject) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextMux__onReject;
+    } else if (handler == Bun__HTTPRequestContextMux__onRejectStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextMux__onRejectStream;
+    } else if (handler == Bun__HTTPRequestContextMux__onResolve) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextMux__onResolve;
+    } else if (handler == Bun__HTTPRequestContextMux__onResolveStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextMux__onResolveStream;
+    } else if (handler == Bun__HTTPRequestContextMuxTLS__onReject) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextMuxTLS__onReject;
+    } else if (handler == Bun__HTTPRequestContextMuxTLS__onRejectStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextMuxTLS__onRejectStream;
+    } else if (handler == Bun__HTTPRequestContextMuxTLS__onResolve) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextMuxTLS__onResolve;
+    } else if (handler == Bun__HTTPRequestContextMuxTLS__onResolveStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextMuxTLS__onResolveStream;
+    } else if (handler == Bun__HTTPRequestContextDebugMux__onReject) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugMux__onReject;
+    } else if (handler == Bun__HTTPRequestContextDebugMux__onRejectStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugMux__onRejectStream;
+    } else if (handler == Bun__HTTPRequestContextDebugMux__onResolve) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugMux__onResolve;
+    } else if (handler == Bun__HTTPRequestContextDebugMux__onResolveStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugMux__onResolveStream;
+    } else if (handler == Bun__HTTPRequestContextDebugMuxTLS__onReject) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugMuxTLS__onReject;
+    } else if (handler == Bun__HTTPRequestContextDebugMuxTLS__onRejectStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugMuxTLS__onRejectStream;
+    } else if (handler == Bun__HTTPRequestContextDebugMuxTLS__onResolve) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugMuxTLS__onResolve;
+    } else if (handler == Bun__HTTPRequestContextDebugMuxTLS__onResolveStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugMuxTLS__onResolveStream;
     } else if (handler == Bun__FetchTasklet__onResolveRequestStream) {
         return GlobalObject::PromiseFunctions::Bun__FetchTasklet__onResolveRequestStream;
     } else if (handler == Bun__FetchTasklet__onRejectRequestStream) {

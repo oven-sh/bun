@@ -51,8 +51,8 @@ pub mod js_bundler {
 
     /// Parse the `files` option from JavaScript.
     /// Expected format: `Record<string, string | Blob | File | TypedArray | ArrayBuffer>`.
-    /// Uses async (`from_js_async`) parsing so the resulting bytes are owned —
-    /// the bundler runs on a separate thread and must not borrow JS heap memory.
+    /// The bytes are copied: the bundler runs on a separate thread and must not
+    /// borrow JS heap memory.
     fn file_map_from_js(global_this: &JSGlobalObject, files_value: JSValue) -> JsResult<FileMap> {
         let mut this = FileMap::default();
         // errdefer this.deinit() — `FileMap` (Box<[u8]> values) drops on `?`.
@@ -76,23 +76,17 @@ pub mod js_bundler {
         this.map.reserve(files_iter.len);
 
         while let Some((prop, property_value)) = files_iter.next()? {
-            // Parse the value as BlobOrStringOrBuffer using async mode for thread safety.
-            // Async mode `protect()`s any JS-backed buffer; adopt into a
-            // `ThreadIsolated` so the guard unprotects + drops at end of iteration.
-            let blob_or_string = match crate::node::BlobOrStringOrBuffer::from_js_async(
+            let blob_or_string = match crate::node::BlobOrStringOrBuffer::from_js(
                 global_this,
                 property_value,
             )? {
-                Some(v) => bun_jsc::ThreadIsolated::adopt(v),
+                Some(v) => v,
                 None => {
                     return Err(global_this.throw_invalid_arguments(format_args!("Expected file content to be a string, Blob, File, TypedArray, or ArrayBuffer")));
                 }
             };
-            // Async mode guarantees `blob_or_string` owns its bytes (Blob data is
-            // copied, JS strings are decoded). Extract them into the lower-tier
-            // map and release the wrapper immediately so no JSC handle crosses
-            // threads.
-            let bytes: Box<[u8]> = blob_or_string.slice().to_vec().into_boxed_slice();
+            // Copy the bytes into the lower-tier map so no JSC handle crosses threads.
+            let bytes: Box<[u8]> = blob_or_string.slice().into();
             drop(blob_or_string);
 
             // Clone the key since we need to own it.
@@ -126,6 +120,7 @@ pub mod js_bundler {
         pub(crate) jsx: api::Jsx,
         pub(crate) force_node_env: options::ForceNodeEnv,
         pub(crate) code_splitting: bool,
+        pub(crate) split_require: bool,
         pub(crate) minify: Minify,
         pub(crate) no_macros: bool,
         pub(crate) ignore_dce_annotations: bool,
@@ -191,6 +186,7 @@ pub mod js_bundler {
                 },
                 force_node_env: options::ForceNodeEnv::Unspecified,
                 code_splitting: false,
+                split_require: true,
                 minify: Minify::default(),
                 no_macros: false,
                 ignore_dce_annotations: false,
@@ -802,6 +798,10 @@ pub mod js_bundler {
 
             if let Some(hot) = config.get_boolean_loose(global_this, "splitting")? {
                 this.code_splitting = hot;
+            }
+
+            if let Some(split_require) = config.get_boolean_loose(global_this, "splitRequire")? {
+                this.split_require = split_require;
             }
 
             if let Some(min_chunk_size) =

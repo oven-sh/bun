@@ -223,14 +223,18 @@ pub(crate) fn scan_imports_and_exports(
                         }
                     }
                     ImportKind::Require =>
-                    // Files that are imported with require() must be CommonJS modules
+                    // Files that are imported with require() must be CommonJS modules,
+                    // unless a split `require()` loads the file at runtime as its own
+                    // chunk (no wrapper, the same as a cross-chunk `import()` below).
                     {
-                        if other_kind == ExportsKind::Esm {
-                            col!(flags)[other_file].wrap = WrapKind::Esm;
-                        } else {
-                            // TODO: introduce a NamedRequire for require("./foo").Bar AST nodes to support tree-shaking those.
-                            col!(flags)[other_file].wrap = WrapKind::Cjs;
-                            col!(exports_kind)[other_file] = ExportsKind::Cjs;
+                        if !this.is_external_dynamic_import(record, id as u32) {
+                            if other_kind == ExportsKind::Esm {
+                                col!(flags)[other_file].wrap = WrapKind::Esm;
+                            } else {
+                                // TODO: introduce a NamedRequire for require("./foo").Bar AST nodes to support tree-shaking those.
+                                col!(flags)[other_file].wrap = WrapKind::Cjs;
+                                col!(exports_kind)[other_file] = ExportsKind::Cjs;
+                            }
                         }
                     }
                     ImportKind::Dynamic => {
@@ -903,8 +907,10 @@ pub(crate) fn scan_imports_and_exports(
                             } else {
                                 // We should use "__require" instead of "require" if we're not
                                 // generating a CommonJS output file, since it won't exist otherwise.
-                                // An `import()` is printed as-is and never becomes `__require()`.
+                                // An `import()` is printed as-is and never becomes `__require()`,
+                                // nor does a split `require()` (`import.meta.require`).
                                 if kind != ImportKind::Dynamic
+                                    && !is_external_dyn
                                     && should_call_runtime_require(output_format)
                                 {
                                     runtime_require_uses += 1;

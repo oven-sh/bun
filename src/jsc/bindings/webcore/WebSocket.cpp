@@ -753,7 +753,6 @@ void WebSocket::sendWebSocketData(const char* baseAddress, size_t length, const 
     case ConnectedWebSocketKind::Client: {
         Bun__WebSocketClient__writeBinaryData(this->m_connectedWebSocket.client, reinterpret_cast<const unsigned char*>(baseAddress), length, static_cast<uint8_t>(op));
         // this->m_connectedWebSocket.client->send({ baseAddress, length }, opCode);
-        // this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
@@ -773,7 +772,6 @@ void WebSocket::sendWebSocketString(const String& message, const Opcode op)
         auto slice = Zig::toEncodedSlice(message);
         Bun__WebSocketClient__writeString(this->m_connectedWebSocket.client, &slice, static_cast<uint8_t>(op));
         // this->m_connectedWebSocket.client->send({ baseAddress, length }, opCode);
-        // this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
@@ -853,13 +851,11 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
     case ConnectedWebSocketKind::Client: {
         EncodedSlice reasonSlice = Zig::toEncodedSlice(reason);
         Bun__WebSocketClient__close(this->m_connectedWebSocket.client, code, &reasonSlice);
-        // this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
         EncodedSlice reasonSlice = Zig::toEncodedSlice(reason);
         Bun__WebSocketClientTLS__close(this->m_connectedWebSocket.clientSSL, code, &reasonSlice);
-        // this->m_bufferedAmount = this->m_connectedWebSocket.clientSSL->getBufferedAmount();
         break;
     }
     default: {
@@ -886,6 +882,37 @@ ExceptionOr<void> WebSocket::terminate()
     m_state = CLOSING;
     cancelConnectedClient();
     return {};
+}
+
+bool WebSocket::pause()
+{
+    m_paused = true;
+    return applyPauseToConnectedClient();
+}
+
+bool WebSocket::resume()
+{
+    m_paused = false;
+    return applyPauseToConnectedClient();
+}
+
+// True when the socket's read state changed (or will, once a CONNECTING
+// socket opens); false when there is no socket to act on.
+bool WebSocket::applyPauseToConnectedClient()
+{
+    switch (m_connectedWebSocketKind) {
+    case ConnectedWebSocketKind::Client:
+        return m_paused
+            ? Bun__WebSocketClient__pause(m_connectedWebSocket.client)
+            : Bun__WebSocketClient__resume(m_connectedWebSocket.client);
+    case ConnectedWebSocketKind::ClientSSL:
+        return m_paused
+            ? Bun__WebSocketClientTLS__pause(m_connectedWebSocket.clientSSL)
+            : Bun__WebSocketClientTLS__resume(m_connectedWebSocket.clientSSL);
+    case ConnectedWebSocketKind::None:
+        return m_state == CONNECTING;
+    }
+    return false;
 }
 
 void WebSocket::cancelUpgradeClient()
@@ -1118,7 +1145,22 @@ WebSocket::State WebSocket::readyState() const
 
 unsigned WebSocket::bufferedAmount() const
 {
-    return saturateAdd(m_bufferedAmount, m_bufferedAmountAfterClose);
+    // Live: bytes queued in the native client (frames not yet written to the
+    // socket, plus the proxy tunnel's pending ciphertext). m_bufferedAmount
+    // only carries the leftover reported at close.
+    size_t live = 0;
+    switch (m_connectedWebSocketKind) {
+    case ConnectedWebSocketKind::Client:
+        live = Bun__WebSocketClient__bufferedAmount(m_connectedWebSocket.client);
+        break;
+    case ConnectedWebSocketKind::ClientSSL:
+        live = Bun__WebSocketClientTLS__bufferedAmount(m_connectedWebSocket.clientSSL);
+        break;
+    case ConnectedWebSocketKind::None:
+        break;
+    }
+    unsigned clamped = live > std::numeric_limits<unsigned>::max() ? std::numeric_limits<unsigned>::max() : static_cast<unsigned>(live);
+    return saturateAdd(saturateAdd(m_bufferedAmount, clamped), m_bufferedAmountAfterClose);
 }
 
 String WebSocket::protocol() const
@@ -1497,6 +1539,8 @@ void WebSocket::didConnect(us_socket_t* socket, void* bufferedData, const PerMes
         this->m_connectedWebSocket.client = Bun__WebSocketClient__init(reinterpret_cast<CppWebSocket*>(this), socket, this->scriptExecutionContext()->jsGlobalObject(), bufferedData, deflate_params, customSSLCtx);
         this->m_connectedWebSocketKind = ConnectedWebSocketKind::Client;
     }
+    if (m_paused)
+        applyPauseToConnectedClient();
 
     this->didConnect();
 }
@@ -1684,6 +1728,8 @@ void WebSocket::didConnectWithTunnel(void* tunnel, void* bufferedData, const Per
         bufferedData,
         deflate_params);
     this->m_connectedWebSocketKind = ConnectedWebSocketKind::Client;
+    if (m_paused)
+        applyPauseToConnectedClient();
 
     // IMPORTANT: Call didConnect() BEFORE setting the connected websocket on the tunnel.
     // didConnect() sets m_state = OPEN, and messages are dropped if state != OPEN.

@@ -265,6 +265,178 @@ test("handles cyclic dependencies", async () => {
   });
 });
 
+test("a package reached through a dependency cycle dedupes into one store entry", async () => {
+  // Two workspaces with different dependency sets both pull in the
+  // `dedupe-cycle-a` <-> `dedupe-cycle-b` cycle. `dedupe-cycle-peer` leaks a
+  // peer (`no-deps`) that no ancestor provides, so the store builder cannot
+  // resolve it from either workspace's chain. The unresolved name is part of
+  // the early-dedupe key, so both positions must collapse into a single
+  // store entry per package. The tree builder used to skip early dedupe at
+  // every position with an unresolved leaking peer, which duplicated the
+  // `dedupe-cycle-a` entry (identical contents under two store names) and
+  // made `bun install` re-expand the shared subtree once per workspace
+  // (#40445).
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "dedupe-cycle-ws",
+        workspaces: {
+          packages: ["ws-one", "ws-two"],
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "ws-one", "package.json"),
+      JSON.stringify({
+        name: "ws-one",
+        version: "1.0.0",
+        dependencies: {
+          "dedupe-cycle-a": "1.0.0",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "ws-two", "package.json"),
+      JSON.stringify({
+        name: "ws-two",
+        version: "1.0.0",
+        dependencies: {
+          "dedupe-cycle-b": "1.0.0",
+        },
+      }),
+    ),
+  ]);
+
+  await runBunInstall(bunEnv, packageDir);
+
+  const storeEntries = await readdirSorted(join(packageDir, "node_modules", ".bun"));
+  const aEntries = storeEntries.filter(e => e.startsWith("dedupe-cycle-a@1.0.0"));
+  const bEntries = storeEntries.filter(e => e.startsWith("dedupe-cycle-b@1.0.0"));
+  const peerEntries = storeEntries.filter(e => e.startsWith("dedupe-cycle-peer@1.0.0"));
+  expect(aEntries).toHaveLength(1);
+  expect(bEntries).toHaveLength(1);
+  expect(peerEntries).toHaveLength(1);
+
+  const bunDir = join(packageDir, "node_modules", ".bun");
+
+  // both sides of the cycle link to the single entry of the other side
+  expect(withoutEntryHash(readlinkSync(join(bunDir, aEntries[0], "node_modules", "dedupe-cycle-b")))).toBe(
+    join("..", "..", bEntries[0], "node_modules", "dedupe-cycle-b"),
+  );
+  expect(withoutEntryHash(readlinkSync(join(bunDir, bEntries[0], "node_modules", "dedupe-cycle-a")))).toBe(
+    join("..", "..", aEntries[0], "node_modules", "dedupe-cycle-a"),
+  );
+
+  // the unprovided peer auto-installs the same no-deps version for both
+  // workspaces
+  expect(await file(join(bunDir, peerEntries[0], "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "no-deps",
+    version: "1.0.0",
+  });
+
+  // both workspaces resolve their entry point of the cycle
+  expect(await file(join(packageDir, "ws-one", "node_modules", "dedupe-cycle-a", "package.json")).json()).toMatchObject(
+    {
+      name: "dedupe-cycle-a",
+      version: "1.0.0",
+    },
+  );
+  expect(await file(join(packageDir, "ws-two", "node_modules", "dedupe-cycle-b", "package.json")).json()).toMatchObject(
+    {
+      name: "dedupe-cycle-b",
+      version: "1.0.0",
+    },
+  );
+});
+
+test("early dedupe keeps declarer-specific resolutions of an unprovided peer", async () => {
+  // `dedupe-divergent-peers` pulls in two declarers of the peer name
+  // `no-deps` with divergent ranges: `dedupe-cycle-peer` wants 1.0.0 and
+  // `dedupe-divergent-strict` wants ^2.0.0. Neither workspace chain provides
+  // `no-deps`, so the shared subtree dedupes on the unresolved name and each
+  // declarer must still auto-install its own best version. `ws-three` seeds
+  // both no-deps versions into the lockfile under aliases (a different
+  // dependency name, so they provide nothing to the peer).
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "dedupe-divergent-ws",
+        workspaces: {
+          packages: ["ws-one", "ws-two", "ws-three"],
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "ws-one", "package.json"),
+      JSON.stringify({
+        name: "ws-one",
+        version: "1.0.0",
+        dependencies: {
+          "dedupe-divergent-peers": "1.0.0",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "ws-two", "package.json"),
+      JSON.stringify({
+        name: "ws-two",
+        version: "1.0.0",
+        dependencies: {
+          "dedupe-divergent-peers": "1.0.0",
+          "a-dep": "1.0.1",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "ws-three", "package.json"),
+      JSON.stringify({
+        name: "ws-three",
+        version: "1.0.0",
+        dependencies: {
+          "aliased-no-deps-1": "npm:no-deps@1.0.0",
+          "aliased-no-deps-2": "npm:no-deps@2.0.0",
+        },
+      }),
+    ),
+  ]);
+
+  await runBunInstall(bunEnv, packageDir);
+
+  const bunDir = join(packageDir, "node_modules", ".bun");
+  const storeEntries = await readdirSorted(bunDir);
+  expect(storeEntries.filter(e => e.startsWith("dedupe-divergent-peers@1.0.0"))).toHaveLength(1);
+  const peerEntries = storeEntries.filter(e => e.startsWith("dedupe-cycle-peer@1.0.0"));
+  const strictEntries = storeEntries.filter(e => e.startsWith("dedupe-divergent-strict@1.0.0"));
+  expect(peerEntries).toHaveLength(1);
+  expect(strictEntries).toHaveLength(1);
+
+  // each declarer auto-installs its own best version of the unprovided peer
+  expect(await file(join(bunDir, peerEntries[0], "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    name: "no-deps",
+    version: "1.0.0",
+  });
+  expect(await file(join(bunDir, strictEntries[0], "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    name: "no-deps",
+    version: "2.0.0",
+  });
+
+  // both workspaces resolve the shared package
+  for (const ws of ["ws-one", "ws-two"]) {
+    expect(
+      await file(join(packageDir, ws, "node_modules", "dedupe-divergent-peers", "package.json")).json(),
+    ).toMatchObject({
+      name: "dedupe-divergent-peers",
+      version: "1.0.0",
+    });
+  }
+});
+
 test("package with dependency on previous self works", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 

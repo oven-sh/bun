@@ -1232,6 +1232,25 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.tunnel().is_some_and(|t| t.has_backpressure())
     }
 
+    pub(crate) fn buffered_amount(&self) -> usize {
+        self.send_buffer.borrow().readable_length()
+            + self.tunnel().map_or(0, |t| t.buffered_amount())
+    }
+
+    pub(crate) fn pause(&self) -> bool {
+        if let Some(tunnel) = self.tunnel() {
+            return tunnel.pause_stream();
+        }
+        self.tcp.get().pause_stream()
+    }
+
+    pub(crate) fn resume(&self) -> bool {
+        if let Some(tunnel) = self.tunnel() {
+            return tunnel.resume_stream();
+        }
+        self.tcp.get().resume_stream()
+    }
+
     /// Frame small unbackpressured sends on the stack; else fall back to [`Self::send_data`].
     fn send_frame(&self, bytes: Copy<'_>, payload_byte_len: usize, opcode: Opcode) {
         let frame_size = WebsocketHeader::frame_size_including_mask(payload_byte_len);
@@ -1625,6 +1644,20 @@ pub type WebSocketClientTLS = WebSocket<true>;
 pub fn bun__websocketclient__cancel(this: ThisPtr<crate::websocket_client::WebSocketClient>) {
     WebSocketClient::cancel(this)
 }
+// HOST_EXPORT(Bun__WebSocketClient__bufferedAmount, c)
+pub fn bun__websocketclient__buffered_amount(
+    this: &crate::websocket_client::WebSocketClient,
+) -> usize {
+    this.buffered_amount()
+}
+// HOST_EXPORT(Bun__WebSocketClient__pause, c)
+pub fn bun__websocketclient__pause(this: &crate::websocket_client::WebSocketClient) -> bool {
+    this.pause()
+}
+// HOST_EXPORT(Bun__WebSocketClient__resume, c)
+pub fn bun__websocketclient__resume(this: &crate::websocket_client::WebSocketClient) -> bool {
+    this.resume()
+}
 // HOST_EXPORT(Bun__WebSocketClient__close, c)
 pub fn bun__websocketclient__close(
     this: ThisPtr<crate::websocket_client::WebSocketClient>,
@@ -1695,6 +1728,20 @@ pub fn bun__websocketclient__write_string(
 // HOST_EXPORT(Bun__WebSocketClientTLS__cancel, c)
 pub fn bun__websocketclienttls__cancel(this: ThisPtr<crate::websocket_client::WebSocketClientTLS>) {
     WebSocketClientTLS::cancel(this)
+}
+// HOST_EXPORT(Bun__WebSocketClientTLS__bufferedAmount, c)
+pub fn bun__websocketclienttls__buffered_amount(
+    this: &crate::websocket_client::WebSocketClientTLS,
+) -> usize {
+    this.buffered_amount()
+}
+// HOST_EXPORT(Bun__WebSocketClientTLS__pause, c)
+pub fn bun__websocketclienttls__pause(this: &crate::websocket_client::WebSocketClientTLS) -> bool {
+    this.pause()
+}
+// HOST_EXPORT(Bun__WebSocketClientTLS__resume, c)
+pub fn bun__websocketclienttls__resume(this: &crate::websocket_client::WebSocketClientTLS) -> bool {
+    this.resume()
 }
 // HOST_EXPORT(Bun__WebSocketClientTLS__close, c)
 pub fn bun__websocketclienttls__close(

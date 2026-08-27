@@ -123,6 +123,9 @@ pub mod linker_context {
     #[path = "mergeSmallChunks.rs"]
     pub mod merge_small_chunks;
 
+    #[path = "crossChunkNames.rs"]
+    pub mod cross_chunk_names;
+
     #[path = "computeCrossChunkDependencies.rs"]
     pub mod compute_cross_chunk_dependencies;
 
@@ -277,6 +280,9 @@ pub mod options {
         /// The one shared string table every chunk's bytecode references by ordinal (`EncoderStringTable::serialize`).
         #[strum(serialize = "bytecode-string-table")]
         BytecodeStringTable,
+        /// The string table every chunk's `ModuleInfo` body indexes (`ModuleInfoStringTable::serialize`).
+        #[strum(serialize = "module-info-string-table")]
+        ModuleInfoStringTable,
         #[strum(serialize = "metafile-json")]
         MetafileJson,
         #[strum(serialize = "metafile-markdown")]
@@ -292,6 +298,7 @@ pub mod options {
                     | OutputKind::ModuleInfo
                     | OutputKind::BuiltinBytecode
                     | OutputKind::BytecodeStringTable
+                    | OutputKind::ModuleInfoStringTable
                     | OutputKind::MetafileJson
                     | OutputKind::MetafileMarkdown
             )

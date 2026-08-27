@@ -160,6 +160,48 @@ describe("bundler", () => {
     outfile: "/out.js",
     run: { file: "/user.mjs", stdout: "bar bar" },
   });
+  // An entry point that another entry point imports: still a module of its own (parsed once, as an entry point),
+  // and the importer links to it rather than past it.
+  for (const splitting of [false, true]) {
+    itBundled(`cjs2esm/ModuleExportsEqualsRequireEntryPointImportedByEntryPoint${splitting ? "Splitting" : ""}`, {
+      files: {
+        "/a.js": /* js */ `
+          import lib from './b.js';
+          console.log('a', lib.foo);
+        `,
+        "/b.js": /* js */ `
+          module.exports = require('./library.js')
+        `,
+        "/library.js": /* js */ `
+          module.exports = { foo: 'bar' };
+        `,
+        "/user.mjs": /* js */ `
+          await import('./out/a.js');
+          const b = await import('./out/b.js');
+          console.log('b', b.default.foo);
+        `,
+      },
+      entryPoints: ["/a.js", "/b.js"],
+      outdir: "/out",
+      splitting,
+      run: { file: "/user.mjs", stdout: "a bar\nb bar" },
+    });
+  }
+  // Two re-export-only entry points over the same target: two modules, one shared target.
+  itBundled("cjs2esm/ModuleExportsEqualsRequireTwoEntryPoints", {
+    files: {
+      "/a.js": `module.exports = require('./library.js')`,
+      "/b.js": `module.exports = require('./library.js')`,
+      "/library.js": `module.exports = { foo: 'bar' };`,
+      "/user.mjs": /* js */ `
+        const [a, b] = await Promise.all([import('./out/a.js'), import('./out/b.js')]);
+        console.log(a.default.foo, b.default.foo);
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    run: { file: "/user.mjs", stdout: "bar bar" },
+  });
   itBundled("cjs2esm/ModuleExportsBasedOnNodeEnvProduction", {
     files: {
       "/entry.js": /* js */ `

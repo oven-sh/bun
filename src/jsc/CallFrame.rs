@@ -228,11 +228,8 @@ pub struct CallerSrcLoc {
 /// Node.fs, `will_be_async` is set to true which allows string/path APIs to
 /// know if they have to do threadsafe clones.
 pub struct ArgumentsSlice<'a> {
-    /// Backing storage for the remaining-args view. [`Self::init`] borrows the
-    /// source slice, which already ties this struct's lifetime to it, so a
-    /// heap-owned dupe buys nothing here (it could not outlive `'a`). Kept as
-    /// `Cow` so a future caller that does own its args can pass `Owned`
-    /// without changing the type.
+    /// Backing storage for the remaining-args view. A `Cow` so a caller that
+    /// owns its args can pass `Owned` without changing the type.
     remaining_buf: Cow<'a, [JSValue]>,
     /// Cursor into `remaining_buf`; advances on `eat()`.
     remaining_start: usize,

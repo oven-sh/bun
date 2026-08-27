@@ -2086,28 +2086,13 @@ impl<'a> Lexer<'a> {
                     } // EOF? Stop.
 
                     0x23 | 0x40 => {
-                        let pragma_trigger_pos = self.end; // Position OF #/@
-                        // Use remaining() which starts *after* the consumed #/@
-                        // Note: reshaped for borrowck — `remaining()` borrows
-                        // `self.contents`; `scan_pragma` needs `&mut self`.
-                        // Detach via `StoreStr` (arena-owned, lives for parse).
+                        // `remaining()` borrows `self.contents` and `scan_pragma` needs
+                        // `&mut self`, so detach the slice into the arena first.
+                        let pragma_trigger_pos = self.end;
                         let chunk = js_ast::StoreStr::new(self.remaining());
-                        let offset = self.scan_pragma(pragma_trigger_pos, chunk.slice(), true);
-
-                        if offset > 0 {
-                            // Pragma found (e.g., __PURE__).
-                            // Advance current past the pragma's argument text.
-                            // 'current' is already after the #/@ trigger.
-                            self.current += offset;
-                            // Do NOT consume the character immediately after the pragma.
-                            // Let the main loop find the actual line terminator.
-
-                            // Continue the outer loop from the position AFTER the pragma arg.
-                            continue;
-                        }
-                        // If offset == 0, it wasn't a valid pragma start.
-                        // Not a pragma or is_json. Treat #/@ as a normal comment character.
-                        // The character was consumed by step(). Let the outer loop continue.
+                        // 0 when this `#`/`@` starts no pragma. The character after the
+                        // pragma argument is left for the main loop.
+                        self.current += self.scan_pragma(pragma_trigger_pos, chunk.slice(), true);
                         continue;
                     }
                     _ => {

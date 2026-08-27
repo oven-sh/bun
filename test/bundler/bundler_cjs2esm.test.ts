@@ -182,7 +182,7 @@ describe("bundler", () => {
     },
     entryPoints: ["/a.js", "/b.js"],
     outdir: "/out",
-    run: { file: "/user.mjs", stdout: "a bar\\nb bar" },
+    run: { file: "/user.mjs", stdout: "a bar\nb bar" },
   });
   itBundled("cjs2esm/ModuleExportsEqualsRequireEntryPointImportedByEntryPointSplitting", {
     files: {
@@ -205,7 +205,7 @@ describe("bundler", () => {
     entryPoints: ["/a.js", "/b.js"],
     outdir: "/out",
     splitting: true,
-    run: { file: "/user.mjs", stdout: "a bar\\nb bar" },
+    run: { file: "/user.mjs", stdout: "a bar\nb bar" },
   });
   // Two re-export-only entry points over the same target: two modules, one shared target.
   itBundled("cjs2esm/ModuleExportsEqualsRequireTwoEntryPoints", {

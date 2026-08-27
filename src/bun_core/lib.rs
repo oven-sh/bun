@@ -2013,22 +2013,21 @@ pub(crate) mod strings_impl {
             return None;
         }
 
-        // A longer name that starts with `item` (`_authtoken`, `_auth_`) is a misspelling
-        // of it, and its value is just as secret. A closing quote ends a quoted ini key.
+        let mut whitespace = false;
         let mut offset = item.len();
-        while offset < text.len() && crate::js_lexer::is_identifier_continue(text[offset] as i32) {
-            offset += 1;
-        }
-        if offset < text.len() && matches!(text[offset], b'"' | b'\'') {
-            offset += 1;
-        }
         while offset < text.len() && text[offset].is_ascii_whitespace() {
             offset += 1;
+            whitespace = true;
         }
         if offset == text.len() {
             return None;
         }
         let cont = crate::js_lexer::is_identifier_continue(text[offset] as i32);
+
+        // must be another identifier
+        if !whitespace && cont {
+            return None;
+        }
 
         // `null` is not returned after this point. Redact to the next
         // newline if anything is unexpected
@@ -2089,6 +2088,9 @@ pub(crate) mod strings_impl {
     /// Returns offset and length of first secret found.
     pub(crate) fn starts_with_secret(str: &[u8]) -> Option<(usize, usize)> {
         if let Some(r) = starts_with_redacted_item(str, b"_auth") {
+            return Some(r);
+        }
+        if let Some(r) = starts_with_redacted_item(str, b"_authToken") {
             return Some(r);
         }
         if let Some(r) = starts_with_redacted_item(str, b"email") {

@@ -1139,9 +1139,7 @@ impl<'a> Formatter<'a> {
                             writer.write_all(pretty_fmt_const!(true, "<r><green>").as_bytes());
                         }
 
-                        // Only a top-level multiline value gets the newline
-                        // wrap (jest's addExtraLineBreaks); nested strings
-                        // print inline.
+                        // Jest wraps only a top-level multiline value (addExtraLineBreaks).
                         let wrap = self.indent == 0 && str.index_of_any(b"\n\r").is_some();
                         if wrap {
                             writer.write_all(b"\n");

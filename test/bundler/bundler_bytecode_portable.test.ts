@@ -148,6 +148,45 @@ function shapesSource() {
   return lines.join("\n") + "\n";
 }
 
+// Source text in the forms a bundler would normalize away but that reach JSC as-is through vm.Script (and jsc/other
+// embedders): a hashbang line, CRLF line endings, U+2028/U+2029 both as line terminators and inside literals, U+FEFF as
+// whitespace, \u{...} escapes in identifiers, strings, templates and regular expressions (an identifier spelled with
+// escapes and spelled literally is one binding), line continuations, HTML-like comments, and the sloppy-only lexical
+// forms Bun's transpiler refuses: duplicate parameter names, legacy octal literals and octal string escapes. Also the
+// strict-mode contrast to records.js's sloppy section (block-scoped function declarations, unmapped arguments,
+// undefined this, eval's own scope), here rather than there because the bundler drops function-level "use strict"
+// directives. Line and column bookkeeping for all of these ends up in the cached functions' positions.
+function sourceFormsSource() {
+  const LS = " ", PS = " ", ZWNBSP = "﻿";
+  const lines = [
+    "#!/usr/bin/env not-a-real-interpreter",
+    "var out = [];",
+    "var \\u{1d49c}\\u0061 = 'escaped astral';",
+    "out.push(\u{1d49c}a === \\u{1d49c}a, '\\u{1F600}'.length, /\\u{1F600}/u.test('\u{1F600}'), `\\u{41}${'\\u0042'}\\x43`);",
+    "var caf\\u00e9 = 1; out.push(café + caf\\u00e9);",
+    `out.push('a${LS}b'.length, "c${PS}d".length, \`e${LS}f\`.length);`,
+    `function acrossSeparators(x) {${LS}  var y = x + 1;${PS}  return y * 2;${LS}}`,
+    "out.push(acrossSeparators(20), acrossSeparators.toString().length);",
+    `out.push(${ZWNBSP}1 +${ZWNBSP}2${ZWNBSP});`,
+    "out.push('line \\",
+    "continued'.length, `template",
+    "with a CRLF inside`.indexOf('\\r'), String.raw`raw",
+    "CRLF`.length);",
+    "<!-- an HTML-like comment, to the end of the line",
+    "out.push('after html comment');",
+    "--> also a comment when it starts a line",
+    "function dup(a, a) { return a; }",
+    "out.push(dup(1, 2), 010, 0o10, '\\101\\0'.length, '\\7'.charCodeAt(0));",
+    "function positions() {\treturn (function inner() {\t\treturn new Error().stack !== undefined; })(); }",
+    "out.push(positions());",
+    "function strictForms(a) { 'use strict'; var r = []; { function inBlock() { return 'block'; } r.push(inBlock()); } r.push(typeof inBlock); arguments[0] = 'changed'; r.push(a, arguments[0], (function () { return typeof this; })()); eval('var leaked = 1;'); r.push(typeof leaked); return r; }",
+    "out.push(...strictForms('orig'), ...(function sloppyTwin(a) { arguments[0] = 'changed'; eval('var leaked = 1;'); return [a, (function () { return typeof this; })(), typeof leaked]; })('orig'));",
+    "console.log(JSON.stringify(out));",
+  ];
+  return lines.join("\r\n") + "\r\n";
+}
+const sourceFormsOutput = `[true,2,true,"ABC",2,3,3,3,42,65,3,14,-1,8,"after html comment",2,8,8,2,7,true,"block","undefined","orig","changed","undefined","undefined","changed","object","number"]`;
+
 const corpusBuilds = [
   { name: "bun build --bytecode features.js", entry: "./features.js", args: [] as string[], output: featuresOutput },
   {
@@ -267,6 +306,10 @@ describe("bytecode cache portability", () => {
     outputs["vm.Script big.js"] = fingerprint(
       "vm.Script big.js",
       new vm.Script(bigSource(), { filename: "big.js", produceCachedData: true }).cachedData!,
+    );
+    outputs["vm.Script source-forms.js"] = fingerprint(
+      "vm.Script source-forms.js",
+      new vm.Script(sourceFormsSource(), { filename: "source-forms.js", produceCachedData: true }).cachedData!,
     );
     const librarySource = (lib: string) => readFileSync(join(corpusDir, "../../node_modules", lib), "utf8");
     outputs["vm.Script lodash.js"] = fingerprint(
@@ -522,9 +565,35 @@ describe("bytecode cache portability", () => {
     });
   }
 
+  // A payload this build cannot use (written by an incompatible build, cut short, empty) must cost a parse, nothing more.
+  // Byte 20 is the entry header's callee-save register count; changing any header byte also fails the header checksum.
+  for (const [variant, spoil] of [
+    ["a different build's header", (jsc: Buffer) => ((jsc[20] ^= 0xff), jsc)],
+    ["truncated", (jsc: Buffer) => jsc.subarray(0, 200)],
+    ["empty", (jsc: Buffer) => jsc.subarray(0, 0)],
+  ] as const) {
+    test.concurrent(`a .jsc that is ${variant} is a cache miss, not a crash`, async () => {
+      using dir = tempDir("bytecode-portable-reject", {});
+      const { jsc } = await bundle(String(dir), "./records.js", []);
+      writeFileSync(join(String(dir), "records.js.jsc"), spoil(Buffer.from(jsc)));
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "records.js")],
+        env: { ...bunEnv, BUN_JSC_verboseDiskCache: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("Cache hit");
+      expect(stderr).toContain("[Disk Cache] Cache miss for sourceCode");
+      expect(stdout).toBe(recordsOutput + "\n");
+      expect(exitCode).toBe(0);
+    });
+  }
+
   for (const [file, source, output] of [
     ["features.js", featuresSource, featuresOutput],
     ["records.js", recordsSource, recordsOutput],
+    ["source-forms.js", sourceFormsSource(), sourceFormsOutput],
   ] as const) {
     test.concurrent(`vm.Script cachedData for ${file} is accepted and runs`, async () => {
       const { cachedData } = new vm.Script(source, { filename: file, produceCachedData: true });
@@ -532,7 +601,7 @@ describe("bytecode cache portability", () => {
       expect(script.cachedDataRejected).toBe(false);
       const lines: string[] = [];
       const context = vm.createContext({ console: { log: (...args: unknown[]) => lines.push(args.join(" ")) } });
-      await script.runInContext(context); // both scripts end in the promise that prints their output
+      await script.runInContext(context); // features.js and records.js end in the promise that prints their output
       expect(lines.join("\n")).toBe(output);
     });
   }

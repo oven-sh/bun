@@ -197,10 +197,6 @@ function generate(ssl) {
         cache: true,
       },
 
-      //   cork: {
-      //     fn: "cork",
-      //     length: 1,
-      //   },
       data: {
         getter: "getData",
         cache: true,
@@ -209,10 +205,6 @@ function generate(ssl) {
       readyState: {
         getter: "getReadyState",
       },
-
-      // topics: {
-      //   getter: "getTopics",
-      // },
 
       remoteFamily: {
         getter: "getRemoteFamily",

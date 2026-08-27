@@ -50,8 +50,6 @@ pub struct CopyFile {
     pub(crate) system_error: Option<SystemError>,
 
     pub(crate) read_len: SizeType,
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(crate) read_off: SizeType,
 
     pub(crate) mkdirp_if_not_exists: bool,
     #[cfg(not(windows))]
@@ -115,8 +113,6 @@ impl CopyFile {
             source_fd: Fd::INVALID,
             system_error: None,
             read_len: 0,
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            read_off: 0,
         };
         let cx = global_this.js_thread();
         let promise = jsc::JSPromiseStrong::init(global_this);
@@ -349,8 +345,6 @@ impl CopyFile {
         &mut self,
     ) -> Result<(), crate::Error> {
         use bun_sys::linux;
-
-        self.read_off += self.offset;
 
         let mut remain: usize = self.max_length as usize;
         let unknown_size = remain == MAX_SIZE as usize || remain == 0;

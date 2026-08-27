@@ -100,7 +100,6 @@ impl Drop for ArenaResetGuard {
 pub enum FetchFlags {
     Transpile,
     PrintSource,
-    PrintSourceAndClone,
 }
 
 impl FetchFlags {

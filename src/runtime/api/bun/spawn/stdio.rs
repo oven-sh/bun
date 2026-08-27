@@ -59,7 +59,6 @@ pub enum Stdio {
     Dup2(Dup2),
     Path(PathLike<'static>),
     Blob(webcore::blob::Any),
-    ArrayBuffer(jsc::array_buffer::ArrayBufferStrong),
     Memfd(Fd),
     Pipe,
     /// Like `Pipe` at indices >= 3, but the parent end of the socketpair is
@@ -111,7 +110,6 @@ impl Stdio {
             // returned slice borrows `self` and the caller guarantees the
             // Vec<u8> outlives this Stdio.
             Self::Capture(c) => unsafe { (*c.buf).slice() },
-            Self::ArrayBuffer(ab) => ab.array_buffer.byte_slice(),
             Self::Blob(blob) => blob.slice(),
             _ => &[],
         }
@@ -127,7 +125,7 @@ impl Stdio {
         #[cfg(all(any(target_os = "linux", target_os = "android"), not(target_env = "ohos")))]
         match self {
             Self::Blob(blob) => !blob.needs_to_read_file(),
-            Self::Memfd(_) | Self::ArrayBuffer(_) => true,
+            Self::Memfd(_) => true,
             // `Self::Pipe` is never memfd: a memfd has no EOF signal, so a
             // grandchild still writing after the child exits would be lost.
             _ => false,
@@ -292,9 +290,7 @@ impl Stdio {
                 out: d.out,
                 to: d.to,
             }),
-            Self::Capture(_) | Self::Pipe | Self::ArrayBuffer(_) | Self::ReadableStream(_) => {
-                buffer()
-            }
+            Self::Capture(_) | Self::Pipe | Self::ReadableStream(_) => buffer(),
             #[cfg(not(windows))]
             Self::SocketFd => SpawnOptionsStdio::SocketFd,
             // Windows extra-stdio is a libuv pipe handle (no raw-fd ownership
@@ -318,11 +314,7 @@ impl Stdio {
 
     pub(crate) fn is_piped(&self) -> bool {
         match self {
-            Self::Capture(_)
-            | Self::ArrayBuffer(_)
-            | Self::Blob(_)
-            | Self::Pipe
-            | Self::ReadableStream(_) => true,
+            Self::Capture(_) | Self::Blob(_) | Self::Pipe | Self::ReadableStream(_) => true,
             Self::Ipc => cfg!(windows),
             _ => false,
         }
@@ -575,15 +567,9 @@ impl Stdio {
                 )));
             }
 
-            let copied_value =
-                jsc::array_buffer::ArrayBuffer::create_buffer(global, array_buffer.byte_slice())?;
-            let copied = copied_value
-                .as_array_buffer(global)
-                .expect("create_buffer returns a Uint8Array");
-            *out_stdio = Stdio::ArrayBuffer(jsc::array_buffer::ArrayBufferStrong {
-                array_buffer: copied,
-                held: jsc::StrongOptional::create(copied.value, global),
-            });
+            *out_stdio = Stdio::Blob(webcore::blob::Any::from_owned_slice(
+                array_buffer.byte_slice().to_vec(),
+            ));
             return Ok(());
         }
 
@@ -684,9 +670,6 @@ impl Stdio {
 impl Drop for Stdio {
     fn drop(&mut self) {
         match self {
-            Self::ArrayBuffer(_array_buffer) => {
-                // `array_buffer.deinit()` — handled by field Drop.
-            }
             Self::Blob(blob) => {
                 blob.detach();
             }

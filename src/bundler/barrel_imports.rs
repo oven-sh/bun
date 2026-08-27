@@ -120,6 +120,19 @@ fn apply_barrel_optimization_impl(
     if !is_explicit && !is_side_effects_false {
         return Ok(());
     }
+    // An entry point's exports are the public interface of the build. No file
+    // imports an entry point, so nothing seeds `requested_exports` for it and a
+    // deferred record would never be un-deferred. The linked output would then
+    // emit the export clause with the re-exported bindings shaken away.
+    if this
+        .graph
+        .entry_points
+        .iter()
+        .any(|ep| ep.get() == source_index)
+    {
+        return Ok(());
+    }
+
     let ast = &mut result.ast;
     if ast.import_records.len() == 0 {
         return Ok(());

@@ -208,14 +208,6 @@ impl<'a> Writable<'a> {
                         super::source_from_blob(blob),
                     )));
                 }
-                Stdio::ArrayBuffer(array_buffer) => {
-                    return Ok(Writable::Buffer(StaticPipeWriter::create(
-                        evtloop,
-                        subprocess as *mut Subprocess<'a>,
-                        result,
-                        super::source_from_array_buffer(core::mem::take(array_buffer)),
-                    )));
-                }
                 Stdio::Fd(fd) => {
                     return Ok(Writable::Fd(*fd));
                 }
@@ -312,12 +304,6 @@ impl<'a> Writable<'a> {
                     super::source_from_blob(blob),
                 )))
             }
-            Stdio::ArrayBuffer(array_buffer) => Ok(Writable::Buffer(StaticPipeWriter::create(
-                evtloop,
-                std::ptr::from_mut::<Subprocess<'a>>(subprocess),
-                result,
-                super::source_from_array_buffer(core::mem::take(array_buffer)),
-            ))),
             Stdio::Memfd(_) => {
                 // Transfer ownership: `Stdio`'s Drop would close the memfd, so
                 // take it out via ManuallyDrop (same pattern as the Blob arm)

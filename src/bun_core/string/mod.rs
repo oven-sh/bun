@@ -134,6 +134,11 @@ unsafe extern "C" {
     fn BunString__tryCreateAtom(bytes: *const u8, len: usize) -> String;
     fn BunString__createStaticExternalLatin1(bytes: *const u8, len: usize) -> String;
     fn BunString__createStaticExternalUTF16(units: *const u16, len: usize) -> String;
+    fn BunString__createStaticExternalLatin1WithHash(
+        bytes: *const u8,
+        len: usize,
+        hash: u32,
+    ) -> String;
     fn BunString__createExternal(
         bytes: *const u8,
         len: usize,
@@ -831,6 +836,13 @@ impl String {
         // SAFETY: bytes describes a valid slice; C++ side stores ptr/len
         // without copying and never frees it.
         unsafe { BunString__createStaticExternalLatin1(bytes.as_ptr(), bytes.len()) }
+    }
+    /// [`Self::create_static_external_latin1`] with `WTF::StringImpl::hash()` of `bytes` already known, so the
+    /// result is thread-shareable without reading the bytes.
+    pub fn create_static_external_latin1_with_hash(bytes: &'static [u8], hash: u32) -> Self {
+        debug_assert!(!bytes.is_empty());
+        // SAFETY: as above; `hash` is StringImpl::hash() of `bytes`.
+        unsafe { BunString__createStaticExternalLatin1WithHash(bytes.as_ptr(), bytes.len(), hash) }
     }
     /// UTF-16 form of [`Self::create_static_external_latin1`].
     pub fn create_static_external_utf16(units: &'static [u16]) -> Self {

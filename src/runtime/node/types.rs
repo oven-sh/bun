@@ -341,6 +341,25 @@ impl StringOrBuffer<'static> {
         unsafe { ThreadIsolated::new(Self::owned(bytes)) }
     }
 
+    /// For a work-pool job without a pin: copies a buffer's current bytes, isolates a string.
+    pub(crate) fn make_thread_isolated_copy(&mut self, global: &JSGlobalObject) {
+        match self {
+            Self::Buffer(buffer) => {
+                if let Some(current) = buffer.buffer.value.as_array_buffer(global) {
+                    buffer.buffer = current;
+                }
+                let bytes = buffer.slice().to_vec();
+                global.vm().report_extra_memory(bytes.len());
+                *self = Self::owned(bytes);
+            }
+            Self::String(str) => {
+                str.make_thread_isolated();
+                *self = Self::ThreadIsolatedString(core::mem::take(str));
+            }
+            Self::ThreadIsolatedString(_) | Self::Utf8(_) | Self::PinnedBuffer(_) => {}
+        }
+    }
+
     /// `value` is ArrayBuffer-like (the caller checked): borrowed for `Sync`,
     /// pinned and GC-rooted for `Async`.
     pub(crate) fn buffer_from_js(

@@ -204,11 +204,12 @@ console.log(utils());`,
           stdout: "pipe",
           stderr: "pipe",
         });
-        const text = await proc.stdout.text();
-        await proc.exited;
+        const [text, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
         expect(text).toContain(path.join(baseDir, "我") + "\n");
         expect(text).toContain(path.join(baseDir, "我", "我.ts") + "\n");
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
       }
 
       {
@@ -237,13 +238,14 @@ console.log(utils());`,
           stdout: "pipe",
           stderr: "pipe",
         });
-        const text = await proc.stdout.text();
-        await proc.exited;
+        const [text, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
         const dir = process.platform === "win32" ? "B:\\~BUN\\root" : "/$bunfs/root";
         expect(text).toContain(dir + "\n");
         expect(text).toContain(path.join(dir, "exe.exe") + "\n");
         expect(text).not.toContain(baseDir);
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
       }
     }, 60_000);
 

@@ -288,13 +288,11 @@ impl ClientSession {
         false
     }
 
-    /// The lsquic stream is gone and no FIN reached `on_stream_data` (a FIN
-    /// detaches the stream inside `deliver`, so `on_stream_close` never sees
-    /// an attached stream after one). The peer sent RESET_STREAM, or the
-    /// connection closed under the stream. Before the response headers this
-    /// is the stale-session race that `deliver` retries. After them the body
-    /// is truncated: the H3 twin of an HTTP/1 close without the last chunk,
-    /// and of H2's RST_STREAM mid-body (`HTTP2StreamReset`).
+    /// The lsquic stream closed without a FIN: a delivered FIN detaches the
+    /// stream inside `deliver`, so a stream still attached here got none.
+    /// Before the response headers, `deliver` retries the stale-session race.
+    /// After them the body is truncated and the request fails, as H2 does
+    /// with `HTTP2StreamReset`.
     pub(crate) fn on_stream_closed(&mut self, stream: *mut Stream, peer_reset: bool) {
         let st = stream_mut(stream);
         let Some(client_ptr) = st.client else {
@@ -313,12 +311,10 @@ impl ClientSession {
         self.fail(stream, err);
     }
 
-    /// Runs from inside lsquic's process_conns via on_stream_{headers,data}
-    /// and, before the response headers arrive, `on_stream_closed`. `done` =
-    /// the peer's FIN arrived (or the stream is gone before headers); deliver
-    /// whatever is buffered then detach. Mirrors H2's
-    /// `ClientSession.deliverStream` so the HTTPClient state machine sees the
-    /// same call sequence regardless of transport.
+    /// Runs from inside lsquic's process_conns via on_stream_{headers,data},
+    /// and via `on_stream_closed` before the response headers. `done` = the
+    /// peer's FIN arrived; deliver whatever is buffered then detach. Mirrors
+    /// H2's `ClientSession.deliverStream`.
     pub(crate) fn deliver(&mut self, stream: *mut Stream, done: bool) {
         let st = stream_mut(stream);
         let Some(client_ptr) = st.client else {

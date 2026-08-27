@@ -116,10 +116,9 @@ void uws_h3_res_end_stream(uws_h3_res_t* res, bool close_connection)
     r->sendTerminatingChunk(close_connection);
 }
 
-/* Server-side failure after the response started (a body stream errored,
- * a file read failed). HTTP/1 closes the socket without the terminating
- * chunk; the HTTP/3 equivalent is RESET_STREAM, since a FIN would hand the
- * client the truncated body as a complete message. */
+/* The body failed after the response started. A FIN would deliver the
+ * truncated body as a complete message; RESET_STREAM is the HTTP/3 form of
+ * HTTP/1's close without the terminating chunk. */
 void uws_h3_res_force_close(uws_h3_res_t* res)
 {
     ((Http3Response*)res)->clearOnWritableAndAborted();

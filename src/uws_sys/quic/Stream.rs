@@ -11,14 +11,11 @@ bun_opaque::opaque_ffi! {
     pub struct Stream;
 }
 
-/// HTTP/3 error codes (RFC 9114 §8.1) carried by `RESET_STREAM`. Mirrors the
-/// `US_H3_*` constants in `quic.h`.
+/// HTTP/3 error codes (RFC 9114 §8.1) for `RESET_STREAM`; the `US_H3_*` values in `quic.h`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u64)]
 pub enum H3ErrorCode {
-    /// The HTTP stack failed while producing the message.
     InternalError = 0x102,
-    /// The request or its response is cancelled by the sender.
     RequestCancelled = 0x10C,
 }
 
@@ -64,16 +61,14 @@ impl Stream {
         us_quic_stream_close(self)
     }
 
-    /// Abort the send half with `RESET_STREAM(error_code)` and close the
-    /// stream. Unlike [`Stream::close`], the peer does not see a FIN, which in
-    /// HTTP/3 would mark the bytes sent so far as a complete message.
+    /// `RESET_STREAM(error_code)` and close. Unlike [`Stream::close`] the peer
+    /// sees no FIN, which in HTTP/3 would mark the message complete.
     pub fn reset(&mut self, error_code: H3ErrorCode) {
         us_quic_stream_reset(self, error_code as u64)
     }
 
-    /// True once the peer has sent `RESET_STREAM` for the half we read from.
-    /// `on_stream_close` then follows without `on_stream_data` ever reporting
-    /// `fin`.
+    /// The peer sent `RESET_STREAM` for our read half. `on_stream_close` then
+    /// follows with no `fin` from `on_stream_data`.
     pub fn peer_reset(&mut self) -> bool {
         us_quic_stream_peer_reset(self) != 0
     }

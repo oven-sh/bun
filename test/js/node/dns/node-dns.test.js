@@ -1,5 +1,5 @@
-import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isLinux, isWindows, readUntil, tempDir } from "harness";
 import * as dgram from "node:dgram";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
@@ -1031,13 +1031,14 @@ describe("pending cache", () => {
   });
 });
 
-// dns.lookup() is getaddrinfo(3) on a pool thread, and getaddrinfo holds that
-// thread until the resolver answers. Lookups must not share the work pool with
+// dns.lookup() is getaddrinfo(3) on a pool thread, and so is the resolver
+// behind every socket connect (fetch, Bun.connect, node:net). getaddrinfo holds
+// that thread until the resolver answers. Neither must share the work pool with
 // file I/O: once one thread per core is waiting on a dead resolver, every
 // Bun.file read would queue behind them. The LD_PRELOAD shim below is the
 // resolver that never answers. Each call reports itself on stderr first, so the
 // test knows when the threads that took the calls are stuck for good.
-describe.skipIf(!isLinux)("lookup against an unresponsive resolver", () => {
+describe.skipIf(!isLinux)("getaddrinfo against an unresponsive resolver", () => {
   const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
   const GETADDRINFO_SHIM_C = /* c */ `
@@ -1054,8 +1055,9 @@ int getaddrinfo(const char* node, const char* service, const struct addrinfo* hi
   // The shared work pool is pinned to this many threads (UV_THREADPOOL_SIZE).
   const WORK_POOL_THREADS = 2;
 
-  // More lookups than the work pool has threads, so some are queued whichever
-  // pool they run on.
+  // More calls than the work pool has threads, so some are queued whichever
+  // pool they run on. argv[2] picks the API: dns.lookup() goes through the
+  // libc lookup job, fetch() through the connect resolver.
   const STARVATION_FIXTURE = /* js */ `
 import dns from "node:dns";
 
@@ -1064,72 +1066,72 @@ function report(result) {
   process.exit(result.starved === false ? 0 : 1);
 }
 
+const start =
+  process.argv[2] === "fetch" ? name => fetch("http://" + name + "/") : name => dns.promises.lookup(name);
 for (let i = 0; i < 8; i++) {
-  dns.promises.lookup("host-" + i + ".invalid").then(
-    value => report({ unexpected: "resolved", value }),
+  start("host-" + i + ".invalid").then(
+    () => report({ unexpected: "resolved" }),
     error => report({ unexpected: "rejected", code: error.code, message: error.message }),
   );
 }
 
-// The test closes stdin once ${WORK_POOL_THREADS} lookups are inside getaddrinfo.
+// The test closes stdin once ${WORK_POOL_THREADS} calls are inside getaddrinfo.
 // Stdin is a pipe, so the event loop reads it, not the work pool.
 await Bun.stdin.stream().getReader().read();
 
-// Bun.file().text() runs on the work pool. The stuck lookups hold the event
-// loop open forever, so a read that never completes is turned into a report.
+// Bun.file().text() runs on the work pool. The stuck calls hold the event loop
+// open forever, so a read that never completes is turned into a report.
 const watchdog = setTimeout(() => report({ starved: true }), 10_000);
 const text = await Bun.file(import.meta.path).text();
 clearTimeout(watchdog);
 report({ starved: false, read: text.length > 0 });
 `;
 
-  async function readUntil(stream, enough) {
-    const decoder = new TextDecoder();
-    const reader = stream.getReader();
-    let text = "";
-    try {
-      while (!enough(text)) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        text += decoder.decode(value, { stream: true });
-      }
-    } finally {
-      reader.releaseLock();
-    }
-    return text;
-  }
+  let dir;
+  let shimPath;
 
-  test.skipIf(!cc)("does not starve the work pool", async () => {
-    using dir = tempDir("dns-unresponsive-resolver", {
+  beforeAll(async () => {
+    if (!cc) return;
+    dir = tempDir("dns-unresponsive-resolver", {
       "shim.c": GETADDRINFO_SHIM_C,
       "fixture.js": STARVATION_FIXTURE,
     });
-    const root = String(dir);
-    const shimPath = join(root, "shim.so");
+    shimPath = join(String(dir), "shim.so");
     await using ccProc = Bun.spawn({
-      cmd: [cc, "-shared", "-fPIC", "-o", shimPath, join(root, "shim.c")],
+      cmd: [cc, "-shared", "-fPIC", "-o", shimPath, join(String(dir), "shim.c")],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
     const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
     if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
+  });
 
+  afterAll(() => {
+    dir?.[Symbol.dispose]();
+  });
+
+  test.concurrent.skipIf(!cc).each(["lookup", "fetch"])("%s does not starve the work pool", async api => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "fixture.js"],
-      cwd: root,
+      cmd: [bunExe(), "fixture.js", api],
+      cwd: String(dir),
       env: {
         ...bunEnv,
         LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shimPath}:${bunEnv.LD_PRELOAD}` : shimPath,
         UV_THREADPOOL_SIZE: String(WORK_POOL_THREADS),
+        // An inherited proxy would make every fetch resolve the one proxy host.
+        HTTP_PROXY: undefined,
+        HTTPS_PROXY: undefined,
+        http_proxy: undefined,
+        https_proxy: undefined,
       },
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });
 
-    // Wait until one lookup per work pool thread is stuck inside getaddrinfo.
-    // A fixture that exits before that printed why on stdout.
+    // Wait until one call per work pool thread is stuck inside getaddrinfo. A
+    // fixture that exits before that printed why on stdout.
     const saturated = await Promise.race([
       readUntil(proc.stderr, text => text.split("hung\n").length > WORK_POOL_THREADS).then(() => true),
       proc.exited.then(() => false),
@@ -1137,7 +1139,7 @@ report({ starved: false, read: text.length > 0 });
     if (saturated) proc.stdin.end();
 
     // The fixture cannot exit on its own under BUN_DESTRUCT_VM_ON_EXIT: the VM
-    // teardown waits for the stuck lookups. Read its verdict, then kill it.
+    // teardown waits for the stuck calls. Read its verdict, then kill it.
     const verdict = await readUntil(proc.stdout, text => text.includes("\n"));
     proc.kill();
     expect(verdict.trim()).toBe(JSON.stringify({ starved: false, read: true }));

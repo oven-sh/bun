@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isCI, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isCI, isLinux, isMacOS, isWindows, readUntil, tempDir } from "harness";
 import { join } from "node:path";
 
 // Helper to determine if we should use unrestricted keychain access
@@ -381,22 +381,6 @@ const text = await Bun.file(import.meta.path).text();
 clearTimeout(watchdog);
 report({ starved: false, read: text.length > 0 });
 `;
-
-async function readUntil(stream: ReadableStream<Uint8Array>, enough: (text: string) => boolean): Promise<string> {
-  const decoder = new TextDecoder();
-  const reader = stream.getReader();
-  let text = "";
-  try {
-    while (!enough(text)) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      text += decoder.decode(value, { stream: true });
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  return text;
-}
 
 test.skipIf(!isLinux || !cc)("hung keyring calls do not starve the work pool", async () => {
   using dir = tempDir("secrets-hung-keyring", {

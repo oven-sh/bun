@@ -102,11 +102,10 @@
     "HTTPThread::schedule": 1
   },
   "src/runtime/dns_jsc/dns.rs": {
-    "WorkPool::schedule*": 1,
     "unsafe impl Send": [
-      "GlobalCache",
-      "SendPtr<T>"
-    ]
+      "GlobalCache"
+    ],
+    "worker_pool.schedule(Batch)": 1
   },
   "src/runtime/image/Image.rs": {
     "unsafe impl Send": [

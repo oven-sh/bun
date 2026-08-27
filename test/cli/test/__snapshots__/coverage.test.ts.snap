@@ -3,8 +3,8 @@
 exports[`lcov coverage reporter: lcov-coverage-reporter-output 1`] = `
 "TN:
 SF:demo1.ts
-FN:2,(anonymous_2)
-FNDA:0,(anonymous_2)
+FN:2,(anonymous_2_1)
+FNDA:0,(anonymous_2_1)
 FNF:1
 FNH:0
 DA:2,19
@@ -15,10 +15,10 @@ LH:3
 end_of_record
 TN:
 SF:demo2.ts
-FN:4,(anonymous_4)
-FN:9,(anonymous_9)
-FNDA:1,(anonymous_4)
-FNDA:0,(anonymous_9)
+FN:4,(anonymous_4_36)
+FN:9,(anonymous_9_78)
+FNDA:1,(anonymous_4_36)
+FNDA:0,(anonymous_9_78)
 FNF:2
 FNH:1
 DA:2,28

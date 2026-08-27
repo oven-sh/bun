@@ -383,8 +383,8 @@ test("should call both functions", () => {
   expect(lcovContent).toMatchInlineSnapshot(`
 "TN:
 SF:include-me.ts
-FN:2,(anonymous_2)
-FNDA:1,(anonymous_2)
+FN:2,(anonymous_2_7)
+FNDA:1,(anonymous_2_7)
 FNF:1
 FNH:1
 DA:2,11
@@ -394,8 +394,8 @@ LH:2
 end_of_record
 TN:
 SF:test.test.ts
-FN:6,(anonymous_6)
-FNDA:1,(anonymous_6)
+FN:6,(anonymous_6_158)
+FNDA:1,(anonymous_6_158)
 FNF:1
 FNH:1
 DA:2,40
@@ -656,7 +656,7 @@ test("--parallel merges function coverage across workers", async () => {
     "bunfig.toml": `[test]
 coverageThreshold = { lines = 1.0, functions = 1.0 }
 `,
-    "subject.ts": `await Bun.sleep(250);
+    "subject.ts": `await Bun.sleep(500);
 export function first() {
   return 1;
 }
@@ -668,6 +668,8 @@ export function second() {
 import { expect, test } from "bun:test";
 import { first } from "./subject.ts";
 
+await Bun.write("pid-first.txt", String(process.pid));
+
 test("calls first", () => {
   expect(first()).toBe(1);
 });
@@ -676,21 +678,41 @@ test("calls first", () => {
 import { expect, test } from "bun:test";
 import { second } from "./subject.ts";
 
+await Bun.write("pid-second.txt", String(process.pid));
+
 test("calls second", () => {
   expect(second()).toBe(2);
 });
 `,
   });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", "--parallel=2"],
-    // Spawn both workers at once so each takes one test file. The 250ms
-    // top-level sleep in subject.ts keeps the first worker busy so the
-    // second file is not picked up by the same worker.
-    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
-    cwd: String(dir),
-    stderr: "pipe",
-  });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  // The union is only exercised when the two files run in different worker
+  // processes: a single worker hits both functions on its own. The 500ms
+  // top-level sleep in subject.ts keeps the first worker busy so the second
+  // file goes to the second worker (spawned at once via
+  // BUN_TEST_PARALLEL_SCALE_MS=0). Each test file records its pid; retry the
+  // run if scheduling still collapsed onto one worker.
+  let stderr = "";
+  let exitCode = -1;
+  let pids = new Set<string>();
+  for (let attempt = 0; attempt < 3 && pids.size < 2; attempt++) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", "--parallel=2"],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    pids = new Set(
+      await Promise.all([
+        Bun.file(path.join(String(dir), "pid-first.txt")).text(),
+        Bun.file(path.join(String(dir), "pid-second.txt")).text(),
+      ]),
+    );
+  }
+  // Precondition: the two test files ran in distinct workers.
+  expect(pids.size).toBe(2);
 
   expect(stderr).toContain("2 pass");
   const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");

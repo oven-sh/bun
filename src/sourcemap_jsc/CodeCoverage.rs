@@ -313,19 +313,25 @@ pub mod lcov {
         writer.write_all(b"\n")?;
 
         // JSC does not expose function names, so synthesize one from the
-        // 1-based start line. Ranges that start on the same line collapse into
-        // one record. The parallel merge unions FNDA hits across workers by
-        // name, so disjoint per-worker function coverage adds up (#40586).
-        let mut fn_records: Vec<(u32, bool)> = Vec::with_capacity(report.functions.len());
+        // 1-based start line plus the start byte offset in the generated
+        // source. The offset keeps distinct functions that start on the same
+        // line distinct and collapses only true duplicate ranges (a relinked
+        // CodeBlock). It is stable across workers for the same file, so the
+        // parallel merge can union FNDA hits by name (#40586).
+        let mut fn_records: Vec<(u32, u32, bool)> = Vec::with_capacity(report.functions.len());
         for function in &report.functions {
             if function.start_line != u32::MAX {
-                fn_records.push((function.start_line + 1, function.executed));
+                fn_records.push((
+                    function.start_line + 1,
+                    function.start_offset,
+                    function.executed,
+                ));
             }
         }
-        index_sort::sort_slice_unstable_by(&mut fn_records, |a, b| a.0.cmp(&b.0));
+        index_sort::sort_slice_unstable_by(&mut fn_records, |a, b| (a.0, a.1).cmp(&(b.0, b.1)));
         fn_records.dedup_by(|next, prev| {
-            if next.0 == prev.0 {
-                prev.1 |= next.1;
+            if next.0 == prev.0 && next.1 == prev.1 {
+                prev.2 |= next.2;
                 true
             } else {
                 false
@@ -333,13 +339,19 @@ pub mod lcov {
         });
 
         // FN: line number,function name
-        for &(line, _) in &fn_records {
-            writeln!(writer, "FN:{},(anonymous_{})", line, line)?;
+        for &(line, offset, _) in &fn_records {
+            writeln!(writer, "FN:{},(anonymous_{}_{})", line, line, offset)?;
         }
 
         // FNDA: execution count,function name
-        for &(line, executed) in &fn_records {
-            writeln!(writer, "FNDA:{},(anonymous_{})", u32::from(executed), line)?;
+        for &(line, offset, executed) in &fn_records {
+            writeln!(
+                writer,
+                "FNDA:{},(anonymous_{}_{})",
+                u32::from(executed),
+                line,
+                offset
+            )?;
         }
 
         // FNF: functions found
@@ -349,7 +361,10 @@ pub mod lcov {
         writeln!(
             writer,
             "FNH:{}",
-            fn_records.iter().filter(|&&(_, executed)| executed).count()
+            fn_records
+                .iter()
+                .filter(|&&(_, _, executed)| executed)
+                .count()
         )?;
 
         // ** Track all executable lines **
@@ -629,6 +644,7 @@ impl ByteRangeMapping {
 
                 functions.push(FunctionBlock {
                     start_line: min_line,
+                    start_offset: u32::try_from(min).expect("int cast"),
                     executed: did_fn_execute,
                 });
 
@@ -807,6 +823,7 @@ impl ByteRangeMapping {
 
                 functions.push(FunctionBlock {
                     start_line: min_line,
+                    start_offset: u32::try_from(min).expect("int cast"),
                     executed: did_fn_execute,
                 });
                 if did_fn_execute {
@@ -941,11 +958,14 @@ pub use bun_options_types::code_coverage_options::Fraction;
 pub struct Block {}
 
 /// Per-function coverage for the LCOV writer. JSC reports byte ranges only
-/// (no names), so the start line doubles as the function's identity when the
-/// parallel merge unions hits across workers.
+/// (no names), so the start line and start offset double as the function's
+/// identity when the parallel merge unions hits across workers.
 #[derive(Clone, Copy)]
 pub struct FunctionBlock {
     /// 0-based start line; `u32::MAX` when the range maps to no line.
     pub(crate) start_line: u32,
+    /// Start byte offset in the generated source. Distinguishes functions
+    /// that start on the same line.
+    pub(crate) start_offset: u32,
     pub(crate) executed: bool,
 }

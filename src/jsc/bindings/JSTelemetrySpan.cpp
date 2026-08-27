@@ -145,9 +145,12 @@ public:
     unsigned dropped() const { return m_dropped; }
 
     // null | JSArray [key0, value0, …] → the slice of pool().items it fills.
-    TelemetryAttrSlice gather(JSValue flat);
+    // Pairs past `maxPairs` are counted in dropped() instead.
+    TelemetryAttrSlice gather(JSValue flat, unsigned maxPairs = kTelemetryMaxGather);
     TelemetryAttrSlice gatherOne(JSString* key, JSValue value);
-    // An isPlainAttributesObject's own enumerable properties, keys borrowed from its Structure.
+    // An isPlainAttributesObject's own enumerable properties, keys borrowed
+    // from its Structure. No cap: the pooled span applies limits.attributes
+    // and counts what it drops.
     TelemetryAttrSlice gatherPlainObject(VM&, JSObject*);
 
 private:
@@ -236,16 +239,16 @@ TelemetryAttrSlice TelemetryAttrGatherer::gatherOne(JSString* key, JSValue value
     return { start, 1 };
 }
 
-TelemetryAttrSlice TelemetryAttrGatherer::gather(JSValue flatValue)
+TelemetryAttrSlice TelemetryAttrGatherer::gather(JSValue flatValue, unsigned maxPairs)
 {
     uint32_t start = m_items.size();
     auto* flat = telemetryArray(flatValue);
     if (!flat)
         return { start, 0 };
     unsigned n = flat->length() & ~1u;
-    if (n > 2 * kTelemetryMaxGather) {
-        m_dropped += (n - 2 * kTelemetryMaxGather) / 2;
-        n = 2 * kTelemetryMaxGather;
+    if (n / 2 > maxPairs) {
+        m_dropped += n / 2 - maxPairs;
+        n = 2 * maxPairs;
     }
     m_items.reserveCapacity(start + n / 2);
     for (unsigned i = 0; i < n; i += 2) {
@@ -274,10 +277,6 @@ TelemetryAttrSlice TelemetryAttrGatherer::gatherPlainObject(VM& vm, JSObject* ob
         JSValue v = object->getDirect(entry.offset());
         if (v.isUndefinedOrNull())
             return true;
-        if (m_items.size() - start >= kTelemetryMaxGather) {
-            ++m_dropped;
-            return true;
-        }
         m_items.grow(m_items.size() + 1);
         if (!fill(m_items.last(), v, true)) {
             m_items.shrink(m_items.size() - 1);
@@ -466,8 +465,9 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetrySetAttributes, (JSGlobalObject * lexicalGlob
         return JSValue::encode(jsBoolean(true));
     JSValue flat = callFrame->argument(2);
     if (flat.isCell()) {
+        // No cap, like gatherPlainObject: every pair reaches the pooled span.
         TelemetryAttrGatherer gatherer;
-        if (gatherer.gather(flat).length) {
+        if (gatherer.gather(flat, std::numeric_limits<unsigned>::max()).length) {
             TelemetryAttrPool pool = gatherer.pool();
             Bun__Telemetry__nativeSetAttributes(globalObject, span->m_native, &pool);
         }

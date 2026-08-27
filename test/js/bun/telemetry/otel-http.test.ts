@@ -1395,6 +1395,60 @@ describe("attribute count limit", () => {
     })();
     expect(srv.droppedAttributesCount).toBe(Object.keys(full.attributes).length - 16);
   });
+
+  test("setAttributes with more keys than C++ gathers per list reaches the span with every key", async () => {
+    const N = 4200; // past TelemetryABI.h kTelemetryMaxGather
+    const plain: Record<string, number> = {};
+    for (let i = 0; i < N; i++) plain["k" + i] = i;
+    // a getter makes the object take the flattened (Object.keys) path
+    const exotic: Record<string, number> = {
+      get g0() {
+        return 0;
+      },
+    };
+    for (let i = 1; i < N; i++) exotic["g" + i] = i;
+    const serve = (attrs: object | null, prefix: string) =>
+      Bun.serve({
+        port: 0,
+        fetch() {
+          const s = Bun.otel.activeSpan()!;
+          if (attrs) {
+            s.setAttribute(prefix + (N - 1), -1);
+            s.setAttributes(attrs);
+          }
+          return new Response("x");
+        },
+      });
+    const request = async (server: { port: number }) => {
+      await (await fetch(`http://localhost:${server.port}/`)).text();
+      return byName(await collect(), "bun.http.server")[0];
+    };
+    let ownTotal: number;
+    {
+      using server = serve(null, "");
+      ownTotal = Object.keys((await request(server)).attributes).length;
+    }
+    const limit = 100;
+    for (const [attrs, prefix] of [
+      [plain, "k"],
+      [exotic, "g"],
+    ] as const) {
+      Bun.otel.start({
+        exporters: [{ export: (b: any[]) => spans.push(...b) }],
+        instrumentations: { http: true },
+        limits: { attributeCountLimit: limit },
+      });
+      using server = serve(attrs, prefix);
+      const srv = await request(server);
+      const keys = Object.keys(srv.attributes);
+      const kept = keys.filter(k => k.startsWith(prefix)).length;
+      expect(keys.length).toBe(limit);
+      // set first, so it is kept; the object's last key (past the 4096th) still overwrites it
+      expect(srv.attributes[prefix + (N - 1)]).toBe(N - 1);
+      // every key that did not fit is counted, including the ones past the 4096th (an overwrite is not a drop)
+      expect(srv.droppedAttributesCount).toBe(N - kept + (ownTotal - (keys.length - kept)));
+    }
+  });
 });
 
 describe("disable", () => {

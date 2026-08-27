@@ -397,7 +397,27 @@ impl UDPSocketConfig {
                         "Expected \"hostname\" to be a string"
                     )));
                 }
-                break 'brk value.to_bun_string(global_this)?;
+                let s = value.to_bun_string(global_this)?;
+                // Reject non-hostname characters up front: the uws bind path
+                // resolves via libc getaddrinfo, which on the OHOS sandbox
+                // spends ~4s per malformed name before failing (ESRCH/
+                // ETIMEOUT) — a 200-iteration leak test then hangs for 800s.
+                // Allow the DNS alphabet plus IPv6 literal/scope syntax
+                // ([ ] : %) and the zone-id '%' separator.
+                let hostname_bytes = s.to_utf8();
+                let bytes = hostname_bytes.as_ref();
+                if !bytes.is_empty()
+                    && !bytes
+                        .iter()
+                        .all(|&c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-' | b'_' | b'%' | b':' | b'[' | b']'))
+                {
+                    return Err(global_this.throw_value(
+                        bun_sys::Error::from_code_int(SystemErrno::EINVAL as c_int, bun_sys::Tag::open)
+                            .with_path(bytes)
+                            .to_js(global_this),
+                    ));
+                }
+                break 'brk s;
             } else {
                 break 'brk BunString::static_("0.0.0.0");
             }

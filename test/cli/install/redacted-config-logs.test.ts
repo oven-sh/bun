@@ -213,9 +213,9 @@ describe.concurrent("redact", async () => {
       expected: "supplies no credentials",
     },
     {
-      // A quoted key is a string literal, not an identifier, so it took a different
-      // path through the highlighter and the value came out verbatim under color.
-      // The misspelt option name is what makes a diagnostic print this line at all.
+      // The unknown-option warning names the option but never echoes the line, so no
+      // value can leak whatever the key's spelling: quoted, misspelt, or without the
+      // underscore. These rows pin that the warning prints and the value does not.
       title: "quoted _authToken key",
       npmrc: '"//registry.npmjs.org/:_authtoken"=npm_notarealtokenvalue',
       expected: "is not a known .npmrc option",
@@ -234,16 +234,12 @@ describe.concurrent("redact", async () => {
       secret: "SUPERSECRETVALUE",
     },
     {
-      // A typo that drops the underscore matches no redaction keyword, so the
-      // warning must not echo the line at all.
       title: "misspelt option without the underscore",
       npmrc: "//registry.npmjs.org/:authToken=npm_notarealtokenvalue",
       expected: "is not a known .npmrc option",
       secret: "npm_notarealtokenvalue",
     },
     {
-      // Unquoted twin of the above: the identifier path must redact after a
-      // misspelt option too, since the warning prints the line.
       title: "misspelt _authToken key",
       npmrc: "//registry.npmjs.org/:_authtoken=npm_notarealtokenvalue",
       expected: "is not a known .npmrc option",

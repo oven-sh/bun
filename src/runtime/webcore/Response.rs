@@ -1,11 +1,8 @@
 use core::cell::Cell;
-use core::ffi::c_void;
 use core::mem;
-use core::ptr::NonNull;
 
 use bun_jsc::JsCell;
-use bun_jsc::{AbortSignal, AbortSignalRef, GlobalRef};
-use bun_ptr::RefPtr;
+use bun_jsc::{AbortSignal, GlobalRef};
 
 use crate::webcore::jsc::{
     BuiltinName, CallFrame, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef,
@@ -24,117 +21,66 @@ use super::{FetchHeaders, ReadableStream, Request};
 pub use super::blob::Blob;
 use bun_ptr::weak_ptr::WeakPtrData;
 
-/// RAII handle to a C++-owned `WebCore::FetchHeaders`.
-///
-/// Holds exactly one ref on the C++ intrusive refcount; `Drop` releases it via
-/// `WebCore__FetchHeaders__deref`. NOT a `std::rc::Rc` (the payload lives on
-/// the C++ heap and is opaque here).
-///
-/// Intentionally not `Clone`: the only "share" operation the surface
-/// exposes is `clone_this()`, which deep-copies a fresh `FetchHeaders` on the
-/// C++ side. Transferring ownership is by-move.
-#[repr(transparent)]
-pub struct HeadersRef(NonNull<FetchHeaders>);
-
-impl HeadersRef {
-    /// Adopt a freshly-created `FetchHeaders*` (refcount already 1).
-    ///
-    /// # Safety
-    /// `ptr` must be a valid `WebCore::FetchHeaders*` and the caller must
-    /// transfer ownership of one ref.
-    #[inline]
-    pub(crate) unsafe fn adopt(ptr: NonNull<FetchHeaders>) -> Self {
-        Self(ptr)
-    }
-
-    #[inline]
-    pub(crate) fn as_ptr(&self) -> *mut FetchHeaders {
-        self.0.as_ptr()
-    }
-
-    /// `FetchHeaders.createEmpty()` — fresh C++ allocation, refcount 1.
-    #[inline]
-    pub(crate) fn create_empty() -> Self {
-        // SAFETY: C++ allocates a new FetchHeaders with refcount 1; never null.
-        unsafe { Self::adopt(FetchHeaders::create_empty()) }
-    }
-
-    /// `FetchHeaders.createFromUWS(req)` — fresh C++ allocation, refcount 1.
-    #[inline]
-    pub(crate) fn create_from_uws(uws_request: *mut core::ffi::c_void) -> Self {
-        // SAFETY: C++ allocates a new FetchHeaders with refcount 1; never null.
-        unsafe { Self::adopt(FetchHeaders::create_from_uws(uws_request)) }
-    }
-
-    /// `FetchHeaders.createFromJS(global, value)` — may throw, may return null.
-    #[inline]
-    pub(crate) fn create_from_js(
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsResult<Option<Self>> {
-        // SAFETY: C++ returns a +1 ref or null.
-        Ok(FetchHeaders::create_from_js(global, value)?.map(|p| unsafe { Self::adopt(p) }))
-    }
-
-    /// `FetchHeaders.cloneThis(global)` — deep copy on the C++ side.
-    #[inline]
-    pub(crate) fn clone_this(&self, global: &JSGlobalObject) -> JsResult<Option<Self>> {
-        // SAFETY: C++ returns a +1 ref or null.
-        Ok(bun_opaque::opaque_deref_mut(self.0.as_ptr())
-            .clone_this(global)?
-            .map(|p| unsafe { Self::adopt(p) }))
-    }
-}
-
-impl core::ops::Deref for HeadersRef {
-    type Target = FetchHeaders;
-    #[inline]
-    fn deref(&self) -> &FetchHeaders {
-        // `FetchHeaders` is an opaque ZST FFI handle (S008); `self.0` is live
-        // for the lifetime of `self` — safe `*const → &` via `opaque_deref`.
-        bun_opaque::opaque_deref(self.0.as_ptr())
-    }
-}
-
-impl core::ops::DerefMut for HeadersRef {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut FetchHeaders {
-        // `FetchHeaders` is an opaque ZST FFI handle (S008); `self.0` is live
-        // for the lifetime of `self` — safe `*mut → &mut` via `opaque_deref_mut`.
-        bun_opaque::opaque_deref_mut(self.0.as_ptr())
-    }
-}
-
-impl Drop for HeadersRef {
-    #[inline]
-    fn drop(&mut self) {
-        // `self.0` is live; releasing our +1 ref via WebCore__FetchHeaders__deref.
-        // Explicit UFCS to avoid `core::ops::Deref::deref` resolution ambiguity.
-        // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-        FetchHeaders::deref(bun_opaque::opaque_deref_mut(self.0.as_ptr()));
-    }
-}
+pub use bun_jsc::fetch_headers::HeadersRef;
 
 /// Errors the owning fetch `Response`'s body on abort (Fetch spec "abort a fetch" step 4).
 pub(crate) struct BodyAbortListener {
-    signal: AbortSignalRef,
-    /// `Response` owns `Box<Self>`, so a ref-counted pointer here would cycle.
-    response: bun_ptr::ParentRef<Response, bun_ptr::Mut>,
+    /// Our listener on the signal (and reference on it); dropped with the Response.
+    registration: Cell<Option<bun_jsc::AbortListenerRegistration>>,
+    /// `Response` owns this, so a ref-counted pointer here would cycle.
+    response: bun_ptr::ParentRef<Response>,
     global: GlobalRef,
 }
 
-impl BodyAbortListener {
-    unsafe extern "C" fn on_abort(ctx: *mut c_void, reason: JSValue) {
+/// A counted native reference to a heap [`Response`] (its `ref_count`),
+/// released on drop.
+pub(crate) struct ResponseRef(bun_ptr::BackRef<Response>);
+
+impl ResponseRef {
+    /// One more reference on the heap `Response` behind `response`.
+    fn retain(response: bun_ptr::ParentRef<Response>) -> Self {
+        response.ref_count.set(response.ref_count.get() + 1);
+        Self(bun_ptr::BackRef::from(
+            core::ptr::NonNull::new(response.as_const_ptr().cast_mut()).expect("ParentRef"),
+        ))
+    }
+
+    /// Install a [`BodyAbortListener`] so abort reaches this body after `FetchTasklet` has detached.
+    pub(crate) fn attach_abort_signal(&self, global: &JSGlobalObject, signal: &AbortSignal) {
+        let listener = bun_ptr::OwnedThis::new(BodyAbortListener {
+            registration: Cell::new(None),
+            response: bun_ptr::ParentRef::from(core::ptr::NonNull::from(self.0)),
+            global: GlobalRef::new(global),
+        });
+        listener
+            .registration
+            .set(Some(signal.listen_native(listener.this_ptr().into())));
+        self.abort_listener.set(Some(listener));
+    }
+}
+
+impl core::ops::Deref for ResponseRef {
+    type Target = Response;
+    #[inline]
+    fn deref(&self) -> &Response {
+        self.0.get()
+    }
+}
+
+impl Drop for ResponseRef {
+    fn drop(&mut self) {
+        Response::unref(self.0.as_const_ptr().cast_mut());
+    }
+}
+
+impl bun_jsc::NativeAbortListener for BodyAbortListener {
+    fn on_abort(this: bun_ptr::ThisPtr<Self>, reason: JSValue) {
         reason.ensure_still_alive();
-        // SAFETY: `ctx` is the `Box<BodyAbortListener>` registered in
-        // `attach_abort_signal`; `clean_native_bindings` removes it before the
-        // box is dropped, so it is live here. Copy out up front: erroring a
-        // still-streaming body can re-enter `Response::unref` via
-        // `FetchTasklet::abandon_response_body` and destroy this box.
-        let (response, global) =
-            unsafe { ((*ctx.cast::<Self>()).response, (*ctx.cast::<Self>()).global) };
-        // SAFETY: `response` is live (see above).
-        let _keepalive = unsafe { RefPtr::init_ref(response.as_mut_ptr()) };
+        // Copy out up front: erroring a still-streaming body can re-enter
+        // `Response::unref` via `FetchTasklet::abandon_response_body`
+        // and destroy this listener.
+        let (response, global) = (this.response, this.global);
+        let _keepalive = ResponseRef::retain(response);
         if !matches!(
             response.get_body_value(),
             BodyValue::Used | BodyValue::Error(_) | BodyValue::Null | BodyValue::Empty
@@ -154,14 +100,6 @@ impl BodyAbortListener {
             // R-2: re-derive after `error()` ran JS.
             let _ = response.get_body_value().to_error_instance(err, &global);
         }
-    }
-}
-
-impl Drop for BodyAbortListener {
-    fn drop(&mut self) {
-        let ctx = core::ptr::from_mut(self).cast::<c_void>();
-        self.signal.clean_native_bindings(ctx);
-        self.signal.pending_activity_unref();
     }
 }
 
@@ -219,7 +157,7 @@ pub struct Response {
     reported_estimated_size: Cell<usize>,
 
     /// Fetch's `AbortSignal` listener; survives `FetchTasklet` teardown so a fully-buffered body is still errored.
-    abort_listener: JsCell<Option<Box<BodyAbortListener>>>,
+    abort_listener: JsCell<Option<bun_ptr::OwnedThis<BodyAbortListener>>>,
 }
 
 impl Default for Response {
@@ -480,30 +418,6 @@ impl Response {
     #[inline]
     pub(crate) fn detach_readable_stream(&self, global_object: &JSGlobalObject) {
         <Self as BodyMixin>::detach_readable_stream(self, global_object)
-    }
-
-    /// Install a [`BodyAbortListener`] so abort reaches this body after `FetchTasklet` has detached.
-    ///
-    /// SAFETY: `this` must be a live heap `Response` (stored as the listener's [`ParentRef`]).
-    pub(crate) unsafe fn attach_abort_signal(
-        this: *mut Response,
-        global: &JSGlobalObject,
-        signal: &AbortSignal,
-    ) {
-        let signal_ref = signal.ref_();
-        signal.pending_activity_ref();
-        let mut listener = Box::new(BodyAbortListener {
-            signal: signal_ref,
-            // SAFETY: caller contract; `this` is live and owns the box.
-            response: unsafe { bun_ptr::ParentRef::from_raw_mut(this) },
-            global: GlobalRef::new(global),
-        });
-        signal.add_listener(
-            core::ptr::from_mut(&mut *listener).cast::<c_void>(),
-            BodyAbortListener::on_abort,
-        );
-        // SAFETY: caller contract; `this` is live.
-        unsafe { (*this).abort_listener.set(Some(listener)) };
     }
 
     #[inline]
@@ -784,6 +698,14 @@ impl Response {
     pub(crate) fn make_maybe_pooled(global_object: &JSGlobalObject, ptr: *mut Response) -> JSValue {
         // SAFETY: caller contract — `ptr` is live and uniquely owned.
         unsafe { (*ptr).to_js(global_object) }
+    }
+
+    /// Move to the heap and create the JS wrapper (which owns one reference);
+    /// the returned [`ResponseRef`] is a second, native one.
+    pub(crate) fn to_js_retained(self, global_object: &JSGlobalObject) -> (JSValue, ResponseRef) {
+        let ptr = core::ptr::NonNull::from(Box::leak(Box::new(self)));
+        let native = ResponseRef::retain(bun_ptr::ParentRef::from(ptr));
+        (Self::make_maybe_pooled(global_object, ptr.as_ptr()), native)
     }
 
     pub(crate) fn clone_value(&self, global_this: &JSGlobalObject) -> JsResult<Response> {

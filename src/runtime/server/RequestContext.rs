@@ -3232,8 +3232,11 @@ where
                     }
                 }
 
-                if lock.on_receive_value.is_some() || lock.task.is_some() {
-                    // someone else is waiting for the stream or waiting for `onStartStreaming`
+                if lock.on_receive_value.is_some()
+                    || lock.task.is_some()
+                    || !lock.producer.is_dead()
+                {
+                    // someone else is waiting for the stream or a producer is waiting for `onStartStreaming`
                     let Ok(readable) = value.to_readable_stream(global_this) else {
                         return;
                     }; // TODO: properly propagate exception upwards

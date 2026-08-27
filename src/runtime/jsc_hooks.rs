@@ -1795,10 +1795,10 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
             ActiveHandle::WindowsNamedPipe(c) => unsafe {
                 crate::socket::WindowsNamedPipeContext::stop_for_vm_teardown(c.as_ptr())
             },
-            // SAFETY: live until it unregisters in `deinit`.
-            ActiveHandle::Fetch(t) => unsafe {
-                crate::webcore::fetch::FetchTasklet::stop_for_vm_teardown(t.as_ptr())
-            },
+            ActiveHandle::Fetch(t) => crate::webcore::fetch::FetchTasklet::stop_for_vm_teardown(
+                // SAFETY: registered (from its `ThisPtr`) until it unregisters on drop ⇒ live.
+                unsafe { bun_ptr::ThisPtr::new(t.as_ptr()) },
+            ),
             // SAFETY: live until they unregister in `on_response`.
             ActiveHandle::S3Request(t) => unsafe {
                 crate::webcore::s3::simple_request::S3HttpSimpleTask::stop_for_vm_teardown(

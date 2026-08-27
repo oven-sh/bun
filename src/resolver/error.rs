@@ -50,6 +50,8 @@ impl Error {
             Self::Sys(bun_errno::SystemErrno::EACCES) => bun_core::Error::AccessDenied,
             Self::Sys(bun_errno::SystemErrno::ENAMETOOLONG) => bun_core::Error::NameTooLong,
             Self::Sys(bun_errno::SystemErrno::ENOSPC) => bun_core::Error::NoSpaceLeft,
+            Self::Sys(bun_errno::SystemErrno::EMFILE) => bun_core::Error::ProcessFdQuotaExceeded,
+            Self::Sys(bun_errno::SystemErrno::ENFILE) => bun_core::Error::SystemFdQuotaExceeded,
             _ => bun_core::Error::Unexpected,
         }
     }

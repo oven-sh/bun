@@ -170,6 +170,35 @@ describe.if(isPosix)("cwd deleted before startup", () => {
   });
 });
 
+// A generic root error must stay generic. The handler used to report any
+// `Unexpected`/`NotOpenForReading` root error as possible fd exhaustion
+// whenever RLIMIT_NOFILE was below 16384 (a normal default), sending users
+// toward ulimit changes unrelated to the real failure (issue #40625). Real
+// EMFILE/ENFILE keep the explicit ProcessFdQuotaExceeded/SystemFdQuotaExceeded
+// guidance.
+test.if(isPosix)("a generic root error is not reported as fd exhaustion under a low fd limit", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      "/bin/sh",
+      "-c",
+      `ulimit -n 4096 && exec "$@"`,
+      "--",
+      bunExe(),
+      path.join(import.meta.dir, "fixture-crash.js"),
+      "rootError",
+    ],
+    env: noReportEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("An unknown error occurred (Unexpected)");
+  expect(stderr).not.toContain("file descriptors");
+  expect(stderr).not.toContain("ulimit");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(1);
+});
+
 // Windows: the VEH handler must walk the stack from the fault CONTEXT record
 // (RtlVirtualUnwind), not from inside the handler. When the fault is in an
 // external DLL the old RtlCaptureStackBackTrace path could stop at

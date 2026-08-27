@@ -2808,10 +2808,7 @@ impl<'a> Lexer<'a> {
                 } else {
                     self.add_error(
                         self.start,
-                        format_args!(
-                            "JSX entity escape is too big: {}",
-                            bstr::BStr::new(entity)
-                        ),
+                        format_args!("JSX entity escape is too big: {}", bstr::BStr::new(entity)),
                     );
                     strings::UNICODE_REPLACEMENT as CodePoint
                 };

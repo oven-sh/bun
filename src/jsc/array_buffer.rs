@@ -342,8 +342,9 @@ impl ArrayBuffer {
         if bytes.is_empty() {
             return Self::create_uint8_array(global, &[]);
         }
-        let bytes = core::mem::ManuallyDrop::new(bytes);
-        let ptr = bytes.as_ptr().cast_mut();
+        let mut bytes = core::mem::ManuallyDrop::new(bytes);
+        let len = bytes.len();
+        let ptr = bytes.as_mut_ptr();
         // SAFETY: `ptr[..len]` is the `Vec`'s live global-allocator (mimalloc)
         // allocation, now owned by JSC and freed exactly once by
         // `MarkedArrayBuffer_deallocator` (`mi_free`, which needs no capacity).
@@ -352,7 +353,7 @@ impl ArrayBuffer {
                 global,
                 TypedArrayType::TypeUint8,
                 ptr.cast::<c_void>(),
-                bytes.len(),
+                len,
                 Some(MarkedArrayBuffer_deallocator),
                 ptr.cast::<c_void>(),
             )

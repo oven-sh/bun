@@ -1,4 +1,3 @@
-import { dlopen } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, compileFixture, isCI, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { copyFileSync } from "node:fs";
@@ -327,37 +326,23 @@ describe("Bun.secrets timeout option", () => {
   });
 });
 
-// Bun dlopens "libsecret-1.so.0" by name, so a stub on LD_LIBRARY_PATH stands in
-// for a keyring daemon that never answers. The stub needs GLib/GIO installed
-// (it reports cancellation through a GCancellable) and a C compiler.
-function canLoadGlib(): boolean {
-  if (!isLinux) return false;
-  const probes = {
-    "libglib-2.0.so.0": "g_free",
-    "libgobject-2.0.so.0": "g_object_unref",
-    "libgio-2.0.so.0": "g_cancellable_cancel",
-  };
-  try {
-    for (const [lib, symbol] of Object.entries(probes)) {
-      dlopen(lib, { [symbol]: { args: ["ptr"], returns: "void" } }).close();
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
+// SecretsLinux.cpp dlopens GLib, GObject, GIO and libsecret by soname, so one
+// stub library copied under those four names into a directory on
+// LD_LIBRARY_PATH stands in for the whole stack: a keyring daemon that never
+// answers, with no GLib installed. Needs a C compiler.
+const stubSonames = ["libglib-2.0.so.0", "libgobject-2.0.so.0", "libgio-2.0.so.0", "libsecret-1.so.0"];
 
-describe.skipIf(!canLoadGlib() || !(Bun.which("cc") || Bun.which("clang") || Bun.which("gcc")))(
+describe.skipIf(!isLinux || !(Bun.which("cc") || Bun.which("clang") || Bun.which("gcc")))(
   "Bun.secrets with a stalled Secret Service",
   () => {
     let libDir: ReturnType<typeof tempDir>;
 
     beforeAll(() => {
       libDir = tempDir("bun-secrets-stub", {});
-      copyFileSync(
-        compileFixture(join(import.meta.dir, "secrets-stub", "libsecret-stub.c"), { flags: ["-ldl"] }),
-        join(String(libDir), "libsecret-1.so.0"),
-      );
+      const stub = compileFixture(join(import.meta.dir, "secrets-stub", "libsecret-stub.c"));
+      for (const soname of stubSonames) {
+        copyFileSync(stub, join(String(libDir), soname));
+      }
     });
     afterAll(() => libDir[Symbol.dispose]());
 

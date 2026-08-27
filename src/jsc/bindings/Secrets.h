@@ -40,12 +40,16 @@ struct Error {
 // deadline, VM teardown) while the pool thread may be inside the call. Linux
 // wraps a GCancellable, which libsecret honors (D-Bus calls fail with
 // G_IO_ERROR_CANCELLED, a prompt is dismissed). Keychain and Credential Manager
-// calls cannot be interrupted, so there `cancel()` is a no-op.
+// calls cannot be interrupted, so there `cancel()` only marks the job, and a
+// job that has not started yet skips the call.
 class Cancellation {
     WTF_MAKE_NONCOPYABLE(Cancellation);
 
 public:
     Cancellation() = default;
+
+    // Pool thread, before the platform call: a cancel already arrived.
+    bool requested() const { return m_cancelRequested.load(); }
 
 #if OS(LINUX) || OS(FREEBSD)
     ~Cancellation();
@@ -58,10 +62,12 @@ public:
 
 private:
     std::atomic<void*> m_gcancellable { nullptr };
-    std::atomic<bool> m_cancelRequested { false };
 #else
-    void cancel() {}
+    void cancel() { m_cancelRequested.store(true); }
+
+private:
 #endif
+    std::atomic<bool> m_cancelRequested { false };
 };
 
 // Sync platform-specific implementations (used by threadpool)

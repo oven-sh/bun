@@ -1,15 +1,17 @@
-// A fake libsecret-1.so.0 for the Bun.secrets timeout tests. Bun dlopens
-// "libsecret-1.so.0", so a directory with this library on LD_LIBRARY_PATH
-// replaces the real one. BUN_SECRETS_STUB_MODE selects what every call does:
+// A fake Secret Service stack for the Bun.secrets tests. SecretsLinux.cpp
+// dlopens libglib-2.0.so.0, libgobject-2.0.so.0, libgio-2.0.so.0 and
+// libsecret-1.so.0 by name, so one build of this file, copied under those four
+// names into a directory on LD_LIBRARY_PATH, replaces the whole stack. No GLib
+// needs to be installed. BUN_SECRETS_STUB_MODE selects what every call does:
 //
 //   hang    block until the GCancellable Bun passed is cancelled, then fail
-//           with G_IO_ERROR_CANCELLED (a keyring that never answers, with a
-//           libsecret that honors cancellation)
+//           (a keyring that never answers, with a libsecret that honors
+//           cancellation)
 //   never   block forever and ignore the GCancellable
 //   return  lookup returns "stub-value"; store and clear succeed
 //
 // Every call logs one line to stderr so a test can wait for it.
-#include <dlfcn.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,7 +24,60 @@ typedef char gchar;
 typedef void* gpointer;
 typedef unsigned int guint;
 
-#define G_IO_ERROR_CANCELLED 19
+// ── GLib / GObject: only what SecretsLinux.cpp dlsyms ─────────────────────
+
+void g_error_free(GError* error) { (void)error; }
+void g_free(gpointer mem) { free(mem); }
+gpointer g_hash_table_new(gpointer hash_func, gpointer key_equal_func)
+{
+    (void)hash_func;
+    (void)key_equal_func;
+    return NULL;
+}
+void g_hash_table_destroy(gpointer hash_table) { (void)hash_table; }
+gpointer g_hash_table_lookup(gpointer hash_table, gpointer key)
+{
+    (void)hash_table;
+    (void)key;
+    return NULL;
+}
+void g_hash_table_insert(gpointer hash_table, gpointer key, gpointer value)
+{
+    (void)hash_table;
+    (void)key;
+    (void)value;
+}
+void g_list_free(gpointer list) { (void)list; }
+void g_list_free_full(gpointer list, gpointer free_func)
+{
+    (void)list;
+    (void)free_func;
+}
+guint g_str_hash(gpointer v) { return (guint)(size_t)v; }
+gboolean g_str_equal(gpointer a, gpointer b) { return strcmp(a, b) == 0; }
+
+// ── GIO: a GCancellable is one atomic flag ────────────────────────────────
+
+typedef struct {
+    atomic_int cancelled;
+} Cancellable;
+
+gpointer g_cancellable_new(void)
+{
+    return calloc(1, sizeof(Cancellable));
+}
+void g_cancellable_cancel(gpointer cancellable)
+{
+    if (cancellable) atomic_store(&((Cancellable*)cancellable)->cancelled, 1);
+}
+gboolean g_cancellable_is_cancelled(gpointer cancellable)
+{
+    return cancellable && atomic_load(&((Cancellable*)cancellable)->cancelled);
+}
+// Bun only ever unrefs the cancellables it created.
+void g_object_unref(gpointer object) { free(object); }
+
+// ── libsecret ─────────────────────────────────────────────────────────────
 
 static const char* mode(void)
 {
@@ -30,73 +85,62 @@ static const char* mode(void)
     return m ? m : "never";
 }
 
-static void log_call(const char* name, void* cancellable)
+static void log_call(const char* name, gpointer cancellable)
 {
     fprintf(stderr, "[stub] %s mode=%s cancellable=%s\n", name, mode(), cancellable ? "yes" : "no");
     fflush(stderr);
 }
 
-// Blocks per the mode. Returns 1 when the call was cancelled (error set).
-static int block(void* cancellable, GError** error)
+// Blocks per the mode. Only returns (after logging) once the call was cancelled.
+static void block(gpointer cancellable)
 {
-    if (strcmp(mode(), "hang") != 0) {
+    if (strcmp(mode(), "hang") != 0 || !cancellable) {
         for (;;) pause();
     }
-
-    void* gio = dlopen("libgio-2.0.so.0", RTLD_LAZY | RTLD_LOCAL);
-    void* glib = dlopen("libglib-2.0.so.0", RTLD_LAZY | RTLD_LOCAL);
-    gboolean (*is_cancelled)(void*) = gio ? (gboolean (*)(void*))dlsym(gio, "g_cancellable_is_cancelled") : NULL;
-    guint (*io_error_quark)(void) = gio ? (guint (*)(void))dlsym(gio, "g_io_error_quark") : NULL;
-    GError* (*error_new_literal)(guint, int, const char*) = glib ? (GError * (*)(guint, int, const char*)) dlsym(glib, "g_error_new_literal") : NULL;
-    if (!cancellable || !is_cancelled || !io_error_quark || !error_new_literal) {
-        for (;;) pause();
-    }
-
-    while (!is_cancelled(cancellable)) {
+    while (!g_cancellable_is_cancelled(cancellable)) {
         usleep(5 * 1000);
     }
     fprintf(stderr, "[stub] cancelled\n");
     fflush(stderr);
-    if (error) {
-        *error = error_new_literal(io_error_quark(), G_IO_ERROR_CANCELLED, "Operation was cancelled");
-    }
-    return 1;
 }
 
-gchar* secret_password_lookup_sync(const SecretSchema* schema, void* cancellable, GError** error, ...)
+gchar* secret_password_lookup_sync(const SecretSchema* schema, gpointer cancellable, GError** error, ...)
 {
     (void)schema;
+    (void)error;
     log_call("lookup", cancellable);
     if (strcmp(mode(), "return") == 0) {
         return strdup("stub-value");
     }
-    block(cancellable, error);
+    block(cancellable);
     return NULL;
 }
 
 gboolean secret_password_store_sync(const SecretSchema* schema, const gchar* collection, const gchar* label,
-    const gchar* password, void* cancellable, GError** error, ...)
+    const gchar* password, gpointer cancellable, GError** error, ...)
 {
     (void)schema;
     (void)collection;
     (void)label;
     (void)password;
+    (void)error;
     log_call("store", cancellable);
     if (strcmp(mode(), "return") == 0) {
         return 1;
     }
-    block(cancellable, error);
+    block(cancellable);
     return 0;
 }
 
-gboolean secret_password_clear_sync(const SecretSchema* schema, void* cancellable, GError** error, ...)
+gboolean secret_password_clear_sync(const SecretSchema* schema, gpointer cancellable, GError** error, ...)
 {
     (void)schema;
+    (void)error;
     log_call("clear", cancellable);
     if (strcmp(mode(), "return") == 0) {
         return 1;
     }
-    block(cancellable, error);
+    block(cancellable);
     return 0;
 }
 

@@ -269,6 +269,14 @@ extern "C" {
 // Runs on the threadpool - does the actual platform API work
 void Bun__SecretsJobOptions__runTask(SecretsJobOptions* opts)
 {
+    // The deadline passed (or the VM is going away) while this job waited for
+    // a pool thread: nobody will read the result, so do not touch the store.
+    if (opts->cancellation.requested()) {
+        opts->error.type = Secrets::ErrorType::PlatformError;
+        opts->error.message = "The operation was cancelled"_s;
+        return;
+    }
+
     // Already have CString fields, pass them directly to platform APIs
     switch (opts->op) {
     case SecretsJobOptions::GET: {

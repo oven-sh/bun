@@ -27,8 +27,7 @@ test.concurrent("macro that awaits crypto.subtle.digest resolves under bun run",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  // A debug build also logs "[macro] call sha" to stdout.
-  expect(stdout).toContain(`${expected}\n`);
+  expect(stdout).toBe(`${expected}\n`);
   expect(exitCode).toBe(0);
 });
 
@@ -54,8 +53,8 @@ console.log(start());
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(stdout).toContain("1\n");
-  expect(stdout).toContain("settled\n");
+  // The unawaited digest settles before or after the entry module's output.
+  expect(stdout.trim().split("\n").sort()).toEqual(["1", "settled"]);
   expect(exitCode).toBe(0);
 });
 

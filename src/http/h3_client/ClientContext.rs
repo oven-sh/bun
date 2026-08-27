@@ -164,7 +164,7 @@ impl ClientContext {
         };
         session.registry_index.set(u32::MAX);
         // Never the last reference: the connection's own is released after.
-        entry.deref();
+        drop(entry);
     }
 
     /// Handles to every live session, so a callee may unregister one while

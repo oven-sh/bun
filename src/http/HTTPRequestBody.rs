@@ -54,7 +54,7 @@ impl Stream {
     /// Another handle on `buffer`, holding its own reference.
     pub fn attach(buffer: &bun_ptr::RefPtr<ThreadSafeStreamBuffer>) -> Stream {
         Stream {
-            buffer: Some(buffer.dupe_ref()),
+            buffer: Some(buffer.clone()),
             ended: false,
         }
     }
@@ -65,15 +65,7 @@ impl Stream {
     }
 
     pub(crate) fn detach(&mut self) {
-        if let Some(buffer) = self.buffer.take() {
-            buffer.deref();
-        }
-    }
-}
-
-impl Drop for Stream {
-    fn drop(&mut self) {
-        self.detach();
+        self.buffer = None;
     }
 }
 
@@ -87,7 +79,7 @@ impl Body {
             Body::Bytes(bytes) => Body::Bytes(*bytes),
             Body::Sendfile(sendfile) => Body::Sendfile(*sendfile),
             Body::Stream(stream) => Body::Stream(Stream {
-                buffer: stream.buffer.as_ref().map(|b| b.dupe_ref()),
+                buffer: stream.buffer.clone(),
                 ended: stream.ended,
             }),
         }

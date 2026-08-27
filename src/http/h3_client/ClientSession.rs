@@ -76,7 +76,7 @@ impl ClientSession {
         let _ = H3::live_sessions.fetch_add(1, Ordering::Relaxed);
         // `session` becomes the connection's own reference; hand the caller
         // another.
-        let callers = session.dupe_ref();
+        let callers = session.clone();
         callers.conn_ref.set(Some(session));
         callers
     }
@@ -89,11 +89,9 @@ impl ClientSession {
     /// Run `body`, then release whatever reference it gave up
     /// (`released_ref`) once no borrow of the session is live.
     pub(crate) fn enter(this: ThisPtr<ClientSession>, body: impl FnOnce(&ClientSession)) {
-        let _keep_alive = this.ref_guard();
+        let _keep_alive = RefPtr::from_this(this);
         body(&this);
-        if let Some(released) = this.released_ref.take() {
-            released.deref();
-        }
+        drop(this.released_ref.take());
     }
 
     /// The live lsquic connection handle (an opaque handle lsquic owns until
@@ -240,9 +238,7 @@ impl ClientSession {
                 pending.remove(i);
             }
         }
-        if let Some(entry_ref) = entry_ref {
-            entry_ref.deref();
-        }
+        drop(entry_ref);
     }
 
     /// [`detach`](Self::detach) for a stream whose request the caller is

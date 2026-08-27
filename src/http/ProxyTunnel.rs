@@ -8,7 +8,7 @@ use bun_ptr::{BackRef, SelfRoot, ThisPtr};
 use bun_uws as uws;
 
 use crate::http_cert_error::HTTPCertError;
-use crate::http_context::HTTPSocket;
+use crate::http_context::{HTTPSocket, PeerVerification};
 use crate::internal_state::{HTTPStage, Stage};
 use crate::ssl_config::SSLConfig;
 use crate::ssl_wrapper::{Handlers as SSLWrapperHandlers, InitError, SSLWrapper, WriteDataError};
@@ -16,7 +16,7 @@ use crate::{AlpnOffer, HTTPClient, RequestRef, SniHostname};
 
 bun_core::declare_scope!(http_proxy_tunnel, visible);
 
-/// A counted reference on a [`ProxyTunnel`]; `.deref()` releases it.
+/// A counted reference on a [`ProxyTunnel`], released when dropped.
 pub type RefPtr = bun_ptr::RefPtr<ProxyTunnel>;
 
 /// What the wrapper's callbacks get: the tunnel the wrapper is embedded in
@@ -52,12 +52,11 @@ pub struct ProxyTunnel {
     /// would re-pool with the flag erased, letting a later reject_unauthorized=true
     /// request silently reuse a tunnel whose cert failed validation.
     pub(crate) did_have_handshaking_error: Cell<bool>,
-    /// Whether the inner TLS session was established with reject_unauthorized=true
-    /// (and therefore hostname-verified via checkServerIdentity). A CA-valid but
-    /// wrong-hostname cert produces error_no=0 so did_have_handshaking_error stays
-    /// false; without this flag, a strict caller could reuse a tunnel where
-    /// hostname was never checked.
-    pub(crate) established_with_reject_unauthorized: Cell<bool>,
+    /// How the inner TLS peer was authenticated. A CA-valid but wrong-hostname
+    /// cert produces error_no=0 so did_have_handshaking_error stays false;
+    /// without this, a strict caller could reuse a tunnel where the hostname
+    /// was never checked natively.
+    pub(crate) verification: Cell<PeerVerification>,
     pub(crate) ref_count: Cell<u32>,
     self_root: SelfRoot<ProxyTunnel>,
     /// The request currently driving this tunnel; `None` while pooled or once
@@ -135,7 +134,7 @@ fn on_data(t: Ctx, decoded_data: &[u8]) {
         t.defer(TunnelEvent::Data(decoded_data.to_vec()));
         return;
     };
-    let _guard = t.this_ptr().ref_guard();
+    let _guard = RefPtr::from_this(t.this_ptr());
     client.tunnel_on_data(&t, decoded_data);
 }
 
@@ -148,7 +147,7 @@ fn on_handshake(t: Ctx, handshake_success: bool, ssl_error: uws::us_bun_verify_e
         t.defer(TunnelEvent::Handshake(handshake_success, ssl_error));
         return;
     };
-    let _guard = t.this_ptr().ref_guard();
+    let _guard = RefPtr::from_this(t.this_ptr());
     client.tunnel_on_handshake(&t, handshake_success, ssl_error);
 }
 
@@ -216,7 +215,7 @@ impl HTTPClient {
             };
             // The handlers may release the request's reference; keep the
             // tunnel alive across each one.
-            let _guard = t.this_ptr().ref_guard();
+            let _guard = RefPtr::from_this(t.this_ptr());
             match event {
                 TunnelEvent::Handshake(ok, err) => self.tunnel_on_handshake(&t, ok, err),
                 TunnelEvent::Data(data) => self.tunnel_on_data(&t, &data),
@@ -477,7 +476,7 @@ impl ProxyTunnel {
             socket: Cell::new(Socket::from_generic::<IS_SSL>(socket)),
             write_buffer: RefCell::new(bun_io::StreamBuffer::default()),
             did_have_handshaking_error: Cell::new(false),
-            established_with_reject_unauthorized: Cell::new(false),
+            verification: Cell::new(PeerVerification::None),
             ref_count: Cell::new(1),
             self_root,
             request: Cell::new(Some(client.req())),
@@ -486,7 +485,7 @@ impl ProxyTunnel {
         tunnel.wrapper.set_ctx(BackRef::new(&*tunnel));
 
         // configure SNI/ALPN for the inner session before the first handshake
-        let sni = SniHostname::new(client.hostname().unwrap_or_else(|| client.url.hostname()));
+        let sni = SniHostname::new(crate::get_tls_hostname(client, false));
         tunnel.wrapper.with_ssl(|ssl| {
             crate::configure_http_client_with_alpn(ssl, sni.as_cstr(), AlpnOffer::H1)
         });
@@ -515,7 +514,7 @@ impl ProxyTunnel {
     /// alive until this returns.
     pub(crate) fn on_writable<const IS_SSL: bool>(this: ThisPtr<Self>, socket: HTTPSocket<IS_SSL>) {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onWritable");
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
         {
             let mut write_buffer = this.write_buffer.borrow_mut();
             let encoded_data = write_buffer.slice();
@@ -536,7 +535,7 @@ impl ProxyTunnel {
     /// Encrypted bytes arrived on the outer socket. Same contract as
     /// [`Self::on_writable`].
     pub(crate) fn receive(this: ThisPtr<Self>, buf: &[u8]) {
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
         this.wrapper.receive_data(buf);
     }
 
@@ -560,13 +559,11 @@ impl ProxyTunnel {
         // next client so re-pooling doesn't erase it.
         self.did_have_handshaking_error
             .set(client.flags.did_have_handshaking_error);
-        // OR semantics — a lax client is allowed to reuse a strict tunnel (the
+        // max semantics — a lax client is allowed to reuse a strict tunnel (the
         // existingSocket guard only blocks the reverse). When that lax client
-        // detaches, it must not downgrade a hostname-verified TLS session to
-        // lax-established; once true, stays true.
-        self.established_with_reject_unauthorized.set(
-            self.established_with_reject_unauthorized.get() || client.flags.reject_unauthorized,
-        );
+        // detaches, it must not downgrade a hostname-verified TLS session.
+        self.verification
+            .set(self.verification.get().max(client.target_verification()));
         // The tunnel is idle in the pool and no callbacks will fire until
         // adopt() reattaches a new owner and socket.
     }

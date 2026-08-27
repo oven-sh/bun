@@ -111,6 +111,6 @@ impl PendingConnect {
             *qs.ext::<ClientSession>() = NonNull::new(session.as_ptr());
         });
         // the lookup's reference
-        this.session.deref();
+        drop(this);
     }
 }

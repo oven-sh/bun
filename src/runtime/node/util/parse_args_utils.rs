@@ -99,7 +99,7 @@ pub(crate) fn classify_token(arg: &Str, options: &[OptionDefinition]) -> TokenSu
                 TokenSubtype::LoneLongOption
             };
         } else if arg.starts_with_ascii(b"-") {
-            let first_char = arg.substring_with_len(1, 2);
+            let first_char = arg.substring_range(1, 2);
             let option_idx = find_option_by_short_name(&first_char, options);
             if let Some(i) = option_idx {
                 return if options[i].r#type == OptionValueType::String {

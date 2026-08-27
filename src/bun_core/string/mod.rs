@@ -502,15 +502,15 @@ impl Str {
     /// `start_index..` to end.
     pub fn substring(&self, start_index: usize) -> StringView<'_> {
         let len = self.len();
-        self.substring_with_len(start_index.min(len), len)
+        self.substring_range(start_index.min(len), len)
     }
     /// `start_index..end_index`.
-    pub fn substring_with_len(&self, start_index: usize, end_index: usize) -> StringView<'_> {
+    pub fn substring_range(&self, start_index: usize, end_index: usize) -> StringView<'_> {
         match self.tag {
             Tag::EncodedSlice | Tag::StaticEncodedSlice | Tag::WTFStringImpl => {
                 StringView::from_encoded(
                     self.to_encoded_slice()
-                        .substring_with_len(start_index, end_index),
+                        .substring_range(start_index, end_index),
                 )
             }
             Tag::Dead | Tag::Empty => self.as_view(),
@@ -987,7 +987,7 @@ impl String {
         }
     }
     /// Zero-copy `start..end` of a WTF-backed string: a +1 impl that shares
-    /// `self`'s buffer and keeps it alive (cf. [`Str::substring_with_len`], a view).
+    /// `self`'s buffer and keeps it alive (cf. [`Str::substring_range`], a view).
     pub fn substring_shared(&self, start: usize, end: usize) -> String {
         debug_assert!(self.tag == Tag::WTFStringImpl);
         debug_assert!(start <= end && end <= self.len());
@@ -1442,7 +1442,7 @@ impl<'a> EncodedSlice<'a> {
 
     /// Re-wrap a sub-range of the underlying storage, preserving the
     /// UTF-8/16-bit/global tag bits.
-    pub fn substring_with_len(self, start_index: usize, end_index: usize) -> Self {
+    pub fn substring_range(self, start_index: usize, end_index: usize) -> Self {
         if self.is_16bit() {
             let mut out = Self::utf16(&self.utf16_slice()[start_index..end_index]);
             if self.is_globally_allocated() {
@@ -1461,7 +1461,7 @@ impl<'a> EncodedSlice<'a> {
     }
     #[inline]
     pub fn substring(self, start_index: usize) -> Self {
-        self.substring_with_len(start_index.min(self.len), self.len)
+        self.substring_range(start_index.min(self.len), self.len)
     }
     /// Clamp `len`, preserving the pointer (and its tag bits) verbatim.
     #[inline]

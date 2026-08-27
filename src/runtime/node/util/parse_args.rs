@@ -120,17 +120,17 @@ impl fmt::Display for RawNameFormatter<'_> {
         let raw: &Str = &self.raw;
         if let Some(optgroup_idx) = token.optgroup_idx {
             let i = optgroup_idx as usize;
-            raw.substring_with_len(i, i + 1).fmt(f)
+            raw.substring_range(i, i + 1).fmt(f)
         } else {
             match token.parse_type {
                 OptionParseType::LoneShortOption | OptionParseType::LoneLongOption => raw.fmt(f),
                 OptionParseType::ShortOptionAndValue => {
-                    let substr = raw.substring_with_len(0, 2);
+                    let substr = raw.substring_range(0, 2);
                     substr.fmt(f)
                 }
                 OptionParseType::LongOptionAndValue => {
                     let equal_index = raw.index_of_ascii_char(b'=').unwrap();
-                    let substr = raw.substring_with_len(0, equal_index);
+                    let substr = raw.substring_range(0, equal_index);
                     substr.fmt(f)
                 }
             }
@@ -148,7 +148,7 @@ impl OptionToken<'_> {
             let str = {
                 use std::io::Write;
                 let mut cursor: &mut [u8] = &mut buf[..];
-                write!(cursor, "-{}", raw.substring_with_len(i, i + 1)).expect("unreachable");
+                write!(cursor, "-{}", raw.substring_range(i, i + 1)).expect("unreachable");
                 let written = 8 - cursor.len();
                 &buf[..written]
             };
@@ -160,13 +160,13 @@ impl OptionToken<'_> {
                 }
                 OptionParseType::ShortOptionAndValue => {
                     let raw = self.raw.as_bun_string(global)?;
-                    let substr = raw.substring_with_len(0, 2);
+                    let substr = raw.substring_range(0, 2);
                     substr.to_js(global)
                 }
                 OptionParseType::LongOptionAndValue => {
                     let raw = self.raw.as_bun_string(global)?;
                     let equal_index = raw.index_of_ascii_char(b'=').unwrap();
-                    let substr = raw.substring_with_len(0, equal_index);
+                    let substr = raw.substring_range(0, equal_index);
                     substr.to_js(global)
                 }
             }
@@ -561,7 +561,7 @@ fn tokenize_args(
             // isLoneShortOption
             TokenSubtype::LoneShortOption => {
                 // e.g. '-f'
-                let short_option = arg.substring_with_len(1, 2);
+                let short_option = arg.substring_range(1, 2);
                 let option_idx = find_option_by_short_name(&short_option, options);
                 let option_type: OptionValueType =
                     option_idx.map_or(OptionValueType::Boolean, |idx| options[idx].r#type);
@@ -602,7 +602,7 @@ fn tokenize_args(
                 let original_arg_idx = index;
                 let arg_len = arg.len();
                 for idx_in_optgroup in 1..arg_len {
-                    let short_option = arg.substring_with_len(idx_in_optgroup, idx_in_optgroup + 1);
+                    let short_option = arg.substring_range(idx_in_optgroup, idx_in_optgroup + 1);
                     let option_idx = find_option_by_short_name(&short_option, options);
                     let option_type: OptionValueType =
                         option_idx.map_or(OptionValueType::Boolean, |idx| options[idx].r#type);
@@ -667,10 +667,10 @@ fn tokenize_args(
 
             TokenSubtype::ShortOptionAndValue => {
                 // e.g. -fFILE
-                let short_option = arg.substring_with_len(1, 2);
+                let short_option = arg.substring_range(1, 2);
                 let option_idx = find_option_by_short_name(&short_option, options);
                 let value = arg.substring(2);
-                let raw = arg.substring_with_len(0, 2);
+                let raw = arg.substring_range(0, 2);
 
                 ctx.handle_token(&Token::Option(OptionToken {
                     index,
@@ -730,7 +730,7 @@ fn tokenize_args(
             TokenSubtype::LongOptionAndValue => {
                 // e.g. --foo=barconst
                 let equal_index = arg.index_of_ascii_char(b'=');
-                let long_option = arg.substring_with_len(2, equal_index.unwrap());
+                let long_option = arg.substring_range(2, equal_index.unwrap());
                 let value = arg.substring(equal_index.unwrap() + 1);
 
                 ctx.handle_token(&Token::Option(OptionToken {

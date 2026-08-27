@@ -1158,7 +1158,7 @@ impl<'a> Formatter<'a> {
                                 BACKSLASH => {
                                     writer.print(format_args!(
                                         "{}\\",
-                                        remaining.substring_with_len(0, i)
+                                        remaining.substring_range(0, i)
                                     ));
                                     remaining = remaining.substring(i + 1);
                                 }
@@ -1168,12 +1168,12 @@ impl<'a> Formatter<'a> {
                                     {
                                         writer.print(format_args!(
                                             "{}",
-                                            remaining.substring_with_len(0, i)
+                                            remaining.substring_range(0, i)
                                         ));
                                     } else {
                                         writer.print(format_args!(
                                             "{}\n",
-                                            remaining.substring_with_len(0, i)
+                                            remaining.substring_range(0, i)
                                         ));
                                     }
 

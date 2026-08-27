@@ -106,7 +106,7 @@ C++ consumes a `BunString`/`EncodedSlice` through exactly one of:
 use bun_core::{EncodedSlice, Str, String, StringView, Utf8Bytes};   // the only import path
 
 let s = String::clone_utf8(utf8_bytes);        // copies into a WTFStringImpl
-let s = String::from_static("literal");            // 'static ASCII slice, never freed
+let s = String::from_static("literal");        // 'static ASCII slice, never freed
 f(&s);                                         // `&String` coerces to a `&Str` parameter
 f(&StringView::utf8(utf8_bytes));              // borrow caller bytes for the call (`from_bytes` scans and
 f(&StringView::latin1(ascii_or_latin1));       //   tags UTF-8 if non-ASCII; `utf16(units)` for UTF-16)

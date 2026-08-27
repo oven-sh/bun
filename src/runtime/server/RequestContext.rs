@@ -1536,7 +1536,7 @@ where
 
         if let Some(request) = self.request_mut() {
             // `req` is live only while the dispatch is still on the stack.
-            let req = if HTTP3 { None } else { self.req.get() };
+            let req = if MUX { None } else { self.req.get() };
             request.detach_request_context(
                 req.map(|req| bun_opaque::opaque_deref(req.cast::<uws::Request>())),
             );

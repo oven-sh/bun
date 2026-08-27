@@ -767,27 +767,24 @@ static bool isFailedEntryThatNeverEvaluated(JSC::ModuleRegistryEntry* entry)
     }
 }
 
+// The loader's registry is keyed by (specifier, type).
+static constexpr JSC::ScriptFetchParameters::Type moduleTypes[] = {
+    JSC::ScriptFetchParameters::Type::None,
+    JSC::ScriptFetchParameters::Type::JavaScript,
+    JSC::ScriptFetchParameters::Type::WebAssembly,
+    JSC::ScriptFetchParameters::Type::JSON,
+    JSC::ScriptFetchParameters::Type::Text,
+    JSC::ScriptFetchParameters::Type::HostDefined,
+};
+
 static void dropFailedEntryThatNeverEvaluated(Zig::GlobalObject* globalObject, const JSC::Identifier& key)
 {
-    // Probe each (specifier, type) bucket: registryEntry() scans the whole map
-    // for a key without a JavaScript entry, and this runs on every resolve.
-    static constexpr JSC::ScriptFetchParameters::Type moduleTypes[] = {
-        JSC::ScriptFetchParameters::Type::None,
-        JSC::ScriptFetchParameters::Type::JavaScript,
-        JSC::ScriptFetchParameters::Type::WebAssembly,
-        JSC::ScriptFetchParameters::Type::JSON,
-        JSC::ScriptFetchParameters::Type::Text,
-        JSC::ScriptFetchParameters::Type::HostDefined,
-    };
     auto* impl = key.impl();
     if (!impl)
         return;
 
-    // ModuleLoadTopRejected looks the key up by name one microtask after the
-    // failure is recorded; a fresh entry there would inherit the stale error.
-    if (globalObject->pendingModuleLoad(key))
-        return;
-
+    // Probe each type bucket: registryEntry() scans the whole map for a key
+    // without a JavaScript entry, and this runs on every resolve.
     auto* loader = globalObject->moduleLoader();
     bool found = false;
     const auto& moduleMap = loader->moduleMap();
@@ -803,10 +800,24 @@ static void dropFailedEntryThatNeverEvaluated(Zig::GlobalObject* globalObject, c
     if (!found)
         return;
 
+    // ModuleLoadTopRejected looks the key up by name one microtask after the
+    // failure is recorded; a fresh entry there would inherit the stale error.
+    if (globalObject->hasPendingModuleLoad(key))
+        return;
+
     // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread
     // under cellLock(); take the same lock so the removal can't race it.
     WTF::Locker locker { loader->cellLock() };
     loader->removeEntry(key);
+}
+
+bool GlobalObject::hasPendingModuleLoad(const JSC::Identifier& key) const
+{
+    for (auto type : moduleTypes) {
+        if (pendingModuleLoads.get({ key.impl(), type }))
+            return true;
+    }
+    return false;
 }
 
 // Reaction on a tracked load's promise. Argument 1 is the resolved key passed
@@ -821,17 +832,37 @@ BUN_DEFINE_HOST_FUNCTION(Bun__onModuleLoadSettled, (JSC::JSGlobalObject * global
     auto key = JSC::Identifier::fromString(vm, keyString->value(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
     auto* thisObject = static_cast<Zig::GlobalObject*>(globalObject);
-    // Module.runMain may have started a newer load of the key: keep that one.
-    auto* pending = thisObject->pendingModuleLoad(key);
-    if (!pending || pending->status() != JSC::JSPromise::Status::Pending)
-        thisObject->pendingModuleLoads.remove(key.impl());
+    // Module.runMain may have started a newer load of the key: keep a pending one.
+    for (auto type : moduleTypes) {
+        Zig::PendingModuleLoadKey mapKey { key.impl(), type };
+        auto* pending = thisObject->pendingModuleLoads.get(mapKey);
+        if (pending && pending->status() != JSC::JSPromise::Status::Pending)
+            thisObject->pendingModuleLoads.remove(mapKey);
+    }
     return JSValue::encode(jsUndefined());
 }
 
-void GlobalObject::trackPendingModuleLoad(const JSC::Identifier& key, JSC::JSPromise* promise)
+// Fulfillment reaction on a Module.runMain load, whose promise settles with the
+// evaluation result. Argument 1 is the resolved key; returns its namespace.
+BUN_DEFINE_HOST_FUNCTION(Bun__moduleNamespaceForKey, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* keyString = dynamicDowncast<JSString>(callFrame->argument(1));
+    if (!keyString) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+    auto key = JSC::Identifier::fromString(vm, keyString->value(globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* entry = globalObject->moduleLoader()->moduleMap().get({ key.impl(), JSC::ScriptFetchParameters::Type::JavaScript }).get();
+    if (!entry || !entry->record())
+        return JSValue::encode(jsUndefined());
+    RELEASE_AND_RETURN(scope, JSValue::encode(entry->record()->getModuleNamespace(globalObject)));
+}
+
+void GlobalObject::trackPendingModuleLoad(const JSC::Identifier& key, JSC::ScriptFetchParameters::Type type, JSC::JSPromise* promise)
 {
     auto& vm = this->vm();
-    pendingModuleLoads.set(key.impl(), JSC::Weak<JSC::JSPromise>(promise));
+    pendingModuleLoads.set({ key.impl(), type }, JSC::Weak<JSC::JSPromise>(promise));
     // The string shares the Identifier's atom, so the handler gets the same impl back.
     JSFunction* onSettled = thenable(Bun__onModuleLoadSettled);
     promise->performPromiseThenWithContext(vm, this, onSettled, onSettled, jsUndefined(), jsString(vm, key.string()));
@@ -847,7 +878,8 @@ static JSC::JSPromise* importResolvedModule(Zig::GlobalObject* globalObject, con
     // job. A second top-level load would fetch again, and the loader reports
     // the first load's failure by key one microtask later, onto whatever entry
     // the second load registered in between.
-    if (auto* pending = globalObject->pendingModuleLoad(key)) {
+    auto type = parameters ? parameters->type() : JSC::ScriptFetchParameters::Type::JavaScript;
+    if (auto* pending = globalObject->pendingModuleLoad(key, type)) {
         auto* joined = JSC::JSPromise::create(vm, globalObject->promiseStructure());
         joined->pipeFrom(vm, pending);
         return joined;
@@ -858,7 +890,7 @@ static JSC::JSPromise* importResolvedModule(Zig::GlobalObject* globalObject, con
     if (scope.exception()) [[unlikely]]
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
     ASSERT(result);
-    globalObject->trackPendingModuleLoad(key, result);
+    globalObject->trackPendingModuleLoad(key, type, result);
     return result;
 }
 
@@ -4344,6 +4376,8 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onRejectInputStream;
     } else if (handler == Bun__onModuleLoadSettled) {
         return GlobalObject::PromiseFunctions::Bun__onModuleLoadSettled;
+    } else if (handler == Bun__moduleNamespaceForKey) {
+        return GlobalObject::PromiseFunctions::Bun__moduleNamespaceForKey;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

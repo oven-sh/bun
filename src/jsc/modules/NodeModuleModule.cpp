@@ -794,7 +794,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * lexicalGlobalObjec
 
     auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
-    globalObject->trackPendingModuleLoad(key, promise);
+    // The tracked promise must settle like an import() promise: with the
+    // module namespace, not the evaluation result. The VM reports a rejection
+    // through `promise`, so this one is marked handled.
+    auto* namespacePromise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    namespacePromise->markAsHandled();
+    promise->performPromiseThenWithContext(vm, globalObject, globalObject->thenable(Bun__moduleNamespaceForKey), JSC::jsUndefined(), namespacePromise, JSC::jsString(vm, key.string()));
+    globalObject->trackPendingModuleLoad(key, JSC::ScriptFetchParameters::Type::JavaScript, namespacePromise);
     Bun__VirtualMachine__setOverrideModuleRunMainPromise(globalObject->bunVM(), promise);
 
     return JSC::JSValue::encode(JSC::jsUndefined());

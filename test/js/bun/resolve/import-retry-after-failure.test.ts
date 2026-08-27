@@ -12,7 +12,11 @@ import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 // second load's fresh entry would keep that error for the whole process.
 test("import() of a module that failed to load retries after the file changes", async () => {
   using dir = tempDir("import-retry", {
+    // runMain resolves with no referrer and does not re-read a directory
+    // listed before the file was written, so these exist before bun starts.
     "h3.virt": "",
+    "h5.mjs": "export const v = 42;",
+    "d.json": '{"v":42}',
     "main.mjs": `
       import fs from "node:fs";
       import { createRequire } from "node:module";
@@ -110,8 +114,6 @@ test("import() of a module that failed to load retries after the file changes", 
       await t("H2b", "./h2.virt");
       console.log("H2 loads", loads.get("h2.virt"));
       // Module.runMain starts the same kind of top-level load as import().
-      // h3.virt exists before bun starts: runMain resolves with no referrer and
-      // does not re-read a directory listed before the file was written.
       require("module").runMain("./h3.virt");
       const h3 = await Promise.resolve()
         .then(() => import("./h3.virt"))
@@ -119,6 +121,17 @@ test("import() of a module that failed to load retries after the file changes", 
       console.log("H3", h3);
       await t("H3b", "./h3.virt");
       console.log("H3 loads", loads.get("h3.virt"));
+      // An import() that joins a runMain load gets the namespace, not runMain's
+      // evaluation result.
+      require("module").runMain("./h5.mjs");
+      const h5 = await Promise.resolve()
+        .then(() => import("./h5.mjs"))
+        .then(ns => "OK " + ns.v, () => "ERR");
+      console.log("H5", h5);
+      // Loads are keyed by module type too: a typed import() in the same tick
+      // does not join the untyped one.
+      const d = await Promise.all([import("./d.json"), import("./d.json", { with: { type: "text" } })]);
+      console.log("D", typeof d[0].default, d[0].default.v, typeof d[1].default, JSON.parse(d[1].default).v);
 
       // A module whose body threw stays cached even after the file changes.
       fs.writeFileSync("e.mjs", 'throw new Error("boom"); export const v = 1;');
@@ -162,6 +175,8 @@ test("import() of a module that failed to load retries after the file changes", 
     H3 ERR
     H3b OK 42
     H3 loads 2
+    H5 OK 42
+    D object 42 string 42
     E1 ERR boom
     E2 ERR boom"
   `);

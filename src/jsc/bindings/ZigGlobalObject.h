@@ -57,6 +57,7 @@ struct node_module;
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/ScriptFetchParameters.h>
 #include <JavaScriptCore/WeakGCMap.h>
 #include <JavaScriptCore/JSTypeInfo.h>
 #include <JavaScriptCore/Structure.h>
@@ -104,6 +105,18 @@ namespace Zig {
 class JSCStackTrace;
 
 using DOMGuardedObjectSet = UncheckedKeyHashSet<WebCore::DOMGuardedObject*>;
+
+// JSC::ModuleMapKey with an owning key, for a map whose values are weak.
+using PendingModuleLoadKey = std::pair<RefPtr<UniquedStringImpl>, JSC::ScriptFetchParameters::Type>;
+
+struct PendingModuleLoadKeyHash {
+    static unsigned hash(const PendingModuleLoadKey& key)
+    {
+        return WTF::pairIntHash(key.first ? key.first->existingSymbolAwareHash() : 0, static_cast<unsigned>(key.second));
+    }
+    static bool equal(const PendingModuleLoadKey& a, const PendingModuleLoadKey& b) { return a.first == b.first && a.second == b.second; }
+    static constexpr bool safeToCompareToEmptyOrDeleted = false;
+};
 
 class GlobalObject : public Bun::GlobalScope {
     using Base = Bun::GlobalScope;
@@ -415,6 +428,7 @@ public:
         Bun__HTMLRewriter__onResolveInputStream,
         Bun__HTMLRewriter__onRejectInputStream,
         Bun__onModuleLoadSettled,
+        Bun__moduleNamespaceForKey,
         Count_,
     };
     static constexpr size_t promiseFunctionsSize = static_cast<size_t>(PromiseFunctions::Count_);
@@ -733,13 +747,19 @@ public:
     BunPlugin::OnResolve onResolvePlugins {};
 
     // The top-level module loads (import(), Module.runMain) whose promise has
-    // not settled, by resolved key. A second import() of the key joins the load
-    // instead of starting another, and moduleLoaderResolve keeps the key's
-    // failed registry entry until then. Weak: a load that can still settle is
+    // not settled, keyed like the loader's registry: (resolved key, module
+    // type). Each promise fulfills with the module namespace. A second import()
+    // of the same pair joins the load instead of starting another, and
+    // moduleLoaderResolve keeps the key's failed registry entries while any
+    // load of the key is pending. Weak: a load that can still settle is
     // reachable from its own reaction chain.
-    JSC::WeakGCMap<RefPtr<UniquedStringImpl>, JSC::JSPromise, JSC::IdentifierRepHash> pendingModuleLoads;
-    JSC::JSPromise* pendingModuleLoad(const JSC::Identifier& key) const { return pendingModuleLoads.get(key.impl()); }
-    void trackPendingModuleLoad(const JSC::Identifier& key, JSC::JSPromise* promise);
+    JSC::WeakGCMap<PendingModuleLoadKey, JSC::JSPromise, PendingModuleLoadKeyHash> pendingModuleLoads;
+    JSC::JSPromise* pendingModuleLoad(const JSC::Identifier& key, JSC::ScriptFetchParameters::Type type) const
+    {
+        return pendingModuleLoads.get({ key.impl(), type });
+    }
+    bool hasPendingModuleLoad(const JSC::Identifier& key) const;
+    void trackPendingModuleLoad(const JSC::Identifier& key, JSC::ScriptFetchParameters::Type type, JSC::JSPromise* promise);
 
     // This increases the cache hit rate for JSC::VM's SourceProvider cache
     // It also avoids an extra allocation for the SourceProvider

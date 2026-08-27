@@ -97,7 +97,7 @@ unsafe extern "C" {
 /// Methods that may drop the heap's ref (and with it possibly the last ref)
 /// take `ThisPtr<Self>`; after they release it `this` may be gone.
 pub trait TimerObject:
-    bun_ptr::RefCounted<DestructorCtx = ()> + TimerOwner + Sized + 'static
+    bun_ptr::RefCounted + TimerOwner + Sized + 'static
 {
     fn internals(&self) -> &TimerObjectInternals;
     fn event_loop_timer(&self) -> &JsCell<EventLoopTimer>;
@@ -134,9 +134,7 @@ pub trait TimerObject:
     /// Release the scheduled-timer ref, if held. May free `this`.
     #[inline]
     fn release_heap_ref(this: ThisPtr<Self>) {
-        if let Some(held) = this.heap_ref().take() {
-            held.deref();
-        }
+        drop(this.heap_ref().take());
     }
 
     fn set_enable_keeping_event_loop_alive(&self, enable: bool) {
@@ -279,7 +277,7 @@ pub trait TimerObject:
             JSImmediate::arguments_get_cached(timer).expect("ImmediateObject arguments slot");
 
         let exception_thrown = {
-            let _pin = this.ref_guard();
+            let _pin = RefPtr::from_this(this);
             let async_id = s.async_id();
             let result = this.run(global, timer, callback, arguments, async_id, vm);
             // Fresh read: re-entrant `cancel()` may have changed `state`.
@@ -389,7 +387,7 @@ pub trait TimerObject:
         vm.event_loop_mut().enter();
         {
             // Ensure it stays alive for this scope.
-            let _pin = this.ref_guard();
+            let _pin = RefPtr::from_this(this);
 
             let _ = this.run(
                 global,
@@ -774,8 +772,6 @@ pub trait TimerObject:
     fn release_heap_entry(this: ThisPtr<Self>) {
         let held = this.heap_ref().take();
         Self::cancel(this);
-        if let Some(held) = held {
-            held.deref();
-        }
+        drop(held);
     }
 }

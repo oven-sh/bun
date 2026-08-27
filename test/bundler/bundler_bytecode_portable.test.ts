@@ -90,7 +90,7 @@ function bigSource() {
   const lines = [
     "var o = {};",
     `for (var i = 0; i < ${calls}; i++) o["m" + i] = function (x) { return x + 1; };`,
-    `var huge = "${"0123456789abcdef".repeat(70000 / 16)}";`,
+    `var huge = "${Buffer.alloc(70000, "0123456789abcdef").toString()}";`,
     "function big(flag, s) {",
     "  var " + Array.from({ length: locals }, (_, i) => `v${i} = ${i}`).join(", ") + ";",
     "  var r = 0;",
@@ -114,11 +114,11 @@ const bigOutput = "160307 70000";
 const shapesOutput = "16257";
 function shapesSource() {
   const lines = ["var acc = 0, s;"];
-  for (let n = 0; n <= 64; n++) lines.push(`s = "${"x".repeat(n)}"; acc += s.length; s = "${"é".repeat(n)}"; acc += s.length; s = "${"字".repeat(n)}"; acc += s.length;`);
+  for (let n = 0; n <= 64; n++) lines.push(`s = "${Buffer.alloc(n, "x")}"; acc += s.length; s = "${"é".repeat(n)}"; acc += s.length; s = "${"字".repeat(n)}"; acc += s.length;`);
   for (const b of [7, 8, 14, 15, 16, 21, 22, 28, 29, 31, 32, 33, 52]) for (const d of [-1, 0, 1]) lines.push(`acc += ${2 ** b + d} % 7; acc -= ${-(2 ** b) + d} % 5;`);
   for (let n = 1; n <= 24; n++) {
     lines.push(`function sw${n}(v) { switch (v) { ${Array.from({ length: n }, (_, i) => `case ${i * (n % 3 + 1)}: return ${i};`).join(" ")} default: return -1; } } acc += sw${n}(${n - 1});`);
-    lines.push(`function ss${n}(v) { switch (v) { ${Array.from({ length: n }, (_, i) => `case "k${"q".repeat(i)}": return ${i};`).join(" ")} default: return -1; } } acc += ss${n}("k${"q".repeat(n - 1)}");`);
+    lines.push(`function ss${n}(v) { switch (v) { ${Array.from({ length: n }, (_, i) => `case "k${Buffer.alloc(i, "q")}": return ${i};`).join(" ")} default: return -1; } } acc += ss${n}("k${Buffer.alloc(n - 1, "q")}");`);
     lines.push(`function p${n}(${Array.from({ length: n }, (_, i) => "a" + i).join(", ")}) { return arguments.length + a${n - 1}; } acc += p${n}(${Array.from({ length: n }, (_, i) => i).join(", ")});`);
     lines.push(`class C${n} { ${Array.from({ length: n }, (_, i) => `f${i} = ${i}; #p${i} = ${i};`).join(" ")} sum() { return ${Array.from({ length: n }, (_, i) => `this.f${i} + this.#p${i}`).join(" + ")}; } } acc += new C${n}().sum();`);
     lines.push(`acc += [${Array.from({ length: n }, (_, i) => i).join(", ")}].length + [${Array.from({ length: n }, (_, i) => i + 0.5).join(", ")}].length + [${Array.from({ length: n }, (_, i) => `"e${i}"`).join(", ")}].length;`);
@@ -455,7 +455,7 @@ describe("bytecode cache portability", () => {
 
   // Identical bytes only help if this platform also decodes what it encodes.
   for (const { name, entry, args, output } of corpusBuilds) {
-    test(`output of \`${name}\` loads from the cache`, async () => {
+    test.concurrent(`output of \`${name}\` loads from the cache`, async () => {
       using dir = tempDir("bytecode-portable-run", {});
       await bundle(String(dir), entry, args);
       await using proc = Bun.spawn({
@@ -472,15 +472,13 @@ describe("bytecode cache portability", () => {
   }
 
   for (const [file, source, output] of [["features.js", featuresSource, featuresOutput], ["records.js", recordsSource, recordsOutput]] as const) {
-    test(`vm.Script cachedData for ${file} is accepted and runs`, async () => {
+    test.concurrent(`vm.Script cachedData for ${file} is accepted and runs`, async () => {
       const { cachedData } = new vm.Script(source, { filename: file, produceCachedData: true });
       const script = new vm.Script(source, { filename: file, cachedData });
       expect(script.cachedDataRejected).toBe(false);
       const lines: string[] = [];
-      const done = Promise.withResolvers<void>();
-      const context = vm.createContext({ console: { log: (...args: unknown[]) => { lines.push(args.join(" ")); done.resolve(); } } });
-      script.runInContext(context);
-      await done.promise; // both scripts print once, after their async parts settle
+      const context = vm.createContext({ console: { log: (...args: unknown[]) => lines.push(args.join(" ")) } });
+      await script.runInContext(context); // both scripts end in the promise that prints their output
       expect(lines.join("\n")).toBe(output);
     });
   }

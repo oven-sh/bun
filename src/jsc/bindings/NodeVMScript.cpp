@@ -253,10 +253,6 @@ JSC::ProgramExecutable* NodeVMScript::createExecutable()
 
 void NodeVMScript::cacheBytecode()
 {
-    if (!m_cachedExecutable) {
-        createExecutable();
-    }
-
     m_cachedBytecode = getBytecode(globalObject(), JSC::SourceCodeType::ProgramType, m_source);
     m_cachedDataProduced = m_cachedBytecode != nullptr;
 }

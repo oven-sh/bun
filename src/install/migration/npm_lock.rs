@@ -765,9 +765,8 @@ impl<'a> Migrator<'a> {
                 }
 
                 let version_tag = version.tag;
-                // A `file:` path in a `file:` package's own package.json is user authored
-                // (`Lockfile::is_trusted_folder_dependency`); a bare folder npm found
-                // beside the package for a registry spec is not.
+                // Trust a `file:` spec written in a `file:` package's own package.json, not a
+                // bare folder npm found for a registry spec (`is_trusted_folder_dependency`).
                 let declares_folder =
                     res_tag == resolution::Tag::Folder && version_tag == DepTag::Folder;
                 let mut found = self.find_target(key, name);

@@ -27,7 +27,7 @@ pub trait StandaloneModuleGraph: Send + Sync {
         let is_embedded_path =
             bun_options_types::standalone_path::is_bun_standalone_file_path(specifier);
         if (!is_relative && !is_embedded_path)
-            || bun_paths::is_sep_native(specifier[specifier.len() - 1])
+            || specifier.last().is_some_and(|&c| bun_paths::is_sep_native(c))
         {
             return None;
         }

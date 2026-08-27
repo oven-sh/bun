@@ -670,6 +670,8 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     globalObject->isThreadLocalDefaultGlobalObject = true;
     Bun__setDefaultGlobalObject(globalObject);
     JSC::gcProtect(globalObject);
+    // The VM's hook slot follows the default global: this one has no nextTick queue yet.
+    globalObject->resetOnEachMicrotaskTick();
 
     // NapiEnv holds a raw Zig::GlobalObject*; deferred napi finalizers for
     // the old global's objects run on the next event-loop tick — after this

@@ -1370,4 +1370,42 @@ describe("enterWith() and process.nextTick() in the same microtask", () => {
     `;
     expect(await run(["-e", script])).toEqual({ stdout: "end\ntick0\nthen\ntick y\n", stderr: "", exitCode: 0 });
   });
+
+  // The cleanup's other job: the store enterWith() set outside any microtask
+  // is gone once the next microtask ends.
+  test.concurrent("enterWith() in a timer callback does not leak into the next timer", async () => {
+    const script = `
+      ${cjsImport}
+      const als = new AsyncLocalStorage();
+      setTimeout(() => {
+        als.enterWith("x");
+        Promise.resolve().then(() => console.log("then", als.getStore()));
+      }, 1);
+      setTimeout(() => console.log("timer", als.getStore()), 5);
+    `;
+    expect(await run(["-e", script])).toEqual({ stdout: "then x\ntimer undefined\n", stderr: "", exitCode: 0 });
+  });
+
+  // bun test --isolate gives the second file a new global with no nextTick
+  // queue. The hook slot has to follow it, or the file's top-level ticks wait
+  // for the sibling microtasks instead of running first like in a fresh process.
+  test.concurrent("bun test --isolate arms the nextTick drain for each new global", async () => {
+    using dir = tempDir("als-isolate-tick", {
+      "a.test.js": `
+        import { test, expect } from "bun:test";
+        process.nextTick(() => {});
+        test("a", () => expect(1).toBe(1));
+      `,
+      "b.test.js": `
+        import { test, expect } from "bun:test";
+        const ran = [];
+        process.nextTick(() => ran.push("tick"));
+        Promise.resolve().then(() => ran.push("then"));
+        test("b", () => expect(ran).toEqual(["tick", "then"]));
+      `,
+    });
+    const result = await run(["test", "--isolate", "a.test.js", "b.test.js"], String(dir));
+    expect(result.stderr).toContain(" 2 pass");
+    expect(result.exitCode).toBe(0);
+  });
 });

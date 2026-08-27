@@ -226,9 +226,6 @@ pub mod text {
         executable_lines_that_havent_been_executed.set_intersection(&report.executable_lines);
 
         let mut iter = executable_lines_that_havent_been_executed.iterator::<true, true>();
-        let mut start_of_line_range: usize = 0;
-        let mut prev_line: usize = 0;
-        let mut is_first = true;
 
         // `concat!(pretty_fmt!(..), "{}")` requires a literal; split into a
         // prefix `write_all` + plain `write!` so the const-generic `ENABLE_COLORS` can
@@ -236,47 +233,44 @@ pub mod text {
         let red = pretty_fmt::<ENABLE_COLORS>("<red>");
         let comma = pretty_fmt::<ENABLE_COLORS>("<r><d>,<r>");
 
-        while let Some(next_line) = iter.next() {
-            if next_line == (prev_line + 1) {
-                prev_line = next_line;
-                continue;
-            } else if is_first && start_of_line_range == 0 && prev_line == 0 {
-                start_of_line_range = next_line;
-                prev_line = next_line;
-                continue;
-            }
-
-            if is_first {
-                is_first = false;
+        fn write_range(
+            writer: &mut impl bun_io::Write,
+            red: &[u8],
+            comma: &[u8],
+            is_first: &mut bool,
+            start: usize,
+            end: usize,
+        ) -> bun_io::Result<()> {
+            if *is_first {
+                *is_first = false;
             } else {
-                writer.write_all(&comma)?;
+                writer.write_all(comma)?;
             }
-
-            if start_of_line_range == prev_line {
-                writer.write_all(&red)?;
-                write!(writer, "{}", start_of_line_range + 1)?;
+            writer.write_all(red)?;
+            if start == end {
+                write!(writer, "{}", start + 1)
             } else {
-                writer.write_all(&red)?;
-                write!(writer, "{}-{}", start_of_line_range + 1, prev_line + 1)?;
+                write!(writer, "{}-{}", start + 1, end + 1)
             }
-
-            prev_line = next_line;
-            start_of_line_range = next_line;
         }
 
-        if prev_line != start_of_line_range {
-            if is_first {
-            } else {
-                writer.write_all(&comma)?;
-            }
+        // Coalesce consecutive 0-based line indices into `start-end` runs.
+        let mut pending: Option<(usize, usize)> = None;
+        let mut is_first = true;
 
-            if start_of_line_range == prev_line {
-                writer.write_all(&red)?;
-                write!(writer, "{}", start_of_line_range + 1)?;
-            } else {
-                writer.write_all(&red)?;
-                write!(writer, "{}-{}", start_of_line_range + 1, prev_line + 1)?;
-            }
+        while let Some(next_line) = iter.next() {
+            pending = Some(match pending {
+                Some((start, end)) if next_line == end + 1 => (start, next_line),
+                Some((start, end)) => {
+                    write_range(writer, &red, &comma, &mut is_first, start, end)?;
+                    (next_line, next_line)
+                }
+                None => (next_line, next_line),
+            });
+        }
+
+        if let Some((start, end)) = pending {
+            write_range(writer, &red, &comma, &mut is_first, start, end)?;
         }
         Ok(())
     }
@@ -564,9 +558,17 @@ impl ByteRangeMapping {
                     .expect("int cast");
                 let max: usize = usize::try_from(function.start_offset.max(function.end_offset))
                     .expect("int cast");
-                let mut min_line: u32 = u32::MAX;
-                let mut max_line: u32 = 0;
+                let did_fn_execute = function.execution_count > 0 || function.has_executed;
 
+                functions.push(Block {});
+
+                if did_fn_execute {
+                    // Its lines are already tracked via statement blocks.
+                    functions_which_have_executed.set(i);
+                    continue;
+                }
+
+                // Only lines the code lands on, so blank lines get no record.
                 for byte_offset in min..max {
                     let Some(new_line_index) = LineOffsetTable::find_index(
                         line_starts,
@@ -582,27 +584,11 @@ impl ByteRangeMapping {
                     }
 
                     let line: u32 = u32::try_from(new_line_index).expect("int cast");
-                    min_line = min_line.min(line);
-                    max_line = max_line.max(line);
-                }
-
-                let did_fn_execute = function.execution_count > 0 || function.has_executed;
-
-                // only mark the lines as executable if the function has not executed
-                // functions that have executed have non-executable lines in them and thats fine.
-                if !did_fn_execute {
-                    let end = max_line.min(line_count);
-                    line_hits_slice[min_line as usize..end as usize].fill(0);
-                    for line in min_line..end {
+                    if line < line_count {
                         executable_lines.set(line as usize);
                         lines_which_have_executed.unset(line as usize);
+                        line_hits_slice[line as usize] = 0;
                     }
-                }
-
-                functions.push(Block {});
-
-                if did_fn_execute {
-                    functions_which_have_executed.set(i);
                 }
             }
         } else if let Some(parsed_mapping) = parsed_mappings_.as_deref() {
@@ -702,8 +688,8 @@ impl ByteRangeMapping {
                     .expect("int cast");
                 let max: usize = usize::try_from(function.start_offset.max(function.end_offset))
                     .expect("int cast");
-                let mut min_line: u32 = u32::MAX;
-                let mut max_line: u32 = 0;
+                let did_fn_execute = function.execution_count > 0 || function.has_executed;
+                let mut has_mapping = false;
 
                 for byte_offset in min..max {
                     let Some(new_line_index) = LineOffsetTable::find_index(
@@ -751,27 +737,22 @@ impl ByteRangeMapping {
                         if line >= line_count {
                             continue;
                         }
-                        min_line = min_line.min(line);
-                        max_line = max_line.max(line);
-                    }
-                }
+                        has_mapping = true;
+                        if did_fn_execute {
+                            // Its lines are already tracked via statement blocks.
+                            break;
+                        }
 
-                // no sourcemaps? ignore it
-                if min_line == u32::MAX && max_line == 0 {
-                    continue;
-                }
-
-                let did_fn_execute = function.execution_count > 0 || function.has_executed;
-
-                // only mark the lines as executable if the function has not executed
-                // functions that have executed have non-executable lines in them and thats fine.
-                if !did_fn_execute {
-                    let end = max_line.min(line_count);
-                    for line in min_line..end {
+                        // Only mapped lines, so comment and blank lines get no record.
                         executable_lines.set(line as usize);
                         lines_which_have_executed.unset(line as usize);
                         line_hits_slice[line as usize] = 0;
                     }
+                }
+
+                // no sourcemaps? ignore it
+                if !has_mapping {
+                    continue;
                 }
 
                 functions.push(Block {});

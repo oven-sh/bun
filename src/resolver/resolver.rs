@@ -576,9 +576,8 @@ pub struct Resolver<'a> {
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
 
-    /// Transient per-resolve flag set by [`Self::resolve_for_macro`]: user
-    /// externals (`--external` patterns and exact names, `packages:
-    /// "external"`) are not applied, so the path resolves to a real module.
+    /// Set by [`Self::resolve_for_macro`]; disables the user external checks
+    /// for the duration of one resolve.
     pub(crate) ignore_user_externals: bool,
 }
 
@@ -1509,11 +1508,9 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// [`Self::resolve`], but user externals (`--external` patterns and exact
-    /// names, `packages: "external"`) are not applied. A macro import runs at
-    /// build time and is inlined, so it never appears in the output; marking
-    /// it external would hand the macro loader an unresolved specifier
-    /// (#40626).
+    /// [`Self::resolve`] without user externals (`--external`, `packages:
+    /// "external"`). A macro runs at build time and is inlined, so its import
+    /// must resolve to a real module (#40626).
     pub fn resolve_for_macro(
         &mut self,
         source_dir: &[u8],

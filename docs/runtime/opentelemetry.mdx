@@ -152,7 +152,7 @@ Bun.serve({
 });
 ```
 
-`Bun.otel.wrap(fn)` does the same for every call of a function, declared once: `this` and the arguments pass through, and the span is named after the function. The wrapped function is not a constructor (a class cannot be wrapped; wrap its methods). When `fn` returns a thenable that is not a native `Promise` (a query builder, for example), it is adopted with `Promise.resolve()` while the span is active and that `Promise` is what the caller receives.
+`Bun.otel.wrap(fn)` does the same for every call of a function, declared once: `this` and the arguments pass through, and the span is named after the function. The wrapped function is not a constructor (a class cannot be wrapped; wrap its methods), and a generator function cannot be wrapped either (it returns before its body runs; use `Bun.otel.span` inside it). When `fn` returns a thenable that is not a native `Promise` (a query builder, for example), it is adopted with `Promise.resolve()` while the span is active and that `Promise` is what the caller receives.
 
 ```ts
 export const loadUser = Bun.otel.wrap(async function loadUser(id: string) {

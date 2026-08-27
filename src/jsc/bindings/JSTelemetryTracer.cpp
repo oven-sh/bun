@@ -387,6 +387,14 @@ extern "C" EncodedJSValue Bun__Telemetry__observeSettlement(Zig::GlobalObject* g
 
 // Bun.otel.span(name, attributes?, fn?) — without fn: the span, active until
 // disposed/exited/ended.
+// A generator function returns its iterator immediately, so tracing the call
+// would end the span before the body runs; the work inside has to be traced instead.
+static bool isGeneratorFunction(JSValue fn)
+{
+    auto* jsFunction = dynamicDowncast<JSFunction>(fn);
+    return jsFunction && !jsFunction->isHostOrBuiltinFunction() && isGeneratorOrAsyncGeneratorWrapperParseMode(jsFunction->jsExecutable()->parseMode());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsTelemetryOtelSpan, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -408,6 +416,8 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryOtelSpan, (JSGlobalObject * lexicalGlobalObj
         return throwVMTypeError(globalObject, scope, "Bun.otel.span: attributes must be an object"_s);
     if (!fn.isUndefined() && !fn.isCallable())
         return throwVMTypeError(globalObject, scope, "Bun.otel.span: the last argument must be a function"_s);
+    if (isGeneratorFunction(fn)) [[unlikely]]
+        return throwVMTypeError(globalObject, scope, "Bun.otel.span: a generator function cannot be traced as a call (it returns before its body runs); use Bun.otel.span inside the generator instead"_s);
     auto* span = telemetryCreateSpan(globalObject, Bun__Telemetry__userScope(), 0, name);
     if (attributes.isObject()) {
         telemetrySpanSetAttributes(globalObject, span, attributes);
@@ -486,6 +496,8 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryOtelWrap, (JSGlobalObject * lexicalGlobalObj
     JSObject* target = fn.getObject();
     if (auto* jsFunction = dynamicDowncast<JSFunction>(target); jsFunction && !jsFunction->isHostOrBuiltinFunction() && jsFunction->jsExecutable()->isClassConstructorFunction()) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "Bun.otel.wrap: a class cannot be wrapped (the wrapped function is not a constructor); wrap its methods instead"_s);
+    if (isGeneratorFunction(target)) [[unlikely]]
+        return throwVMTypeError(globalObject, scope, "Bun.otel.wrap: a generator function cannot be wrapped (it returns before its body runs); use Bun.otel.span inside the generator instead"_s);
     JSValue targetName = target->get(globalObject, vm.propertyNames->name);
     RETURN_IF_EXCEPTION(scope, {});
     WTF::String fnName = targetName.isString() ? asString(targetName)->tryGetValue() : WTF::String();

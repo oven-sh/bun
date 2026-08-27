@@ -462,7 +462,9 @@ declare module "bun" {
      * or rejection is recorded on it. A non-`Promise` thenable result is
      * adopted with `Promise.resolve()` under the span and that `Promise` is
      * returned. The wrapped function is not a constructor; wrapping a class
-     * throws.
+     * throws. So does wrapping a generator function: the call returns its
+     * iterator before the body runs, so trace the work inside it with
+     * `Bun.otel.span` instead.
      *
      * ```ts
      * export const loadUser = Bun.otel.wrap(async function loadUser(id: string) {

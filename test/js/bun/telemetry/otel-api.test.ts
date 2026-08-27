@@ -160,6 +160,18 @@ describe("Bun.otel", () => {
     expect(w()).toBe(1);
   });
 
+  test("Bun.otel.wrap / span(name, fn) reject generator functions (the call returns before the body runs)", () => {
+    expect(() => Bun.otel.wrap(function* gen() {})).toThrow(TypeError);
+    expect(() => Bun.otel.wrap(async function* agen() {})).toThrow(TypeError);
+    expect(() => Bun.otel.span("g", function* () {} as any)).toThrow(TypeError);
+    expect(() => Bun.otel.span("g", {}, async function* () {} as any)).toThrow(TypeError);
+    // an ordinary function that returns an iterator is fine: the caller decided that
+    const w = Bun.otel.wrap(function iter() {
+      return [1, 2][Symbol.iterator]();
+    });
+    expect([...w()]).toEqual([1, 2]);
+  });
+
   test("wrap/span with a thenable: adopted into a Promise under the span, which ends when it settles", async () => {
     let ranUnder: string | undefined;
     const thenable = {

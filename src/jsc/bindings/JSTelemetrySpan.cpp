@@ -898,12 +898,13 @@ TelemetryPropagation telemetryPropagationOfPooled(Zig::GlobalObject* globalObjec
     TelemetryPropagation out;
     if (!handle)
         return out;
-    // A span that already has a cell caches the headers in its fields.
-    if (auto* span = toTelemetrySpan(JSValue::decode(Bun__Telemetry__poolCell(globalObject, handle))))
-        return telemetryPropagationOf(globalObject, span);
     BunString traceState = { BunStringTag::Empty, {} }, baggage = { BunStringTag::Empty, {} };
-    if (!Bun__Telemetry__nativePropagation(globalObject, handle, &traceState, &baggage))
+    JSC::EncodedJSValue cell {};
+    if (!Bun__Telemetry__nativePropagation(globalObject, handle, &traceState, &baggage, &cell))
         return out;
+    // A span that already has a cell caches the headers in its fields.
+    if (auto* span = toTelemetrySpan(JSValue::decode(cell)))
+        return telemetryPropagationOf(globalObject, span);
     auto& vm = globalObject->vm();
     if (auto s = traceState.transferToWTFString(); !s.isEmpty())
         out.traceState = jsString(vm, WTF::move(s));
@@ -921,7 +922,7 @@ static void fillNativePropagation(Zig::GlobalObject* globalObject, JSTelemetrySp
         return;
     auto& vm = globalObject->vm();
     BunString traceState = { BunStringTag::Empty, {} }, baggage = { BunStringTag::Empty, {} };
-    Bun__Telemetry__nativePropagation(globalObject, span->m_native, &traceState, &baggage);
+    Bun__Telemetry__nativePropagation(globalObject, span->m_native, &traceState, &baggage, nullptr);
     auto adopt = [&](BunString& header) -> JSString* {
         auto s = header.transferToWTFString();
         return s.isEmpty() ? jsEmptyString(vm) : jsString(vm, WTF::move(s));

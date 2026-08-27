@@ -882,13 +882,16 @@ pub extern "C" fn Bun__Telemetry__nativeName(
 }
 
 /// W3C `tracestate` / `baggage` a native-owned span received (+1 refs, caller
-/// adopts). False, with both Empty, when it carries neither.
+/// adopts). False, with both Empty, when it carries neither. When `cell` is
+/// given and the span already has a JS cell, that cell is returned in it
+/// instead (its fields cache the headers) and both strings stay Empty.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__nativePropagation(
     global: &JSGlobalObject,
     handle: NativeSpan,
     trace_state: &mut OwnedJsString,
     baggage: &mut OwnedJsString,
+    cell: Option<&mut JSValue>,
 ) -> bool {
     *trace_state = OwnedJsString::EMPTY;
     *baggage = OwnedJsString::EMPTY;
@@ -899,21 +902,17 @@ pub extern "C" fn Bun__Telemetry__nativePropagation(
         if s.trace_state.is_empty() && s.baggage.is_empty() {
             return false;
         }
+        if let Some(cell) = cell
+            && s.js_cell.is_some()
+        {
+            *cell = JSValue::from_encoded(s.js_cell.0);
+            return true;
+        }
         *trace_state = OwnedJsString::clone_utf8(&s.trace_state);
         *baggage = OwnedJsString::clone_utf8(&s.baggage);
         true
     })
     .unwrap_or(false)
-}
-
-/// The JS cell already materialized for a pooled span (never creates one);
-/// undefined when there is none or the span has ended.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Telemetry__poolCell(global: &JSGlobalObject, handle: NativeSpan) -> JSValue {
-    local(global)
-        .and_then(|l| pool::with_ref(&l.pool, handle, |s| s.js_cell))
-        .filter(|c| c.is_some())
-        .map_or(JSValue::UNDEFINED, |c| JSValue::from_encoded(c.0))
 }
 
 #[unsafe(no_mangle)]

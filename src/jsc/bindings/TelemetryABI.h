@@ -242,13 +242,12 @@ void Bun__Telemetry__nativeAddEvent(JSC::JSGlobalObject*, Bun::TelemetryNativeHa
 void Bun__Telemetry__nativeAddLink(JSC::JSGlobalObject*, Bun::TelemetryNativeHandle, const Bun::TelemetryLinkRef*, const Bun::TelemetryAttrPool*);
 // Owned (+1) copies; empty when the slot is gone or the value is empty.
 BunString Bun__Telemetry__nativeName(JSC::JSGlobalObject*, Bun::TelemetryNativeHandle);
-// False (and both outputs Empty) when the span carries neither.
-bool Bun__Telemetry__nativePropagation(JSC::JSGlobalObject*, Bun::TelemetryNativeHandle, BunString* traceState, BunString* baggage);
+// False (and both outputs Empty) when the span carries neither. With a non-null
+// `cell` and an already-materialized span, *cell is set instead and both stay Empty.
+bool Bun__Telemetry__nativePropagation(JSC::JSGlobalObject*, Bun::TelemetryNativeHandle, BunString* traceState, BunString* baggage, JSC::EncodedJSValue* cell);
 // Identity of a live pooled span; false (and *out untouched) once it has ended.
 bool Bun__Telemetry__poolStub(JSC::JSGlobalObject*, Bun::TelemetryNativeHandle, Bun::TelemetrySpanStub* out);
 JSC::EncodedJSValue Bun__Telemetry__poolMaterialize(Zig::GlobalObject*, Bun::TelemetryNativeHandle);
-// The cell poolMaterialize already made for a live pooled span, else undefined; never creates one.
-JSC::EncodedJSValue Bun__Telemetry__poolCell(Zig::GlobalObject*, Bun::TelemetryNativeHandle);
 
 // ─── implemented in src/runtime/telemetry/sqlite.rs ───
 // A bun:sqlite query span; the none handle when not recording. `errcode == 0` ⇒ ok.

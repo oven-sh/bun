@@ -365,6 +365,26 @@ describe.concurrent("node:domain without a handler and with nested domains", () 
     expect(exitCode).toBe(0);
   });
 
+  test("a throw in a child domain added to its parent reaches the parent's handler once", async () => {
+    const { stdout, exitCode } = await run(
+      `
+      const domain = require("node:domain");
+      const parent = domain.create();
+      const child = domain.create();
+      parent.add(child);
+      let calls = 0;
+      parent.on("error", e => {
+        calls++;
+        console.log("parent:" + e.message, "emitter=" + (e.domainEmitter === child), "d=" + (e.domain === parent));
+      });
+      process.on("uncaughtException", e => { console.log("uncaughtException:" + e.message); process.exit(1); });
+      setTimeout(() => { console.log("calls", calls); process.exit(0); }, 1);
+      parent.run(() => child.run(() => { throw new Error("boom"); }));`,
+    );
+    expect(stdout).toBe("parent:boom emitter=true d=true\ncalls 1\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("a top-level 'error' handler that throws is fatal with exit code 7", async () => {
     const { stdout, stderr, exitCode } = await run(
       `

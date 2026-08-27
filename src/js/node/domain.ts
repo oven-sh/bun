@@ -125,7 +125,11 @@ function handleError(er, type) {
     return false;
   }
 
-  return active._errorHandler(er);
+  // Like node's capture callback, the result of _errorHandler is not consulted:
+  // with a listener on the stack it delivers the error or throws. emit() returns
+  // false when it routed the error to the domain's own parent domain.
+  active._errorHandler(er);
+  return true;
 }
 
 setDomainErrorHandler(handleError);

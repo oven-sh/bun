@@ -59,6 +59,24 @@ for (const secure of [true, false]) {
       expect(res.body.toString()).toBe("hello");
     });
 
+    // https://github.com/oven-sh/bun/issues/30248
+    // RFC 9110 §10.1.1: recognized 100-continue forms dispatch the handler,
+    // anything else answers 417 before the handler runs.
+    test("Expect dispatch: 100-continue casings reach the handler, unknown expectations 417", async () => {
+      const results: Record<string, { status: number; body: string }> = {};
+      for (const value of ["100-continue", "100-Continue", "100-CONTINUE", "muffins", "x100-continue"]) {
+        const res = await request(session, { ":path": "/echo", ":method": "POST", expect: value }, "hello");
+        results[value] = { status: res.status, body: res.body.toString() };
+      }
+      expect(results).toEqual({
+        "100-continue": { status: 201, body: "hello" },
+        "100-Continue": { status: 201, body: "hello" },
+        "100-CONTINUE": { status: 201, body: "hello" },
+        "muffins": { status: 417, body: "" },
+        "x100-continue": { status: 417, body: "" },
+      });
+    });
+
     test("POST body is echoed with status and request headers", async () => {
       const res = await request(session, { ":path": "/echo", ":method": "POST", "x-echo": "abc" }, "payload-123");
       expect(res.status).toBe(201);

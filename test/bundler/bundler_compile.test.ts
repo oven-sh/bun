@@ -531,7 +531,7 @@ describe("bundler", () => {
         console.log(require(s("./both.js")).default);
         console.log(require(s("./disk-only.js")).default);
         const w1 = new Worker("./both.js");
-        console.log(await new Promise(r => { w1.onmessage = e => r(e.data); }));
+        console.log(await new Promise(r => { w1.onmessage = e => r(e.data); w1.onerror = e => r("error: " + e.message); }));
         w1.terminate();
         const w2 = new Worker("./disk-only-worker.js");
         console.log(await new Promise(r => { w2.onmessage = e => r(e.data); w2.onerror = e => r("error: " + e.message); }));

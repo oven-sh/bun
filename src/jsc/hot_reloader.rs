@@ -99,8 +99,8 @@ impl HotReloaderCtx for VirtualMachine {
     fn post_reload_task<const RELOAD_IMMEDIATELY: bool>(
         handle: &crate::VmHandle,
         task: Box<Task<Self, EventLoop, RELOAD_IMMEDIATELY>>,
-    ) -> Result<(), Box<Task<Self, EventLoop, RELOAD_IMMEDIATELY>>> {
-        handle.post_boxed(crate::LoopKind::Regular, task)
+    ) {
+        handle.post_boxed(crate::LoopKind::Regular, task);
     }
 
     fn reload(&self, _task: &dyn HotReloadTaskView) {
@@ -188,12 +188,12 @@ pub trait HotReloaderCtx: Sized + 'static {
     fn reload_handle(&self) -> Option<crate::VmHandle>;
 
     /// Watcher thread: queue `task` on the owning thread through `handle`
-    /// (from [`reload_handle`](Self::reload_handle)); it comes back if the
-    /// owner is already closed. Only contexts with a handle are ever asked.
+    /// (from [`reload_handle`](Self::reload_handle)); it is dropped unrun if
+    /// the owner is already closed. Only contexts with a handle are ever asked.
     fn post_reload_task<const RELOAD_IMMEDIATELY: bool>(
         handle: &crate::VmHandle,
         task: Box<Task<Self, Self::EventLoop, RELOAD_IMMEDIATELY>>,
-    ) -> Result<(), Box<Task<Self, Self::EventLoop, RELOAD_IMMEDIATELY>>>;
+    );
 
     /// Called from `Task::run` (owning thread) to perform the actual reload.
     /// The const-generic task is erased via the `HotReloadTaskView` so this
@@ -455,15 +455,15 @@ pub struct Task<Ctx: HotReloaderCtx, EventLoopType, const RELOAD_IMMEDIATELY: bo
     _event_loop: PhantomData<fn() -> EventLoopType>,
 }
 
-// Only the VM's tasks are ever queued (`bun build --watch` has no loop); the
-// `run_task` arms for these two tags `heap::take` exactly these types.
+// Only the VM's tasks are ever queued (`bun build --watch` has no loop). A
+// task released unrun or refused is a file change that will not reload
+// anything: dropping it is all there is to do.
 bun_event_loop::boxed_task! {
-    impl[const RELOAD_IMMEDIATELY: bool] for Task<VirtualMachine, EventLoop, RELOAD_IMMEDIATELY> =>
+    impl[const RELOAD_IMMEDIATELY: bool] Task<VirtualMachine, EventLoop, RELOAD_IMMEDIATELY> =>
         if RELOAD_IMMEDIATELY { task_tag::WatchReloadTask } else { task_tag::HotReloadTask };
-    fn release_unrun(self) {
-        // A file change the watcher thread posted that will not reload anything.
-        drop(self)
-    }
+    run = |task: Box<Self>| { task.run(); Ok(()) };
+    release_unrun = drop;
+    refused = drop;
 }
 
 impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
@@ -482,17 +482,23 @@ where
         }
     }
 
-    /// Owning thread. Returns whether a reload ran (the dispatcher then leaves
-    /// the tick early without draining microtasks).
+    /// Whether [`run`](Self::run) reloads (the dispatcher then leaves the
+    /// tick early without draining microtasks) or only busts directory caches.
+    pub fn reloads(&self) -> bool {
+        self.count > 0
+    }
+
+    /// Owning thread: bust the pending directory caches, then reload if this
+    /// batch carries changed files.
     #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
-    pub fn run(self: Box<Self>) -> bool {
+    pub fn run(self: Box<Self>) {
         let ctx = self.ctx.get();
         let dirs = core::mem::take(&mut *self.pending.dirs.lock());
         for dir in &dirs {
             let _ = ctx.bust_dir_cache(dir);
         }
         if self.count == 0 {
-            return false;
+            return;
         }
         // Since we rely on the event loop for hot reloads, there can be
         // a delay before the next reload begins. In the time between the
@@ -506,7 +512,6 @@ where
         while self.pending.count.swap(0, Ordering::Relaxed) > 0 {
             ctx.reload(&*self);
         }
-        true
     }
 
     pub(crate) fn append(
@@ -571,8 +576,7 @@ where
                 pending: Arc::clone(&self.pending),
                 _event_loop: PhantomData,
             });
-            // VM torn down while a change was pending: the box comes back and drops.
-            let _ = Ctx::post_reload_task(handle, task);
+            Ctx::post_reload_task(handle, task);
         }
         self.dirs.clear();
 
@@ -1197,10 +1201,10 @@ impl HotReloaderCtx for bun_bundler::BundleV2<'static> {
 
     fn post_reload_task<const RELOAD_IMMEDIATELY: bool>(
         _handle: &crate::VmHandle,
-        task: Box<Task<Self, Self::EventLoop, RELOAD_IMMEDIATELY>>,
-    ) -> Result<(), Box<Task<Self, Self::EventLoop, RELOAD_IMMEDIATELY>>> {
+        _task: Box<Task<Self, Self::EventLoop, RELOAD_IMMEDIATELY>>,
+    ) {
         // No handle (see `reload_handle`), so never asked.
-        Err(task)
+        unreachable!()
     }
 
     fn reload(&self, _task: &dyn HotReloadTaskView) {

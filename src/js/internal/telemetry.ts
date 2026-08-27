@@ -43,10 +43,6 @@ const StringPrototypeTrim = String.prototype.trim;
 const ArrayPrototypeJoin = Array.prototype.join;
 const SafeMap = Map;
 const JSONParse = JSON.parse;
-// (not `Bun.resolveSync` at module scope: this module is evaluated while the
-// Bun object is reifying its lazy `otel` property, and reading another Bun
-// property re-entrantly during that is not allowed)
-let BunResolveSync: typeof Bun.resolveSync;
 
 // @opentelemetry/api well-known keys (createContextKey === Symbol.for).
 const SPAN_KEY = Symbol.for("OpenTelemetry Context Key SPAN");
@@ -419,21 +415,61 @@ const propagator = {
  * getGlobal() only needs the same major and minor >= its own). */
 function installedApiVersion(): string {
   // The entry point's view first, then the cwd's (a `bun build --compile`
-  // binary's Bun.main is inside /$bunfs/, next to no node_modules).
+  // binary's Bun.main is inside /$bunfs/, next to no node_modules). A plain
+  // walk up the tree, not the resolver: this must never auto-install.
   const { readFileSync } = require("node:fs");
-  for (const from of [Bun.main, process.cwd() + "/"]) {
+  const { dirname, join } = require("node:path");
+  for (const from of [Bun.main, process.cwd() + "/x"]) {
     if (!from) continue;
-    try {
-      const path = (BunResolveSync ??= Bun.resolveSync)("@opentelemetry/api/package.json", from + "");
-      const pkg = JSONParse(readFileSync(path, "utf8"));
-      if (typeof pkg?.version === "string") return pkg.version;
-    } catch {}
+    for (let dir = dirname(from), up: string; ; dir = up) {
+      try {
+        const pkg = JSONParse(readFileSync(join(dir, "node_modules", "@opentelemetry", "api", "package.json"), "utf8"));
+        if (typeof pkg?.version === "string") return pkg.version;
+      } catch {}
+      up = dirname(dir);
+      if (up === dir) break;
+    }
   }
   return "1.9.0";
 }
 
+// `…/@opentelemetry/api/build/{src,esm,esnext}/index.js` (`api@1.9.1@@@1` in the install cache)
+const API_ENTRY = /[\\/]@opentelemetry[\\/]api(?:@[^\\/]*)?[\\/]build[\\/](?:src|esm|esnext)[\\/]index\.js$/;
+
+/** Every copy of `@opentelemetry/api` this global has already evaluated (CJS
+ * or ESM), found by registry key — nothing is resolved or loaded. */
+function loadedApiModules(): any[] {
+  const found: any[] = [];
+  for (const key of $requireMap.$keys()) {
+    if (API_ENTRY.test(key)) {
+      const e = $requireMap.$get(key)?.exports;
+      if (e?.trace?.setGlobalTracerProvider) $arrayPush(found, e);
+    }
+  }
+  for (const key of $esmRegistryEvaluatedKeys()) {
+    if (API_ENTRY.test(key)) {
+      const ns = $esmNamespaceForCjs(key);
+      const e = ns?.trace?.setGlobalTracerProvider ? ns : ns?.default;
+      if (e?.trace?.setGlobalTracerProvider && !found.includes(e)) $arrayPush(found, e);
+    }
+  }
+  return found;
+}
+
 function installGlobal() {
   const g = globalThis as any;
+  // A copy of the api that is already loaded may have handed out tracers
+  // (`const tracer = trace.getTracer(..)` at module scope, before start()):
+  // those are ProxyTracers that only ever see a provider given to
+  // trace.setGlobalTracerProvider(), so register through the api. That also
+  // stamps the registry with the api's own version.
+  for (const api of loadedApiModules()) {
+    api.trace.setGlobalTracerProvider(tracerProvider);
+    api.context?.setGlobalContextManager?.(contextManager);
+    api.propagation?.setGlobalPropagator?.(propagator);
+  }
+  // For copies loaded later: the registry they will find. (The setters above
+  // made it if they ran; `??=` leaves a provider user code registered alone.)
   let reg = g[API_KEY];
   if (!reg) {
     let version: string | undefined;
@@ -445,21 +481,6 @@ function installGlobal() {
         version = v;
       },
     };
-  } else if (!reg.trace) {
-    // The api package is already loaded (it made the registry). Tracers it
-    // handed out before now are ProxyTracers whose provider only gets a
-    // delegate through trace.setGlobalTracerProvider(), so register through
-    // the api rather than by writing the registry.
-    try {
-      const path = (BunResolveSync ??= Bun.resolveSync)("@opentelemetry/api", (Bun.main || process.cwd() + "/") + "");
-      // loaded as CJS (require) or as ESM (import): only look, never load
-      const api = $requireMap.$get(path)?.exports ?? $esmNamespaceForCjs(path);
-      if (api?.trace?.setGlobalTracerProvider) {
-        api.trace.setGlobalTracerProvider(tracerProvider);
-        api.context?.setGlobalContextManager?.(contextManager);
-        api.propagation?.setGlobalPropagator?.(propagator);
-      }
-    } catch {}
   }
   reg.trace ??= tracerProvider;
   reg.context ??= contextManager;

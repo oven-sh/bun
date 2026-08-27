@@ -430,6 +430,37 @@ describe("@opentelemetry/api", () => {
     await collect();
   });
 
+  test("a tracer obtained before Bun.otel.start() records once tracing starts (require and import)", async () => {
+    // Libraries take `trace.getTracer()` at module scope; the app calls start() later.
+    for (const load of [`const { trace } = require("@opentelemetry/api");`, `import { trace } from "@opentelemetry/api";`]) {
+      using dir = tempDir("otel-early-tracer", {
+        "index.mjs": `
+          ${load}
+          const tracer = trace.getTracer("early");
+          const before = tracer.startSpan("a").isRecording();
+          const spans = [];
+          Bun.otel.start({ exporters: [{ export: b => spans.push(...b) }] });
+          const s = tracer.startSpan("b");
+          const during = s.isRecording();
+          s.end();
+          await Bun.otel.forceFlush();
+          console.log(JSON.stringify([before, during, spans.map(s => s.name), trace.getTracer("late").startSpan("c").isRecording()]));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe(JSON.stringify([false, true, ["b"], true]));
+      expect(exitCode).toBe(0);
+    }
+  });
+
   test("the api global is only installed when telemetry is enabled", async () => {
     const script = `
       const { trace } = require("@opentelemetry/api");

@@ -87,17 +87,13 @@ static ALWAYS_INLINE JSTelemetrySpan* telemetryCreateSpan(Zig::GlobalObject* glo
 {
     auto& vm = globalObject->vm();
     auto active = TelemetryContextSlot::current(globalObject);
-    JSTelemetrySpan* parentCell = toTelemetrySpan(active.header);
-    uint64_t parentHandle = active.poolHandle();
-    // (a pooled span that ended is nobody's parent, cell or handle alike)
-    const TelemetrySpanStub* parent = parentCell ? (parentCell->m_native && parentCell->ended() ? nullptr : &parentCell->m_stub)
-        : parentHandle                           ? Bun__Telemetry__poolStub(globalObject, parentHandle)
-                                                 : nullptr;
+    TelemetrySpanStub parentStub;
+    bool hasParent = active.parentStub(globalObject, &parentStub);
     TelemetrySpanStub stub;
-    Bun__Telemetry__stubStart(globalObject, &stub, parent, 0);
+    Bun__Telemetry__stubStart(globalObject, &stub, hasParent ? &parentStub : nullptr, 0);
     auto* span = JSTelemetrySpan::create(vm, globalObject, stub, scopeId, kind, name, 0);
-    if (parent)
-        inheritPropagation(vm, globalObject, span, parentHandle, parentCell);
+    if (hasParent)
+        inheritPropagation(vm, globalObject, span, active.poolHandle(), active.cell());
     return span;
 }
 
@@ -204,10 +200,12 @@ static JSTelemetrySpan* tracerStartSpan(Zig::GlobalObject* globalObject, JSTelem
     JSTelemetrySpan* parentCell = resolveParent(globalObject, parent);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
+    const TelemetrySpanStub* parentStub = parentCell ? parentCell->parentStub() : nullptr;
     TelemetrySpanStub stub;
-    Bun__Telemetry__stubStart(globalObject, &stub, parentCell ? &parentCell->m_stub : nullptr, telemetryTimeInputToNs(startTime));
+    Bun__Telemetry__stubStart(globalObject, &stub, parentStub, telemetryTimeInputToNs(startTime));
     auto* span = JSTelemetrySpan::create(vm, globalObject, stub, tracer->m_scope, telemetryApiKind(kind), name, 0);
-    inheritPropagation(vm, globalObject, span, 0, parentCell);
+    if (parentStub)
+        inheritPropagation(vm, globalObject, span, 0, parentCell);
 
     if (attributes.isObject()) {
         callSpanBuiltin(globalObject, span, names.setAttributesPublicName(), attributes);
@@ -332,8 +330,6 @@ JSTelemetryTracer* JSTelemetryTracer::create(VM& vm, Zig::GlobalObject* globalOb
 // promise/thenable result) from the reactions the telemetryTraceSettled
 // builtin attaches; the caller receives that derived promise, so an
 // unhandled rejection stays unhandled.
-
-extern "C" uint64_t Bun__Telemetry__activeNativeHandle(Zig::GlobalObject*);
 
 // `fn` returned `result` under `span` (still active): restore the context and
 // end the span now, or hand back a promise that ends it when `result` settles.
@@ -471,9 +467,6 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryWrappedCall, (JSGlobalObject * lexicalGlobal
     return finishTraced(globalObject, scope, span, result);
 }
 
-// Bun.otel.wrap(name, fn) — or wrap(fn), named after the function.
-extern "C" uint32_t Bun__Telemetry__enabled;
-
 // internal: a Uint32Array over the process-wide instrument mask, so JS
 // integrations (node:http) test a bit instead of calling into native when
 // tracing is off.
@@ -488,6 +481,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryEnabledMask, (JSGlobalObject * globalObject,
     return JSValue::encode(view);
 }
 
+// Bun.otel.wrap(name, fn) — or wrap(fn), named after the function.
 JSC_DEFINE_HOST_FUNCTION(jsTelemetryOtelWrap, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -583,9 +577,19 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryWrapSpanContext, (JSGlobalObject * lexicalGl
         BunString t = telemetryBorrow(asString(traceId));
         BunString s = telemetryBorrow(asString(spanId));
         Bun__Telemetry__stubFromHexIds(&stub, &t, &s, traceFlags.isInt32() ? static_cast<uint8_t>(traceFlags.asInt32()) : TelemetrySpanStub::Sampled, isRemote.isBoolean() ? isRemote.asBoolean() : true);
-    } else if (traceFlags.isInt32() && traceFlags.asInt32() == -1)
-        stub.flags |= TelemetrySpanStub::Suppressed; // telemetry.ts suppressedPlaceholder()
+    }
     return JSValue::encode(createCarrier(globalObject, stub, callFrame->argument(4)));
+}
+
+// suppressedCarrier() — the header `context.with(suppressTracing(ctx), …)`
+// activates: no span (root or child) starts under it.
+JSC_DEFINE_HOST_FUNCTION(jsTelemetrySuppressedCarrier, (JSGlobalObject * lexicalGlobalObject, CallFrame*))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    TelemetrySpanStub stub {};
+    stub.startNs = 1;
+    stub.flags = TelemetrySpanStub::NonRecording | TelemetrySpanStub::Suppressed;
+    return JSValue::encode(createCarrier(globalObject, stub, jsUndefined()));
 }
 
 // parseTraceparent(traceparent, tracestate?) — remote carrier, or undefined if the header is invalid.
@@ -613,11 +617,11 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryPropagationHeaders, (JSGlobalObject * lexica
     auto* span = toTelemetrySpan(callFrame->argument(0));
     if (!span)
         return JSValue::encode(out);
-    uint32_t flags = Bun__Telemetry__propagationFlags();
-    if ((flags & 1) && span->m_stub.hasTraceId()) {
+    auto propagators = Bun__Telemetry__propagators();
+    if (propagators.traceContext && span->m_stub.hasTraceId()) {
         std::span<Latin1Character> buf;
-        auto traceparent = WTF::String::createUninitialized(55, buf);
-        Bun__Telemetry__formatTraceparent(&span->m_stub, buf.data());
+        auto traceparent = WTF::String::createUninitialized(kTraceparentLength, buf);
+        Bun__Telemetry__formatTraceparent(&span->m_stub, reinterpret_cast<uint8_t (*)[kTraceparentLength]>(buf.data()));
         out->putDirectIndex(globalObject, 0, jsString(vm, WTF::move(traceparent)));
         RETURN_IF_EXCEPTION(scope, {});
     }
@@ -632,7 +636,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryPropagationHeaders, (JSGlobalObject * lexica
         traceState = span->string(JSTelemetrySpan::Field::TraceState);
         baggage = span->string(JSTelemetrySpan::Field::Baggage);
     }
-    if ((flags & 1) && traceState && asString(traceState)->length()) {
+    if (propagators.traceContext && traceState && asString(traceState)->length()) {
         out->putDirectIndex(globalObject, 1, traceState);
         RETURN_IF_EXCEPTION(scope, {});
     }
@@ -640,14 +644,20 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryPropagationHeaders, (JSGlobalObject * lexica
     // baggage set via the api Context (propagation.extract / setBaggage) wins
     // over what the request carried in, like fetch and propagator.inject().
     bool includeAmbient = callFrame->argument(1).isTrue();
-    if ((flags & 2) && includeAmbient) {
-        BunString bg = Bun__Telemetry__activeExtrasBaggage(globalObject);
-        if (bg.tag == BunStringTag::Dead)
+    if (propagators.baggage && includeAmbient) {
+        BunString header { BunStringTag::Empty, {} };
+        switch (Bun__Telemetry__activeExtrasBaggage(globalObject, &header)) {
+        case TelemetryBaggageOverride::Inherit:
+            break;
+        case TelemetryBaggageOverride::Masked:
             baggage = JSValue();
-        else if (bg.tag != BunStringTag::Empty)
-            baggage = jsString(vm, bg.transferToWTFString());
+            break;
+        case TelemetryBaggageOverride::Header:
+            baggage = jsString(vm, header.transferToWTFString());
+            break;
+        }
     }
-    if ((flags & 2) && baggage && asString(baggage)->length()) {
+    if (propagators.baggage && baggage && asString(baggage)->length()) {
         out->putDirectIndex(globalObject, 2, baggage);
         RETURN_IF_EXCEPTION(scope, {});
     }

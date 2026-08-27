@@ -10,9 +10,8 @@ use crate::{
 };
 
 pub struct Hooks {
-    /// The active span's identity for `global` (a `JSGlobalObject*`), or null.
-    /// Points into the JS cell; valid until the caller next runs JS.
-    pub active_span: fn(global: *mut c_void) -> *const SpanStub,
+    /// The active span's identity for `global` (a `JSGlobalObject*`), by value.
+    pub active_span: fn(global: *mut c_void) -> Option<SpanStub>,
     /// The per-VM state for `global` (null once the VM is exiting); lives as
     /// long as the VM.
     pub local: fn(global: *mut c_void) -> *const RefCell<Local>,
@@ -70,14 +69,7 @@ pub fn with_local<R>(global: *mut c_void, f: impl FnOnce(&mut Local) -> R) -> Op
 /// The active span's identity.
 #[inline]
 pub fn active_span(global: *mut c_void) -> Option<SpanStub> {
-    let h = HOOKS.get()?;
-    let p = (h.active_span)(global);
-    if p.is_null() {
-        None
-    } else {
-        // SAFETY: `Hooks::active_span` returns null or a pointer valid until JS next runs.
-        Some(unsafe { *p })
-    }
+    (HOOKS.get()?.active_span)(global)
 }
 
 /// Start a leaf span for `i` under the active span. `SpanStub::NONE` when

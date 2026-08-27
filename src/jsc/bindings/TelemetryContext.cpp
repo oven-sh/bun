@@ -68,6 +68,20 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryActiveExtras, (JSGlobalObject * globalObject
     return Bun__Telemetry__activeExtras(defaultGlobalObject(globalObject));
 }
 
+bool TelemetryContextSlot::parentStub(JSGlobalObject* globalObject, TelemetrySpanStub* out) const
+{
+    if (auto* span = cell()) {
+        if (const auto* stub = span->parentStub()) {
+            *out = *stub;
+            return true;
+        }
+        return false;
+    }
+    if (uint64_t handle = poolHandle())
+        return Bun__Telemetry__poolStub(globalObject, handle, out);
+    return false;
+}
+
 } // namespace Bun
 
 using namespace JSC;
@@ -152,18 +166,9 @@ extern "C" uint64_t Bun__Telemetry__activeNativeHandle(Zig::GlobalObject* global
     return slot.poolHandle();
 }
 
-/// Identity of the active span (points into the cell or pool slot), or null.
-/// This is what fetch/sql/etc. call to find their parent.
-extern "C" const Bun::TelemetrySpanStub* Bun__Telemetry__activeSpanStub(Zig::GlobalObject* globalObject)
+extern "C" bool Bun__Telemetry__activeSpanStub(Zig::GlobalObject* globalObject, Bun::TelemetrySpanStub* out)
 {
-    auto slot = TelemetryContextSlot::current(globalObject);
-    // A pooled (request) span that ended is nobody's parent, whether it is
-    // seen as the bare handle or through its materialized cell.
-    if (auto* span = Bun::toTelemetrySpan(slot.header))
-        return span->m_native && span->ended() ? nullptr : &span->m_stub;
-    if (uint64_t handle = slot.poolHandle())
-        return Bun__Telemetry__poolStub(globalObject, handle);
-    return nullptr;
+    return TelemetryContextSlot::current(globalObject).parentStub(globalObject, out);
 }
 
 extern "C" JSC::EncodedJSValue Bun__Telemetry__activeExtras(Zig::GlobalObject* globalObject)
@@ -172,38 +177,40 @@ extern "C" JSC::EncodedJSValue Bun__Telemetry__activeExtras(Zig::GlobalObject* g
     return JSValue::encode(extras ? extras : jsUndefined());
 }
 
-/// The W3C `baggage` header for Baggage carried in the active api Context
-/// (e.g. `context.with(propagation.extract(...), ...)`), or Empty. +1 ref.
-/// A failure to serialize is swallowed (Empty), never left pending.
-extern "C" BunString Bun__Telemetry__activeExtrasBaggage(Zig::GlobalObject* globalObject)
+/// What the active api Context (e.g. `context.with(propagation.extract(...), ...)`)
+/// says about Baggage: Inherit (nothing — use the request's inbound header),
+/// Masked (deleteBaggage / an empty Baggage — send none), or Header
+/// (`*outHeader` is its W3C `baggage` header, +1 ref). A failure to
+/// serialize is swallowed (Inherit), never left pending.
+extern "C" Bun::TelemetryBaggageOverride Bun__Telemetry__activeExtrasBaggage(Zig::GlobalObject* globalObject, BunString* outHeader)
 {
+    using Bun::TelemetryBaggageOverride;
     JSValue extras = TelemetryContextSlot::current(globalObject).extras;
     if (!extras || !extras.isCell())
-        return { BunStringTag::Empty, {} };
+        return TelemetryBaggageOverride::Inherit;
     auto& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue fn = Bun::telemetryInternalFunction(globalObject, WebCore::builtinNames(vm).baggageHeaderFromExtrasPublicName());
     if (scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
-        return { BunStringTag::Empty, {} };
+        return TelemetryBaggageOverride::Inherit;
     }
     MarkedArgumentBuffer args;
     args.append(extras);
     JSValue header = call(globalObject, fn, jsUndefined(), args, "baggageHeaderFromExtras"_s);
     if (scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
-        return { BunStringTag::Empty, {} };
+        return TelemetryBaggageOverride::Inherit;
     }
-    // null: the Context masks baggage (deleteBaggage / empty) — Dead tells the
-    // caller not to fall back to the request's inbound header.
     if (header.isNull())
-        return { BunStringTag::Dead, {} };
+        return TelemetryBaggageOverride::Masked;
     if (!header.isString() || !asString(header)->length())
-        return { BunStringTag::Empty, {} };
+        return TelemetryBaggageOverride::Inherit;
     BunString out = Bun::toStringRef(globalObject, header);
     if (scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
-        return { BunStringTag::Empty, {} };
+        return TelemetryBaggageOverride::Inherit;
     }
-    return out;
+    *outHeader = out;
+    return TelemetryBaggageOverride::Header;
 }

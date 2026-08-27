@@ -25,8 +25,9 @@ void Bun__Telemetry__exit(Zig::GlobalObject*, JSC::EncodedJSValue prev);
 // The active span as a cell (materializing one for a pooled span), or undefined.
 JSC::EncodedJSValue Bun__Telemetry__activeSpanCell(Zig::GlobalObject*);
 JSC::EncodedJSValue Bun__Telemetry__activeExtras(Zig::GlobalObject*);
-BunString Bun__Telemetry__activeExtrasBaggage(Zig::GlobalObject*);
-const Bun::TelemetrySpanStub* Bun__Telemetry__activeSpanStub(Zig::GlobalObject*);
+Bun::TelemetryBaggageOverride Bun__Telemetry__activeExtrasBaggage(Zig::GlobalObject*, BunString* outHeader);
+// The active span as a parent (fetch/sql/etc. call this); false when there is none.
+bool Bun__Telemetry__activeSpanStub(Zig::GlobalObject*, Bun::TelemetrySpanStub* out);
 // Pool handle of the active span if it is native-owned, else 0.
 uint64_t Bun__Telemetry__activeNativeHandle(Zig::GlobalObject*);
 }
@@ -54,7 +55,12 @@ struct TelemetryContextSlot {
             return static_cast<uint64_t>(header.asDouble());
         return 0;
     }
-    bool sameSpanContext(const TelemetryContextSlot& other) const { return header == other.header && extras == other.extras; }
+    JSTelemetrySpan* cell() const { return toTelemetrySpan(header); }
+    // Whether this slot's header denotes `span` (a pooled span may appear as
+    // its bare handle or as its materialized cell).
+    bool denotes(const JSTelemetrySpan* span) const { return header == JSC::JSValue(span) || (span->m_native && poolHandle() == span->m_native); }
+    // The active span as a parent (see JSTelemetrySpan::parentStub); false when there is none.
+    bool parentStub(JSC::JSGlobalObject*, TelemetrySpanStub* out) const;
 
     // A slot value carrying `header`/`extras` and the ALS pairs of `stores`.
     static JSC::JSValue build(JSC::JSGlobalObject*, JSC::JSValue header, JSC::JSValue extras, const TelemetryContextSlot& stores);

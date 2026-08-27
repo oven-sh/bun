@@ -15,8 +15,11 @@ use bun_telemetry::{
 use super::local;
 
 unsafe extern "C" {
-    safe fn Bun__Telemetry__activeSpanStub(global: &JSGlobalObject) -> *const SpanStub;
-    safe fn Bun__Telemetry__activeExtrasBaggage(global: &JSGlobalObject) -> OwnedJsString;
+    safe fn Bun__Telemetry__activeSpanStub(global: &JSGlobalObject, out: &mut SpanStub) -> bool;
+    safe fn Bun__Telemetry__activeExtrasBaggage(
+        global: &JSGlobalObject,
+        out_header: &mut OwnedJsString,
+    ) -> BaggageOverride;
     safe fn Bun__Telemetry__activeSpanCell(global: &JSGlobalObject) -> JSValue;
     safe fn Bun__Telemetry__enter(global: &JSGlobalObject, span: JSValue) -> JSValue;
     safe fn Bun__Telemetry__exit(global: &JSGlobalObject, prev: JSValue);
@@ -36,21 +39,37 @@ unsafe extern "C" {
     safe fn Bun__TelemetrySpan__baggage(cell: JSValue) -> bun_core::StringView<'static>;
 }
 
-/// `rt::Hooks::active_span` — `global` is a `JSGlobalObject*`.
-pub(crate) fn active_ptr(global: *mut c_void) -> *const SpanStub {
-    Bun__Telemetry__activeSpanStub(JSGlobalObject::opaque_ref(global.cast::<JSGlobalObject>()))
+/// What the active @opentelemetry/api Context says about baggage. Mirrors
+/// TelemetryABI.h `TelemetryBaggageOverride`; C++ only produces these three.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum BaggageOverride {
+    /// The Context says nothing: use what the span inherited from the request.
+    Inherit = 0,
+    /// The Context deleted/emptied its Baggage: send none.
+    Masked = 1,
+    /// The Context carries Baggage: `out_header` holds its W3C header.
+    Header = 2,
 }
 
-/// The active span's identity. Valid until the caller next runs JS.
+/// Which W3C propagators are on (OTEL_PROPAGATORS). Mirrors TelemetryABI.h
+/// `TelemetryPropagators`.
+#[repr(C)]
+pub struct Propagators {
+    pub trace_context: bool,
+    pub baggage: bool,
+}
+
+/// `rt::Hooks::active_span` — `global` is a `JSGlobalObject*`.
+pub(crate) fn active_hook(global: *mut c_void) -> Option<SpanStub> {
+    active(JSGlobalObject::opaque_ref(global.cast::<JSGlobalObject>()))
+}
+
+/// The active span's identity (as a parent: an ended request span is none).
 #[inline]
-pub fn active(global: &JSGlobalObject) -> Option<&SpanStub> {
-    let p = Bun__Telemetry__activeSpanStub(global);
-    if p.is_null() {
-        None
-    } else {
-        // SAFETY: points into the active JSTelemetrySpan cell; valid until JS next runs (see doc).
-        Some(unsafe { &*p })
-    }
+pub fn active(global: &JSGlobalObject) -> Option<SpanStub> {
+    let mut stub = SpanStub::NONE;
+    Bun__Telemetry__activeSpanStub(global, &mut stub).then_some(stub)
 }
 
 #[inline]
@@ -93,19 +112,14 @@ pub(crate) fn release_cell(js_cell: bun_telemetry::JsCellRef) {
 /// inherited from the incoming request — the same rule as propagator.inject
 /// and node:http.
 pub fn with_active_propagation<R>(global: &JSGlobalObject, f: impl FnOnce(&[u8], &[u8]) -> R) -> R {
-    // Empty: the Context says nothing (use inherited); Dead: it says "none".
-    let from_context = Bun__Telemetry__activeExtrasBaggage(global);
-    let masked = from_context.tag() == bun_core::Tag::Dead;
-    let from_context = if masked {
-        bun_core::Utf8Bytes::EMPTY
-    } else {
-        from_context.to_utf8()
-    };
-    fn pick<'a>(masked: bool, from_context: &'a [u8], inherited: &'a [u8]) -> &'a [u8] {
-        if masked || !from_context.is_empty() {
-            from_context
-        } else {
-            inherited
+    let mut header = OwnedJsString::EMPTY;
+    let over = Bun__Telemetry__activeExtrasBaggage(global, &mut header);
+    let from_context = header.to_utf8();
+    fn pick<'a>(over: BaggageOverride, from_context: &'a [u8], inherited: &'a [u8]) -> &'a [u8] {
+        match over {
+            BaggageOverride::Inherit => inherited,
+            BaggageOverride::Masked => b"",
+            BaggageOverride::Header => from_context,
         }
     }
     let from_context = from_context.slice();
@@ -118,7 +132,7 @@ pub fn with_active_propagation<R>(global: &JSGlobalObject, f: impl FnOnce(&[u8],
                 })
             })
             .unwrap_or_default();
-        return f(&owned[0], pick(masked, from_context, &owned[1]));
+        return f(&owned[0], pick(over, from_context, &owned[1]));
     }
     // JS-owned spans keep the inherited headers in their TraceState/Baggage fields.
     let cell = active_js(global);
@@ -127,7 +141,7 @@ pub fn with_active_propagation<R>(global: &JSGlobalObject, f: impl FnOnce(&[u8],
         Bun__TelemetrySpan__baggage(cell),
     );
     let (ts, bg) = (ts.to_utf8(), bg.to_utf8());
-    f(ts.slice(), pick(masked, from_context, bg.slice()))
+    f(ts.slice(), pick(over, from_context, bg.slice()))
 }
 
 /// Is `value` a JSTelemetrySpan?
@@ -751,15 +765,19 @@ pub extern "C" fn Bun__Telemetry__nativeEnd(
     live
 }
 
-/// Identity of a live pooled span, or null once it has ended.
+/// Identity of a live pooled span; false (and `out` untouched) once it has ended.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__poolStub(
     global: &JSGlobalObject,
     handle: u64,
-) -> *const SpanStub {
-    match local(global) {
-        Some(l) => pool::stub_ptr(&l.pool, NativeSpan(handle)),
-        None => core::ptr::null(),
+    out: &mut SpanStub,
+) -> bool {
+    match local(global).and_then(|l| pool::stub(&l.pool, NativeSpan(handle))) {
+        Some(stub) => {
+            *out = stub;
+            true
+        }
+        None => false,
     }
 }
 
@@ -935,11 +953,13 @@ pub extern "C" fn Bun__Telemetry__nativePropagation(
     .unwrap_or(false)
 }
 
-/// bit 0: W3C trace context, bit 1: baggage.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Telemetry__propagationFlags() -> u32 {
+pub extern "C" fn Bun__Telemetry__propagators() -> Propagators {
     let st = super::state();
-    (st.propagate_trace_context as u32) | ((st.propagate_baggage as u32) << 1)
+    Propagators {
+        trace_context: st.propagate_trace_context,
+        baggage: st.propagate_baggage,
+    }
 }
 
 /// Record a thrown JS value on a native span per semconv: an `exception`

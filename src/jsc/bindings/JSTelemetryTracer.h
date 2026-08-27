@@ -33,6 +33,7 @@ JSC_DECLARE_HOST_FUNCTION(jsTelemetryEnabledMask);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetryOtelSet);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetryCreateTracer);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetryWrapSpanContext);
+JSC_DECLARE_HOST_FUNCTION(jsTelemetrySuppressedCarrier);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetryParseTraceparent);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetryPropagationHeaders);
 

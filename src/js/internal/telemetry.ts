@@ -12,6 +12,7 @@ const nativeIsEnabled = $newRustFunction("telemetry.rs", "isEnabled", 0);
 const createScope = $newRustFunction("telemetry.rs", "createScope", 2);
 const nativeActiveSpan = $newRustFunction("telemetry.rs", "activeSpan", 0);
 const wrapSpanContext = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetryWrapSpanContext", 5);
+const suppressedCarrier = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetrySuppressedCarrier", 0);
 const parseTraceparent = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetryParseTraceparent", 2);
 const withContext = $newRustFunction("telemetry.rs", "withContext", 3);
 const nativeForceFlush = $newRustFunction("telemetry.rs", "forceFlush", 0);
@@ -20,6 +21,11 @@ const nativeExportSettled = $newRustFunction("telemetry.rs", "exportSettled", 3)
 const nativeDecode = $newRustFunction("telemetry.rs", "decode", 1);
 const nativeShutdown = $newRustFunction("telemetry.rs", "shutdown", 0);
 const nativePropagationFlags = $newRustFunction("telemetry.rs", "propagationFlags", 0);
+// telemetry.rs propagation_flags: bun_telemetry::State::propagate_*
+const enum Propagator {
+  TraceContext = 1 << 0,
+  Baggage = 1 << 1,
+}
 const propagationHeaders = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetryPropagationHeaders", 2);
 const enterContext = $newCppFunction("TelemetryContext.cpp", "jsTelemetryEnterContext", 2);
 const exitContext = $newCppFunction("TelemetryContext.cpp", "jsTelemetryExitContext", 1);
@@ -172,7 +178,7 @@ function placeholderSpan() {
 const SUPPRESS_TRACING_KEY = Symbol.for("OpenTelemetry SDK Context Key SUPPRESS_TRACING");
 let suppressedSpan: any;
 function suppressedPlaceholder() {
-  return (suppressedSpan ??= wrapSpanContext(undefined, undefined, -1));
+  return (suppressedSpan ??= suppressedCarrier());
 }
 
 function runWithContext(ctx: any, fn: Function, thisArg: unknown, args: any[]) {
@@ -373,7 +379,7 @@ const propagator = {
       }
       incomingBaggage = baggage;
     }
-    if (nativePropagationFlags() & 2) {
+    if (nativePropagationFlags() & Propagator.Baggage) {
       // The Context's own Baggage (set or deleted in JS) wins over what the request carried in.
       const fromContext = baggageHeaderFromExtras(extras);
       const s = fromContext === "" ? incomingBaggage : fromContext;
@@ -383,7 +389,7 @@ const propagator = {
   extract(context: any, carrier: any, getter: any = defaultGetter): BunContext {
     let ctx: BunContext = context instanceof BunContext ? context : new BunContext(...unpackContext(context));
     const flags = nativePropagationFlags();
-    let tp = flags & 1 ? getter.get(carrier, "traceparent") : undefined;
+    let tp = flags & Propagator.TraceContext ? getter.get(carrier, "traceparent") : undefined;
     if ($isJSArray(tp)) tp = tp[0];
     if (typeof tp === "string") {
       let traceState = getter.get(carrier, "tracestate");
@@ -391,7 +397,7 @@ const propagator = {
       const span = parseTraceparent(tp, typeof traceState === "string" ? traceState : undefined);
       if (span) ctx = ctx.setValue(SPAN_KEY, span);
     }
-    let bg = flags & 2 ? getter.get(carrier, "baggage") : undefined;
+    let bg = flags & Propagator.Baggage ? getter.get(carrier, "baggage") : undefined;
     if ($isJSArray(bg)) bg = ArrayPrototypeJoin.$call(bg, ",");
     if (typeof bg === "string") {
       const bag = parseBaggage(bg);

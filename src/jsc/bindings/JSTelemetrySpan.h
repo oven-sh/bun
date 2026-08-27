@@ -78,6 +78,9 @@ public:
     void setState(int32_t s) { field(Field::State).setWithoutWriteBarrier(jsNumber(s)); }
     bool isRecording() const { return state() & Recording; }
     bool ended() const { return state() & Ended; }
+    // This span as a parent: null for a pooled (request) span that has ended —
+    // its slot and ids may be reused at any moment.
+    const TelemetrySpanStub* parentStub() const { return m_native && ended() ? nullptr : &m_stub; }
 
     TelemetrySpanStub m_stub;
     uint64_t m_native { 0 };

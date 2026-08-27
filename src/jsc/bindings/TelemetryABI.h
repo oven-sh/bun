@@ -24,8 +24,11 @@ struct TelemetrySpanStub {
     uint8_t parentSpanId[8];
     uint64_t startNs;
 
+    // Complete list; owned by bun_telemetry::span::Flags.
+    static constexpr uint8_t W3CMask = 0x0f;
     static constexpr uint8_t Sampled = 0x01;
     static constexpr uint8_t Remote = 0x10;
+    static constexpr uint8_t ParentRemote = 0x20;
     static constexpr uint8_t NonRecording = 0x40;
     // The api's SUPPRESS_TRACING context: no span (root or child) starts under it.
     static constexpr uint8_t Suppressed = 0x80;
@@ -47,6 +50,24 @@ static_assert(offsetof(TelemetrySpanStub, spanId) == 16);
 static_assert(offsetof(TelemetrySpanStub, flags) == 24);
 static_assert(offsetof(TelemetrySpanStub, parentSpanId) == 25);
 static_assert(offsetof(TelemetrySpanStub, startNs) == 40);
+
+// bun_telemetry::propagation::TRACEPARENT_LEN
+static constexpr size_t kTraceparentLength = 55;
+
+// Which W3C propagators are on (OTEL_PROPAGATORS). Mirrors span.rs `Propagators`.
+struct TelemetryPropagators {
+    bool traceContext;
+    bool baggage;
+};
+static_assert(sizeof(TelemetryPropagators) == 2);
+
+// What the active @opentelemetry/api Context says about baggage
+// (TelemetryContext.cpp). Mirrors span.rs `BaggageOverride`.
+enum class TelemetryBaggageOverride : uint8_t {
+    Inherit = 0, // the Context says nothing: use what the span inherited from the request
+    Masked = 1, // the Context deleted/emptied its Baggage: send none
+    Header = 2, // the Context carries Baggage: *outHeader holds its W3C header (+1 ref)
+};
 
 enum class TelemetryAttrKind : uint8_t {
     String = 0,
@@ -171,19 +192,20 @@ static constexpr unsigned kTelemetryMaxGather = 4096;
 extern "C" {
 // bun_telemetry::Instrument::Sqlite.bit()
 extern const uint32_t Bun__Telemetry__SQLITE_MASK;
+// bun_telemetry::ENABLED (a Rust AtomicU32): read with __atomic_load_n(&Bun__Telemetry__enabled, __ATOMIC_RELAXED).
+extern uint32_t Bun__Telemetry__enabled;
 
 void Bun__Telemetry__stubStart(JSC::JSGlobalObject*, Bun::TelemetrySpanStub* out, const Bun::TelemetrySpanStub* parent, uint64_t startNs);
 // Non-recording carrier for hex ids; false if either id is not valid hex / all zero.
 bool Bun__Telemetry__stubFromHexIds(Bun::TelemetrySpanStub* out, const BunString* traceId, const BunString* spanId, uint8_t traceFlags, bool remote);
-// W3C traceparent (bun_telemetry::propagation). `out` is 55 bytes.
-void Bun__Telemetry__formatTraceparent(const Bun::TelemetrySpanStub*, uint8_t* out);
+// W3C traceparent (bun_telemetry::propagation).
+void Bun__Telemetry__formatTraceparent(const Bun::TelemetrySpanStub*, uint8_t (*out)[Bun::kTraceparentLength]);
 bool Bun__Telemetry__parseTraceparent(const BunString* header, Bun::TelemetrySpanStub* out);
 // Lowercase hex of `bytes[0..n]` into `out[0..2n]` (bun_core::fmt).
 void Bun__Telemetry__hexLower(const uint8_t* bytes, size_t n, uint8_t* out);
 uint64_t Bun__Telemetry__nowNs();
 uint16_t Bun__Telemetry__userScope();
-// bit 0: W3C trace context, bit 1: baggage.
-uint32_t Bun__Telemetry__propagationFlags();
+Bun::TelemetryPropagators Bun__Telemetry__propagators();
 void Bun__Telemetry__encodeSpan(JSC::JSGlobalObject*, const Bun::TelemetryEndDesc*);
 
 // Native-owned (pooled) spans; `handle` is a bun_telemetry::pool::NativeSpan.
@@ -198,6 +220,7 @@ void Bun__Telemetry__nativeAddLink(JSC::JSGlobalObject*, uint64_t handle, const 
 BunString Bun__Telemetry__nativeName(JSC::JSGlobalObject*, uint64_t handle);
 // False (and both outputs Empty) when the span carries neither.
 bool Bun__Telemetry__nativePropagation(JSC::JSGlobalObject*, uint64_t handle, BunString* traceState, BunString* baggage);
-const Bun::TelemetrySpanStub* Bun__Telemetry__poolStub(JSC::JSGlobalObject*, uint64_t handle);
+// Identity of a live pooled span; false (and *out untouched) once it has ended.
+bool Bun__Telemetry__poolStub(JSC::JSGlobalObject*, uint64_t handle, Bun::TelemetrySpanStub* out);
 JSC::EncodedJSValue Bun__Telemetry__poolMaterialize(Zig::GlobalObject*, uint64_t handle);
 }

@@ -258,8 +258,7 @@ void telemetryEndSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, ui
     // reachable for as long as the span object does.
     if (JSValue prev = span->get(JSTelemetrySpan::Field::Restore)) {
         auto current = TelemetryContextSlot::current(globalObject);
-        bool isActive = current.header == JSValue(span) || (span->m_native && current.poolHandle() == span->m_native);
-        if (isActive)
+        if (current.denotes(span))
             Bun__Telemetry__exit(globalObject, JSValue::encode(prev));
         auto before = TelemetryContextSlot::read(prev);
         if (before.storeValueCount()) {

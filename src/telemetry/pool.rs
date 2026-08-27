@@ -314,15 +314,21 @@ impl Pool {
     }
 
     #[inline]
+    fn slot(&self, handle: NativeSpan) -> Option<&Slot> {
+        if !handle.is_some() {
+            return None;
+        }
+        let slot = self.slots.get(handle.index())?;
+        (slot.live && slot.generation == handle.generation()).then_some(slot)
+    }
+
+    #[inline]
     fn live_slot(&mut self, handle: NativeSpan) -> Option<&mut Slot> {
         if !handle.is_some() {
             return None;
         }
         let slot = self.slots.get_mut(handle.index())?;
-        if !slot.live || slot.generation != handle.generation() {
-            return None;
-        }
-        Some(slot)
+        (slot.live && slot.generation == handle.generation()).then_some(slot)
     }
 
     fn release(&mut self, handle: NativeSpan) {
@@ -380,14 +386,7 @@ pub fn with<R>(p: &mut Pool, handle: NativeSpan, f: impl FnOnce(&mut Slot) -> R)
 /// Read-only access (e.g. propagation reading trace state).
 #[inline]
 pub fn with_ref<R>(p: &Pool, handle: NativeSpan, f: impl FnOnce(&Slot) -> R) -> Option<R> {
-    if !handle.is_some() {
-        return None;
-    }
-    let slot = p.slots.get(handle.index())?;
-    if !slot.live || slot.generation != handle.generation() {
-        return None;
-    }
-    Some(f(slot))
+    p.slot(handle).map(f)
 }
 
 /// Result of [`end`]: whether a span was recorded, and the JS cell that had
@@ -445,23 +444,16 @@ pub fn discard(p: &mut Pool, handle: NativeSpan) -> JsCellRef {
     cell
 }
 
-/// Identity of a live span by handle; null once it has ended (an ended span
-/// is nobody's parent: its slot and ids may be reused at any moment, so the
-/// answer must not depend on whether they have been yet). Pointer is valid
-/// until the pool is next mutated.
-pub fn stub_ptr(p: &Pool, handle: NativeSpan) -> *const SpanStub {
-    if !handle.is_some() {
-        return core::ptr::null();
-    }
-    match p.slots.get(handle.index()) {
-        Some(slot) if slot.live && slot.generation == handle.generation() => &raw const slot.stub,
-        _ => core::ptr::null(),
-    }
+/// Identity of a live span; `None` once it has ended (an ended span is
+/// nobody's parent: its slot and ids may be reused at any moment, so the
+/// answer must not depend on whether they have been yet).
+pub fn stub(p: &Pool, handle: NativeSpan) -> Option<SpanStub> {
+    p.slot(handle).map(|s| s.stub)
 }
 
 /// Whether the span behind `handle` is still open.
 pub fn is_live(p: &Pool, handle: NativeSpan) -> bool {
-    with_ref(p, handle, |_| ()).is_some()
+    p.slot(handle).is_some()
 }
 
 #[cfg(test)]

@@ -51,10 +51,10 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         return Ok(registry_url.username.to_vec());
     }
 
-    if registry.token.is_empty() {
+    // An `_auth` whose username could not be derived still authenticates the request.
+    let Some(authorization) = registry.authorization() else {
         return Err(WhoamiError::NeedAuth);
-    }
-    let authorization = registry.authorization().expect("token is set");
+    };
 
     let auth_type: &[u8] = match &manager.options.publish_config.auth_type {
         Some(auth_type) => auth_type.as_str().as_bytes(),
@@ -331,16 +331,23 @@ pub mod registry {
         }
     }
 
-    const EMBEDDED_MARKERS: [(&[u8], EmbeddedOpt); 4] = [
+    /// `:<name>=` is yarn's shape (`/api/:_authToken=T`); `/<name>=` is the one Bun's
+    /// JFrog guide shows (`/npm/_auth=<base64>`).
+    const EMBEDDED_MARKERS: [(&[u8], EmbeddedOpt); 8] = [
         (b":_authToken=", EmbeddedOpt::Token),
         (b":_auth=", EmbeddedOpt::Auth),
         (b":username=", EmbeddedOpt::Username),
         (b":_password=", EmbeddedOpt::Password),
+        (b"/_authToken=", EmbeddedOpt::Token),
+        (b"/_auth=", EmbeddedOpt::Auth),
+        (b"/username=", EmbeddedOpt::Username),
+        (b"/_password=", EmbeddedOpt::Password),
     ];
 
-    /// The rightmost `:<name>=` credential marker in `pathname`, as `(colon, marker)`.
-    /// Anchoring on the marker rather than on any `:` keeps a colon inside the value from
-    /// ending the scan, and leaves a colon that merely belongs to the path alone.
+    /// The rightmost credential marker in `pathname`, as `(start, marker, opt)`.
+    /// Anchoring on the marker rather than on any `:` or `/` keeps a colon or slash
+    /// inside the value (base64 holds `/`) from ending the scan, and leaves one that
+    /// merely belongs to the path alone.
     fn last_embedded_marker(pathname: &[u8]) -> Option<(usize, &'static [u8], EmbeddedOpt)> {
         EMBEDDED_MARKERS
             .iter()
@@ -350,19 +357,22 @@ pub mod registry {
             .max_by_key(|&(i, _, _)| i)
     }
 
-    /// Strip trailing yarn-style credential segments out of `url.pathname`. Runs before
-    /// the registry's own credentials are consulted: the pathname must be sanitized
+    /// Strip trailing credential segments out of `url.pathname`. Runs before the
+    /// registry's own credentials are consulted: the pathname must be sanitized
     /// whether or not the credential is adopted, or the secret ships in the request path.
     ///
     /// <https://github.com/yarnpkg/yarn/blob/6db39cf0ff684ce4e7de29669046afb8103fce3d/src/registries/npm-registry.js#L364>
     fn parse_embedded_auth<'a>(url: &mut URL<'a>) -> EmbeddedAuth<'a> {
         let mut out = EmbeddedAuth::default();
         let mut pathname: &'a [u8] = url.pathname;
-        let mut needs_to_check_slash = true;
 
         // Right to left: the credentials are appended after the path.
-        while let Some((colon, marker, opt)) = last_embedded_marker(pathname) {
-            let value = &pathname[colon + marker.len()..];
+        while let Some((start, marker, opt)) = last_embedded_marker(pathname) {
+            let mut value = &pathname[start + marker.len()..];
+            // The slash that closes the URL (`/:_authToken=S/`) is not part of the value.
+            if let Some(unslashed) = value.strip_suffix(b"/") {
+                value = unslashed;
+            }
             // An empty marker supplies no credential; it must not end the scan or shadow
             // a credential from `.npmrc`.
             if !out.terminal && !value.is_empty() {
@@ -370,32 +380,15 @@ pub mod registry {
                 out.terminal = matches!(opt, EmbeddedOpt::Token | EmbeddedOpt::Auth);
             }
 
-            pathname = &pathname[..colon];
-            needs_to_check_slash = false;
-            if pathname.len() > 1 && pathname[pathname.len() - 1] == b'/' {
+            // A `/<name>=` segment leaves the slash that closes the path; yarn's `:<name>=`
+            // is written after that slash, so the slash goes with it.
+            pathname = if marker[0] == b'/' {
+                &pathname[..start + 1]
+            } else {
+                &pathname[..start]
+            };
+            if marker[0] == b':' && pathname.len() > 1 && pathname[pathname.len() - 1] == b'/' {
                 pathname = &pathname[..pathname.len() - 1];
-            }
-        }
-
-        // In this case, there is only one.
-        if needs_to_check_slash {
-            if let Some(last_slash) = strings::last_index_of_char(pathname, b'/') {
-                let remain = &pathname[last_slash + 1..];
-                if let Some(eql_i) = strings::index_of_char_usize(remain, b'=') {
-                    let segment = &remain[..eql_i];
-                    let value = &remain[eql_i + 1..];
-                    let opt = EMBEDDED_MARKERS
-                        .iter()
-                        .find(|(marker, _)| &marker[1..marker.len() - 1] == segment)
-                        .map(|&(_, opt)| opt);
-                    if let Some(opt) = opt {
-                        pathname = &pathname[..last_slash + 1];
-                        if !value.is_empty() {
-                            *out.slot(opt) = Some(value);
-                            out.terminal = true;
-                        }
-                    }
-                }
             }
         }
 
@@ -411,14 +404,21 @@ pub mod registry {
 
         /// The `Authorization` value for this registry, or `None` when it has no
         /// credentials. Raw bytes: a credential need not be UTF-8.
-        pub fn authorization(&self) -> Option<Vec<u8>> {
+        /// The `Authorization` header as `(scheme, value)`, unallocated; a token
+        /// outranks a Basic credential, as in npm.
+        pub fn authorization_parts(&self) -> Option<(&'static [u8], &[u8])> {
             if !self.token.is_empty() {
-                Some([b"Bearer ".as_slice(), &self.token].concat())
+                Some((b"Bearer ", &self.token))
             } else if !self.auth.is_empty() {
-                Some([b"Basic ".as_slice(), &self.auth].concat())
+                Some((b"Basic ", &self.auth))
             } else {
                 None
             }
+        }
+
+        pub fn authorization(&self) -> Option<Vec<u8>> {
+            self.authorization_parts()
+                .map(|(scheme, value)| [scheme, value].concat())
         }
 
         /// Stores the WHATWG serialization (the base `bun_url::join` resolves against) so same-origin checks, concatenated tarball URLs and `url_hash` agree with the requests; credentials must already be split off.

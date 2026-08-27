@@ -632,12 +632,8 @@ impl Options {
                         let mut api_registry = Api::NpmRegistry::from_url(registry_);
                         // Credentials in the URL win, as they do for `registry=` in .npmrc.
                         if !api_registry.has_credentials() {
-                            let prev_url = self.scope.url.url();
                             let new_url = bun_url::URL::parse(&api_registry.url);
-                            if bun_core::without_trailing_slash(new_url.host)
-                                == bun_core::without_trailing_slash(prev_url.host)
-                                && (new_url.is_https() || !prev_url.is_https())
-                            {
+                            if same_host_not_downgraded(&new_url, &self.scope.url.url()) {
                                 api_registry.token = core::mem::take(&mut self.scope.token);
                                 api_registry.auth = core::mem::take(&mut self.scope.auth);
                             }
@@ -651,24 +647,18 @@ impl Options {
 
         if let Some(cli) = &maybe_cli {
             if !cli.registry.is_empty() {
-                let api_registry = Api::NpmRegistry::from_url(cli.registry);
-                if api_registry.has_credentials() {
-                    self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
-                } else {
+                let mut api_registry = Api::NpmRegistry::from_url(cli.registry);
+                // Credentials in the URL win, as they do for `registry=` in .npmrc.
+                if !api_registry.has_credentials() {
                     let new_url = bun_url::URL::parse(&api_registry.url);
-                    let same_origin = {
-                        let prev_url = self.scope.url.url();
-                        bun_core::without_trailing_slash(new_url.host)
-                            == bun_core::without_trailing_slash(prev_url.host)
-                            && (new_url.is_https() || !prev_url.is_https())
-                    };
-                    if !same_origin {
-                        self.scope.token = Box::default();
-                        self.scope.auth = Box::default();
-                        self.scope.user = Box::default();
+                    if same_host_not_downgraded(&new_url, &self.scope.url.url()) {
+                        api_registry.token = core::mem::take(&mut self.scope.token);
+                        api_registry.auth = core::mem::take(&mut self.scope.auth);
                     }
-                    self.scope.set_url(api_registry.url);
                 }
+                // Through the same builder as every other registry, so a credential
+                // embedded in the URL is stripped from the request path here too.
+                self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
             }
         }
 
@@ -1115,4 +1105,11 @@ impl Enable {
     pub(crate) fn global_virtual_store(self) -> bool {
         self.contains(Enable::GLOBAL_VIRTUAL_STORE)
     }
+}
+
+/// `new` is on `base`'s host and does not downgrade https to http, so `base`'s
+/// credentials may follow it: the shape `npm_config_registry` and `--registry` share.
+fn same_host_not_downgraded(new: &bun_url::URL, base: &bun_url::URL) -> bool {
+    bun_core::without_trailing_slash(new.host) == bun_core::without_trailing_slash(base.host)
+        && (new.is_https() || !base.is_https())
 }

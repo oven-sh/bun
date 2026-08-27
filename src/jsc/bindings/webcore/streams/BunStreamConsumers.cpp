@@ -361,8 +361,9 @@ static bool appendChunkBytes(JSC::VM& vm, JSGlobalObject* globalObject, JSValue 
         return true;
     }
     std::span<const uint8_t> span;
-    if (!binaryChunkSpan(globalObject, chunk, span)) {
-        RETURN_IF_EXCEPTION(scope, false);
+    bool isBinary = binaryChunkSpan(globalObject, chunk, span);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!isBinary) {
         throwTypeError(globalObject, scope, "Expected an ArrayBuffer, ArrayBufferView, or string chunk"_s);
         return false;
     }
@@ -403,8 +404,9 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
         }
         stringChunks.append({ WTF::String(), 0 });
         std::span<const uint8_t> span;
-        if (!binaryChunkSpan(globalObject, chunk, span)) {
-            RETURN_IF_EXCEPTION(scope, {});
+        bool isBinary = binaryChunkSpan(globalObject, chunk, span);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!isBinary) {
             throwTypeError(globalObject, scope, "Expected an ArrayBuffer, ArrayBufferView, or string chunk"_s);
             return {};
         }
@@ -666,8 +668,9 @@ static JSValue textAccumulatorWrite(JSC::VM& vm, JSGlobalObject* globalObject, J
         return jsNumber(length);
     }
     std::span<const uint8_t> span;
-    if (!binaryChunkSpan(globalObject, chunk, span)) {
-        RETURN_IF_EXCEPTION(scope, {});
+    bool isBinary = binaryChunkSpan(globalObject, chunk, span);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!isBinary) {
         throwTypeError(globalObject, scope, "Expected text, ArrayBuffer or ArrayBufferView"_s);
         return {};
     }

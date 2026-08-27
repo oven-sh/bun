@@ -939,10 +939,10 @@ impl WatcherAtomics {
                         // Not atomic because the dev server is not running events right now.
                         (*this).dbg_server_event = Some(ev);
                     }
-                    (*ev).concurrent_task = bun_event_loop::ConcurrentTask::ConcurrentTask {
-                        task: bun_event_loop::Task::init(ev),
-                        ..Default::default()
-                    };
+                    (*ev).concurrent_task =
+                        bun_event_loop::ConcurrentTask::ConcurrentTask::intrusive(
+                            bun_event_loop::Task::init(ev),
+                        );
                     // The queued node pointer is derived from `ev` (allocation-root
                     // provenance) so it stays valid across `Drop for DevServer`'s
                     // writes. Refused ⇒ the VM is torn down; the event is one of

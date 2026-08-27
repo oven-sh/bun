@@ -50,7 +50,9 @@ use bun_threading::Guarded;
 
 use crate::virtual_machine::{self, VirtualMachine, WorkerVm, runtime_hooks};
 use crate::worker_messaging_proxy::WorkerMessagingProxy;
-use crate::{self as jsc, EncodedSliceJsc as _, JSGlobalObject, JSPromise, JSValue, JsError, LogJsc};
+use crate::{
+    self as jsc, EncodedSliceJsc as _, JSGlobalObject, JSPromise, JSValue, JsError, LogJsc,
+};
 
 bun_core::define_scoped_log!(log, Worker, hidden);
 
@@ -534,7 +536,6 @@ impl WebWorker {
     fn set_requested_terminate(&self) -> bool {
         self.requested_terminate.swap(true, Ordering::Release)
     }
-
 
     #[inline]
     pub(crate) fn hot_reload(&self) -> crate::virtual_machine::HotReload {
@@ -1079,7 +1080,8 @@ fn on_unhandled_rejection(
     // clone. Node reports a SyntaxError; build a real one from the formatted parse
     // error so the subtype reaches the parent intact.
     if let Some(bm) = error_instance.as_class_ref::<crate::BuildMessage>() {
-        error_instance = EncodedSlice::utf8(&bm.msg.data.text).to_syntax_error_instance(global_object);
+        error_instance =
+            EncodedSlice::utf8(&bm.msg.data.text).to_syntax_error_instance(global_object);
     }
 
     let mut array: Vec<u8> = Vec::new();

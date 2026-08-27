@@ -222,7 +222,6 @@ const bundledTogether = [
   "ansi-regex",
   "axios",
   "body-parser",
-  "bun-plugin-svelte",
   "bun-plugin-yaml",
   "comlink",
   "commander",
@@ -522,10 +521,10 @@ describe("bytecode cache portability", () => {
           },
         },
         "bun build --bytecode libraries.js": {
-          "js": "dee946ae6d528d46132370198202a8e4c93d52b9c29164a990164990bc7e4ab0",
+          "js": "19b7140de574d94ee53835575012178296dec911613066390ade7725792fbf22",
           "jsc": {
-            "bytes": 25721064,
-            "sha256": "ec54f0408cbbabc9525fae3fd6e1a97cb5f64c8580e19a66bed42682b58ae2d6",
+            "bytes": 23792536,
+            "sha256": "d2b87a793841dee8c5702630a947051952d6473b3e6a3099a3110c73dadff1a6",
           },
         },
         "bun build --bytecode lodash/lodash.js": {

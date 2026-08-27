@@ -1,131 +1,95 @@
+// Fixture for serve-pending-promise-abort-leak.test.ts. It runs in a child
+// process: before the fix, the late settle below corked a uWS response the 413
+// had already freed (heap-use-after-free under ASAN), and that crash must not
+// take the test runner down with it.
+//
+// A chunked (no Content-Length) POST that exceeds maxRequestBodySize hits the
+// streaming 413 in on_buffered_body_chunk, not the up-front Content-Length
+// check. That path used to write the 413 on the raw uWS response without
+// detaching ctx.resp or releasing the base ref. uWS markDone() clears
+// onAborted, so no abort fired when the socket closed, and a later
+// handleResolve()/handleReject() dereferenced the freed response.
 import { connect } from "node:net";
 
-// A chunked (no Content-Length) POST that exceeds maxRequestBodySize hits the
-// streaming 413 in onBufferedBodyChunk, not the up-front server.zig check.
-// That path previously wrote the 413 directly on the raw uWS response without
-// detaching ctx.resp or releasing the base ref — uWS markDone() nulls
-// onAborted, so when the socket closed no abort fired. If the fetch handler's
-// Promise then settled, handleResolve()/handleReject() dereferenced the
-// already-freed response (heap-use-after-free under ASAN) and the
-// RequestContext leaked.
-
-async function sendChunkedOverflow(port: number) {
+// Sends the overflowing POST. Resolves with everything the server wrote once
+// it closed the connection: uSockets frees a closed socket at the end of the
+// loop iteration that closed it, and the client only sees the close in a later
+// one, so by then the uWS response is gone.
+async function sendChunkedOverflow(port: number): Promise<string> {
   const sock = connect(port, "127.0.0.1");
   await new Promise<void>((resolve, reject) => {
     sock.on("connect", resolve);
     sock.on("error", reject);
   });
+  // The server closes with part of the body unread; a reset is expected.
+  sock.removeAllListeners("error");
+  sock.on("error", () => {});
 
-  sock.write(
-    "POST / HTTP/1.1\r\n" + //
-      `Host: 127.0.0.1:${port}\r\n` +
-      "Transfer-Encoding: chunked\r\n" +
-      "\r\n",
-  );
+  let received = "";
+  const { promise: closed, resolve: onClose } = Promise.withResolvers<string>();
+  sock.on("data", d => (received += d.toString("latin1")));
+  sock.on("close", () => onClose(received));
+
+  sock.write("POST / HTTP/1.1\r\n" + `Host: 127.0.0.1:${port}\r\n` + "Transfer-Encoding: chunked\r\n" + "\r\n");
   const chunk = Buffer.alloc(2048, "A");
   sock.write(chunk.length.toString(16) + "\r\n");
   sock.write(chunk);
   sock.write("\r\n0\r\n\r\n");
-
-  let received = "";
-  const { promise, resolve: done } = Promise.withResolvers<void>();
-  sock.on("data", d => {
-    received += d.toString();
-    if (received.includes("\r\n\r\n")) done();
-  });
-  sock.on("close", () => done());
-  await promise;
-  sock.destroy();
-  return received.split("\r\n")[0];
+  return closed;
 }
 
-async function waitForPending(server: ReturnType<typeof Bun.serve>, n: number) {
-  for (let i = 0; i < 100 && server.pendingRequests !== n; i++) {
-    Bun.gc(true);
-    await Bun.sleep(10);
-  }
-  return server.pendingRequests;
-}
-
-// --- resolve path ---
-{
-  let capturedResolve: ((r: Response) => void) | undefined;
-  let bodyErr = "";
+for (const settle of ["resolve", "reject"] as const) {
+  let settleLate: (() => void) | undefined;
+  let handlerPromise: Promise<Response> | undefined;
+  let bodyError = "";
+  let errorCalls = 0;
   const server = Bun.serve({
     port: 0,
     idleTimeout: 0,
     maxRequestBodySize: 1024,
     fetch(req) {
       if (req.method !== "POST") return new Response("follow-up");
-      req.text().catch(e => (bodyErr = String(e?.message ?? e)));
-      return new Promise<Response>(resolve => {
-        capturedResolve = resolve;
+      req.text().catch(e => (bodyError = (e as Error).message));
+      handlerPromise = new Promise<Response>((resolve, reject) => {
+        settleLate =
+          settle === "resolve" ? () => resolve(new Response("late")) : () => reject(new Error("late reject"));
       });
-    },
-  });
-
-  const status = await sendChunkedOverflow(Number(server.port));
-  // Let the closed socket's memory be reclaimed before the late resolve so a
-  // stale ctx.resp is a real dangling pointer, not just a done-but-live one.
-  await waitForPending(server, 1);
-  await Bun.sleep(10);
-
-  // handleResolve must observe isAbortedOrEnded() and drop the Response; it
-  // must not cork/write on the freed uWS socket.
-  capturedResolve!(new Response("late"));
-  capturedResolve = undefined;
-  const pending = await waitForPending(server, 0);
-
-  // A follow-up request must still work and must not see the stale "late".
-  const ok = await fetch(server.url, { method: "GET" });
-  const okText = await ok.text();
-
-  console.log(
-    JSON.stringify({
-      case: "resolve",
-      status,
-      bodyErr,
-      pendingAfterResolve: pending,
-      followUp: { status: ok.status, text: okText },
-    }),
-  );
-  server.stop(true);
-}
-
-// --- reject path ---
-{
-  let capturedReject: ((e: unknown) => void) | undefined;
-  const server = Bun.serve({
-    port: 0,
-    idleTimeout: 0,
-    maxRequestBodySize: 1024,
-    fetch(req) {
-      req.text().catch(() => {});
-      return new Promise<Response>((_resolve, reject) => {
-        capturedReject = reject;
-      });
+      return handlerPromise;
     },
     error() {
-      // A late reject after the 413 should be a no-op for this request; the
-      // error handler only renders when it can still respond.
+      errorCalls++;
       return new Response("error-handler", { status: 500 });
     },
   });
 
-  const status = await sendChunkedOverflow(Number(server.port));
-  await waitForPending(server, 1);
-  await Bun.sleep(10);
+  const response = await sendChunkedOverflow(Number(server.port));
+  // The 413 tore the context down before its bytes reached the client.
+  const pendingAfter413 = server.pendingRequests;
 
-  capturedReject!(new Error("late reject"));
-  capturedReject = undefined;
-  const pending = await waitForPending(server, 0);
+  // handleResolve/handleReject must find no context: nothing is rendered,
+  // error() does not run, and nothing touches the freed uWS response. Awaiting
+  // the handler promise orders the checks after the native reaction, which was
+  // attached first.
+  settleLate!();
+  const outcome = await handlerPromise!.then(
+    () => "resolved",
+    (e: Error) => `rejected: ${e.message}`,
+  );
+  settleLate = undefined;
 
+  // A request on a fresh connection must not see the stale "late" response.
+  const followUp = await fetch(server.url);
   console.log(
     JSON.stringify({
-      case: "reject",
-      status,
-      pendingAfterReject: pending,
+      settle,
+      response,
+      bodyError,
+      pendingAfter413,
+      outcome,
+      pendingAfterSettle: server.pendingRequests,
+      errorCalls,
+      followUp: [followUp.status, await followUp.text()],
     }),
   );
-  server.stop(true);
+  await server.stop();
 }

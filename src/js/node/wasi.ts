@@ -446,9 +446,7 @@ var require_wasi = __commonJS({
         let { filetype, rightsBase, rightsInheriting } = translateFileAttributes(wasi, entry.real, stats);
         entry.filetype = filetype;
         if (!entry.rights) {
-          // The host process shares the file offset of fd 0-2 and there is no
-          // lseek in node:fs, so a regular file on a standard descriptor reads
-          // and writes at the host's offset and cannot be seeked.
+          // fd 0-2 read and write at the host's file offset (node:fs has no lseek).
           if (entry.real <= 2 && filetype === constants_1.WASI_FILETYPE_REGULAR_FILE) {
             rightsBase &= ~(constants_1.WASI_RIGHT_FD_SEEK | constants_1.WASI_RIGHT_FD_TELL);
           }
@@ -569,11 +567,8 @@ var require_wasi = __commonJS({
         this.bindings = wasiConfig.bindings || defaultConfig.bindings;
         const bindings = this.bindings;
         fs = bindings.fs;
-        // The file type and rights of the standard descriptors come from the
-        // host fd on first use (see `stat`), like any descriptor from
-        // path_open. Hard-coding a character device made wasi-libc's isatty()
-        // report a tty with stdout redirected to a file or a pipe. They have
-        // no `path`, so they can never serve as the base of a path_* call.
+        // fd 0-2 take their type and rights from the host fd on first use (see
+        // `stat`). Without a `path` they can never be the base of a path_* call.
         this.FD_MAP = /* @__PURE__ */ new Map([
           [constants_1.WASI_STDIN_FILENO, { real: 0, filetype: void 0, rights: void 0 }],
           [constants_1.WASI_STDOUT_FILENO, { real: 1, filetype: void 0, rights: void 0 }],
@@ -657,12 +652,8 @@ var require_wasi = __commonJS({
         // Resolve a guest-supplied path against the directory backing `stats` and
         // verify the result cannot escape that directory, either lexically
         // ("..", absolute paths) or through a symlink that already exists on the
-        // host filesystem.
-        //
-        // With `followFinal` false the final component is checked as the entry
-        // itself, not as what it points to. This is for calls that operate on
-        // a symlink (unlink, readlink, rename, lstat) and so never leave the
-        // parent directory, whatever the link's target is.
+        // host filesystem. `followFinal` false checks the final component as the
+        // entry itself, for calls that act on a symlink (unlink, readlink, ...).
         const RESOLVE_PATH = (stats, guestPath, followFinal = true) => {
           if (!stats.path) {
             throw new types_1.WASIError(constants_1.WASI_EINVAL);
@@ -1248,10 +1239,8 @@ var require_wasi = __commonJS({
             this.refreshMemory();
             const op = Buffer.from(this.memory.buffer, oldPath, oldPathLen).toString();
             const np = Buffer.from(this.memory.buffer, newPath, newPathLen).toString();
-            // The old path is always resolved through a final symlink, whatever
-            // the lookup flags say: whether link(2) follows one is platform
-            // defined, and a hard link to a file outside the preopen would be
-            // a real escape.
+            // Whether link(2) follows a final symlink is platform defined, so the
+            // old path is always resolved through one (a hard link must not escape).
             fs.linkSync(RESOLVE_PATH(ostats, op), RESOLVE_PATH(nstats, np, false));
             return constants_1.WASI_ESUCCESS;
           }),
@@ -1457,10 +1446,8 @@ var require_wasi = __commonJS({
             this.refreshMemory();
             const op = Buffer.from(this.memory.buffer, oldPath, oldPathLen).toString();
             const np = Buffer.from(this.memory.buffer, newPath, newPathLen).toString();
-            // An absolute target names a host path, refuse it like Node does.
-            // A relative target is stored as written: it is interpreted only
-            // when the link is followed, and every call that follows a link
-            // checks the result against the preopen at that time.
+            // Like Node: refuse an absolute target. A relative one is stored as
+            // written and checked by the calls that follow the link.
             if (path.isAbsolute(op)) {
               return constants_1.WASI_EPERM;
             }
@@ -1638,8 +1625,7 @@ var require_wasi = __commonJS({
           try {
             return fs.fstatSync(real_fd, { bigint: true });
           } catch {
-            // A closed standard descriptor on the host: present it as an
-            // empty character device.
+            // A closed standard descriptor: present it as an empty character device.
             const now = new Date();
             const nowNs = BigInt(now.valueOf()) * BigInt(1e6);
             const no = () => false;
@@ -1684,9 +1670,8 @@ var require_wasi = __commonJS({
         return fd;
       }
       refreshMemory() {
-        // memory.grow() hands out a new buffer object. A non-shared buffer is
-        // also detached, but a SharedArrayBuffer keeps its old length, so
-        // compare identity rather than byteLength.
+        // grow() replaces memory.buffer. A shared one keeps its byteLength, so
+        // compare identity.
         const { buffer } = this.memory;
         if (!this.view || this.view.buffer !== buffer) {
           this.view = new DataView(buffer);

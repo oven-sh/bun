@@ -4697,6 +4697,37 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
+        /// A plugin `onResolve` result lands after the importer's parse
+        /// completed, so the `schedule_barrel_deferred_imports` pass that ran
+        /// at parse completion saw this import record without a `source_index`
+        /// and skipped it when seeding `requested_exports`. A barrel parsed
+        /// after that point then defers re-exports this importer needs and
+        /// nothing un-defers them (#40606). Re-run the pass now that the
+        /// record points at its target; it is idempotent.
+        fn schedule_barrel_imports_after_plugin_resolve(
+            &mut self,
+            importer_source_index: IndexInt,
+        ) {
+            if !self.is_barrel_optimization_enabled() {
+                return;
+            }
+            let idx = importer_source_index as usize;
+            if idx >= self.graph.ast.len() {
+                return;
+            }
+            let ast_target = self.graph.ast.items_target()[idx];
+            let scheduled = barrel_imports::schedule_barrel_deferred_imports(
+                self,
+                importer_source_index,
+                ast_target,
+            )
+            .expect("oom");
+            // The barrel BFS schedules parse tasks through
+            // `process_resolve_queue`, which does not touch the scan counter;
+            // account for them here like `on_parse_task_complete` does.
+            self.graph.pending_items += u32::try_from(scheduled).expect("int cast");
+        }
+
         pub(crate) fn on_resolve(resolve: &mut jsc_api::JSBundler::Resolve, this: &mut BundleV2) {
             // RAII guard captures `this`
             // as a raw pointer so it does not hold a unique borrow across the body.
@@ -4765,6 +4796,9 @@ pub mod bv2_impl {
                         this.run_resolver(
                             &resolve.import_record,
                             resolve.import_record.original_target,
+                        );
+                        this.schedule_barrel_imports_after_plugin_resolve(
+                            resolve.import_record.importer_source_index,
                         );
                         return;
                     }
@@ -5003,6 +5037,9 @@ pub mod bv2_impl {
                                     .as_mut_slice()
                                     [resolve.import_record.import_record_index as usize];
                                 import_record.source_index = source_index;
+                                this.schedule_barrel_imports_after_plugin_resolve(
+                                    resolve.import_record.importer_source_index,
+                                );
                             }
                         }
                     }

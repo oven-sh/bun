@@ -19,6 +19,29 @@ impl fmt::Display for ErrorResponse {
 }
 
 impl ErrorResponse {
+    /// True when the server-side prepared statement is gone (SQLSTATE `26000`)
+    /// or its cached plan is stale (SQLSTATE `0A000` from routine
+    /// `RevalidateCachedQuery`; `0A000` alone is the generic
+    /// feature_not_supported class). Mirrors pgjdbc `willHealViaReparse`.
+    pub fn invalidates_prepared_statement(&self) -> bool {
+        let mut code_26000 = false;
+        let mut code_0a000 = false;
+        let mut routine_revalidate = false;
+        for m in &self.messages {
+            match m {
+                FieldMessage::Code(code) => {
+                    code_26000 = code.eql_comptime(b"26000");
+                    code_0a000 = code.eql_comptime(b"0A000");
+                }
+                FieldMessage::Routine(r) => {
+                    routine_revalidate = r.eql_comptime(b"RevalidateCachedQuery");
+                }
+                _ => {}
+            }
+        }
+        code_26000 || (code_0a000 && routine_revalidate)
+    }
+
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         mut reader: NewReader<Container>,
     ) -> Result<Self, AnyPostgresError> {

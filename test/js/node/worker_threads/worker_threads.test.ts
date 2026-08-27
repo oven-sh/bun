@@ -445,6 +445,19 @@ describe("execArgv option", async () => {
     expect(err?.message).toBe("Initiated Worker with invalid execArgv flags: --redirect-warnings requires an argument");
   });
 
+  it("lists a missing required value and unknown flags together", () => {
+    let err: any;
+    try {
+      new Worker("1", { eval: true, execArgv: ["--foo", "--redirect-warnings"] });
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("ERR_WORKER_INVALID_EXEC_ARGV");
+    expect(err?.message).toBe(
+      "Initiated Worker with invalid execArgv flags: --redirect-warnings requires an argument, --foo",
+    );
+  });
+
   it("a required value consumes the next token even when it starts with a dash", async () => {
     // node pops the next token unconditionally, so the dash-prefixed token is
     // the value, not a new flag; both validators must agree.
@@ -739,6 +752,25 @@ describe("execArgv option", async () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "function", stderr: "", exitCode: 0 });
+  });
+
+  it("an inheriting worker reports its parent worker's execArgv, and that list round-trips", async () => {
+    // main -> A (explicit --expose-gc) -> B (inherits). As in node, B's process.execArgv is A's
+    // list, so from B `new Worker(url)` and `new Worker(url, { execArgv: process.execArgv })` agree.
+    const probe = "require('worker_threads').parentPort.postMessage(typeof globalThis.gc)";
+    const b = `
+      const { Worker, parentPort } = require('worker_threads');
+      const ask = opts => new Promise(resolve => new Worker(${JSON.stringify(probe)}, { eval: true, ...opts }).once('message', resolve));
+      Promise.all([ask({}), ask({ execArgv: process.execArgv })]).then(([inherit, explicit]) =>
+        parentPort.postMessage({ execArgv: process.execArgv, inherit, explicit }));
+    `;
+    const a = `
+      const { Worker, parentPort } = require('worker_threads');
+      new Worker(${JSON.stringify(b)}, { eval: true }).once('message', m => parentPort.postMessage(m));
+    `;
+    const w = new Worker(a, { eval: true, execArgv: ["--expose-gc"] });
+    const [result] = await once(w, "message");
+    expect(result).toEqual({ execArgv: ["--expose-gc"], inherit: "function", explicit: "function" });
   });
 });
 

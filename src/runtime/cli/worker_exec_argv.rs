@@ -329,22 +329,25 @@ fn split_token(tok: &[u8]) -> (&[u8], Option<&[u8]>) {
 #[derive(Default)]
 pub struct ScanOutcome {
     pub honored: WorkerExecArgv,
-    /// `<flag> requires an argument` entries; take precedence over `invalid`
+    /// `<flag> requires an argument` entries; listed before `invalid`.
     pub errors: Vec<Vec<u8>>,
     /// Raw rejected tokens.
     pub invalid: Vec<Vec<u8>>,
 }
 
 impl ScanOutcome {
+    /// Every problem in one list, so no bad token is hidden by another.
     pub fn message(&self) -> Option<Vec<u8>> {
-        let list = if !self.errors.is_empty() {
-            &self.errors
-        } else if !self.invalid.is_empty() {
-            &self.invalid
-        } else {
+        if self.errors.is_empty() && self.invalid.is_empty() {
             return None;
-        };
-        Some(list.join(&b", "[..]))
+        }
+        let parts: Vec<&[u8]> = self
+            .errors
+            .iter()
+            .chain(self.invalid.iter())
+            .map(Vec::as_slice)
+            .collect();
+        Some(parts.join(&b", "[..]))
     }
 }
 

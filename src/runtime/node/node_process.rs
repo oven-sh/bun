@@ -233,6 +233,13 @@ mod _impl {
                     super::worker_option_string(wtf).into_js(global_object)
                 });
             }
+            // An inheriting worker reports the nearest ancestor worker's explicit list, as node
+            // reports the parent Environment's exec_argv.
+            if let Some(inherited) = worker.inherited_exec_argv() {
+                return JSValue::create_array_from_iter(global_object, inherited.iter(), |token| {
+                    BunString::clone_utf8(token).into_js(global_object)
+                });
+            }
         }
 
         // For compiled/standalone executables, execArgv should contain compile_exec_argv and BUN_OPTIONS.

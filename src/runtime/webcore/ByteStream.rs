@@ -102,13 +102,6 @@ impl ProducerHold {
         }
     }
 
-    /// [`hold`](Self::hold) for a source the caller has in hand.
-    pub fn hold_source(&self, source: &mut Source) {
-        self.release();
-        source.increment_count();
-        self.source.set(Some(core::ptr::NonNull::from(source)));
-    }
-
     pub fn is_held(&self) -> bool {
         self.source.get().is_some()
     }

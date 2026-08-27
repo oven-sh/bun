@@ -23,14 +23,15 @@ leak:start_wqthread
 leak:CRYPTO_set_thread_local
 leak:BIO_new
 leak:_tlv_get_addr
-# Bun::generateInternalModule (InternalModuleRegistry.cpp) evaluates a builtin
-# JS module (node:fs, ...). Native state the module creates on load, such as the
-# node:fs Binding box behind $lazy("fs"), is owned by a JSC cell. JSC's heap is
-# libpas memory, which LSAN does not scan, so that state reads as a direct leak
-# whenever the VM is not torn down before exit (a macro VM inside `bun build`).
-# The entry must track the function's name: it was Bun::generateModule until
-# the rename in #40597 made the old entry match nothing.
-leak:Bun::generateInternalModule
+# Bun::generateInternalModule (InternalModuleRegistry.cpp) runs a builtin JS
+# module's top level. Covers the node:fs Binding box that $lazy("fs") hands to
+# the NodeJSFS cell: JSC cells live in libpas memory, which LSAN does not scan,
+# so the box reads as a direct leak in a VM that is never torn down (the macro
+# VM inside `bun build`). Anchored so the lambda inside
+# Bun::generateInternalModuleSourceCode does not match too. Delete once
+# `bun build` tears down its macro VM on exit or the box is LSAN-ignored where
+# it is allocated.
+leak:^Bun::generateInternalModule(
 leak:Zig::ImportMetaObject::createFromSpecifier
 leak:Zig::GlobalObject::moduleLoaderResolve
 leak:JSModuleLoader__import

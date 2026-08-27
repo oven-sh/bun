@@ -374,7 +374,6 @@ pub fn do_patch_commit(
                 if let Some(patchdep) = lockfile.patched_dependencies.get(&name_and_version_hash) {
                     if let Some(hash) = patchdep.patchfile_hash() {
                         let tag = buntaghashbuf_make(&mut bunpatchtagbuf, hash);
-                        bun_patch_tag_owned = Some(tag.into());
                         break 'patch_tag &*tag;
                     }
                 }
@@ -408,6 +407,7 @@ pub fn do_patch_commit(
                 );
                 break 'has_bun_patch_tag None;
             }
+            bun_patch_tag_owned = Some(Box::from(patch_tag));
             break 'has_bun_patch_tag Some(patch_tag);
         };
         scopeguard::defer! {
@@ -595,10 +595,15 @@ pub fn do_patch_commit(
 
     let patchfile_path: Box<[u8]> = Box::<[u8]>::from(path_in_patches_dir.as_bytes());
     if let Some(patch_tag) = bun_patch_tag_owned {
-        let _ = sys::unlink(resolve_path::join_z::<platform::Auto>(&[
+        if let Err(e) = sys::unlink(resolve_path::join_z::<platform::Auto>(&[
             changes_dir,
             &patch_tag[..],
-        ]));
+        ])) {
+            if e.get_errno() != sys::E::ENOENT {
+                Output::err(e, "failed to remove patch tag sentinel", ());
+                Global::crash();
+            }
+        }
     }
 
     Ok(Some(PatchCommitResult {

@@ -148,7 +148,7 @@ extern "C" fn select_alpn_callback(
             // below has exited, since this guard is declared first. Connected
             // usockets only: UpgradedDuplex/Pipe own mem BIOs whose BIO_get_data
             // is a BUF_MEM*, not loop_ssl_data.
-            let mut saved_loop_state: [*mut c_void; 5] = [core::ptr::null_mut(); 5];
+            let mut saved_loop_state: [*mut c_void; 6] = [core::ptr::null_mut(); 6];
             if matches!(this.socket.get().socket, uws::InternalSocket::Connected(_)) {
                 tls_socket_functions::ffi::us_internal_ssl_loop_state_save(
                     boringssl_sys::SSL::opaque_ref(ssl),

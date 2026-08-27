@@ -100,6 +100,12 @@ struct loop_ssl_data {
   unsigned int ssl_write_batch_len;
   unsigned int ssl_write_batch_cap;
   int ssl_write_batching;
+  /* The socket whose sealed records fill ssl_write_batch. The slot is shared
+   * per-loop, so a flush must only ever deliver the batch to this socket, and
+   * a batching region entered for another socket flushes these records to
+   * their owner first (BIO_s_custom_write). Meaningful while
+   * ssl_write_batch_len > 0. */
+  struct us_socket_t *ssl_write_batch_owner;
 
   /* Single spill slot: ciphertext a partial batch flush could not deliver.
    * SSL believes these records were written, so they MUST reach this exact
@@ -583,6 +589,7 @@ static inline struct us_ssl_reneg_state_t *us_reneg_state(SSL *ssl) {
 extern void us_internal_socket_raw_shutdown(struct us_socket_t *s);
 
 static void ssl_update_handshake(struct us_socket_t *s);
+static int ssl_flush_write_batch(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s);
 static int us_ssl_inline_reject_tripped(struct us_socket_t *s);
 static inline int ssl_gone(struct us_socket_t *s);
 
@@ -621,7 +628,10 @@ static long BIO_s_custom_ctrl(BIO *bio, int cmd, long num, void *user) {
  * from inside SSL_do_handshake/SSL_read: user JS that writes to or destroys a
  * different TLS socket on the same loop re-points loop_ssl_data->ssl_socket
  * (and may consume the read-input window), and the interrupted handshake's
- * next BIO_write would otherwise land on that other socket's fd. */
+ * next BIO_write would otherwise land on that other socket's fd. The batching
+ * flag is saved-and-zeroed so a write or close_notify for a different socket
+ * inside the callback goes to that socket's fd via the per-record BIO path
+ * instead of appending to the interrupted handshake's batch. */
 void us_internal_ssl_loop_state_save(void *ssl_ptr, void **out) {
   SSL *ssl = (SSL *)ssl_ptr;
   struct loop_ssl_data *d = (struct loop_ssl_data *)BIO_get_data(SSL_get_wbio(ssl));
@@ -630,6 +640,8 @@ void us_internal_ssl_loop_state_save(void *ssl_ptr, void **out) {
   out[2] = d ? (void *)d->ssl_read_input : NULL;
   out[3] = d ? (void *)(uintptr_t)d->ssl_read_input_length : NULL;
   out[4] = d ? (void *)(uintptr_t)d->ssl_read_input_offset : NULL;
+  out[5] = d ? (void *)(uintptr_t)d->ssl_write_batching : NULL;
+  if (d) d->ssl_write_batching = 0;
 }
 
 void us_internal_ssl_loop_state_restore(void **saved) {
@@ -639,6 +651,7 @@ void us_internal_ssl_loop_state_restore(void **saved) {
   d->ssl_read_input = (char *)saved[2];
   d->ssl_read_input_length = (unsigned int)(uintptr_t)saved[3];
   d->ssl_read_input_offset = (unsigned int)(uintptr_t)saved[4];
+  d->ssl_write_batching = (int)(uintptr_t)saved[5];
 }
 
 static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
@@ -664,10 +677,22 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
     return length;
   }
 
-  if (loop_ssl_data->ssl_write_batching) {
+  if (loop_ssl_data->ssl_write_batching &&
+      loop_ssl_data->ssl_write_batch_len &&
+      loop_ssl_data->ssl_write_batch_owner != loop_ssl_data->ssl_socket) {
+    /* The batch holds another socket's records (a JS callback in this
+     * dispatch wrote to a second TLS socket on the same loop while the
+     * first socket's flight was held). Deliver them to their owner first so
+     * each socket's records stay in order. */
+    ssl_flush_write_batch(loop_ssl_data, loop_ssl_data->ssl_write_batch_owner);
+  }
+
+  if (loop_ssl_data->ssl_write_batching && loop_ssl_data->ssl_spill_owner == NULL) {
     /* Append the sealed record; the batch hits the kernel once, after
      * SSL_write returns. Reporting the full length keeps BoringSSL sealing
-     * the next record instead of parking a partial one. */
+     * the next record instead of parking a partial one. Skipped while a
+     * spill occupies the slot: a later short flush could not park its
+     * remainder without clobbering that socket's pending ciphertext. */
     unsigned int needed = loop_ssl_data->ssl_write_batch_len + (unsigned int)length;
     if (needed > loop_ssl_data->ssl_write_batch_cap) {
       unsigned int new_cap = loop_ssl_data->ssl_write_batch_cap ? loop_ssl_data->ssl_write_batch_cap : 65536;
@@ -688,6 +713,7 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
     }
     memcpy(loop_ssl_data->ssl_write_batch + loop_ssl_data->ssl_write_batch_len, data, (size_t)length);
     loop_ssl_data->ssl_write_batch_len = needed;
+    loop_ssl_data->ssl_write_batch_owner = loop_ssl_data->ssl_socket;
     BIO_clear_retry_flags(bio);
     return length;
   }
@@ -709,11 +735,26 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
 static int ssl_flush_write_batch(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s) {
   unsigned int len = loop_ssl_data->ssl_write_batch_len;
   if (!len) return 1;
+  if (loop_ssl_data->ssl_write_batch_owner != s) {
+    /* Not this socket's records (SSL_write failed before sealing anything
+     * while another socket's flight was held): leave them for their owner's
+     * own flush point. */
+    return 1;
+  }
   loop_ssl_data->ssl_write_batch_len = 0;
+  loop_ssl_data->ssl_write_batch_owner = NULL;
   int written = us_socket_raw_write(s, loop_ssl_data->ssl_write_batch, (int)len);
   if (written < 0) written = 0;
   if ((unsigned int)written < len) {
     unsigned int remainder = len - (unsigned int)written;
+    if (loop_ssl_data->ssl_spill_owner) {
+      /* The spill slot is already another socket's (a re-entrant JS region
+       * produced one between the entry-time gate and this flush).
+       * Overwriting it would leak and corrupt that socket's stream; this
+       * socket's remainder is undeliverable. */
+      s->ssl_fatal_error = 1;
+      return 0;
+    }
     char *spill = us_malloc(remainder);
     if (!spill) {
       /* Out of memory with ciphertext in flight: the connection cannot stay
@@ -729,6 +770,17 @@ static int ssl_flush_write_batch(struct loop_ssl_data *loop_ssl_data, struct us_
     return 0;
   }
   return 1;
+}
+
+/* Drop the batch slot when its owner dies without reaching a flush point
+ * (error/RST teardown), or when a destroy from inside the handshake cancels
+ * the held flight. The buffer itself is loop-owned and reused. */
+static void ssl_release_batch(struct us_loop_t *loop, struct us_socket_t *s) {
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)loop->data.ssl_data;
+  if (loop_ssl_data && loop_ssl_data->ssl_write_batch_owner == s) {
+    loop_ssl_data->ssl_write_batch_len = 0;
+    loop_ssl_data->ssl_write_batch_owner = NULL;
+  }
 }
 
 /* Try to drain the spill slot for `s`. Returns 1 when clear (or not ours),
@@ -773,6 +825,9 @@ void us_internal_ssl_socket_relocated(struct us_loop_t *loop, struct us_socket_t
   if (!loop_ssl_data) return;
   if (loop_ssl_data->ssl_spill_owner == old_s) {
     loop_ssl_data->ssl_spill_owner = new_s;
+  }
+  if (loop_ssl_data->ssl_write_batch_owner == old_s) {
+    loop_ssl_data->ssl_write_batch_owner = new_s;
   }
   if (loop_ssl_data->ssl_last_fatal_error_owner == (void *)old_s) {
     loop_ssl_data->ssl_last_fatal_error_owner = (void *)new_s;
@@ -1607,6 +1662,7 @@ void us_internal_ssl_detach(struct us_socket_t *s) {
    * owns or the loop-wide slot dangles (batching permanently disabled, and a
    * reused socket address would drain the dead socket's records). */
   ssl_release_spill(s->group->loop, s);
+  ssl_release_batch(s->group->loop, s);
   if (s->ssl) {
     if (s->ssl_in_use) {
       /* SSL_do_handshake/SSL_read is on the stack (a JS callback run from
@@ -1907,6 +1963,17 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
     s->ssl_pending_detach = 1;
     s->ssl_pending_close_code = (unsigned char) code;
     return s;
+  }
+  {
+    /* Ciphertext batched in this dispatch and still held (the handshake's
+     * final flight, a fatal alert sealed by a failing SSL_read) goes to the
+     * wire before the close_notify/FIN this teardown sends. A partial write
+     * spills; the graceful-close deferral below then waits for the drain. */
+    struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
+    if (loop_ssl_data && loop_ssl_data->ssl_write_batch_len &&
+        loop_ssl_data->ssl_write_batch_owner == s && !us_socket_is_closed(s)) {
+      ssl_flush_write_batch(loop_ssl_data, s);
+    }
   }
   /* Neither node's `_handle.close()` (FAST_SHUTDOWN, no reason) nor a graceful
    * close (code 0: peer close_notify / end-completion) may cut off spilled
@@ -2275,12 +2342,45 @@ struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *s, char *data, i
   int read = 0;
 restart:
   while (1) {
+    /* While the handshake is pending, SSL_read seals this side's outbound
+     * flight (TLS 1.3 client Certificate/Finished, server Hello flight).
+     * Batch those records instead of raw-writing each: when the handshake
+     * completes in this read, the flight is HELD across the on_handshake
+     * dispatch below, so a write the JS callback issues appends to it and
+     * us_internal_ssl_write flushes flight + first application data in ONE
+     * kernel write (one TCP segment). Two segments let a peer that tears
+     * down right after the handshake (node's post-verify destroy, #40653)
+     * close with the second segment unread, which turns its FIN teardown
+     * into an RST and a bogus ECONNRESET at this side. Node's memory BIO
+     * drained once per cycle has the same single-segment shape. Gated on a
+     * free spill slot like us_internal_ssl_write, so a short flush cannot
+     * clobber another socket's pending ciphertext. */
+    int hs_batching = s->ssl_handshake_state == HANDSHAKE_PENDING &&
+                      !loop_ssl_data->ssl_write_batching &&
+                      !loop_ssl_data->ssl_spill_owner;
+    if (hs_batching) loop_ssl_data->ssl_write_batching = 1;
     unsigned char ssl_was_in_use = s->ssl_in_use;
     s->ssl_in_use = 1;
     int just_read = SSL_read(s_ssl(s),
                              loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING + read,
                              LIBUS_RECV_BUFFER_LENGTH - read);
     s->ssl_in_use = ssl_was_in_use;
+    if (hs_batching) {
+      loop_ssl_data->ssl_write_batching = 0;
+      if (s->ssl_pending_detach) {
+        /* Destroyed from a callback inside the read: the flight is cancelled
+         * with the connection (the BIO swallows post-detach records the same
+         * way). */
+        ssl_release_batch(s->group->loop, s);
+      } else if (!(s->ssl && s->ssl_handshake_state == HANDSHAKE_PENDING &&
+                   SSL_is_init_finished(s_ssl(s)))) {
+        /* The handshake did not complete in this read (or already reported):
+         * send this round's flight now so the peer can progress. */
+        ssl_flush_write_batch(loop_ssl_data, s);
+      }
+      /* else: handshake just completed - hold the flight for the
+       * on_handshake dispatch below. */
+    }
     if (!ssl_was_in_use && s->ssl_pending_detach) {
       /* A callback run from inside this read destroyed the socket; perform
        * the deferred close now and stop processing. */
@@ -2334,7 +2434,13 @@ restart:
                * finishes immediately). With SENT_SHUTDOWN both directions are
                * closed and nothing is left to hold open: fall through so the
                * deferred graceful close (code 0, no FIN sent) completes here
-               * instead of waiting for a FIN that may never come. */
+               * instead of waiting for a FIN that may never come. A flight
+               * held by this read's handshake batching must not be parked
+               * past this return. */
+              if (loop_ssl_data->ssl_write_batch_len &&
+                  loop_ssl_data->ssl_write_batch_owner == s) {
+                ssl_flush_write_batch(loop_ssl_data, s);
+              }
               return s;
             }
           }
@@ -2370,6 +2476,12 @@ restart:
           ssl_trigger_handshake(s, 1);
           if (ssl_gone(s)) return NULL;
           loop_ssl_data->ssl_socket = s;
+          /* The callback ran with the flight held: a write it issued already
+           * flushed flight + data together; send whatever is still held. */
+          if (loop_ssl_data->ssl_write_batch_len &&
+              loop_ssl_data->ssl_write_batch_owner == s) {
+            ssl_flush_write_batch(loop_ssl_data, s);
+          }
         }
         if (!read) break;
 
@@ -2407,6 +2519,12 @@ restart:
       loop_ssl_data->ssl_read_input_length = saved_length;
       loop_ssl_data->ssl_read_input_offset = saved_offset;
       loop_ssl_data->ssl_socket = s;
+      /* Same as the no-data completion above: send what the callback's own
+       * write did not already flush of the held flight. */
+      if (loop_ssl_data->ssl_write_batch_len &&
+          loop_ssl_data->ssl_write_batch_owner == s) {
+        ssl_flush_write_batch(loop_ssl_data, s);
+      }
     }
 
     read += just_read;
@@ -2530,6 +2648,7 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
    * we report as written are honest up to one bounded spill. Reporting a
    * whole large write as consumed while its ciphertext sat in memory let the
    * layers above fire 'finish' and close before the data reached the wire. */
+  int outer_batching = loop_ssl_data->ssl_write_batching;
   int batching = (loop_ssl_data->ssl_spill_owner == NULL);
   loop_ssl_data->ssl_write_batching = batching;
 
@@ -2543,9 +2662,10 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
     last_ssl_written = SSL_write(s_ssl(s), data + total, chunk);
     s->ssl_in_use = 0;
     if (s->ssl_pending_detach) {
-      /* Closed from inside the call: drop this write's records and close now. */
-      loop_ssl_data->ssl_write_batching = 0;
-      loop_ssl_data->ssl_write_batch_len = 0;
+      /* Closed from inside the call: drop this write's records (and any held
+       * flight of ours they extend) and close now. */
+      loop_ssl_data->ssl_write_batching = outer_batching;
+      ssl_release_batch(s->group->loop, s);
       s->ssl_pending_detach = 0;
       us_socket_close(s, s->ssl_pending_close_code, NULL);
       return 0;
@@ -2560,7 +2680,7 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
       if (s->ssl_fatal_error) break;
     }
   }
-  loop_ssl_data->ssl_write_batching = 0;
+  loop_ssl_data->ssl_write_batching = outer_batching;
   if (batching) {
     ssl_flush_write_batch(loop_ssl_data, s);
   }
@@ -2587,9 +2707,16 @@ void us_internal_ssl_shutdown(struct us_socket_t *s) {
 
   /* Spilled ciphertext is data the layers above already count as written;
    * a FIN/close_notify now would cut it off. Finish the shutdown from the
-   * writable event once the spill drains. */
+   * writable event once the spill drains. A held batch (an end() issued
+   * from the on_handshake callback while the final flight is still parked)
+   * is the same kind of debt: flush it first so the close_notify and FIN
+   * below follow the flight, not precede it. */
   {
     struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
+    if (loop_ssl_data && loop_ssl_data->ssl_write_batch_len &&
+        loop_ssl_data->ssl_write_batch_owner == s) {
+      ssl_flush_write_batch(loop_ssl_data, s);
+    }
     if (loop_ssl_data && loop_ssl_data->ssl_spill_owner == s) {
       if (!ssl_drain_spill(loop_ssl_data, s)) {
         s->ssl_shutdown_after_spill = 1;
@@ -2908,7 +3035,7 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
   struct loop_ssl_data *cb_lsd = (struct loop_ssl_data *)BIO_get_data(SSL_get_wbio(ssl));
   struct us_socket_t *cb_socket = cb_lsd ? cb_lsd->ssl_socket : NULL;
 
-  void *saved_loop_state[5];
+  void *saved_loop_state[6];
   us_internal_ssl_loop_state_save(ssl, saved_loop_state);
   int abort_handshake = 0;
   SSL_CTX *dyn =

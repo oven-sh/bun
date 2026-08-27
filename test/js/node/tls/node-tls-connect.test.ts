@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, tls as COMMON_CERT_, isASAN } from "harness";
+import { bunEnv, bunExe, tls as COMMON_CERT_, isASAN, nodeExe, tempDir } from "harness";
 import https from "https";
 import net from "net";
 import { join } from "path";
@@ -1668,3 +1668,174 @@ describe.concurrent("a client paused while connecting", () => {
     });
   });
 });
+
+// #40653: a TLS 1.3 client must send its final handshake flight and the first
+// write issued from the 'secureConnect' callback in ONE TCP segment, like
+// Node does through its memory BIO. Two segments let a server that tears the
+// connection down right after the handshake (Node's post-verify destroy of a
+// rejected client certificate) close with the second segment unread, which
+// turns its FIN teardown into an RST and a bogus 'read ECONNRESET' at the
+// client. A raw TCP proxy in front of the server records the client's segment
+// boundaries: the client child's writes are milliseconds apart when they are
+// separate sends, so each reaches the proxy as its own 'data' chunk.
+it("TLS 1.3 client coalesces its final handshake flight with the first write from secureConnect into one segment (#40653)", async () => {
+  // Resolves with the number of client-to-server chunks the proxy had
+  // forwarded by the time the server's plaintext 'data' event fired.
+  const { promise: chunksWhenServerGotData, resolve: reportChunks } = Promise.withResolvers<number>();
+
+  // Client-to-server chunk sizes as the proxy receives them. One recv per
+  // arriving segment: the proxy is idle between the child's sends.
+  const upstreamChunks: number[] = [];
+
+  const server = tls.createServer({
+    key: COMMON_CERT_.key,
+    cert: COMMON_CERT_.cert,
+    minVersion: "TLSv1.3",
+    maxVersion: "TLSv1.3",
+  });
+  server.on("secureConnection", socket => {
+    socket.on("data", () => {
+      reportChunks(upstreamChunks.length);
+      socket.end();
+    });
+    socket.on("error", () => {});
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const serverPort = (server.address() as AddressInfo).port;
+
+  const proxy = net.createServer({ allowHalfOpen: true }, client => {
+    const upstream = net.connect({ port: serverPort, host: "127.0.0.1", allowHalfOpen: true });
+    client.on("data", data => {
+      upstreamChunks.push(data.length);
+      upstream.write(data);
+    });
+    upstream.on("data", data => client.write(data));
+    client.on("end", () => upstream.end());
+    upstream.on("end", () => client.end());
+    client.on("error", () => {});
+    upstream.on("error", () => {});
+  });
+  await new Promise<void>(resolve => proxy.listen(0, "127.0.0.1", resolve));
+  const proxyPort = (proxy.address() as AddressInfo).port;
+
+  try {
+    const clientScript = `
+      const tls = require("node:tls");
+      const events = [];
+      const socket = tls.connect({
+        host: "127.0.0.1",
+        port: ${proxyPort},
+        rejectUnauthorized: false,
+        minVersion: "TLSv1.3",
+        maxVersion: "TLSv1.3",
+      });
+      socket.on("secureConnect", () => {
+        events.push("secureConnect");
+        socket.write("HELLO");
+      });
+      socket.on("data", () => events.push("data"));
+      socket.on("end", () => events.push("end"));
+      socket.on("error", error => events.push("error:" + error.code));
+      socket.on("close", hadError => {
+        events.push("close:" + hadError);
+        console.log(events.join(","));
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", clientScript],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("secureConnect,end,close:false");
+    expect(exitCode).toBe(0);
+
+    // ClientHello, then ONE segment carrying change_cipher_spec + Finished +
+    // the "HELLO" application record. On the unfixed client the flight and
+    // the application record are two sends, so the server's data arrives in
+    // a third chunk.
+    expect(await chunksWhenServerGotData).toBe(2);
+  } finally {
+    proxy.close();
+    server.close();
+  }
+});
+
+// End-to-end shape of the issue: a Node TLS 1.3 server that rejects the
+// client's certificate does so AFTER the client saw 'secureConnect' (TLS 1.3
+// clients finish first), and destroys the raw socket with no close_notify.
+// With the coalesced segment above, the server closes with an empty receive
+// buffer, so the client sees a bare FIN and reports a clean 'end'. The server
+// must be Node: it is Node's post-verify destroy (bare close, no
+// SSL_shutdown) that produces this teardown shape.
+it.skipIf(!nodeExe())(
+  "TLS 1.3 client sees 'end', not ECONNRESET, when the server tears down right after rejecting its certificate (#40653)",
+  async () => {
+    using dir = tempDir("tls13-bare-fin", {
+      "server.mjs": `
+        import tls from "node:tls";
+        const server = tls.createServer({
+          key: ${JSON.stringify(COMMON_CERT_.key)},
+          cert: ${JSON.stringify(COMMON_CERT_.cert)},
+          // No 'ca': the client's self-signed cert fails verification.
+          requestCert: true,
+          rejectUnauthorized: true,
+          minVersion: "TLSv1.3",
+          maxVersion: "TLSv1.3",
+        });
+        server.on("tlsClientError", () => {});
+        server.listen(0, "127.0.0.1", () => {
+          console.log(server.address().port);
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [nodeExe()!, "server.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let out = "";
+    while (!out.includes("\n")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      out += decoder.decode(value);
+    }
+    const port = parseInt(out.trim(), 10);
+    expect(port).toBeGreaterThan(0);
+
+    // The bug is a race between the client's second segment and the server's
+    // destroy. One clean run proves little; five runs failed 5/5 before the
+    // fix on Linux and 20/20 in the report on macOS.
+    for (let i = 0; i < 5; i++) {
+      const events: string[] = [];
+      await new Promise<void>(resolve => {
+        const socket = tlsConnect({
+          host: "127.0.0.1",
+          port,
+          rejectUnauthorized: false,
+          key: COMMON_CERT_.key,
+          cert: COMMON_CERT_.cert,
+          minVersion: "TLSv1.3",
+          maxVersion: "TLSv1.3",
+        });
+        socket.on("secureConnect", () => {
+          events.push("secureConnect");
+          socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        });
+        socket.on("error", error => events.push(`error:${(error as NodeJS.ErrnoException).code}`));
+        socket.on("end", () => events.push("end"));
+        socket.on("close", hadError => {
+          events.push(`close:${hadError}`);
+          resolve();
+        });
+      });
+      expect(events).toEqual(["secureConnect", "end", "close:false"]);
+    }
+  },
+);

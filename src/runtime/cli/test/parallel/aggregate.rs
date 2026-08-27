@@ -163,9 +163,8 @@ impl FileCoverage {
         out
     }
 
-    /// FNF/FNH for the merged report, derived from the unioned FN/FNDA
-    /// records. Falls back to the per-fragment max when no fragment carried
-    /// per-function records.
+    /// FNF/FNH from the unioned FN/FNDA records, or the per-fragment max
+    /// when no fragment carried per-function records.
     fn fn_totals(&self) -> (u32, u32) {
         if self.fns.count() == 0 {
             return (self.fnf, self.fnh);
@@ -190,14 +189,11 @@ impl FileCoverage {
     }
 }
 
-/// Merge per-worker LCOV fragments into a single report. Line-level (DA) merge
-/// sums hits, and keeps a zero-hit line only when every fragment covering the
-/// file agrees it is executable (see `FileCoverage::merged_lines`). Function
-/// coverage is unioned from the per-function FN/FNDA records: hits for the
-/// same function name are summed across fragments, and FNF/FNH derive from
-/// the merged set, so disjoint per-worker function hits add up instead of
-/// under-reporting % Funcs (#40586). Fragments without FN/FNDA records fall
-/// back to the per-fragment FNF/FNH max.
+/// Merge per-worker LCOV fragments into a single report. DA hits are summed,
+/// and a zero-hit line is kept only when every fragment covering the file
+/// agrees it is executable (see `FileCoverage::merged_lines`). FNDA hits are
+/// summed per function name, so disjoint per-worker function hits add up
+/// instead of under-reporting % Funcs (#40586).
 pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     chunks: &[&[u8]],
     opts: &mut CodeCoverageOptions,

@@ -312,12 +312,10 @@ pub mod lcov {
         }
         writer.write_all(b"\n")?;
 
-        // JSC does not expose function names, so synthesize one from the
-        // 1-based start line plus the start byte offset in the generated
-        // source. The offset keeps distinct functions that start on the same
-        // line distinct and collapses only true duplicate ranges (a relinked
-        // CodeBlock). It is stable across workers for the same file, so the
-        // parallel merge can union FNDA hits by name (#40586).
+        // JSC does not expose function names. Synthesize one from the 1-based
+        // start line plus the generated-source start offset: stable across
+        // workers, so the parallel merge unions FNDA hits by name, and unique
+        // per function, so same-line functions stay distinct (#40586).
         let mut fn_records: Vec<(u32, u32, bool)> = Vec::with_capacity(report.functions.len());
         for function in &report.functions {
             if function.start_line != u32::MAX {
@@ -957,15 +955,12 @@ pub use bun_options_types::code_coverage_options::Fraction;
 #[derive(Clone, Copy, Default)]
 pub struct Block {}
 
-/// Per-function coverage for the LCOV writer. JSC reports byte ranges only
-/// (no names), so the start line and start offset double as the function's
-/// identity when the parallel merge unions hits across workers.
+/// Per-function coverage for the LCOV writer.
 #[derive(Clone, Copy)]
 pub struct FunctionBlock {
     /// 0-based start line; `u32::MAX` when the range maps to no line.
     pub(crate) start_line: u32,
-    /// Start byte offset in the generated source. Distinguishes functions
-    /// that start on the same line.
+    /// Start byte offset in the generated source; distinguishes same-line functions.
     pub(crate) start_offset: u32,
     pub(crate) executed: bool,
 }

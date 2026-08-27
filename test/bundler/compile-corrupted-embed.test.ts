@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { closeSync, copyFileSync, openSync, readSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
@@ -76,7 +76,7 @@ function elfStompLength(path: string): void {
 /// Stomp the payload vaddr stored at the BUN_COMPILED blob header: the only
 /// 16 KiB-aligned u64 inside a PT_LOAD's file-backed range holding the
 /// payload's vaddr.
-function elfStompVaddr(path: string): void {
+function elfStompVaddr(path: string, newVaddr: bigint): void {
   const fd = openSync(path, "r+");
   try {
     const { vaddr } = elfFindPayload(fd);
@@ -99,7 +99,7 @@ function elfStompVaddr(path: string): void {
       ) {
         const off = Number(p_offset + (v - p_vaddr));
         if (readAt(fd, off, 8).readBigUInt64LE(0) === vaddr) {
-          writeU64At(fd, off, 0x4141414141414141n);
+          writeU64At(fd, off, newVaddr);
           return;
         }
       }
@@ -223,7 +223,9 @@ test.if(isLinux)(
     expect(healthy.exitCode).toBe(0);
 
     await expectGracefulFallback(corruptedCopy(exe, "lenbad", elfStompLength));
-    await expectGracefulFallback(corruptedCopy(exe, "vaddrbad", elfStompVaddr));
+    // Above any mapped segment, and below the one holding the payload.
+    await expectGracefulFallback(corruptedCopy(exe, "vaddrhigh", p => elfStompVaddr(p, 0x4141414141414141n)));
+    await expectGracefulFallback(corruptedCopy(exe, "vaddrlow", p => elfStompVaddr(p, 0x1000n)));
   },
   TIMEOUT,
 );
@@ -265,13 +267,16 @@ test.if(isMacOS)(
       env: bunEnv,
     });
     if (codesign.exitCode !== 0) {
-      // codesign on newer macOS refuses to re-sign bun's compiled layout
+      // codesign on arm64 macOS refuses to re-sign bun's compiled layout
       // ("main executable failed strict validation" / "internal error in
-      // Code Signing subsystem" on macOS 26, with or without --no-strict).
-      // Without a valid ad-hoc signature the kernel kills the process
-      // before startup, so the corrupted-run half of this test can't be
-      // exercised on such hosts; older macOS and the x64 lanes still cover
-      // it, and the healthy-binary check above ran regardless.
+      // Code Signing subsystem", with or without --no-strict), and without a
+      // valid ad-hoc signature the arm64 kernel kills the process before
+      // startup, so the corrupted-run half can't be exercised there. The x64
+      // lanes must not take this skip: codesign works on them.
+      if (!isArm64) {
+        expect(codesign.stderr.toString()).toBe("");
+        expect(codesign.exitCode).toBe(0);
+      }
       console.warn("skipping corrupted-run check; codesign failed:", codesign.stderr.toString());
       return;
     }

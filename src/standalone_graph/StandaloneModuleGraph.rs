@@ -513,13 +513,16 @@ mod elf {
         let module = bun_sys::elf::find_loaded_module(vaddr_ptr as usize)?;
         let header_size = size_of::<u64>();
         // `target` carries write provenance for the in-place bytecode mutation.
-        let target = (vaddr as usize).wrapping_add(module.base_address);
         // vaddr and the length prefix are untrusted (post-build corruption), so
-        // bound the payload by the PT_LOAD segment that maps BUN_COMPILED (the
-        // writer appends the payload to that same extended segment).
-        let payload_capacity = module
-            .segment_end
-            .checked_sub(target)
+        // require `[target, target + 8 + len)` inside the PT_LOAD segment that
+        // maps BUN_COMPILED (the writer appends the payload to that same
+        // extended segment); anything outside it is unmapped.
+        let target = usize::try_from(vaddr)
+            .ok()
+            .and_then(|vaddr| vaddr.checked_add(module.base_address))?;
+        let payload_capacity = (target >= module.segment_start)
+            .then_some(module.segment_end)
+            .and_then(|segment_end| segment_end.checked_sub(target))
             .and_then(|available| available.checked_sub(header_size));
         let Some(payload_capacity) = payload_capacity else {
             bun_core::debug_warn!("bun standalone module graph is not mapped by its segment");

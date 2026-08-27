@@ -153,8 +153,11 @@ pub mod api {
         /// `.npmrc`'s `_auth`, verbatim. npm never decodes it, so neither may we.
         /// Not read from `bunfig.toml`; it only carries the value to `Scope::from_api`.
         pub auth: Box<[u8]>,
-        /// email
-        pub email: Box<[u8]>,
+        /// The registry was declared by a `.npmrc` `registry=` line. A credential inside
+        /// that URL (userinfo, or a `:_authToken=` segment) is then the weakest source,
+        /// which any `.npmrc` line for the key replaces; a URL typed into `bunfig.toml`,
+        /// the environment or the command line keeps its credential.
+        pub credentials_from_url: bool,
     }
 
     impl NpmRegistry {
@@ -205,6 +208,18 @@ pub mod api {
     /// same type.
     pub use bun_install_types::NodeLinker::{NodeLinker, PnpmMatcher};
 
+    /// The credential one `.npmrc` key resolved to (`//host/path/:_authToken=...`,
+    /// `:_auth=`, or `:username=` + `:_password=`), kept past config loading so the
+    /// package manager can match it against a registry URL it only learns later
+    /// (`--registry`, `$NPM_CONFIG_REGISTRY`, a bunfig registry without credentials).
+    #[derive(Clone, Debug, Default)]
+    pub struct NpmUrlAuth {
+        /// npm's config key as written between `//` and `:<opt>=`, e.g. `host/path/`.
+        pub key: Box<[u8]>,
+        /// Only `token`, `auth`, `username` and `password` are set; `url` stays empty.
+        pub credentials: NpmRegistry,
+    }
+
     /// Full field set.
     /// `Default` is every field `None`/empty.
     ///
@@ -216,6 +231,10 @@ pub mod api {
         pub default_registry: Option<NpmRegistry>,
         /// scoped
         pub scoped: Option<NpmRegistryMap>,
+        /// One entry per `.npmrc` credential key that carries a complete credential,
+        /// after every file was collapsed into one map. `Options::load` walks it for
+        /// every registry that ended up without credentials.
+        pub url_auth: Vec<NpmUrlAuth>,
         /// lockfile_path
         pub lockfile_path: Option<Box<[u8]>>,
         /// save_lockfile_path

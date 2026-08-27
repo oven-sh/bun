@@ -245,6 +245,32 @@ describe.concurrent("redact", async () => {
       expected: "is not a known .npmrc option",
       secret: "npm_notarealtokenvalue",
     },
+    // Lines that are not `//host/…:option=value` never reach the unknown-option
+    // warning, since the word after the last colon could be the value itself.
+    {
+      title: "credential key without an equals sign",
+      npmrc: "//registry.npmjs.org/:_authToken",
+      expected: "",
+      secret: "_authToken",
+    },
+    {
+      title: "credential key with a colon instead of an equals sign",
+      npmrc: "//registry.npmjs.org/:_authToken:npm_notarealtokenvalue",
+      expected: "",
+      secret: "npm_notarealtokenvalue",
+    },
+    {
+      title: "bare host and port",
+      npmrc: "//localhost:4873",
+      expected: "",
+      secret: "4873",
+    },
+    {
+      title: "bare bracketed IPv6 host",
+      npmrc: "//[::1]",
+      expected: "",
+      secret: "::1",
+    },
     {
       // The most common .npmrc authoring mistake, and the value is always a live secret.
       // npm decodes _password with Buffer.from(v, "base64"), which never throws — it

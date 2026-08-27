@@ -84,7 +84,7 @@ Bun supports the following options:
 - `username`
 - `_password` (base64 encoded password)
 - `_auth` (sent as written in a `Basic` header; npm's form is base64 encoded username:password, for example `btoa(username + ":" + password)`)
-- `email`
+- `email` (accepted and ignored, as npm does)
 
 The equivalent `bunfig.toml` option is to add a key in [`install.scopes`](/runtime/bunfig#install-scopes):
 

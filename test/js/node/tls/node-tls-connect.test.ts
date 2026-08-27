@@ -1700,7 +1700,7 @@ it("TLS 1.3 client coalesces its final handshake flight with the first write fro
     });
     socket.on("error", () => {});
   });
-  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  await once(server.listen(0, "127.0.0.1"), "listening");
   const serverPort = (server.address() as AddressInfo).port;
 
   const proxy = net.createServer({ allowHalfOpen: true }, client => {
@@ -1715,7 +1715,7 @@ it("TLS 1.3 client coalesces its final handshake flight with the first write fro
     client.on("error", () => {});
     upstream.on("error", () => {});
   });
-  await new Promise<void>(resolve => proxy.listen(0, "127.0.0.1", resolve));
+  await once(proxy.listen(0, "127.0.0.1"), "listening");
   const proxyPort = (proxy.address() as AddressInfo).port;
 
   try {

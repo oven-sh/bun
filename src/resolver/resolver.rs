@@ -2454,9 +2454,7 @@ impl<'a> Resolver<'a> {
         let real_path: Option<&'static [u8]> = self
             .dir_cache_mut()
             .get(path)
-            .map(|info| {
-                bun_paths::string_paths::without_trailing_slash_windows_path(info.abs_real_path)
-            })
+            .map(|info| strings::without_trailing_slash_windows_path(info.abs_real_path))
             .filter(|real| !real.is_empty() && *real != path);
         let first_bust = self.fs_mut().fs.bust_entries_cache(path);
         let second_bust = self.dir_cache_mut().remove(path);

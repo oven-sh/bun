@@ -67,8 +67,7 @@ function EventEmitter(opts) {
 Object.defineProperty(EventEmitter, "name", { value: "EventEmitter", configurable: true });
 const EventEmitterPrototype = (EventEmitter.prototype = {});
 
-// Looked up through `EventEmitter.init` on every construction, like node, so
-// node:domain can replace it to stamp the active domain on new emitters.
+// Reached through `EventEmitter.init` like node, so node:domain can replace it.
 function init(opts) {
   if (this._events === undefined || this._events === this.__proto__._events) {
     this._events = Object.create(null);

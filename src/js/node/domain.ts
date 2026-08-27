@@ -1,19 +1,10 @@
 // Hardcoded module "node:domain"
 //
-// Port of node's lib/domain.js. Node releases follow a domain across async
-// boundaries with async_hooks: `init` pairs a new resource with process.domain,
-// `before` and `after` enter and exit that domain around each callback. Bun
-// has no before/after hooks, so the stack of entered domains lives in the
-// async context instead (the store AsyncLocalStorage rides), the way node's
-// main branch now does it too. Every callback that snapshots the async context
-// (timers, process.nextTick, promise reactions, I/O callbacks) then runs with
-// the stack it was created under.
-//
-// Errors reach `handleError` below through jsFunctionSetDomainErrorHandler
-// (BunProcess.cpp). The uncaught-exception and unhandled-rejection paths call
-// it with the async context of the throw (or rejection) still active and skip
-// the 'uncaughtException' / 'unhandledRejection' listeners when it returns
-// true, like node's domain-owned uncaughtExceptionCaptureCallback.
+// Port of node's lib/domain.js (the AsyncLocalStorage-based version on node's
+// main branch). The stack of entered domains lives in the async context, so a
+// callback runs with the stack it was created under. BunProcess.cpp calls
+// `handleError` for every uncaught exception and unhandled rejection before
+// the process listeners, with the async context of the failure still active.
 
 const EventEmitter = require("node:events");
 const { AsyncLocalStorage } = require("node:async_hooks");
@@ -28,19 +19,16 @@ const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeSlice = Array.prototype.slice;
 const ArrayPrototypeSplice = Array.prototype.splice;
 
-// The domains entered and not yet exited, innermost last, or undefined when
-// there is none. Never mutated in place: enter()/exit() install a new array so
-// a callback that snapshotted the old context keeps its own stack.
+// The domains entered and not yet exited, innermost last, or undefined. Never
+// mutated in place: a callback that snapshotted the old context keeps its stack.
 const domainStack = new AsyncLocalStorage();
 
 function currentStack(): Domain[] | undefined {
   return domainStack.getStore();
 }
 
-// Writes the [AsyncLocalStorage, value, ...] context array node/async_hooks.ts
-// keeps, instead of going through enterWith(): enterWith() schedules a reset
-// of the context at the next microtask checkpoint, and a domain entered by
-// run() has to outlive the throw it did not catch until handleError runs.
+// Not enterWith(): that schedules a context reset at the next microtask
+// checkpoint, before a throw out of run() reaches handleError.
 function setStack(stack: Domain[]) {
   const value = stack.length === 0 ? undefined : stack;
   const context = $getInternalField($asyncContext, 0);
@@ -71,10 +59,9 @@ function activeDomain(): Domain | undefined {
   return stack === undefined ? undefined : stack[stack.length - 1];
 }
 
-// The domains entered by enter() and not yet exited in synchronous code, in
-// order. Only enter() adds to it, a restored async context never does, so
-// handleError can tell a throw inside run()/bind()/intercept() from a throw in
-// an async callback that only inherited its stack.
+// Domains entered by enter() in synchronous code and not yet exited. A restored
+// async context never adds to it, which tells a throw inside run() from a throw
+// in a callback that only inherited its stack.
 const syncEntries: Domain[] = [];
 
 function setActiveDomain(domain) {
@@ -103,17 +90,14 @@ function domainUncaughtExceptionClear() {
   syncEntries.length = 0;
 }
 
-// Called from BunProcess.cpp for every uncaught exception and unhandled
-// rejection, before the process listeners, with the async context of the
-// failure still active. Returns true when a domain took the error.
+// Returns true when a domain took the error.
 function handleError(er, type) {
   const stack = currentStack();
   if (stack === undefined) return false;
   const active = stack[stack.length - 1];
 
   if (type === "unhandledRejection") {
-    // node: promiseInfo.domain.emit('error', reason). The handler runs from
-    // the tick queue in node, outside every domain.
+    // node: promiseInfo.domain.emit('error', reason), outside every domain.
     if (active.listenerCount("error") === 0) return false;
     setStack([]);
     active.emit("error", er);
@@ -121,14 +105,9 @@ function handleError(er, type) {
     return true;
   }
 
-  // node hands the error to the active domain only while a domain on the
-  // stack has an 'error' listener. Inside a synchronous run() any domain on
-  // the stack counts: when the inner one has no listener its emit() throws and
-  // _errorHandler passes the error to the parent. In an async callback only
-  // the active domain counts, as in node: the parents were on the stack when
-  // the callback was created, not when it ran. Otherwise the error takes the
-  // normal path with the stack cleared first (node prepends
-  // domainUncaughtExceptionClear to the 'uncaughtException' listeners).
+  // Like node, a parent domain's 'error' listener only counts for a throw
+  // inside a synchronous run(). An async callback had only the active domain
+  // entered for it, so without a listener there the error takes the normal path.
   let hasErrorListener = active.listenerCount("error") > 0;
   if (!hasErrorListener && syncEntries[syncEntries.length - 1] === active) {
     for (let i = stack.length - 2; i >= 0; i--) {
@@ -163,7 +142,6 @@ function createDomain() {
 
 Domain.prototype.members = undefined;
 
-// Called for an error thrown while this domain was active.
 Domain.prototype._errorHandler = function (er) {
   let caught = false;
 
@@ -177,53 +155,38 @@ Domain.prototype._errorHandler = function (er) {
     });
     er.domainThrown = true;
   }
-  // Pop all adjacent duplicates of this domain from the stack so its error
-  // handler does not run inside the domain itself and re-enter recursively.
+  // The handler must not run inside the domain it handles errors for.
   while (activeDomain() === this) {
     this.exit();
   }
 
   if (currentStack() === undefined) {
-    // Top-level domain handler. An exception it throws is not caught here so it
-    // stays fatal, as in node.
-    //
-    // Without an 'error' listener, do not emit: the throw from emit() would
-    // end the process before the 'uncaughtException' listeners get the error.
+    // Top-level handler: a throw from it stays fatal. Without a listener emit()
+    // would throw before the 'uncaughtException' listeners see the error.
     if (this.listenerCount("error") > 0) {
       caught = this.emit("error", er);
     }
   } else {
-    // Wrap this in a try/catch so we don't get infinite throwing
     try {
-      // One of three things will happen here.
-      //
-      // 1. There is a handler, caught = true
-      // 2. There is no handler, caught = false
-      // 3. It throws, caught = false
       caught = this.emit("error", er);
     } catch (er2) {
-      // The domain error handler threw. See if another domain can catch THIS
-      // error, or else crash on the original one.
+      // The handler threw: the next domain on the stack gets that error.
       const stack = currentStack();
       if (stack !== undefined) {
         caught = stack[stack.length - 1]._errorHandler(er2);
       } else {
-        // Pass on to the next exception handler.
         throw er2;
       }
     }
   }
 
-  // Exit all domains on the stack. Uncaught exceptions end the current tick
-  // and no domains should be left on the stack between ticks.
+  // An uncaught exception ends the tick: no domain stays entered after it.
   domainUncaughtExceptionClear();
 
   return caught;
 };
 
 Domain.prototype.enter = function () {
-  // Note that this might be a no-op, but we still need to push it onto the
-  // stack so that we can pop it later.
   const stack = currentStack();
   const next = stack === undefined ? [] : ArrayPrototypeSlice.$call(stack);
   ArrayPrototypePush.$call(next, this);
@@ -232,7 +195,6 @@ Domain.prototype.enter = function () {
 };
 
 Domain.prototype.exit = function () {
-  // Don't do anything if this domain is not on the stack.
   const stack = currentStack();
   if (stack === undefined) return;
   const index = ArrayPrototypeLastIndexOf.$call(stack, this);
@@ -244,24 +206,12 @@ Domain.prototype.exit = function () {
   if (syncIndex !== -1) syncEntries.length = syncIndex;
 };
 
-// note: this works for timers as well.
 Domain.prototype.add = function (ee) {
   const { domain: previous } = ee;
-  // If the domain is already added, then nothing left to do.
   if (previous === this) return;
-
-  // Has a domain already - remove it first.
   if (previous) previous.remove(ee);
 
-  // Check for circular Domain->Domain links.
-  // They cause big issues.
-  //
-  // For example:
-  // var d = domain.create();
-  // var e = domain.create();
-  // d.add(e);
-  // e.add(d);
-  // e.emit('error', er); // RangeError, stack overflow!
+  // A Domain->Domain cycle would make emit('error') recurse forever.
   if (ee instanceof Domain) {
     for (let d = this.domain; d; d = d.domain) {
       if (ee === d) return;
@@ -370,8 +320,7 @@ EventEmitter.init = function (opts) {
 
   const ret = eventInit.$call(this, opts);
 
-  // events.ts gives a captureRejections emitter its own `emit`, which would
-  // shadow the domain-aware prototype emit below. Wrap that one as well.
+  // A captureRejections emitter gets its own `emit` from events.ts.
   if (ObjectHasOwn(this, "emit")) {
     const ownEmit = this.emit;
     this.emit = function emit(...args) {
@@ -393,8 +342,6 @@ function emitWithDomain(emitter, originalEmit, args) {
   const type = args[0];
   const shouldEmitError = type === "error" && emitter.listenerCount(type) > 0;
 
-  // Just call original `emit` if current EE instance has `error`
-  // handler, there's no active domain or this is process
   if (shouldEmitError || domain === null || domain === undefined || emitter === process) {
     return originalEmit.$apply(emitter, args);
   }
@@ -414,10 +361,8 @@ function emitWithDomain(emitter, originalEmit, args) {
       er.domainThrown = false;
     }
 
-    // Remove the active domain (and its duplicates) from the stack so the
-    // domain's error handler does not run in its own context. Otherwise an
-    // event emitter created or an exception thrown in that handler would
-    // recursively execute that handler.
+    // The handler runs outside the active domain (and its duplicates) so it
+    // cannot re-enter itself through an emitter created or a throw inside it.
     const origStack = currentStack();
     if (origStack !== undefined) {
       const origActive = origStack[origStack.length - 1];
@@ -430,8 +375,6 @@ function emitWithDomain(emitter, originalEmit, args) {
 
     domain.emit("error", er);
 
-    // Now that the domain's error handler has completed, restore the domains
-    // stack and the active domain to their original values.
     if (origStack !== undefined) {
       setStack(origStack);
     }

@@ -3259,8 +3259,7 @@ void GlobalObject::handleRejectedPromises()
                 continue;
             inflight.index = i + 1;
 
-            // Report under the async context that was active when the promise
-            // rejected, the way node restores promiseInfo.contextFrame.
+            // Report under the async context of the rejection (node: promiseInfo.contextFrame).
             JSValue previousAsyncContext = asyncContextData->getInternalField(0);
             asyncContextData->putInternalField(virtual_machine, 0, asyncContexts.at(i));
             Bun__handleRejectedPromise(this, promise);

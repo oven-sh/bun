@@ -1331,12 +1331,8 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         RETURN_IF_EXCEPTION(monitorScope, true);
     }
 
-    // node:domain gets the error before the capture callback and the
-    // 'uncaughtException' listeners, like node's domain-owned captureFn. The
-    // async context of the throw is still active here, so the router sees the
-    // domain the failing callback was created in. A rejection that reaches this
-    // path (--unhandled-rejections=strict or throw) is routed like a throw, as
-    // node's _fatalException does.
+    // node:domain gets the error first, like node's domain-owned captureFn. The
+    // async context of the throw is still active here.
     if (auto* domainHandler = process->domainErrorHandler()) {
         auto domainScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         MarkedArgumentBuffer domainArgs;
@@ -1347,9 +1343,7 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
             (void)domainScope.tryClearException();
             if (vm.hasPendingTerminationException()) [[unlikely]]
                 return true;
-            // A throw from a domain 'error' handler is fatal, like a throw from an
-            // 'uncaughtException' listener: the re-entrant report exits with code 7
-            // and prints the handler's error, not the one it was handling.
+            // Fatal like a throw from an 'uncaughtException' listener (exit code 7).
             Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(JSValue(ex)));
             return true;
         }
@@ -1478,8 +1472,7 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
         return true;
     auto* process = globalObject->processObject();
 
-    // handleRejectedPromises() restored the async context of the rejection, so
-    // node:domain's router sees the domain the promise was rejected under.
+    // handleRejectedPromises() restored the async context of the rejection.
     if (auto* domainHandler = process->domainErrorHandler()) {
         auto domainScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         MarkedArgumentBuffer args;

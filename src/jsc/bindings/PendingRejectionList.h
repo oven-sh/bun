@@ -7,14 +7,9 @@
 
 namespace Bun {
 
-// Promises rejected with no handler attached yet, each paired with the async
-// context that was active when it was rejected. handleRejectedPromises()
-// restores that context while it reports the rejection, so 'unhandledRejection'
-// listeners and node:domain observe the AsyncLocalStorage state of the
-// rejection rather than the event loop's (node: promiseInfo.contextFrame).
-//
-// Same cellLock discipline as WriteBarrierList: every mutation and the GC
-// visit take the owner's cellLock.
+// Promises rejected with no handler yet, each with the async context active at
+// the rejection (node: promiseInfo.contextFrame). Same cellLock discipline as
+// WriteBarrierList.
 class PendingRejectionList {
 public:
     void append(JSC::VM& vm, JSC::JSCell* owner, JSC::JSPromise* promise, JSC::JSValue asyncContext)
@@ -34,8 +29,7 @@ public:
         });
     }
 
-    // Move every entry out under one cellLock. promises[i] and asyncContexts[i]
-    // describe the same rejection.
+    // promises[i] and asyncContexts[i] describe the same rejection.
     void drainTo(JSC::JSCell* owner, JSC::MarkedArgumentBuffer& promises, JSC::MarkedArgumentBuffer& asyncContexts)
     {
         WTF::Locker locker { owner->cellLock() };

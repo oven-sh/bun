@@ -6,8 +6,7 @@ use bun_threading::thread_pool::{Config, DEFAULT_THREAD_STACK_SIZE};
 use crate::{JSGlobalObject, JSValue, JsResult, Strong};
 
 /// A keyring call can wait without bound (an unlock prompt nobody answers), so
-/// the calls run on their own pool and never hold up the shared `WorkPool`.
-/// The keyring daemon serializes them, so a few threads are enough.
+/// the calls get a small pool of their own instead of the shared `WorkPool`.
 const SECRETS_POOL_THREADS: u32 = 4;
 
 // Opaque pointer to C++ SecretsJobOptions struct

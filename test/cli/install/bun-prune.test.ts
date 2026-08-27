@@ -2421,8 +2421,9 @@ test.concurrent.skipIf(isWindows || process.getuid?.() === 0)(
         "1 package removed, 1 failed (checked 3 installed packages)",
       ]);
       expect(exitCode).toBe(1);
+      // The read-only junk-b keeps its inner folder (the rmdir is what fails); the file inside it went first.
       expect(layout(dir)).toEqual(["junk-b", "no-deps"]);
-      expect(existsSync(join(inner, "package.json"))).toBeTrue();
+      expect(kind(inner)).toBe("dir");
 
       // --silent still reports what could not be removed; the exit code alone would hide which entry it was.
       const silent = await prune(dir, "--silent");
@@ -2430,7 +2431,7 @@ test.concurrent.skipIf(isWindows || process.getuid?.() === 0)(
       expect(normalizeBunSnapshot(silent.stderr)).toMatch(failure);
       expect(silent.exitCode).toBe(1);
       expect(layout(dir)).toEqual(["junk-b", "no-deps"]);
-      expect(existsSync(join(inner, "package.json"))).toBeTrue();
+      expect(kind(inner)).toBe("dir");
     } finally {
       chmodSync(junkB, 0o755);
     }

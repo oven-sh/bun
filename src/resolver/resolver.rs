@@ -6747,7 +6747,10 @@ fn primary_side_effects(
 /// `bun build --compile` executable: the file itself, or -- since every entry point is embedded under a `.js` name --
 /// the `.js` name for a source extension or no extension (`/$bunfs/root/w.ts` -> `/$bunfs/root/w.js`). Returns the
 /// graph's own name for it, which is what the module loader keys on.
-fn find_in_standalone_graph(graph: &dyn StandaloneModuleGraph, path: &[u8]) -> Option<&'static [u8]> {
+fn find_in_standalone_graph(
+    graph: &dyn StandaloneModuleGraph,
+    path: &[u8],
+) -> Option<&'static [u8]> {
     let intern = |name: &[u8]| -> &'static [u8] {
         Fs::file_system::DirnameStore::instance()
             .append_slice(name)

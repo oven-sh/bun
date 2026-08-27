@@ -1302,7 +1302,12 @@ unsafe fn resolve_entry_point_specifier<'s>(
             )
         } {
             if result.flags.is_standalone_module() {
-                return Some(result.path_const().expect("standalone results have a path").text);
+                return Some(
+                    result
+                        .path_const()
+                        .expect("standalone results have a path")
+                        .text,
+                );
             }
         }
     }

@@ -2849,10 +2849,6 @@ fn get_or_put_resolved_package(
                 }
 
                 // transitive folder dependencies do not have their dependencies resolved
-                //
-                // Only constrain `file:` targets declared by remote packages
-                // (registry, git, tarball); the project's own local packages are
-                // user authored and may point anywhere, like root dependencies.
                 if crate::bin::bin_target_escapes_package_dir(this.lockfile.str(&folder))
                     && !this.lockfile.is_dependency_of_local_package(dependency_id)
                 {

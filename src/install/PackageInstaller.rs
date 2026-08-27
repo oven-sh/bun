@@ -1455,10 +1455,6 @@ impl<'a> PackageInstaller<'a> {
                     installer.cache_dir = Fd::cwd();
                 } else {
                     // transitive folder dependencies are not hoisted
-                    //
-                    // Only constrain `file:` targets declared by remote packages
-                    // (registry, git, tarball); the project's own local packages are
-                    // user authored and may point anywhere, like root dependencies.
                     if folder.len() >= self.folder_path_buf.len()
                         || (bin::bin_target_escapes_package_dir(folder)
                             && !self

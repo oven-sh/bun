@@ -1014,12 +1014,10 @@ impl Tag {
         self == Tag::Git || self == Tag::Github
     }
 
-    /// A local package: the root, a workspace, or a `file:` folder package.
-    /// Their package.jsons are authored by the user (or by files the user
-    /// explicitly points the project at), unlike content fetched from a
-    /// registry, git host, or tarball. Local packages get
-    /// `local_package_features` and their `file:` dependency paths are trusted
-    /// like root dependencies.
+    /// The root, a workspace, or a `file:` folder package: a package.json the
+    /// user wrote or pointed the project at, not content fetched from a registry,
+    /// git host, or tarball. Gets `local_package_features`; its `file:` paths
+    /// are trusted like root dependencies.
     pub(crate) fn is_local_package(self) -> bool {
         self == Tag::Root || self == Tag::Workspace || self == Tag::Folder
     }

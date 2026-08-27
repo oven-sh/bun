@@ -860,16 +860,12 @@ impl Lockfile {
         0
     }
 
-    /// Is dependency `id` declared by a local package (see
-    /// [`resolution::Tag::is_local_package`])? Its `file:` paths are then
-    /// trusted like root dependencies; paths declared by remote packages
-    /// (registry, git, tarball) are not.
+    /// Is dependency `id` declared by a local package ([`resolution::Tag::is_local_package`])?
+    /// Its `file:` path is then trusted like a root dependency's.
     ///
-    /// A `Folder` declaring package is always itself declared by the root or a
-    /// workspace: only those folder dependencies have their package.json
-    /// parsed. A folder dependency of any other package is recorded as a
-    /// resolution with no dependencies of its own (see the transitive folder
-    /// branch in `get_or_put_resolved_package`), so it never declares one.
+    /// A `Folder` parent is itself always declared by the root or a workspace: a
+    /// folder dependency of any other package is recorded without dependencies
+    /// (the transitive folder branch of `get_or_put_resolved_package`).
     pub(crate) fn is_dependency_of_local_package(&self, id: DependencyID) -> bool {
         let Some(parent_id) = self.get_parent_pkg_of_dependency(id) else {
             return false;

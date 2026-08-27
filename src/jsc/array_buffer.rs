@@ -683,19 +683,31 @@ impl PinnedArrayBuffer {
         Some(this)
     }
 
-    /// [`root`](Self::root) for a job that only reads: a resizable non-shared buffer is copied, as a pin stops a detach but not a shrink.
+    /// [`root`](Self::root) for a job that reads the bytes itself: see [`copy_if_resizable`](Self::copy_if_resizable).
     pub fn root_read_only(global: &JSGlobalObject, value: JSValue) -> Option<Self> {
         let mut this = Self::root(global, value)?;
-        if this.buffer.resizable && !this.buffer.shared && this.buffer.byte_len > 0 {
-            let bytes = this.buffer.byte_slice();
-            let mut copy = Vec::new();
-            copy.try_reserve_exact(bytes.len()).ok()?;
-            copy.extend_from_slice(bytes);
-            global.vm().report_extra_memory(copy.len());
-            this.buffer.ptr = copy.as_mut_ptr();
-            this.copy = Some(copy);
+        this.copy_if_resizable(global).then_some(this)
+    }
+
+    /// A pin stops a detach but not a shrink, which unmaps pages: a resizable non-shared buffer is copied so a job that reads the bytes itself cannot fault (a syscall reader gets `EFAULT` and needs no copy). `false` if the copy cannot be allocated.
+    pub fn copy_if_resizable(&mut self, global: &JSGlobalObject) -> bool {
+        if !self.buffer.resizable
+            || self.buffer.shared
+            || self.buffer.byte_len == 0
+            || self.copy.is_some()
+        {
+            return true;
         }
-        Some(this)
+        let bytes = self.buffer.byte_slice();
+        let mut copy = Vec::new();
+        if copy.try_reserve_exact(bytes.len()).is_err() {
+            return false;
+        }
+        copy.extend_from_slice(bytes);
+        global.vm().report_extra_memory(copy.len());
+        self.buffer.ptr = copy.as_mut_ptr();
+        self.copy = Some(copy);
+        true
     }
 
     #[inline]

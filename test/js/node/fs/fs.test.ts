@@ -6715,25 +6715,8 @@ it("fs.promises.writeFile keeps the source buffer attached while the write is in
   expect(readFileSync(file, "latin1")).toBe("EEEEEEEE");
 });
 
-// A pin stops a detach but not `ArrayBuffer.prototype.resize()`. The pool thread reads the bytes
-// captured at call time, not the shrunk buffer.
-it("fs.write writes the bytes captured at call time when a resizable source shrinks in flight", async () => {
-  using dir = tempDir("fs-write-resizable", {});
-  const file = join(String(dir), "out.bin");
-  const fd = openSync(file, "w");
-  const buf = new Uint8Array(new ArrayBuffer(1 << 16, { maxByteLength: 1 << 16 }));
-  for (let i = 0; i < buf.length; i++) buf[i] = i & 0xff;
-  const { promise, resolve, reject } = Promise.withResolvers<number>();
-  try {
-    fs.write(fd, buf, 5, 10, 0, (err, written) => (err ? reject(err) : resolve(written)));
-    buf.buffer.resize(0);
-    expect(await promise).toBe(10);
-  } finally {
-    closeSync(fd);
-  }
-  expect(readFileSync(file)).toEqual(Buffer.from([5, 6, 7, 8, 9, 10, 11, 12, 13, 14]));
-});
-
+// A pin stops a detach but not `ArrayBuffer.prototype.resize()`. The pool thread copies the path into
+// its own buffer, so it must read the bytes captured at call time, not the shrunk buffer.
 it("fs.promises.stat reads a Buffer path captured at call time when its resizable ArrayBuffer shrinks in flight", async () => {
   // The unfixed build segfaults on the pool thread, so this runs in a child process.
   await using proc = Bun.spawn({
@@ -6743,12 +6726,16 @@ it("fs.promises.stat reads a Buffer path captured at call time when its resizabl
       `
         const fs = require("node:fs");
         const encoded = new TextEncoder().encode(process.execPath);
-        const ab = new ArrayBuffer(encoded.length, { maxByteLength: 1 << 16 });
-        const path = new Uint8Array(ab);
-        path.set(encoded);
-        const pending = fs.promises.stat(path);
-        ab.resize(0);
-        pending.then(stat => console.log(stat.size > 0 ? "ok" : "empty"));
+        let wrong = 0;
+        for (let i = 0; i < 20; i++) {
+          const ab = new ArrayBuffer(encoded.length, { maxByteLength: 1 << 16 });
+          const path = new Uint8Array(ab);
+          path.set(encoded);
+          const pending = fs.promises.stat(path);
+          ab.resize(0);
+          if (!((await pending).size > 0)) wrong++;
+        }
+        console.log("wrong:", wrong);
       `,
     ],
     env: bunEnv,
@@ -6756,7 +6743,7 @@ it("fs.promises.stat reads a Buffer path captured at call time when its resizabl
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("ok\n");
+  expect(stdout).toBe("wrong: 0\n");
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

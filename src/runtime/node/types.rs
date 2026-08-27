@@ -342,7 +342,7 @@ impl StringOrBuffer<'static> {
     }
 
     /// `value` is ArrayBuffer-like (the caller checked): borrowed for `Sync`,
-    /// pinned and GC-rooted for `Async` (a resizable buffer is copied, the job only reads it).
+    /// pinned and GC-rooted for `Async`.
     pub(crate) fn buffer_from_js(
         global: &JSGlobalObject,
         value: JSValue,
@@ -351,7 +351,7 @@ impl StringOrBuffer<'static> {
         if flavor == Flavor::Sync {
             return Ok(Self::Buffer(Buffer::from_array_buffer(global, value)));
         }
-        match PinnedArrayBuffer::root_read_only(global, value) {
+        match PinnedArrayBuffer::root(global, value) {
             Some(buffer) => Ok(Self::PinnedBuffer(buffer)),
             None => Err(global.throw_out_of_memory()),
         }
@@ -454,13 +454,19 @@ impl StringOrBuffer<'static> {
         Self::from_js_maybe_async(global, value, Flavor::Sync, StringObjects::Allow)
     }
 
-    /// [`from_js`](Self::from_js) for a work-pool job: strings thread-isolated, buffers pinned and GC-rooted.
+    /// [`from_js`](Self::from_js) for a work-pool job that reads the bytes itself: strings thread-isolated, buffers pinned and GC-rooted, a resizable buffer copied ([`PinnedArrayBuffer::copy_if_resizable`]).
     #[inline]
     pub(crate) fn from_js_async(
         global: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<ThreadIsolated<Self>>> {
-        let parsed = Self::from_js_maybe_async(global, value, Flavor::Async, StringObjects::Allow)?;
+        let mut parsed =
+            Self::from_js_maybe_async(global, value, Flavor::Async, StringObjects::Allow)?;
+        if let Some(Self::PinnedBuffer(buffer)) = &mut parsed
+            && !buffer.copy_if_resizable(global)
+        {
+            return Err(global.throw_out_of_memory());
+        }
         // SAFETY: parsed with `Flavor::Async`.
         Ok(parsed.map(|v| unsafe { ThreadIsolated::new(v) }))
     }

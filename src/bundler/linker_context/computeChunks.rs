@@ -424,8 +424,7 @@ pub(crate) fn compute_chunks(
                             chunk.entry_bits = entry_bits.clone()?;
                             let entry = chunk
                                 .files_with_parts_in_chunk
-                                .get_or_put(source_index.get() as u32)
-                                .expect("unreachable");
+                                .get_or_put(source_index.get() as u32)?;
                             if !entry.found_existing {
                                 *entry.value_ptr = AtomicUsize::new(0);
                             }

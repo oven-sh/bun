@@ -2438,10 +2438,9 @@ extern "C" fn napi_internal_enqueue_finalizer(
 // ThreadSafeFunction
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Ownership: the JS thread owns this allocation until it has finalized the
-/// function (`finalize`, or `env_teardown` when the env dies first); from
-/// `resources_released` on it belongs to the remaining `thread_count`
-/// references, and whoever drops the last one frees it.
+/// Ownership: the JS thread owns this allocation until `finalize` (or
+/// `env_teardown`) sets `resources_released`; then the remaining
+/// `thread_count` references own it and the last one dropped frees it.
 // TODO: generate a compile-time version of this instead of runtime checking
 pub(crate) struct ThreadSafeFunction {
     /// thread-safe functions can be "referenced" and "unreferenced". A
@@ -2493,10 +2492,10 @@ pub(crate) struct ThreadSafeFunction {
     /// that would reach `event_loop` from another thread reads it under the
     /// same lock, so teardown cannot land between the check and the enqueue.
     pub(crate) env_dead: AtomicBool,
-    /// Also written under `lock` on the JS thread, once `finalize` or
-    /// `env_teardown` has released every JS-thread-owned resource. Until then
-    /// the JS thread still owns this object, so a thread that drops the last
-    /// `thread_count` reference must not free it (Node's `kClosed`).
+    /// Also written under `lock`, once `finalize` or `env_teardown` has
+    /// released every JS-thread-owned resource. Until then the thread that
+    /// drops the last `thread_count` reference must not free this (Node's
+    /// `kClosed`).
     pub(crate) resources_released: AtomicBool,
 }
 
@@ -2715,11 +2714,9 @@ impl ThreadSafeFunction {
                 // Closing (napi_tsfn_abort, or the last call already ran):
                 // nothing still queued runs any more, as in Node's DispatchOne.
                 // An abort's leftovers go back to the addon, with no lock held
-                // since that re-enters it. Then the function finalizes, whether
-                // or not other threads still hold references: after an abort
-                // they are told to make no further calls, so they may never
-                // release (Node's CloseHandlesAndMaybeDelete). They only decide
-                // who frees the allocation (`finalize`).
+                // since that re-enters it. Then the function finalizes whatever
+                // thread_count is: after an abort the other threads may never
+                // release (Node's CloseHandlesAndMaybeDelete).
                 let leftovers = self.take_queue();
                 drop(_g);
                 self.hand_back(leftovers);
@@ -2867,9 +2864,8 @@ impl ThreadSafeFunction {
         let (status, orphaned) = unsafe { (*this).enqueue(ctx, block) };
 
         if orphaned {
-            // SAFETY: the lock is dropped, we dropped the last thread reference
-            // and the JS thread (`finalize` or `env_teardown`) already released
-            // everything it owned.
+            // SAFETY: the lock is dropped, this was the last thread reference,
+            // and the JS thread already released what only it may release.
             unsafe { ThreadSafeFunction::free_orphaned(this) };
         }
         status
@@ -2946,26 +2942,21 @@ impl ThreadSafeFunction {
         }
     }
 
-    /// Runs on the JS thread once the function has closed
-    /// (`maybe_queue_finalizer`). Runs the addon's finalizer and releases what
-    /// only this thread may release, then hands the allocation over to the
-    /// remaining `thread_count` references (Node's Finalize + MaybeDelete):
-    /// with none left it is freed here, else by whoever drops the last one
-    /// (`release_locked`).
+    /// Runs on the JS thread once the function has closed. Runs the addon's
+    /// finalizer, releases what only this thread may release, and frees the
+    /// allocation unless another thread still holds a reference; then the last
+    /// release frees it (Node's Finalize + MaybeDelete).
     ///
     /// SAFETY: `this` is a live allocation from `new` that no other event-loop
     /// task will reach again.
     unsafe fn finalize(this: *mut ThreadSafeFunction) {
         // SAFETY: caller contract. The borrow ends before the addon's finalizer
-        // runs, since that may still use the handle
-        // (napi_get_threadsafe_function_context).
+        // runs; it may still use the handle (napi_get_threadsafe_function_context).
         let finalizer = unsafe {
             let self_ = &mut *this;
             if let Some(env) = self_.env.as_ref() {
-                // SAFETY: env is live (we hold a ref); drops our registry entry
-                // so teardown cannot hand this pointer out after it is freed.
-                // `this` is passed as an opaque registry key only, never
-                // dereferenced.
+                // SAFETY: env is live (we hold a ref). `this` is an opaque
+                // registry key here, never dereferenced.
                 NapiEnv__unregisterThreadSafeFunction(env.get(), this.cast());
             }
             self_
@@ -2980,8 +2971,7 @@ impl ThreadSafeFunction {
                 })
         };
 
-        // Before anything is released, as in Node and `env_teardown`. This
-        // dispatch is the finalizer's landing frame.
+        // Before anything is released, as in Node and `env_teardown`.
         if let Some(mut finalizer) = finalizer {
             crate::dispatch::fold(finalizer.run());
         }
@@ -2990,9 +2980,8 @@ impl ThreadSafeFunction {
         // ends before the free below.
         let free = unsafe {
             let self_ = &mut *this;
-            // Published in the same critical section that reads thread_count,
-            // as in `env_teardown`: a thread that drops the last reference
-            // frees the allocation only if it sees this store.
+            // The same critical section reads thread_count, so a thread that
+            // drops the last reference frees only if it sees this store.
             let _g = self_.lock.lock_guard();
             self_.event_loop = None;
             drop(self_.env.take());
@@ -3090,9 +3079,8 @@ impl ThreadSafeFunction {
         }
 
         // Phase 3: release what only the JS thread may release, then hand the
-        // allocation over: `resources_released` is what lets another thread
-        // free it, so it is published in the same critical section that reads
-        // thread_count (Node's ReleaseResources + MaybeDelete).
+        // allocation over. `resources_released` is published in the critical
+        // section that reads thread_count (Node's ReleaseResources + MaybeDelete).
         let _g = self.lock.lock_guard();
         self.callback = TsfnCallback::Js(StrongOptional::empty());
         self.poll_ref.disable();
@@ -3145,9 +3133,8 @@ impl ThreadSafeFunction {
         };
 
         if orphaned {
-            // SAFETY: the lock is dropped, we dropped the last thread reference
-            // and the JS thread (`finalize` or `env_teardown`) already released
-            // everything it owned.
+            // SAFETY: the lock is dropped, this was the last thread reference,
+            // and the JS thread already released what only it may release.
             unsafe { ThreadSafeFunction::free_orphaned(this) };
         }
         status
@@ -3168,13 +3155,10 @@ impl ThreadSafeFunction {
         if self.env_dead.load(Ordering::SeqCst)
             || self.closing.load(Ordering::SeqCst) == ClosingState::Closed as u8
         {
-            // The JS thread owns the finalization: `finalize` is queued or
-            // done, or the event loop we were created on is gone
-            // (`env_teardown`; both set their state under the lock we hold).
-            // Never schedule onto the loop again. Whoever drops the last
-            // reference frees us -- but only once the JS thread has released
-            // the resources only it may release; until then it owns us and
-            // will free us itself if we are the last to let go.
+            // The JS thread owns the finalization (`finalize` is queued or
+            // done, or `env_teardown` ran): never schedule onto the loop again.
+            // The last reference frees us once the JS thread has released what
+            // only it may release; before that, it frees us itself.
             let orphaned = prev_remaining == 1 && self.resources_released.load(Ordering::SeqCst);
             return (NapiStatus::ok as napi_status, orphaned);
         }

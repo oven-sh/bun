@@ -324,8 +324,6 @@ pub enum Error {
     UnexpectedPendingResolution,
     #[error("AsyncModule")]
     AsyncModule,
-    #[error("NotSupported")]
-    NotSupported,
     #[error("BlobNotFound")]
     BlobNotFound,
     #[error("JSErrorObject")]
@@ -732,7 +730,6 @@ impl Error {
             Self::MissingTranspileExtra => "MissingTranspileExtra",
             Self::UnexpectedPendingResolution => "UnexpectedPendingResolution",
             Self::AsyncModule => "AsyncModule",
-            Self::NotSupported => "NotSupported",
             Self::BlobNotFound => "BlobNotFound",
             Self::JSErrorObject => "JSErrorObject",
             Self::PluginError => "PluginError",

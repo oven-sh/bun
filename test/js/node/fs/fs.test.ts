@@ -2015,6 +2015,286 @@ it("preadv", () => {
   expect(buffers[2]).toEqual(new Uint8Array([10, 11, 12]));
 });
 
+// Node defaults an explicit `undefined` len to 0 on every truncate entry point
+// (`if (len === undefined) len = 0` in truncateSync, `len = 0` default params
+// elsewhere), while `null` still fails validateInteger.
+describe.concurrent("truncate with an undefined len", () => {
+  const file = (name: string, dir: string) => {
+    const p = join(dir, name);
+    writeFileSync(p, "hello world");
+    return p;
+  };
+
+  it("truncateSync(path, undefined) truncates to 0", () => {
+    using dir = tempDir("fs-truncate-undefined", {});
+    const p = file("sync.txt", String(dir));
+    fs.truncateSync(p, undefined);
+    expect(statSync(p).size).toBe(0);
+  });
+
+  it("promises.truncate(path, undefined) truncates to 0", async () => {
+    using dir = tempDir("fs-truncate-undefined", {});
+    const p = file("promise.txt", String(dir));
+    await _promises.truncate(p, undefined);
+    expect(statSync(p).size).toBe(0);
+  });
+
+  it("truncate(path, undefined, cb) truncates to 0", async () => {
+    using dir = tempDir("fs-truncate-undefined", {});
+    const p = file("callback.txt", String(dir));
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    fs.truncate(p, undefined, err => (err ? reject(err) : resolve()));
+    await promise;
+    expect(statSync(p).size).toBe(0);
+  });
+
+  it("ftruncateSync(fd, undefined) truncates to 0", () => {
+    using dir = tempDir("fs-truncate-undefined", {});
+    const p = file("fsync.txt", String(dir));
+    const fd = openSync(p, "r+");
+    try {
+      ftruncateSync(fd, undefined);
+      expect(fstatSync(fd).size).toBe(0);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  it("null is still rejected with ERR_INVALID_ARG_TYPE", async () => {
+    using dir = tempDir("fs-truncate-null", {});
+    const p = file("null.txt", String(dir));
+    expect(() => fs.truncateSync(p, null as any)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    await expect(() => _promises.truncate(p, null as any)).toThrowWithCodeAsync(TypeError, "ERR_INVALID_ARG_TYPE");
+    const fd = openSync(p, "r+");
+    try {
+      expect(() => ftruncateSync(fd, null as any)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(p, "utf8")).toBe("hello world");
+  });
+});
+
+// The `fs.*Sync` functions bound straight to the native binding parse their
+// arguments in Rust (`args::*::from_js` in node_fs.rs), where an absent argument
+// and an explicit `undefined` arrive differently. Node treats them the same for
+// every optional argument, so each row must produce the same outcome both ways.
+describe("explicit undefined behaves like an absent optional argument", () => {
+  type Ctx = {
+    dir: string;
+    file: () => string;
+    fresh: (prefix: string) => string;
+    withFd: <T>(flags: string, f: (fd: number) => T) => T;
+  };
+  const makeCtx = (dir: string): Ctx => {
+    let n = 0;
+    const fresh = (prefix: string) => join(dir, `${prefix}${n++}`);
+    const file = () => {
+      const p = fresh("f");
+      writeFileSync(p, "hello world");
+      return p;
+    };
+    const withFd = <T>(flags: string, f: (fd: number) => T): T => {
+      const fd = openSync(file(), flags);
+      try {
+        return f(fd);
+      } finally {
+        closeSync(fd);
+      }
+    };
+    return { dir, file, fresh, withFd };
+  };
+  // Strings (fresh paths from mkdtempSync, readlinkSync) differ between the two
+  // calls by construction, so only their type is compared.
+  const outcome = (f: () => unknown) => {
+    try {
+      const v = f();
+      return { ok: typeof v === "string" ? "string" : v };
+    } catch (e: any) {
+      return { code: e.code };
+    }
+  };
+
+  const rows: [string, (c: Ctx) => unknown, (c: Ctx) => unknown][] = [
+    ["accessSync(path[, mode])", c => fs.accessSync(c.file()), c => fs.accessSync(c.file(), undefined)],
+    [
+      "appendFileSync(path, data[, options])",
+      c => fs.appendFileSync(c.file(), "x"),
+      c => fs.appendFileSync(c.file(), "x", undefined),
+    ],
+    [
+      "copyFileSync(src, dest[, mode])",
+      c => copyFileSync(c.file(), c.fresh("c")),
+      c => copyFileSync(c.file(), c.fresh("c"), undefined),
+    ],
+    [
+      "cpSync(src, dest[, options])",
+      c => fs.cpSync(c.file(), c.fresh("cp")),
+      c => fs.cpSync(c.file(), c.fresh("cp"), undefined),
+    ],
+    ["existsSync(path)", c => existsSync(c.file()), c => existsSync(c.file(), undefined as any)],
+    [
+      "fstatSync(fd[, options]).size",
+      c => c.withFd("r", fd => fstatSync(fd).size),
+      c => c.withFd("r", fd => fstatSync(fd, undefined).size),
+    ],
+    [
+      "ftruncateSync(fd[, len])",
+      c =>
+        c.withFd("r+", fd => {
+          ftruncateSync(fd);
+          return fstatSync(fd).size;
+        }),
+      c =>
+        c.withFd("r+", fd => {
+          ftruncateSync(fd, undefined);
+          return fstatSync(fd).size;
+        }),
+    ],
+    ["lstatSync(path[, options]).size", c => lstatSync(c.file()).size, c => lstatSync(c.file(), undefined).size],
+    ["mkdirSync(path[, options])", c => mkdirSync(c.fresh("m")), c => mkdirSync(c.fresh("m"), undefined)],
+    ["mkdtempSync(prefix[, options])", c => mkdtempSync(c.fresh("t")), c => mkdtempSync(c.fresh("t"), undefined)],
+    [
+      "opendirSync(path[, options])",
+      c => fs.opendirSync(c.dir).closeSync(),
+      c => fs.opendirSync(c.dir, undefined).closeSync(),
+    ],
+    ["openSync(path[, flags])", c => closeSync(openSync(c.file())), c => closeSync(openSync(c.file(), undefined))],
+    [
+      "openSync(path, flags[, mode])",
+      c => closeSync(openSync(c.file(), "r")),
+      c => closeSync(openSync(c.file(), "r", undefined)),
+    ],
+    ["readdirSync(path[, options]).length", c => readdirSync(c.dir).length, c => readdirSync(c.dir, undefined).length],
+    [
+      "readFileSync(path[, options]).length",
+      c => readFileSync(c.file()).length,
+      c => readFileSync(c.file(), undefined).length,
+    ],
+    [
+      "readlinkSync(path[, options])",
+      c => {
+        const l = c.fresh("l");
+        symlinkSync(c.file(), l);
+        return readlinkSync(l);
+      },
+      c => {
+        const l = c.fresh("l");
+        symlinkSync(c.file(), l);
+        return readlinkSync(l, undefined);
+      },
+    ],
+    [
+      "readSync(fd, buffer[, options])",
+      c => c.withFd("r", fd => readSync(fd, Buffer.alloc(2))),
+      c => c.withFd("r", fd => readSync(fd, Buffer.alloc(2), undefined)),
+    ],
+    [
+      "readSync(fd, buffer, offset, length[, position])",
+      c => c.withFd("r", fd => readSync(fd, Buffer.alloc(2), 0, 2)),
+      c => c.withFd("r", fd => readSync(fd, Buffer.alloc(2), 0, 2, undefined)),
+    ],
+    [
+      "readvSync(fd, buffers[, position])",
+      c => c.withFd("r", fd => readvSync(fd, [Buffer.alloc(2)])),
+      c => c.withFd("r", fd => readvSync(fd, [Buffer.alloc(2)], undefined)),
+    ],
+    ["realpathSync(path[, options])", c => realpathSync(c.dir), c => realpathSync(c.dir, undefined)],
+    [
+      "realpathSync.native(path[, options])",
+      c => realpathSync.native(c.dir),
+      c => realpathSync.native(c.dir, undefined),
+    ],
+    [
+      "rmdirSync(path[, options])",
+      c => {
+        const d = c.fresh("d");
+        mkdirSync(d);
+        return rmdirSync(d);
+      },
+      c => {
+        const d = c.fresh("d");
+        mkdirSync(d);
+        return rmdirSync(d, undefined);
+      },
+    ],
+    ["rmSync(path[, options])", c => rmSync(c.file()), c => rmSync(c.file(), undefined)],
+    ["statSync(path[, options]).size", c => statSync(c.file()).size, c => statSync(c.file(), undefined).size],
+    [
+      "statfsSync(path[, options]).bsize",
+      c => typeof statfsSync(c.dir).bsize,
+      c => typeof statfsSync(c.dir, undefined).bsize,
+    ],
+    [
+      "symlinkSync(target, path[, type])",
+      c => symlinkSync(c.file(), c.fresh("s")),
+      c => symlinkSync(c.file(), c.fresh("s"), undefined),
+    ],
+    [
+      "truncateSync(path[, len])",
+      c => {
+        const p = c.file();
+        fs.truncateSync(p);
+        return statSync(p).size;
+      },
+      c => {
+        const p = c.file();
+        fs.truncateSync(p, undefined);
+        return statSync(p).size;
+      },
+    ],
+    [
+      "writeFileSync(path, data[, options])",
+      c => writeFileSync(c.file(), "x"),
+      c => writeFileSync(c.file(), "x", undefined),
+    ],
+    [
+      "writeSync(fd, buffer[, offset])",
+      c => c.withFd("r+", fd => writeSync(fd, Buffer.from("ab"))),
+      c => c.withFd("r+", fd => writeSync(fd, Buffer.from("ab"), undefined)),
+    ],
+    [
+      "writeSync(fd, buffer, offset[, length])",
+      c => c.withFd("r+", fd => writeSync(fd, Buffer.from("ab"), 0)),
+      c => c.withFd("r+", fd => writeSync(fd, Buffer.from("ab"), 0, undefined)),
+    ],
+    [
+      "writeSync(fd, buffer, offset, length[, position])",
+      c => c.withFd("r+", fd => writeSync(fd, Buffer.from("ab"), 0, 2)),
+      c => c.withFd("r+", fd => writeSync(fd, Buffer.from("ab"), 0, 2, undefined)),
+    ],
+    [
+      "writeSync(fd, string[, position])",
+      c => c.withFd("r+", fd => writeSync(fd, "ab")),
+      c => c.withFd("r+", fd => writeSync(fd, "ab", undefined)),
+    ],
+    [
+      "writevSync(fd, buffers[, position])",
+      c => c.withFd("r+", fd => writevSync(fd, [Buffer.from("ab")])),
+      c => c.withFd("r+", fd => writevSync(fd, [Buffer.from("ab")], undefined)),
+    ],
+  ];
+
+  it.each(rows)("%s", (_label, absent, explicit) => {
+    using dir = tempDir("fs-undefined-arg", {});
+    const c = makeCtx(String(dir));
+    expect(outcome(() => explicit(c))).toEqual(outcome(() => absent(c)));
+  });
+
+  // Node coerces a positional read `length` with `length |= 0`, so `undefined`
+  // reads 0 bytes. Bun validates it as an integer instead and throws
+  // ERR_OUT_OF_RANGE 'The value of "length" is out of range. It must be an
+  // integer. Received NaN'. The 3-argument form is the options overload in
+  // Node, so the comparison is against an explicit 0.
+  it.failing("readSync(fd, buffer, offset, undefined) reads 0 bytes like readSync(fd, buffer, offset, 0)", () => {
+    using dir = tempDir("fs-undefined-arg", {});
+    const c = makeCtx(String(dir));
+    expect(outcome(() => c.withFd("r", fd => readSync(fd, Buffer.alloc(2), 0, undefined)))).toEqual(
+      outcome(() => c.withFd("r", fd => readSync(fd, Buffer.alloc(2), 0, 0))),
+    );
+  });
+});
+
 describe.concurrent("writev/readv with more than IOV_MAX buffers", () => {
   // IOV_MAX is 1024 on Linux and macOS. Node's libuv loops writev in
   // IOV_MAX-sized batches and caps readv at IOV_MAX; Bun previously passed
@@ -3023,6 +3303,35 @@ it("realpath async", async () => {
 }, 30_000);
 
 describe("stat", () => {
+  it("async calls do not keep a Buffer path alive after they complete", async () => {
+    using dir = tempDir("fs-async-buffer-path", { x: "hello" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("fs");
+        const file = Buffer.from(require("path").join(process.argv[1], "x"));
+        const missing = Buffer.from(require("path").join(process.argv[1], "missing"));
+        for (let i = 0; i < 200; i++) {
+          await fs.promises.stat(Buffer.from(file));
+          await fs.promises.readFile(Buffer.from(file));
+          await fs.promises.writeFile(Buffer.from(file), Buffer.from("hello"));
+          await fs.promises.stat(Buffer.from(missing)).catch(() => {});
+        }
+        Bun.gc(true);
+        console.log(require("bun:jsc").heapStats().objectTypeCounts.Uint8Array);`,
+        String(dir),
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const live = Number(stdout);
+    expect(Number.isFinite(live)).toBe(true);
+    expect(live).toBeLessThan(200);
+    expect(exitCode).toBe(0);
+  });
+
   it("file metadata is correct", () => {
     const fileStats = statSync(join(import.meta.dir, "fs-stream.js"));
     expect(fileStats.isSymbolicLink()).toBe(false);

@@ -50,11 +50,11 @@ pub(crate) fn guard_tls(secure: Option<*mut uws::SslCtx>, tls_config: SSLConfig)
 }
 
 pub(crate) struct ConnectionCtorArgs<M> {
-    pub hostname_str: bun_core::OwnedString,
+    pub hostname_str: bun_core::String,
     pub port: i32,
-    pub username_str: bun_core::OwnedString,
-    pub password_str: bun_core::OwnedString,
-    pub database_str: bun_core::OwnedString,
+    pub username_str: bun_core::String,
+    pub password_str: bun_core::String,
+    pub database_str: bun_core::String,
     pub ssl_mode: M,
     pub tls_config: SSLConfig,
     /// `SSL_CTX*` holding one reference the caller must release on every
@@ -70,11 +70,11 @@ impl<M: SslModeArg> ConnectionCtorArgs<M> {
         vm: &mut VirtualMachine,
         arguments: &[JSValue],
     ) -> JsResult<Option<Self>> {
-        let hostname_str = bun_core::OwnedString::new(arguments[0].to_bun_string(global_object)?);
+        let hostname_str = arguments[0].to_bun_string(global_object)?;
         let port = arguments[1].coerce::<i32>(global_object)?;
-        let username_str = bun_core::OwnedString::new(arguments[2].to_bun_string(global_object)?);
-        let password_str = bun_core::OwnedString::new(arguments[3].to_bun_string(global_object)?);
-        let database_str = bun_core::OwnedString::new(arguments[4].to_bun_string(global_object)?);
+        let username_str = arguments[2].to_bun_string(global_object)?;
+        let password_str = arguments[3].to_bun_string(global_object)?;
+        let database_str = arguments[4].to_bun_string(global_object)?;
         let modes = M::MODES;
         let ssl_mode = usize::try_from(arguments[5].to_int32())
             .ok()

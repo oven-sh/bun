@@ -185,6 +185,10 @@ impl If {
         exit_code: ExitCode,
     ) -> Yield {
         interp.deinit_node(child);
+        if interp.interrupted(this) {
+            let parent = interp.as_if(this).base.parent;
+            return interp.child_done(parent, this, exit_code);
+        }
         let me = interp.as_if_mut(this);
         let IfState::Exec(exec) = &mut me.state else {
             panic!(

@@ -68,7 +68,6 @@ impl Drop for WebSocketProxy {
         // target_host / websocket_request_buf: Box<[u8]> drops automatically.
         if let Some(tunnel) = self.tunnel.take() {
             WebSocketProxyTunnel::shutdown(tunnel.this_ptr());
-            tunnel.deref();
         }
     }
 }

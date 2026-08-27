@@ -84,11 +84,14 @@ struct Http3Context {
         std::vector<std::string_view> methods =
             method == "*" ? std::vector<std::string_view>{"*"} : std::vector<std::string_view>{method};
         cd->router.add(methods, pattern, [handler = std::move(handler)](auto *router) mutable {
-            auto &ud = router->getUserData();
-            ud.httpRequest->setYield(false);
-            ud.httpRequest->setParameters(router->getParameters());
-            handler(ud.httpResponse, ud.httpRequest);
-            return !ud.httpRequest->getYield();
+            /* Copy out: the handler may reload routes, replacing `router`
+             * (and its user data) while we're inside it. */
+            Http3Request *req = router->getUserData().httpRequest;
+            Http3Response *res = router->getUserData().httpResponse;
+            req->setYield(false);
+            req->setParameters(router->getParameters());
+            handler(res, req);
+            return !req->getYield();
         }, method == "*" ? cd->router.LOW_PRIORITY : cd->router.MEDIUM_PRIORITY);
     }
 

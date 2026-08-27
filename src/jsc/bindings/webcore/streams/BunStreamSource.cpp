@@ -271,7 +271,6 @@ static void startJSSinkController(JSC::VM& vm, JSGlobalObject* globalObject, JSO
     BUN_START_JSSINK_CONTROLLER(JSReadableFileSinkController)
     BUN_START_JSSINK_CONTROLLER(JSReadableHTTPResponseSinkController)
     BUN_START_JSSINK_CONTROLLER(JSReadableHTTPSResponseSinkController)
-    BUN_START_JSSINK_CONTROLLER(JSReadableH3ResponseSinkController)
     BUN_START_JSSINK_CONTROLLER(JSReadableNetworkSinkController)
     BUN_START_JSSINK_CONTROLLER(JSReadableFetchRequestBodySinkController)
     BUN_START_JSSINK_CONTROLLER(JSReadableHTMLRewriterSinkController)
@@ -1017,6 +1016,10 @@ static std::optional<bool> rsisWriteChunk(JSC::VM& vm, JSGlobalObject* globalObj
     bool shouldSuspend = wrote.isNumber() && wrote.asNumber() < 0;
     if (auto* wrotePromise = dynamicDowncast<JSPromise>(wrote)) {
         markPromiseAsHandled(vm, wrotePromise);
+        if (wrotePromise->status() == JSPromise::Status::Rejected) {
+            throwException(globalObject, scope, wrotePromise->result());
+            return std::nullopt;
+        }
         shouldSuspend = wrotePromise->status() == JSPromise::Status::Pending;
     }
     if (shouldSuspend) {

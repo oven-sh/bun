@@ -71,7 +71,6 @@ pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
 /// only consume the serialized form.
 pub mod analyze_transpiled_module {
     use bun_collections::HashMap;
-    use bun_core::slice_as_bytes;
 
     /// Every record kind carries one trailing bitcast-`FetchParameters` slot
     /// after its `StringID` payload.
@@ -143,7 +142,7 @@ pub mod analyze_transpiled_module {
     // SAFETY: `#[repr(transparent)]` over `u32` (Pod).
     unsafe impl bytemuck::Pod for StringID {}
     impl StringID {
-        pub(crate) const STAR_DEFAULT: Self = Self(u32::MAX);
+        pub const STAR_DEFAULT: Self = Self(u32::MAX);
         pub const STAR_NAMESPACE: Self = Self(u32::MAX - 1);
     }
 
@@ -207,42 +206,228 @@ pub mod analyze_transpiled_module {
         pub record_kinds: &'a [RecordKind],
         pub flags: Flags,
     }
+    /// Width in bytes of a run of integers: the smallest of 1, 2, 4 that holds
+    /// the largest value.
+    #[inline]
+    pub fn int_width(max_value: u32) -> u8 {
+        if max_value <= u8::MAX as u32 {
+            1
+        } else if max_value <= u16::MAX as u32 {
+            2
+        } else {
+            4
+        }
+    }
+    #[inline]
+    fn put<W: std::io::Write>(w: &mut W, width: u8, v: u32) -> std::io::Result<()> {
+        match width {
+            1 => w.write_all(&[v as u8]),
+            2 => w.write_all(&(v as u16).to_le_bytes()),
+            _ => w.write_all(&v.to_le_bytes()),
+        }
+    }
+
+    /// Strings referenced by one or more serialized `ModuleInfo` bodies. A
+    /// `--compile` build shares one across every chunk (chunk specifiers and
+    /// export names repeat in most of them); the runtime transpiler cache
+    /// writes a module's own strings followed by its body.
+    ///
+    /// ```text
+    /// u8   offset width O ∈ {1,2,4}, sized for the total byte length
+    /// u8   0, 0, 0
+    /// u32  count
+    /// uO   × (count + 1): byte offset of each string, then the total
+    /// u8…  concatenated WTF-8
+    /// ```
+    #[derive(Default)]
+    pub struct ModuleInfoStringTable {
+        map: HashMap<Box<[u8]>, u32>,
+        offsets: Vec<u32>,
+        buf: Vec<u8>,
+    }
+    impl ModuleInfoStringTable {
+        pub fn intern(&mut self, s: &[u8]) -> u32 {
+            if let Some(&id) = self.map.get(s) {
+                return id;
+            }
+            let id = u32::try_from(self.offsets.len()).unwrap();
+            self.offsets.push(u32::try_from(self.buf.len()).unwrap());
+            self.buf.extend_from_slice(s);
+            self.map.insert(s.into(), id);
+            id
+        }
+        /// Interns every string of `mi`; the result maps its local ids to table ids.
+        pub fn intern_all(&mut self, mi: &ModuleInfo) -> Vec<u32> {
+            let mut ids = Vec::with_capacity(mi.strings_lens.len());
+            let mut offset = 0usize;
+            for &len in &mi.strings_lens {
+                ids.push(self.intern(&mi.strings_buf[offset..offset + len as usize]));
+                offset += len as usize;
+            }
+            ids
+        }
+        pub fn count(&self) -> u32 {
+            self.offsets.len() as u32
+        }
+        pub fn serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
+            Self::serialize_parts(w, self.offsets.iter().copied(), &self.buf)
+        }
+        fn serialize_parts<W: std::io::Write>(
+            w: &mut W,
+            offsets: impl ExactSizeIterator<Item = u32>,
+            buf: &[u8],
+        ) -> std::io::Result<()> {
+            let total = u32::try_from(buf.len()).unwrap();
+            let width = int_width(total);
+            w.write_all(&[width, 0, 0, 0])?;
+            w.write_all(&u32::try_from(offsets.len()).unwrap().to_le_bytes())?;
+            for offset in offsets {
+                put(w, width, offset)?;
+            }
+            put(w, width, total)?;
+            w.write_all(buf)
+        }
+    }
+
     impl<'a> ModuleInfoDeserialized<'a> {
+        /// Self-contained form: this module's own string table, then its body.
         pub(crate) fn serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
-            w.write_all(
-                &u32::try_from(self.record_kinds.len())
-                    .unwrap()
-                    .to_le_bytes(),
+            let mut offset = 0u32;
+            ModuleInfoStringTable::serialize_parts(
+                w,
+                self.strings_lens.iter().map(|&len| {
+                    let at = offset;
+                    offset += len;
+                    at
+                }),
+                self.strings_buf,
             )?;
-            // `RecordKind: NoUninit` (#[repr(u8)]) → safe byte view.
-            w.write_all(slice_as_bytes(self.record_kinds))?;
-            let pad = (4 - (self.record_kinds.len() % 4)) % 4;
-            w.write_all(&[0u8; 4][..pad])?; // alignment padding
+            self.serialize_body(w, self.strings_lens.len() as u32, |id| id)
+        }
 
-            w.write_all(&u32::try_from(self.buffer.len()).unwrap().to_le_bytes())?;
-            w.write_all(slice_as_bytes(self.buffer))?;
+        /// Body wire format (little-endian), ids index a `ModuleInfoStringTable`
+        /// of `table_count` strings through `table_id`:
+        ///
+        /// ```text
+        /// u8   flags
+        /// u8   id width W ∈ {1,2,4}, sized for table_count + 2 sentinels
+        /// u8   0, 0
+        /// u32  requested-module count, u32 record count
+        /// u8   × records:    kind | fetch-kind << 3 | same-name << 6
+        /// u8   × requested:  phase | fetch-kind << 1
+        /// uW…  per requested module: specifier [, host-defined type]
+        /// uW…  per record: its string ids [, host-defined type]
+        /// ```
+        ///
+        /// fetch-kind 0..=3 is None / JavaScript / WebAssembly / JSON and 4 means
+        /// a host-defined type id follows. `STAR_NAMESPACE` / `STAR_DEFAULT` are
+        /// written as `table_count` / `table_count + 1`. Slots the kind implies
+        /// (`*` for a namespace import, `ExportInfoLocal`'s padding, the fetch
+        /// parameter itself) are not written; `same-name` elides an import's
+        /// local name when it equals the import name.
+        /// `bun_bundler::analyze_transpiled_module` (`Body` / `IdCursor`) reads
+        /// this in place when building the `JSModuleRecord`.
+        pub fn serialize_body<W: std::io::Write>(
+            &self,
+            w: &mut W,
+            table_count: u32,
+            table_id: impl Fn(u32) -> u32,
+        ) -> std::io::Result<()> {
+            let id_width = int_width(table_count + 1);
+            let id = |w: &mut W, s: StringID| {
+                put(
+                    w,
+                    id_width,
+                    match s {
+                        StringID::STAR_NAMESPACE => table_count,
+                        StringID::STAR_DEFAULT => table_count + 1,
+                        s => table_id(s.0),
+                    },
+                )
+            };
+            let fetch_kind = |fp: FetchParameters| match fp {
+                FetchParameters::None => 0u8,
+                FetchParameters::Javascript => 1,
+                FetchParameters::Webassembly => 2,
+                FetchParameters::Json => 3,
+                _ => 4,
+            };
+            // (ids written, fetch parameters, elide slot 1, elide slot 2)
+            let shape = |kind: RecordKind, data: &'a [StringID]| match kind {
+                RecordKind::ImportInfoSingle | RecordKind::ImportInfoSingleTypeScript => (
+                    &data[..3],
+                    FetchParameters(data[3].0),
+                    false,
+                    data[1] == data[2],
+                ),
+                RecordKind::ImportInfoNamespace | RecordKind::ImportInfoNamespaceDefer => {
+                    debug_assert!(data[1] == StringID::STAR_NAMESPACE);
+                    (&data[..3], FetchParameters(data[3].0), true, false)
+                }
+                RecordKind::ExportInfoIndirect => {
+                    (&data[..3], FetchParameters(data[3].0), false, false)
+                }
+                RecordKind::ExportInfoLocal => (&data[..2], FetchParameters::None, false, false),
+                RecordKind::ExportInfoNamespace => {
+                    (&data[..2], FetchParameters(data[2].0), false, false)
+                }
+                RecordKind::ExportInfoStar => {
+                    (&data[..1], FetchParameters(data[1].0), false, false)
+                }
+            };
+            let records = || {
+                let mut i = 0usize;
+                self.record_kinds.iter().map(move |&kind| {
+                    let data = &self.buffer[i..i + kind.len()];
+                    i += kind.len();
+                    (kind, data)
+                })
+            };
 
+            w.write_all(&[self.flags.to_byte(), id_width, 0, 0])?;
             w.write_all(
                 &u32::try_from(self.requested_modules_keys.len())
                     .unwrap()
                     .to_le_bytes(),
             )?;
-            w.write_all(slice_as_bytes(self.requested_modules_keys))?;
-            w.write_all(slice_as_bytes(self.requested_modules_values))?;
-            w.write_all(slice_as_bytes(self.requested_modules_phases))?;
-            let pad = (4 - (self.requested_modules_phases.len() % 4)) % 4;
-            w.write_all(&[0u8; 4][..pad])?; // alignment padding
-
-            w.write_all(&[self.flags.to_byte()])?;
-            w.write_all(&[0u8; 3])?; // alignment padding
-
             w.write_all(
-                &u32::try_from(self.strings_lens.len())
+                &u32::try_from(self.record_kinds.len())
                     .unwrap()
                     .to_le_bytes(),
             )?;
-            w.write_all(slice_as_bytes(self.strings_lens))?;
-            w.write_all(self.strings_buf)?;
+            for (kind, data) in records() {
+                let (_, fetch, _, same_name) = shape(kind, data);
+                w.write_all(&[(kind as u8) | (fetch_kind(fetch) << 3) | ((same_name as u8) << 6)])?;
+            }
+            for (&value, &phase) in self
+                .requested_modules_values
+                .iter()
+                .zip(self.requested_modules_phases)
+            {
+                w.write_all(&[(phase as u8) | (fetch_kind(value) << 1)])?;
+            }
+            for (&key, &value) in self
+                .requested_modules_keys
+                .iter()
+                .zip(self.requested_modules_values)
+            {
+                id(w, key)?;
+                if fetch_kind(value) == 4 {
+                    id(w, StringID(value.0))?;
+                }
+            }
+            for (kind, data) in records() {
+                let (ids, fetch, skip1, skip2) = shape(kind, data);
+                for (slot, &s) in ids.iter().enumerate() {
+                    if (skip1 && slot == 1) || (skip2 && slot == 2) {
+                        continue;
+                    }
+                    id(w, s)?;
+                }
+                if fetch_kind(fetch) == 4 {
+                    id(w, StringID(fetch.0))?;
+                }
+            }
             Ok(())
         }
     }
@@ -2672,7 +2857,19 @@ pub(crate) mod __gated_printer {
                     self.print(b"(");
                 }
 
-                if let Some(ref_) = self.options.require_ref {
+                if record
+                    .flags
+                    .contains(ImportRecordFlags::CROSS_CHUNK_REQUIRE)
+                {
+                    // A split `require()`: the path is a sibling chunk, resolved
+                    // relative to this chunk — not through the runtime's
+                    // `__require`, which would resolve it relative to the
+                    // runtime's chunk.
+                    if let Some(mi) = self.module_info() {
+                        mi.flags.contains_import_meta = true;
+                    }
+                    self.print(b"import.meta.require");
+                } else if let Some(ref_) = self.options.require_ref {
                     self.print_symbol(ref_);
                 } else {
                     self.print(b"require");
@@ -7795,8 +7992,8 @@ pub(crate) fn print_with_writer_and_platform<
     })
 }
 
-/// Serializes ModuleInfo to an owned byte slice. Returns null on failure.
-/// The caller is responsible for freeing the returned slice.
+/// Serializes ModuleInfo (its own string table, then its body) to an owned
+/// byte slice. Returns `None` on failure.
 pub fn serialize_module_info(
     module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
 ) -> Option<Box<[u8]>> {
@@ -7812,4 +8009,20 @@ pub fn serialize_module_info(
         return None;
     }
     Some(buf.into_boxed_slice())
+}
+
+/// Serializes only ModuleInfo's body, with its strings referenced through
+/// `table_ids` (from `ModuleInfoStringTable::intern_all`) into a table of
+/// `table_count` strings that is stored once for many modules.
+pub fn serialize_module_info_body(
+    mi: &analyze_transpiled_module::ModuleInfo,
+    table_count: u32,
+    table_ids: &[u32],
+) -> Box<[u8]> {
+    debug_assert!(mi.finalized);
+    let mut buf: Vec<u8> = Vec::new();
+    mi.as_deserialized()
+        .serialize_body(&mut buf, table_count, |id| table_ids[id as usize])
+        .expect("Vec<u8> write");
+    buf.into_boxed_slice()
 }

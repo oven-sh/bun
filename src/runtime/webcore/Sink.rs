@@ -466,18 +466,14 @@ impl<T: JsSinkType> JSSink<T> {
             )));
         }
 
-        let str_ = arg.to_js_string(global)?;
-        let view = str_.view(global);
+        let view = arg.to_js_string_view(global)?;
         if view.is_empty() {
             return Ok(JSValue::js_number(0.0));
         }
 
-        // Keep the JSString GC-live while we borrow its character buffer.
-        let _keep_str = bun_jsc::EnsureStillAlive(str_.to_js());
-        if view.is_16bit() {
-            let utf16 = view.utf16_slice_aligned();
+        if view.is_utf16() {
+            let utf16 = view.utf16();
             let bytes: &[u8] = bytemuck::cast_slice(utf16);
-            // Borrowed view over GC-kept JSString.
             let data = bun_ptr::RawSlice::new(bytes);
             return Ok(this
                 .sink
@@ -485,8 +481,7 @@ impl<T: JsSinkType> JSSink<T> {
                 .to_js(global));
         }
 
-        // Borrowed view over GC-kept JSString (Latin-1 path).
-        let data = bun_ptr::RawSlice::new(view.slice());
+        let data = bun_ptr::RawSlice::new(view.latin1());
         Ok(this
             .sink
             .write_latin1(&streams::Result::Temporary(data))
@@ -737,8 +732,7 @@ pub(crate) unsafe fn sink_handle_from_id(
     const HTTP_RESPONSE_SINK: u8 = 4;
     const HTTPS_RESPONSE_SINK: u8 = 5;
     const NETWORK_SINK: u8 = 6;
-    const H3_RESPONSE_SINK: u8 = 7;
-    const FETCH_REQUEST_BODY_SINK: u8 = 8;
+    const FETCH_REQUEST_BODY_SINK: u8 = 7;
 
     let raw = ptr.as_ptr();
     match id {
@@ -765,10 +759,6 @@ pub(crate) unsafe fn sink_handle_from_id(
         // SAFETY: caller contract — `raw` is a live `*mut NetworkSink`.
         NETWORK_SINK => SinkHandle::S3Upload(unsafe {
             bun_ptr::BackRef::from_raw_mut(raw.cast::<streams::NetworkSink>())
-        }),
-        // SAFETY: caller contract — `raw` is a live `*mut H3ResponseSink`.
-        H3_RESPONSE_SINK => SinkHandle::H3Response(unsafe {
-            bun_ptr::BackRef::from_raw_mut(raw.cast::<streams::H3ResponseSink>())
         }),
         // SAFETY: caller contract — `raw` is a live `*mut FetchRequestBodySink`.
         FETCH_REQUEST_BODY_SINK => SinkHandle::FetchRequestBody(unsafe {

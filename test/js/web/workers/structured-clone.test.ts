@@ -1091,3 +1091,31 @@ describe("truncated Set/Map payloads are rejected without hanging", () => {
     expect(deserialize(serialize(new Map([[1, 1]])))).toEqual(new Map([[1, 1]]));
   });
 });
+
+describe("string constant pool entries survive GC during deserialization", () => {
+  // A string that appears twice in one payload is materialized once and referenced by index the
+  // second time. If the only object holding the first JSString drops it (here: a Map key that the
+  // payload sets twice) and the heap is collected before the back-reference is read, the
+  // deserializer must still hand back the original string.
+  test("Map value re-set during serialization", () => {
+    for (let iteration = 0; iteration < 1; iteration++) {
+      const expected = "Expected result " + iteration;
+      const map = new Map();
+      map.set("free", expected);
+      map.set("tmp", {
+        get a() {
+          map.delete("free");
+          map.set("free", 0x1234);
+          for (let i = 0; i < 0x10; i++) map.set("gc1_" + i, new ArrayBuffer(1024 * 1024 * 0x10));
+          for (let i = 0; i < 0x800; i++) map.set("gc2_" + i, new Date());
+          map.set("expected", expected);
+          return 1;
+        },
+      });
+      const result = structuredClone(map);
+      expect(result.get("expected")).toBe(expected);
+      expect(result.get("free")).toBe(0x1234);
+      expect(result.get("tmp")).toEqual({ a: 1 });
+    }
+  });
+});

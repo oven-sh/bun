@@ -10,7 +10,6 @@
 // Used for the per-allocation hot-path TLS in `ast_alloc::AST_ALLOC`.
 #![feature(thread_local)]
 
-use core::fmt::Write as _;
 use core::mem::{MaybeUninit, size_of};
 use core::ptr::{NonNull, addr_of_mut};
 use core::sync::atomic::{AtomicU16, AtomicU32, Ordering};
@@ -775,172 +774,6 @@ pub fn page_size() -> usize {
     })
 }
 
-// ── String — TYPE_ONLY landing ─────────────────────────────────────────────
-// Layout-only (#[repr(C)]) so T0/T1 crates can name the type; rich methods
-// (toJS, toUTF8, WTF refcounting) remain in bun_str via extension traits.
-// PORTING.md: "#[repr(C)] struct { tag: u8, value: StringValue } — NOT a Rust
-// enum (C++ mutates tag and value independently across FFI)."
-
-/// Discriminant for [`String`]'s representation.
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Tag {
-    Dead = 0,
-    WTFStringImpl = 1,
-    ZigString = 2,
-    StaticZigString = 3,
-    Empty = 4,
-}
-
-// `ZigString` pointer-tag scheme — single source of truth.
-// Flag bits live in the POINTER's high byte; untagging truncates to 53 bits.
-pub(crate) const ZS_UTF8_BIT: usize = 1usize << 61;
-pub(crate) const ZS_GLOBAL_BIT: usize = 1usize << 62;
-pub(crate) const ZS_16BIT_BIT: usize = 1usize << 63;
-pub(crate) const ZS_UNTAG_MASK: usize = (1usize << 53) - 1;
-
-/// FFI string slice — `{ ptr: *const u8, len: usize }`.
-///
-/// **Canonical storage layout.** `bun_core::string::ZigString` is a
-/// `#[repr(transparent)]` newtype over this struct (so the FFI layout has ONE
-/// source of truth) and adds the encoding-aware/allocating methods via
-/// `Deref`/`DerefMut`. The pointer-tag accessors (`is_*` / `mark_*` /
-/// `untagged` / `slice` / `utf16_slice_aligned`) live HERE so the T0
-/// `bun_alloc::String` union and `WTFStringImplStruct::to_zig_string` can use
-/// them without an upward dep on `bun_core`. Higher-tier callers should name
-/// `bun_core::ZigString`; reaching the inherent methods through `Deref` is the
-/// intended path.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct ZigString {
-    /// Tagged pointer — never dereference directly; use `untagged()`.
-    pub(crate) _unsafe_ptr_do_not_use: *const u8,
-    pub len: usize,
-}
-
-impl ZigString {
-    pub const EMPTY: ZigString = ZigString {
-        _unsafe_ptr_do_not_use: b"".as_ptr(),
-        len: 0,
-    };
-
-    #[inline]
-    pub const fn init(slice: &[u8]) -> ZigString {
-        ZigString {
-            _unsafe_ptr_do_not_use: slice.as_ptr(),
-            len: slice.len(),
-        }
-    }
-
-    /// Construct from an already-tagged pointer + length. `ptr` is stored
-    /// verbatim — tag bits are not touched.
-    #[inline]
-    pub const fn from_tagged_ptr(ptr: *const u8, len: usize) -> ZigString {
-        ZigString {
-            _unsafe_ptr_do_not_use: ptr,
-            len,
-        }
-    }
-
-    /// Raw tagged pointer (top-bit flags intact). Pair with
-    /// [`from_tagged_ptr`]; do **not** dereference without [`untagged`].
-    #[inline]
-    pub const fn tagged_ptr(&self) -> *const u8 {
-        self._unsafe_ptr_do_not_use
-    }
-
-    #[inline]
-    pub fn init_utf16(items: &[u16]) -> ZigString {
-        let mut out = ZigString {
-            _unsafe_ptr_do_not_use: items.as_ptr().cast(),
-            len: items.len(),
-        };
-        out.mark_utf16();
-        out
-    }
-
-    #[inline]
-    pub const fn length(&self) -> usize {
-        self.len
-    }
-    #[inline]
-    pub const fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    #[inline]
-    pub fn is_16bit(&self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & ZS_16BIT_BIT != 0
-    }
-    #[inline]
-    pub fn is_utf8(&self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & ZS_UTF8_BIT != 0
-    }
-    #[inline]
-    pub fn is_globally_allocated(&self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & ZS_GLOBAL_BIT != 0
-    }
-    #[inline]
-    pub fn mark_utf16(&mut self) {
-        self._unsafe_ptr_do_not_use =
-            ((self._unsafe_ptr_do_not_use as usize) | ZS_16BIT_BIT) as *const u8;
-    }
-    #[inline]
-    pub fn mark_utf8(&mut self) {
-        self._unsafe_ptr_do_not_use =
-            ((self._unsafe_ptr_do_not_use as usize) | ZS_UTF8_BIT) as *const u8;
-    }
-    #[inline]
-    pub fn mark_global(&mut self) {
-        self._unsafe_ptr_do_not_use =
-            ((self._unsafe_ptr_do_not_use as usize) | ZS_GLOBAL_BIT) as *const u8;
-    }
-
-    /// Strip the flag bits — truncate to the low 53 bits.
-    #[inline]
-    pub fn untagged(ptr: *const u8) -> *const u8 {
-        ((ptr as usize) & ZS_UNTAG_MASK) as *const u8
-    }
-
-    /// 8-bit byte view (latin1 or utf8). Caller must ensure `!is_16bit()`.
-    #[inline]
-    pub fn slice(&self) -> &[u8] {
-        if self.len == 0 {
-            return &[];
-        }
-        debug_assert!(
-            !self.is_16bit(),
-            "ZigString::slice() on UTF-16 string; use to_slice()"
-        );
-        // SAFETY: constructor stored a valid ptr/len; flag bits stripped.
-        // Length is capped at `u32::MAX`.
-        unsafe {
-            core::slice::from_raw_parts(
-                Self::untagged(self._unsafe_ptr_do_not_use),
-                core::cmp::min(self.len, u32::MAX as usize),
-            )
-        }
-    }
-
-    /// UTF-16 code-unit view. Caller must ensure `is_16bit()`.
-    #[inline]
-    pub fn utf16_slice_aligned(&self) -> &[u16] {
-        if self.len == 0 {
-            return &[];
-        }
-        debug_assert!(self.is_16bit());
-        // SAFETY: 16-bit-tagged constructor stored a 2-byte-aligned ptr valid
-        // for `self.len` u16 units; flag bits stripped via `ZS_UNTAG_MASK`
-        // (inlined `untagged()` so the cast goes `usize → *const u16` directly).
-        unsafe {
-            core::slice::from_raw_parts(
-                ((self._unsafe_ptr_do_not_use as usize) & ZS_UNTAG_MASK) as *const u16,
-                self.len,
-            )
-        }
-    }
-}
-
 /// Port of `WTFStringImplStruct` — must match WebKit's `WTF::StringImpl` layout.
 ///
 /// `m_ref_count` / `m_hash_and_flags` are `Cell<u32>` (not bare `u32`) because
@@ -973,6 +806,8 @@ impl WTFStringImplStruct {
     // These details must stay in sync with WTFStringImpl.h in WebKit!
     // ---------------------------------------------------------------------
     pub(crate) const S_HASH_FLAG_8BIT_BUFFER: u32 = 1 << 2;
+    pub(crate) const S_HASH_FLAG_STRING_KIND_IS_ATOM: u32 = 1 << 4;
+    pub(crate) const S_HASH_FLAG_STRING_KIND_IS_SYMBOL: u32 = 1 << 5;
     /// The bottom bit in the ref count indicates a static (immortal) string.
     pub(crate) const S_REF_COUNT_FLAG_IS_STATIC_STRING: u32 = 0x1;
     /// This allows us to ref / deref without disturbing the static string flag.
@@ -1093,21 +928,25 @@ impl WTFStringImplStruct {
         }
     }
     #[inline]
-    pub fn is_thread_safe(&self) -> bool {
-        WTFStringImpl__isThreadSafe(self)
+    pub fn is_atom(&self) -> bool {
+        (self.m_hash_and_flags.get() & Self::S_HASH_FLAG_STRING_KIND_IS_ATOM) != 0
+    }
+    #[inline]
+    pub fn is_symbol(&self) -> bool {
+        (self.m_hash_and_flags.get() & Self::S_HASH_FLAG_STRING_KIND_IS_SYMBOL) != 0
+    }
+    #[inline]
+    pub fn is_thread_isolated(&self) -> bool {
+        WTFStringImpl__isThreadIsolated(self)
+    }
+    #[inline]
+    pub fn is_thread_shareable(&self) -> bool {
+        WTFStringImpl__isThreadShareable(self)
     }
     /// Compute the hash() if necessary
     #[inline]
     pub fn ensure_hash(&self) {
         Bun__WTFStringImpl__ensureHash(self);
-    }
-    #[inline]
-    pub fn to_zig_string(&self) -> ZigString {
-        if self.is_8bit() {
-            ZigString::init(self.latin1_slice())
-        } else {
-            ZigString::init_utf16(self.utf16_slice())
-        }
     }
 }
 
@@ -1121,99 +960,9 @@ unsafe extern "C" {
     // `destroy` path crosses FFI. `*const` + `unsafe`: it frees the
     // allocation backing the pointer.
     pub fn Bun__WTFStringImpl__destroy(this: *const WTFStringImplStruct);
-    // Rust no longer calls these.
-    pub safe fn Bun__WTFStringImpl__ref(this: &WTFStringImplStruct);
-    pub fn Bun__WTFStringImpl__deref(this: *const WTFStringImplStruct);
-    safe fn WTFStringImpl__isThreadSafe(this: &WTFStringImplStruct) -> bool;
+    safe fn WTFStringImpl__isThreadIsolated(this: &WTFStringImplStruct) -> bool;
+    safe fn WTFStringImpl__isThreadShareable(this: &WTFStringImplStruct) -> bool;
     safe fn Bun__WTFStringImpl__ensureHash(this: &WTFStringImplStruct);
-}
-
-/// C-layout untagged union over [`String`]'s payload representations.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub union StringImpl {
-    pub zig_string: ZigString,
-    pub wtf_string_impl: WTFStringImpl,
-    // .StaticZigString aliases .zig_string; .Dead/.Empty are zero-width.
-}
-
-/// Known as `BunString` in C++.
-///
-/// 5-variant tagged union over WTF-backed and `ZigString`-backed strings. NOT a
-/// Rust `enum` because C++ mutates `tag` and `value` independently across FFI.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct String {
-    pub tag: Tag,
-    pub value: StringImpl,
-}
-
-impl String {
-    pub const EMPTY: String = String {
-        tag: Tag::Empty,
-        value: StringImpl {
-            zig_string: ZigString::EMPTY,
-        },
-    };
-    pub const DEAD: String = String {
-        tag: Tag::Dead,
-        value: StringImpl {
-            zig_string: ZigString::EMPTY,
-        },
-    };
-
-    /// Borrow the live `WTF::StringImpl` backing this string.
-    ///
-    /// Centralises the union-field read + raw-ptr deref that `to_zig_string` /
-    /// `length` / `is_8bit` each open-coded. Callers branch on
-    /// `self.tag == WTFStringImpl` first (debug-asserted).
-    #[inline(always)]
-    fn wtf_impl(&self) -> &WTFStringImplStruct {
-        debug_assert_eq!(self.tag, Tag::WTFStringImpl);
-        // SAFETY: `tag == WTFStringImpl` ⇒ `wtf_string_impl` is the active
-        // union field and a non-null, live `*mut WTFStringImplStruct`
-        // (refcount ≥ 1 for the `String`'s lifetime).
-        unsafe { &*self.value.wtf_string_impl }
-    }
-
-    #[inline]
-    pub(crate) fn to_zig_string(&self) -> ZigString {
-        match self.tag {
-            Tag::StaticZigString | Tag::ZigString => {
-                // SAFETY: `tag` is `ZigString`/`StaticZigString` ⇒ `zig_string`
-                // is the active union field.
-                unsafe { self.value.zig_string }
-            }
-            Tag::WTFStringImpl => self.wtf_impl().to_zig_string(),
-            _ => ZigString::EMPTY,
-        }
-    }
-}
-
-impl core::fmt::Display for String {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // utf8 → write bytes; utf16 → transcode;
-        // latin1 → widen each byte to a Unicode scalar.
-        let zs = self.to_zig_string();
-        if zs.len == 0 {
-            return Ok(());
-        }
-        if zs.is_16bit() {
-            for c in core::char::decode_utf16(zs.utf16_slice_aligned().iter().copied()) {
-                f.write_char(c.unwrap_or(core::char::REPLACEMENT_CHARACTER))?;
-            }
-            Ok(())
-        } else if zs.is_utf8() {
-            // BStr renders raw bytes without allocating.
-            write!(f, "{}", bstr::BStr::new(zs.slice()))
-        } else {
-            for &b in zs.slice() {
-                // Latin-1 byte → Unicode codepoint of the same value.
-                f.write_char(b as char)?;
-            }
-            Ok(())
-        }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

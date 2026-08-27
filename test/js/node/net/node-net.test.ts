@@ -1647,6 +1647,183 @@ describe("paused socket whose peer sends RST", () => {
     }
     expect(errors.map(e => e.code)).not.toContain("ENOEXEC");
   });
+  // Like node, an onread socket's pause() stops the handle itself, so the RST
+  // arrives at a handle that is not registered for reads at all.
+  it("does not surface a bogus errno error for an onread socket", async () => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const errors: NodeJS.ErrnoException[] = [];
+    const server = createServer(c => {
+      c.on("error", () => {});
+      c.on("data", () => c.resetAndDestroy());
+    });
+    try {
+      await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      const c = connect({ port, host: "127.0.0.1", onread: { buffer: Buffer.alloc(16), callback: () => {} } });
+      c.on("error", e => errors.push(e));
+      c.on("close", () => resolve());
+      await once(c, "connect");
+      // Every 'connect' listener has run by now, including the _read() that
+      // connect() queued, so nothing starts the handle again after this pause.
+      c.pause();
+      c.write("x");
+      await promise;
+    } finally {
+      server.close();
+    }
+    expect(errors.map(e => e.code)).not.toContain("ENOEXEC");
+  });
+});
+
+// Node stops kernel reads when push() returns false, not on pause(): a paused
+// socket keeps reading into its buffer, so it still sees the peer's FIN.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L817-L827
+// Stopping the handle on pause() left the FIN unread forever, so a socket that
+// nothing resumes (unpipe() pauses it) never emitted 'end' or 'close' and its
+// server's close() never called back.
+describe.concurrent("paused socket whose peer ends", () => {
+  // Pauses the accepted socket after the accept-time read(0), with nothing
+  // pushed afterwards that could start the handle again, then the peer ends.
+  async function pauseThenPeerEnds(endBeforePeer: boolean) {
+    const server = createServer();
+    const accepted = Promise.withResolvers<Socket>();
+    server.on("connection", accepted.resolve);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const serverClosed = Promise.withResolvers<void>();
+    try {
+      const client = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
+      const clientClosed = once(client, "close");
+      const [socket] = await Promise.all([accepted.promise, once(client, "connect")]);
+      const events: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      socket.on("end", () => events.push("end"));
+      socket.on("close", hadError => {
+        events.push(`close hadError=${hadError}`);
+        closed.resolve();
+      });
+      socket.on("error", closed.reject);
+      socket.pause();
+      if (endBeforePeer) socket.end();
+      expect(socket.isPaused()).toBe(true);
+      client.end();
+      await Promise.all([closed.promise, clientClosed]);
+      expect(events).toEqual(["end", "close hadError=false"]);
+    } finally {
+      server.close(err => (err ? serverClosed.reject(err) : serverClosed.resolve()));
+    }
+    // The connection is gone, so close() calls back.
+    await serverClosed.promise;
+  }
+
+  it("still emits 'end' and 'close'", () => pauseThenPeerEnds(false));
+
+  it("still emits 'end' and 'close' after it end()ed first", () => pauseThenPeerEnds(true));
+});
+
+// The peer's bytes are queued on `socket` once the write callback ran; the poll
+// between the two immediates is when a handle that reads would consume them.
+async function expectNothingRead(socket: Socket, peer: Socket, bytes: string) {
+  await new Promise(resolve => peer.write(bytes, resolve));
+  await new Promise(resolve => setImmediate(() => setImmediate(resolve)));
+  expect({ paused: socket.isPaused(), bytesRead: socket.bytesRead }).toEqual({ paused: true, bytesRead: 0 });
+  const data = once(socket, "data");
+  socket.resume();
+  expect(String((await data)[0])).toBe(bytes);
+}
+
+// Node starts a connection's reads with a read(0) after the 'connect' listeners ran,
+// and skips it if one of them paused: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1695-L1696
+it("pause() in a 'connect' listener leaves the peer's bytes unread until resume()", async () => {
+  const accepted = Promise.withResolvers<Socket>();
+  const server = createServer(accepted.resolve);
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const port = (server.address() as import("node:net").AddressInfo).port;
+    const client: Socket = connect(port, "127.0.0.1", () => client.pause());
+    const [socket] = await Promise.all([accepted.promise, once(client, "connect")]);
+    await expectNothingRead(client, socket, "reply");
+    socket.destroy();
+    await once(client, "close");
+  } finally {
+    server.close();
+  }
+});
+
+// A 'readable' listener sets flowing to false as well, but the read() has asked for data: Node's
+// handle is reading then, so ours must keep reading (the https-over-proxy CONNECT does this).
+it("read() and once('readable') in a 'connect' listener still receive the peer's bytes", async () => {
+  const server = createServer(socket => socket.write("reply"));
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const port = (server.address() as import("node:net").AddressInfo).port;
+    const readable = Promise.withResolvers<string>();
+    const client: Socket = connect(port, "127.0.0.1", () => {
+      client.read();
+      client.once("readable", () => readable.resolve(String(client.read())));
+    });
+    client.on("error", readable.reject);
+    expect(await readable.promise).toBe("reply");
+    client.destroy();
+  } finally {
+    server.close();
+  }
+});
+
+describe.concurrent("pauseOnConnect", () => {
+  it("reads server.pauseOnConnect per connection, like node", async () => {
+    const server = createServer();
+    const accepted = Promise.withResolvers<Socket>();
+    server.on("connection", accepted.resolve);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    // Set after listen(): the listener was created without it, so this connection is stopped from JS.
+    server.pauseOnConnect = true;
+    try {
+      const client = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
+      const [socket] = await Promise.all([accepted.promise, once(client, "connect")]);
+      await expectNothingRead(socket, client, "early");
+      client.destroy();
+      await once(socket, "close");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("applies to a dialed socket", async () => {
+    const accepted = Promise.withResolvers<Socket>();
+    const server = createServer(accepted.resolve);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      const client = connect({ port, host: "127.0.0.1", pauseOnConnect: true } as import("node:net").NetConnectOpts);
+      const [socket] = await Promise.all([accepted.promise, once(client, "connect")]);
+      await expectNothingRead(client, socket, "reply");
+      socket.destroy();
+      await once(client, "close");
+    } finally {
+      server.close();
+    }
+  });
+
+  // A socket that opened paused must notice its peer going away like a socket that
+  // pause()d later does, on every backend (kqueue keeps a read knote for that).
+  it("still reports a peer reset before resume()", async () => {
+    const server = createServer({ pauseOnConnect: true });
+    const accepted = Promise.withResolvers<Socket>();
+    server.on("connection", accepted.resolve);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const client = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
+      const [socket] = await Promise.all([accepted.promise, once(client, "connect")]);
+      const errors: NodeJS.ErrnoException[] = [];
+      socket.on("error", e => errors.push(e));
+      const closed = new Promise(resolve => socket.on("close", resolve));
+      client.resetAndDestroy();
+      await closed;
+      expect(errors.map(e => e.code).filter(code => code !== "ECONNRESET")).toEqual([]);
+    } finally {
+      server.close();
+    }
+  });
 });
 
 describe("net.Server accepted-socket buffering", () => {

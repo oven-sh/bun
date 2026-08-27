@@ -1424,6 +1424,20 @@ pub fn github_action_property(self_: &[u8]) -> GithubActionPropertyFormatter<'_>
     GithubActionPropertyFormatter { text: self_ }
 }
 
+pub struct GithubActionFormatter<'a> {
+    text: &'a [u8],
+}
+
+impl Display for GithubActionFormatter<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        github_action_writer(f, self.text)
+    }
+}
+
+pub fn github_action(utf8: &[u8]) -> GithubActionFormatter<'_> {
+    GithubActionFormatter { text: utf8 }
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // QuotedFormatter
 // ───────────────────────────────────────────────────────────────────────────
@@ -2894,8 +2908,7 @@ pub fn u64_hex_fixed<const LOWER: bool, const N: usize>(v: u64) -> [u8; N] {
 }
 
 /// Format a 6-byte MAC address as `xx:xx:xx:xx:xx:xx` (lowercase hex,
-/// colon-separated). Returns a fixed 17-byte ASCII buffer; borrow as `&[u8]`
-/// for `ZigString::init`.
+/// colon-separated) into a fixed 17-byte ASCII buffer.
 #[inline]
 pub fn mac_address_lower(mac: [u8; 6]) -> [u8; 17] {
     let mut out = [b':'; 17];

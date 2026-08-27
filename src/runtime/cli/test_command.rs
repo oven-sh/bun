@@ -7,16 +7,11 @@ use crate::cli::test::scanner::{self, Scanner};
 use crate::cli::test::timings::Timings;
 use bun_collections::BoundedArray;
 use bun_core::{self as bun, Global, Output, env_var, fmt as bun_fmt};
+use bun_core::{EncodedSlice, strings};
 use bun_core::{pretty_error, pretty_errorln};
 use bun_dotenv as DotEnv;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc};
-// `set_time_zone` / `delete_module_registry_entry` take the JSC-side
-// `ZigString` (repr(C)-identical to `bun_core::ZigString`, but with the
-// JSGlobalObject FFI methods); import that one so the call sites type-check.
-use bun_core::ZigStringSlice;
-use bun_core::strings;
-use bun_jsc::zig_string::ZigString;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_leading_path_separator;
@@ -1815,9 +1810,7 @@ impl CommandLineReporter {
                     // Ensure the directory exists
                     let mut fs = crate::node::fs::NodeFS::default();
                     let _ = fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
-                        path: crate::node::PathLike::EncodedSlice(
-                            ZigStringSlice::from_utf8_never_free(&opts.reports_directory),
-                        ),
+                        path: crate::node::PathLike::borrowed(&opts.reports_directory),
                         always_return_none: true,
                         recursive: true,
                         ..Default::default()
@@ -2044,7 +2037,7 @@ impl CommandLineReporter {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun_core::String) -> bool {
+extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::String) -> bool {
     let zig_slice = test_name_str.to_utf8();
     // In this particular case, we don't actually care about non-ascii latin1 characters.
     // so we skip the ascii check
@@ -2270,7 +2263,7 @@ impl TestCommand {
                 // Clone (not take): ParallelRunner::run_as_coordinator → build_worker_argv
                 // reads ctx.args.{conditions,define,loaders,tsconfig_override,drop,
                 // main_fields,extension_order,env_files,feature_flags,preserve_symlinks,
-                // allow_addons,disable_default_env_files,jsx} after this point to forward
+                // allow_addons,allow_ffi_cc,disable_default_env_files,jsx} after this point to forward
                 // them to workers.
                 transform_options: ctx.args.clone(),
                 debugger: core::mem::take(&mut ctx.runtime_options.debugger),
@@ -2337,7 +2330,9 @@ impl TestCommand {
         }
 
         if !tz_name.is_empty() {
-            _ = vm.global().set_time_zone(&ZigString::init(tz_name));
+            _ = vm
+                .global()
+                .set_time_zone(&EncodedSlice::from_bytes(tz_name));
         }
 
         if ctx.test_options.test_worker {
@@ -3218,7 +3213,7 @@ impl TestCommand {
             // Clear the module cache before re-running (except for the first run)
             if repeat_index > 0 {
                 vm.clear_entry_point()?;
-                let entry = ZigString::init(file_path);
+                let entry = EncodedSlice::from_bytes(file_path);
                 vm.global().delete_module_registry_entry(&entry)?;
                 // Reset per-test snapshot counters so rerun N matches the same
                 // snapshot keys as run 1 instead of looking for "test name 2", etc.

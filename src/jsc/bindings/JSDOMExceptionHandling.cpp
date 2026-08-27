@@ -74,6 +74,7 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* except
     // }
 
     Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+    RETURN_IF_EXCEPTION(scope, );
 
     if (exceptionDetails) {
         auto errorMessage = retrieveErrorMessage(*lexicalGlobalObject, vm, exception->value(), scope);

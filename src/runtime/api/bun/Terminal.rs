@@ -15,17 +15,17 @@ use core::ffi::{c_int, c_void};
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::node::StringOrBuffer;
-use crate::webcore::blob::ZigStringBlobExt;
+use bun_core::EncodedSlice;
 use bun_core::SignalCode;
-use bun_core::ZigString;
 use bun_io::Loop as AsyncLoop;
 use bun_io::pipe_reader::BufferedReaderParent;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
 use bun_io::{BufferedReader, ReadState, StreamingWriter, WriteStatus};
+use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
-    MarkedArrayBuffer, SysErrorJsc, ZigStringSlice,
+    MarkedArrayBuffer, SysErrorJsc,
 };
 use bun_sys::{self as sys, Fd, FdExt};
 
@@ -89,12 +89,6 @@ pub mod js {
 /// 2. Reader (released in onReaderDone/onReaderError)
 /// 3. Writer (released in onWriterClose)
 ///
-// `bun.ptr.RefCount` is intrusive single-thread → `bun_ptr::IntrusiveRc<Terminal>`.
-// Never `Rc`/`Arc` here: `*mut Terminal` crosses FFI as the `.classes.ts` m_ctx
-// payload and is recovered by raw pointer in finalize/host fns. (LIFETIMES.tsv
-// marks CreateResult.terminal as SHARED, but the RefCount→IntrusiveRc rule wins;
-// the TSV row is for plain `*T` fields, not intrusive mixins.)
-//
 // `no_construct, no_finalize`: this class uses `constructNeedsThis: true` (3-arg
 // constructor) and intrusive refcounting (finalize → deref, not heap::take),
 // neither of which the macro's default hooks support. The C-ABI shims live in
@@ -132,10 +126,6 @@ pub struct Terminal {
     /// Current terminal size
     cols: Cell<u16>,
     rows: Cell<u16>,
-
-    /// Terminal name (e.g., "xterm-256color"). Read-only after construction.
-    /// Held for Drop (owns the slice allocation); no getter currently exposes it.
-    _term_name: ZigStringSlice,
 
     /// Event loop handle for callbacks. Read-only after construction.
     event_loop_handle: EventLoopHandle,
@@ -205,7 +195,6 @@ pub type IOReader = BufferedReader;
 pub struct Options {
     pub(crate) cols: u16,
     pub(crate) rows: u16,
-    pub(crate) term_name: ZigStringSlice,
     pub(crate) data_callback: Option<JSValue>,
     pub(crate) exit_callback: Option<JSValue>,
     pub(crate) drain_callback: Option<JSValue>,
@@ -216,7 +205,6 @@ impl Default for Options {
         Self {
             cols: 80,
             rows: 24,
-            term_name: ZigStringSlice::default(),
             data_callback: None,
             exit_callback: None,
             drain_callback: None,
@@ -259,7 +247,6 @@ impl Options {
         js_options: JSValue,
     ) -> JsResult<Options> {
         let mut options = Options::default();
-        // errdefer options.deinit() — handled by Drop on early return.
 
         if let Some(n) = js_options.get_optional_i32(global_object, b"cols")? {
             if n > 0 && n <= 65535 {
@@ -273,15 +260,15 @@ impl Options {
             }
         }
 
-        if let Some(slice) = js_options.get_optional_slice(global_object, b"name")? {
-            if slice.slice().len() > Self::MAX_TERM_NAME_LEN {
-                drop(slice);
+        // `name` is a documented option (bun.d.ts) that nothing consumes yet;
+        // it is still type- and length-checked.
+        if let Some(name) = js_options.get_optional_slice(global_object, b"name")? {
+            if name.slice().len() > Self::MAX_TERM_NAME_LEN {
                 return Err(global_object.throw(format_args!(
                     "Terminal name too long (max {} characters)",
                     Self::MAX_TERM_NAME_LEN
                 )));
             }
-            options.term_name = slice;
         }
 
         if let Some(v) = js_options.get_optional_value(global_object, b"data")? {
@@ -306,18 +293,11 @@ impl Options {
     }
 }
 
-impl Drop for Options {
-    fn drop(&mut self) {
-        // term_name: ZigString::Slice has its own Drop; nothing further to
-        // clean up here.
-    }
-}
-
 /// Result from creating a Terminal
 pub(crate) struct CreateResult {
-    // Intrusive single-thread refcount that crosses FFI as `*mut Terminal`; see
-    // ref_count comment on `Terminal` for why this is not `Arc`.
-    pub terminal: bun_ptr::IntrusiveRc<Terminal>,
+    /// The new terminal; its initial ref belongs to the JS wrapper (`js_value`),
+    /// which holds itself strong until the terminal closes.
+    pub terminal: bun_ptr::BackRef<Terminal, bun_ptr::Mut>,
     pub js_value: JSValue,
 }
 
@@ -418,27 +398,14 @@ impl Terminal {
     /// Internal initialization - shared by constructor and createFromSpawn
     fn init_terminal(
         global_object: &JSGlobalObject,
-        // term_name ownership is transferred to the Terminal struct on success or
-        // any error after createPty; cleared in-place once moved.
-        options: &mut Options,
+        options: &Options,
         // If provided, use this JSValue; otherwise create one via toJS
         existing_js_value: Option<JSValue>,
     ) -> Result<CreateResult, InitError> {
         // Create PTY
         let pty_result = create_pty(options.cols, options.rows)?;
 
-        // Use default term name if empty
-        let term_name = if !options.term_name.slice().is_empty() {
-            core::mem::take(&mut options.term_name)
-        } else {
-            ZigStringSlice::from_utf8_never_free(b"xterm-256color")
-        };
-        // Ownership moves to the struct below; clear so caller's options drop
-        // doesn't double-free on the WriterStartFailed/ReaderStartFailed paths.
-        options.term_name = ZigStringSlice::default();
-
-        // Heap-allocate the Terminal; the intrusive ref_count
-        // field starts at 1 (JS side's ref). Wrapped as IntrusiveRc on success.
+        // The intrusive ref_count starts at 1: the JS wrapper's ref.
         let terminal: *mut Terminal = bun_core::heap::into_raw(Box::new(Terminal {
             ref_count: bun_ptr::RefCount::init(),
             master_fd: Cell::new(pty_result.master),
@@ -457,7 +424,6 @@ impl Terminal {
             } else {
                 options.rows
             }),
-            _term_name: term_name,
             event_loop_handle: EventLoopHandle::init(
                 global_object.bun_vm().as_mut().event_loop().cast(),
             ),
@@ -470,13 +436,13 @@ impl Terminal {
             #[cfg(unix)]
             tty_state: Cell::new(bun_core::tty::State::new()),
         }));
+        let parent_ptr = terminal;
         // SAFETY: just allocated, non-null, exclusively owned here. R-2: `&`
         // (not `&mut`) — every method below takes `&self`; field writes go
         // through `Cell`/`JsCell`.
         let terminal = unsafe { &*terminal };
 
         // Set reader parent
-        let parent_ptr = terminal.as_ctx_ptr();
         terminal
             .reader
             .with_mut(|r| r.set_parent(parent_ptr.cast::<c_void>()));
@@ -571,9 +537,8 @@ impl Terminal {
         }
 
         Ok(CreateResult {
-            // SAFETY: `parent_ptr` is the heap-allocated allocation above with
-            // ref_count >= 1; IntrusiveRc::from_raw adopts one existing ref.
-            terminal: unsafe { bun_ptr::IntrusiveRc::from_raw(parent_ptr) },
+            // SAFETY: `parent_ptr` is the live `heap::into_raw` pointer above.
+            terminal: unsafe { bun_ptr::BackRef::from_raw_mut(parent_ptr) },
             js_value: this_value,
         })
     }
@@ -597,34 +562,29 @@ impl Terminal {
             )));
         }
 
-        let mut options = Options::parse_from_js(global_object, js_options)?;
+        let options = Options::parse_from_js(global_object, js_options)?;
 
-        match Self::init_terminal(global_object, &mut options, Some(this_value)) {
+        match Self::init_terminal(global_object, &options, Some(this_value)) {
             Ok(result) => {
                 // Hand the intrusive ref to the JS wrapper as m_ctx; finalize()
                 // releases it via deref_().
-                Ok(bun_ptr::IntrusiveRc::into_raw(result.terminal))
+                Ok(result.terminal.as_ptr())
             }
-            Err(err) => {
-                drop(options);
-                Err(match err {
-                    InitError::OpenPtyFailed => {
-                        global_object.throw(format_args!("Failed to open PTY"))
-                    }
-                    InitError::DupFailed => {
-                        global_object.throw(format_args!("Failed to duplicate PTY file descriptor"))
-                    }
-                    InitError::NotSupported => {
-                        global_object.throw(format_args!("PTY not supported on this platform"))
-                    }
-                    InitError::WriterStartFailed => {
-                        global_object.throw(format_args!("Failed to start terminal writer"))
-                    }
-                    InitError::ReaderStartFailed => {
-                        global_object.throw(format_args!("Failed to start terminal reader"))
-                    }
-                })
-            }
+            Err(err) => Err(match err {
+                InitError::OpenPtyFailed => global_object.throw(format_args!("Failed to open PTY")),
+                InitError::DupFailed => {
+                    global_object.throw(format_args!("Failed to duplicate PTY file descriptor"))
+                }
+                InitError::NotSupported => {
+                    global_object.throw(format_args!("PTY not supported on this platform"))
+                }
+                InitError::WriterStartFailed => {
+                    global_object.throw(format_args!("Failed to start terminal writer"))
+                }
+                InitError::ReaderStartFailed => {
+                    global_object.throw(format_args!("Failed to start terminal reader"))
+                }
+            }),
         }
     }
 
@@ -633,7 +593,7 @@ impl Terminal {
     /// The slave_fd should be used for the subprocess's stdin/stdout/stderr
     pub(crate) fn create_from_spawn(
         global_object: &JSGlobalObject,
-        options: &mut Options,
+        options: &Options,
     ) -> Result<CreateResult, InitError> {
         Self::init_terminal(global_object, options, None)
     }
@@ -1893,7 +1853,7 @@ impl Terminal {
         let signal_value: JSValue = if let Some(s) = signal {
             // SignalCode derives Debug → "SIGTERM" etc.
             let name = format!("{:?}", s);
-            ZigString::init(name.as_bytes()).to_js(global_this)
+            EncodedSlice::latin1(name.as_bytes()).to_js(global_this)
         } else {
             JSValue::NULL
         };
@@ -2017,8 +1977,6 @@ fn deinit_and_destroy(this: *mut Terminal) {
     // closeInternal() checks flags.closed and returns early on subsequent calls,
     // so this is safe even if finalize() already called it
     t.close_internal();
-    // term_name, reader, writer: Drop runs via heap::take below.
-    // bun.destroy(this)
     // SAFETY: `this` was heap-allocated in init_terminal and ref_count == 0, so
     // no other live references exist.
     drop(unsafe { bun_core::heap::take(this) });

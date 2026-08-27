@@ -1614,3 +1614,57 @@ describe("throwing 'secureConnect' listener", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe.concurrent("a client paused while connecting", () => {
+  // Node starts the TLS handle's reads from its own read(0) whatever the stream's
+  // paused state, and pause() while connecting never readStops, onread mode
+  // included (lib/net.js pause). So the handshake completes, and the reading
+  // handle is what keeps the process alive until then: everything on the server
+  // side is unref'd. Verified against node v26.3.0 for both variants.
+  it.each([
+    ["plain", ""],
+    ["onread", "onread: { buffer: Buffer.alloc(1024), callback() {} },"],
+  ])("%s: still completes the handshake and holds the process until then", async (_mode, onreadOption) => {
+    const script = `
+      const tlsMod = require("node:tls");
+      const server = tlsMod.createServer(${JSON.stringify(COMMON_CERT_)}, function onConn(socket) {
+        socket.unref();
+      });
+      server.listen(0, "127.0.0.1", function onListen() {
+        server.unref();
+        const client = tlsMod.connect({
+          port: server.address().port,
+          host: "127.0.0.1",
+          rejectUnauthorized: false,
+          ${onreadOption}
+        });
+        client.pause();
+        client.on("secureConnect", function onSecureConnect() {
+          console.log("secureConnect paused=" + client.isPaused());
+          client.destroy();
+          server.close();
+        });
+        client.on("error", function onError(err) {
+          console.log("error " + (err.code || err.message));
+        });
+      });
+      process.on("exit", function onExit(code) {
+        console.log("exit " + code);
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Debug builds may write benign diagnostics to stderr, so it is only shown
+    // when the fixture failed (the convention of the fixtures above).
+    expect({ stdout: stdout.trim().split("\n"), exitCode, failureDetail: exitCode === 0 ? "" : stderr }).toEqual({
+      stdout: ["secureConnect paused=true", "exit 0"],
+      exitCode: 0,
+      failureDetail: "",
+    });
+  });
+});

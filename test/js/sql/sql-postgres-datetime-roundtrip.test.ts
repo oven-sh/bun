@@ -6,7 +6,8 @@ import path from "path";
 // path decodes it as UTC (µs since 2000-01-01). The simple/text path must do
 // the same — otherwise it goes through JS Date.parse and is read as local time,
 // making the two protocols disagree on non-UTC hosts. `timestamptz` and `date`
-// must keep decoding correctly.
+// must keep decoding correctly, including the seconds-resolution offsets the
+// server prints for historical instants and the always-text array types.
 //
 // The fixture runs against a real Postgres server (docker-compose in CI, or a
 // DATABASE_URL/local instance otherwise) and prints "OK TZ=<tz> offsetMin=<n>"

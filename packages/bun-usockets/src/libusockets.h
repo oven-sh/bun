@@ -556,6 +556,11 @@ struct ssl_ctx_st *us_ssl_ctx_from_options(
  * (uWS App.h) that don't pull in BoringSSL headers. */
 void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
 void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
+/* Install an ALPN selector that prefers "h2", then "http/1.1" (when
+ * allow_http1). Used by uWS when an App has an HTTP/2 context attached. */
+void us_ssl_ctx_enable_http2_alpn(struct ssl_ctx_st *ssl_ctx, int allow_http1);
+/* 1 iff the completed handshake on `s` negotiated ALPN "h2". */
+int us_socket_alpn_is_h2(us_socket_r s);
 long us_ssl_ctx_live_count(void);
 /* Appends the certificates in the PEM `content` to `ctx`'s trust store;
  * returns 0 when nothing could be added. */

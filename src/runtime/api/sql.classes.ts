@@ -17,14 +17,7 @@ for (const type of types) {
       finalize: true,
       configurable: false,
       hasPendingActivity: type === "PostgresSQL",
-      klass: {
-        //   escapeString: {
-        //     fn: "escapeString",
-        //   },
-        //   escapeIdentifier: {
-        //     fn: "escapeIdentifier",
-        //   },
-      },
+      klass: {},
       JSType: "0b11101110",
       proto: {
         close: {

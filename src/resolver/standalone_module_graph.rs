@@ -13,6 +13,10 @@ pub trait StandaloneModuleGraph: Send + Sync {
     /// Look up `name` (already known to be under the standalone virtual root)
     /// and return the embedded file's canonical name slice if present.
     fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&'static [u8]>;
+    /// Whether the embedded file at `name` carries a serialized ES module record (`module_info`).
+    fn has_module_info(&self, _name: &[u8]) -> bool {
+        false
+    }
     /// The embedded module `specifier` names when imported from `source_dir`: an absolute embedded path (in either
     /// path syntax), or a `./` / `../` specifier joined onto `source_dir`, looked up as spelled and then -- since every
     /// entry point is embedded under a `.js` name -- under the `.js` name for a source extension or no extension

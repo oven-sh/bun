@@ -72,18 +72,19 @@ impl SharedWorkNode {
         /// # Safety
         /// Only installed by [`SharedWorkNode::new`], so `task` is the node
         /// embedded in a live `T` that [`WorkPool::schedule_shared`] queued
-        /// together with one reference.
+        /// together with one reference, reached through a pointer with the
+        /// whole `T`'s provenance.
         unsafe fn run<T: SharedWorkTask>(task: *mut Task) {
-            // SAFETY: fn contract (`UnsafeCell<Task>` is `repr(transparent)`
-            // over `Task`, and `task` is `SharedWorkNode`'s first field).
-            let (node, this) = unsafe {
+            // SAFETY: fn contract; `task` is `SharedWorkNode`'s first field
+            // (repr(C), `UnsafeCell` is transparent). Raw projections only, so
+            // the pointer keeps the allocation's provenance for `from_raw`.
+            let this = unsafe {
                 let node = task.cast::<SharedWorkNode>();
-                (&*node, T::from_field_ptr(node))
+                (*core::ptr::addr_of!((*node).queued))
+                    .store(false, core::sync::atomic::Ordering::Release);
+                bun_ptr::RefPtr::from_raw(T::from_field_ptr(node))
             };
-            node.queued
-                .store(false, core::sync::atomic::Ordering::Release);
-            // SAFETY: fn contract — `schedule_shared` moved this reference into the pool.
-            T::run_work_task(unsafe { bun_ptr::RefPtr::from_raw(this) });
+            T::run_work_task(this);
         }
         SharedWorkNode {
             task: core::cell::UnsafeCell::new(Task {
@@ -91,6 +92,29 @@ impl SharedWorkNode {
                 callback: run::<T>,
             }),
             queued: core::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// Move `this` into its node for the pool: the node's `Task` to hand to
+    /// the pool (its callback takes the reference back out), or `None` if the
+    /// node is already queued (a bug: asserts in debug; the reference is dropped).
+    pub fn arm<T: SharedWorkTask>(this: bun_ptr::RefPtr<T>) -> Option<*mut Task> {
+        let this = bun_ptr::RefPtr::into_raw(this);
+        // SAFETY: `this` is live (the reference just unwrapped). Raw
+        // projections only, so the `Task` pointer the pool gets keeps the
+        // whole allocation's provenance for the callback's container-of.
+        unsafe {
+            let node: *mut SharedWorkNode = T::field_of(this);
+            if (*core::ptr::addr_of!((*node).queued))
+                .swap(true, core::sync::atomic::Ordering::AcqRel)
+            {
+                debug_assert!(false, "SharedWorkTask scheduled while already queued");
+                drop(bun_ptr::RefPtr::from_raw(this));
+                return None;
+            }
+            Some(core::cell::UnsafeCell::raw_get(core::ptr::addr_of!(
+                (*node).task
+            )))
         }
     }
 }
@@ -230,17 +254,9 @@ impl WorkPool {
     /// [`SharedWorkTask::run_work_task`] receives it. Scheduling a node that is
     /// already queued is a bug: it asserts in debug and is otherwise a no-op.
     pub fn schedule_shared<T: SharedWorkTask>(this: bun_ptr::RefPtr<T>) {
-        let this = bun_ptr::RefPtr::into_raw(this);
-        // SAFETY: `this` is live (we hold the reference just unwrapped), so the
-        // projection is in bounds.
-        let node: &SharedWorkNode = unsafe { &*T::field_of(this) };
-        if node.queued.swap(true, core::sync::atomic::Ordering::AcqRel) {
-            debug_assert!(false, "SharedWorkTask scheduled while already queued");
-            // SAFETY: the reference unwrapped above, not handed to the pool.
-            drop(unsafe { bun_ptr::RefPtr::from_raw(this) });
-            return;
+        if let Some(task) = SharedWorkNode::arm(this) {
+            Self::schedule(task);
         }
-        Self::schedule(node.task.get());
     }
 
     /// Schedule a heap-allocated task by value. The pool takes ownership of
@@ -299,5 +315,67 @@ impl WorkPool {
         // SAFETY: task_ is a valid Box-allocated TaskType<C>; .task is its first field.
         Self::schedule(unsafe { &raw mut (*task_).task });
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::cell::Cell;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    static RUNS: AtomicUsize = AtomicUsize::new(0);
+    static DROPS: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(bun_ptr::ThreadSafeRefCounted)]
+    struct Work {
+        ref_count: bun_ptr::ThreadSafeRefCount<Work>,
+        before: Cell<u32>,
+        task: SharedWorkNode,
+        after: Cell<u32>,
+    }
+    crate::shared_work_task!(Work, task);
+    impl Work {
+        fn run_work_task(this: bun_ptr::RefPtr<Self>) {
+            this.after.set(this.before.get() + this.after.get());
+            RUNS.fetch_add(1, Ordering::SeqCst);
+            drop(this);
+        }
+    }
+    impl Drop for Work {
+        fn drop(&mut self) {
+            DROPS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// The pool's part: invoke the node's callback with the `Task` pointer.
+    fn fake_pool(task: *mut Task) {
+        // SAFETY: `task` came from `SharedWorkNode::arm`.
+        unsafe { ((*task).callback)(task) };
+    }
+
+    #[test]
+    fn shared_work_task_round_trip() {
+        let work = bun_ptr::RefPtr::new(Work {
+            ref_count: bun_ptr::ThreadSafeRefCount::init(),
+            before: Cell::new(7),
+            task: SharedWorkNode::new::<Work>(),
+            after: Cell::new(1),
+        });
+        let task = SharedWorkNode::arm(work.clone()).expect("not queued");
+        // Other holders keep using the value while it is queued.
+        work.before.set(41);
+        fake_pool(task);
+        assert_eq!(work.after.get(), 42);
+        assert_eq!(RUNS.load(Ordering::SeqCst), 1);
+        assert_eq!(DROPS.load(Ordering::SeqCst), 0);
+
+        // Re-armed after the callback cleared `queued`; the pool's reference
+        // is the last one this time.
+        let task = SharedWorkNode::arm(work).expect("not queued");
+        assert_eq!(DROPS.load(Ordering::SeqCst), 0);
+        fake_pool(task);
+        assert_eq!(RUNS.load(Ordering::SeqCst), 2);
+        assert_eq!(DROPS.load(Ordering::SeqCst), 1);
     }
 }

@@ -157,7 +157,7 @@ function ptrify(ty: string): { cTy: string; deref: (n: string) => string; extraL
   }
   // Other slice shapes (`&'a [T]`) and `&str` are NOT FFI-safe; reject.
   if (/^&[^\[]*\[/.test(ty) || /^&\s*str\b/.test(ty)) {
-    throw new Error(`slice/str param \`${ty}\` is not FFI-safe; use \`&[T]\` (const) or (ptr, len)`);
+    throw new Error(`slice/str param \`${ty}\` is not FFI-safe; use \`&[T]\` / \`&mut [T]\` or (ptr, len)`);
   }
   // `&mut T` / `&T` — keep as a reference in the thunk signature. `&T` and
   // `*const T` (resp. `&mut T`/`*mut T`) are ABI-identical for `extern "C"`

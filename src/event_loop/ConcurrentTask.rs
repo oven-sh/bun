@@ -367,12 +367,6 @@ unsafe impl Linked for ConcurrentTask {
 }
 pub type Queue = UnboundedQueue<ConcurrentTask>;
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum AutoDeinit {
-    ManualDeinit,
-    AutoDeinit,
-}
-
 impl ConcurrentTask {
     /// Heap-allocate a ConcurrentTask and return a raw pointer.
     /// The pointer is intrusive (linked into `Queue`), so we use `heap::alloc` rather than `Box<T>`.
@@ -450,12 +444,8 @@ impl ConcurrentTask {
         Self::create(ManagedTask::ManagedTask::new(ptr, callback))
     }
 
-    pub fn from<T: Taskable>(
-        &mut self,
-        of: *mut T,
-        auto_deinit: AutoDeinit,
-    ) -> &mut ConcurrentTask {
-        debug_assert!(auto_deinit == AutoDeinit::ManualDeinit);
+    /// Load this intrusive carrier with `of`'s task, ready to post.
+    pub fn from<T: Taskable>(&mut self, of: *mut T) -> &mut ConcurrentTask {
         self.from_task(Task::init(of))
     }
 

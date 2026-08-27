@@ -141,6 +141,73 @@ describe("bundler", () => {
       stdout: "bar",
     },
   });
+  // When `module.exports = require(external)` is collapsed into the importing
+  // file's import record, the record's path is rewritten but the loader was
+  // left as the intermediate file's loader, emitting a spurious
+  // `with { type: "..." }` attribute on the hoisted external import.
+  itBundled("cjs2esm/ModuleExportsEqualsRequireExternal", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import pkg from 'lib';
+        console.log(pkg.hello);
+      `,
+      "/node_modules/lib/index.js": /* js */ `
+        module.exports = require('the-external');
+      `,
+    },
+    external: ["the-external"],
+    target: "bun",
+    runtimeFiles: {
+      "/node_modules/the-external/index.js": /* js */ `
+        module.exports = { hello: "world" };
+      `,
+      "/node_modules/the-external/package.json": /* json */ `
+        { "name": "the-external", "main": "index.js" }
+      `,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain(`from "the-external"`);
+      expect(out).not.toContain("with {");
+      expect(out).not.toContain("with{");
+    },
+    run: {
+      stdout: "world",
+    },
+  });
+  itBundled("cjs2esm/ModuleExportsEqualsRequireExternalChained", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import pkg from './a.ts';
+        console.log(pkg.hello);
+      `,
+      "/a.ts": /* ts */ `
+        module.exports = require('./b.cjs');
+      `,
+      "/b.cjs": /* js */ `
+        module.exports = require('the-external');
+      `,
+    },
+    external: ["the-external"],
+    target: "bun",
+    runtimeFiles: {
+      "/node_modules/the-external/index.js": /* js */ `
+        module.exports = { hello: "chained" };
+      `,
+      "/node_modules/the-external/package.json": /* json */ `
+        { "name": "the-external", "main": "index.js" }
+      `,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain(`from "the-external"`);
+      expect(out).not.toContain("with {");
+      expect(out).not.toContain("with{");
+    },
+    run: {
+      stdout: "chained",
+    },
+  });
   itBundled("cjs2esm/ModuleExportsBasedOnNodeEnvProduction", {
     files: {
       "/entry.js": /* js */ `

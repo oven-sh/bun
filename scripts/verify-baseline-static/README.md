@@ -64,8 +64,7 @@ symbol can only produce garbage up to that symbol, never into the function
 after it. JSC's LLInt is the case that matters. `ENABLE(LLINT_EMBEDDED_OPCODE_ID)`
 puts a raw 4-byte `.int <opcode id>` in front of every opcode handler. On ELF
 each handler has its own `llint_op_*` symbol, so the id bytes decode on their
-own (no id below 3599 spells a post-Nehalem instruction; real ids stay under
-1000) and the next handler starts clean. On Windows the PDB has no per-handler
+own (no id below 3599 spells a post-Nehalem instruction; real ids stay under 1000) and the next handler starts clean. On Windows the PDB has no per-handler
 record, so the whole interpreter is one symbol and stays allowlisted.
 
 MSVC inlines jump tables and small `static const` arrays into `.text` right

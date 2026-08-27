@@ -129,7 +129,9 @@ describe.concurrent("multiline strings serialize inline like jest", () => {
       env: { ...bunEnv, CI: "false" },
       stderr: "pipe",
     });
-    expect(await proc.exited).toBe(0);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
     const written = await Bun.file(`${dir}/__snapshots__/multiline.test.ts.snap`).text();
     // Byte-for-byte what jest writes, except the header comment line.
     expect(written).toBe(

@@ -333,6 +333,10 @@ run_test() {
     # (4/0), one case flaked in the full run
     */install/test-dev-peer-dependency-priority.test.ts)
       _retry_on_fail=1 ;;
+    # body.test.ts textStream ECONNRESET case: passes solo; the connection
+    # sometimes drops before the first chunk decodes under full-run load
+    */web/fetch/body.test.ts)
+      _retry_on_fail=1 ;;
   esac
 
   # ── 串行标记：这些测试并行跑会冲突导致 subshell 死 ──

@@ -13,21 +13,23 @@
 
 #[cfg(target_os = "macos")]
 fn main() {
+    use std::io::Write;
+    let mut err = std::io::stderr().lock();
     let problems = match bun_appkit::verify_bindings() {
         Ok(problems) => problems,
-        Err(err) => {
-            eprintln!("bindings: could not load the frameworks: {err}");
+        Err(e) => {
+            let _ = writeln!(err, "bindings: could not load the frameworks: {e}");
             std::process::exit(1);
         }
     };
     if problems.is_empty() {
-        eprintln!("bindings: every binding matches the SDK");
+        let _ = writeln!(err, "bindings: every binding matches the SDK");
         return;
     }
     for p in &problems {
-        eprintln!("{p}");
+        let _ = writeln!(err, "{p}");
     }
-    eprintln!("bindings: {} problem(s)", problems.len());
+    let _ = writeln!(err, "bindings: {} problem(s)", problems.len());
     std::process::exit(1);
 }
 

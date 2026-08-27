@@ -8,7 +8,7 @@
 
 use crate::otlp::{self, SpanWriter, Value, field};
 use crate::span::{SpanKind, SpanStub, StatusCode};
-use crate::{Limits, Local, ScopeId, clock, rt};
+use crate::{Limits, Local, ScopeId, clock};
 
 /// `index | generation << 32`; 0 is the empty handle (generation starts at 1).
 /// The generation is kept below 2^21 so the handle round-trips through a JS
@@ -272,7 +272,7 @@ impl Slot {
                     status: self.status,
                     status_message: &self.status_message,
                 },
-                &rt::limits(),
+                &crate::state().limits,
             );
             return;
         }
@@ -281,7 +281,7 @@ impl Slot {
         w.raw(&self.attrs);
         // (begin-time attributes above were truncated by push_attribute; end-time
         // ones written by `extra` — db.query.text etc. — get the same limit)
-        w.limit_values(rt::limits().attribute_value_length);
+        w.limit_values(crate::state().limits.attribute_value_length);
         extra(&mut w);
         w.raw(&self.extra);
         if self.dropped_attrs != 0 {

@@ -11,7 +11,7 @@ use std::sync::Arc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult};
 use bun_telemetry::processor::{self, Processor};
-use bun_telemetry::{Instrument, Limits, Sampler};
+use bun_telemetry::{Instrument, Sampler};
 use bun_telemetry_cold::config::{self, Compression, OtlpExporterConfig};
 
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerTag};
@@ -31,51 +31,11 @@ pub use span::{
     native_context_value, with_active_propagation,
 };
 
-/// Process-wide, immutable after `configure()`. Read on hot paths without
-/// locking via `state()`.
-pub struct State {
-    pub sampler: Sampler,
-    pub limits: Limits,
-    pub propagate_trace_context: bool,
-    pub propagate_baggage: bool,
-    pub capture_db_statement: bool,
-    pub capture_request_headers: Vec<Box<[u8]>>,
-}
+pub use bun_telemetry::{State, configured, state};
 
-/// Replaced wholesale by `configure()`; the previous value is intentionally
-/// leaked (a few hundred bytes per `Bun.otel.start()` call) so `state()` can
-/// hand out `&'static` without locking on hot paths.
-static STATE: core::sync::atomic::AtomicPtr<State> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
-static RETIRED_STATES: bun_threading::Guarded<Vec<usize>> = bun_threading::Guarded::new(Vec::new());
 /// Serializes "is anything configured yet → configure" across threads (main
 /// and workers starting at once), so exporters are not added twice.
 static CONFIGURE_LOCK: bun_threading::Guarded<()> = bun_threading::Guarded::new(());
-static DEFAULT_STATE: State = State {
-    sampler: Sampler::ParentBasedAlwaysOn,
-    limits: bun_telemetry::data::DEFAULT_LIMITS,
-    propagate_trace_context: true,
-    propagate_baggage: true,
-    capture_db_statement: true,
-    capture_request_headers: Vec::new(),
-};
-
-#[inline]
-pub fn state() -> &'static State {
-    let p = STATE.load(core::sync::atomic::Ordering::Acquire);
-    if p.is_null() {
-        &DEFAULT_STATE
-    } else {
-        // SAFETY: non-null values come from `Box::into_raw` in `configure` and are never freed.
-        unsafe { &*p }
-    }
-}
-
-#[inline]
-pub(crate) fn configured() -> bool {
-    !STATE.load(core::sync::atomic::Ordering::Acquire).is_null()
-}
-
 #[inline]
 pub fn processor() -> &'static Processor {
     processor::global_or_init()
@@ -435,7 +395,7 @@ fn configure_with(
             }
         }
     }
-    let new_state = Box::into_raw(Box::new(State {
+    bun_telemetry::set_state(State {
         sampler: cfg.sampler,
         limits: cfg.limits,
         propagate_trace_context: cfg.propagate_trace_context,
@@ -446,13 +406,7 @@ fn configure_with(
             .iter()
             .map(|s| s.as_bytes().into())
             .collect(),
-    }));
-    let old = STATE.swap(new_state, core::sync::atomic::Ordering::AcqRel);
-    if !old.is_null() {
-        // Other threads may still hold a `&'static State` from `state()`;
-        // retire instead of freeing (reconfiguration is rare).
-        RETIRED_STATES.lock().push(old as usize);
-    }
+    });
     *p.config.write() = cfg.batch;
     let host_name = crate::node::node_os::hostname_string();
     let os_version = crate::node::node_os::release();
@@ -486,9 +440,6 @@ fn configure_with(
         local: local_hook,
         after_record: |g| after_record(JSGlobalObject::opaque_ref(g.cast::<JSGlobalObject>())),
         release_cell: span::release_cell,
-        sampler: || state().sampler,
-        limits: || state().limits,
-        capture_db_statement: || state().capture_db_statement,
         active_trace_state: |g, f| {
             span::with_active_trace_state(JSGlobalObject::opaque_ref(g.cast::<JSGlobalObject>()), f)
         },

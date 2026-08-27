@@ -58,7 +58,6 @@ pub fn begin(global: *mut c_void, system: System, conn: &ConnectionInfo<'_>) -> 
     if !stub.is_some() {
         return NativeSpan::NONE;
     }
-    let limits = rt::limits();
     let span = rt::with_local(global, |local| {
         pool::begin_with(
             &mut local.pool,
@@ -76,7 +75,7 @@ pub fn begin(global: *mut c_void, system: System, conn: &ConnectionInfo<'_>) -> 
                 if !stub.is_recording() {
                     return;
                 }
-                let l = &limits;
+                let l = &crate::state().limits;
                 s.push_attribute(b"db.system.name", &Value::Str(system.name().as_bytes()), l);
                 if !conn.namespace.is_empty() {
                     s.push_attribute(b"db.namespace", &Value::Str(conn.namespace), l);
@@ -225,7 +224,7 @@ pub fn end(global: *mut c_void, span: NativeSpan, statement: &[u8], error: Optio
         return;
     }
     let op = sql_operation(statement).map(str::as_bytes);
-    let capture = rt::capture_db_statement();
+    let capture = crate::state().capture_db_statement;
     let ended = rt::with_local(global, |local| {
         if let Some(o) = op {
             pool::with(&mut local.pool, span, |s| {

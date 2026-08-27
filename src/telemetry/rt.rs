@@ -20,9 +20,6 @@ pub struct Hooks {
     pub after_record: fn(global: *mut c_void),
     /// A pooled span that had a JS cell materialized for it ended: release it.
     pub release_cell: fn(js_cell: crate::pool::JsCellRef),
-    pub sampler: fn() -> crate::Sampler,
-    pub limits: fn() -> crate::data::Limits,
-    pub capture_db_statement: fn() -> bool,
     /// `f(tracestate)` with the active span's W3C `tracestate` (empty if none).
     pub active_trace_state: fn(global: *mut c_void, f: &mut dyn FnMut(&[u8])),
 }
@@ -83,21 +80,9 @@ pub fn active_span(global: *mut c_void) -> Option<SpanStub> {
     }
 }
 
-/// The configured span limits (defaults before the runtime is configured).
-#[inline]
-pub fn limits() -> crate::Limits {
-    HOOKS
-        .get()
-        .map(|h| (h.limits)())
-        .unwrap_or(crate::DEFAULT_LIMITS)
-}
-
 #[inline]
 pub fn capture_db_statement() -> bool {
-    HOOKS
-        .get()
-        .map(|h| (h.capture_db_statement)())
-        .unwrap_or(true)
+    crate::state().capture_db_statement
 }
 
 /// Start a leaf span for `i` under the active span. `SpanStub::NONE` when
@@ -107,9 +92,6 @@ pub fn start_leaf(global: *mut c_void, i: Instrument) -> SpanStub {
     if !crate::enabled(i) {
         return SpanStub::NONE;
     }
-    let Some(h) = HOOKS.get() else {
-        return SpanStub::NONE;
-    };
     let active = active_span(global);
     if active.is_some_and(|s| s.ctx.flags.suppressed()) {
         return SpanStub::NONE;
@@ -118,12 +100,11 @@ pub fn start_leaf(global: *mut c_void, i: Instrument) -> SpanStub {
     if parent.is_none() && !crate::allows_root(i) {
         return SpanStub::NONE;
     }
-    let sampler = (h.sampler)();
     with_local(global, |l| {
         SpanStub::start(
             &mut l.rng,
             parent.as_ref(),
-            &sampler,
+            &crate::state().sampler,
             clock::now_unix_nanos(),
         )
     })
@@ -162,7 +143,7 @@ pub fn end_leaf_at(
     let recorded = with_local(global, |l| {
         batch::record(&mut l.batch, ScopeId::from(i), &mut |buf: &mut Vec<u8>| {
             let mut w = SpanWriter::begin(buf, stub, name, kind, end_ns);
-            w.limit_values(limits().attribute_value_length);
+            w.limit_values(crate::state().limits.attribute_value_length);
             write(&mut w);
             w.finish();
         });

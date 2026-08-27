@@ -22,7 +22,7 @@ pub mod span;
 #[cfg(test)]
 mod native_test_shims;
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
 
 pub use data::{DEFAULT_LIMITS, Limits};
 pub use otlp::{SpanWriter, Value};
@@ -30,6 +30,53 @@ pub use pool::{JsCellRef, NativeSpan};
 pub use processor::{ExportPayload, Exporter, Processor};
 pub use sampler::Sampler;
 pub use span::{Flags, SpanContext, SpanId, SpanKind, SpanStub, StatusCode, TraceId};
+
+/// Process-wide, immutable once set. Read on hot paths without locking via
+/// [`state()`]; replaced wholesale by [`set_state`].
+pub struct State {
+    pub sampler: Sampler,
+    pub limits: Limits,
+    pub propagate_trace_context: bool,
+    pub propagate_baggage: bool,
+    pub capture_db_statement: bool,
+    pub capture_request_headers: Vec<Box<[u8]>>,
+}
+
+static STATE: AtomicPtr<State> = AtomicPtr::new(core::ptr::null_mut());
+/// Replaced values are retired, not freed (a few hundred bytes per
+/// `Bun.otel.start()`), so `state()` can hand out `&'static`.
+static RETIRED_STATES: bun_threading::Guarded<Vec<usize>> = bun_threading::Guarded::new(Vec::new());
+static DEFAULT_STATE: State = State {
+    sampler: Sampler::ParentBasedAlwaysOn,
+    limits: DEFAULT_LIMITS,
+    propagate_trace_context: true,
+    propagate_baggage: true,
+    capture_db_statement: true,
+    capture_request_headers: Vec::new(),
+};
+
+#[inline]
+pub fn state() -> &'static State {
+    let p = STATE.load(Ordering::Acquire);
+    if p.is_null() {
+        &DEFAULT_STATE
+    } else {
+        // SAFETY: non-null values come from `Box::into_raw` in `set_state` and are never freed.
+        unsafe { &*p }
+    }
+}
+
+#[inline]
+pub fn configured() -> bool {
+    !STATE.load(Ordering::Acquire).is_null()
+}
+
+pub fn set_state(s: State) {
+    let old = STATE.swap(Box::into_raw(Box::new(s)), Ordering::AcqRel);
+    if !old.is_null() {
+        RETIRED_STATES.lock().push(old as usize);
+    }
+}
 
 /// Per-VM (per JS thread) telemetry state. Owned by the runtime's `VmState`
 /// and reached through the VM; lower tiers get it via [`rt::with_local`].

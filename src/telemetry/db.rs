@@ -203,6 +203,40 @@ pub fn discard(global: *mut c_void, span: NativeSpan) {
     rt::discard_pooled(global, span)
 }
 
+/// `db.query.text` cap; collectors reject multi-MB attributes.
+const QUERY_TEXT_MAX: usize = 16 * 1024;
+/// Leading text scanned for the verb when the statement is not captured:
+/// room for a prepended comment.
+const VERB_SCAN_MAX: usize = 1024;
+
+/// [`end`] for a statement held as a JS string. Only the leading code units
+/// `end` reads are transcoded, so a Latin-1/UTF-16 statement costs
+/// O(min(len, cap)) per query rather than a whole-text copy.
+pub fn end_string(
+    global: *mut c_void,
+    span: NativeSpan,
+    statement: &bun_core::String,
+    error: Option<DbError<'_>>,
+) {
+    if !span.is_some() {
+        return;
+    }
+    let units = if crate::capture_db_statement() {
+        // A code unit is at least one UTF-8 byte, so one unit past the cap
+        // keeps a longer statement longer than QUERY_TEXT_MAX bytes and
+        // `truncate_utf8` still trims it (split trailing sequence included).
+        QUERY_TEXT_MAX + 1
+    } else {
+        VERB_SCAN_MAX
+    };
+    end(
+        global,
+        span,
+        statement.trunc(units).to_utf8().slice(),
+        error,
+    );
+}
+
 /// Finish a query span. `statement` is recorded as `db.query.text` when
 /// statement capture is on.
 pub fn end(global: *mut c_void, span: NativeSpan, statement: &[u8], error: Option<DbError<'_>>) {
@@ -231,10 +265,9 @@ pub fn end(global: *mut c_void, span: NativeSpan, statement: &[u8], error: Optio
             w.attr("db.operation.name", o);
         }
         if capture && !statement.is_empty() {
-            // Cap very large statements; collectors reject multi-MB attributes.
             w.attr(
                 "db.query.text",
-                crate::otlp::truncate_utf8(statement, 16 * 1024),
+                crate::otlp::truncate_utf8(statement, QUERY_TEXT_MAX),
             );
         }
         if let Some(DbError {

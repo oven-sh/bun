@@ -88,12 +88,7 @@ impl QuerySpan {
         error: Option<DbError<'_>>,
     ) {
         if let Some(span) = self.take() {
-            bun_telemetry::db::end(
-                global.as_ptr().cast(),
-                span,
-                statement.to_utf8().slice(),
-                error,
-            );
+            bun_telemetry::db::end_string(global.as_ptr().cast(), span, statement, error);
         }
     }
 
@@ -121,12 +116,7 @@ impl QuerySpan {
                 from_server: false,
             },
         };
-        bun_telemetry::db::end(
-            global.as_ptr().cast(),
-            span,
-            statement.to_utf8().slice(),
-            Some(error),
-        );
+        bun_telemetry::db::end_string(global.as_ptr().cast(), span, statement, Some(error));
         // Describing the error must not change what the application sees:
         // a throwing getter on it is ignored (the rejection itself follows);
         // a pending termination stays pending for the caller.

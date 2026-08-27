@@ -2,9 +2,11 @@
 //! programmatic/bunfig options that override them.
 //! https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/
 
-use bun_telemetry::data::{DEFAULT_LIMITS, Limits};
 use bun_telemetry::processor::BatchConfig;
-use bun_telemetry::{Instrument, Sampler};
+use bun_telemetry::{Instrument, InstrumentSet, Limits, Sampler, State};
+
+/// The OTLP/HTTP collector a bare `BUN_OTEL=1` / `Bun.otel.start()` exports to.
+pub const DEFAULT_COLLECTOR: &str = "http://localhost:4318";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Compression {
@@ -31,6 +33,13 @@ impl OtlpExporterConfig {
             timeout_ms: 10000,
         }
     }
+}
+
+#[derive(Clone, Debug)]
+pub enum ExporterConfig {
+    Otlp(OtlpExporterConfig),
+    /// OTLP/JSON on stderr (`OTEL_TRACES_EXPORTER=console`, `exporters: ["console"]`).
+    Console,
 }
 
 /// The traces URL for an OTLP base endpoint (`OTEL_EXPORTER_OTLP_ENDPOINT`):
@@ -86,17 +95,12 @@ pub struct Config {
     /// Extra resource attributes (`OTEL_RESOURCE_ATTRIBUTES` and user config).
     pub resource_attributes: Vec<(String, ResourceValue)>,
     pub sampler: Sampler,
-    /// Bitmask of `Instrument`s that record.
-    pub instruments: u32,
-    /// Bitmask of `Instrument`s allowed to start root spans.
-    pub roots: u32,
+    /// Instruments that record.
+    pub instruments: InstrumentSet,
+    /// Instruments allowed to start root spans.
+    pub roots: InstrumentSet,
     pub batch: BatchConfig,
-    pub otlp_exporters: Vec<OtlpExporterConfig>,
-    /// `OTEL_TRACES_EXPORTER=console`.
-    pub console_exporter: bool,
-    /// `OTEL_TRACES_EXPORTER` was set (possibly to `none`): the environment
-    /// chose the exporters, so `start()` adds no default endpoint.
-    pub exporters_from_env: bool,
+    pub exporters: Vec<ExporterConfig>,
     pub propagate_trace_context: bool,
     pub propagate_baggage: bool,
     pub limits: Limits,
@@ -108,30 +112,46 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        let mut all = 0u32;
-        let mut roots = 0u32;
-        for i in Instrument::ALL {
-            all |= i.bit();
-            if !i.requires_parent_by_default() {
-                roots |= i.bit();
-            }
-        }
+        let d = State::DEFAULT;
         Config {
             service_name: None,
             resource_attributes: Vec::new(),
-            sampler: Sampler::default(),
-            instruments: all,
-            roots,
+            sampler: d.sampler,
+            instruments: InstrumentSet::ALL,
+            roots: InstrumentSet::default_roots(),
             batch: BatchConfig::default(),
-            otlp_exporters: Vec::new(),
-            console_exporter: false,
-            exporters_from_env: false,
-            propagate_trace_context: true,
-            propagate_baggage: true,
-            limits: DEFAULT_LIMITS,
-            capture_db_statement: true,
+            exporters: Vec::new(),
+            propagate_trace_context: d.propagate_trace_context,
+            propagate_baggage: d.propagate_baggage,
+            limits: d.limits,
+            capture_db_statement: d.capture_db_statement,
             capture_request_headers: Vec::new(),
         }
+    }
+}
+
+impl Config {
+    /// The hot-path knobs `bun_telemetry::set_state` publishes.
+    pub fn state(&self) -> State {
+        State {
+            sampler: self.sampler,
+            limits: self.limits,
+            propagate_trace_context: self.propagate_trace_context,
+            propagate_baggage: self.propagate_baggage,
+            capture_db_statement: self.capture_db_statement,
+            capture_request_headers: self
+                .capture_request_headers
+                .iter()
+                .map(|s| s.as_bytes().into())
+                .collect(),
+        }
+    }
+
+    pub fn otlp_exporters(&self) -> impl Iterator<Item = &OtlpExporterConfig> {
+        self.exporters.iter().filter_map(|e| match e {
+            ExporterConfig::Otlp(x) => Some(x),
+            ExporterConfig::Console => None,
+        })
     }
 }
 
@@ -155,12 +175,22 @@ pub fn bunfig() -> Option<&'static Bunfig> {
     BUNFIG.get()
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Activation {
+    /// `OTEL_SDK_DISABLED`: nothing may turn tracing on, `Bun.otel.start()` included.
+    SdkDisabled,
+    /// Not enabled by `BUN_OTEL`/bunfig; `Bun.otel.start()` may.
+    Off,
+    /// `BUN_OTEL` truthy or bunfig `[otel] enabled = true`.
+    On,
+}
+
 /// Outcome of reading the environment.
 pub struct EnvConfig {
-    /// `BUN_OTEL` truthy, and not `OTEL_SDK_DISABLED`.
-    pub enabled: bool,
-    /// `OTEL_SDK_DISABLED` truthy: nothing may turn tracing on, `start()` included.
-    pub sdk_disabled: bool,
+    pub activation: Activation,
+    /// `OTEL_TRACES_EXPORTER` was set (possibly `none`): the environment
+    /// chose the exporters, so `start()` adds no default endpoint.
+    pub exporters_chosen_by_env: bool,
     pub config: Config,
     pub warnings: Vec<String>,
 }
@@ -211,16 +241,19 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
     let mut warnings = Vec::new();
 
     let bunfig = bunfig();
-    let mut enabled = get("BUN_OTEL")
+    let activation = if get("OTEL_SDK_DISABLED").is_some_and(|v| truthy(&v)) {
+        Activation::SdkDisabled
+    } else if get("BUN_OTEL")
         .map(|v| truthy(&v))
         .or_else(|| bunfig.and_then(|b| b.enabled))
-        .unwrap_or(false);
-    let sdk_disabled = get("OTEL_SDK_DISABLED")
-        .map(|v| truthy(&v))
-        .unwrap_or(false);
-    if sdk_disabled {
-        enabled = false;
-    }
+        .unwrap_or(false)
+    {
+        Activation::On
+    } else {
+        Activation::Off
+    };
+    let enabled = activation == Activation::On;
+    let mut exporters_chosen_by_env = false;
     // service.name: OTEL_SERVICE_NAME > OTEL_RESOURCE_ATTRIBUTES > bunfig.
     if let Some(v) = get("OTEL_SERVICE_NAME") {
         let v = s(&v);
@@ -285,12 +318,12 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
         c.batch.export_timeout_ms = n;
     }
     if let Some(n) = num("OTEL_BSP_MAX_QUEUE_SIZE", &mut warnings) {
-        c.batch.max_queue_size = n.max(1);
+        c.batch.max_queue_size = n;
     }
     if let Some(n) = num("OTEL_BSP_MAX_EXPORT_BATCH_SIZE", &mut warnings) {
-        c.batch.max_export_batch_size = n.max(1);
+        c.batch.max_export_batch_size = n;
     }
-    c.batch.max_export_batch_size = c.batch.max_export_batch_size.min(c.batch.max_queue_size);
+    c.batch = c.batch.normalized();
     if let Some(n) = num("OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT", &mut warnings)
         .or_else(|| num("OTEL_ATTRIBUTE_COUNT_LIMIT", &mut warnings))
     {
@@ -385,15 +418,14 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
     let mut want_otlp = true;
     if let Some(v) = get("OTEL_TRACES_EXPORTER") {
         want_otlp = false;
-        c.exporters_from_env = true;
+        exporters_chosen_by_env = true;
         for e in bun_core::strings::split(&v, b",") {
             match e.trim_ascii() {
                 b"otlp" => want_otlp = true,
-                b"console" => c.console_exporter = true,
+                b"console" => c.exporters.push(ExporterConfig::Console),
                 b"" => {}
                 b"none" => {
-                    c.otlp_exporters.clear();
-                    c.console_exporter = false;
+                    c.exporters.clear();
                     want_otlp = false;
                 }
                 other => warnings.push(format!(
@@ -404,20 +436,17 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
         }
     }
     if want_otlp {
-        let url = explicit_url.or_else(|| {
-            if enabled {
-                Some("http://localhost:4318/v1/traces".to_string())
-            } else {
-                None
-            }
-        });
+        let url = explicit_url.or_else(|| enabled.then(|| traces_endpoint(DEFAULT_COLLECTOR)));
         if let Some(url) = url {
-            c.otlp_exporters.push(OtlpExporterConfig {
-                url,
-                headers: env_headers,
-                compression: compression.unwrap_or(Compression::None),
-                timeout_ms: timeout_ms.unwrap_or(10000),
-            });
+            let mut x = OtlpExporterConfig::new(url);
+            x.headers = env_headers;
+            if let Some(v) = compression {
+                x.compression = v;
+            }
+            if let Some(t) = timeout_ms {
+                x.timeout_ms = t;
+            }
+            c.exporters.push(ExporterConfig::Otlp(x));
         }
     }
 
@@ -425,7 +454,7 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
     // BUN_OTEL_DISABLE a deny-list; `name!` forces root spans on, `name?`
     // forces parent-required.
     if let Some(v) = get("BUN_OTEL_INSTRUMENTATIONS") {
-        let mut mask = 0u32;
+        let mut mask = InstrumentSet::EMPTY;
         for n in bun_core::strings::split(&v, b",") {
             let n = n.trim_ascii();
             if n.is_empty() {
@@ -438,10 +467,10 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
             };
             match Instrument::from_name(n) {
                 Some(i) => {
-                    mask |= i.bit();
+                    mask.insert(i);
                     match force {
-                        Some(true) => c.roots |= i.bit(),
-                        Some(false) => c.roots &= !i.bit(),
+                        Some(true) => c.roots.insert(i),
+                        Some(false) => c.roots.remove(i),
                         None => {}
                     }
                 }
@@ -452,7 +481,7 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
             }
         }
         // User spans are always allowed.
-        c.instruments = mask | Instrument::User.bit();
+        c.instruments = mask.with(Instrument::User);
     }
     if let Some(v) = get("BUN_OTEL_DISABLE") {
         for n in bun_core::strings::split(&v, b",") {
@@ -461,7 +490,7 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
                 continue;
             }
             match Instrument::from_name(n) {
-                Some(i) => c.instruments &= !i.bit(),
+                Some(i) => c.instruments.remove(i),
                 None => warnings.push(format!(
                     "BUN_OTEL_DISABLE: unknown instrumentation {:?}",
                     s(n)
@@ -503,8 +532,8 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
     }
 
     EnvConfig {
-        enabled,
-        sdk_disabled,
+        activation,
+        exporters_chosen_by_env,
         config: c,
         warnings,
     }
@@ -555,11 +584,9 @@ mod tests {
             ("OTEL_SERVICE_NAME", ""),
         ]);
         let r = from_env(&e);
-        assert_eq!(r.config.otlp_exporters.len(), 1);
-        assert_eq!(
-            r.config.otlp_exporters[0].url,
-            "http://localhost:4318/v1/traces"
-        );
+        let otlp: Vec<_> = r.config.otlp_exporters().collect();
+        assert_eq!(otlp.len(), 1);
+        assert_eq!(otlp[0].url, "http://localhost:4318/v1/traces");
         assert!(r.warnings.is_empty(), "{:?}", r.warnings);
     }
 
@@ -567,12 +594,10 @@ mod tests {
     fn defaults_when_enabled() {
         let e = env(&[("BUN_OTEL", "1")]);
         let r = from_env(&e);
-        assert!(r.enabled);
-        assert_eq!(r.config.otlp_exporters.len(), 1);
-        assert_eq!(
-            r.config.otlp_exporters[0].url,
-            "http://localhost:4318/v1/traces"
-        );
+        assert_eq!(r.activation, Activation::On);
+        let otlp: Vec<_> = r.config.otlp_exporters().collect();
+        assert_eq!(otlp.len(), 1);
+        assert_eq!(otlp[0].url, "http://localhost:4318/v1/traces");
     }
 
     #[test]
@@ -582,7 +607,7 @@ mod tests {
             ("OTEL_EXPORTER_OTLP_ENDPOINT", "https://collector"),
             ("OTEL_TRACES_EXPORTER", "none"),
         ]);
-        assert!(from_env(&e).config.otlp_exporters.is_empty());
+        assert!(from_env(&e).config.exporters.is_empty());
         let e = env(&[
             ("BUN_OTEL", "1"),
             ("OTEL_EXPORTER_OTLP_ENDPOINT", "https://collector"),
@@ -591,8 +616,9 @@ mod tests {
             ("OTEL_EXPORTER_OTLP_TIMEOUT", "1234"),
         ]);
         let r = from_env(&e);
-        assert_eq!(r.config.otlp_exporters.len(), 1);
-        let x = &r.config.otlp_exporters[0];
+        let otlp: Vec<_> = r.config.otlp_exporters().collect();
+        assert_eq!(otlp.len(), 1);
+        let x = otlp[0];
         assert_eq!(x.url, "https://collector/v1/traces");
         assert!(
             x.headers
@@ -622,7 +648,7 @@ mod tests {
             ("BUN_OTEL_DISABLE", "fs, dns"),
         ]);
         let r = from_env(&e);
-        let x = &r.config.otlp_exporters[0];
+        let x = r.config.otlp_exporters().next().unwrap();
         assert_eq!(x.url, "https://otel.example.com:4318/v1/traces");
         assert_eq!(
             x.headers,
@@ -639,19 +665,22 @@ mod tests {
                 ResourceValue::Str("prod".into())
             )]
         );
-        assert_eq!(r.config.instruments & Instrument::Fs.bit(), 0);
-        assert_eq!(r.config.instruments & Instrument::Dns.bit(), 0);
-        assert_ne!(r.config.instruments & Instrument::HttpServer.bit(), 0);
+        assert!(!r.config.instruments.contains(Instrument::Fs));
+        assert!(!r.config.instruments.contains(Instrument::Dns));
+        assert!(r.config.instruments.contains(Instrument::HttpServer));
     }
 
     #[test]
     fn disabled() {
         let e = env(&[("BUN_OTEL", "1"), ("OTEL_SDK_DISABLED", "true")]);
-        assert!(!from_env(&e).enabled);
+        assert_eq!(from_env(&e).activation, Activation::SdkDisabled);
         let e = env(&[("OTEL_EXPORTER_OTLP_ENDPOINT", "http://x")]);
         let r = from_env(&e);
-        assert!(!r.enabled);
+        assert_eq!(r.activation, Activation::Off);
         // Endpoint is still parsed so `Bun.otel.start()` with no args uses it.
-        assert_eq!(r.config.otlp_exporters[0].url, "http://x/v1/traces");
+        assert_eq!(
+            r.config.otlp_exporters().next().unwrap().url,
+            "http://x/v1/traces"
+        );
     }
 }

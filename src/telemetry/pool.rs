@@ -467,7 +467,7 @@ pub fn is_live(p: &Pool, handle: NativeSpan) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::DEFAULT_LIMITS;
+    use crate::DEFAULT_LIMITS;
 
     #[test]
     fn set_attribute_is_last_write_wins_even_when_key_bits_collide() {

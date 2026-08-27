@@ -224,7 +224,7 @@ pub fn end(global: *mut c_void, span: NativeSpan, statement: &[u8], error: Optio
         return;
     }
     let op = sql_operation(statement).map(str::as_bytes);
-    let capture = crate::state().capture_db_statement;
+    let capture = crate::capture_db_statement();
     let ended = rt::with_local(global, |local| {
         if let Some(o) = op {
             pool::with(&mut local.pool, span, |s| {

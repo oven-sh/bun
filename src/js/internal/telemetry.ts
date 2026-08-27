@@ -18,7 +18,7 @@ const nativeForceFlush = $newRustFunction("telemetry.rs", "forceFlush", 0);
 const nativeStats = $newRustFunction("telemetry.rs", "stats", 0);
 const nativeExportSettled = $newRustFunction("telemetry.rs", "exportSettled", 3);
 const nativeDecode = $newRustFunction("telemetry.rs", "decode", 1);
-const nativeSetEnabled = $newRustFunction("telemetry.rs", "setEnabled", 2);
+const nativeShutdown = $newRustFunction("telemetry.rs", "shutdown", 0);
 const nativePropagationFlags = $newRustFunction("telemetry.rs", "propagationFlags", 0);
 const propagationHeaders = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetryPropagationHeaders", 2);
 const enterContext = $newCppFunction("TelemetryContext.cpp", "jsTelemetryEnterContext", 2);
@@ -484,8 +484,7 @@ function start(options?: any) {
 
 async function shutdown() {
   await nativeForceFlush();
-  // (mask 0, and the second argument omitted = shut down, not just "disable instrumentations")
-  nativeSetEnabled(0);
+  nativeShutdown();
 }
 
 // W3C tracestate as an @opentelemetry/api `TraceState` (immutable; set/unset

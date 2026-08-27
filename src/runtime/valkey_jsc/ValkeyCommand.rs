@@ -264,7 +264,7 @@ impl Promise {
             );
             let credential_bearing =
                 matches!(name, b"AUTH" | b"HELLO" | b"MIGRATE" | b"ACL" | b"CONFIG");
-            if credential_bearing || !bun_telemetry::rt::capture_db_statement() {
+            if credential_bearing || !bun_telemetry::capture_db_statement() {
                 return;
             }
             let first: &[u8] = match &command.args {

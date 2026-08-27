@@ -80,11 +80,6 @@ pub fn active_span(global: *mut c_void) -> Option<SpanStub> {
     }
 }
 
-#[inline]
-pub fn capture_db_statement() -> bool {
-    crate::state().capture_db_statement
-}
-
 /// Start a leaf span for `i` under the active span. `SpanStub::NONE` when
 /// disabled or when `i` requires a parent and there is none.
 #[inline]

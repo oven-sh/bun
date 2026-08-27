@@ -2,6 +2,7 @@
 
 #include "ZigGlobalObject.h"
 #include "BuiltinModuleKeys.h"
+#include "IsolatedModuleCache.h"
 #include "MessagePort.h"
 #include "helpers.h"
 #include "JavaScriptCore/ArgList.h"
@@ -3754,8 +3755,11 @@ static JSModuleRecord* createStandaloneRecord(Zig::GlobalObject* globalObject, c
     if (!provider)
         return nullptr;
     auto* record = zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, globalObject->vm(), key, jsSourceCode->sourceCode(), provider->m_moduleInfo);
-    zig__ModuleInfoDeserialized__deinit(provider->m_moduleInfo);
-    provider->m_moduleInfo = nullptr;
+    // Same ownership rule as Bun__analyzeTranspiledModule: a provider shared across globals keeps its module_info.
+    if (!Bun::IsolatedModuleCache::canUse(globalObject->vm(), globalObject->bunVM())) {
+        zig__ModuleInfoDeserialized__deinit(provider->m_moduleInfo);
+        provider->m_moduleInfo = nullptr;
+    }
     return record;
 }
 

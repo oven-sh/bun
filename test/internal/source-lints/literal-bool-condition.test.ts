@@ -61,7 +61,10 @@ function withoutTestItems(lines: string[]): string[] {
     let depth = 0;
     let sawBrace = false;
     let state: "code" | "string" | "raw" | "block" = "code";
-    let rawHashes = 0;
+    // `"` followed by the opening `#`s closes a raw string.
+    let rawClose = '"';
+    // Rust block comments nest.
+    let blockDepth = 0;
     let done = false;
     while (i < lines.length && !done) {
       let line = lines[i];
@@ -77,15 +80,18 @@ function withoutTestItems(lines: string[]): string[] {
             else if (ch === '"') state = "code";
             break;
           case "raw":
-            if (ch === '"' && line.slice(k + 1, k + 1 + rawHashes) === "#".repeat(rawHashes)) {
-              k += rawHashes;
+            if (line.startsWith(rawClose, k)) {
+              k += rawClose.length - 1;
               state = "code";
             }
             break;
           case "block":
-            if (ch === "*" && next === "/") {
+            if (ch === "/" && next === "*") {
               k++;
-              state = "code";
+              blockDepth++;
+            } else if (ch === "*" && next === "/") {
+              k++;
+              if (--blockDepth === 0) state = "code";
             }
             break;
           case "code": {
@@ -93,6 +99,7 @@ function withoutTestItems(lines: string[]): string[] {
               k = line.length;
             } else if (ch === "/" && next === "*") {
               k++;
+              blockDepth = 1;
               state = "block";
             } else if (ch === '"') {
               state = "string";
@@ -103,8 +110,9 @@ function withoutTestItems(lines: string[]): string[] {
             ) {
               // `r"..."`, `r#"..."#`, `br"..."`: an `r` that does not continue an
               // identifier and is followed by `#*"` opens a raw string.
-              rawHashes = line.slice(k + 1).indexOf('"');
-              k += 1 + rawHashes;
+              const hashes = line.slice(k + 1).indexOf('"');
+              rawClose = '"' + line.slice(k + 1, k + 1 + hashes);
+              k += 1 + hashes;
               state = "raw";
             } else if (ch === "'" && (next === "\\" || line[k + 2] === "'")) {
               // A char literal (`'{'`, `'\n'`); a lifetime (`'a`) has no
@@ -184,6 +192,7 @@ test("withoutTestItems keeps production code and blanks #[cfg(test)] items", () 
     "    const C: char = '{';",
     "    /* { */ fn f<'a>(_: &'a str) {}",
     '    const E: &str = f(r#"{"a": "}"#);',
+    "    /* outer /* inner */ still a comment { */",
     '    const D: &str = r"',
     "}",
     '";',
@@ -210,6 +219,7 @@ test("withoutTestItems keeps production code and blanks #[cfg(test)] items", () 
     "fn live_too() {}",
     "",
     "fn last() {}",
+    "",
     "",
     "",
     "",

@@ -204,15 +204,12 @@ void URLSearchParams::updateURL()
         m_associatedURL->markSearchParamsDirty();
 }
 
-ExceptionOr<void> URLSearchParams::updateFromAssociatedURL()
+ExceptionOr<void> URLSearchParams::updateFromQuery(StringView query)
 {
-    ASSERT(m_associatedURL);
-    // The URL is already updated. A failed parse leaves the params empty, not stale.
-    m_pairs.clear();
-    auto pairs = parseSearch(m_associatedURL->search());
-    if (pairs.hasException()) [[unlikely]]
-        return pairs.releaseException();
-    m_pairs = pairs.releaseReturnValue();
+    auto pairs = WTF::URLParser::tryParseURLEncodedForm(query, maxPairs());
+    if (!pairs) [[unlikely]]
+        return tooManyPairs();
+    m_pairs = WTF::move(*pairs);
     return {};
 }
 

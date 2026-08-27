@@ -452,21 +452,21 @@ describe("entry count limit", () => {
   );
 
   it.concurrent(
-    "url.search throws when the new query has too many pairs",
+    "url.search throws when the new query has too many pairs and leaves the URL as it was",
     async () => {
       const out = await run(`
         const url = new URL("http://example.com/?a=1");
         const params = url.searchParams;
         out.search = threw(() => { url.search = pairs(MAX + 1); });
-        out.searchLength = url.search.length;
-        out.sizeAfterFailedSearch = params.size;
+        out.href = url.href;
+        out.entries = [...params];
         url.search = "b=2";
         out.getAfterSearch = params.get("b");
       `);
       expect(out).toEqual({
         search: tooMany,
-        searchLength: 1 + 2 * (MAX + 1),
-        sizeAfterFailedSearch: 0,
+        href: "http://example.com/?a=1",
+        entries: [["a", "1"]],
         getAfterSearch: "2",
       });
     },
@@ -474,21 +474,21 @@ describe("entry count limit", () => {
   );
 
   it.concurrent(
-    "url.href throws when the new query has too many pairs",
+    "url.href throws when the new query has too many pairs and leaves the URL as it was",
     async () => {
       const out = await run(`
         const url = new URL("http://example.com/?a=1");
         const params = url.searchParams;
-        out.href = threw(() => { url.href = "http://example.com/?" + pairs(MAX + 1); });
-        out.searchLength = url.search.length;
-        out.sizeAfterFailedHref = params.size;
+        out.href = threw(() => { url.href = "http://other.example/path?" + pairs(MAX + 1); });
+        out.hrefAfter = url.href;
+        out.entries = [...params];
         url.href = "http://example.com/?b=2";
         out.getAfterHref = params.get("b");
       `);
       expect(out).toEqual({
         href: tooMany,
-        searchLength: 1 + 2 * (MAX + 1),
-        sizeAfterFailedHref: 0,
+        hrefAfter: "http://example.com/?a=1",
+        entries: [["a", "1"]],
         getAfterHref: "2",
       });
     },

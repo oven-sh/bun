@@ -174,12 +174,16 @@ ExceptionOr<void> DOMURL::setFullURL(const URL& fullURL)
     return setURL(WTF::move(completeURL));
 }
 
+// The query is parsed before the URL is stored, so a failure leaves both the URL and the params as they were.
 ExceptionOr<void> DOMURL::setURL(URL&& url)
 {
+    if (m_searchParams) {
+        auto result = m_searchParams->updateFromQuery(url.query());
+        if (result.hasException()) [[unlikely]]
+            return result;
+    }
     m_url = WTF::move(url);
     m_searchParamsDirty = false;
-    if (m_searchParams)
-        return m_searchParams->updateFromAssociatedURL();
     return {};
 }
 

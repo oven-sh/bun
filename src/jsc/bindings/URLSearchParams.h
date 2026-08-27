@@ -51,7 +51,8 @@ public:
     bool has(const StringView name, const String& value = {}) const;
     ExceptionOr<void> set(const String& name, const String& value);
     String toString() const;
-    ExceptionOr<void> updateFromAssociatedURL();
+    // Replaces the pairs with the parse of a URL query. On failure the pairs are unchanged.
+    ExceptionOr<void> updateFromQuery(StringView query);
     void sort();
     size_t size() const { return m_pairs.size(); }
     size_t memoryCost() const;

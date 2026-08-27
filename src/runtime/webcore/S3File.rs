@@ -143,6 +143,7 @@ fn resolve_s3_blob(
             if matches!(path, crate::node::PathOrFileDescriptor::Fd(_)) {
                 return Err(global.throw_invalid_arguments(format_args!("{error_message}")));
             }
+            // The clone owns a copy of a buffer's bytes; `path` unpins at scope exit.
             let blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
             Ok((Box::new(blob), options))
         }

@@ -1285,6 +1285,8 @@ impl From<BunError> for LinkError {
 pub struct LinkerOptions {
     pub(crate) generate_bytecode_cache: bool,
     pub(crate) generate_internal_module_bytecode: bool,
+    /// See `CompileTargetBuiltins::Target`.
+    pub(crate) target_builtins: Option<std::sync::Arc<[u8]>>,
     pub(crate) bytecode_depth: u32,
     pub(crate) output_format: Format,
     pub(crate) ignore_dce_annotations: bool,
@@ -1330,6 +1332,7 @@ impl Default for LinkerOptions {
         Self {
             generate_bytecode_cache: false,
             generate_internal_module_bytecode: false,
+            target_builtins: None,
             bytecode_depth: u32::MAX,
             output_format: Format::Esm,
             ignore_dce_annotations: false,

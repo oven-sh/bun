@@ -39,6 +39,20 @@ test("bad workspace path", () => {
   expect(exitCode).toBe(1);
 });
 
+// The glob walker opens the literal prefix of an absolute pattern before it walks it. When
+// that directory is missing, the error names the errno by its node spelling on every
+// platform (Windows used to print the bare variant name, "NOENT").
+test("glob entry under a missing directory reports the errno name", async () => {
+  using dir = tempDir("bad-workspace-glob-missing-root", {});
+  const entry = `${String(dir).replaceAll("\\", "/")}/missing/*`;
+  writeFileSync(join(String(dir), "package.json"), rootPackageJson([entry]));
+
+  const { stderr, exitCode } = await runInstall(String(dir));
+
+  expect(stderr).toContain(`error: Failed to run workspace pattern ${entry} due to error ENOENT`);
+  expect(exitCode).toBe(1);
+});
+
 test("non-string workspaces entry prints the error without literal markup", async () => {
   using dir = tempDir("bad-workspace-non-string", {
     "package.json": JSON.stringify({ name: "hey", workspaces: [123] }),

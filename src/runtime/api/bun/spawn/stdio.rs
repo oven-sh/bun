@@ -172,7 +172,7 @@ impl Stdio {
 
                         bun_core::debug_warn!(
                             "Failed to write to memfd: {}",
-                            <&'static str>::from(err.get_errno()),
+                            bstr::BStr::new(err.name()),
                         );
                         fd.close();
                         return false;

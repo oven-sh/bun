@@ -503,6 +503,16 @@ mod errno_name_tests {
         }
     }
 
+    /// Matters on Windows, where `E` is a separate enum with unprefixed variant names.
+    #[test]
+    fn e_spells_like_system_errno() {
+        assert_eq!(<&'static str>::from(E::ENOENT), "ENOENT");
+        assert_eq!(<&'static str>::from(E::E2BIG), "E2BIG");
+        assert_eq!(<&'static str>::from(E::SUCCESS), "SUCCESS");
+        #[cfg(windows)]
+        assert_eq!(<&'static str>::from(E::UV_ENOENT), "UV_ENOENT");
+    }
+
     #[test]
     fn coreutils_map() {
         assert_eq!(

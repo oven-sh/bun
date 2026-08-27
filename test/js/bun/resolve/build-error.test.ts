@@ -247,6 +247,43 @@ test.concurrent("JSX next to module.exports is not blamed on a runtime import", 
   expect(stderr).not.toContain("Try require(");
 });
 
+// The lexer reads the first token while the parser is constructed. An error it
+// logs there still has to fail the parse, on both load paths.
+test.concurrent("a lexer error on the first token rejects import() and require()", async () => {
+  using dir = tempDir("build-error-first-token", {
+    // `\u0030foo` spells the identifier `0foo`.
+    "bad.js": `\\u0030foo = 1;\nconsole.log("loaded");`,
+    "main.js": `
+      const out = {};
+      try {
+        await import("./bad.js");
+      } catch (e) {
+        out.import = [e.name, e.message];
+      }
+      try {
+        require("./bad.js");
+      } catch (e) {
+        out.require = [e.name, e.message];
+      }
+      console.log(JSON.stringify(out));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  if (exitCode !== 0) console.error(stderr);
+  const expected = ["BuildMessage", 'Invalid identifier: "0foo"'];
+  expect(JSON.parse(stdout)).toEqual({ import: expected, require: expected });
+  expect(exitCode).toBe(0);
+});
+
 test("BuildMessage finalize frees with the same allocator it was created with", async () => {
   // BuildMessage.create() clones the message with the passed allocator
   // but finalize() was freeing it with bun.default_allocator and never

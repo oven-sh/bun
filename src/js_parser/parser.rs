@@ -1688,6 +1688,7 @@ pub fn new_lazy_export_ast_impl<'bump>(
         define,
         source,
         log: log_ptr,
+        orig_error_count: 0,
     };
     let result = match parser.to_lazy_export_ast(expr, runtime_api_call, symbols) {
         Ok(r) => r,

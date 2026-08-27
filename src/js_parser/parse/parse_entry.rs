@@ -62,6 +62,9 @@ pub struct Parser<'a> {
     pub(crate) source: &'a bun_ast::Source,
     pub(crate) define: &'a Define,
     pub(crate) bump: &'a Arena,
+    /// `log.errors` before the priming `lexer.next()` in `init`. An error the
+    /// lexer logs for the first token must count against the parse too.
+    pub(crate) orig_error_count: u32,
 }
 
 pub struct Options<'a> {
@@ -314,6 +317,7 @@ impl<'a> Parser<'a> {
         bump: &'a Arena,
     ) -> Result<Parser<'a>, Error> {
         source.check_parseable_len(log, "File")?;
+        let orig_error_count = log.errors;
         let mut lexer = js_lexer::Lexer::init_without_reading(log, source, bump);
         // Must be set before the priming `next()` so leading comments are seen.
         lexer.track_comments = options.features.minify_identifiers;
@@ -330,6 +334,7 @@ impl<'a> Parser<'a> {
             define,
             source,
             log: log_ptr,
+            orig_error_count,
         })
     }
 }
@@ -741,11 +746,9 @@ impl<'a> Parser<'a> {
             source,
             define,
             bump,
+            orig_error_count,
         } = self;
 
-        // `lexer.log` aliases `log`; route through the centralised
-        // `Lexer::log()` accessor so this site stays safe.
-        let orig_error_count = lexer.log().errors;
         // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
         // field docs), so handing the same raw pointer to both is defined —
         // no `&mut` is materialized.

@@ -87,7 +87,12 @@ impl JavaScript {
         };
 
         let result = match parser.parse() {
-            Ok(r) => r,
+            Ok(r) => {
+                // Every phase of the parse halts on a logged error, so callers
+                // may run or cache an AST without checking the log.
+                debug_assert!(!matches!(r, js_parser::Result::Ast(_)) || temp_log.errors == 0);
+                r
+            }
             Err(err) => {
                 // `Parser::parse` consumes `self`, so `parser` is gone in this
                 // arm. The `&'a mut temp_log` it held is released, so read

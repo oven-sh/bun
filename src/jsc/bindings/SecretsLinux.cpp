@@ -174,8 +174,7 @@ public:
             }
         }
 
-        // Load GIO (GCancellable). libsecret links against it, so it is present
-        // wherever libsecret is.
+        // Load GIO (GCancellable). libsecret links it, so it is present wherever libsecret is.
         gio_handle = dlopen("libgio-2.0.so.0", RTLD_LAZY | RTLD_GLOBAL);
         if (!gio_handle) {
             gio_handle = dlopen("libgio-2.0.so", RTLD_LAZY | RTLD_GLOBAL);
@@ -263,10 +262,9 @@ static LibsecretFramework* libsecretFramework()
     return framework->secret_handle ? &framework.get() : nullptr;
 }
 
-// The pool thread publishes the GCancellable and then checks for a cancel
-// request; the JS thread records the request and then looks for the
-// GCancellable. With seq_cst on both sides one of them sees the other's
-// write, so a cancel that races the start of the call is never lost.
+// Dekker-style handshake: the pool thread publishes the token then reads the
+// cancel flag, the JS thread sets the flag then reads the token (both seq_cst),
+// so a cancel that races the start of the call is never lost.
 void* Cancellation::gcancellable()
 {
     if (void* existing = m_gcancellable.load()) return existing;

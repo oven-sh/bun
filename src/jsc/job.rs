@@ -185,10 +185,9 @@ pub trait JobContext: Sized + 'static {
     /// can wait on something external. Only such jobs are tracked by the VM.
     const CANCELLABLE: bool = false;
 
-    /// Whether the job holds the event loop open until its completion runs
-    /// (Node: a queued `uv_work_t`). A job whose promise can settle before
-    /// the pool body returns (a deadline) keeps its own [`KeepAlive`] on the
-    /// `Js` side instead, and releases it there.
+    /// Whether the job holds the loop open until its completion runs (Node: a
+    /// queued `uv_work_t`). A job whose promise can settle first (a deadline)
+    /// holds its own [`KeepAlive`] on the `Js` side instead.
     const KEEPS_LOOP_ALIVE: bool = true;
 
     /// Pool thread, VM not yet in its final wait when the pool reached the job
@@ -304,8 +303,7 @@ impl<C: JobContext> bun_event_loop::Taskable for Job<C> {
 }
 
 impl<C: JobContext> Job<C> {
-    /// JS thread: build the job, keep the loop alive for it (unless `C`
-    /// does), hand it to the pool.
+    /// JS thread: build the job, keep the loop alive for it (unless `C` does), hand it to the pool.
     #[track_caller]
     pub fn schedule(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
         let mut keep_alive = KeepAlive::default();

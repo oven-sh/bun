@@ -48,8 +48,8 @@ pub(crate) struct SecretsJob {
 impl crate::JobContext for SecretsJob {
     type OffThread = Self;
     type Js = Box<Pending>;
-    /// libsecret's sync calls take a `GCancellable`; the macOS and Windows
-    /// calls cannot be interrupted, so `cancel` is a no-op there.
+    /// Only libsecret takes a `GCancellable`; Keychain and Credential Manager
+    /// calls cannot be interrupted.
     const CANCELLABLE: bool = cfg!(any(target_os = "linux", target_os = "freebsd"));
     /// [`Pending`] holds the loop ref, so the deadline can release it.
     const KEEPS_LOOP_ALIVE: bool = false;
@@ -60,8 +60,7 @@ impl crate::JobContext for SecretsJob {
     }
 
     fn then(this: Self, pending: Box<Pending>, cx: &crate::JsThread<'_>) -> JsResult<()> {
-        // The deadline already rejected the promise; the late result is dropped
-        // (the options destructor zeroes it).
+        // The deadline already rejected the promise: drop the late result.
         if pending.timed_out {
             return Ok(());
         }
@@ -80,8 +79,7 @@ impl crate::JobContext for SecretsJob {
         scope.assert_no_exception_except_termination()
     }
 
-    /// VM teardown: the pool thread may be parked on the keyring (a D-Bus
-    /// call, an unlock prompt). Make the platform call return.
+    /// VM teardown: make a call parked on the keyring (D-Bus, an unlock prompt) return.
     unsafe fn cancel(off: *mut Self) {
         // SAFETY: fn contract; `cancel` only touches the job's atomics.
         Bun__SecretsJobOptions__cancel(SecretsJobOptions::opaque_mut(unsafe { (*off).options.0 }));
@@ -89,8 +87,7 @@ impl crate::JobContext for SecretsJob {
 }
 
 /// The JS-thread half of a [`SecretsJob`]: the promise, the loop ref, and the
-/// deadline. Boxed so the timer node keeps its address while the job moves
-/// its halves around.
+/// deadline. Boxed: the timer node needs a stable address while the job moves.
 #[repr(C)]
 pub struct Pending {
     /// `bun_runtime::dispatch` recovers `*mut Pending` from this field
@@ -98,9 +95,8 @@ pub struct Pending {
     event_loop_timer: EventLoopTimer,
     promise: Strong,
     keep_alive: KeepAlive,
-    /// The job's C++ options. The job owns them and frees them only after this
-    /// box is dropped, which unlinks the timer first, so the pointer is live
-    /// whenever the timer fires.
+    /// The job's C++ options: live whenever the timer can fire, because the job
+    /// frees them only after this box (which unlinks the timer) is dropped.
     options: *mut SecretsJobOptions,
     timed_out: bool,
 }
@@ -112,9 +108,8 @@ unsafe impl crate::job::JsAffine for Pending {}
 bun_event_loop::impl_timer_owner!(Pending; from_timer_ptr => event_loop_timer);
 
 impl Pending {
-    /// The deadline passed (JS thread, `drain_timers`): reject the promise now,
-    /// let the loop go, and ask the platform call to return. Its result, if it
-    /// ever arrives, is dropped in `then`.
+    /// The deadline passed: reject the promise, let the loop go, and ask the
+    /// platform call to return (`then` drops its late result).
     ///
     /// # Safety
     /// `this` is the live box a `SecretsJob` owns; `vm` is the live per-thread VM.

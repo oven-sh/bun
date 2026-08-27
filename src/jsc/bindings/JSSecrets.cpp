@@ -66,9 +66,8 @@ JSValue Error::toJS(VM& vm, JSGlobalObject* globalObject) const
 
 }
 
-// How long a call may wait on the credential store before it rejects, unless
-// the caller passes `timeout`. A D-Bus method call times out after 25 s by
-// default, so a keyring that has not answered by now is not going to.
+// Default deadline. GDBus gives each method call 25 s, so a keyring that is
+// silent for 30 s is not going to answer.
 static constexpr uint64_t kDefaultTimeoutMs = 30'000;
 
 // Options struct that will be passed through the threadpool
@@ -186,9 +185,8 @@ struct SecretsJobOptions {
             name = nameValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, false);
 
-            // `timeout`: milliseconds to wait for the credential store.
-            // undefined keeps the default; null, 0 and +Infinity wait forever
-            // (0 and +Infinity as `Bun.spawn` reads them).
+            // `timeout` ms: undefined keeps the default; null, 0 and +Infinity
+            // wait forever (0 and +Infinity as `Bun.spawn` reads them).
             JSValue timeoutValue = getIfPropertyExistsPrototypePollutionMitigation(globalObject, options, Identifier::fromString(vm, "timeout"_s));
             RETURN_IF_EXCEPTION(scope, false);
             if (timeoutValue.isNull() || (timeoutValue.isNumber() && timeoutValue.asNumber() == std::numeric_limits<double>::infinity())) {
@@ -292,9 +290,8 @@ void Bun__SecretsJobOptions__runTask(SecretsJobOptions* opts)
     }
 }
 
-// JS thread, while the pool thread may be inside the platform call: ask it to
-// return early. Its result is dropped either way (the promise was already
-// rejected, or the VM is being torn down).
+// JS thread, any time: make the platform call return early. Its result is
+// dropped either way (promise already rejected, or VM teardown).
 void Bun__SecretsJobOptions__cancel(SecretsJobOptions* opts)
 {
     opts->cancellation.cancel();

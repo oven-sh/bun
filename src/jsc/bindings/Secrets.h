@@ -36,14 +36,11 @@ struct Error {
     JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject) const;
 };
 
-// One platform call's cancellation state. Lives in the job; `cancel()` runs
-// on the JS thread (the deadline, VM teardown) while the pool thread may be
-// inside the platform call.
-//
-// Linux: a GCancellable that libsecret's sync calls honor (a pending D-Bus
-// call fails with G_IO_ERROR_CANCELLED, a keyring prompt is dismissed). The
-// macOS Keychain and Windows Credential Manager calls cannot be interrupted,
-// so there `cancel()` has nothing to do and the call finishes on its own.
+// One platform call's cancellation state. `cancel()` runs on the JS thread (the
+// deadline, VM teardown) while the pool thread may be inside the call. Linux
+// wraps a GCancellable, which libsecret honors (D-Bus calls fail with
+// G_IO_ERROR_CANCELLED, a prompt is dismissed). Keychain and Credential Manager
+// calls cannot be interrupted, so there `cancel()` is a no-op.
 class Cancellation {
     WTF_MAKE_NONCOPYABLE(Cancellation);
 
@@ -56,8 +53,7 @@ public:
     // JS thread. Safe before, during, and after the platform call.
     void cancel();
 
-    // Pool thread, right before the libsecret call: the GCancellable* to pass
-    // to it (created here; null when libgio is not available).
+    // Pool thread, before the libsecret call: the GCancellable* to pass to it.
     void* gcancellable();
 
 private:

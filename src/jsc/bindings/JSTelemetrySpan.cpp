@@ -91,11 +91,6 @@ extern "C" void* Bun__TelemetrySpan__fromJS(JSC::EncodedJSValue v)
     return toTelemetrySpan(JSValue::decode(v));
 }
 
-extern "C" const TelemetrySpanStub* Bun__TelemetrySpan__stub(void* cell)
-{
-    return &static_cast<JSTelemetrySpan*>(cell)->m_stub;
-}
-
 /// Borrowed W3C `tracestate` a JS-owned span inherited (Empty if none / not a span).
 extern "C" BunString Bun__TelemetrySpan__traceState(JSC::EncodedJSValue v)
 {

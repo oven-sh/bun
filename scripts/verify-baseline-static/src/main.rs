@@ -739,57 +739,90 @@ fn record(
     });
 }
 
+/// Split a text section into decode units: one per symbol start, so the
+/// x64 decoder is re-aligned at every address the symbol table vouches for
+/// as an instruction boundary. The first unit starts at the section start
+/// (covers a section with no symbol at its first byte), the last ends at
+/// the section end. Gaps between sized symbols stay inside the unit of the
+/// symbol before them, so inter-function padding is still decoded and still
+/// attributed to `<no-symbol@...>` by `symbol_for`.
+///
+/// `syms` is sorted by address (both table builders guarantee it).
+fn decode_units(sec_addr: u64, sec_len: usize, syms: &[Sym]) -> Vec<(u64, u64)> {
+    let sec_end = sec_addr + sec_len as u64;
+    let lo = syms.partition_point(|s| s.addr < sec_addr);
+    let hi = syms.partition_point(|s| s.addr < sec_end);
+    let mut starts: Vec<u64> = Vec::with_capacity(hi - lo + 2);
+    starts.push(sec_addr);
+    starts.extend(syms[lo..hi].iter().map(|s| s.addr));
+    starts.dedup();
+    starts.push(sec_end);
+    starts.windows(2).map(|w| (w[0], w[1])).collect()
+}
+
 /// x64 decode + classify. iced provides exact per-instruction CpuidFeature.
 fn scan_x86_64(bytes: &[u8], sec_addr: u64, syms: &[Sym], allowlist: &Allowlist) -> ScanResult {
     let mut violations = Buckets::new();
     let mut allowlisted = Buckets::new();
     let mut total_insns = 0u64;
 
-    // Linear sweep. iced handles variable-length encoding; on undecodable
-    // bytes (data-in-text) it returns Code::INVALID and we skip. False
-    // positives from data-in-text are rare in practice — LLVM puts jump
-    // tables in .rodata, not inline.
-    let mut decoder = Decoder::with_ip(64, bytes, sec_addr, DecoderOptions::NONE);
+    // Linear sweep, restarted at every symbol start (objdump's resync rule).
+    // iced handles variable-length encoding; on undecodable bytes
+    // (data-in-text) it returns Code::INVALID and we skip.
+    //
+    // The restart bounds a desync to the symbol it starts in. JSC's LLInt
+    // puts a raw 4-byte `.int <opcode id>` in front of every opcode handler
+    // (LowLevelInterpreter.cpp: EMBED_OPCODE_ID_IF_NEEDED); one sweep over
+    // the whole section reads those bytes as an instruction that runs INTO
+    // the next handler and stays desynced for several more, through rel32
+    // displacements that change with link layout. That is how an RDPMC
+    // appeared in llint_op_jmp_wide32 on a PR that did not touch JSC.
+    // No real instruction straddles a symbol start, so a straddler is
+    // always garbage; truncating it (it decodes as INVALID) loses nothing.
     let mut insn = Instruction::default();
-    while decoder.can_decode() {
-        decoder.decode_out(&mut insn);
-        if insn.is_invalid() {
-            continue;
-        }
-        total_insns += 1;
-
-        let feats = insn.cpuid_features();
-        // Fast path: no post-baseline features at all (the common case).
-        if feats.iter().copied().all(is_allowed) {
-            continue;
-        }
-        if is_harmless_on_nehalem(&insn) {
-            continue;
-        }
-
-        // iced's Mnemonic and CpuidFeature are repr'd via tables with static
-        // &str names behind their Debug impls, but there's no public stable
-        // accessor. Leak the Debug repr once per hit — tiny volume (tens of
-        // thousands of hits max, each a few bytes; a KB or so for a full scan).
-        let mnem: &'static str = Box::leak(format!("{:?}", insn.mnemonic()).into_boxed_str());
-        // Record EVERY post-baseline feature, not just the first one found.
-        // Multi-feature instructions (e.g. VPCLMULQDQ requires AVX+PCLMULQDQ)
-        // must check each feature against the ceiling independently — if the
-        // ceiling says [AVX] but PCLMULQDQ is also required, that's a violation.
-        for bad_feat in feats.iter().copied().filter(|f| !is_allowed(*f)) {
-            if is_impossible_feature(bad_feat) {
+    for (from, to) in decode_units(sec_addr, bytes.len(), syms) {
+        let unit = &bytes[(from - sec_addr) as usize..(to - sec_addr) as usize];
+        let mut decoder = Decoder::with_ip(64, unit, from, DecoderOptions::NONE);
+        while decoder.can_decode() {
+            decoder.decode_out(&mut insn);
+            if insn.is_invalid() {
                 continue;
             }
-            let feat: &'static str = Box::leak(format!("{:?}", bad_feat).into_boxed_str());
-            record(
-                insn.ip(),
-                mnem,
-                feat,
-                syms,
-                allowlist,
-                &mut violations,
-                &mut allowlisted,
-            );
+            total_insns += 1;
+
+            let feats = insn.cpuid_features();
+            // Fast path: no post-baseline features at all (the common case).
+            if feats.iter().copied().all(is_allowed) {
+                continue;
+            }
+            if is_harmless_on_nehalem(&insn) {
+                continue;
+            }
+
+            // iced's Mnemonic and CpuidFeature are repr'd via tables with static
+            // &str names behind their Debug impls, but there's no public stable
+            // accessor. Leak the Debug repr once per hit — tiny volume (tens of
+            // thousands of hits max, each a few bytes; a KB or so for a full scan).
+            let mnem: &'static str = Box::leak(format!("{:?}", insn.mnemonic()).into_boxed_str());
+            // Record EVERY post-baseline feature, not just the first one found.
+            // Multi-feature instructions (e.g. VPCLMULQDQ requires AVX+PCLMULQDQ)
+            // must check each feature against the ceiling independently — if the
+            // ceiling says [AVX] but PCLMULQDQ is also required, that's a violation.
+            for bad_feat in feats.iter().copied().filter(|f| !is_allowed(*f)) {
+                if is_impossible_feature(bad_feat) {
+                    continue;
+                }
+                let feat: &'static str = Box::leak(format!("{:?}", bad_feat).into_boxed_str());
+                record(
+                    insn.ip(),
+                    mnem,
+                    feat,
+                    syms,
+                    allowlist,
+                    &mut violations,
+                    &mut allowlisted,
+                );
+            }
         }
     }
 
@@ -1186,5 +1219,107 @@ fn main() -> ExitCode {
             eprintln!("error: {e}");
             ExitCode::from(2)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Bytes 0x3590cc4..0x3590d1c of the bun-linux-x64-musl `bun-profile`
+    /// from CI build 107029: the tail of `llint_op_jmp_wide16`, the embedded
+    /// opcode id `.int 0x2c6` of the next handler, all of `llint_op_jmp_wide32`,
+    /// and the embedded id `.int 0x47` of `llint_op_jtrue` after it.
+    #[rustfmt::skip]
+    const LLINT_JMP_WIDE32: &[u8] = &[
+        // llint_op_jmp_wide16 tail: movzx / lea rsi,[rip+disp32] / jmp [rsi+rax*8]
+        0x43, 0x0f, 0xb6, 0x44, 0x05, 0x00, 0x48, 0x8d, 0x35, 0x2f, 0x33, 0x21, 0x01, 0xff, 0x24, 0xc6,
+        // .int 710 (op_jmp_wide32), then llint_op_jmp_wide32 at +0x14
+        0xc6, 0x02, 0x00, 0x00, 0x4b, 0x63, 0x44, 0x05, 0x02, 0x85, 0xc0, 0x74, 0x13, 0x49, 0x01, 0xc0,
+        // lea rsi,[rip+0x121330f]: the displacement bytes 0f 33 spell RDPMC
+        0x43, 0x0f, 0xb6, 0x44, 0x05, 0x00, 0x48, 0x8d, 0x35, 0x0f, 0x33, 0x21, 0x01, 0xff, 0x24, 0xc6,
+        0x4d, 0x01, 0xe8, 0x48, 0x89, 0xef, 0x4c, 0x89, 0xc6, 0xe8, 0x52, 0x4d, 0x7f, 0x00, 0x49, 0x89,
+        0xc0, 0x4d, 0x29, 0xe8, 0x43, 0x0f, 0xb6, 0x44, 0x05, 0x00, 0x48, 0x8d, 0x35, 0xeb, 0x32, 0x21,
+        // jmp [rsi+rax*8], then .int 71 (op_jtrue)
+        0x01, 0xff, 0x24, 0xc6, 0x47, 0x00, 0x00, 0x00,
+    ];
+    const BASE: u64 = 0x3590cc4;
+    const WIDE32: u64 = 0x3590cd8;
+    const JTRUE: u64 = 0x3590d1c;
+
+    fn sym(addr: u64, end: u64, name: &str) -> Sym {
+        Sym {
+            addr,
+            end,
+            name: name.to_owned(),
+        }
+    }
+
+    fn llint_syms() -> Vec<Sym> {
+        vec![
+            sym(BASE, WIDE32, "llint_op_jmp_wide16"),
+            sym(WIDE32, JTRUE, "llint_op_jmp_wide32"),
+        ]
+    }
+
+    fn violation_names(res: &ScanResult) -> Vec<String> {
+        res.violations
+            .iter()
+            .map(|(sym, rep)| {
+                let mut feats: Vec<_> = rep.features.iter().copied().collect();
+                feats.sort();
+                format!("{sym} [{}]", feats.join(", "))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn without_symbol_starts_the_sweep_desyncs_into_the_next_handler() {
+        // No symbols: a single decode unit, i.e. the plain linear sweep. The
+        // `.int 0x2c6` desyncs it into the next handler and it reads `0f 33`
+        // out of the lea displacement. This is the false positive CI saw.
+        let res = scan_x86_64(LLINT_JMP_WIDE32, BASE, &[], &Allowlist::new());
+        assert_eq!(
+            violation_names(&res),
+            vec![format!("<no-symbol@{:#x}> [RDPMC]", 0x3590ced_u64)]
+        );
+    }
+
+    #[test]
+    fn sweep_restarts_at_each_symbol_start() {
+        let res = scan_x86_64(LLINT_JMP_WIDE32, BASE, &llint_syms(), &Allowlist::new());
+        assert!(res.violations.is_empty(), "{:?}", violation_names(&res));
+        assert!(res.allowlisted.is_empty());
+        // 3 real instructions in the wide16 tail, the `mov byte ptr [rdx],0`
+        // that the first three id bytes spell (the fourth is truncated at the
+        // symbol start and dropped), 16 in llint_op_jmp_wide32, and the
+        // `.int 0x47` tail that decodes as `add [r8],r8b` plus a truncated byte.
+        assert_eq!(res.total_insns, 3 + 1 + 16 + 1);
+    }
+
+    #[test]
+    fn decode_units_cover_the_section_exactly_once() {
+        let len = LLINT_JMP_WIDE32.len();
+        let sec_end = BASE + len as u64;
+        // A symbol at the section start does not produce an empty unit, and
+        // symbols outside the section are ignored.
+        let with_neighbors = vec![
+            sym(BASE - 0x100, BASE - 0x80, "before"),
+            sym(BASE, WIDE32, "llint_op_jmp_wide16"),
+            sym(WIDE32, JTRUE, "llint_op_jmp_wide32"),
+            sym(JTRUE + 0x40, JTRUE + 0x80, "after"),
+        ];
+        assert_eq!(
+            decode_units(BASE, len, &with_neighbors),
+            vec![(BASE, WIDE32), (WIDE32, sec_end)]
+        );
+        // A section whose first symbol starts after the section start gets a
+        // leading unit for the bytes before it.
+        assert_eq!(
+            decode_units(BASE - 8, len + 8, &llint_syms()),
+            vec![(BASE - 8, BASE), (BASE, WIDE32), (WIDE32, sec_end)]
+        );
+        // No symbols: one unit, the whole section.
+        assert_eq!(decode_units(BASE, len, &[]), vec![(BASE, sec_end)]);
     }
 }

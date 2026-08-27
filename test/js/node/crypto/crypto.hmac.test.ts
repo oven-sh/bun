@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Hmac, createHmac, createSecretKey } from "crypto";
+import { Hmac, createHash, createHmac, createSecretKey, getHashes, hkdfSync, pbkdf2Sync } from "crypto";
 import { PassThrough } from "stream";
 
 function testHmac(algo, key, data, expected) {
@@ -448,5 +448,129 @@ describe("crypto.Hmac", () => {
     expect(createHmac("sha256", buf).update("foo").digest()).toEqual(
       createHmac("sha256", keyObject).update("foo").digest(),
     );
+  });
+
+  // createHash accepts BLAKE2 digests but createHmac previously rejected them
+  // with ERR_CRYPTO_INVALID_DIGEST, and getHashes() omitted them. Vectors
+  // generated with Node.js.
+  describe("HMAC-BLAKE2", () => {
+    const longKey = Buffer.alloc(200, 0xaa);
+    const longData = Buffer.alloc(300, 0x61);
+    const vectors = [
+      {
+        algo: "blake2b512",
+        key: Buffer.alloc(0),
+        data: "",
+        hmac: "198cd2006f66ff83fbbd913f78aca2251caf4f19fe9475aade8cf2091b99a68466775177424f58286886cbae8229644cec747237d4b721735485e17372fdf59c",
+      },
+      {
+        algo: "blake2b512",
+        key: "key",
+        data: "The quick brown fox jumps over the lazy dog",
+        hmac: "92294f92c0dfb9b00ec9ae8bd94d7e7d8a036b885a499f149dfe2fd2199394aaaf6b8894a1730cccb2cd050f9bcf5062a38b51b0dab33207f8ef35ae2c9df51b",
+      },
+      {
+        algo: "blake2b512",
+        key: longKey,
+        data: "Test With Longer Than Block-Size Key",
+        hmac: "e9000fe6312bcc1775bb219504154a96906a4ec72fe5dfd280214804cc70e92cd2a6ee8e4c4a248725a1f6f430401e0f323db3f7d39b5dd5302837bbadd8326a",
+      },
+      {
+        algo: "blake2b512",
+        key: "key",
+        data: longData,
+        hmac: "75a175d7bd38de76897a99d5788387424cc46a515946550d806f5919b2b5c9be8adfcac0e5e666487e3f4938664c57d1588d35af8159b206fc73a56b74e97c2f",
+      },
+      {
+        algo: "blake2s256",
+        key: Buffer.alloc(0),
+        data: "",
+        hmac: "eaf4bb25938f4d20e72656bbbc7a9bf63c0c18537333c35bdb67db1402661acd",
+      },
+      {
+        algo: "blake2s256",
+        key: "key",
+        data: "The quick brown fox jumps over the lazy dog",
+        hmac: "f93215bb90d4af4c3061cd932fb169fb8bb8a91d0b4022baea1271e1323cd9a0",
+      },
+      {
+        algo: "blake2s256",
+        key: longKey,
+        data: "Test With Longer Than Block-Size Key",
+        hmac: "b1e4fdce261f7b6cc721a1b1118951ab4e1a292419cbf93a4c8f97441ff5c451",
+      },
+      {
+        algo: "blake2s256",
+        key: "key",
+        data: longData,
+        hmac: "ad8060720ec7504c430b638034fa099f931f514cdaf3d96e03192bfa1eb55290",
+      },
+    ];
+
+    for (const { algo, key, data, hmac } of vectors) {
+      testHmac(algo, key, data, hmac);
+    }
+
+    test("multi-chunk update matches single update", () => {
+      for (const algo of ["blake2b512", "blake2s256"]) {
+        const a = createHmac(algo, "key");
+        a.update("hello");
+        a.update(" ");
+        a.update("world");
+        const b = createHmac(algo, "key").update("hello world");
+        expect(a.digest("hex")).toBe(b.digest("hex"));
+      }
+    });
+
+    test("case-insensitive algorithm name", () => {
+      const lower = createHmac("blake2s256", "key").update("abc").digest("hex");
+      const upper = createHmac("BLAKE2S256", "key").update("abc").digest("hex");
+      expect(upper).toBe(lower);
+    });
+
+    test("createHash output is unchanged", () => {
+      expect(createHash("blake2b512").update("abc").digest("hex")).toBe(
+        "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923",
+      );
+      expect(createHash("blake2s256").update("abc").digest("hex")).toBe(
+        "508c5e8c327c14e2e1a72ba34eeb452f37458b209ed63a294d999b4c86675982",
+      );
+    });
+
+    test("getHashes lists BLAKE2 digests that createHash accepts", () => {
+      const hashes = getHashes();
+      expect(hashes).toContain("blake2b512");
+      expect(hashes).toContain("blake2s256");
+      expect(hashes).toContain("blake2b256");
+    });
+
+    // Node's own test-crypto-pbkdf2.js and test-crypto-hkdf.js iterate
+    // getHashes() through these APIs, so every listed name must work there
+    // too. Values from Node.js.
+    test.each([
+      ["blake2b512", "40b77cc2ee4b4c44eeb5babc299be14af5670e39ea3ce14c0fe70e6c99369886"],
+      ["blake2s256", "7b88e65e6e95a118bc995f681a391cbd7b46e0cf9750a81100f613add62d84be"],
+    ])("pbkdf2Sync accepts %s", (algo, expected) => {
+      expect(pbkdf2Sync("password", "salt", 2, 32, algo).toString("hex")).toBe(expected);
+    });
+
+    test.each([
+      ["blake2b512", "b3b27a54dac96f4819e8befbc643bd78b7882208b2e366043cbf47ab44b033a4"],
+      ["blake2s256", "b1a7297a13a0295c6c6c50e092617114e130fe45667ca5475ae49cf8536c5ad0"],
+    ])("hkdfSync accepts %s", (algo, expected) => {
+      expect(Buffer.from(hkdfSync(algo, "key", "salt", "info", 32)).toString("hex")).toBe(expected);
+    });
+
+    test("every getHashes() entry works with createHash", () => {
+      for (const name of getHashes()) {
+        expect(createHash(name).update("abc").digest("hex").length).toBeGreaterThan(0);
+      }
+    });
+
+    test("blake2b256 HMAC (Bun extension)", () => {
+      const h = createHmac("blake2b256", "key").update("abc").digest("hex");
+      expect(h).toMatch(/^[0-9a-f]{64}$/);
+      expect(h).toBe(createHmac("blake2b256", "key").update("abc").digest("hex"));
+    });
   });
 });

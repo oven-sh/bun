@@ -218,13 +218,13 @@ describe.concurrent("redact", async () => {
       // The misspelt option name is what makes a diagnostic print this line at all.
       title: "quoted _authToken key",
       npmrc: '"//registry.npmjs.org/:_authtoken"=npm_notarealtokenvalue',
-      expected: "*",
+      expected: "is not a known .npmrc option",
       secret: "npm_notarealtokenvalue",
     },
     {
       title: "quoted _auth key",
       npmrc: 'registry=https://registry.example.com/api/\n"//registry.example.com/:_auth_"=does-not-decode',
-      expected: "*",
+      expected: "is not a known .npmrc option",
       secret: "does-not-decode",
     },
     {
@@ -232,6 +232,14 @@ describe.concurrent("redact", async () => {
       npmrc: '"//registry.npmjs.org/:password"=SUPERSECRETVALUE',
       expected: "is not a known .npmrc option",
       secret: "SUPERSECRETVALUE",
+    },
+    {
+      // A typo that drops the underscore matches no redaction keyword, so the
+      // warning must not echo the line at all.
+      title: "misspelt option without the underscore",
+      npmrc: "//registry.npmjs.org/:authToken=npm_notarealtokenvalue",
+      expected: "is not a known .npmrc option",
+      secret: "npm_notarealtokenvalue",
     },
     {
       // Unquoted twin of the above: the identifier path must redact after a

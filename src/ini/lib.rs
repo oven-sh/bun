@@ -1830,17 +1830,21 @@ mod draft {
                     IniOption::Some(conf_item) => conf_item,
                     IniOption::None => continue,
                     IniOption::Unknown { suffix, loc } => {
-                        iter.log.add_warning_fmt_opts(
+                        // No source excerpt: the value after `=` may be a secret under a
+                        // misspelt name the redactor cannot recognise (`:authToken=`).
+                        let line = 1 + bun_core::strings::count_char(
+                            &source.contents[..usize::try_from(loc.start).unwrap_or(0)],
+                            b'\n',
+                        );
+                        iter.log.add_warning_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
                             format_args!(
-                                "{} is not a known .npmrc option; ignoring this line",
+                                "{}:{}: {} is not a known .npmrc option; ignoring this line",
+                                bstr::BStr::new(source.path.text),
+                                line,
                                 bstr::BStr::new(&suffix),
                             ),
-                            bun_ast::AddErrorOptions {
-                                source: Some(source),
-                                loc,
-                                redact_sensitive_information: true,
-                                ..Default::default()
-                            },
                         );
                         continue;
                     }

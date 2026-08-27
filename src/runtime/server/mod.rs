@@ -1675,12 +1675,18 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
-    /// Drop this server's [`HotServers`] entry (if it registered one).
+    /// Drop this server's [`HotServers`] entry — only if the entry under its
+    /// id is still `self` (a stopped server's deferred teardown must not evict
+    /// a newer server that re-registered the same id).
     fn unregister_hot(&self) {
         let config = self.config();
         if config.allow_hot && !config.id.is_empty() {
             if let Some(hot) = hot_servers(self.vm().as_mut()) {
-                hot.swap_remove(&config.id);
+                if let Some(i) = hot.get_index(&config.id) {
+                    if hot.values()[i] == AnyServer::from(self) {
+                        hot.swap_remove_at(i);
+                    }
+                }
             }
         }
     }
@@ -1733,12 +1739,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if closed
             && !self.has_flags(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE)
             && self.all_closed_promise.get().has_value()
-            // `ServerAllConnectionsClosedTask::run_from_js_thread` early-returns
-            // (without resolving the promise) when the VM is shutting down —
-            // see the `if !vm.is_shutting_down()` gate there. Skip the
-            // allocation entirely so a `Server::finalize()` that fires during
-            // `lastChanceToFinalize()` doesn't strand a `Box` (and its
-            // `JSPromiseStrong`) that no event-loop tick will ever drain.
+            // When the VM is shutting down no event-loop tick will ever drain
+            // the task, so skip the allocation entirely — a `Server::finalize()`
+            // that fires during `lastChanceToFinalize()` would otherwise strand
+            // a `Box` (and its `JSPromiseStrong`).
             && !self.vm().is_shutting_down()
         {
             httplog!("schedule other promise");

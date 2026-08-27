@@ -3801,7 +3801,7 @@ static void collectStandaloneClosure(Zig::GlobalObject* globalObject, JSModuleLo
                 continue;
             if (auto* entry = loader->registryEntry(key)) {
                 // Usable as a loaded dependency only if the loader already finished loading that module's own subgraph.
-                if (entry->record() && entry->loadPromise() && entry->loadPromise()->status() == JSPromise::Status::Fulfilled)
+                if (entry->record() && entry->isLoaded())
                     closure.records.add(key.impl(), entry->record());
                 else
                     closure.complete = false;
@@ -3865,8 +3865,7 @@ static void registerStandaloneClosure(Zig::GlobalObject* globalObject, JSModuleL
         auto* entry = loader->ensureRegistered(globalObject, m.key, ScriptFetchParameters::Type::JavaScript);
         RETURN_IF_EXCEPTION(scope, void());
         RELEASE_ASSERT(!entry->record()); // nothing between collect and register can register one of these keys
-        entry->provideModule(globalObject, m.source, m.record);
-        RETURN_IF_EXCEPTION(scope, void());
+        entry->provideModule(vm, m.source, m.record);
         releaseModuleInfo(globalObject, m.source);
     }
     if (!closure.complete)
@@ -3880,14 +3879,8 @@ static void registerStandaloneClosure(Zig::GlobalObject* globalObject, JSModuleL
             RETURN_IF_EXCEPTION(scope, void());
         }
     }
-    for (auto& m : closure.modules) {
-        auto* entry = loader->registryEntry(m.key);
-        if (!entry->loadPromise()) {
-            JSPromise* loaded = JSPromise::create(vm, globalObject->promiseStructure());
-            loaded->fulfill(vm, m.record);
-            entry->setLoadPromise(vm, loaded);
-        }
-    }
+    for (auto& m : closure.modules)
+        loader->registryEntry(m.key)->markLoaded();
 }
 
 JSC::JSPromise* StandaloneGlobalObject::moduleLoaderFetch(JSGlobalObject* jsGlobalObject, JSModuleLoader* loader, JSValue key, RefPtr<JSC::ScriptFetchParameters> parameters, RefPtr<JSC::ScriptFetcher> fetcher)

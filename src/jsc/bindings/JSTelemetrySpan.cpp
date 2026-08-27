@@ -87,16 +87,9 @@ DEFINE_VISIT_CHILDREN(JSTelemetrySpan);
 
 // ─── entry points for src/runtime/telemetry/span.rs ───
 
-extern "C" JSC::EncodedJSValue Bun__TelemetrySpan__createNative(Zig::GlobalObject* globalObject, const TelemetrySpanStub* stub, uint16_t scope, uint8_t kind, TelemetryNativeHandle native, BunString* traceState, BunString* baggage)
+extern "C" JSC::EncodedJSValue Bun__TelemetrySpan__createNative(Zig::GlobalObject* globalObject, const TelemetrySpanStub* stub, uint16_t scope, uint8_t kind, TelemetryNativeHandle native)
 {
-    auto& vm = globalObject->vm();
-    auto* span = JSTelemetrySpan::createNative(vm, globalObject, *stub, scope, kind, native);
-    using Field = JSTelemetrySpan::Field;
-    if (auto s = traceState->transferToWTFString(); !s.isEmpty())
-        span->field(Field::TraceState).set(vm, span, jsString(vm, WTF::move(s)));
-    if (auto s = baggage->transferToWTFString(); !s.isEmpty())
-        span->field(Field::Baggage).set(vm, span, jsString(vm, WTF::move(s)));
-    return JSValue::encode(span);
+    return JSValue::encode(JSTelemetrySpan::createNative(globalObject->vm(), globalObject, *stub, scope, kind, native));
 }
 
 static void markEnded(Zig::GlobalObject*, JSTelemetrySpan*);
@@ -831,16 +824,45 @@ static JSString* hexId(VM& vm, std::span<const uint8_t> bytes)
 
 TelemetryPropagation telemetryPropagationOfPooled(Zig::GlobalObject* globalObject, TelemetryNativeHandle handle)
 {
+    TelemetryPropagation out;
     if (!handle)
-        return {};
-    // Materializes the cell only for a span that received headers; its fields hold them.
-    auto* span = toTelemetrySpan(JSValue::decode(Bun__Telemetry__nativePropagation(globalObject, handle)));
-    return span ? telemetryPropagationOf(globalObject, span) : TelemetryPropagation {};
+        return out;
+    // A span that already has a cell caches the headers in its fields.
+    if (auto* span = toTelemetrySpan(JSValue::decode(Bun__Telemetry__poolCell(globalObject, handle))))
+        return telemetryPropagationOf(globalObject, span);
+    BunString traceState = { BunStringTag::Empty, {} }, baggage = { BunStringTag::Empty, {} };
+    if (!Bun__Telemetry__nativePropagation(globalObject, handle, &traceState, &baggage))
+        return out;
+    auto& vm = globalObject->vm();
+    if (auto s = traceState.transferToWTFString(); !s.isEmpty())
+        out.traceState = jsString(vm, WTF::move(s));
+    if (auto s = baggage.transferToWTFString(); !s.isEmpty())
+        out.baggage = jsString(vm, WTF::move(s));
+    return out;
 }
 
-TelemetryPropagation telemetryPropagationOf(Zig::GlobalObject*, const JSTelemetrySpan* span)
+// A native-owned span's TraceState/Baggage fields start null and are filled
+// from its slot on the first read; the empty string means "looked up, none".
+static void fillNativePropagation(Zig::GlobalObject* globalObject, JSTelemetrySpan* span)
 {
     using Field = JSTelemetrySpan::Field;
+    if (!span->m_native || !span->get(Field::TraceState).isNull())
+        return;
+    auto& vm = globalObject->vm();
+    BunString traceState = { BunStringTag::Empty, {} }, baggage = { BunStringTag::Empty, {} };
+    Bun__Telemetry__nativePropagation(globalObject, span->m_native, &traceState, &baggage);
+    auto adopt = [&](BunString& header) -> JSString* {
+        auto s = header.transferToWTFString();
+        return s.isEmpty() ? jsEmptyString(vm) : jsString(vm, WTF::move(s));
+    };
+    span->field(Field::TraceState).set(vm, span, adopt(traceState));
+    span->field(Field::Baggage).set(vm, span, adopt(baggage));
+}
+
+TelemetryPropagation telemetryPropagationOf(Zig::GlobalObject* globalObject, JSTelemetrySpan* span)
+{
+    using Field = JSTelemetrySpan::Field;
+    fillNativePropagation(globalObject, span);
     TelemetryPropagation out;
     if (JSString* s = span->string(Field::TraceState); s && s->length())
         out.traceState = s;

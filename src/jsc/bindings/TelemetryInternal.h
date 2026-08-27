@@ -116,7 +116,7 @@ struct TelemetryPropagation {
     JSString* traceState { nullptr };
     JSString* baggage { nullptr };
 };
-TelemetryPropagation telemetryPropagationOf(Zig::GlobalObject*, const JSTelemetrySpan*);
+TelemetryPropagation telemetryPropagationOf(Zig::GlobalObject*, JSTelemetrySpan*);
 TelemetryPropagation telemetryPropagationOfPooled(Zig::GlobalObject*, TelemetryNativeHandle);
 // span.setAttribute(key, value) without calling into JS. Throws only on OOM.
 void telemetrySpanSetAttribute(Zig::GlobalObject*, JSTelemetrySpan*, JSString* key, JSValue value);

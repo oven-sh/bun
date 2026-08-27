@@ -443,9 +443,15 @@ var require_wasi = __commonJS({
       }
       if (entry.filetype === void 0) {
         const stats = wasi.fstatSync(entry.real);
-        const { filetype, rightsBase, rightsInheriting } = translateFileAttributes(wasi, entry.real, stats);
+        let { filetype, rightsBase, rightsInheriting } = translateFileAttributes(wasi, entry.real, stats);
         entry.filetype = filetype;
         if (!entry.rights) {
+          // The host process shares the file offset of fd 0-2 and there is no
+          // lseek in node:fs, so a regular file on a standard descriptor reads
+          // and writes at the host's offset and cannot be seeked.
+          if (entry.real <= 2 && filetype === constants_1.WASI_FILETYPE_REGULAR_FILE) {
+            rightsBase &= ~(constants_1.WASI_RIGHT_FD_SEEK | constants_1.WASI_RIGHT_FD_TELL);
+          }
           entry.rights = {
             base: rightsBase,
             inheriting: rightsInheriting,
@@ -648,8 +654,6 @@ var require_wasi = __commonJS({
           }
           return stats;
         };
-        const isContained = (parent, child) =>
-          child === parent || child.startsWith(parent.endsWith(path.sep) ? parent : parent + path.sep);
         // Resolve a guest-supplied path against the directory backing `stats` and
         // verify the result cannot escape that directory, either lexically
         // ("..", absolute paths) or through a symlink that already exists on the
@@ -672,6 +676,8 @@ var require_wasi = __commonJS({
           }
           const base = path.resolve(stats.path);
           const resolved = path.resolve(base, rel);
+          const isContained = (parent, child) =>
+            child === parent || child.startsWith(parent.endsWith(path.sep) ? parent : parent + path.sep);
           if (!isContained(base, resolved)) {
             throw new types_1.WASIError(constants_1.WASI_ENOTCAPABLE);
           }
@@ -1194,13 +1200,17 @@ var require_wasi = __commonJS({
             this.view.setBigUint64(bufPtr, rstats.ctimeNs, true);
             return constants_1.WASI_ESUCCESS;
           }),
-          path_filestat_set_times: wrap((fd, _dirflags, pathPtr, pathLen, stAtim, stMtim, fstflags) => {
+          path_filestat_set_times: wrap((fd, dirflags, pathPtr, pathLen, stAtim, stMtim, fstflags) => {
             const stats = CHECK_FD(fd, constants_1.WASI_RIGHT_PATH_FILESTAT_SET_TIMES);
             if (!stats.path) {
               return constants_1.WASI_EINVAL;
             }
             this.refreshMemory();
-            const rstats = this.fstatSync(stats.real);
+            const p = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
+            const follow = (dirflags & constants_1.WASI_LOOKUPFLAGS_SYMLINK_FOLLOW) !== 0;
+            const resolved = RESOLVE_PATH(stats, p, follow);
+            // A time that is not being set keeps the target's own value.
+            const rstats = follow ? fs.statSync(resolved) : fs.lstatSync(resolved);
             let atim = rstats.atime;
             let mtim = rstats.mtime;
             const n = nsToMs(now(constants_1.WASI_CLOCK_REALTIME));
@@ -1222,8 +1232,11 @@ var require_wasi = __commonJS({
             } else if ((fstflags & constants_1.WASI_FILESTAT_SET_MTIM_NOW) === constants_1.WASI_FILESTAT_SET_MTIM_NOW) {
               mtim = n;
             }
-            const p = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
-            fs.utimesSync(RESOLVE_PATH(stats, p), new Date(atim), new Date(mtim));
+            if (follow) {
+              fs.utimesSync(resolved, new Date(atim), new Date(mtim));
+            } else {
+              fs.lutimesSync(resolved, new Date(atim), new Date(mtim));
+            }
             return constants_1.WASI_ESUCCESS;
           }),
           path_link: wrap((oldFd, _oldFlags, oldPath, oldPathLen, newFd, newPath, newPathLen) => {
@@ -1235,7 +1248,11 @@ var require_wasi = __commonJS({
             this.refreshMemory();
             const op = Buffer.from(this.memory.buffer, oldPath, oldPathLen).toString();
             const np = Buffer.from(this.memory.buffer, newPath, newPathLen).toString();
-            fs.linkSync(RESOLVE_PATH(ostats, op), RESOLVE_PATH(nstats, np));
+            // The old path is always resolved through a final symlink, whatever
+            // the lookup flags say: whether link(2) follows one is platform
+            // defined, and a hard link to a file outside the preopen would be
+            // a real escape.
+            fs.linkSync(RESOLVE_PATH(ostats, op), RESOLVE_PATH(nstats, np, false));
             return constants_1.WASI_ESUCCESS;
           }),
           path_open: wrap(
@@ -1440,15 +1457,14 @@ var require_wasi = __commonJS({
             this.refreshMemory();
             const op = Buffer.from(this.memory.buffer, oldPath, oldPathLen).toString();
             const np = Buffer.from(this.memory.buffer, newPath, newPathLen).toString();
-            const linkPath = RESOLVE_PATH(stats, np, false);
-            // The target is resolved relative to the link's own directory.
-            // Refuse one that names a host path outside the preopen, whether
-            // absolute or through "..", so the guest cannot plant an escape
-            // for other users of the directory.
-            if (!isContained(path.resolve(stats.path), path.resolve(path.dirname(linkPath), op))) {
-              return constants_1.WASI_ENOTCAPABLE;
+            // An absolute target names a host path, refuse it like Node does.
+            // A relative target is stored as written: it is interpreted only
+            // when the link is followed, and every call that follows a link
+            // checks the result against the preopen at that time.
+            if (path.isAbsolute(op)) {
+              return constants_1.WASI_EPERM;
             }
-            fs.symlinkSync(op, linkPath);
+            fs.symlinkSync(op, RESOLVE_PATH(stats, np, false));
             return constants_1.WASI_ESUCCESS;
           }),
           path_unlink_file: wrap((fd, pathPtr, pathLen) => {

@@ -302,6 +302,7 @@ it("fd_fdstat_get reports the host file type of the standard descriptors", async
       wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
       const view = new DataView(wasi.memory.buffer);
       const WASI_FILETYPE_CHARACTER_DEVICE = 2;
+      const WASI_WHENCE_SET = 0;
       const WASI_RIGHT_FD_SEEK_OR_TELL = BigInt(4) | BigInt(32);
       const out = {};
       for (const fd of [0, 1, 2]) {
@@ -310,7 +311,9 @@ it("fd_fdstat_get reports the host file type of the standard descriptors", async
         const rights = view.getBigUint64(72, true);
         // what wasi-libc's isatty() computes from fd_fdstat_get
         const isatty = filetype === WASI_FILETYPE_CHARACTER_DEVICE && (rights & WASI_RIGHT_FD_SEEK_OR_TELL) === BigInt(0);
-        out[fd] = { errno, filetype, isatty };
+        // the host owns the offset of fd 0-2, so none of them can be seeked
+        const seek = wasi.wasiImport.fd_seek(fd, BigInt(0), WASI_WHENCE_SET, 128);
+        out[fd] = { errno, filetype, isatty, seek };
       }
       process.stdout.write(JSON.stringify(out));
       `,
@@ -322,83 +325,135 @@ it("fd_fdstat_get reports the host file type of the standard descriptors", async
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
 
+  const WASI_EPERM = 63;
   const WASI_FILETYPE_REGULAR_FILE = 4;
   const WASI_FILETYPE_SOCKET_STREAM = 6;
   expect(JSON.parse(fs.readFileSync(stdoutPath, "utf8"))).toEqual({
-    0: { errno: 0, filetype: WASI_FILETYPE_REGULAR_FILE, isatty: false },
-    1: { errno: 0, filetype: WASI_FILETYPE_REGULAR_FILE, isatty: false },
-    2: { errno: 0, filetype: WASI_FILETYPE_SOCKET_STREAM, isatty: false },
+    0: { errno: 0, filetype: WASI_FILETYPE_REGULAR_FILE, isatty: false, seek: WASI_EPERM },
+    1: { errno: 0, filetype: WASI_FILETYPE_REGULAR_FILE, isatty: false, seek: WASI_EPERM },
+    2: { errno: 0, filetype: WASI_FILETYPE_SOCKET_STREAM, isatty: false, seek: WASI_EPERM },
   });
+  expect(exitCode).toBe(0);
 });
 
-it.skipIf(isWindows)(
-  "path_symlink refuses a target outside the preopen, and a link inside can be inspected and removed",
-  () => {
-    using dir = tempDir("wasi-symlink-policy", {
-      "secret.txt": "outside",
-      "sandbox/inside.txt": "inside",
-      "sandbox/sub/.keep": "",
-    });
-    const root = String(dir);
-    const sandbox = path.join(root, "sandbox");
-    // links planted before the guest runs: one to a file outside, one dangling
-    fs.symlinkSync(path.join("..", "secret.txt"), path.join(sandbox, "escape"));
-    fs.symlinkSync(path.join(root, "does-not-exist"), path.join(sandbox, "dangling"));
+it.skipIf(isWindows)("symlinks: only following one is checked against the preopen", () => {
+  using dir = tempDir("wasi-symlink-policy", {
+    "secret.txt": "outside",
+    "sandbox/inside.txt": "inside",
+    "sandbox/sub/.keep": "",
+  });
+  const root = String(dir);
+  const sandbox = path.join(root, "sandbox");
+  const secret = path.join(root, "secret.txt");
+  // links planted before the guest runs: one to a file outside, one dangling
+  fs.symlinkSync(path.join("..", "secret.txt"), path.join(sandbox, "escape"));
+  fs.symlinkSync(path.join(root, "does-not-exist"), path.join(sandbox, "dangling"));
+  const secretBefore = fs.statSync(secret, { bigint: true });
 
-    const wasi = new WASI({ preopens: { "/": sandbox } });
-    wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
-    const memory = Buffer.from(wasi.memory.buffer);
-    const view = new DataView(wasi.memory.buffer);
+  const wasi = new WASI({ preopens: { "/": sandbox } });
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  const memory = Buffer.from(wasi.memory.buffer);
+  const view = new DataView(wasi.memory.buffer);
 
-    const WASI_ESUCCESS = 0;
-    const WASI_ENOTCAPABLE = 76;
-    const WASI_FILETYPE_SYMBOLIC_LINK = 7;
-    const WASI_LOOKUPFLAGS_SYMLINK_FOLLOW = 1;
-    const preopenFd = 3;
-    const targetPtr = 1024;
-    const pathPtr = 2048;
-    const newPathPtr = 3072;
-    const statPtr = 4096;
-    const bufPtr = 8192;
-    const bufUsedPtr = 12288;
-    const symlink = (target, linkPath) =>
-      wasi.wasiImport.path_symlink(
-        targetPtr,
-        memory.write(target, targetPtr),
-        preopenFd,
-        pathPtr,
-        memory.write(linkPath, pathPtr),
-      );
-
-    // a target that leaves the preopen is refused, absolute or relative to the link
-    expect(symlink(path.join(root, "secret.txt"), "abs-link")).toBe(WASI_ENOTCAPABLE);
-    expect(symlink("../secret.txt", "rel-link")).toBe(WASI_ENOTCAPABLE);
-    expect(symlink("../../secret.txt", "sub/deep-link")).toBe(WASI_ENOTCAPABLE);
-    // a target that stays inside is fine, including ".." from a subdirectory
-    expect(symlink("inside.txt", "ok-link")).toBe(WASI_ESUCCESS);
-    expect(symlink("../inside.txt", "sub/up-link")).toBe(WASI_ESUCCESS);
-    expect(fs.readdirSync(sandbox).sort()).toEqual(["dangling", "escape", "inside.txt", "ok-link", "sub"]);
-    expect(fs.readFileSync(path.join(sandbox, "sub", "up-link"), "utf8")).toBe("inside");
-
-    // calls that do not follow the final component act on the link itself
-    let len = memory.write("escape", pathPtr);
-    expect(wasi.wasiImport.path_filestat_get(preopenFd, 0, pathPtr, len, statPtr)).toBe(WASI_ESUCCESS);
-    expect(view.getUint8(statPtr + 16)).toBe(WASI_FILETYPE_SYMBOLIC_LINK);
-    expect(wasi.wasiImport.path_readlink(preopenFd, pathPtr, len, bufPtr, 256, bufUsedPtr)).toBe(WASI_ESUCCESS);
-    expect(memory.toString("utf8", bufPtr, bufPtr + view.getUint32(bufUsedPtr, true))).toBe("../secret.txt");
-    // following it is still refused
-    expect(wasi.wasiImport.path_filestat_get(preopenFd, WASI_LOOKUPFLAGS_SYMLINK_FOLLOW, pathPtr, len, statPtr)).toBe(
-      WASI_ENOTCAPABLE,
+  const WASI_ESUCCESS = 0;
+  const WASI_EPERM = 63;
+  const WASI_ENOTCAPABLE = 76;
+  const WASI_FILETYPE_SYMBOLIC_LINK = 7;
+  const WASI_LOOKUPFLAGS_SYMLINK_FOLLOW = 1;
+  const WASI_FILESTAT_SET_MTIM = 4;
+  const WASI_RIGHT_FD_READ = BigInt(2);
+  const preopenFd = 3;
+  const targetPtr = 1024;
+  const pathPtr = 2048;
+  const newPathPtr = 3072;
+  const statPtr = 4096;
+  const bufPtr = 8192;
+  const bufUsedPtr = 12288;
+  const fdPtr = 16384;
+  const symlink = (target, linkPath) =>
+    wasi.wasiImport.path_symlink(
+      targetPtr,
+      memory.write(target, targetPtr),
+      preopenFd,
+      pathPtr,
+      memory.write(linkPath, pathPtr),
     );
-    const newLen = memory.write("renamed", newPathPtr);
-    expect(wasi.wasiImport.path_rename(preopenFd, pathPtr, len, preopenFd, newPathPtr, newLen)).toBe(WASI_ESUCCESS);
-    expect(wasi.wasiImport.path_unlink_file(preopenFd, newPathPtr, newLen)).toBe(WASI_ESUCCESS);
-    len = memory.write("dangling", pathPtr);
-    expect(wasi.wasiImport.path_unlink_file(preopenFd, pathPtr, len)).toBe(WASI_ESUCCESS);
+  const open = (p, lookupflags) =>
+    wasi.wasiImport.path_open(
+      preopenFd,
+      lookupflags,
+      pathPtr,
+      memory.write(p, pathPtr),
+      0,
+      WASI_RIGHT_FD_READ,
+      BigInt(0),
+      0,
+      fdPtr,
+    );
 
-    expect(fs.readFileSync(path.join(root, "secret.txt"), "utf8")).toBe("outside");
-    expect(fs.readdirSync(sandbox).sort()).toEqual(["inside.txt", "ok-link", "sub"]);
-  },
-);
+  // an absolute target is refused, as in Node. A relative one is stored as
+  // written, even when it points outside: it is checked when followed.
+  expect(symlink(secret, "abs-link")).toBe(WASI_EPERM);
+  expect(symlink("../secret.txt", "rel-link")).toBe(WASI_ESUCCESS);
+  expect(symlink("inside.txt", "ok-link")).toBe(WASI_ESUCCESS);
+  expect(symlink("../inside.txt", "sub/up-link")).toBe(WASI_ESUCCESS);
+  expect(fs.readdirSync(sandbox).sort()).toEqual(["dangling", "escape", "inside.txt", "ok-link", "rel-link", "sub"]);
+  expect(fs.readFileSync(path.join(sandbox, "sub", "up-link"), "utf8")).toBe("inside");
+  expect(open("rel-link", WASI_LOOKUPFLAGS_SYMLINK_FOLLOW)).toBe(WASI_ENOTCAPABLE);
+  expect(open("ok-link", WASI_LOOKUPFLAGS_SYMLINK_FOLLOW)).toBe(WASI_ESUCCESS);
+
+  // calls that do not follow the final component act on the link itself
+  let len = memory.write("escape", pathPtr);
+  expect(wasi.wasiImport.path_filestat_get(preopenFd, 0, pathPtr, len, statPtr)).toBe(WASI_ESUCCESS);
+  expect(view.getUint8(statPtr + 16)).toBe(WASI_FILETYPE_SYMBOLIC_LINK);
+  expect(wasi.wasiImport.path_readlink(preopenFd, pathPtr, len, bufPtr, 256, bufUsedPtr)).toBe(WASI_ESUCCESS);
+  expect(memory.toString("utf8", bufPtr, bufPtr + view.getUint32(bufUsedPtr, true))).toBe("../secret.txt");
+  const mtim = BigInt(1700000000) * BigInt(1e9);
+  expect(
+    wasi.wasiImport.path_filestat_set_times(preopenFd, 0, pathPtr, len, BigInt(0), mtim, WASI_FILESTAT_SET_MTIM),
+  ).toBe(WASI_ESUCCESS);
+  expect(fs.lstatSync(path.join(sandbox, "escape"), { bigint: true }).mtimeNs).toBe(mtim);
+  // following it is still refused
+  expect(wasi.wasiImport.path_filestat_get(preopenFd, WASI_LOOKUPFLAGS_SYMLINK_FOLLOW, pathPtr, len, statPtr)).toBe(
+    WASI_ENOTCAPABLE,
+  );
+  expect(
+    wasi.wasiImport.path_filestat_set_times(
+      preopenFd,
+      WASI_LOOKUPFLAGS_SYMLINK_FOLLOW,
+      pathPtr,
+      len,
+      BigInt(0),
+      mtim,
+      WASI_FILESTAT_SET_MTIM,
+    ),
+  ).toBe(WASI_ENOTCAPABLE);
+  const newLen = memory.write("renamed", newPathPtr);
+  expect(wasi.wasiImport.path_rename(preopenFd, pathPtr, len, preopenFd, newPathPtr, newLen)).toBe(WASI_ESUCCESS);
+  expect(wasi.wasiImport.path_unlink_file(preopenFd, newPathPtr, newLen)).toBe(WASI_ESUCCESS);
+  for (const name of ["dangling", "rel-link"]) {
+    len = memory.write(name, pathPtr);
+    expect(wasi.wasiImport.path_unlink_file(preopenFd, pathPtr, len)).toBe(WASI_ESUCCESS);
+  }
+
+  // with the follow flag the times go to the target, which must be inside
+  len = memory.write("ok-link", pathPtr);
+  expect(
+    wasi.wasiImport.path_filestat_set_times(
+      preopenFd,
+      WASI_LOOKUPFLAGS_SYMLINK_FOLLOW,
+      pathPtr,
+      len,
+      BigInt(0),
+      mtim,
+      WASI_FILESTAT_SET_MTIM,
+    ),
+  ).toBe(WASI_ESUCCESS);
+  expect(fs.statSync(path.join(sandbox, "inside.txt"), { bigint: true }).mtimeNs).toBe(mtim);
+  expect(fs.lstatSync(path.join(sandbox, "ok-link"), { bigint: true }).mtimeNs).not.toBe(mtim);
+
+  const secretAfter = fs.statSync(secret, { bigint: true });
+  expect([secretAfter.mtimeNs, fs.readFileSync(secret, "utf8")]).toEqual([secretBefore.mtimeNs, "outside"]);
+  expect(fs.readdirSync(sandbox).sort()).toEqual(["inside.txt", "ok-link", "sub"]);
+});

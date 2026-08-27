@@ -2727,8 +2727,10 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue EncodedSlice__toJSO
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
     auto str = Zig::toStringView(*strPtr);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    if (str.view.isNull()) [[unlikely]]
-        return Bun::ERR::STRING_TOO_LONG(scope, globalObject);
+    if (str.view.isNull()) [[unlikely]] {
+        scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_STRING_TOO_LONG, "Cannot parse a JSON string longer than 2147483647 characters"_s));
+        return {};
+    }
 
     // JSONParseWithException does not propagate exceptions as expected. See #5859
     JSValue result = JSONParse(globalObject, str.view);

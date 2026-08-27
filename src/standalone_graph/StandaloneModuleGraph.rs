@@ -812,7 +812,13 @@ const TRAILER: &[u8] = b"\n---- Bun! ----\n";
 
 /// e.g. "bun-v1.4.1-canary.1+abcdef123 linux-x64", as recorded in every executable this bun compiles.
 fn compile_host_description() -> String {
-    format!("bun-v{} {}-{}{}", bun_core::Global::package_json_version_with_revision, Environment::OS_NAME_NPM, Environment::ARCH.npm_name(), if Environment::IS_MUSL { "-musl" } else { "" })
+    format!(
+        "bun-v{} {}-{}{}",
+        bun_core::Global::package_json_version_with_revision,
+        Environment::OS_NAME_NPM,
+        Environment::ARCH.npm_name(),
+        if Environment::IS_MUSL { "-musl" } else { "" }
+    )
 }
 
 unsafe extern "C" {
@@ -1066,15 +1072,24 @@ impl StandaloneModuleGraph {
             startup_module_count: startup_module_count.min(module_count as u32),
             compile_host: offsets.compile_host,
             // SAFETY: read-only string subrange, disjoint from writable regions.
-            compile_host_description: unsafe { slice_to(raw_const, raw_len, offsets.compile_host_description_ptr) },
+            compile_host_description: unsafe {
+                slice_to(raw_const, raw_len, offsets.compile_host_description_ptr)
+            },
         })
     }
 
     /// The one cross-compile the bytecode format is sensitive to: written under one C++ ABI (MSVC vs Itanium), read
     /// under the other. Reported with crash reports as a feature flag so such crashes stand out.
     pub fn bytecode_crosses_abi(&self) -> bool {
-        let Some(host_is_windows) = self.compile_host.is_windows() else { return false };
-        host_is_windows != Environment::IS_WINDOWS && self.files.values().iter().any(|file| !file.bytecode.is_empty())
+        let Some(host_is_windows) = self.compile_host.is_windows() else {
+            return false;
+        };
+        host_is_windows != Environment::IS_WINDOWS
+            && self
+                .files
+                .values()
+                .iter()
+                .any(|file| !file.bytecode.is_empty())
     }
 
     /// Ahead-of-time bytecode for internal module `id`, if the executable carries it.
@@ -1547,7 +1562,8 @@ pub(crate) fn to_bytes(
         flags |= Flags::HAS_MODULE_INFO_STRING_TABLE;
     }
     let compile_exec_argv_ptr = string_builder.append_count_z(compile_exec_argv);
-    let compile_host_description_ptr = string_builder.append_count(compile_host_description().as_bytes());
+    let compile_host_description_ptr =
+        string_builder.append_count(compile_host_description().as_bytes());
 
     let offsets = Offsets {
         entry_point_id: entry_point_id as u32,

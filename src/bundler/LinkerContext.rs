@@ -429,52 +429,6 @@ impl<'a> LinkerContext<'a> {
         true
     }
 
-    /// Whether a live part of this file prints anything into its chunk (what `convert_stmts_for_chunk` keeps).
-    pub(crate) fn file_prints_code(&self, source_index: crate::IndexInt) -> bool {
-        let i = source_index as usize;
-        let flags = self.graph.meta.items_flags();
-        let records = self.graph.ast.items_import_records()[i].as_slice();
-        // The wrapper part prints the `__esm` / `__commonJS` closure.
-        let wrapper_part_index = if flags[i].wrap != WrapKind::None {
-            self.graph.meta.items_wrapper_part_index()[i].get()
-        } else {
-            Index::INVALID.get()
-        };
-        let stmt_prints = |stmt: &Stmt| -> bool {
-            let (record, is_export_star) = match stmt.data {
-                bun_ast::StmtData::SImport(s) => (&records[s.import_record_index as usize], false),
-                bun_ast::StmtData::SExportFrom(s) => {
-                    (&records[s.import_record_index as usize], false)
-                }
-                bun_ast::StmtData::SExportStar(s) => {
-                    (&records[s.import_record_index as usize], s.alias.is_none())
-                }
-                bun_ast::StmtData::SExportClause(_) => return false,
-                _ => return true,
-            };
-            if record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED) {
-                return false;
-            }
-            !record.source_index.is_valid()
-                || flags[record.source_index.get() as usize].wrap != WrapKind::None
-                // `export * from` a module with dynamic exports prints `__reExport(...)`.
-                || (is_export_star
-                    && record
-                        .flags
-                        .contains(bun_ast::ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN))
-        };
-        let parts = self.graph.ast.items_parts()[i].as_slice();
-        let mut live = self.graph.parts_live[i].iterator::<true, true>();
-        while let Some(part_index) = live.next() {
-            if part_index as u32 == wrapper_part_index
-                || parts[part_index].stmts.slice().iter().any(stmt_prints)
-            {
-                return true;
-            }
-        }
-        false
-    }
-
     /// `bundle` is taken as a raw `*mut` because the caller invokes this as
     /// `self.linker.load(self, …)` — `self` *is*
     /// `(*bundle).linker`, so a `&mut BundleV2` here would alias the receiver
@@ -3025,7 +2979,48 @@ impl<'a> LinkerContext<'a> {
                     }
                 }
             }
+
+            if !self.graph.files_with_code.is_set(source_index as usize) {
+                let flags = self.graph.meta.items_flags();
+                // A wrapped file prints its `__esm` / `__commonJS` closure.
+                if flags[source_index as usize].wrap != WrapKind::None
+                    || Self::part_prints_code(flags, records, part)
+                {
+                    self.graph.files_with_code.set(source_index as usize);
+                }
+            }
         }
+    }
+
+    /// Whether the part prints anything into its chunk. `convert_stmts_for_chunk`
+    /// drops an import or re-export of an unwrapped bundled file, an unused import
+    /// record, and an `export {}` clause without printing anything in its place.
+    fn part_prints_code(
+        flags: &[crate::js_meta::Flags],
+        records: &[ImportRecord],
+        part: &Part,
+    ) -> bool {
+        // With tree shaking, each top-level statement is its own part.
+        let [stmt] = part.stmts.slice() else {
+            return !part.stmts.is_empty();
+        };
+        let (record, is_export_star) = match stmt.data {
+            bun_ast::StmtData::SImport(s) => (&records[s.import_record_index as usize], false),
+            bun_ast::StmtData::SExportFrom(s) => (&records[s.import_record_index as usize], false),
+            bun_ast::StmtData::SExportStar(s) => {
+                (&records[s.import_record_index as usize], s.alias.is_none())
+            }
+            bun_ast::StmtData::SExportClause(_) => return false,
+            _ => return true,
+        };
+        !record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED)
+            && (!record.source_index.is_valid()
+                || flags[record.source_index.get() as usize].wrap != WrapKind::None
+                // `export * from` a module with dynamic exports prints `__reExport(...)`.
+                || (is_export_star
+                    && record
+                        .flags
+                        .contains(bun_ast::ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN)))
     }
 } // end tree-shaking impl
 

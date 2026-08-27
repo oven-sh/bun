@@ -3,7 +3,7 @@ use bun_alloc::ArenaVecExt as _;
 use core::sync::atomic::AtomicUsize;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
-use bun_collections::{ArrayHashMap, AutoBitSet, MapEntry, VecExt, index_sort};
+use bun_collections::{ArrayHashMap, AutoBitSet, VecExt, index_sort};
 use bun_core::strings;
 use bun_paths::{PathBuffer, resolve_path};
 use bun_sourcemap::SourceMapPieces;
@@ -299,7 +299,7 @@ pub(crate) fn compute_chunks(
     let ast_targets = this.graph.ast.items_target();
 
     // reshaped for borrowck — re-borrow file_entry_bits after the loop above mutated it
-    let file_entry_bits: &[AutoBitSet] = this.graph.files.items_entry_bits();
+    let file_entry_bits: &mut [AutoBitSet] = this.graph.files.items_entry_bits_mut();
 
     let css_reprs = this.graph.ast.items_css();
 
@@ -314,51 +314,56 @@ pub(crate) fn compute_chunks(
                     }
 
                     if this.graph.code_splitting {
+                        // A file that prints nothing gets no chunk: it would be an
+                        // empty file, and two such chunks share a content hash.
+                        if !this
+                            .graph
+                            .files_with_code
+                            .is_set(source_index.get() as usize)
+                        {
+                            continue;
+                        }
                         let js_chunk_key =
                             temp.alloc_slice_copy(entry_bits.bytes(this.graph.entry_points.len()));
-                        let js_chunk: &mut Chunk = match js_chunks.entry(js_chunk_key) {
-                            MapEntry::Vacant(vacant) => {
-                                // Its chunk would be an empty file.
-                                if !this.file_prints_code(source_index.get()) {
-                                    continue;
-                                }
-                                let is_browser_chunk_from_server_build =
-                                    could_be_browser_target_from_server_build
-                                        && ast_targets[source_index.get() as usize]
-                                            == Target::Browser;
-                                vacant.insert(Chunk {
-                                    entry_bits: entry_bits.clone()?,
-                                    entry_point: chunk::EntryPoint::non_entry_point(
-                                        source_index.get(),
-                                        0,
-                                    ),
-                                    content: chunk::Content::Javascript(
-                                        chunk::JavaScriptChunk::default(),
-                                    ),
-                                    output_source_map: SourceMapPieces::init(),
-                                    flags: make_flags(false, is_browser_chunk_from_server_build),
-                                    ..Default::default()
-                                })
-                            }
-                            MapEntry::Occupied(occupied) => {
-                                let js_chunk = occupied.into_mut();
-                                if could_be_browser_target_from_server_build
-                                    && !js_chunk.entry_point.is_entry_point()
-                                    && !js_chunk
-                                        .flags
-                                        .contains(chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
-                                    && ast_targets[source_index.get() as usize] == Target::Browser
-                                {
-                                    // Any browser-target file makes the non-entry chunk a browser chunk.
-                                    js_chunk
-                                        .flags
-                                        .insert(chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD);
-                                }
-                                js_chunk
-                            }
-                        };
+                        let js_chunk_entry = js_chunks.get_or_put(js_chunk_key)?;
 
-                        let entry = js_chunk
+                        if !js_chunk_entry.found_existing {
+                            let is_browser_chunk_from_server_build =
+                                could_be_browser_target_from_server_build
+                                    && ast_targets[source_index.get() as usize] == Target::Browser;
+                            *js_chunk_entry.value_ptr = Chunk {
+                                entry_bits: entry_bits.clone()?,
+                                entry_point: chunk::EntryPoint::non_entry_point(
+                                    source_index.get(),
+                                    0,
+                                ),
+                                content: chunk::Content::Javascript(
+                                    chunk::JavaScriptChunk::default(),
+                                ),
+                                output_source_map: SourceMapPieces::init(),
+                                flags: make_flags(false, is_browser_chunk_from_server_build),
+                                ..Default::default()
+                            };
+                        } else if could_be_browser_target_from_server_build
+                            && !js_chunk_entry.value_ptr.entry_point.is_entry_point()
+                            && !js_chunk_entry
+                                .value_ptr
+                                .flags
+                                .contains(chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
+                            && ast_targets[source_index.get() as usize] == Target::Browser
+                        {
+                            // If any file in the chunk has browser target, mark the whole chunk as browser.
+                            // This handles the case where a lazy-loaded chunk (code splitting chunk, not entry point)
+                            // contains browser-targeted files but was first created by a non-browser file.
+                            // We only apply this to non-entry-point chunks to preserve the correct side for server entry points.
+                            js_chunk_entry
+                                .value_ptr
+                                .flags
+                                .insert(chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD);
+                        }
+
+                        let entry = js_chunk_entry
+                            .value_ptr
                             .files_with_parts_in_chunk
                             .get_or_put(source_index.get() as u32)
                             .expect("unreachable");

@@ -1,4 +1,4 @@
-import { ROOT_CONTEXT as API_ROOT, context as apiContext, propagation as apiPropagation } from "@opentelemetry/api";
+import { ROOT_CONTEXT as API_ROOT, context as apiContext, propagation as apiPropagation, trace as apiTrace } from "@opentelemetry/api";
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -229,12 +229,19 @@ describe("Bun.serve", () => {
     using server = Bun.serve({
       port: 0,
       fetch() {
-        // the 500 below would derive http.response.status_code=500 and error.type="500"
-        Bun.otel.set({ "http.response.status_code": 299, "server.address": "front.example", "error.type": "UpstreamDown" });
+        // the 500 below would derive http.response.status_code=500 and error.type="500";
+        // url.path / client.address are per-request tail attributes
+        Bun.otel.set({
+          "http.response.status_code": 299,
+          "server.address": "front.example",
+          "error.type": "UpstreamDown",
+          "url.path": "/redacted",
+          "client.address": "hidden",
+        });
         return new Response("no", { status: 500 });
       },
     });
-    await (await fetch(`http://localhost:${server.port}/`)).text();
+    await (await fetch(`http://localhost:${server.port}/secret/path`)).text();
     const deadline = Date.now() + 5000;
     do {
       await Bun.sleep(0);
@@ -243,14 +250,16 @@ describe("Bun.serve", () => {
     const raw = Buffer.from(bytes!);
     const count = (key: string) => raw.toString("latin1").split(key).length - 1;
     // one SERVER span only (fetch spans are off): every key exactly once in the wire bytes
-    expect([count("http.response.status_code"), count("server.address"), count("error.type")]).toEqual([1, 1, 1]);
-    const [srv] = Bun.otel.decode(bytes!);
-    expect([srv.attributes["http.response.status_code"], srv.attributes["server.address"], srv.attributes["error.type"]]).toEqual([
-      299,
-      "front.example",
-      "UpstreamDown",
+    expect(["http.response.status_code", "server.address", "error.type", "url.path", "client.address"].map(count)).toEqual([
+      1, 1, 1, 1, 1,
     ]);
+    expect(raw.includes("/secret/path")).toBe(false);
+    const [srv] = Bun.otel.decode(bytes!);
+    expect(
+      ["http.response.status_code", "server.address", "error.type", "url.path", "client.address"].map(k => srv.attributes[k]),
+    ).toEqual([299, "front.example", "UpstreamDown", "/redacted", "hidden"]);
     expect(srv.status.code).toBe(2); // still an error: the response was a 500
+    expect(srv.droppedAttributesCount ?? 0).toBe(0);
   });
 
   test("5xx marks server span as error; 4xx does not", async () => {
@@ -357,6 +366,39 @@ describe("Bun.serve", () => {
     expect(inner!.get("baggage")).toBe("userId=42");
     const innerClient = clients.find(c => c.attributes["url.full"].includes(String(backend.port)))!;
     expect(inner!.get("traceparent")).toBe(`00-${traceId}-${innerClient.spanId}-01`);
+  });
+
+  test("a request span handed to later work still carries its tracestate and baggage after the response went out", async () => {
+    asExternalClient();
+    let late: Promise<any> | undefined;
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        const span = Bun.otel.activeSpan()!; // materialized, nothing read yet
+        late = new Promise(resolve =>
+          setTimeout(() => {
+            const carrier: Record<string, string> = {};
+            Bun.otel.propagator.inject(apiTrace.setSpan(API_ROOT, span), carrier, {
+              set: (c: any, k: string, v: string) => (c[k] = v),
+            });
+            resolve({ ts: (span.spanContext().traceState as any)?.serialize() ?? "", carrier });
+          }, 20),
+        );
+        return new Response("ok");
+      },
+    });
+    await (
+      await fetch(`http://localhost:${server.port}/`, {
+        headers: {
+          traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+          tracestate: "vendor=late",
+          baggage: "k=v",
+        },
+      })
+    ).text();
+    await collect(1); // the SERVER span has ended by now
+    const { ts, carrier } = await late!;
+    expect([ts, carrier.tracestate, carrier.baggage]).toEqual(["vendor=late", "vendor=late", "k=v"]);
   });
 
   test("a traceparent the caller sets on fetch() becomes the CLIENT span's parent and the header is re-pointed at the CLIENT span", async () => {

@@ -34,7 +34,15 @@ unsafe extern "C" {
     safe fn Bun__TelemetrySpan__createSuppressedCarrier(global: &JSGlobalObject) -> JSValue;
     safe fn Bun__TelemetrySpan__is(value: JSValue) -> bool;
     safe fn Bun__Telemetry__activeNativeHandle(global: &JSGlobalObject) -> NativeSpan;
-    safe fn Bun__TelemetrySpan__nativeEnded(cell: JSValue);
+    /// `trace_state`/`baggage`: what the ended span carried (may be empty),
+    /// for the cell to keep answering with.
+    safe fn Bun__TelemetrySpan__nativeEnded(
+        cell: JSValue,
+        trace_state: *const u8,
+        trace_state_len: usize,
+        baggage: *const u8,
+        baggage_len: usize,
+    );
     /// Borrowed (not ref'd) header strings of a JS-owned span; Empty otherwise.
     /// Valid until the caller next runs JS.
     safe fn Bun__TelemetrySpan__traceState(cell: JSValue) -> bun_core::StringView<'static>;
@@ -100,12 +108,19 @@ pub fn native_context_value(native: NativeSpan) -> JSValue {
 }
 
 /// Release the JS cell a pooled span materialized (see `pool::Ended`).
-pub(crate) fn release_cell(js_cell: bun_telemetry::JsCellRef) {
+pub(crate) fn release_cell(
+    js_cell: bun_telemetry::JsCellRef,
+    propagation: Option<&(Vec<u8>, Vec<u8>)>,
+) {
     if !js_cell.is_some() {
         return;
     }
     let v = JSValue::from_encoded(js_cell.0);
-    Bun__TelemetrySpan__nativeEnded(v);
+    let (ts, bg): (&[u8], &[u8]) = match propagation {
+        Some((ts, bg)) => (ts, bg),
+        None => (b"", b""),
+    };
+    Bun__TelemetrySpan__nativeEnded(v, ts.as_ptr(), ts.len(), bg.as_ptr(), bg.len());
     v.unprotect();
 }
 
@@ -759,7 +774,7 @@ pub extern "C" fn Bun__Telemetry__poolMaterialize(
             })
             .is_some();
         if !stored {
-            release_cell(bun_telemetry::JsCellRef(v.0));
+            release_cell(bun_telemetry::JsCellRef(v.0), None);
             return JSValue::UNDEFINED;
         }
         return v;

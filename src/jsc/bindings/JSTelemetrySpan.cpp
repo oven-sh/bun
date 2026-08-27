@@ -95,13 +95,25 @@ extern "C" JSC::EncodedJSValue Bun__TelemetrySpan__createNative(Zig::GlobalObjec
 static void markEnded(Zig::GlobalObject*, JSTelemetrySpan*);
 
 /// A pooled span with a materialized cell ended natively: the same Ended
-/// transition as end().
-extern "C" void Bun__TelemetrySpan__nativeEnded(JSC::EncodedJSValue v)
+/// transition as end(). The pool slot is gone after this, so the tracestate /
+/// baggage the span carried move onto the cell now unless already read.
+extern "C" void Bun__TelemetrySpan__nativeEnded(JSC::EncodedJSValue v, const uint8_t* traceState, size_t traceStateLen, const uint8_t* baggage, size_t baggageLen)
 {
-    if (auto* span = toTelemetrySpan(JSValue::decode(v))) {
-        if (!span->ended())
-            markEnded(defaultGlobalObject(span->globalObject()), span);
+    auto* span = toTelemetrySpan(JSValue::decode(v));
+    if (!span)
+        return;
+    auto* globalObject = defaultGlobalObject(span->globalObject());
+    using Field = JSTelemetrySpan::Field;
+    if (span->get(Field::TraceState).isNull()) {
+        auto& vm = globalObject->vm();
+        auto make = [&](const uint8_t* p, size_t n) -> JSString* {
+            return n ? jsString(vm, WTF::String::fromUTF8ReplacingInvalidSequences(std::span { p, n })) : jsEmptyString(vm);
+        };
+        span->field(Field::TraceState).set(vm, span, make(traceState, traceStateLen));
+        span->field(Field::Baggage).set(vm, span, make(baggage, baggageLen));
     }
+    if (!span->ended())
+        markEnded(globalObject, span);
 }
 
 extern "C" bool Bun__TelemetrySpan__is(JSC::EncodedJSValue v)

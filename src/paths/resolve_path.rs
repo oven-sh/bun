@@ -1628,7 +1628,7 @@ pub fn join_abs<'a, P: PlatformT>(cwd: &'a [u8], part: &[u8]) -> &'a [u8] {
 /// This is the equivalent of path.resolve
 ///
 /// Returned path is stored in a temporary buffer. It must be copied if it needs to be stored.
-/// `cwd` and `parts` may be of any length.
+/// `cwd` and each part may be of any length.
 // result borrows the thread-local buffer ('static) OR returns `cwd`
 // directly when `parts.is_empty()`. Return tied to `cwd`'s lifetime ('static: 'a).
 pub fn join_abs_string<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a [u8] {
@@ -1666,7 +1666,8 @@ pub fn join_abs_string_spill<'a, P: PlatformT>(
 /// This is the equivalent of path.resolve
 ///
 /// Returned path is stored in a temporary buffer. It must be copied if it needs to be stored.
-/// `cwd` and `parts` may be of any length.
+/// `cwd` and each part may be of any length. `parts` must not be empty: the
+/// result would be `cwd` itself, which has no NUL.
 pub fn join_abs_string_z<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a ZStr {
     let capacity = join_abs_capacity::<P>(cwd.len(), parts);
     if capacity <= PARSER_JOIN_INPUT_BUFFER_LEN {

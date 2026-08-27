@@ -520,9 +520,13 @@ test("rm errors for several operands into a closed pipe finish", async () => {
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
-    stderr: "inherit",
+    stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toBe("0\n");
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "0\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
 });

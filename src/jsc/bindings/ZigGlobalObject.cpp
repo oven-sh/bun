@@ -391,10 +391,13 @@ extern "C" JSC::EncodedJSValue BunObject__createBunStdin(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue BunObject__createBunStderr(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue BunObject__createBunStdout(JSC::JSGlobalObject*);
 
+// One-shot: a process.nextTick queued inside a microtask creates m_nextTickQueue after
+// GlobalObject::drainMicrotasks() has already checked for it, so the first drain happens here.
 static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 {
     auto* globalObject = defaultGlobalObject();
     if (auto queue = globalObject->m_nextTickQueue.get()) {
+        globalObject->nextTickQueueHandoffDone = true;
         globalObject->resetOnEachMicrotaskTick();
         queue->drain(vm, globalObject);
     }
@@ -405,12 +408,11 @@ static void cleanupAsyncHooksData(JSC::VM& vm)
     auto* globalObject = defaultGlobalObject();
     globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
     globalObject->asyncHooksNeedsCleanup = false;
-    if (!globalObject->m_nextTickQueue) {
-        vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
+    // Put back the hook that jsCleanupLater displaced. A still-armed one-shot owns this
+    // microtask boundary too: the queue may have been created since it was displaced.
+    globalObject->resetOnEachMicrotaskTick();
+    if (!globalObject->nextTickQueueHandoffDone)
         checkIfNextTickWasCalledDuringMicrotask(vm);
-    } else {
-        vm.setOnEachMicrotaskTick(nullptr);
-    }
 }
 
 GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure)
@@ -453,12 +455,10 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
     auto& vm = this->vm();
     if (this->asyncHooksNeedsCleanup) {
         vm.setOnEachMicrotaskTick(&cleanupAsyncHooksData);
+    } else if (this->nextTickQueueHandoffDone) {
+        vm.setOnEachMicrotaskTick(nullptr);
     } else {
-        if (this->m_nextTickQueue) {
-            vm.setOnEachMicrotaskTick(nullptr);
-        } else {
-            vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
-        }
+        vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
     }
 }
 
@@ -560,15 +560,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     vm.setOnComputeErrorInfo(computeErrorInfoWrapperToString);
     vm.setOnComputeErrorInfoJSValue(computeErrorInfoWrapperToJSValue);
     vm.setComputeLineColumnWithSourcemap(computeLineColumnWithSourcemap);
-    vm.setOnEachMicrotaskTick([](JSC::VM& vm) -> void {
-        // if you process.nextTick on a microtask we need this
-        auto* globalObject = defaultGlobalObject();
-        if (auto queue = globalObject->m_nextTickQueue.get()) {
-            globalObject->resetOnEachMicrotaskTick();
-            queue->drain(vm, globalObject);
-            return;
-        }
-    });
+    vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
 
     if (executionContextId > -1) {
         const auto initializeWorker = [&](WebCore::WorkerMessagingProxy& worker) -> void {

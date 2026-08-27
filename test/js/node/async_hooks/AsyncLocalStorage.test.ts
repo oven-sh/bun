@@ -1,6 +1,6 @@
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import http2 from "http2";
 
 describe("AsyncLocalStorage", () => {
@@ -1247,5 +1247,127 @@ describe("async generators", () => {
       }
     });
     expect(caughtStore).toBe("STORE_X");
+  });
+});
+
+// enterWith() swaps the VM's onEachMicrotaskTick hook for its own cleanup. The
+// default hook is the one-shot that drains a process.nextTick queue created
+// inside a microtask (the entry script's top-level code runs in one). The
+// cleanup used to hand back nothing when the queue already existed, so ticks
+// queued next to an enterWith() were never drained and the process exited
+// without running them. Every case spawns a fresh process because that hook
+// is per-process state.
+describe("enterWith() and process.nextTick() in the same microtask", () => {
+  async function run(args: string[], cwd?: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const cjsImport = `const { AsyncLocalStorage } = require("node:async_hooks");`;
+  const esmImport = `import { AsyncLocalStorage } from "node:async_hooks";`;
+  const entryScript = (importLine: string) => `
+    ${importLine}
+    const als = new AsyncLocalStorage();
+    als.enterWith("x");
+    process.nextTick(() => console.log("tick", als.getStore()));
+    console.log("end");
+  `;
+
+  test.concurrent("CommonJS entry: the tick runs before exit", async () => {
+    using dir = tempDir("als-enterwith-tick", { "entry.cjs": entryScript(cjsImport) });
+    expect(await run(["entry.cjs"], String(dir))).toEqual({ stdout: "end\ntick x\n", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("ES module entry: the tick runs before exit", async () => {
+    using dir = tempDir("als-enterwith-tick", { "entry.mjs": entryScript(esmImport) });
+    expect(await run(["entry.mjs"], String(dir))).toEqual({ stdout: "end\ntick x\n", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("bun -e: the tick runs before exit", async () => {
+    expect(await run(["-e", entryScript(cjsImport)])).toEqual({ stdout: "end\ntick x\n", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("a tick queued before enterWith() runs too, with the store it captured", async () => {
+    const script = `
+      ${cjsImport}
+      const als = new AsyncLocalStorage();
+      process.nextTick(() => console.log("tick1", als.getStore()));
+      als.enterWith("x");
+      process.nextTick(() => console.log("tick2", als.getStore()));
+      console.log("end");
+    `;
+    expect(await run(["-e", script])).toEqual({ stdout: "end\ntick1 undefined\ntick2 x\n", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("ticks run before the promise jobs the script queued after them", async () => {
+    const script = `
+      ${cjsImport}
+      const als = new AsyncLocalStorage();
+      als.enterWith("x");
+      process.nextTick(() => console.log("tick", als.getStore()));
+      Promise.resolve().then(() => console.log("then", als.getStore()));
+      queueMicrotask(() => console.log("microtask", als.getStore()));
+      console.log("end");
+    `;
+    expect(await run(["-e", script])).toEqual({
+      stdout: "end\ntick x\nthen x\nmicrotask x\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("enterWith() in the microtask that first touches process.nextTick", async () => {
+    const script = `
+      ${cjsImport}
+      const als = new AsyncLocalStorage();
+      Promise.resolve().then(() => {
+        als.enterWith("y");
+        process.nextTick(() => console.log("tick", als.getStore()));
+      });
+      console.log("end");
+    `;
+    expect(await run(["-e", script])).toEqual({ stdout: "end\ntick y\n", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("a second enterWith() in a promise job keeps its own tick", async () => {
+    const script = `
+      ${cjsImport}
+      const als = new AsyncLocalStorage();
+      als.enterWith("a");
+      Promise.resolve().then(() => {
+        als.enterWith("b");
+        process.nextTick(() => console.log("tick-b", als.getStore()));
+      });
+      process.nextTick(() => console.log("tick-a", als.getStore()));
+      console.log("end");
+    `;
+    expect(await run(["-e", script])).toEqual({ stdout: "end\ntick-a a\ntick-b b\n", stderr: "", exitCode: 0 });
+  });
+
+  // Once the queue has had its first drain, a tick queued from a microtask
+  // waits for the sibling microtasks, as in node. enterWith() in that
+  // microtask must not pull the drain forward.
+  test.concurrent("enterWith() after the first drain does not run ticks ahead of sibling microtasks", async () => {
+    const script = `
+      ${cjsImport}
+      const als = new AsyncLocalStorage();
+      process.nextTick(() => console.log("tick0"));
+      setTimeout(() => {
+        Promise.resolve().then(() => {
+          als.enterWith("y");
+          process.nextTick(() => console.log("tick", als.getStore()));
+        });
+        Promise.resolve().then(() => console.log("then"));
+      }, 1);
+      console.log("end");
+    `;
+    expect(await run(["-e", script])).toEqual({ stdout: "end\ntick0\nthen\ntick y\n", stderr: "", exitCode: 0 });
   });
 });

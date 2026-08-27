@@ -426,6 +426,9 @@ public:
     }
 
     bool asyncHooksNeedsCleanup = false;
+    // Set once the onEachMicrotaskTick hook has drained a freshly created m_nextTickQueue.
+    // From then on GlobalObject::drainMicrotasks() owns the queue and the hook stays unset.
+    bool nextTickQueueHandoffDone = false;
     double INSPECT_MAX_BYTES = 50;
     bool isInsideErrorPrepareStackTraceCallback = false;
 

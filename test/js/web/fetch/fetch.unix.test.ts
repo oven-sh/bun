@@ -1,8 +1,8 @@
 import { serve, ServeOptions, Server } from "bun";
 import { afterAll, expect, it } from "bun:test";
 import { once } from "events";
-import { mkdirSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tls, tmpdirSync } from "harness";
+import { mkdirSync, rmSync } from "fs";
+import { bunEnv, bunExe, isWindows, tempDir, tls, tmpdirSync } from "harness";
 import { request } from "http";
 import { createServer } from "net";
 import { join } from "path";
@@ -250,7 +250,8 @@ it.skipIf(isWindows)("reuses the connection (keep-alive)", async () => {
     }
 
     const sock = makeServer();
-    const sockPath = join(tmpdirSync(), "ka.sock");
+    using dir = tempDir("fetch-unix-ka", {});
+    const sockPath = join(String(dir), "ka.sock");
     sock.srv.listen(sockPath);
     await once(sock.srv, "listening");
     try {
@@ -296,12 +297,12 @@ it.skipIf(isWindows)("keep-alive pool is keyed by socket path", async () => {
     return { srv, connections: () => connections };
   }
 
-  const dir = tmpdirSync();
+  using dir = tempDir("fetch-unix-pool-key", {});
   const a = makeServer("a");
   const b = makeServer("b");
   const tcp = makeServer("tcp");
-  const aPath = join(dir, "a.sock");
-  const bPath = join(dir, "b.sock");
+  const aPath = join(String(dir), "a.sock");
+  const bPath = join(String(dir), "b.sock");
   a.srv.listen(aPath);
   b.srv.listen(bPath);
   tcp.srv.listen(0, "127.0.0.1");
@@ -326,9 +327,7 @@ it.skipIf(isWindows)("keep-alive pool is keyed by socket path", async () => {
 });
 
 it.skipIf(isWindows)("TLS over a unix socket is only reused for the hostname the handshake verified", async () => {
-  const dir = tmpdirSync();
-  const caPath = join(dir, "ca.pem");
-  writeFileSync(caPath, tls.cert);
+  using dir = tempDir("fetch-unix-tls", { "ca.pem": tls.cert });
   // The harness cert is valid for "localhost". A pooled connection verified
   // for it must not serve a request to a different hostname over the same
   // socket path: that request has to handshake again and fail verification.
@@ -338,7 +337,7 @@ it.skipIf(isWindows)("TLS over a unix socket is only reused for the hostname the
       "-e",
       `
       import { createServer } from "node:tls";
-      const unix = ${JSON.stringify(join(dir, "tls.sock"))};
+      const unix = ${JSON.stringify(join(String(dir), "tls.sock"))};
       const sockets = new Set();
       let handshakes = 0;
       const srv = createServer(${JSON.stringify(tls)}, sock => {
@@ -374,7 +373,7 @@ it.skipIf(isWindows)("TLS over a unix socket is only reused for the hostname the
       srv.close();
       `,
     ],
-    env: { ...bunEnv, NODE_EXTRA_CA_CERTS: caPath },
+    env: { ...bunEnv, NODE_EXTRA_CA_CERTS: join(String(dir), "ca.pem") },
     stdout: "pipe",
     stderr: "pipe",
   });

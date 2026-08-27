@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { itBundled } from "./expectBundled";
 
 for (let backend of ["api", "cli"] as const) {
@@ -122,9 +122,12 @@ for (let backend of ["api", "cli"] as const) {
 
 // A build inlines the env as of the Bun.build() call. The bundler thread reads
 // its own copy of the env: a `process.env.X = ...` assignment while a build is
-// in flight (every assignment now writes the native env map in place) must not
+// in flight (on POSIX every assignment writes the native env map in place; on
+// Windows only the proxy variables do, through their accessor) must not
 // change, or free out from under, what the build inlines.
 describe.concurrent("env is copied when the build is scheduled", () => {
+  const key = isWindows ? "HTTPS_PROXY" : "BUNDLE_ENV_COPY";
+  const prefixPattern = isWindows ? "HTTPS_*" : "BUNDLE_ENV_*";
   const atCall = "value-when-the-build-was-scheduled-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   const duringBuild = "value-assigned-while-bundling-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
@@ -135,21 +138,21 @@ describe.concurrent("env is copied when the build is scheduled", () => {
       name: "assign-env-while-bundling",
       setup(build) {
         build.onLoad({ filter: ${filter} }, () => {
-          process.env.BUNDLE_ENV_COPY = ${JSON.stringify(duringBuild)};
+          process.env.${key} = ${JSON.stringify(duringBuild)};
           for (let i = 0; i < 64; i++) process.env["BUNDLE_ENV_COPY_GROW_" + i] = "grow-the-map";
-          return { loader: "ts", contents: "console.log(process.env.BUNDLE_ENV_COPY);" };
+          return { loader: "ts", contents: "console.log(process.env.${key});" };
         });
       },
     };
   `;
 
-  test.each(["inline", "BUNDLE_ENV_*"] as const)("Bun.build({ env: %j })", async env => {
+  test.each(["inline", prefixPattern] as const)("Bun.build({ env: %j })", async env => {
     using dir = tempDir("bun-build-env-copy", {
       "entry.ts": "export {};",
       "plugin.ts": pluginSource("/entry\\.ts$/"),
       "build-fixture.ts": /* ts */ `
         import plugin from "./plugin.ts";
-        process.env.BUNDLE_ENV_COPY = ${JSON.stringify(atCall)};
+        process.env.${key} = ${JSON.stringify(atCall)};
         const result = await Bun.build({
           entrypoints: ["./entry.ts"],
           env: ${JSON.stringify(env)},
@@ -188,7 +191,7 @@ describe.concurrent("env is copied when the build is scheduled", () => {
       "plugin.ts": pluginSource("/app\\.ts$/"),
       "serve-fixture.ts": /* ts */ `
         import index from "./index.html";
-        process.env.BUNDLE_ENV_COPY = ${JSON.stringify(atCall)};
+        process.env.${key} = ${JSON.stringify(atCall)};
         using server = Bun.serve({
           port: 0,
           development: false,

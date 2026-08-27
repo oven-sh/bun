@@ -90,6 +90,49 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
     60_000,
   );
 
+  // --bytecode into an executable for another os/arch/libc embeds bytecode written by this platform's JavaScriptCore for
+  // another's; such executables say so in crash reports (Features: cross_compiled_bytecode). The "other platform" build
+  // here is the same OS with the other CPU, and reuses this bun as the target executable, so it still runs here.
+  const otherPlatform = `bun-${isLinux ? "linux" : isMacOS ? "darwin" : "windows"}-${isArm64 ? "x64" : "aarch64"}${isMusl ? "-musl" : ""}`;
+  test.each([
+    ["this platform", undefined as string | undefined, false],
+    [otherPlatform, otherPlatform, true],
+  ])("--compile --bytecode for %s", async (_label, target, expected) => {
+    using dir = tempDir("build-compile-cross-bytecode", {
+      "app.js": `require("bun:internal-for-testing").crash_handler.panic();`,
+    });
+    const outfile = join(dir + "", isWindows ? "app.exe" : "app");
+    await using build = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--bytecode",
+        ...(target ? [`--target=${target}`, `--compile-executable-path=${process.execPath}`] : []),
+        join(dir + "", "app.js"),
+        "--outfile",
+        outfile,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildStderr).not.toContain("error");
+    expect(buildExit).toBe(0);
+    await using proc = Bun.spawn({
+      cmd: [outfile],
+      env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // (stdout is not asserted: ASAN builds print the symbolized crash trace there.)
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("panic");
+    expect(stderr.includes("cross_compiled_bytecode")).toBe(expected);
+    expect(exitCode).not.toBe(0);
+  });
+
   // "cross": the target is not the host, so the internal modules' sources, ids and stamp are read out of the target
   // executable's builtins section (here: this same bun under a different version, so the result still runs locally).
   test.each([false, true, "cross" as const])(

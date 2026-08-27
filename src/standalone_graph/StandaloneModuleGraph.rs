@@ -774,7 +774,10 @@ bitflags::bitflags! {
         /// After the startup module count: one `StringPointer` to the string table every module's `module_info`
         /// body indexes.
         const HAS_MODULE_INFO_STRING_TABLE  = 1 << 9;
-        // _padding: u22
+        /// Built with `--compile --bytecode --target=<a different os/arch/libc than the bun that built it>`: the embedded
+        /// bytecode was written by another platform's JavaScriptCore. Reported with crash reports.
+        const CROSS_COMPILED_BYTECODE       = 1 << 10;
+        // _padding: u21
     }
 }
 
@@ -1150,6 +1153,7 @@ fn module_dest_path(output_file: &OutputFile) -> std::borrow::Cow<'_, [u8]> {
 }
 
 pub(crate) fn to_bytes(
+    target: &CompileTarget,
     prefix: &[u8],
     output_files: &[OutputFile],
     output_format: Format,
@@ -1497,6 +1501,13 @@ pub(crate) fn to_bytes(
         record[4..8].copy_from_slice(&module_info_string_table_ptr.length.to_le_bytes());
         let _ = string_builder.append_count(&record);
         flags |= Flags::HAS_MODULE_INFO_STRING_TABLE;
+    }
+    if !target.is_host_platform()
+        && output_files
+            .iter()
+            .any(|file| file.output_kind == options::OutputKind::Bytecode)
+    {
+        flags |= Flags::CROSS_COMPILED_BYTECODE;
     }
     let compile_exec_argv_ptr = string_builder.append_count_z(compile_exec_argv);
 
@@ -2435,6 +2446,7 @@ pub fn to_executable(
     #[cfg(windows)]
     let _ = root_dir;
     let bytes = match to_bytes(
+        target,
         module_prefix,
         output_files,
         output_format,
@@ -2877,14 +2889,11 @@ fn append_bytecode_aligned(
     writable[0..padding].fill(0);
     string_builder.len += padding;
     let aligned_offset = string_builder.len;
-    let writable_after_padding = string_builder.writable();
-    writable_after_padding[0..bytecode.len()].copy_from_slice(bytecode);
-    let unaligned_space = &writable_after_padding[bytecode.len()..];
-    let len = bytecode.len() + unaligned_space.len().min(128);
-    string_builder.len += len;
+    string_builder.writable()[0..bytecode.len()].copy_from_slice(bytecode);
+    string_builder.len += bytecode.len();
     StringPointer {
         offset: aligned_offset as u32,
-        length: len as u32,
+        length: bytecode.len() as u32,
     }
 }
 

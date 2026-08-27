@@ -15,6 +15,8 @@
 
 #include "NativeModuleImpl.h"
 #include "BunBuiltinNames.h"
+#include "JSBuffer.h"
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/CachedBytecode.h>
 #include <JavaScriptCore/CachedTypes.h>
 #include <JavaScriptCore/CodeCache.h>
@@ -248,6 +250,7 @@ namespace Zig {
 JSC::VM& vmForBytecodeCache();
 void ensureBuiltinNamesForBytecodeCache(JSC::VM&);
 }
+extern "C" void Bun__destroyBytecodeCacheVM();
 
 static bool encodeInternalModule(const String& text, const String& moduleName, const String& url, uint32_t sourceStamp, uint32_t depth, const uint8_t** bytes, size_t* size, JSC::CachedBytecode** handle, JSC::EncoderStringTable* externalStrings)
 {
@@ -291,6 +294,61 @@ extern "C" bool Bun__generateInternalModuleBytecodeFromSource(const Latin1Charac
     using namespace Bun;
     return encodeInternalModule(String({ text, textLength }), String({ name, nameLength }), String({ url, urlLength }), sourceStamp, depth, bytes, size, handle, externalStrings);
 }
+
+namespace Bun {
+
+// bun:internal-for-testing: the bytecode `bun build --compile --bytecode` would embed for a builtin module, and the
+// external string table it would embed beside it -- either for internal module number `index` (null past the last
+// one), or for `source` written in builtin syntax under `name`.
+JSC_DEFINE_HOST_FUNCTION(jsInternalModuleBytecode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String text, name, url;
+    uint32_t stamp = 0;
+    if (callFrame->argument(0).isString()) {
+        text = callFrame->argument(0).toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!callFrame->argument(1).isString())
+            return throwVMTypeError(globalObject, scope, "internalModuleBytecode(source, name): name must be a string"_s);
+        name = callFrame->argument(1).toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!text.is8Bit() || !text.startsWith("(function ("_s))
+            return throwVMTypeError(globalObject, scope, "internalModuleBytecode(source, name): source must be Latin-1 and start with \"(function (\""_s);
+        url = makeString("builtin://"_s, name);
+    } else {
+        uint32_t index = callFrame->argument(0).toUInt32(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (index >= bun_internal_modules_header.moduleCount)
+            return JSValue::encode(jsNull());
+        const auto& m = internalModuleRecord(index);
+        text = internalModuleSource(index);
+        name = internalModuleString(m.nameOffset, m.nameLength);
+        url = internalModuleString(m.urlOffset, m.urlLength);
+        stamp = bun_internal_modules_header.sourceStamp;
+    }
+    JSC::EncoderStringTable externalStrings;
+    const uint8_t* bytes = nullptr;
+    size_t size = 0;
+    JSC::CachedBytecode* handle = nullptr;
+    bool encoded = encodeInternalModule(text, name, url, stamp, std::numeric_limits<uint32_t>::max(), &bytes, &size, &handle, &externalStrings);
+    // The encoder runs in this thread's bytecode-cache VM; `bun build` tears it down after a build, and so does this.
+    Bun__destroyBytecodeCacheVM();
+    if (!encoded)
+        return throwVMError(globalObject, scope, makeString("could not generate bytecode for "_s, name));
+    RefPtr<JSC::CachedBytecode> bytecode = adoptRef(handle);
+    JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, bytecode->span());
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::JSUint8Array* strings = WebCore::createBuffer(globalObject, externalStrings.serialize().span());
+    RETURN_IF_EXCEPTION(scope, {});
+    JSObject* result = constructEmptyObject(globalObject);
+    result->putDirect(vm, vm.propertyNames->name, jsString(vm, name));
+    result->putDirect(vm, Identifier::fromString(vm, "bytecode"_s), buffer);
+    result->putDirect(vm, Identifier::fromString(vm, "strings"_s), strings);
+    return JSValue::encode(result);
+}
+
+} // namespace Bun
 
 // This executable's whole builtins section (header, index, sources), for the bundler's section reader.
 extern "C" const uint8_t* Bun__builtinsSection(size_t* length)

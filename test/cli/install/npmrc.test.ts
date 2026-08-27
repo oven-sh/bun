@@ -2240,10 +2240,11 @@ describe.concurrent("//host/ credential lines are matched against the request UR
   });
 
   test("a query on a cross-host dist.tarball still resolves the deeper line", async () => {
-    using cdn = mockRegistry("Bearer cdn-token", { secure: true, tarballPath: "/npm/x.tgz", tarballQuery: "?sig=abc" });
+    using cdn = mockRegistry("Bearer cdn-token", { secure: true, tarballPath: "/npm/x.tgz" });
     using registry = mockRegistry("Bearer registry-token", {
       tarballOrigin: () => cdn.origin,
       tarballPath: "/npm/x.tgz",
+      tarballQuery: "?sig=abc",
     });
     using dir = tempDir("npmrc-url-auth-query-cdn", {
       "package.json": packageJson,

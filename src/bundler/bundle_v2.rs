@@ -2751,7 +2751,6 @@ pub mod bv2_impl {
             let task: &mut ParseTask = self.arena_create(task_val);
             task.loader = Some(loader);
             task.task.node.next = core::ptr::null_mut();
-            task.tree_shaking = self.linker.options.tree_shaking;
             task.known_target = target;
             task.jsx.development = self
                 .transpiler_for_target(target)
@@ -2863,7 +2862,6 @@ pub mod bv2_impl {
             let task: &mut ParseTask = self.arena_create(task_val);
             task.loader = Some(loader);
             task.task.node.next = core::ptr::null_mut();
-            task.tree_shaking = self.linker.options.tree_shaking;
             task.is_entry_point = is_entry_point;
             task.known_target = target;
             task.jsx.development = self
@@ -3412,7 +3410,6 @@ pub mod bv2_impl {
                     std::ptr::from_mut(self).cast::<BundleV2<'static>>(),
                 );
                 (*runtime_parse_task).ctx = Some(ctx_mut);
-                (*runtime_parse_task).tree_shaking = true;
                 (*runtime_parse_task).loader = Some(Loader::Js);
             }
             self.increment_scan_counter();
@@ -3733,7 +3730,6 @@ pub mod bv2_impl {
             task.jsx = self.transpiler_for_target(known_target).options.jsx.clone();
             task.task.node.next = core::ptr::null_mut();
             task.io_task.node.next = core::ptr::null_mut();
-            task.tree_shaking = self.linker.options.tree_shaking;
             task.known_target = known_target;
 
             self.increment_scan_counter();
@@ -3806,7 +3802,6 @@ pub mod bv2_impl {
             } else {
                 self.transpiler_for_target(known_target).options.jsx.clone()
             };
-            let tree_shaking = self.linker.options.tree_shaking;
             // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; coerce the
             // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from
             // `arena()` ends before we take `&mut self` below.
@@ -3820,7 +3815,6 @@ pub mod bv2_impl {
                 emit_decorator_metadata: false, // TODO
                 package_version: bun_ast::StoreStr::EMPTY,
                 loader: Some(loader),
-                tree_shaking,
                 known_target,
                 ..Default::default()
             });
@@ -4959,7 +4953,6 @@ pub mod bv2_impl {
                                 source_index: bun_ast::Index::init(source_index.get()),
                                 module_type: options::ModuleType::Unknown,
                                 loader: Some(loader),
-                                tree_shaking: this.linker.options.tree_shaking,
                                 known_target: resolve.import_record.original_target,
                                 is_entry_point: resolve.import_record.kind
                                     == ImportKind::EntryPointBuild,
@@ -6391,7 +6384,6 @@ pub mod bv2_impl {
                         resolve_task.jsx = transpiler.options.jsx.clone();
                         resolve_task.jsx.development = transpiler.options.forced_jsx_development();
                         resolve_task.loader = Some(import_record_loader);
-                        resolve_task.tree_shaking = transpiler.options.tree_shaking;
                         resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
                         *resolve_entry.value_ptr = resolve_task;
                         continue;
@@ -6759,7 +6751,6 @@ pub mod bv2_impl {
                 resolve_task.jsx.development = transpiler.options.forced_jsx_development();
 
                 resolve_task.loader = Some(import_record_loader);
-                resolve_task.tree_shaking = transpiler.options.tree_shaking;
                 *resolve_entry.value_ptr = resolve_task;
                 if let Some(secondary) = &resolve_result.path_pair.secondary {
                     if !secondary.is_disabled

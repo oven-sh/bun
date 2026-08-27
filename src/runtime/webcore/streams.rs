@@ -2092,7 +2092,6 @@ pub struct NetworkSink {
     pub(crate) source: SourceHandle,
     // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
     pub global_this: Option<BackRef<JSGlobalObject>>,
-    pub(crate) high_water_mark: BlobSizeType,
     /// Pending `flush()` promise. Serves both the user `s3file.writer().flush()`
     /// API and the `readDirectStream` / `BunAsyncIterableSource` pump, which
     /// parks on `controller.flush(true)` (not `m_onPull`) on backpressure.
@@ -2122,7 +2121,6 @@ impl Default for NetworkSink {
             task: None,
             source: SourceHandle::default(),
             global_this: None,
-            high_water_mark: 2048,
             flush_promise: JSPromiseStrong::default(),
             pending: WritablePending::default(),
             end_promise: JSPromiseStrong::default(),
@@ -2169,16 +2167,11 @@ impl NetworkSink {
         None
     }
 
-    pub(crate) fn start(&mut self, stream_start: &Start) -> bun_sys::Result<()> {
+    pub(crate) fn start(&mut self, _stream_start: &Start) -> bun_sys::Result<()> {
         if self.ended {
             return bun_sys::Result::Ok(());
         }
 
-        if let &Start::ChunkSize(chunk_size) = stream_start {
-            if chunk_size > 0 {
-                self.high_water_mark = chunk_size;
-            }
-        }
         self.source.start();
         bun_sys::Result::Ok(())
     }

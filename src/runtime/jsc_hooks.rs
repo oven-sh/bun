@@ -2782,15 +2782,11 @@ fn transpile_source_code_inner(
                 // disable_transpiling: return raw source.
                 if disable_transpilying {
                     let source_code = match args.flags {
-                        FetchFlags::PrintSourceAndClone => {
-                            bun_core::String::clone_utf8(&source.contents)
-                        }
                         FetchFlags::PrintSource => {
                             // The file contents live in a Drop-carrying
                             // `source_contents_backing` on `parse_result`, so a
                             // borrow would dangle once `parse_result` drops on
-                            // return. Clone instead — matches the
-                            // `PrintSourceAndClone` arm.
+                            // return. Clone instead.
                             bun_core::String::clone_utf8(&source.contents)
                         }
                         FetchFlags::Transpile => unreachable!(),
@@ -4472,7 +4468,7 @@ fn transpile_error_value(
     err: crate::Error,
 ) -> Option<JSValue> {
     match err {
-        crate::Error::PluginError | crate::Error::Bundler(bun_bundler::Error::Plugin) => None,
+        crate::Error::Bundler(bun_bundler::Error::Plugin) => None,
         // `take_error` unwraps the JSC::Exception to its inner value; the C++
         // caller re-wraps via `JSC::Exception::create`, so storing the raw
         // Exception here would double-wrap and trip

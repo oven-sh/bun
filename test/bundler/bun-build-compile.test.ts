@@ -133,9 +133,20 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
     expect(exitCode).not.toBe(0);
   });
 
-  test.each([false, true])(
+  // "cross": the target is not the host, so the internal modules' sources, ids and stamp are read out of the target
+  // executable's builtins section (here: this same bun under a different version, so the result still runs locally).
+  test.each([false, true, "cross" as const])(
     "--bytecode=%p: internal modules the app imports come from embedded bytecode",
-    async bytecode => {
+    async mode => {
+      const bytecode = mode !== false;
+      const os = isMacOS ? "darwin" : isLinux ? "linux" : isWindows ? "windows" : "unknown";
+      const cross =
+        mode === "cross"
+          ? {
+              target: `bun-${os}-${isArm64 ? "aarch64" : "x64"}${isMusl ? "-musl" : ""}-v1.0.0` as any,
+              executablePath: process.execPath,
+            }
+          : {};
       using dir = tempDir("build-compile-builtin-bytecode", {
         "app.js": `import { join } from "node:path";
 import http from "node:http";
@@ -147,7 +158,7 @@ server.close();`,
       const outfile = join(dir + "", "app");
       const result = await Bun.build({
         entrypoints: [join(dir + "", "app.js")],
-        compile: { outfile },
+        compile: { outfile, ...cross },
         bytecode,
         format: "esm",
         target: "bun",
@@ -166,6 +177,8 @@ server.close();`,
       }
       expect(exitCode).toBe(0);
     },
+    // A --compile build plus (for "cross") bytecode for ~45 internal modules: ~10s under debug+ASAN.
+    60_000,
   );
 
   test("compile with invalid target fails gracefully", async () => {

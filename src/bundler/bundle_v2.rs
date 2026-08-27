@@ -1416,13 +1416,24 @@ pub mod bv2_impl {
                 external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
             ) -> Option<Box<[u8]>>;
 
-            /// Defined `#[no_mangle]` in `bun_jsc::cached_bytecode`: (registry id, bytecode) for the internal modules named
-            /// by `specifiers` plus their static requires.
+            /// Defined `#[no_mangle]` in `bun_jsc::cached_bytecode`: this executable's builtins section
+            /// (`bun_exe_format::builtins`).
+            safe fn __bun_jsc_host_builtins() -> &'static [u8];
+            /// Bytecode for this executable's internal module `id`, as InternalModuleRegistry consumes it.
             safe fn __bun_jsc_generate_internal_module_bytecode(
-                specifiers: &[&[u8]],
+                id: u32,
                 depth: u32,
                 external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
-            ) -> Vec<(u32, Box<[u8]>)>;
+            ) -> Option<Box<[u8]>>;
+            /// Same, for another executable's internal module given its source, registry name, url and source stamp.
+            safe fn __bun_jsc_generate_internal_module_bytecode_from_source(
+                source: &[u8],
+                name: &[u8],
+                url: &[u8],
+                source_stamp: u32,
+                depth: u32,
+                external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
+            ) -> Option<Box<[u8]>>;
 
             safe fn __bun_jsc_encoder_string_table_new() -> core::ptr::NonNull<EncoderStringTable>;
             pub(crate) safe fn __bun_jsc_destroy_bytecode_cache_vm();
@@ -1510,12 +1521,34 @@ pub mod bv2_impl {
         }
 
         #[inline]
+        pub(crate) fn host_builtins() -> &'static [u8] {
+            __bun_jsc_host_builtins()
+        }
+
+        #[inline]
         pub(crate) fn generate_internal_module_bytecode(
-            specifiers: &[&[u8]],
+            id: u32,
             depth: u32,
             external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
-        ) -> Vec<(u32, Box<[u8]>)> {
-            __bun_jsc_generate_internal_module_bytecode(specifiers, depth, external_strings)
+        ) -> Option<Box<[u8]>> {
+            __bun_jsc_generate_internal_module_bytecode(id, depth, external_strings)
+        }
+
+        #[inline]
+        pub(crate) fn generate_internal_module_bytecode_from_source(
+            module: &bun_exe_format::builtins::Module<'_>,
+            source_stamp: u32,
+            depth: u32,
+            external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
+        ) -> Option<Box<[u8]>> {
+            __bun_jsc_generate_internal_module_bytecode_from_source(
+                module.source,
+                module.name,
+                module.url,
+                source_stamp,
+                depth,
+                external_strings,
+            )
         }
 
         /// CYCLEBREAK GENUINE: `JSBundleCompletionTask` — the
@@ -3009,7 +3042,18 @@ pub mod bv2_impl {
             this.linker.options.output_format = this.transpiler.options.output_format;
             this.linker.options.generate_bytecode_cache = this.transpiler.options.bytecode;
             this.linker.options.generate_internal_module_bytecode =
-                this.transpiler.options.bytecode && this.transpiler.options.compile_target_is_host;
+                this.transpiler.options.bytecode
+                    && !matches!(
+                        this.transpiler.options.compile_target_builtins,
+                        crate::options::CompileTargetBuiltins::None
+                    );
+            this.linker.options.target_builtins =
+                match &this.transpiler.options.compile_target_builtins {
+                    crate::options::CompileTargetBuiltins::Target(section) => {
+                        Some(std::sync::Arc::clone(section))
+                    }
+                    _ => None,
+                };
             this.linker.options.bytecode_depth = this.transpiler.options.bytecode_depth;
             this.linker.options.compile_mode = this.transpiler.options.compile_mode;
             this.linker.options.metafile = this.transpiler.options.metafile;

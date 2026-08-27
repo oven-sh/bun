@@ -868,12 +868,17 @@ impl BunTest {
             match (*this).phase {
                 Phase::Collection => {}
                 Phase::Execution => {
-                    let now = Timespec::now_force_real_time();
-                    if (*this).execution.defers_timeout_to_matcher_wait(&now) {
-                        // The wait is about to give up and fail the entry itself. Come back for the
-                        // rest of the timeout handling once it has.
+                    if let Some(deadline) = (*this).execution.defers_timeout_to_matcher_wait() {
+                        // The wait fails the entry itself at its deadline. Come back for the rest of
+                        // the timeout handling once it has.
                         (*this).execution.kill_dangling_processes_on_timeout(global);
-                        (*this).update_min_timeout(global, &now.add_ms(1));
+                        let now = Timespec::now_force_real_time();
+                        let wake = if deadline.order(&now) == core::cmp::Ordering::Greater {
+                            deadline
+                        } else {
+                            now.add_ms(1)
+                        };
+                        (*this).update_min_timeout(global, &wake);
                         return;
                     }
                     if let Err(e) = (*this).execution.handle_timeout(global) {
@@ -1531,6 +1536,9 @@ impl RefData {
 pub(crate) struct WaitingEntry {
     buntest: BunTestPtr,
     ends_when: EndsWhen,
+    /// `Some` when this wait pushed its claim into `Execution::matcher_wait_claim`: the next-outer
+    /// wait's claim, restored on drop.
+    shadowed_claim: Option<Option<RefDataValue>>,
 }
 
 /// Why a [`WaitingEntry`] gave up. The matcher's error names it.
@@ -1564,7 +1572,7 @@ enum EndsWhen {
     /// which one unknown: done once every entry still executing in it has timed out.
     GroupTimedOut,
     /// A continuation of this entry, the runner live. Done at the entry's deadline, which the timer
-    /// callback leaves to this wait (`Execution::continuation_matcher_waits`) so that the error lands
+    /// callback leaves to this wait (`Execution::matcher_wait_claim`) so that the error lands
     /// on the entry; if the runner moves past the entry anyway, once the file is done.
     Continuation(RefDataValue),
     /// A continuation of some entry of this concurrent group, which one unknown: done once every entry
@@ -1589,18 +1597,17 @@ impl WaitingEntry {
                 | RefDataValue::Start) => EndsWhen::Continuation(data),
             },
         };
-        let waiting = WaitingEntry { buntest, ends_when };
-        waiting.counter().set(waiting.counter().get() + 1);
-        Some(waiting)
-    }
-
-    /// The `Execution` counter of waits like this one on the stack.
-    fn counter(&self) -> &core::cell::Cell<u32> {
-        let execution = &self.buntest.execution;
-        match self.ends_when {
-            EndsWhen::EntryTimedOut(_) | EndsWhen::GroupTimedOut => &execution.blocking_matcher_waits,
-            EndsWhen::Continuation(_) | EndsWhen::GroupOver(_) => &execution.continuation_matcher_waits,
-        }
+        let shadowed_claim = match &ends_when {
+            EndsWhen::EntryTimedOut(_) | EndsWhen::GroupTimedOut => {
+                execution.blocking_matcher_waits.set(execution.blocking_matcher_waits.get() + 1);
+                None
+            }
+            EndsWhen::Continuation(data) => Some(execution.matcher_wait_claim.replace(Some(*data))),
+            EndsWhen::GroupOver(group_index) => Some(execution.matcher_wait_claim.replace(Some(
+                RefDataValue::Execution { group_index: *group_index, entry_data: None },
+            ))),
+        };
+        Some(WaitingEntry { buntest, ends_when, shadowed_claim })
     }
 
     pub(crate) fn gave_up(&self, global_this: &JSGlobalObject) -> Option<GaveUp> {
@@ -1637,7 +1644,11 @@ impl WaitingEntry {
                 // live arena node; both outlive this call, which re-enters nothing.
                 let sequence = unsafe { &mut *sequence.as_ptr() };
                 let entry = unsafe { sequence.active_entry?.as_ref() };
-                entry.evaluate_timeout(sequence, &now).then_some(GaveUp::TimedOut)
+                if entry.evaluate_timeout(sequence, &now) {
+                    return Some(GaveUp::TimedOut);
+                }
+                self.wake_at(global_this, &entry.timespec);
+                None
             }
             EndsWhen::GroupOver(group_index) => {
                 if *group_index != self.buntest.execution.group_index {
@@ -1648,6 +1659,7 @@ impl WaitingEntry {
                     self.mark_executing_entries_timed_out(&now);
                     return Some(GaveUp::TimedOut);
                 }
+                self.wake_at(global_this, &soonest);
                 None
             }
         }
@@ -1706,7 +1718,13 @@ impl WaitingEntry {
 
 impl Drop for WaitingEntry {
     fn drop(&mut self) {
-        self.counter().set(self.counter().get() - 1);
+        let execution = &self.buntest.execution;
+        match self.shadowed_claim {
+            Some(previous) => execution.matcher_wait_claim.set(previous),
+            None => execution
+                .blocking_matcher_waits
+                .set(execution.blocking_matcher_waits.get() - 1),
+        }
     }
 }
 

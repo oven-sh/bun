@@ -567,8 +567,7 @@ var require_wasi = __commonJS({
         this.bindings = wasiConfig.bindings || defaultConfig.bindings;
         const bindings = this.bindings;
         fs = bindings.fs;
-        // fd 0-2 take their type and rights from the host fd on first use (see
-        // `stat`). Without a `path` they can never be the base of a path_* call.
+        // fd 0-2 get their type and rights from the host fd on first use, in `stat`.
         this.FD_MAP = /* @__PURE__ */ new Map([
           [constants_1.WASI_STDIN_FILENO, { real: 0, filetype: void 0, rights: void 0 }],
           [constants_1.WASI_STDOUT_FILENO, { real: 1, filetype: void 0, rights: void 0 }],
@@ -652,8 +651,7 @@ var require_wasi = __commonJS({
         // Resolve a guest-supplied path against the directory backing `stats` and
         // verify the result cannot escape that directory, either lexically
         // ("..", absolute paths) or through a symlink that already exists on the
-        // host filesystem. `followFinal` false checks the final component as the
-        // entry itself, for calls that act on a symlink (unlink, readlink, ...).
+        // host filesystem.
         const RESOLVE_PATH = (stats, guestPath, followFinal = true) => {
           if (!stats.path) {
             throw new types_1.WASIError(constants_1.WASI_EINVAL);
@@ -1239,8 +1237,7 @@ var require_wasi = __commonJS({
             this.refreshMemory();
             const op = Buffer.from(this.memory.buffer, oldPath, oldPathLen).toString();
             const np = Buffer.from(this.memory.buffer, newPath, newPathLen).toString();
-            // Whether link(2) follows a final symlink is platform defined, so the
-            // old path is always resolved through one (a hard link must not escape).
+            // link(2) may follow a final symlink (platform defined), so the old path is resolved through one.
             fs.linkSync(RESOLVE_PATH(ostats, op), RESOLVE_PATH(nstats, np, false));
             return constants_1.WASI_ESUCCESS;
           }),
@@ -1446,8 +1443,7 @@ var require_wasi = __commonJS({
             this.refreshMemory();
             const op = Buffer.from(this.memory.buffer, oldPath, oldPathLen).toString();
             const np = Buffer.from(this.memory.buffer, newPath, newPathLen).toString();
-            // Like Node: refuse an absolute target. A relative one is stored as
-            // written and checked by the calls that follow the link.
+            // Like Node: refuse an absolute target. A relative one is checked when the link is followed.
             if (path.isAbsolute(op)) {
               return constants_1.WASI_EPERM;
             }
@@ -1670,8 +1666,7 @@ var require_wasi = __commonJS({
         return fd;
       }
       refreshMemory() {
-        // grow() replaces memory.buffer. A shared one keeps its byteLength, so
-        // compare identity.
+        // grow() replaces memory.buffer, and a shared one keeps its byteLength, so compare identity.
         const { buffer } = this.memory;
         if (!this.view || this.view.buffer !== buffer) {
           this.view = new DataView(buffer);

@@ -864,23 +864,40 @@ pub fn lstatat(fd: impl AsFd, path: &ZStr) -> Result<Stat> {
         }
     }
 }
-/// Read cwd into a stack
-/// `PathBuffer`, then duplicate into a heap-owned NUL-terminated `ZBox`.
-pub fn getcwd_alloc() -> Maybe<bun_core::ZBox> {
-    let mut buf = [0u8; bun_core::MAX_PATH_BYTES];
-    let len = getcwd(&mut buf[..])?;
-    Ok(bun_core::ZBox::from_bytes(&buf[..len]))
+/// After the OS working directory changed: record where we are in
+/// [`bun_core::cwd`] as the OS reports it. If it cannot report a name (an
+/// ancestor is unreadable, the path is longer than `PATH_MAX`), go back to the
+/// recorded directory and return the `getcwd` error, so an `Err` always means
+/// the working directory is unchanged.
+fn cwd_changed() -> Maybe<()> {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    match getcwd(&mut buf[..]) {
+        Ok(len) => {
+            bun_core::cwd::set(&buf[..len]);
+            Ok(())
+        }
+        Err(err) => {
+            let _ = chdir_os(bun_core::cwd::get_z());
+            Err(err)
+        }
+    }
 }
 
-/// `getcwd` returning a NUL-terminated
-/// borrow into `buf`. POSIX `getcwd(3)` already NUL-terminates; on Windows
-/// the libuv path does too.
-pub fn getcwd_z(buf: &mut bun_paths::PathBuffer) -> Maybe<&ZStr> {
-    let len = getcwd(&mut buf[..])?;
-    debug_assert!(len < buf.len());
-    buf[len] = 0;
-    // SAFETY: NUL written at buf[len]; slice is within buf.
-    Ok(ZStr::from_buf(&buf[..], len))
+/// [`bun_core::cwd::get_z`], or `ENOENT` from `getcwd` if the process was
+/// started from a directory the OS cannot name and has not moved since —
+/// for operations that would otherwise act on the stand-in directory.
+pub fn require_cwd() -> Maybe<&'static ZStr> {
+    match bun_core::cwd::require() {
+        Ok(_) => Ok(bun_core::cwd::get_z()),
+        Err(_) => Err(Error::from_code(E::ENOENT, Tag::getcwd)),
+    }
+}
+
+/// Change the process working directory; [`bun_core::cwd`] follows. On `Err`
+/// the working directory is unchanged.
+pub fn chdir(path: &ZStr) -> Maybe<()> {
+    chdir_os(path)?;
+    cwd_changed()
 }
 
 pub mod coreutils_error_map;
@@ -2647,14 +2664,7 @@ mod posix_impl {
         Ok(())
     }
     pub fn getcwd(buf: &mut [u8]) -> Maybe<usize> {
-        // SAFETY: `buf` is a valid exclusive slice; `getcwd` writes at most
-        // `buf.len()` bytes (including the NUL).
-        let p = unsafe { libc::getcwd(buf.as_mut_ptr().cast(), buf.len()) };
-        if p.is_null() {
-            return Err(err_with(Tag::getcwd));
-        }
-        // SAFETY: on success `getcwd` returns `buf`'s pointer NUL-terminated.
-        Ok(unsafe { libc::strlen(p) })
+        bun_core::util::getcwd_len(buf).map_err(|_| err_with(Tag::getcwd))
     }
 
     // ── link/perm/time/access group ──
@@ -3037,14 +3047,16 @@ mod posix_impl {
         let rc = check!(safe_libc::lseek(fd.native(), offset, whence), Tag::lseek);
         Ok(rc)
     }
-    pub fn chdir(path: &ZStr) -> Maybe<()> {
+    pub(crate) fn chdir_os(path: &ZStr) -> Maybe<()> {
         // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
         check_p!(unsafe { libc::chdir(path.as_ptr()) }, Tag::chdir, path);
         Ok(())
     }
+    /// Change the process working directory to `fd`; [`bun_core::cwd`]
+    /// follows. On `Err` the working directory is unchanged.
     pub fn fchdir(fd: Fd) -> Maybe<()> {
         check!(safe_libc::fchdir(fd.native()), Tag::fchdir);
-        Ok(())
+        super::cwd_changed()
     }
     pub fn umask(mode: Mode) -> Mode {
         // `Mode` is normalized to u32 across platforms; libc::mode_t is u16 on
@@ -3943,22 +3955,7 @@ mod windows_impl {
         Err(Error::new(E::ENOTSUP, Tag::dup2))
     }
     pub fn getcwd(buf: &mut [u8]) -> Maybe<usize> {
-        // GetCurrentDirectoryW + WTF16→UTF8.
-        let mut wbuf = WPathBuffer::default();
-        let len =
-            unsafe { w::kernel32::GetCurrentDirectoryW(wbuf.len() as u32, wbuf.as_mut_ptr()) };
-        if len == 0 {
-            return Err(Error::new(w::get_last_errno(), Tag::getcwd));
-        }
-        // MSDN: when `nBufferLength` is too small `GetCurrentDirectoryW`
-        // returns the *required* size (incl. NUL), which can exceed
-        // `wbuf.len()` under long-path opt-in. Guard so the slice below
-        // surfaces ENAMETOOLONG instead of panicking on OOB.
-        if len as usize > wbuf.len() {
-            return Err(Error::new(E::ENAMETOOLONG, Tag::getcwd));
-        }
-        let utf8 = bun_paths::string_paths::from_w_path(buf, &wbuf[..len as usize]);
-        Ok(utf8.len())
+        bun_core::util::getcwd_len(buf).map_err(|_| Error::new(w::get_last_errno(), Tag::getcwd))
     }
     pub fn mkdirat(dir: impl AsFd, path: &ZStr, _mode: Mode) -> Maybe<()> {
         let dir = dir.as_fd();
@@ -4341,7 +4338,7 @@ mod windows_impl {
         }
         Ok(usize::try_from(new).expect("int cast"))
     }
-    pub fn chdir(path: &ZStr) -> Maybe<()> {
+    pub(crate) fn chdir_os(path: &ZStr) -> Maybe<()> {
         // `SetCurrentDirectoryW(toWDirPath(..))`.
         // `toWDirPath` appends a trailing backslash so e.g. `"C:"` is treated
         // as the drive root, not the drive's saved cwd.
@@ -4352,6 +4349,8 @@ mod windows_impl {
         }
         Ok(())
     }
+    /// Change the process working directory to `fd`; [`bun_core::cwd`]
+    /// follows. On `Err` the working directory is unchanged.
     pub fn fchdir(fd: Fd) -> Maybe<()> {
         let mut buf = bun_core::PathBuffer::default();
         let p = super::get_fd_path(fd, &mut buf)?;

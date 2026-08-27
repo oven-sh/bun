@@ -7,10 +7,12 @@ pub use bun_install::ShellCompletions::Shell;
 // The embedded script bodies must stay above the install tier (asset dependency),
 // so `completions()` is an extension trait on the re-exported enum rather than an
 // inherent method.
+#[cfg(not(windows))]
 pub(crate) trait ShellCompletionsExt {
     fn completions(self) -> &'static [u8];
 }
 
+#[cfg(not(windows))]
 impl ShellCompletionsExt for Shell {
     fn completions(self) -> &'static [u8] {
         // Release builds carry these compressed and inflate on first use.

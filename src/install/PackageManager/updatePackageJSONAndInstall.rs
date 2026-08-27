@@ -7,7 +7,6 @@ use bstr::BStr;
 
 use crate::Error;
 use crate::ShellCompletions;
-use crate::bun_fs::FileSystem;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_js_printer as js_printer;
@@ -515,20 +514,8 @@ fn update_package_json_and_install_with_manager_with_updates(
     }
 
     // may or may not be the package json we are editing
-    let top_level_dir_without_trailing_slash =
-        strings::without_trailing_slash(FileSystem::instance().top_level_dir());
-
-    let mut root_package_json_path_buf = PathBuffer::uninit();
-    let root_package_json_path: &ZStr = 'root_package_json_path: {
-        root_package_json_path_buf[..top_level_dir_without_trailing_slash.len()]
-            .copy_from_slice(top_level_dir_without_trailing_slash);
-        root_package_json_path_buf[top_level_dir_without_trailing_slash.len()..]
-            [..b"/package.json".len()]
-            .copy_from_slice(b"/package.json");
-        let root_package_json_path_len =
-            top_level_dir_without_trailing_slash.len() + b"/package.json".len();
-        root_package_json_path_buf[root_package_json_path_len] = 0;
-        let root_package_json_path = &root_package_json_path_buf[..root_package_json_path_len];
+    {
+        let root_package_json_path: &[u8] = &manager.root_package_json_path;
 
         // The lifetime of this pointer is only valid until the next call to `getWithPath`, which can happen after this scope.
         // https://github.com/oven-sh/bun/issues/12288
@@ -640,15 +627,9 @@ fn update_package_json_and_install_with_manager_with_updates(
         if manager.options.add_catalog.is_some() && manager.workspace_name_hash.is_some() {
             add_catalog::edit_root_entry_before_install(manager, root_package_json)?;
         }
+    }
 
-        // SAFETY: root_package_json_path_buf[root_package_json_path_len] == 0 written above
-        break 'root_package_json_path ZStr::from_buf(
-            &root_package_json_path_buf[..],
-            root_package_json_path_len,
-        );
-    };
-
-    install_with_manager::install_with_manager(manager, ctx, root_package_json_path, original_cwd)?;
+    install_with_manager::install_with_manager(manager, ctx, original_cwd)?;
 
     if matches!(
         subcommand,
@@ -661,14 +642,15 @@ fn update_package_json_and_install_with_manager_with_updates(
     }
 
     if manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
-        let (source, path): (&[u8], &ZStr) =
+        let root_package_json_path: &[u8] = &manager.root_package_json_path;
+        let (source, path): (&[u8], &[u8]) =
             if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {
                 'source_and_path: {
                     let root_package_json_entry = match manager
                         .workspace_package_json_cache
                         .get_with_path(
                             manager.log_mut(),
-                            root_package_json_path.as_bytes(),
+                            root_package_json_path,
                             GetJSONOptions::default(),
                         )
                         .unwrap()
@@ -678,7 +660,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                             Output::err(
                                 err,
                                 "failed to read/parse package.json at '{s}'",
-                                (BStr::new(root_package_json_path.as_bytes()),),
+                                (BStr::new(root_package_json_path),),
                             );
                             Global::exit(1);
                         }
@@ -692,7 +674,7 @@ fn update_package_json_and_install_with_manager_with_updates(
             } else {
                 (
                     &new_package_json_source,
-                    manager.original_package_json_path.as_zstr(),
+                    manager.original_package_json_path.as_bytes(),
                 )
             };
 
@@ -816,9 +798,6 @@ pub fn update_package_json_and_install_and_cli(
             }
         }
     };
-    // `defer ctx.allocator.free(original_cwd)` — `original_cwd: Box<[u8]>` drops at scope exit.
-    let _original_cwd_owner: Box<[u8]> = original_cwd;
-    let original_cwd: &[u8] = &_original_cwd_owner;
     // SAFETY: `super::init` returns a `*mut PackageManager` to the process-static
     // singleton. We are on the single CLI thread; no worker
     // threads deref `get()` until `install_with_manager` spawns the HTTP thread.
@@ -892,13 +871,8 @@ pub fn update_package_json_and_install_and_cli(
                         // have a binary called "esbuild" in /tmp/TeST and you
                         // install esbuild, it will not detect that case if we naively
                         // just checked for "esbuild" in $PATH where "$PATH" is /tmp/test
-                        bun_which::which(
-                            &mut path_buf,
-                            path_env,
-                            FileSystem::instance().top_level_dir(),
-                            basename,
-                        )
-                        .is_none()
+                        bun_which::which(&mut path_buf, path_env, bun_core::cwd::get(), basename)
+                            .is_none()
                     } else {
                         true
                     };

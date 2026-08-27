@@ -36,7 +36,7 @@ fn build_argv(parts: &[&[u8]]) -> Vec<Box<[u8]>> {
 fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
     crate::api::bun::process::WindowsOptions {
         loop_: bun_event_loop::EventLoopHandle::init_mini(
-            bun_event_loop::MiniEventLoop::init_global(None, None),
+            bun_event_loop::MiniEventLoop::init_global(None),
         ),
         ..Default::default()
     }
@@ -537,7 +537,7 @@ impl UpgradeCommand {
         HTTP::http_thread::init(&Default::default());
 
         // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
-        let filesystem = unsafe { &mut *fs::FileSystem::init(None)? };
+        let filesystem = unsafe { &mut *fs::FileSystem::init() };
         let mut env_loader = DotEnv::Loader::init();
         env_loader.load_process()?;
 
@@ -769,10 +769,6 @@ impl UpgradeCommand {
             };
 
             let tmpdir_path_len = tmpdir_path.len();
-            tmpdir_path_buf[tmpdir_path_len] = 0;
-            // SAFETY: buf[tmpdir_path_len] == 0 written above
-            let tmpdir_z = ZStr::from_buf(&tmpdir_path_buf[..], tmpdir_path_len);
-            let _ = sys::chdir(tmpdir_z);
 
             // SAFETY: literal ends with NUL.
             let tmpname: &ZStr = ZStr::from_static(b"bun.zip\0");
@@ -820,7 +816,7 @@ impl UpgradeCommand {
                     let Some(unzip_exe) = which(
                         &mut unzip_path_buf,
                         env_loader.map.get(b"PATH").unwrap_or(b""),
-                        filesystem.top_level_dir,
+                        bun_core::cwd::get(),
                         b"unzip",
                     ) else {
                         let _ = sys::unlinkat(&save_dir, tmpname);
@@ -1012,8 +1008,7 @@ impl UpgradeCommand {
                     // The spawn path may report a missing file as either
                     // `FileNotFound` or `ENOENT`; accept both.
                     if err_name == b"FileNotFound" || err_name == b"ENOENT" {
-                        // We already chdir'd to tmpdir, so the relative `exe` path works.
-                        if sys::exists(exe) {
+                        if sys::exists_at(&save_dir, &bun_core::ZBox::from_bytes(exe)) {
                             // On systems like NixOS, the FileNotFound is actually the system-wide linker,
                             // as they do not have one (most systems have it at a known path). This is how
                             // ChildProcess returns FileNotFound despite the actual

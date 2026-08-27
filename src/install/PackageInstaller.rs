@@ -12,7 +12,6 @@ use bun_sys::{self as Syscall, Dir, Fd};
 use crate::bin_real as bin;
 use crate::bin_real::Bin;
 use crate::bun_bunfig::Arguments as Command;
-use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 
 use crate::lifecycle_script_runner::LifecycleScriptSubprocess;
@@ -358,8 +357,7 @@ fn abs_node_modules_path(
         &mut rel_buf,
         &mut depth_buf,
     );
-    let top = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
-    let mut abs = AbsPath::from(top).unwrap_or_oom();
+    let mut abs = AbsPath::from(bun_core::cwd::get()).unwrap_or_oom();
     abs.append(rel.as_bytes()).unwrap_or_oom();
     abs
 }
@@ -747,9 +745,9 @@ impl<'a> PackageInstaller<'a> {
             // reshaped for borrowck — index instead of `for (self.trees, 0..) |*tree, tree_id|`.
             if self.trees[tree_id].binaries.count() > 0 {
                 self.seen_bin_links.clear();
+                let cwd = bun_core::cwd::get();
                 self.node_modules.path.truncate(
-                    strings::without_trailing_slash(FileSystem::instance().top_level_dir()).len()
-                        + 1,
+                    cwd.len() + usize::from(!cwd.last().is_some_and(|&c| bun_paths::is_sep_any(c))),
                 );
                 let (rel_path, _) = lockfile::tree::relative_path_and_depth::<
                     { lockfile::tree::IteratorPathStyle::NodeModules },

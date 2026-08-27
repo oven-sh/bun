@@ -545,7 +545,7 @@ fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
 
     // SAFETY: `transpiler.env` / `.fs` are process-lifetime singletons set during VM init.
     let mut path_str = Utf8Bytes::Borrowed(vm.env_loader().get(b"PATH").unwrap_or(b""));
-    let mut cwd_str = Utf8Bytes::Borrowed(vm.top_level_dir());
+    let mut cwd_str = Utf8Bytes::Borrowed(bun_core::cwd::get());
 
     if let Some(arg) = arguments.next_eat() {
         if !arg.is_empty_or_undefined_or_null() && arg.is_object() {
@@ -793,7 +793,7 @@ fn register_macro(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsRe
 }
 
 fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    EncodedSlice::from_bytes(bun_resolver::fs::FileSystem::get().top_level_dir).to_js(global_this)
+    EncodedSlice::from_bytes(bun_core::cwd::get()).to_js(global_this)
 }
 
 fn get_origin(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -1618,9 +1618,7 @@ fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
                     let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<
                         bun_paths::resolve_path::platform::Auto,
                     >(
-                        bun_paths::fs::FileSystem::instance().top_level_dir(),
-                        &mut buf[..buf_len - 1],
-                        paths,
+                        bun_core::cwd::get(), &mut buf[..buf_len - 1], paths
                     ) else {
                         return Err(
                             global_this.throw_invalid_arguments(format_args!("Path too long"))

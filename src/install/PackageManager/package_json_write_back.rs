@@ -1,11 +1,10 @@
 use bun_collections::DynamicBitSet;
 use bun_collections::bit_set::Range as BitRange;
-use bun_core::{Global, strings};
+use bun_core::Global;
 use bun_paths::path_buffer_pool;
 use bun_paths::resolve_path::{join_abs_string_buf, platform};
 use bun_sys::{Fd, File};
 
-use crate::bun_fs::FileSystem;
 use crate::dependency::DependencyExt as _;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Lockfile, Package};
@@ -14,8 +13,7 @@ use crate::{Dependency, PackageID, PackageNameHash, invalid_package_id};
 
 use super::add_catalog;
 use super::add_remove_with_filter::{
-    WorkspaceTarget, fetch_entry, fetch_entry_root, root_package_json_path, store_entry,
-    write_target,
+    WorkspaceTarget, fetch_entry, fetch_entry_root, store_entry, write_target,
 };
 use super::options::Do;
 use super::package_json_editor::{self as PackageJSONEditor, EditOptions};
@@ -48,14 +46,6 @@ pub(crate) fn record(
     received_requests: bool,
 ) {
     push(&mut manager.edited_package_jsons, target, received_requests);
-}
-
-fn root_target() -> WorkspaceTarget {
-    WorkspaceTarget {
-        name: Box::default(),
-        name_hash: None,
-        package_json_path: root_package_json_path(),
-    }
 }
 
 /// Phase 1 (before bun.lock is saved): write the resolved versions into the edited package.json entries and re-derive bun.lock's declared columns from them.
@@ -114,7 +104,7 @@ fn edit_update_targets(
     edited: &mut Vec<EditedPackageJson>,
     exact: bool,
 ) -> crate::Result<()> {
-    let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    let top_level = bun_core::cwd::get();
     let mut selected: Vec<WorkspaceTarget> = Vec::new();
     {
         let lockfile: &Lockfile = &manager.lockfile;
@@ -179,7 +169,7 @@ fn edit_update_targets(
     }
 
     if !manager.updating_catalogs.is_empty() {
-        let root = root_target();
+        let root = WorkspaceTarget::root(manager);
         let root_ast = fetch_entry_root(manager, &root);
         if PackageJSONEditor::edit_catalogs_after_update(manager, &root_ast)? {
             store_entry(manager, &root, root_ast);
@@ -225,7 +215,7 @@ fn edit_cwd(
         return Ok(());
     }
 
-    let root = root_target();
+    let root = WorkspaceTarget::root(manager);
     let root_ast = fetch_entry_root(manager, &root);
     let mut changed = catalog_mode && !updates.is_empty();
     if !manager.updating_catalogs.is_empty() {

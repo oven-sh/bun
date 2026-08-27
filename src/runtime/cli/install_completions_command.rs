@@ -1,15 +1,16 @@
-use bun_core::pretty_errorln;
+use bun_core::Output;
 use bun_core::strings;
-use bun_core::{Global, Output, env_var};
 #[cfg(not(windows))]
-use bun_core::{note, print_errorln};
-use bun_paths::PathBuffer;
+use bun_core::{Global, env_var, note, pretty_errorln, print_errorln};
 #[cfg(windows)]
 use bun_paths::WPathBuffer;
 #[cfg(not(windows))]
-use bun_paths::{platform, resolve_path};
-use bun_sys::{self, E, File};
+use bun_paths::{PathBuffer, platform, resolve_path};
+#[cfg(not(windows))]
+use bun_sys::E;
+use bun_sys::{self, File};
 
+#[cfg(not(windows))]
 use crate::shell_completions::{Shell, ShellCompletionsExt as _};
 
 pub(crate) struct InstallCompletionsCommand;
@@ -213,45 +214,7 @@ impl InstallCompletionsCommand {
     }
 
     pub(crate) fn exec() -> Result<(), crate::Error> {
-        // Fail silently on auto-update.
-        let fail_exit_code: u32 = if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false) {
-            1
-        } else {
-            0
-        };
-
-        let mut cwd_buf = PathBuffer::uninit();
-
-        let stdout = File::stdout();
-
-        let mut shell = Shell::Unknown;
-        if let Some(shell_name) = env_var::SHELL.platform_get() {
-            shell = Shell::from_env(shell_name);
-        }
-
-        let cwd_len = match bun_sys::getcwd(&mut cwd_buf) {
-            Ok(len) => len,
-            Err(_) => {
-                // don't fail on this if we don't actually need to
-                if fail_exit_code == 1 && !bun_sys::isatty(stdout.handle) {
-                    let completions = shell.completions();
-                    if !completions.is_empty() {
-                        if let Err(err) = stdout.write_all(completions) {
-                            if err.get_errno() == E::EPIPE {
-                                Global::exit(0);
-                            } else {
-                                return Err(err.into());
-                            }
-                        }
-                        Global::exit(0);
-                    }
-                }
-
-                pretty_errorln!("<r><red>error<r>: Could not get current working directory");
-                Global::exit(fail_exit_code);
-            }
-        };
-        let cwd: &[u8] = &cwd_buf[..cwd_len];
+        let cwd = bun_core::cwd::get();
 
         let _ = Self::install_bunx_symlink(cwd);
 
@@ -268,6 +231,20 @@ impl InstallCompletionsCommand {
 
         #[cfg(not(windows))]
         {
+            // Fail silently on auto-update.
+            let fail_exit_code: u32 = if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false) {
+                1
+            } else {
+                0
+            };
+
+            let stdout = File::stdout();
+
+            let mut shell = Shell::Unknown;
+            if let Some(shell_name) = env_var::SHELL.platform_get() {
+                shell = Shell::from_env(shell_name);
+            }
+
             let filename: &[u8] = match shell {
                 Shell::Unknown => {
                     Output::err_generic(

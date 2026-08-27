@@ -740,6 +740,8 @@ impl BunxCommand {
         };
         bun_output::scoped_log!(bunx, "initial_bin_name: {}", BStr::new(initial_bin_name));
 
+        bun_core::cwd::require()?;
+
         // fast path: they're actually using this interchangeably with `bun run`
         // so we use Bun.which to check
         let mut this_transpiler_slot = ::core::mem::MaybeUninit::<Transpiler<'static>>::uninit();
@@ -981,7 +983,7 @@ impl BunxCommand {
         // `path_buf` is a stack local so
         // `bun_which::which`'s returned slice can borrow it for the rest of exec().
         let mut path_buf = PathBuffer::uninit();
-        let top_level_dir: &[u8] = fs.top_level_dir;
+        let top_level_dir: &[u8] = bun_core::cwd::get();
 
         let mut absolute_in_cache_dir_buf = PathBuffer::uninit();
         let buf_total = absolute_in_cache_dir_buf.len();
@@ -1391,7 +1393,6 @@ impl BunxCommand {
                         // SAFETY: `env_loader` is a valid `&'static mut Loader`; this is a
                         // stacked reborrow, not a sibling alias.
                         Some(unsafe { &mut *(env_loader as *mut _) }),
-                        None,
                     ),
                 ),
                 ..Default::default()

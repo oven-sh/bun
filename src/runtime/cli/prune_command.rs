@@ -40,6 +40,6 @@ impl PruneCommand {
             Output::flush();
         }
 
-        bun_install::prune::prune(manager, &original_cwd).map_err(crate::Error::from)
+        bun_install::prune::prune(manager, original_cwd).map_err(crate::Error::from)
     }
 }

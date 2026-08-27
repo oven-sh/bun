@@ -9,7 +9,7 @@ use bun_jsc::{
     JsResult, JsThread, StringJsc as _, SysErrorJsc as _,
 };
 use bun_paths::resolve_path::join_string_buf;
-use bun_paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, platform};
+use bun_paths::{self as resolve_path, MAX_PATH_BYTES, platform};
 use bun_sys as syscall;
 
 // Codegen hooks (JSGlob): toJS / fromJS / fromJSDirect are provided by the
@@ -67,18 +67,9 @@ impl ScanOpts {
             }
 
             // Convert to an absolute path
-            let mut path_buf = PathBuffer::uninit();
-            let cwd_len = match bun_sys::getcwd(&mut path_buf[..]) {
-                bun_sys::Result::Ok(len) => len,
-                bun_sys::Result::Err(err) => {
-                    let err_js = err.to_js(global_this);
-                    return Err(global_this.throw_value(err_js));
-                }
-            };
-
             let cwd_str = join_string_buf::<platform::Auto>(
                 &mut path_buf2,
-                &[&path_buf[..cwd_len], cwd_utf8.slice()],
+                &[bun_core::cwd::get(), cwd_utf8.slice()],
             );
             break 'cwd_str Box::<[u8]>::from(cwd_str);
         };

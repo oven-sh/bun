@@ -4100,40 +4100,20 @@ pub fn intern_argv(v: Vec<&'static ZStr>) -> &'static [&'static ZStr] {
 /// Writes the current working directory into the caller's `PathBuffer` and
 /// returns the NUL-terminated slice on success.
 pub fn getcwd(buf: &mut PathBuffer) -> crate::CrateResult<&ZStr> {
-    let len = getcwd_len(buf)?;
+    let len = getcwd_len(&mut buf.0)?;
     Ok(ZStr::from_buf(&buf.0, len))
 }
 
-/// `getcwd` tolerating an unreachable cwd (e.g. deleted while we run): falls
-/// back to the executable's directory like Node's `Environment::GetCwd`, so
-/// startup proceeds and `process.cwd()` surfaces the real error later.
-pub fn getcwd_or_exe_dir(buf: &mut PathBuffer) -> &ZStr {
-    let len = match getcwd_len(buf) {
-        Ok(n) => n,
-        Err(_) => {
-            let dir: &[u8] = self_exe_path()
-                .ok()
-                .and_then(|p| dirname(p.as_bytes()))
-                // Reject a dir that can't fit with its NUL (paths from
-                // /proc/self/exe are not bounded by MAX_PATH_BYTES).
-                .filter(|d| d.len() < buf.0.len())
-                .unwrap_or(if cfg!(windows) { b"C:\\" } else { b"/" });
-            buf.0[..dir.len()].copy_from_slice(dir);
-            buf.0[dir.len()] = 0;
-            dir.len()
-        }
-    };
-    ZStr::from_buf(&buf.0, len)
-}
-
 /// Length-returning core of [`getcwd`]; `buf` holds the NUL-terminated path.
-fn getcwd_len(buf: &mut PathBuffer) -> crate::CrateResult<usize> {
+/// The OS error, if any, is left in `errno` / `GetLastError` for callers that
+/// want it (`bun_sys::getcwd`).
+pub fn getcwd_len(buf: &mut [u8]) -> crate::CrateResult<usize> {
     #[cfg(unix)]
-    // SAFETY: `buf` provides `MAX_PATH_BYTES` writable bytes for `getcwd`; on
-    // success the returned pointer aliases `buf` and is NUL-terminated, so
-    // `strlen` reads in-bounds.
+    // SAFETY: `getcwd` writes at most `buf.len()` bytes; on success the
+    // returned pointer aliases `buf` and is NUL-terminated, so `strlen` reads
+    // in-bounds.
     unsafe {
-        let p = libc::getcwd(buf.0.as_mut_ptr().cast(), buf.0.len());
+        let p = libc::getcwd(buf.as_mut_ptr().cast(), buf.len());
         if p.is_null() {
             if crate::ffi::errno() == libc::ENOENT {
                 return Err(crate::CrateError::CurrentWorkingDirectoryUnlinked);
@@ -4144,39 +4124,34 @@ fn getcwd_len(buf: &mut PathBuffer) -> crate::CrateResult<usize> {
     }
     #[cfg(windows)]
     {
-        // Windows: wrap
-        // `kernel32.GetCurrentDirectoryW` and transcode WTF-16 → WTF-8.
+        // Windows: `kernel32.GetCurrentDirectoryW`, transcoded to UTF-8.
         unsafe extern "system" {
             fn GetCurrentDirectoryW(nBufferLength: u32, lpBuffer: *mut u16) -> u32;
         }
-        let mut wbuf = WPathBuffer::ZEROED;
+        let mut wbuf = WPathBuffer::uninit();
         // SAFETY: `wbuf` has `PATH_MAX_WIDE` writable u16 units.
         let n = unsafe { GetCurrentDirectoryW(wbuf.0.len() as u32, wbuf.0.as_mut_ptr()) } as usize;
         if n == 0 {
             return Err(crate::CrateError::Unexpected);
         }
+        const ERROR_FILENAME_EXCED_RANGE: u32 = 206;
         if n >= wbuf.0.len() {
+            bun_windows_sys::kernel32::SetLastError(ERROR_FILENAME_EXCED_RANGE);
             return Err(crate::CrateError::NameTooLong);
         }
-        // WTF-16 → WTF-8 into the caller's `PathBuffer`. Surrogate pairs are
-        // combined; unpaired surrogates are encoded as 3-byte WTF-8.
-        let src = &wbuf.0[..n];
-        let out = &mut buf.0;
-        let mut wi = 0usize;
-        let mut bi = 0usize;
-        while wi < src.len() {
-            let (cp, adv) = crate::strings::decode_wtf16_raw(&src[wi..]);
-            wi += adv as usize;
-            let mut tmp = [0u8; 4];
-            let nb = crate::strings::encode_wtf8_rune(&mut tmp, cp);
-            if bi + nb >= out.len() {
-                return Err(crate::CrateError::NameTooLong);
-            }
-            out[bi..bi + nb].copy_from_slice(&tmp[..nb]);
-            bi += nb;
+        // Drop a `\\?\` prefix and transcode to UTF-8, the form every other
+        // path in the process is compared against.
+        const LONG_PATH_PREFIX: [u16; 4] = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
+        let src = crate::strings::trim_prefix_comptime::<u16>(&wbuf.0[..n], &LONG_PATH_PREFIX);
+        let last = buf.len() - 1;
+        let result = crate::strings::copy_utf16_into_utf8(&mut buf[..last], src);
+        if (result.read as usize) < src.len() {
+            bun_windows_sys::kernel32::SetLastError(ERROR_FILENAME_EXCED_RANGE);
+            return Err(crate::CrateError::NameTooLong);
         }
-        out[bi] = 0;
-        Ok(bi)
+        let written = result.written as usize;
+        buf[written] = 0;
+        Ok(written)
     }
     #[cfg(not(any(unix, windows)))]
     {

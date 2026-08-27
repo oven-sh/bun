@@ -397,6 +397,7 @@ dependencies = [
  "bun_wyhash",
  "bytemuck",
  "const_format",
+ "hashbrown 0.15.5",
  "itoa",
  "libc",
  "strum",

@@ -755,7 +755,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
     {
         WTF::String pathString = pathValue.toWTFString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
-        pathString = pathResolveWTFString(lexicalGlobalObject, pathString);
+        pathString = pathResolveWTFString(pathString);
 
         auto fileURL = WTF::URL::fileURLWithFileSystemPath(pathString);
         auto object = WebCore::DOMURL::create(fileURL.string(), String());

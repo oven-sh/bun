@@ -5,7 +5,6 @@ use bun_collections::{ArrayHashMap, ArrayIdentityContext, MultiArrayList, String
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_paths::{self as path, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, resolve_path};
-use bun_resolver::fs::FileSystem;
 use bun_semver::semver_query::Wildcard;
 use bun_semver::version::VersionInt;
 use bun_semver::{self as semver, ExternalString, String, Version as SemverVersion};
@@ -1844,7 +1843,7 @@ impl Package<u64> {
                 let folder = *dependency_version.folder();
                 let mut folder_buf = PathBuffer::uninit();
                 let Some(joined) = resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
-                    FileSystem::instance().top_level_dir(),
+                    bun_core::cwd::get(),
                     &mut folder_buf.0,
                     &[source.path.name().dir, folder.slice(buf)],
                 ) else {
@@ -1858,8 +1857,7 @@ impl Package<u64> {
                     );
                     return Err(crate::Error::InstallFailed);
                 };
-                let relative: &[u8] =
-                    resolve_path::relative(FileSystem::instance().top_level_dir(), joined);
+                let relative: &[u8] = resolve_path::relative(bun_core::cwd::get(), joined);
                 #[cfg(windows)]
                 let relative: &[u8] = {
                     let len = relative.len();
@@ -1967,9 +1965,9 @@ impl Package<u64> {
                                 let mut buf2 = PathBuffer::uninit();
                                 let rel =
                                     resolve_path::relative_platform::<path::platform::Auto, false>(
-                                        FileSystem::instance().top_level_dir(),
+                                        bun_core::cwd::get(),
                                         resolve_path::join_abs_string_buf::<path::platform::Auto>(
-                                            FileSystem::instance().top_level_dir(),
+                                            bun_core::cwd::get(),
                                             &mut buf2.0,
                                             &[source.path.name().dir, workspace],
                                         ),
@@ -2798,11 +2796,7 @@ impl Package<u64> {
                         // this path does alot of extra work to format the error message
                         // but this is ok because the install is going to fail anyways, so this
                         // has zero effect on the happy path.
-                        let mut cwd_buf = PathBuffer::uninit();
-                        // `bun_sys::getcwd` returns the byte length — slice
-                        // the buffer ourselves.
-                        let cwd_len = bun_sys::getcwd(&mut cwd_buf.0[..])?;
-                        let cwd: &[u8] = &cwd_buf.0[..cwd_len];
+                        let cwd = bun_core::cwd::get();
 
                         let num_notes = 'count: {
                             let mut i: usize = 0;

@@ -392,9 +392,7 @@ impl InitCommand {
             }
         }
 
-        let _ = Fs::FileSystem::init(None)?;
-        let pathname =
-            Fs::PathName::init(Fs::FileSystem::get().top_level_dir_without_trailing_slash());
+        let pathname = Fs::PathName::init(bun_core::cwd::require()?);
         let destination_dir = Fd::cwd();
 
         let mut fields = PackageJSONFields::default();
@@ -1463,8 +1461,7 @@ impl Template {
         let Some(path) = env_var::PATH.get() else {
             return false;
         };
-        // SAFETY: FileSystem::instance() returns the process-global singleton.
-        let top_level_dir = Fs::FileSystem::get().top_level_dir;
+        let top_level_dir = bun_core::cwd::get();
         bun_which::which(&mut *pathbuffer, path, top_level_dir, b"claude").is_some()
     }
 

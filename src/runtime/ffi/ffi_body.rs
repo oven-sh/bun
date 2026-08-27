@@ -1433,7 +1433,7 @@ impl FFI {
             ) {
                 // NUL-terminate in place so `DynLib::open`
                 // can pass the slice to libc without copying. `resolve_*_to_buf`
-                // is bounded by `Fs::FileSystem::tmpname` + a tmpdir join (both
+                // is bounded by `bun_paths::fs::tmpname` + a tmpdir join (both
                 // fit in `PATH_MAX`), so `filepath_buf[len]` is in bounds.
                 filepath_buf[len] = 0;
                 break 'brk &filepath_buf[0..len];
@@ -2325,8 +2325,8 @@ impl CompilerRT {
         #[cfg(unix)]
         {
             let mut name_buf = PathBuffer::uninit();
-            let name = Fs::FileSystem::tmpname(b"bun-cc", &mut name_buf.0, bun_core::fast_random())
-                .ok()?;
+            let name =
+                bun_paths::fs::tmpname(b"bun-cc", &mut name_buf.0, bun_core::fast_random()).ok()?;
             Some(ZBox::from_bytes(name.as_bytes()))
         }
         #[cfg(windows)]

@@ -10,7 +10,7 @@ use bun_install::audit_fix::{self, Advisory};
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::reachable;
 use bun_install::package_manager_real::command_line_arguments::AuditLevel;
-use bun_install::package_manager_real::{ROOT_PACKAGE_JSON_PATH, install_with_manager};
+use bun_install::package_manager_real::install_with_manager;
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{CommandLineArguments, LogLevel, PackageManager, PackageNameHash, Subcommand};
 use bun_libdeflate_sys::libdeflate;
@@ -136,15 +136,10 @@ impl AuditCommand {
             Ok(v) => v,
             Err(err) => {
                 if err == bun_install::Error::MissingPackageJSON {
-                    let mut cwd_buf = bun_paths::PathBuffer::uninit();
-                    if let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) {
-                        Output::err_generic(
-                            "No package.json was found for directory \"{s}\"",
-                            (BStr::new(cwd.as_bytes()),),
-                        );
-                    } else {
-                        Output::err_generic("No package.json was found", ());
-                    }
+                    Output::err_generic(
+                        "No package.json was found for directory \"{s}\"",
+                        (BStr::new(bun_core::cwd::get()),),
+                    );
                     bun_core::note!("Run \"bun init\" to initialize a project");
                     Global::exit(1);
                 }
@@ -160,7 +155,7 @@ impl AuditCommand {
                 json_output,
                 audit_level,
                 audit_ignore_list,
-                &original_cwd,
+                original_cwd,
             );
         }
 
@@ -280,9 +275,7 @@ impl AuditCommand {
 
         audit_fix::prepare_install(pm, &plan)?;
 
-        // SAFETY: `ROOT_PACKAGE_JSON_PATH` is written exactly once inside `PackageManager::init`; only read thereafter.
-        let root_package_json_path = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
-        if let Err(e) = install_with_manager(pm, &mut *ctx, root_package_json_path, original_cwd) {
+        if let Err(e) = install_with_manager(pm, &mut *ctx, original_cwd) {
             InstallCommand::handle_error(crate::Error::from(e))?;
             Global::exit(1);
         }

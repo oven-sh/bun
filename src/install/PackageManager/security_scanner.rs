@@ -10,7 +10,6 @@ use bstr::BStr;
 // on Windows. The inherent `loop_()` projects `.uv_loop` from the uws wrapper
 // on Windows so `BufferedReaderParent::loop_` returns the libuv loop directly.
 use crate::Error;
-use crate::bun_fs::FileSystem;
 use crate::bun_json::{Expr, ExprData};
 use crate::package_manager_real::Command::Context as CommandContext;
 use bun_collections::ArrayHashMap;
@@ -824,7 +823,7 @@ fn attempt_security_scan_with_retry(
         );
         bun_core::pretty_errorln!(
             "<d>[SecurityProvider]<r> top_level_dir: '{}'",
-            BStr::new(FileSystem::instance().top_level_dir())
+            BStr::new(bun_core::cwd::get())
         );
         bun_core::pretty_errorln!(
             "<d>[SecurityProvider]<r> original_cwd: '{}'",
@@ -1098,7 +1097,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             stdout: Stdio::Inherit,
             stderr: Stdio::Inherit,
             stdin: Stdio::Inherit,
-            cwd: Box::from(FileSystem::instance().top_level_dir()),
+            cwd: Box::from(bun_core::cwd::get()),
             extra_fds,
             ..Default::default()
         };
@@ -1209,7 +1208,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             stdout: Stdio::Inherit,
             stderr: Stdio::Inherit,
             stdin: Stdio::Inherit,
-            cwd: Box::from(FileSystem::instance().top_level_dir()),
+            cwd: Box::from(bun_core::cwd::get()),
             extra_fds,
             windows: spawn::WindowsOptions {
                 loop_: EventLoopHandle::from_any(&mut self.manager.event_loop),

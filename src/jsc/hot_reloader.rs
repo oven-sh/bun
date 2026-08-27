@@ -144,10 +144,6 @@ impl HotReloaderCtx for VirtualMachine {
         )
     }
 
-    fn watcher_top_level_dir(&self) -> &'static [u8] {
-        self.top_level_dir()
-    }
-
     fn install_bun_watcher(
         &mut self,
         watcher: Box<Watcher>,
@@ -222,9 +218,6 @@ pub trait HotReloaderCtx {
     // The methods below expose just enough surface for the generic body.
 
     fn is_watcher_enabled(&self) -> bool;
-
-    /// The watcher only consumes the project root path.
-    fn watcher_top_level_dir(&self) -> &'static [u8];
 
     /// Installs the watcher and wires the resolver's watch callback.
     /// Returns the now-installed `*mut Watcher` so the caller can `start()` it.
@@ -743,8 +736,7 @@ where
             _event_loop: PhantomData,
         }));
 
-        // SAFETY: see above; `watcher_top_level_dir` returns `&'static [u8]`.
-        let watcher = match Watcher::init(reloader, unsafe { (*this).watcher_top_level_dir() }) {
+        let watcher = match Watcher::init(reloader, bun_core::cwd::get()) {
             Ok(w) => w,
             Err(err) => {
                 bun_core::handle_error_return_trace(&err);
@@ -904,11 +896,8 @@ where
                     if self.verbose {
                         Self::debug(format_args!(
                             "File changed: {}",
-                            // Note: `fs.relative_to(file_path)` would borrow `&*fs`
-                            // while `rfs = &mut fs.fs` is live; inline the body so the
-                            // split-borrow on `fs.top_level_dir` is visible to borrowck.
                             bstr::BStr::new(bun_paths::resolve_path::relative(
-                                fs.top_level_dir,
+                                bun_core::cwd::get(),
                                 file_path
                             ))
                         ));
@@ -1257,7 +1246,7 @@ where
                                         Self::debug(format_args!(
                                             "File change: {}",
                                             bstr::BStr::new(bun_paths::resolve_path::relative(
-                                                fs.top_level_dir,
+                                                bun_core::cwd::get(),
                                                 abs_path,
                                             ))
                                         ));
@@ -1270,7 +1259,7 @@ where
                             Self::debug(format_args!(
                                 "Dir change: {} (affecting {})",
                                 bstr::BStr::new(bun_paths::resolve_path::relative(
-                                    fs.top_level_dir,
+                                    bun_core::cwd::get(),
                                     file_path
                                 )),
                                 affected_len
@@ -1354,10 +1343,6 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
 
     fn is_watcher_enabled(&self) -> bool {
         self.bun_watcher.is_some()
-    }
-
-    fn watcher_top_level_dir(&self) -> &'static [u8] {
-        FileSystem::get().top_level_dir
     }
 
     fn install_bun_watcher(

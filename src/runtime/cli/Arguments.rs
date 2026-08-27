@@ -19,8 +19,8 @@ use bun_jsc::regular_expression::Flags as RegexFlags;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, MacroOptions, Shard};
 use bun_options_types::schema::api;
+use bun_paths::platform;
 use bun_paths::resolve_path;
-use bun_paths::{PathBuffer, platform};
 
 use crate::cli;
 use crate::cli::colon_list_type::ColonListType;
@@ -813,24 +813,18 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     }
 
     // ── --cwd ────────────────────────────────────────────────────────────────
-    // `api::TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`,
-    // so we dupe into a plain `Box<[u8]>`.
-    let cwd: Box<[u8]> = if let Some(cwd_arg) = args.option(b"--cwd") {
-        let mut outbuf = PathBuffer::uninit();
+    if let Some(cwd_arg) = args.option(b"--cwd") {
         // An absolute --cwd needs no base; a relative one still requires a
         // live cwd (an exe-dir base would silently chdir somewhere else).
         let base: &[u8] = if bun_paths::is_absolute(cwd_arg) {
             b"/"
         } else {
-            bun_core::getcwd(&mut outbuf)?.as_bytes()
+            bun_core::cwd::require()?
         };
         let mut spill = Vec::new();
         let out =
             resolve_path::join_abs_string_spill::<platform::Loose>(base, &mut spill, &[cwd_arg]);
-        // `chdir` wants a NUL-terminated path, so dupe-Z once and reuse for both
-        // the `chdir` arg and the stored `absolute_working_dir`.
-        let out_z = bun_core::ZBox::from_bytes(out);
-        if let bun_sys::Result::Err(err) = bun_sys::chdir(&out_z) {
+        if let bun_sys::Result::Err(err) = bun_sys::chdir(&bun_core::ZBox::from_bytes(out)) {
             Output::err(
                 err,
                 "Could not change directory to \"{}\"\n",
@@ -838,26 +832,23 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             );
             Global::exit(1);
         }
-        // Store the post-chdir physical path (mirrors process.chdir) so
-        // process.cwd(), path.resolve, and the resolver agree on one form.
-        let mut phys = PathBuffer::uninit();
-        match bun_core::getcwd(&mut phys) {
-            Ok(p) => Box::<[u8]>::from(p.as_bytes()),
-            Err(_) => Box::<[u8]>::from(out_z.as_bytes()),
-        }
-    } else if matches!(
-        cmd,
-        CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
-    ) {
-        // A deleted cwd must not abort the runtime (Node boots and lets
-        // `process.cwd()` throw later); fall back to the executable's dir.
-        let mut temp = PathBuffer::uninit();
-        Box::<[u8]>::from(bun_core::getcwd_or_exe_dir(&mut temp).as_bytes())
+    }
+    if matches!(cmd, CommandTag::RunCommand | CommandTag::AutoCommand) {
+        ctx.filters = slice_to_owned(args.options(b"--filter"));
+        ctx.workspaces = args.flag(b"--workspaces");
+        ctx.if_present = args.flag(b"--if-present");
+        ctx.parallel = args.flag(b"--parallel");
+        ctx.sequential = args.flag(b"--sequential");
+        ctx.no_exit_on_error = args.flag(b"--no-exit-on-error");
+    }
+    // Running workspace scripts acts on a project like `install` does; only a
+    // plain run starts without a readable working directory.
+    let runs_workspace_scripts =
+        !ctx.filters.is_empty() || ctx.workspaces || ctx.parallel || ctx.sequential;
+    let cwd: &[u8] = if cmd.starts_without_cwd() && !runs_workspace_scripts {
+        bun_core::cwd::get()
     } else {
-        // Everything else (install/test/build/...) must not silently act on
-        // whatever project happens to live above the executable.
-        let mut temp = PathBuffer::uninit();
-        Box::<[u8]>::from(bun_core::getcwd(&mut temp)?.as_bytes())
+        bun_core::cwd::require()?
     };
 
     // Not gated on .BunxCommand: bunx skips Arguments.parse entirely
@@ -873,13 +864,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     }
 
     if matches!(cmd, CommandTag::RunCommand | CommandTag::AutoCommand) {
-        ctx.filters = slice_to_owned(args.options(b"--filter"));
-        ctx.workspaces = args.flag(b"--workspaces");
-        ctx.if_present = args.flag(b"--if-present");
-        ctx.parallel = args.flag(b"--parallel");
-        ctx.sequential = args.flag(b"--sequential");
-        ctx.no_exit_on_error = args.flag(b"--no-exit-on-error");
-
         if let Some(elide_lines) = args.option(b"--elide-lines") {
             if !elide_lines.is_empty() {
                 ctx.bundler_options.elide_lines = match strings::parse_int::<usize>(elide_lines, 10)
@@ -901,7 +885,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         parse_test_command_options(&args, ctx);
     }
 
-    ctx.args.absolute_working_dir = Some(cwd);
     ctx.positionals = slice_to_owned(args.positionals());
 
     if command::LOADS_CONFIG[cmd] {
@@ -955,7 +938,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     opts.tsconfig_override = args.option(b"--tsconfig-override").map(|ts| {
         let mut spill = Vec::new();
         Box::from(resolve_path::join_abs_string_spill::<platform::Auto>(
-            ctx.args.absolute_working_dir.as_deref().unwrap(),
+            cwd,
             &mut spill,
             &[ts],
         ))

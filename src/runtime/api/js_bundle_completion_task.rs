@@ -299,9 +299,7 @@ impl JSBundleCompletionTask {
         };
 
         let mut outbuf = paths::path_buffer_pool::get();
-        // SAFETY: `FileSystem::instance()` is the process-lifetime singleton
-        // initialized during VM startup before any `Bun.build` is reachable.
-        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+        let top_level_dir = bun_core::cwd::get();
 
         // Always get an absolute path for the outfile to ensure it works
         // correctly with PE metadata operations.
@@ -708,9 +706,7 @@ impl JSBundleCompletionTask {
                     && bun_paths::is_absolute(&this.config.outdir.list);
                 let outdir = this.config.outdir.list.clone();
                 let dir = this.config.dir.list.clone();
-                // SAFETY: `FileSystem::instance()` is the process-lifetime singleton
-                // initialized during VM startup before any `Bun.build` is reachable.
-                let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+                let top_level_dir = bun_core::cwd::get();
 
                 let mut to_assign_on_sourcemap = JSValue::ZERO;
                 for (i, output_file) in output_files.iter_mut().enumerate() {
@@ -1184,11 +1180,6 @@ impl CompletionStruct for JSBundleCompletionTask {
             },
             entry_points: config.entry_points.keys().to_vec(),
             target: Some(config.target.to_api()),
-            absolute_working_dir: if !config.dir.list.is_empty() {
-                Some(Box::from(config.dir.list.as_slice()))
-            } else {
-                None
-            },
             inject: Vec::new(),
             external: config.external.keys().to_vec(),
             main_fields: Vec::new(),

@@ -6,7 +6,7 @@ use bun_core::UnwrapOrOom as _;
 use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output};
 
-use bun_core::{ZStr, strings};
+use bun_core::strings;
 use bun_semver::String as SemverString;
 
 use crate::GetJsonResult as WorkspacePackageJsonCacheResult;
@@ -50,7 +50,6 @@ use super::security_scanner;
 pub fn install_with_manager(
     manager: &mut PackageManager,
     ctx: Command::Context,
-    root_package_json_path: &ZStr,
     original_cwd: &[u8],
 ) -> crate::Result<()> {
     let log_level = manager.options.log_level;
@@ -163,7 +162,7 @@ pub fn install_with_manager(
                 let mut lockfile = Lockfile::default();
                 let mut maybe_root = lockfile::Package::default();
 
-                let source_copy = root_package_json_source(manager, root_package_json_path)?;
+                let source_copy = root_package_json_source(manager)?;
 
                 let mut resolver: () = ();
                 // `parse` needs `manager`, `manager.log` and a fresh
@@ -627,12 +626,7 @@ pub fn install_with_manager(
                 |_| false,
             );
         }
-        root = create_new_lockfile_and_enqueue(
-            manager,
-            &load_result,
-            root_package_json_path,
-            log_level,
-        )?;
+        root = create_new_lockfile_and_enqueue(manager, &load_result, log_level)?;
     } else {
         {
             let keys: Vec<u64> = manager.lockfile.patched_dependencies.keys().to_vec();
@@ -791,7 +785,7 @@ pub fn install_with_manager(
         && !matches!(load_result, lockfile::LoadResult::NotFound)
     {
         'frozen_lockfile: {
-            let changed_section = frozen_changed_section(manager, root_package_json_path);
+            let changed_section = frozen_changed_section(manager);
             if changed_section.is_none() {
                 if load_result.loaded_from_text_lockfile() {
                     if bun_core::handle_oom(Lockfile::eql(
@@ -1419,12 +1413,9 @@ pub(crate) fn get_workspace_filters(
     Ok((filters, install_root_dependencies))
 }
 
-fn frozen_changed_section(
-    manager: &mut PackageManager,
-    root_package_json_path: &ZStr,
-) -> Option<&'static str> {
+fn frozen_changed_section(manager: &mut PackageManager) -> Option<&'static str> {
     if manager.summary.overrides_changed {
-        Some(overrides_field_name(manager, root_package_json_path))
+        Some(overrides_field_name(manager))
     } else if manager.summary.catalogs_changed {
         Some("the catalog")
     } else {
@@ -1434,14 +1425,11 @@ fn frozen_changed_section(
 
 #[cold]
 #[inline(never)]
-fn overrides_field_name(
-    manager: &mut PackageManager,
-    root_package_json_path: &ZStr,
-) -> &'static str {
+fn overrides_field_name(manager: &mut PackageManager) -> &'static str {
     let log = manager.log_mut();
     let WorkspacePackageJsonCacheResult::Entry(entry) = manager
         .workspace_package_json_cache
-        .get_with_path(log, root_package_json_path.as_bytes(), Default::default())
+        .get_with_path(log, &manager.root_package_json_path, Default::default())
     else {
         return "overrides";
     };
@@ -1867,13 +1855,11 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
     }
 }
 
-fn root_package_json_source(
-    manager: &mut PackageManager,
-    root_package_json_path: &ZStr,
-) -> crate::Result<Source> {
+fn root_package_json_source(manager: &mut PackageManager) -> crate::Result<Source> {
+    let log = manager.log_mut();
     let (verb, err) = match manager.workspace_package_json_cache.get_with_path(
-        manager.log_mut(),
-        root_package_json_path.as_bytes(),
+        log,
+        &manager.root_package_json_path,
         Default::default(),
     ) {
         WorkspacePackageJsonCacheResult::Entry(entry) => return Ok(entry.source.clone()),
@@ -1888,7 +1874,7 @@ fn root_package_json_source(
     Output::err(
         err,
         "failed to {} '{}'",
-        (verb, bstr::BStr::new(root_package_json_path.as_bytes())),
+        (verb, bstr::BStr::new(&manager.root_package_json_path)),
     );
     Global::exit(1);
 }
@@ -1898,7 +1884,6 @@ fn root_package_json_source(
 fn create_new_lockfile_and_enqueue(
     manager: &mut PackageManager,
     load_result: &lockfile::LoadResult,
-    root_package_json_path: &ZStr,
     log_level: Options::LogLevel,
 ) -> crate::Result<lockfile::Package> {
     let mut root = lockfile::Package::default();
@@ -1930,7 +1915,7 @@ fn create_new_lockfile_and_enqueue(
         Global::crash();
     }
 
-    let source_copy = root_package_json_source(manager, root_package_json_path)?;
+    let source_copy = root_package_json_source(manager)?;
 
     let mut resolver: () = ();
     {

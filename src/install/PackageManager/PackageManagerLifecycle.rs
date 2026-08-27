@@ -13,8 +13,6 @@ use bun_paths::{AutoAbsPath, EnvPath};
 use bun_semver::string::Builder as SemverStringBuilder;
 use bun_sys as Syscall;
 
-use crate::bun_fs::FileSystem;
-
 use super::directories;
 use crate::lifecycle_script_runner::{
     InstallCtx, LifecycleScriptSubprocess as RealLifecycleScriptSubprocess,
@@ -295,10 +293,8 @@ impl PackageManager {
     }
 
     pub(crate) fn load_root_lifecycle_scripts(&mut self, root_package: &Package) {
-        let binding_dot_gyp_path = join_abs_string_z::<platform::Auto>(
-            FileSystem::instance().top_level_dir(),
-            &[b"binding.gyp"],
-        );
+        let binding_dot_gyp_path =
+            join_abs_string_z::<platform::Auto>(bun_core::cwd::get(), &[b"binding.gyp"]);
 
         let buf = self.lockfile.buffers.string_bytes.as_slice();
         // need to clone because this is a copy before Lockfile.cleanWithLogger

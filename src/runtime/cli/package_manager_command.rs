@@ -265,18 +265,10 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Ok(v) => v,
             Err(err) => {
                 if err == bun_install::Error::MissingPackageJSON {
-                    let mut cwd_buf = PathBuffer::uninit();
-                    match bun_sys::getcwd(&mut cwd_buf[..]) {
-                        Ok(len) => {
-                            Output::err_generic(
-                                "No package.json was found for directory \"{s}\"",
-                                (bstr::BStr::new(&cwd_buf[..len]),),
-                            );
-                        }
-                        Err(_) => {
-                            Output::err_generic("No package.json was found", ());
-                        }
-                    }
+                    Output::err_generic(
+                        "No package.json was found for directory \"{s}\"",
+                        (bstr::BStr::new(bun_core::cwd::get()),),
+                    );
                     bun_core::note!("Run \"bun init\" to initialize a project");
                     Global::exit(1);
                 }
@@ -315,7 +307,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         }
 
         if strings::eql_comptime(subcommand, b"scan") {
-            ScanCommand::exec_with_manager(&mut *ctx, pm, &cwd)?;
+            ScanCommand::exec_with_manager(&mut *ctx, pm, cwd)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"pack") {
             PackCommand::exec_with_manager(ctx, pm)?;
@@ -359,10 +351,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             PmViewCommand::view(pm, spec, property_path, json_output)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"bin") {
-            // SAFETY: `FileSystem::instance()` is initialised during
-            // `PackageManager::init` (CLI startup); the singleton lives for
-            // process lifetime.
-            let top_level_dir: &[u8] = Fs::FileSystem::get().top_level_dir;
+            let top_level_dir: &[u8] = bun_core::cwd::get();
             let output_path = Path::resolve_path::join_abs::<Path::platform::Auto>(
                 top_level_dir,
                 pm.options.bin_path.as_bytes(),
@@ -619,16 +608,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     )?;
                 }
             } else {
-                let mut cwd_buf = PathBuffer::uninit();
-                let path = match bun_sys::getcwd(&mut cwd_buf[..]) {
-                    Ok(len) => &cwd_buf[..len],
-                    Err(_) => {
-                        bun_core::pretty_errorln!(
-                            "<r><red>error<r>: Could not get current working directory",
-                        );
-                        Global::exit(1);
-                    }
-                };
+                let path = bun_core::cwd::get();
                 let dependencies = lockfile.buffers.dependencies.as_slice();
                 let slice = lockfile.packages.slice();
                 let resolutions = slice.items_resolution();
@@ -760,7 +740,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"version") {
             let positionals: &[&[u8]] = pm.options.positionals;
-            PmVersionCommand::exec(ctx, pm, positionals, &cwd)?;
+            PmVersionCommand::exec(ctx, pm, positionals, cwd)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"why") {
             let positionals: &[&[u8]] = pm.options.positionals;
@@ -768,15 +748,15 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"diff") {
             let positionals: Vec<&[u8]> = pm.options.positionals.to_vec();
-            PmDiffCommand::exec(pm, &positionals, &diff_args, diff_flags, &cwd)?;
+            PmDiffCommand::exec(pm, &positionals, &diff_args, diff_flags, cwd)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"licenses") {
             let positionals: &[&[u8]] = pm.options.positionals;
-            PmLicensesCommand::exec(pm, positionals, &cwd, licenses_flags)?;
+            PmLicensesCommand::exec(pm, positionals, cwd, licenses_flags)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"pkg") {
             let positionals: &[&[u8]] = pm.options.positionals;
-            PmPkgCommand::exec(&&mut *ctx, pm, positionals, &cwd)?;
+            PmPkgCommand::exec(&&mut *ctx, pm, positionals, cwd)?;
             Global::exit(0);
         }
 
@@ -855,17 +835,10 @@ fn print_node_modules_folder_structure(
                 );
             }
         } else {
-            let mut cwd_buf = PathBuffer::uninit();
-            let path = match bun_sys::getcwd(&mut cwd_buf[..]) {
-                Ok(len) => &cwd_buf[..len],
-                Err(_) => {
-                    bun_core::pretty_errorln!(
-                        "<r><red>error<r>: Could not get current working directory",
-                    );
-                    Global::exit(1);
-                }
-            };
-            Output::println(format_args!("{} node_modules", bstr::BStr::new(path)));
+            Output::println(format_args!(
+                "{} node_modules",
+                bstr::BStr::new(bun_core::cwd::get())
+            ));
         }
     }
 
@@ -982,15 +955,10 @@ fn print_trusted_dependencies_flat(
     directories: &[NodeModulesFolder],
     lockfile: &Lockfile,
 ) {
-    let mut cwd_buf = PathBuffer::uninit();
-    let path = match bun_sys::getcwd(&mut cwd_buf[..]) {
-        Ok(len) => &cwd_buf[..len],
-        Err(_) => {
-            bun_core::pretty_errorln!("<r><red>error<r>: Could not get current working directory",);
-            Global::exit(1);
-        }
-    };
-    Output::println(format_args!("{} node_modules", bstr::BStr::new(path)));
+    Output::println(format_args!(
+        "{} node_modules",
+        bstr::BStr::new(bun_core::cwd::get())
+    ));
 
     let dependencies = lockfile.buffers.dependencies.as_slice();
     let resolutions_buf = lockfile.buffers.resolutions.as_slice();

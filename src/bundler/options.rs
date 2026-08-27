@@ -1869,7 +1869,7 @@ impl<'a> BundleOptions<'a> {
         // for the duration of this call only.
         opts.external = init_external_modules(
             &mut fs.fs,
-            fs.top_level_dir,
+            bun_core::cwd::get(),
             &transform
                 .external
                 .iter()

@@ -709,7 +709,8 @@ impl TarballStream {
                 return Err(crate::Error::InstallFailed);
             };
         let mut buf = PathBuffer::uninit();
-        let tmpname = FileSystem::tmpname(tmpname_suffix, &mut buf[..], bun_core::fast_random())?;
+        let tmpname =
+            bun_paths::fs::tmpname(tmpname_suffix, &mut buf[..], bun_core::fast_random())?;
         // allocator.dupeZ → owned NUL-terminated copy.
         self.tmpname = ZBox::from_bytes(tmpname.as_bytes());
 

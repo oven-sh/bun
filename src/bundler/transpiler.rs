@@ -206,9 +206,7 @@ impl<'a> Transpiler<'a> {
     pub(crate) fn fs(&self) -> &Fs::FileSystem {
         // SAFETY: `self.fs` is set in `Transpiler::init` to the
         // `Fs::FileSystem::instance` singleton (process-lifetime, never null,
-        // never freed). Reads of `top_level_dir` (the dominant use) are sound
-        // even concurrently with `fs_mut()` callers because that field is
-        // `&'static [u8]` written once at init.
+        // never freed).
         unsafe { &*self.fs }
     }
 
@@ -351,7 +349,6 @@ impl<'a> Transpiler<'a> {
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
-                from.fs,
             ),
             env: from.env,
             // `MacroContext::init(transpiler)` takes the
@@ -378,7 +375,6 @@ impl<'a> Transpiler<'a> {
             core::ptr::addr_of_mut!(self.resolve_queue),
             core::ptr::addr_of_mut!(self.options).cast(),
             core::ptr::addr_of_mut!(*self.resolve_results),
-            self.fs,
         );
         self.macro_context = Some(js_ast::Macro::MacroContext::init(self));
     }
@@ -420,7 +416,7 @@ impl<'a> Transpiler<'a> {
     }
 
     fn _resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
-        let top_level_dir = self.fs().top_level_dir;
+        let top_level_dir = bun_core::cwd::get();
         match self.resolver.resolve_with_framework(
             top_level_dir,
             entry_point,
@@ -466,11 +462,10 @@ impl<'a> Transpiler<'a> {
                 // `dirname`) or `cache_bust_buf`. Rust can't unify the two
                 // disjoint mutable borrows of `cache_bust_buf` across `break`,
                 // so compute `busted` directly instead.
+                let cwd = bun_core::cwd::get();
                 let busted: bool = 'name: {
                     // Neither buster name below would fit `cache_bust_buf`.
-                    if self.fs().top_level_dir.len() + entry_point.len() + 4
-                        > bun_paths::MAX_PATH_BYTES
-                    {
+                    if cwd.len() + entry_point.len() + 4 > bun_paths::MAX_PATH_BYTES {
                         break 'name false;
                     }
                     if bun_paths::is_absolute(entry_point) {
@@ -494,13 +489,10 @@ impl<'a> Transpiler<'a> {
 
                     // `".."` needs no platform separator rewrite.
                     let parts: [&[u8]; 2] = [entry_point, b".."];
-                    let top_level_dir = self.fs().top_level_dir;
 
                     let buster_name = bun_paths::resolve_path::join_abs_string_buf_z::<
                         bun_paths::platform::Auto,
-                    >(
-                        top_level_dir, &mut cache_bust_buf[..], &parts
-                    );
+                    >(cwd, &mut cache_bust_buf[..], &parts);
                     self.resolver.bust_dir_cache(
                         bun_paths::string_paths::without_trailing_slash_windows_path(
                             buster_name.as_bytes(),
@@ -712,12 +704,11 @@ impl<'a> Transpiler<'a> {
             core::ptr::addr_of_mut!(self.resolve_queue),
             core::ptr::addr_of_mut!(self.options).cast(),
             core::ptr::addr_of_mut!(*self.resolve_results),
-            self.fs,
         );
 
         if auto_jsx {
             // Most of the time, this will already be cached
-            let top_level_dir = self.fs().top_level_dir;
+            let top_level_dir = bun_core::cwd::get();
             if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
                 if let Some(tsconfig) = root_dir.tsconfig_json() {
                     // If we don't explicitly pass JSX, try to get it from the root tsconfig
@@ -774,7 +765,7 @@ impl<'a> Transpiler<'a> {
                 // (or a parent) is unreadable, readDirInfo may return null;
                 // bail out of .env file loading in that case, but process
                 // env vars were already loaded above.
-                let top_level_dir = self.fs().top_level_dir;
+                let top_level_dir = bun_core::cwd::get();
                 let dir_info = match self.resolver.read_dir_info(top_level_dir) {
                     Ok(Some(d)) => d,
                     _ => return Ok(()),
@@ -1041,25 +1032,6 @@ fn to_parser_module_type(
     m
 }
 
-/// The inline `bun_resolver::fs` module exposes the `FileSystem`
-/// struct + `INSTANCE`/`INSTANCE_LOADED` statics (resolver/lib.rs:120,129) but
-/// not the `init` constructor (that lives in the still-gated file-backed
-/// `resolver/fs.rs`). All fields are `pub` and `EntriesMap`/`Mutex` have
-/// public constructors, so reproduce the singleton-init here:
-/// first call sets `top_level_dir` (defaulting to getcwd),
-/// subsequent calls return the existing instance untouched.
-fn init_file_system(top_level_dir: Option<&'static [u8]>) -> crate::Result<*mut Fs::FileSystem> {
-    // `FileSystem` initialization calls `adjustUlimit()`
-    // to raise RLIMIT_NOFILE and stores the returned limit in
-    // `file_limit`/`file_quota`, and touches the `DirEntry.EntryStore`
-    // singleton. The previous hand-built `Implementation { file_limit: 0, .. }`
-    // skipped both, so `RealFS::need_to_close_files` (resolver/lib.rs:1594)
-    // evaluated `!(0 > 254 && ..)` → always `true`, defeating directory-fd
-    // caching, and the process never had its fd ulimit raised — large module
-    // graphs could hit EMFILE where the spec build does not.
-    Fs::FileSystem::init(top_level_dir).map_err(Into::into)
-}
-
 /// Project this crate's `options::BundleOptions<'a>` into the
 /// resolver-crate FORWARD_DECL subset (`bun_resolver::options::BundleOptions`).
 /// The two are nominally distinct until MOVE_DOWN to `bun_options_types`
@@ -1239,18 +1211,7 @@ impl<'a> Transpiler<'a> {
         // `reset()` branches to `enter()` on null ARENA), so per-file ASTs
         // *do* get the side arena from the first parsed file onward.
 
-        // `FileSystem::init` wants `&'static [u8]`. Intern via `DirnameStore`
-        // (the same path `FileSystem::init` already uses for the
-        // `None`/getcwd case — fs.rs:222) so the cwd lives in the
-        // process-lifetime BSS string store without `Box::leak`. PORTING.md
-        // §Forbidden bars `Box::leak` even for singletons; on subsequent
-        // per-worker `Transpiler::init` calls the previous leak was discarded
-        // (`FileSystem::init` only stores `top_level_dir` on first call).
-        let cwd: Option<&'static [u8]> = match opts.absolute_working_dir.as_deref() {
-            Some(s) => Some(Fs::DirnameStore::instance().append_slice(s)?),
-            None => None,
-        };
-        let fs: *mut Fs::FileSystem = init_file_system(cwd)?;
+        let fs: *mut Fs::FileSystem = Fs::FileSystem::init();
 
         let env_loader: *mut dot_env::Loader = match env_loader_ {
             Some(l) => l,
@@ -1289,7 +1250,7 @@ impl<'a> Transpiler<'a> {
         // mut Log` is materialized here, so the sibling raw pointers don't
         // invalidate a long-lived unique borrow under stacked borrows.
         // SAFETY: `fs` is the process-lifetime `Fs::FileSystem` singleton from
-        // `init_file_system` above; this short `&mut *fs` is the only live
+        // `FileSystem::init` above; this short `&mut *fs` is the only live
         // borrow for the duration of `from_api`.
         let bundle_options = options::BundleOptions::from_api(unsafe { &mut *fs }, log, opts)?;
 
@@ -1336,7 +1297,6 @@ impl<'a> Transpiler<'a> {
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
-                fs,
             ));
             core::ptr::addr_of_mut!((*p).env).write(env_loader);
             core::ptr::addr_of_mut!((*p).macro_context).write(None);
@@ -2631,7 +2591,7 @@ impl<'a> Transpiler<'a> {
             return crate::linker::dupe(_entry);
         }
 
-        let entry = fs.relative_to(entry);
+        let entry = bun_paths::resolve_path::relative(bun_core::cwd::get(), entry);
 
         if !strings::starts_with(entry, b"./") {
             // Entry point paths without a leading "./" are interpreted as package
@@ -2662,7 +2622,7 @@ impl<'a> Transpiler<'a> {
         // snapshot entry points so the `&mut self` resolver call
         // does not conflict with the `&self.options` borrow.
         let entries: Vec<Box<[u8]>> = self.options.entry_points.to_vec();
-        let top_level_dir = self.fs().top_level_dir;
+        let top_level_dir = bun_core::cwd::get();
 
         for _entry in entries.iter() {
             let entry: &[u8] = if NORMALIZE_ENTRY_POINT {
@@ -2897,7 +2857,7 @@ impl<'a> Transpiler<'a> {
 
         let mut file_path = Fs::Path::init(file_path_text);
 
-        let top_level_dir = self.fs().top_level_dir;
+        let top_level_dir = bun_core::cwd::get();
         let rel = bun_paths::resolve_path::relative(top_level_dir, file_path_text);
         file_path.pretty = crate::linker::dupe(rel);
 

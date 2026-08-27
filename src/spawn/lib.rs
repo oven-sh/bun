@@ -394,9 +394,7 @@ pub fn run(opts: RunOptions<'_>) -> crate::Result<RunResult> {
         // sync-spawn callers pass.
         #[cfg(windows)]
         windows: process::sync::WindowsOptions {
-            loop_: EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None, None,
-            )),
+            loop_: EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(None)),
             ..Default::default()
         },
         ..Default::default()

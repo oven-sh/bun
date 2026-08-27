@@ -177,15 +177,7 @@ impl UserOptions {
                 let utf8_string = bunstr.to_utf8();
 
                 if strings::eql(utf8_string.slice(), b"react") {
-                    let root = match bun_sys::getcwd_alloc() {
-                        Ok(z) => arena_dupe_z(&arena, z.as_bytes()),
-                        Err(e) => {
-                            return Err(global.throw_error(
-                                e.to_zig_err(),
-                                "while querying current working directory",
-                            ));
-                        }
-                    };
+                    let root = arena_dupe_z(&arena, bun_core::cwd::get());
 
                     let framework = Framework::react(&arena)
                         .map_err(|e| throw_core_error(global, e, "Framework::react"))?;
@@ -236,13 +228,7 @@ impl UserOptions {
         let root: &[u8] = if let Some(slice) = get_optional_slice(config, global, b"root")? {
             allocations.track(slice)
         } else {
-            match bun_sys::getcwd_alloc() {
-                Ok(z) => arena_dupe_z(&arena, z.as_bytes()).as_bytes(),
-                Err(e) => {
-                    return Err(global
-                        .throw_error(e.to_zig_err(), "while querying current working directory"));
-                }
-            }
+            arena_dupe_z(&arena, bun_core::cwd::get()).as_bytes()
         };
 
         if let Some(plugin_array) = config.get(global, "plugins")? {
@@ -682,7 +668,7 @@ impl Framework {
         }
 
         for fsr in clone.file_system_router_types.iter_mut() {
-            let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+            let top_level_dir = bun_core::cwd::get();
             fsr.root = arena_erase(arena.alloc_slice_copy(paths::resolve_path::join_abs::<
                 paths::platform::Auto,
             >(top_level_dir, fsr.root)));
@@ -725,7 +711,7 @@ impl Framework {
             return;
         }
 
-        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+        let top_level_dir = bun_core::cwd::get();
         let mut result = match r.resolve(top_level_dir, *path, bun_ast::ImportKind::Stmt) {
             Ok(res) => res,
             Err(err) => {
@@ -1354,7 +1340,7 @@ impl Default for ReactFastRefresh {
 
 #[inline]
 fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<&'static [u8]> {
-    let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let top_level_dir = bun_core::cwd::get();
     match r.resolve(top_level_dir, path, bun_ast::ImportKind::Stmt) {
         // `path_const().text` is `&'static [u8]` already (`FilenameStore`-
         // backed; see note in `resolve_helper` above and `bun_ptr::Interned`).

@@ -7,7 +7,6 @@ use bun_core::ZBox;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::{self as path, PathBuffer};
-use bun_resolver::fs::FileSystem;
 use bun_semver::String as SemverString;
 use bun_sys::{self as sys, Fd, FdExt};
 use bun_threading::IntrusiveWorkTask as _;
@@ -423,7 +422,7 @@ impl PatchTask {
         // 2. Create temp dir to do all the modifications
         let mut tmpname_buf = [0u8; 1024];
         let tempdir_name =
-            match FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random()) {
+            match bun_paths::fs::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random()) {
                 Ok(name) => name,
                 // max len is 1+16+1+8+3, well below 1024
                 Err(_no_space_left) => unreachable!(),
@@ -737,7 +736,7 @@ impl PatchTask {
                 logger: Log::init(),
             }),
             manager: bun_ptr::BackRef::new_mut(manager),
-            project_dir: FileSystem::instance().top_level_dir(),
+            project_dir: bun_core::cwd::get(),
             task: ThreadPoolTask {
                 node: ThreadPoolNode::default(),
                 callback: Self::run_from_thread_pool,
@@ -812,7 +811,7 @@ impl PatchTask {
                 install_context: None,
             }),
             manager: bun_ptr::BackRef::new_mut(pkg_manager),
-            project_dir: FileSystem::instance().top_level_dir(),
+            project_dir: bun_core::cwd::get(),
             task: ThreadPoolTask {
                 node: ThreadPoolNode::default(),
                 callback: Self::run_from_thread_pool,

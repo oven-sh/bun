@@ -358,22 +358,14 @@ impl File {
             Err(e) => Err(e),
         }
     }
-    /// Normalize a
-    /// user-provided relative path against the resolver's cached
-    /// `top_level_dir` (NOT a fresh `getcwd()`), then `readFrom`.
-    ///
-    /// The cached `top_level_dir` lives in `bun_resolver::fs` (T5), which
-    /// `bun_sys` (T1) must not depend on, so callers pass it explicitly.
-    pub fn read_from_user_input(
-        dir: impl AsFd,
-        top_level_dir: &[u8],
-        input_path: &[u8],
-    ) -> Maybe<Vec<u8>> {
+    /// [`read_from`](Self::read_from) a user-provided path, resolved against
+    /// the working directory and normalized.
+    pub fn read_from_user_input(dir: impl AsFd, input_path: &[u8]) -> Maybe<Vec<u8>> {
         let dir = dir.as_fd();
-        let mut buf = bun_paths::PathBuffer::default();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Loose>(
-            top_level_dir,
-            &mut buf.0,
+            bun_core::cwd::get(),
+            &mut buf[..],
             &[input_path],
         );
         Self::read_from(dir, normalized.as_bytes())

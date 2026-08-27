@@ -192,6 +192,9 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     StackCheck::configure_thread();
     bun_io::ParentDeathWatchdog::install();
 
+    // 6. The working directory, read once; everything else joins onto it.
+    bun_core::cwd::startup();
+
     // 7. CLI dispatch.
     crate::cli::Cli::start();
     // `Global::exit` is `-> !`; it coerces to the `c_int` return type.

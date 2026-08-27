@@ -26,6 +26,7 @@ bun_output_tags.workspace = true
 # merged from bun_string:
 bun_highway.workspace = true
 bun_wyhash.workspace = true
+hashbrown.workspace = true
 thiserror.workspace = true
 
 [target.'cfg(windows)'.dependencies]

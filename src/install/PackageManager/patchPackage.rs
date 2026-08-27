@@ -9,7 +9,6 @@ use bun_paths::resolve_path;
 use bun_paths::{PathBuffer, Platform, SEP};
 use bun_sys::{self as sys, Dir, Fd, FdDirExt as _, FdExt as _};
 
-use crate::bun_fs::FileSystem;
 use crate::bun_json as JSON;
 use crate::dependency::{Dependency, DependencyExt as _};
 use crate::isolated_install::FileCopier;
@@ -306,7 +305,7 @@ pub fn do_patch_commit(
             ]);
         };
 
-        let random_tempdir = match bun_paths::fs::FileSystem::tmpname(
+        let random_tempdir = match bun_paths::fs::tmpname(
             b"node_modules_tmp",
             &mut buf2[..],
             bun_core::fast_random(),
@@ -354,17 +353,14 @@ pub fn do_patch_commit(
             break 'has_nested_node_modules true;
         };
 
-        let patch_tag_tmpname = match bun_paths::fs::FileSystem::tmpname(
-            b"patch_tmp",
-            &mut buf3[..],
-            bun_core::fast_random(),
-        ) {
-            Ok(s) => s,
-            Err(e) => {
-                Output::err(e, "failed to make tempdir", ());
-                Global::crash();
-            }
-        };
+        let patch_tag_tmpname =
+            match bun_paths::fs::tmpname(b"patch_tmp", &mut buf3[..], bun_core::fast_random()) {
+                Ok(s) => s,
+                Err(e) => {
+                    Output::err(e, "failed to make tempdir", ());
+                    Global::crash();
+                }
+            };
 
         let mut bunpatchtagbuf: BuntagHashBuf = BuntagHashBuf::default();
         // If the package was already patched then it might have a ".bun-tag-XXXXXXXX"
@@ -451,14 +447,7 @@ pub fn do_patch_commit(
             }
         }
 
-        let mut cwdbuf = PathBuffer::uninit();
-        let cwd = match sys::getcwd_z(&mut cwdbuf) {
-            Ok(fd) => fd,
-            Err(e) => {
-                bun_core::pretty_error!("<r><red>error<r>: failed to get cwd path {}<r>\n", e);
-                Global::crash();
-            }
-        };
+        let cwd = bun_core::cwd::get_z();
         let mut gitbuf = PathBuffer::uninit();
         let git = match bun_which::which(
             &mut gitbuf,
@@ -545,8 +534,7 @@ pub fn do_patch_commit(
 
     // write the patch contents to temp file then rename
     let mut tmpname_buf = [0u8; 1024];
-    let tempfile_name =
-        bun_paths::fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
+    let tempfile_name = bun_paths::fs::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
     let tmpdir = get_temporary_directory(manager).handle.fd();
     if let Err(e) = sys::File::write_file(tmpdir, tempfile_name, &patchfile_contents) {
         Output::err(e, "failed to write patch to temp file", ());
@@ -973,20 +961,14 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
             bstr::BStr::new(pkg_name),
             bstr::BStr::new(resolve_path::join_string_buf::<platform::Posix>(
                 &mut bufn[..],
-                &[
-                    FileSystem::instance().top_level_dir_without_trailing_slash(),
-                    module_folder
-                ]
+                &[bun_core::cwd::get(), module_folder]
             )),
         );
         bun_core::pretty!(
             "\nOnce you're done with your changes, run:\n\n  <cyan>bun patch --commit '{}'<r>\n",
             bstr::BStr::new(resolve_path::join_string_buf::<platform::Posix>(
                 &mut bufn[..],
-                &[
-                    FileSystem::instance().top_level_dir_without_trailing_slash(),
-                    module_folder
-                ]
+                &[bun_core::cwd::get(), module_folder]
             )),
         );
     } else {

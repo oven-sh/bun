@@ -6,7 +6,6 @@ use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 use bun_paths::path_buffer_pool;
 use bun_paths::resolve_path::{join_abs_string_buf, platform};
 
-use crate::bun_fs::FileSystem;
 use crate::dependency::Behavior;
 use crate::lockfile::Lockfile;
 use crate::lockfile::package::PackageColumns as _;
@@ -410,7 +409,7 @@ pub fn select_lockfile_workspaces(
     let pkg_names = lockfile.packages.items_name();
     let name_hashes = lockfile.packages.items_name_hash();
     let string_buf = lockfile.buffers.string_bytes.as_slice();
-    let top_level_dir = FileSystem::instance().top_level_dir();
+    let top_level_dir = bun_core::cwd::get();
 
     let mut path_buf = path_buffer_pool::get();
     let dirs: Vec<Box<[u8]>> = ids

@@ -17,7 +17,6 @@ use bun_url::{OwnedURL, URL};
 use bun_wyhash::Wyhash11;
 
 use crate::bin::{self, Bin};
-use crate::bun_fs::FileSystem;
 use crate::external_slice::ExternalPackageNameHashList;
 use crate::integrity::Integrity;
 use crate::{
@@ -1356,7 +1355,8 @@ pub mod package_manifest {
         ) -> Result<(), Error> {
             let file_id = Wyhash11::hash(0, this.name());
             let mut tmp_path_buf = [0u8; 64];
-            let tmp_path = FileSystem::tmpname(b"npm", &mut tmp_path_buf, bun_core::fast_random())?;
+            let tmp_path =
+                bun_paths::fs::tmpname(b"npm", &mut tmp_path_buf, bun_core::fast_random())?;
             let mut out_path_buf =
                 [0u8; ("18446744073709551615".len() * 2) + "_".len() + ".npm".len() + 1];
             let out_path = Self::manifest_file_name(&mut out_path_buf, file_id, scope)?;

@@ -1,6 +1,6 @@
 use bun_ast::{Loc, Source};
 use bun_core::{MutableString, strings};
-use bun_paths::{PathBuffer, fs::FileSystem};
+use bun_paths::PathBuffer;
 use bun_ptr::RawSlice;
 
 use crate::{
@@ -77,13 +77,19 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
 ) -> Result<(), crate::Error> {
     let mut filename_buf = PathBuffer::uninit();
     let mut filename: &[u8] = source.path.text;
-    let top_level_dir: &[u8] =
-        strings::without_trailing_slash(FileSystem::instance().top_level_dir());
-    if filename.len() > top_level_dir.len()
+    let top_level_dir: &[u8] = bun_core::cwd::get();
+    // The separator after the directory (a root's own) becomes the leading `/`.
+    let dir_len = top_level_dir.len()
+        - usize::from(
+            top_level_dir
+                .last()
+                .is_some_and(|&c| bun_paths::is_sep_any(c)),
+        );
+    if filename.len() > dir_len
         && strings::has_prefix(filename, top_level_dir)
-        && bun_paths::is_sep_native(filename[top_level_dir.len()])
+        && bun_paths::is_sep_any(filename[dir_len])
     {
-        filename = &filename[top_level_dir.len()..];
+        filename = &filename[dir_len..];
         if cfg!(windows) {
             let n = filename.len();
             filename_buf[..n].copy_from_slice(filename);

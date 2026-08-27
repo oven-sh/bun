@@ -220,8 +220,6 @@ pub use super::node_fs_binding::Binding;
 use bun_jsc::JSPromiseStrong;
 
 use super::dir_iterator as DirIterator;
-#[cfg(not(windows))]
-use bun_resolver::fs::FileSystem;
 
 // On POSIX the libuv-backed code paths (`UVFSRequest`, `uv_fs_*`) are absent:
 // `UVFSRequest` aliases `AsyncFSTask` and every `uv::*` reference is gated
@@ -7420,17 +7418,15 @@ impl NodeFS {
         {
             let mut outbuf = PathBuffer::uninit();
             let inbuf = &mut self.sync_error_buf;
-            // SAFETY: single-threaded init flag (resolver/fs.rs).
-            debug_assert!(
-                bun_resolver::fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed)
-            );
-
             let path_slice = args.path.slice();
-            // SAFETY: instance() returns the leaked singleton; INSTANCE_LOADED checked above.
-            let fs = FileSystem::get();
-            let parts = [fs.top_level_dir, path_slice];
             let inbuf_len = inbuf.len();
-            let Some(joined) = fs.abs_buf_checked(&parts, &mut inbuf[..inbuf_len - 1]) else {
+            let Some(joined) =
+                bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Loose>(
+                    bun_core::cwd::get(),
+                    &mut inbuf[..inbuf_len - 1],
+                    &[path_slice],
+                )
+            else {
                 return Err(sys::Error {
                     errno: E::ENAMETOOLONG as _,
                     syscall: sys::Tag::realpath,
@@ -7658,7 +7654,7 @@ impl NodeFS {
 
             let target_path = args.target_path.slice();
             let new_path = args.new_path.slice();
-            // Note: to_buf and sync_error_buf hold intermediate states, but the
+            // Note: sync_error_buf holds intermediate states, but the
             // ending state is:
             //    - new_path is in &sync_error_buf
             //    - target_path is in &to_buf
@@ -7669,14 +7665,10 @@ impl NodeFS {
                 args::SymlinkLinkType::Dir => ResolvedLinkType::Dir,
                 args::SymlinkLinkType::Junction => ResolvedLinkType::Junction,
                 args::SymlinkLinkType::Unspecified => 'auto_detect: {
-                    let cwd_len = match sys::getcwd(&mut to_buf[..]) {
-                        Ok(c) => c,
-                        Err(_) => panic!("failed to resolve current working directory"),
-                    };
                     let dir = bun_core::dirname(new_path).unwrap_or(new_path);
                     let src_len =
                         paths::resolve_path::join_abs_string_buf::<paths::platform::Windows>(
-                            &to_buf[..cwd_len],
+                            bun_core::cwd::get(),
                             &mut self.sync_error_buf[..],
                             &[dir, target_path],
                         )
@@ -7703,14 +7695,10 @@ impl NodeFS {
                 if resolved_link_type == ResolvedLinkType::Junction {
                     // this is similar to the `const src` above, but these cases
                     // are mutually exclusive, so it isn't repeating any work.
-                    let cwd_len = match sys::getcwd(&mut to_buf[..]) {
-                        Ok(c) => c,
-                        Err(_) => panic!("failed to resolve current working directory"),
-                    };
                     let dir = bun_core::dirname(new_path).unwrap_or(new_path);
                     let target_len =
                         paths::resolve_path::join_abs_string_buf::<paths::platform::Windows>(
-                            &to_buf[..cwd_len],
+                            bun_core::cwd::get(),
                             &mut self.sync_error_buf[4..],
                             &[dir, target_path],
                         )
@@ -8263,19 +8251,12 @@ impl NodeFS {
         if paths::is_absolute(link_target.as_bytes()) {
             return Syscall::symlink(link_target, dest);
         }
-        let mut cwd_buf = PathBuffer::uninit();
         let mut resolved_buf = PathBuffer::uninit();
         let src_dir = paths::resolve_path::dirname::<paths::platform::Posix>(src.as_bytes());
-        let Ok(cwd_len) = sys::getcwd(&mut cwd_buf[..]) else {
-            // If we can't resolve cwd, preserve the link target as-is rather
-            // than pointing the copied link back at the source path.
-            return Syscall::symlink(link_target, dest);
-        };
-        let cwd = &cwd_buf[..cwd_len];
         let resolved_buf_len = resolved_buf.len();
         let Some(resolved) =
             paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Posix>(
-                cwd,
+                bun_core::cwd::get(),
                 &mut resolved_buf[..resolved_buf_len - 1],
                 &[src_dir, link_target.as_bytes()],
             )

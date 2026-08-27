@@ -403,25 +403,11 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
 
     // Resolve `dir` to an absolute path against the process cwd.
     let mut abs_buf = PathBuffer::uninit();
-    let mut cwd_buf = PathBuffer::uninit();
     let abs: &[u8] = if bun_paths::is_absolute(dir) {
         dir
     } else {
-        let cwd_len = match sys::getcwd(&mut cwd_buf[..]) {
-            Ok(n) => n,
-            Err(e) => {
-                return EnableResult {
-                    status: STATUS_FAILED,
-                    directory: None,
-                    message: Some(format!(
-                        "Cannot resolve cache directory: {}",
-                        errno_name(&e)
-                    )),
-                };
-            }
-        };
         bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::resolve_path::platform::Auto>(
-            &cwd_buf[..cwd_len],
+            bun_core::cwd::get(),
             &mut abs_buf[..],
             &[dir],
         )
@@ -1022,11 +1008,11 @@ fn write_persist_job_locked(
 
     let basename = cache_basename(job.key);
     let mut tmpname_buf = PathBuffer::uninit();
-    let tmpname_zstr: &ZStr =
-        match bun_resolver::fs::FileSystem::tmpname(&basename, &mut tmpname_buf[..], job.key) {
-            Ok(z) => z,
-            Err(_) => return Err(()),
-        };
+    let tmpname_zstr: &ZStr = match bun_paths::fs::tmpname(&basename, &mut tmpname_buf[..], job.key)
+    {
+        Ok(z) => z,
+        Err(_) => return Err(()),
+    };
 
     cclog!("[compile cache] Creating temporary file for cache of {name} ({tname})...");
 

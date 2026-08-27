@@ -3,14 +3,12 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use bun_collections::{DynamicBitSet as Bitset, DynamicBitSetList, StringHashMap};
-use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_paths::SEP;
 use bun_sys::{self as sys, Dir, Fd};
 
 use crate::analytics;
 use crate::bun_bunfig::Arguments as Command;
-use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 
 use crate::lockfile::tree;
@@ -373,8 +371,7 @@ pub(crate) fn install_hoisted_packages(
                 root_node_modules_folder: node_modules_folder,
                 node: &mut install_node,
                 node_modules: NodeModulesFolder {
-                    path: strings::without_trailing_slash(FileSystem::instance().top_level_dir())
-                        .to_vec(),
+                    path: bun_core::cwd::get().to_vec(),
                     tree_id: 0,
                 },
                 // SAFETY: `mgr_ptr` is the provenance root; raw place addr.
@@ -423,10 +420,15 @@ pub(crate) fn install_hoisted_packages(
             };
         };
 
-        installer.node_modules.path.push(SEP);
-
-        let top_level_len =
-            strings::without_trailing_slash(FileSystem::instance().top_level_dir()).len() + 1;
+        if !installer
+            .node_modules
+            .path
+            .last()
+            .is_some_and(|&c| bun_paths::is_sep_any(c))
+        {
+            installer.node_modules.path.push(SEP);
+        }
+        let top_level_len = installer.node_modules.path.len();
 
         while let Some(node_modules) = iterator.next(Some(&mut installer.completed_trees)) {
             installer.node_modules.path.truncate(top_level_len);

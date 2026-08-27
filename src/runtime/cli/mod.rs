@@ -1854,6 +1854,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
             Global::exit(1);
         }
 
+        bun_core::cwd::require()?;
         let create_command_info = CreateCommand::extract_info(&ctx)?;
         let template = create_command_info.template;
         let example_tag = create_command_info.example_tag;

@@ -6,11 +6,10 @@ use bun_paths::path_buffer_pool;
 use bun_paths::resolve_path::{join_abs_string_buf, platform};
 use bun_semver::{PinnedVersion, Version};
 
-use crate::bun_fs::FileSystem;
 use crate::lockfile::CatalogMap;
 use crate::lockfile::package::PackageColumns as _;
 use crate::package_manager_real::add_remove_with_filter::{
-    WorkspaceTarget, fetch_entry_root, root_package_json_path, store_entry,
+    WorkspaceTarget, fetch_entry_root, store_entry,
 };
 use crate::package_manager_real::package_json_editor::for_each_catalog_object;
 use crate::package_manager_real::package_json_write_back;
@@ -99,23 +98,15 @@ pub(super) fn apply(manager: &mut PackageManager, plan: &super::FixPlan) -> crat
 
 fn target_for(manager: &PackageManager, owner: PackageID) -> Option<WorkspaceTarget> {
     if owner == 0 {
-        return Some(WorkspaceTarget {
-            name: Box::default(),
-            name_hash: None,
-            package_json_path: root_package_json_path(),
-        });
+        return Some(WorkspaceTarget::root(manager));
     }
     let lockfile = &manager.lockfile;
     let res = lockfile.packages.items_resolution()[owner as usize];
     match res.tag {
-        ResolutionTag::Root => Some(WorkspaceTarget {
-            name: Box::default(),
-            name_hash: None,
-            package_json_path: root_package_json_path(),
-        }),
+        ResolutionTag::Root => Some(WorkspaceTarget::root(manager)),
         ResolutionTag::Workspace => {
             let buf = lockfile.buffers.string_bytes.as_slice();
-            let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+            let top_level = bun_core::cwd::get();
             let mut path_buf = path_buffer_pool::get();
             Some(WorkspaceTarget {
                 name: Box::from(lockfile.packages.items_name()[owner as usize].slice(buf)),

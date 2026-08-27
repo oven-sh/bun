@@ -1,7 +1,6 @@
 use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
 
-use crate::fs as Fs;
 use crate::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS};
 use bun_core::{ZStr, strings};
 
@@ -691,7 +690,7 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
         // afterwards (overwrites relative_to_buf anyway).
         let norm_len = normalize_string_buf::<true, P, true>(from, &mut relative_to_buf[..]).len();
         join_abs_string_buf::<P>(
-            Fs::FileSystem::instance().top_level_dir(),
+            bun_core::cwd::get(),
             relative_from_buf,
             &[&relative_to_buf[..norm_len]],
         )
@@ -722,11 +721,7 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
         // output buffer, untouched until the final relative_normalized_buf call
         // and disjoint from both threadlocals), then join into relative_to_buf.
         let norm_len = normalize_string_buf::<true, P, true>(to, buf).len();
-        join_abs_string_buf::<P>(
-            Fs::FileSystem::instance().top_level_dir(),
-            relative_to_buf,
-            &[&buf[..norm_len]],
-        )
+        join_abs_string_buf::<P>(bun_core::cwd::get(), relative_to_buf, &[&buf[..norm_len]])
     };
 
     relative_normalized_buf::<P, ALWAYS_COPY>(buf, normalized_from, normalized_to)
@@ -2289,13 +2284,8 @@ impl PosixToWinNormalizer {
             if root.len() == 1 {
                 debug_assert!(is_sep_any(root[0]));
                 if strings::is_windows_absolute_path_missing_drive_letter::<u8>(maybe_posix_path) {
-                    // reshaped for borrowck — `getcwd` writes into
-                    // `buf` and returns a borrow of it; capture the lengths we
-                    // need, drop the borrow, then re-slice `buf`.
-                    let sr_len = {
-                        let cwd = bun_core::getcwd(buf)?;
-                        windows_filesystem_root(cwd.as_bytes()).len()
-                    };
+                    let cwd_root = windows_filesystem_root(bun_core::cwd::get());
+                    let sr_len = cwd_root.len();
                     // The cwd root (arbitrarily long for UNC cwds) plus the
                     // path must fit `buf` with one byte of headroom: the
                     // joined result feeds `normalize_buf`, whose UNC-root
@@ -2306,6 +2296,7 @@ impl PosixToWinNormalizer {
                     if sr_len + maybe_posix_path.len() - 1 >= buf.len() {
                         return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                     }
+                    buf[..sr_len].copy_from_slice(cwd_root);
                     buf[sr_len..sr_len + maybe_posix_path.len() - 1]
                         .copy_from_slice(&maybe_posix_path[1..]);
                     let res = &buf[0..sr_len + maybe_posix_path.len() - 1];
@@ -2337,11 +2328,8 @@ impl PosixToWinNormalizer {
             if root.len() == 1 {
                 debug_assert!(is_sep_any(root[0]));
                 if strings::is_windows_absolute_path_missing_drive_letter::<u8>(maybe_posix_path) {
-                    // reshaped for borrowck — see resolve_cwd above.
-                    let sr_len = {
-                        let cwd = bun_core::getcwd(buf)?;
-                        windows_filesystem_root(cwd.as_bytes()).len()
-                    };
+                    let cwd_root = windows_filesystem_root(bun_core::cwd::get());
+                    let sr_len = cwd_root.len();
                     // The cwd root (arbitrarily long for UNC cwds) plus the
                     // path and its NUL must fit `buf`; such a combination
                     // can't exist on NT anyway, so error out instead of
@@ -2349,6 +2337,7 @@ impl PosixToWinNormalizer {
                     if sr_len + maybe_posix_path.len() > buf.len() {
                         return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                     }
+                    buf[..sr_len].copy_from_slice(cwd_root);
                     buf[sr_len..sr_len + maybe_posix_path.len() - 1]
                         .copy_from_slice(&maybe_posix_path[1..]);
                     buf[sr_len + maybe_posix_path.len() - 1] = 0;

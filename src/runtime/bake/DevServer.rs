@@ -587,21 +587,12 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     let global = options.vm.global();
 
     let generic_action = "while initializing development server";
-    // FileSystem is a process-lifetime singleton; `init` interns the path into
-    // the `DirnameStore` (process-lifetime arena) so no caller-side leak is
-    // needed for the `'static` it stores.
-    let _fs = match bun_resolver::fs::FileSystem::init(Some(options.root.as_bytes())) {
-        Ok(fs) => fs,
-        Err(err) => return Err(global.throw_error(err, generic_action)),
-    };
-    let top_level_dir: &'static [u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
-
     // `.bun_watcher = undefined` → `Watcher.init(DevServer, dev, fs, ...)`
     // SAFETY: `Watcher::init` only stores `p` as an opaque `*mut ()` ctx; it does
     // not dereference it until `start()` spawns the watcher thread, by which point
     // every `DevServer` field is initialized (`assume_init` below precedes
     // `bun_watcher.start()`).
-    let bun_watcher = match Watcher::init::<DevServer>(p, top_level_dir) {
+    let bun_watcher = match Watcher::init::<DevServer>(p, bun_core::cwd::get()) {
         Ok(w) => w,
         Err(err) => {
             return Err(global.throw_error(

@@ -80,8 +80,7 @@ pub fn which_for_spawn<'a>(
             && !cwd.is_empty()
             && std::env::var_os("NoDefaultCurrentDirectoryInExePath").is_none()
         {
-            // The cwd is one more `$PATH` directory: `.exe`/`.cmd`/`.bat` before the
-            // walk, `.com` after it.
+            // One more `$PATH` directory: .exe/.cmd/.bat before the walk, .com after it.
             let mut convert_buf = w_path_buffer_pool::get();
             let mut path_buf = path_buffer_pool::get();
             let spells_executable_extension = ends_with_extension(bin);

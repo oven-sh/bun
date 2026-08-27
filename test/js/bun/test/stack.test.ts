@@ -203,7 +203,10 @@ function thrower() {
 function throwString() {
   throw "not an error instance";
 }
-const callback = kind === "string" ? throwString : thrower;
+function throwDOMException() {
+  throw new DOMException("not an error instance either", "AbortError");
+}
+const callback = kind === "string" ? throwString : kind === "domexception" ? throwDOMException : thrower;
 switch (entryPoint) {
   case "sync": callback(); break;
   case "nextTick": process.nextTick(callback); break;
@@ -414,16 +417,69 @@ test("something", () => {
     expect(exitCode).toBe(1);
   });
 
-  test.concurrent(
-    "a thrown value that is not an Error is still printed with the frames of the throw site",
-    async () => {
-      using dir = tempDir("uncaught-print", { "fixture.js": fixture });
-      const results = await Promise.all(exceptionEntryPoints.map(entryPoint => run(String(dir), entryPoint, "string")));
-      for (const { stderr, exitCode } of results) {
-        expect(stderr).toContain("error: not an error instance\n");
-        expect(stderr).toMatch(/^\s+at throwString \(<dir>\/fixture\.js:16:\d+\)$/m);
-        expect(exitCode).toBe(1);
-      }
-    },
-  );
+  // A thrown value that is not an Error has no stack of its own, so the frames
+  // of the throw that delivered it are the only location there is. When an
+  // uncaughtException listener rethrows it, that is the listener's throw.
+  const lineOf = (source: string) => fixture.split("\n").findIndex(line => line.includes(source)) + 1;
+  const frameAt = (functionName: string, line: number) =>
+    new RegExp(`^\\s+at ${functionName} \\(<dir>/fixture\\.js:${line}:\\d+\\)$`, "m");
+
+  async function expectThrowSiteFrames(kind: string, header: string, throwSite: string) {
+    using dir = tempDir("uncaught-print", { "fixture.js": fixture });
+    const [rethrown, ...results] = await Promise.all(
+      ["rethrow", ...exceptionEntryPoints].map(entryPoint => run(String(dir), entryPoint, kind)),
+    );
+    for (const { stderr, exitCode } of results) {
+      expect(stderr).toContain(header);
+      expect(stderr).toMatch(frameAt("throw\\w+", lineOf(throwSite)));
+      expect(exitCode).toBe(1);
+    }
+    expect(rethrown.stderr).toContain(header);
+    expect(rethrown.stderr).toMatch(frameAt("<anonymous>", lineOf('case "rethrow"')));
+    expect(rethrown.exitCode).toBe(7);
+  }
+
+  test.concurrent("a thrown string is still printed with the frames of the throw site", async () => {
+    await expectThrowSiteFrames("string", "error: not an error instance\n", 'throw "not an error instance"');
+  });
+
+  test.concurrent("a thrown DOMException is still printed with the frames of the throw site", async () => {
+    await expectThrowSiteFrames(
+      "domexception",
+      "AbortError: not an error instance either\n",
+      "throw new DOMException(",
+    );
+  });
+
+  // A ResolveMessage thrown through the exception has no stack of its own
+  // either, and is still printed once.
+  test.concurrent("bun test prints a synchronously thrown resolve error once", async () => {
+    using dir = tempDir("uncaught-print", {
+      "missing.test.js": `import { test } from "bun:test";
+test("sync require", () => {
+  require("./does-not-exist");
+});
+`,
+    });
+    const { stderr, exitCode } = await runBunTest(String(dir), "missing.test.js");
+    // Debug builds add an internal `require` frame, which also moves the divot.
+    const withoutStackFrames = stderr
+      .split("\n")
+      .filter(line => !/^\s*(at |\^\s*$)/.test(line))
+      .join("\n");
+    expect(normalizeBunSnapshot(withoutStackFrames, String(dir))).toMatchInlineSnapshot(`
+      "missing.test.js:
+      1 | import { test } from "bun:test";
+      2 | test("sync require", () => {
+      ResolveMessage: Cannot find module './does-not-exist'
+      Require stack:
+      - <dir>/missing.test.js
+      (fail) sync require
+
+       0 pass
+       1 fail
+      Ran 1 test across 1 file."
+    `);
+    expect(exitCode).toBe(1);
+  });
 });

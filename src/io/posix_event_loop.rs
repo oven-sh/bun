@@ -299,10 +299,40 @@ pub struct FilePoll {
     pub(crate) next_to_free: *mut FilePoll,
 
     pub(crate) allocator_type: AllocatorType,
+
+    /// The loop whose epoll/kqueue holds this registration; null while unregistered.
+    registered_loop: *mut Loop,
 }
 
 #[cfg(not(windows))]
 impl FilePoll {
+    /// The loop that holds this poll's registration, or `loop_` while unregistered.
+    fn owning_loop<'a>(&self, loop_: &'a mut Loop) -> &'a mut Loop {
+        if self.registered_loop.is_null() || self.registered_loop == ptr::from_mut(loop_) {
+            return loop_;
+        }
+        // SAFETY: a loop outlives every poll registered on it (`unregister` clears the pointer).
+        unsafe { &mut *self.registered_loop }
+    }
+
+    fn add_active_on_owning_loop(&self, event_loop_ctx: EventLoopCtx, value: u32) {
+        if self.registered_loop.is_null() {
+            event_loop_ctx.loop_add_active(value);
+            return;
+        }
+        // SAFETY: see `owning_loop`.
+        loop_add_active(unsafe { &mut *self.registered_loop }, value);
+    }
+
+    fn sub_active_on_owning_loop(&self, event_loop_ctx: EventLoopCtx, value: u32) {
+        if self.registered_loop.is_null() {
+            event_loop_ctx.loop_sub_active(value);
+            return;
+        }
+        // SAFETY: see `owning_loop`.
+        loop_sub_active(unsafe { &mut *self.registered_loop }, value);
+    }
+
     fn update_flags(&mut self, updated: FlagsSet) {
         let mut flags = self.flags;
         flags.remove(Flags::Readable);
@@ -392,6 +422,7 @@ impl FilePoll {
         let was_ever_registered = self.flags.contains(Flags::WasEverRegistered);
         self.flags = FlagsSet::empty();
         self.fd = INVALID_FD;
+        self.registered_loop = ptr::null_mut();
         // `self` may live inside the `Store.hive` inline array, so a
         // `&mut Store` taken while `&mut self` is live would assert unique
         // access over the slot and invalidate `self`'s tag (Stacked Borrows).
@@ -448,8 +479,10 @@ impl FilePoll {
     /// This decrements the active counter if it was previously incremented
     /// "active" controls whether or not the event loop should potentially idle
     pub fn disable_keeping_process_alive(&mut self, event_loop_ctx: EventLoopCtx) {
-        event_loop_ctx
-            .loop_sub_active(self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
+        self.sub_active_on_owning_loop(
+            event_loop_ctx,
+            self.flags.contains(Flags::HasIncrementedActiveCount) as u32,
+        );
 
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.remove(Flags::HasIncrementedActiveCount);
@@ -460,8 +493,10 @@ impl FilePoll {
             return;
         }
 
-        event_loop_ctx
-            .loop_add_active((!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32);
+        self.add_active_on_owning_loop(
+            event_loop_ctx,
+            (!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32,
+        );
 
         self.flags.insert(Flags::KeepsEventLoopAlive);
         self.flags.insert(Flags::HasIncrementedActiveCount);
@@ -516,6 +551,7 @@ impl FilePoll {
             owner,
             next_to_free: ptr::null_mut(),
             allocator_type: if vm.is_js() { AllocatorType::Js } else { AllocatorType::Mini },
+            registered_loop: ptr::null_mut(),
             #[cfg(all(target_os = "macos", debug_assertions))]
             // Single-threaded event loop so `Relaxed` ordering is sufficient.
             generation_number: MAX_GENERATION_NUMBER
@@ -592,6 +628,7 @@ impl FilePoll {
         one_shot: OneShotFlag,
         fd: Fd,
     ) -> sys::Result<()> {
+        let loop_ = self.owning_loop(loop_);
         let watcher_fd = loop_.fd;
 
         syslog!(
@@ -834,6 +871,7 @@ impl FilePoll {
         }
 
         self.activate(loop_);
+        self.registered_loop = ptr::from_mut(loop_);
         self.flags.insert(match flag {
             Flags::Readable => Flags::PollReadable,
             Flags::Process => {
@@ -866,6 +904,7 @@ impl FilePoll {
         fd: Fd,
         force_unregister: bool,
     ) -> sys::Result<()> {
+        let loop_ = self.owning_loop(loop_);
         // Note: compute the syscall result first, then unconditionally
         // deactivate. Avoids a raw-pointer scopeguard.
         #[cfg(any(
@@ -1145,6 +1184,7 @@ impl FilePoll {
         self.flags.remove(Flags::PollProcess);
         self.flags.remove(Flags::PollMachport);
         self.flags.remove(Flags::PollMemoryPressure);
+        self.registered_loop = ptr::null_mut();
 
         sys::Result::Ok(())
     }

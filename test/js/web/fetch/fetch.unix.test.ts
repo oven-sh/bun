@@ -1,8 +1,8 @@
 import { serve, ServeOptions, Server } from "bun";
 import { afterAll, expect, it } from "bun:test";
 import { once } from "events";
-import { mkdirSync, rmSync } from "fs";
-import { isWindows, tmpdirSync } from "harness";
+import { mkdirSync, rmSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isWindows, tls, tmpdirSync } from "harness";
 import { request } from "http";
 import { createServer } from "net";
 import { join } from "path";
@@ -278,7 +278,7 @@ it.skipIf(isWindows)("reuses the connection (keep-alive)", async () => {
 });
 
 it.skipIf(isWindows)("keep-alive pool is keyed by socket path", async () => {
-  function makeServer() {
+  function makeServer(name: string) {
     let connections = 0;
     const srv = createServer(sock => {
       connections++;
@@ -289,7 +289,7 @@ it.skipIf(isWindows)("keep-alive pool is keyed by socket path", async () => {
         let i: number;
         while ((i = buf.indexOf("\r\n\r\n")) >= 0) {
           buf = buf.slice(i + 4);
-          sock.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+          sock.write(`HTTP/1.1 200 OK\r\nContent-Length: ${name.length}\r\n\r\n${name}`);
         }
       });
     });
@@ -297,27 +297,97 @@ it.skipIf(isWindows)("keep-alive pool is keyed by socket path", async () => {
   }
 
   const dir = tmpdirSync();
-  const a = makeServer();
-  const b = makeServer();
+  const a = makeServer("a");
+  const b = makeServer("b");
+  const tcp = makeServer("tcp");
   const aPath = join(dir, "a.sock");
   const bPath = join(dir, "b.sock");
   a.srv.listen(aPath);
   b.srv.listen(bPath);
-  await Promise.all([once(a.srv, "listening"), once(b.srv, "listening")]);
+  tcp.srv.listen(0, "127.0.0.1");
+  await Promise.all([once(a.srv, "listening"), once(b.srv, "listening"), once(tcp.srv, "listening")]);
   try {
-    // Same URL, two socket paths — must not cross-reuse.
+    // The same URL reaches three servers: two socket paths and TCP. A pooled
+    // connection must only ever be reused for the endpoint it is connected to.
+    const url = `http://127.0.0.1:${(tcp.srv.address() as import("net").AddressInfo).port}/x`;
+    const bodies: string[] = [];
     for (let i = 0; i < 3; i++) {
-      expect(await (await fetch("http://localhost/x", { unix: aPath })).text()).toBe("ok");
-      expect(await (await fetch("http://localhost/x", { unix: bPath })).text()).toBe("ok");
+      bodies.push(await (await fetch(url, { unix: aPath })).text());
+      bodies.push(await (await fetch(url, { unix: bPath })).text());
+      bodies.push(await (await fetch(url)).text());
     }
-    // A TCP request to the same URL hostname must not reuse a pooled unix socket.
-    await expect(fetch("http://localhost:1/x", { signal: AbortSignal.timeout(1000) })).rejects.toThrow();
-
-    expect({ a: a.connections(), b: b.connections() }).toEqual({ a: 1, b: 1 });
+    expect(bodies).toEqual(["a", "b", "tcp", "a", "b", "tcp", "a", "b", "tcp"]);
+    expect({ a: a.connections(), b: b.connections(), tcp: tcp.connections() }).toEqual({ a: 1, b: 1, tcp: 1 });
   } finally {
     a.srv.close();
     b.srv.close();
+    tcp.srv.close();
   }
+});
+
+it.skipIf(isWindows)("TLS over a unix socket is only reused for the hostname the handshake verified", async () => {
+  const dir = tmpdirSync();
+  const caPath = join(dir, "ca.pem");
+  writeFileSync(caPath, tls.cert);
+  // The harness cert is valid for "localhost". A pooled connection verified
+  // for it must not serve a request to a different hostname over the same
+  // socket path: that request has to handshake again and fail verification.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { createServer } from "node:tls";
+      const unix = ${JSON.stringify(join(dir, "tls.sock"))};
+      const sockets = new Set();
+      let handshakes = 0;
+      const srv = createServer(${JSON.stringify(tls)}, sock => {
+        handshakes++;
+        let buf = "";
+        sock.on("error", () => {});
+        sock.on("data", d => {
+          buf += d.toString("latin1");
+          let i;
+          while ((i = buf.indexOf("\\r\\n\\r\\n")) >= 0) {
+            buf = buf.slice(i + 4);
+            sock.write("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok");
+          }
+        });
+      });
+      // "connection" fires for the raw socket, before the handshake; the
+      // rejected hostname below never completes one.
+      srv.on("connection", sock => sockets.add(sock));
+      srv.listen(unix);
+      await new Promise(r => srv.once("listening", r));
+      const out = {};
+      out.first = await (await fetch("https://localhost/x", { unix })).text();
+      out.second = await (await fetch("https://localhost/x", { unix })).text();
+      out.afterLocalhost = { connections: sockets.size, handshakes };
+      try {
+        out.other = await (await fetch("https://foo.localhost/x", { unix })).text();
+      } catch (e) {
+        out.other = e.code;
+      }
+      out.afterOther = { connections: sockets.size, handshakes };
+      console.log(JSON.stringify(out));
+      for (const sock of sockets) sock.destroy();
+      srv.close();
+      `,
+    ],
+    env: { ...bunEnv, NODE_EXTRA_CA_CERTS: caPath },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    first: "ok",
+    second: "ok",
+    afterLocalhost: { connections: 1, handshakes: 1 },
+    other: "ERR_TLS_CERT_ALTNAME_INVALID",
+    afterOther: { connections: 2, handshakes: 1 },
+  });
+  expect(exitCode).toBe(0);
 });
 
 it("handle redirect to non-unix", async () => {

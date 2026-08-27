@@ -205,7 +205,8 @@ pub struct PooledSocket<const SSL: bool> {
     pub(crate) proxy_tunnel: Option<RefPtr<ProxyTunnel>>,
     /// Target (origin) hostname the tunnel connects to. `hostname_buf`
     /// above holds the PROXY hostname; this is the upstream we CONNECTed
-    /// to. Heap-allocated only when proxy_tunnel is set; empty otherwise.
+    /// to. For TLS over a unix socket it is the hostname the handshake
+    /// verified (`hostname_buf` holds the path). Empty otherwise.
     pub(crate) target_hostname: Box<[u8]>,
     pub(crate) target_port: u16,
     /// Hash of the effective Proxy-Authorization value so that tunnels
@@ -655,7 +656,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     owner,
                     // Pool owns the tunnel ref transferred by the caller.
                     proxy_tunnel: tunnel,
-                    target_hostname: if had_tunnel && !target_hostname.is_empty() {
+                    target_hostname: if (had_tunnel || is_unix) && !target_hostname.is_empty() {
                         Box::<[u8]>::from(target_hostname)
                     } else {
                         Box::default()
@@ -760,6 +761,10 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 if !required_for_target.admits(socket.proxy_tunnel.as_ref().unwrap().verification) {
                     continue;
                 }
+            } else if is_unix && !strings::eql_long(&socket.target_hostname, target_hostname, true) {
+                // The path says nothing about which certificate the handshake
+                // checked; a TLS connection is only good for that hostname.
+                continue;
             }
             if SSL && !required_for_socket.admits(socket.verification) {
                 continue;
@@ -837,7 +842,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 0,
                 SSLConfig::raw_ptr(client.tls_props.as_ref()),
                 false,
-                b"",
+                client.unix_tls_hostname::<SSL>(),
                 0,
                 0,
                 AlpnOffer::H1,

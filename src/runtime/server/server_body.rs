@@ -130,7 +130,7 @@ pub(super) trait RequestCtx<const SSL: bool, const DEBUG: bool>:
     fn set_request_body_content_len(&self, len: usize);
     fn set_is_transfer_encoding(&self, v: bool);
     fn set_is_waiting_for_request_body(&self, v: bool);
-    fn arm_on_data(this: NonNull<Self>, resp: uws::AnyResponse);
+    fn arm_on_data(&self, resp: uws::AnyResponse);
     // body-streaming callback hooks (type-erased, stored on `Body::PendingValue`).
     // `this` must be a live `*mut Self` cast to `*mut c_void`.
     fn on_start_buffering_callback(this: NonNull<c_void>);
@@ -249,12 +249,12 @@ macro_rules! impl_request_ctx {
                 self.flags.set_is_waiting_for_request_body(v)
             }
             #[inline]
-            fn arm_on_data(this: NonNull<Self>, resp: uws::AnyResponse) {
+            fn arm_on_data(&self, resp: uws::AnyResponse) {
                 resp.on_data(
                     |ctx: *mut Self, chunk: &[u8], last: bool| {
                         Self::on_buffered_body_chunk(ctx, chunk, last)
                     },
-                    this.as_ptr(),
+                    self.as_ctx_ptr(),
                 );
             }
             #[inline]
@@ -2976,7 +2976,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             ctx.set_is_transfer_encoding(is_te);
             if expects_body {
                 ctx.set_is_waiting_for_request_body(true);
-                Ctx::arm_on_data(NonNull::from(ctx), any_resp);
+                ctx.arm_on_data(any_resp);
             }
         }
 

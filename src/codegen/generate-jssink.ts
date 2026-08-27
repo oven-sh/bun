@@ -394,10 +394,8 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlo
     ${name}__controllerDetached(ptr, JSC::JSValue::encode(controller));
     controller->m_sinkPtr = nullptr;
 
-    // close(reason): the pump's abrupt path passes the source's error, which
-    // can itself be undefined (controller.error() with no argument); a clean
-    // close passes no argument. "No argument" is encoded as the empty value so
-    // the sink can tell the two apart.
+    // A failed source closes with its error (possibly undefined); a clean
+    // close passes no argument, encoded as the empty value.
     ${name}__close(lexicalGlobalObject, ptr,
         callFrame->argumentCount() > 0 ? JSC::JSValue::encode(callFrame->argument(0)) : JSC::JSValue::encode(JSC::JSValue()));
 
@@ -1159,9 +1157,8 @@ pub extern "C" fn ${name}__controllerDetached(this: &mut ${name}, controller: JS
 `;
 
     // ZIG_DECL JSC::EncodedJSValue ${name}__close(JSC::JSGlobalObject*, void* sinkPtr, JSC::EncodedJSValue reason)
-    // C++ caller null-checks `ptr` before calling. `*mut`, not `&mut`: a
-    // failing close can re-enter the sink through its owner (see
-    // `JsSinkType::close_with_error`).
+    // C++ caller null-checks `ptr` before calling. `*mut`: a failing close can
+    // re-enter the sink (see `JsSinkType::close_with_error`).
     symbols.push(`${name}__close`);
     templ += `#[allow(dead_code, unreachable_pub, unused)]
 #[unsafe(no_mangle)]

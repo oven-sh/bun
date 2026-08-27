@@ -2387,13 +2387,10 @@ impl NetworkSink {
         bun_sys::Result::Ok(())
     }
 
-    /// JS-pump terminator for a source that failed (`controller.close(error)`
-    /// from the pump's abrupt path). Unlike `end()`, the upload is not
-    /// committed: `task.fail` aborts it, and the stashed error makes the
-    /// caller's promise reject with the source's own error (a nullish reason
-    /// falls back to the generic S3 error). The pump promise's reject reaction
-    /// (`S3UploadStreamWrapper::handle_reject_stream`) still runs afterwards
-    /// and releases the pump ref, so no wrapper deref here.
+    /// JS-pump terminator for a source that failed. Unlike `end()`, the upload
+    /// is aborted, not committed; the stashed reason becomes the caller's
+    /// rejection. The pump's reject reaction still releases the pump ref, so
+    /// no wrapper deref here.
     ///
     /// Raw `*mut Self`: `task.fail()` synchronously fires
     /// `S3UploadStreamWrapper::resolve`, which re-borrows this sink.

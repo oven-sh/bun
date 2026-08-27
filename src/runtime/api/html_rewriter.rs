@@ -1477,11 +1477,8 @@ impl RewriterPipe {
         let src = self.detach_input_source(false);
 
         if self.js_pump_reaction_pending.get() {
-            // The pump-promise `.then()` reaction is the single terminal
-            // authority on the JS-pump path: the pump calls
-            // `controller.close(...)` synchronously before the promise settles,
-            // so running `end_rewrite` here would resolve the body before the
-            // reaction has had its say.
+            // The pump closes the sink before its promise settles; the `.then()`
+            // reaction is the terminal step on this path.
             return;
         }
 

@@ -313,18 +313,13 @@ pub trait JsSinkType: Sized + JsSinkAbi {
     fn end_from_js(&mut self, global: &JSGlobalObject) -> sys::Result<JSValue>;
     fn flush(&mut self) -> sys::Result<()>;
     fn start(&mut self, config: streams::Start) -> sys::Result<()>;
-    /// `controller.close(reason)` called with an argument: the JS pump's
-    /// source failed (`rsisAbrupt`), so the bytes written so far are a
-    /// truncated body, not a complete one. `reason` is the source's stored
-    /// error and can be `undefined` or `null` (`controller.error()` with no
-    /// argument). A sink whose output is observable (a file, an upload, a
-    /// transformed body) must fail instead of ending as if the source had
-    /// closed. The default keeps the clean end for sinks whose owner learns
-    /// of the failure from the pump promise rejection.
+    /// `controller.close(reason)` with an argument: the pump's source failed,
+    /// so the bytes written so far are a truncated body. `reason` is the
+    /// source's error and may be nullish. The default keeps the clean end for
+    /// sinks whose owner handles the pump promise rejection.
     ///
-    /// Raw pointer, not `&mut self`: failing can re-enter the sink through its
-    /// owner (the S3 upload task's completion callback borrows the sink) and
-    /// may free it.
+    /// Raw pointer: failing can re-enter the sink through its owner and may
+    /// free it.
     ///
     /// # Safety
     /// `this` is the cell's live sink.
@@ -642,9 +637,8 @@ impl<T: JsSinkType> JSSink<T> {
     /// `${abi_name}__close` body — called from
     /// `${controller}__close` and `${name}__doClose` in JSSink.cpp with a raw
     /// `m_sinkPtr` (not a host-fn callframe), so exceptions become `.zero`.
-    /// `reason` is the `close(reason)` argument: the source's error from the
-    /// pump's abrupt path (possibly `undefined`), or the empty value when
-    /// `close()` was called with no argument (a clean close).
+    /// `reason` is the `close(reason)` argument, or the empty value when
+    /// `close()` had no argument.
     ///
     /// # Safety
     /// `this` is the cell's live sink.

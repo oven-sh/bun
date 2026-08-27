@@ -241,7 +241,7 @@ impl MultiPartUpload {
     /// Tell the observer `flushed` bytes drained. It is kept alive across the
     /// call: draining can complete the upload, which releases the observer.
     fn emit_writable(&self, flushed: u64) {
-        let Some(observer) = self.observer.get().as_ref().map(UploadObserver::clone) else {
+        let Some(observer) = self.observer.get().clone() else {
             return;
         };
         match &observer {

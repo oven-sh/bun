@@ -131,10 +131,17 @@ function expectBinRemoved(nm: string, name: string) {
 
 type BunfigOpts = NonNullable<Parameters<VerdaccioRegistry["createTestDir"]>[0]>["bunfigOpts"];
 
+// Writes the manifest and installs it: with a linker flag through `install`, otherwise through the harness's
+// `runBunInstall`, which also checks that the lockfile was saved.
+async function installInto(dir: string, packageJson: string, pkgJson: Record<string, unknown>, linker?: Linker) {
+  await write(packageJson, JSON.stringify(pkgJson));
+  if (linker) await install(dir, "--linker", linker);
+  else await runBunInstall(installEnv(dir), dir);
+}
+
 async function setup(pkgJson: Record<string, unknown>, bunfigOpts?: BunfigOpts) {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts });
-  await write(packageJson, JSON.stringify(pkgJson));
-  await runBunInstall(installEnv(packageDir), packageDir);
+  await installInto(packageDir, packageJson, pkgJson);
   return packageDir;
 }
 
@@ -156,8 +163,7 @@ type Linker = "hoisted" | "isolated";
 
 async function setupWithLinker(linker: Linker, pkgJson: Record<string, unknown>, bunfigOpts?: BunfigOpts) {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker, ...bunfigOpts } });
-  await write(packageJson, JSON.stringify(pkgJson));
-  await install(packageDir, "--linker", linker);
+  await installInto(packageDir, packageJson, pkgJson, linker);
   return packageDir;
 }
 
@@ -172,17 +178,22 @@ function writeWorkspaces(dir: string, packageJson: string, { root, packages }: W
   ]);
 }
 
+async function installWorkspacesInto(dir: string, packageJson: string, linker: Linker, workspaces: Workspaces) {
+  await writeWorkspaces(dir, packageJson, workspaces);
+  await install(dir, "--linker", linker);
+}
+
 async function setupWorkspaces(linker: Linker, workspaces: Workspaces) {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker } });
-  await writeWorkspaces(packageDir, packageJson, workspaces);
-  await install(packageDir, "--linker", linker);
+  await installWorkspacesInto(packageDir, packageJson, linker, workspaces);
   return packageDir;
 }
 
 // Copies an installed project into the empty directory `dest` so that the copy stands on its own. A relative link is
-// kept. An absolute link into `source` (bun writes those for the cache's index, and for workspace and store links on
-// Windows) is pointed at the copy; `fs.cpSync` would leave both kinds pointing into `source`. A directory link is
-// recreated as a junction on Windows, which needs no privilege, like the fallback `bun install` itself uses.
+// kept as it is. An absolute link into `source` (bun writes those for the cache's index, and for workspace and store
+// links on Windows) is pointed at the same entry of the copy; `fs.cpSync` would leave both kinds pointing into
+// `source`. An absolute directory link is recreated as a junction, which needs no privilege, like the fallback `bun
+// install` itself uses. The harness's `copyTreeSync` (#39741) is this same algorithm.
 function copyTree(source: string, dest: string) {
   const root = realpathSync.native(source);
   const copy = (from: string, to: string) => {
@@ -191,14 +202,16 @@ function copyTree(source: string, dest: string) {
       const entryTo = join(to, entry.name);
       if (entry.isSymbolicLink()) {
         let target = readlinkSync(entryFrom);
-        const isDir = statSync(entryFrom, { throwIfNoEntry: false })?.isDirectory() ?? false;
+        const linkKind = statSync(entryFrom, { throwIfNoEntry: false })?.isDirectory() ? "dir" : "file";
         if (isAbsolute(target)) {
           const inside = relative(root, target);
           if (!inside.startsWith("..") && !isAbsolute(inside)) target = join(dest, inside);
+          symlinkSync(target, entryTo, linkKind === "dir" ? "junction" : "file");
+        } else {
+          symlinkSync(target, entryTo, linkKind);
         }
-        symlinkSync(target, entryTo, isDir ? "junction" : "file");
       } else if (entry.isDirectory()) {
-        mkdirSync(entryTo);
+        mkdirSync(entryTo, { recursive: true });
         copy(entryFrom, entryTo);
       } else {
         copyFileSync(entryFrom, entryTo);
@@ -208,85 +221,78 @@ function copyTree(source: string, dest: string) {
   copy(source, dest);
 }
 
-// A starting tree that several cases share. It is installed once, on first use, and every case gets its own copy,
-// cache included, so a case starts the way its own install would have left it. The copied bunfig names the
-// original's cache folder, so the copy gets one that names its own.
-function shared(build: () => Promise<string>) {
+// A starting tree that several cases share. `build` installs it into a test directory once, on first use; every case
+// then gets its own copy, cache included, with a bunfig of its own, so it starts the way its own install would have
+// left it.
+function shared(bunfigOpts: BunfigOpts, build: (dir: string, packageJson: string) => Promise<void>) {
   let source: Promise<string> | undefined;
   return async () => {
-    const from = await (source ??= build());
+    source ??= registry.createTestDir({ bunfigOpts }).then(async ({ packageDir, packageJson }) => {
+      await build(packageDir, packageJson);
+      return packageDir;
+    });
     const dir = String(tempDir("verdaccio-test-", {}));
-    copyTree(from, dir);
-    const { install } = Bun.TOML.parse(readFileSync(join(dir, "bunfig.toml"), "utf8")) as {
-      install: Record<string, unknown>;
-    };
-    writeFileSync(
-      join(dir, "bunfig.toml"),
-      Bun.TOML.stringify({ install: { ...install, cache: join(dir, ".bun-cache") } })!,
-    );
+    copyTree(await source, dir);
+    await registry.writeBunfig(dir, bunfigOpts);
     return dir;
   };
 }
 
-const perLinker = (build: (linker: Linker) => Promise<string>) =>
-  Object.fromEntries(linkers.map(linker => [linker, shared(() => build(linker))])) as Record<
-    Linker,
-    () => Promise<string>
-  >;
+// A shared tree from one manifest, installed the way `setup` (no linker) or `setupWithLinker` installs it.
+const packageTree = (pkgJson: Record<string, unknown>, linker?: Linker) =>
+  shared(linker && { linker }, (dir, packageJson) => installInto(dir, packageJson, pkgJson, linker));
+const workspaceTree = (linker: Linker, workspaces: Workspaces) =>
+  shared({ linker }, (dir, packageJson) => installWorkspacesInto(dir, packageJson, linker, workspaces));
+const perLinker = (tree: (linker: Linker) => () => Promise<string>) =>
+  Object.fromEntries(linkers.map(linker => [linker, tree(linker)])) as Record<Linker, () => Promise<string>>;
 
 const trees = {
-  noDeps: shared(() => setup({ name: "foo", dependencies: { "no-deps": "1.0.0" } })),
-  oneDepNoDeps2: shared(() => setup({ name: "foo", dependencies: { "one-dep": "1.0.0", "no-deps": "2.0.0" } })),
-  noDepsScopedBin: shared(() =>
-    setup({ name: "foo", dependencies: { "no-deps": "1.0.0", "@scoped/has-bin-entry": "1.0.0" } }),
+  noDeps: packageTree({ name: "foo", dependencies: { "no-deps": "1.0.0" } }),
+  oneDepNoDeps2: packageTree({ name: "foo", dependencies: { "one-dep": "1.0.0", "no-deps": "2.0.0" } }),
+  noDepsScopedBin: packageTree({ name: "foo", dependencies: { "no-deps": "1.0.0", "@scoped/has-bin-entry": "1.0.0" } }),
+  devBins: packageTree({
+    name: "foo",
+    dependencies: { "no-deps": "1.0.0", "@scoped/has-bin-entry": "1.0.0" },
+    devDependencies: { "one-fixed-dep-bins": "1.0.0", "what-bin": "1.0.0" },
+  }),
+  prodAndDev: packageTree({
+    name: "foo",
+    dependencies: { "no-deps": "1.0.0" },
+    devDependencies: { "one-fixed-dep": "1.0.0" },
+  }),
+  devRootProdNested: packageTree({
+    name: "foo",
+    dependencies: { "one-fixed-dep": "1.0.0" },
+    devDependencies: { "no-deps": "2.0.0" },
+  }),
+  native: packageTree({ name: "foo", dependencies: { "no-deps": "1.0.0", "test-postinstall-skip-native": "1.0.0" } }),
+  isolatedNoDeps: packageTree({ name: "foo", dependencies: { "no-deps": "1.0.0" } }, "isolated"),
+  isolatedDevOneDep: packageTree(
+    { name: "foo", dependencies: { "no-deps": "1.0.0" }, devDependencies: { "one-dep": "1.0.0" } },
+    "isolated",
   ),
-  devBins: shared(() =>
-    setup({
-      name: "foo",
-      dependencies: { "no-deps": "1.0.0", "@scoped/has-bin-entry": "1.0.0" },
-      devDependencies: { "one-fixed-dep-bins": "1.0.0", "what-bin": "1.0.0" },
-    }),
-  ),
-  prodAndDev: shared(() =>
-    setup({ name: "foo", dependencies: { "no-deps": "1.0.0" }, devDependencies: { "one-fixed-dep": "1.0.0" } }),
-  ),
-  devRootProdNested: shared(() =>
-    setup({ name: "foo", dependencies: { "one-fixed-dep": "1.0.0" }, devDependencies: { "no-deps": "2.0.0" } }),
-  ),
-  native: shared(() =>
-    setup({ name: "foo", dependencies: { "no-deps": "1.0.0", "test-postinstall-skip-native": "1.0.0" } }),
-  ),
-  isolatedNoDeps: shared(() => setupWithLinker("isolated", { name: "foo", dependencies: { "no-deps": "1.0.0" } })),
-  isolatedDevOneDep: shared(() =>
-    setupWithLinker("isolated", {
-      name: "foo",
-      dependencies: { "no-deps": "1.0.0" },
-      devDependencies: { "one-dep": "1.0.0" },
-    }),
-  ),
-  isolatedNative: shared(() =>
-    setupWithLinker("isolated", {
-      name: "foo",
-      dependencies: { "no-deps": "1.0.0", "test-postinstall-skip-native": "1.0.0" },
-    }),
+  isolatedNative: packageTree(
+    { name: "foo", dependencies: { "no-deps": "1.0.0", "test-postinstall-skip-native": "1.0.0" } },
+    "isolated",
   ),
   optional: perLinker(linker =>
-    setupWithLinker(linker, {
-      name: "foo",
-      dependencies: { "no-deps": "1.0.0" },
-      optionalDependencies: { "a-dep": "1.0.1" },
-      devDependencies: { "one-fixed-dep": "1.0.0" },
-    }),
+    packageTree(
+      {
+        name: "foo",
+        dependencies: { "no-deps": "1.0.0" },
+        optionalDependencies: { "a-dep": "1.0.1" },
+        devDependencies: { "one-fixed-dep": "1.0.0" },
+      },
+      linker,
+    ),
   ),
   peerDepsFixed: perLinker(linker =>
-    setupWithLinker(linker, { name: "foo", dependencies: { "peer-deps-fixed": "1.0.0" } }),
+    packageTree({ name: "foo", dependencies: { "peer-deps-fixed": "1.0.0" } }, linker),
   ),
-  hoistedRootAndA: shared(() =>
-    setupWorkspaces("hoisted", {
-      root: { dependencies: { "no-deps": "2.0.0" } },
-      packages: { a: { dependencies: { "no-deps": "1.0.0" } } },
-    }),
-  ),
+  hoistedRootAndA: workspaceTree("hoisted", {
+    root: { dependencies: { "no-deps": "2.0.0" } },
+    packages: { a: { dependencies: { "no-deps": "1.0.0" } } },
+  }),
 };
 
 // Every entry of a node_modules folder, as paths relative to it: a package folder (scope folders flattened), a file,
@@ -1381,7 +1387,7 @@ const appLinksTool = {
     tool: {},
   },
 };
-const appLinksToolTree = shared(() => setupWorkspaces("isolated", appLinksTool));
+const appLinksToolTree = workspaceTree("isolated", appLinksTool);
 
 test.concurrent(
   "isolated + workspaces: --production removes a workspace's registry devDependency and its dev-only workspace link, keeps prod links",
@@ -1776,7 +1782,7 @@ const prunedCheckout = (app: Record<string, unknown>) => ({
     other: { dependencies: { "left-pad": "1.0.0" } },
   },
 });
-const prunedCheckoutTree = perLinker(linker => setupWorkspaces(linker, prunedCheckout({})));
+const prunedCheckoutTree = perLinker(linker => workspaceTree(linker, prunedCheckout({})));
 
 // The hoisted root folder, and the isolated store and app folder, of a prunedCheckout tree once `other` is gone from disk.
 const prunedCheckoutHoisted = ["app -> ../packages/app", "left-pad", "no-deps", "other -> ../packages/other"];

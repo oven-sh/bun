@@ -4,7 +4,7 @@
 
 use core::ffi::c_void;
 
-use bun_jsc::{JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue};
 use bun_telemetry::otlp::EntryWriter;
 use bun_telemetry::pool::{self, NativeSpan};
 use bun_telemetry::{
@@ -165,43 +165,6 @@ impl Drop for Entered {
 
 pub fn limits() -> &'static Limits {
     &super::state().limits
-}
-
-/// `{ "k": v, ... }` → each (key, value) as attribute values (config paths).
-pub(crate) fn for_each_attribute(
-    global: &JSGlobalObject,
-    obj: JSValue,
-    mut f: impl FnMut(&[u8], &Value<'_>),
-) -> JsResult<()> {
-    let Some(o) = obj.get_object() else {
-        return Ok(());
-    };
-    let iter = JSPropertyIterator::init(
-        global,
-        o,
-        JSPropertyIteratorOptions {
-            skip_empty_name: true,
-            include_value: true,
-            ..Default::default()
-        },
-    )?;
-    while let Some((name, value)) = iter.next()? {
-        let key = name.to_utf8();
-        if value.is_string() {
-            let s = value.to_utf8(global)?;
-            f(key.slice(), &Value::Str(s.slice()));
-        } else if value.is_number() {
-            let n = value.as_number();
-            if n.is_finite() && n == n.trunc() && n.abs() <= bun_jsc::MAX_SAFE_INTEGER as f64 {
-                f(key.slice(), &Value::Int(n as i64));
-            } else {
-                f(key.slice(), &Value::Double(n));
-            }
-        } else if value.is_boolean() {
-            f(key.slice(), &Value::Bool(value.as_boolean()));
-        }
-    }
-    Ok(())
 }
 
 /// End a native-owned span into the VM's batch.

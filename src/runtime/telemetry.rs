@@ -563,19 +563,39 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         if let Some(v) = explicit_service_name {
             cfg.service_name = Some(v);
         }
-        if let Some(v) = opts.get(global, "resourceAttributes")? {
-            span::for_each_attribute(global, v, |k, val| {
-                use bun_telemetry_cold::config::ResourceValue as R;
-                let vs = match val {
-                    bun_telemetry::Value::Str(s) => {
-                        R::Str(bstr::ByteSlice::to_str_lossy(*s).into_owned())
+        if let Some(o) = opts
+            .get(global, "resourceAttributes")?
+            .and_then(|v| v.get_object())
+        {
+            use bun_telemetry_cold::config::ResourceValue as R;
+            let iter = bun_jsc::JSPropertyIterator::init(
+                global,
+                o,
+                bun_jsc::JSPropertyIteratorOptions {
+                    skip_empty_name: true,
+                    include_value: true,
+                    ..Default::default()
+                },
+            )?;
+            while let Some((name, val)) = iter.next()? {
+                let vs = if val.is_string() {
+                    R::Str(bstr::ByteSlice::to_str_lossy(val.to_utf8(global)?.slice()).into_owned())
+                } else if val.is_number() {
+                    let n = val.as_number();
+                    if n.is_finite()
+                        && n == n.trunc()
+                        && n.abs() <= bun_jsc::MAX_SAFE_INTEGER as f64
+                    {
+                        R::Int(n as i64)
+                    } else {
+                        R::Double(n)
                     }
-                    bun_telemetry::Value::Int(i) => R::Int(*i),
-                    bun_telemetry::Value::Double(d) => R::Double(*d),
-                    bun_telemetry::Value::Bool(b) => R::Bool(*b),
-                    _ => return,
+                } else if val.is_boolean() {
+                    R::Bool(val.as_boolean())
+                } else {
+                    continue;
                 };
-                let k = bstr::ByteSlice::to_str_lossy(k).into_owned();
+                let k = bstr::ByteSlice::to_str_lossy(name.to_utf8().slice()).into_owned();
                 if k == "service.name" {
                     // an explicit serviceName wins (SDK: OTEL_SERVICE_NAME > resource attrs)
                     if !has_service_name {
@@ -585,7 +605,7 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                     cfg.resource_attributes.retain(|(ek, _)| *ek != k);
                     cfg.resource_attributes.push((k, vs));
                 }
-            })?;
+            }
         }
         // `endpoint` + `headers` is shorthand for one OTLP exporter.
         let endpoint = opt_str(global, opts, "endpoint")?;

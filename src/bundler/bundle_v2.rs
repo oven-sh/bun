@@ -7147,18 +7147,24 @@ pub mod bv2_impl {
                         .path
                         .text;
                     if this.should_add_watcher(source_path) {
-                        // const generic `CLONE_FILE_PATH = isWindows`
-                        // matches `cfg!(windows)` at compile time.
-                        let _ = this
-                            .bun_watcher_mut()
-                            .unwrap()
-                            .add_file::<{ cfg!(windows) }>(
-                                parse_result.watcher_data.fd,
+                        let fd = parse_result.watcher_data.fd;
+                        let dir_fd = parse_result.watcher_data.dir_fd;
+                        let hash = bun_wyhash::hash(source_path) as u32;
+                        let bun_watcher = this.bun_watcher_mut().unwrap();
+                        // The watcher keeps the path past this bundle; borrow it
+                        // only when it is interned for the process lifetime
+                        // (`dupe_alloc` leaves other paths in the bundle arena).
+                        let _ = if Fs::as_interned_path(source_path).is_some() {
+                            bun_watcher.add_file::<{ cfg!(windows) }>(
+                                fd,
                                 source_path,
-                                bun_wyhash::hash(source_path) as u32,
-                                parse_result.watcher_data.dir_fd,
+                                hash,
+                                dir_fd,
                                 None,
-                            );
+                            )
+                        } else {
+                            bun_watcher.add_file::<true>(fd, source_path, hash, dir_fd, None)
+                        };
                     }
                 }
             }

@@ -2024,6 +2024,10 @@ impl<'a> Formatter<'a> {
 
                             let old_quote_strings = self.quote_strings;
                             self.quote_strings = true;
+                            // The key is nested inside the tag even when the
+                            // element itself is the root value, so it must
+                            // never get the top-level newline wrap.
+                            self.indent += 1;
 
                             let inner: JsResult<()> = (|| {
                                 self.format::<W, ENABLE_ANSI_COLORS>(
@@ -2033,6 +2037,7 @@ impl<'a> Formatter<'a> {
                                     self.global_this,
                                 )
                             })();
+                            self.indent = self.indent.saturating_sub(1);
                             self.quote_strings = old_quote_strings;
                             inner?;
                             needs_space = true;

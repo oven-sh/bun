@@ -131,6 +131,33 @@ describe.concurrent("multiline strings serialize inline like jest", () => {
     });
     expect(await proc.exited).toBe(0);
     const written = await Bun.file(`${dir}/__snapshots__/multiline.test.ts.snap`).text();
-    expect(written).toContain(["exports[`multiline 1`] = `", "{", '  "x": "A', 'B",', "}", "`;"].join("\n"));
+    // Byte-for-byte what jest writes, except the header comment line.
+    expect(written).toBe(
+      [
+        "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots",
+        "",
+        "exports[`multiline 1`] = `",
+        "{",
+        '  "x": "A',
+        'B",',
+        "}",
+        "`;",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  // A multiline JSX key prints inline inside the tag, never with the
+  // top-level newline wrap, even when the element is the root value.
+  test("a multiline JSX key stays inline", () => {
+    const element = {
+      $$typeof: Symbol.for("react.element"),
+      type: "div",
+      key: "a\nb",
+      props: {},
+      ref: null,
+    };
+    expect(element).toMatchInlineSnapshot(`<div key="a
+b" />`);
   });
 });

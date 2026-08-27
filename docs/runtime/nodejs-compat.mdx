@@ -113,7 +113,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:domain`](https://nodejs.org/api/domain.html)
 
-🟡 Missing `Domain` `members`. A domain only catches errors thrown synchronously inside `run()`/`bind()` or emitted by emitters passed to `add()`. Bun does not route errors from timers, `process.nextTick`, promises and other async callbacks to the domain.
+🟢 Implemented on top of `AsyncLocalStorage`, like Node.js's current implementation. Errors thrown in timers, `process.nextTick`, promises and I/O callbacks created inside a domain reach its `'error'` handler, and emitters created inside a domain are bound to it. A domain without an `'error'` listener leaves unhandled rejections to `process.on('unhandledRejection')` instead of turning them into uncaught exceptions.
 
 ### [`node:http2`](https://nodejs.org/api/http2.html)
 

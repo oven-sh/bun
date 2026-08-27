@@ -1331,6 +1331,32 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         RETURN_IF_EXCEPTION(monitorScope, true);
     }
 
+    // node:domain gets the error before the capture callback and the
+    // 'uncaughtException' listeners, like node's domain-owned captureFn. The
+    // async context of the throw is still active here, so the router sees the
+    // domain the failing callback was created in. A rejection that reaches this
+    // path (--unhandled-rejections=strict or throw) is routed like a throw, as
+    // node's _fatalException does.
+    if (auto* domainHandler = process->domainErrorHandler()) {
+        auto domainScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        MarkedArgumentBuffer domainArgs;
+        domainArgs.append(exception);
+        domainArgs.append(jsString(vm, String("uncaughtException"_s)));
+        JSValue handled = call(lexicalGlobalObject, domainHandler, domainArgs, "domain error handler"_s);
+        if (auto* ex = domainScope.exception()) [[unlikely]] {
+            (void)domainScope.tryClearException();
+            if (vm.hasPendingTerminationException()) [[unlikely]]
+                return true;
+            // A throw from a domain 'error' handler is fatal, like a throw from an
+            // 'uncaughtException' listener: the re-entrant report exits with code 7
+            // and prints the handler's error, not the one it was handling.
+            Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(JSValue(ex)));
+            return true;
+        }
+        if (handled.isTrue())
+            return true;
+    }
+
     auto uncaughtExceptionIdent = Identifier::fromString(JSC::getVM(globalObject), "uncaughtException"_s);
 
     // if there is an uncaughtExceptionCaptureCallback, call it and consider the exception handled
@@ -1451,6 +1477,20 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
     if (vm.hasPendingTerminationException()) [[unlikely]]
         return true;
     auto* process = globalObject->processObject();
+
+    // handleRejectedPromises() restored the async context of the rejection, so
+    // node:domain's router sees the domain the promise was rejected under.
+    if (auto* domainHandler = process->domainErrorHandler()) {
+        auto domainScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        MarkedArgumentBuffer args;
+        args.append(reason);
+        args.append(jsString(vm, String("unhandledRejection"_s)));
+        args.append(promise);
+        JSValue handled = call(lexicalGlobalObject, domainHandler, args, "domain error handler"_s);
+        RETURN_IF_EXCEPTION(domainScope, true);
+        if (handled.isTrue())
+            return true;
+    }
 
     auto eventType = Identifier::fromString(vm, "unhandledRejection"_s);
     auto& wrapped = process->wrapped();
@@ -3725,6 +3765,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_uncaughtExceptionCaptureCallback);
+    visitor.append(thisObject->m_domainErrorHandler);
     visitor.append(thisObject->m_nextTickFunction);
     visitor.append(thisObject->m_cachedCwd);
     visitor.append(thisObject->m_argv);
@@ -4348,6 +4389,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionReportUncaughtException, (JSC::JSGlobalObject
 {
     JSValue arg0 = callFrame->argument(0);
     Bun__reportUnhandledError(globalObject, JSValue::encode(arg0));
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetDomainErrorHandler, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSValue handler = callFrame->argument(0);
+    ASSERT(handler.isCallable());
+    defaultGlobalObject(globalObject)->processObject()->setDomainErrorHandler(handler.getObject());
     return JSValue::encode(jsUndefined());
 }
 

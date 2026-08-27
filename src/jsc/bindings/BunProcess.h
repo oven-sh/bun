@@ -27,6 +27,10 @@ class Process : public WebCore::JSEventEmitter {
     // Only used by internal code via passing to queueNextTick
     LazyProperty<Process, JSFunction> m_emitHelperFunction;
     WriteBarrier<Unknown> m_uncaughtExceptionCaptureCallback;
+    // node:domain's error router (jsFunctionSetDomainErrorHandler). It gets
+    // every uncaught exception and unhandled rejection before the listeners do
+    // and returns true when the active domain took the error.
+    WriteBarrier<JSObject> m_domainErrorHandler;
     WriteBarrier<JSObject> m_nextTickFunction;
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L113-L116
     WriteBarrier<JSString> m_cachedCwd;
@@ -131,6 +135,16 @@ public:
         return m_uncaughtExceptionCaptureCallback.get();
     }
 
+    inline void setDomainErrorHandler(JSC::JSObject* handler)
+    {
+        m_domainErrorHandler.set(vm(), this, handler);
+    }
+
+    inline JSC::JSObject* domainErrorHandler()
+    {
+        return m_domainErrorHandler.get();
+    }
+
     inline Structure* cpuUsageStructure() { return m_cpuUsageStructure.getInitializedOnMainThread(this); }
     inline Structure* resourceUsageStructure() { return m_resourceUsageStructure.getInitializedOnMainThread(this); }
     inline Structure* memoryUsageStructure() { return m_memoryUsageStructure.getInitializedOnMainThread(this); }
@@ -144,5 +158,8 @@ JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 // process.nextTick drain and, via $newCppFunction, by the node-style
 // callback shims in src/js.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
+
+// Installs node:domain's error router (see Process::m_domainErrorHandler).
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSetDomainErrorHandler);
 
 } // namespace Bun

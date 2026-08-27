@@ -1066,13 +1066,10 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
 
     switch (operation) {
     case JSPromiseRejectionOperation::Reject:
-        globalObj->m_aboutToBeNotifiedRejectedPromises.append(obj->vm(), globalObj, promise);
+        globalObj->m_aboutToBeNotifiedRejectedPromises.append(obj->vm(), globalObj, promise, obj->m_asyncContextData.get()->getInternalField(0));
         break;
     case JSPromiseRejectionOperation::Handle:
-        bool removed = globalObj->m_aboutToBeNotifiedRejectedPromises.removeFirstMatching(globalObj, [&](JSC::WriteBarrier<JSC::JSPromise>& unhandledPromise) {
-            return unhandledPromise.get() == promise;
-        });
-        if (removed) break;
+        if (globalObj->m_aboutToBeNotifiedRejectedPromises.remove(globalObj, promise)) break;
         // handleRejectedPromises() drains the list into a local buffer before
         // running any handler. A handler may .catch() a later still-queued
         // promise; that promise is no longer in m_aboutToBeNotifiedRejectedPromises
@@ -3245,21 +3242,29 @@ void GlobalObject::handleRejectedPromises()
         // the same pattern JSC's VM::didExhaustMicrotaskQueue and WebCore's
         // RejectedPromiseTracker use.
         JSC::MarkedArgumentBuffer promises;
-        m_aboutToBeNotifiedRejectedPromises.drainTo(this, promises);
+        JSC::MarkedArgumentBuffer asyncContexts;
+        m_aboutToBeNotifiedRejectedPromises.drainTo(this, promises, asyncContexts);
         RELEASE_ASSERT(!promises.hasOverflowed());
+        RELEASE_ASSERT(!asyncContexts.hasOverflowed());
         // Expose the not-yet-processed tail so promiseRejectionTracker(Handle)
         // can tell "still pending" apart from "already notified". Linked as a
         // stack so a re-entrant handleRejectedPromises() (a handler that ticks
         // the event loop) restores the outer frame instead of nulling it.
         InFlightRejections inflight { &promises, 0, m_rejectedPromisesBeingProcessed };
         WTF::SetForScope inflightScope(m_rejectedPromisesBeingProcessed, &inflight);
+        auto* asyncContextData = m_asyncContextData.get();
         for (size_t i = 0, size = promises.size(); i < size; ++i) {
             auto* promise = static_cast<JSC::JSPromise*>(promises.at(i).asCell());
             if (promise->isHandled())
                 continue;
             inflight.index = i + 1;
 
+            // Report under the async context that was active when the promise
+            // rejected, the way node restores promiseInfo.contextFrame.
+            JSValue previousAsyncContext = asyncContextData->getInternalField(0);
+            asyncContextData->putInternalField(virtual_machine, 0, asyncContexts.at(i));
             Bun__handleRejectedPromise(this, promise);
+            asyncContextData->putInternalField(virtual_machine, 0, previousAsyncContext);
             if (auto ex = scope.exception()) {
                 if (virtual_machine.isTerminationException(ex)) [[unlikely]]
                     return;

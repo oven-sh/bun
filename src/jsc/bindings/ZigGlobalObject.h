@@ -70,6 +70,7 @@ struct node_module;
 #include <node_api.h>
 #include "BakeAdditionsToGlobalObject.h"
 #include "WriteBarrierList.h"
+#include "PendingRejectionList.h"
 #include "NativeModuleList.h"
 #include "streams/JSStreamsRuntime.h"
 
@@ -810,7 +811,7 @@ private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
 
-    Bun::WriteBarrierList<JSC::JSPromise> m_aboutToBeNotifiedRejectedPromises;
+    Bun::PendingRejectionList m_aboutToBeNotifiedRejectedPromises;
 
 public:
     // While handleRejectedPromises() is iterating its drained snapshot, this

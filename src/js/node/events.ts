@@ -62,6 +62,14 @@ var defaultMaxListeners = 10;
 
 // EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.$apply(this)`.
 function EventEmitter(opts) {
+  EventEmitter.init.$call(this, opts);
+}
+Object.defineProperty(EventEmitter, "name", { value: "EventEmitter", configurable: true });
+const EventEmitterPrototype = (EventEmitter.prototype = {});
+
+// Looked up through `EventEmitter.init` on every construction, like node, so
+// node:domain can replace it to stamp the active domain on new emitters.
+function init(opts) {
   if (this._events === undefined || this._events === this.__proto__._events) {
     this._events = Object.create(null);
     this._eventsCount = 0;
@@ -87,8 +95,6 @@ function EventEmitter(opts) {
     }
   }
 }
-Object.defineProperty(EventEmitter, "name", { value: "EventEmitter", configurable: true });
-const EventEmitterPrototype = (EventEmitter.prototype = {});
 
 EventEmitterPrototype.setMaxListeners = function setMaxListeners(n) {
   validateNumber(n, "setMaxListeners", 0);
@@ -992,7 +998,7 @@ Object.assign(EventEmitter, {
   EventEmitterAsyncResource,
   errorMonitor: kErrorMonitor,
   addAbortListener,
-  init: EventEmitter,
+  init,
   listenerCount,
 });
 

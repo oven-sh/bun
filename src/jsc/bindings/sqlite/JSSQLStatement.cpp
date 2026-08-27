@@ -48,6 +48,7 @@
 #include "wtf/text/StringToIntegerConversion.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include "BunString.h"
+#include "TelemetryABI.h"
 static constexpr int32_t kSafeIntegersFlag = 1 << 1;
 static constexpr int32_t kStrictFlag = 1 << 2;
 static constexpr int32_t kOwnedByDatabaseFlag = 1 << 3;
@@ -194,12 +195,6 @@ static inline JSC::JSValue jsBigIntFromSQLite(JSC::JSGlobalObject* globalObject,
         return {};                                                                                                  \
     }
 
-// ── Native OpenTelemetry (see src/runtime/telemetry/sqlite.rs) ───────────────
-extern "C" uint32_t Bun__Telemetry__enabled;
-extern "C" const uint32_t Bun__Telemetry__SQLITE_MASK;
-extern "C" uint64_t Bun__Telemetry__sqliteBegin(JSC::JSGlobalObject*, const char* file, size_t fileLen);
-extern "C" void Bun__Telemetry__sqliteEnd(JSC::JSGlobalObject*, uint64_t span, const char* sql, size_t sqlLen, int errcode, const char* codeName, const char* errmsg);
-
 /// `SQLITE_CONSTRAINT_UNIQUE` etc. for a (possibly extended) result code; null if unknown.
 static const char* sqliteCodeName(int code)
 {
@@ -223,7 +218,7 @@ public:
         : m_scope(scope)
         , m_db(db)
     {
-        if (record && (__atomic_load_n(&Bun__Telemetry__enabled, __ATOMIC_RELAXED) & Bun__Telemetry__SQLITE_MASK)) [[unlikely]]
+        if (record && (telemetryEnabledMask() & Bun__Telemetry__SQLITE_MASK)) [[unlikely]]
             begin(globalObject);
     }
 
@@ -277,7 +272,7 @@ private:
         if (failed)
             msg = !m_errmsg.isNull() ? m_errmsg.data() : (m_db ? sqlite3_errmsg(m_db) : nullptr);
         Bun__Telemetry__sqliteEnd(m_globalObject, m_span, sql, len, rc, failed ? sqliteCodeName(rc) : nullptr, msg);
-        m_span = 0;
+        m_span = {};
     }
 
     JSC::ThrowScope& m_scope;
@@ -288,7 +283,7 @@ private:
     int m_rc { SQLITE_OK };
     CString m_errmsg;
     JSC::JSGlobalObject* m_globalObject { nullptr };
-    uint64_t m_span { 0 };
+    TelemetryNativeHandle m_span {};
 };
 
 } // namespace Bun

@@ -87,7 +87,7 @@ pub fn end_message(
             bun_jsc::js_promise::Status::Pending => {
                 // An async handler: the span covers the promise and records its
                 // rejection, like Bun.otel.span(name, async fn).
-                let cell = super::span::Bun__Telemetry__poolMaterialize(global, span.0);
+                let cell = super::span::Bun__Telemetry__poolMaterialize(global, span);
                 let derived = match bun_jsc::host_fn::from_js_host_call(global, || {
                     Bun__Telemetry__observeSettlement(global, result, cell)
                 }) {

@@ -23,15 +23,17 @@ unsafe extern "C" {
     safe fn Bun__Telemetry__activeSpanCell(global: &JSGlobalObject) -> JSValue;
     safe fn Bun__Telemetry__enter(global: &JSGlobalObject, span: JSValue) -> JSValue;
     safe fn Bun__Telemetry__exit(global: &JSGlobalObject, prev: JSValue);
+    /// `native` must be a live (non-zero) handle.
     safe fn Bun__TelemetrySpan__createNative(
         global: &JSGlobalObject,
         stub: &SpanStub,
         scope: u16,
         kind: u8,
-        native: u64,
+        native: NativeSpan,
     ) -> JSValue;
-    safe fn Bun__TelemetrySpan__fromJS(value: JSValue) -> *mut c_void;
-    safe fn Bun__Telemetry__activeNativeHandle(global: &JSGlobalObject) -> u64;
+    safe fn Bun__TelemetrySpan__createSuppressedCarrier(global: &JSGlobalObject) -> JSValue;
+    safe fn Bun__TelemetrySpan__is(value: JSValue) -> bool;
+    safe fn Bun__Telemetry__activeNativeHandle(global: &JSGlobalObject) -> NativeSpan;
     safe fn Bun__TelemetrySpan__nativeEnded(cell: JSValue);
     /// Borrowed (not ref'd) header strings of a JS-owned span; Empty otherwise.
     /// Valid until the caller next runs JS.
@@ -87,7 +89,7 @@ pub fn active_js(global: &JSGlobalObject) -> JSValue {
 /// the bare handle as a number or a materialized cell).
 #[inline]
 pub fn active_native(global: &JSGlobalObject) -> NativeSpan {
-    NativeSpan(Bun__Telemetry__activeNativeHandle(global))
+    Bun__Telemetry__activeNativeHandle(global)
 }
 
 /// The async-context slot value for a native-owned span: the pool handle as
@@ -147,7 +149,7 @@ pub fn with_active_propagation<R>(global: &JSGlobalObject, f: impl FnOnce(&[u8],
 /// Is `value` a JSTelemetrySpan?
 #[inline]
 pub fn is_span(value: JSValue) -> bool {
-    !Bun__TelemetrySpan__fromJS(value).is_null()
+    Bun__TelemetrySpan__is(value)
 }
 
 /// RAII activation of a span cell for the duration of a native → JS call.
@@ -467,43 +469,29 @@ fn entry_attrs(
     each_attr(refs, pool, scratch, |k, v| w.attr(k, v));
 }
 
-fn status_code(api: u8) -> StatusCode {
-    match api {
-        1 => StatusCode::Ok,
-        2 => StatusCode::Error,
-        _ => StatusCode::Unset,
-    }
-}
-
 fn link_context(link: &LinkRef) -> Option<SpanContext> {
     let trace_id = TraceId::from_hex(link.trace_id.to_utf8().slice())?;
     let span_id = SpanId::from_hex(link.span_id.to_utf8().slice())?;
     Some(SpanContext {
         trace_id,
         span_id,
-        flags: Flags(link.trace_flags & (Flags::SAMPLED | Flags::REMOTE)),
+        flags: Flags::from_link_byte(link.trace_flags),
     })
 }
 
 /// Ids, sampling decision and start time for a new span.
 /// `parent` may be null (root) and may carry `Flags::REMOTE`.
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn Bun__Telemetry__stubStart(
     global: &JSGlobalObject,
     out: &mut SpanStub,
-    parent: *const SpanStub,
+    parent: Option<&SpanStub>,
     start_ns: u64,
 ) {
-    let parent = if parent.is_null() {
-        None
-    } else {
-        // SAFETY: C++ passes null or a live stub.
-        Some(unsafe { (*parent).ctx })
-    };
+    let parent = parent.map(|p| p.ctx);
     if parent.is_some_and(|c| c.flags.suppressed()) {
         // Under suppressTracing(): a no-op span that keeps suppressing.
-        *out = suppressed_stub();
+        *out = SpanStub::suppressed();
         return;
     }
     let now = clock::or_now(start_ns);
@@ -523,7 +511,7 @@ pub extern "C" fn Bun__Telemetry__stubStart(
     {
         // No pipeline (no BUN_OTEL / bunfig / start()): the span still carries
         // ids for propagation but records nothing and is never buffered.
-        out.ctx.flags = Flags(out.ctx.flags.0 | Flags::NON_RECORDING);
+        out.ctx.flags = out.ctx.flags.with_non_recording();
     }
 }
 
@@ -544,65 +532,40 @@ pub fn with_active_trace_state<R>(global: &JSGlobalObject, f: impl FnOnce(&[u8])
 
 /// A non-recording carrier cell with the SUPPRESSED bit (see VmState::enter_suppressed).
 pub(crate) fn suppressed_carrier_cell(global: &JSGlobalObject) -> JSValue {
-    Bun__TelemetrySpan__createNative(global, &suppressed_stub(), 0, 0, 0)
-}
-
-/// The carrier `context.with(suppressTracing(ctx), …)` activates: no span
-/// (root or child) starts under it.
-fn suppressed_stub() -> SpanStub {
-    let mut stub = carrier(SpanStub::NONE.ctx, false);
-    stub.ctx.flags = Flags(stub.ctx.flags.0 | Flags::SUPPRESSED);
-    stub
+    Bun__TelemetrySpan__createSuppressedCarrier(global)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__suppressedStub(out: &mut SpanStub) {
-    *out = suppressed_stub();
-}
-
-fn carrier(ctx: SpanContext, remote: bool) -> SpanStub {
-    SpanStub {
-        ctx: SpanContext {
-            flags: Flags(
-                (ctx.flags.0 & Flags::SAMPLED)
-                    | Flags::NON_RECORDING
-                    | if remote { Flags::REMOTE } else { 0 },
-            ),
-            ..ctx
-        },
-        parent: SpanId::INVALID,
-        start_ns: 1,
-    }
+    *out = SpanStub::suppressed();
 }
 
 /// A non-recording carrier for a (possibly remote) span context given as hex
 /// ids. Either id null or not valid hex: `*out` is the all-invalid carrier and
 /// the result is false. Always writes `*out`.
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn Bun__Telemetry__carrierStub(
     out: &mut SpanStub,
-    trace_id: *const JsString,
-    span_id: *const JsString,
+    trace_id: Option<&JsString>,
+    span_id: Option<&JsString>,
     trace_flags: u8,
     remote: bool,
 ) -> bool {
-    // SAFETY: C++ passes null or a borrowed string that outlives the call.
-    let ids = unsafe { trace_id.as_ref().zip(span_id.as_ref()) }.and_then(|(t, s)| {
+    let ids = trace_id.zip(span_id).and_then(|(t, s)| {
         Some((
             TraceId::from_hex(t.to_utf8().slice())?,
             SpanId::from_hex(s.to_utf8().slice())?,
         ))
     });
     let Some((trace_id, span_id)) = ids else {
-        *out = carrier(SpanStub::NONE.ctx, false);
+        *out = SpanStub::carrier(SpanStub::NONE.ctx, false);
         return false;
     };
-    *out = carrier(
+    *out = SpanStub::carrier(
         SpanContext {
             trace_id,
             span_id,
-            flags: Flags(trace_flags),
+            flags: Flags::from_w3c(trace_flags),
         },
         remote,
     );
@@ -623,7 +586,7 @@ pub extern "C" fn Bun__Telemetry__formatTraceparent(
 pub extern "C" fn Bun__Telemetry__parseTraceparent(header: &JsString, out: &mut SpanStub) -> bool {
     match bun_telemetry::propagation::parse_traceparent(header.to_utf8().slice()) {
         Some(ctx) => {
-            *out = carrier(ctx, true);
+            *out = SpanStub::carrier(ctx, true);
             true
         }
         None => false,
@@ -726,7 +689,7 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(global: &JSGlobalObject, desc: &End
             }
             if desc.status != 0 {
                 w.status(
-                    status_code(desc.status),
+                    StatusCode::from_api(desc.status),
                     desc.status_message.to_utf8().slice(),
                 );
             }
@@ -739,32 +702,18 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(global: &JSGlobalObject, desc: &End
 // ─────────────── native-owned (pooled) spans ───────────────
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Telemetry__nativeIsLive(global: &JSGlobalObject, handle: u64) -> bool {
-    local(global).is_some_and(|l| pool::is_live(&l.pool, NativeSpan(handle)))
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Telemetry__nativeEnd(
-    global: &JSGlobalObject,
-    handle: u64,
-    end_ns: u64,
-) -> bool {
-    bun_telemetry::rt::end_pooled(
-        global.as_ptr().cast(),
-        NativeSpan(handle),
-        end_ns,
-        &mut |_| {},
-    )
+pub extern "C" fn Bun__Telemetry__nativeEnd(global: &JSGlobalObject, handle: NativeSpan, end_ns: u64) {
+    bun_telemetry::rt::end_pooled(global.as_ptr().cast(), handle, end_ns, &mut |_| {});
 }
 
 /// Identity of a live pooled span; false (and `out` untouched) once it has ended.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__poolStub(
     global: &JSGlobalObject,
-    handle: u64,
+    handle: NativeSpan,
     out: &mut SpanStub,
 ) -> bool {
-    match local(global).and_then(|l| pool::stub(&l.pool, NativeSpan(handle))) {
+    match local(global).and_then(|l| pool::stub(&l.pool, handle)) {
         Some(stub) => {
             *out = stub;
             true
@@ -776,8 +725,7 @@ pub extern "C" fn Bun__Telemetry__poolStub(
 /// The JS cell for a pooled span, creating (and pinning) it on first use;
 /// undefined once the span has ended.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Telemetry__poolMaterialize(global: &JSGlobalObject, handle: u64) -> JSValue {
-    let native = NativeSpan(handle);
+pub extern "C" fn Bun__Telemetry__poolMaterialize(global: &JSGlobalObject, native: NativeSpan) -> JSValue {
     let Some(mut l) = local(global) else {
         return JSValue::UNDEFINED;
     };
@@ -789,7 +737,7 @@ pub extern "C" fn Bun__Telemetry__poolMaterialize(global: &JSGlobalObject, handl
         if cell.is_some() {
             return JSValue::from_encoded(cell.0);
         }
-        let v = Bun__TelemetrySpan__createNative(global, &stub, scope.0, kind.to_api(), native.0);
+        let v = Bun__TelemetrySpan__createNative(global, &stub, scope.0, kind.to_api(), native);
         v.protect();
         // Pin only a cell the slot now owns; an unowned pinned cell would never be released.
         let stored = local(global)
@@ -813,7 +761,7 @@ pub extern "C" fn Bun__Telemetry__poolMaterialize(global: &JSGlobalObject, handl
 /// False when the span has ended (its slot released) or is not recording.
 pub extern "C" fn Bun__Telemetry__nativeSetAttributes(
     global: &JSGlobalObject,
-    handle: u64,
+    handle: NativeSpan,
     attrs: &AttrPool,
 ) -> bool {
     let lim = limits();
@@ -821,12 +769,12 @@ pub extern "C" fn Bun__Telemetry__nativeSetAttributes(
         return false;
     };
     let Local { pool, scratch, .. } = &mut *l;
-    if !pool::with_ref(pool, NativeSpan(handle), |s| s.stub.is_recording()).unwrap_or(false) {
+    if !pool::with_ref(pool, handle, |s| s.stub.is_recording()).unwrap_or(false) {
         return false;
     }
     let [scratch @ .., _] = scratch;
     each_attr(attrs.items(), attrs, scratch, |k, v| {
-        pool::with(pool, NativeSpan(handle), |s| s.set_attribute(k, v, lim));
+        pool::with(pool, handle, |s| s.set_attribute(k, v, lim));
     });
     true
 }
@@ -834,34 +782,34 @@ pub extern "C" fn Bun__Telemetry__nativeSetAttributes(
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__nativeSetName(
     global: &JSGlobalObject,
-    handle: u64,
+    handle: NativeSpan,
     name: &JsString,
 ) {
     let Some(mut l) = local(global) else { return };
     let Local { pool, scratch, .. } = &mut *l;
     let name = utf8(name, &mut scratch[0]);
-    pool::with(pool, NativeSpan(handle), |s| s.set_name(name));
+    pool::with(pool, handle, |s| s.set_name(name));
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__nativeSetStatus(
     global: &JSGlobalObject,
-    handle: u64,
+    handle: NativeSpan,
     code: u8,
     message: &JsString,
 ) {
     let Some(mut l) = local(global) else { return };
     let Local { pool, scratch, .. } = &mut *l;
     let message = utf8(message, &mut scratch[0]);
-    pool::with(pool, NativeSpan(handle), |s| {
-        s.set_status(status_code(code), message)
+    pool::with(pool, handle, |s| {
+        s.set_status(StatusCode::from_api(code), message)
     });
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__nativeAddEvent(
     global: &JSGlobalObject,
-    handle: u64,
+    handle: NativeSpan,
     event: &EventRef,
     attrs: &AttrPool,
 ) {
@@ -870,7 +818,7 @@ pub extern "C" fn Bun__Telemetry__nativeAddEvent(
     let Local { pool, scratch, .. } = &mut *l;
     let [scratch @ .., name_buf] = scratch;
     let name = utf8(&event.name, name_buf);
-    pool::with(pool, NativeSpan(handle), |s| {
+    pool::with(pool, handle, |s| {
         if let Some(ev) = s.begin_event(name, event.time_ns, lim) {
             entry_attrs(ev, attrs.slice(event.attrs), attrs, scratch);
         }
@@ -880,7 +828,7 @@ pub extern "C" fn Bun__Telemetry__nativeAddEvent(
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__nativeAddLink(
     global: &JSGlobalObject,
-    handle: u64,
+    handle: NativeSpan,
     link: &LinkRef,
     attrs: &AttrPool,
 ) {
@@ -891,7 +839,7 @@ pub extern "C" fn Bun__Telemetry__nativeAddLink(
     let Some(mut l) = local(global) else { return };
     let Local { pool, scratch, .. } = &mut *l;
     let [scratch @ .., _] = scratch;
-    pool::with(pool, NativeSpan(handle), |s| {
+    pool::with(pool, handle, |s| {
         if let Some(lw) = s.begin_link(&ctx, link.trace_state.to_utf8().slice(), lim) {
             entry_attrs(lw, attrs.slice(link.attrs), attrs, scratch);
         }
@@ -902,12 +850,12 @@ pub extern "C" fn Bun__Telemetry__nativeAddLink(
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__nativeName(
     global: &JSGlobalObject,
-    handle: u64,
+    handle: NativeSpan,
 ) -> OwnedJsString {
     let Some(l) = local(global) else {
         return OwnedJsString::EMPTY;
     };
-    pool::with_ref(&l.pool, NativeSpan(handle), |s| {
+    pool::with_ref(&l.pool, handle, |s| {
         if s.name.is_empty() && s.http.active {
             // A request span's name is derived (method + route) rather than stored.
             let mut name = Vec::with_capacity(32);
@@ -924,7 +872,7 @@ pub extern "C" fn Bun__Telemetry__nativeName(
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__nativePropagation(
     global: &JSGlobalObject,
-    handle: u64,
+    handle: NativeSpan,
     trace_state: &mut OwnedJsString,
     baggage: &mut OwnedJsString,
 ) -> bool {
@@ -933,7 +881,7 @@ pub extern "C" fn Bun__Telemetry__nativePropagation(
     let Some(l) = local(global) else {
         return false;
     };
-    pool::with_ref(&l.pool, NativeSpan(handle), |s| {
+    pool::with_ref(&l.pool, handle, |s| {
         if s.trace_state.is_empty() && s.baggage.is_empty() {
             return false;
         }

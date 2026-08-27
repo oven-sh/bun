@@ -12,11 +12,11 @@ using namespace JSC;
 // @getInternalField/@putInternalField ops with no native call
 // (src/js/builtins/TelemetrySpan.ts mirrors Field and State as const enums).
 //
-// Two flavours share the class:
-//  - JS-owned (tracer.startSpan): everything lives in the fields and is
-//    handed to Rust once, at end().
-//  - native-owned (Bun.serve request spans, node:http client, …): `m_native`
-//    is a bun_telemetry::pool handle; name/attributes/events live in that
+// Two flavours share the class (one named constructor each):
+//  - JS-owned (createOwned: tracer.startSpan, Bun.otel.span, context carriers):
+//    everything lives in the fields and is handed to Rust once, at end().
+//  - native-owned (createNative: Bun.serve request spans, …): `m_native` is a
+//    live bun_telemetry::pool handle; name/attributes/events live in that
 //    slot, JS mutators forward to it and the owning integration ends it.
 class JSTelemetrySpan final : public JSC::JSInternalFieldObjectImpl<11> {
 public:
@@ -50,7 +50,7 @@ public:
         // cached spanContext() object; empty until asked for
         Context = 10,
     };
-    static constexpr unsigned numberOfInternalFields = 11;
+    static_assert(static_cast<unsigned>(Field::Context) + 1 == numberOfInternalFields);
 
     enum State : int32_t {
         Recording = 1,
@@ -63,8 +63,10 @@ public:
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
 
-    // `kind` is the @opentelemetry/api SpanKind; `name` is a JSString or null (native-owned).
-    static JSTelemetrySpan* create(VM&, Zig::GlobalObject*, const TelemetrySpanStub&, uint16_t scope, uint8_t kind, JSValue name, uint64_t nativeHandle);
+    // `kind` is the @opentelemetry/api SpanKind. `name` is required (may be the empty string).
+    static JSTelemetrySpan* createOwned(VM&, Zig::GlobalObject*, const TelemetrySpanStub&, uint16_t scope, uint8_t kind, JSString* name);
+    // `handle` must be live (non-zero); Field::Name stays null (the slot has the name).
+    static JSTelemetrySpan* createNative(VM&, Zig::GlobalObject*, const TelemetrySpanStub&, uint16_t scope, uint8_t kind, TelemetryNativeHandle);
 
     WriteBarrier<Unknown>& field(Field f) { return internalField(static_cast<unsigned>(f)); }
     JSValue get(Field f) const { return internalField(static_cast<unsigned>(f)).get(); }
@@ -78,12 +80,12 @@ public:
     void setState(int32_t s) { field(Field::State).setWithoutWriteBarrier(jsNumber(s)); }
     bool isRecording() const { return state() & Recording; }
     bool ended() const { return state() & Ended; }
-    // This span as a parent: null for a pooled (request) span that has ended —
-    // its slot and ids may be reused at any moment.
-    const TelemetrySpanStub* parentStub() const { return m_native && ended() ? nullptr : &m_stub; }
+    // This span's own stub, for use as a parent: null for a pooled (request)
+    // span that has ended — its slot and ids may be reused at any moment.
+    const TelemetrySpanStub* stubAsParent() const { return m_native && ended() ? nullptr : &m_stub; }
 
     TelemetrySpanStub m_stub;
-    uint64_t m_native { 0 };
+    TelemetryNativeHandle m_native {};
     uint16_t m_scope { 0 };
     uint8_t m_kind { 0 };
 
@@ -92,7 +94,7 @@ private:
         : Base(vm, structure)
     {
     }
-    void finishCreation(VM&, const TelemetrySpanStub&, uint16_t scope, uint8_t kind, JSValue name, uint64_t nativeHandle);
+    void finishCreation(VM&, const TelemetrySpanStub&, uint16_t scope, uint8_t kind, JSString* nameOrNull, TelemetryNativeHandle);
 };
 
 inline JSTelemetrySpan* toTelemetrySpan(JSValue v)

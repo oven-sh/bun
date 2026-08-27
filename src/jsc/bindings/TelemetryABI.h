@@ -6,6 +6,7 @@
 #include "headers-handwritten.h"
 #include <cstddef>
 #include <cstring>
+#include <type_traits>
 
 namespace JSC {
 class JSGlobalObject;
@@ -68,6 +69,17 @@ enum class TelemetryBaggageOverride : uint8_t {
     Masked = 1, // the Context deleted/emptied its Baggage: send none
     Header = 2, // the Context carries Baggage: *outHeader holds its W3C header (+1 ref)
 };
+
+// A bun_telemetry::pool::NativeSpan (Rust: #[repr(transparent)] struct NativeSpan(u64)):
+// slot index + generation of a native-owned span; all-zero = none. A POD of one
+// uint64_t (no constructors, no default member initializer) so it crosses the C
+// ABI by value exactly like a uint64_t on every target, MSVC included.
+struct TelemetryNativeHandle {
+    uint64_t bits;
+    explicit operator bool() const { return bits != 0; }
+    friend bool operator==(TelemetryNativeHandle a, TelemetryNativeHandle b) { return a.bits == b.bits; }
+};
+static_assert(sizeof(TelemetryNativeHandle) == 8 && std::is_trivially_copyable_v<TelemetryNativeHandle> && std::is_standard_layout_v<TelemetryNativeHandle> && std::is_trivially_default_constructible_v<TelemetryNativeHandle>);
 
 enum class TelemetryAttrKind : uint8_t {
     String = 0,
@@ -185,6 +197,17 @@ static_assert(offsetof(TelemetryEndDesc, status) == 151);
 // smaller) are applied in Rust.
 static constexpr unsigned kTelemetryMaxGather = 4096;
 
+namespace detail {
+extern "C" {
+extern uint32_t Bun__Telemetry__enabled;
+}
+}
+
+// bun_telemetry::ENABLED is a Rust AtomicU32 written from any thread: read it only through these.
+ALWAYS_INLINE uint32_t telemetryEnabledMask() { return __atomic_load_n(&detail::Bun__Telemetry__enabled, __ATOMIC_RELAXED); }
+// For the Uint32Array view node:http polls (jsTelemetryEnabledMask); never dereference directly.
+ALWAYS_INLINE const uint32_t* telemetryEnabledMaskAddress() { return &detail::Bun__Telemetry__enabled; }
+
 } // namespace Bun
 
 // ─── implemented in src/runtime/telemetry/span.rs ───
@@ -192,8 +215,6 @@ static constexpr unsigned kTelemetryMaxGather = 4096;
 extern "C" {
 // bun_telemetry::Instrument::Sqlite.bit()
 extern const uint32_t Bun__Telemetry__SQLITE_MASK;
-// bun_telemetry::ENABLED (a Rust AtomicU32): read with __atomic_load_n(&Bun__Telemetry__enabled, __ATOMIC_RELAXED).
-extern uint32_t Bun__Telemetry__enabled;
 
 void Bun__Telemetry__stubStart(JSC::JSGlobalObject*, Bun::TelemetrySpanStub* out, const Bun::TelemetrySpanStub* parent, uint64_t startNs);
 // Non-recording carrier for hex ids: true when both parse; otherwise (false)
@@ -211,19 +232,24 @@ uint16_t Bun__Telemetry__userScope();
 Bun::TelemetryPropagators Bun__Telemetry__propagators();
 void Bun__Telemetry__encodeSpan(JSC::JSGlobalObject*, const Bun::TelemetryEndDesc*);
 
-// Native-owned (pooled) spans; `handle` is a bun_telemetry::pool::NativeSpan.
-bool Bun__Telemetry__nativeIsLive(JSC::JSGlobalObject*, uint64_t handle);
-bool Bun__Telemetry__nativeEnd(JSC::JSGlobalObject*, uint64_t handle, uint64_t endNs);
-bool Bun__Telemetry__nativeSetAttributes(JSC::JSGlobalObject*, uint64_t handle, const Bun::TelemetryAttrPool*);
-void Bun__Telemetry__nativeSetName(JSC::JSGlobalObject*, uint64_t handle, const BunString*);
-void Bun__Telemetry__nativeSetStatus(JSC::JSGlobalObject*, uint64_t handle, uint8_t code, const BunString* message);
-void Bun__Telemetry__nativeAddEvent(JSC::JSGlobalObject*, uint64_t handle, const Bun::TelemetryEventRef*, const Bun::TelemetryAttrPool*);
-void Bun__Telemetry__nativeAddLink(JSC::JSGlobalObject*, uint64_t handle, const Bun::TelemetryLinkRef*, const Bun::TelemetryAttrPool*);
+// Native-owned (pooled) spans.
+void Bun__Telemetry__nativeEnd(JSC::JSGlobalObject*, Bun::TelemetryNativeHandle, uint64_t endNs);
+// False when the span has ended (its slot released) or is not recording.
+bool Bun__Telemetry__nativeSetAttributes(JSC::JSGlobalObject*, Bun::TelemetryNativeHandle, const Bun::TelemetryAttrPool*);
+void Bun__Telemetry__nativeSetName(JSC::JSGlobalObject*, Bun::TelemetryNativeHandle, const BunString*);
+void Bun__Telemetry__nativeSetStatus(JSC::JSGlobalObject*, Bun::TelemetryNativeHandle, uint8_t code, const BunString* message);
+void Bun__Telemetry__nativeAddEvent(JSC::JSGlobalObject*, Bun::TelemetryNativeHandle, const Bun::TelemetryEventRef*, const Bun::TelemetryAttrPool*);
+void Bun__Telemetry__nativeAddLink(JSC::JSGlobalObject*, Bun::TelemetryNativeHandle, const Bun::TelemetryLinkRef*, const Bun::TelemetryAttrPool*);
 // Owned (+1) copies; empty when the slot is gone or the value is empty.
-BunString Bun__Telemetry__nativeName(JSC::JSGlobalObject*, uint64_t handle);
+BunString Bun__Telemetry__nativeName(JSC::JSGlobalObject*, Bun::TelemetryNativeHandle);
 // False (and both outputs Empty) when the span carries neither.
-bool Bun__Telemetry__nativePropagation(JSC::JSGlobalObject*, uint64_t handle, BunString* traceState, BunString* baggage);
+bool Bun__Telemetry__nativePropagation(JSC::JSGlobalObject*, Bun::TelemetryNativeHandle, BunString* traceState, BunString* baggage);
 // Identity of a live pooled span; false (and *out untouched) once it has ended.
-bool Bun__Telemetry__poolStub(JSC::JSGlobalObject*, uint64_t handle, Bun::TelemetrySpanStub* out);
-JSC::EncodedJSValue Bun__Telemetry__poolMaterialize(Zig::GlobalObject*, uint64_t handle);
+bool Bun__Telemetry__poolStub(JSC::JSGlobalObject*, Bun::TelemetryNativeHandle, Bun::TelemetrySpanStub* out);
+JSC::EncodedJSValue Bun__Telemetry__poolMaterialize(Zig::GlobalObject*, Bun::TelemetryNativeHandle);
+
+// ─── implemented in src/runtime/telemetry/sqlite.rs ───
+// A bun:sqlite query span; the none handle when not recording. `errcode == 0` ⇒ ok.
+Bun::TelemetryNativeHandle Bun__Telemetry__sqliteBegin(JSC::JSGlobalObject*, const char* file, size_t fileLen);
+void Bun__Telemetry__sqliteEnd(JSC::JSGlobalObject*, Bun::TelemetryNativeHandle, const char* sql, size_t sqlLen, int errcode, const char* codeName, const char* errmsg);
 }

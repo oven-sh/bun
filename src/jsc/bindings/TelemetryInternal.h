@@ -102,7 +102,7 @@ JSValue telemetryInternalFunction(Zig::GlobalObject*, const Identifier&);
 void telemetryEndSpan(Zig::GlobalObject*, JSTelemetrySpan*, uint64_t endNs);
 // One attribute onto a pooled span; false once the pooled span has ended or
 // when it is not recording.
-bool telemetryNativeSetAttribute(Zig::GlobalObject*, uint64_t handle, JSString* key, JSValue value);
+bool telemetryNativeSetAttribute(Zig::GlobalObject*, TelemetryNativeHandle, JSString* key, JSValue value);
 // Make `span` the active span of this async frame and arm Field::Restore
 // with the slot value it displaced (`extras`: see Bun__Telemetry__enterWithExtras).
 // No-op when this Span object is already entered.
@@ -117,7 +117,7 @@ struct TelemetryPropagation {
     JSString* baggage { nullptr };
 };
 TelemetryPropagation telemetryPropagationOf(Zig::GlobalObject*, const JSTelemetrySpan*);
-TelemetryPropagation telemetryPropagationOfPooled(Zig::GlobalObject*, uint64_t poolHandle);
+TelemetryPropagation telemetryPropagationOfPooled(Zig::GlobalObject*, TelemetryNativeHandle);
 // span.setAttribute(key, value) without calling into JS. Throws only on OOM.
 void telemetrySpanSetAttribute(Zig::GlobalObject*, JSTelemetrySpan*, JSString* key, JSValue value);
 // span.setAttributes(object); throws (exception left pending) only if a

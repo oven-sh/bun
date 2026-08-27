@@ -65,16 +65,16 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryActiveExtras, (JSGlobalObject * globalObject
     return Bun__Telemetry__activeExtras(defaultGlobalObject(globalObject));
 }
 
-bool TelemetryContextSlot::parentStub(JSGlobalObject* globalObject, TelemetrySpanStub* out) const
+bool TelemetryContextSlot::stubAsParent(JSGlobalObject* globalObject, TelemetrySpanStub* out) const
 {
     if (auto* span = cell()) {
-        if (const auto* stub = span->parentStub()) {
+        if (const auto* stub = span->stubAsParent()) {
             *out = *stub;
             return true;
         }
         return false;
     }
-    if (uint64_t handle = poolHandle())
+    if (auto handle = poolHandle())
         return Bun__Telemetry__poolStub(globalObject, handle, out);
     return false;
 }
@@ -150,7 +150,7 @@ extern "C" JSC::EncodedJSValue Bun__Telemetry__activeSpanCell(Zig::GlobalObject*
     return JSValue::encode(cell.isCell() ? cell : jsUndefined());
 }
 
-extern "C" uint64_t Bun__Telemetry__activeNativeHandle(Zig::GlobalObject* globalObject)
+extern "C" Bun::TelemetryNativeHandle Bun__Telemetry__activeNativeHandle(Zig::GlobalObject* globalObject)
 {
     auto slot = TelemetryContextSlot::current(globalObject);
     if (auto* span = Bun::toTelemetrySpan(slot.header))
@@ -160,7 +160,7 @@ extern "C" uint64_t Bun__Telemetry__activeNativeHandle(Zig::GlobalObject* global
 
 extern "C" bool Bun__Telemetry__activeSpanStub(Zig::GlobalObject* globalObject, Bun::TelemetrySpanStub* out)
 {
-    return TelemetryContextSlot::current(globalObject).parentStub(globalObject, out);
+    return TelemetryContextSlot::current(globalObject).stubAsParent(globalObject, out);
 }
 
 extern "C" JSC::EncodedJSValue Bun__Telemetry__activeExtras(Zig::GlobalObject* globalObject)

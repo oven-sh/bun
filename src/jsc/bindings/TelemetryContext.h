@@ -28,8 +28,8 @@ JSC::EncodedJSValue Bun__Telemetry__activeExtras(Zig::GlobalObject*);
 Bun::TelemetryBaggageOverride Bun__Telemetry__activeExtrasBaggage(Zig::GlobalObject*, BunString* outHeader);
 // The active span as a parent (fetch/sql/etc. call this); false when there is none.
 bool Bun__Telemetry__activeSpanStub(Zig::GlobalObject*, Bun::TelemetrySpanStub* out);
-// Pool handle of the active span if it is native-owned, else 0.
-uint64_t Bun__Telemetry__activeNativeHandle(Zig::GlobalObject*);
+// Pool handle of the active span if it is native-owned, else none (all-zero).
+Bun::TelemetryNativeHandle Bun__Telemetry__activeNativeHandle(Zig::GlobalObject*);
 }
 
 namespace Bun {
@@ -46,21 +46,21 @@ struct TelemetryContextSlot {
     static ALWAYS_INLINE TelemetryContextSlot current(Zig::GlobalObject* globalObject) { return read(globalObject->m_asyncContextData.get()->getInternalField(0)); }
 
     unsigned storeValueCount() const { return array ? array->length() - storesStart : 0; }
-    // The pool handle when `header` is a number, else 0.
-    uint64_t poolHandle() const
+    // The pool handle when `header` is a number, else none (all-zero).
+    TelemetryNativeHandle poolHandle() const
     {
         if (header.isInt32())
-            return static_cast<uint64_t>(header.asInt32());
+            return { static_cast<uint64_t>(header.asInt32()) };
         if (header.isDouble())
-            return static_cast<uint64_t>(header.asDouble());
-        return 0;
+            return { static_cast<uint64_t>(header.asDouble()) };
+        return {};
     }
     JSTelemetrySpan* cell() const { return toTelemetrySpan(header); }
     // Whether this slot's header denotes `span` (a pooled span may appear as
     // its bare handle or as its materialized cell).
     bool denotes(const JSTelemetrySpan* span) const { return header == JSC::JSValue(span) || (span->m_native && poolHandle() == span->m_native); }
-    // The active span as a parent (see JSTelemetrySpan::parentStub); false when there is none.
-    bool parentStub(JSC::JSGlobalObject*, TelemetrySpanStub* out) const;
+    // The active span's stub, for use as a parent (see JSTelemetrySpan::stubAsParent); false when there is none.
+    bool stubAsParent(JSC::JSGlobalObject*, TelemetrySpanStub* out) const;
 
     // A slot value carrying `header`/`extras` and the ALS pairs of `stores`.
     static JSC::JSValue build(JSC::JSGlobalObject*, JSC::JSValue header, JSC::JSValue extras, const TelemetryContextSlot& stores);

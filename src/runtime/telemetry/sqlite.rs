@@ -6,16 +6,16 @@ use bun_jsc::JSGlobalObject;
 use bun_telemetry::db::{self, ConnectionInfo, System};
 use bun_telemetry::{Instrument, NativeSpan};
 
-/// Start a SQLite query span. Returns a pool handle (to be passed to
-/// `Bun__Telemetry__sqliteEnd`) or 0 when not recording.
+/// Start a SQLite query span (to be passed to `Bun__Telemetry__sqliteEnd`);
+/// `NativeSpan::NONE` when not recording.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__sqliteBegin(
     global: &JSGlobalObject,
     file: *const c_char,
     file_len: usize,
-) -> u64 {
+) -> NativeSpan {
     if !bun_telemetry::enabled(Instrument::Sqlite) {
-        return 0;
+        return NativeSpan::NONE;
     }
     let file: &[u8] = if file.is_null() {
         b""
@@ -34,7 +34,6 @@ pub extern "C" fn Bun__Telemetry__sqliteBegin(
             namespace: name,
         },
     )
-    .0
 }
 
 /// Finish a span from `Bun__Telemetry__sqliteBegin`. `errcode == 0` ⇒ ok.
@@ -42,17 +41,16 @@ pub extern "C" fn Bun__Telemetry__sqliteBegin(
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn Bun__Telemetry__sqliteEnd(
     global: &JSGlobalObject,
-    span: u64,
+    span: NativeSpan,
     sql: *const c_char,
     sql_len: usize,
     errcode: i32,
     code_name: *const c_char,
     errmsg: *const c_char,
 ) {
-    if span == 0 {
+    if !span.is_some() {
         return;
     }
-    let span = NativeSpan(span);
     let sql: &[u8] = if sql.is_null() {
         b""
     } else {

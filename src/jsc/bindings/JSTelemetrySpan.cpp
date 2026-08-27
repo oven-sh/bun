@@ -5,6 +5,7 @@
 #include "TelemetryInternal.h"
 #include "BunClientData.h"
 #include "WebCoreJSBuiltins.h"
+#include "JSDOMException.h"
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/DOMJITSignature.h>
 #include <JavaScriptCore/FrameTracers.h>
@@ -34,25 +35,34 @@ Structure* JSTelemetrySpan::createStructure(VM& vm, JSGlobalObject* globalObject
     return Structure::create(vm, globalObject, createTelemetrySpanPrototype(vm, defaultGlobalObject(globalObject)), TypeInfo(Type, StructureFlags), info());
 }
 
-JSTelemetrySpan* JSTelemetrySpan::create(VM& vm, Zig::GlobalObject* globalObject, const TelemetrySpanStub& stub, uint16_t scope, uint8_t kind, JSValue name, uint64_t nativeHandle)
+JSTelemetrySpan* JSTelemetrySpan::createOwned(VM& vm, Zig::GlobalObject* globalObject, const TelemetrySpanStub& stub, uint16_t scope, uint8_t kind, JSString* name)
 {
     Structure* structure = globalObject->JSTelemetrySpanStructure();
     auto* cell = new (NotNull, allocateCell<JSTelemetrySpan>(vm)) JSTelemetrySpan(vm, structure);
-    cell->finishCreation(vm, stub, scope, kind, name, nativeHandle);
+    cell->finishCreation(vm, stub, scope, kind, name, TelemetryNativeHandle {});
     return cell;
 }
 
-void JSTelemetrySpan::finishCreation(VM& vm, const TelemetrySpanStub& stub, uint16_t scope, uint8_t kind, JSValue name, uint64_t nativeHandle)
+JSTelemetrySpan* JSTelemetrySpan::createNative(VM& vm, Zig::GlobalObject* globalObject, const TelemetrySpanStub& stub, uint16_t scope, uint8_t kind, TelemetryNativeHandle handle)
+{
+    ASSERT(handle);
+    Structure* structure = globalObject->JSTelemetrySpanStructure();
+    auto* cell = new (NotNull, allocateCell<JSTelemetrySpan>(vm)) JSTelemetrySpan(vm, structure);
+    cell->finishCreation(vm, stub, scope, kind, nullptr, handle);
+    return cell;
+}
+
+void JSTelemetrySpan::finishCreation(VM& vm, const TelemetrySpanStub& stub, uint16_t scope, uint8_t kind, JSString* nameOrNull, TelemetryNativeHandle handle)
 {
     Base::finishCreation(vm);
     m_stub = stub;
-    m_native = nativeHandle;
+    m_native = handle;
     m_scope = scope;
     m_kind = kind;
-    int32_t state = (stub.isRecording() ? Recording : 0) | (nativeHandle ? Native : 0);
+    int32_t state = (stub.isRecording() ? Recording : 0) | (handle ? Native : 0);
     field(Field::State).setWithoutWriteBarrier(jsNumber(state));
     field(Field::Attributes).setWithoutWriteBarrier(jsNull());
-    field(Field::Name).set(vm, this, name);
+    field(Field::Name).set(vm, this, nameOrNull ? JSValue(nameOrNull) : jsNull());
     field(Field::Events).setWithoutWriteBarrier(jsNull());
     field(Field::Links).setWithoutWriteBarrier(jsNull());
     field(Field::StatusCode).setWithoutWriteBarrier(jsNumber(0));
@@ -74,9 +84,9 @@ DEFINE_VISIT_CHILDREN(JSTelemetrySpan);
 
 // ─── entry points for src/runtime/telemetry/span.rs ───
 
-extern "C" JSC::EncodedJSValue Bun__TelemetrySpan__createNative(Zig::GlobalObject* globalObject, const TelemetrySpanStub* stub, uint16_t scope, uint8_t kind, uint64_t native)
+extern "C" JSC::EncodedJSValue Bun__TelemetrySpan__createNative(Zig::GlobalObject* globalObject, const TelemetrySpanStub* stub, uint16_t scope, uint8_t kind, TelemetryNativeHandle native)
 {
-    return JSValue::encode(JSTelemetrySpan::create(globalObject->vm(), globalObject, *stub, scope, kind, jsNull(), native));
+    return JSValue::encode(JSTelemetrySpan::createNative(globalObject->vm(), globalObject, *stub, scope, kind, native));
 }
 
 static void markEnded(Zig::GlobalObject*, JSTelemetrySpan*);
@@ -91,9 +101,9 @@ extern "C" void Bun__TelemetrySpan__nativeEnded(JSC::EncodedJSValue v)
     }
 }
 
-extern "C" void* Bun__TelemetrySpan__fromJS(JSC::EncodedJSValue v)
+extern "C" bool Bun__TelemetrySpan__is(JSC::EncodedJSValue v)
 {
-    return toTelemetrySpan(JSValue::decode(v));
+    return !!toTelemetrySpan(JSValue::decode(v));
 }
 
 /// Borrowed W3C `tracestate` a JS-owned span inherited (Empty if none / not a span).
@@ -306,7 +316,7 @@ void telemetryEndSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, ui
             JSString* name = telemetryArrayString(list, i * 3);
             if (!name)
                 continue;
-            events.append({ telemetryBorrow(name), telemetryTimeInputToNs(list->tryGetIndexQuickly(i * 3 + 1)), gatherer.gather(list->tryGetIndexQuickly(i * 3 + 2)) });
+            events.append(TelemetryEventRef { .name = telemetryBorrow(name), .timeNs = telemetryTimeInputToNs(list->tryGetIndexQuickly(i * 3 + 1)), .attrs = gatherer.gather(list->tryGetIndexQuickly(i * 3 + 2)) });
         }
     }
 
@@ -319,27 +329,27 @@ void telemetryEndSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, ui
             JSValue flags = list->tryGetIndexQuickly(i * 5 + 2);
             if (!traceId || !spanId)
                 continue;
-            links.append({ telemetryBorrow(traceId), telemetryBorrow(spanId), telemetryBorrow(telemetryArrayString(list, i * 5 + 4)), gatherer.gather(list->tryGetIndexQuickly(i * 5 + 3)), static_cast<uint8_t>(flags.isInt32() ? flags.asInt32() : 0) });
+            links.append(TelemetryLinkRef { .traceId = telemetryBorrow(traceId), .spanId = telemetryBorrow(spanId), .traceState = telemetryBorrow(telemetryArrayString(list, i * 5 + 4)), .attrs = gatherer.gather(list->tryGetIndexQuickly(i * 5 + 3)), .traceFlags = static_cast<uint8_t>(flags.isInt32() ? flags.asInt32() : 0) });
         }
     }
 
     JSValue status = span->get(Field::StatusCode);
     TelemetryEndDesc desc {
-        &span->m_stub,
-        endNs,
-        telemetryBorrow(span->string(Field::Name)),
-        telemetryBorrow(span->string(Field::StatusMessage)),
-        telemetryBorrow(span->string(Field::TraceState)),
-        gatherer.pool(),
-        attrs,
-        events.begin(),
-        links.begin(),
-        static_cast<uint32_t>(events.size()),
-        static_cast<uint32_t>(links.size()),
-        gatherer.dropped(),
-        span->m_scope,
-        span->m_kind,
-        static_cast<uint8_t>(status.isInt32() ? status.asInt32() : 0),
+        .stub = &span->m_stub,
+        .endNs = endNs,
+        .name = telemetryBorrow(span->string(Field::Name)),
+        .statusMessage = telemetryBorrow(span->string(Field::StatusMessage)),
+        .traceState = telemetryBorrow(span->string(Field::TraceState)),
+        .pool = gatherer.pool(),
+        .attrs = attrs,
+        .events = events.begin(),
+        .links = links.begin(),
+        .nEvents = static_cast<uint32_t>(events.size()),
+        .nLinks = static_cast<uint32_t>(links.size()),
+        .droppedAttrs = gatherer.dropped(),
+        .scope = span->m_scope,
+        .kind = span->m_kind,
+        .status = static_cast<uint8_t>(status.isInt32() ? status.asInt32() : 0),
     };
     Bun__Telemetry__encodeSpan(globalObject, &desc);
 
@@ -350,7 +360,7 @@ void telemetryEndSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, ui
 
 // ─── native-owned span mutators (private globals used by TelemetrySpan.ts) ───
 
-bool telemetryNativeSetAttribute(Zig::GlobalObject* globalObject, uint64_t handle, JSString* key, JSValue value)
+bool telemetryNativeSetAttribute(Zig::GlobalObject* globalObject, TelemetryNativeHandle handle, JSString* key, JSValue value)
 {
     TelemetryAttrGatherer gatherer;
     gatherer.gatherOne(key, value);
@@ -451,7 +461,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryAddEvent, (JSGlobalObject * lexicalGlobalObj
         return JSValue::encode(jsUndefined());
     }
     TelemetryAttrGatherer gatherer;
-    TelemetryEventRef event { telemetryBorrow(asString(name)), telemetryTimeInputToNs(time), gatherer.gather(flat) };
+    TelemetryEventRef event { .name = telemetryBorrow(asString(name)), .timeNs = telemetryTimeInputToNs(time), .attrs = gatherer.gather(flat) };
     TelemetryAttrPool pool = gatherer.pool();
     Bun__Telemetry__nativeAddEvent(globalObject, span->m_native, &event, &pool);
     return JSValue::encode(jsUndefined());
@@ -466,7 +476,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryAddLink, (JSGlobalObject * lexicalGlobalObje
     if (!span || !span->m_native || !traceId.isString() || !spanId.isString())
         return JSValue::encode(jsUndefined());
     TelemetryAttrGatherer gatherer;
-    TelemetryLinkRef link { telemetryBorrow(asString(traceId)), telemetryBorrow(asString(spanId)), telemetryBorrow(traceState.isString() ? asString(traceState) : nullptr), gatherer.gather(callFrame->argument(4)), static_cast<uint8_t>(flags.isInt32() ? flags.asInt32() : 0) };
+    TelemetryLinkRef link { .traceId = telemetryBorrow(asString(traceId)), .spanId = telemetryBorrow(asString(spanId)), .traceState = telemetryBorrow(traceState.isString() ? asString(traceState) : nullptr), .attrs = gatherer.gather(callFrame->argument(4)), .traceFlags = static_cast<uint8_t>(flags.isInt32() ? flags.asInt32() : 0) };
     TelemetryAttrPool pool = gatherer.pool();
     Bun__Telemetry__nativeAddLink(globalObject, span->m_native, &link, &pool);
     return JSValue::encode(jsUndefined());
@@ -623,8 +633,10 @@ void telemetryEnterSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, 
 }
 
 // span.fail(error) without running JS (getters, toString): for exceptions seen
-// while unwinding. ErrorInstance name/message/code are read directly; other
-// values contribute only a generic type.
+// while unwinding. The same rule as TelemetrySpan.ts telemetryErrorType / fail:
+// ErrorInstance code/name/message and DOMException name/message are read
+// directly, a primitive is the message, any other object contributes only the
+// generic type "Error".
 void telemetryFailSpanNoJS(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, JSValue error)
 {
     auto& vm = globalObject->vm();
@@ -634,7 +646,7 @@ void telemetryFailSpanNoJS(Zig::GlobalObject* globalObject, JSTelemetrySpan* spa
     // May run while `error` is still the pending exception (unwinding).
     SuspendExceptionScope suspendException(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    WTF::String type, message;
+    WTF::String type, message; // type: null = the value is a primitive (no exception.type)
     if (auto* instance = error.isCell() ? dynamicDowncast<ErrorInstance>(error.asCell()) : nullptr) {
         JSValue code = instance->getDirect(vm, WebCore::builtinNames(vm).codePublicName());
         if (code && code.isString())
@@ -643,54 +655,89 @@ void telemetryFailSpanNoJS(Zig::GlobalObject* globalObject, JSTelemetrySpan* spa
             type = instance->sanitizedNameString(globalObject);
             scope.clearException();
         }
+        if (type.isEmpty())
+            type = "Error"_s;
         message = instance->sanitizedMessageString(globalObject);
         scope.clearException();
-    } else if (error.isString())
+    } else if (auto* dom = error.isCell() ? dynamicDowncast<WebCore::JSDOMException>(error.asCell()) : nullptr) {
+        // (its numeric legacy `code` is not a type)
+        type = dom->wrapped().name();
+        if (type.isEmpty())
+            type = "Error"_s;
+        message = dom->wrapped().message();
+    } else if (error.isString()) {
         message = asString(error)->tryGetValue();
-    if (type.isEmpty())
-        type = "Error"_s;
+    } else if (error.isNumber()) {
+        message = WTF::String::number(error.asNumber());
+    } else if (error.isBoolean()) {
+        message = error.isTrue() ? "true"_s : "false"_s;
+    } else if (error.isHeapBigInt()) {
+        message = JSBigInt::tryGetString(vm, error.asHeapBigInt(), 10);
+#if USE(BIGINT32)
+    } else if (error.isBigInt32()) {
+        message = WTF::String::number(error.bigInt32AsInt32());
+#endif
+    } else if (error.isObject()) {
+        type = "Error"_s; // an object we cannot read without JS
+    }
+    // undefined / null / Symbol: nothing to describe.
 
     MarkedArgumentBuffer flat;
-    flat.append(jsNontrivialString(vm, "exception.type"_s));
-    flat.append(jsString(vm, type));
+    if (!type.isNull()) {
+        flat.append(jsNontrivialString(vm, "exception.type"_s));
+        flat.append(jsString(vm, type));
+    }
     if (!message.isEmpty()) {
         flat.append(jsNontrivialString(vm, "exception.message"_s));
         flat.append(jsString(vm, message));
     }
-    JSArray* flatArray = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), flat);
-    if (scope.exception()) [[unlikely]] {
-        scope.clearException(); // (an OOM while recording is dropped)
-        return;
+    JSArray* flatArray = nullptr; // null = no exception event (OTel requires type or message on it)
+    if (flat.size()) {
+        flatArray = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), flat);
+        if (scope.exception()) [[unlikely]] {
+            scope.clearException(); // (an OOM while recording is dropped)
+            return;
+        }
     }
+    // `error.type` attribute: none for a nullish error, like span.fail(undefined).
+    JSString* errorType = error.isUndefinedOrNull() ? nullptr : jsString(vm, type.isNull() ? "Error"_s : type);
     BunString messageStr = Bun::toString(message);
     if (span->m_native) {
-        TelemetryAttrGatherer gatherer;
-        TelemetryEventRef event { telemetryBorrow(jsNontrivialString(vm, "exception"_s)), 0, gatherer.gather(flatArray) };
-        TelemetryAttrPool pool = gatherer.pool();
-        Bun__Telemetry__nativeAddEvent(globalObject, span->m_native, &event, &pool);
-        TelemetryAttrGatherer attr;
-        attr.gatherOne(jsNontrivialString(vm, "error.type"_s), jsString(vm, type));
-        TelemetryAttrPool attrPool = attr.pool();
-        Bun__Telemetry__nativeSetAttributes(globalObject, span->m_native, &attrPool);
+        if (flatArray) {
+            TelemetryAttrGatherer gatherer;
+            TelemetryEventRef event { .name = telemetryBorrow(jsNontrivialString(vm, "exception"_s)), .timeNs = 0, .attrs = gatherer.gather(flatArray) };
+            TelemetryAttrPool pool = gatherer.pool();
+            Bun__Telemetry__nativeAddEvent(globalObject, span->m_native, &event, &pool);
+        }
+        if (errorType) {
+            TelemetryAttrGatherer attr;
+            attr.gatherOne(jsNontrivialString(vm, "error.type"_s), errorType);
+            TelemetryAttrPool attrPool = attr.pool();
+            Bun__Telemetry__nativeSetAttributes(globalObject, span->m_native, &attrPool);
+        }
         Bun__Telemetry__nativeSetStatus(globalObject, span->m_native, 2, &messageStr);
         return;
     }
     using Field = JSTelemetrySpan::Field;
     auto record = [&] {
-        JSArray* events = telemetryArray(span->get(Field::Events));
-        if (!events) {
-            events = constructEmptyArray(globalObject, nullptr, 0);
+        if (flatArray) {
+            JSArray* events = telemetryArray(span->get(Field::Events));
+            if (!events) {
+                events = constructEmptyArray(globalObject, nullptr, 0);
+                RETURN_IF_EXCEPTION(scope, );
+                span->field(Field::Events).set(vm, span, events);
+            }
+            events->push(globalObject, jsNontrivialString(vm, "exception"_s));
             RETURN_IF_EXCEPTION(scope, );
-            span->field(Field::Events).set(vm, span, events);
+            events->push(globalObject, jsNumber(static_cast<double>(Bun__Telemetry__nowNs()) / 1e6));
+            RETURN_IF_EXCEPTION(scope, );
+            events->push(globalObject, flatArray);
+            RETURN_IF_EXCEPTION(scope, );
         }
-        events->push(globalObject, jsNontrivialString(vm, "exception"_s));
-        RETURN_IF_EXCEPTION(scope, );
-        events->push(globalObject, jsNumber(static_cast<double>(Bun__Telemetry__nowNs()) / 1e6));
-        RETURN_IF_EXCEPTION(scope, );
-        events->push(globalObject, flatArray);
-        RETURN_IF_EXCEPTION(scope, );
-        telemetrySpanSetAttribute(globalObject, span, jsNontrivialString(vm, "error.type"_s), jsString(vm, type));
-        RETURN_IF_EXCEPTION(scope, );
+        if (errorType) {
+            telemetrySpanSetAttribute(globalObject, span, jsNontrivialString(vm, "error.type"_s), errorType);
+            RETURN_IF_EXCEPTION(scope, );
+        }
         if (span->get(Field::StatusCode).asInt32() != 1) {
             span->field(Field::StatusCode).set(vm, span, jsNumber(2));
             span->field(Field::StatusMessage).set(vm, span, message.isEmpty() ? jsEmptyString(vm) : jsString(vm, message));
@@ -744,7 +791,7 @@ static JSString* hexId(VM& vm, std::span<const uint8_t> bytes)
     return jsString(vm, WTF::move(s));
 }
 
-TelemetryPropagation telemetryPropagationOfPooled(Zig::GlobalObject* globalObject, uint64_t handle)
+TelemetryPropagation telemetryPropagationOfPooled(Zig::GlobalObject* globalObject, TelemetryNativeHandle handle)
 {
     TelemetryPropagation out;
     if (!handle)
@@ -865,16 +912,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsTelemetrySpanGetter_kind, (JSGlobalObject*, JSC::Enco
     return JSValue::encode(jsNumber(span->m_kind));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsTelemetrySpanGetter_ended, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsTelemetrySpanGetter_ended, (JSGlobalObject*, JSC::EncodedJSValue thisValue, PropertyName))
 {
     auto* span = toTelemetrySpan(JSValue::decode(thisValue));
     if (!span)
         return JSValue::encode(jsUndefined());
-    if (span->ended())
-        return JSValue::encode(jsBoolean(true));
-    if (span->m_native)
-        return JSValue::encode(jsBoolean(!Bun__Telemetry__nativeIsLive(globalObject, span->m_native)));
-    return JSValue::encode(jsBoolean(false));
+    return JSValue::encode(jsBoolean(span->ended()));
 }
 
 class JSTelemetrySpanPrototype final : public JSNonFinalObject {

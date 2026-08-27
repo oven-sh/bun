@@ -602,8 +602,8 @@ registry=https://somehost.com/org1/npm/registry/
   });
 
   describe("credentials keyed to a bracketed IPv6 host", () => {
-    // Config keys are matched literally against the keys walked up from the registry
-    // URL, so the bracketed authority only has to survive the registry side's parse.
+    // Keys and registry URLs are both parsed as URLs and compared on host and path, so
+    // the bracketed authority has to survive both parses.
     test.each([
       ["loopback with a port", "http://[::1]:4873/", "//[::1]:4873/"],
       ["loopback without a port", "http://[::1]/", "//[::1]/"],
@@ -866,6 +866,124 @@ registry=https://:TOK@somehost.com/
 
   // `Scope::from_api` decodes `_auth` solely to derive the identity `bun pm whoami`
   // prints; the credential itself is always forwarded verbatim.
+  test("an env registry on the same host keeps the .npmrc username and _password", async () => {
+    const blob = Buffer.from("alice:hunter2").toString("base64");
+    const authorizations: (string | null)[] = [];
+    await using registry = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        authorizations.push(req.headers.get("authorization"));
+        return Response.json({
+          name: "pkg",
+          "dist-tags": { latest: "1.0.0" },
+          versions: { "1.0.0": { name: "pkg", version: "1.0.0" } },
+        });
+      },
+    });
+    const host = `127.0.0.1:${registry.port}`;
+    using dir = tempDir("npmrc-env-registry-auth", {
+      "home/.gitkeep": "",
+      "package.json": JSON.stringify({ name: "probe", version: "0.0.0" }),
+      ".npmrc": `registry=http://${host}/\n//${host}/:username=alice\n//${host}/:_password=${Buffer.from("hunter2").toString("base64")}\n`,
+    });
+    const homeDir = join(String(dir), "home");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "view", "pkg", "version"],
+      cwd: String(dir),
+      env: {
+        ...env,
+        HOME: homeDir,
+        USERPROFILE: homeDir,
+        XDG_CONFIG_HOME: homeDir,
+        npm_config_registry: `http://${host}/`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ authorizations, stdout }).toEqual({ authorizations: [`Basic ${blob}`], stdout: "1.0.0\n" });
+    expect(exitCode).toBe(0);
+  });
+  test("an env registry on the same host keeps the registry URL's userinfo", async () => {
+    const blob = Buffer.from("alice:hunter2").toString("base64");
+    const authorizations: (string | null)[] = [];
+    await using registry = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        authorizations.push(req.headers.get("authorization"));
+        return Response.json({
+          name: "pkg",
+          "dist-tags": { latest: "1.0.0" },
+          versions: { "1.0.0": { name: "pkg", version: "1.0.0" } },
+        });
+      },
+    });
+    const host = `127.0.0.1:${registry.port}`;
+    using dir = tempDir("npmrc-env-registry-auth", {
+      "home/.gitkeep": "",
+      "package.json": JSON.stringify({ name: "probe", version: "0.0.0" }),
+      ".npmrc": `registry=http://alice:hunter2@${host}/\n`,
+    });
+    const homeDir = join(String(dir), "home");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "view", "pkg", "version"],
+      cwd: String(dir),
+      env: {
+        ...env,
+        HOME: homeDir,
+        USERPROFILE: homeDir,
+        XDG_CONFIG_HOME: homeDir,
+        npm_config_registry: `http://${host}/`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ authorizations, stdout }).toEqual({ authorizations: [`Basic ${blob}`], stdout: "1.0.0\n" });
+    expect(exitCode).toBe(0);
+  });
+  test("an env registry that downgrades https to http drops the .npmrc _auth", async () => {
+    const blob = Buffer.from("alice:hunter2").toString("base64");
+    const authorizations: (string | null)[] = [];
+    await using registry = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        authorizations.push(req.headers.get("authorization"));
+        return Response.json({
+          name: "pkg",
+          "dist-tags": { latest: "1.0.0" },
+          versions: { "1.0.0": { name: "pkg", version: "1.0.0" } },
+        });
+      },
+    });
+    const host = `127.0.0.1:${registry.port}`;
+    using dir = tempDir("npmrc-env-registry-auth", {
+      "home/.gitkeep": "",
+      "package.json": JSON.stringify({ name: "probe", version: "0.0.0" }),
+      ".npmrc": `registry=https://${host}/\n//${host}/:_auth=${blob}\n`,
+    });
+    const homeDir = join(String(dir), "home");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "view", "pkg", "version"],
+      cwd: String(dir),
+      env: {
+        ...env,
+        HOME: homeDir,
+        USERPROFILE: homeDir,
+        XDG_CONFIG_HOME: homeDir,
+        npm_config_registry: `http://${host}/`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ authorizations, stdout }).toEqual({ authorizations: [null], stdout: "1.0.0\n" });
+    expect(exitCode).toBe(0);
+  });
+
   describe("bun pm whoami derives the username from _auth", () => {
     async function whoamiWith(files: Record<string, string>) {
       using dir = tempDir("npmrc-whoami-auth", {
@@ -887,37 +1005,42 @@ registry=https://:TOK@somehost.com/
       return { stdout, stderr, exitCode };
     }
 
-    function whoami(authValue: string) {
-      return whoamiWith({
-        ".npmrc": `registry=https://registry.invalid/\n//registry.invalid/:_auth=${authValue}\n`,
+    // Answers `/-/whoami` with a fixed name and records the Authorization header, so a
+    // request that goes out is visible even when Bun cannot derive a name locally.
+    async function whoamiAgainstRegistry(authLine: (host: string) => string, userinfo = "") {
+      const authorizations: (string | null)[] = [];
+      await using registry = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          authorizations.push(req.headers.get("authorization"));
+          return Response.json({ username: "from-registry" });
+        },
       });
+      const host = `127.0.0.1:${registry.port}`;
+      const result = await whoamiWith({
+        ".npmrc": `registry=http://${userinfo}${host}/\n${authLine(host)}\n`,
+      });
+      return { ...result, authorizations };
     }
 
-    test("a decodable _auth prints its username", async () => {
-      const { stdout, exitCode } = await whoami(Buffer.from("alice:s3cret").toString("base64"));
-      expect(stdout).toBe("alice\n");
+    test("a decodable _auth prints its username without a request", async () => {
+      const blob = Buffer.from("alice:s3cret").toString("base64");
+      const { stdout, exitCode, authorizations } = await whoamiAgainstRegistry(host => `//${host}/:_auth=${blob}`);
+      expect({ stdout, authorizations }).toEqual({ stdout: "alice\n", authorizations: [] });
       expect(exitCode).toBe(0);
     });
 
-    test("a non-decodable _auth carries no identity", async () => {
-      const { stdout, stderr, exitCode } = await whoami("!!not-base64!!");
-      expect(stdout).toBe("");
-      expect(stderr).toContain("missing authentication");
-      expect(exitCode).toBe(1);
-    });
-
-    test("an _auth with a blank username carries no identity", async () => {
-      const { stdout, stderr, exitCode } = await whoami(Buffer.from(":s3cret").toString("base64"));
-      expect(stdout).toBe("");
-      expect(stderr).toContain("missing authentication");
-      expect(exitCode).toBe(1);
-    });
-
-    test("an _auth with a blank password carries no identity", async () => {
-      const { stdout, stderr, exitCode } = await whoami(Buffer.from("tok:").toString("base64"));
-      expect(stdout).toBe("");
-      expect(stderr).toContain("missing authentication");
-      expect(exitCode).toBe(1);
+    // No local identity in these values, so the credential goes to the registry as
+    // written and the registry answers; main gave up with "missing authentication".
+    test.each([
+      ["opaque", "!!not-base64!!"],
+      ["blank username", Buffer.from(":s3cret").toString("base64")],
+      ["blank password", Buffer.from("tok:").toString("base64")],
+    ])("an _auth without a local identity asks the registry (%s)", async (_name, authValue) => {
+      const { stdout, exitCode, authorizations } = await whoamiAgainstRegistry(host => `//${host}/:_auth=${authValue}`);
+      expect({ stdout, authorizations }).toEqual({ stdout: "from-registry\n", authorizations: [`Basic ${authValue}`] });
+      expect(exitCode).toBe(0);
     });
 
     // The wire sends `Basic <_auth>` here (auth beats the username + password the
@@ -927,12 +1050,12 @@ registry=https://:TOK@somehost.com/
       ["opaque", "!!not-base64!!"],
       ["blank-password", Buffer.from("tok:").toString("base64")],
     ])("the registry URL's username/password do not leak an identity past _auth (%s)", async (_name, authValue) => {
-      const { stdout, stderr, exitCode } = await whoamiWith({
-        ".npmrc": `registry=https://url-user:url-pass@registry.invalid/\n//registry.invalid/:_auth=${authValue}\n`,
-      });
-      expect(stdout).toBe("");
-      expect(stderr).toContain("missing authentication");
-      expect(exitCode).toBe(1);
+      const { stdout, exitCode, authorizations } = await whoamiAgainstRegistry(
+        host => `//${host}/:_auth=${authValue}`,
+        "url-user:url-pass@",
+      );
+      expect({ stdout, authorizations }).toEqual({ stdout: "from-registry\n", authorizations: [`Basic ${authValue}`] });
+      expect(exitCode).toBe(0);
     });
 
     // Credentials declared in bunfig.toml beat every .npmrc line for that registry,

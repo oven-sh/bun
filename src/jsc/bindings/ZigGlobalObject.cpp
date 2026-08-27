@@ -3844,6 +3844,10 @@ static void collectStandaloneClosure(Zig::GlobalObject* globalObject, JSModuleLo
                 continue;
             }
             keepAlive.append(record);
+            if (keepAlive.hasOverflowed()) [[unlikely]] {
+                closure.complete = false;
+                return;
+            }
             closure.records.add(key.impl(), record);
             closure.modules.append({ key, source, record, {} });
         }

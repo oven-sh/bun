@@ -1,7 +1,7 @@
 import { internalModuleBytecode } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import vm from "node:vm";
 import { basename, join } from "path";
 import { gzipSync } from "zlib";
@@ -188,6 +188,8 @@ function sourceFormsSource() {
   return lines.join("\r\n") + "\r\n";
 }
 const sourceFormsOutput = `[true,2,true,"ABC",2,3,3,3,42,65,3,14,-1,8,"after html comment",2,8,8,2,7,true,"block","undefined","orig","changed","undefined","undefined","changed","object","number"]`;
+
+const esmOutput = `["main",3,1,"worker:2:2",true,"string"]`;
 
 const corpusBuilds = [
   { name: "bun build --bytecode features.js", entry: "./features.js", args: [] as string[], output: featuresOutput },
@@ -566,6 +568,41 @@ describe("bytecode cache portability", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toStartWith("[Disk Cache] Cache hit for sourceCode");
+      expect(stdout).toBe(output + "\n");
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  // The shipping path: the corpus inside `bun build --compile --bytecode` executables, CJS and ESM, every module loaded
+  // from the embedded bytecode (one "Cache hit" per module; the trailing miss is the runtime's own eval).
+  for (const { name, entries, args, output, modules } of [
+    { name: "features.js", entries: ["./features.js"], args: [], output: featuresOutput, modules: 1 },
+    { name: "--minify records.js", entries: ["./records.js"], args: ["--minify"], output: recordsOutput, modules: 1 },
+    { name: "--format=esm big.js", entries: ["./big.js"], args: ["--format=esm"], output: bigOutput, modules: 1 },
+    { name: "--format=esm esm/main.js + worker", entries: ["./esm/main.js", "./esm/worker.js"], args: ["--format=esm"], output: esmOutput, modules: 2 },
+    { name: "--format=esm --minify esm/main.js + worker", entries: ["./esm/main.js", "./esm/worker.js"], args: ["--format=esm", "--minify"], output: esmOutput, modules: 2 },
+  ]) {
+    test.concurrent(`\`bun build --compile --bytecode ${name}\` runs from the embedded bytecode`, async () => {
+      using dir = tempDir("bytecode-portable-compile", {});
+      const exe = join(String(dir), isWindows ? "app.exe" : "app");
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "--bytecode", ...args, "--outfile", exe, ...entries],
+        cwd: corpusDir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect(buildStderr).not.toContain("error");
+      expect(buildExit).toBe(0);
+      await using proc = Bun.spawn({
+        cmd: [exe],
+        env: { ...bunEnv, BUN_JSC_verboseDiskCache: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr.match(/\[Disk Cache\] Cache hit for sourceCode/g)?.length).toBe(modules);
       expect(stdout).toBe(output + "\n");
       expect(exitCode).toBe(0);
     });

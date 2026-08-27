@@ -1478,11 +1478,10 @@ impl RewriterPipe {
 
         if self.js_pump_reaction_pending.get() {
             // The pump-promise `.then()` reaction is the single terminal
-            // authority on the JS-pump path: `rsisAbrupt` calls
-            // `controller.close(error)` synchronously (the generated `__close`
-            // drops the argument) before rejecting the pump promise, so running
-            // `end_rewrite` here would resolve the body with truncated output
-            // and pre-empt the reject reaction.
+            // authority on the JS-pump path: the pump calls
+            // `controller.close(...)` synchronously before the promise settles,
+            // so running `end_rewrite` here would resolve the body before the
+            // reaction has had its say.
             return;
         }
 
@@ -1888,6 +1887,17 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
     }
     fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
         self.end_from_stream(err.map(StreamError::Error));
+        bun_sys::Result::Ok(())
+    }
+    unsafe fn close_with_error(
+        this: *mut Self,
+        global: &JSGlobalObject,
+        reason: JSValue,
+    ) -> bun_sys::Result<()> {
+        // SAFETY: caller contract; `end_from_stream` pins the pipe itself.
+        unsafe { &*this }.end_from_stream(Some(StreamError::JSValue(
+            jsc::strong::Optional::create(reason, global),
+        )));
         bun_sys::Result::Ok(())
     }
     fn end_from_js(&mut self, _global: &JSGlobalObject) -> bun_sys::Result<JSValue> {

@@ -42,6 +42,9 @@ const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeTrim = String.prototype.trim;
 const ArrayPrototypeJoin = Array.prototype.join;
 const SafeMap = Map;
+const SafeWeakMap = WeakMap;
+const WeakMapPrototypeGet = WeakMap.prototype.get;
+const WeakMapPrototypeSet = WeakMap.prototype.set;
 const JSONParse = JSON.parse;
 
 // @opentelemetry/api well-known keys (createContextKey === Symbol.for).
@@ -336,11 +339,22 @@ function parseBaggage(header: string): Baggage | undefined {
 function baggageHeaderFromExtras(extras: unknown): string | null {
   if (!$isMap(extras) || !(extras as Map<symbol, unknown>).$has(BAGGAGE_KEY)) return "";
   const bag = (extras as Map<symbol, unknown>).$get(BAGGAGE_KEY);
-  if (bag == null || typeof (bag as any).getAllEntries !== "function") return null;
+  if (!$isObject(bag) || typeof (bag as any).getAllEntries !== "function") return null;
   return serializeBaggage(bag) || null;
 }
 
+// An api Baggage (ours or @opentelemetry/api's) is immutable, so its header is computed once.
+const baggageHeaders = new SafeWeakMap<object, string>();
 function serializeBaggage(bag: any): string {
+  let header = WeakMapPrototypeGet.$call(baggageHeaders, bag);
+  if (header === undefined) {
+    header = serializeBaggageEntries(bag);
+    WeakMapPrototypeSet.$call(baggageHeaders, bag, header);
+  }
+  return header;
+}
+
+function serializeBaggageEntries(bag: any): string {
   const parts: string[] = [];
   for (const [k, e] of bag.getAllEntries()) {
     let s = encodeURIComponent_(k) + "=" + encodeURIComponent_(e.value);

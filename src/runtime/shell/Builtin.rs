@@ -694,32 +694,27 @@ impl Builtin {
                 let jsval = interp.jsobjs[idx];
 
                 if jsval.js_type().is_array_buffer_like() {
-                    // Each slot gets its own pin + GC root.
-                    let root = || match PinnedArrayBuffer::root(global, jsval) {
-                        Some(buf) => Ok(buf),
-                        None => {
+                    // Each slot gets its own pin + GC root; `None` has thrown OOM.
+                    let root = || {
+                        let buf = PinnedArrayBuffer::root(global, jsval);
+                        if buf.is_none() {
                             let _ = global.throw_out_of_memory();
-                            Err(Yield::failed())
                         }
+                        buf
                     };
                     let me = Self::of_mut(interp, cmd);
                     if redirect.stdin() {
-                        match root() {
-                            Ok(buf) => me.stdin = BuiltinInput::ArrayBuf { buf, i: 0 },
-                            Err(y) => return Some(y),
-                        }
+                        let Some(buf) = root() else { return Some(Yield::failed()) };
+                        me.stdin = BuiltinInput::ArrayBuf { buf, i: 0 };
                     }
                     if redirect.stdout() {
-                        match root() {
-                            Ok(buf) => me.stdout = BuiltinIO::ArrayBuf { buf, i: 0 },
-                            Err(y) => return Some(y),
-                        }
+                        let Some(buf) = root() else { return Some(Yield::failed()) };
+                        me.stdout = BuiltinIO::ArrayBuf { buf, i: 0 };
                     }
                     if redirect.stderr() {
-                        match root() {
-                            Ok(buf) => me.stderr = BuiltinIO::ArrayBuf { buf, i: 0 },
-                            Err(y) => return Some(y),
-                        }
+                        let Some(buf) = root() else { return Some(Yield::failed()) };
+                        me.stderr = BuiltinIO::ArrayBuf { buf, i: 0 };
+                    }
                     }
                 } else if let Some(body) =
                     crate::webcore::body::Value::from_request_or_response(jsval)

@@ -241,7 +241,7 @@ pub fn end(global: *mut c_void, span: NativeSpan, statement: &[u8], error: Optio
                 }
             });
         }
-        pool::end(local, span, 0, |w| {
+        pool::end(local, span, 0, &mut |w| {
             if let Some(o) = op {
                 w.attr("db.operation.name", o);
             }

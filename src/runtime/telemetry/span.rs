@@ -237,32 +237,14 @@ pub fn end_native(
     end_ns: u64,
     mut extra: impl FnMut(&mut SpanWriter<'_>),
 ) {
-    end_native_with(
-        global,
-        span,
-        end_ns,
-        &mut |_: &mut pool::Slot| {},
-        &mut extra,
-    )
-}
-
-/// [`end_native`] with a closure that updates the slot first (one pool borrow).
-#[inline]
-pub fn end_native_with(
-    global: &JSGlobalObject,
-    span: NativeSpan,
-    end_ns: u64,
-    prep: &mut dyn FnMut(&mut pool::Slot),
-    extra: &mut dyn FnMut(&mut SpanWriter<'_>),
-) {
     let Some(mut l) = local(global) else { return };
-    let ended = pool::end_with(&mut l, span, end_ns, prep, extra);
+    let ended = pool::end(&mut l, span, end_ns, &mut extra);
     drop(l);
     finish_ended(global, ended);
 }
 
 #[inline]
-fn finish_ended(global: &JSGlobalObject, ended: Option<pool::Ended>) {
+pub(super) fn finish_ended(global: &JSGlobalObject, ended: Option<pool::Ended>) {
     if let Some(e) = ended {
         release_cell(e.js_cell);
         if e.recorded {
@@ -824,7 +806,7 @@ pub extern "C" fn Bun__Telemetry__nativeEnd(
     let Some(mut l) = local(global) else {
         return false;
     };
-    let ended = pool::end(&mut l, NativeSpan(handle), end_ns, |_| {});
+    let ended = pool::end(&mut l, NativeSpan(handle), end_ns, &mut |_| {});
     drop(l);
     let live = ended.is_some();
     finish_ended(global, ended);

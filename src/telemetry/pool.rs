@@ -400,22 +400,11 @@ pub struct Ended {
 /// End the span: encode it into the VM's batch (if recording) and release
 /// the slot. `extra` adds integration attributes at end time. Returns `None`
 /// if the handle was stale.
+#[inline(never)]
 pub fn end(
     l: &mut Local,
     handle: NativeSpan,
     end_ns: u64,
-    mut extra: impl FnMut(&mut SpanWriter<'_>),
-) -> Option<Ended> {
-    end_with(l, handle, end_ns, &mut |_: &mut Slot| {}, &mut extra)
-}
-
-/// [`end`] plus a closure that runs on the slot right before it is written.
-#[inline(never)]
-pub fn end_with(
-    l: &mut Local,
-    handle: NativeSpan,
-    end_ns: u64,
-    prep: &mut dyn FnMut(&mut Slot),
     extra: &mut dyn FnMut(&mut SpanWriter<'_>),
 ) -> Option<Ended> {
     let end_ns = clock::or_now(end_ns);
@@ -426,7 +415,6 @@ pub fn end_with(
         ..
     } = l;
     let slot = pool.live_slot(handle)?;
-    prep(slot);
     let mut full = false;
     let js_cell = slot.js_cell;
     let recording = slot.is_recording();

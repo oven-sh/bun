@@ -189,19 +189,17 @@ pub fn end_with(
     aborted: bool,
     handler_error: bool,
 ) {
-    super::end_native_with(
-        global,
-        span,
-        0,
-        &mut |s: &mut pool::Slot| {
-            s.http.status = status;
-            if aborted {
-                s.http.flags |= R::FLAG_ABORTED;
-            }
-            if handler_error {
-                s.http.flags |= R::FLAG_HANDLER_ERROR;
-            }
-        },
-        &mut |_: &mut bun_telemetry::SpanWriter<'_>| {},
-    );
+    let Some(mut l) = local(global) else { return };
+    pool::with(&mut l.pool, span, |s| {
+        s.http.status = status;
+        if aborted {
+            s.http.flags |= R::FLAG_ABORTED;
+        }
+        if handler_error {
+            s.http.flags |= R::FLAG_HANDLER_ERROR;
+        }
+    });
+    let ended = pool::end(&mut l, span, 0, &mut |_| {});
+    drop(l);
+    super::span::finish_ended(global, ended);
 }

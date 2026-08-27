@@ -44,6 +44,8 @@ Attribute names follow the stable OpenTelemetry [HTTP](https://opentelemetry.io/
 | `spawn <cmd>`                |                     | `process.executable.name`, `process.args_count`, `process.pid`, `process.exit.code`                                                                                                                                                                                                                                                         |
 | `dns.lookup`                 |                     | `dns.question.name`                                                                                                                                                                                                                                                                                                                         |
 
+A server span is named `GET /route` when the request matched a `routes` pattern; a router that runs inside `fetch` (or a node:http handler) can name it by setting `http.route` itself (`Bun.otel.set("http.route", "/users/:id")` or `span.setAttribute`). Any of the attributes above that you set on the span replaces the value Bun would have derived.
+
 Failures set the span status to `ERROR` with the error message, `error.type` (the error's `code`, an HTTP status ≥ 500 / ≥ 400 for clients, an exit code or signal name), and an `exception` event. The resource carries `service.name` (default `unknown_service:bun`), `telemetry.sdk.*`, `process.runtime.*`, `process.pid`, `process.executable.*`, `process.command`, `host.name`, `host.arch`, `os.type` and `os.version`.
 
 ---

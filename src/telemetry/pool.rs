@@ -84,9 +84,6 @@ pub struct Slot {
     /// One bit per `key_bit(key)` of the attributes pushed so far, so
     /// `set_attribute` only scans for a duplicate when there may be one.
     attr_keys: u64,
-    /// An `error.type` attribute is among `attrs` (the HTTP encoder then does
-    /// not derive one).
-    has_error_type: bool,
     n_events: u16,
     n_links: u16,
     dropped_events: u16,
@@ -116,7 +113,6 @@ impl Slot {
             n_attrs: 0,
             dropped_attrs: 0,
             attr_keys: 0,
-            has_error_type: false,
             n_events: 0,
             n_links: 0,
             dropped_events: 0,
@@ -147,7 +143,6 @@ impl Slot {
         self.n_attrs = 0;
         self.dropped_attrs = 0;
         self.attr_keys = 0;
-        self.has_error_type = false;
         self.n_events = 0;
         self.n_links = 0;
         self.dropped_events = 0;
@@ -196,8 +191,8 @@ impl Slot {
         }
         self.n_attrs += 1;
         self.attr_keys |= key_bit(key);
-        if key == b"error.type" {
-            self.has_error_type = true;
+        if self.http.active {
+            self.http.user_keys.insert(key);
         }
         otlp::write_key_value_limited(
             &mut self.attrs,
@@ -210,12 +205,19 @@ impl Slot {
 
     /// Last-write-wins variant for keys that may repeat (user code).
     pub fn set_attribute(&mut self, key: &[u8], v: &Value<'_>, limits: &Limits) {
+        // `http.route` on a request span is the route, which also names the span.
+        if self.http.active && key == b"http.route" {
+            if let Value::Str(route) = *v {
+                self.http.set_route(route);
+                return;
+            }
+        }
         if self.attr_keys & key_bit(key) != 0 {
             if let Some((off, len)) = otlp::find_attribute(&self.attrs, key) {
                 self.attrs.drain(off..off + len);
                 self.n_attrs -= 1;
-                if key == b"error.type" {
-                    self.has_error_type = false;
+                if self.http.active {
+                    self.http.user_keys.remove(key);
                 }
             }
         }
@@ -293,7 +295,6 @@ impl Slot {
                     trace_state: &self.trace_state,
                     attrs: &self.attrs,
                     n_attrs: self.n_attrs,
-                    has_error_type: self.has_error_type,
                     dropped_attrs: self.dropped_attrs,
                     dropped_events: self.dropped_events,
                     dropped_links: self.dropped_links,

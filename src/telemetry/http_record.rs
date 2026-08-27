@@ -193,8 +193,55 @@ pub struct Facts {
     pub https: bool,
     pub termination: Termination,
     pub status: u16,
+    /// Derived attributes JS has set on this span itself.
+    pub user_keys: UserSetKeys,
     /// This slot holds an HTTP server span rather than a generic one.
     pub active: bool,
+}
+
+/// The attributes the encoder derives for a request span at export time.
+/// A bit is set once JS put that key on the span itself; the encoder then
+/// leaves it alone (the user's value wins and the key is never written twice).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct UserSetKeys(u16);
+
+impl UserSetKeys {
+    pub const NONE: UserSetKeys = UserSetKeys(0);
+    const METHOD: u16 = 1 << 0;
+    const SCHEME: u16 = 1 << 1;
+    const SERVER_ADDRESS: u16 = 1 << 2;
+    const SERVER_PORT: u16 = 1 << 3;
+    const PROTOCOL_VERSION: u16 = 1 << 4;
+    const USER_AGENT: u16 = 1 << 5;
+    const STATUS_CODE: u16 = 1 << 6;
+    const ERROR_TYPE: u16 = 1 << 7;
+
+    #[inline]
+    fn bit(key: &[u8]) -> u16 {
+        match key {
+            b"http.request.method" => Self::METHOD,
+            b"url.scheme" => Self::SCHEME,
+            b"server.address" => Self::SERVER_ADDRESS,
+            b"server.port" => Self::SERVER_PORT,
+            b"network.protocol.version" => Self::PROTOCOL_VERSION,
+            b"user_agent.original" => Self::USER_AGENT,
+            b"http.response.status_code" => Self::STATUS_CODE,
+            b"error.type" => Self::ERROR_TYPE,
+            _ => 0,
+        }
+    }
+    #[inline]
+    pub fn insert(&mut self, key: &[u8]) {
+        self.0 |= Self::bit(key);
+    }
+    #[inline]
+    pub fn remove(&mut self, key: &[u8]) {
+        self.0 &= !Self::bit(key);
+    }
+    #[inline]
+    fn has(self, bit: u16) -> bool {
+        self.0 & bit != 0
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -244,6 +291,7 @@ impl Facts {
             https: false,
             termination: Termination::Completed,
             status: 0,
+            user_keys: UserSetKeys::NONE,
             active: false,
         }
     }
@@ -258,6 +306,7 @@ impl Facts {
         self.https = false;
         self.termination = Termination::Completed;
         self.status = 0;
+        self.user_keys = UserSetKeys::NONE;
         self.peer_encoded_len = 0;
         self.peer_encoded_attrs = 0;
         self.version = HttpVersion::Unknown;
@@ -398,8 +447,6 @@ pub struct SpanParts<'a> {
     pub attrs: &'a [u8],
     /// Attributes already encoded in `attrs`.
     pub n_attrs: u16,
-    /// An `error.type` attribute is already among `attrs`.
-    pub has_error_type: bool,
     pub dropped_attrs: u16,
     pub dropped_events: u16,
     pub dropped_links: u16,
@@ -413,7 +460,7 @@ pub struct SpanParts<'a> {
 struct TemplateKey {
     https: bool,
     termination: Termination,
-    has_error_type: bool,
+    user_keys: UserSetKeys,
     status: u16,
     status_code: StatusCode,
     has_parent: bool,
@@ -433,7 +480,7 @@ impl TemplateKey {
         TemplateKey {
             https: facts.https,
             termination: facts.termination,
-            has_error_type: p.has_error_type,
+            user_keys: facts.user_keys,
             status: facts.status,
             status_code: p.status,
             has_parent: p.stub.parent.is_valid(),
@@ -818,14 +865,19 @@ fn encode_head(
         n: u32::from(p.n_attrs) + tail_attr_count(facts),
         budget,
     };
-    a.put(
-        "http.request.method",
-        Value::Str(facts.method.attr_value().as_bytes()),
-    );
-    a.put(
-        "url.scheme",
-        Value::Str(if facts.https { b"https" } else { b"http" }),
-    );
+    let user = facts.user_keys;
+    if !user.has(UserSetKeys::METHOD) {
+        a.put(
+            "http.request.method",
+            Value::Str(facts.method.attr_value().as_bytes()),
+        );
+    }
+    if !user.has(UserSetKeys::SCHEME) {
+        a.put(
+            "url.scheme",
+            Value::Str(if facts.https { b"https" } else { b"http" }),
+        );
+    }
     if !host.is_empty() {
         let (hname, port) = split_host_port(host);
         // semconv examples give IPv6 literals bare (as network.peer.address is).
@@ -833,15 +885,19 @@ fn encode_head(
             .strip_prefix(b"[")
             .and_then(|h| h.strip_suffix(b"]"))
             .unwrap_or(hname);
-        a.put("server.address", Value::Str(hname));
+        if !user.has(UserSetKeys::SERVER_ADDRESS) {
+            a.put("server.address", Value::Str(hname));
+        }
         // semconv: required when server.address is set; the scheme default when Host has none.
-        let port = port.unwrap_or(if facts.https { 443 } else { 80 });
-        a.put("server.port", Value::Int(port as i64));
+        if !user.has(UserSetKeys::SERVER_PORT) {
+            let port = port.unwrap_or(if facts.https { 443 } else { 80 });
+            a.put("server.port", Value::Int(port as i64));
+        }
     }
-    if facts.version != HttpVersion::Unknown {
+    if facts.version != HttpVersion::Unknown && !user.has(UserSetKeys::PROTOCOL_VERSION) {
         a.put("network.protocol.version", Value::Str(facts.version.text()));
     }
-    if !ua.is_empty() {
+    if !ua.is_empty() && !user.has(UserSetKeys::USER_AGENT) {
         a.put("user_agent.original", Value::Str(ua));
     }
     if !route.is_empty() {
@@ -851,9 +907,11 @@ fn encode_head(
     a.w.raw(p.attrs);
     let mut span_status = p.status;
     let mut msg: &[u8] = p.status_message;
-    let has_error_type = p.has_error_type;
+    let has_error_type = user.has(UserSetKeys::ERROR_TYPE);
     if status != 0 {
-        a.put("http.response.status_code", Value::Int(status as i64));
+        if !user.has(UserSetKeys::STATUS_CODE) {
+            a.put("http.response.status_code", Value::Int(status as i64));
+        }
         if status >= 500 {
             if !has_error_type {
                 let mut buf = bun_core::fmt::ItoaBuf::new();

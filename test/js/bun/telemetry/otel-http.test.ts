@@ -181,6 +181,63 @@ describe("Bun.serve", () => {
     expect(work.traceId).toBe(srv.traceId);
   });
 
+  test("http.route set from the handler names the span (routers on plain fetch / node:http)", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        Bun.otel.set("http.route", "/users/:id");
+        return new Response("ok");
+      },
+    });
+    await (await fetch(`http://localhost:${server.port}/users/7`)).text();
+    const [srv] = byName(await collect(2), "bun.http.server");
+    expect([srv.name, srv.attributes["http.route"], srv.attributes["url.path"]]).toEqual([
+      "GET /users/:id",
+      "/users/:id",
+      "/users/7",
+    ]);
+
+    const node = http.createServer((req, res) => {
+      Bun.otel.activeSpan()!.setAttribute("http.route", "/n/:id");
+      res.end("ok");
+    });
+    await new Promise<void>(r => node.listen(0, r));
+    await (await fetch(`http://127.0.0.1:${(node.address() as any).port}/n/1`)).text();
+    await new Promise<void>(r => node.close(() => r()));
+    const [nsrv] = byName(await collect(2), "bun.http.server");
+    expect([nsrv.name, nsrv.attributes["http.route"]]).toEqual(["GET /n/:id", "/n/:id"]);
+  });
+
+  test("a semconv attribute set from JS replaces the derived one instead of being exported twice", async () => {
+    let bytes: Uint8Array | undefined;
+    Bun.otel.start({ instrumentations: { http: true, fetch: false }, exporters: [{ exportProtobuf: (b: Uint8Array) => (bytes = b) }] });
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        // the 500 below would derive http.response.status_code=500 and error.type="500"
+        Bun.otel.set({ "http.response.status_code": 299, "server.address": "front.example", "error.type": "UpstreamDown" });
+        return new Response("no", { status: 500 });
+      },
+    });
+    await (await fetch(`http://localhost:${server.port}/`)).text();
+    const deadline = Date.now() + 5000;
+    do {
+      await Bun.sleep(0);
+      await Bun.otel.forceFlush();
+    } while (!bytes && Date.now() < deadline);
+    const raw = Buffer.from(bytes!);
+    const count = (key: string) => raw.toString("latin1").split(key).length - 1;
+    // one SERVER span only (fetch spans are off): every key exactly once in the wire bytes
+    expect([count("http.response.status_code"), count("server.address"), count("error.type")]).toEqual([1, 1, 1]);
+    const [srv] = Bun.otel.decode(bytes!);
+    expect([srv.attributes["http.response.status_code"], srv.attributes["server.address"], srv.attributes["error.type"]]).toEqual([
+      299,
+      "front.example",
+      "UpstreamDown",
+    ]);
+    expect(srv.status.code).toBe(2); // still an error: the response was a 500
+  });
+
   test("5xx marks server span as error; 4xx does not", async () => {
     // Static route responses bypass RequestContext, so use a dynamic handler.
     using server2 = Bun.serve({

@@ -1,6 +1,6 @@
 import { internalModuleBytecode } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import vm from "node:vm";
 import { basename, join } from "path";
@@ -322,11 +322,17 @@ const libraryBuilds = libraries.map(lib => ({
 }));
 const bundlerBuilds = [...corpusBuilds, ...libraryBuilds];
 
-// big.js is generated next to the checked-in corpus once per run (same bytes every time).
+// The generated inputs go next to the checked-in corpus rather than into a temp dir: the bundler writes each module's
+// path relative to the cwd into its output, so the corpus directory has to be the same relative place on every machine.
+// Same bytes every run; only written when missing or stale so a concurrent run never sees a half-written file.
+function writeCorpusFile(name: string, contents: string) {
+  const path = join(corpusDir, name);
+  if (!existsSync(path) || readFileSync(path, "utf8") !== contents) writeFileSync(path, contents);
+}
 const bigPath = join(corpusDir, "big.js");
-writeFileSync(bigPath, bigSource());
-writeFileSync(join(corpusDir, "shapes.js"), shapesSource());
-writeFileSync(join(corpusDir, "all.js"), allSource);
+writeCorpusFile("big.js", bigSource());
+writeCorpusFile("shapes.js", shapesSource());
+writeCorpusFile("all.js", allSource);
 writeFileSync(
   join(corpusDir, "libraries.js"),
   `var loaded = 0, failed = [];\n${librariesSource}\nconsole.log(loaded + " libraries, failed: " + JSON.stringify(failed));\n`,
@@ -447,7 +453,7 @@ describe("bytecode cache portability", () => {
       {
         "builtin corpus": {
           "bytes": 5304,
-          "sha256": "5d462e69e55d9216a9f43643b295d0f0ec34604d089f7ffe9de4ea84ca7b0e07",
+          "sha256": "74db458f0e32c1f28527fd97c0bd7c22810e42f3ecd93b10c4c4a7fe1df510eb",
         },
         "builtin corpus strings": {
           "bytes": 836,

@@ -92,14 +92,12 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
 
   // --bytecode into an executable for another os/arch/libc embeds bytecode written by this platform's JavaScriptCore for
   // another's; such executables say so in crash reports (Features: cross_compiled_bytecode). The "other platform" build
-  // here is the same OS with another libc or CPU, and reuses this bun as the target executable, so it still runs here.
-  const otherPlatform = isLinux
-    ? `bun-linux-${isArm64 ? "aarch64" : "x64"}${isMusl ? "" : "-musl"}`
-    : `bun-${isMacOS ? "darwin" : "windows"}-${isArm64 ? "x64" : "aarch64"}`;
+  // here is the same OS with the other CPU, and reuses this bun as the target executable, so it still runs here.
+  const otherPlatform = `bun-${isLinux ? "linux" : isMacOS ? "darwin" : "windows"}-${isArm64 ? "x64" : "aarch64"}${isMusl ? "-musl" : ""}`;
   test.each([
-    ["this platform", undefined, false],
+    ["this platform", undefined as string | undefined, false],
     [otherPlatform, otherPlatform, true],
-  ])("--compile --bytecode for %s: cross_compiled_bytecode=%p", async (_label, target, expected) => {
+  ])("--compile --bytecode for %s", async (_label, target, expected) => {
     using dir = tempDir("build-compile-cross-bytecode", {
       "app.js": `require("bun:internal-for-testing").crash_handler.panic();`,
     });

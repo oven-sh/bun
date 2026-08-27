@@ -2332,11 +2332,10 @@ pub fn to_executable(
     windows_options: &WindowsOptions,
     compile_exec_argv: &[u8],
     self_exe_path: Option<&[u8]>,
-    flags: Flags,
+    mut flags: Flags,
 ) -> crate::Result<CompileResult> {
     #[cfg(windows)]
     let _ = root_dir;
-    let mut flags = flags;
     if !target.is_host_platform() && output_files.iter().any(|file| file.output_kind == options::OutputKind::Bytecode) {
         flags |= Flags::CROSS_COMPILED_BYTECODE;
     }

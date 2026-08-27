@@ -1684,6 +1684,41 @@ describe("package-lock.json migration fixes", () => {
     ).toHaveProperty("name", "shared-lib");
   });
 
+  // A folder that a registry package ships inside itself is a `Folder` entry too, but the registry
+  // package declared it, so a `file:` path in its package.json that leaves the project is still skipped.
+  test.concurrent("a file: dependency declared by a registry package's own folder is still skipped", async () => {
+    const dependencies = { evil: "1.0.0" };
+    using copy = tempDir("npm-migrate-registry-folder-declares-file-dep", {
+      "root/package.json": JSON.stringify({ name: "root", dependencies }),
+      "root/package-lock.json": npmLock("root", {
+        "": { name: "root", dependencies },
+        "node_modules/evil": {
+          version: "1.0.0",
+          resolved: `${OFFLINE_REGISTRY}evil/-/evil-1.0.0.tgz`,
+          dependencies: { inner: "file:./inner" },
+        },
+        "node_modules/evil/node_modules/inner": { resolved: "node_modules/evil/inner", link: true },
+        "node_modules/evil/inner": { version: "1.0.0", dependencies: { loot: "file:../../../../secret" } },
+        "node_modules/evil/inner/node_modules/loot": { resolved: "../secret", link: true },
+        "../secret": { version: "1.0.0" },
+      }),
+      "secret/package.json": JSON.stringify({ name: "loot", version: "1.0.0" }),
+      "secret/credentials.txt": "do-not-link-me",
+    });
+    const dir = join(String(copy), "root");
+    writeExtra(dir, {});
+
+    const { stderr, exitCode, text, lock } = await migrate(dir);
+    expect(stderr).toContain(
+      'skipped "loot" from package-lock.json: transitive folder dependency "../secret" is outside the project',
+    );
+    expect(exitCode).toBe(0);
+    expect(Object.keys(lock.packages).sort()).toStrictEqual(["evil", "evil/inner"]);
+    expect(lock.packages["evil/inner"]).toStrictEqual(["inner@file:node_modules/evil/inner", {}]);
+    expect(text).not.toContain("../secret");
+    expect(text).not.toContain("loot");
+  });
+
   test.concurrent("lockfileVersion 5 is refused, and install falls back to a fresh resolve", async () => {
     using dir = synthetic("npm-migrate-v5", {
       "package.json": JSON.stringify({ name: "v5", dependencies: { "dep-1": "file:dep-1" } }),

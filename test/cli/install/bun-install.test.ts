@@ -10295,6 +10295,78 @@ it("does not install a registry package's transitive file: dependency that point
   });
 });
 
+it("refuses to install an escaping file: dependency that a registry package's own folder declares in the lockfile", async () => {
+  // Bun's resolver records no dependencies for a folder that a registry package
+  // ships, but a lockfile written elsewhere (a migration) can. Trust for a
+  // folder parent is anchored at the root or a workspace, so the installer still
+  // refuses the escaping path.
+  await withContext(defaultOpts, async ctx => {
+    const urls: string[] = [];
+    using dir = tempDir("registry-folder-declares-file-dep", {
+      "secret/package.json": JSON.stringify({ name: "loot", version: "1.0.0" }),
+      "secret/credentials.txt": "do-not-link-me",
+    });
+    const secretDir = join(String(dir), "secret").replaceAll("\\", "/");
+    setContextHandler(
+      ctx,
+      dummyRegistryForContext(ctx, urls, {
+        "0.0.3": {
+          dependencies: {
+            inner: "file:./inner",
+          },
+        },
+      }),
+    );
+    await writeFile(
+      join(ctx.package_dir, "package.json"),
+      JSON.stringify({
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: {
+          baz: "0.0.3",
+        },
+      }),
+    );
+    await writeFile(
+      join(ctx.package_dir, "bun.lock"),
+      JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: {
+          "": {
+            name: "my-app",
+            dependencies: {
+              baz: "0.0.3",
+            },
+          },
+        },
+        packages: {
+          "baz": ["baz@0.0.3", `${ctx.registry_url}baz-0.0.3.tgz`, { dependencies: { inner: "file:./inner" } }, ""],
+          "baz/inner": ["inner@file:node_modules/baz/inner", { dependencies: { loot: "file:" + secretDir } }],
+          "baz/inner/loot": ["loot@file:" + secretDir, {}],
+        },
+      }),
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: ctx.package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+    expect(err).toContain("refusing to install dependency loot with unsafe folder path");
+    expect(await exists(join(ctx.package_dir, "node_modules", "loot"))).toBe(false);
+    expect(
+      await exists(join(ctx.package_dir, "node_modules", "baz", "node_modules", "inner", "node_modules", "loot")),
+    ).toBe(false);
+    expect(out).not.toContain("3 packages installed");
+    expect(exitCode).toBe(1);
+  });
+});
+
 it("installs transitive file: dependencies of a local file: package that point outside the project", async () => {
   // A file: package referenced by the root package.json lives outside the
   // project and declares its own relative folder dependencies that also land

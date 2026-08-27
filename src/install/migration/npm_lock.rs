@@ -108,6 +108,8 @@ struct Migrator<'a> {
     link_entries: DynamicBitSet,
     shadowed: DynamicBitSet,
     skipped_external: DynamicBitSet,
+    /// Targets the root or a workspace depends on directly.
+    local_declared: DynamicBitSet,
     entry_package_ids: Vec<PackageID>,
     queue: Vec<(u32, PackageID)>,
     probe: Vec<u8>,
@@ -142,6 +144,7 @@ pub(super) fn migrate_packages(
         link_entries: DynamicBitSet::init_empty(entry_count)?,
         shadowed: DynamicBitSet::init_empty(entry_count)?,
         skipped_external: DynamicBitSet::init_empty(entry_count)?,
+        local_declared: DynamicBitSet::init_empty(entry_count)?,
         entry_package_ids: vec![INVALID_PACKAGE_ID; entry_count],
         queue: Vec::new(),
         probe: Vec::new(),
@@ -765,11 +768,19 @@ impl<'a> Migrator<'a> {
                 }
 
                 let version_tag = version.tag;
-                // Trust a `file:` spec written in a `file:` package's own package.json, not a
-                // bare folder npm found for a registry spec (`is_trusted_folder_dependency`).
-                let declares_folder =
-                    res_tag == resolution::Tag::Folder && version_tag == DepTag::Folder;
+                // A `file:` spec in a root-declared `file:` package's own package.json is
+                // trusted like a root dependency (`is_trusted_folder_dependency`). A folder
+                // a registry package ships, or a bare folder npm found for a registry spec,
+                // is not.
+                let declares_folder = res_tag == resolution::Tag::Folder
+                    && version_tag == DepTag::Folder
+                    && self.local_declared.is_set(j as usize);
                 let mut found = self.find_target(key, name);
+                if let Some((t, _)) = found
+                    && is_local
+                {
+                    self.local_declared.set(t as usize);
+                }
                 if let Some((t, through_link)) = found
                     && !is_local
                     && !declares_folder

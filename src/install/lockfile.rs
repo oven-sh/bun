@@ -860,18 +860,36 @@ impl Lockfile {
         0
     }
 
-    /// Is dependency `id` declared by a local package ([`resolution::Tag::is_local_package`])?
-    ///
-    /// A `Folder` parent is itself always declared by the root or a workspace: a
-    /// folder dependency of any other package is recorded without dependencies
-    /// (the transitive folder branch of `get_or_put_resolved_package`).
+    /// Does the root or a workspace depend on package `id` directly?
+    pub(crate) fn is_workspace_declared_package(&self, id: PackageID) -> bool {
+        let packages = self.packages.slice();
+        let resolutions = self.buffers.resolutions.as_slice();
+        for (pkg_id, res_list) in packages.items_resolutions().iter().enumerate() {
+            let tag = packages.items_resolution()[pkg_id].tag;
+            if tag != ResolutionTag::Workspace && tag != ResolutionTag::Root {
+                continue;
+            }
+            if res_list.get(resolutions).contains(&id) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Is dependency `id` declared by the root, a workspace, or a `file:` package
+    /// that one of them depends on directly? Bun's resolver only parses the
+    /// package.json of such `file:` packages, but a migrated lockfile may carry
+    /// dependencies for a folder that a registry package shipped, so the anchor
+    /// is checked rather than assumed.
     pub(crate) fn is_dependency_of_local_package(&self, id: DependencyID) -> bool {
         let Some(parent_id) = self.get_parent_pkg_of_dependency(id) else {
             return false;
         };
-        self.packages.items_resolution()[parent_id as usize]
-            .tag
-            .is_local_package()
+        match self.packages.items_resolution()[parent_id as usize].tag {
+            ResolutionTag::Root | ResolutionTag::Workspace => true,
+            ResolutionTag::Folder => self.is_workspace_declared_package(parent_id),
+            _ => false,
+        }
     }
 
     /// May the folder path of dependency `id` leave its package directory? Yes

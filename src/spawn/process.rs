@@ -249,7 +249,7 @@ impl ProcessHandle {
     /// (`ProcessAutoKiller`). Valid while this handle is held.
     #[inline]
     pub fn as_ptr(&self) -> core::ptr::NonNull<Process> {
-        self.0.data
+        self.0.as_non_null()
     }
 }
 
@@ -258,27 +258,27 @@ impl ProcessHandle {
 impl ProcessHandle {
     #[inline]
     pub fn pid(&self) -> PidT {
-        self.0.data().pid
+        self.0.pid
     }
 
     pub fn status(&self) -> Status {
-        self.0.data().status.clone()
+        self.0.status.clone()
     }
 
     pub fn has_killed(&self) -> bool {
-        self.0.data().has_killed()
+        self.0.has_killed()
     }
 
     pub fn signal_code(&self) -> Option<bun_core::SignalCode> {
-        self.0.data().signal_code()
+        self.0.signal_code()
     }
 
     pub fn has_exit_handler(&self) -> bool {
-        self.0.data().exit_handler.is_some()
+        self.0.exit_handler.is_some()
     }
 
     pub fn memory_cost(&self) -> usize {
-        self.0.data().memory_cost()
+        self.0.memory_cost()
     }
 }
 

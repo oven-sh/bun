@@ -1674,10 +1674,8 @@ impl<'a> HTTPClient<'a> {
             .max(self.socket_verification())
     }
 
-    /// The hostname a TLS handshake over this client's unix socket verifies
-    /// (`PooledSocket::target_hostname` for a unix entry). Empty for plain
-    /// HTTP or a TCP connection. Reads `connected_url` because `do_redirect`
-    /// releases the socket after `url` already points at the redirect target.
+    /// `PooledSocket::target_hostname` for a TLS unix entry. Read from
+    /// `connected_url`: `do_redirect` releases after `url` has moved on.
     pub(crate) fn unix_tls_hostname<const IS_SSL: bool>(&self) -> &[u8] {
         if IS_SSL && !self.unix_socket_path.is_empty() {
             self.connected_url.hostname

@@ -203,10 +203,8 @@ pub struct PooledSocket<const SSL: bool> {
     /// strong ref while the socket is parked (the `RefPtr` *is* that ref).
     /// None for direct connections.
     pub(crate) proxy_tunnel: Option<RefPtr<ProxyTunnel>>,
-    /// Target (origin) hostname the tunnel connects to. `hostname_buf`
-    /// above holds the PROXY hostname; this is the upstream we CONNECTed
-    /// to. For TLS over a unix socket it is the hostname the handshake
-    /// verified (`hostname_buf` holds the path). Empty otherwise.
+    /// Tunnel: the origin hostname (`hostname_buf` is the proxy). Unix TLS:
+    /// the hostname the handshake verified (`hostname_buf` is the path).
     pub(crate) target_hostname: Box<[u8]>,
     pub(crate) target_port: u16,
     /// Hash of the effective Proxy-Authorization value so that tunnels
@@ -762,8 +760,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     continue;
                 }
             } else if is_unix && !strings::eql_long(&socket.target_hostname, target_hostname, true) {
-                // The path says nothing about which certificate the handshake
-                // checked; a TLS connection is only good for that hostname.
                 continue;
             }
             if SSL && !required_for_socket.admits(socket.verification) {

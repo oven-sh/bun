@@ -928,29 +928,115 @@ describe.concurrent("bun build unrecognized flags", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("Unrecognized flag '--totally-bogus-flag'");
-    expect(stderr).not.toContain("did you mean");
     expect(stdout).toContain("Usage:");
     expect(exitCode).toBe(1);
     expect(fs.existsSync(path.join(String(dir), "b.js"))).toBe(false);
   });
 
-  test("a near miss of a real flag suggests it", async () => {
-    using dir = tempDir("build-unknown-flag-typo", {
+  test("an unrecognized flag with =value is reported by name", async () => {
+    using dir = tempDir("build-unknown-flag-value", {
       "a.js": "export const x = { v: 1 };",
     });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "a.js", "--outfile=b.js", "--minif"],
+      cmd: [bunExe(), "build", "a.js", "--outfile=b.js", "--sourcemaps=inline"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("Unrecognized flag '--minif'");
-    expect(stderr).toContain("did you mean '--minify'?");
+    expect(stderr).toContain("Unrecognized flag '--sourcemaps'");
     expect(stdout).toContain("Usage:");
     expect(exitCode).toBe(1);
     expect(fs.existsSync(path.join(String(dir), "b.js"))).toBe(false);
+  });
+
+  test("runtime flags before the build keyword are still skipped", async () => {
+    // `bun --smol build` and the tokens `BUN_OPTIONS` splices in front of
+    // the keyword are runtime flags. Only flags after `build` are strict.
+    using dir = tempDir("build-runtime-flags-before", {
+      "a.js": "export const x = { v: 1 };",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", "build", "a.js", "--outfile=b.js", "--totally-bogus-flag"],
+      env: { ...bunEnv, BUN_OPTIONS: "--bun" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Unrecognized flag '--totally-bogus-flag'");
+    expect(stdout).toContain("Usage:");
+    expect(exitCode).toBe(1);
+    expect(fs.existsSync(path.join(String(dir), "b.js"))).toBe(false);
+  });
+
+  test("BUN_OPTIONS does not break bun build", async () => {
+    using dir = tempDir("build-bun-options", {
+      "a.js": "export const x = { v: 1 };",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "a.js", "--outfile=b.js"],
+      env: { ...bunEnv, BUN_OPTIONS: "--smol" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("b.js");
+    expect(exitCode).toBe(0);
+    expect(fs.existsSync(path.join(String(dir), "b.js"))).toBe(true);
+  });
+
+  test("flags removed in 1.2 are still accepted", async () => {
+    // `--experimental-css`, `--experimental-html` and
+    // `--experimental-css-chunking` were documented 1.1 opt-ins for what is
+    // now always on. Scripts from that era still pass them.
+    using dir = tempDir("build-removed-flags", {
+      "a.js": "export const x = { v: 1 };",
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "a.js",
+        "--outfile=b.js",
+        "--experimental-css",
+        "--experimental-html",
+        "--experimental-css-chunking",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("b.js");
+    expect(exitCode).toBe(0);
+    expect(fs.existsSync(path.join(String(dir), "b.js"))).toBe(true);
+  });
+
+  test("esbuild-style --loader:.ext=loader and --drop:name apply", async () => {
+    using dir = tempDir("build-loader-drop-colon", {
+      "a.js": 'import icon from "./icon.svg"; console.log("dropped"); export const x = { icon };',
+      "icon.svg": "<svg/>",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "a.js", "--outfile=b.js", "--loader:.svg=text", "--drop:console"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("b.js");
+    expect(exitCode).toBe(0);
+    const out = await Bun.file(path.join(String(dir), "b.js")).text();
+    expect(out).toContain('"<svg/>"');
+    expect(out).not.toContain("console.log");
   });
 
   test("esbuild-style --external:M keeps the module external", async () => {

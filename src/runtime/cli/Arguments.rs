@@ -500,8 +500,12 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--bundle                         Bundle dependencies into the output. This is the default behavior"
         ),
         parse_param!("--no-bundle                      Transpile file only, do not bundle"),
-        // Hidden compat flag: old docs showed `bun build --entrypoints ./a.ts`.
+        // Hidden compat flags. Old docs showed `bun build --entrypoints ./a.ts`.
+        // `--experimental-css` and `--experimental-html` were the 1.1 opt-ins
+        // for what is now always on.
         parse_param!("--entrypoints <STR>..."),
+        parse_param!("--experimental-css"),
+        parse_param!("--experimental-html"),
         parse_param!(
             "--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed."
         ),
@@ -513,7 +517,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--keep-names                     Preserve original function and class names when minifying"
         ),
         parse_param!(
-            "--css-chunking                   Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS"
+            "--css-chunking/--experimental-css-chunking   Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS"
         ),
         parse_param!("--dump-environment-variables"),
         parse_param!("--conditions <STR>...            Pass custom conditions to resolve"),
@@ -788,13 +792,15 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,
                 _ => &[],
             },
-            // `bun build` has no argv passthrough, so an unknown flag is a
-            // typo that would otherwise ship wrong output in silence (#40558).
+            // `bun build` has no argv passthrough after the `build` keyword, so
+            // an unknown flag there is a typo that would otherwise ship wrong
+            // output in silence (#40558).
             reject_unrecognized_flags: cmd == CommandTag::BuildCommand,
-            // esbuild spellings used by in-tree build scripts: the react `bun
-            // init` template has `--define:K=V`, node-fallbacks `--external:M`.
+            // esbuild spellings whose value format bun's flag also accepts.
+            // In-tree build scripts use two of them: the react `bun init`
+            // template has `--define:K=V`, node-fallbacks `--external:M`.
             colon_value_flags: match cmd {
-                CommandTag::BuildCommand => &[b"define", b"external"],
+                CommandTag::BuildCommand => &[b"define", b"external", b"loader", b"drop"],
                 _ => &[],
             },
         },

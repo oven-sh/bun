@@ -293,9 +293,6 @@ pub struct Diagnostic {
     pub(crate) arg: Vec<u8>,
     pub(crate) short: Option<u8>,
     pub(crate) long: Option<Vec<u8>>,
-    /// The declared long name closest to an unrecognized flag, if one is
-    /// within a few edits.
-    pub(crate) suggestion: Option<&'static [u8]>,
 }
 
 impl Diagnostic {
@@ -338,60 +335,12 @@ impl Diagnostic {
                 bun_core::pretty_errorln!("<red>error<r><d>:<r> Invalid Argument '{}'", name)
             }
             crate::Error::UnrecognizedFlag => {
-                bun_core::pretty_errorln!("<red>error<r><d>:<r> Unrecognized flag '{}'", name);
-                if let Some(suggestion) = self.suggestion {
-                    bun_core::note!("did you mean '--{}'?", bstr::BStr::new(suggestion));
-                }
+                bun_core::pretty_errorln!("<red>error<r><d>:<r> Unrecognized flag '{}'", name)
             }
         }
         bun_core::Output::flush();
         Ok(())
     }
-}
-
-/// Levenshtein distance between `a` and `b`, capped at `limit + 1`.
-#[cold]
-fn edit_distance(a: &[u8], b: &[u8], limit: usize) -> usize {
-    if a.len().abs_diff(b.len()) > limit {
-        return limit + 1;
-    }
-    let mut prev: Vec<usize> = (0..=b.len()).collect();
-    let mut curr: Vec<usize> = vec![0; b.len() + 1];
-    for (i, &ca) in a.iter().enumerate() {
-        curr[0] = i + 1;
-        let mut row_min = curr[0];
-        for (j, &cb) in b.iter().enumerate() {
-            let cost = usize::from(ca != cb);
-            curr[j + 1] = (prev[j] + cost).min(prev[j + 1] + 1).min(curr[j] + 1);
-            row_min = row_min.min(curr[j + 1]);
-        }
-        if row_min > limit {
-            return limit + 1;
-        }
-        core::mem::swap(&mut prev, &mut curr);
-    }
-    prev[b.len()]
-}
-
-/// The declared long name or alias closest to `name`, when it is within
-/// `max(1, name.len() / 3)` edits. Error path only.
-#[cold]
-pub(crate) fn closest_long_name<Id>(params: &[Param<Id>], name: &[u8]) -> Option<&'static [u8]> {
-    let limit = core::cmp::max(1, name.len() / 3);
-    let mut best: Option<(&'static [u8], usize)> = None;
-    let candidates = params.iter().flat_map(|p| {
-        p.names
-            .long
-            .into_iter()
-            .chain(p.names.long_aliases.iter().copied())
-    });
-    for candidate in candidates {
-        let distance = edit_distance(name, candidate, limit);
-        if distance <= limit && best.is_none_or(|(_, best_distance)| distance < best_distance) {
-            best = Some((candidate, distance));
-        }
-    }
-    best.map(|(candidate, _)| candidate)
 }
 
 #[derive(Clone, Copy)]
@@ -428,7 +377,10 @@ pub struct ParseOptions<'a> {
     /// aliases on exactly that branch (node_options-inl.h).
     pub short_aliases: &'static [(&'static [u8], &'static [u8])],
     /// Unknown `--long` flags are skipped by default so node-mode and `bun run`
-    /// can pass argv through. Commands with no passthrough set this to error.
+    /// can pass argv through. Commands with no passthrough set this to error
+    /// on an unknown flag after the first positional (the subcommand keyword).
+    /// Flags before the keyword are runtime flags (`bun --smol build`, the
+    /// tokens `BUN_OPTIONS` splices in) and keep the skip.
     pub reject_unrecognized_flags: bool,
     /// Long names that also accept esbuild's `--name:VALUE` spelling
     /// (`--define:K=V` hands `K=V` to `--define`).

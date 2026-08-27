@@ -59,10 +59,13 @@ pub struct StreamingClap<'p, 'a, Id, ArgIterator> {
     pub(crate) positional: Option<&'p clap::Param<Id>>,
     pub(crate) diagnostic: Option<&'p mut clap::Diagnostic>,
     pub(crate) short_aliases: &'static [(&'static [u8], &'static [u8])],
-    /// Error on unknown long flags instead of the default silent skip.
+    /// Error on unknown long flags after the first positional instead of the
+    /// default silent skip.
     pub(crate) reject_unrecognized_flags: bool,
     /// Long names that also accept esbuild's `--name:VALUE` spelling.
     pub(crate) colon_value_flags: &'static [&'static [u8]],
+    /// Set once a positional has been returned.
+    pub(crate) seen_positional: bool,
 }
 
 // ArgIterator is the
@@ -172,12 +175,8 @@ where
                     }
                 }
 
-                if self.reject_unrecognized_flags {
-                    let err = self.err(arg, None, Some(name), ArgError::UnrecognizedFlag);
-                    if let Some(d) = self.diagnostic.as_deref_mut() {
-                        d.suggestion = clap::closest_long_name(params, name);
-                    }
-                    return Err(err);
+                if self.reject_unrecognized_flags && self.seen_positional {
+                    return Err(self.err(arg, None, Some(name), ArgError::UnrecognizedFlag));
                 }
 
                 // continue parsing after unrecognized flag
@@ -186,6 +185,7 @@ where
             ArgKind::Short => self.chainging(Chaining { arg, index: 0 }),
             ArgKind::Positional => {
                 if let Some(param) = self.positional_param() {
+                    self.seen_positional = true;
                     // If we find a positional with the value `--` then we
                     // interpret the rest of the arguments as positional
                     // arguments.
@@ -351,7 +351,6 @@ where
             d.arg = arg.to_vec();
             d.short = short;
             d.long = long.map(|l| l.to_vec());
-            d.suggestion = None;
         }
         e
     }
@@ -367,6 +366,15 @@ mod tests {
         args_strings: &[&[u8]],
         results: &[Arg<'_, '_, u8>],
     ) {
+        test_no_err_ex(params, args_strings, results, false);
+    }
+
+    fn test_no_err_ex(
+        params: &[clap::Param<u8>],
+        args_strings: &[&[u8]],
+        results: &[Arg<'_, '_, u8>],
+        reject_unrecognized_flags: bool,
+    ) {
         let mut iter = args::SliceIterator {
             remain: args_strings,
         };
@@ -377,8 +385,9 @@ mod tests {
             state: State::Normal,
             positional: None,
             diagnostic: None,
-            reject_unrecognized_flags: false,
+            reject_unrecognized_flags,
             colon_value_flags: &[],
+            seen_positional: false,
         };
 
         for res in results {
@@ -423,6 +432,7 @@ mod tests {
             diagnostic: Some(&mut diag),
             reject_unrecognized_flags,
             colon_value_flags: &[],
+            seen_positional: false,
         };
         loop {
             match c.next() {
@@ -844,11 +854,9 @@ mod tests {
         ];
         test_err(&params, &[b"q"], b"Invalid argument 'q'\n");
         test_err(&params, &[b"-q"], b"Invalid argument '-q'\n");
-        // Unrecognized long flags are skipped by default, rejected in strict mode.
+        // Unrecognized long flags are skipped by default.
         test_no_err(&params, &[b"--q"], &[]);
         test_no_err(&params, &[b"--q=1"], &[]);
-        test_err_ex(&params, &[b"--q"], b"Unrecognized flag '--q'\n", true);
-        test_err_ex(&params, &[b"--q=1"], b"Unrecognized flag '--q'\n", true);
         test_err(
             &params,
             &[b"-a=1"],
@@ -894,6 +902,7 @@ mod tests {
             diagnostic: None,
             reject_unrecognized_flags: true,
             colon_value_flags: &[b"define"],
+            seen_positional: false,
         };
 
         let arg = c.next().expect("parse").expect("arg");
@@ -904,64 +913,61 @@ mod tests {
         assert!(c.next().expect("parse").is_none());
     }
 
-    fn unrecognized_suggestion(params: &[clap::Param<u8>], arg: &[u8]) -> Option<&'static [u8]> {
-        let mut diag = clap::Diagnostic::default();
-        let args: &[&[u8]] = &[arg];
-        let mut iter = args::SliceIterator { remain: args };
-        let mut c = StreamingClap::<u8, args::SliceIterator> {
-            short_aliases: &[],
-            params,
-            iter: &mut iter,
-            state: State::Normal,
-            positional: None,
-            diagnostic: Some(&mut diag),
-            reject_unrecognized_flags: true,
-            colon_value_flags: &[],
-        };
-        assert!(matches!(c.next(), Err(ArgError::UnrecognizedFlag)));
-        assert_eq!(diag.long.as_deref(), Some(&arg[2..]));
-        diag.suggestion
-    }
-
     #[test]
-    fn unrecognized_flag_suggestion() {
+    fn reject_unrecognized_flags() {
         let params: [clap::Param<u8>; 2] = [
             clap::Param {
                 id: 0,
                 names: clap::Names {
-                    long: Some(b"minify"),
-                    long_aliases: &[b"compress"],
+                    long: Some(b"aa"),
                     ..Default::default()
                 },
                 ..Default::default()
             },
             clap::Param {
                 id: 1,
-                names: clap::Names {
-                    long: Some(b"sourcemap"),
-                    ..Default::default()
-                },
-                takes_value: clap::Values::One,
+                takes_value: clap::Values::Many,
                 ..Default::default()
             },
         ];
+        let build = || Arg {
+            param: &params[1],
+            value: Some(b"build"),
+        };
 
-        assert_eq!(
-            unrecognized_suggestion(&params, b"--minif"),
-            Some(b"minify".as_slice())
+        // Unknown flags before the first positional are runtime flags and
+        // are still skipped.
+        test_no_err_ex(
+            &params,
+            &[b"--q", b"build", b"--aa"],
+            &[
+                build(),
+                Arg {
+                    param: &params[0],
+                    value: None,
+                },
+            ],
+            true,
         );
-        assert_eq!(
-            unrecognized_suggestion(&params, b"--sourcemaps"),
-            Some(b"sourcemap".as_slice())
+        test_no_err_ex(&params, &[b"--q=1", b"build"], &[build()], true);
+        // After it they are errors, reported without any `=value`.
+        test_err_ex(
+            &params,
+            &[b"build", b"--q"],
+            b"Unrecognized flag '--q'\n",
+            true,
         );
-        assert_eq!(
-            unrecognized_suggestion(&params, b"--compres"),
-            Some(b"compress".as_slice())
+        test_err_ex(
+            &params,
+            &[b"build", b"--aa", b"--q=1"],
+            b"Unrecognized flag '--q'\n",
+            true,
         );
-        assert_eq!(
-            unrecognized_suggestion(&params, b"--totally-bogus-flag"),
-            None
+        test_err_ex(
+            &params,
+            &[b"--q", b"build", b"a.js", b"--q"],
+            b"Unrecognized flag '--q'\n",
+            true,
         );
-        assert_eq!(unrecognized_suggestion(&params, b"--q"), None);
     }
 }

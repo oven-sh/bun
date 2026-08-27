@@ -6745,7 +6745,13 @@ pub fn resolve_embedded(
         buf[..specifier.len()].copy_from_slice(specifier);
         specifier.len()
     } else if specifier.starts_with(b"./") || specifier.starts_with(b"../") {
-        bun_paths::join_abs_string_buf(source_dir, &mut buf[..], &[specifier], bun_paths::Platform::Loose).len()
+        bun_paths::join_abs_string_buf(
+            source_dir,
+            &mut buf[..],
+            &[specifier],
+            bun_paths::Platform::Loose,
+        )
+        .len()
     } else {
         return None;
     };

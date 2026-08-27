@@ -204,15 +204,16 @@ fn collect_newly_loaded(
 ///
 /// 1. An `import()` entry point `D` is redundant in a key when, whichever way
 ///    `D` gets loaded, some other entry in that key has already been loaded
-///    (`preceded` below: every importer of `D` is in the key, or is itself only
-///    reachable through the key). Keys that are equal after dropping their
-///    redundant entries describe chunks that are always loaded together: with
-///    one user entry `main` and a lazy `import("./x")` only reachable from
-///    `main`, the `{main, x}` chunk is loaded iff `main` runs, the same as
-///    `main`'s own chunk, so its files can live there and `x`'s chunk imports
-///    what it needs from the `main` chunk. Different entries may cover
-///    different importers: with `import("./cmd")` in both `main` and a lazy
-///    `repl`, the `{main, repl, cmd}` chunk loads iff `main` or `repl` does.
+///    (`load_class` below: no importer of `D` can be reached from a process
+///    root without passing through the key). Keys that are equal
+///    after dropping their redundant entries describe chunks that are always
+///    loaded together: with one user entry `main` and a lazy `import("./x")`
+///    only reachable from `main`, the `{main, x}` chunk is loaded iff `main`
+///    runs, the same as `main`'s own chunk, so its files can live there and
+///    `x`'s chunk imports what it needs from the `main` chunk. Different
+///    entries may cover different importers: with `import("./cmd")` in both
+///    `main` and a lazy `repl`, the `{main, repl, cmd}` chunk loads iff `main`
+///    or `repl` does.
 /// 2. A chunk whose live parts have no top-level side effects may join a chunk
 ///    loaded by a superset of its entries, as long as everything it imports is
 ///    already loaded wherever that target is (or is side-effect free too); the
@@ -330,58 +331,87 @@ pub(crate) fn merge_small_chunks(
 
     // A dynamic entry can stand in for its importers when some live code
     // `import()`s it, nothing `require()`s it, and no importer is mid-evaluation
-    // at a top-level await while it loads.
-    let has_guarantors = |entry_id: usize| {
-        is_dynamic_entry(entry_id)
+    // at a top-level await while it loads. Every other entry is a root: it may
+    // be the first thing loaded (a user entry), or nothing says what precedes it.
+    let mut guaranteed = AutoBitSet::init_empty(entry_points_len)?;
+    let mut roots: Vec<usize> = Vec::new();
+    for entry_id in 0..entry_points_len {
+        if is_dynamic_entry(entry_id)
             && !required_sync.is_set(entry_id)
             && importer_bits[entry_id].find_first_set().is_some()
             && !importer_bits[entry_id].has_intersection(&awaits)
-    };
-    // The dynamic entries with guarantors that each entry `import()`s.
-    let mut dependents: Vec<Vec<u32>> = vec![Vec::new(); entry_points_len];
+        {
+            guaranteed.set(entry_id);
+        } else {
+            roots.push(entry_id);
+        }
+    }
+    // The guaranteed entries each entry `import()`s.
+    let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); entry_points_len];
     for entry_id in 0..entry_points_len {
-        if !has_guarantors(entry_id) {
+        if !guaranteed.is_set(entry_id) {
             continue;
         }
         let mut iter = importer_bits[entry_id].iterator::<true, true>();
         while let Some(importer) = iter.next() {
-            dependents[importer].push(entry_id as u32);
+            dependents[importer].push(entry_id);
         }
     }
-    // `preceded(key)`: entries some member of `key` is guaranteed to have loaded
-    // before — the key itself plus, to a fixpoint, every dynamic entry all of
-    // whose importers are already in the set. An entry only reachable through a
-    // cycle of such entries never loads at all, so it counts too. `missing`
-    // counts each dependent's importers not yet in the set; `stamp` resets it
-    // per key in O(1).
-    let importer_count: Vec<u32> = importer_bits.iter().map(|b| b.count() as u32).collect();
-    let mut missing: Vec<u32> = vec![0; entry_points_len];
-    let mut stamp: Vec<u32> = vec![0; entry_points_len];
+    // `load_class(key)`: `key` minus each guaranteed entry none of whose
+    // importers a root reaches through `import()`s without passing through the
+    // key; such an importer ran after some entry of the key, so that entry's
+    // chunk was loaded first. (An importer cycle no root reaches never loads,
+    // so it does not count either.) A key whose every entry is redundant is
+    // never loaded and left alone.
+    let mut reached: Vec<u32> = vec![0; entry_points_len];
     let mut epoch: u32 = 0;
     let mut worklist: Vec<usize> = Vec::new();
-    let mut preceded = |key: &AutoBitSet| -> crate::Result<AutoBitSet> {
-        epoch += 1;
-        let mut set = key.clone()?;
-        worklist.clear();
+    let mut candidates: Vec<usize> = Vec::new();
+    let mut load_class = |key: &AutoBitSet| -> crate::Result<AutoBitSet> {
+        let mut class = key.clone()?;
+        candidates.clear();
         let mut iter = key.iterator::<true, true>();
         while let Some(entry_id) = iter.next() {
-            worklist.push(entry_id);
+            if guaranteed.is_set(entry_id) {
+                candidates.push(entry_id);
+            }
+        }
+        if candidates.is_empty() {
+            return Ok(class);
+        }
+        epoch += 1;
+        worklist.clear();
+        for &root in &roots {
+            if !key.is_set(root) {
+                reached[root] = epoch;
+                worklist.push(root);
+            }
         }
         while let Some(entry_id) = worklist.pop() {
             for &dependent in &dependents[entry_id] {
-                let dependent = dependent as usize;
-                if stamp[dependent] != epoch {
-                    stamp[dependent] = epoch;
-                    missing[dependent] = importer_count[dependent];
-                }
-                missing[dependent] -= 1;
-                if missing[dependent] == 0 && !set.is_set(dependent) {
-                    set.set(dependent);
+                if !key.is_set(dependent) && reached[dependent] != epoch {
+                    reached[dependent] = epoch;
                     worklist.push(dependent);
                 }
             }
         }
-        Ok(set)
+        for &entry_id in &candidates {
+            let mut iter = importer_bits[entry_id].iterator::<true, true>();
+            let mut preceded = true;
+            while let Some(importer) = iter.next() {
+                if reached[importer] == epoch {
+                    preceded = false;
+                    break;
+                }
+            }
+            if preceded {
+                class.unset(entry_id);
+            }
+        }
+        if class.find_first_set().is_none() {
+            return Ok(key.clone()?);
+        }
+        Ok(class)
     };
 
     // Group the live JS files by their chunk key, and the groups by their
@@ -451,18 +481,7 @@ pub(crate) fn merge_small_chunks(
                 }
             }
             MapEntry::Vacant(entry) => {
-                // Drop each dynamic entry whose every importer is preceded by
-                // the key.
-                let mut class = bits.clone()?;
-                let preceded_by_key = preceded(bits)?;
-                let mut iter = bits.iterator::<true, true>();
-                while let Some(entry_id) = iter.next() {
-                    if has_guarantors(entry_id)
-                        && importer_bits[entry_id].subset_of(&preceded_by_key)
-                    {
-                        class.unset(entry_id);
-                    }
-                }
+                let class = load_class(bits)?;
                 match classes.entry(temp.alloc_slice_copy(class.bytes(entry_points_len))) {
                     MapEntry::Occupied(e) => e.into_mut().1.push(group_index),
                     MapEntry::Vacant(e) => {

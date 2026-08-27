@@ -1305,7 +1305,7 @@ describe("bundler", () => {
       // main, repl, sub, cmd, and one {main, repl} chunk holding common.js
       // and shared.js.
       expect(jsFilesIn(api)).toHaveLength(5);
-      const sharedChunk = jsFilesIn(api).find(f => api.readFile("/out/" + f).includes("shared evaluated"))!;
+      const sharedChunk = chunkContaining(api, "shared evaluated");
       api.expectFile("/out/" + sharedChunk).toContain("common");
       expect(jsOutput(api, "cmd")).toContain(`from "./${sharedChunk}"`);
     },
@@ -1313,6 +1313,44 @@ describe("bundler", () => {
       { file: "/out/main.js", stdout: "shared evaluated\nmain 41 common\ncmd 42" },
       { file: "/out/repl.js", stdout: "shared evaluated\nrepl 41 common\nsub\ncmd 42" },
     ],
+  });
+
+  // Lazy modules that import() each other: `d` is only reached through `x`,
+  // which `main` or `y` loads, and `y` only through `x`, so `main` always
+  // comes first and the {main, d} chunk folds into main.js.
+  itBundled("splitting/FoldsChunkBehindDynamicImportCycle", {
+    files: {
+      "/main.js": /* js */ `
+        import { shared } from './shared.js'
+        console.log('main', shared())
+        import('./x.js')
+      `,
+      "/x.js": /* js */ `
+        console.log('x')
+        export const y = () => import('./y.js')
+        import('./d.js').then(m => console.log('d', m.d()))
+      `,
+      "/y.js": /* js */ `
+        export const x = () => import('./x.js')
+      `,
+      "/d.js": /* js */ `
+        import { shared } from './shared.js'
+        export function d() { return shared() + 1 }
+      `,
+      "/shared.js": /* js */ `
+        export function shared() { return 41 }
+      `,
+    },
+    entryPoints: ["/main.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["d.js", "main.js", "x.js", "y.js"]);
+      api.expectFile("/out/main.js").toContain("41");
+      expect(jsOutput(api, "d")).toContain('from "./main.js"');
+    },
+    run: { file: "/out/main.js", stdout: "main 41\nx\nd 42" },
   });
 
   // Folding a chunk with side effects into a pure one (rule 1) makes the

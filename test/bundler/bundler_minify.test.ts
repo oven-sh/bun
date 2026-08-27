@@ -3,6 +3,22 @@ import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
+  // A direct eval at the top level of a file the bundler wraps in a CommonJS
+  // closure can reach that file's top-level names, so they are not renamed.
+  itBundled("minify/DirectEvalKeepsTopLevelNamesOfWrappedFile", {
+    files: {
+      "/entry.js": /* js */ `
+        var secret = 'top'
+        function helper() { return 'fn' }
+        console.log(eval('secret'), eval('helper()'))
+      `,
+    },
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("secret");
+    },
+    run: { stdout: "top fn" },
+  });
   itBundled("minify/TemplateStringFolding", {
     files: {
       "/entry.js": /* js */ `

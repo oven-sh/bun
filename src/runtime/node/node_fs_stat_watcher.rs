@@ -89,60 +89,6 @@ unsafe impl bun_threading::Linked for StatWatcher {
     }
 }
 
-/// RAII owner of one outstanding [`StatWatcherScheduler`] ref. Adopts the
-/// "task in flight" ref taken in [`StatWatcherScheduler::timer_callback`] and
-/// releases it on Drop.
-#[must_use = "dropping immediately releases the adopted ref"]
-struct SchedulerRefGuard(*mut StatWatcherScheduler);
-
-impl SchedulerRefGuard {
-    /// Take ownership of a ref the caller already holds (no bump).
-    ///
-    /// # Safety
-    /// `ptr` must point to a live `StatWatcherScheduler` and the caller must
-    /// own one outstanding ref, which is transferred to the returned guard.
-    #[inline]
-    unsafe fn adopt(ptr: *mut StatWatcherScheduler) -> Self {
-        Self(ptr)
-    }
-}
-
-impl Drop for SchedulerRefGuard {
-    #[inline]
-    fn drop(&mut self) {
-        // SAFETY: `adopt` contract — `self.0` is live and we own one ref.
-        unsafe { ThreadSafeRefCount::<StatWatcherScheduler>::deref(self.0) };
-    }
-}
-
-/// RAII owner of one outstanding [`StatWatcher`] ref. Adopts a ref taken
-/// elsewhere (e.g. by `InitialStatTask::create_and_schedule` or
-/// [`StatWatcher::restat`]) and releases it on Drop.
-/// Holds a raw pointer so no `&`/`&mut StatWatcher` is
-/// live across the potential free in `deref`.
-#[must_use = "dropping immediately releases the adopted ref"]
-struct WatcherRefGuard(*mut StatWatcher);
-
-impl WatcherRefGuard {
-    /// Take ownership of a ref the caller already holds (no bump).
-    ///
-    /// # Safety
-    /// `ptr` must point to a live `StatWatcher` and the caller must own one
-    /// outstanding ref, which is transferred to the returned guard.
-    #[inline]
-    unsafe fn adopt(ptr: *mut StatWatcher) -> Self {
-        Self(ptr)
-    }
-}
-
-impl Drop for WatcherRefGuard {
-    #[inline]
-    fn drop(&mut self) {
-        // SAFETY: `adopt` contract — `self.0` is live and we own one ref.
-        unsafe { ThreadSafeRefCount::<StatWatcher>::deref(self.0) };
-    }
-}
-
 impl StatWatcherScheduler {
     /// # Safety
     /// `this` must point to a live `StatWatcherScheduler`.
@@ -327,7 +273,7 @@ impl StatWatcherScheduler {
         }
 
         // One ref is held across the work-pool hop (released by the
-        // `SchedulerRefGuard` in `work_pool_callback`). Taken here — not in
+        // `RefPtr::from_raw` in `work_pool_callback`). Taken here — not in
         // `set_interval` — so the count exactly tracks "task in flight" instead
         // of accumulating one leak per `set_interval(0)` / re-arm.
         // SAFETY: `self` is live (`&mut self`).
@@ -347,7 +293,7 @@ impl StatWatcherScheduler {
         // ref'd when the work-pool task was scheduled
         // SAFETY: `this` is live; one ref (taken in `timer_callback`) is owned
         // by this callback and adopted here.
-        let _ref_guard = unsafe { SchedulerRefGuard::adopt(this) };
+        let guard = unsafe { RefPtr::from_raw(this) };
         // BACKREF — `this` is alive (ref'd when the timer was scheduled);
         // `ParentRef` Deref gives safe `&Self` for the queue/interval reads.
         let this_ref = ParentRef::from(NonNull::new(this).expect("work_pool_callback: scheduler"));
@@ -416,7 +362,7 @@ impl StatWatcherScheduler {
         // Publish the queue writes above before declaring the work-pool hop
         // finished; `shutdown_for_exit` Acquire-loads this and then drains.
         this_ref.work_pool_in_flight.store(false, Ordering::Release);
-        drop(_ref_guard);
+        drop(guard);
         drop(ticket);
     }
 
@@ -476,9 +422,8 @@ impl StatWatcherScheduler {
         }
 
         // Release the RareData ref (`into_raw()` in `lazy_scheduler`). The
-        // scheduler stays alive until every remaining `StatWatcher::finalize`
-        // drops its `RefPtr` during `lastChanceToFinalize`; the last of those
-        // brings the count to zero.
+        // scheduler stays alive until the last remaining `StatWatcher` (each
+        // holds a `scheduler` ref) is freed.
         // SAFETY: `this` is live and we own the RareData ref.
         Self::deref(this);
     }
@@ -763,7 +708,6 @@ impl StatWatcher {
         let this = ParentRef::from(NonNull::new(this_ptr).expect("finalize: watcher"));
         this.this_value.with_mut(|r| r.finalize());
         this.closed.store(true, Ordering::Relaxed);
-        this.scheduler.deref();
         // but don't deinit until the scheduler drops its reference.
         // SAFETY: `this_ptr` was just leaked from `Box`; we own one ref.
         Self::deref(this_ptr);
@@ -771,7 +715,7 @@ impl StatWatcher {
 
     fn initial_stat_success_on_main_thread(this: *mut StatWatcher) -> bun_event_loop::JsResult<()> {
         // SAFETY: balance the ref from createAndSchedule(); raw ptr captured (not `&self`).
-        let _ref_guard = unsafe { WatcherRefGuard::adopt(this) };
+        let _guard = unsafe { RefPtr::from_raw(this) };
         // BACKREF — `this` is alive (ref'd in
         // InitialStatTask::create_and_schedule). R-2: all field access via
         // Cell/JsCell/Atomic; `ParentRef` Deref gives safe `&Self`.
@@ -797,7 +741,7 @@ impl StatWatcher {
 
     fn initial_stat_error_on_main_thread(this: *mut StatWatcher) -> bun_event_loop::JsResult<()> {
         // SAFETY: balance the ref from createAndSchedule(); raw ptr captured (not `&self`).
-        let _ref_guard = unsafe { WatcherRefGuard::adopt(this) };
+        let _guard = unsafe { RefPtr::from_raw(this) };
         // BACKREF — `this` is alive (ref'd in
         // InitialStatTask::create_and_schedule). R-2: `cb.call()` below
         // re-enters JS, which may call `do_close()` → fresh `&Self` from
@@ -884,7 +828,7 @@ impl StatWatcher {
         this: *mut StatWatcher,
     ) -> bun_event_loop::JsResult<()> {
         // SAFETY: balance the ref from restat(); raw ptr captured (not `&self`).
-        let _ref_guard = unsafe { WatcherRefGuard::adopt(this) };
+        let _guard = unsafe { RefPtr::from_raw(this) };
         // BACKREF — `this` is alive (ref'd in restat()). R-2: `cb.call()`
         // below re-enters JS, which may call `do_close()` → fresh `&Self` from
         // m_ctx; aliased `&` is sound, aliased `&mut` is not (and the

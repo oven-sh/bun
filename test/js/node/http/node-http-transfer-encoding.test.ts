@@ -169,6 +169,47 @@ test("empty Transfer-Encoding with Content-Length frames the body like node", as
   expect(response).toStartWith("HTTP/1.1 200");
 });
 
+// An empty field followed by "Transfer-Encoding: chunked" combines to just
+// "chunked" (RFC 9110 5.6.1). llhttp frames the body as chunked and node
+// delivers it. The has-body decision must look at every Transfer-Encoding
+// field: reading only the first one sees an empty value and drops the body.
+test.each([
+  ["empty", ""],
+  ["whitespace-only", "   "],
+])("%s Transfer-Encoding field followed by chunked delivers the body like node", async (name, te) => {
+  const events: string[] = [];
+  await using server = createServer((req, res) => {
+    let body = "";
+    req.on("data", d => (body += d));
+    req.on("end", () => {
+      events.push(`request ${req.url} body=${body}`);
+      res.end("ok");
+    });
+  });
+  server.on("clientError", (err: any, socket) => {
+    events.push(`clientError ${err.code}`);
+    socket.destroy();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const { promise, resolve } = Promise.withResolvers<string>();
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write(
+      `POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding:${te}\r\nTransfer-Encoding: chunked\r\n\r\n` +
+        "5\r\nhello\r\n0\r\n\r\n" +
+        "GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+  });
+  let raw = "";
+  socket.on("data", chunk => (raw += chunk.toString()));
+  socket.on("error", () => {});
+  socket.on("close", () => resolve(raw));
+  const response = await promise;
+  expect(events).toEqual(["request /a body=hello", "request /b body="]);
+  expect(response.match(/HTTP\/1\.1 200/g)).toHaveLength(2);
+});
+
 // Boundary of the leniency: node errors once any non-whitespace value byte
 // arrives, even one that names no coding.
 test("comma-only Transfer-Encoding value still fires clientError like node", async () => {

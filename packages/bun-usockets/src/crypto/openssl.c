@@ -1522,6 +1522,49 @@ void us_internal_ssl_ctx_unref(SSL_CTX *p) {
   if (p) SSL_CTX_free(p);
 }
 
+/* ── HTTP/2 ALPN ─────────────────────────────────────────────────────────── */
+
+static int us_alpn_select_h2(SSL *ssl, const unsigned char **out, unsigned char *outlen,
+                             const unsigned char *in, unsigned int inlen, void *arg) {
+  (void) ssl;
+  int allow_http1 = arg != NULL;
+  const unsigned char *http1 = NULL;
+  for (unsigned int i = 0; i + 1 <= inlen;) {
+    unsigned int len = in[i];
+    if (i + 1 + len > inlen) break;
+    const unsigned char *proto = &in[i + 1];
+    if (len == 2 && proto[0] == 'h' && proto[1] == '2') {
+      *out = proto;
+      *outlen = 2;
+      return SSL_TLSEXT_ERR_OK;
+    }
+    if (len == 8 && memcmp(proto, "http/1.1", 8) == 0) http1 = proto;
+    i += 1 + len;
+  }
+  if (http1 && allow_http1) {
+    *out = http1;
+    *outlen = 8;
+    return SSL_TLSEXT_ERR_OK;
+  }
+  /* The client offered ALPN but not h2 (this callback doesn't run at all for
+   * a client that sends no ALPN extension; that one completes the handshake
+   * and is answered at the HTTP layer). Proceed without ALPN when HTTP/1 is
+   * allowed; otherwise refuse the handshake with no_application_protocol. */
+  return allow_http1 ? SSL_TLSEXT_ERR_NOACK : SSL_TLSEXT_ERR_ALERT_FATAL;
+}
+
+void us_ssl_ctx_enable_http2_alpn(SSL_CTX *ctx, int allow_http1) {
+  SSL_CTX_set_alpn_select_cb(ctx, us_alpn_select_h2, allow_http1 ? (void *) 1 : NULL);
+}
+
+int us_socket_alpn_is_h2(struct us_socket_t *s) {
+  if (!s->ssl) return 0;
+  const unsigned char *proto = NULL;
+  unsigned int len = 0;
+  SSL_get0_alpn_selected(s_ssl(s), &proto, &len);
+  return len == 2 && proto[0] == 'h' && proto[1] == '2';
+}
+
 /* ── Per-socket SSL attach/detach ────────────────────────────────────────── */
 
 void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,

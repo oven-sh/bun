@@ -1077,7 +1077,7 @@ fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<J
     // SAFETY: bun_vm() returns the live per-thread singleton.
     let vm = global_this.bun_vm();
     let mut args = ArgumentsSlice::init(vm, arguments);
-    let Some(specifier) = args.protect_eat_next() else {
+    let Some(specifier) = args.next_eat() else {
         return Err(global_this
             .throw_invalid_arguments(format_args!("Expected a specifier and a from path")));
     };
@@ -1086,7 +1086,7 @@ fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<J
         return Err(global_this.throw_invalid_arguments(format_args!("specifier must be a string")));
     }
 
-    let Some(from) = args.protect_eat_next() else {
+    let Some(from) = args.next_eat() else {
         return Err(global_this.throw_invalid_arguments(format_args!("Expected a from path")));
     };
 
@@ -1878,26 +1878,11 @@ fn get_is_standalone_executable(global_this: &JSGlobalObject, _: &JSObject) -> J
 fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
     use crate::webcore::blob::{Blob, BlobExt as _};
     use bun_standalone_graph::{File as GraphFile, Graph as StandaloneModuleGraph};
-    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    let vm = global_this.bun_vm();
-    if vm.standalone_module_graph.is_none() {
+    let Some(graph) = StandaloneModuleGraph::get_ref() else {
         return JSValue::create_empty_array(global_this, 0);
-    }
-    // NOTE (layering): `VirtualMachine.standalone_module_graph` is
-    // type-erased to `&dyn bun_resolver::StandaloneModuleGraph` so `bun_jsc`
-    // doesn't depend on `bun_standalone_graph`. The concrete graph is the
-    // process singleton — `Graph::get()` returns the same instance the trait
-    // object was built from (`vm.standalone_module_graph.is_some()` ⇔
-    // `Graph::get().is_some()`).
-    // SAFETY: `Graph::get()` yields the process-lifetime singleton verified
-    // populated by the `is_some()` check above; this getter runs only on the
-    // JS thread, so the `&mut` borrow is exclusive for the call.
-    let graph: &mut StandaloneModuleGraph = unsafe {
-        &mut *StandaloneModuleGraph::get()
-            .expect("vm.standalone_module_graph set ⇔ Graph singleton populated")
     };
 
-    let unsorted_files = graph.files.values_mut();
+    let unsorted_files = graph.files.values();
     let mut sort_indices: Vec<u32> = Vec::with_capacity(unsorted_files.len());
     for (index, file) in unsorted_files.iter().enumerate() {
         // Some % of people using `bun build --compile` want to obscure the source code
@@ -1921,15 +1906,13 @@ fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JS
         }
     });
     for (i, index) in sort_indices.iter().enumerate() {
-        use crate::api::standalone_graph_jsc::FileJsc as _;
-        let file: &mut GraphFile = &mut unsorted_files[*index as usize];
+        let file: &GraphFile = &unsorted_files[*index as usize];
         // `file_blob` keeps the embedded path (minus the `/$bunfs/root/` prefix)
         // as the blob name, preserving any subdirectory from the asset template.
-        let input_blob: &mut Blob = file.file_blob(global_this);
-        // We call .dupe() on this to ensure that we don't return a blob that might get freed later.
-        let blob = Blob::new(input_blob.dupe_with_content_type(true));
-        // SAFETY: `Blob::new` returned a fresh heap allocation.
-        unsafe { (*blob).name.set(input_blob.name.get().clone()) };
+        let blob = Blob::new(crate::api::standalone_graph_jsc::file_blob(
+            file,
+            global_this,
+        ));
         // SAFETY: `blob` is heap-allocated and lives until JS owns it via to_js.
         array.put_index(global_this, i as u32, unsafe { (*blob).to_js(global_this) })?;
     }
@@ -2152,9 +2135,8 @@ extern "C" fn Bun__reportError(global_object: &JSGlobalObject, err: JSValue) {
 /// object nor `undefined`.
 ///
 /// Kept separate from [`parse_compress_buffer_and_options`] so async callers
-/// (e.g. `JSZstd::get_options_async`) can read `options` *before* GC-protecting
-/// the buffer — preserving error precedence and avoiding a protect leak on the
-/// early-throw path.
+/// (e.g. `JSZstd::get_options_async`) can read `options` *before* pinning and
+/// rooting the buffer, preserving error precedence.
 #[inline]
 pub(crate) fn parse_compress_args(
     global: &JSGlobalObject,
@@ -2654,17 +2636,16 @@ pub mod JSZstd {
     fn get_options_async(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
-    ) -> JsResult<(node::StringOrBuffer<'static>, Option<JSValue>, i32)> {
+    ) -> JsResult<(
+        node::ThreadIsolated<node::StringOrBuffer<'static>>,
+        Option<JSValue>,
+        i32,
+    )> {
         let (buffer_value, options_val) = parse_compress_args(global_this, callframe)?;
 
         let level = get_level(global_this, options_val)?;
 
-        if let Some(buffer) = node::StringOrBuffer::from_js_maybe_async(
-            global_this,
-            buffer_value,
-            node::Flavor::Async,
-            node::StringObjects::Allow,
-        )? {
+        if let Some(buffer) = node::StringOrBuffer::from_js_async(global_this, buffer_value)? {
             return Ok((buffer, options_val, level));
         }
 
@@ -2781,9 +2762,7 @@ pub mod JSZstd {
 
     /// `Bun.zstdCompress` / `Bun.zstdDecompress` off the JS thread.
     pub(crate) struct ZstdJob {
-        /// Created with `Flavor::Async` (JS-backed buffer protected); the
-        /// [`bun_jsc::ThreadSafe`] releases that with the job.
-        pub buffer: bun_jsc::ThreadSafe<node::StringOrBuffer<'static>>,
+        pub buffer: node::ThreadIsolated<node::StringOrBuffer<'static>>,
         pub is_compress: bool,
         pub level: i32,
         /// Filled in by `run`.
@@ -2830,7 +2809,7 @@ pub mod JSZstd {
 
     fn create_job(
         global_this: &JSGlobalObject,
-        buffer: node::StringOrBuffer<'static>,
+        buffer: node::ThreadIsolated<node::StringOrBuffer<'static>>,
         is_compress: bool,
         level: i32,
     ) -> JSValue {
@@ -2840,7 +2819,7 @@ pub mod JSZstd {
         jsc::Job::<ZstdJob>::schedule(
             &cx,
             ZstdJob {
-                buffer: bun_jsc::ThreadSafe::adopt(buffer),
+                buffer,
                 is_compress,
                 level,
                 result: Ok(Box::default()),
@@ -2881,28 +2860,27 @@ pub mod JSZstd {
 // crate and can't move down without dragging `node::PathLike`/S3/aio. The
 // stores exist purely for per-VM lazy init; that is per-thread
 // in practice (`VirtualMachine::get()` is thread-local), so cache the
-// `StoreRef`s here.
+// `RefPtr<Store>`s here.
 mod stdio_stores {
     use super::*;
     use crate::node::types::PathOrFileDescriptor;
-    use crate::webcore::blob::store::{Data, File as FileStore};
-    use crate::webcore::blob::{Blob, BlobExt as _, Store, StoreRef};
+    use crate::webcore::blob::store::{Data, File as FileStore, IsAllAscii};
+    use crate::webcore::blob::{Blob, BlobExt as _, Store};
+    use bun_ptr::RefPtr;
 
     thread_local! {
-        static STDIN: core::cell::RefCell<Option<StoreRef>> = const { core::cell::RefCell::new(None) };
-        static STDOUT: core::cell::RefCell<Option<StoreRef>> = const { core::cell::RefCell::new(None) };
-        static STDERR: core::cell::RefCell<Option<StoreRef>> = const { core::cell::RefCell::new(None) };
+        static STDIN: core::cell::RefCell<Option<RefPtr<Store>>> = const { core::cell::RefCell::new(None) };
+        static STDOUT: core::cell::RefCell<Option<RefPtr<Store>>> = const { core::cell::RefCell::new(None) };
+        static STDERR: core::cell::RefCell<Option<RefPtr<Store>>> = const { core::cell::RefCell::new(None) };
     }
 
-    fn build_store(uv_fd: i32, is_atty: bool) -> StoreRef {
+    fn build_store(uv_fd: i32, is_atty: bool) -> RefPtr<Store> {
         let fd = bun_sys::Fd::from_uv(uv_fd);
         let mode: bun_sys::Mode = match bun_sys::fstat(fd) {
             Ok(stat) => stat.st_mode as bun_sys::Mode,
             Err(_) => 0,
         };
-        // NOTE: with `StoreRef` (intrusive RAII) the slot is +1 and
-        // the Blob takes its own +1 via `clone()`.
-        let store = Store::new(Store {
+        RefPtr::new(Store {
             data: Data::File(FileStore {
                 pathlike: PathOrFileDescriptor::Fd(fd),
                 is_atty: Some(is_atty),
@@ -2911,14 +2889,13 @@ mod stdio_stores {
             }),
             mime_type: bun_http_types::MimeType::NONE,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            is_all_ascii: None,
-        });
-        StoreRef::from(store)
+            is_all_ascii: IsAllAscii::default(),
+        })
     }
 
     fn make_blob(
         global_this: &JSGlobalObject,
-        slot: &'static std::thread::LocalKey<core::cell::RefCell<Option<StoreRef>>>,
+        slot: &'static std::thread::LocalKey<core::cell::RefCell<Option<RefPtr<Store>>>>,
         uv_fd: i32,
         is_atty: bool,
         feature: &'static core::sync::atomic::AtomicUsize,

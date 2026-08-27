@@ -5,7 +5,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_boringssl as boringssl;
 use bun_cares_sys::c_ares_draft as c_ares;
-use bun_core::{MutableString, String as BunString, Utf8Bytes};
+use bun_core::{MutableString, String as BunString};
 use bun_event_loop::{
     ConcurrentTask::{AutoDeinit, ConcurrentTask},
     Task, Taskable,
@@ -148,8 +148,7 @@ pub struct FetchTasklet {
     pub(crate) check_server_identity: StrongOptional,
     pub(crate) reject_unauthorized: bool,
     pub(crate) upgraded_connection: bool,
-    // Custom Hostname
-    pub(crate) hostname: Option<Box<[u8]>>,
+    pub(crate) unix_socket_path: Box<[u8]>,
     pub(crate) is_waiting_body: bool,
     pub(crate) is_waiting_abort: bool,
     pub(crate) is_waiting_request_stream_start: bool,
@@ -456,13 +455,13 @@ impl FetchTasklet {
 
     fn clear_data(&mut self) {
         bun_output::scoped_log!(FetchTasklet, "clearData ");
+        // `http.client` borrows `url_proxy_buffer` / `unix_socket_path` / `request_headers`.
+        self.http = None;
         if !self.url_proxy_buffer.is_empty() {
             self.url_proxy_buffer = Box::default();
         }
 
-        if let Some(_hostname) = self.hostname.take() {
-            // dropped by Box
-        }
+        self.unix_socket_path = Box::default();
 
         if let Some(certificate) = self.result.certificate_info.take() {
             drop(certificate);
@@ -470,10 +469,6 @@ impl FetchTasklet {
 
         // Drop on assignment runs the cleanup. MultiArrayList has no `clear()`.
         self.request_headers = Headers::default();
-
-        if let Some(http_) = self.http.as_mut() {
-            http_.clear_data();
-        }
 
         if let Some(metadata) = self.metadata.take() {
             drop(metadata);
@@ -513,7 +508,6 @@ impl FetchTasklet {
         // SAFETY: this was allocated via heap::alloc in `get()`; ref_count == 0 so exclusive
         let mut boxed = unsafe { bun_core::heap::take(this) };
         boxed.clear_data();
-        // self.http: Option<Box<AsyncHTTP>> dropped here automatically
         drop(boxed);
     }
 
@@ -1787,14 +1781,8 @@ impl FetchTasklet {
         // reshaped for borrowck — capture metadata fields before to_body_value() takes &mut self
         let headers = FetchHeaders::create_from_pico_headers(http_response.headers.list);
         let status_code = http_response.status_code as u16;
-        // status_text and url must NOT be atomized: this runs on the HTTP
-        // thread, and atom strings live in a per-thread table — creating or
-        // deref'ing them off the JS thread trips the `wasRemoved`
-        // RELEASE_ASSERT in AtomStringImpl::remove(). Plain WTFStringImpl
-        // refcounts are atomic, so clone_utf8 is safe.
         // Fast path: when the wire reason phrase matches the canonical text for
-        // this status code, store a StaticEncodedSlice (deref is a no-op, so still
-        // safe to drop off-thread) and skip the WTF allocation entirely.
+        // this status code, store a StaticEncodedSlice and skip the WTF allocation.
         let status_text = match crate::server::http_status_text::get(status_code)
             .map(|t| &t[4..])
             .filter(|canon| *canon == http_response.status)
@@ -1910,7 +1898,7 @@ impl FetchTasklet {
             check_server_identity: fetch_options.check_server_identity,
             reject_unauthorized: fetch_options.reject_unauthorized,
             upgraded_connection: fetch_options.upgraded_connection,
-            hostname: fetch_options.hostname,
+            unix_socket_path: fetch_options.unix_socket_path,
             is_waiting_body: false,
             is_waiting_abort: false,
             is_waiting_request_stream_start: false,
@@ -1926,7 +1914,7 @@ impl FetchTasklet {
         fetch_tasklet.tracker.did_schedule(global_this);
 
         // `body` is *moved* through `FetchOptions` into `request_body` (no
-        // shallow alias, no post-queue detach), so the StoreRef already carries
+        // shallow alias, no post-queue detach), so the RefPtr<Store> already carries
         // the caller's +1 — bumping it again here leaked one ref per
         // Blob-backed body (issue: fetch-leak fixture #5 RSS growth).
         // `clear_data() → request_body.detach()` releases it.
@@ -1972,32 +1960,30 @@ impl FetchTasklet {
 
         // This task gets queued on the HTTP thread.
         // `AsyncHTTP::init` takes several `&'static [u8]` borrows
-        // (headers_buf, request_body, hostname) that point into
+        // (headers_buf, request_body, unix_socket_path) that point into
         // FetchTasklet-owned storage. The tasklet is heap-pinned via
         // `heap::alloc`, so erase the borrow lifetimes through raw pointers.
         // SAFETY: `fetch_tasklet_ptr` is a stable heap allocation that outlives
         // the AsyncHTTP (dropped together in `deinit`); the slices below borrow
-        // its `request_headers.buf`, `request_body`, and `hostname` fields
-        // which are not reallocated for the lifetime of the request.
+        // its `request_headers.buf`, `request_body`, and `unix_socket_path`
+        // fields which are not reallocated for the lifetime of the request.
         // SAFETY (`Interned::assume` — Population B, holder-backed):
         // `fetch_tasklet_ptr` is a `heap::alloc`'d `FetchTasklet` whose
-        // `request_headers.buf` / `request_body` / `hostname` fields are not
-        // reallocated for the request's lifetime, and the tasklet is freed in
-        // `deinit` only after the owned `AsyncHTTP` is dropped. NOT
-        // process-lifetime — these should become `RawSlice<u8>` once
-        // `AsyncHTTP::init` accepts holder-lifetime slices; `assume` names the
-        // owner so the widen is grep-able until then.
+        // `request_headers.buf` / `request_body` /
+        // `unix_socket_path` fields are not reallocated for the request's
+        // lifetime, and the tasklet is freed in `deinit` only after the owned
+        // `AsyncHTTP` is dropped. NOT process-lifetime — these should become
+        // `RawSlice<u8>` once `AsyncHTTP::init` accepts holder-lifetime slices;
+        // `assume` names the owner so the widen is grep-able until then.
         let headers_buf: &'static [u8] =
             unsafe { bun_ptr::Interned::assume(fetch_tasklet.request_headers.buf.as_slice()) }
                 .as_bytes();
         // SAFETY: see `Interned::assume` note above — same heap-pinned `FetchTasklet` owner.
         let request_body_slice: &'static [u8] =
             unsafe { bun_ptr::Interned::assume(fetch_tasklet.request_body.slice()) }.as_bytes();
-        let hostname: Option<&'static [u8]> = fetch_tasklet
-            .hostname
-            .as_deref()
-            // SAFETY: see block note above — same `FetchTasklet` owner.
-            .map(|s| unsafe { bun_ptr::Interned::assume(s) }.as_bytes());
+        // SAFETY: see block note above — same `FetchTasklet` owner.
+        let unix_socket_path: &'static [u8] =
+            unsafe { bun_ptr::Interned::assume(&fetch_tasklet.unix_socket_path) }.as_bytes();
         // `MultiArrayList` owns its
         // allocation, so clone; AsyncHTTP::init clones again for the client.
         let header_entries = bun_core::handle_oom(fetch_tasklet.request_headers.entries.clone());
@@ -2024,9 +2010,8 @@ impl FetchTasklet {
                 http_proxy: proxy,
                 proxy_settings,
                 proxy_headers: fetch_options.proxy_headers,
-                hostname,
                 signals: Some(fetch_tasklet.signals),
-                unix_socket_path: Some(fetch_options.unix_socket_path),
+                unix_socket_path: Some(unix_socket_path),
                 disable_timeout: Some(fetch_options.disable_timeout),
                 idle_timeout_seconds: fetch_options.idle_timeout_seconds,
                 disable_keepalive: Some(fetch_options.disable_keepalive),
@@ -2636,10 +2621,8 @@ pub struct FetchOptions {
     pub(crate) proxy_headers: Option<Headers>,
     pub(crate) url_proxy_buffer: Box<[u8]>,
     pub(crate) signal: Option<*mut AbortSignal>,
-    // Custom Hostname
-    pub(crate) hostname: Option<Box<[u8]>>,
     pub(crate) check_server_identity: StrongOptional,
-    pub(crate) unix_socket_path: Utf8Bytes<'static>,
+    pub(crate) unix_socket_path: Box<[u8]>,
     pub(crate) ssl_config: Option<http::ssl_config::SharedPtr>,
     pub(crate) upgraded_connection: bool,
     pub(crate) forced_protocol: Option<http::Protocol>,

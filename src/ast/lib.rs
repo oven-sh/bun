@@ -84,6 +84,20 @@ pub enum ImportKind {
 // - packages/bun-types/bun.d.ts
 
 impl ImportKind {
+    /// With code splitting, whether an edge of this kind puts its target in a
+    /// chunk of its own that is loaded when the expression runs, rather than
+    /// in the importer's static closure. `require()` qualifies only when the
+    /// output runs in Bun, which loads the chunk synchronously through
+    /// `import.meta.require`.
+    #[inline]
+    pub fn can_be_lazy_chunk(self, target_is_bun: bool) -> bool {
+        match self {
+            ImportKind::Dynamic => true,
+            ImportKind::Require => target_is_bun,
+            _ => false,
+        }
+    }
+
     #[inline]
     pub fn label(self) -> &'static [u8] {
         match self {

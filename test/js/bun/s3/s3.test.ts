@@ -1953,7 +1953,8 @@ describe("s3 upload stream body error", () => {
             );
           }
           if (req.method === "PUT") {
-            received += (await req.arrayBuffer()).byteLength;
+            const { byteLength } = await req.arrayBuffer();
+            received += byteLength;
             return new Response(undefined, { status: 200, headers: { ETag: '"etag"' } });
           }
           if (req.method === "POST" && url.search.includes("uploadId")) {

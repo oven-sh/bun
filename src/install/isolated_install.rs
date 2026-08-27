@@ -520,12 +520,11 @@ pub(crate) fn build_store(
                                     }
                                     break 'resolved invalid_package_id;
                                 };
-                                // Auto-install fallback is declarer-specific; let the
-                                // second pass handle this position rather than risk an
-                                // unsound key.
-                                if resolved == invalid_package_id {
-                                    break 'dont_dedupe;
-                                }
+                                // `invalid_package_id` is part of the key: an
+                                // unresolved peer auto-installs the declarer's own
+                                // `resolutions[peer_dep_id]`, which is position-
+                                // independent, so two positions that both leave
+                                // the name unresolved expand identically.
                                 hasher.update(bun_core::bytes_of(&peer_name_hash));
                                 hasher.update(bun_core::bytes_of(&resolved));
                             }

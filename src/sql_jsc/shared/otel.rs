@@ -88,7 +88,12 @@ impl QuerySpan {
         error: Option<DbError<'_>>,
     ) {
         if let Some(span) = self.take() {
-            bun_telemetry::db::end(global.as_ptr().cast(), span, statement.to_utf8().slice(), error);
+            bun_telemetry::db::end(
+                global.as_ptr().cast(),
+                span,
+                statement.to_utf8().slice(),
+                error,
+            );
         }
     }
 

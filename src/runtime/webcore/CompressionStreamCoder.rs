@@ -696,9 +696,7 @@ impl CompressionStreamCoder {
     }
 }
 
-/// A chunk's bytes for the pool thread: the bytes a paired [`PinnedArrayBuffer`]
-/// on the JS side keeps valid (a pinned + GC-rooted backing store, or its copy
-/// of a resizable one) or an owned copy.
+/// A chunk's bytes for the pool thread: what the paired [`PinnedArrayBuffer`] on the JS side keeps valid, or an owned copy.
 pub(crate) enum AsyncInput {
     Pinned { ptr: *const u8, len: usize },
     Owned(Vec<u8>),

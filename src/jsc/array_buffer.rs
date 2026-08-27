@@ -648,10 +648,6 @@ impl ArrayBuffer {
 /// GC-roots the cell. `Drop` releases what was taken. Constructed on the JS
 /// thread; a `root()`ed value is dropped there too, while a `pin()`-only value
 /// held by a `Blob` store drops wherever the store's last ref goes.
-///
-/// A pin does not stop `ArrayBuffer.prototype.resize()`: a shrink unmaps the
-/// trimmed pages under the borrow. [`root_read_only`](Self::root_read_only)
-/// is the constructor for a job that only reads a buffer it cannot watch.
 pub struct PinnedArrayBuffer {
     buffer: ArrayBuffer,
     rooted: bool,
@@ -687,11 +683,7 @@ impl PinnedArrayBuffer {
         Some(this)
     }
 
-    /// [`root`](Self::root) for a job that only reads the bytes. A resizable
-    /// non-shared buffer can shrink while the job runs, so its current bytes are
-    /// copied and the view reads the copy. A fixed-length buffer cannot shrink
-    /// and a growable `SharedArrayBuffer` only grows in place, so both stay
-    /// borrowed. `None` also when the copy cannot be allocated.
+    /// [`root`](Self::root) for a job that only reads: a resizable non-shared buffer is copied, as a pin stops a detach but not a shrink.
     pub fn root_read_only(global: &JSGlobalObject, value: JSValue) -> Option<Self> {
         let mut this = Self::root(global, value)?;
         if this.buffer.resizable && !this.buffer.shared && this.buffer.byte_len > 0 {

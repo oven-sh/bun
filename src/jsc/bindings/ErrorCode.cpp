@@ -1915,15 +1915,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
 
     Bun::ErrorCode error = static_cast<Bun::ErrorCode>(code);
 
-    // `$ERR_INVALID_ARG_TYPE(message)` / `$ERR_INVALID_ARG_VALUE(message)`: a
-    // message written in full, for a refusal Node's "The "x" argument must
-    // be of type y" template does not describe.
-    if ((error == Bun::ErrorCode::ERR_INVALID_ARG_TYPE || error == Bun::ErrorCode::ERR_INVALID_ARG_VALUE) && callFrame->argumentCount() == 2 && callFrame->argument(1).isString()) {
-        auto message = callFrame->argument(1).toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        return JSC::JSValue::encode(createError(globalObject, error, message));
-    }
-
     switch (error) {
     case Bun::ErrorCode::ERR_INVALID_ARG_TYPE: {
         JSValue arg0 = callFrame->argument(1);

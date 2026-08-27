@@ -107,9 +107,15 @@ const ObjectHasOwn = Object.hasOwn;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 
-/** What a proxy trap refuses (assigning, defining, deleting): a plain TypeError, as a frozen object's is. */
-function typeError(message: string) {
-  return new TypeError(message);
+/**
+ * A plain TypeError, as a frozen object's is for what a proxy trap refuses
+ * (assigning, defining, deleting). With `code`: an argument refusal worded
+ * in full, for the few the $ERR_INVALID_ARG_* templates cannot word.
+ */
+function typeError(message: string, code?: "ERR_INVALID_ARG_TYPE" | "ERR_INVALID_ARG_VALUE") {
+  const error = new TypeError(message) as TypeError & { code?: string };
+  if (code !== undefined) error.code = code;
+  return error;
 }
 
 /**
@@ -287,8 +293,9 @@ function runningClassOf(native: NativeObjC): NativeObjCClass {
   for (let i = running.length - 1; i >= 0; i--) {
     if (running[i].receiver === native) return running[i].cls;
   }
-  throw $ERR_INVALID_ARG_VALUE(
+  throw typeError(
     "this.super / objc.super(object): read outside one of the object's script-defined methods (after an await, in a timer or a callback there is none running); read it inside the method and keep what it gives, or pass the class whose superclass should answer: objc.super(object, objc.classes.MyView)",
+    "ERR_INVALID_ARG_VALUE",
   );
 }
 
@@ -329,7 +336,7 @@ function superProxy(native: NativeObjC, cls: NativeObjCClass): object {
         if (property === "msgSend") {
           found = function msgSend(selector: unknown, ...args: unknown[]) {
             if (typeof selector !== "string" || selector.length === 0) {
-              throw $ERR_INVALID_ARG_TYPE("super.msgSend(selector, ...args): selector must be a non-empty string");
+              throw $ERR_INVALID_ARG_TYPE("selector", "a non-empty string", selector);
             }
             return sendSuper(selector, args);
           };
@@ -390,7 +397,7 @@ const reservedMethods = new Map<string, (native: NativeObjC) => object | undefin
     native =>
       function msgSend(selector: unknown, ...args: unknown[]) {
         if (typeof selector !== "string" || selector.length === 0) {
-          throw $ERR_INVALID_ARG_TYPE("msgSend(selector, ...args): selector must be a non-empty string");
+          throw $ERR_INVALID_ARG_TYPE("selector", "a non-empty string", selector);
         }
         return send(native, selector, args);
       },
@@ -619,19 +626,19 @@ const enumTables = () =>
 
 /** An exported constant by name, read as `type` (default: the generated table's, else an object). */
 function constant(name: string, options?: { type?: string }): unknown {
-  if (typeof name !== "string" || name.length === 0)
-    throw $ERR_INVALID_ARG_TYPE("objc.constant(name): name must be a non-empty string");
+  if (typeof name !== "string" || name.length === 0) throw $ERR_INVALID_ARG_TYPE("name", "a non-empty string", name);
   let type = options?.type;
   if (type !== undefined && typeof type !== "string")
-    throw $ERR_INVALID_ARG_TYPE("objc.constant(name, { type }): type must be a type encoding string");
+    throw $ERR_INVALID_ARG_TYPE("options.type", "a type encoding string", type);
   const { constants } = enumTables();
   if (type === undefined) {
     type = ObjectHasOwn(constants, name) ? constants[name] : "@";
     // The SDK declares it as something the bridge cannot read (a table of
     // function pointers, a `FILE *`); reading it as an object would guess.
     if (type === "?")
-      throw $ERR_INVALID_ARG_VALUE(
+      throw typeError(
         `objc: the constant ${name} does not hold an Objective-C object; pass its C type, as in objc.constant("${name}", { type: "d" }) for a double or { type: "{CGRect=dddd}" } for a struct`,
+        "ERR_INVALID_ARG_VALUE",
       );
   }
   return fromNative(binding.objcConstant(name, type));
@@ -721,23 +728,23 @@ const classNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 function defineClass(definition: ClassDefinition): object {
   if (typeof definition !== "object" || definition === null) {
-    throw $ERR_INVALID_ARG_TYPE("objc.defineClass(definition): definition must be an object");
+    throw $ERR_INVALID_ARG_TYPE("definition", "object", definition);
   }
   const { name, superclass = "NSObject", protocols = [], methods, classMethods = {} } = definition;
   if (name !== undefined && (typeof name !== "string" || !classNamePattern.test(name))) {
-    throw $ERR_INVALID_ARG_TYPE("objc.defineClass(): name must be a string of letters, digits and _");
+    throw $ERR_INVALID_ARG_TYPE("definition.name", ["a string of letters, digits and _"], name);
   }
   // The application delegate class is this module's to define, on first need: a subclass is one.
   if (superclass === "BunApplicationDelegate") applicationDelegateClass();
   const superclassHandle = typeof superclass === "string" ? objcClasses[superclass] : superclass;
   if (!ArrayIsArray(protocols)) {
-    throw $ERR_INVALID_ARG_TYPE("objc.defineClass(): protocols must be an array of protocol names");
+    throw $ERR_INVALID_ARG_TYPE("definition.protocols", ["Array of protocol names"], protocols);
   }
   if (typeof methods !== "object" || methods === null) {
-    throw $ERR_INVALID_ARG_TYPE("objc.defineClass(): methods must be an object of functions keyed by selector");
+    throw $ERR_INVALID_ARG_TYPE("definition.methods", ["an object of functions keyed by selector"], methods);
   }
   if (typeof classMethods !== "object" || classMethods === null) {
-    throw $ERR_INVALID_ARG_TYPE("objc.defineClass(): classMethods must be an object of functions keyed by selector");
+    throw $ERR_INVALID_ARG_TYPE("definition.classMethods", ["an object of functions keyed by selector"], classMethods);
   }
   const selectors: string[] = [];
   const types: (string | undefined)[] = [];
@@ -756,14 +763,16 @@ function defineClass(definition: ClassDefinition): object {
         (typeof body !== "function" && !isScriptConstant(body)) ||
         (encoding !== undefined && typeof encoding !== "string")
       ) {
-        throw $ERR_INVALID_ARG_TYPE(
+        throw typeError(
           `objc.defineClass(): ${which}[${JSON.stringify(key)}] must be a function, a constant (boolean, number or null), or { types, fn } or { types, value } with types a string`,
+          "ERR_INVALID_ARG_TYPE",
         );
       }
       const lead = key.charCodeAt(0);
       if (lead === 43 || lead === 45) {
-        throw $ERR_INVALID_ARG_VALUE(
+        throw typeError(
           `objc.defineClass(): ${which}[${JSON.stringify(key)}]: leave the ${key[0]} off; instance methods go in \`methods\` and class methods in \`classMethods\``,
+          "ERR_INVALID_ARG_VALUE",
         );
       }
       // A key spelled the way sends are (`tableView_objectValueForTableColumn_row_`) names the same selector.
@@ -772,8 +781,9 @@ function defineClass(definition: ClassDefinition): object {
       for (let i = 0; i < selector.length; i++) if (selector.charCodeAt(i) === 58) colons++;
       const declared = typeof body === "function" ? body.length : 0;
       if (declared > colons) {
-        throw $ERR_INVALID_ARG_VALUE(
+        throw typeError(
           `objc.defineClass(): "${selector}" takes ${colons} argument${colons === 1 ? "" : "s"} but its function declares ${declared}`,
+          "ERR_INVALID_ARG_VALUE",
         );
       }
       selectors.push(selector);
@@ -830,33 +840,27 @@ function functionNamed(
 /** `objc.fn(name, { returns, args, format })`. */
 function cFunction(name: string, types?: FunctionTypes): (...args: unknown[]) => unknown {
   if (typeof name !== "string" || name.length === 0) {
-    throw $ERR_INVALID_ARG_TYPE("objc.fn(name, types): name must be a non-empty string");
+    throw $ERR_INVALID_ARG_TYPE("name", "a non-empty string", name);
   }
   if (types !== undefined && (typeof types !== "object" || types === null)) {
-    throw $ERR_INVALID_ARG_TYPE("objc.fn(name, types): types must be an object { returns, args }");
+    throw $ERR_INVALID_ARG_TYPE("types", ["a { returns, args } object"], types);
   }
   const { returns = "v", args = [], format, returnsRetained, retainedOuts } = types ?? {};
-  if (
-    typeof returns !== "string" ||
-    returns.length === 0 ||
-    !ArrayIsArray(args) ||
-    !args.every(a => typeof a === "string" && a.length > 0)
-  ) {
-    throw $ERR_INVALID_ARG_TYPE(
-      "objc.fn(name, { returns, args }): returns must be a type encoding and args an array of type encodings",
-    );
+  if (typeof returns !== "string" || returns.length === 0) {
+    throw $ERR_INVALID_ARG_TYPE("types.returns", "a type encoding string", returns);
+  }
+  if (!ArrayIsArray(args) || !args.every(a => typeof a === "string" && a.length > 0)) {
+    throw $ERR_INVALID_ARG_TYPE("types.args", ["Array of type encoding strings"], args);
   }
   const isIndex = (i: unknown): boolean => NumberIsInteger(i) && (i as number) >= 0 && (i as number) < args.length;
   if (format !== undefined && !isIndex(format)) {
-    throw $ERR_INVALID_ARG_VALUE("objc.fn(name, { format }): format must be the index of the format string among args");
+    throw $ERR_INVALID_ARG_VALUE("types.format", format, "must be the index of the format string among args");
   }
   if (returnsRetained !== undefined && typeof returnsRetained !== "boolean") {
-    throw $ERR_INVALID_ARG_TYPE("objc.fn(name, { returnsRetained }): returnsRetained must be a boolean");
+    throw $ERR_INVALID_ARG_TYPE("types.returnsRetained", "boolean", returnsRetained);
   }
   if (retainedOuts !== undefined && (!ArrayIsArray(retainedOuts) || !retainedOuts.every(isIndex))) {
-    throw $ERR_INVALID_ARG_VALUE(
-      "objc.fn(name, { retainedOuts }): retainedOuts must be an array of indexes among args",
-    );
+    throw $ERR_INVALID_ARG_VALUE("types.retainedOuts", retainedOuts, "must be an array of indexes among args");
   }
   return functionNamed(
     name,
@@ -1102,7 +1106,7 @@ const app = {
   },
   set activationPolicy(value: string) {
     if (typeof value !== "string" || !ObjectHasOwn(activationPolicies, value)) {
-      throw $ERR_INVALID_ARG_VALUE('app.activationPolicy must be "regular", "accessory" or "background"');
+      throw $ERR_INVALID_ARG_VALUE("app.activationPolicy", value, 'must be "regular", "accessory" or "background"');
     }
     if (started && Bun.isMainThread && value !== liveActivationPolicy()) applyActivationPolicy(value);
     activationPolicy = value;
@@ -1132,8 +1136,9 @@ const app = {
         !(nativeOfProxy.get(value) instanceof ObjCObject) ||
         !(value as Handle).isKindOfClass_(applicationDelegateClass()))
     ) {
-      throw $ERR_INVALID_ARG_TYPE(
+      throw typeError(
         'app.delegate must be an instance of BunApplicationDelegate or of a subclass (objc.defineClass({ superclass: "BunApplicationDelegate", methods: { … } })), or null',
+        "ERR_INVALID_ARG_TYPE",
       );
     }
     userDelegate = value as Handle | null;
@@ -1157,8 +1162,10 @@ const app = {
     return new AppHold();
   },
   on(event: string, listener: AppListener) {
-    if (!appEvents.includes(event)) throw $ERR_INVALID_ARG_VALUE(`Unknown app event "${event}"`);
-    if (typeof listener !== "function") throw $ERR_INVALID_ARG_TYPE("listener must be a function");
+    if (!appEvents.includes(event)) {
+      throw $ERR_INVALID_ARG_VALUE("event", event, `must be one of ${appEvents.join(", ")}`);
+    }
+    if (typeof listener !== "function") throw $ERR_INVALID_ARG_TYPE("listener", "function", listener);
     let set = appListeners.get(event);
     if (!set) appListeners.set(event, (set = new Set()));
     set.add(listener);
@@ -1182,13 +1189,12 @@ const objc = {
   /** Sends answered by the superclass: `objc.super(this).drawRect_(rect)` inside a defined method, or with the class given. */
   super(object: unknown, cls?: unknown): object {
     const native = typeof object === "object" && object !== null ? nativeOfProxy.get(object) : undefined;
-    if (native === undefined)
-      throw $ERR_INVALID_ARG_TYPE("objc.super(object, cls?): object must be an Objective-C handle");
+    if (native === undefined) throw $ERR_INVALID_ARG_TYPE("object", ["Objective-C handle"], object);
     let clsNative: NativeObjCClass | undefined;
     if (cls !== undefined) {
       const c = typeof cls === "object" && cls !== null ? nativeOfProxy.get(cls) : undefined;
       if (c === undefined || !isClassNative(c))
-        throw $ERR_INVALID_ARG_TYPE("objc.super(object, cls): cls must be a class handle");
+        throw typeError("objc.super(object, cls): cls must be a class handle", "ERR_INVALID_ARG_TYPE");
       clsNative = c;
     }
     return superOf(native, clsNative ?? runningClassOf(native));
@@ -1197,7 +1203,7 @@ const objc = {
   NSNotFound,
   sel(name: string): NativeObjCSelector {
     if (typeof name !== "string" || name.length === 0) {
-      throw $ERR_INVALID_ARG_TYPE("objc.sel(name): name must be a non-empty string");
+      throw $ERR_INVALID_ARG_TYPE("name", "a non-empty string", name);
     }
     return new ObjCSelector(name);
   },
@@ -1223,7 +1229,7 @@ const objc = {
   },
   defineClass,
   target(fn: (sender: object | null) => unknown): object {
-    if (typeof fn !== "function") throw $ERR_INVALID_ARG_TYPE("objc.target(fn): fn must be a function");
+    if (typeof fn !== "function") throw $ERR_INVALID_ARG_TYPE("fn", "function", fn);
     targetClass ??= fromNative(binding.objcTargetClass()) as { new: () => object };
     const target = targetClass.new();
     binding.objcAttach(target, { "action:": fn });
@@ -1231,9 +1237,9 @@ const objc = {
   },
   /** Without `types`: no result and one object per parameter `fn` declares. */
   block(fn: Function, types?: string): object {
-    if (typeof fn !== "function") throw $ERR_INVALID_ARG_TYPE("objc.block(fn, types): fn must be a function");
+    if (typeof fn !== "function") throw $ERR_INVALID_ARG_TYPE("fn", "function", fn);
     if (types === undefined) types = "v@?" + "@".repeat(fn.length);
-    else if (typeof types !== "string") throw $ERR_INVALID_ARG_TYPE("objc.block(fn, types): types must be a string");
+    else if (typeof types !== "string") throw $ERR_INVALID_ARG_TYPE("types", "string", types);
     return fromNative(binding.objcBlock(fn, types)) as object;
   },
 };

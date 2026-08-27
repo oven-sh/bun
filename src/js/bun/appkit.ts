@@ -170,9 +170,16 @@ function delivered(deliver: () => void): void {
   }
 }
 
-/** A plain TypeError, as the language's own are: an abstract class constructed, a method sent to a view it does not apply to. */
-function typeError(message: string) {
-  return new TypeError(message);
+/**
+ * A plain TypeError, as the language's own are: an abstract class
+ * constructed, a method sent to a view it does not apply to. With `code`: an
+ * argument refusal worded in full, for those the $ERR_INVALID_ARG_*
+ * templates cannot word.
+ */
+function typeError(message: string, code?: "ERR_INVALID_ARG_TYPE" | "ERR_INVALID_ARG_VALUE") {
+  const error = new TypeError(message) as TypeError & { code?: string };
+  if (code !== undefined) error.code = code;
+  return error;
 }
 
 // ---------------------------------------------------------------------------
@@ -260,7 +267,7 @@ const app = {
     return appName;
   },
   set name(value: string | null | undefined) {
-    if (value != null && typeof value !== "string") throw $ERR_INVALID_ARG_TYPE("app.name must be a string or null");
+    if (value != null && typeof value !== "string") throw $ERR_INVALID_ARG_TYPE("app.name", ["string", "null"], value);
     appName = value == null || value === "" ? defaultAppName : value;
     // The standard menus carry the name ("About …", "Quit …").
     if (wired && menuSpec === null) installMenuBar();
@@ -326,8 +333,8 @@ const app = {
     application.quit();
   },
   on(event: string, listener: Listener) {
-    if (!appEvents.includes(event)) throw $ERR_INVALID_ARG_VALUE(`Unknown app event "${event}"`);
-    if (typeof listener !== "function") throw $ERR_INVALID_ARG_TYPE("listener must be a function");
+    if (!appEvents.includes(event)) throw $ERR_INVALID_ARG_VALUE("event", event, `must be ${nameList(appEvents)}`);
+    if (typeof listener !== "function") throw $ERR_INVALID_ARG_TYPE("listener", "function", listener);
     let set = listeners.get(event);
     if (!set) listeners.set(event, (set = new Set()));
     set.add(listener);
@@ -435,11 +442,11 @@ class View {
     liveViewCount++;
     collectedViews.register(this, undefined);
     if (props != null) {
-      if (typeof props !== "object") throw $ERR_INVALID_ARG_TYPE(`${kind} options must be an object`);
+      if (typeof props !== "object") throw $ERR_INVALID_ARG_TYPE("options", "object", props);
       for (const key of ObjectKeys(props)) {
         const value = props[key];
         if (value === undefined) continue;
-        if (!hasProp(this, key)) throw $ERR_INVALID_ARG_VALUE(`Unknown property "${key}" for ${kind}`);
+        if (!hasProp(this, key)) throw $ERR_INVALID_ARG_VALUE(`options.${key}`, value, `is not a property of ${kind}`);
         (this as any)[key] = value;
       }
     }
@@ -558,10 +565,10 @@ function tellAxis(child: View, container: Container | null): void {
 
 /** Throws unless `child` is a View this container may take: not an ancestor, and not in another parent. */
 function adoptable(container: Container, child: unknown, method: string): void {
-  if (!(child instanceof View)) throw $ERR_INVALID_ARG_TYPE(`${kindOf(container)}.${method}: child must be a View`);
+  if (!(child instanceof View)) throw $ERR_INVALID_ARG_TYPE("child", ["View"], child);
   for (let ancestor: Container | null = container; ancestor; ancestor = ancestor.parent) {
     if (ancestor === (child as View))
-      throw $ERR_INVALID_ARG_VALUE("A view cannot contain itself or one of its ancestors");
+      throw typeError("A view cannot contain itself or one of its ancestors", "ERR_INVALID_ARG_VALUE");
   }
   const parent = rawParentOf(child);
   if (parent !== null && parent !== container) {
@@ -638,7 +645,7 @@ class Container extends View {
   }
 
   set children(views: readonly View[]) {
-    if (!ArrayIsArray(views)) throw $ERR_INVALID_ARG_TYPE(`${kindOf(this)}.children must be an array of views`);
+    if (!ArrayIsArray(views)) throw $ERR_INVALID_ARG_TYPE(`${kindOf(this)}.children`, ["Array of views"], views);
     this.replaceChildren.$apply(this, views);
   }
 
@@ -722,7 +729,7 @@ class Container extends View {
     for (const view of views) {
       adoptable(this, view, "replaceChildren");
       if (wanted.has(view))
-        throw $ERR_INVALID_ARG_VALUE(`${kindOf(this)}.replaceChildren: the same view appears twice`);
+        throw typeError(`${kindOf(this)}.replaceChildren: the same view appears twice`, "ERR_INVALID_ARG_VALUE");
       wanted.add(view);
     }
     const children = this.#children;
@@ -791,15 +798,14 @@ const GpuFrame = binding.GpuFrame;
 {
   const proto = GpuFrame.prototype;
   const renderPass = proto.renderPass;
-  const what = "frame.renderPass() clear";
   proto.renderPass = function (this: NativeFrame, target: unknown, options?: unknown) {
     if (target instanceof MetalView) {
       target = nativeOf(target);
       if (typeof (options as { clear?: unknown } | undefined)?.clear === "string") {
-        options = { ...(options as object), clear: rgbaFor(what, (options as { clear: string }).clear) };
+        options = { ...(options as object), clear: rgbaFor("clear", (options as { clear: string }).clear) };
       }
     } else if (typeof (target as { clear?: unknown } | undefined)?.clear === "string") {
-      target = { ...(target as object), clear: rgbaFor(what, (target as { clear: string }).clear) };
+      target = { ...(target as object), clear: rgbaFor("clear", (target as { clear: string }).clear) };
     }
     return renderPass.$call(this, target, options);
   };
@@ -851,11 +857,11 @@ const alignUp = (n: number, align: number) => Math.ceil(n / align) * align;
 function writeScalar(view: DataView, at: number, scalar: Scalar, value: unknown, path: string) {
   if (scalar === "bool") {
     if (typeof value !== "boolean" && typeof value !== "number")
-      throw $ERR_INVALID_ARG_TYPE(`${path} must be a boolean`);
+      throw $ERR_INVALID_ARG_TYPE(path, ["boolean", "number"], value);
     view.setUint8(at, value ? 1 : 0);
     return;
   }
-  if (typeof value !== "number") throw $ERR_INVALID_ARG_TYPE(`${path} must be a number`);
+  if (typeof value !== "number") throw $ERR_INVALID_ARG_TYPE(path, "number", value);
   switch (scalar) {
     case "f32":
       return view.setFloat32(at, value, true);
@@ -883,10 +889,10 @@ class StructLayout {
 
   constructor(spec: Record<string, string>, name: string) {
     if (!spec || typeof spec !== "object" || ArrayIsArray(spec)) {
-      throw $ERR_INVALID_ARG_TYPE("gpu.struct(fields) expects an object mapping field names to MSL type names");
+      throw $ERR_INVALID_ARG_TYPE("fields", ["object mapping field names to MSL type names"], spec);
     }
     if (typeof name !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
-      throw $ERR_INVALID_ARG_VALUE("gpu.struct(fields, name): name must be an identifier");
+      throw $ERR_INVALID_ARG_VALUE("name", name, "must be an identifier");
     }
     const order: StructField[] = [];
     const fields: Record<string, StructField> = {};
@@ -894,13 +900,11 @@ class StructLayout {
     let align = 1;
     for (const key of ObjectKeys(spec)) {
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key))
-        throw $ERR_INVALID_ARG_VALUE(`gpu.struct: field name "${key}" is not an identifier`);
+        throw $ERR_INVALID_ARG_VALUE("fields", key, "has a field name that is not an identifier");
       const type = spec[key];
       const info = typeof type === "string" && ObjectHasOwn(mslTypes, type) ? mslTypes[type] : undefined;
       if (!info) {
-        throw $ERR_INVALID_ARG_VALUE(
-          `gpu.struct: field "${key}" has unknown type ${JSON.stringify(type)}; expected one of ${ObjectKeys(mslTypes).join(", ")}`,
-        );
+        throw $ERR_INVALID_ARG_VALUE(`fields.${key}`, type, `must be one of ${ObjectKeys(mslTypes).join(", ")}`);
       }
       offset = alignUp(offset, info.align);
       const field = ObjectFreeze({ name: key, type, offset, size: info.size, align: info.align, info });
@@ -910,7 +914,7 @@ class StructLayout {
       const fieldAlign = info.align;
       if (fieldAlign > align) align = fieldAlign;
     }
-    if (order.length === 0) throw $ERR_INVALID_ARG_VALUE("gpu.struct(fields) needs at least one field");
+    if (order.length === 0) throw $ERR_INVALID_ARG_VALUE("fields", spec, "must have at least one field");
     this.name = name;
     this.align = align;
     this.size = alignUp(offset, align);
@@ -926,8 +930,7 @@ class StructLayout {
   }
 
   pack(values: Record<string, unknown>, target?: ArrayBufferLike | ArrayBufferView | null, byteOffset: number = 0) {
-    if (!values || typeof values !== "object")
-      throw $ERR_INVALID_ARG_TYPE(`${this.name}.pack(values) expects an object`);
+    if (!values || typeof values !== "object") throw $ERR_INVALID_ARG_TYPE("values", "object", values);
     let buffer: ArrayBufferLike;
     let base: number;
     let room: number;
@@ -945,7 +948,7 @@ class StructLayout {
       base = target.byteOffset;
       room = target.byteLength;
     } else {
-      throw $ERR_INVALID_ARG_TYPE(`${this.name}.pack: target must be an ArrayBuffer or a typed array`);
+      throw $ERR_INVALID_ARG_TYPE("target", ["ArrayBuffer", "TypedArray", "null"], target);
     }
     if (typeof byteOffset !== "number" || !(byteOffset >= 0) || byteOffset % 1 !== 0) {
       throw $ERR_OUT_OF_RANGE(`${this.name}.pack byteOffset`, "a non-negative integer", byteOffset);
@@ -959,7 +962,9 @@ class StructLayout {
       );
     }
     for (const key of ObjectKeys(values)) {
-      if (!ObjectHasOwn(this.fields, key)) throw $ERR_INVALID_ARG_VALUE(`${this.name}.pack: unknown field "${key}"`);
+      if (!ObjectHasOwn(this.fields, key)) {
+        throw $ERR_INVALID_ARG_VALUE(`values.${key}`, values[key], `is not a field of ${this.name}`);
+      }
     }
     const view = new DataView(buffer, base + byteOffset, this.size);
     for (const field of this.#order) {
@@ -979,7 +984,7 @@ class StructLayout {
       }
       const list = value as ArrayLike<unknown>;
       if (typeof list !== "object" || list === null || typeof list.length !== "number") {
-        throw $ERR_INVALID_ARG_TYPE(`${path} must be an array or typed array of ${count} numbers (${field.type})`);
+        throw $ERR_INVALID_ARG_TYPE(path, [`Array or TypedArray of ${count} numbers (${field.type})`], list);
       }
       // Matrices are column-major; each column is padded like a vector, so a
       // 3-row column takes 4 slots. Accept both the tight and the padded form.
@@ -989,7 +994,7 @@ class StructLayout {
       else if (list.length === columns * paddedRows) stride = paddedRows;
       else {
         const shape = paddedRows === rows ? String(count) : `${count} (or ${columns * paddedRows} padded)`;
-        throw $ERR_INVALID_ARG_VALUE(`${path} must have ${shape} elements for ${field.type}, got ${list.length}`);
+        throw $ERR_INVALID_ARG_VALUE(path, list, `must have ${shape} elements for ${field.type}`);
       }
       for (let c = 0; c < columns; c++) {
         const columnAt = field.offset + c * paddedRows * step;
@@ -1063,7 +1068,7 @@ function setMetalHandler(
   deliver: (deliver: () => void) => void,
 ): void {
   if (handler != null && typeof handler !== "function")
-    throw $ERR_INVALID_ARG_TYPE(`MetalView.${prop} must be a function`);
+    throw $ERR_INVALID_ARG_TYPE(`MetalView.${prop}`, ["function", "null"], handler);
   const native = nativeOf(view);
   if (handler == null) {
     delete propsOf(view)[prop];
@@ -1183,27 +1188,28 @@ const maxPoints = 1e7;
 
 function optionalString(what: string, value: unknown): string | null {
   if (value === null) return null;
-  if (typeof value !== "string") throw $ERR_INVALID_ARG_TYPE(`${what} must be a string or null`);
+  if (typeof value !== "string") throw $ERR_INVALID_ARG_TYPE(what, ["string", "null"], value);
   return value;
 }
 
 function optionalBoolean(what: string, value: unknown): boolean | null {
   if (value === null) return null;
-  if (typeof value !== "boolean") throw $ERR_INVALID_ARG_TYPE(`${what} must be a boolean or null`);
+  if (typeof value !== "boolean") throw $ERR_INVALID_ARG_TYPE(what, ["boolean", "null"], value);
   return value;
 }
 
 function optionalNumber(what: string, value: unknown): number | null {
   if (value === null) return null;
-  if (typeof value !== "number") throw $ERR_INVALID_ARG_TYPE(`${what} must be a number or null`);
-  if (!Number.isFinite(value)) throw $ERR_INVALID_ARG_TYPE(`${what} must be a finite number`);
+  if (typeof value !== "number") throw $ERR_INVALID_ARG_TYPE(what, ["number", "null"], value);
+  if (!Number.isFinite(value)) throw typeError(`${what} must be a finite number`, "ERR_INVALID_ARG_TYPE");
   return value;
 }
 
 function optionalCount(what: string, value: unknown): number | null {
   if (value === null) return null;
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
-    throw $ERR_INVALID_ARG_TYPE(`${what} must be a non-negative integer or null`);
+  if (typeof value !== "number") throw $ERR_INVALID_ARG_TYPE(what, ["number", "null"], value);
+  if (!Number.isInteger(value) || value < 0) {
+    throw typeError(`${what} must be a non-negative integer or null`, "ERR_INVALID_ARG_TYPE");
   }
   return value;
 }
@@ -1211,13 +1217,13 @@ function optionalCount(what: string, value: unknown): number | null {
 /** Numbers and booleans in a list of labels read as their text, as a template literal would show them. */
 function stringList(what: string, value: unknown): readonly string[] {
   if (value === null) return emptyList;
-  if (!ArrayIsArray(value)) throw $ERR_INVALID_ARG_TYPE(`${what} must be an array of strings`);
+  if (!ArrayIsArray(value)) throw $ERR_INVALID_ARG_TYPE(what, ["Array of strings"], value);
   const out: string[] = [];
   for (let i = 0; i < value.length; i++) {
     const item = value[i];
     if (typeof item === "string") out.push(item);
     else if (typeof item === "number" || typeof item === "boolean") out.push(String(item));
-    else throw $ERR_INVALID_ARG_TYPE(`${what}[${i}] must be a string`);
+    else throw $ERR_INVALID_ARG_TYPE(`${what}[${i}]`, "string", item);
   }
   return ObjectFreeze(out);
 }
@@ -1234,14 +1240,19 @@ function nameList(names: readonly string[]): string {
 
 function oneOf<T extends string>(what: string, value: unknown, names: readonly T[]): T {
   if (typeof value === "string" && names.includes(value as T)) return value as T;
-  throw $ERR_INVALID_ARG_TYPE(`${what} must be ${nameList(names)}`);
+  throw $ERR_INVALID_ARG_TYPE(
+    what,
+    names.map(name => `"${name}"`),
+    value,
+  );
 }
 
 /** A number above zero; `null` and `0` both mean "none" and give `null`. */
 function positiveNumber(what: string, value: unknown): number | null {
   if (value === null) return null;
-  if (typeof value !== "number" || !(Number.isFinite(value) && value >= 0)) {
-    throw $ERR_INVALID_ARG_TYPE(`${what} must be a positive number or null`);
+  if (typeof value !== "number") throw $ERR_INVALID_ARG_TYPE(what, ["number", "null"], value);
+  if (!(Number.isFinite(value) && value >= 0)) {
+    throw typeError(`${what} must be a positive number or null`, "ERR_INVALID_ARG_TYPE");
   }
   return value === 0 ? null : value;
 }
@@ -1250,7 +1261,7 @@ function positiveNumber(what: string, value: unknown): number | null {
 function positivePoints(what: string, value: unknown): number | null {
   const length = positiveNumber(what, value);
   if (length !== null && length > maxPoints) {
-    throw $ERR_INVALID_ARG_TYPE(`${what} must be a positive number no larger than ${maxPoints} or null`);
+    throw typeError(`${what} must be a positive number no larger than ${maxPoints} or null`, "ERR_INVALID_ARG_TYPE");
   }
   return length;
 }
@@ -1271,7 +1282,7 @@ function enumValue(what: string, typeName: string, value: unknown): number {
       if (members[name] === value) return value;
     }
   }
-  throw $ERR_INVALID_ARG_TYPE(`${what} must be an ${typeName} name (${nameList(names)}) or value`);
+  throw typeError(`${what} must be an ${typeName} name (${nameList(names)}) or value`, "ERR_INVALID_ARG_TYPE");
 }
 
 /** The short name of the first member with this value (current names precede deprecated aliases), else the number. */
@@ -1390,12 +1401,12 @@ function colorSpec(what: string, value: unknown): ColorSpec | null {
   const { NSColor } = classes;
   if (isHandleOf(value, NSColor)) return value;
   if (typeof value !== "string")
-    throw $ERR_INVALID_ARG_TYPE(`${what} must be a color string, an NSColor handle or null`);
+    throw typeError(`${what} must be a color string, an NSColor handle or null`, "ERR_INVALID_ARG_TYPE");
   const text = value.trim();
   if (ObjectHasOwn(systemColors, text)) return systemColors[text];
   if (colorNamePattern.test(text) && text in NSColor && isHandleOf(NSColor[text](), NSColor)) return text;
   const rgba = parseRgba(text);
-  if (rgba === undefined) throw $ERR_INVALID_ARG_VALUE(`${what}: invalid color ${JSON.stringify(text)}`);
+  if (rgba === undefined) throw $ERR_INVALID_ARG_VALUE(what, text, "is not a color");
   return rgba;
 }
 type ColorSpec = string | readonly [number, number, number, number] | Handle;
@@ -1423,7 +1434,7 @@ function rgbaFor(what: string, value: unknown): [number, number, number, number]
   if (spec === null) return null;
   if (ArrayIsArray(spec)) return spec as [number, number, number, number];
   const srgb = nscolorOf(spec).colorUsingColorSpace_(classes.NSColorSpace.sRGBColorSpace());
-  if (srgb === null) throw $ERR_INVALID_ARG_VALUE(`${what}: a color with no sRGB form`);
+  if (srgb === null) throw typeError(`${what}: a color with no sRGB form`, "ERR_INVALID_ARG_VALUE");
   return [srgb.redComponent(), srgb.greenComponent(), srgb.blueComponent(), srgb.alphaComponent()];
 }
 
@@ -1488,17 +1499,19 @@ const fontDesignConstants: Record<string, string> = {
 
 function fontWeightFor(what: string, weight: unknown): string {
   if (typeof weight === "number") {
-    if (!Number.isFinite(weight)) throw $ERR_INVALID_ARG_TYPE(`${what} must be a finite number`);
+    if (!Number.isFinite(weight)) throw typeError(`${what} must be a finite number`, "ERR_INVALID_ARG_TYPE");
     let i = 0;
     while (i < fontWeightSteps.length && weight >= fontWeightSteps[i]) i++;
     return fontWeightNames[i];
   }
   if (typeof weight === "string") {
     const name = weight === "normal" ? "regular" : weight;
-    if (!ObjectHasOwn(fontWeightConstants, name)) throw $ERR_INVALID_ARG_TYPE(`${what}: unknown weight "${name}"`);
+    if (!ObjectHasOwn(fontWeightConstants, name)) {
+      throw typeError(`${what}: unknown weight "${name}"`, "ERR_INVALID_ARG_TYPE");
+    }
     return name;
   }
-  throw $ERR_INVALID_ARG_TYPE(`${what} must be a number from 100 to 900 or a weight name`);
+  throw typeError(`${what} must be a number from 100 to 900 or a weight name`, "ERR_INVALID_ARG_TYPE");
 }
 
 /** The NSFont closest to a `font` prop value (or the NSFont it is); `null` gives the standard system font. */
@@ -1512,8 +1525,9 @@ function fontFor(what: string, value: unknown): Handle {
   } else if (value !== null) {
     if (isHandleOf(value, classes.NSFont)) return value;
     if (typeof value !== "object" || objc.same(value, value)) {
-      throw $ERR_INVALID_ARG_TYPE(
+      throw typeError(
         `${what} must be a number, a { size, weight, design, italic } object, an NSFont handle or null`,
+        "ERR_INVALID_ARG_TYPE",
       );
     }
     const spec = value as { size?: unknown; weight?: unknown; design?: unknown; italic?: unknown };
@@ -1522,7 +1536,7 @@ function fontFor(what: string, value: unknown): Handle {
     if (givenWeight !== undefined) weight = fontWeightFor(`${what}.weight`, givenWeight);
     if (givenDesign !== undefined) design = oneOf(`${what}.design`, givenDesign, fontDesigns);
     if (givenItalic !== undefined) {
-      if (typeof givenItalic !== "boolean") throw $ERR_INVALID_ARG_TYPE(`${what}.italic must be a boolean`);
+      if (typeof givenItalic !== "boolean") throw $ERR_INVALID_ARG_TYPE(`${what}.italic`, "boolean", givenItalic);
       italic = givenItalic;
     }
   }
@@ -1555,7 +1569,7 @@ function fontFor(what: string, value: unknown): Handle {
 function symbolImage(what: string, name: string | null): Handle | null {
   if (name === null) return null;
   const image = classes.NSImage.imageWithSystemSymbolName_accessibilityDescription_(name, null);
-  if (image === null) throw $ERR_INVALID_ARG_VALUE(`${what}: no system symbol named ${JSON.stringify(name)}`);
+  if (image === null) throw $ERR_INVALID_ARG_VALUE(what, name, "names no system symbol");
   return image;
 }
 
@@ -1666,7 +1680,7 @@ function defineHandlers(Class: { prototype: object }, ...props: string[]) {
       },
       set(this: View, handler: Function | null | undefined) {
         if (handler != null && typeof handler !== "function")
-          throw $ERR_INVALID_ARG_TYPE(`${kindOf(this)}.${prop} must be a function`);
+          throw $ERR_INVALID_ARG_TYPE(`${kindOf(this)}.${prop}`, ["function", "null"], handler);
         if (handler == null) delete propsOf(this)[prop];
         else propsOf(this)[prop] = handler;
       },
@@ -1874,8 +1888,9 @@ function pinEdges(parent: Handle, child: Handle, inset: number) {
 /** A screen length or null; capped where the window's are (an NSWindow frame edge past ±2^31 raises). */
 function optionalPoints(what: string, value: unknown): number | null {
   if (value === null) return null;
-  if (typeof value === "number" && Number.isFinite(value) && Math.abs(value) <= maxPoints) return value;
-  throw $ERR_INVALID_ARG_TYPE(`${what} must be null or a finite number no larger than ${maxPoints}`);
+  if (typeof value !== "number") throw $ERR_INVALID_ARG_TYPE(what, ["number", "null"], value);
+  if (Number.isFinite(value) && Math.abs(value) <= maxPoints) return value;
+  throw typeError(`${what} must be null or a finite number no larger than ${maxPoints}`, "ERR_INVALID_ARG_TYPE");
 }
 
 /**
@@ -2101,7 +2116,7 @@ function borderFor(what: string, value: unknown): { width: number; color: ColorS
   if (value === null) return { width: 0, color: null };
   if (typeof value === "number") return { width: Math.max(optionalPoints(what, value)!, 0), color: "separatorColor" };
   if (typeof value !== "object")
-    throw $ERR_INVALID_ARG_TYPE(`${what} must be a number, a { width, color } object or null`);
+    throw typeError(`${what} must be a number, a { width, color } object or null`, "ERR_INVALID_ARG_TYPE");
   const { width, color } = value as { width?: unknown; color?: unknown };
   return {
     width: width === undefined ? 1 : Math.max(optionalPoints(`${what}.width`, width ?? null) ?? 0, 0),
@@ -2265,7 +2280,7 @@ function alignStack(stack: Stack, align: StackAlign | number, children: readonly
             : attributes[align];
   }
   if (stack.vertical && (attribute === attributes.firstBaseline || attribute === attributes.lastBaseline)) {
-    throw $ERR_INVALID_ARG_VALUE("firstBaseline/lastBaseline alignment only applies to a horizontal stack");
+    throw typeError("firstBaseline/lastBaseline alignment only applies to a horizontal stack", "ERR_INVALID_ARG_VALUE");
   }
   stack.fill = align === "fill";
   stack.view.setAlignment_(attribute);
@@ -2409,21 +2424,22 @@ function insetsFor(what: string, value: unknown): { top: number; left: number; b
     if (typeof length === "number" && Number.isFinite(length) && Math.abs(length) <= maxPoints) {
       return Math.max(length, 0);
     }
-    throw $ERR_INVALID_ARG_TYPE(`${what}${name} must be a finite number no larger than ${maxPoints}`);
+    throw typeError(`${what}${name} must be a finite number no larger than ${maxPoints}`, "ERR_INVALID_ARG_TYPE");
   };
   if (typeof value === "number") {
     const all = edge("", value);
     return { top: all, left: all, bottom: all, right: all };
   }
   if (ArrayIsArray(value)) {
-    if (value.length !== 2) throw $ERR_INVALID_ARG_TYPE(`${what} array form is [vertical, horizontal]`);
+    if (value.length !== 2) throw typeError(`${what} array form is [vertical, horizontal]`, "ERR_INVALID_ARG_TYPE");
     const y = edge("[0]", value[0]);
     const x = edge("[1]", value[1]);
     return { top: y, left: x, bottom: y, right: x };
   }
   if (typeof value !== "object" || value === null) {
-    throw $ERR_INVALID_ARG_TYPE(
+    throw typeError(
       `${what} must be a number, an [vertical, horizontal] pair or a { top, left, bottom, right } object`,
+      "ERR_INVALID_ARG_TYPE",
     );
   }
   const given = value as Record<string, unknown>;
@@ -2444,7 +2460,7 @@ function alignFor(what: string, value: unknown, vertical: boolean): StackAlign |
   if ((typeof value === "string" && ObjectHasOwn(attributes, value)) || typeof value === "number") {
     return enumValue(what, "NSLayoutAttribute", value);
   }
-  throw $ERR_INVALID_ARG_TYPE(`${what} must be ${nameList(aligns)}, or an NSLayoutAttribute name or value`);
+  throw typeError(`${what} must be ${nameList(aligns)}, or an NSLayoutAttribute name or value`, "ERR_INVALID_ARG_TYPE");
 }
 
 /** `"gravity"` is the curated name of `NSStackViewDistributionGravityAreas`; every other member goes by its own. */
@@ -2650,11 +2666,11 @@ function scrollBarsFor(what: string, value: unknown): { horizontal: boolean; ver
       case "both":
         return { horizontal: true, vertical: true };
       default:
-        throw $ERR_INVALID_ARG_TYPE(`${what} must be "none", "horizontal", "vertical" or "both", got "${value}"`);
+        throw $ERR_INVALID_ARG_TYPE(what, ['"none"', '"horizontal"', '"vertical"', '"both"'], value);
     }
   }
   if (typeof value !== "object")
-    throw $ERR_INVALID_ARG_TYPE(`${what} must be a { horizontal, vertical } object, a boolean or null`);
+    throw typeError(`${what} must be a { horizontal, vertical } object, a boolean or null`, "ERR_INVALID_ARG_TYPE");
   const { horizontal, vertical } = value as { horizontal?: unknown; vertical?: unknown };
   return {
     horizontal: optionalBoolean(`${what}.horizontal`, horizontal ?? null) ?? false,
@@ -3421,7 +3437,7 @@ function loadImage(what: string, source: unknown): { image: Handle | null; exclu
   if (isHandleOf(source, NSImage)) return { image: source, exclusive: false };
   const fromData = (bytes: unknown) => {
     const image = NSImage.alloc().initWithData_(bytes);
-    if (image === null) throw $ERR_INVALID_ARG_VALUE(`${what}: unrecognized image data`);
+    if (image === null) throw typeError(`${what}: unrecognized image data`, "ERR_INVALID_ARG_VALUE");
     return { image, exclusive: true };
   };
   if (source instanceof ArrayBuffer || source instanceof SharedArrayBuffer || ArrayBuffer.isView(source)) {
@@ -3430,11 +3446,11 @@ function loadImage(what: string, source: unknown): { image: Handle | null; exclu
   if (typeof source === "object") {
     const { symbol, file, data } = source as { symbol?: unknown; file?: unknown; data?: unknown };
     if (symbol !== undefined) {
-      if (typeof symbol !== "string") throw $ERR_INVALID_ARG_TYPE(`${what}.symbol must be a string`);
+      if (typeof symbol !== "string") throw $ERR_INVALID_ARG_TYPE(`${what}.symbol`, "string", symbol);
       return { image: symbolImage(what, symbol), exclusive: false };
     }
     if (file !== undefined) {
-      if (typeof file !== "string") throw $ERR_INVALID_ARG_TYPE(`${what}.file must be a string`);
+      if (typeof file !== "string") throw $ERR_INVALID_ARG_TYPE(`${what}.file`, "string", file);
       const image = NSImage.alloc().initWithContentsOfFile_(file);
       if (image === null) {
         const error = new Error(`could not load image file ${JSON.stringify(file)}`) as Error & { path: string };
@@ -3445,12 +3461,12 @@ function loadImage(what: string, source: unknown): { image: Handle | null; exclu
     }
     if (data !== undefined) {
       if (!(data instanceof ArrayBuffer || data instanceof SharedArrayBuffer || ArrayBuffer.isView(data))) {
-        throw $ERR_INVALID_ARG_TYPE(`${what}.data must be an ArrayBuffer or a typed array`);
+        throw $ERR_INVALID_ARG_TYPE(`${what}.data`, ["ArrayBuffer", "TypedArray"], data);
       }
       return fromData(data);
     }
   }
-  throw $ERR_INVALID_ARG_TYPE(`${what} must be { symbol }, { file }, { data }, an NSImage handle or null`);
+  throw typeError(`${what} must be { symbol }, { file }, { data }, an NSImage handle or null`, "ERR_INVALID_ARG_TYPE");
 }
 
 function applySymbolSize(view: View, control: Handle) {
@@ -3513,8 +3529,9 @@ defineControlProps(Image, {
       else if ((typeof value === "string" && ObjectHasOwn(members, value)) || typeof value === "number") {
         scaling = enumValue(what, "NSImageScaling", value);
       } else {
-        throw $ERR_INVALID_ARG_TYPE(
+        throw typeError(
           `${what} must be ${nameList(ObjectKeys(imageScalings))}, or an NSImageScaling name or value`,
+          "ERR_INVALID_ARG_TYPE",
         );
       }
       control.setImageScaling_(scaling);
@@ -3647,7 +3664,7 @@ defineControlProps(Spacer, {
 class NativeView extends View {
   constructor(native: unknown, props?: Record<string, unknown>) {
     if (!isHandleOf(native, classes.NSView)) {
-      throw $ERR_INVALID_ARG_TYPE("NativeView: native must be an NSView handle made through bun:objc");
+      throw typeError("NativeView: native must be an NSView handle made through bun:objc", "ERR_INVALID_ARG_TYPE");
     }
     if (viewHandles.has(native)) throw $ERR_INVALID_STATE("NativeView: this NSView already belongs to a view");
     if (native.superview() !== null || native.window() !== null) {
@@ -3694,6 +3711,8 @@ class TextEditor extends View {
     const scroll = classes.NSTextView.scrollableTextView();
     const text = scroll.documentView();
     text.setRichText_(false);
+    // Plain text as typed. These three are flags of this one view: unlike the
+    // WKWebView setters of the same name they write nothing to NSUserDefaults.
     text.setAutomaticQuoteSubstitutionEnabled_(false);
     text.setAutomaticDashSubstitutionEnabled_(false);
     text.setAutomaticTextReplacementEnabled_(false);
@@ -3844,7 +3863,7 @@ function syncHeader(state: TableState) {
 function columnsFor(what: string, value: unknown): TableColumnSpec[] {
   if (value === null) return [];
   if (!ArrayIsArray(value))
-    throw $ERR_INVALID_ARG_TYPE(`${what} must be an array of strings or { id, title, width } objects`);
+    throw $ERR_INVALID_ARG_TYPE(what, ["Array of strings or { id, title, width } objects"], value);
   const out: TableColumnSpec[] = [];
   for (let i = 0; i < value.length; i++) {
     const item = value[i];
@@ -3852,15 +3871,15 @@ function columnsFor(what: string, value: unknown): TableColumnSpec[] {
       out.push({ id: item, title: item, width: null });
     } else if (typeof item === "object" && item !== null) {
       const { id, title, width } = item as { id?: unknown; title?: unknown; width?: unknown };
-      if (typeof title !== "string") throw $ERR_INVALID_ARG_TYPE(`${what}[${i}].title must be a string`);
-      if (id !== undefined && typeof id !== "string") throw $ERR_INVALID_ARG_TYPE(`${what}[${i}].id must be a string`);
+      if (typeof title !== "string") throw $ERR_INVALID_ARG_TYPE(`${what}[${i}].title`, "string", title);
+      if (id !== undefined && typeof id !== "string") throw $ERR_INVALID_ARG_TYPE(`${what}[${i}].id`, "string", id);
       out.push({
         id: id ?? title,
         title,
         width: width === undefined ? null : positivePoints(`${what}[${i}].width`, width),
       });
     } else {
-      throw $ERR_INVALID_ARG_TYPE(`${what}[${i}] must be a string or a { id, title, width } object`);
+      throw $ERR_INVALID_ARG_TYPE(`${what}[${i}]`, ["string", "a { id, title, width } object"], item);
     }
   }
   return out;
@@ -3869,24 +3888,24 @@ function columnsFor(what: string, value: unknown): TableColumnSpec[] {
 /** The rows copied (so later edits to the caller's arrays do not show half-way), numbers and booleans as their text. */
 function rowsFor(what: string, value: unknown): readonly (readonly string[])[] {
   if (value === null) return emptyList;
-  if (!ArrayIsArray(value)) throw $ERR_INVALID_ARG_TYPE(`${what} must be an array of rows`);
+  if (!ArrayIsArray(value)) throw $ERR_INVALID_ARG_TYPE(what, ["Array of rows"], value);
   const out: (readonly string[])[] = [];
   for (let i = 0; i < value.length; i++) {
     const row = value[i];
     if (ArrayIsArray(row)) out.push(stringList(`${what}[${i}]`, row));
     else if (typeof row === "string" || typeof row === "number") out.push(ObjectFreeze([String(row)]));
-    else throw $ERR_INVALID_ARG_TYPE(`${what}[${i}] must be an array of cell strings`);
+    else throw $ERR_INVALID_ARG_TYPE(`${what}[${i}]`, ["Array of cell strings"], row);
   }
   return ObjectFreeze(out);
 }
 
 function indexesFor(what: string, value: unknown): readonly number[] {
   if (value === null) return emptyList;
-  if (!ArrayIsArray(value)) throw $ERR_INVALID_ARG_TYPE(`${what} must be an array of row indexes`);
+  if (!ArrayIsArray(value)) throw $ERR_INVALID_ARG_TYPE(what, ["Array of row indexes"], value);
   const out: number[] = [];
   for (const index of value) {
-    if (typeof index !== "number") throw $ERR_INVALID_ARG_TYPE(`${what}[] must be a number`);
-    if (!Number.isFinite(index)) throw $ERR_INVALID_ARG_TYPE(`${what}[] must be a finite number`);
+    if (typeof index !== "number") throw $ERR_INVALID_ARG_TYPE(`${what}[]`, "number", index);
+    if (!Number.isFinite(index)) throw typeError(`${what}[] must be a finite number`, "ERR_INVALID_ARG_TYPE");
     if (index >= 0) out.push(Math.trunc(index));
   }
   return ObjectFreeze(out);
@@ -4123,8 +4142,8 @@ function keyMask(modifiers: { shift?: boolean; option?: boolean; control?: boole
 
 /** `ids.next` numbers the callback items 1, 2, … across the whole bar. */
 function normalizeMenuItems(items: unknown, path: string, ids: { next: number }, depth: number): MenuEntry[] {
-  if (depth > maxMenuDepth) throw $ERR_INVALID_ARG_VALUE(`${path}: submenus nest too deeply`);
-  if (!ArrayIsArray(items)) throw $ERR_INVALID_ARG_TYPE(`${path} must be an array`);
+  if (depth > maxMenuDepth) throw typeError(`${path}: submenus nest too deeply`, "ERR_INVALID_ARG_VALUE");
+  if (!ArrayIsArray(items)) throw $ERR_INVALID_ARG_TYPE(path, ["Array"], items);
   const out: MenuEntry[] = [];
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
@@ -4133,27 +4152,31 @@ function normalizeMenuItems(items: unknown, path: string, ids: { next: number },
       continue;
     }
     if (!item || typeof item !== "object")
-      throw $ERR_INVALID_ARG_TYPE(`${path}[${i}] must be an object or "separator"`);
+      throw $ERR_INVALID_ARG_TYPE(`${path}[${i}]`, ["object", '"separator"'], item);
     const { title, onClick, action, key, shift, option, control, command, enabled, checked, submenu } =
       item as MenuItem;
-    if (typeof title !== "string") throw $ERR_INVALID_ARG_TYPE(`${path}[${i}].title must be a string`);
+    if (typeof title !== "string") throw $ERR_INVALID_ARG_TYPE(`${path}[${i}].title`, "string", title);
     if (onClick !== undefined && typeof onClick !== "function") {
-      throw $ERR_INVALID_ARG_TYPE(`${path}[${i}].onClick must be a function`);
+      throw $ERR_INVALID_ARG_TYPE(`${path}[${i}].onClick`, "function", onClick);
     }
     if (
       action !== undefined &&
       typeof action !== "function" &&
       !(typeof action === "string" && actionPattern.test(action))
     ) {
-      throw $ERR_INVALID_ARG_TYPE(
+      throw typeError(
         `${path}[${i}].action must be a function, or a selector that takes the sender such as "copy:" or "performClose:"`,
+        "ERR_INVALID_ARG_TYPE",
       );
     }
     if (onClick !== undefined && action !== undefined) {
-      throw $ERR_INVALID_ARG_VALUE(`${path}[${i}]: onClick and action are mutually exclusive`);
+      throw $ERR_INVALID_ARG_VALUE(`${path}[${i}].action`, action, "cannot be given together with onClick");
     }
     if ((onClick !== undefined || action !== undefined) && submenu !== undefined) {
-      throw $ERR_INVALID_ARG_VALUE(`${path}[${i}]: an item with a submenu does not fire onClick or an action`);
+      throw typeError(
+        `${path}[${i}]: an item with a submenu does not fire onClick or an action`,
+        "ERR_INVALID_ARG_VALUE",
+      );
     }
     const keyText = typeof key === "string" ? key : "";
     const entry: MenuEntry = {
@@ -4180,13 +4203,13 @@ function normalizeMenuItems(items: unknown, path: string, ids: { next: number },
 /** Checks `spec`; `null` (the standard menus) for null. */
 function normalizeMenus(spec: unknown): MenuBar | null {
   if (spec == null) return null;
-  if (!ArrayIsArray(spec)) throw $ERR_INVALID_ARG_TYPE("app.menu must be an array of { title, items } or null");
+  if (!ArrayIsArray(spec)) throw $ERR_INVALID_ARG_TYPE("app.menu", ["Array of { title, items }"], spec);
   const menus: MenuBar = [];
   const ids = { next: 1 };
   for (let i = 0; i < spec.length; i++) {
     const menu = spec[i];
     if (!menu || typeof menu !== "object" || typeof menu.title !== "string") {
-      throw $ERR_INVALID_ARG_TYPE(`app.menu[${i}] must be { title: string, items: [...] }`);
+      throw $ERR_INVALID_ARG_TYPE(`app.menu[${i}]`, ["a { title: string, items: [...] } object"], menu);
     }
     menus.push({
       title: menu.title,
@@ -4349,7 +4372,7 @@ function installMenuBar(): void {
 /** The NSMenuItem the installed bar has for `item` (a MenuItem or MenuSpec of `app.menu`), else null. */
 function menuItemOf(item: unknown): object | null {
   if (item === null || (typeof item !== "object" && typeof item !== "function")) {
-    throw $ERR_INVALID_ARG_TYPE("app.menuItem() expects an item or menu object from app.menu");
+    throw $ERR_INVALID_ARG_TYPE("item", ["an item or menu object from app.menu"], item);
   }
   const handle = menuHandles.get(item);
   return handle ?? null;
@@ -4758,13 +4781,17 @@ class Window {
 
   constructor(options: Record<string, unknown> = {}) {
     if (options == null) options = {};
-    if (typeof options !== "object") throw $ERR_INVALID_ARG_TYPE("Window options must be an object");
+    if (typeof options !== "object") throw $ERR_INVALID_ARG_TYPE("options", "object", options);
     for (const key of ObjectKeys(options)) {
-      if (!windowOptionKeys.includes(key)) throw $ERR_INVALID_ARG_VALUE(`Unknown Window option "${key}"`);
+      if (!windowOptionKeys.includes(key)) {
+        throw $ERR_INVALID_ARG_VALUE(`options.${key}`, options[key], "is not a Window option");
+      }
     }
     const x = options.x ?? null;
     const y = options.y ?? null;
-    if ((x === null) !== (y === null)) throw $ERR_INVALID_ARG_VALUE("Window.x and Window.y must be given together");
+    if ((x === null) !== (y === null)) {
+      throw typeError("Window.x and Window.y must be given together", "ERR_INVALID_ARG_VALUE");
+    }
     ensureStarted();
 
     const { buffered } = objcEnums.NSBackingStoreType as Readonly<Record<"buffered", number>>;
@@ -4832,7 +4859,7 @@ class Window {
     const previous = state.content;
     if (previous === view) return;
     if (view !== null) {
-      if (!(view instanceof View)) throw $ERR_INVALID_ARG_TYPE("Window.content must be a View or null");
+      if (!(view instanceof View)) throw $ERR_INVALID_ARG_TYPE("Window.content", ["View", "null"], view);
       if (rawParentOf(view)) {
         throw $ERR_INVALID_STATE(
           `Window.content: this ${kindOf(view)} already has a parent; call remove() on it first`,
@@ -4979,7 +5006,7 @@ for (const key of windowEvents) {
     },
     set(this: Window, handler: Function | null | undefined) {
       if (handler != null && typeof handler !== "function")
-        throw $ERR_INVALID_ARG_TYPE(`Window.${key} must be a function`);
+        throw $ERR_INVALID_ARG_TYPE(`Window.${key}`, ["function", "null"], handler);
       stateOfWindow(this).handlers[key] = handler ?? undefined;
     },
     enumerable: true,

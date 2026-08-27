@@ -18,12 +18,9 @@ pub(crate) fn find_all_imported_parts_in_js_order(
         return Ok(());
     }
 
-    // With code splitting a live JS file prints in exactly one chunk, which
-    // `compute_chunks` chose: by `entry_bits`, except for a user entry point's
-    // own module, which stays in its entry chunk. Files that print nowhere (and
-    // every file without code splitting) map to `u32::MAX`. The walk below
-    // also orders each chunk's cross-chunk imports by where it reaches the
-    // files that run something when loaded.
+    // With code splitting a live JS file prints in exactly one chunk, the one
+    // `compute_chunks` put it in; files that print nowhere (and every file
+    // without code splitting) map to `u32::MAX`.
     let mut chunk_of_file: Vec<u32> = vec![u32::MAX; this.graph.files.len()];
     let mut runs_when_loaded: Vec<bool> = vec![false; this.graph.files.len()];
     if this.graph.code_splitting {
@@ -211,8 +208,7 @@ pub(crate) struct FindImportedPartsVisitor<'a, 'ctx> {
     /// `visit` (see the raw-pointer note above).
     entry_point_chunk_indices: *mut [u32],
     stack: Vec<PartsFrame>,
-    /// The chunk each file prints in; `u32::MAX` for files that print nowhere
-    /// (and everywhere without code splitting).
+    /// The chunk each file prints in; `u32::MAX` when none (or no code splitting).
     chunk_of_file: &'a [u32],
     /// Files that run something when loaded.
     runs_when_loaded: &'a [bool],
@@ -365,9 +361,8 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                     let is_file_in_chunk = if WITH_CODE_SPLITTING
                         && self.c.graph.ast.items_css()[source_index as usize].is_none()
                     {
-                        // when code splitting, the file is in the one chunk that prints it;
-                        // a file that prints nowhere counts for the chunk whose entry points
-                        // are exactly the ones that reach it
+                        // when code splitting, the chunk that prints the file; a file that
+                        // prints nowhere counts for the chunk keyed by its entry points
                         match self.chunk_of_file[source_index as usize] {
                             u32::MAX => self
                                 .entry_bits

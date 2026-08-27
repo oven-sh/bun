@@ -20,24 +20,15 @@ use super::find_imported_css_files_in_js_order::find_imported_css_files_in_js_or
 use super::find_imported_files_in_css_order::find_imported_files_in_css_order;
 use super::merge_small_chunks::merge_small_chunks;
 
-/// Whether user entry point `source_index`, which other entry points also
-/// statically reach, prints its own module into its entry chunk. Keyed by
-/// `entry_bits` alone the module would go to the chunk those entries share,
-/// and the entry chunk would only re-export it (esbuild's layout); then
-/// `import.meta.main`, `import.meta.path` and the rest describe that chunk, not
-/// the entry's output file, and `if (import.meta.main)` in the entry never
-/// runs. Kept in its own chunk, the other entries import what they use from
-/// the entry's output file by the export names the entry already gives those
-/// bindings (`compute_cross_chunk_dependencies`), so its module namespace
-/// stays as written.
-///
-/// That needs every binding another file takes from the module to be one of
-/// its exports, bound directly: not the wrapper of a wrapped module, not its
-/// namespace object (`import * as ns` used as a value, or a dynamic export
-/// fallback), and not an import that a `namespace_alias` prints as a property
-/// access off a CommonJS namespace. `--compile` keys the entry point's module
-/// at `/$bunfs/root/<outfile>` after linking, so nothing may import from its
-/// chunk either. In those cases the module goes to the shared chunk as before.
+/// Whether user entry point `source_index`, which other entry points reach,
+/// prints its own module into its entry chunk (so `import.meta.main` and the
+/// other `import.meta` fields in it describe the entry's output file) instead
+/// of the chunk those entry points share. Their chunks then import from the
+/// entry chunk by the entry's export names, so every binding another file
+/// takes from the module must be an export of it, bound directly: no wrapper,
+/// no namespace object, no CommonJS re-export printed as a property access.
+/// `--compile` renames the entry point's module after linking, so nothing may
+/// import from its chunk.
 fn entry_point_keeps_own_module(this: &LinkerContext, source_index: u32) -> bool {
     if this.options.compile_mode.is_executable() {
         return false;
@@ -390,9 +381,8 @@ pub(crate) fn compute_chunks(
         bits
     };
 
-    // The JS chunk (index into `js_chunks`) that prints a user entry point's own
-    // module although its `entry_bits` name other entry points too; `u32::MAX`
-    // for every other file. See `entry_point_keeps_own_module`.
+    // Index into `js_chunks` of the entry chunk that keeps its user entry point's
+    // module although other entry points reach it; `u32::MAX` for other files.
     let own_module_chunk: &mut [u32] = temp.alloc_slice_fill_copy(this.graph.files.len(), u32::MAX);
     if code_splitting {
         let kinds = this.graph.files.items_entry_point_kind();
@@ -435,11 +425,7 @@ pub(crate) fn compute_chunks(
                         let chunk_index = own_module_chunk[source_index.get() as usize];
                         if chunk_index != u32::MAX {
                             let chunk = &mut js_chunks.values_mut()[chunk_index as usize];
-                            // Every entry point that reaches the module loads this
-                            // chunk now, not only the entry point itself: the others
-                            // import it for its side effects
-                            // (`compute_cross_chunk_dependencies`) and list it in
-                            // their HTML import manifests.
+                            // The entry points that reach the module load this chunk.
                             chunk.entry_bits = entry_bits.clone()?;
                             let entry = chunk
                                 .files_with_parts_in_chunk

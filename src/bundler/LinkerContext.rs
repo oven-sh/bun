@@ -1636,10 +1636,8 @@ pub(crate) enum MatchImportKind {
 pub struct ChunkMeta {
     pub(crate) imports: ChunkMetaMap,
     pub(crate) exports: ChunkMetaMap,
-    /// For an ESM entry chunk: the name its entry point's `export {}` clause
-    /// gives each binding it exports directly (the first one, when several
-    /// do). Another chunk that uses such a binding imports it by that name
-    /// instead of adding an export to the entry point's module namespace.
+    /// ESM entry chunk: the (first) name its entry point exports each binding
+    /// under. Other chunks import such a binding by it, not by a new export.
     pub(crate) export_aliases: bun_collections::HashMap<Ref, bun_ast::StoreStr>,
     pub(crate) dynamic_imports: ArrayHashMap<crate::IndexInt, ()>,
     /// Split `require()` targets, kept apart from `dynamic_imports`

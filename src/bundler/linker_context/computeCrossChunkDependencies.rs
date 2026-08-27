@@ -290,8 +290,7 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                         {
                             target_ref = namespace_alias.namespace_ref;
                         } else if ctx.options.output_format == OutputFormat::Esm {
-                            // `generate_entry_point_tail_js` exports the binding
-                            // itself under this alias.
+                            // `generate_entry_point_tail_js` exports the binding under this alias.
                             chunk_meta
                                 .export_aliases
                                 .entry(target_ref)
@@ -456,8 +455,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         );
                     }
 
-                    // A binding an entry point exports itself is imported by
-                    // that name; anything else the other chunk must export.
+                    // Imported by the entry point's own export name, else the other chunk exports it.
                     let alias = chunk_metas[other_chunk_index as usize]
                         .export_aliases
                         .get(&import_ref)
@@ -693,9 +691,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                                     ref_: item.r#ref,
                                     loc: bun_ast::Loc::EMPTY,
                                 },
-                                // Empty until `cross_chunk_names` assigns the
-                                // binding its bundle-wide name, unless the other
-                                // chunk's entry point already exports it by name.
                                 alias: item.alias,
                                 alias_loc: bun_ast::Loc::EMPTY,
                                 original_name: bun_ast::StoreStr::new(b"" as &[u8]),

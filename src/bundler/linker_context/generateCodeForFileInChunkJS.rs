@@ -920,10 +920,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         });
     }
 
-    // Only an entry point's module still has `import.meta.main` as written
-    // (`ParseTask` inlines `false` everywhere else). Printed into another entry
-    // point's bundle it is a dependency there, so the copy reads `false`; in
-    // its own output file the runtime answers.
+    // An entry point's module (the only kind that still has `import.meta.main`
+    // as written) printed into another entry point's bundle is a dependency there.
     let import_meta_main_value = if chunk.entry_point.is_entry_point()
         && chunk.entry_point.source_index() as usize != source_index
     {

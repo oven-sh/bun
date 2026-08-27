@@ -4,10 +4,6 @@ import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   describe("compile with splitting", () => {
-    // The embedded module graph is laid out in load order: the entry point's
-    // static imports (dependencies first), then each dynamic import's closure,
-    // breadth-first. Chunk index order would be entry, lazy1, lazy2, shared,
-    // shared2.
     // The executable's loader registers an entry's whole static-import closure before JSC walks the graph. These
     // shapes must still load and link in order: a cycle back through the entry, builtins reached from pre-registered
     // chunks, two dynamic imports issued back to back whose closures overlap, and a dynamic import of a chunk that an
@@ -21,10 +17,10 @@ describe("bundler", () => {
         files: {
           "/entry.ts": /* js */ `
             import { a } from "./a";
-            import { sep } from "node:path";
+            import { isAbsolute } from "node:path";
             import { run } from "./run";
             export const fromEntry = "entry";
-            console.log("static", a, sep);
+            console.log("static", a, isAbsolute("/x"));
             run();
           `,
           "/run.ts": /* js */ `
@@ -61,11 +57,15 @@ describe("bundler", () => {
           `,
         },
         run: {
-          stdout: "static abfunctionfunction /\ndynamic xs18functionfunction ys18functionfunction s18function",
+          stdout: "static abfunctionfunction true\ndynamic xs18functionfunction ys18functionfunction s18function",
         },
       });
     }
 
+    // The embedded module graph is laid out in load order: the entry point's
+    // static imports (dependencies first), then each dynamic import's closure,
+    // breadth-first. Chunk index order would be entry, lazy1, lazy2, shared,
+    // shared2.
     itBundled("compile/splitting/ModulesLaidOutInLoadOrder", {
       compile: true,
       splitting: true,

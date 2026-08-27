@@ -32,6 +32,7 @@ use core::cell::Cell;
 use core::ffi::{CStr, c_char, c_void};
 use core::marker::PhantomData;
 use core::ptr::{self, NonNull};
+use core::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Once, OnceLock};
 
 use crate::error::{Error, Result};
@@ -1064,6 +1065,18 @@ pub(crate) fn main_thread() -> Result<()> {
     }
 }
 
+/// Set once [`load`] has succeeded in this process. The terminate handler
+/// (src/jsc/bindings/darwin/objc-uncaught-exception.cpp) reads it to tell an
+/// Objective-C exception a script let escape through the bridge, which ends
+/// the process like an uncaught JavaScript error, from one raised anywhere
+/// else, which is a crash.
+static BRIDGE_LOADED: AtomicBool = AtomicBool::new(false);
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__objcBridgeLoaded() -> bool {
+    BRIDGE_LOADED.load(Ordering::Acquire)
+}
+
 /// Loads the frameworks on first call, once for the process, from any thread.
 pub(crate) fn load() -> Result<&'static Runtime> {
     let rt = match RUNTIME.get_or_init(Runtime::open) {
@@ -1076,6 +1089,7 @@ pub(crate) fn load() -> Result<&'static Runtime> {
     if let Err(cause) = EXCEPTIONS.get_or_init(|| dynamic::probe_catch_frames(rt)) {
         return Err(Error::Load(cause.clone()));
     }
+    BRIDGE_LOADED.store(true, Ordering::Release);
     Ok(rt)
 }
 

@@ -8,7 +8,7 @@
 // frames the entry points they need. An Objective-C exception is a C++
 // exception whose type_info sits inside the thrown buffer right after the
 // `id` (objc4's `struct objc_exception`), which is how the object is
-// recovered here and in ZigGlobalObject.cpp's terminate handler.
+// recovered here and in objc-uncaught-exception.cpp.
 
 #include <cxxabi.h>
 #include <typeinfo>

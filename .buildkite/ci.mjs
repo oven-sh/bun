@@ -841,13 +841,11 @@ function touchesAppKit(options) {
     file =>
       file.startsWith("src/appkit/") ||
       file.startsWith("src/runtime/api/appkit/") ||
+      file.startsWith("src/jsc/bindings/darwin/") ||
       file.startsWith("test/js/bun/appkit/") ||
       file.startsWith("packages/bun-usockets/src/eventing/") ||
-      file.startsWith("src/mimalloc_sys/") ||
-      file.startsWith("vendor/mimalloc/") ||
       file.startsWith("scripts/appkit-") ||
       file === "scripts/build/macos-sdk.ts" ||
-      file === "src/jsc/bindings/ZigGlobalObject.cpp" ||
       /^src\/js\/bun\/(appkit|objc)\.ts$/.test(file) ||
       /^src\/js\/internal\/appkit_\w+\.ts$/.test(file) ||
       /^packages\/bun-types\/(appkit|objc)[\w-]*\.d\.ts$/.test(file),

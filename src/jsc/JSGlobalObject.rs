@@ -1453,9 +1453,10 @@ extern "C" fn Zig__GlobalObject__onCrash() {
     panic!("A C++ exception occurred");
 }
 
-/// An Objective-C exception nothing caught, already described on stderr by
-/// the terminate handler: the program's error, ended like an uncaught
-/// JavaScript one (exit code 1), with no crash report. `std::terminate` runs
+/// An Objective-C exception nothing caught in a process where a script loaded
+/// the bun:objc bridge, already described on stderr by the terminate handler:
+/// the program's error, ended like an uncaught JavaScript one (exit code 1),
+/// with no crash report. `std::terminate` runs
 /// on the raising thread; off the main thread the exit handlers would run
 /// beside a main thread still executing JavaScript, so only the main thread
 /// takes the ordinary exit path.

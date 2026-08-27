@@ -379,9 +379,8 @@ describe("entry count limit", () => {
     async () => {
       const out = await run(`
         out.string = threw(() => new URLSearchParams("?" + pairs(MAX + 1)));
-        out.record = new URLSearchParams({ a: "1", b: "2" }).size;
       `);
-      expect(out).toEqual({ string: tooMany, record: 2 });
+      expect(out).toEqual({ string: tooMany });
     },
     TIMEOUT,
   );
@@ -392,9 +391,23 @@ describe("entry count limit", () => {
       const out = await run(`
         const list = Array.from({ length: MAX + 1 }, () => ["a", ""]);
         out.sequence = threw(() => new URLSearchParams(list));
-        out.size = new URLSearchParams(list.slice(1)).size;
+        out.sequenceAtLimit = new URLSearchParams(list.slice(1)).size;
       `);
-      expect(out).toEqual({ sequence: tooMany, size: MAX });
+      expect(out).toEqual({ sequence: tooMany, sequenceAtLimit: MAX });
+    },
+    TIMEOUT,
+  );
+
+  it.concurrent(
+    "the record constructor throws one pair past the limit",
+    async () => {
+      const out = await run(`
+        const record = Object.fromEntries(Array.from({ length: MAX + 1 }, (_, i) => [String(i), ""]));
+        out.record = threw(() => new URLSearchParams(record));
+        delete record[0];
+        out.recordAtLimit = new URLSearchParams(record).size;
+      `);
+      expect(out).toEqual({ record: tooMany, recordAtLimit: MAX });
     },
     TIMEOUT,
   );

@@ -32,11 +32,16 @@
 
 namespace WebCore {
 
+static Exception tooManyPairs(size_t maxSize)
+{
+    return Exception { RangeError, makeString("URLSearchParams cannot hold more than "_s, maxSize, " entries."_s) };
+}
+
 static ExceptionOr<void> appendPair(Vector<KeyValuePair<String, String>>& pairs, KeyValuePair<String, String>&& pair)
 {
     size_t maxSize = Bun::maxVectorSize<KeyValuePair<String, String>>();
     if (!Bun::appendWithinLimit(pairs, WTF::move(pair), maxSize)) [[unlikely]]
-        return Exception { RangeError, makeString("URLSearchParams cannot hold more than "_s, maxSize, " entries."_s) };
+        return tooManyPairs(maxSize);
     return {};
 }
 
@@ -107,7 +112,11 @@ ExceptionOr<Ref<URLSearchParams>> URLSearchParams::create(std::variant<Vector<Ve
             if (result.hasException()) [[unlikely]]
                 return result.releaseException();
         }
-        return adoptRef(*new URLSearchParams(WTF::move(pairs))); }, [&](const Vector<KeyValuePair<String, String>>& pairs) -> ExceptionOr<Ref<URLSearchParams>> { return adoptRef(*new URLSearchParams(pairs)); }, [&](const String& string) -> ExceptionOr<Ref<URLSearchParams>> { return create(string, nullptr); });
+        return adoptRef(*new URLSearchParams(WTF::move(pairs))); }, [&](const Vector<KeyValuePair<String, String>>& pairs) -> ExceptionOr<Ref<URLSearchParams>> {
+        size_t maxSize = Bun::maxVectorSize<KeyValuePair<String, String>>();
+        if (pairs.size() > maxSize) [[unlikely]]
+            return tooManyPairs(maxSize);
+        return adoptRef(*new URLSearchParams(pairs)); }, [&](const String& string) -> ExceptionOr<Ref<URLSearchParams>> { return create(string, nullptr); });
     return std::visit(visitor, variant);
 }
 

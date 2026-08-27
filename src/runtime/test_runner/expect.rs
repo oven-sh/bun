@@ -11,7 +11,6 @@ use bun_jsc::{JsClass as _, StringJsc as _};
 use bun_jsc::js_promise;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::strings;
-use bun_ptr::RefPtr;
 
 use super::bun_test::{self};
 use super::diff_format::DiffFormatter;
@@ -38,7 +37,7 @@ use bun_jsc::js_error_to_write_error;
 #[bun_jsc::JsClass]
 pub struct Expect {
     pub(crate) flags: Cell<Flags>,
-    pub(crate) parent: Option<RefPtr<bun_test::RefData>>,
+    pub(crate) parent: Option<bun_test::RefDataPtr>,
     pub(crate) custom_label: bun_core::String,
 }
 

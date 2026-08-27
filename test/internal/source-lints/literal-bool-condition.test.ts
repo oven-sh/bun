@@ -41,9 +41,15 @@ const LITERAL_CONDITION = /^\s*(?:\}\s*else\s+)?if\s+(?:true|false)\s*\{/;
 
 /**
  * Blank out every `#[cfg(test)]`-gated item (the attribute line, any attributes
- * after it, and the braced item they annotate) so compile-only unit tests can
- * keep their `if false { .. }` bodies. Line numbers are preserved.
+ * after it, and the item they annotate) so compile-only unit tests can keep
+ * their `if false { .. }` bodies. Line numbers are preserved.
+ *
+ * The item ends where its braces balance, or at the first `;` for a braceless
+ * item (`use ..;`, `mod tests;`). Braces inside string literals, byte/raw
+ * strings, char literals and comments do not count.
  */
+const IDENT = /[A-Za-z0-9_]/;
+
 function withoutTestItems(lines: string[]): string[] {
   const out = [...lines];
   let i = 0;
@@ -52,24 +58,72 @@ function withoutTestItems(lines: string[]): string[] {
       i++;
       continue;
     }
-    // Blank the attribute lines and the item they annotate. The item may share
-    // the attribute's line (`#[cfg(test)] use ..;`); a braced item ends when its
-    // braces balance, a one-line item (`use ..;`, `mod tests;`) at its `;`.
     let depth = 0;
     let sawBrace = false;
-    while (i < lines.length) {
-      const line = lines[i].replace(/^\s*(?:#\[[^\]]*\]\s*)+/, "");
+    let state: "code" | "string" | "raw" | "block" = "code";
+    let rawHashes = 0;
+    let done = false;
+    while (i < lines.length && !done) {
+      let line = lines[i];
       out[i++] = "";
-      if (line.trim() === "") continue;
-      for (const ch of line) {
-        if (ch === "{") {
-          depth++;
-          sawBrace = true;
-        } else if (ch === "}") {
-          depth--;
+      // Outer attributes may share the item's line: `#[cfg(test)] use ..;`.
+      if (state === "code") line = line.replace(/^\s*(?:#\[[^\]]*\]\s*)+/, "");
+      for (let k = 0; k < line.length && !done; k++) {
+        const ch = line[k];
+        const next = line[k + 1];
+        switch (state) {
+          case "string":
+            if (ch === "\\") k++;
+            else if (ch === '"') state = "code";
+            break;
+          case "raw":
+            if (ch === '"' && line.slice(k + 1, k + 1 + rawHashes) === "#".repeat(rawHashes)) {
+              k += rawHashes;
+              state = "code";
+            }
+            break;
+          case "block":
+            if (ch === "*" && next === "/") {
+              k++;
+              state = "code";
+            }
+            break;
+          case "code": {
+            if (ch === "/" && next === "/") {
+              k = line.length;
+            } else if (ch === "/" && next === "*") {
+              k++;
+              state = "block";
+            } else if (ch === '"') {
+              state = "string";
+            } else if (
+              ch === "r" &&
+              /^#*"/.test(line.slice(k + 1)) &&
+              (!IDENT.test(line[k - 1] ?? "") || (line[k - 1] === "b" && !IDENT.test(line[k - 2] ?? "")))
+            ) {
+              // `r"..."`, `r#"..."#`, `br"..."`: an `r` that does not continue an
+              // identifier and is followed by `#*"` opens a raw string.
+              rawHashes = line.slice(k + 1).indexOf('"');
+              k += 1 + rawHashes;
+              state = "raw";
+            } else if (ch === "'" && (next === "\\" || line[k + 2] === "'")) {
+              // A char literal (`'{'`, `'\n'`); a lifetime (`'a`) has no
+              // closing quote and falls through.
+              k = line.indexOf("'", next === "\\" ? k + 2 : k + 1);
+              if (k === -1) k = line.length;
+            } else if (ch === "{") {
+              depth++;
+              sawBrace = true;
+            } else if (ch === "}") {
+              depth--;
+              if (sawBrace && depth <= 0) done = true;
+            } else if (ch === ";" && !sawBrace && depth === 0) {
+              done = true;
+            }
+            break;
+          }
         }
       }
-      if (sawBrace ? depth <= 0 : line.includes(";")) break;
     }
   }
   return out;
@@ -123,6 +177,18 @@ test("withoutTestItems keeps production code and blanks #[cfg(test)] items", () 
     "fn live_too() {}",
     "#[cfg(test)] #[allow(unused)] fn compile_only() { if false {} }",
     "fn last() {}",
+    "#[cfg(test)]",
+    "mod strings {",
+    '    const A: &str = "{"; // }',
+    '    const B: &[u8] = br#"{"#;',
+    "    const C: char = '{';",
+    "    /* { */ fn f<'a>(_: &'a str) {}",
+    '    const E: &str = f(r#"{"a": "}"#);',
+    '    const D: &str = r"',
+    "}",
+    '";',
+    "}",
+    "fn after_strings() {}",
   ]);
   expect(kept).toEqual([
     "fn live() {",
@@ -144,6 +210,18 @@ test("withoutTestItems keeps production code and blanks #[cfg(test)] items", () 
     "fn live_too() {}",
     "",
     "fn last() {}",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "fn after_strings() {}",
   ]);
 });
 

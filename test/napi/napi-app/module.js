@@ -138,9 +138,10 @@ nativeTests.test_threadsafe_function_abort_with_outstanding_ref = async () => {
     await new Promise(resolve => setImmediate(resolve));
   }
   console.log("finalized:", nativeTests.test_napi_threadsafe_function_abort_with_outstanding_ref_finalized());
-  // the other thread releases once it has seen the finalizer run; that is the
-  // one step here that depends on OS scheduling, so wait for it by deadline
-  const deadline = Date.now() + 10_000;
+  // the other thread releases once it has seen the finalizer run (or gives up
+  // after 2s and says so); that is the one step here that depends on OS
+  // scheduling, so wait for it by deadline, under the test runner's 5s
+  const deadline = Date.now() + 4_000;
   while (
     nativeTests.test_napi_threadsafe_function_abort_with_outstanding_ref_release_status() === -1 &&
     Date.now() < deadline
@@ -148,7 +149,9 @@ nativeTests.test_threadsafe_function_abort_with_outstanding_ref = async () => {
     await new Promise(resolve => setTimeout(resolve, 1));
   }
   console.log(
-    "release after finalize:",
+    "released after finalize:",
+    nativeTests.test_napi_threadsafe_function_abort_with_outstanding_ref_released_after_finalize(),
+    "status:",
     nativeTests.test_napi_threadsafe_function_abort_with_outstanding_ref_release_status(),
   );
 };

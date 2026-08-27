@@ -720,7 +720,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     // reports napi_ok (0) and frees the function.
     it("runs the finalizer on abort while another thread still holds a reference", async () => {
       const result = await checkSameOutput("test_threadsafe_function_abort_with_outstanding_ref", []);
-      expect(result).toContain("finalized: true\nrelease after finalize: 0");
+      expect(result).toContain("finalized: true\nreleased after finalize: true status: 0");
     });
 
     // A full bounded queue must not hide that the function is closing: the call

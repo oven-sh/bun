@@ -200,6 +200,7 @@ test_napi_threadsafe_function_abort_blocked_producers_finalized(
 
 static napi_threadsafe_function tsfn_abort_outstanding = nullptr;
 static std::atomic<bool> tsfn_abort_outstanding_finalized{false};
+static std::atomic<bool> tsfn_abort_outstanding_released_after_finalize{false};
 static std::atomic<int> tsfn_abort_outstanding_release_status{-1};
 
 static void tsfn_abort_outstanding_finalize(napi_env env, void *finalize_data,
@@ -210,13 +211,17 @@ static void tsfn_abort_outstanding_finalize(napi_env env, void *finalize_data,
 // Holds the second thread reference without making any call. It learns of the
 // abort from the finalizer (it could as well never release: after an abort no
 // other thread is to make further calls) and only then releases, which frees
-// the function.
+// the function. If the finalizer has not run after 2 seconds it releases
+// anyway, and records that it did not see the finalizer, so the process exits
+// and the test fails on the output instead of hanging.
 static void tsfn_abort_outstanding_holder() {
   auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
   while (!tsfn_abort_outstanding_finalized.load() &&
          std::chrono::steady_clock::now() < deadline) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
+  tsfn_abort_outstanding_released_after_finalize.store(
+      tsfn_abort_outstanding_finalized.load());
   tsfn_abort_outstanding_release_status.store(napi_release_threadsafe_function(
       tsfn_abort_outstanding, napi_tsfn_release));
 }
@@ -231,6 +236,7 @@ static napi_value test_napi_threadsafe_function_abort_with_outstanding_ref(
   napi_value resource_name =
       Napi::String::New(env, "abort_with_outstanding_ref");
   tsfn_abort_outstanding_finalized.store(false);
+  tsfn_abort_outstanding_released_after_finalize.store(false);
   tsfn_abort_outstanding_release_status.store(-1);
   NODE_API_CALL(env,
                 napi_create_threadsafe_function(
@@ -258,6 +264,13 @@ test_napi_threadsafe_function_abort_with_outstanding_ref_release_status(
     const Napi::CallbackInfo &info) {
   return Napi::Number::New(info.Env(),
                            tsfn_abort_outstanding_release_status.load());
+}
+
+static napi_value
+test_napi_threadsafe_function_abort_with_outstanding_ref_released_after_finalize(
+    const Napi::CallbackInfo &info) {
+  return Napi::Boolean::New(
+      info.Env(), tsfn_abort_outstanding_released_after_finalize.load());
 }
 
 static napi_threadsafe_function tsfn_abort_full = nullptr;
@@ -4528,6 +4541,9 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(
       env, exports,
       test_napi_threadsafe_function_abort_with_outstanding_ref_release_status);
+  REGISTER_FUNCTION(
+      env, exports,
+      test_napi_threadsafe_function_abort_with_outstanding_ref_released_after_finalize);
   REGISTER_FUNCTION(env, exports, test_napi_threadsafe_function_abort_full_queue);
   REGISTER_FUNCTION(
       env, exports, test_napi_threadsafe_function_abort_full_queue_finalized);

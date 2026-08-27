@@ -169,9 +169,7 @@ pub use js_meta::{
 pub struct LinkerGraph<'a> {
     pub files: FileList,
     pub(crate) files_live: BitSet,
-    /// Files with a live part that prints something into its chunk. Set as
-    /// parts become live, only with code splitting, which gives no chunk to a
-    /// file whose live parts are only imports and re-exports of unwrapped files.
+    /// Files with a live part that prints something; maintained only with code splitting.
     pub(crate) files_with_code: BitSet,
     /// Per-part liveness — `parts_live[source_index].is_set(part_index)`.
     /// One bitset per source file, sized to that file's `parts.len()`.

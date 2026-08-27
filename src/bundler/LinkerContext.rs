@@ -2992,9 +2992,7 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    /// Whether the part prints anything into its chunk. `convert_stmts_for_chunk`
-    /// drops an import or re-export of an unwrapped bundled file, an unused import
-    /// record, and an `export {}` clause without printing anything in its place.
+    /// Whether the part prints anything into its chunk (what `convert_stmts_for_chunk` keeps).
     fn part_prints_code(
         flags: &[crate::js_meta::Flags],
         records: &[ImportRecord],

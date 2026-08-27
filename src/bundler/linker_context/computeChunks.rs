@@ -314,8 +314,7 @@ pub(crate) fn compute_chunks(
                     }
 
                     if this.graph.code_splitting {
-                        // A file that prints nothing gets no chunk: it would be an
-                        // empty file, and two such chunks share a content hash.
+                        // Its chunk would be an empty file.
                         if !this
                             .graph
                             .files_with_code

@@ -552,6 +552,7 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bun_telemetry::RootSampler;
 
     fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<Vec<u8>> {
         let m: Vec<(String, Vec<u8>)> = pairs
@@ -569,7 +570,10 @@ mod tests {
             ("OTEL_TRACES_SAMPLER_ARG", "lots"),
         ]);
         let r = from_env(&e);
-        assert!(matches!(r.config.sampler, Sampler::TraceIdRatio(u64::MAX)));
+        assert!(matches!(
+            r.config.sampler,
+            Sampler::Root(RootSampler::TraceIdRatio(u64::MAX))
+        ));
         assert!(
             r.warnings
                 .iter()
@@ -582,7 +586,10 @@ mod tests {
         ]);
         let r = from_env(&e);
         assert!(r.warnings.is_empty(), "{:?}", r.warnings);
-        assert!(matches!(r.config.sampler, Sampler::TraceIdRatio(t) if t != u64::MAX && t != 0));
+        assert!(matches!(
+            r.config.sampler,
+            Sampler::Root(RootSampler::TraceIdRatio(t)) if t != u64::MAX && t != 0
+        ));
     }
 
     #[test]

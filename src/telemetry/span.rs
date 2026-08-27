@@ -99,12 +99,15 @@ impl fmt::Debug for SpanId {
     }
 }
 
-/// W3C trace-flags byte plus our own bits above it.
+/// W3C trace-flags (low nibble) plus Bun's own bits above it. The byte is
+/// private: a foreign byte enters only through [`Flags::from_w3c`] /
+/// [`Flags::from_link_byte`], which keep nothing Bun did not define.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 #[repr(transparent)]
-pub struct Flags(pub u8);
+pub struct Flags(u8);
 
 impl Flags {
+    // TelemetryABI.h `TelemetrySpanStub` and TelemetrySpan.ts (link isRemote = 0x10) mirror these.
     pub const SAMPLED: u8 = 0x01;
     /// Context arrived from a remote parent (traceparent header).
     pub const REMOTE: u8 = 0x10;
@@ -116,6 +119,50 @@ impl Flags {
     /// Marks the carrier that `context.with(suppressTracing(ctx))` makes
     /// active: nothing (root or child) starts under it.
     pub const SUPPRESSED: u8 = 0x80;
+
+    pub const NONE: Flags = Flags(0);
+
+    /// A `traceparent` flags byte or an api `traceFlags` number: only the
+    /// sampled bit survives.
+    #[inline]
+    pub const fn from_w3c(byte: u8) -> Flags {
+        Flags(byte & Self::SAMPLED)
+    }
+    /// TelemetrySpan.ts `telemetryAddOneLink`'s encoding: low nibble W3C,
+    /// 0x10 = the linked context is remote.
+    #[inline]
+    pub const fn from_link_byte(byte: u8) -> Flags {
+        Flags(byte & (Self::SAMPLED | Self::REMOTE))
+    }
+    #[inline]
+    pub const fn sampled_only(sampled: bool) -> Flags {
+        Flags(sampled as u8)
+    }
+    #[inline]
+    pub const fn with_remote(self) -> Flags {
+        Flags(self.0 | Self::REMOTE)
+    }
+    #[inline]
+    pub const fn with_parent_remote(self) -> Flags {
+        Flags(self.0 | Self::PARENT_REMOTE)
+    }
+    #[inline]
+    pub const fn with_non_recording(self) -> Flags {
+        Flags(self.0 | Self::NON_RECORDING)
+    }
+    #[inline]
+    pub const fn with_suppressed(self) -> Flags {
+        Flags(self.0 | Self::SUPPRESSED)
+    }
+    /// The whole byte (Bun's own serialisation in [`SpanStub::to_bytes`]).
+    #[inline]
+    pub const fn bits(self) -> u8 {
+        self.0
+    }
+    #[inline]
+    pub fn non_recording(self) -> bool {
+        self.0 & Self::NON_RECORDING != 0
+    }
     #[inline]
     pub fn sampled(self) -> bool {
         self.0 & Self::SAMPLED != 0
@@ -213,9 +260,23 @@ pub enum StatusCode {
     Error = 2,
 }
 
+impl StatusCode {
+    /// From an `@opentelemetry/api` `SpanStatusCode` (UNSET 0, OK 1, ERROR 2);
+    /// anything else is Unset.
+    #[inline]
+    pub const fn from_api(code: u8) -> StatusCode {
+        match code {
+            1 => StatusCode::Ok,
+            2 => StatusCode::Error,
+            _ => StatusCode::Unset,
+        }
+    }
+}
+
 /// What a native integration embeds inline in the struct that represents the
-/// in-flight operation. 48 bytes; no heap, no Drop. `start_ns == 0` means
-/// "no span" so `Option<SpanStub>` isn't needed at integration sites.
+/// in-flight operation. 48 bytes; no heap, no Drop. `NONE` (all zero) means
+/// "no span" so `Option<SpanStub>` isn't needed at integration sites; a
+/// propagation-only carrier has ids and flags but no start time.
 #[derive(Clone, Copy, Default, Debug)]
 #[repr(C)]
 pub struct SpanStub {
@@ -234,7 +295,7 @@ impl SpanStub {
         b[..16].copy_from_slice(&self.ctx.trace_id.0);
         b[16..24].copy_from_slice(&self.ctx.span_id.0);
         b[24..32].copy_from_slice(&self.parent.0);
-        b[32] = self.ctx.flags.0;
+        b[32] = self.ctx.flags.bits();
         b[33..41].copy_from_slice(&self.start_ns.to_le_bytes());
         b
     }
@@ -255,21 +316,44 @@ impl SpanStub {
         ctx: SpanContext {
             trace_id: TraceId::INVALID,
             span_id: SpanId::INVALID,
-            flags: Flags(0),
+            flags: Flags::NONE,
         },
         parent: SpanId::INVALID,
         start_ns: 0,
     };
 
+    /// A propagation-only wrapper around `ctx` (`remote`: it arrived in a
+    /// traceparent): never recorded or exported, keeps the sampled bit so
+    /// children inherit the decision.
+    pub fn carrier(ctx: SpanContext, remote: bool) -> SpanStub {
+        let flags = Flags::sampled_only(ctx.flags.sampled()).with_non_recording();
+        SpanStub {
+            ctx: SpanContext {
+                flags: if remote { flags.with_remote() } else { flags },
+                ..ctx
+            },
+            parent: SpanId::INVALID,
+            start_ns: 0,
+        }
+    }
+
+    /// The carrier `context.with(suppressTracing(ctx), …)` activates: nothing
+    /// (root or child) starts under it.
+    pub fn suppressed() -> SpanStub {
+        let mut s = SpanStub::carrier(SpanStub::NONE.ctx, false);
+        s.ctx.flags = s.ctx.flags.with_suppressed();
+        s
+    }
+
+    /// Not `NONE`: a started span or a carrier.
     #[inline]
     pub fn is_some(&self) -> bool {
-        self.start_ns != 0
+        self.start_ns != 0 || self.ctx.flags.non_recording()
     }
 
     #[inline]
     pub fn is_recording(&self) -> bool {
-        self.start_ns != 0
-            && (self.ctx.flags.0 & (Flags::SAMPLED | Flags::NON_RECORDING)) == Flags::SAMPLED
+        self.start_ns != 0 && self.ctx.flags.sampled() && !self.ctx.flags.non_recording()
     }
 
     /// Start a child of `parent` (or a new root when `parent` is None/invalid).
@@ -300,19 +384,16 @@ impl SpanStub {
         if parent_id == SpanId::INVALID || parent_remote {
             crate::clock::reanchor(now_ns);
         }
-        let sampled = sampler.should_sample(parent, &trace_id);
+        let sampled = Flags::sampled_only(sampler.should_sample(parent, &trace_id));
         SpanStub {
             ctx: SpanContext {
                 trace_id,
                 span_id: SpanId(ids[0].to_be_bytes()),
-                flags: Flags(
-                    (sampled as u8)
-                        | if parent_remote {
-                            Flags::PARENT_REMOTE
-                        } else {
-                            0
-                        },
-                ),
+                flags: if parent_remote {
+                    sampled.with_parent_remote()
+                } else {
+                    sampled
+                },
             },
             parent: parent_id,
             start_ns: now_ns,

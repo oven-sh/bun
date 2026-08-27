@@ -1,17 +1,37 @@
 use crate::span::{SpanContext, TraceId};
 
-/// The SDK-spec built-in samplers. `ParentBased(root)` delegates to the
-/// remote/local parent's sampled flag when there is a parent.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum Sampler {
+/// The decision for a span with no (valid) parent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RootSampler {
     AlwaysOn,
     AlwaysOff,
     /// Threshold on the low 64 bits of the trace id.
     TraceIdRatio(u64),
-    #[default]
-    ParentBasedAlwaysOn,
-    ParentBasedAlwaysOff,
-    ParentBasedTraceIdRatio(u64),
+}
+
+impl RootSampler {
+    #[inline]
+    fn should_sample(self, trace_id: &TraceId) -> bool {
+        match self {
+            RootSampler::AlwaysOn => true,
+            RootSampler::AlwaysOff => false,
+            RootSampler::TraceIdRatio(t) => t == u64::MAX || trace_id.low_u64() < t,
+        }
+    }
+}
+
+/// The SDK-spec built-in samplers. `ParentBased(root)` follows a valid
+/// parent's sampled flag and uses `root` otherwise.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sampler {
+    Root(RootSampler),
+    ParentBased(RootSampler),
+}
+
+impl Default for Sampler {
+    fn default() -> Self {
+        Sampler::ParentBased(RootSampler::AlwaysOn)
+    }
 }
 
 impl Sampler {
@@ -26,29 +46,13 @@ impl Sampler {
     }
 
     #[inline]
-    fn ratio_hit(threshold: u64, trace_id: &TraceId) -> bool {
-        threshold == u64::MAX || trace_id.low_u64() < threshold
-    }
-
-    #[inline]
     pub fn should_sample(&self, parent: Option<&SpanContext>, trace_id: &TraceId) -> bool {
         match *self {
-            Sampler::AlwaysOn => true,
-            Sampler::AlwaysOff => false,
-            Sampler::TraceIdRatio(t) => Self::ratio_hit(t, trace_id),
-            Sampler::ParentBasedAlwaysOn
-            | Sampler::ParentBasedAlwaysOff
-            | Sampler::ParentBasedTraceIdRatio(_) => {
-                if let Some(p) = parent.filter(|p| p.is_valid()) {
-                    return p.sampled();
-                }
-                match *self {
-                    Sampler::ParentBasedAlwaysOn => true,
-                    Sampler::ParentBasedAlwaysOff => false,
-                    Sampler::ParentBasedTraceIdRatio(t) => Self::ratio_hit(t, trace_id),
-                    _ => unreachable!(),
-                }
-            }
+            Sampler::Root(r) => r.should_sample(trace_id),
+            Sampler::ParentBased(r) => match parent.filter(|p| p.is_valid()) {
+                Some(p) => p.sampled(),
+                None => r.should_sample(trace_id),
+            },
         }
     }
 
@@ -70,14 +74,20 @@ impl Sampler {
     /// `ratio` defaults to 1.0 (the spec default) when None.
     pub fn from_env(name: &[u8], ratio: Option<f64>) -> Option<Sampler> {
         let threshold = || ratio.map(Sampler::ratio_threshold).unwrap_or(u64::MAX);
-        Some(match name {
-            b"always_on" => Sampler::AlwaysOn,
-            b"always_off" => Sampler::AlwaysOff,
-            b"traceidratio" => Sampler::TraceIdRatio(threshold()),
-            b"parentbased_always_on" => Sampler::ParentBasedAlwaysOn,
-            b"parentbased_always_off" => Sampler::ParentBasedAlwaysOff,
-            b"parentbased_traceidratio" => Sampler::ParentBasedTraceIdRatio(threshold()),
+        let (parent_based, root) = match name.strip_prefix(b"parentbased_") {
+            Some(root) => (true, root),
+            None => (false, name),
+        };
+        let root = match root {
+            b"always_on" => RootSampler::AlwaysOn,
+            b"always_off" => RootSampler::AlwaysOff,
+            b"traceidratio" => RootSampler::TraceIdRatio(threshold()),
             _ => return None,
+        };
+        Some(if parent_based {
+            Sampler::ParentBased(root)
+        } else {
+            Sampler::Root(root)
         })
     }
 }

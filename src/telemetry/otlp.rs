@@ -855,7 +855,7 @@ mod span_writer_tests {
             ctx: SpanContext {
                 trace_id: TraceId([1; 16]),
                 span_id: SpanId([2; 8]),
-                flags: Flags(Flags::SAMPLED),
+                flags: Flags::from_w3c(Flags::SAMPLED),
             },
             parent: SpanId([0; 8]),
             start_ns: 5,

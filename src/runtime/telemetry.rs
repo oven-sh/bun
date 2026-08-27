@@ -13,7 +13,7 @@ use bun_event_loop::ManagedTask::ManagedTask;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult, VmHandle};
 use bun_telemetry::processor::{self, Processor};
-use bun_telemetry::{Instrument, InstrumentSet, Sampler};
+use bun_telemetry::{Instrument, InstrumentSet, RootSampler, Sampler};
 use bun_telemetry_cold::config::{self, Compression, ExporterConfig, OtlpExporterConfig};
 
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerTag};
@@ -869,8 +869,8 @@ fn sampler_from_js(global: &JSGlobalObject, v: JSValue, arg: Option<JSValue>) ->
         }
     };
     if v.is_number() {
-        return Ok(Sampler::ParentBasedTraceIdRatio(Sampler::ratio_threshold(
-            ratio_of(v.as_number())?,
+        return Ok(Sampler::ParentBased(RootSampler::TraceIdRatio(
+            Sampler::ratio_threshold(ratio_of(v.as_number())?),
         )));
     }
     if let Some(name) = arg_string(global, v)? {

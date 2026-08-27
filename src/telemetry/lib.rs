@@ -29,7 +29,7 @@ pub use limits::{DEFAULT_LIMITS, Limits};
 pub use otlp::{SpanWriter, Value};
 pub use pool::{JsCellRef, NativeSpan};
 pub use processor::{ExportAttempt, ExportPayload, Exporter, FlushTarget, OwnerKey, Processor};
-pub use sampler::Sampler;
+pub use sampler::{RootSampler, Sampler};
 pub use span::{Flags, SpanContext, SpanId, SpanKind, SpanStub, StatusCode, TraceId};
 
 /// Process-wide, immutable once set. Read on hot paths without locking via
@@ -45,7 +45,7 @@ pub struct State {
 
 impl State {
     pub const DEFAULT: State = State {
-        sampler: Sampler::ParentBasedAlwaysOn,
+        sampler: Sampler::ParentBased(RootSampler::AlwaysOn),
         limits: DEFAULT_LIMITS,
         propagate_trace_context: true,
         propagate_baggage: true,
@@ -118,26 +118,29 @@ pub enum Instrument {
     /// Bun.serve and node:http server.
     HttpServer = 0,
     /// fetch() and node:http client.
-    HttpClient,
+    HttpClient = 1,
     /// Bun.sql (PostgreSQL, MySQL).
-    Sql,
+    Sql = 2,
     /// bun:sqlite.
-    Sqlite,
+    Sqlite = 3,
     /// Bun.redis.
-    Redis,
+    Redis = 4,
     /// Bun.connect / Bun.listen / node:net / node:tls.
-    Net,
+    Net = 5,
     /// WebSocket client and ServerWebSocket.
-    WebSocket,
+    WebSocket = 6,
     /// node:fs, Bun.file, Bun.write.
-    Fs,
+    Fs = 7,
     /// Bun.spawn / node:child_process.
-    ChildProcess,
+    ChildProcess = 8,
     /// node:dns / Bun.dns and connection-time lookups.
-    Dns,
+    Dns = 9,
     /// Spans created from JS (Bun.otel.tracer / @opentelemetry/api).
-    User,
+    User = 10,
 }
+
+// src/js/node/_http_client.ts tests the exported mask with `& 2`; JSSQLStatement.cpp uses Bun__Telemetry__SQLITE_MASK.
+const _: () = assert!(Instrument::HttpClient.bit() == 1 << 1);
 
 impl Instrument {
     pub const COUNT: usize = Instrument::User as usize + 1;

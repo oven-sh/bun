@@ -558,7 +558,7 @@ mod tests {
             ctx: SpanContext {
                 trace_id: TraceId([7; 16]),
                 span_id: SpanId([9; 8]),
-                flags: Flags(Flags::SAMPLED),
+                flags: Flags::from_w3c(Flags::SAMPLED),
             },
             parent: SpanId([0; 8]),
             start_ns: 11,

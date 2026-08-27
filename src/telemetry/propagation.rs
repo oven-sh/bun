@@ -44,7 +44,7 @@ pub fn parse_traceparent(h: &[u8]) -> Option<SpanContext> {
     Some(SpanContext {
         trace_id,
         span_id,
-        flags: Flags((flags & Flags::SAMPLED) | Flags::REMOTE),
+        flags: Flags::from_w3c(flags).with_remote(),
     })
 }
 

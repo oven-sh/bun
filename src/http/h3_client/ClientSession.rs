@@ -288,16 +288,13 @@ impl ClientSession {
         false
     }
 
-    /// The lsquic stream closed without a FIN: a delivered FIN detaches the
-    /// stream inside `deliver`, so a stream still attached here got none.
-    /// `peer_reset` is the code of the peer's RESET_STREAM, if it sent one.
-    ///
-    /// Before the response headers, `deliver` retries the request once when
-    /// the connection went away under it (the stale-session race) or the
-    /// server promised it did no application processing (H3_REQUEST_REJECTED,
-    /// RFC 9114 section 8.1). Any other reset may have reached the handler, so
-    /// the request is not re-sent, as H2 retries only REFUSED_STREAM. After
-    /// the headers the body is truncated and the request fails.
+    /// The lsquic stream closed without a FIN (a delivered FIN detaches the
+    /// stream inside `deliver`). `peer_reset` is the peer's RESET_STREAM code.
+    /// Before the response headers `deliver` re-sends the request once, but
+    /// only when no reset arrived (stale session) or the code is
+    /// H3_REQUEST_REJECTED, the one code that promises the server did no
+    /// application processing (RFC 9114 section 8.1; h2 retries only
+    /// REFUSED_STREAM). Otherwise the request fails.
     pub(crate) fn on_stream_closed(&mut self, stream: *mut Stream, peer_reset: Option<u64>) {
         let st = stream_mut(stream);
         let Some(client_ptr) = st.client else {

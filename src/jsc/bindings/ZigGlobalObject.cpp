@@ -3874,6 +3874,7 @@ static void registerStandaloneClosure(Zig::GlobalObject* globalObject, JSModuleL
         RETURN_IF_EXCEPTION(scope, void());
         RELEASE_ASSERT(!entry->record()); // nothing between collect and register can register one of these keys
         entry->provideModule(globalObject, m.source, m.record);
+        RETURN_IF_EXCEPTION(scope, void());
         releaseModuleInfo(globalObject, m.source);
     }
     if (!closure.complete)

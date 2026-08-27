@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, hideFromStackTrace, tempDir } from "harness";
+import { bunEnv, bunExe, hideFromStackTrace, nodeExe, tempDir } from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -5344,6 +5344,102 @@ describe("using declarations in switch statements", () => {
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual(["case 0", "default sees a: true", "dispose b", "dispose a", "after switch"]);
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("await using lowering", () => {
+  const fixturePath = join(import.meta.dir, "await-using-timing-fixture.mjs");
+
+  async function runScript(exe, script, cwd) {
+    await using proc = Bun.spawn({
+      cmd: [exe, script],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return stdout;
+  }
+
+  it("Bun.Transpiler and bun build output dispose on the same microtask ticks as the native syntax", async () => {
+    const source = await Bun.file(fixturePath).text();
+    const lowered = new Bun.Transpiler({ loader: "js", target: "node" }).transformSync(source);
+    expect(lowered).toContain("__callDispose");
+
+    using dir = tempDir("await-using-timing", {
+      "native.mjs": source,
+      "lowered.mjs": lowered,
+    });
+    const cwd = String(dir);
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--target=browser", "native.mjs", "--outfile=bundled.mjs"],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildStderr).toBe("");
+    expect(buildExitCode).toBe(0);
+    const bundled = await Bun.file(join(cwd, "bundled.mjs")).text();
+    expect(bundled).toContain("__callDispose");
+
+    const native = await runScript(bunExe(), "native.mjs", cwd);
+    // The scenario from the original report: the block finishes one microtask
+    // after `await using x = null`, before a sibling that awaited once.
+    expect(native).toContain("returned(using-block-exited < one-tick-later)");
+    expect(native.split("\n").length).toBeGreaterThan(10);
+
+    // Transpiled output imports the helpers from "bun:wrap"; the bundle inlines them.
+    const runs = [runScript(bunExe(), "lowered.mjs", cwd), runScript(bunExe(), "bundled.mjs", cwd)];
+    const node = nodeExe();
+    if (node) runs.push(runScript(node, "bundled.mjs", cwd));
+    for (const output of await Promise.all(runs)) {
+      expect(output).toBe(native);
+    }
+  });
+
+  it("files lowered by older versions of Bun still dispose through the current bun:wrap", async () => {
+    // The shape older versions emitted for two `await using` declarations followed by a
+    // throw: it awaits whatever __callDispose returns instead of stepping through it.
+    using dir = tempDir("await-using-old-lowering", {
+      "old.mjs": `
+        import { __using, __callDispose } from "bun:wrap";
+        const order = [];
+        const resource = name => ({
+          async [Symbol.asyncDispose]() {
+            order.push("dispose " + name);
+            if (name === "b") throw new Error("dispose " + name);
+          },
+        });
+        async function run() {
+          let __stack = [];
+          try {
+            const a = __using(__stack, resource("a"), 1);
+            const b = __using(__stack, resource("b"), 1);
+            throw new Error("body");
+          } catch (_catch) {
+            var _err = _catch, _hasErr = 1;
+          } finally {
+            var _promise = __callDispose(__stack, _err, _hasErr);
+            _promise && await _promise;
+          }
+        }
+        try {
+          await run();
+          order.push("did not throw");
+        } catch (e) {
+          order.push(e.name + ": " + e.error.message + " suppressed " + e.suppressed.message);
+        }
+        console.log(JSON.stringify(order));
+      `,
+    });
+    const stdout = await runScript(bunExe(), "old.mjs", String(dir));
+    expect(JSON.parse(stdout)).toEqual(["dispose b", "dispose a", "SuppressedError: dispose b suppressed body"]);
   });
 });
 

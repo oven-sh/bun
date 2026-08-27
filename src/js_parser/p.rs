@@ -8962,8 +8962,8 @@ impl LowerUsingDeclarationsContext {
             .append_slice(&[self.stack_ref, caught_ref, err_ref, has_err_ref]);
         p.declared_symbols
             .ensure_unused_capacity(
-                // 5 to include the _promise decl later on:
-                if self.has_await_using { 5 } else { 4 },
+                // 6 to include the _dispose and _reason decls later on:
+                if self.has_await_using { 6 } else { 4 },
             )
             .expect("oom");
         p.declared_symbols.append_assume_capacity(DeclaredSymbol {
@@ -9015,35 +9015,37 @@ impl LowerUsingDeclarationsContext {
         };
 
         let finally_stmts: &'a mut [Stmt] = if self.has_await_using {
-            let promise_ref = p.generate_temp_ref(Some(b"_promise"));
-            VecExt::append(&mut scope.generated, promise_ref);
+            // for (var _dispose = __callDispose(stack, error, hasError); _dispose; _dispose = _dispose())
+            //   try { await _dispose.result } catch (_reason) { _dispose.fail(_reason) }
+            let dispose_ref = p.generate_temp_ref(Some(b"_dispose"));
+            let reason_ref = p.generate_temp_ref(Some(b"_reason"));
+            scope.generated.append_slice(&[dispose_ref, reason_ref]);
             p.declared_symbols.append_assume_capacity(DeclaredSymbol {
                 is_top_level,
-                ref_: promise_ref,
+                ref_: dispose_ref,
+            });
+            p.declared_symbols.append_assume_capacity(DeclaredSymbol {
+                is_top_level,
+                ref_: reason_ref,
             });
 
-            let promise_ref_expr = p.new_expr(
-                E::Identifier {
-                    ref_: promise_ref,
-                    ..Default::default()
-                },
-                loc,
-            );
+            let dispose_ident = |p: &mut P<'a, T, S_>| {
+                p.record_usage(dispose_ref);
+                p.new_expr(
+                    E::Identifier {
+                        ref_: dispose_ref,
+                        ..Default::default()
+                    },
+                    loc,
+                )
+            };
 
-            let await_expr = p.new_expr(
-                E::Await {
-                    value: promise_ref_expr,
-                },
-                loc,
-            );
-            p.record_usage(promise_ref);
-
-            // var promise = __callDispose(stack, error, hasError);
-            let promise_binding = p.b(B::Identifier { r#ref: promise_ref }, loc);
-            let stmt0 = p.s(
+            // var _dispose = __callDispose(stack, error, hasError)
+            let dispose_binding = p.b(B::Identifier { r#ref: dispose_ref }, loc);
+            let init = p.s(
                 S::Local {
                     decls: G::DeclList::init_one(Decl {
-                        binding: promise_binding,
+                        binding: dispose_binding,
                         value: Some(call_dispose),
                     }),
                     ..Default::default()
@@ -9051,29 +9053,111 @@ impl LowerUsingDeclarationsContext {
                 loc,
             );
 
-            // The "await" must not happen if an error was thrown before the
-            // "await using", so we conditionally await here:
-            //
-            //   var promise = __callDispose(stack, error, hasError);
-            //   promise && await promise;
-            //
-            let cond_await = p.new_expr(
-                E::Binary {
-                    op: js_ast::op::Code::BinLogicalAnd,
-                    left: promise_ref_expr,
-                    right: await_expr,
-                },
-                loc,
-            );
-            let stmt1 = p.s(
-                S::SExpr {
-                    value: cond_await,
-                    ..Default::default()
+            let test = dispose_ident(p);
+
+            // _dispose = _dispose()
+            let update = {
+                let target = dispose_ident(p);
+                let call = p.new_expr(
+                    E::Call {
+                        target,
+                        ..Default::default()
+                    },
+                    loc,
+                );
+                let assign_target = dispose_ident(p);
+                Expr::assign(assign_target, call)
+            };
+
+            // await _dispose.result;
+            let try_body = {
+                let target = dispose_ident(p);
+                let result = p.new_expr(
+                    E::Dot {
+                        target,
+                        name: b"result".into(),
+                        name_loc: loc,
+                        ..Default::default()
+                    },
+                    loc,
+                );
+                let await_expr = p.new_expr(E::Await { value: result }, loc);
+                let stmt = p.s(
+                    S::SExpr {
+                        value: await_expr,
+                        ..Default::default()
+                    },
+                    loc,
+                );
+                bun_ast::StoreSlice::new_mut(p.arena.alloc_slice_copy(&[stmt]))
+            };
+
+            // catch (_reason) { _dispose.fail(_reason); }
+            let catch_binding = p.b(B::Identifier { r#ref: reason_ref }, loc);
+            let catch_body = {
+                let target = dispose_ident(p);
+                let fail = p.new_expr(
+                    E::Dot {
+                        target,
+                        name: b"fail".into(),
+                        name_loc: loc,
+                        ..Default::default()
+                    },
+                    loc,
+                );
+                p.record_usage(reason_ref);
+                let reason = p.new_expr(
+                    E::Identifier {
+                        ref_: reason_ref,
+                        ..Default::default()
+                    },
+                    loc,
+                );
+                let args = p.arena.alloc_slice_copy(&[reason]);
+                let call = p.new_expr(
+                    E::Call {
+                        target: fail,
+                        args: ExprNodeList::from_arena_slice(args),
+                        ..Default::default()
+                    },
+                    loc,
+                );
+                let stmt = p.s(
+                    S::SExpr {
+                        value: call,
+                        ..Default::default()
+                    },
+                    loc,
+                );
+                bun_ast::StoreSlice::new_mut(p.arena.alloc_slice_copy(&[stmt]))
+            };
+
+            let body = p.s(
+                S::Try {
+                    body_loc: loc,
+                    body: try_body,
+                    catch: Some(js_ast::Catch {
+                        loc,
+                        binding: Some(catch_binding),
+                        body: catch_body,
+                        body_loc: loc,
+                    }),
+                    finally: None,
                 },
                 loc,
             );
 
-            p.arena.alloc_slice_copy(&[stmt0, stmt1])
+            let for_stmt = p.s(
+                S::For {
+                    init: Some(init),
+                    test: Some(test),
+                    update: Some(update),
+                    body,
+                },
+                loc,
+            );
+
+            p.arena.alloc_slice_copy(&[for_stmt])
         } else {
             let call_dispose_loc = call_dispose.loc;
             p.arena.alloc_slice_copy(&[p.s(

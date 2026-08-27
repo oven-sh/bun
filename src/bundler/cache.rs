@@ -88,8 +88,8 @@ impl JavaScript {
 
         let result = match parser.parse() {
             Ok(r) => {
-                // The parser halts on every logged error, so an AST never comes with one.
-                debug_assert!(!matches!(r, js_parser::Result::Ast(_)) || temp_log.errors == 0);
+                // The parser halts on every logged error.
+                debug_assert_eq!(temp_log.errors, 0);
                 r
             }
             Err(err) => {

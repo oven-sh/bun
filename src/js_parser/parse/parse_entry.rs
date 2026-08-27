@@ -777,6 +777,11 @@ impl<'a> Parser<'a> {
             p.lexer.next()?;
         }
 
+        // The first token may already have logged an error; halt before the early returns below.
+        if p.log().errors > orig_error_count {
+            return Err(crate::Error::SyntaxError);
+        }
+
         // Detect a leading "// @bun" pragma
         if p.options.features.dont_bundle_twice {
             if let Some(pragma) = Self::has_bun_pragma(&source.contents, !hashbang.is_empty()) {

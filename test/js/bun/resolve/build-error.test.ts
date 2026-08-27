@@ -251,22 +251,26 @@ test.concurrent("JSX next to module.exports is not blamed on a runtime import", 
 });
 
 // The lexer reads the first token while the parser is constructed. An error it
-// logs there still has to fail the parse, on both load paths.
+// logs there still has to fail the parse, on both load paths, also when the
+// `// @bun` pragma makes the parser hand the file over without parsing it.
 test.concurrent("a lexer error on the first token rejects import() and require()", async () => {
   using dir = tempDir("build-error-first-token", {
     // `\u0030foo` spells the identifier `0foo`.
     "bad.js": `\\u0030foo = 1;\nconsole.log("loaded");`,
+    "prebundled.js": `// @bun\n\\u0030foo = 1;\nconsole.log("loaded");`,
     "main.js": `
       const out = {};
-      try {
-        await import("./bad.js");
-      } catch (e) {
-        out.import = [e.name, e.message];
-      }
-      try {
-        require("./bad.js");
-      } catch (e) {
-        out.require = [e.name, e.message];
+      for (const file of ["./bad.js", "./prebundled.js"]) {
+        try {
+          await import(file);
+        } catch (e) {
+          out["import " + file] = [e.name, e.message];
+        }
+        try {
+          require(file);
+        } catch (e) {
+          out["require " + file] = [e.name, e.message];
+        }
       }
       console.log(JSON.stringify(out));
     `,
@@ -283,7 +287,12 @@ test.concurrent("a lexer error on the first token rejects import() and require()
 
   if (exitCode !== 0) console.error(stderr);
   const expected = ["BuildMessage", 'Invalid identifier: "0foo"'];
-  expect(JSON.parse(stdout)).toEqual({ import: expected, require: expected });
+  expect(JSON.parse(stdout)).toEqual({
+    "import ./bad.js": expected,
+    "require ./bad.js": expected,
+    "import ./prebundled.js": expected,
+    "require ./prebundled.js": expected,
+  });
   expect(exitCode).toBe(0);
 });
 

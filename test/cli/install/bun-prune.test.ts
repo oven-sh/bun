@@ -290,9 +290,10 @@ const trees = {
 };
 
 // Every entry of a node_modules folder, as paths relative to it: a package folder (scope folders flattened), a file,
-// a bin as `.bin/<name>` (one row on Windows too, where it is a shim pair), a store entry, and a link with its
-// target relative to the link. Recurses into each package's own node_modules and into the store, so one list covers
-// the whole tree a prune touches. A scope, `.bin` or store folder that is left empty is listed by its own name.
+// a bin as `.bin/<name>` (on Windows the row stands for the whole `<name>.exe` + `<name>.bunx` shim pair; half a
+// pair keeps its file name), a store entry, and a link with its target relative to the link. Recurses into each
+// package's own node_modules and into the store, so one list covers the whole tree a prune touches. A scope, `.bin`
+// or store folder that is left empty is listed by its own name.
 function layout(dir: string, folder = "node_modules") {
   const rows: string[] = [];
   const pkg = (entry: Dirent, parent: string, prefix: string) => {
@@ -327,8 +328,15 @@ function layout(dir: string, folder = "node_modules") {
         });
       } else if (entry.name === ".bin") {
         orEmpty(rel, () => {
-          for (const bin of new Set(readdirSync(path).map(name => name.replace(/\.(exe|bunx)$/, "")))) {
-            rows.push(`${rel}/${bin}`);
+          const shims = new Map<string, string[]>();
+          for (const file of readdirSync(path)) {
+            const shim = isWindows ? file.match(/^(.+)\.(exe|bunx)$/) : null;
+            if (shim) shims.set(shim[1], [...(shims.get(shim[1]) ?? []), shim[2]]);
+            else rows.push(`${rel}/${file}`);
+          }
+          for (const [name, exts] of shims) {
+            if (exts.length === 2) rows.push(`${rel}/${name}`);
+            else for (const ext of exts) rows.push(`${rel}/${name}.${ext}`);
           }
         });
       } else if (entry.name === ".bun") {

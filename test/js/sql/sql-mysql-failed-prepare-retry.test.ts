@@ -23,7 +23,8 @@ import { expect, test } from "bun:test";
 import type { Socket } from "node:net";
 import {
   listeningServer,
-  mysqlErrorPacket,
+  mysqlAckSessionSetup,
+  mysqlErrPacket,
   mysqlHandshakeV10,
   mysqlOkPacket,
   mysqlReadPackets,
@@ -36,10 +37,10 @@ const COM_STMT_EXECUTE = 0x17;
 const COM_STMT_CLOSE = 0x19;
 
 /**
- * A scripted MySQL server: handshake, OK for the auth response, then routes
- * each COM_STMT_PREPARE through `onPrepare(text, nth)` (nth is 1-based per
- * distinct query text) and answers every COM_STMT_EXECUTE with an OK packet.
- * Call `stop()` in a `finally`.
+ * A scripted MySQL server: handshake, OK for the auth response and for the
+ * driver's session-setup query, then routes each COM_STMT_PREPARE through
+ * `onPrepare(text, nth)` (nth is 1-based per distinct query text) and answers
+ * every COM_STMT_EXECUTE with an OK packet. Call `stop()` in a `finally`.
  */
 async function mockMySQLServer(onPrepare: (text: string, nth: number) => Buffer) {
   const preparesByText = new Map<string, number>();
@@ -58,6 +59,7 @@ async function mockMySQLServer(onPrepare: (text: string, nth: number) => Buffer)
           socket.write(mysqlOkPacket(seq + 1));
           return;
         }
+        if (mysqlAckSessionSetup(socket, payload)) return;
         const cmd = payload[0];
         if (cmd === COM_STMT_PREPARE) {
           const text = payload.subarray(1).toString("utf-8");
@@ -89,7 +91,7 @@ async function mockMySQLServer(onPrepare: (text: string, nth: number) => Buffer)
   };
 }
 
-const tableMissing = () => mysqlErrorPacket(1, 1146, "42S02", "Table 'db.t' doesn't exist");
+const tableMissing = () => mysqlErrPacket(1, 1146, "42S02", "Table 'db.t' doesn't exist");
 
 const settled = (q: Promise<any>) =>
   q.then(

@@ -297,13 +297,9 @@ pub mod features {
         #[unsafe(export_name = "Bun__Feature__webview_webkit")]
         57 => (webview_webkit, "webview_webkit"),
         58 => (xml_parse, "xml_parse", core = XML_PARSE),
-        /// A standalone executable whose bytecode was written by a bun for the other C++ ABI (Windows host, non-Windows
-        /// target or the reverse): the one cross-compile the bytecode format is sensitive to.
-        59 => (bytecode_cross_abi, "bytecode_cross_abi"),
+        /// A standalone executable whose embedded bytecode was produced on a different os/arch/libc than the one running it.
+        59 => (cross_compiled_bytecode, "cross_compiled_bytecode"),
     }
-
-    /// For a standalone executable, the bun that compiled it (e.g. "bun-v1.4.1+abcdef123 linux-x64"), for crash reports.
-    pub static COMPILED_BY: std::sync::OnceLock<&'static [u8]> = std::sync::OnceLock::new();
 
     // C++ declares these as `extern "C" size_t Bun__...;` and
     // reads/increments the value directly, so the exported symbol must BE the

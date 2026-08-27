@@ -90,18 +90,38 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
     60_000,
   );
 
-  test("the executable records which bun compiled it, and crash reports say so", async () => {
-    using dir = tempDir("build-compile-compiled-by", {
+  // --bytecode into an executable for another os/arch/libc embeds bytecode written by this platform's JavaScriptCore for
+  // another's; such executables say so in crash reports (Features: cross_compiled_bytecode). The "other platform" build
+  // here is the same OS with another libc or CPU, and reuses this bun as the target executable, so it still runs here.
+  const otherPlatform = isLinux
+    ? `bun-linux-${isArm64 ? "aarch64" : "x64"}${isMusl ? "" : "-musl"}`
+    : `bun-${isMacOS ? "darwin" : "windows"}-${isArm64 ? "x64" : "aarch64"}`;
+  test.each([
+    ["this platform", undefined, false],
+    [otherPlatform, otherPlatform, true],
+  ])("--compile --bytecode for %s: cross_compiled_bytecode=%p", async (_label, target, expected) => {
+    using dir = tempDir("build-compile-cross-bytecode", {
       "app.js": `require("bun:internal-for-testing").crash_handler.panic();`,
     });
-    const outfile = join(dir + "", "app");
-    const result = await Bun.build({
-      entrypoints: [join(dir + "", "app.js")],
-      compile: { outfile },
-      bytecode: true,
-      target: "bun",
+    const outfile = join(dir + "", isWindows ? "app.exe" : "app");
+    await using build = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--bytecode",
+        ...(target ? [`--target=${target}`, `--compile-executable-path=${process.execPath}`] : []),
+        join(dir + "", "app.js"),
+        "--outfile",
+        outfile,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
     });
-    expect(result.success).toBe(true);
+    const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildStderr).not.toContain("error");
+    expect(buildExit).toBe(0);
     await using proc = Bun.spawn({
       cmd: [outfile],
       env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
@@ -109,15 +129,8 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // e.g. "Compiled by: bun-v1.4.1-canary.1+4274120ab linux-x64"; the same bun compiled it, so its revision and platform.
-    const compiledBy = stderr.match(/^Compiled by: (.*)$/m)?.[1] ?? "";
-    expect(compiledBy).toStartWith(`bun-v${Bun.version}`);
-    expect(compiledBy).toContain(Bun.revision.slice(0, 9));
-    expect(compiledBy).toEndWith(
-      ` ${isWindows ? "windows" : process.platform}-${isArm64 ? "aarch64" : "x64"}${isMusl ? "-musl" : ""}`,
-    );
-    // Compiled and run on the same platform: not the Windows<->non-Windows bytecode case crash reports flag.
-    expect(stderr).not.toContain("bytecode_cross_abi");
+    expect(stderr).toContain("panic");
+    expect(stderr.includes("cross_compiled_bytecode")).toBe(expected);
     expect(stdout).toBe("");
     expect(exitCode).not.toBe(0);
   });

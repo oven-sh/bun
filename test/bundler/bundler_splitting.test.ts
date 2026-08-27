@@ -796,6 +796,31 @@ describe("bundler", () => {
       expect(readdirSync(api.outdir).filter(f => f.endsWith(".js"))).toHaveLength(2);
     },
   });
+  // A file whose every part was tree-shaken gets no chunk: two such files
+  // reached by different sets of entries used to become two empty chunks
+  // with the same content hash ("Multiple files share the same output path").
+  itBundled("splitting/NoChunkForFilesWithNoLiveParts", {
+    files: {
+      "/entry.js": `await import('./a.js'); await import('./b.js'); await import('./e.js')`,
+      "/a.js": `import './c.js'; import './d.js'; console.log('a')`,
+      "/b.js": `import './c.js'; import './shared.js'; console.log('b')`,
+      "/e.js": `import './d.js'; console.log('e')`,
+      "/c.js": `export function dead() {}`,
+      // only live part is a bare import of an unwrapped file: prints nothing either
+      "/d.js": `import './shared.js'; export function dead() {}`,
+      "/shared.js": `console.log('shared')`,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    minifySyntax: true,
+    outdir: "/out",
+    chunkNaming: "chunk-[hash].[ext]",
+    onAfterBundle(api) {
+      // entry + the three import() targets + shared.js's chunk; nothing for c.js / d.js
+      expect(readdirSync(api.outdir).filter(f => f.endsWith(".js"))).toHaveLength(5);
+    },
+    run: { file: "/out/entry.js", stdout: "shared\na\nb\ne" },
+  });
   // An entry point with exports of its own keeps its module namespace as
   // written: shared code is not folded into it (which would add exports),
   // but the chunks that are always loaded with it still fold into one.

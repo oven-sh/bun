@@ -901,7 +901,6 @@ fn registry_get(
         headers.content.written_slice(),
         b"",
         http_proxy,
-        None,
         http::FetchRedirect::Follow,
     );
     req.client.flags.reject_unauthorized = pm.tls_reject_unauthorized();

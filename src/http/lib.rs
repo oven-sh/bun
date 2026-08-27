@@ -1197,8 +1197,6 @@ fn unregister_abort_tracker_for_socket(socket: uws::InternalSocket) {
 /// Returns the hostname to use for TLS SNI and certificate verification.
 /// Priority: tls_props.server_name > client.url.hostname. The Host request
 /// header is an HTTP field only and never selects the TLS peer identity.
-/// IPv6 brackets are stripped ("[::1]" -> "::1") so is_ip_address and
-/// checkServerIdentity see the bare address, like Node's urlToHttpOptions.
 pub(crate) fn get_tls_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: bool) -> &'c [u8] {
     if allow_proxy_url {
         if let Some(proxy) = &client.http_proxy {

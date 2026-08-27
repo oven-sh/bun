@@ -108,7 +108,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // e.g. "Compiled by: bun-v1.4.1-canary.1+4274120ab linux-x64"; the same bun compiled it, so its revision and platform.
     const compiledBy = stderr.match(/^Compiled by: (.*)$/m)?.[1] ?? "";
     expect(compiledBy).toStartWith(`bun-v${Bun.version}`);
@@ -119,6 +119,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
     // Compiled and run on the same platform: not the Windows<->non-Windows bytecode case crash reports flag.
     expect(stderr).toMatch(/^Features: /m);
     expect(stderr).not.toContain("bytecode_cross_abi");
+    expect(stdout).toBe("");
     expect(exitCode).not.toBe(0);
   });
 

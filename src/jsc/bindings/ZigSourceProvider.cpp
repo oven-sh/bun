@@ -86,15 +86,10 @@ Ref<SourceProvider> SourceProvider::create(
         shouldGenerateCodeCoverage = BunTest__shouldGenerateCodeCoverage(&sourceURLBunString);
     }
 
-    // Compute source origin: use explicit bytecode_origin_path if provided, otherwise derive from source_url.
-    // bytecode_origin_path is used for bytecode cache validation where the origin must match
-    // exactly what was used at build time.
     const auto getSourceOrigin = [&]() -> SourceOrigin {
-        auto bytecodeOriginPath = resolvedSource.bytecode_origin_path.transferToWTFString();
-        if (!bytecodeOriginPath.isNull() && !bytecodeOriginPath.isEmpty()) {
-            // Convert file path to file:// URL (same as build time)
-            return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(bytecodeOriginPath));
-        }
+        auto originPath = resolvedSource.origin_path.transferToWTFString();
+        if (!originPath.isEmpty())
+            return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(originPath));
         return toSourceOrigin(sourceURLString, isBuiltin);
     };
 

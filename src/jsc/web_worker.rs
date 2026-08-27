@@ -1288,43 +1288,21 @@ unsafe fn resolve_entry_point_specifier<'s>(
     error_message: &mut BunString,
     log: &mut bun_ast::Log,
 ) -> Option<&'s [u8]> {
-    // SAFETY: per fn contract; read-only field.
+    // In a `bun build --compile` executable, a relative specifier names an embedded entry point (relative to the
+    // embedded root) before it names a file on disk, and an absolute one may be an embedded path in either syntax
+    // (`new URL("./w.ts", import.meta.url)`); the resolver maps both to the embedded module's name.
+    // SAFETY: per fn contract; `standalone_module_graph` is a read-only field and the resolver is only used on
+    // `parent`'s owning thread (see below).
     if let Some(graph) = unsafe { (*parent).standalone_module_graph } {
-        // A relative specifier is relative to the embedded root; an absolute one (spelled out, or from
-        // `new URL("./w.js", import.meta.url)`) may arrive in the platform's path syntax. Either way the
-        // graph's own name for the file is what the module loader recognizes, so return that. Entry
-        // points are embedded under a `.js` name whatever their source extension was, so also try the
-        // name `bun build --compile` would have given the file:
-        //
-        //   new Worker("./foo")     -> /$bunfs/root/foo.js
-        //   new Worker("./foo.ts")  -> /$bunfs/root/foo.js   (also .tsx .jsx .mjs .mts .cjs .cts)
-        //   new Worker(new URL("./foo.mjs", import.meta.url)) -> the same
-        let mut pathbuf = bun_paths::path_buffer_pool::get();
-        let path: &[u8] = if str.starts_with(b"./") || str.starts_with(b"../") {
-            bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Loose>(
+        if let Ok(result) = unsafe {
+            (*parent).transpiler.resolver.resolve(
                 graph.base_public_path_with_default_suffix(),
-                &mut pathbuf[..],
-                &[str],
+                str,
+                bun_ast::ImportKind::EntryPointRun,
             )
-        } else {
-            let len = str.len().min(pathbuf.len() - 3);
-            pathbuf[..len].copy_from_slice(&str[..len]);
-            &pathbuf[..len]
-        };
-        let path_len = path.len();
-        if let Some(name) = graph.find(&pathbuf[..path_len]) {
-            return Some(name);
-        }
-        let extension_len = bun_paths::extension(&pathbuf[..path_len]).len();
-        let is_source_extension = matches!(
-            &pathbuf[path_len - extension_len..path_len],
-            b"" | b".ts" | b".tsx" | b".jsx" | b".mjs" | b".mts" | b".cjs" | b".cts"
-        );
-        if is_source_extension && path_len - extension_len + 3 <= pathbuf.len() {
-            let stem_len = path_len - extension_len;
-            pathbuf[stem_len..stem_len + 3].copy_from_slice(b".js");
-            if let Some(name) = graph.find(&pathbuf[..stem_len + 3]) {
-                return Some(name);
+        } {
+            if result.flags.is_standalone_module() {
+                return Some(result.path_const().expect("standalone results have a path").text);
             }
         }
     }

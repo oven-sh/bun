@@ -462,6 +462,27 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "wjs\nwjs\nwts\nwts\nwmjs\nwjs\nwts\nwmjs\nwts\nwmjs\n", file: "dist/out", setCwd: true },
   });
+  // The same resolution for import()/require() at run time (specifiers the bundler could not see), relative to the
+  // embedded importer: by source extension, by embedded name, without extension, and by file: URL.
+  itBundled("compile/DynamicImportEmbeddedEntryPoint", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { rmSync } from "fs";
+        import { tmpdir } from "os";
+        rmSync("./mod.ts", { force: true });
+        process.chdir(tmpdir());
+        const specs = ["./mod.ts", "./mod.js", "./mod", new URL("./mod.ts", import.meta.url).href];
+        for (const spec of specs) console.log((await import(spec)).default, require(spec).default);
+        await import("./nope.ts").catch(e => console.log(e.constructor.name));
+      `,
+      "/mod.ts": `export default "mod" as string;`,
+    },
+    entryPointsRaw: ["./entry.ts", "./mod.ts"],
+    outfile: "dist/out",
+    run: { stdout: "mod mod\nmod mod\nmod mod\nmod mod\nResolveMessage\n", file: "dist/out", setCwd: true },
+  });
   itBundled("compile/WorkerRelativePathTSExtension", {
     backend: "cli",
     compile: true,

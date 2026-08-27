@@ -1296,23 +1296,24 @@ impl<'a> Resolver<'a> {
         let mut source_dir_resolver = bun_paths::PosixToWinNormalizer::default();
         let source_dir_normalized: &[u8] = 'brk: {
             if let Some(graph) = self.standalone_module_graph {
+                let standalone = |file_name: &'static [u8]| {
+                    ResultUnion::Success(Result {
+                        import_kind: kind,
+                        path_pair: PathPair {
+                            primary: Path::init(file_name),
+                            secondary: None,
+                        },
+                        module_type: options::ModuleType::Esm,
+                        flags: ResultFlags::IS_STANDALONE_MODULE,
+                        ..Default::default()
+                    })
+                };
                 if ::bun_options_types::standalone_path::is_bun_standalone_file_path(import_path) {
-                    if graph.find_assume_standalone_path(import_path).is_some() {
-                        self.extension_order = original_order;
-                        return ResultUnion::Success(Result {
-                            import_kind: kind,
-                            path_pair: PathPair {
-                                primary: Path::init(import_path),
-                                secondary: None,
-                            },
-                            module_type: options::ModuleType::Esm,
-                            flags: ResultFlags::IS_STANDALONE_MODULE,
-                            ..Default::default()
-                        });
-                    }
-
                     self.extension_order = original_order;
-                    return ResultUnion::NotFound;
+                    return match find_in_standalone_graph(graph, import_path) {
+                        Some(file_name) => standalone(file_name),
+                        None => ResultUnion::NotFound,
+                    };
                 } else if ::bun_options_types::standalone_path::is_bun_standalone_file_path(
                     source_dir,
                 ) {
@@ -1326,23 +1327,9 @@ impl<'a> Resolver<'a> {
                         );
 
                         // Support relative paths in the graph
-                        if let Some(file_name) = graph.find_assume_standalone_path(joined) {
-                            // Intern: trait borrows into the graph; `Path::init`
-                            // needs `'static` (DirnameStore-backed).
-                            let file_name = Fs::file_system::DirnameStore::instance()
-                                .append_slice(file_name)
-                                .expect("unreachable");
+                        if let Some(file_name) = find_in_standalone_graph(graph, joined) {
                             self.extension_order = original_order;
-                            return ResultUnion::Success(Result {
-                                import_kind: kind,
-                                path_pair: PathPair {
-                                    primary: Path::init(file_name),
-                                    secondary: None,
-                                },
-                                module_type: options::ModuleType::Esm,
-                                flags: ResultFlags::IS_STANDALONE_MODULE,
-                                ..Default::default()
-                            });
+                            return standalone(file_name);
                         }
                     }
                     break 'brk Fs::FileSystem::instance().top_level_dir;
@@ -6756,6 +6743,38 @@ fn primary_side_effects(
 }
 
 #[inline]
+/// `path` (under the standalone virtual root, in either path syntax) as the name of a module embedded in a
+/// `bun build --compile` executable: the file itself, or -- since every entry point is embedded under a `.js` name --
+/// the `.js` name for a source extension or no extension (`/$bunfs/root/w.ts` -> `/$bunfs/root/w.js`). Returns the
+/// graph's own name for it, which is what the module loader keys on.
+fn find_in_standalone_graph(graph: &dyn StandaloneModuleGraph, path: &[u8]) -> Option<&'static [u8]> {
+    let intern = |name: &[u8]| -> &'static [u8] {
+        Fs::file_system::DirnameStore::instance()
+            .append_slice(name)
+            .expect("unreachable")
+    };
+    if let Some(name) = graph.find_assume_standalone_path(path) {
+        return Some(intern(name));
+    }
+    let extension = bun_paths::extension(path);
+    if !matches!(
+        extension,
+        b"" | b".ts" | b".tsx" | b".jsx" | b".mjs" | b".mts" | b".cjs" | b".cts"
+    ) {
+        return None;
+    }
+    let stem = &path[..path.len() - extension.len()];
+    let mut buf = bun_paths::path_buffer_pool::get();
+    if stem.len() + 3 > buf.len() {
+        return None;
+    }
+    buf[..stem.len()].copy_from_slice(stem);
+    buf[stem.len()..stem.len() + 3].copy_from_slice(b".js");
+    graph
+        .find_assume_standalone_path(&buf[..stem.len() + 3])
+        .map(|name| intern(name))
+}
+
 fn is_dot_slash(path: &[u8]) -> bool {
     #[cfg(not(windows))]
     {

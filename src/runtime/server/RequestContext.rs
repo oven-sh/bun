@@ -3020,11 +3020,8 @@ where
     }
 
     /// Reports a body failure that arrived after the status line was
-    /// committed, so `error()` can no longer answer. Under a bake dev server
-    /// the error page is appended to the body and the response ends normally:
-    /// returns `true`, and the caller must not touch `resp` again.
-    /// `resp_writable` is false once the sink has already ended the response
-    /// (see `end_already_responded_stream`).
+    /// committed. Under a bake dev server the error page ends the response:
+    /// returns `true`, and `resp` must not be touched again.
     fn report_committed_body_error(&self, err: JSValue, resp_writable: bool) -> bool {
         if err.is_empty_or_undefined_or_null() {
             return false;
@@ -3344,8 +3341,7 @@ where
                 this.run_error_handler(js_err);
                 return;
             }
-            // Committed status: report in both modes, then close like
-            // handle_reject_stream.
+            // Committed status: report in both modes, then close.
             let global_this = this.server().global_this();
             if this.report_committed_body_error(err.to_js(global_this), true) {
                 return;

@@ -5,8 +5,6 @@ use std::sync::Arc;
 use bun_collections::smallvec::SmallVec;
 use bun_core::Output;
 use bun_core::strings;
-#[cfg(windows)]
-use bun_event_loop::Task;
 use bun_io::KeepAlive;
 use bun_jsc::abort_signal::{AbortSubscription, OnAbort};
 use bun_jsc::bun_string_jsc;

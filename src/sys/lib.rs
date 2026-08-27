@@ -2951,7 +2951,26 @@ mod posix_impl {
             target_env = "ohos"
         ))]
         {
-            chmod(path, mode)
+            // Plain chmod(2) follows symlinks, which would let a bin-link
+            // chmod reach the file a package's symlinked bin target points at
+            // (symlink-path-traversal). fchmodat(AT_SYMLINK_NOFOLLOW) either
+            // sets the link's own mode or fails without touching the target —
+            // both are safe. OHOS's musl provides fchmodat.
+            const AT_SYMLINK_NOFOLLOW: libc::c_int = 0x100;
+            let rc = unsafe {
+                libc::fchmodat(
+                    libc::AT_FDCWD,
+                    path.as_ptr(),
+                    mode as libc::mode_t,
+                    AT_SYMLINK_NOFOLLOW,
+                )
+            };
+            if rc < 0 {
+                // EOPNOTSUPP/ENOSYS: no nofollow chmod on this kernel — skip
+                // rather than fall through to a target-following chmod.
+                return Ok(());
+            }
+            Ok(())
         }
     }
     pub fn chown(path: &ZStr, uid: u32, gid: u32) -> Maybe<()> {

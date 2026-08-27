@@ -1357,6 +1357,12 @@ impl<'a> Linker<'a> {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
+            // OHOS: the sandbox's openat2 accepts RESOLVE_BENEATH paths that
+            // traverse a symlinked directory out of the tree (returns Ok where
+            // a real kernel would EXDEV), misjudging escapes and letting a bin
+            // chmod reach an outside file. Use the realpath containment check
+            // below instead.
+            #[cfg(not(target_env = "ohos"))]
             if let Some(escapes) = Self::target_escapes_beneath_package_dir(package_dir, abs_target)
             {
                 return escapes;
@@ -1387,7 +1393,7 @@ impl<'a> Linker<'a> {
         )
     }
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(all(any(target_os = "linux", target_os = "android"), not(target_env = "ohos")))]
     fn target_escapes_beneath_package_dir(package_dir: &ZStr, abs_target: &ZStr) -> Option<bool> {
         let package_dir_bytes = package_dir.as_bytes();
         let abs_target_bytes = abs_target.as_bytes();

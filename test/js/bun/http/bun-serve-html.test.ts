@@ -1112,7 +1112,8 @@ test.concurrent("dev server started after process.chdir() reports bundle failure
   });
   const { stdout, stderr, exitCode } = await runServeFixture(dir);
   expect(stderr).toContain(`Could not resolve: "./does-not-exist"`);
-  expect({ stdout, exitCode }, stderr).toEqual({ stdout: JSON.stringify({ status: 500 }), exitCode: 0 });
+  expect(stdout, stderr).toBe(JSON.stringify({ status: 500 }));
+  expect(exitCode).toBe(0);
 });
 
 test("wildcard static routes", async () => {

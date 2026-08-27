@@ -1001,11 +1001,8 @@ where
         let has_responded = resp.has_responded();
 
         // The status line is already committed (a direct ReadableStream's
-        // pull() threw synchronously after do_render_stream wrote headers).
-        // error() cannot replace a response whose status is on the wire;
-        // report the failure and close without the terminating chunk so the
-        // client observes an incomplete message instead of a second header
-        // block spliced into the chunked body.
+        // pull() threw synchronously after do_render_stream wrote headers), so
+        // error() cannot replace it: report the failure and close instead.
         if !has_responded && self.flags.has_written_status() {
             if !value.is_empty_or_undefined_or_null()
                 && let Some(server) = self.server.get()
@@ -1285,14 +1282,10 @@ where
         }
     }
 
-    /// The body source failed after the status line was committed. The
-    /// terminating chunk would turn the truncated body into a complete,
-    /// successful-looking message (RFC 9112 section 7), so while the response
-    /// is still pending close the connection instead and let the client see
-    /// an incomplete message. Whether any body bytes went out first does not
-    /// matter: an empty chunked body with a terminator is just as complete.
-    /// Once the sink already ended the response there is nothing left to
-    /// signal and `end_stream()` only releases the context.
+    /// The body failed after the status line was committed. A terminating
+    /// chunk would make the truncated body look complete (RFC 9112 section 7),
+    /// so close the connection while the response is still pending. Once the
+    /// sink already ended it, `end_stream()` only releases the context.
     pub(crate) fn close_incomplete_stream(&self) {
         if let Some(resp) = self.resp.get() {
             if resp.state().is_response_pending() {
@@ -3356,9 +3349,7 @@ where
                 this.run_error_handler(js_err);
                 return;
             }
-            // Same as handle_reject_stream: error() cannot replace a
-            // committed status, so report the failure and close without the
-            // terminating chunk.
+            // Committed status: report and close, like handle_reject_stream.
             let global_this = this.server().global_this();
             let js_err = err.to_js(global_this);
             if !js_err.is_empty_or_undefined_or_null() {

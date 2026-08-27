@@ -10556,15 +10556,21 @@ for (const field of ["resolutions", "overrides"]) {
   it(`still rejects a registry package's transitive file: dependency that escapes when a different name is in "${field}"`, async () => {
     // An override for a different name must not whitelist an unrelated
     // transitive file: dependency of a registry package that points outside
-    // its package.
+    // its package. The target exists and is installable, so a bypassed check
+    // would link it.
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
+      using dir = tempDir("registry-transitive-file-dep-unrelated-override", {
+        "secret/package.json": JSON.stringify({ name: "loot", version: "1.0.0" }),
+        "secret/credentials.txt": "do-not-link-me",
+      });
+      const secretDir = join(String(dir), "secret");
       setContextHandler(
         ctx,
         dummyRegistryForContext(ctx, urls, {
           "0.0.3": {
             dependencies: {
-              loot: "file:../../secret",
+              loot: "file:" + secretDir.replaceAll("\\", "/"),
             },
           },
         }),

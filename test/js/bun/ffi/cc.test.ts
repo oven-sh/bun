@@ -1260,14 +1260,26 @@ describe.concurrent("disabling cc()", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The Worker runs the probe and posts its one line back to the parent.
+  // The Worker runs the probe and posts its one line back to the parent. A
+  // worker that fails before it posts is reported on stdout instead of
+  // hanging the process.
   const workerHost = (execArgv: string) => /* js */ `
     const { Worker } = require("node:worker_threads");
     const source = ${JSON.stringify(probeWith("require('node:worker_threads').parentPort.postMessage"))};
     const worker = new Worker(source, { eval: true, execArgv: ${execArgv} });
+    let reported = false;
     worker.on("message", msg => {
+      reported = true;
       console.log(msg);
       worker.terminate();
+    });
+    worker.on("error", e => {
+      reported = true;
+      console.log("worker error: " + (e.code ?? e.message));
+      worker.terminate();
+    });
+    worker.on("exit", code => {
+      if (!reported) console.log("worker exited with " + code + " before posting");
     });
   `;
 

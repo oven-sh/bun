@@ -776,7 +776,10 @@ pub(crate) struct Offsets {
     pub flags: Flags,
     pub compile_host: CompileHost,
     pub compile_host_description_ptr: StringPointer,
+    pub _reserved: u32,
 }
+// Written out as raw bytes; no padding, so every byte of it is a field.
+const _: () = assert!(size_of::<Offsets>() == size_of::<usize>() + 3 * size_of::<StringPointer>() + size_of::<u32>() + size_of::<Flags>() + size_of::<CompileHost>() + size_of::<u32>());
 
 bitflags::bitflags! {
     #[repr(transparent)]
@@ -1573,6 +1576,7 @@ pub(crate) fn to_bytes(
         flags,
         compile_host: CompileHost::CURRENT,
         compile_host_description_ptr,
+        _reserved: 0,
     };
 
     // SAFETY: `Offsets` is `#[repr(C)]` POD; same `modules_as_bytes` rationale as above.

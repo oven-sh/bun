@@ -440,7 +440,7 @@ When passing an existing `Terminal` object:
 
 ### Platform differences
 
-`Bun.Terminal` uses `openpty()` on Linux and macOS, and ConPTY (`CreatePseudoConsole`) on Windows. The core behavior is the same on every platform: the child sees a TTY, `write()` reaches the child's stdin, child output reaches the `data` callback, and `resize()` updates the child's view. A few details differ:
+`Bun.Terminal` uses a POSIX pseudo-terminal (`posix_openpt()`) on Linux, macOS, and FreeBSD, and ConPTY (`CreatePseudoConsole`) on Windows. The core behavior is the same on every platform: the child sees a TTY, `write()` reaches the child's stdin, child output reaches the `data` callback, and `resize()` updates the child's view. A few details differ:
 
 - **No termios on Windows.** `inputFlags`, `outputFlags`, `localFlags`, and `controlFlags` always read as `0` and setting them is a no-op. `setRawMode()` records the flag but has no effect on the child; the child controls its own console mode.
 - **No echo without a child process on Windows.** On POSIX, the kernel line discipline echoes `write()` input back to the `data` callback even with no process attached. ConPTY has no line discipline; it buffers input for the next reader. If you need echo, spawn a process that echoes.

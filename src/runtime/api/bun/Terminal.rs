@@ -304,22 +304,13 @@ pub(crate) struct CreateResult {
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum InitError {
     #[error("OpenPtyFailed")]
-    OpenPtyFailed,
+    OpenPtyFailed(sys::Error),
     #[error("DupFailed")]
     DupFailed,
     #[error("WriterStartFailed")]
     WriterStartFailed,
     #[error("ReaderStartFailed")]
     ReaderStartFailed,
-}
-
-impl From<CreatePtyError> for InitError {
-    fn from(e: CreatePtyError) -> Self {
-        match e {
-            CreatePtyError::OpenPtyFailed => InitError::OpenPtyFailed,
-            CreatePtyError::DupFailed => InitError::DupFailed,
-        }
-    }
 }
 
 impl Terminal {
@@ -568,7 +559,9 @@ impl Terminal {
                 Ok(result.terminal.as_ptr())
             }
             Err(err) => Err(match err {
-                InitError::OpenPtyFailed => global_object.throw(format_args!("Failed to open PTY")),
+                InitError::OpenPtyFailed(err) => {
+                    global_object.throw_value(err.to_js(global_object))
+                }
                 InitError::DupFailed => {
                     global_object.throw(format_args!("Failed to duplicate PTY file descriptor"))
                 }
@@ -771,65 +764,16 @@ pub struct PtyResult {
     pub(crate) hpcon: windows::HPCON,
 }
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum CreatePtyError {
-    #[error("OpenPtyFailed")]
-    OpenPtyFailed,
-    #[error("DupFailed")]
-    DupFailed,
-}
-
-fn create_pty(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
-    #[cfg(unix)]
-    return create_pty_posix(cols, rows);
-    #[cfg(windows)]
-    return create_pty_windows(cols, rows);
-}
-
-pub use bun_core::Winsize;
-
-/// `openpty(3)` over plain libc, so no libutil is needed on Linux or FreeBSD.
 #[cfg(unix)]
-fn open_pty(winsize: &Winsize) -> Result<(Fd, Fd), CreatePtyError> {
-    // The `libc` crate does not bind this on macOS.
-    unsafe extern "C" {
-        fn ptsname_r(fd: libc::c_int, buf: *mut libc::c_char, buflen: usize) -> libc::c_int;
-    }
-    // SAFETY: plain libc calls on an fd we own; `name` is a writable buffer of
-    // the length passed.
-    unsafe {
-        let master = libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY);
-        if master < 0 {
-            return Err(CreatePtyError::OpenPtyFailed);
-        }
-        let master = Fd::from_native(master);
-        let mut name = [0u8; 128];
-        if libc::grantpt(master.native()) != 0
-            || libc::unlockpt(master.native()) != 0
-            || ptsname_r(master.native(), name.as_mut_ptr().cast(), name.len()) != 0
-        {
-            master.close();
-            return Err(CreatePtyError::OpenPtyFailed);
-        }
-        let slave = libc::open(name.as_ptr().cast(), libc::O_RDWR | libc::O_NOCTTY);
-        if slave < 0 {
-            master.close();
-            return Err(CreatePtyError::OpenPtyFailed);
-        }
-        libc::ioctl(slave, libc::TIOCSWINSZ as _, core::ptr::from_ref(winsize));
-        Ok((master, Fd::from_native(slave)))
-    }
-}
-
-#[cfg(unix)]
-fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
-    let winsize = Winsize {
+fn create_pty(cols: u16, rows: u16) -> Result<PtyResult, InitError> {
+    let winsize = bun_core::Winsize {
         row: rows,
         col: cols,
         xpixel: 0,
         ypixel: 0,
     };
-    let (master_fd_desc, slave_fd_desc) = open_pty(&winsize)?;
+    let (master_fd_desc, slave_fd_desc) =
+        sys::posix::openpty(winsize).map_err(InitError::OpenPtyFailed)?;
     let slave_fd = slave_fd_desc.native();
 
     // Configure sensible terminal defaults matching node-pty behavior.
@@ -910,7 +854,7 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
         sys::Result::Err(_) => {
             master_fd_desc.close();
             slave_fd_desc.close();
-            return Err(CreatePtyError::DupFailed);
+            return Err(InitError::DupFailed);
         }
     };
 
@@ -920,7 +864,7 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
             master_fd_desc.close();
             slave_fd_desc.close();
             read_fd.close();
-            return Err(CreatePtyError::DupFailed);
+            return Err(InitError::DupFailed);
         }
     };
 
@@ -932,7 +876,6 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
 
     // Set close-on-exec on master side fds only
     // slave_fd should NOT have close-on-exec since child needs to inherit it
-    let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(master_fd_desc);
     let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(read_fd);
     let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(write_fd);
 
@@ -970,7 +913,7 @@ fn create_overlapped_pipe_pair(
     // PIPE_ACCESS_INBOUND: server reads, client writes.
     // PIPE_ACCESS_OUTBOUND: server writes, client reads.
     server_access: u32,
-) -> Result<PipePair, CreatePtyError> {
+) -> Result<PipePair, InitError> {
     use windows::kernel32 as k32;
     const FILE_FLAG_FIRST_PIPE_INSTANCE: u32 = 0x00080000;
 
@@ -989,7 +932,10 @@ fn create_overlapped_pipe_pair(
             ""
         };
         if write!(cursor, r"\\.\pipe\{local}bun-conpty-{pid}-{counter}").is_err() {
-            return Err(CreatePtyError::OpenPtyFailed);
+            return Err(InitError::OpenPtyFailed(sys::Error::from_code(
+                sys::E::ENAMETOOLONG,
+                sys::Tag::openpty,
+            )));
         }
         let written = 96 - cursor.len();
         &name_utf8_buf[..written]
@@ -1014,7 +960,10 @@ fn create_overlapped_pipe_pair(
         )
     };
     if server == windows::INVALID_HANDLE_VALUE {
-        return Err(CreatePtyError::OpenPtyFailed);
+        return Err(InitError::OpenPtyFailed(sys::Error::from_code(
+            windows::get_last_errno(),
+            sys::Tag::openpty,
+        )));
     }
     let server_guard = scopeguard::guard(server, |h| unsafe {
         // SAFETY: h is a valid open HANDLE on the error path.
@@ -1040,7 +989,10 @@ fn create_overlapped_pipe_pair(
         )
     };
     if client == windows::INVALID_HANDLE_VALUE {
-        return Err(CreatePtyError::OpenPtyFailed);
+        return Err(InitError::OpenPtyFailed(sys::Error::from_code(
+            windows::get_last_errno(),
+            sys::Tag::openpty,
+        )));
     }
 
     let server = scopeguard::ScopeGuard::into_inner(server_guard);
@@ -1051,7 +1003,7 @@ fn create_overlapped_pipe_pair(
 static PIPE_SERIAL: AtomicU32 = AtomicU32::new(0);
 
 #[cfg(windows)]
-fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
+fn create_pty(cols: u16, rows: u16) -> Result<PtyResult, InitError> {
     // Track ownership explicitly: handles are nulled out as they are closed or
     // transferred so the errdefer cleanup never double-closes.
     let mut out_server: Option<windows::HANDLE> = None;
@@ -1122,12 +1074,17 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
     {
         let mut pc: windows::HPCON = core::ptr::null_mut();
         // SAFETY: in_client/out_client are valid open HANDLEs; pc is a valid out-ptr.
-        if unsafe {
+        let hr = unsafe {
             windows::CreatePseudoConsole(size, in_client.unwrap(), out_client.unwrap(), 0, &mut pc)
-        } < 0
-        {
+        };
+        if hr < 0 {
             cleanup!();
-            return Err(CreatePtyError::OpenPtyFailed);
+            return Err(InitError::OpenPtyFailed(sys::Error::from_code(
+                sys::SystemErrno::init(windows::HRESULT_CODE(hr) as u32)
+                    .unwrap_or(sys::SystemErrno::EUNKNOWN)
+                    .to_e(),
+                sys::Tag::openpty,
+            )));
         }
         hpcon = Some(pc);
     }
@@ -1151,7 +1108,7 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
         }
         Err(_) => {
             cleanup!();
-            return Err(CreatePtyError::DupFailed);
+            return Err(InitError::DupFailed);
         }
     };
     // errdefer read_fd.close()
@@ -1161,7 +1118,7 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
         Ok(fd) => fd,
         Err(_) => {
             cleanup!();
-            return Err(CreatePtyError::DupFailed);
+            return Err(InitError::DupFailed);
         }
     };
 
@@ -1419,16 +1376,7 @@ impl Terminal {
                 ypixel: 0,
             };
 
-            // SAFETY: master_fd is open (closed flag checked above), TIOCSWINSZ
-            // takes a *const winsize.
-            let ioctl_result = unsafe {
-                libc::ioctl(
-                    self.master_fd.get().native(),
-                    libc::TIOCSWINSZ as _,
-                    &raw const winsize,
-                )
-            };
-            if ioctl_result != 0 {
+            if sys::posix::set_winsize(self.master_fd.get(), winsize).is_err() {
                 return Err(global_object.throw(format_args!("Failed to resize terminal")));
             }
         }

@@ -552,3 +552,7 @@ When a Worker exits, everything it held is released, and the blocks and classes 
 - Foundation timers, delayed performs and main-queue blocks need the application started (`app.start()`); a `Worker` never runs them.
 - `bun --hot` is not supported (defined classes and the application live for the whole process); use `bun --watch`. Under `bun test --isolate` (which `--parallel` implies) each file loads the module afresh and the bridge moves to it, re-binding the named classes a file defines again identically. A second global object alive beside the main one on the same thread (a `ShadowRealm`) cannot load it: that throws.
 - `bun build --compile` works: `bun:objc` stays a builtin of the compiled executable, which needs macOS to run.
+
+## Implementation note
+
+Inside Bun, `src/appkit/objc` is the Objective-C runtime layer that new native code should use; `Bun.WebView`'s older `src/runtime/webview/ObjCRuntime.h` predates it and is to be folded onto it.

@@ -486,9 +486,9 @@ pub mod fs {
     /// `bun_string`). Import this trait to call `.loader()` / `.dupe_alloc()`
     /// on a `Path`.
     pub trait PathResolverExt<'a> {
-        /// Intern `text`/`pretty` into the process-lifetime `FilenameStore`,
-        /// falling back to `alloc` (the per-build bundle arena) for the
-        /// disjoint-`text`/`pretty` case — see the impl for why.
+        /// Intern `text` (and `pretty`, when it is a sub-string of `text`) into
+        /// the process-lifetime `FilenameStore`; a disjoint `pretty` goes in
+        /// `alloc` (the per-build bundle arena) — see the impl for why.
         fn dupe_alloc(&self, alloc: &bun_alloc::MimallocArena)
         -> crate::CrateResult<Path<'static>>;
         fn dupe_alloc_fix_pretty(
@@ -582,25 +582,21 @@ pub mod fs {
                         p.pretty = &text[offset..][..self.pretty.len()];
                         p
                     } else {
-                        // Disjoint `text`/`pretty`. Allocate one combined
-                        // `text\0pretty\0` buffer from the per-build arena (NOT the
-                        // process-lifetime `FilenameStore`): `pretty` here is a
-                        // freshly-relativized display path recomputed every build, so
-                        // interning it permanently would leak one copy per
-                        // `Bun.build()` call. The arena is reset per build; every path
-                        // that escapes to JS is copied into an owned buffer first.
-                        let text_len = self.text.len();
-                        let buf: &mut [u8] =
-                            alloc.alloc_slice_fill_copy(text_len + self.pretty.len() + 2, 0u8);
-                        buf[..text_len].copy_from_slice(self.text);
-                        buf[text_len + 1..text_len + 1 + self.pretty.len()]
-                            .copy_from_slice(self.pretty);
+                        // Disjoint `text`/`pretty` (e.g. a file outside
+                        // `top_level_dir`, whose `pretty` starts with `../`).
+                        // `text` is interned like every other branch: the file
+                        // watcher stores it without copying and outlives the
+                        // per-build arena. Only `pretty` — a display path recomputed
+                        // every build — goes in the arena, so repeated `Bun.build()`
+                        // calls don't grow `FilenameStore` by it.
+                        let text = FilenameStore::instance().append_slice(self.text)?;
+                        let pretty: &mut [u8] = alloc.alloc_slice_copy(self.pretty);
                         // SAFETY: arena memory lives for the whole bundle pass; the
                         // consuming `Path` (graph/import-record) never outlives it.
-                        let buf: &'static [u8] =
-                            unsafe { core::slice::from_raw_parts(buf.as_ptr(), buf.len()) };
-                        let mut p = Path::<'static>::init(&buf[..text_len]);
-                        p.pretty = &buf[text_len + 1..text_len + 1 + self.pretty.len()];
+                        let pretty: &'static [u8] =
+                            unsafe { core::slice::from_raw_parts(pretty.as_ptr(), pretty.len()) };
+                        let mut p = Path::<'static>::init(text);
+                        p.pretty = pretty;
                         p
                     };
                 new_path.namespace = dupe_namespace(self.namespace)?;

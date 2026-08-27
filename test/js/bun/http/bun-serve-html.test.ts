@@ -1095,6 +1095,26 @@ test.concurrent("server.reload() while an html route's first bundle is still in 
   });
 });
 
+// process.chdir() leaves the cached top-level directory with a trailing slash,
+// which the dev server then used as its root when reporting a bundle failure.
+test.concurrent("dev server started after process.chdir() reports bundle failures", async () => {
+  using dir = tempDir("bun-serve-html-chdir", {
+    "app/index.html": `<!DOCTYPE html><html><head></head><body><script type="module" src="./app.ts"></script></body></html>`,
+    "app/app.ts": `import { nope } from "./does-not-exist";\nconsole.log(nope);`,
+    "serve.ts": /*ts*/ `
+      import html from "./app/index.html";
+      process.chdir(import.meta.dir + "/app");
+      const server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+      const res = await fetch(server.url);
+      console.log(JSON.stringify({ status: res.status }));
+      server.stop(true);
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runServeFixture(dir);
+  expect(stderr).toContain(`Could not resolve: "./does-not-exist"`);
+  expect({ stdout, exitCode }, stderr).toEqual({ stdout: JSON.stringify({ status: 500 }), exitCode: 0 });
+});
+
 test("wildcard static routes", async () => {
   await using dir = tempDir("bun-serve-html-error-handling", {
     "index.html": /*html*/ `

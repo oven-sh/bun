@@ -283,6 +283,7 @@ var require_constants = __commonJS({
     exports.WASI_O_DIRECTORY = 1 << 1;
     exports.WASI_O_EXCL = 1 << 2;
     exports.WASI_O_TRUNC = 1 << 3;
+    exports.WASI_LOOKUPFLAGS_SYMLINK_FOLLOW = 1 << 0;
     exports.WASI_PREOPENTYPE_DIR = 0;
     exports.WASI_DIRCOOKIE_START = 0;
     exports.WASI_STDIN_FILENO = 0;
@@ -407,28 +408,8 @@ var require_wasi = __commonJS({
     var types_1 = require_types();
 
     var constants_1 = require_constants();
-    var STDIN_DEFAULT_RIGHTS =
-      constants_1.WASI_RIGHT_FD_DATASYNC |
-      constants_1.WASI_RIGHT_FD_READ |
-      constants_1.WASI_RIGHT_FD_SYNC |
-      constants_1.WASI_RIGHT_FD_ADVISE |
-      constants_1.WASI_RIGHT_FD_FILESTAT_GET |
-      constants_1.WASI_RIGHT_POLL_FD_READWRITE;
-    var STDOUT_DEFAULT_RIGHTS =
-      constants_1.WASI_RIGHT_FD_DATASYNC |
-      constants_1.WASI_RIGHT_FD_WRITE |
-      constants_1.WASI_RIGHT_FD_SYNC |
-      constants_1.WASI_RIGHT_FD_ADVISE |
-      constants_1.WASI_RIGHT_FD_FILESTAT_GET |
-      constants_1.WASI_RIGHT_POLL_FD_READWRITE;
-    var STDERR_DEFAULT_RIGHTS = STDOUT_DEFAULT_RIGHTS;
-    var msToNs = ms => {
-      const msInt = Math.trunc(ms);
-
-      const decimal = BigInt(Math.round((ms - msInt) * 1e6));
-      const ns = BigInt(msInt) * BigInt(1e6);
-      return ns + decimal;
-    };
+    // Largest offset lseek(2) accepts (off_t is signed 64-bit).
+    var MAX_FILE_OFFSET = (BigInt(1) << BigInt(63)) - BigInt(1);
     var nsToMs = ns => {
       if (typeof ns === "number") {
         ns = Math.trunc(ns);
@@ -462,7 +443,7 @@ var require_wasi = __commonJS({
       }
       if (entry.filetype === void 0) {
         const stats = wasi.fstatSync(entry.real);
-        const { filetype, rightsBase, rightsInheriting } = translateFileAttributes(wasi, fd, stats);
+        const { filetype, rightsBase, rightsInheriting } = translateFileAttributes(wasi, entry.real, stats);
         entry.filetype = filetype;
         if (!entry.rights) {
           entry.rights = {
@@ -582,43 +563,15 @@ var require_wasi = __commonJS({
         this.bindings = wasiConfig.bindings || defaultConfig.bindings;
         const bindings = this.bindings;
         fs = bindings.fs;
+        // The file type and rights of the standard descriptors come from the
+        // host fd on first use (see `stat`), like any descriptor from
+        // path_open. Hard-coding a character device made wasi-libc's isatty()
+        // report a tty with stdout redirected to a file or a pipe. They have
+        // no `path`, so they can never serve as the base of a path_* call.
         this.FD_MAP = /* @__PURE__ */ new Map([
-          [
-            constants_1.WASI_STDIN_FILENO,
-            {
-              real: 0,
-              filetype: constants_1.WASI_FILETYPE_CHARACTER_DEVICE,
-              rights: {
-                base: STDIN_DEFAULT_RIGHTS,
-                inheriting: BigInt(0),
-              },
-              path: "/dev/stdin",
-            },
-          ],
-          [
-            constants_1.WASI_STDOUT_FILENO,
-            {
-              real: 1,
-              filetype: constants_1.WASI_FILETYPE_CHARACTER_DEVICE,
-              rights: {
-                base: STDOUT_DEFAULT_RIGHTS,
-                inheriting: BigInt(0),
-              },
-              path: "/dev/stdout",
-            },
-          ],
-          [
-            constants_1.WASI_STDERR_FILENO,
-            {
-              real: 2,
-              filetype: constants_1.WASI_FILETYPE_CHARACTER_DEVICE,
-              rights: {
-                base: STDERR_DEFAULT_RIGHTS,
-                inheriting: BigInt(0),
-              },
-              path: "/dev/stderr",
-            },
-          ],
+          [constants_1.WASI_STDIN_FILENO, { real: 0, filetype: void 0, rights: void 0 }],
+          [constants_1.WASI_STDOUT_FILENO, { real: 1, filetype: void 0, rights: void 0 }],
+          [constants_1.WASI_STDERR_FILENO, { real: 2, filetype: void 0, rights: void 0 }],
         ]);
         const path = bindings.path;
         for (const [k, v] of Object.entries(preopens)) {
@@ -695,11 +648,18 @@ var require_wasi = __commonJS({
           }
           return stats;
         };
+        const isContained = (parent, child) =>
+          child === parent || child.startsWith(parent.endsWith(path.sep) ? parent : parent + path.sep);
         // Resolve a guest-supplied path against the directory backing `stats` and
         // verify the result cannot escape that directory, either lexically
         // ("..", absolute paths) or through a symlink that already exists on the
         // host filesystem.
-        const RESOLVE_PATH = (stats, guestPath) => {
+        //
+        // With `followFinal` false the final component is checked as the entry
+        // itself, not as what it points to. This is for calls that operate on
+        // a symlink (unlink, readlink, rename, lstat) and so never leave the
+        // parent directory, whatever the link's target is.
+        const RESOLVE_PATH = (stats, guestPath, followFinal = true) => {
           if (!stats.path) {
             throw new types_1.WASIError(constants_1.WASI_EINVAL);
           }
@@ -712,8 +672,6 @@ var require_wasi = __commonJS({
           }
           const base = path.resolve(stats.path);
           const resolved = path.resolve(base, rel);
-          const isContained = (parent, child) =>
-            child === parent || child.startsWith(parent.endsWith(path.sep) ? parent : parent + path.sep);
           if (!isContained(base, resolved)) {
             throw new types_1.WASIError(constants_1.WASI_ENOTCAPABLE);
           }
@@ -726,6 +684,10 @@ var require_wasi = __commonJS({
           } catch {}
           let probe = resolved;
           let suffix = "";
+          if (!followFinal && resolved !== base) {
+            probe = path.dirname(resolved);
+            suffix = path.sep + path.basename(resolved);
+          }
           for (;;) {
             let real;
             try {
@@ -892,24 +854,24 @@ var require_wasi = __commonJS({
             const stats = CHECK_FD(fd, constants_1.WASI_RIGHT_FD_FILESTAT_GET);
             const rstats = this.fstatSync(stats.real);
             this.refreshMemory();
-            this.view.setBigUint64(bufPtr, BigInt(rstats.dev), true);
+            this.view.setBigUint64(bufPtr, rstats.dev, true);
             bufPtr += 8;
-            this.view.setBigUint64(bufPtr, BigInt(rstats.ino), true);
+            this.view.setBigUint64(bufPtr, rstats.ino, true);
             bufPtr += 8;
             if (stats.filetype == null) {
               throw Error("stats.filetype must be set");
             }
             this.view.setUint8(bufPtr, stats.filetype);
             bufPtr += 8;
-            this.view.setBigUint64(bufPtr, BigInt(rstats.nlink), true);
+            this.view.setBigUint64(bufPtr, rstats.nlink, true);
             bufPtr += 8;
-            this.view.setBigUint64(bufPtr, BigInt(rstats.size), true);
+            this.view.setBigUint64(bufPtr, rstats.size, true);
             bufPtr += 8;
-            this.view.setBigUint64(bufPtr, msToNs(rstats.atimeMs), true);
+            this.view.setBigUint64(bufPtr, rstats.atimeNs, true);
             bufPtr += 8;
-            this.view.setBigUint64(bufPtr, msToNs(rstats.mtimeMs), true);
+            this.view.setBigUint64(bufPtr, rstats.mtimeNs, true);
             bufPtr += 8;
-            this.view.setBigUint64(bufPtr, msToNs(rstats.ctimeMs), true);
+            this.view.setBigUint64(bufPtr, rstats.ctimeNs, true);
             return constants_1.WASI_ESUCCESS;
           }),
           fd_filestat_set_size: wrap((fd, stSize) => {
@@ -1080,6 +1042,9 @@ var require_wasi = __commonJS({
           }),
           fd_readdir: wrap((fd, bufPtr, bufLen, cookie, bufusedPtr) => {
             const stats = CHECK_FD(fd, constants_1.WASI_RIGHT_FD_READDIR);
+            if (!stats.path) {
+              return constants_1.WASI_EINVAL;
+            }
             this.refreshMemory();
             const entries = fs.readdirSync(stats.path, { withFileTypes: true });
             const startPtr = bufPtr;
@@ -1157,22 +1122,25 @@ var require_wasi = __commonJS({
           fd_seek: wrap((fd, offset, whence, newOffsetPtr) => {
             const stats = CHECK_FD(fd, constants_1.WASI_RIGHT_FD_SEEK);
             this.refreshMemory();
+            let newOffset;
             switch (whence) {
               case constants_1.WASI_WHENCE_CUR:
-                stats.offset = (stats.offset ? stats.offset : BigInt(0)) + BigInt(offset);
+                newOffset = (stats.offset ? stats.offset : BigInt(0)) + BigInt(offset);
                 break;
               case constants_1.WASI_WHENCE_END:
-                const { size } = this.fstatSync(stats.real);
-                stats.offset = BigInt(size) + BigInt(offset);
+                newOffset = this.fstatSync(stats.real).size + BigInt(offset);
                 break;
               case constants_1.WASI_WHENCE_SET:
-                stats.offset = BigInt(offset);
+                newOffset = BigInt(offset);
                 break;
+              default:
+                return constants_1.WASI_EINVAL;
             }
-            if (stats.offset == null) {
-              throw Error("stats.offset must be defined");
+            if (newOffset < BigInt(0) || newOffset > MAX_FILE_OFFSET) {
+              return constants_1.WASI_EINVAL;
             }
-            this.view.setBigUint64(newOffsetPtr, stats.offset, true);
+            stats.offset = newOffset;
+            this.view.setBigUint64(newOffsetPtr, newOffset, true);
             return constants_1.WASI_ESUCCESS;
           }),
           fd_tell: wrap((fd, offsetPtr) => {
@@ -1206,28 +1174,24 @@ var require_wasi = __commonJS({
             }
             this.refreshMemory();
             const p = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
-            const resolved = RESOLVE_PATH(stats, p);
-            let rstats;
-            if (flags) {
-              rstats = fs.statSync(resolved);
-            } else {
-              rstats = fs.lstatSync(resolved);
-            }
-            this.view.setBigUint64(bufPtr, BigInt(rstats.dev), true);
+            const follow = (flags & constants_1.WASI_LOOKUPFLAGS_SYMLINK_FOLLOW) !== 0;
+            const resolved = RESOLVE_PATH(stats, p, follow);
+            const rstats = follow ? fs.statSync(resolved, { bigint: true }) : fs.lstatSync(resolved, { bigint: true });
+            this.view.setBigUint64(bufPtr, rstats.dev, true);
             bufPtr += 8;
-            this.view.setBigUint64(bufPtr, BigInt(rstats.ino), true);
+            this.view.setBigUint64(bufPtr, rstats.ino, true);
             bufPtr += 8;
             this.view.setUint8(bufPtr, translateFileAttributes(this, void 0, rstats).filetype);
             bufPtr += 8;
-            this.view.setBigUint64(bufPtr, BigInt(rstats.nlink), true);
+            this.view.setBigUint64(bufPtr, rstats.nlink, true);
             bufPtr += 8;
-            this.view.setBigUint64(bufPtr, BigInt(rstats.size), true);
+            this.view.setBigUint64(bufPtr, rstats.size, true);
             bufPtr += 8;
-            this.view.setBigUint64(bufPtr, BigInt(rstats.atime.getTime() * 1e6), true);
+            this.view.setBigUint64(bufPtr, rstats.atimeNs, true);
             bufPtr += 8;
-            this.view.setBigUint64(bufPtr, BigInt(rstats.mtime.getTime() * 1e6), true);
+            this.view.setBigUint64(bufPtr, rstats.mtimeNs, true);
             bufPtr += 8;
-            this.view.setBigUint64(bufPtr, BigInt(rstats.ctime.getTime() * 1e6), true);
+            this.view.setBigUint64(bufPtr, rstats.ctimeNs, true);
             return constants_1.WASI_ESUCCESS;
           }),
           path_filestat_set_times: wrap((fd, _dirflags, pathPtr, pathLen, stAtim, stMtim, fstflags) => {
@@ -1440,7 +1404,7 @@ var require_wasi = __commonJS({
             }
             this.refreshMemory();
             const p = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
-            const full = RESOLVE_PATH(stats, p);
+            const full = RESOLVE_PATH(stats, p, false);
             const r = fs.readlinkSync(full);
             const used = Buffer.from(this.memory.buffer).write(r, buf, bufLen);
             this.view.setUint32(bufused, used, true);
@@ -1453,7 +1417,7 @@ var require_wasi = __commonJS({
             }
             this.refreshMemory();
             const p = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
-            fs.rmdirSync(RESOLVE_PATH(stats, p));
+            fs.rmdirSync(RESOLVE_PATH(stats, p, false));
             return constants_1.WASI_ESUCCESS;
           }),
           path_rename: wrap((oldFd, oldPath, oldPathLen, newFd, newPath, newPathLen) => {
@@ -1465,7 +1429,7 @@ var require_wasi = __commonJS({
             this.refreshMemory();
             const op = Buffer.from(this.memory.buffer, oldPath, oldPathLen).toString();
             const np = Buffer.from(this.memory.buffer, newPath, newPathLen).toString();
-            fs.renameSync(RESOLVE_PATH(ostats, op), RESOLVE_PATH(nstats, np));
+            fs.renameSync(RESOLVE_PATH(ostats, op, false), RESOLVE_PATH(nstats, np, false));
             return constants_1.WASI_ESUCCESS;
           }),
           path_symlink: wrap((oldPath, oldPathLen, fd, newPath, newPathLen) => {
@@ -1476,7 +1440,15 @@ var require_wasi = __commonJS({
             this.refreshMemory();
             const op = Buffer.from(this.memory.buffer, oldPath, oldPathLen).toString();
             const np = Buffer.from(this.memory.buffer, newPath, newPathLen).toString();
-            fs.symlinkSync(op, RESOLVE_PATH(stats, np));
+            const linkPath = RESOLVE_PATH(stats, np, false);
+            // The target is resolved relative to the link's own directory.
+            // Refuse one that names a host path outside the preopen, whether
+            // absolute or through "..", so the guest cannot plant an escape
+            // for other users of the directory.
+            if (!isContained(path.resolve(stats.path), path.resolve(path.dirname(linkPath), op))) {
+              return constants_1.WASI_ENOTCAPABLE;
+            }
+            fs.symlinkSync(op, linkPath);
             return constants_1.WASI_ESUCCESS;
           }),
           path_unlink_file: wrap((fd, pathPtr, pathLen) => {
@@ -1486,7 +1458,7 @@ var require_wasi = __commonJS({
             }
             this.refreshMemory();
             const p = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
-            fs.unlinkSync(RESOLVE_PATH(stats, p));
+            fs.unlinkSync(RESOLVE_PATH(stats, p, false));
             return constants_1.WASI_ESUCCESS;
           }),
           poll_oneoff: (sin, sout, nsubscriptions, neventsPtr) => {
@@ -1648,32 +1620,35 @@ var require_wasi = __commonJS({
       fstatSync(real_fd) {
         if (real_fd <= 2) {
           try {
-            return fs.fstatSync(real_fd);
+            return fs.fstatSync(real_fd, { bigint: true });
           } catch {
+            // A closed standard descriptor on the host: present it as an
+            // empty character device.
             const now = new Date();
+            const nowNs = BigInt(now.valueOf()) * BigInt(1e6);
+            const no = () => false;
             return {
-              dev: 0,
-              mode: 8592,
-              nlink: 1,
-              uid: 0,
-              gid: 0,
-              rdev: 0,
-              blksize: 65536,
-              ino: 0,
-              size: 0,
-              blocks: 0,
-              atimeMs: now.valueOf(),
-              mtimeMs: now.valueOf(),
-              ctimeMs: now.valueOf(),
-              birthtimeMs: 0,
-              atime: new Date(),
-              mtime: new Date(),
-              ctime: new Date(),
-              birthtime: new Date(0),
+              dev: BigInt(0),
+              ino: BigInt(0),
+              nlink: BigInt(1),
+              size: BigInt(0),
+              atimeNs: nowNs,
+              mtimeNs: nowNs,
+              ctimeNs: nowNs,
+              atime: now,
+              mtime: now,
+              ctime: now,
+              isBlockDevice: no,
+              isCharacterDevice: () => true,
+              isDirectory: no,
+              isFIFO: no,
+              isFile: no,
+              isSocket: no,
+              isSymbolicLink: no,
             };
           }
         }
-        return fs.fstatSync(real_fd);
+        return fs.fstatSync(real_fd, { bigint: true });
       }
       shortPause() {
         if (this.sleep == null) return;
@@ -1693,8 +1668,12 @@ var require_wasi = __commonJS({
         return fd;
       }
       refreshMemory() {
-        if (!this.view || this.view.buffer.byteLength === 0) {
-          this.view = new DataView(this.memory.buffer);
+        // memory.grow() hands out a new buffer object. A non-shared buffer is
+        // also detached, but a SharedArrayBuffer keeps its old length, so
+        // compare identity rather than byteLength.
+        const { buffer } = this.memory;
+        if (!this.view || this.view.buffer !== buffer) {
+          this.view = new DataView(buffer);
         }
       }
       setMemory(memory) {

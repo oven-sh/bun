@@ -59,10 +59,13 @@ function activeDomain(): Domain | undefined {
   return stack === undefined ? undefined : stack[stack.length - 1];
 }
 
-// Domains entered by enter() in synchronous code and not yet exited. A restored
-// async context never adds to it, which tells a throw inside run() from a throw
-// in a callback that only inherited its stack.
-const syncEntries: Domain[] = [];
+// The stack array the innermost enter() still in effect installed. A context
+// restored for an async callback holds the array that was current when the
+// callback was created, never this one, which tells a throw inside run() from
+// a throw in a callback that only inherited its stack.
+let syncStack: Domain[] | undefined;
+// One record per enter() still in effect: what exit() puts back.
+const syncEntries: { domain: Domain; stack: Domain[] | undefined; syncStack: Domain[] | undefined }[] = [];
 
 function setActiveDomain(domain) {
   if (domain === null || domain === undefined) {
@@ -88,6 +91,7 @@ ObjectDefineProperty(process, "domain", {
 function domainUncaughtExceptionClear() {
   setStack([]);
   syncEntries.length = 0;
+  syncStack = undefined;
 }
 
 // Returns true when a domain took the error.
@@ -112,7 +116,7 @@ function handleError(er, type) {
   // inside a synchronous run(). An async callback had only the active domain
   // entered for it, so without a listener there the error takes the normal path.
   let hasErrorListener = active.listenerCount("error") > 0;
-  if (!hasErrorListener && syncEntries[syncEntries.length - 1] === active) {
+  if (!hasErrorListener && stack === syncStack) {
     for (let i = stack.length - 2; i >= 0; i--) {
       if (stack[i].listenerCount("error") > 0) {
         hasErrorListener = true;
@@ -195,10 +199,14 @@ Domain.prototype._errorHandler = function (er) {
 
 Domain.prototype.enter = function () {
   const stack = currentStack();
+  // Records left by an enter() whose exit() a caught throw skipped belong to
+  // an earlier synchronous run once the current stack is no longer theirs.
+  if (stack !== syncStack) syncEntries.length = 0;
   const next = stack === undefined ? [] : ArrayPrototypeSlice.$call(stack);
   ArrayPrototypePush.$call(next, this);
   setStack(next);
-  ArrayPrototypePush.$call(syncEntries, this);
+  ArrayPrototypePush.$call(syncEntries, { domain: this, stack, syncStack });
+  syncStack = next;
 };
 
 Domain.prototype.exit = function () {
@@ -208,9 +216,16 @@ Domain.prototype.exit = function () {
   if (index === -1) return;
 
   // Exit all domains until this one.
-  setStack(ArrayPrototypeSlice.$call(stack, 0, index));
-  const syncIndex = ArrayPrototypeLastIndexOf.$call(syncEntries, this);
-  if (syncIndex !== -1) syncEntries.length = syncIndex;
+  let i = syncEntries.length - 1;
+  while (i >= 0 && syncEntries[i].domain !== this) i--;
+  if (i === -1) {
+    setStack(ArrayPrototypeSlice.$call(stack, 0, index));
+    return;
+  }
+  const entry = syncEntries[i];
+  syncEntries.length = i;
+  setStack(entry.stack === undefined ? [] : entry.stack);
+  syncStack = entry.syncStack;
 };
 
 Domain.prototype.add = function (ee) {
@@ -371,6 +386,7 @@ function emitWithDomain(emitter, originalEmit, args) {
     // The handler runs outside the active domain (and its duplicates) so it
     // cannot re-enter itself through an emitter created or a throw inside it.
     const origStack = currentStack();
+    const origSyncStack = syncStack;
     if (origStack !== undefined) {
       const origActive = origStack[origStack.length - 1];
       let idx = origStack.length - 1;
@@ -378,12 +394,14 @@ function emitWithDomain(emitter, originalEmit, args) {
         --idx;
       }
       setStack(idx < 0 ? [] : ArrayPrototypeSlice.$call(origStack, 0, idx + 1));
+      syncStack = currentStack();
     }
 
     domain.emit("error", er);
 
     if (origStack !== undefined) {
       setStack(origStack);
+      syncStack = origSyncStack;
     }
 
     return false;

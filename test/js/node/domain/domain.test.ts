@@ -341,6 +341,26 @@ describe.concurrent("node:domain without a handler and with nested domains", () 
     expect(exitCode).toBe(1);
   });
 
+  test("a listener throw caught in one callback does not make a later async throw synchronous", async () => {
+    // the caught throw skips the exit() that emit() would have run after the listener
+    const { stdout, exitCode } = await run(
+      prelude +
+        `
+        const inner = domain.create();
+        d.run(() => inner.run(() => {
+          process.nextTick(() => {
+            const ee = new EventEmitter();
+            ee.on("x", () => { throw new Error("caught"); });
+            try { ee.emit("x"); } catch {}
+            console.log("caught", process.domain === inner);
+          });
+          setTimeout(() => { throw new Error("boom"); }, 1);
+        }));`,
+    );
+    expect(stdout).toBe("caught true\nuncaughtException:boom active=undefined\n");
+    expect(exitCode).toBe(1);
+  });
+
   test("an inner domain with a listener handles its own async errors", async () => {
     const { stdout, exitCode } = await run(
       prelude +

@@ -126,8 +126,7 @@ bool isNonNegativeNumber(JSC::JSValue); // userJS: no — WebStreamsMisc.cpp
 RefPtr<JSC::ArrayBuffer> transferArrayBufferImpl(JSC::JSGlobalObject*, JSC::ArrayBuffer&); // userJS: no — WebStreamsMisc.cpp
 bool canTransferArrayBuffer(JSC::ArrayBuffer&); // userJS: no — WebStreamsMisc.cpp
 // spec CanTransferArrayBuffer(O) — pure.
-// An ArrayBuffer / ArrayBufferView chunk whose buffer was detached (transferred, or a
-// WebAssembly.Memory that grew). Native consumers error on it instead of reading 0 bytes. Pure.
+// An ArrayBuffer / ArrayBufferView chunk whose buffer was detached (transfer, Memory.grow). Pure.
 bool isDetachedBufferSource(JSC::JSValue chunk); // userJS: no — WebStreamsMisc.cpp
 JSC::JSObject* createDetachedChunkError(JSC::JSGlobalObject*); // userJS: no — WebStreamsMisc.cpp
 void throwDetachedChunkError(JSC::JSGlobalObject*, JSC::ThrowScope&); // userJS: no — WebStreamsMisc.cpp

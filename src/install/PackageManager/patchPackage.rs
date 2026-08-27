@@ -288,6 +288,7 @@ pub fn do_patch_commit(
     )
     .expect("formatting into a Vec is infallible");
 
+    let mut bun_patch_tag_owned: Option<Box<[u8]>> = None;
     let patchfile_contents: Vec<u8> = 'brk: {
         let new_folder = changes_dir;
         let mut buf2 = PathBuffer::uninit();
@@ -367,7 +368,6 @@ pub fn do_patch_commit(
         };
 
         let mut bunpatchtagbuf: BuntagHashBuf = BuntagHashBuf::default();
-        let mut bun_patch_tag_owned: Option<Box<[u8]>> = None;
         let bun_patch_tag: Option<&[u8]> = 'has_bun_patch_tag: {
             let name_and_version_hash = string_hash(&patch_key);
             let patch_tag: &[u8] = 'patch_tag: {

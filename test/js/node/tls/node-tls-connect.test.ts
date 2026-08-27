@@ -1942,3 +1942,165 @@ it.skipIf(!nodeExe())(
     }
   },
 );
+
+describe("a dialed socket paused before its handshake completed", () => {
+  // The TLS handle has to read to complete the handshake. Node starts its reads from
+  // the read(0) that runs after the 'connect' listeners, so a pause() from one of them
+  // never stops the handle. Bun's handle reads from the start and a pause() must not
+  // stop it either while the handshake is in flight.
+  type Dialed = {
+    client: TLSSocket;
+    socket: TLSSocket;
+    onread: string[];
+    fence: () => Promise<void>;
+    [Symbol.dispose]: () => void;
+  };
+
+  async function dial(options: {
+    pauseOnConnect?: boolean;
+    onread?: boolean;
+    onConnect?: (client: TLSSocket) => void;
+    afterDial?: (client: TLSSocket) => void;
+  }): Promise<Dialed> {
+    const accepted = Promise.withResolvers<TLSSocket>();
+    const server = tls.createServer(COMMON_CERT_, accepted.resolve);
+    server.on("tlsClientError", accepted.reject);
+    // A second connection is the fence: its bytes reach this process after the server's
+    // reply reached the client's receive buffer.
+    const probe = net.createServer();
+    let client: TLSSocket | undefined;
+    const dispose = () => {
+      client?.destroy();
+      server.close();
+      probe.close();
+    };
+    try {
+      await Promise.all([
+        once(server.listen(0, "127.0.0.1"), "listening"),
+        once(probe.listen(0, "127.0.0.1"), "listening"),
+      ]);
+      const onread: string[] = [];
+      const dialed = tlsConnect({
+        port: (server.address() as AddressInfo).port,
+        host: "127.0.0.1",
+        rejectUnauthorized: false,
+        pauseOnConnect: options.pauseOnConnect,
+        onread: options.onread
+          ? {
+              buffer: Buffer.alloc(1024),
+              callback: (n: number, buf: Buffer) => onread.push(String(buf.subarray(0, n))),
+            }
+          : undefined,
+      } as tls.ConnectionOptions);
+      client = dialed;
+      if (options.onConnect) dialed.on("connect", () => options.onConnect!(dialed));
+      options.afterDial?.(dialed);
+      const [socket] = await Promise.all([accepted.promise, once(dialed, "secureConnect")]);
+      const fence = async () => {
+        const probed = Promise.withResolvers<void>();
+        probe.once("connection", s => s.once("data", () => probed.resolve()));
+        const probeClient = net.connect((probe.address() as AddressInfo).port, "127.0.0.1", () => probeClient.end("x"));
+        await probed.promise;
+      };
+      return { client: dialed, socket, onread, fence, [Symbol.dispose]: dispose };
+    } catch (error) {
+      dispose();
+      throw error;
+    }
+  }
+
+  async function untilBuffered(socket: TLSSocket, length: number) {
+    const deadline = performance.now() + 10_000;
+    while (socket.readableLength < length) {
+      if (performance.now() > deadline) throw new Error(`readableLength stayed at ${socket.readableLength}`);
+      await new Promise<void>(resolve => setImmediate(resolve));
+    }
+  }
+
+  async function writeReply(socket: TLSSocket) {
+    await new Promise<void>((resolve, reject) => socket.write("from-server", err => (err ? reject(err) : resolve())));
+  }
+
+  async function roundTripAfterResume(client: TLSSocket, socket: TLSSocket) {
+    const received = once(client, "data");
+    client.resume();
+    expect(String((await received)[0])).toBe("from-server");
+    const reply = once(socket, "data");
+    client.write("from-client");
+    expect(String((await reply)[0])).toBe("from-client");
+    const clientClosed = once(client, "close");
+    socket.end();
+    client.end();
+    await clientClosed;
+  }
+
+  it("pause() in a 'connect' listener: the handshake completes and the reply waits in the stream's buffer", async () => {
+    using t = await dial({ onConnect: client => client.pause() });
+    const { client, socket } = t;
+    expect({ paused: client.isPaused(), flowing: client.readableFlowing }).toEqual({ paused: true, flowing: false });
+    await writeReply(socket);
+    // Like Node: the handle reads, the decrypted bytes wait in the paused stream.
+    await untilBuffered(client, "from-server".length);
+    expect({ paused: client.isPaused(), readableLength: client.readableLength }).toEqual({
+      paused: true,
+      readableLength: "from-server".length,
+    });
+    await roundTripAfterResume(client, socket);
+  });
+
+  // Socket.prototype.pause stops an onread handle as soon as `connecting` is false, which
+  // afterConnect clears before it emits 'connect'. The handshake still needs the reads, so
+  // it never completes. Node's handle is not reading yet inside the listener, and its
+  // onread callback gets the reply once it is.
+  it.todo("pause() in a 'connect' listener of an onread socket: the handshake still completes", async () => {
+    using t = await dial({ onread: true, onConnect: client => client.pause() });
+    const { client, socket } = t;
+    expect(client.isPaused()).toBe(true);
+    await writeReply(socket);
+    await t.fence();
+    expect(t.onread).toEqual(["from-server"]);
+    const reply = once(socket, "data");
+    client.write("from-client");
+    expect(String((await reply)[0])).toBe("from-client");
+    const clientClosed = once(client, "close");
+    socket.end();
+    client.end();
+    await clientClosed;
+  });
+
+  // pauseOnConnect on a dialed socket is Bun's option (node-net.test.ts "applies to a dialed
+  // socket"). For TLS the pause waits for the handshake.
+  it("pauseOnConnect: the handshake completes, then the socket reads nothing until resume()", async () => {
+    using t = await dial({ pauseOnConnect: true });
+    const { client, socket } = t;
+    expect({ paused: client.isPaused(), flowing: client.readableFlowing }).toEqual({ paused: true, flowing: false });
+    await writeReply(socket);
+    await t.fence();
+    // The handle stopped reading once the handshake completed, so the reply stays in the kernel.
+    expect({ paused: client.isPaused(), bytesRead: client.bytesRead }).toEqual({ paused: true, bytesRead: 0 });
+    await roundTripAfterResume(client, socket);
+  });
+
+  // The native pause runs when the handshake completes, after this resume(), and nothing
+  // starts the handle again: the stream reports flowing but the socket reads nothing. (A
+  // listener attached after 'secureConnect' would hide it: on('data') calls resume() again,
+  // which starts the handle once `connecting` is false.)
+  it.todo("pauseOnConnect: a resume() before 'secureConnect' is not undone by the handshake", async () => {
+    const received = Promise.withResolvers<string>();
+    using t = await dial({
+      pauseOnConnect: true,
+      afterDial: client => {
+        client.resume();
+        client.once("data", chunk => received.resolve(String(chunk)));
+      },
+    });
+    const { client, socket } = t;
+    expect(client.isPaused()).toBe(false);
+    await writeReply(socket);
+    expect(await received.promise).toBe("from-server");
+    const clientClosed = once(client, "close");
+    socket.end();
+    client.end();
+    await clientClosed;
+  });
+});

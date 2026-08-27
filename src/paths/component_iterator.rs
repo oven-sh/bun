@@ -183,9 +183,9 @@ pub enum MakePathStep<E> {
     Created,
     /// Directory already exists (`EEXIST`). Walk advances forward.
     Exists,
-    /// A parent is missing (`ENOENT`). Walk steps back one component;
-    /// if there is no previous component, or the parent already reported
-    /// `Created`/`Exists` on this walk, the carried error is returned.
+    /// A parent is missing (`ENOENT`). Walk steps back one component; if
+    /// there is none, or the walk already advanced forward, the carried error
+    /// is returned.
     NotFound(E),
 }
 
@@ -196,13 +196,9 @@ pub enum MakePathStep<E> {
 /// Starts at `it.last()`; on `Created`/`Exists` advances via `next()`
 /// (returning `Ok(())` when there is none), on `NotFound(e)` steps back via
 /// `previous()` (returning `Err(e)` when there is none — i.e. the very first
-/// component's parent does not exist).
-///
-/// Once the walk has advanced forward, a `NotFound` is final: the parent just
-/// reported `Created`/`Exists`, so stepping back would only repeat the same
-/// pair of results forever. This is what a dangling symlink (EEXIST for the
-/// link, ENOENT below it), procfs, or on Windows a regular file in place of a
-/// directory produce.
+/// component's parent does not exist). After the walk has advanced, a
+/// `NotFound` returns `Err(e)` at once: the parent exists but cannot hold
+/// children (a dangling symlink, procfs), so stepping back cannot make progress.
 ///
 /// `mkdir` is invoked with `component.path`: a borrowed prefix slice into the
 /// original input, never NUL-terminated. Callers that need a sentinel must
@@ -424,8 +420,7 @@ mod tests {
 
     #[test]
     fn make_path_stops_when_parent_exists_but_child_is_not_found() {
-        // `/a/b` is a dangling symlink: EEXIST for itself, ENOENT for any
-        // child. The walk must not bounce between the two forever.
+        // `/a/b` is a dangling symlink: EEXIST for itself, ENOENT below it.
         let it = ComponentIterator::init(&b"/a/b/c"[..], PathFormat::Posix).unwrap();
         let mut attempts: Vec<&[u8]> = vec![];
         let r = make_path_with(it, |p| {

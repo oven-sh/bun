@@ -47,7 +47,12 @@ test("onResolve returning undefined keeps re-exports through a sideEffects:false
     cwd: String(dir),
     stderr: "pipe",
   });
-  const [buildStderr, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+  const [buildStdout, buildStderr, buildExitCode] = await Promise.all([
+    build.stdout.text(),
+    build.stderr.text(),
+    build.exited,
+  ]);
+  expect(buildStdout).toBe("");
   expect(buildStderr).toBe("");
   expect(buildExitCode).toBe(0);
 

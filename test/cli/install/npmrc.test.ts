@@ -1064,11 +1064,11 @@ describe("the config key's authority is normalized like a WHATWG URL", () => {
     expect(token(`registry=HTTPS://example.com:443/api/\n//example.com/:_authToken=T\n`)).toBe("T");
   });
 
-  // npm's key never spells out a default port; a hand-written `:443` is dropped when
-  // read, so the key still matches (released Bun matched it too).
-  it("drops :443 from a key, so it matches an https registry", () => {
-    expect(token(`registry=https://example.com:443/api/\n//example.com:443/:_authToken=T\n`)).toBe("T");
-    expect(token(`registry=https://example.com/api/\n//example.com:443/:_authToken=T\n`)).toBe("T");
+  // npm compares a hand-written key as written: a port in it stays, so `//host:443/`
+  // is the key of `http://host:443/` (a TLS-terminating proxy) and not of `https://host/`.
+  it("keeps a port written in a scheme-less key", () => {
+    expect(token(`registry=http://example.com:443/api/\n//example.com:443/:_authToken=T\n`)).toBe("T");
+    expect(token(`registry=https://example.com/api/\n//example.com:443/:_authToken=T\n`)).toBe("");
   });
 
   // Bun's docs long showed keys with a scheme (`//http://localhost:4873/:_authToken=`);
@@ -1081,7 +1081,7 @@ describe("the config key's authority is normalized like a WHATWG URL", () => {
   });
 
   it("drops a default port after a bracketed IPv6 host, not inside it", () => {
-    expect(token(`registry=https://[::1]/\n//[::1]:443/:_authToken=T\n`)).toBe("T");
+    expect(token(`registry=https://[::1]/\n//https://[::1]:443/:_authToken=T\n`)).toBe("T");
     expect(token(`registry=http://[::80]/\n//[::80]/:_authToken=T\n`)).toBe("T");
   });
 

@@ -1096,28 +1096,32 @@ mod draft {
     }
 
     /// npm writes a key with `nerfDart(new URL(registry))`: no scheme, a lowercase
-    /// host, no default port. A hand-written key is folded to that shape once, here,
-    /// so the byte-for-byte lookups later behave like npm's map lookups. Bun's docs
-    /// long showed `//http://host/:_authToken=`, so a leading scheme is dropped too.
+    /// host, and no default port (URL parsing drops it). A hand-written key is
+    /// compared as written, so a port in it stays, whatever the scheme turns out to
+    /// be: `//host:443/` is `http://host:443/`'s key, not `https://host/`'s. Bun's
+    /// docs long showed `//http://host/:_authToken=`; with a scheme spelled out, that
+    /// scheme's default port is dropped the way URL parsing would.
     fn normalize_key(raw: &[u8]) -> Box<[u8]> {
         let has_scheme = |scheme: &[u8]| {
             raw.len() >= scheme.len() && raw[..scheme.len()].eq_ignore_ascii_case(scheme)
         };
-        let (default_port, rest): (&[u8], &[u8]) = if has_scheme(b"https://") {
-            (b"443", &raw[b"https://".len()..])
+        let (default_port, rest): (Option<&[u8]>, &[u8]) = if has_scheme(b"https://") {
+            (Some(b"443"), &raw[b"https://".len()..])
         } else if has_scheme(b"http://") {
-            (b"80", &raw[b"http://".len()..])
+            (Some(b"80"), &raw[b"http://".len()..])
         } else {
-            (b"443", raw)
+            (None, raw)
         };
         let host_end = bun_core::strings::index_of_char_usize(rest, b'/').unwrap_or(rest.len());
         let mut key = rest.to_vec();
         key[..host_end].make_ascii_lowercase();
         // In a bracketed IPv6 authority only a colon after `]` introduces a port.
-        if let Some(colon) = bun_core::strings::last_index_of_char(&key[..host_end], b':') {
-            let is_port = key[0] != b'[' || (colon > 0 && key[colon - 1] == b']');
-            if is_port && key[colon + 1..host_end] == *default_port {
-                key.drain(colon..host_end);
+        if let Some(default_port) = default_port {
+            if let Some(colon) = bun_core::strings::last_index_of_char(&key[..host_end], b':') {
+                let is_port = key[0] != b'[' || (colon > 0 && key[colon - 1] == b']');
+                if is_port && key[colon + 1..host_end] == *default_port {
+                    key.drain(colon..host_end);
+                }
             }
         }
         key.into_boxed_slice()

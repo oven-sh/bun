@@ -44,7 +44,6 @@ pub enum CtxTag {
     DebugHttpsMux,
     /// The context finished; `ptr` is the [`RequestHeadSnapshot`] the lazy getters read instead.
     Head,
-    Head,
 }
 
 #[derive(Copy, Clone)]

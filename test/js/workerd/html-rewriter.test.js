@@ -471,10 +471,9 @@ describe("HTMLRewriter", () => {
     });
 
     // `rsisAbrupt` calls `controller.close(error)` synchronously before
-    // rejecting the pump promise, and the generated `__close` drops its error
-    // argument. The pipe must defer its terminal step to the reject reaction
-    // so the real error reaches the output body instead of resolving with
-    // truncated HTML.
+    // rejecting the pump promise. The pipe must defer its terminal step to the
+    // reject reaction so the real error reaches the output body instead of
+    // resolving with truncated HTML.
     it.each(["default", "pull"])(
       "a JS ReadableStream (%s) input that errors mid-stream rejects the body",
       async kind => {
@@ -500,6 +499,31 @@ describe("HTMLRewriter", () => {
         await expect(res.text()).rejects.toThrow("upstream boom");
       },
     );
+
+    // The input is already errored when transform() runs: the pump's first
+    // read throws, so `controller.close(error)` and the pump rejection both
+    // happen inside transform(), before any reject reaction is attached. The
+    // close must carry the error to the pipe, or the body resolves to "".
+    // `error()` with no reason errors the stream with `undefined`; that must
+    // not read as a clean close either.
+    it.each([
+      ["an Error", new Error("upstream boom")],
+      ["undefined", undefined],
+    ])("a JS ReadableStream input that is already errored (%s) rejects the body", async (_, reason) => {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode("<p>partial"));
+          controller.error(reason);
+        },
+      });
+      const res = new HTMLRewriter().on("p", { element() {} }).transform(new Response(stream));
+      const settled = await res.text().then(
+        text => ({ resolved: text }),
+        err => ({ rejected: err }),
+      );
+      expect(settled).toEqual({ rejected: reason });
+    });
 
     // A `type: 'direct'` source whose `pull()` throws synchronously leaves the
     // JS controller's `m_sinkPtr` set after `readDirectStream` returns with an

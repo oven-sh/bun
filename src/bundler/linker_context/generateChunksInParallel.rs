@@ -1317,7 +1317,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
     // Only `StandaloneModuleGraph::to_bytes` reads these.
     if is_compile {
-        let (order, startup_count) = chunk_load_order(chunks, &output_files.output_files);
+        let (order, startup_count) = chunk_load_order(
+            chunks,
+            &output_files.output_files,
+            c.options.target.is_bun(),
+        );
         for (chunk_index, &position) in order.iter().enumerate() {
             let file = &mut output_files.output_files[chunk_index];
             file.load_order = position;
@@ -1404,15 +1408,32 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 }
 
 /// `--compile --bytecode`: the executable also carries ahead-of-time bytecode for the internal modules (node:fs, …) the
-/// bundle imports, so their first `require` decodes instead of parsing. One `OutputKind::BuiltinBytecode` per module;
-/// StandaloneModuleGraph::to_bytes lays them out and InternalModuleRegistry picks them up by id.
+/// bundle imports and everything those require while loading, so their first `require` decodes instead of parsing. One
+/// `OutputKind::BuiltinBytecode` per module; StandaloneModuleGraph::to_bytes lays them out and InternalModuleRegistry
+/// picks them up by id. The modules, their ids and (when compiling for another platform) their sources come from the
+/// builtins section of the executable the bundle is going into.
 fn append_internal_module_bytecode(
     c: &LinkerContext,
     output_files: &mut Vec<options::OutputFile>,
     external_strings: Option<core::ptr::NonNull<crate::bundle_v2::dispatch::EncoderStringTable>>,
 ) {
+    use crate::bundle_v2::dispatch;
+    let target_section = c.options.target_builtins.as_deref();
+    let builtins = match bun_exe_format::builtins::Builtins::parse(
+        target_section.unwrap_or_else(|| dispatch::host_builtins()),
+    ) {
+        Ok(b) => b,
+        Err(e) => {
+            debug!(
+                "Internal module bytecode: builtins section unreadable ({})",
+                <&'static str>::from(&e)
+            );
+            return;
+        }
+    };
+
     let import_records = c.graph.ast.items_import_records();
-    let mut specifiers: Vec<&[u8]> = Vec::new();
+    let mut wanted: Vec<u32> = Vec::new();
     for source_index in &c.graph.reachable_files {
         let Some(records) = import_records.get(source_index.get() as usize) else {
             continue;
@@ -1422,27 +1443,59 @@ fn append_internal_module_bytecode(
                 continue;
             }
             let text: &[u8] = record.path.text;
-            let is_builtin = record.tag == bun_ast::ImportRecordTag::Builtin
-                || text.starts_with(b"node:")
-                || text.starts_with(b"bun:")
-                || bun_resolve_builtins::HardcodedModule::Alias::has(
-                    text,
-                    crate::options::Target::Bun,
-                    Default::default(),
-                );
-            if is_builtin && !specifiers.contains(&text) {
-                specifiers.push(text);
+            let alias = bun_resolve_builtins::HardcodedModule::Alias::get(
+                text,
+                crate::options::Target::Bun,
+                Default::default(),
+            );
+            let canonical: &[u8] = match &alias {
+                // The one aliased npm specifier whose registry name is not the specifier (bundle-modules.ts).
+                Some(alias) if alias.path.as_bytes() == b"@vercel/fetch" => b"vercel_fetch",
+                Some(alias) => alias.path.as_bytes(),
+                None if record.tag == bun_ast::ImportRecordTag::Builtin
+                    || strings::has_prefix(text, b"node:")
+                    || strings::has_prefix(text, b"bun:") =>
+                {
+                    text
+                }
+                None => continue,
+            };
+            if let Some(id) = builtins.find(canonical) {
+                if !wanted.contains(&id) {
+                    wanted.push(id);
+                }
             }
         }
     }
-    if specifiers.is_empty() {
-        return;
+    let mut i = 0;
+    while i < wanted.len() {
+        for dep in builtins.dependencies(wanted[i]) {
+            if !wanted.contains(&dep) {
+                wanted.push(dep);
+            }
+        }
+        i += 1;
     }
-    for (id, bytecode) in crate::bundle_v2::dispatch::generate_internal_module_bytecode(
-        &specifiers,
-        c.options.bytecode_depth,
-        external_strings,
-    ) {
+
+    for id in wanted {
+        let bytecode = match target_section {
+            Some(_) => builtins.module(id).and_then(|m| {
+                dispatch::generate_internal_module_bytecode_from_source(
+                    &m,
+                    builtins.source_stamp,
+                    c.options.bytecode_depth,
+                    external_strings,
+                )
+            }),
+            None => dispatch::generate_internal_module_bytecode(
+                id,
+                c.options.bytecode_depth,
+                external_strings,
+            ),
+        };
+        let Some(bytecode) = bytecode else {
+            continue;
+        };
         debug!("Internal module bytecode {}: {} bytes", id, bytecode.len());
         output_files.push(options::OutputFile::init(options::OutputFileInit {
             output_path: id.to_string().into_bytes().into_boxed_slice(),
@@ -1464,13 +1517,18 @@ fn append_internal_module_bytecode(
 
 /// Position of each chunk in the order a `--compile` executable is expected to
 /// load it: the entry point's static cross-chunk imports in evaluation order,
-/// then the closures of its dynamic imports, breadth-first. The standalone
+/// then the closures of its dynamic imports (`import()` and split `require()`
+/// chunks), breadth-first. The standalone
 /// module graph lays modules out by this so booting faults in one run of pages
 /// rather than one page per chunk scattered across the payload. Also returns
 /// how many of the positions make up the static closure of the entry point
 /// the executable runs: the first server-side one, as `to_bytes` picks it.
 /// `output_files[i]` is chunk `i`'s output file.
-fn chunk_load_order(chunks: &[Chunk], output_files: &[options::OutputFile]) -> (Vec<u32>, u32) {
+fn chunk_load_order(
+    chunks: &[Chunk],
+    output_files: &[options::OutputFile],
+    target_is_bun: bool,
+) -> (Vec<u32>, u32) {
     let mut visited = AutoBitSet::init_empty(chunks.len()).expect("oom");
     let mut order: Vec<u32> = Vec::with_capacity(chunks.len());
     let entry_points = |side_is_client: bool| {
@@ -1503,7 +1561,11 @@ fn chunk_load_order(chunks: &[Chunk], output_files: &[options::OutputFile]) -> (
                 Some(import) => {
                     stack.last_mut().unwrap().1 += 1;
                     let dep = import.chunk_index;
-                    if import.import_kind == bun_ast::ImportKind::Dynamic {
+                    // An HTML import puts browser-side chunks in a server build;
+                    // those never load anything through `import.meta.require`.
+                    let importer_is_bun = target_is_bun
+                        && output_files[chunk_index as usize].side != Some(options::Side::Client);
+                    if import.import_kind.can_be_lazy_chunk(importer_is_bun) {
                         dynamic_frontier.push_back(dep);
                     } else if !visited.is_set(dep as usize) {
                         visited.set(dep as usize);

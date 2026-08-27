@@ -94,7 +94,12 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--no-addons" type="boolean">
-  Throw an error if <code>process.dlopen</code> is called, and disable export condition <code>node-addons</code>
+  Throw an error if <code>process.dlopen</code> or <code>bun:ffi</code> <code>cc()</code> is called, and disable export
+  condition <code>node-addons</code>
+</ParamField>
+
+<ParamField path="--no-ffi-cc" type="boolean">
+  Throw an error if <code>bun:ffi</code> <code>cc()</code> is called (disables the C compiler)
 </ParamField>
 
 <ParamField path="--unhandled-rejections" type="string">

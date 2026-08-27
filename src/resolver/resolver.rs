@@ -6736,8 +6736,10 @@ fn primary_side_effects(
 ) -> SideEffects {
     if side_effects.has_side_effects(path) {
         SideEffects::HasSideEffects
-    } else {
+    } else if matches!(side_effects, crate::package_json::SideEffects::False) {
         SideEffects::NoSideEffectsPackageJson
+    } else {
+        SideEffects::NoSideEffectsPackageJsonArray
     }
 }
 

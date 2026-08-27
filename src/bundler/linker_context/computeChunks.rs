@@ -298,6 +298,30 @@ pub(crate) fn compute_chunks(
     let css_asts = this.graph.ast.items_css();
     let ast_targets = this.graph.ast.items_target();
 
+    // Files with at least one part that will be printed. A file with none
+    // (nothing survived tree shaking, or only bare imports of unwrapped files
+    // did) gets no code-splitting chunk: it would be an empty file, and two
+    // such chunks share a content hash.
+    let contributes_code = {
+        let mut bits = AutoBitSet::init_empty(this.graph.files.len())?;
+        let parts = this.graph.ast.items_parts();
+        let reachable: &[Index] = if this.graph.code_splitting {
+            this.graph.reachable_files.slice()
+        } else {
+            &[]
+        };
+        for source_index in reachable {
+            let i = source_index.get() as usize;
+            let parts_live = &this.graph.parts_live[i];
+            if parts[i].as_slice().iter().enumerate().any(|(p, part)| {
+                parts_live.is_set(p) && this.should_include_part(source_index.get(), part)
+            }) {
+                bits.set(i);
+            }
+        }
+        bits
+    };
+
     // reshaped for borrowck — re-borrow file_entry_bits after the loop above mutated it
     let file_entry_bits: &mut [AutoBitSet] = this.graph.files.items_entry_bits_mut();
 
@@ -314,6 +338,9 @@ pub(crate) fn compute_chunks(
                     }
 
                     if this.graph.code_splitting {
+                        if !contributes_code.is_set(source_index.get() as usize) {
+                            continue;
+                        }
                         let js_chunk_key =
                             temp.alloc_slice_copy(entry_bits.bytes(this.graph.entry_points.len()));
                         let js_chunk_entry = js_chunks.get_or_put(js_chunk_key)?;

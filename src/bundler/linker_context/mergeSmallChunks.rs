@@ -268,6 +268,11 @@ pub(crate) fn merge_small_chunks(
     for _ in 0..entry_points_len {
         importer_bits.push(AutoBitSet::init_empty(entry_points_len)?);
     }
+    // Dynamic entries some live split `require()` loads. The call
+    // runs while its importer is still evaluating, so no importer is
+    // guaranteed to precede the target; folding shared code into the
+    // importer's chunk could place it after the call site.
+    let mut required_sync = AutoBitSet::init_empty(entry_points_len)?;
     for source_index in this.graph.reachable_files.iter() {
         let source_index = source_index.get();
         if !is_live_js(source_index) {
@@ -287,7 +292,15 @@ pub(crate) fn merge_small_chunks(
                     continue;
                 }
                 let target_entry = entry_id_by_source[record.source_index.get() as usize];
-                if target_entry != u32::MAX {
+                if target_entry == u32::MAX {
+                    continue;
+                }
+                if record
+                    .flags
+                    .contains(ImportRecordFlags::CROSS_CHUNK_REQUIRE)
+                {
+                    required_sync.set(target_entry as usize);
+                } else {
                     importer_bits[target_entry as usize]
                         .set_union(&file_entry_bits[source_index as usize]);
                 }
@@ -316,9 +329,14 @@ pub(crate) fn merge_small_chunks(
     // also `import()`s them: nothing precedes them. A dynamic entry no live
     // code imports is left alone (empty set).
     let mut guaranteed: Vec<AutoBitSet> = Vec::with_capacity(entry_points_len);
+    let has_guarantors = |entry_id: usize| {
+        is_dynamic_entry(entry_id)
+            && !required_sync.is_set(entry_id)
+            && importer_bits[entry_id].find_first_set().is_some()
+    };
     for entry_id in 0..entry_points_len {
         let mut bits = AutoBitSet::init_empty(entry_points_len)?;
-        if is_dynamic_entry(entry_id) && importer_bits[entry_id].find_first_set().is_some() {
+        if has_guarantors(entry_id) {
             bits.set_all(true);
             bits.unset(entry_id);
         }
@@ -328,7 +346,7 @@ pub(crate) fn merge_small_chunks(
     loop {
         let mut changed = false;
         for (entry_id, importers) in importer_bits.iter().enumerate() {
-            if !is_dynamic_entry(entry_id) || importers.find_first_set().is_none() {
+            if !has_guarantors(entry_id) {
                 continue;
             }
             next.set_all(true);

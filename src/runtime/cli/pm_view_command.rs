@@ -129,7 +129,6 @@ pub(crate) fn view(
         header_buf,
         b"",
         http_proxy,
-        None,
         http::FetchRedirect::Follow,
     );
     req.client.flags.reject_unauthorized = manager.tls_reject_unauthorized();

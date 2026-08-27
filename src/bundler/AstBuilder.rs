@@ -549,10 +549,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             flags: Default::default(),
             target,
             top_level_await_keyword: None,
-            // .nested_scope_slot_counts = if (p.options.features.minify_identifiers)
-            //     renamer.assignNestedScopeSlots(p.arena, p.scopes.items[0], p.symbols.items)
-            // else
-            //     js_ast.SlotCounts{},
             nested_scope_slot_counts: Default::default(),
             hashbang: b"".into(),
             css: None,

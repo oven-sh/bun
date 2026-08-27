@@ -200,12 +200,8 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
                 script->cachedDataRejected(TriState::True);
             }
         }
-    } else if (script->options().produceCachedData) {
+    } else if (script->options().produceCachedData)
         script->cacheBytecode();
-        RETURN_IF_EXCEPTION(scope, {});
-        // TODO(@heimskr): is there ever a case where bytecode production fails?
-        script->cachedDataProduced(true);
-    }
 
     return JSValue::encode(script);
 }
@@ -253,11 +249,7 @@ JSC::ProgramExecutable* NodeVMScript::createExecutable()
 
 void NodeVMScript::cacheBytecode()
 {
-    if (!m_cachedExecutable) {
-        createExecutable();
-    }
-
-    m_cachedBytecode = getBytecode(globalObject(), m_cachedExecutable.get(), m_source);
+    m_cachedBytecode = getBytecode(globalObject(), JSC::SourceCodeType::ProgramType, m_source);
     m_cachedDataProduced = m_cachedBytecode != nullptr;
 }
 
@@ -269,12 +261,10 @@ JSC::JSUint8Array* NodeVMScript::getBytecodeBuffer()
     }
 
     if (!m_cachedBytecodeBuffer) {
-        if (!m_cachedBytecode) {
+        if (!m_cachedBytecode)
             cacheBytecode();
-            RETURN_IF_EXCEPTION(scope, nullptr);
-        }
-
-        ASSERT(m_cachedBytecode);
+        if (!m_cachedBytecode)
+            return nullptr;
 
         std::span<const uint8_t> bytes = m_cachedBytecode->span();
         m_cachedBytecodeBuffer.set(vm(), this, WebCore::createBuffer(globalObject(), bytes));

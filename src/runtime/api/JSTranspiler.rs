@@ -5,7 +5,7 @@ use bun_options_types::TargetExt as _;
 use std::io::Write as _;
 
 use crate::Error;
-use crate::node::{Encoding, Flavor, StringObjects, StringOrBuffer};
+use crate::node::{StringOrBuffer, ThreadIsolated};
 use bun_alloc::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec re-exports
 use bun_ast::Expr;
 use bun_ast::Loader;
@@ -633,7 +633,7 @@ impl Config {
 /// into the owning `JSTranspiler`'s config (its `Transpiler` is bit-copied),
 /// which the job's Js side keeps alive and the pool borrow keeps valid.
 pub(crate) struct TransformTask {
-    pub input_code: bun_jsc::ThreadIsolated<StringOrBuffer<'static>>,
+    pub input_code: ThreadIsolated<StringOrBuffer<'static>>,
     pub output_code: BunString,
     pub transpiler: core::mem::ManuallyDrop<Transpiler::Transpiler<'static>>,
     pub log: bun_ast::Log,
@@ -673,7 +673,7 @@ impl TransformTask {
     fn schedule(
         transpiler: &JSTranspiler,
         transpiler_js: JSValue,
-        input_code: bun_jsc::ThreadIsolated<StringOrBuffer<'static>>,
+        input_code: ThreadIsolated<StringOrBuffer<'static>>,
         global: &JSGlobalObject,
         loader: Loader,
     ) -> JSValue {
@@ -1358,31 +1358,19 @@ impl JSTranspiler {
             ));
         };
 
-        let Some(code) = StringOrBuffer::from_js_with_encoding_maybe_async(
-            global,
-            code_arg,
-            Encoding::Utf8,
-            Flavor::Async,
-            StringObjects::Allow,
-        )?
-        else {
+        let code = if let Some(buffer) = code_arg.as_array_buffer(global) {
+            let bytes = buffer.byte_slice().to_vec();
+            global.vm().report_extra_memory(bytes.len());
+            StringOrBuffer::owned_isolated(bytes)
+        } else if let Some(code) = StringOrBuffer::from_js_async(global, code_arg)? {
+            code
+        } else {
             return Err(global.throw_invalid_argument_type(
                 "transform",
                 "code",
                 "string or Uint8Array",
             ));
         };
-        let mut code = code;
-        if matches!(code, StringOrBuffer::Buffer(_)) {
-            let bytes = code.slice().to_vec();
-            global.vm().report_extra_memory(bytes.len());
-            bun_jsc::Unprotect::unprotect(&mut code);
-            code = StringOrBuffer::owned(bytes);
-        }
-        // `errdefer code.deinitAndUnprotect()` — `from_js_with_encoding_maybe_async`
-        // (`Flavor::Async`) already protected; adopt into a `ThreadIsolated` so any
-        // early-return drop unprotects. `TransformTask::create` takes the guard.
-        let code = bun_jsc::ThreadIsolated::adopt(code);
 
         args.eat();
         let loader: Option<Loader> = 'brk: {

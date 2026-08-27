@@ -13,7 +13,6 @@ use bun_boringssl::ssl_ctx_setup;
 use bun_boringssl_sys::SSL_CTX;
 use bun_collections::{HiveArray, TaggedPtrUnion};
 use bun_core::strings;
-use bun_core::{self, FeatureFlags};
 use bun_ptr::RefPtr;
 use bun_uws as uws;
 
@@ -730,8 +729,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 continue;
             }
 
-            // The hash covers the Host-header SNI override that the handshake
-            // was verified against (see get_tls_hostname / connect()).
             if socket.proxy_auth_hash != proxy_auth_hash {
                 continue;
             }
@@ -835,16 +832,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
     pub(crate) fn connect(
         &mut self,
         client: &mut HTTPClient,
-        hostname_: &[u8],
+        hostname: &[u8],
         port: u16,
     ) -> Result<Option<HTTPSocket<SSL>>, Error> {
-        let hostname: &[u8] =
-            if FeatureFlags::HARDCODE_LOCALHOST_TO_127_0_0_1 && hostname_ == b"localhost" {
-                b"127.0.0.1"
-            } else {
-                hostname_
-            };
-
         client.connected_url = client
             .http_proxy
             .clone()
@@ -852,15 +842,14 @@ impl<const SSL: bool> HTTPContext<SSL> {
         // URL.hostname is a borrowed slice — assigning a local would not
         // satisfy the field's lifetime, so this uses raw lifetime erasure.
         client.connected_url.hostname =
-            // SAFETY: hostname borrows either a static literal or `client.url`/
-            // `client.http_proxy` which outlive `connected_url` for the
-            // duration of the connect attempt.
+            // SAFETY: hostname borrows `client.url` or `client.http_proxy`,
+            // which outlive `connected_url` for the duration of the connect
+            // attempt.
             unsafe { bun_ptr::detach_lifetime(hostname) };
 
         if SSL {
             if client.can_offer_h2() {
                 let cfg = SSLConfig::raw_ptr(client.tls_props.as_ref());
-                let host_header_hash = client.proxy_auth_hash();
                 // Listed sessions are kept alive by the registry's ref. The
                 // scan only reads; `adopt` runs after the iteration is over
                 // because it may end by unregistering the session it was
@@ -875,7 +864,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     })
                     .find(|s| {
                         s.has_headroom()
-                            && s.matches(hostname, port, cfg, host_header_hash)
+                            && s.matches(hostname, port, cfg)
                             // Same guard as the pool path (`existing_socket`).
                             && client.socket_verification().admits(s.verification)
                     });
@@ -887,7 +876,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 for pc in &mut self.pending_h2_connects {
                     // Same guard as the active-session loop above, applied to
                     // an in-flight connect before its session exists.
-                    if pc.matches(hostname, port, cfg_nn, host_header_hash)
+                    if pc.matches(hostname, port, cfg_nn)
                         && client.socket_verification().admits(pc.verification)
                     {
                         // client outlives the pending connect (resolved before
@@ -902,8 +891,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         client.flags.reused_socket_verification = PeerVerification::None;
         if client.is_keep_alive_possible() {
             let want_tunnel = client.http_proxy.is_some() && client.url.is_https();
-            // CONNECT TCP target (writeProxyConnect line 346). The SNI
-            // override (client.hostname) is hashed into proxyAuthHash.
+            // CONNECT TCP target (writeProxyConnect line 346).
             let target_hostname: &[u8] = if want_tunnel {
                 client.url.hostname
             } else {
@@ -914,13 +902,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             } else {
                 0
             };
-            // For a direct TLS connection the handshake verifies the peer
-            // against get_tls_hostname() — which prefers the Host-header
-            // override (client.hostname) over url.hostname — so the override
-            // must discriminate the pool key there too, not just for CONNECT
-            // tunnels. proxy_auth_hash() reduces to exactly the override hash
-            // (or 0) for a non-proxied request.
-            let proxy_auth_hash: u64 = if want_tunnel || (SSL && client.http_proxy.is_none()) {
+            let proxy_auth_hash: u64 = if want_tunnel {
                 client.proxy_auth_hash()
             } else {
                 0
@@ -1012,7 +994,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     port,
                     ssl_config: cfg,
                     verification: client.socket_verification(),
-                    host_header_hash: client.proxy_auth_hash(),
                     ..Default::default()
                 });
                 // `client.pending_h2 = pc` stores a *borrowed* backref into the

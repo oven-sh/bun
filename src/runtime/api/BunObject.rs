@@ -1077,7 +1077,7 @@ fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<J
     // SAFETY: bun_vm() returns the live per-thread singleton.
     let vm = global_this.bun_vm();
     let mut args = ArgumentsSlice::init(vm, arguments);
-    let Some(specifier) = args.protect_eat_next() else {
+    let Some(specifier) = args.next_eat() else {
         return Err(global_this
             .throw_invalid_arguments(format_args!("Expected a specifier and a from path")));
     };
@@ -1086,7 +1086,7 @@ fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<J
         return Err(global_this.throw_invalid_arguments(format_args!("specifier must be a string")));
     }
 
-    let Some(from) = args.protect_eat_next() else {
+    let Some(from) = args.next_eat() else {
         return Err(global_this.throw_invalid_arguments(format_args!("Expected a from path")));
     };
 
@@ -2135,9 +2135,8 @@ extern "C" fn Bun__reportError(global_object: &JSGlobalObject, err: JSValue) {
 /// object nor `undefined`.
 ///
 /// Kept separate from [`parse_compress_buffer_and_options`] so async callers
-/// (e.g. `JSZstd::get_options_async`) can read `options` *before* GC-protecting
-/// the buffer — preserving error precedence and avoiding a protect leak on the
-/// early-throw path.
+/// (e.g. `JSZstd::get_options_async`) can read `options` *before* pinning and
+/// rooting the buffer, preserving error precedence.
 #[inline]
 pub(crate) fn parse_compress_args(
     global: &JSGlobalObject,
@@ -2637,17 +2636,16 @@ pub mod JSZstd {
     fn get_options_async(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
-    ) -> JsResult<(node::StringOrBuffer<'static>, Option<JSValue>, i32)> {
+    ) -> JsResult<(
+        node::ThreadIsolated<node::StringOrBuffer<'static>>,
+        Option<JSValue>,
+        i32,
+    )> {
         let (buffer_value, options_val) = parse_compress_args(global_this, callframe)?;
 
         let level = get_level(global_this, options_val)?;
 
-        if let Some(buffer) = node::StringOrBuffer::from_js_maybe_async(
-            global_this,
-            buffer_value,
-            node::Flavor::Async,
-            node::StringObjects::Allow,
-        )? {
+        if let Some(buffer) = node::StringOrBuffer::from_js_async(global_this, buffer_value)? {
             return Ok((buffer, options_val, level));
         }
 
@@ -2764,9 +2762,7 @@ pub mod JSZstd {
 
     /// `Bun.zstdCompress` / `Bun.zstdDecompress` off the JS thread.
     pub(crate) struct ZstdJob {
-        /// Created with `Flavor::Async` (JS-backed buffer protected); the
-        /// [`bun_jsc::ThreadIsolated`] releases that with the job.
-        pub buffer: bun_jsc::ThreadIsolated<node::StringOrBuffer<'static>>,
+        pub buffer: node::ThreadIsolated<node::StringOrBuffer<'static>>,
         pub is_compress: bool,
         pub level: i32,
         /// Filled in by `run`.
@@ -2813,7 +2809,7 @@ pub mod JSZstd {
 
     fn create_job(
         global_this: &JSGlobalObject,
-        buffer: node::StringOrBuffer<'static>,
+        buffer: node::ThreadIsolated<node::StringOrBuffer<'static>>,
         is_compress: bool,
         level: i32,
     ) -> JSValue {
@@ -2823,7 +2819,7 @@ pub mod JSZstd {
         jsc::Job::<ZstdJob>::schedule(
             &cx,
             ZstdJob {
-                buffer: bun_jsc::ThreadIsolated::adopt(buffer),
+                buffer,
                 is_compress,
                 level,
                 result: Ok(Box::default()),

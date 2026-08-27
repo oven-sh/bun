@@ -1154,7 +1154,7 @@ static bool initializePESection()
     PIMAGE_SECTION_HEADER sectionHeader = IMAGE_FIRST_SECTION(ntHeaders);
 
     for (int i = 0; i < ntHeaders->FileHeader.NumberOfSections; i++) {
-        if (strncmp((char*)sectionHeader->Name, ".bun", 4) == 0) {
+        if (memcmp(sectionHeader->Name, ".bun\0\0\0\0", 8) == 0) {
             // Found the .bun section
             // Section format: 8 bytes size (uint64_t) + data
             BYTE* sectionData = (BYTE*)hModule + sectionHeader->VirtualAddress;

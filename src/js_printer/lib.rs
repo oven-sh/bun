@@ -2861,7 +2861,19 @@ pub(crate) mod __gated_printer {
                     self.print(b"(");
                 }
 
-                if let Some(ref_) = self.options.require_ref {
+                if record
+                    .flags
+                    .contains(ImportRecordFlags::CROSS_CHUNK_REQUIRE)
+                {
+                    // A split `require()`: the path is a sibling chunk, resolved
+                    // relative to this chunk — not through the runtime's
+                    // `__require`, which would resolve it relative to the
+                    // runtime's chunk.
+                    if let Some(mi) = self.module_info() {
+                        mi.flags.contains_import_meta = true;
+                    }
+                    self.print(b"import.meta.require");
+                } else if let Some(ref_) = self.options.require_ref {
                     self.print_symbol(ref_);
                 } else {
                     self.print(b"require");

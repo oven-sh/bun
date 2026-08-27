@@ -1,6 +1,6 @@
 use crate::mal_prelude::*;
 use bun_alloc::ArenaVecExt as _;
-use bun_collections::{ArrayHashMap, VecExt, index_sort};
+use bun_collections::{ArrayHashMap, AutoBitSet, VecExt, index_sort};
 
 use crate::LinkerContext;
 use crate::js_meta;
@@ -25,6 +25,7 @@ pub(crate) fn compute_cross_chunk_dependencies(
             imports: ChunkMetaMap::default(),
             exports: ChunkMetaMap::default(),
             dynamic_imports: ArrayHashMap::<IndexInt, ()>::default(),
+            require_imports: ArrayHashMap::<IndexInt, ()>::default(),
         })
         .collect();
 
@@ -179,7 +180,12 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                         // include its hash when we're calculating the hashes of all
                         // dependencies of this chunk.
                         if other_chunk_index as usize != chunk_index {
-                            let _ = chunk_meta.dynamic_imports.put(other_chunk_index, ()); // OOM-only Result
+                            let deps = if import_record.kind == bun_ast::ImportKind::Require {
+                                &mut chunk_meta.require_imports
+                            } else {
+                                &mut chunk_meta.dynamic_imports
+                            };
+                            let _ = deps.put(other_chunk_index, ()); // OOM-only Result
                         }
                     }
                 }
@@ -322,28 +328,24 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
 /// loading one runs nothing, and neither does anything its files statically
 /// import (which may live in a chunk the entry would otherwise only have
 /// reached, in order, through this one).
-fn inert_chunks(c: &LinkerContext, chunks: &[Chunk]) -> Vec<bool> {
+fn inert_chunks(c: &LinkerContext, chunks: &[Chunk]) -> Result<AutoBitSet, bun_alloc::AllocError> {
     let mut chunk_of_file = vec![u32::MAX; c.graph.files.len()];
-    let mut inert: Vec<bool> = chunks
-        .iter()
-        .map(|chunk| {
-            matches!(chunk.content, chunk::Content::Javascript(_))
-                && !chunk.entry_point.is_entry_point()
-        })
-        .collect();
+    let mut inert = AutoBitSet::init_empty(chunks.len())?;
     for (chunk_index, chunk) in chunks.iter().enumerate() {
         if !matches!(chunk.content, chunk::Content::Javascript(_)) {
             continue;
         }
+        let mut runs_nothing = !chunk.entry_point.is_entry_point();
         for &source_index in chunk.files_with_parts_in_chunk.keys() {
             chunk_of_file[source_index as usize] = chunk_index as u32;
-            if inert[chunk_index] && !c.loading_file_has_no_side_effects(source_index) {
-                inert[chunk_index] = false;
-            }
+            runs_nothing = runs_nothing && c.loading_file_has_no_side_effects(source_index);
+        }
+        if runs_nothing {
+            inert.set(chunk_index);
         }
     }
-    if !inert.iter().any(|&b| b) {
-        return inert;
+    if inert.count() == 0 {
+        return Ok(inert);
     }
 
     // Other chunks each still-inert chunk's files statically import from.
@@ -351,7 +353,7 @@ fn inert_chunks(c: &LinkerContext, chunks: &[Chunk]) -> Vec<bool> {
     let parts = c.graph.ast.items_parts();
     let mut imported_chunks: Vec<Vec<u32>> = vec![Vec::new(); chunks.len()];
     for (chunk_index, chunk) in chunks.iter().enumerate() {
-        if !inert[chunk_index] {
+        if !inert.is_set(chunk_index) {
             continue;
         }
         let imported = &mut imported_chunks[chunk_index];
@@ -389,17 +391,17 @@ fn inert_chunks(c: &LinkerContext, chunks: &[Chunk]) -> Vec<bool> {
     loop {
         let mut changed = false;
         for chunk_index in 0..chunks.len() {
-            if inert[chunk_index]
+            if inert.is_set(chunk_index)
                 && imported_chunks[chunk_index]
                     .iter()
-                    .any(|&other| !inert[other as usize])
+                    .any(|&other| !inert.is_set(other as usize))
             {
-                inert[chunk_index] = false;
+                inert.unset(chunk_index);
                 changed = true;
             }
         }
         if !changed {
-            return inert;
+            return Ok(inert);
         }
     }
 }
@@ -409,7 +411,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
     chunks: &mut [Chunk],
     chunk_metas: &mut [ChunkMeta],
 ) -> Result<(), bun_alloc::AllocError> {
-    let mut inert: Option<Vec<bool>> = None;
+    let mut inert: Option<AutoBitSet> = None;
 
     // Mark imported symbols as exported in the chunk from which they are declared
     // The loop body also indexes chunk_metas[other_chunk_index] /
@@ -498,7 +500,10 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                     continue;
                 }
                 // Nothing is used from it; skip it if loading it runs nothing.
-                if inert.get_or_insert_with(|| inert_chunks(c, chunks))[other_chunk_index] {
+                if inert.is_none() {
+                    inert = Some(inert_chunks(c, chunks)?);
+                }
+                if inert.as_ref().unwrap().is_set(other_chunk_index) {
                     continue;
                 }
                 let js = chunks[chunk_index].content.javascript_mut();
@@ -512,21 +517,32 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         // Make sure we also track dynamic cross-chunk imports. These need to be
         // tracked so we count them as dependencies of this chunk for the purpose
         // of hash calculation.
-        if chunk_metas[chunk_index].dynamic_imports.count() > 0 {
-            let dynamic_chunk_indices = chunk_metas[chunk_index].dynamic_imports.keys_mut();
-            index_sort::sort_slice_unstable_by(dynamic_chunk_indices, |a, b| a.cmp(b));
+        let chunk_meta = &mut chunk_metas[chunk_index];
+        for (lazy_imports, import_kind) in [
+            (
+                &mut chunk_meta.dynamic_imports,
+                bun_ast::ImportKind::Dynamic,
+            ),
+            (
+                &mut chunk_meta.require_imports,
+                bun_ast::ImportKind::Require,
+            ),
+        ] {
+            if lazy_imports.count() == 0 {
+                continue;
+            }
+            let lazy_chunk_indices = lazy_imports.keys_mut();
+            index_sort::sort_slice_unstable_by(lazy_chunk_indices, |a, b| a.cmp(b));
 
             let chunk = &mut chunks[chunk_index];
             // `ChunkImport.import_kind` is a `#[repr(u8)]` enum (validity
             // invariant), so `writable_slice` would form `&mut [T]` over
             // invalid bit patterns. Push into reserved capacity instead.
-            chunk
-                .cross_chunk_imports
-                .reserve(dynamic_chunk_indices.len());
-            for &dynamic_chunk_index in dynamic_chunk_indices.iter() {
+            chunk.cross_chunk_imports.reserve(lazy_chunk_indices.len());
+            for &lazy_chunk_index in lazy_chunk_indices.iter() {
                 chunk.cross_chunk_imports.push(chunk::ChunkImport {
-                    import_kind: bun_ast::ImportKind::Dynamic,
-                    chunk_index: dynamic_chunk_index,
+                    import_kind,
+                    chunk_index: lazy_chunk_index,
                 });
             }
         }
@@ -600,6 +616,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
     {
         debug!("Generating cross-chunk imports");
         let mut list: Vec<CrossChunkImport> = Vec::new();
+        let mut evaluation_rank: Vec<u32> = vec![u32::MAX; chunks.len()];
         // We move the per-chunk fields we
         // mutate (`imports_from_other_chunks`, `cross_chunk_imports`) out via `take`, drop
         // the `chunk` borrow, hand the whole `chunks` slice to `sorted_cross_chunk_imports`
@@ -621,13 +638,23 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             // write it back at loop end.
             let mut cross_chunk_prefix_stmts = Vec::<bun_ast::Stmt>::default();
 
+            let reached = &chunks[chunk_index]
+                .content
+                .javascript()
+                .reached_chunks_in_order;
+            for (rank, &other) in reached.iter().enumerate() {
+                evaluation_rank[other as usize] = rank as u32;
+            }
             CrossChunkImport::sorted_cross_chunk_imports(
                 &mut list,
                 chunks,
                 &mut imports_from_other_chunks,
                 c.graph.stable_source_indices.slice(),
-            )
-            .expect("unreachable");
+                &evaluation_rank,
+            );
+            for &other in reached.iter() {
+                evaluation_rank[other as usize] = u32::MAX;
+            }
             let cross_chunk_imports_input: &[CrossChunkImport] = list.as_slice();
             for cross_chunk_import in cross_chunk_imports_input {
                 match c.options.output_format {

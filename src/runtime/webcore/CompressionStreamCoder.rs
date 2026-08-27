@@ -21,7 +21,7 @@ use core::ptr::{self, NonNull};
 
 use bun_core::EncodedSlice;
 use bun_jsc::EncodedSliceJsc as _;
-use bun_jsc::{ErrorCode, JSGlobalObject, JSUint8Array, JSValue, Strong};
+use bun_jsc::{ErrorCode, JSGlobalObject, JSUint8Array, JSValue, PinnedArrayBuffer, Strong};
 
 use bun_brotli::c as brotli;
 use bun_zlib as zlib;
@@ -696,28 +696,14 @@ impl CompressionStreamCoder {
     }
 }
 
-/// A chunk's bytes for the pool thread: a pinned ArrayBuffer's backing
-/// store (its pin/protect is the paired [`PinnedChunk`] on the JS side) or an
-/// owned copy.
+/// A chunk's bytes for the pool thread: what the paired [`PinnedArrayBuffer`] on the JS side keeps valid, or an owned copy.
 pub(crate) enum AsyncInput {
     Pinned { ptr: *const u8, len: usize },
     Owned(Vec<u8>),
 }
-// SAFETY: `Pinned.ptr` is a backing store pinned + protected by the paired
-// `PinnedChunk` for as long as the job lives; read only under the pool borrow.
+// SAFETY: `Pinned.ptr` points at bytes the paired `PinnedArrayBuffer` keeps
+// valid for as long as the job lives; read only under the pool borrow.
 unsafe impl Send for AsyncInput {}
-
-/// The pin + GC protection on a chunk whose bytes went to the pool; released
-/// on drop (JS thread, with the job's Js side).
-pub(crate) struct PinnedChunk(bun_jsc::ArrayBuffer);
-// SAFETY: pin/protect on a heap cell; gone with the heap.
-unsafe impl bun_jsc::job::JsAffine for PinnedChunk {}
-impl Drop for PinnedChunk {
-    fn drop(&mut self) {
-        self.0.unpin();
-        self.0.value.unprotect();
-    }
-}
 
 impl AsyncInput {
     /// JS thread: pin `chunk` if it is a pinnable ArrayBuffer/view, else copy `fallback`.
@@ -725,21 +711,18 @@ impl AsyncInput {
         global: &JSGlobalObject,
         chunk: JSValue,
         fallback: &[u8],
-    ) -> (Self, Option<PinnedChunk>) {
-        if let Some(buf) = chunk.as_pinned_arraybuffer(global) {
-            // A resizable non-shared backing can `mprotect()` pages out on
-            // `resize()`; pinning does not block that, so spill to a copy.
-            if buf.resizable && !buf.shared {
-                buf.unpin();
-                return (Self::Owned(fallback.to_vec()), None);
-            }
-            chunk.protect();
+    ) -> (Self, Option<PinnedArrayBuffer>) {
+        // Continuation steps pass no chunk.
+        if !chunk.is_cell() {
+            return (Self::Owned(fallback.to_vec()), None);
+        }
+        if let Some(buf) = PinnedArrayBuffer::root_read_only(global, chunk) {
             return (
                 Self::Pinned {
                     ptr: buf.ptr,
                     len: buf.byte_len,
                 },
-                Some(PinnedChunk(buf)),
+                Some(buf),
             );
         }
         (Self::Owned(fallback.to_vec()), None)
@@ -965,7 +948,7 @@ pub struct CompressionAsyncJs {
     /// and its `m_codecPromise` WriteBarrier keeps the pending
     /// transform-algorithm promise alive.
     stream: Strong,
-    _pin: Option<PinnedChunk>,
+    _pin: Option<PinnedArrayBuffer>,
 }
 
 impl bun_jsc::JobContext for CompressionAsyncCtx {

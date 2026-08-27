@@ -3004,50 +3004,9 @@ where
             self.render_metadata();
         }
 
-        if DEBUG_MODE {
-            if let Some(server) = self.server.get() {
-                if !err.is_empty_or_undefined_or_null() {
-                    let server = &*server;
-                    let mut exception_list: jsc::ExceptionList = Vec::new();
-                    server
-                        .vm()
-                        .as_mut()
-                        .run_error_handler(err, Some(&mut exception_list));
-
-                    // The fallback page below writes into `resp`, which must
-                    // not be dereferenced once the sink has already ended the
-                    // response (see `end_already_responded_stream`).
-                    if !ended_response && server.dev_server().is_some() {
-                        // Render the error fallback HTML page like renderDefaultError does
-                        if !self.flags.has_written_status() {
-                            self.flags.set_has_written_status(true);
-                            if let Some(resp) = self.resp.get() {
-                                resp.write_status(b"500 Internal Server Error");
-                                resp.write_header(
-                                    b"content-type",
-                                    &bun_http_types::MimeType::HTML.value,
-                                );
-                            }
-                        }
-
-                        let bb = DevErrorPage {
-                            message: b"Stream error during server-side rendering",
-                            cwd: bun_resolver::fs::FileSystem::get().top_level_dir,
-                            exceptions: &exception_list,
-                            log: None,
-                        }
-                        .render();
-
-                        if let Some(resp) = self.resp.get() {
-                            // SAFETY: FFI handle
-                            resp.write(&bb);
-                        }
-
-                        self.end_stream(self.should_close_connection());
-                        return;
-                    }
-                }
-            }
+        // Production mode keeps this asynchronous JS path quiet.
+        if DEBUG_MODE && self.report_committed_body_error(err, !ended_response) {
+            return;
         }
         // HTTP/1 only: the sink already fully ended the response, so `resp`
         // can no longer be dereferenced (see `end_already_responded_stream`).
@@ -3058,6 +3017,45 @@ where
             return;
         }
         self.close_incomplete_stream();
+    }
+
+    /// Reports a body failure that arrived after the status line was
+    /// committed, so `error()` can no longer answer. Under a bake dev server
+    /// the error page is appended to the body and the response ends normally:
+    /// returns `true`, and the caller must not touch `resp` again.
+    /// `resp_writable` is false once the sink has already ended the response
+    /// (see `end_already_responded_stream`).
+    fn report_committed_body_error(&self, err: JSValue, resp_writable: bool) -> bool {
+        if err.is_empty_or_undefined_or_null() {
+            return false;
+        }
+        let server = self.server();
+        if !DEBUG_MODE || !resp_writable || server.dev_server().is_none() {
+            server.vm().as_mut().run_error_handler(err, None);
+            return false;
+        }
+
+        let mut exception_list: jsc::ExceptionList = Vec::new();
+        server
+            .vm()
+            .as_mut()
+            .run_error_handler(err, Some(&mut exception_list));
+
+        let bb = DevErrorPage {
+            message: b"Stream error during server-side rendering",
+            cwd: bun_resolver::fs::FileSystem::get().top_level_dir,
+            exceptions: &exception_list,
+            log: None,
+        }
+        .render();
+
+        if let Some(resp) = self.resp.get() {
+            // SAFETY: FFI handle
+            resp.write(&bb);
+        }
+
+        self.end_stream(self.should_close_connection());
+        true
     }
 
     pub(crate) fn do_render_with_body(
@@ -3346,11 +3344,11 @@ where
                 this.run_error_handler(js_err);
                 return;
             }
-            // Committed status: report and close, like handle_reject_stream.
+            // Committed status: report in both modes, then close like
+            // handle_reject_stream.
             let global_this = this.server().global_this();
-            let js_err = err.to_js(global_this);
-            if !js_err.is_empty_or_undefined_or_null() {
-                this.server().vm().as_mut().run_error_handler(js_err, None);
+            if this.report_committed_body_error(err.to_js(global_this), true) {
+                return;
             }
             this.close_incomplete_stream();
             return;

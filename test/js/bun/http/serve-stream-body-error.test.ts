@@ -13,6 +13,9 @@
 //      Response's status and headers plus an empty chunked body with a clean
 //      terminator: a complete, successful-looking response for a body that
 //      failed.
+// The natively streamed bodies further down (HTMLRewriter, proxied fetch) pin
+// the same contract for the non-ReadableStream path, which also dropped the
+// producer's error without reporting it.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN } from "harness";
 import { join } from "node:path";
@@ -93,80 +96,70 @@ test.concurrent("pending-error-after-headers: headers go out, the body is not te
   expect(exitCode).toBe(0);
 });
 
-// A native byte stream body (here: a proxied upstream fetch body) whose
-// producer fails before the first chunk. The downstream client used to get a
-// clean, empty 200 and nothing was reported. Now the upstream failure is
-// reported and the downstream connection is closed without the terminator.
-test.concurrent("proxied upstream body that fails before its first chunk is not forwarded as complete", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `import net from "node:net";
-      // The upstream answers with headers only. Its connection is dropped once
-      // the proxied headers have provably reached the downstream client, so
-      // the body fails before its first chunk and the forced close (a RST,
-      // which can discard unread data on the peer) cannot race the client's
-      // read. uWS terminates the header block only with the first body byte,
-      // so no blank line ever arrives here.
-      let dropUpstream;
-      const upstream = net.createServer(sock => {
-        sock.once("data", () => {
-          sock.write("HTTP/1.1 200 OK\\r\\nContent-Type: text/plain\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n");
-          dropUpstream = () => sock.destroy();
-        });
-      });
-      await new Promise(resolve => upstream.listen(0, "127.0.0.1", resolve));
-      const server = Bun.serve({
-        port: 0,
-        development: false,
-        error() { return new Response("err-body", { status: 500 }); },
-        async fetch() {
-          const up = await fetch("http://127.0.0.1:" + upstream.address().port + "/");
-          return new Response(up.body, { status: up.status, headers: { "x-proxied": "1" } });
+// Bodies that Bun.serve streams natively (an HTMLRewriter transform, a proxied
+// fetch() Response) reach the server through RequestContext::end_chunk rather
+// than handle_reject_stream. Their status is committed before the body starts,
+// so error() cannot answer. Before the fix end_chunk dropped the error (a
+// rewriter handler that threw after the first byte left no trace anywhere) and
+// a producer that failed before its first chunk went out as a clean, empty 200.
+// Now the failure is reported in both modes and the connection is closed
+// without the terminating chunk, with whatever body bytes were already out.
+//
+// [variant, body bytes on the wire, what the report must name]
+const nativeBodies = [
+  ["rewriter-mid-stream-throw", "e\r\n<b>chunk-a</b>\r\n", "boom"],
+  ["rewriter-mid-stream-reject", "e\r\n<b>chunk-a</b>\r\n", "boom"],
+  ["proxied-fetch-mid-stream", "7\r\nchunk-a\r\n", "ECONNRESET"],
+  ["proxied-fetch-after-status", "", "ECONNRESET"],
+] as const;
+
+for (const flags of [[], ["development"]]) {
+  const mode = flags.length ? "development" : "production";
+  test.concurrent.each(nativeBodies)(
+    `%s in ${mode} mode: reported, and the body is not terminated as complete`,
+    async (variant, body, reported) => {
+      const { stdout, stderr, exitCode } = await runFixture(variant, ...flags);
+      expect({ result: JSON.parse(stdout), exitCode }).toEqual({
+        result: {
+          statusLine: "HTTP/1.1 200 OK",
+          cleanChunkedTerminator: false,
+          body,
+          errorCb: 0,
+          unhandled: 0,
+          secondStatusLine: "HTTP/1.1 200 OK",
         },
+        exitCode: 0,
       });
-      const wire = await new Promise(resolve => {
-        let buf = "";
-        const sock = net.connect(server.port, "127.0.0.1", () => {
-          sock.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
-        });
-        sock.on("data", d => {
-          buf += d.toString("latin1");
-          if (/x-proxied: 1\\r\\n/i.test(buf)) {
-            dropUpstream?.();
-            dropUpstream = undefined;
-          }
-        });
-        sock.on("error", () => {});
-        sock.on("close", () => resolve(buf));
-      });
-      const [head, ...body] = wire.split("\\r\\n\\r\\n");
-      console.log(JSON.stringify({
-        statusLine: head.split("\\r\\n")[0],
-        proxied: /x-proxied: 1/i.test(head),
-        body: body.join("\\r\\n\\r\\n"),
-        cleanChunkedTerminator: wire.endsWith("0\\r\\n\\r\\n"),
-      }));
-      server.stop(true);
-      upstream.close();`,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
+      expect(stderr).toContain(reported);
+    },
+  );
+}
+
+// When the development server also runs a bake dev server (it has an HTML
+// route), the report additionally renders the dev error page as the rest of
+// the body and ends the response normally, so the browser shows the error
+// after whatever was already streamed. The JS stream has always taken this
+// branch; the native body now goes through the same code.
+test.concurrent.each([
+  ["rewriter-mid-stream-throw", "e\r\n<b>chunk-a</b>\r\n"],
+  ["mid-stream-reject", "7\r\nchunk-a\r\n"],
+])("%s under a dev server: the error page is appended to the body", async (variant, firstChunk) => {
+  const { stdout, stderr, exitCode } = await runFixture(variant, "development", "dev-server");
+  const { body, ...result } = JSON.parse(stdout);
+  expect({ result, exitCode }).toEqual({
+    result: {
+      statusLine: "HTTP/1.1 200 OK",
+      cleanChunkedTerminator: true,
+      errorCb: 0,
+      unhandled: 0,
+      secondStatusLine: "HTTP/1.1 200 OK",
+    },
+    exitCode: 0,
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // The proxy's status and headers are flushed as soon as the upstream headers
-  // arrive, so they are on the wire; the body must then end incomplete.
-  expect(JSON.parse(stdout)).toEqual({
-    statusLine: "HTTP/1.1 200 OK",
-    proxied: true,
-    body: "",
-    cleanChunkedTerminator: false,
-  });
-  // The upstream failure is reported instead of being swallowed.
-  expect(stderr).toContain("ECONNRESET");
-  expect(exitCode).toBe(0);
+  expect(body).toStartWith(firstChunk);
+  expect(body).toContain("Stream error during server-side rendering");
+  expect(body).toContain("boom");
+  expect(stderr).toContain("boom");
 });
 
 // The body errors after a chunk has already been flushed to the client. The

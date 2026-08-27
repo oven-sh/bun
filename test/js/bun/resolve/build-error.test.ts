@@ -218,7 +218,7 @@ test.concurrent("a type-only import next to module.exports loads on every path",
     direct.exited,
   ]);
 
-  if (exitCode !== 0) console.error(stderr);
+  expect(stderr).toBe("");
   expect(JSON.parse(stdout)).toEqual({ import: { f: { x: 1 } }, require: { f: { x: 1 } } });
   expect(directStdout).toBe("");
   expect(directStderr).toBe("");
@@ -285,7 +285,7 @@ test.concurrent("a lexer error on the first token rejects import() and require()
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  if (exitCode !== 0) console.error(stderr);
+  expect(stderr).toBe("");
   const expected = ["BuildMessage", 'Invalid identifier: "0foo"'];
   expect(JSON.parse(stdout)).toEqual({
     "import ./bad.js": expected,

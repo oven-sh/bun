@@ -19,7 +19,7 @@
   @arrayPush(arr, key);
   var kinds = [@isObject(obj), @isJSArray(arr), @isProxyObject(obj), @isDerivedArray(arr), @isPromise(obj), @isRegExpObject(obj), @isMap(obj), @isSet(obj), @isUndefinedOrNull(second), @isGenerator(obj), @isArrayIterator(obj), @isShadowRealm(obj)];
   var proto = @getPrototypeOf(obj);
-  var direct = @getByIdDirect(obj, length);
+  var direct = @getByIdDirect(obj, "length");
   @putByIdDirect(obj, then, count);
   var withThis = @getByValWithThis(obj, self, key);
   @putByValWithThisStrict(obj, self, key, num);

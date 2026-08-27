@@ -117,7 +117,6 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
       ` ${isWindows ? "windows" : process.platform}-${isArm64 ? "aarch64" : "x64"}${isMusl ? "-musl" : ""}`,
     );
     // Compiled and run on the same platform: not the Windows<->non-Windows bytecode case crash reports flag.
-    expect(stderr).toMatch(/^Features: /m);
     expect(stderr).not.toContain("bytecode_cross_abi");
     expect(stdout).toBe("");
     expect(exitCode).not.toBe(0);

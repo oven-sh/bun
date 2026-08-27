@@ -364,7 +364,7 @@ describe("bytecode cache portability", () => {
       {
         "builtin corpus": {
           "bytes": 5304,
-          "sha256": "0725b4fca80f36b05713f35e1a8fbf73be36f06dee03686e2cbe5819fd2c27a4",
+          "sha256": "5d462e69e55d9216a9f43643b295d0f0ec34604d089f7ffe9de4ea84ca7b0e07",
         },
         "builtin corpus strings": {
           "bytes": 836,

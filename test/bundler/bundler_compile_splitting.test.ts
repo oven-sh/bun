@@ -83,8 +83,8 @@ describe("bundler", () => {
         const file = readFileSync(api.outfile);
         const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined, "latin1");
         expect(trailer).toBeGreaterThan(0);
-        // `Offsets { byte_count: usize, modules_ptr: StringPointer, entry_point_id: u32, compile_exec_argv_ptr: StringPointer, flags: u32 }`
-        const offsets = trailer - 32;
+        // `Offsets { byte_count: usize, modules_ptr: StringPointer, entry_point_id: u32, compile_exec_argv_ptr: StringPointer, flags: u32, compile_host: [u8; 4], compile_host_description_ptr: StringPointer, _reserved: u32 }`
+        const offsets = trailer - 48;
         const base = offsets - Number(file.readBigUInt64LE(offsets));
         const modules = { offset: file.readUInt32LE(offsets + 8), length: file.readUInt32LE(offsets + 12) };
         const flags = file.readUInt32LE(offsets + 28);
@@ -153,7 +153,7 @@ describe("bundler", () => {
         const file = readFileSync(api.outfile);
         const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined, "latin1");
         expect(trailer).toBeGreaterThan(0);
-        const offsets = trailer - 32;
+        const offsets = trailer - 48;
         const base = offsets - Number(file.readBigUInt64LE(offsets));
         const modules = { offset: file.readUInt32LE(offsets + 8), length: file.readUInt32LE(offsets + 12) };
         const count = modules.length / 52;

@@ -429,6 +429,39 @@ impl<'a> LinkerContext<'a> {
         true
     }
 
+    /// Whether `convert_stmts_for_chunk` drops this top-level statement and
+    /// prints nothing in its place: an `import`, `export … from` or `export *`
+    /// of a bundled file that is not wrapped (the importer's bindings are
+    /// rewritten to the target's symbols; see `should_remove_import_export_stmt`),
+    /// one whose import record the barrel optimization marked unused, or an
+    /// `export {}` clause (exports are stripped while bundling). Anything else
+    /// counts as printing, including the imports of wrapped files that become
+    /// `init_foo()` / `require_foo()` calls.
+    pub(crate) fn stmt_prints_nothing(&self, source_index: crate::IndexInt, stmt: &Stmt) -> bool {
+        let records = &self.graph.ast.items_import_records()[source_index as usize];
+        let flags = self.graph.meta.items_flags();
+        let (record, keep_for_runtime_re_export) = match stmt.data {
+            bun_ast::StmtData::SImport(s) => (&records[s.import_record_index as usize], false),
+            bun_ast::StmtData::SExportFrom(s) => (&records[s.import_record_index as usize], false),
+            bun_ast::StmtData::SExportStar(s) => {
+                // "export * from 'path'" of a module with dynamic exports is
+                // printed as a `__reExport(...)` call instead.
+                (&records[s.import_record_index as usize], s.alias.is_none())
+            }
+            bun_ast::StmtData::SExportClause(_) => return true,
+            _ => return false,
+        };
+        if record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED) {
+            return true;
+        }
+        record.source_index.is_valid()
+            && flags[record.source_index.get() as usize].wrap == WrapKind::None
+            && !(keep_for_runtime_re_export
+                && record
+                    .flags
+                    .contains(bun_ast::ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN))
+    }
+
     /// `bundle` is taken as a raw `*mut` because the caller invokes this as
     /// `self.linker.load(self, …)` — `self` *is*
     /// `(*bundle).linker`, so a `&mut BundleV2` here would alias the receiver

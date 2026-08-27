@@ -821,6 +821,92 @@ describe("bundler", () => {
     },
     run: { file: "/out/entry.js", stdout: "shared\na\nb\ne" },
   });
+  // A file whose live parts are only re-exports of unwrapped files prints
+  // nothing either: its importers bind to the re-exported file directly. It
+  // used to get a chunk holding just the banner, which nothing imported.
+  itBundled("splitting/NoChunkForReExportOnlyFiles", {
+    files: {
+      "/entry.js": /* js */ `
+        export async function main() {
+          const a = await import('./a.js'); const b = await import('./b.js'); const e = await import('./e.js');
+          a.run(); b.run(); e.run();
+        }
+        main();
+      `,
+      "/a.js": /* js */ `
+        import { greet } from './barrel.js'; import { shout } from './barrel2.js';
+        export function run() { console.log(greet('a'), shout('a')) }
+      `,
+      "/b.js": /* js */ `
+        import { greet } from './barrel.js';
+        export function run() { console.log(greet('b')) }
+      `,
+      "/e.js": /* js */ `
+        import { shout } from './barrel2.js';
+        export function run() { console.log(shout('e')) }
+      `,
+      "/barrel.js": `export { greet } from "./impl.js";`,
+      "/barrel2.js": `export { shout } from "./impl.js";`,
+      "/impl.js": /* js */ `
+        export function greet(s) { return "hi " + s }
+        export function shout(s) { return s.toUpperCase() }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    target: "bun",
+    minifyWhitespace: true,
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    banner: "// LICENSE BANNER",
+    outdir: "/out",
+    onAfterBundle(api) {
+      // entry + the three import() targets + impl.js's chunk; nothing for barrel.js / barrel2.js
+      expect(readdirSync(api.outdir).filter(f => f.endsWith(".js"))).toHaveLength(5);
+    },
+    run: { file: "/out/entry.js", stdout: "hi a A\nhi b\nE" },
+  });
+  // The same for `export *` and `export * as ns` of an unwrapped file, and
+  // for a file whose only statements are an import and an `export {}`.
+  itBundled("splitting/NoChunkForExportStarOrClauseOnlyFiles", {
+    files: {
+      "/entry.js": /* js */ `
+        export async function main() {
+          const a = await import('./a.js'); const b = await import('./b.js'); const e = await import('./e.js');
+          a.run(); b.run(); e.run();
+        }
+        main();
+      `,
+      "/a.js": /* js */ `
+        import { greet } from './star.js'; import { impl } from './ns.js'; import { shout } from './clause.js';
+        export function run() { console.log(greet('a'), impl.shout('a'), shout('a')) }
+      `,
+      "/b.js": /* js */ `
+        import { greet } from './star.js'; import { shout } from './clause.js';
+        export function run() { console.log(greet('b'), shout('b')) }
+      `,
+      "/e.js": /* js */ `
+        import { impl } from './ns.js';
+        export function run() { console.log(impl.shout('e')) }
+      `,
+      "/star.js": `export * from "./impl.js";`,
+      "/ns.js": `export * as impl from "./impl.js";`,
+      "/clause.js": `import { shout } from "./impl.js"; export { shout };`,
+      "/impl.js": /* js */ `
+        export function greet(s) { return "hi " + s }
+        export function shout(s) { return s.toUpperCase() }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      // entry + the three import() targets + impl.js's chunk + the runtime chunk
+      // (`__export` builds the `impl` namespace object); nothing for star.js / ns.js / clause.js
+      expect(readdirSync(api.outdir).filter(f => f.endsWith(".js"))).toHaveLength(6);
+    },
+    run: { file: "/out/entry.js", stdout: "hi a A A\nhi b B\nE" },
+  });
   // An entry point with exports of its own keeps its module namespace as
   // written: shared code is not folded into it (which would add exports),
   // but the chunks that are always loaded with it still fold into one.

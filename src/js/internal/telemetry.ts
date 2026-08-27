@@ -42,9 +42,6 @@ const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeTrim = String.prototype.trim;
 const ArrayPrototypeJoin = Array.prototype.join;
 const SafeMap = Map;
-const SafeWeakMap = WeakMap;
-const WeakMapPrototypeGet = WeakMap.prototype.get;
-const WeakMapPrototypeSet = WeakMap.prototype.set;
 const JSONParse = JSON.parse;
 
 // @opentelemetry/api well-known keys (createContextKey === Symbol.for).
@@ -259,10 +256,20 @@ const tracerProvider = {
 
 // ── W3C propagator (api TextMapPropagator) ────────────────────────────────
 
+type BaggageEntry = { value: string; metadata?: unknown };
+
+let ownBaggageHeader: (bag: Baggage) => string;
+
 class Baggage {
-  #entries: Map<string, { value: string; metadata?: unknown }>;
-  constructor(entries?: Map<string, { value: string; metadata?: unknown }>) {
+  // Never the caller's entry objects: parseBaggage builds them and setEntry
+  // copies, so the key set AND the values are fixed and #header can be memoized.
+  #entries: Map<string, BaggageEntry>;
+  #header: string | undefined;
+  constructor(entries?: Map<string, BaggageEntry>) {
     this.#entries = entries ?? new SafeMap();
+  }
+  static {
+    ownBaggageHeader = bag => (bag.#header ??= serializeBaggageEntries(bag.#entries));
   }
   getEntry(key: string) {
     const e = this.#entries.$get(key);
@@ -271,9 +278,9 @@ class Baggage {
   getAllEntries() {
     return ArrayFrom(this.#entries, ([k, v]) => [k, { ...v }]);
   }
-  setEntry(key: string, entry: { value: string }) {
+  setEntry(key: string, entry: BaggageEntry) {
     const m = new SafeMap(this.#entries);
-    m.$set(key, entry);
+    m.$set(key, { value: entry.value + "", metadata: entry.metadata });
     return new Baggage(m);
   }
   removeEntry(key: string) {
@@ -343,20 +350,15 @@ function baggageHeaderFromExtras(extras: unknown): string | null {
   return serializeBaggage(bag) || null;
 }
 
-// An api Baggage (ours or @opentelemetry/api's) is immutable, so its header is computed once.
-const baggageHeaders = new SafeWeakMap<object, string>();
+// A foreign Baggage (@opentelemetry/api's BaggageImpl, a user duck-type) holds
+// the caller's live entry objects, so it is re-serialized per call.
 function serializeBaggage(bag: any): string {
-  let header = WeakMapPrototypeGet.$call(baggageHeaders, bag);
-  if (header === undefined) {
-    header = serializeBaggageEntries(bag);
-    WeakMapPrototypeSet.$call(baggageHeaders, bag, header);
-  }
-  return header;
+  return bag instanceof Baggage ? ownBaggageHeader(bag) : serializeBaggageEntries(bag.getAllEntries());
 }
 
-function serializeBaggageEntries(bag: any): string {
+function serializeBaggageEntries(entries: Iterable<[string, BaggageEntry]>): string {
   const parts: string[] = [];
-  for (const [k, e] of bag.getAllEntries()) {
+  for (const [k, e] of entries) {
     let s = encodeURIComponent_(k) + "=" + encodeURIComponent_(e.value);
     const metadata = e.metadata;
     if (metadata !== undefined) s += ";" + metadata;

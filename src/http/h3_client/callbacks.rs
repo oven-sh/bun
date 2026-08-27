@@ -311,7 +311,7 @@ extern "C" fn on_stream_close(s: *mut quic::Stream) {
     stream.qstream = None;
     bun_core::scoped_log!(
         h3_client,
-        "stream_close status={} delivered={} peer_reset={}",
+        "stream_close status={} delivered={} peer_reset={:?}",
         stream.status_code,
         stream.headers_delivered,
         peer_reset,

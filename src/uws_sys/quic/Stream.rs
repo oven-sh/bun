@@ -11,11 +11,13 @@ bun_opaque::opaque_ffi! {
     pub struct Stream;
 }
 
-/// HTTP/3 error codes (RFC 9114 §8.1) for `RESET_STREAM`; the `US_H3_*` values in `quic.h`.
+/// HTTP/3 error codes (RFC 9114 §8.1) carried by `RESET_STREAM`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u64)]
 pub enum H3ErrorCode {
     InternalError = 0x102,
+    /// The server did no application processing; the request can be re-sent.
+    RequestRejected = 0x10B,
     RequestCancelled = 0x10C,
 }
 
@@ -28,7 +30,7 @@ unsafe extern "C" {
     safe fn us_quic_stream_shutdown(s: &mut Stream);
     safe fn us_quic_stream_close(s: &mut Stream);
     safe fn us_quic_stream_reset(s: &mut Stream, error_code: u64);
-    safe fn us_quic_stream_peer_reset(s: &mut Stream) -> c_int;
+    safe fn us_quic_stream_peer_reset(s: &mut Stream, code: &mut u64) -> c_int;
     safe fn us_quic_stream_header_count(s: &mut Stream) -> c_uint;
     safe fn us_quic_stream_header(s: &mut Stream, i: c_uint) -> *const Header;
     safe fn us_quic_stream_ext(s: &mut Stream) -> *mut c_void;
@@ -67,10 +69,11 @@ impl Stream {
         us_quic_stream_reset(self, error_code as u64)
     }
 
-    /// The peer sent `RESET_STREAM` for our read half. `on_stream_close` then
-    /// follows with no `fin` from `on_stream_data`.
-    pub fn peer_reset(&mut self) -> bool {
-        us_quic_stream_peer_reset(self) != 0
+    /// The error code of the `RESET_STREAM` the peer sent for our read half.
+    /// `on_stream_close` then follows with no `fin` from `on_stream_data`.
+    pub fn peer_reset(&mut self) -> Option<u64> {
+        let mut code = 0u64;
+        (us_quic_stream_peer_reset(self, &mut code) != 0).then_some(code)
     }
 
     pub fn header_count(&mut self) -> c_uint {

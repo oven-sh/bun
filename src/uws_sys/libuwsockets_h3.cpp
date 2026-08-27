@@ -116,13 +116,12 @@ void uws_h3_res_end_stream(uws_h3_res_t* res, bool close_connection)
     r->sendTerminatingChunk(close_connection);
 }
 
-/* The body failed after the response started. A FIN would deliver the
- * truncated body as a complete message; RESET_STREAM is the HTTP/3 form of
- * HTTP/1's close without the terminating chunk. */
-void uws_h3_res_force_close(uws_h3_res_t* res)
+/* RESET_STREAM(error_code), not FIN: in HTTP/3 a FIN would deliver the
+ * bytes sent so far as a complete message. */
+void uws_h3_res_force_close(uws_h3_res_t* res, uint64_t error_code)
 {
     ((Http3Response*)res)->clearOnWritableAndAborted();
-    us_quic_stream_reset((us_quic_stream_t*)res, US_H3_INTERNAL_ERROR);
+    us_quic_stream_reset((us_quic_stream_t*)res, error_code);
 }
 
 bool uws_h3_res_try_end(uws_h3_res_t* res, const char* bytes, size_t len, size_t total_len, bool close)

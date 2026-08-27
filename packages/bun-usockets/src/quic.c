@@ -121,6 +121,7 @@ struct us_quic_stream_s {
     int headers_delivered;
     int fin_delivered;
     int peer_reset;
+    uint64_t peer_reset_code;
     /* ext follows */
 };
 
@@ -673,7 +674,9 @@ static void us_quic_on_reset(lsquic_stream_t *stream, lsquic_stream_ctx_t *h, in
      *         alongside STOP_SENDING is still delivered. Closing here
      *         would drop it. */
     if (h && stream && how == 0) {
-        ((us_quic_stream_t *) h)->peer_reset = 1;
+        us_quic_stream_t *s = (us_quic_stream_t *) h;
+        s->peer_reset = 1;
+        s->peer_reset_code = lsquic_stream_get_error_code(stream);
         lsquic_stream_close(stream);
     }
 }
@@ -1095,7 +1098,8 @@ void us_quic_stream_reset(us_quic_stream_t *s, uint64_t error_code) {
     if (s->stream) lsquic_stream_maybe_reset(s->stream, error_code, 1);
 }
 
-int us_quic_stream_peer_reset(us_quic_stream_t *s) {
+int us_quic_stream_peer_reset(us_quic_stream_t *s, uint64_t *code) {
+    *code = s->peer_reset_code;
     return s->peer_reset;
 }
 

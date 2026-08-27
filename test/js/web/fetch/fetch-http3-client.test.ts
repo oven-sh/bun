@@ -739,6 +739,57 @@ describe("response stream ends without FIN", () => {
     const result = await fetchFromServerThat((_stream, session) => session.close({ code: 0x100, type: "application" }));
     expect(result).toEqual({ status: 200, first: "partial", rest: { rejected: "ECONNRESET" } });
   });
+
+  // RESET_STREAM before the response headers. Only H3_REQUEST_REJECTED (0x10B)
+  // promises that the server did no application processing (RFC 9114 section
+  // 8.1), so only that code may re-send the request, as h2 retries only
+  // REFUSED_STREAM. Any other code fails the request without a second copy.
+  async function postToServerThatResetsWith(errorCode: number) {
+    const requests: string[] = [];
+    await using server = await listen(
+      async session => {
+        session.onstream = (stream: any) => stream.closed.catch(() => {});
+        await session.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        onheaders(this: any, headers: Record<string, string>) {
+          requests.push(`${headers[":method"]} ${headers[":path"]}`);
+          if (requests.length === 1) {
+            this.destroy(new QuicError("rejected", { errorCode }));
+            return;
+          }
+          this.sendHeaders({ ":status": "200" });
+          this.writer.writeSync(new TextEncoder().encode("second attempt"));
+          this.writer.endSync();
+        },
+      },
+    );
+    const result = await fetch(`https://127.0.0.1:${server.address.port}/submit`, {
+      ...h3,
+      method: "POST",
+      body: "payload",
+    }).then(
+      async res => ({ resolved: `${res.status} ${await res.text()}` }),
+      (e: Error & { code?: string }) => ({ rejected: e.code }),
+    );
+    return { result, requests };
+  }
+
+  test("RESET_STREAM(H3_REQUEST_REJECTED) before the headers re-sends the request once", async () => {
+    expect(await postToServerThatResetsWith(0x10b)).toEqual({
+      result: { resolved: "200 second attempt" },
+      requests: ["POST /submit", "POST /submit"],
+    });
+  });
+
+  test("RESET_STREAM(H3_INTERNAL_ERROR) before the headers fails without a second copy of the request", async () => {
+    expect(await postToServerThatResetsWith(0x102)).toEqual({
+      result: { rejected: "HTTP3StreamReset" },
+      requests: ["POST /submit"],
+    });
+  });
 });
 
 // Subprocess so the experimental flag is process-scoped and the in-process

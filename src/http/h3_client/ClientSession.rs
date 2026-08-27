@@ -290,20 +290,26 @@ impl ClientSession {
 
     /// The lsquic stream closed without a FIN: a delivered FIN detaches the
     /// stream inside `deliver`, so a stream still attached here got none.
-    /// Before the response headers, `deliver` retries the stale-session race.
-    /// After them the body is truncated and the request fails, as H2 does
-    /// with `HTTP2StreamReset`.
-    pub(crate) fn on_stream_closed(&mut self, stream: *mut Stream, peer_reset: bool) {
+    /// `peer_reset` is the code of the peer's RESET_STREAM, if it sent one.
+    ///
+    /// Before the response headers, `deliver` retries the request once when
+    /// the connection went away under it (the stale-session race) or the
+    /// server promised it did no application processing (H3_REQUEST_REJECTED,
+    /// RFC 9114 section 8.1). Any other reset may have reached the handler, so
+    /// the request is not re-sent, as H2 retries only REFUSED_STREAM. After
+    /// the headers the body is truncated and the request fails.
+    pub(crate) fn on_stream_closed(&mut self, stream: *mut Stream, peer_reset: Option<u64>) {
         let st = stream_mut(stream);
         let Some(client_ptr) = st.client else {
             return self.detach(stream);
         };
-        if !st.headers_delivered {
+        let retryable = peer_reset.is_none_or(|c| c == quic::H3ErrorCode::RequestRejected as u64);
+        if !st.headers_delivered && retryable {
             return self.deliver(stream, true);
         }
         let err = if client_mut(client_ptr).signals.get(Signal::Aborted) {
             crate::Error::Aborted
-        } else if peer_reset {
+        } else if peer_reset.is_some() {
             crate::Error::HTTP3StreamReset
         } else {
             crate::Error::ConnectionClosed

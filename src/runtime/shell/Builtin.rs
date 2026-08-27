@@ -704,17 +704,22 @@ impl Builtin {
                     };
                     let me = Self::of_mut(interp, cmd);
                     if redirect.stdin() {
-                        let Some(buf) = root() else { return Some(Yield::failed()) };
+                        let Some(buf) = root() else {
+                            return Some(Yield::failed());
+                        };
                         me.stdin = BuiltinInput::ArrayBuf { buf, i: 0 };
                     }
                     if redirect.stdout() {
-                        let Some(buf) = root() else { return Some(Yield::failed()) };
+                        let Some(buf) = root() else {
+                            return Some(Yield::failed());
+                        };
                         me.stdout = BuiltinIO::ArrayBuf { buf, i: 0 };
                     }
                     if redirect.stderr() {
-                        let Some(buf) = root() else { return Some(Yield::failed()) };
+                        let Some(buf) = root() else {
+                            return Some(Yield::failed());
+                        };
                         me.stderr = BuiltinIO::ArrayBuf { buf, i: 0 };
-                    }
                     }
                 } else if let Some(body) =
                     crate::webcore::body::Value::from_request_or_response(jsval)

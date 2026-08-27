@@ -148,8 +148,6 @@ pub struct FetchTasklet {
     pub(crate) check_server_identity: StrongOptional,
     pub(crate) reject_unauthorized: bool,
     pub(crate) upgraded_connection: bool,
-    // Custom Hostname
-    pub(crate) hostname: Option<Box<[u8]>>,
     pub(crate) unix_socket_path: Box<[u8]>,
     pub(crate) is_waiting_body: bool,
     pub(crate) is_waiting_abort: bool,
@@ -457,13 +455,12 @@ impl FetchTasklet {
 
     fn clear_data(&mut self) {
         bun_output::scoped_log!(FetchTasklet, "clearData ");
-        // `http.client` borrows `url_proxy_buffer` / `hostname` / `unix_socket_path` / `request_headers`.
+        // `http.client` borrows `url_proxy_buffer` / `unix_socket_path` / `request_headers`.
         self.http = None;
         if !self.url_proxy_buffer.is_empty() {
             self.url_proxy_buffer = Box::default();
         }
 
-        self.hostname = None;
         self.unix_socket_path = Box::default();
 
         if let Some(certificate) = self.result.certificate_info.take() {
@@ -1901,7 +1898,6 @@ impl FetchTasklet {
             check_server_identity: fetch_options.check_server_identity,
             reject_unauthorized: fetch_options.reject_unauthorized,
             upgraded_connection: fetch_options.upgraded_connection,
-            hostname: fetch_options.hostname,
             unix_socket_path: fetch_options.unix_socket_path,
             is_waiting_body: false,
             is_waiting_abort: false,
@@ -1964,17 +1960,16 @@ impl FetchTasklet {
 
         // This task gets queued on the HTTP thread.
         // `AsyncHTTP::init` takes several `&'static [u8]` borrows
-        // (headers_buf, request_body, hostname, unix_socket_path) that point
-        // into FetchTasklet-owned storage. The tasklet is heap-pinned via
+        // (headers_buf, request_body, unix_socket_path) that point into
+        // FetchTasklet-owned storage. The tasklet is heap-pinned via
         // `heap::alloc`, so erase the borrow lifetimes through raw pointers.
         // SAFETY: `fetch_tasklet_ptr` is a stable heap allocation that outlives
         // the AsyncHTTP (dropped together in `deinit`); the slices below borrow
-        // its `request_headers.buf`, `request_body`, `hostname`, and
-        // `unix_socket_path` fields which are not reallocated for the lifetime
-        // of the request.
+        // its `request_headers.buf`, `request_body`, and `unix_socket_path`
+        // fields which are not reallocated for the lifetime of the request.
         // SAFETY (`Interned::assume` — Population B, holder-backed):
         // `fetch_tasklet_ptr` is a `heap::alloc`'d `FetchTasklet` whose
-        // `request_headers.buf` / `request_body` / `hostname` /
+        // `request_headers.buf` / `request_body` /
         // `unix_socket_path` fields are not reallocated for the request's
         // lifetime, and the tasklet is freed in `deinit` only after the owned
         // `AsyncHTTP` is dropped. NOT process-lifetime — these should become
@@ -1986,11 +1981,6 @@ impl FetchTasklet {
         // SAFETY: see `Interned::assume` note above — same heap-pinned `FetchTasklet` owner.
         let request_body_slice: &'static [u8] =
             unsafe { bun_ptr::Interned::assume(fetch_tasklet.request_body.slice()) }.as_bytes();
-        let hostname: Option<&'static [u8]> = fetch_tasklet
-            .hostname
-            .as_deref()
-            // SAFETY: see block note above — same `FetchTasklet` owner.
-            .map(|s| unsafe { bun_ptr::Interned::assume(s) }.as_bytes());
         // SAFETY: see block note above — same `FetchTasklet` owner.
         let unix_socket_path: &'static [u8] =
             unsafe { bun_ptr::Interned::assume(&fetch_tasklet.unix_socket_path) }.as_bytes();
@@ -2020,7 +2010,6 @@ impl FetchTasklet {
                 http_proxy: proxy,
                 proxy_settings,
                 proxy_headers: fetch_options.proxy_headers,
-                hostname,
                 signals: Some(fetch_tasklet.signals),
                 unix_socket_path: Some(unix_socket_path),
                 disable_timeout: Some(fetch_options.disable_timeout),
@@ -2632,8 +2621,6 @@ pub struct FetchOptions {
     pub(crate) proxy_headers: Option<Headers>,
     pub(crate) url_proxy_buffer: Box<[u8]>,
     pub(crate) signal: Option<*mut AbortSignal>,
-    // Custom Hostname
-    pub(crate) hostname: Option<Box<[u8]>>,
     pub(crate) check_server_identity: StrongOptional,
     pub(crate) unix_socket_path: Box<[u8]>,
     pub(crate) ssl_config: Option<http::ssl_config::SharedPtr>,

@@ -12,7 +12,6 @@ workspace = true
 [dependencies]
 bun_opaque.workspace = true
 bstr.workspace = true
-scopeguard.workspace = true
 bun_core.workspace = true
 bun_bundler.workspace = true
 bun_ast.workspace = true

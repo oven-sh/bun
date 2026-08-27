@@ -127,6 +127,7 @@ pub mod js_bundler {
         pub(crate) jsx: api::Jsx,
         pub(crate) force_node_env: options::ForceNodeEnv,
         pub(crate) code_splitting: bool,
+        pub(crate) split_require: bool,
         pub(crate) minify: Minify,
         pub(crate) no_macros: bool,
         pub(crate) ignore_dce_annotations: bool,
@@ -192,6 +193,7 @@ pub mod js_bundler {
                 },
                 force_node_env: options::ForceNodeEnv::Unspecified,
                 code_splitting: false,
+                split_require: true,
                 minify: Minify::default(),
                 no_macros: false,
                 ignore_dce_annotations: false,
@@ -803,6 +805,10 @@ pub mod js_bundler {
 
             if let Some(hot) = config.get_boolean_loose(global_this, "splitting")? {
                 this.code_splitting = hot;
+            }
+
+            if let Some(split_require) = config.get_boolean_loose(global_this, "splitRequire")? {
+                this.split_require = split_require;
             }
 
             if let Some(min_chunk_size) =

@@ -68,6 +68,78 @@ test("import with many build errors keeps AggregateError entries alive across GC
   expect(exitCode).toBe(0);
 });
 
+// "Cannot use import statement with CommonJS-only features" is logged after
+// the parser has already produced an AST. The async transpile path behind
+// `import` and `import()` used to skip the log check that `require()` does, so
+// JSC got the `import` inside the CommonJS wrapper and threw its own
+// SyntaxError instead.
+const mixedModuleFiles = {
+  "dep.js": `export const x = 42;`,
+  "mixed.js": `import { x } from "./dep.js";\nmodule.exports = { x };`,
+};
+
+test.concurrent(
+  "import() of a file that mixes import with module.exports rejects with the parser's error",
+  async () => {
+    using dir = tempDir("build-error-mixed-import", {
+      ...mixedModuleFiles,
+      "main.js": `
+      const out = {};
+      try {
+        await import("./mixed.js");
+      } catch (e) {
+        out.import = [e.name, e.message];
+      }
+      try {
+        require("./mixed.js");
+      } catch (e) {
+        out.require = [e.name, e.message];
+      }
+      console.log(JSON.stringify(out));
+    `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    if (exitCode !== 0) console.error(stderr);
+    const expected = ["BuildMessage", "Cannot use import statement with CommonJS-only features"];
+    expect(JSON.parse(stdout)).toEqual({ import: expected, require: expected });
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent(
+  "unhandled import() of a file that mixes import with module.exports prints the parser's notes",
+  async () => {
+    using dir = tempDir("build-error-mixed-uncaught", {
+      ...mixedModuleFiles,
+      "main.js": `import("./mixed.js");`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toContain("error: Cannot use import statement with CommonJS-only features");
+    expect(stderr).toContain(`note: Try require("./dep.js") instead`);
+    expect(stderr).toContain("note: This file is CommonJS because 'module' was used");
+    expect(exitCode).toBe(1);
+  },
+);
+
 test("BuildMessage finalize frees with the same allocator it was created with", async () => {
   // BuildMessage.create() clones the message with the passed allocator
   // but finalize() was freeing it with bun.default_allocator and never

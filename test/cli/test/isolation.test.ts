@@ -787,20 +787,22 @@ test.concurrent("--isolate: cached SourceProvider's module_info rebuilds correct
   // export entries. Under --isolate, file b hits the SourceProvider cache and
   // rebuilds JSModuleRecord from the cached module_info (Bun__analyzeTranspiledModule)
   // instead of re-parsing. If the record is wrong, named imports would be
-  // undefined or the count would mismatch.
+  // undefined or the count would mismatch. The names are long enough that the
+  // record's string table passes 64 KB and stores its offsets as u32.
   const N = 2000;
+  const P = Buffer.alloc(40, "p").toString();
   let big = "";
-  for (let i = 0; i < N; i++) big += `export function f${i}(x){return x+${i};}\n`;
+  for (let i = 0; i < N; i++) big += `export function f${i}${P}(x){return x+${i};}\n`;
   big += `export const COUNT = ${N};\n`;
 
   const tBody = (name: string) => `
     import { test, expect } from "bun:test";
-    import { f0, f1, f${N - 1}, COUNT } from "./big";
+    import { f0${P}, f1${P}, f${N - 1}${P}, COUNT } from "./big";
     import * as all from "./big";
     test("${name}", () => {
-      expect(f0(1)).toBe(1);
-      expect(f1(1)).toBe(2);
-      expect(f${N - 1}(1)).toBe(${N});
+      expect(f0${P}(1)).toBe(1);
+      expect(f1${P}(1)).toBe(2);
+      expect(f${N - 1}${P}(1)).toBe(${N});
       expect(COUNT).toBe(${N});
       expect(Object.keys(all).length).toBe(${N + 1});
     });

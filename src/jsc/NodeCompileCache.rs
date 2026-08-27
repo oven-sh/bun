@@ -300,6 +300,11 @@ pub fn init_from_env_once() {
                 ENABLED.store(1, Ordering::Relaxed);
                 return;
             }
+            if crate::virtual_machine::standalone_module_graph().is_some() {
+                cclog!("[compile cache] Disabled in standalone executables.\n");
+                ENABLED.store(1, Ordering::Relaxed);
+                return;
+            }
             let _ = enable_with_dir(dir, portable_from_env());
         } else {
             ENABLED.store(1, Ordering::Relaxed);

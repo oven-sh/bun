@@ -176,6 +176,36 @@ describe.concurrent("node:domain EventEmitter integration", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("an emitter with captureRejections keeps its own emit and still enters the domain", async () => {
+    const { stdout, exitCode } = await run(
+      prelude +
+        `
+        let ee;
+        d.run(() => {
+          ee = new EventEmitter({ captureRejections: true });
+          ee.on("x", () => { console.log("listener", process.domain === d); throw new Error("boom"); });
+        });
+        console.log(Object.hasOwn(ee, "emit"));
+        setTimeout(() => ee.emit("x"), 1);`,
+    );
+    expect(stdout).toBe(`true\nlistener true\ndomain:boom ${thrown}\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  test("an emitter with captureRejections routes 'error' without listeners to its domain", async () => {
+    const { stdout, exitCode } = await run(
+      prelude +
+        `
+        let ee;
+        d.run(() => {
+          ee = new EventEmitter({ captureRejections: true });
+        });
+        setTimeout(() => ee.emit("error", new Error("boom")), 1);`,
+    );
+    expect(stdout).toBe("domain:boom thrown=false d=true emitter=EventEmitter active=undefined\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("EventEmitter.usingDomains and EventEmitter.init", async () => {
     // `bun -e` preloads a builtin for every identifier named like one, so the
     // module is bound to `dom` to keep the first line before the load.
@@ -284,6 +314,20 @@ describe.concurrent("node:domain without a handler and with nested domains", () 
         `
         const inner = domain.create();
         d.run(() => inner.run(() => setTimeout(() => { throw new Error("boom"); }, 1)));`,
+    );
+    expect(stdout).toBe("uncaughtException:boom active=undefined\n");
+    expect(exitCode).toBe(1);
+  });
+
+  test("a run() that completed in an earlier callback does not make a later async throw synchronous", async () => {
+    const { stdout, exitCode } = await run(
+      prelude +
+        `
+        const inner = domain.create();
+        d.run(() => inner.run(() => setTimeout(() => {
+          inner.run(() => {});
+          setTimeout(() => { throw new Error("boom"); }, 1);
+        }, 1)));`,
     );
     expect(stdout).toBe("uncaughtException:boom active=undefined\n");
     expect(exitCode).toBe(1);

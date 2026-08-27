@@ -21,6 +21,12 @@ const { AsyncLocalStorage } = require("node:async_hooks");
 const setDomainErrorHandler = $newCppFunction("BunProcess.cpp", "jsFunctionSetDomainErrorHandler", 1);
 
 const ObjectDefineProperty = Object.defineProperty;
+const ObjectHasOwn = Object.hasOwn;
+const ArrayPrototypeIndexOf = Array.prototype.indexOf;
+const ArrayPrototypeLastIndexOf = Array.prototype.lastIndexOf;
+const ArrayPrototypePush = Array.prototype.push;
+const ArrayPrototypeSlice = Array.prototype.slice;
+const ArrayPrototypeSplice = Array.prototype.splice;
 
 // The domains entered and not yet exited, innermost last, or undefined when
 // there is none. Never mutated in place: enter()/exit() install a new array so
@@ -45,15 +51,15 @@ function setStack(stack: Domain[]) {
   const { length } = context;
   let i = 0;
   while (i < length && context[i] !== domainStack) i += 2;
-  const next = context.slice();
+  const next = ArrayPrototypeSlice.$call(context);
   if (i < length) {
     if (value === undefined) {
-      next.splice(i, 2);
+      ArrayPrototypeSplice.$call(next, i, 2);
     } else {
       next[i + 1] = value;
     }
   } else if (value !== undefined) {
-    next.push(domainStack, value);
+    ArrayPrototypePush.$call(next, domainStack, value);
   } else {
     return;
   }
@@ -65,10 +71,11 @@ function activeDomain(): Domain | undefined {
   return stack === undefined ? undefined : stack[stack.length - 1];
 }
 
-// The domain entered last by enter() in the current synchronous run, or null.
-// handleError uses it to tell a throw inside run()/bind()/intercept() from a
-// throw in an async callback that only inherited the stack.
-let syncDomain: Domain | null = null;
+// The domains entered by enter() and not yet exited in synchronous code, in
+// order. Only enter() adds to it, a restored async context never does, so
+// handleError can tell a throw inside run()/bind()/intercept() from a throw in
+// an async callback that only inherited its stack.
+const syncEntries: Domain[] = [];
 
 function setActiveDomain(domain) {
   if (domain === null || domain === undefined) {
@@ -77,8 +84,8 @@ function setActiveDomain(domain) {
   }
   if (activeDomain() !== domain) {
     const stack = currentStack();
-    const next = stack === undefined ? [] : stack.slice();
-    next.push(domain);
+    const next = stack === undefined ? [] : ArrayPrototypeSlice.$call(stack);
+    ArrayPrototypePush.$call(next, domain);
     setStack(next);
   }
 }
@@ -93,7 +100,7 @@ ObjectDefineProperty(process, "domain", {
 
 function domainUncaughtExceptionClear() {
   setStack([]);
-  syncDomain = null;
+  syncEntries.length = 0;
 }
 
 // Called from BunProcess.cpp for every uncaught exception and unhandled
@@ -123,7 +130,7 @@ function handleError(er, type) {
   // normal path with the stack cleared first (node prepends
   // domainUncaughtExceptionClear to the 'uncaughtException' listeners).
   let hasErrorListener = active.listenerCount("error") > 0;
-  if (!hasErrorListener && syncDomain === active) {
+  if (!hasErrorListener && syncEntries[syncEntries.length - 1] === active) {
     for (let i = stack.length - 2; i >= 0; i--) {
       if (stack[i].listenerCount("error") > 0) {
         hasErrorListener = true;
@@ -218,22 +225,23 @@ Domain.prototype.enter = function () {
   // Note that this might be a no-op, but we still need to push it onto the
   // stack so that we can pop it later.
   const stack = currentStack();
-  const next = stack === undefined ? [] : stack.slice();
-  next.push(this);
+  const next = stack === undefined ? [] : ArrayPrototypeSlice.$call(stack);
+  ArrayPrototypePush.$call(next, this);
   setStack(next);
-  syncDomain = this;
+  ArrayPrototypePush.$call(syncEntries, this);
 };
 
 Domain.prototype.exit = function () {
   // Don't do anything if this domain is not on the stack.
   const stack = currentStack();
   if (stack === undefined) return;
-  const index = stack.lastIndexOf(this);
+  const index = ArrayPrototypeLastIndexOf.$call(stack, this);
   if (index === -1) return;
 
   // Exit all domains until this one.
-  setStack(stack.slice(0, index));
-  syncDomain = index === 0 ? null : stack[index - 1];
+  setStack(ArrayPrototypeSlice.$call(stack, 0, index));
+  const syncIndex = ArrayPrototypeLastIndexOf.$call(syncEntries, this);
+  if (syncIndex !== -1) syncEntries.length = syncIndex;
 };
 
 // note: this works for timers as well.
@@ -267,13 +275,13 @@ Domain.prototype.add = function (ee) {
     value: this,
     writable: true,
   });
-  this.members.push(ee);
+  ArrayPrototypePush.$call(this.members, ee);
 };
 
 Domain.prototype.remove = function (ee) {
   ee.domain = null;
-  const index = this.members.indexOf(ee);
-  if (index !== -1) this.members.splice(index, 1);
+  const index = ArrayPrototypeIndexOf.$call(this.members, ee);
+  if (index !== -1) ArrayPrototypeSplice.$call(this.members, index, 1);
 };
 
 Domain.prototype.run = function (fn, ...args) {
@@ -301,7 +309,7 @@ function intercepted(_this, self, cb, fnargs) {
   }
 
   self.enter();
-  const ret = cb.$apply(_this, Array.prototype.slice.$call(fnargs, 1));
+  const ret = cb.$apply(_this, ArrayPrototypeSlice.$call(fnargs, 1));
   self.exit();
 
   return ret;
@@ -360,27 +368,42 @@ EventEmitter.init = function (opts) {
     this.domain = active;
   }
 
-  return eventInit.$call(this, opts);
+  const ret = eventInit.$call(this, opts);
+
+  // events.ts gives a captureRejections emitter its own `emit`, which would
+  // shadow the domain-aware prototype emit below. Wrap that one as well.
+  if (ObjectHasOwn(this, "emit")) {
+    const ownEmit = this.emit;
+    this.emit = function emit(...args) {
+      return emitWithDomain(this, ownEmit, args);
+    };
+  }
+
+  return ret;
 };
 
 const eventEmit = EventEmitter.prototype.emit;
 EventEmitter.prototype.emit = function emit(...args) {
-  const domain = this.domain;
+  return emitWithDomain(this, eventEmit, args);
+};
+
+function emitWithDomain(emitter, originalEmit, args) {
+  const domain = emitter.domain;
 
   const type = args[0];
-  const shouldEmitError = type === "error" && this.listenerCount(type) > 0;
+  const shouldEmitError = type === "error" && emitter.listenerCount(type) > 0;
 
   // Just call original `emit` if current EE instance has `error`
   // handler, there's no active domain or this is process
-  if (shouldEmitError || domain === null || domain === undefined || this === process) {
-    return eventEmit.$apply(this, args);
+  if (shouldEmitError || domain === null || domain === undefined || emitter === process) {
+    return originalEmit.$apply(emitter, args);
   }
 
   if (type === "error") {
     const er = args.length > 1 && args[1] ? args[1] : $ERR_UNHANDLED_ERROR();
 
     if (typeof er === "object") {
-      er.domainEmitter = this;
+      er.domainEmitter = emitter;
       ObjectDefineProperty(er, "domain", {
         __proto__: null,
         configurable: true,
@@ -402,7 +425,7 @@ EventEmitter.prototype.emit = function emit(...args) {
       while (idx > -1 && origStack[idx] === origActive) {
         --idx;
       }
-      setStack(idx < 0 ? [] : origStack.slice(0, idx + 1));
+      setStack(idx < 0 ? [] : ArrayPrototypeSlice.$call(origStack, 0, idx + 1));
     }
 
     domain.emit("error", er);
@@ -417,11 +440,11 @@ EventEmitter.prototype.emit = function emit(...args) {
   }
 
   domain.enter();
-  const ret = eventEmit.$apply(this, args);
+  const ret = originalEmit.$apply(emitter, args);
   domain.exit();
 
   return ret;
-};
+}
 
 export default {
   Domain,

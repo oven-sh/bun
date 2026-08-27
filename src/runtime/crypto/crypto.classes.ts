@@ -40,8 +40,10 @@ export default [
     finalize: true,
 
     proto: {
+      // Web IDL requires regular operations to be configurable.
       getRandomValues: {
         fn: "getRandomValues",
+        configurable: true,
         // https://discord.com/channels/876711213126520882/1276103693665828894/1276133319033229363
         // https://discord.com/channels/876711213126520882/1276103693665828894/1276127092047609919
         // DOMJIT: {
@@ -53,6 +55,7 @@ export default [
       randomUUID: {
         fn: "randomUUID",
         length: 1,
+        configurable: true,
         DOMJIT: {
           returns: "JSString",
           "pure": false,
@@ -61,6 +64,7 @@ export default [
       },
       timingSafeEqual: {
         fn: "timingSafeEqual",
+        configurable: true,
         DOMJIT: {
           returns: "JSValue",
           "pure": false,

@@ -459,7 +459,11 @@ pub extern "C" fn Bun__hasStandaloneModuleGraph() -> bool {
 /// without entering the resolver. Returns the graph's own spelling of the key (the same bytes on POSIX; on Windows the
 /// canonical separator form) so every importer lands on one registry entry, or null if `name` is not an embedded file.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__standaloneModuleKey(name: *const u8, len: usize, out_len: *mut usize) -> *const u8 {
+pub unsafe extern "C" fn Bun__standaloneModuleKey(
+    name: *const u8,
+    len: usize,
+    out_len: *mut usize,
+) -> *const u8 {
     // SAFETY: `name[..len]` is the caller's live 8-bit string buffer; `out_len` is writable.
     let name = unsafe { bun_core::ffi::slice(name, len) };
     if !bun_options_types::standalone_path::is_bun_standalone_file_path(name) {

@@ -318,8 +318,7 @@ pub(crate) fn compute_chunks(
                             temp.alloc_slice_copy(entry_bits.bytes(this.graph.entry_points.len()));
                         let js_chunk: &mut Chunk = match js_chunks.entry(js_chunk_key) {
                             MapEntry::Vacant(vacant) => {
-                                // A file that prints nothing does not start a chunk (it
-                                // would be empty); it still joins one another file starts.
+                                // Its chunk would be an empty file.
                                 if !this.file_prints_code(source_index.get()) {
                                     continue;
                                 }
@@ -350,8 +349,7 @@ pub(crate) fn compute_chunks(
                                         .contains(chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
                                     && ast_targets[source_index.get() as usize] == Target::Browser
                                 {
-                                    // A browser-target file makes the whole non-entry chunk a
-                                    // browser chunk, whichever file started it.
+                                    // Any browser-target file makes the non-entry chunk a browser chunk.
                                     js_chunk
                                         .flags
                                         .insert(chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD);

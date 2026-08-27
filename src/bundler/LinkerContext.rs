@@ -429,9 +429,7 @@ impl<'a> LinkerContext<'a> {
         true
     }
 
-    /// Whether a live part of this file prints anything into its chunk. Mirrors
-    /// what `convert_stmts_for_chunk` drops outright: imports and re-exports of
-    /// unwrapped bundled files, unused import records, and `export {}` clauses.
+    /// Whether a live part of this file prints anything into its chunk (what `convert_stmts_for_chunk` keeps).
     pub(crate) fn file_prints_code(&self, source_index: crate::IndexInt) -> bool {
         let i = source_index as usize;
         let flags = self.graph.meta.items_flags();

@@ -341,7 +341,9 @@ impl StringOrBuffer<'static> {
         unsafe { ThreadIsolated::new(Self::owned(bytes)) }
     }
 
-    /// For a work-pool job without a pin: copies a buffer's current bytes, isolates a string.
+    /// Makes a value parsed with `Flavor::Sync` own its bytes for a work-pool job:
+    /// copies a buffer's current bytes, isolates a string. A `Flavor::Async` parse
+    /// is the pinned borrow this replaces, so a `PinnedBuffer` never reaches it.
     pub(crate) fn make_thread_isolated_copy(&mut self, global: &JSGlobalObject) -> JsResult<()> {
         match self {
             Self::Buffer(buffer) => {
@@ -360,7 +362,10 @@ impl StringOrBuffer<'static> {
                 str.make_thread_isolated();
                 *self = Self::ThreadIsolatedString(core::mem::take(str));
             }
-            Self::ThreadIsolatedString(_) | Self::Utf8(_) | Self::PinnedBuffer(_) => {}
+            Self::ThreadIsolatedString(_) | Self::Utf8(_) => {}
+            Self::PinnedBuffer(_) => {
+                unreachable!("make_thread_isolated_copy on a value parsed with Flavor::Async")
+            }
         }
         Ok(())
     }

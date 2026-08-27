@@ -668,7 +668,8 @@ describe("bytecode cache portability", () => {
     // not portability, so it is left out until that is fixed.)
     const internalModules: Record<string, string> = {};
     for (let i = 0, m; (m = internalModuleBytecode(i)); i++)
-      if (m.name !== "node:http2") internalModules[m.name] = hash(m.bytecode) + " " + fingerprint("", m.strings, false).sha256;
+      if (m.name !== "node:http2")
+        internalModules[m.name] = hash(m.bytecode) + " " + fingerprint("", m.strings, false).sha256;
     expect(Object.keys(internalModules).length).toBeGreaterThan(100);
     expect(JSON.parse(readFileSync(join(String(dir), "api", "internal-modules.json"), "utf8"))).toEqual(
       internalModules,

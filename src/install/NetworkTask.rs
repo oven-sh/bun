@@ -390,26 +390,19 @@ fn append_auth(header_builder: &mut HeaderBuilder, scope: &npm::registry::Scope)
     // Routing through `format_args!`/`BStr` Display would be
     // lossy for non-UTF-8 tokens (U+FFFD expands 1→3 bytes) and overrun the
     // exact byte count reserved by `count_auth`. Use raw-byte append.
-    if !scope.token.is_empty() {
-        header_builder.append_bytes_value("Authorization", b"Bearer ", &scope.token);
-    } else if !scope.auth.is_empty() {
-        header_builder.append_bytes_value("Authorization", b"Basic ", &scope.auth);
-    } else {
+    let Some((scheme, value)) = scope.authorization_parts() else {
         return;
-    }
+    };
+    header_builder.append_bytes_value("Authorization", scheme, value);
     header_builder.append("npm-auth-type", "legacy");
 }
 
 fn count_auth(header_builder: &mut HeaderBuilder, scope: &npm::registry::Scope) {
-    if !scope.token.is_empty() {
-        header_builder.count("Authorization", "");
-        header_builder.content.cap += "Bearer ".len() + scope.token.len();
-    } else if !scope.auth.is_empty() {
-        header_builder.count("Authorization", "");
-        header_builder.content.cap += "Basic ".len() + scope.auth.len();
-    } else {
+    let Some((scheme, value)) = scope.authorization_parts() else {
         return;
-    }
+    };
+    header_builder.count("Authorization", "");
+    header_builder.content.cap += scheme.len() + value.len();
     header_builder.count("npm-auth-type", "legacy");
 }
 

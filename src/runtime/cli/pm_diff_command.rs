@@ -866,28 +866,21 @@ fn registry_get(
             && url.hostname == registry.hostname
             && url.get_port_auto() == registry.get_port_auto()
     };
-    let (token, auth): (&[u8], &[u8]) = if same_origin {
-        (&scope.token, &scope.auth)
+    let authorization = if same_origin {
+        scope.authorization_parts()
     } else {
-        (b"", b"")
+        None
     };
-    if !token.is_empty() {
+    if let Some((scheme, value)) = authorization {
         headers.count(b"Authorization", b"");
-        headers.content.cap += b"Bearer ".len() + token.len();
-        headers.count(b"npm-auth-type", b"legacy");
-    } else if !auth.is_empty() {
-        headers.count(b"Authorization", b"");
-        headers.content.cap += b"Basic ".len() + auth.len();
+        headers.content.cap += scheme.len() + value.len();
         headers.count(b"npm-auth-type", b"legacy");
     }
     headers.allocate()?;
     headers.append(b"Accept", accept);
     // Raw-byte append: a non-UTF-8 token through Display would grow past the reserved count.
-    if !token.is_empty() {
-        headers.append_bytes_value(b"Authorization", b"Bearer ", token);
-        headers.append(b"npm-auth-type", b"legacy");
-    } else if !auth.is_empty() {
-        headers.append_bytes_value(b"Authorization", b"Basic ", auth);
+    if let Some((scheme, value)) = authorization {
+        headers.append_bytes_value(b"Authorization", scheme, value);
         headers.append(b"npm-auth-type", b"legacy");
     }
 

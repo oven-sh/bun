@@ -997,9 +997,9 @@ const _: () = assert!(core::mem::offset_of!(NewSource<ByteStream>, context) == 0
 const _: () = assert!(core::mem::offset_of!(NewSource<FileReader>, context) == 0);
 
 impl<C: SourceContext> NewSource<C> {
-    /// Heap-allocate a source around `context`. The returned reference is the
-    /// one the JS wrapper takes over in [`Self::to_readable_stream`] (and
-    /// releases in [`Self::finalize`]); until then the caller holds it.
+    /// Heap-allocate a source around `context`. [`Self::to_readable_stream`]
+    /// gives the JS wrapper a reference of its own (released in
+    /// [`Self::finalize`]); the returned one is the caller's.
     pub fn new(context: C, global_this: &JSGlobalObject) -> RefPtr<Self> {
         RefPtr::new_cyclic(|self_root| NewSource {
             context,
@@ -1173,9 +1173,10 @@ impl<C: SourceContext> NewSource<C> {
         let out_value = if let Some(v) = self.this_jsvalue.get().try_get() {
             v
         } else {
-            // The wrapper's `m_ctx` takes over the initial reference; the GC
-            // finalizer drives teardown through `finalize`.
-            C::js_create(self.this_ptr().as_ptr().cast::<c_void>(), global_this)
+            // The wrapper's `m_ctx` holds a reference of its own; the GC
+            // finalizer releases it through `finalize`.
+            let wrapper_ref = RefPtr::from_this(self.this_ptr());
+            C::js_create(RefPtr::into_raw(wrapper_ref).cast::<c_void>(), global_this)
         };
         out_value.ensure_still_alive();
         if self.this_jsvalue.get().is_empty() {

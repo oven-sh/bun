@@ -29,9 +29,14 @@
 namespace uWS {
 
 /* RFC 9113 §8.2.2 / RFC 9114 §4.2: connection-specific fields are not
- * allowed in HTTP/2 or HTTP/3 responses. */
+ * allowed in HTTP/2 or HTTP/3 responses. Folds A-Z only: the 0x20 trick
+ * would also fold '_' and '^', breaking lookups of names that use them. */
 static inline bool asciiIEquals(std::string_view a, const char *lower) {
-    for (size_t i = 0; i < a.size(); i++) if ((a[i] | 0x20) != lower[i]) return false;
+    for (size_t i = 0; i < a.size(); i++) {
+        unsigned char c = (unsigned char) a[i];
+        if (c >= 'A' && c <= 'Z') c = (unsigned char) (c + ('a' - 'A'));
+        if (c != (unsigned char) lower[i]) return false;
+    }
     return true;
 }
 /* RFC 9113 §8.3.1 / RFC 9114 §4.3.1 request-target rules shared by the h2

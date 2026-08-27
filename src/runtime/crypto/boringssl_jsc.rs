@@ -66,14 +66,26 @@ pub(crate) fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
     let err = EncodedSlice::utf8(error_message).to_error_instance(global);
 
     if let Some(library) = non_empty(boring::err_lib_error_string(err_code)) {
-        err.put(global, b"library", EncodedSlice::latin1(library).to_js(global));
+        err.put(
+            global,
+            b"library",
+            EncodedSlice::latin1(library).to_js(global),
+        );
     }
     if let Some(function) = non_empty(boring::err_func_error_string(err_code)) {
-        err.put(global, b"function", EncodedSlice::latin1(function).to_js(global));
+        err.put(
+            global,
+            b"function",
+            EncodedSlice::latin1(function).to_js(global),
+        );
     }
     let reason = boring::err_reason_error_string(err_code);
     if let Some(reason) = non_empty(reason.as_deref()) {
-        err.put(global, b"reason", EncodedSlice::latin1(reason).to_js(global));
+        err.put(
+            global,
+            b"reason",
+            EncodedSlice::latin1(reason).to_js(global),
+        );
 
         let lib = lib_short_name(boring::err_get_lib(err_code));
         // Don't generate codes like "ERR_OSSL_SSL_".

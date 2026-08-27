@@ -401,7 +401,7 @@ pub mod exports {
         super::get_transpiler_constructor(g, o)
     }
     // HOST_EXPORT(BunObject_lazyPropCb_argv, jsc)
-    pub fn lazy_argv(g: &JSGlobalObject, o: &JSObject) -> JSValue {
+    pub fn lazy_argv(g: &JSGlobalObject, o: &JSObject) -> JsResult<JSValue> {
         super::get_argv(g, o)
     }
     // HOST_EXPORT(BunObject_lazyPropCb_cron, jsc)
@@ -1829,7 +1829,6 @@ fn get_is_standalone_executable(global_this: &JSGlobalObject, _: &JSObject) -> J
 }
 
 fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
-    use crate::webcore::blob::BlobExt as _;
     use bun_standalone_graph::{File as GraphFile, Graph as StandaloneModuleGraph};
     let Some(graph) = StandaloneModuleGraph::get_ref() else {
         return JSValue::create_empty_array(global_this, 0);
@@ -1952,8 +1951,8 @@ pub mod environment_variables {
     // HOST_EXPORT(Bun__getEnvValue, c)
     pub fn get_env_value_zig<'a>(
         global_object: &'a JSGlobalObject,
-        name: &EncodedSlice<'_>,
-        value: &mut core::mem::MaybeUninit<EncodedSlice<'a>>,
+        name: &bun_core::EncodedSlice<'_>,
+        value: &mut core::mem::MaybeUninit<bun_core::EncodedSlice<'a>>,
     ) -> bool {
         if let Some(val) = get_env_value(global_object, *name) {
             value.write(val);

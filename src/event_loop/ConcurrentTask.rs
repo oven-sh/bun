@@ -530,10 +530,10 @@ mod tests {
     static REFUSED: AtomicUsize = AtomicUsize::new(0);
     static DROPPED: AtomicUsize = AtomicUsize::new(0);
 
-    struct Payload(#[allow(dead_code)] Box<[u8; 64]>);
+    struct Payload(Box<[u8; 64]>);
     impl Drop for Payload {
         fn drop(&mut self) {
-            DROPPED.fetch_add(1, Ordering::SeqCst);
+            DROPPED.fetch_add(usize::from(self.0[0] == 7), Ordering::SeqCst);
         }
     }
     crate::boxed_task! {

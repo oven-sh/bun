@@ -1738,9 +1738,7 @@ impl ThreadSafeFunction {
     fn run_dispatch_task(this: ThisPtr<Self>) -> JsResult<()> {
         let dispatched = this.shared.lock().dispatch_ref.take();
         Self::drain(this);
-        if let Some(dispatched) = dispatched {
-            dispatched.deref();
-        }
+        drop(dispatched);
         Ok(())
     }
 
@@ -1749,9 +1747,7 @@ impl ThreadSafeFunction {
     /// the task's reference is left to drop.
     fn release_dispatch_task(this: ThisPtr<Self>) {
         let dispatched = this.shared.lock().dispatch_ref.take();
-        if let Some(dispatched) = dispatched {
-            dispatched.deref();
-        }
+        drop(dispatched);
     }
 
     fn run_finalize_task(this: ThisPtr<Self>) -> JsResult<()> {
@@ -1759,9 +1755,7 @@ impl ThreadSafeFunction {
         if !this.env_dead.load(Ordering::SeqCst) {
             Self::finalize(this);
         }
-        if let Some(queued) = queued {
-            queued.deref();
-        }
+        drop(queued);
         Ok(())
     }
 
@@ -1771,9 +1765,7 @@ impl ThreadSafeFunction {
     /// the task's own reference is dropped here.
     fn release_finalize_task(this: ThisPtr<Self>) {
         let queued = this.js.with_mut(|js| js.finalize_ref.take());
-        if let Some(queued) = queued {
-            queued.deref();
-        }
+        drop(queued);
     }
 
     /// The threadsafe function's queue drain is a dispatcher: each queued call
@@ -2034,7 +2026,7 @@ impl ThreadSafeFunction {
     pub(crate) fn push(this: ThisPtr<Self>, ctx: *mut c_void, block: bool) -> napi_status {
         let mut released = Released::default();
         let status = Self::enqueue(this, ctx, block, &mut released);
-        released.release();
+        drop(released);
         status
     }
 
@@ -2139,9 +2131,7 @@ impl ThreadSafeFunction {
         if let Some(finalizer) = finalizer {
             finalizer.enqueue();
         }
-        if let Some(owner) = owner {
-            owner.deref();
-        }
+        drop(owner);
     }
 
     /// Runs on the JS thread from `NapiEnv::cleanup()` while JSC is still
@@ -2220,9 +2210,7 @@ impl ThreadSafeFunction {
             drop(js.env.take());
             js.owner_ref.take()
         });
-        if let Some(owner) = owner {
-            owner.deref();
-        }
+        drop(owner);
     }
 
     /// `napi_ref_threadsafe_function` — JS thread only (as in Node).
@@ -2258,7 +2246,7 @@ impl ThreadSafeFunction {
             let mut shared = this.shared.lock();
             Self::release_locked(this, &mut shared, mode, &mut released)
         };
-        released.release();
+        drop(released);
         status
     }
 
@@ -2310,7 +2298,7 @@ impl ThreadSafeFunction {
 }
 
 /// References whose holders let go inside a `ThreadSafeFunction`'s critical
-/// section, released once its lock is dropped: the last one frees the
+/// section, dropped once its lock is released: the last one frees the
 /// function, lock included.
 #[derive(Default)]
 struct Released([Option<RefPtr<ThreadSafeFunction>>; 2]);
@@ -2320,12 +2308,6 @@ impl Released {
         if let Some(r) = r {
             let slot = self.0.iter_mut().find(|slot| slot.is_none());
             *slot.expect("at most two references change hands per call") = Some(r);
-        }
-    }
-
-    fn release(self) {
-        for r in self.0.into_iter().flatten() {
-            r.deref();
         }
     }
 }
@@ -2411,7 +2393,7 @@ pub fn napi_create_threadsafe_function(
         // finalizer: the handle was never published, so the addon still owns
         // what it passed in (node's `Init` failure path just deletes the
         // ThreadSafeFunction, whose destructor only releases its own resources).
-        owner.deref();
+        drop(owner);
         return env.generic_failure();
     }
 

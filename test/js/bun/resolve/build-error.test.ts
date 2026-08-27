@@ -226,6 +226,27 @@ test.concurrent("a type-only import next to module.exports loads on every path",
   expect(directExitCode).toBe(0);
 });
 
+// The parser adds the JSX runtime import itself. It must not be reported as
+// an import statement the user should replace with require().
+test.concurrent("JSX next to module.exports is not blamed on a runtime import", async () => {
+  using dir = tempDir("build-error-jsx-cjs", {
+    "mixed.tsx": `const el = <div />;\nmodule.exports = { el };`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "mixed.tsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("");
+  expect(stderr).not.toContain("Cannot use import statement with CommonJS-only features");
+  expect(stderr).not.toContain("Try require(");
+});
+
 test("BuildMessage finalize frees with the same allocator it was created with", async () => {
   // BuildMessage.create() clones the message with the passed allocator
   // but finalize() was freeing it with bun.default_allocator and never

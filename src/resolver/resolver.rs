@@ -6742,22 +6742,13 @@ fn primary_side_effects(
     }
 }
 
-#[inline]
 /// `path` (under the standalone virtual root, in either path syntax) as the name of a module embedded in a
 /// `bun build --compile` executable: the file itself, or -- since every entry point is embedded under a `.js` name --
 /// the `.js` name for a source extension or no extension (`/$bunfs/root/w.ts` -> `/$bunfs/root/w.js`). Returns the
 /// graph's own name for it, which is what the module loader keys on.
-fn find_in_standalone_graph(
-    graph: &dyn StandaloneModuleGraph,
-    path: &[u8],
-) -> Option<&'static [u8]> {
-    let intern = |name: &[u8]| -> &'static [u8] {
-        Fs::file_system::DirnameStore::instance()
-            .append_slice(name)
-            .expect("unreachable")
-    };
+fn find_in_standalone_graph(graph: &dyn StandaloneModuleGraph, path: &[u8]) -> Option<&'static [u8]> {
     if let Some(name) = graph.find_assume_standalone_path(path) {
-        return Some(intern(name));
+        return Some(name);
     }
     let extension = bun_paths::extension(path);
     if !matches!(
@@ -6773,11 +6764,10 @@ fn find_in_standalone_graph(
     }
     buf[..stem.len()].copy_from_slice(stem);
     buf[stem.len()..stem.len() + 3].copy_from_slice(b".js");
-    graph
-        .find_assume_standalone_path(&buf[..stem.len() + 3])
-        .map(intern)
+    graph.find_assume_standalone_path(&buf[..stem.len() + 3])
 }
 
+#[inline]
 fn is_dot_slash(path: &[u8]) -> bool {
     #[cfg(not(windows))]
     {

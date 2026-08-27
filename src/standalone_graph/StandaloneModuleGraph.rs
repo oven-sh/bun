@@ -305,11 +305,11 @@ unsafe impl Sync for StandaloneModuleGraph {}
 /// slice; the `&mut`-returning inherent methods above stay for the runtime's
 /// blob/sourcemap caching path.
 impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
-    fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&[u8]> {
+    fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&'static [u8]> {
         self.lookup_file(name).map(|f| f.name)
     }
 
-    fn find(&self, name: &[u8]) -> Option<&[u8]> {
+    fn find(&self, name: &[u8]) -> Option<&'static [u8]> {
         self.find_ref(name).map(|f| f.name)
     }
 

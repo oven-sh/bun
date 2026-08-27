@@ -107,7 +107,7 @@ pub fn begin(
             } else {
                 R::HttpVersion::Http11
             };
-            (f.peer, f.peer_port, f.version) = match resp {
+            let (peer, peer_port, version) = match resp {
                 bun_uws::AnyResponse::H3(_) => match resp.get_remote_socket_info() {
                     Some(a) => (
                         R::PeerIp::from_text(a.ip()),
@@ -123,6 +123,7 @@ pub fn begin(
                     None => (R::PeerIp::None, 0, h1),
                 },
             };
+            f.version = version;
 
             let url = req.url();
             let path_len = if h.path_len == u32::MAX {
@@ -131,6 +132,8 @@ pub fn begin(
                 h.path_len as usize
             };
             f.set_request(
+                &peer,
+                peer_port,
                 url,
                 path_len,
                 R::forwarded_client(h.forwarded(), h.x_forwarded_for()),

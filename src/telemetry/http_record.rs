@@ -41,8 +41,8 @@ pub const fn method_name(m: Method) -> &'static str {
     }
 }
 
-/// The peer address as captured on the request path; formatted only when a
-/// span is encoded without a template hit.
+/// The peer address as captured on the request path; formatted by
+/// [`Facts::set_request`].
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PeerIp {
     None,
@@ -112,11 +112,8 @@ pub struct Facts {
     /// Length of the path part of the url (`url.len()` if no query).
     path_len: u32,
     pub method: Method,
-    /// The socket peer (per request; not part of the template key).
-    pub peer: PeerIp,
-    pub peer_port: u16,
     /// Length of the encoded `network.peer.*` bytes at the front of `raw`
-    /// ([`encode_peer_attrs`], written by [`Facts::set_request`]). 0 = encode from `peer`.
+    /// ([`encode_peer_attrs`], written by [`Facts::set_request`]).
     peer_encoded_len: u8,
     /// How many attributes those bytes hold (address, or address + port).
     peer_encoded_attrs: u8,
@@ -168,8 +165,6 @@ impl Facts {
             lens: [0; 5],
             path_len: 0,
             method: Method::GET,
-            peer: PeerIp::None,
-            peer_port: 0,
             peer_encoded_len: 0,
             peer_encoded_attrs: 0,
             version: HttpVersion::Unknown,
@@ -186,8 +181,6 @@ impl Facts {
         self.active = false;
         self.flags = 0;
         self.status = 0;
-        self.peer = PeerIp::None;
-        self.peer_port = 0;
         self.peer_encoded_len = 0;
         self.peer_encoded_attrs = 0;
         self.version = HttpVersion::Unknown;
@@ -197,12 +190,13 @@ impl Facts {
     }
 
     /// Set the request strings in one go (must be called before `set_route`);
-    /// `self.peer` / `self.peer_port` must already be set (their
-    /// `network.peer.*` attributes are encoded here). `client`: the first
-    /// forwarded-for hop (empty if none).
+    /// the socket peer's `network.peer.*` attributes are encoded here.
+    /// `client`: the first forwarded-for hop (empty if none).
     #[inline]
     pub fn set_request(
         &mut self,
+        peer: &PeerIp,
+        peer_port: u16,
         url: &[u8],
         path_len: usize,
         client: &[u8],
@@ -220,7 +214,7 @@ impl Facts {
         self.raw.clear();
         self.raw
             .reserve(PEER_ATTRS_MAX + url.len() + client.len() + host.len() + ua.len());
-        encode_peer_attrs(&self.peer, self.peer_port, &mut self.raw);
+        encode_peer_attrs(peer, peer_port, &mut self.raw);
         let peer_encoded_len = self.raw.len();
         debug_assert!(peer_encoded_len <= u8::MAX as usize);
         self.peer_encoded_len = peer_encoded_len as u8;
@@ -570,13 +564,7 @@ fn peer_text_of(encoded: &[u8]) -> &[u8] {
 /// Attributes appended per request rather than templated (see `append_tail`).
 fn tail_attr_count(facts: &Facts) -> u32 {
     // url.path [+ url.query] [+ client.address] [+ network.peer.address [+ .port]]
-    let peer_attrs = if facts.peer_encoded_attrs != 0 {
-        facts.peer_encoded_attrs as u32
-    } else if !matches!(facts.peer, PeerIp::None) {
-        1 + u32::from(facts.peer_port != 0)
-    } else {
-        0
-    };
+    let peer_attrs = facts.peer_encoded_attrs as u32;
     // client.address: the forwarded hop (lens[1]) or else the peer.
     let has_client = facts.lens[1] != 0 || peer_attrs != 0;
     1 + u32::from(facts.flags & FLAG_HAS_QUERY != 0) + u32::from(has_client) + peer_attrs
@@ -610,16 +598,7 @@ fn append_tail(
     let (path, query) = (&url[..pl], url.get(pl + 1..).unwrap_or(b""));
     // `room`: how many more attributes fit under attributeCountLimit.
     let mut room = (limits.attributes as u32).saturating_sub(user_attr_count(p));
-    let mut fresh = Vec::new();
-    let (encoded, n): (&[u8], u32) = if !s.peer_encoded.is_empty() {
-        (s.peer_encoded, facts.peer_encoded_attrs as u32)
-    } else if !matches!(facts.peer, PeerIp::None) {
-        fresh.reserve(PEER_ATTRS_MAX);
-        encode_peer_attrs(&facts.peer, facts.peer_port, &mut fresh);
-        (&fresh, 1 + u32::from(facts.peer_port != 0))
-    } else {
-        (b"", 0)
-    };
+    let (encoded, n) = (s.peer_encoded, facts.peer_encoded_attrs as u32);
     // semconv: client.address is the client behind any proxies (X-Forwarded-For
     // / Forwarded) — also the only identity on a unix-socket listener — and
     // network.peer.* the socket peer.

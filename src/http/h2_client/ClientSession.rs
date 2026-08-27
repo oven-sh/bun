@@ -159,8 +159,8 @@ pub struct ClientSession {
 /// per-request wakeups from `HTTPThread`) takes one of these and goes through
 /// [`ClientSession::enter`], so the releases happen through the holder's
 /// pointer after the body's borrow has ended. Callers that need the session
-/// alive across two entry points hold a `ref_guard()` of their own across
-/// both.
+/// alive across two entry points hold a [`RefPtr::from_this`] guard of their
+/// own across both.
 pub(crate) type SessionPtr = bun_ptr::ThisPtr<ClientSession>;
 
 impl ClientSession {

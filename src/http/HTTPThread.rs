@@ -878,7 +878,8 @@ impl ThreadState {
         self.flush_completions();
         self.drain_queued_preconnects();
 
-        drop(core::mem::take(&mut *self.queued_proxy_derefs.borrow_mut()));
+        let derefs = core::mem::take(&mut *self.queued_proxy_derefs.borrow_mut());
+        drop(derefs);
 
         let mut count: usize = 0;
         let mut active = ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed);

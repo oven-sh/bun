@@ -224,44 +224,14 @@ impl SideEffects {
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
                 if call.can_be_unwrapped_if_unused != CallUnwrap::Never {
-                    if call.args.len_u32() > 0 {
-                        let joined = Self::join_all_simplified(p, &call.args);
-                        if let Some(j) = &joined {
-                            if call.can_be_unwrapped_if_unused
-                                == CallUnwrap::IfUnusedAndToStringSafe
-                            {
-                                // For now, only support this for 1 argument.
-                                if j.data.is_safe_to_string() {
-                                    return None;
-                                }
-                            }
-                        }
-                        return joined;
-                    } else {
-                        return None;
-                    }
+                    return Self::join_all_simplified(p, &call.args);
                 }
             }
             ExprData::ENew(call) => {
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
                 if call.can_be_unwrapped_if_unused != CallUnwrap::Never {
-                    if call.args.len_u32() > 0 {
-                        let joined = Self::join_all_simplified(p, &call.args);
-                        if let Some(j) = &joined {
-                            if call.can_be_unwrapped_if_unused
-                                == CallUnwrap::IfUnusedAndToStringSafe
-                            {
-                                // For now, only support this for 1 argument.
-                                if j.data.is_safe_to_string() {
-                                    return None;
-                                }
-                            }
-                        }
-                        return joined;
-                    } else {
-                        return None;
-                    }
+                    return Self::join_all_simplified(p, &call.args);
                 }
             }
 

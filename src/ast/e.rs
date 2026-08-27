@@ -293,6 +293,7 @@ pub enum CallUnwrap {
     #[default]
     Never,
     IfUnused,
+    /// `Symbol.for`: removable like `IfUnused` but printed without `@__PURE__`. The ECall visit resets it to `Never` unless every argument is a primitive literal.
     IfUnusedAndToStringSafe,
 }
 

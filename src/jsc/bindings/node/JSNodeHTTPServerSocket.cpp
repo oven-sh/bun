@@ -684,11 +684,13 @@ void JSNodeHTTPServerSocket::onClose()
                 if (auto* ptr = exception.get()) {
                     exception.clear();
                     globalObject->reportUncaughtExceptionAtEventLoop(globalObject, ptr);
+                    RETURN_IF_EXCEPTION(scope, );
                 }
             } else if (!vm.hasPendingTerminationException()) {
                 auto* ptr = scope.exception();
                 scope.clearException();
                 globalObject->reportUncaughtExceptionAtEventLoop(globalObject, ptr);
+                RETURN_IF_EXCEPTION(scope, );
             }
         }
         thisObject->detach();
@@ -711,6 +713,7 @@ void JSNodeHTTPServerSocket::onDrain()
         if (auto* exception = scope.exception()) {
             (void)scope.tryClearException();
             globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
+            RETURN_IF_EXCEPTION(scope, );
             return;
         }
         bufferedSize = this->streamBuffer.bufferedSize();
@@ -764,6 +767,7 @@ void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
         if (auto* exception = scope.exception()) {
             (void)scope.tryClearException();
             globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
+            RETURN_IF_EXCEPTION(scope, );
             return;
         }
         gcProtect(chunk);

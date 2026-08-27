@@ -107,6 +107,10 @@ pub struct Options<'a> {
 
     /// Lower `toml_datetime`-tagged strings in a lazy-export AST to `Temporal.*.from` calls.
     pub lower_toml_datetimes: bool,
+
+    /// A bundle entry point: its own output is needed, so a `module.exports = require(...)`-only file stays a real
+    /// module rather than becoming a redirect to what it re-exports.
+    pub is_entry_point: bool,
 }
 
 impl<'a> Default for Options<'a> {
@@ -139,6 +143,7 @@ impl<'a> Default for Options<'a> {
             framework: None,
             repl_mode: false,
             lower_toml_datetimes: false,
+            is_entry_point: false,
         }
     }
 }
@@ -223,6 +228,7 @@ impl<'a> Options<'a> {
             framework: self.framework,
             repl_mode: self.repl_mode,
             lower_toml_datetimes: self.lower_toml_datetimes,
+            is_entry_point: self.is_entry_point,
         }
     }
 
@@ -295,6 +301,7 @@ impl<'a> Options<'a> {
             framework: None,
             repl_mode: false,
             lower_toml_datetimes: loader == options::Loader::Toml,
+            is_entry_point: false,
         };
         opts.jsx.parse = loader.is_jsx();
         opts
@@ -1412,7 +1419,9 @@ impl<'a> Parser<'a> {
 
                                     None
                                 };
-                                if let Some(id) = redirect_import_record_index {
+                                if let Some(id) = redirect_import_record_index
+                                    && !p.options.is_entry_point
+                                {
                                     part.symbol_uses = Default::default();
                                     return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
                                         import_records: p.import_records.move_to_baby_list(p.arena),

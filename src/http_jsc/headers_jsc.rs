@@ -123,7 +123,6 @@ pub fn to_fetch_headers(
     global: &JSGlobalObject,
 ) -> JsResult<NonNull<FetchHeaders>> {
     use bun_http_types::ETag::HeaderEntryColumns;
-    use bun_jsc::JsError;
     if this.entries.len() == 0 {
         return Ok(FetchHeaders::create_empty());
     }
@@ -142,7 +141,6 @@ pub fn to_fetch_headers(
         &EncodedSlice::from_bytes(this.buf.as_slice()),
         this.entries.len() as u32,
     )
-    .ok_or(JsError::Thrown)
 }
 
 struct H2TestingAPIs;

@@ -126,7 +126,7 @@ impl BodyAbortListener {
         // `attach_abort_signal`; `clean_native_bindings` removes it before the
         // box is dropped, so it is live here. Copy out up front: erroring a
         // still-streaming body can re-enter `Response::unref` via
-        // `FetchTasklet::ignore_remaining_response_body` and destroy this box.
+        // `FetchTasklet::abandon_response_body` and destroy this box.
         let (response, global) =
             unsafe { ((*ctx.cast::<Self>()).response, (*ctx.cast::<Self>()).global) };
         Response::ref_(response.as_mut_ptr());

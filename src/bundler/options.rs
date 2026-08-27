@@ -519,7 +519,7 @@ pub fn get_loader_and_virtual_source<'a>(
 
             // "file:" loader makes no sense for blobs
             // so let's default to tsx.
-            if let Some(filename) = jsc_vm.blob_file_name(blob) {
+            if let Some(filename) = jsc_vm.blob_store_path(blob) {
                 let current_path = Fs::Path::init(filename);
 
                 // Only treat it as a file if is a Bun.file()
@@ -1112,6 +1112,18 @@ bun_core::comptime_string_map! {
     };
 }
 
+/// `--compile --bytecode`: the executable whose internal JS modules (node:fs, ...) get ahead-of-time bytecode. Their
+/// sources differ per platform, so for another platform they are read out of that bun executable's builtins section
+/// (`bun_exe_format::builtins`); `None` is a target executable without one (an older bun), which then gets no builtin
+/// bytecode.
+#[derive(Clone, Default)]
+pub enum CompileTargetBuiltins {
+    #[default]
+    Host,
+    Target(std::sync::Arc<[u8]>),
+    None,
+}
+
 /// What `--compile` resolved to for this bundle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CompileMode {
@@ -1252,6 +1264,10 @@ pub struct BundleOptions<'a> {
     pub tree_shaking: bool,
     pub tree_shaking_override: Option<bool>,
     pub code_splitting: bool,
+    /// With `code_splitting`, target bun: `require()` of a bundled ESM file
+    /// becomes a chunk of its own, loaded synchronously at the call. On by
+    /// default; `--no-split-require` / `splitRequire: false` opts out.
+    pub split_require: bool,
     pub source_map: SourceMapOption,
     pub packages: PackagesOption,
 
@@ -1280,13 +1296,18 @@ pub struct BundleOptions<'a> {
     /// captures the last expression in { value: expr } for result extraction.
     pub repl_mode: bool,
     pub css_chunking: bool,
+    /// Code splitting: also fold side-effect-free chunks whose source is
+    /// smaller than this many bytes into a chunk more entry points load.
+    /// 0 disables that; chunks with identical load conditions always fold.
+    pub min_chunk_size: u64,
 
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
     pub bytecode: bool,
-    /// `--compile --bytecode` for another platform: the executable's internal-module sources (and their bytecode) are that
-    /// platform's, not this one's, so don't embed bytecode generated from ours.
-    pub compile_target_is_host: bool,
+    /// How many levels of nested functions get bytecode (`u32::MAX` = all; 0 = only each module's top level).
+    pub bytecode_depth: u32,
+    /// `--compile --bytecode`: whose internal modules get ahead-of-time bytecode embedded alongside the bundle's.
+    pub compile_target_builtins: CompileTargetBuiltins,
 
     pub code_coverage: bool,
     pub debugger: bool,
@@ -1459,6 +1480,7 @@ impl<'a> BundleOptions<'a> {
             tree_shaking: self.tree_shaking,
             tree_shaking_override: self.tree_shaking_override,
             code_splitting: self.code_splitting,
+            split_require: self.split_require,
             source_map: self.source_map,
             packages: self.packages,
             disable_transpilation: self.disable_transpilation,
@@ -1474,10 +1496,12 @@ impl<'a> BundleOptions<'a> {
             dead_code_elimination: self.dead_code_elimination,
             repl_mode: self.repl_mode,
             css_chunking: self.css_chunking,
+            min_chunk_size: self.min_chunk_size,
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
             bytecode: self.bytecode,
-            compile_target_is_host: self.compile_target_is_host,
+            bytecode_depth: self.bytecode_depth,
+            compile_target_builtins: self.compile_target_builtins.clone(),
             code_coverage: self.code_coverage,
             debugger: self.debugger,
             compile_mode: self.compile_mode,
@@ -1653,6 +1677,7 @@ impl<'a> BundleOptions<'a> {
             env: Env::default(),
             transform_options: std::sync::Arc::clone(&transform),
             css_chunking: false,
+            min_chunk_size: 0,
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,
 
@@ -1705,6 +1730,7 @@ impl<'a> BundleOptions<'a> {
             tree_shaking: false,
             tree_shaking_override: None,
             code_splitting: false,
+            split_require: true,
             source_map: SourceMapOption::None,
             packages: PackagesOption::Bundle,
             disable_transpilation: false,
@@ -1722,7 +1748,8 @@ impl<'a> BundleOptions<'a> {
             ignore_dce_annotations: false,
             emit_dce_annotations: false,
             bytecode: false,
-            compile_target_is_host: true,
+            bytecode_depth: u32::MAX,
+            compile_target_builtins: CompileTargetBuiltins::Host,
             code_coverage: false,
             debugger: false,
             compile_mode: CompileMode::None,

@@ -1135,8 +1135,8 @@ fn write_head_internal(
     let (write_head, response): (WriteHead, *mut c_void) = match response {
         uws::AnyResponse::TCP(tcp) => (NodeHTTPServer__writeHead_http, (*tcp).cast::<c_void>()),
         uws::AnyResponse::SSL(ssl) => (NodeHTTPServer__writeHead_https, (*ssl).cast::<c_void>()),
-        uws::AnyResponse::H3(_) => {
-            bun_core::Output::panic(format_args!("node:http does not support HTTP/3 responses"));
+        uws::AnyResponse::H3(_) | uws::AnyResponse::H2(_) => {
+            bun_core::Output::panic(format_args!("node:http responses are always HTTP/1"));
         }
     };
     bun_jsc::from_js_host_call_generic(global_object, || {
@@ -2396,12 +2396,14 @@ impl NodeHTTPResponse {
         &self,
         global_object: &JSGlobalObject,
         _callframe: &CallFrame,
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         let section = self.raw_request_headers.replace(Vec::new());
         if section.is_empty() {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         }
-        Bun__NodeHTTP__buildRawHeadersArray(global_object, section.as_ptr(), section.len())
+        bun_jsc::call_zero_is_throw(global_object, || {
+            Bun__NodeHTTP__buildRawHeadersArray(global_object, section.as_ptr(), section.len())
+        })
     }
 
     /// `handle.takeRequestTrailers()` — this request's captured trailer section
@@ -2410,20 +2412,22 @@ impl NodeHTTPResponse {
         &self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         let section = self.request_trailers.replace(Vec::new());
         if section.is_empty() {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         }
         // Lenient (insecureHTTPParser) servers accept CTL bytes in trailer values on
         // the wire; parse them with the same leniency so they surface on req.trailers.
         let use_insecure_http_parser = callframe.argument(0).to_boolean();
-        Bun__NodeHTTP__parseRequestTrailers(
-            global_object,
-            section.as_ptr(),
-            section.len(),
-            use_insecure_http_parser,
-        )
+        bun_jsc::call_zero_is_throw(global_object, || {
+            Bun__NodeHTTP__parseRequestTrailers(
+                global_object,
+                section.as_ptr(),
+                section.len(),
+                use_insecure_http_parser,
+            )
+        })
     }
 
     pub(crate) fn get_bytes_written(
@@ -2573,7 +2577,6 @@ impl NodeHTTPResponse {
 // `as_ctx_ptr()`-derived provenance; converting them to `unsafe deref(*mut)`
 // is a separate sweep.
 impl bun_ptr::AnyRefCounted for NodeHTTPResponse {
-    type DestructorCtx = ();
     #[inline]
     unsafe fn rc_ref(this: *mut Self) {
         // SAFETY: caller contract — `this` is live; touches only the
@@ -2581,7 +2584,7 @@ impl bun_ptr::AnyRefCounted for NodeHTTPResponse {
         unsafe { (*this).ref_() }
     }
     #[inline]
-    unsafe fn rc_deref_with_context(this: *mut Self, (): ()) {
+    unsafe fn rc_deref(this: *mut Self) {
         // SAFETY: caller contract — `this` is live; `deref()` touches only
         // `Cell`/`JsCell` fields and on zero frees via `heap::take`.
         unsafe { (*this).deref() }
@@ -2590,16 +2593,6 @@ impl bun_ptr::AnyRefCounted for NodeHTTPResponse {
     unsafe fn rc_has_one_ref(this: *const Self) -> bool {
         // SAFETY: caller contract — `this` is live.
         unsafe { (*this).ref_count.get() == 1 }
-    }
-    #[inline]
-    unsafe fn rc_assert_no_refs(this: *const Self) {
-        // SAFETY: caller contract — `this` is live.
-        debug_assert_eq!(unsafe { (*this).ref_count.get() }, 0);
-    }
-    #[cfg(debug_assertions)]
-    #[inline]
-    unsafe fn rc_debug_data(_this: *mut Self) -> *mut dyn bun_ptr::ref_count::DebugDataOps {
-        bun_ptr::ref_count::noop_debug_data()
     }
 }
 
@@ -2659,7 +2652,7 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
             break 'brk 0;
         };
 
-        *has_body = req_len > 0 || request_ref.header(b"transfer-encoding").is_some();
+        *has_body = req_len > 0 || request_ref.has_transfer_encoding();
     }
 
     let raw_response = if is_ssl != 0 {

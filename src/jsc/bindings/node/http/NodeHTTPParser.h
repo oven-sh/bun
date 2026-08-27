@@ -150,8 +150,6 @@ public:
     JSC::JSValue getCurrentBuffer(JSC::JSGlobalObject*) const;
     JSC::JSValue duration() const;
 
-    bool lessThan(HTTPParser& other) const;
-
     // llhttp callbacks
     int onMessageBegin();
     int onUrl(const char* at, size_t length);

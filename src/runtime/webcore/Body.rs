@@ -41,9 +41,9 @@ pub(super) fn wtf_impl(s: &WTFStringImpl) -> &WTFStringImplStruct {
 }
 
 /// Mutable view of a [`Blob`]'s backing `Store` through its
-/// `JsCell<Option<StoreRef>>` field. Centralises the per-site raw
+/// `JsCell<Option<RefPtr<Store>>>` field. Centralises the per-site raw
 /// `(*blob.store.get()…as_ptr()).mime_type = …` deref under the same
-/// invariant `StoreRef::data_mut` already documents:
+/// invariant `Store::data_mut` already documents:
 /// shared-mutable interior, single-threaded JS event-loop, no concurrent
 /// `&Store` outstanding for the borrow's duration.
 #[inline]
@@ -52,8 +52,8 @@ fn blob_store_mut(blob: &Blob) -> Option<&mut blob::Store> {
     blob.store
         .get()
         .as_ref()
-        // SAFETY: `StoreRef` invariant — pointee is a live heap `Store` while
-        // any `StoreRef` exists; single-threaded JS event-loop discipline
+        // SAFETY: `RefPtr<Store>` invariant — pointee is a live heap `Store` while
+        // any `RefPtr<Store>` exists; single-threaded JS event-loop discipline
         // guarantees no other `&`/`&mut Store` is live for this borrow.
         .map(|s| unsafe { &mut *s.as_ptr() })
 }
@@ -411,7 +411,7 @@ impl PendingValue {
                     // The ReadableStream within is expected to keep this Promise alive.
                     // If you try to protect() this, it will leak memory because the other end of the ReadableStream won't call it.
                     // See https://github.com/oven-sh/bun/issues/13678
-                    return Ok(promise);
+                    return promise;
                 }
                 Action::None => {}
             }
@@ -774,10 +774,16 @@ impl Value {
                 self.locked_to_native_stream(global_this, false)
             }
             Value::Error(err) => {
-                // Leave `self` as `Error` so the promise-returning readers
-                // (`handle_body_error`) still reject too.
                 let reason = err.to_js(global_this);
-                ReadableStream::errored(global_this, reason)
+                let value = ReadableStream::errored(global_this, reason)?;
+                // As for a blob above: this stream is the body from here on, so `.body` hands it
+                // out again, `bodyUsed` follows it, and the promise readers reject through it.
+                let stream = ReadableStream::from_js_direct(value).unwrap();
+                *self = Value::Locked(PendingValue {
+                    readable: webcore::readable_stream::Strong::init(stream, global_this),
+                    ..PendingValue::new(global_this)
+                });
+                Ok(value)
             }
         }
     }
@@ -825,7 +831,9 @@ impl Value {
             Value::Locked(_) => self.locked_to_native_stream(global_this, true),
             Value::Error(err) => {
                 let reason = err.to_js(global_this);
-                ReadableStream::errored(global_this, reason)
+                let stream = ReadableStream::errored(global_this, reason)?;
+                *self = Value::Used;
+                Ok(stream)
             }
         }
     }

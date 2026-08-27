@@ -200,18 +200,22 @@ JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
     UNREACHABLE();
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] void BunString__toThreadSafe(BunString* str)
+extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__threadIsolatedCopy(const BunString* str)
 {
-    if (str->tag == BunStringTag::WTFStringImpl) {
-        auto* existing = str->impl.wtf;
-        // StringImpl::isolatedCopy() always returns a freshly-allocated impl,
-        // so when we replace the pointer we must release the ref we were
-        // holding to the original; otherwise every call leaks one ref.
-        auto impl = existing->isolatedCopy();
-        if (impl.ptr() != existing) {
-            str->impl.wtf = &impl.leakRef();
-            existing->deref();
-        }
+    if (str->tag == BunStringTag::WTFStringImpl)
+        return { BunStringTag::WTFStringImpl, { .wtf = &str->impl.wtf->isolatedCopy().leakRef() } };
+    return *str;
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] void BunString__makeThreadShareable(BunString* str)
+{
+    if (str->tag != BunStringTag::WTFStringImpl)
+        return;
+    auto* impl = str->impl.wtf;
+    Ref<WTF::StringImpl> shared = makeThreadShareable(*impl);
+    if (shared.ptr() != impl) {
+        str->impl.wtf = &shared.leakRef();
+        impl->deref();
     }
 }
 
@@ -296,7 +300,7 @@ static constexpr unsigned int kMinCrossThreadShareableLength = 256;
 // the receivers race the lazy m_hashAndFlags update (debug: ASSERT(!hasHash())
 // in setHash; e.g. two workers switch()ing on the same BroadcastChannel
 // message). Static strings are immortal, pre-hashed and safe to share as-is.
-static Ref<WTF::StringImpl> isolatedCopyForSharing(WTF::StringImpl& impl)
+Ref<WTF::StringImpl> threadShareableCopy(const WTF::StringImpl& impl)
 {
     Ref<WTF::StringImpl> copy = impl.isolatedCopy();
     if (!copy->isStatic()) {
@@ -306,29 +310,27 @@ static Ref<WTF::StringImpl> isolatedCopyForSharing(WTF::StringImpl& impl)
     return copy;
 }
 
+Ref<WTF::StringImpl> makeThreadShareable(WTF::StringImpl& impl)
+{
+    if (impl.isAtom() || impl.isSymbol() || impl.isSubString())
+        return threadShareableCopy(impl);
+    if (!impl.isStatic()) {
+        impl.hash();
+        // Already set means other threads may hold this impl; don't write the flags word.
+        if (impl.canBecomeAtom())
+            impl.setNeverAtomize();
+    }
+    return impl;
+}
+
 WTF::String toCrossThreadShareable(const WTF::String& string)
 {
     auto* impl = string.impl();
     if (!impl)
         return string;
-
-    if (string.length() < kMinCrossThreadShareableLength)
-        return isolatedCopyForSharing(*impl);
-
-    // 1) Never share AtomStringImpl/symbols - they have special thread-unsafe behavior
-    if (impl->isAtom() || impl->isSymbol())
-        return isolatedCopyForSharing(*impl);
-
-    // 2) Don't share slices
-    if (impl->bufferOwnership() == StringImpl::BufferSubstring)
-        return isolatedCopyForSharing(*impl);
-
-    // 3) Ensure we won't lazily touch hash/flags on the consumer thread
-    // Force hash computation on this thread before sharing
-    const_cast<StringImpl*>(impl)->hash();
-    const_cast<StringImpl*>(impl)->setNeverAtomize();
-
-    return string;
+    if (impl->length() < kMinCrossThreadShareableLength)
+        return threadShareableCopy(*impl);
+    return makeThreadShareable(*impl);
 }
 
 }
@@ -793,18 +795,19 @@ extern "C" BunString BunString__createExternalGloballyAllocatedUTF16(
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] bool WTFStringImpl__isThreadSafe(
+// What isolatedCopy() yields: no atom-table membership and no base impl.
+extern "C" [[ZIG_EXPORT(nothrow)]] bool WTFStringImpl__isThreadIsolated(
     const WTF::StringImpl* wtf)
 {
-    if (wtf->isSymbol())
-        return false;
+    return !wtf->isAtom() && !wtf->isSymbol() && !wtf->isSubString();
+}
 
-    if (wtf->isAtom()) {
-        // AtomString destructor would destruct on the wrong string table.
-        return false;
-    }
-
-    return true;
+// What BunString__makeThreadShareable yields: isolated, and no holder can
+// mutate it (hash already computed, never atomized in place).
+extern "C" [[ZIG_EXPORT(nothrow)]] bool WTFStringImpl__isThreadShareable(
+    const WTF::StringImpl* wtf)
+{
+    return WTFStringImpl__isThreadIsolated(wtf) && (wtf->isStatic() || (wtf->hasHash() && !wtf->canBecomeAtom()));
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__ensureHash(WTF::StringImpl* str)
@@ -840,7 +843,9 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__upsertBunStringArray(
         } else {
             // Create new array with both values
             JSC::JSArray* array = JSC::constructEmptyArray(global, nullptr, 2);
+            RETURN_IF_EXCEPTION(scope, {});
             array->putDirectIndex(global, 0, existingValue);
+            RETURN_IF_EXCEPTION(scope, {});
             array->putDirectIndex(global, 1, newValue);
             target->putDirect(vm, id, array, 0);
         }

@@ -14,8 +14,8 @@ use bun_core::{EncodedSlice, ZStr};
 use bun_core::{ZBox, env_var, fmt as bun_fmt, zstr};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    self as jsc, CallFrame, EncodedSliceJsc, JSGlobalObject, JSObject, JSPropertyIterator, JSValue,
-    JsCell, JsClass, JsError, JsResult, SystemError,
+    self as jsc, CallFrame, EncodedSliceJsc, ErrorCode, JSGlobalObject, JSObject,
+    JSPropertyIterator, JSValue, JsCell, JsClass, JsError, JsResult, SystemError,
 };
 #[cfg(target_os = "macos")]
 use bun_paths as path;
@@ -118,16 +118,19 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
+/// `Ok(JSValue::ZERO)` is the C++ side's "could not create" without a
+/// pending exception; a TypeError for an unsupported signature comes back as
+/// `Err`.
 fn create_jsc_ffi_function(
     global: &JSGlobalObject,
     symbol_name: &EncodedSlice,
     function: &Function,
     target: *mut c_void,
     owner: JSValue,
-) -> JSValue {
+) -> JsResult<JSValue> {
     let arg_types: Vec<u8> = function.arg_types.iter().map(|t| *t as u8).collect();
     // SAFETY: `global` is a live JSC handle and `arg_types` outlives the call.
-    unsafe {
+    jsc::call_check_slow(global, || unsafe {
         Bun__CreateJSCFFIFunction(
             global,
             symbol_name,
@@ -141,7 +144,7 @@ fn create_jsc_ffi_function(
             target,
             owner,
         )
-    }
+    })
 }
 
 /// Raw extern fn pointers fed to the TCC-JIT'd C trampolines via `add_symbol`.
@@ -983,6 +986,16 @@ impl FFI {
     // `bun_ffi_cc(__g, __f)` call, which doesn't resolve inside `impl FFI`.
     // The C-ABI shim (`Bun__FFI__cc`) is supplied by the `.classes.ts` codegen.
     pub fn bun_ffi_cc(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        if !global_this.bun_vm().allow_ffi_cc() {
+            return Err(global_this
+                .err(
+                    ErrorCode::FFI_CC_DISABLED,
+                    format_args!(
+                        "Cannot compile C code because the bun:ffi C compiler is disabled."
+                    ),
+                )
+                .throw());
+        }
         if !bun_core::Environment::ENABLE_TINYCC {
             return Err(global_this.throw(format_args!(
                 "bun:ffi cc() is not available in this build (TinyCC is disabled)"
@@ -1272,7 +1285,8 @@ impl FFI {
 
         let arg_types: Vec<u8> = func.arg_types.iter().map(|t| *t as u8).collect();
         // SAFETY: `global_this` is a live JSC handle and `js_callback` is a live callable.
-        let cb = unsafe {
+        // Empty without an exception is the C++ side's "could not create".
+        let cb = jsc::call_check_slow(global_this, || unsafe {
             Bun__CreateJSCFFICallback(
                 global_this,
                 js_callback,
@@ -1285,13 +1299,8 @@ impl FFI {
                 func.return_type as u8,
                 func.threadsafe,
             )
-        };
+        })?;
         if cb.is_empty() {
-            // An exception left by the constructor (OOM, or a termination
-            // request landing in it) is the caller's, not a value.
-            if global_this.has_exception() {
-                return Err(JsError::Thrown);
-            }
             return Ok(
                 global_this.create_error_instance(format_args!("Failed to create FFI callback"))
             );
@@ -1534,23 +1543,24 @@ impl FFI {
                 .symbol_from_dynamic_library
                 .expect("symbol was resolved above");
             let symbol_name = EncodedSlice::utf8(function_name.as_bytes());
-            let cb = create_jsc_ffi_function(global, &symbol_name, function, target, js_object);
-            if cb.is_empty() {
-                // An exception the constructor left pending is the caller's.
-                let ret = if global.has_exception() {
-                    Err(JsError::Thrown)
-                } else {
-                    Ok(global.to_invalid_arguments(format_args!(
-                        "Failed to create FFI function for symbol \"{}\" in \"{}\"",
-                        BStr::new(function_name.as_bytes()),
-                        BStr::new(name)
-                    )))
+            let cb =
+                match create_jsc_ffi_function(global, &symbol_name, function, target, js_object) {
+                    Ok(cb) if !cb.is_empty() => cb,
+                    result => {
+                        // An exception the constructor left pending is the caller's.
+                        let ret = result.map(|_| {
+                            global.to_invalid_arguments(format_args!(
+                                "Failed to create FFI function for symbol \"{}\" in \"{}\"",
+                                BStr::new(function_name.as_bytes()),
+                                BStr::new(name)
+                            ))
+                        });
+                        dylib.close();
+                        // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
+                        unsafe { &*lib_ptr }.do_close();
+                        return ret;
+                    }
                 };
-                dylib.close();
-                // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
-                unsafe { &*lib_ptr }.do_close();
-                return ret;
-            }
             obj.put(global, symbol_name, cb);
         }
 
@@ -1620,21 +1630,22 @@ impl FFI {
             }
             let target = function.symbol_from_dynamic_library.expect("checked above");
             let symbol_name = EncodedSlice::utf8(function_name.as_bytes());
-            let cb = create_jsc_ffi_function(global, &symbol_name, function, target, js_object);
-            if cb.is_empty() {
-                // An exception the constructor left pending is the caller's.
-                let err = if global.has_exception() {
-                    Err(JsError::Thrown)
-                } else {
-                    Ok(global.to_invalid_arguments(format_args!(
-                        "Failed to create FFI function for symbol \"{}\"",
-                        BStr::new(function_name.as_bytes())
-                    )))
+            let cb =
+                match create_jsc_ffi_function(global, &symbol_name, function, target, js_object) {
+                    Ok(cb) if !cb.is_empty() => cb,
+                    result => {
+                        // An exception the constructor left pending is the caller's.
+                        let err = result.map(|_| {
+                            global.to_invalid_arguments(format_args!(
+                                "Failed to create FFI function for symbol \"{}\"",
+                                BStr::new(function_name.as_bytes())
+                            ))
+                        });
+                        // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
+                        unsafe { &*lib_ptr }.do_close();
+                        return err;
+                    }
                 };
-                // SAFETY: lib_ptr is the live, JS-owned FFI allocation (from into_raw).
-                unsafe { &*lib_ptr }.do_close();
-                return err;
-            }
             obj.put(global, symbol_name, cb);
         }
 
@@ -1679,13 +1690,9 @@ impl FFI {
             &function,
             target,
             JSValue::UNDEFINED,
-        );
+        )?;
         if cb.is_empty() {
-            return Ok(if global.has_exception() {
-                global.take_error(JsError::Thrown)
-            } else {
-                global.to_invalid_arguments(format_args!("Failed to create FFI function"))
-            });
+            return Ok(global.to_invalid_arguments(format_args!("Failed to create FFI function")));
         }
         Ok(cb)
     }
@@ -2133,10 +2140,6 @@ impl Function {
                 }
             }
         }
-
-        // try writer.writeAll(
-        //     "(JSContext ctx, void* function, void* thisObject, size_t argumentCount, const EncodedJSValue arguments[], void* exception);\n\n",
-        // );
 
         let mut arg_buf = [0u8; 512];
 

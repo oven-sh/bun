@@ -2021,8 +2021,14 @@ fn import_windows_socket_payload(
         log!("importWindowsSocketPayload: WSASocketW failed: {}", err);
         return Ok(None);
     }
-    msg_data.delete_property(global, WIN_SOCKET_INFO_KEY);
-    Ok(Some(Fd::from_system(sock as *mut c_void)))
+    let fd = Fd::from_system(sock as *mut c_void);
+    if let Err(err) = msg_data.delete_property(global, WIN_SOCKET_INFO_KEY) {
+        // The imported socket is not owned by anything yet; do not leak it
+        // with the exception.
+        fd.close();
+        return Err(err);
+    }
+    Ok(Some(fd))
 }
 
 fn received_fd_to_js(fd: Fd) -> JSValue {

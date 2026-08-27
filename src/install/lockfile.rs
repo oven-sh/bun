@@ -1049,7 +1049,6 @@ impl Lockfile {
             log,
             old_preinstall_state,
             manager: &mut *manager,
-            trees_count: 1,
         };
 
         // try clone_queue.ensureUnusedCapacity(root.dependencies.len);
@@ -1279,7 +1278,6 @@ pub struct Cloner<'a> {
     pub lockfile: &'a mut Lockfile,
     pub(crate) old: &'a mut Lockfile,
     pub(crate) mapping: &'a mut [PackageID],
-    pub(crate) trees_count: u32,
     pub(crate) log: &'a mut bun_ast::Log,
     pub(crate) old_preinstall_state: Vec<Install::PreinstallState>,
     pub(crate) manager: &'a mut PackageManager,

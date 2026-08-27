@@ -347,6 +347,15 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
         self.masks[word_mask_index(index)] |= word_mask_bit(index);
     }
 
+    /// Removes a specific bit from the bit set
+    pub fn unset(&mut self, index: usize) {
+        debug_assert!(index < Self::BIT_LENGTH);
+        if NUM_MASKS == 0 {
+            return; // doesn't compile in this case
+        }
+        self.masks[word_mask_index(index)] &= !word_mask_bit(index);
+    }
+
     /// Sets all bits
     pub(crate) fn set_all(&mut self, value: bool) {
         self.masks.fill(if value { usize::MAX } else { 0 });
@@ -365,6 +374,23 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
         for (mask, alt) in self.masks.iter_mut().zip(other.masks.iter()) {
             *mask |= *alt;
         }
+    }
+
+    /// Performs an intersection of two bit sets, and stores the
+    /// result in the first one.
+    pub(crate) fn set_intersection(&mut self, other: &Self) {
+        debug_assert_eq!(self.masks.len(), other.masks.len());
+        for (mask, alt) in self.masks.iter_mut().zip(other.masks.iter()) {
+            *mask &= *alt;
+        }
+    }
+
+    /// Returns true iff the first bit set is the subset of the second one.
+    pub(crate) fn subset_of(&self, other: &Self) -> bool {
+        self.masks
+            .iter()
+            .zip(other.masks.iter())
+            .all(|(a, b)| a & b == *a)
     }
 
     /// Finds the index of the first set bit.
@@ -1043,6 +1069,37 @@ impl AutoBitSet {
 
     pub fn set(&mut self, index: usize) {
         auto_forward!(self, |b| b.set(index))
+    }
+
+    pub fn unset(&mut self, index: usize) {
+        auto_forward!(self, |b| b.unset(index))
+    }
+
+    /// `self |= other`. Both sets must have the same arm (same bit length).
+    pub fn set_union(&mut self, other: &AutoBitSet) {
+        match (self, other) {
+            (AutoBitSet::Static(a), AutoBitSet::Static(b)) => a.set_union(b),
+            (AutoBitSet::Dynamic(a), AutoBitSet::Dynamic(b)) => a.set_union(b),
+            _ => unreachable!("AutoBitSet::set_union: mismatched bit lengths"),
+        }
+    }
+
+    /// `self &= other`. Both sets must have the same arm (same bit length).
+    pub fn set_intersection(&mut self, other: &AutoBitSet) {
+        match (self, other) {
+            (AutoBitSet::Static(a), AutoBitSet::Static(b)) => a.set_intersection(b),
+            (AutoBitSet::Dynamic(a), AutoBitSet::Dynamic(b)) => a.set_intersection(b),
+            _ => unreachable!("AutoBitSet::set_intersection: mismatched bit lengths"),
+        }
+    }
+
+    /// Is every bit of `self` also set in `other`?
+    pub fn subset_of(&self, other: &AutoBitSet) -> bool {
+        match (self, other) {
+            (AutoBitSet::Static(a), AutoBitSet::Static(b)) => a.subset_of(b),
+            (AutoBitSet::Dynamic(a), AutoBitSet::Dynamic(b)) => a.subset_of(b),
+            _ => unreachable!("AutoBitSet::subset_of: mismatched bit lengths"),
+        }
     }
 
     pub(crate) fn raw_bytes(&self) -> &[u8] {

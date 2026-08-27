@@ -105,7 +105,6 @@ pub struct ParseTask {
     // Used for splitting up the work between the io and parse steps.
     pub(crate) stage: ParseTaskStage,
 
-    pub(crate) tree_shaking: bool,
     pub(crate) known_target: options::Target,
     pub(crate) module_type: options::ModuleType,
     pub(crate) emit_decorator_metadata: bool,
@@ -289,7 +288,6 @@ impl ParseTask {
                 callback: io_task_callback,
             },
             stage: ParseTaskStage::NeedsSourceCode,
-            tree_shaking: false,
             is_entry_point: false,
         }
     }
@@ -323,7 +321,6 @@ impl Default for ParseTask {
                 callback: io_task_callback,
             },
             stage: ParseTaskStage::NeedsSourceCode,
-            tree_shaking: false,
             known_target: options::Target::default(),
             module_type: options::ModuleType::Unknown,
             emit_decorator_metadata: false,
@@ -565,7 +562,6 @@ pub mod parse_worker {
                 callback: io_task_callback,
             },
             stage: ParseTaskStage::NeedsSourceCode,
-            tree_shaking: false,
             module_type: options::ModuleType::Unknown,
             emit_decorator_metadata: false,
             experimental_decorators: false,
@@ -2611,6 +2607,7 @@ pub mod parse_worker {
         };
         opts.code_splitting = topts.code_splitting;
         opts.module_type = task.module_type;
+        opts.is_entry_point = task.is_entry_point;
 
         task.jsx.parse = loader.is_jsx();
 

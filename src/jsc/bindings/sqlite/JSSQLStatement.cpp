@@ -906,12 +906,14 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
         CHECK_BIND(sqlite3_bind_double(stmt, i, value.asDouble()))
     } else if (value.isString()) {
         auto* str = value.toStringOrNull(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, false);
         if (!str) [[unlikely]] {
             throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Expected string"_s));
             return false;
         }
 
         const auto roped = str->view(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, false);
         if (roped->isNull()) [[unlikely]] {
             throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Out of memory :("_s));
             return false;
@@ -936,7 +938,9 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
             if ((min == JSBigInt::ComparisonResult::GreaterThan || min == JSBigInt::ComparisonResult::Equal) && (max == JSBigInt::ComparisonResult::LessThan || max == JSBigInt::ComparisonResult::Equal)) [[likely]] {
                 CHECK_BIND(sqlite3_bind_int64(stmt, i, JSBigInt::toBigInt64(value)));
             } else {
-                throwRangeError(lexicalGlobalObject, scope, makeString("BigInt value '"_s, bigInt->toString(lexicalGlobalObject, 10), "' is out of range"_s));
+                auto bigIntString = bigInt->toString(lexicalGlobalObject, 10);
+                RETURN_IF_EXCEPTION(scope, false);
+                throwRangeError(lexicalGlobalObject, scope, makeString("BigInt value '"_s, bigIntString, "' is out of range"_s));
                 sqlite3_clear_bindings(stmt);
                 return false;
             }
@@ -1018,6 +1022,7 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
             auto* name = sqlite3_bind_parameter_name(stmt, i + 1);
 
             JSValue value = getValue(name, i);
+            RETURN_IF_EXCEPTION(scope, {});
             if (!statementStillAlive())
                 return {};
             if (!value && !scope.exception()) {
@@ -1045,6 +1050,7 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
     else if (bindings.isOnlyIndexed) [[unlikely]] {
         for (size_t i = 0; i < size; i++) {
             JSValue value = target->getDirectIndex(globalObject, i);
+            RETURN_IF_EXCEPTION(scope, {});
             if (!statementStillAlive())
                 return {};
             if (!value && !scope.exception()) {
@@ -1091,6 +1097,7 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
                             value = target->get(globalObject, property);
                     }
                 }
+                RETURN_IF_EXCEPTION(scope, {});
                 if (!statementStillAlive())
                     return {};
                 structure = target->structure();
@@ -1338,6 +1345,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSerialize, (JSC::JSGlobalObject * lexical
     }
 
     int32_t dbIndex = callFrame->argument(0).toInt32(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     VersionSqlite3* versionDB = databaseForHandle(dbIndex);
     if (!versionDB) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
@@ -1382,6 +1390,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
     }
 
     int32_t dbIndex = callFrame->argument(0).toInt32(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     VersionSqlite3* versionDB = databaseForHandle(dbIndex);
     if (!versionDB) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
@@ -1451,6 +1460,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
     }
 
     int32_t handle = callFrame->argument(0).toInt32(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     VersionSqlite3* versionDB = databaseForHandle(handle);
     if (!versionDB) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
@@ -1482,6 +1492,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
     }
 
     Bun::UTF8View utf8 = Bun::UTF8View(jsSqlString->view(lexicalGlobalObject));
+    RETURN_IF_EXCEPTION(scope, {});
 
     const char* sqlStringHead = utf8.span().data();
     const char* end = utf8.span().data() + utf8.span().size();
@@ -1609,7 +1620,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementIsInTransactionFunction, (JSC::JSGlobalOb
         return {};
     }
 
-    int32_t handle = dbNumber.toInt32(lexicalGlobalObject);
+    int32_t handle = JSC::toInt32(dbNumber.asNumber());
 
     VersionSqlite3* versionDB = databaseForHandle(handle);
     if (!versionDB) [[unlikely]] {
@@ -1650,7 +1661,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
         return {};
     }
 
-    int32_t handle = dbNumber.toInt32(lexicalGlobalObject);
+    int32_t handle = JSC::toInt32(dbNumber.asNumber());
     VersionSqlite3* versionDB = databaseForHandle(handle);
     if (!versionDB) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createRangeError(lexicalGlobalObject, "Invalid database handle"_s));
@@ -1676,7 +1687,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     unsigned int flags = DEFAULT_SQLITE_PREPARE_FLAGS;
     if (prepareFlagsValue.isNumber()) {
 
-        int prepareFlags = prepareFlagsValue.toInt32(lexicalGlobalObject);
+        int prepareFlags = JSC::toInt32(prepareFlagsValue.asNumber());
         if (prepareFlags < 0 || prepareFlags > MAX_SQLITE_PREPARE_FLAG) {
             throwException(lexicalGlobalObject, scope, createRangeError(lexicalGlobalObject, "Invalid prepare flags"_s));
             return {};
@@ -1768,7 +1779,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
             return {};
         }
 
-        openFlags = flags.toInt32(lexicalGlobalObject);
+        openFlags = JSC::toInt32(flags.asNumber());
     }
 
     JSValue finalizationTarget = callFrame->argument(2);
@@ -1828,7 +1839,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
         return {};
     }
 
-    int dbIndex = dbNumber.toInt32(lexicalGlobalObject);
+    int dbIndex = JSC::toInt32(dbNumber.asNumber());
 
     VersionSqlite3* versionDB = databaseForHandle(dbIndex);
     if (!versionDB) {
@@ -1908,8 +1919,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
         return {};
     }
 
-    int dbIndex = dbNumber.toInt32(lexicalGlobalObject);
-    int op = opNumber.toInt32(lexicalGlobalObject);
+    int dbIndex = JSC::toInt32(dbNumber.asNumber());
+    int op = JSC::toInt32(opNumber.asNumber());
 
     VersionSqlite3* versionDB = databaseForHandle(dbIndex);
     if (!versionDB) {
@@ -2969,6 +2980,7 @@ template void JSSQLStatement::visitOutputConstraints(JSCell*, SlotVisitor&);
 JSValue createJSSQLStatementConstructor(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* object = JSC::constructEmptyObject(globalObject);
     auto* diff = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), jsUndefined(), jsUndefined());
 
@@ -2976,9 +2988,12 @@ JSValue createJSSQLStatementConstructor(Zig::GlobalObject* globalObject)
         vm,
         globalObject,
         JSSQLStatementConstructor::createStructure(vm, globalObject, globalObject->m_functionPrototype.get()));
+    RETURN_IF_EXCEPTION(scope, {});
 
     object->putDirectIndex(globalObject, 0, constructor);
+    RETURN_IF_EXCEPTION(scope, {});
     object->putDirectIndex(globalObject, 1, diff);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return object;
 }

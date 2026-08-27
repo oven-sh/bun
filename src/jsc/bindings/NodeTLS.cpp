@@ -27,6 +27,7 @@ using namespace JSC;
 JSC_DEFINE_HOST_FUNCTION(getBundledRootCertificates, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     struct us_cert_string_t* out;
     auto size = us_raw_root_certs(&out);
@@ -38,9 +39,10 @@ JSC_DEFINE_HOST_FUNCTION(getBundledRootCertificates, (JSC::JSGlobalObject * glob
         auto raw = out[i];
         auto str = WTF::String::fromUTF8(std::span { raw.str, raw.len });
         rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, str));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
-    return JSValue::encode(JSC::objectConstructorFreeze(globalObject, rootCertificates));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::objectConstructorFreeze(globalObject, rootCertificates)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(getExtraCACertificates, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

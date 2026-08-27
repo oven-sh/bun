@@ -670,10 +670,14 @@ JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, ui
         return obj->tryGetIndexQuickly(i);
     }
 
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PropertySlot slot(obj, PropertySlot::InternalMethodType::Get);
-    if (obj->methodTable()->getOwnPropertySlotByIndex(obj, globalObject, i, slot)) {
+    bool hasSlot = obj->methodTable()->getOwnPropertySlotByIndex(obj, globalObject, i, slot);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (hasSlot) {
         if (!slot.isAccessor()) {
-            return slot.getValue(globalObject, i);
+            RELEASE_AND_RETURN(scope, slot.getValue(globalObject, i));
         }
     }
 
@@ -814,6 +818,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 return true;
             case AsymmetricMatcherResult::NOT_MATCHER:
                 // continue comparison
+                RETURN_IF_EXCEPTION(scope, false);
                 break;
             }
         } else if (v1.isCell() && !v1.isEmpty() && v1.asCell()->type() == JSC::JSType(JSDOMWrapperType)) {
@@ -824,6 +829,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 return true;
             case AsymmetricMatcherResult::NOT_MATCHER:
                 // continue comparison
+                RETURN_IF_EXCEPTION(scope, false);
                 break;
             }
         }
@@ -850,9 +856,13 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     const auto originalGCBufferSize = gcBuffer.size();
     for (size_t i = 0; i < length; i++) {
         auto values = stack.at(i);
-        if (JSC::JSValue::strictEqual(globalObject, values.first, v1)) {
-            return JSC::JSValue::strictEqual(globalObject, values.second, v2);
-        } else if (JSC::JSValue::strictEqual(globalObject, values.second, v2))
+        bool firstMatches = JSC::JSValue::strictEqual(globalObject, values.first, v1);
+        RETURN_IF_EXCEPTION(scope, false);
+        bool secondMatches = JSC::JSValue::strictEqual(globalObject, values.second, v2);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (firstMatches)
+            return secondMatches;
+        if (secondMatches)
             return false;
     }
 
@@ -3389,14 +3399,14 @@ JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* globalObj
     WTF::URL referrer = WTF::URL::fileURLWithFileSystemPath(WTF::String::fromUTF8(std::span { referrerUrlPtr, referrerUrlLen })).isolatedCopy();
 
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::SourceCode sourceCode = JSC::makeSource(
         src, JSC::SourceOrigin { origin }, JSC::SourceTaintedOrigin::Untainted, origin.fileSystemPath(),
         WTF::TextPosition(), JSC::SourceProviderSourceType::Module);
     globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, origin.fileSystemPath()), JSC::ScriptFetchParameters::Type::JavaScript, WTF::move(sourceCode));
+    RETURN_IF_EXCEPTION(scope, {});
     auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, origin.fileSystemPath()), JSC::Identifier::fromString(vm, referrer.fileSystemPath()), nullptr, nullptr);
-
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (scope.exception()) [[unlikely]] {
         promise->rejectWithCaughtException(vm, scope);
@@ -4103,6 +4113,7 @@ JSC::EncodedJSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC::JSGlobalObjec
     snapshotBuilder.buildSnapshot();
 
     WTF::String jsonString = snapshotBuilder.json();
+    RETURN_IF_EXCEPTION(scope, {});
     JSC::EncodedJSValue result = JSC::JSValue::encode(JSONParse(globalObject, jsonString));
     scope.releaseAssertNoException();
     return result;
@@ -4933,6 +4944,7 @@ BunString JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlo
 
     if (name && name.isString()) {
         auto str = name.toWTFString(arg1);
+        RETURN_IF_EXCEPTION(scope, BunStringEmpty);
         if (!str.isEmpty()) {
             return toStringAdopt(WTF::move(str));
         }
@@ -4974,6 +4986,7 @@ BunString JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlo
         if (toStringTagValue) {
             if (toStringTagValue.isString()) {
                 displayName = toStringTagValue.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, );
             }
         }
     }
@@ -5396,12 +5409,16 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__fastGetOwn(JSC::EncodedJSValue JSVa
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     ASSERT(value.isCell());
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PropertySlot slot = PropertySlot(value, PropertySlot::InternalMethodType::GetOwnProperty);
     const Identifier name = builtinNameMap(globalObject->vm(), arg2);
     auto* object = value.getObject();
 
-    if (object->getOwnPropertySlot(object, globalObject, name, slot)) {
-        return JSValue::encode(slot.getValue(globalObject, name));
+    bool hasOwnProperty = object->getOwnPropertySlot(object, globalObject, name, slot);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (hasOwnProperty) {
+        RELEASE_AND_RETURN(scope, JSValue::encode(slot.getValue(globalObject, name)));
     }
 
     return {};
@@ -5447,7 +5464,9 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
         if (structure->outOfLineSize() == 0 && structure->inlineSize() == 0) {
             fast = false;
 
-            if (JSValue proto = object->getPrototype(globalObject)) {
+            JSValue proto = object->getPrototype(globalObject);
+            RETURN_IF_EXCEPTION(scope, );
+            if (proto) {
                 if ((structure = proto.structureOrNull())) {
                     prototypeObject = proto;
                     fast = canPerformFastPropertyEnumerationForIterationBun(structure);
@@ -5622,6 +5641,7 @@ restart:
                     } else if (slot.isValue()) {
                         propertyValue = slot.getValue(globalObject, property);
                     } else if (object->getOwnPropertySlot(object, globalObject, property, slot)) {
+                        RETURN_IF_EXCEPTION(scope, );
                         propertyValue = slot.getValue(globalObject, property);
                     }
                 } else if (slot.isAccessor()) {
@@ -5770,6 +5790,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
             } else if (slot.isValue()) {
                 propertyValue = slot.getValue(globalObject, property);
             } else if (object->getOwnPropertySlot(object, globalObject, property, slot)) {
+                RETURN_IF_EXCEPTION(scope, );
                 propertyValue = slot.getValue(globalObject, property);
             }
         } else if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
@@ -5821,7 +5842,13 @@ bool JSC__JSValue__isInstanceOf(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObjec
 
 extern "C" JSC::EncodedJSValue JSC__JSValue__createRopeString(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject)
 {
-    return JSValue::encode(JSC::jsString(globalObject, JSC::JSValue::decode(JSValue0).toString(globalObject), JSC::JSValue::decode(JSValue1).toString(globalObject)));
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* str0 = JSC::JSValue::decode(JSValue0).toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSString* str1 = JSC::JSValue::decode(JSValue1).toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsString(globalObject, str0, str1)));
 }
 
 extern "C" size_t JSC__VM__blockBytesAllocated(JSC::VM* vm)
@@ -6033,12 +6060,12 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__getOwnByValue(JSC::EncodedJSValue v
 
     PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
     if (property.getUInt32(index)) {
-        if (!object->getOwnPropertySlotByIndex(object, globalObject, index, slot))
+        bool hasSlot = object->getOwnPropertySlotByIndex(object, globalObject, index, slot);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!hasSlot)
             return {};
 
-        RETURN_IF_EXCEPTION(scope, {});
-
-        return JSC::JSValue::encode(slot.getValue(globalObject, index));
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(slot.getValue(globalObject, index)));
     } else {
         auto propertyName = property.toPropertyKey(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
@@ -6047,7 +6074,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__getOwnByValue(JSC::EncodedJSValue v
 
         RETURN_IF_EXCEPTION(scope, {});
 
-        return JSC::JSValue::encode(slot.getValue(globalObject, propertyName));
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(slot.getValue(globalObject, propertyName)));
     }
 }
 

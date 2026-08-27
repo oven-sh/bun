@@ -480,6 +480,7 @@ describe.skipIf(!canLoadGlib() || !(Bun.which("cc") || Bun.which("clang") || Bun
         if (done) break;
         stderr += decoder.decode(value, { stream: true });
       }
+      expect(stderr).toContain("[stub] lookup mode=hang cancellable=yes");
       proc.stdin.write("go\n");
       await proc.stdin.end();
 

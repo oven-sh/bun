@@ -219,8 +219,8 @@ test.concurrent("a type-only import next to module.exports loads on every path",
 
   if (exitCode !== 0) console.error(stderr);
   expect(JSON.parse(stdout)).toEqual({ import: { f: { x: 1 } }, require: { f: { x: 1 } } });
-  expect(exitCode).toBe(0);
   expect(directStderr).toBe("");
+  expect(exitCode).toBe(0);
   expect(directExitCode).toBe(0);
 });
 

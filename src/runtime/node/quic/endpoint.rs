@@ -222,12 +222,6 @@ impl Drop for QuicEndpoint {
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             timer_all().remove(self.event_loop_timer.as_ptr());
         }
-        if let Some(bl) = self.block_list.replace(None) {
-            bl.deref();
-        }
-        for s in self.sessions.replace(Vec::new()) {
-            s.deref();
-        }
     }
 }
 
@@ -275,7 +269,7 @@ impl lsquic::NqDriverOwner for QuicEndpoint {
     /// One process pass per loop turn (loop_pre/loop_post): the writes a JS
     /// turn queued leave as one engine pass and one sendmmsg batch.
     fn process_pass(this: ThisPtr<Self>) {
-        let _keep = this.ref_guard();
+        let _keep = RefPtr::from_this(this);
         this.run_driver_pass(false);
     }
 
@@ -284,7 +278,7 @@ impl lsquic::NqDriverOwner for QuicEndpoint {
     /// observes a session ending mid-chain (node's loop never interleaves
     /// that way).
     fn drain_pass(this: ThisPtr<Self>) {
-        let _keep = this.ref_guard();
+        let _keep = RefPtr::from_this(this);
         this.run_driver_pass(true);
     }
 }
@@ -292,20 +286,19 @@ impl lsquic::NqDriverOwner for QuicEndpoint {
 thread_local! {
     /// A server may advertise another local endpoint's address as its
     /// preferred_address (RFC 9000 sec 9.6). Holds a ref on every bound
-    /// endpoint until `release_native`.
-    static ENDPOINT_REGISTRY: core::cell::RefCell<Vec<RefPtr<QuicEndpoint>>> =
-        const { core::cell::RefCell::new(Vec::new()) };
+    /// endpoint until `release_native`; never released by thread exit, which
+    /// comes after the VM (and the timer heap an endpoint unlinks from) is gone.
+    static ENDPOINT_REGISTRY: core::cell::RefCell<core::mem::ManuallyDrop<Vec<RefPtr<QuicEndpoint>>>> =
+        const { core::cell::RefCell::new(core::mem::ManuallyDrop::new(Vec::new())) };
 }
 
 /// Every other registered endpoint, each with a ref held for the caller's
 /// scope: a pass on one runs JS that can close and release another.
-fn registry_others(
-    not: &QuicEndpoint,
-) -> Vec<(ThisPtr<QuicEndpoint>, bun_ptr::ScopedRef<QuicEndpoint>)> {
+fn registry_others(not: &QuicEndpoint) -> Vec<(ThisPtr<QuicEndpoint>, RefPtr<QuicEndpoint>)> {
     ENDPOINT_REGISTRY.with_borrow(|v| {
         v.iter()
-            .filter(|e| !core::ptr::eq(e.data(), not))
-            .map(|e| (e.this_ptr(), e.this_ptr().ref_guard()))
+            .filter(|e| !core::ptr::eq(e.as_ptr(), not))
+            .map(|e| (e.this_ptr(), e.clone()))
             .collect()
     })
 }
@@ -318,9 +311,9 @@ fn registry_find_by_addr(addr: &StoredAddr, not: &QuicEndpoint) -> Option<ThisPt
     let want = addr.decode().map(|(f, p, ip)| (f, p, ip.to_vec()));
     ENDPOINT_REGISTRY.with_borrow(|v| {
         v.iter()
-            .filter(|e| !core::ptr::eq(e.data(), not))
+            .filter(|e| !core::ptr::eq(e.as_ptr(), not))
             .find(|e| {
-                let theirs = e.data().local_addr.get();
+                let theirs = e.local_addr.get();
                 theirs.decode().map(|(f, p, ip)| (f, p, ip.to_vec())) == want
             })
             .map(RefPtr::this_ptr)
@@ -367,7 +360,7 @@ impl uws::udp::UdpHandler for QuicEndpoint {
         buf: &mut uws::udp::PacketBuffer,
         packets: c_int,
     ) {
-        let _keep = this.ref_guard();
+        let _keep = RefPtr::from_this(this);
         let this: &QuicEndpoint = &this;
         let global: &JSGlobalObject = &this.global;
         let local = this.local_addr.get();
@@ -953,13 +946,8 @@ impl QuicEndpoint {
         // Codegen installs the pointer on the JS object only after this
         // returns Ok, so a throw from any option read below must release
         // the endpoint and any Strong already stored in it.
-        match Self::construct_options(this.data(), global, frame, this_value) {
-            Ok(()) => Ok(this.into_raw()),
-            Err(e) => {
-                this.deref();
-                Err(e)
-            }
-        }
+        Self::construct_options(&this, global, frame, this_value)?;
+        Ok(RefPtr::into_raw(this))
     }
 
     fn construct_options(
@@ -1042,7 +1030,7 @@ impl QuicEndpoint {
         self.socket.get().as_ref().map(uws::udp::UdpSocket::as_ptr)
     }
     fn session_ids(&self) -> Vec<session::Id> {
-        self.sessions.get().iter().map(|s| s.data().id()).collect()
+        self.sessions.get().iter().map(|s| s.id()).collect()
     }
     /// A session still in the `sessions` registry — `unregister_session`
     /// always precedes the session's teardown, and the registry entry holds
@@ -1051,11 +1039,11 @@ impl QuicEndpoint {
         self.sessions
             .get()
             .iter()
-            .find(|s| s.data().id() == id)
+            .find(|s| s.id() == id)
             .map(RefPtr::this_ptr)
     }
     fn register_session(&self, session: &RefPtr<QuicSession>) {
-        self.sessions.with_mut(|v| v.push(session.dupe_ref()));
+        self.sessions.with_mut(|v| v.push(session.clone()));
     }
     fn write_stat(&self, idx: usize, value: u64) {
         if let Some(slot) = self.stats.get(idx) {
@@ -1108,7 +1096,7 @@ impl QuicEndpoint {
         let Some(addr) = peer.to_socket_address() else {
             return false;
         };
-        let blocked = bl.data().check_sockaddr(&addr._addr) != self.block_list_allow.get();
+        let blocked = bl.check_sockaddr(&addr._addr) != self.block_list_allow.get();
         if blocked {
             self.add_stat(IDX_STATS_PACKETS_BLOCKED, 1);
         }
@@ -1157,7 +1145,7 @@ impl QuicEndpoint {
             .with_mut(|r| r.set_strong(this_value, global));
         self.update_keepalive();
         ENDPOINT_REGISTRY.with_borrow_mut(|v| {
-            if !v.iter().any(|e| core::ptr::eq(e.data(), self)) {
+            if !v.iter().any(|e| core::ptr::eq(e.as_ptr(), self)) {
                 v.push(RefPtr::from_this(self.this_ptr()));
             }
         });
@@ -1182,7 +1170,7 @@ impl QuicEndpoint {
         if self.processing.replace(true) {
             return;
         }
-        let _keep_self = self.this_ptr().ref_guard();
+        let _keep_self = RefPtr::from_this(self.this_ptr());
         // A depth-0 pass runs after the previous flight left the socket: safe
         // point for graceful closes stashed during a dispatch.
         if self.send_scope_depth.get() == 0 {
@@ -1249,7 +1237,7 @@ impl QuicEndpoint {
             let Some(session) = self.live_session(id) else {
                 continue;
             };
-            let _keep = session.ref_guard();
+            let _keep = RefPtr::from_this(session);
             session.process_events(global);
             session.maybe_finish_deferred_close();
         }
@@ -1334,7 +1322,7 @@ impl QuicEndpoint {
     }
 
     pub(crate) fn on_timer_fire(this: ThisPtr<Self>) {
-        let _keep = this.ref_guard();
+        let _keep = RefPtr::from_this(this);
         this.event_loop_timer
             .with_mut(|t| t.state = EventLoopTimerState::FIRED);
         let global: &JSGlobalObject = &this.global;
@@ -1412,7 +1400,7 @@ impl QuicEndpoint {
         let applied = self.apply_server_session_options(global, &session);
         let id = session.id();
         self.register_session(&session);
-        session.deref();
+        drop(session);
         self.pending_new_sessions.with_mut(|v| v.push(id));
         self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
         self.provisional.with_mut(|v| {
@@ -1547,9 +1535,7 @@ impl QuicEndpoint {
                 self.register_session(&session);
                 self.pending_new_sessions.with_mut(|v| v.push(session.id()));
                 self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
-                session
-                    .data()
-                    .push_event(session::SessionEvent::HandshakeDone { ok: true });
+                session.push_event(session::SessionEvent::HandshakeDone { ok: true });
                 Some(session)
             }
             Err(e) => {
@@ -1604,7 +1590,7 @@ impl QuicEndpoint {
     pub(super) fn unregister_session(&self, session: session::Id) {
         let removed = self.sessions.with_mut(|v| {
             v.iter()
-                .position(|s| s.data().id() == session)
+                .position(|s| s.id() == session)
                 .map(|i| v.remove(i))
         });
         self.pending_new_sessions
@@ -1622,9 +1608,7 @@ impl QuicEndpoint {
                 false
             })
         });
-        if let Some(removed) = removed {
-            removed.deref();
-        }
+        drop(removed);
     }
 
     fn build_engine(
@@ -1732,12 +1716,10 @@ impl QuicEndpoint {
         }
         let removed = ENDPOINT_REGISTRY.with_borrow_mut(|v| {
             v.iter()
-                .position(|e| core::ptr::eq(e.data(), self))
+                .position(|e| core::ptr::eq(e.as_ptr(), self))
                 .map(|i| v.remove(i))
         });
-        if let Some(removed) = removed {
-            removed.deref();
-        }
+        drop(removed);
         true
     }
 
@@ -1781,7 +1763,7 @@ impl QuicEndpoint {
             .as_ref()
             .map(bun_jsc::Strong::get)
         {
-            session.data().apply_options(global, options)?;
+            session.apply_options(global, options)?;
         }
         Ok(())
     }
@@ -2003,7 +1985,7 @@ impl QuicEndpoint {
                 lsquic::N_LSQVER,
                 local.as_sockaddr(),
                 remote.as_sockaddr(),
-                session.dupe_ref(),
+                session.clone(),
                 sni.as_deref(),
                 0,
                 &resume_blob,
@@ -2017,28 +1999,25 @@ impl QuicEndpoint {
         let conn = match connected {
             Some(Ok(conn)) => conn,
             Some(Err(unused)) => {
-                unused.deref();
-                session.data().teardown(global);
-                session.deref();
+                drop(unused);
+                session.teardown(global);
                 return Ok(JSValue::UNDEFINED);
             }
             None => {
-                session.data().teardown(global);
-                session.deref();
+                session.teardown(global);
                 return Ok(JSValue::UNDEFINED);
             }
         };
-        session.data().conn.set(Some(conn));
-        session.data().cache_sockaddrs(conn);
+        session.conn.set(Some(conn));
+        session.cache_sockaddrs(conn);
         // `conn` is set above, so teardown clears the conn's ctx and the
         // late callbacks no-op instead of reaching an unrooted session.
-        if let Err(e) = session.data().apply_options(global, options) {
-            session.data().teardown(global);
-            session.deref();
+        if let Err(e) = session.apply_options(global, options) {
+            session.teardown(global);
             return Err(e);
         }
         if !resume_blob.is_empty() {
-            session.data().apply_peer_datagram_budget();
+            session.apply_peer_datagram_budget();
         }
         // keepAlive is per-session in Node.
         conn.set_ping_period_us(keepalive_us);
@@ -2046,7 +2025,7 @@ impl QuicEndpoint {
             conn.use_preferred_address(true);
         }
         self.register_session(&session);
-        session.deref();
+        drop(session);
         self.add_stat(IDX_STATS_CLIENT_SESSIONS, 1);
         self.schedule_process();
         Ok(handle)
@@ -2079,15 +2058,15 @@ impl QuicEndpoint {
         probe[off] = VERNEG_PROBE_CID_LEN as u8;
         off += 1;
         probe[off..off + VERNEG_PROBE_CID_LEN].copy_from_slice(&scid);
-        session.data().verneg.set(Some((version, min_version)));
-        session.data().remote_addr.set(remote);
+        session.verneg.set(Some((version, min_version)));
+        session.remote_addr.set(remote);
         self.pending_verneg
             .with_mut(|v| v.push((session.id(), scid, now_ns())));
         // A probe has no engine, so nothing else would ever arm the timer that
         // runs the sweep expiring it.
         self.schedule_process();
         self.register_session(&session);
-        session.deref();
+        drop(session);
         self.add_stat(IDX_STATS_CLIENT_SESSIONS, 1);
         if let Some(socket) = self.socket_ptr() {
             uws::udp::Socket::opaque_mut(socket.as_ptr()).send(

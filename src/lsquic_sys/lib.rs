@@ -416,7 +416,7 @@ settings_setters! {
 
 /// The endpoint that owns an [`Engine`]. Engine-level callbacks fire from
 /// inside that engine's methods (or its destruction), so `this` is live.
-pub trait NqEndpoint: AnyRefCounted<DestructorCtx = ()> + 'static {
+pub trait NqEndpoint: AnyRefCounted + 'static {
     type Session: NqSession;
 
     /// A new server connection. The returned ref becomes lsquic's conn
@@ -432,7 +432,7 @@ pub trait NqEndpoint: AnyRefCounted<DestructorCtx = ()> + 'static {
 }
 
 /// The object an lsquic conn context refers to.
-pub trait NqSession: AnyRefCounted<DestructorCtx = ()> + 'static {
+pub trait NqSession: AnyRefCounted + 'static {
     type Stream: NqStream;
 
     fn on_hsk_done(&self, status: c_int);
@@ -467,7 +467,7 @@ pub trait NqSession: AnyRefCounted<DestructorCtx = ()> + 'static {
 }
 
 /// The object an lsquic stream context refers to.
-pub trait NqStream: AnyRefCounted<DestructorCtx = ()> + 'static {
+pub trait NqStream: AnyRefCounted + 'static {
     fn on_read(&self, stream: Stream);
     fn on_write(&self, stream: Stream);
     /// The stream is freed right after this returns; the context's ref is
@@ -560,24 +560,24 @@ mod thunk {
 
     /// A callback's receiver, with a ref held for the callback's duration so
     /// an impl that releases the context's ref mid-callback stays live.
-    pub(super) struct Held<T: AnyRefCounted<DestructorCtx = ()>> {
-        _ref: bun_ptr::ScopedRef<T>,
+    pub(super) struct Held<T: AnyRefCounted> {
+        _ref: RefPtr<T>,
         ptr: ThisPtr<T>,
     }
-    impl<T: AnyRefCounted<DestructorCtx = ()>> core::ops::Deref for Held<T> {
+    impl<T: AnyRefCounted> core::ops::Deref for Held<T> {
         type Target = T;
         fn deref(&self) -> &T {
             self.ptr.get()
         }
     }
-    impl<T: AnyRefCounted<DestructorCtx = ()>> Held<T> {
+    impl<T: AnyRefCounted> Held<T> {
         /// # Safety
         /// `ctx` is a live, intrusively-refcounted `T`.
         unsafe fn new(ctx: *mut c_void) -> Self {
             // SAFETY: caller contract.
             unsafe {
                 Held {
-                    _ref: bun_ptr::ScopedRef::new(ctx.cast::<T>()),
+                    _ref: RefPtr::init_ref(ctx.cast::<T>()),
                     ptr: ThisPtr::new(ctx.cast::<T>()),
                 }
             }
@@ -626,7 +626,7 @@ mod thunk {
         };
         // SAFETY: shim contract — `owner` is the `ea_stream_if_ctx` we set.
         match E::on_new_conn(unsafe { endpoint::<E>(owner) }, conn) {
-            Some(session) => session.into_raw().cast(),
+            Some(session) => RefPtr::into_raw(session).cast(),
             None => core::ptr::null_mut(),
         }
     }
@@ -647,7 +647,7 @@ mod thunk {
         // this is the last use of the ref it held.
         unsafe {
             session::<E>(ctx).on_conn_closed();
-            RefPtr::<S<E>>::from_raw(ctx.cast()).deref();
+            drop(RefPtr::<S<E>>::from_raw(ctx.cast()));
         }
     }
     pub(super) unsafe extern "C" fn on_conncloseframe<E: NqEndpoint>(
@@ -695,7 +695,7 @@ mod thunk {
         // SAFETY: non-null conn ctx (the ref this crate leaked into it).
         let session = unsafe { session::<E>(ctx) };
         match S::<E>::on_new_stream(session.this_ptr(), stream) {
-            Some(owner) => owner.into_raw().cast(),
+            Some(owner) => RefPtr::into_raw(owner).cast(),
             None => core::ptr::null_mut(),
         }
     }
@@ -729,7 +729,7 @@ mod thunk {
                 lsquic_stream_set_ctx(s.get(), core::ptr::null_mut());
                 stream::<E>(ctx).on_close(s);
             }
-            RefPtr::<St<E>>::from_raw(ctx.cast()).deref();
+            drop(RefPtr::<St<E>>::from_raw(ctx.cast()));
         }
     }
     pub(super) unsafe extern "C" fn on_stream_reset<E: NqEndpoint>(
@@ -955,10 +955,7 @@ impl<E: NqEndpoint> Engine<E> {
                 owner,
                 _origin_blob: settings.origin_blob.take(),
             }),
-            None => {
-                owner.deref();
-                None
-            }
+            None => None,
         }
     }
 
@@ -1057,7 +1054,7 @@ impl<E: NqEndpoint> Engine<E> {
         };
         match Conn::from_raw(conn) {
             Some(conn) => {
-                let _ = session.into_raw();
+                let _ = RefPtr::into_raw(session);
                 Ok(conn)
             }
             None => Err(session),
@@ -1068,9 +1065,8 @@ impl<E: NqEndpoint> Engine<E> {
 impl<E: NqEndpoint> Drop for Engine<E> {
     fn drop(&mut self) {
         // SAFETY: created by `us_nq_engine_new`, destroyed once; callbacks it
-        // runs still see a live owner (released below).
+        // runs still see a live owner (`owner` is released after this).
         unsafe { lsquic_engine_destroy(self.raw.as_ptr()) };
-        self.owner.deref();
     }
 }
 
@@ -1581,7 +1577,7 @@ struct DriverNode {
 
 /// An endpoint's node on the loop's node:quic driver list. While registered
 /// it holds a ref on its owner, so the loop's walk always reaches a live one.
-pub struct NqDriver<T: NqDriverOwner + AnyRefCounted<DestructorCtx = ()>> {
+pub struct NqDriver<T: NqDriverOwner + AnyRefCounted> {
     node: Box<DriverNode>,
     registered: Cell<Option<(NonNull<bun_uws_sys::Loop>, RefPtr<T>)>>,
 }
@@ -1596,7 +1592,7 @@ unsafe extern "C" fn driver_drain<T: NqDriverOwner>(owner: *mut c_void) {
     T::drain_pass(unsafe { ThisPtr::new(owner.cast::<T>()) })
 }
 
-impl<T: NqDriverOwner + AnyRefCounted<DestructorCtx = ()>> NqDriver<T> {
+impl<T: NqDriverOwner + AnyRefCounted> NqDriver<T> {
     pub fn new() -> Self {
         NqDriver {
             node: Box::new(DriverNode {
@@ -1653,7 +1649,7 @@ impl<T: NqDriverOwner + AnyRefCounted<DestructorCtx = ()>> NqDriver<T> {
             // SAFETY: registered on this loop by `register`.
             unsafe { us_nq_loop_unregister(loop_.as_ptr(), self.node_ptr()) };
             self.node.owner.set(core::ptr::null_mut());
-            owner.deref();
+            drop(owner);
         }
     }
 
@@ -1668,13 +1664,13 @@ impl<T: NqDriverOwner + AnyRefCounted<DestructorCtx = ()>> NqDriver<T> {
     }
 }
 
-impl<T: NqDriverOwner + AnyRefCounted<DestructorCtx = ()>> Default for NqDriver<T> {
+impl<T: NqDriverOwner + AnyRefCounted> Default for NqDriver<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: NqDriverOwner + AnyRefCounted<DestructorCtx = ()>> Drop for NqDriver<T> {
+impl<T: NqDriverOwner + AnyRefCounted> Drop for NqDriver<T> {
     fn drop(&mut self) {
         self.unregister();
     }

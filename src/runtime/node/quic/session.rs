@@ -469,17 +469,6 @@ pub struct QuicSession {
     global: GlobalRef,
 }
 
-impl Drop for QuicSession {
-    fn drop(&mut self) {
-        for s in self.streams.replace(Vec::new()) {
-            s.deref();
-        }
-        if let Some(ep) = self.endpoint.replace(None) {
-            ep.deref();
-        }
-    }
-}
-
 impl QuicSession {
     fn new(global: &JSGlobalObject, endpoint: ThisPtr<QuicEndpoint>, is_server: bool) -> Self {
         Self {
@@ -542,14 +531,11 @@ impl QuicSession {
     ) -> JsResult<(RefPtr<QuicSession>, JSValue)> {
         let created = RefPtr::new(Self::new(global, endpoint, is_server));
         created.self_ref.set(BackRef::from(created.this_ptr()));
-        let session = created.dupe_ref();
-        let handle = Self::to_js_nonnull(created.data, global);
-        let _ = created.into_this_ptr();
+        let session = created.clone();
+        let handle = Self::to_js_nonnull(created.as_non_null(), global);
+        let _ = RefPtr::into_raw(created);
 
-        if let Err(e) = expose_state_buffers(global, handle, &session.state, &session.stats) {
-            session.deref();
-            return Err(e);
-        }
+        expose_state_buffers(global, handle, &session.state, &session.stats)?;
         session.state.no_error_code.set(0);
         session.state.internal_error_code.set(1);
         session.state.stream_open_allowed.set(1);
@@ -756,9 +742,7 @@ impl QuicSession {
                 .position(|s| s.key() == stream)
                 .map(|i| v.remove(i))
         });
-        if let Some(removed) = removed {
-            removed.deref();
-        }
+        drop(removed);
     }
     fn bump_stream_stat(&self, id: u64, local: bool) {
         let idx = match (id & STREAM_ID_UNI_BIT != 0, local) {
@@ -775,7 +759,7 @@ impl QuicSession {
         let global: &JSGlobalObject = &self.global;
         match QuicStream::create(global, self.this_ptr(), self.handle(), Some(raw)) {
             Ok((qs, _handle)) => {
-                self.streams.with_mut(|v| v.push(qs.dupe_ref()));
+                self.streams.with_mut(|v| v.push(qs.clone()));
                 qs.mark_wrote_to_lsquic();
                 self.bump_stream_stat(raw.id(), false);
                 self.push_event(SessionEvent::StreamReady {
@@ -1393,7 +1377,7 @@ impl QuicSession {
                 let Some(stream) = self.live_stream(key) else {
                     return Ok(());
                 };
-                let _keep = stream.ref_guard();
+                let _keep = RefPtr::from_this(stream);
                 if stream.mark_close_reported() {
                     return Ok(());
                 }
@@ -1697,7 +1681,7 @@ impl QuicSession {
         if self.close_reported.replace(true) {
             return;
         }
-        let _keep = self.this_ptr().ref_guard();
+        let _keep = RefPtr::from_this(self.this_ptr());
         self.state.closing.set(1);
         self.write_stat(IDX_STATS_SESSION_DESTROYED_AT, now_ns());
         // Take the close reason before emit_qlog: that runs onSessionQlog,
@@ -1761,7 +1745,7 @@ impl QuicSession {
         if self.destroyed.replace(true) {
             return;
         }
-        let _keep = self.this_ptr().ref_guard();
+        let _keep = RefPtr::from_this(self.this_ptr());
         let streams = self.streams.replace(Vec::new());
         // Each `teardown` can run user JS that destroys a later entry; the
         // refs taken out of `streams` keep every native object live through
@@ -1773,24 +1757,19 @@ impl QuicSession {
         for qs in &streams {
             qs.teardown(_global);
         }
-        for qs in streams {
-            qs.deref();
-        }
+        drop(streams);
         self.pending_local_bidi.with_mut(VecDeque::clear);
         self.pending_local_uni.with_mut(VecDeque::clear);
         if let Some(conn) = self.conn.take() {
             // Detaching the context breaks the back-pointer so late callbacks
             // no-op; the conn itself lives until lsquic closes it.
-            if let Some(ctx_ref) = conn.take_ctx::<QuicSession>() {
-                ctx_ref.deref();
-            }
+            drop(conn.take_ctx::<QuicSession>());
         }
         self.events.with_mut(Vec::clear);
         if let Some(ep) = self.endpoint.replace(None) {
             // The endpoint's `process()` re-validates against its registry, so
             // removing here is what makes the entry it snapshotted safe to skip.
             ep.unregister_session(self.id);
-            ep.deref();
         }
         self.endpoint_js.set(None);
         self.application_options_js.set(None);

@@ -142,14 +142,6 @@ pub struct QuicStream {
     destroyed: Cell<bool>,
 }
 
-impl Drop for QuicStream {
-    fn drop(&mut self) {
-        if let Some(session) = self.session.replace(None) {
-            session.deref();
-        }
-    }
-}
-
 impl QuicStream {
     /// Returns one ref for the caller alongside the JS handle (which owns
     /// another, released by finalize).
@@ -184,14 +176,11 @@ impl QuicStream {
             destroyed: Cell::new(false),
         });
         created.self_ref.set(BackRef::from(created.this_ptr()));
-        let stream = created.dupe_ref();
-        let handle = Self::to_js_nonnull(created.data, global);
-        let _ = created.into_this_ptr();
+        let stream = created.clone();
+        let handle = Self::to_js_nonnull(created.as_non_null(), global);
+        let _ = RefPtr::into_raw(created);
 
-        if let Err(e) = expose_state_buffers(global, handle, &stream.state, &stream.stats) {
-            stream.deref();
-            return Err(e);
-        }
+        expose_state_buffers(global, handle, &stream.state, &stream.stats)?;
         stream.this_value.with_mut(|r| r.set_strong(handle, global));
         let now = super::now_ns();
         stream.write_stat(IDX_STATS_CREATED_AT, now);
@@ -516,21 +505,18 @@ impl QuicStream {
         if self.destroyed.replace(true) {
             return;
         }
-        let _keep = self.this_ptr().ref_guard();
+        let _keep = RefPtr::from_this(self.this_ptr());
         self.write_stat(IDX_STATS_DESTROYED_AT, super::now_ns());
         // Detach lsquic's stream context before dropping the wrapper Strong:
         // lsquic's `on_close` (and `on_reset`) can fire after this, and the
         // shim skips a stream with no context.
         if let Some(s) = self.ls.take() {
-            if let Some(ctx_ref) = s.take_ctx::<QuicStream>() {
-                ctx_ref.deref();
-            }
+            drop(s.take_ctx::<QuicStream>());
         }
         if let Some(session) = self.session.replace(None) {
             // The session's `streams` list is the only other holder; leave it
             // before downgrading so process_events cannot reach this stream.
             session.remove_stream(self.key);
-            session.deref();
         }
         self.outbound.with_mut(|o| o.data.clear());
         self.inbound.with_mut(|i| {
@@ -748,7 +734,7 @@ impl QuicStream {
         // The session stays registered on the endpoint while any stream
         // exists; hold it across the teardown that drops this stream's ref.
         let session = self.session_ref();
-        let _keep_session = session.map(ThisPtr::ref_guard);
+        let _keep_session = session.map(RefPtr::from_this);
         self.teardown(global);
         if let Some(session) = session {
             session.schedule_process();

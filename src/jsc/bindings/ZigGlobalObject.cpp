@@ -3824,6 +3824,10 @@ static void collectStandaloneClosure(Zig::GlobalObject* globalObject, JSModuleLo
                 continue;
             }
             keepAlive.append(source);
+            if (keepAlive.hasOverflowed()) [[unlikely]] {
+                closure.complete = false;
+                return;
+            }
 
             AbstractModuleRecord* record = nullptr;
             if (auto* provider = embedded ? transpiledModuleProvider(source) : nullptr) {
@@ -3918,6 +3922,8 @@ JSC::JSPromise* StandaloneGlobalObject::moduleLoaderFetch(JSGlobalObject* jsGlob
     if (!rootRecord)
         RELEASE_AND_RETURN(scope, resolvedInternalPromise(globalObject, rootSource));
     keepAlive.append(rootRecord);
+    if (keepAlive.hasOverflowed()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, resolvedInternalPromise(globalObject, rootSource));
 
     StandaloneClosure closure;
     closure.modules.append({ rootKey, rootSource, rootRecord, {} });

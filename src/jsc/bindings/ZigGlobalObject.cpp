@@ -391,8 +391,7 @@ extern "C" JSC::EncodedJSValue BunObject__createBunStdin(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue BunObject__createBunStderr(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue BunObject__createBunStdout(JSC::JSGlobalObject*);
 
-// One-shot: a process.nextTick queued inside a microtask creates m_nextTickQueue after
-// GlobalObject::drainMicrotasks() has already checked for it, so the first drain happens here.
+// A queue created inside a microtask missed the drain at the top of GlobalObject::drainMicrotasks().
 static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 {
     auto* globalObject = defaultGlobalObject();
@@ -409,8 +408,7 @@ static void cleanupAsyncHooksData(JSC::VM& vm)
     auto* globalObject = defaultGlobalObject();
     globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
     globalObject->asyncHooksNeedsCleanup = false;
-    // Put back the hook that jsCleanupLater displaced and give it this microtask boundary:
-    // the queue may have been created since, with the one-shot still armed.
+    // The one-shot this cleanup displaced still owns this microtask boundary.
     globalObject->resetOnEachMicrotaskTick();
     checkIfNextTickWasCalledDuringMicrotask(vm);
 }

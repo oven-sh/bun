@@ -30,8 +30,7 @@ public:
     // drain function). The queued callbacks go with the heap.
     void discard(JSC::VM& vm);
 
-    // A queue created inside a microtask gets its first drain from the VM's onEachMicrotaskTick
-    // hook. After that GlobalObject::drainMicrotasks() drains it and the hook stays unset.
+    // Set once the onEachMicrotaskTick one-shot has drained this queue; GlobalObject::drainMicrotasks() owns it after that.
     bool handedOff() const { return m_handedOff; }
     void setHandedOff() { m_handedOff = true; }
 

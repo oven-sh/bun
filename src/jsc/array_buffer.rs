@@ -164,34 +164,33 @@ impl ArrayBuffer {
     pub const MAX_SIZE: c_uint = c_uint::MAX;
 }
 
-/// An `ArrayBuffer`'s (or view's) bytes handed to a pool [`Job`](crate::Job)
-/// without copying: the buffer is pinned (it cannot be detached or
-/// transferred, and — being neither resizable nor shared — cannot move,
-/// shrink, or be written by another agent) and its cell GC-protected until
-/// this is dropped. JS on the owning thread can still store into it while the
-/// job runs, so the job never views it as a `&[u8]`: [`ffi_slice`](Self::ffi_slice)
-/// lends it as an [`FfiSlice`](bun_core::ffi::FfiSlice) for C code (a codec)
-/// to read, under the job's [`Ticket`](crate::Ticket). Like
-/// [`ThreadSafe`](crate::node_path::ThreadSafe), it is made on the JS thread
-/// and released there when the job comes back.
-pub struct PinnedArrayBuffer(ArrayBuffer);
+/// A [`root`](PinnedArrayBuffer::root)ed `ArrayBuffer` (or view) handed to a
+/// pool [`Job`](crate::Job) without copying: being neither resizable nor
+/// shared it cannot move, shrink, or be written by another agent while pinned.
+/// JS on the owning thread can still store into it while the job runs, so the
+/// job never views it as a `&[u8]`: [`ffi_slice`](Self::ffi_slice) lends it as
+/// an [`FfiSlice`](bun_core::ffi::FfiSlice) for C code (a codec) to read,
+/// under the job's [`Ticket`](crate::Ticket). Made on the JS thread and
+/// released there when the job comes back.
+pub struct JobPinnedArrayBuffer(PinnedArrayBuffer);
 
 // SAFETY: the only off-thread operation is `ffi_slice`, which demands a
-// `Ticket` (VM alive) and lends memory that is pinned in place and protected
-// for as long as `self` lives, never as a `&[u8]`; `Drop` releases pin/protect
-// only on a JS thread (see there) and is a leak, not a race, anywhere else.
-unsafe impl Send for PinnedArrayBuffer {}
+// `Ticket` (VM alive) and lends memory that is pinned in place and rooted for
+// as long as `self` lives, never as a `&[u8]`; `Drop` releases pin/root only
+// on a JS thread (see there) and is a leak, not a race, anywhere else.
+unsafe impl Send for JobPinnedArrayBuffer {}
 
-impl PinnedArrayBuffer {
-    /// Pin and protect `value` if it is a non-shared, non-resizable
+impl JobPinnedArrayBuffer {
+    /// Pin and root `value` if it is a non-shared, non-resizable
     /// `ArrayBuffer` or view; `None` otherwise (the caller copies instead).
-    pub fn pin(global: &JSGlobalObject, value: JSValue) -> Option<Self> {
-        let buffer = value.as_pinned_arraybuffer(global)?;
-        if buffer.resizable || buffer.shared {
-            buffer.unpin();
+    pub fn root(global: &JSGlobalObject, value: JSValue) -> Option<Self> {
+        if !value.is_cell() {
             return None;
         }
-        buffer.value.protect();
+        let buffer = PinnedArrayBuffer::root(global, value)?;
+        if buffer.resizable || buffer.shared || buffer.ptr.is_null() {
+            return None;
+        }
         Some(Self(buffer))
     }
 
@@ -203,22 +202,21 @@ impl PinnedArrayBuffer {
     /// ticket. The owning JS thread may store into them concurrently; a
     /// reader sees each byte's old or new value.
     pub fn ffi_slice<'a>(&'a self, _vm_alive: &crate::Ticket) -> bun_core::ffi::FfiSlice<'a, u8> {
-        // SAFETY: pinned (no detach/transfer, not resizable/shared) and
-        // protected while `self` lives, and the heap outlives the ticket: the
-        // `byte_len` bytes at `ptr` stay allocated for `'a`. May be concurrently
-        // written by JS; `FfiSlice` never forms a `&[u8]` over it.
+        // SAFETY: pinned (no detach/transfer, not resizable/shared) and rooted
+        // while `self` lives, and the heap outlives the ticket: the `byte_len`
+        // bytes at `ptr` stay allocated for `'a`. May be concurrently written
+        // by JS; `FfiSlice` never forms a `&[u8]` over it.
         unsafe { bun_core::ffi::FfiSlice::from_raw(self.0.ptr.cast_const(), self.0.byte_len) }
     }
 }
 
-impl Drop for PinnedArrayBuffer {
+impl Drop for JobPinnedArrayBuffer {
     fn drop(&mut self) {
         // Pin count and the protected-values table belong to the JS thread. A
         // job always comes back to its VM's thread to drop this; a thread with
         // no VM (nothing else should hold one) leaks the pin instead of racing.
-        if crate::virtual_machine::VirtualMachine::get_or_null().is_some() {
-            self.0.unpin();
-            self.0.value.unprotect();
+        if crate::virtual_machine::VirtualMachine::get_or_null().is_none() {
+            self.0.defuse();
         }
     }
 }

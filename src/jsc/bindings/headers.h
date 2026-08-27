@@ -524,22 +524,6 @@ ZIG_DECL void NetworkSink__updateRef(void* arg0, bool arg1);
 BUN_DECLARE_HOST_FUNCTION(NetworkSink__write);
 #endif
 
-CPP_DECL JSC::EncodedJSValue H3ResponseSink__createObject(JSC::JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
-CPP_DECL void* H3ResponseSink__fromJS(JSC::EncodedJSValue JSValue1);
-
-#ifdef __cplusplus
-
-ZIG_DECL JSC::EncodedJSValue H3ResponseSink__close(JSC::JSGlobalObject* arg0, void* arg1);
-BUN_DECLARE_HOST_FUNCTION(H3ResponseSink__construct);
-BUN_DECLARE_HOST_FUNCTION(H3ResponseSink__end);
-ZIG_DECL JSC::EncodedJSValue SYSV_ABI SYSV_ABI H3ResponseSink__endWithSink(void* arg0, JSC::JSGlobalObject* arg1);
-ZIG_DECL void H3ResponseSink__finalize(void* arg0);
-BUN_DECLARE_HOST_FUNCTION(H3ResponseSink__flush);
-BUN_DECLARE_HOST_FUNCTION(H3ResponseSink__start);
-ZIG_DECL void H3ResponseSink__updateRef(void* arg0, bool arg1);
-BUN_DECLARE_HOST_FUNCTION(H3ResponseSink__write);
-#endif
-
 CPP_DECL JSC::EncodedJSValue FetchRequestBodySink__createObject(JSC::JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
 CPP_DECL void* FetchRequestBodySink__fromJS(JSC::EncodedJSValue JSValue1);
 
@@ -713,14 +697,22 @@ BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onResolveStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPRequest__onResolve);
 BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPRequest__onReject);
 
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextH3__onResolve);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextH3__onReject);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextH3__onResolveStream);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextH3__onRejectStream);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugH3__onResolve);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugH3__onReject);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugH3__onResolveStream);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugH3__onRejectStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextMux__onResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextMux__onReject);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextMux__onResolveStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextMux__onRejectStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextMuxTLS__onResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextMuxTLS__onReject);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextMuxTLS__onResolveStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextMuxTLS__onRejectStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugMux__onResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugMux__onReject);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugMux__onResolveStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugMux__onRejectStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugMuxTLS__onResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugMuxTLS__onReject);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugMuxTLS__onResolveStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugMuxTLS__onRejectStream);
 
 BUN_DECLARE_HOST_FUNCTION(Bun__FileSink__onResolveStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__FileSink__onRejectStream);

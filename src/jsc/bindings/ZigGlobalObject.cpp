@@ -2119,14 +2119,6 @@ void GlobalObject::finishCreation(VM& vm)
              init.setStructure(structure);
              init.setConstructor(constructor);
          } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSH3ResponseSinkClassStructure), [](LazyClassStructure::Initializer& init) {
-             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::H3ResponseSink);
-             auto* structure = JSH3ResponseSink::createStructure(init.vm, init.global, prototype);
-             auto* constructor = JSH3ResponseSinkConstructor::create(init.vm, init.global, JSH3ResponseSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-             init.setPrototype(prototype);
-             init.setStructure(structure);
-             init.setConstructor(constructor);
-         } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSFetchRequestBodySinkClassStructure), [](LazyClassStructure::Initializer& init) {
              auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::FetchRequestBodySink);
              auto* structure = JSFetchRequestBodySink::createStructure(init.vm, init.global, prototype);
@@ -3880,22 +3872,38 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__CronJob__onPromiseResolve;
     } else if (handler == Bun__CronJob__onPromiseReject) {
         return GlobalObject::PromiseFunctions::Bun__CronJob__onPromiseReject;
-    } else if (handler == Bun__HTTPRequestContextH3__onReject) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextH3__onReject;
-    } else if (handler == Bun__HTTPRequestContextH3__onRejectStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextH3__onRejectStream;
-    } else if (handler == Bun__HTTPRequestContextH3__onResolve) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextH3__onResolve;
-    } else if (handler == Bun__HTTPRequestContextH3__onResolveStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextH3__onResolveStream;
-    } else if (handler == Bun__HTTPRequestContextDebugH3__onReject) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH3__onReject;
-    } else if (handler == Bun__HTTPRequestContextDebugH3__onRejectStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH3__onRejectStream;
-    } else if (handler == Bun__HTTPRequestContextDebugH3__onResolve) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH3__onResolve;
-    } else if (handler == Bun__HTTPRequestContextDebugH3__onResolveStream) {
-        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH3__onResolveStream;
+    } else if (handler == Bun__HTTPRequestContextMux__onReject) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextMux__onReject;
+    } else if (handler == Bun__HTTPRequestContextMux__onRejectStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextMux__onRejectStream;
+    } else if (handler == Bun__HTTPRequestContextMux__onResolve) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextMux__onResolve;
+    } else if (handler == Bun__HTTPRequestContextMux__onResolveStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextMux__onResolveStream;
+    } else if (handler == Bun__HTTPRequestContextMuxTLS__onReject) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextMuxTLS__onReject;
+    } else if (handler == Bun__HTTPRequestContextMuxTLS__onRejectStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextMuxTLS__onRejectStream;
+    } else if (handler == Bun__HTTPRequestContextMuxTLS__onResolve) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextMuxTLS__onResolve;
+    } else if (handler == Bun__HTTPRequestContextMuxTLS__onResolveStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextMuxTLS__onResolveStream;
+    } else if (handler == Bun__HTTPRequestContextDebugMux__onReject) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugMux__onReject;
+    } else if (handler == Bun__HTTPRequestContextDebugMux__onRejectStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugMux__onRejectStream;
+    } else if (handler == Bun__HTTPRequestContextDebugMux__onResolve) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugMux__onResolve;
+    } else if (handler == Bun__HTTPRequestContextDebugMux__onResolveStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugMux__onResolveStream;
+    } else if (handler == Bun__HTTPRequestContextDebugMuxTLS__onReject) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugMuxTLS__onReject;
+    } else if (handler == Bun__HTTPRequestContextDebugMuxTLS__onRejectStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugMuxTLS__onRejectStream;
+    } else if (handler == Bun__HTTPRequestContextDebugMuxTLS__onResolve) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugMuxTLS__onResolve;
+    } else if (handler == Bun__HTTPRequestContextDebugMuxTLS__onResolveStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugMuxTLS__onResolveStream;
     } else if (handler == Bun__FetchTasklet__onResolveRequestStream) {
         return GlobalObject::PromiseFunctions::Bun__FetchTasklet__onResolveRequestStream;
     } else if (handler == Bun__FetchTasklet__onRejectRequestStream) {

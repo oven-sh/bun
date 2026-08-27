@@ -999,9 +999,7 @@ impl CAresReverse {
 impl Drop for CAresReverse {
     fn drop(&mut self) {
         self.poll_ref.unref(js_event_loop_ctx());
-        if let Some(resolver) = self.resolver.take() {
-            resolver.deref();
-        }
+        drop(self.resolver.take());
     }
 }
 
@@ -1092,9 +1090,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
 impl<T: CAresRecordType> Drop for CAresLookup<T> {
     fn drop(&mut self) {
         self.poll_ref.unref(js_event_loop_ctx());
-        if let Some(resolver) = self.resolver.take() {
-            resolver.deref();
-        }
+        drop(self.resolver.take());
     }
 }
 
@@ -1293,9 +1289,7 @@ impl Drop for DNSLookup {
         self.poll_ref.unref(Async::posix_event_loop::get_vm_ctx(
             Async::AllocatorType::Js,
         ));
-        if let Some(resolver) = self.resolver.take() {
-            resolver.deref();
-        }
+        drop(self.resolver.take());
     }
 }
 
@@ -1323,10 +1317,8 @@ impl Drop for GlobalData {
         self.resolver.destroy_channel();
         // A timer `disarm_all_for_vm_teardown` unlinked (or one still armed:
         // the timer heap goes with the VM) no longer needs its ref.
-        if let Some(timer_ref) = self.resolver.timer_ref.take() {
-            timer_ref.deref();
-        }
-        self.resolver.deref();
+        drop(self.resolver.timer_ref.take());
+        // `self.resolver` releases our ref as the field drops.
     }
 }
 
@@ -1362,7 +1354,7 @@ impl Resolver {
         use bun_jsc::virtual_machine::SweepResult;
         // Failing the pending queries releases their refs on this resolver from
         // inside `ares_destroy`; hold one so it outlives its own channel close.
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
         let result = if this.destroy_channel() {
             SweepResult::Stopped
         } else {
@@ -2024,7 +2016,7 @@ pub mod internal {
                 "expected (hostname: string, addresses: string[])"
             )));
         }
-        let hostname_slice = args[0].to_slice(global)?;
+        let hostname_slice = args[0].to_utf8(global)?;
         let len = args[1].get_length(global)? as usize;
         if len == 0 || len > 64 {
             return Err(
@@ -2034,7 +2026,7 @@ pub mod internal {
 
         let mut nodes: Vec<(AddrInfo, Option<SockaddrStorage>)> = Vec::with_capacity(len);
         for i in 0..len {
-            let addr_slice = args[1].get_index(global, i as u32)?.to_slice(global)?;
+            let addr_slice = args[1].get_index(global, i as u32)?.to_utf8(global)?;
             let addr_z = bun::ZBox::from_bytes(addr_slice.slice());
             let mut octets = [0u8; 16];
             let ip: std::net::IpAddr =
@@ -2204,7 +2196,7 @@ pub mod internal {
         let hostname_or_url = arguments[0];
 
         let hostname_slice = if hostname_or_url.is_string() {
-            hostname_or_url.to_slice(global_this)?
+            hostname_or_url.to_utf8(global_this)?
         } else {
             return Err(
                 global_this.throw_invalid_arguments(format_args!("hostname must be a string"))
@@ -2688,9 +2680,7 @@ impl Resolver {
         // (after a possible re-arm has taken its own).
         let _release = scopeguard::guard(this.timer_ref.take(), move |timer_ref| {
             timer_all_mut().increment_timer_ref(-1, uws_loop);
-            if let Some(timer_ref) = timer_ref {
-                timer_ref.deref();
-            }
+            drop(timer_ref);
         });
 
         this.event_loop_timer
@@ -2763,9 +2753,7 @@ impl Resolver {
         // Not ACTIVE ⇒ no ref is held (it is released when the timer fires or
         // is removed).
         debug_assert!(stale.is_none());
-        if let Some(stale) = stale {
-            stale.deref();
-        }
+        drop(stale);
         let now_ts = now
             .copied()
             .unwrap_or_else(|| bun::timespec::now(bun::TimespecMockMode::ForceRealTime));
@@ -2796,11 +2784,9 @@ impl Resolver {
         let uws_loop = this.vm().uws_loop();
         timer_all_mut().increment_timer_ref(-1, uws_loop);
         // Every caller holds at least one other ref for the duration of this
-        // call (a lookup's `RefPtr`, a `ref_guard`, or the global-resolver
+        // call (a lookup's `RefPtr`, a keep-alive guard, or the global-resolver
         // pin), so this is never the last.
-        if let Some(timer_ref) = this.timer_ref.take() {
-            timer_ref.deref();
-        }
+        drop(this.timer_ref.take());
     }
 
     // ───────────── pending-cache helpers ─────────────
@@ -2821,7 +2807,7 @@ impl Resolver {
         result: Option<T::Reply>,
         head: CAresLookup<T>,
     ) {
-        let _g = this.ref_guard();
+        let _g = RefPtr::from_this(this);
 
         let waiters = T::pending_cache(&this).take(index);
 
@@ -2871,7 +2857,7 @@ impl Resolver {
             .pending_host_cache(PendingCacheField::PendingHostCacheCares)
             .take(index);
 
-        let _g = this.ref_guard();
+        let _g = RefPtr::from_this(this);
 
         let Some(addr) = result else {
             head.process_get_addr_info(err, timeout, None);
@@ -2921,7 +2907,7 @@ impl Resolver {
             .pending_host_cache(PendingCacheField::PendingHostCacheNative)
             .take(index);
 
-        let _g = this.ref_guard();
+        let _g = RefPtr::from_this(this);
 
         let Some(result) = result else {
             head.process_get_addr_info_native(err);
@@ -2968,7 +2954,7 @@ impl Resolver {
     ) {
         let waiters = this.pending_addr_cache_cares.take(index);
 
-        let _g = this.ref_guard();
+        let _g = RefPtr::from_this(this);
 
         let Some(addr) = result else {
             head.process_resolve(err, timeout, None);
@@ -3017,7 +3003,7 @@ impl Resolver {
     ) {
         let waiters = this.pending_nameinfo_cache_cares.take(index);
 
-        let _g = this.ref_guard();
+        let _g = RefPtr::from_this(this);
 
         let Some(name_info) = result else {
             head.process_resolve(err, timeout, None);
@@ -3113,7 +3099,7 @@ impl Resolver {
             return;
         }
 
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
 
         if let Some(channel) = this.channel.get().as_deref() {
             channel.process(fd, readable, writable);
@@ -3595,7 +3581,7 @@ impl libuv::SocketPollHandler for UvDnsPoll {
         let _exit = vm.enter_event_loop_scope();
         // Kept alive across `Channel::process` (which re-enters and may
         // release refs) by the guard.
-        let _guard = parent.ref_guard();
+        let _guard = RefPtr::from_this(parent);
         // channel must be non-null here as c_ares must have been initialized if we're receiving callbacks
         let channel = parent.channel.get().as_deref().expect("c-ares channel");
         if status < 0 {
@@ -3932,7 +3918,7 @@ impl Resolver {
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<c_int> {
-        let str_ = value.to_slice(global_this)?;
+        let str_ = value.to_utf8(global_this)?;
         let text = bun::ZBox::from_bytes(str_.slice());
 
         let mut addr = [0u8; 16];

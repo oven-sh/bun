@@ -1543,17 +1543,6 @@ impl SourceData for webcore::AnyBlob {
 pub(crate) fn source_from_blob(b: webcore::AnyBlob) -> Source {
     Source::Any(Box::new(b))
 }
-/// Copy the ArrayBuffer bytes into an owned allocation so the async pipe
-/// writer holds independent storage. Without the copy, the StaticPipeWriter
-/// retains a raw pointer into the JS ArrayBuffer's backing store; if JS
-/// mutates or detaches that buffer before the event-loop-driven write
-/// completes, the child process receives corrupted or truncated data.
-/// Synchronous spawnSync is unaffected because it writes inline.
-#[inline]
-pub(crate) fn source_from_array_buffer(ab: jsc::array_buffer::ArrayBufferStrong) -> Source {
-    Source::OwnedBytes(ab.array_buffer.byte_slice().to_vec().into_boxed_slice())
-}
-
 /// Windows: the extra stdio pipes (`stdio_pipes`) are uv handles this
 /// Subprocess owns without a reader/writer in front of them; record that so a
 /// thread teardown closes them through us (and `finalize_streams` then finds

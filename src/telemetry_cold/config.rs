@@ -334,7 +334,6 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
     if let Some(n) = num("OTEL_BSP_MAX_EXPORT_BATCH_SIZE", &mut warnings) {
         c.batch.max_export_batch_size = n;
     }
-    c.batch = c.batch.normalized();
     if let Some(n) = num("OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT", &mut warnings)
         .or_else(|| num("OTEL_ATTRIBUTE_COUNT_LIMIT", &mut warnings))
     {

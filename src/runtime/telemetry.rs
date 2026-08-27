@@ -182,7 +182,7 @@ impl VmState {
         if self.timer_armed.get() {
             return;
         }
-        let delay = processor().config.read().scheduled_delay_ms.max(50);
+        let delay = processor().config().scheduled_delay_ms.max(50);
         let next =
             bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).add_ms(delay as i64);
         self.event_loop_timer.with_mut(|t| {
@@ -388,7 +388,7 @@ fn configure_with(
         p.export_all();
     }
     bun_telemetry::set_state(cfg.state());
-    *p.config.write() = cfg.batch;
+    p.set_config(cfg.batch);
     let host_name = crate::node::node_os::hostname_string();
     let os_version = crate::node::node_os::release();
     let resource =
@@ -699,7 +699,6 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             if let Some(v) = b.get_optional_int::<u32>(global, "maxExportBatchSize")? {
                 cfg.batch.max_export_batch_size = v;
             }
-            cfg.batch = cfg.batch.normalized();
         }
         if let Some(v) = opts.get(global, "captureDbStatement")? {
             cfg.capture_db_statement = v.to_boolean();

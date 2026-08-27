@@ -8,9 +8,10 @@
 //! new one at end: its exported duration is off by the step (the encoder
 //! clamps end >= start), the same exposure `@opentelemetry/sdk-trace-base`
 //! has by deriving its offset from `Date.now()` per span. Everything else —
-//! export deadlines, retry backoff — is a duration and uses [`mono_now`].
+//! export deadlines, retry backoff — is a duration and uses [`MonoInstant`].
 
 use core::sync::atomic::{AtomicU64, Ordering};
+use core::time::Duration;
 
 /// `epoch_ns - mono_ns` (wrapping); 0 = not yet measured.
 static OFFSET: AtomicU64 = AtomicU64::new(0);
@@ -18,10 +19,45 @@ static OFFSET: AtomicU64 = AtomicU64::new(0);
 static ANCHORED_AT: AtomicU64 = AtomicU64::new(0);
 const REANCHOR_INTERVAL_NS: u64 = 1_000_000_000;
 
-/// CLOCK_MONOTONIC nanoseconds, for deadlines and durations.
 #[inline]
-pub fn mono_now() -> u64 {
+fn mono_ns() -> u64 {
     bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns()
+}
+
+/// A CLOCK_MONOTONIC reading; only comparable with other `MonoInstant`s.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct MonoInstant(u64);
+
+impl MonoInstant {
+    pub const FAR_FUTURE: MonoInstant = MonoInstant(u64::MAX);
+
+    #[inline]
+    pub fn now() -> MonoInstant {
+        MonoInstant(mono_ns())
+    }
+
+    /// Saturating `self - earlier`.
+    #[inline]
+    pub fn since(self, earlier: MonoInstant) -> Duration {
+        Duration::from_nanos(self.0.saturating_sub(earlier.0))
+    }
+
+    /// Time left until `self` from now (zero if passed).
+    #[inline]
+    pub fn remaining(self) -> Duration {
+        self.since(MonoInstant::now())
+    }
+}
+
+impl core::ops::Add<Duration> for MonoInstant {
+    type Output = MonoInstant;
+    #[inline]
+    fn add(self, d: Duration) -> MonoInstant {
+        MonoInstant(
+            self.0
+                .saturating_add(u64::try_from(d.as_nanos()).unwrap_or(u64::MAX)),
+        )
+    }
 }
 
 #[cold]
@@ -36,7 +72,7 @@ fn measure(mono: u64) -> u64 {
 /// Nanoseconds since the Unix epoch.
 #[inline]
 pub fn now_unix_nanos() -> u64 {
-    let mono = mono_now();
+    let mono = mono_ns();
     let mut off = OFFSET.load(Ordering::Relaxed);
     if off == 0 {
         off = measure(mono);
@@ -52,7 +88,7 @@ pub fn now_unix_nanos() -> u64 {
 pub fn reanchor(now_ns: u64) {
     let mono = now_ns.wrapping_sub(OFFSET.load(Ordering::Relaxed));
     if mono.wrapping_sub(ANCHORED_AT.load(Ordering::Relaxed)) >= REANCHOR_INTERVAL_NS {
-        measure(mono_now());
+        measure(mono_ns());
     }
 }
 

@@ -16,6 +16,7 @@ use bun_http::{
     AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, HeaderBuilder, Method,
 };
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, Strong, VmHandle, bun_string_jsc};
+use bun_telemetry::MonoInstant;
 use bun_telemetry::processor::{ExportAttempt, ExportPayload, ExportResult, Exporter, OwnerKey};
 use bun_telemetry_cold::config::{Compression, ExporterConfig, OtlpExporterConfig};
 use bun_telemetry_cold::decode::{self, AnyValue, KeyValue, Repeated, Scope, Span, TraceRequest};
@@ -28,6 +29,9 @@ pub struct OtlpHttpExporter {
     url: Box<[u8]>,
     headers: HeaderBuilder,
     compression: Compression,
+    timeout_ms: u32,
+    /// `timeout_ms` rounded up: the HTTP client's idle timeout is in seconds
+    /// and must not undercut the configured budget.
     timeout_seconds: u32,
     warned: core::sync::atomic::AtomicBool,
     /// The idle timeout re-arms on every body read, so a collector trickling
@@ -38,8 +42,7 @@ pub struct OtlpHttpExporter {
 struct InflightRequest {
     async_http_id: u32,
     abort: Arc<bun_http::signals::Store>,
-    /// `clock::mono_now()` domain.
-    deadline_ns: u64,
+    deadline: MonoInstant,
 }
 
 const MAX_ATTEMPTS: u32 = 5;
@@ -194,7 +197,8 @@ impl OtlpHttpExporter {
             url: cfg.url.as_bytes().into(),
             headers,
             compression: cfg.compression,
-            timeout_seconds: (cfg.timeout_ms / 1000).max(1),
+            timeout_ms: cfg.timeout_ms,
+            timeout_seconds: cfg.timeout_ms.div_ceil(1000).max(1),
             warned: core::sync::atomic::AtomicBool::new(false),
             inflight: bun_threading::Guarded::new(Vec::new()),
         })
@@ -245,11 +249,11 @@ impl OtlpHttpExporter {
 
     /// Abort in-flight exports that have run past the export timeout; they
     /// then complete with an error and take the retry path.
-    fn abort_overdue(&self, now_ns: u64) {
+    fn abort_overdue(&self, now: MonoInstant) {
         let overdue: Vec<InflightRequest> = self
             .inflight
             .lock()
-            .extract_if(.., |r| now_ns >= r.deadline_ns)
+            .extract_if(.., |r| now >= r.deadline)
             .collect();
         for r in overdue {
             // The abort tracker only knows requests whose `aborted` signal is
@@ -267,10 +271,10 @@ impl OtlpHttpExporter {
             .retain(|r| r.async_http_id != async_http_id);
     }
 
-    fn send_blocking(&self, payload: &ExportPayload, deadline_ns: u64) -> Result<(), SendError> {
+    fn send_blocking(&self, payload: &ExportPayload, deadline: MonoInstant) -> Result<(), SendError> {
         // Bound the request by whichever is sooner: the exporter timeout or the deadline.
-        let left = deadline_ns.saturating_sub(bun_telemetry::clock::mono_now()) / 1_000_000_000;
-        let timeout = self.timeout_seconds.min((left as u32).max(1));
+        let left_secs = u32::try_from(deadline.remaining().as_secs()).unwrap_or(u32::MAX);
+        let timeout = self.timeout_seconds.min(left_secs.max(1));
         let mut req = self.request(
             &payload.body,
             HTTPClientResultCallback::new::<()>(core::ptr::null_mut(), |_, _, _| {}),
@@ -413,12 +417,12 @@ impl Exporter for OtlpHttpExporter {
                     ..Default::default()
                 }),
             );
-            let now = bun_telemetry::clock::mono_now();
+            let now = MonoInstant::now();
             me.abort_overdue(now);
             me.inflight.lock().push(InflightRequest {
                 async_http_id: http.async_http_id,
                 abort: signals,
-                deadline_ns: now + u64::from(me.timeout_seconds) * 1_000_000_000,
+                deadline: now + Duration::from_millis(u64::from(me.timeout_ms)),
             });
             (*task).http.0.write(http);
             bun_http::http_thread::init(&Default::default());
@@ -428,15 +432,15 @@ impl Exporter for OtlpHttpExporter {
         }
     }
 
-    fn tick(&self, now_mono_ns: u64) {
-        self.abort_overdue(now_mono_ns);
+    fn tick(&self, now: MonoInstant) {
+        self.abort_overdue(now);
     }
 
-    fn export_blocking(&self, payload: &ExportPayload, deadline_ns: u64) -> ExportResult {
-        if bun_telemetry::clock::mono_now() >= deadline_ns {
+    fn export_blocking(&self, payload: &ExportPayload, deadline: MonoInstant) -> ExportResult {
+        if deadline.remaining().is_zero() {
             return ExportResult::Failure;
         }
-        match self.send_blocking(payload, deadline_ns) {
+        match self.send_blocking(payload, deadline) {
             Ok(()) => ExportResult::Success,
             Err(err) => {
                 self.warn_once(payload, " at exit", &err);
@@ -454,11 +458,11 @@ pub struct ConsoleExporter;
 
 impl Exporter for ConsoleExporter {
     fn export(self: Arc<Self>, attempt: ExportAttempt) {
-        let result = self.export_blocking(attempt.payload(), u64::MAX);
+        let result = self.export_blocking(attempt.payload(), MonoInstant::FAR_FUTURE);
         attempt.done(result);
     }
 
-    fn export_blocking(&self, payload: &ExportPayload, _deadline_ns: u64) -> ExportResult {
+    fn export_blocking(&self, payload: &ExportPayload, _deadline: MonoInstant) -> ExportResult {
         let mut json = bun_telemetry_cold::otlp_json::to_json(&payload.body);
         json.push(b'\n');
         bun_core::Output::print_error(bstr::BStr::new(&json));
@@ -715,8 +719,7 @@ pub struct JsExporter {
 
 struct AwaitingExport {
     ticket: u64,
-    /// `clock::mono_now()` domain.
-    deadline_ns: u64,
+    deadline: MonoInstant,
     attempt: ExportAttempt,
 }
 
@@ -905,11 +908,11 @@ impl JsExporter {
         let global = s.global();
         let ticket = self.next_ticket.get();
         self.next_ticket.set(ticket + 1);
-        let timeout_ms = u64::from(super::processor().config().export_timeout_ms);
-        let deadline_ns = bun_telemetry::clock::mono_now() + timeout_ms * 1_000_000;
+        let deadline = MonoInstant::now()
+            + Duration::from_millis(u64::from(super::processor().config().export_timeout_ms));
         self.awaiting.borrow_mut().push(AwaitingExport {
             ticket,
-            deadline_ns,
+            deadline,
             attempt,
         });
         // Both ids ride as f64 (counters, well inside 53 bits).
@@ -939,14 +942,14 @@ impl JsExporter {
 
     /// Fail exports whose promise outlived the export timeout (owner thread),
     /// so one exporter that never settles cannot hold the pipeline.
-    fn fail_overdue(&self, now_ns: u64) {
+    fn fail_overdue(&self, now: MonoInstant) {
         if !super::current_vm_state().is_some_and(|s| core::ptr::eq(s, self.owner)) {
             return;
         }
         let overdue: Vec<AwaitingExport> = self
             .awaiting
             .borrow_mut()
-            .extract_if(.., |w| now_ns >= w.deadline_ns)
+            .extract_if(.., |w| now >= w.deadline)
             .collect();
         for w in overdue {
             bun_core::warn!(
@@ -983,7 +986,7 @@ impl Exporter for JsExporter {
         }
     }
 
-    fn export_blocking(&self, payload: &ExportPayload, deadline_ns: u64) -> ExportResult {
+    fn export_blocking(&self, payload: &ExportPayload, deadline: MonoInstant) -> ExportResult {
         match self.deliver(payload) {
             Delivery::Exported => ExportResult::Success,
             Delivery::Failed => ExportResult::Failure,
@@ -994,7 +997,7 @@ impl Exporter for JsExporter {
                 // completes), but sockets and timers are not serviced. An
                 // exporter that needs I/O here should be flushed with
                 // `await Bun.otel.shutdown()` before exiting.
-                let _ = deadline_ns;
+                let _ = deadline;
                 let Some(s) = super::current_vm_state() else {
                     return ExportResult::Failure;
                 };
@@ -1026,7 +1029,7 @@ impl Exporter for JsExporter {
         Some(self.owner_key)
     }
 
-    fn tick(&self, now_mono_ns: u64) {
-        self.fail_overdue(now_mono_ns);
+    fn tick(&self, now: MonoInstant) {
+        self.fail_overdue(now);
     }
 }

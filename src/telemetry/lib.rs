@@ -24,6 +24,7 @@ mod native_test_shims;
 
 use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
 
+pub use clock::MonoInstant;
 pub use limits::{DEFAULT_LIMITS, Limits};
 pub use otlp::{SpanWriter, Value};
 pub use pool::{JsCellRef, NativeSpan};

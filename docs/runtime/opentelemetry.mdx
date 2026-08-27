@@ -93,7 +93,7 @@ The OTLP/HTTP protobuf protocol is supported. `grpc` is not.
 
 ## `Bun.otel.start()`
 
-Configure tracing from code. Anything you leave out falls back to the environment variables above.
+Configure tracing from code. Anything you leave out falls back to the environment variables above, read from `process.env` at the time of the call.
 
 ```ts title="telemetry.ts" icon="/icons/typescript.svg"
 Bun.otel.start({

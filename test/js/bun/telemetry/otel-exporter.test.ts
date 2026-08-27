@@ -229,6 +229,26 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(c.spans().map((s: any) => s.name)).toEqual(["s"]);
   });
 
+  test("Bun.otel.start() reads OTEL_* from process.env as it is at the call, not only the startup environment", async () => {
+    using c = collector();
+    const { exitCode, stderr } = await run(
+      `process.env.OTEL_EXPORTER_OTLP_ENDPOINT = process.env.LATE_ENDPOINT;
+       process.env.OTEL_SERVICE_NAME = "set-late";
+       process.env.OTEL_RESOURCE_ATTRIBUTES = "team=core";
+       delete process.env.OTEL_TRACES_SAMPLER; // was "always_off" at startup
+       Bun.otel.start();
+       Bun.otel.tracer("t").startSpan("s").end();`,
+      { LATE_ENDPOINT: c.url, OTEL_TRACES_SAMPLER: "always_off" },
+    );
+    expect(stderr).toBe("");
+    expect(c.spans().map((s: any) => s.name)).toEqual(["s"]);
+    const attrs = Object.fromEntries(
+      c.received[0].body.resourceSpans[0].resource.attributes.map((a: any) => [a.key, a.value.stringValue]),
+    );
+    expect([attrs["service.name"], attrs["team"]]).toEqual(["set-late", "core"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("OTEL_SDK_DISABLED wins", async () => {
     using c = collector();
     const { stdout, exitCode } = await run(`console.log(Bun.otel.enabled)`, {

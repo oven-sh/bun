@@ -317,6 +317,42 @@ fn read_env_config(vm: &VirtualMachine) -> config::EnvConfig {
     config::from_env(&|k: &str| loader.get(k.as_bytes()).map(|v| v.to_vec()))
 }
 
+/// [`read_env_config`] over `process.env` as it is now rather than the
+/// process's startup environment, so `process.env.OTEL_* = …` assigned from
+/// JS (a dotenv loader, a test) before `Bun.otel.start()` counts, as it does
+/// for the SDK's `NodeSDK`.
+#[optimize(size)]
+fn read_live_env_config(global: &JSGlobalObject) -> JsResult<config::EnvConfig> {
+    let env = Bun__Telemetry__processEnv(global);
+    let failed: core::cell::Cell<Option<bun_jsc::JsError>> = core::cell::Cell::new(None);
+    let cfg = config::from_env(&|k: &str| {
+        // After a getter threw, stop reading: the exception is pending.
+        if let Some(e) = failed.take() {
+            failed.set(Some(e));
+            return None;
+        }
+        let v = match env.get(global, k) {
+            Ok(Some(v)) if v.is_string() => v.to_utf8(global),
+            Ok(_) => return None,
+            Err(e) => {
+                failed.set(Some(e));
+                return None;
+            }
+        };
+        match v {
+            Ok(s) => Some(s.to_vec()),
+            Err(e) => {
+                failed.set(Some(e));
+                None
+            }
+        }
+    });
+    match failed.take() {
+        Some(e) => Err(e),
+        None => Ok(cfg),
+    }
+}
+
 /// Called once per VM during startup (main and workers). Cheap when
 /// telemetry is not enabled: one env lookup.
 #[optimize(size)]
@@ -441,6 +477,11 @@ fn install_api_global(global: &JSGlobalObject) {
     Bun__Telemetry__installApiGlobal(global);
 }
 
+unsafe extern "C" {
+    /// The `process.env` object (JSTelemetryTracer.cpp).
+    safe fn Bun__Telemetry__processEnv(global: &JSGlobalObject) -> JSValue;
+}
+
 // ─────────────────────────── span helpers for integrations ───────────────────────────
 
 /// Start a leaf `SpanStub` for instrumentation `i` under the active span.
@@ -513,8 +554,7 @@ fn arg_string(global: &JSGlobalObject, v: JSValue) -> JsResult<Option<String>> {
 #[optimize(size)]
 pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let opts = frame.argument(0);
-    let vm = global.bun_vm();
-    let env = read_env_config(vm);
+    let env = read_live_env_config(global)?;
     if env.activation == config::Activation::SdkDisabled {
         // OTEL_SDK_DISABLED wins over code, as with the SDK's NodeSDK.start().
         static WARNED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
@@ -666,11 +706,9 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             // samplerArg falls back to OTEL_TRACES_SAMPLER_ARG like every other option.
             let arg = match opts.get(global, "samplerArg")? {
                 Some(a) => Some(a),
-                None => vm
-                    .env_loader()
-                    .get(b"OTEL_TRACES_SAMPLER_ARG")
-                    .map(|v| bun_jsc::bun_string_jsc::create_utf8_for_js(global, v))
-                    .transpose()?,
+                None => Bun__Telemetry__processEnv(global)
+                    .get(global, "OTEL_TRACES_SAMPLER_ARG")?
+                    .filter(|v| v.is_string()),
             };
             cfg.sampler = sampler_from_js(global, v, arg)?;
         }

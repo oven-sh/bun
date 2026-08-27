@@ -650,6 +650,11 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryPropagationHeaders, (JSGlobalObject * lexica
 
 } // namespace Bun
 
+extern "C" JSC::EncodedJSValue Bun__Telemetry__processEnv(Zig::GlobalObject* globalObject)
+{
+    return JSC::JSValue::encode(globalObject->processEnvObject());
+}
+
 /// Pre-populate the @opentelemetry/api global registry with the native
 /// provider (internal/telemetry.ts installGlobal). Runs during VM setup /
 /// Bun.otel.start(); a failure is reported like any other uncaught error.

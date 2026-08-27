@@ -412,7 +412,8 @@ declare module "bun" {
   const otel: {
     /**
      * Enable tracing (or reconfigure it). Options not given fall back to the
-     * `OTEL_*` environment variables, then to defaults — also on a repeat
+     * `OTEL_*` environment variables (`process.env` as it is at the call),
+     * then to defaults — also on a repeat
      * call, which is a process-wide reconfiguration (from a worker too):
      * spans already recorded are flushed with the previous configuration,
      * and only the exporter list is kept when `exporters`/`endpoint` are

@@ -173,8 +173,7 @@ class AsyncLocalStorage {
         return;
       }
     }
-    // Not concat(): it spreads an array (or isConcatSpreadable) store into
-    // the [key, value, ...] frame.
+    // Not concat(): it would spread an array store.
     const appended = context.slice();
     appended.push(this, store);
     set(appended);

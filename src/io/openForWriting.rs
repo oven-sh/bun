@@ -14,6 +14,9 @@ pub trait OpenForWritingInput {
         is_nonblocking: &mut bool,
         openat: &dyn Fn(Fd, &ZStr, i32, Mode) -> bun_sys::Result<Fd>,
     ) -> bun_sys::Result<Fd>;
+    fn borrowed_fd(&self) -> Option<Fd> {
+        None
+    }
 }
 
 impl OpenForWritingInput for crate::PathOrFileDescriptor<'_> {
@@ -31,7 +34,13 @@ impl OpenForWritingInput for crate::PathOrFileDescriptor<'_> {
                 *is_nonblocking = true;
                 bun_sys::openat_a(dir, path, input_flags, mode)
             }
-            Fd(fd_) => bun_sys::dup_with_flags(*fd_, 0),
+            Fd(fd) => bun_sys::Result::Ok(*fd),
+        }
+    }
+    fn borrowed_fd(&self) -> Option<Fd> {
+        match self {
+            crate::PathOrFileDescriptor::Fd(fd) => Some(*fd),
+            crate::PathOrFileDescriptor::Path(_) => None,
         }
     }
 }
@@ -112,15 +121,30 @@ where
     #[cfg(unix)]
     let mut isatty = false;
     let mut is_nonblocking = false;
-    let result =
-        input_path.open_for_writing_result(dir, input_flags, mode, &mut is_nonblocking, &openat);
-    let fd = result?;
+    let borrowed = input_path.borrowed_fd();
+    let fd = match borrowed {
+        Some(fd) => fd,
+        None => input_path.open_for_writing_result(
+            dir,
+            input_flags,
+            mode,
+            &mut is_nonblocking,
+            &openat,
+        )?,
+    };
+    #[cfg(windows)]
+    let _ = borrowed;
 
     #[cfg(unix)]
     {
+        let close_on_err = |fd: Fd| {
+            if borrowed.is_none() {
+                fd.close();
+            }
+        };
         match bun_sys::fstat(fd) {
             Err(err) => {
-                fd.close();
+                close_on_err(fd);
                 return Err(err);
             }
             Ok(stat) => {
@@ -151,7 +175,7 @@ where
                     let flags = match bun_sys::get_fcntl_flags(fd) {
                         Ok(flags) => flags,
                         Err(err) => {
-                            fd.close();
+                            close_on_err(fd);
                             return Err(err);
                         }
                     };

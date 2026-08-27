@@ -37,6 +37,12 @@ const { validateInteger, validateInt32, validateFunction } = require("internal/v
 
 const kIsPerformingIO = Symbol("kIsPerformingIO");
 const kIoDone = Symbol("kIoDone");
+const kFileSink = Symbol("kFileSink");
+const fileSinkBytesWritten: (sink: FileSink) => number | undefined = $newRustFunction(
+  "runtime/webcore/FileSink.rs",
+  "jsBytesWritten",
+  1,
+);
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
@@ -256,6 +262,15 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
         callback(err);
       } else {
         this.fd = fd;
+        if (this[kFileSink] === true && fs.write === write) {
+          try {
+            this[kFileSink] = Bun.file(fd).writer();
+            this._write = fileSinkWrite;
+            this._writev = fileSinkWritev;
+          } catch {
+            this[kFileSink] = undefined;
+          }
+        }
         callback();
         this.emit("open", this.fd);
         this.emit("ready");
@@ -350,6 +365,24 @@ function close(stream, err, cb) {
     return;
   }
 
+  const sink = stream[kFileSink];
+  if (sink && sink !== true) {
+    stream[kFileSink] = undefined;
+    let rc;
+    try {
+      rc = sink.end(err);
+    } catch (sinkErr) {
+      return close(stream, err || sinkErr, cb);
+    }
+    if ($isPromise(rc)) {
+      rc.then(
+        () => close(stream, err, cb),
+        sinkErr => close(stream, err || sinkErr, cb),
+      );
+      return;
+    }
+  }
+
   if (!stream.fd) {
     cb(err);
   } else if (stream.flush) {
@@ -433,6 +466,7 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     if (!write) this._write = null;
     if (!writev) this._writev = null;
   } else {
+    if (!fastPath && fd == null && start === undefined && autoClose !== false) this[kFileSink] = true;
     this._writev = undefined;
     $assert(this[kFs].write, "assuming user does not delete fs.write!");
   }
@@ -553,6 +587,84 @@ function writevAll(chunks, size, pos, cb, retries = 0) {
       cb();
     }
   });
+}
+
+function fileSinkWrite(data, encoding, cb) {
+  if (this.destroyed) return cb($ERR_STREAM_DESTROYED("write"));
+  const sink = this[kFileSink];
+  let rc;
+  try {
+    rc = sink.write(data);
+    // `true` means the sink is already done and dropped the chunk.
+    if (rc === true) throw $ERR_STREAM_DESTROYED("write");
+    // flush(true) waits for bytes libuv still has in flight (Windows).
+    if (!$isPromise(rc)) rc = sink.flush(true);
+  } catch (e) {
+    return afterFileSinkWriteSettled(this, cb, e, 0);
+  }
+  if ($isPromise(rc)) {
+    this[kIsPerformingIO] = true;
+    rc.then(
+      () => afterFileSinkWriteSettled(this, cb, null, data.length),
+      err => afterFileSinkWriteSettled(this, cb, err, 0),
+    );
+  } else {
+    this.bytesWritten += data.length;
+    process.nextTick(afterFileSinkWrite, this, cb);
+  }
+}
+
+function fileSinkWritev(data, cb) {
+  if (this.destroyed) return cb($ERR_STREAM_DESTROYED("write"));
+  const len = data.length;
+  let size = 0;
+  const chunks = new Array(len);
+  for (let i = 0; i < len; i++) {
+    const chunk = data[i].chunk;
+    chunks[i] = chunk;
+    size += chunk.length;
+  }
+  const sink = this[kFileSink];
+  let rc;
+  try {
+    rc = sink.writev(chunks);
+    if (rc === true) throw $ERR_STREAM_DESTROYED("write");
+    if (!$isPromise(rc)) rc = sink.flush(true);
+  } catch (e) {
+    return afterFileSinkWriteSettled(this, cb, e, 0);
+  }
+  if ($isPromise(rc)) {
+    this[kIsPerformingIO] = true;
+    rc.then(
+      () => afterFileSinkWriteSettled(this, cb, null, size),
+      err => afterFileSinkWriteSettled(this, cb, err, 0),
+    );
+  } else {
+    this.bytesWritten += size;
+    process.nextTick(afterFileSinkWrite, this, cb);
+  }
+}
+
+function afterFileSinkWriteSettled(stream, cb, err, bytes) {
+  stream[kIsPerformingIO] = false;
+  if (stream.destroyed) {
+    cb(err || $ERR_STREAM_DESTROYED("write"));
+    return stream.emit(kIoDone, err);
+  }
+  if (err) {
+    // The rejection does not say how much of the chunk landed; the sink does.
+    const sink = stream[kFileSink];
+    const written = sink && sink !== true ? fileSinkBytesWritten(sink) : undefined;
+    if (written !== undefined) stream.bytesWritten = written;
+    return cb(err);
+  }
+  stream.bytesWritten += bytes;
+  cb(null);
+}
+
+function afterFileSinkWrite(stream, cb) {
+  if (stream.destroyed) return cb($ERR_STREAM_DESTROYED("write"));
+  cb(null);
 }
 
 function _write(data, encoding, cb) {

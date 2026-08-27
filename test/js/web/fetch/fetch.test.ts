@@ -2726,6 +2726,28 @@ describe("fetch should allow duplex", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The request-body sink parks every JS-pump write as pending; writev must
+  // still take every chunk instead of stopping after the first.
+  it("sends every chunk of a type:'direct' body's controller.writev()", async () => {
+    using server = serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(await req.text());
+      },
+    });
+    const res = await fetch(server.url, {
+      method: "POST",
+      body: new ReadableStream({
+        type: "direct",
+        async pull(controller: any) {
+          await controller.writev([Buffer.from("a"), Buffer.from("bb"), Buffer.from("ccc")]);
+          await controller.end();
+        },
+      }),
+    });
+    expect(await res.text()).toBe("abbccc");
+  });
+
   // Passing a response body as a request body attaches it to a native sink;
   // the source stream must be marked locked + disturbed so a second consumer
   // errors instead of hanging on data that will never be delivered to it.

@@ -309,6 +309,39 @@ pub trait JsSinkType: Sized + JsSinkAbi {
     fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable;
+    /// `bufs` borrow JS buffers; a sink whose `write_bytes` runs JS must copy them first.
+    fn writev_bytes(&mut self, bufs: &[&[u8]]) -> streams::result::Writable {
+        use streams::result::Writable;
+        let mut total: u64 = 0;
+        let mut backpressure = false;
+        // A sink that parks every write still takes the next chunk.
+        let mut pending = None;
+        for b in bufs {
+            if b.is_empty() {
+                continue;
+            }
+            let data = bun_ptr::RawSlice::new(b);
+            match self.write_bytes(&streams::Result::Temporary(data)) {
+                Writable::Owned(n) | Writable::Temporary(n) => total += n,
+                Writable::Backpressure(n) => {
+                    total += n;
+                    backpressure = true;
+                }
+                Writable::OwnedAndDone(n) => return Writable::OwnedAndDone(total + n),
+                Writable::Done => return Writable::OwnedAndDone(total),
+                slot @ Writable::Pending(_) => pending = Some(slot),
+                err @ Writable::Err(_) => return err,
+            }
+        }
+        if let Some(slot) = pending {
+            return slot;
+        }
+        if backpressure {
+            Writable::Backpressure(total)
+        } else {
+            Writable::Owned(total)
+        }
+    }
     fn end(&mut self, err: Option<SysError>) -> sys::Result<()>;
     fn end_from_js(&mut self, global: &JSGlobalObject) -> sys::Result<JSValue>;
     fn flush(&mut self) -> sys::Result<()>;
@@ -504,6 +537,67 @@ impl<T: JsSinkType> JSSink<T> {
             .sink
             .write_latin1(&streams::Result::Temporary(data))
             .to_js(global))
+    }
+
+    /// `${abi_name}__writev` host-fn body.
+    pub fn js_writev(
+        global: &crate::webcore::jsc::JSGlobalObject,
+        frame: &crate::webcore::jsc::CallFrame,
+    ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
+        use crate::webcore::jsc::JSValue;
+        bun_core::mark_binding!();
+
+        let arg = frame.argument(0);
+        arg.ensure_still_alive();
+        let _keep = bun_jsc::EnsureStillAlive(arg);
+        if !arg.is_array() {
+            return Err(global.throw_value(global.to_type_error(
+                bun_jsc::ErrorCode::INVALID_ARG_TYPE,
+                format_args!("writev() expects an array of ArrayBufferView"),
+            )));
+        }
+
+        let len = arg.get_length(global)? as usize;
+        if len == 0 {
+            return Ok(JSValue::js_number(0.0));
+        }
+        const MAX_CHUNKS: usize = 1 << 20;
+        if len > MAX_CHUNKS {
+            return Err(global.throw_value(global.to_type_error(
+                bun_jsc::ErrorCode::OUT_OF_RANGE,
+                format_args!("writev() chunk count {} exceeds {}", len, MAX_CHUNKS),
+            )));
+        }
+
+        bun_jsc::MarkedArgumentBuffer::new(|roots| {
+            let mut items: Vec<JSValue> = Vec::with_capacity(len);
+            for i in 0..len {
+                let item = arg.get_index(global, i as u32)?;
+                roots.append(item);
+                items.push(item);
+            }
+            let mut slices: Vec<&[u8]> = Vec::with_capacity(len);
+            for item in &items {
+                let Some(buffer) = item.as_array_buffer(global) else {
+                    return Err(global.throw_value(global.to_type_error(
+                        bun_jsc::ErrorCode::INVALID_ARG_TYPE,
+                        format_args!("writev() expects an array of ArrayBufferView"),
+                    )));
+                };
+                let slice = buffer.slice();
+                // SAFETY: `roots` keeps every cell GC-live. No JS runs before
+                // `writev_bytes`, and a sink whose write runs JS (RewriterPipe)
+                // copies every chunk before its first write, so no slice is
+                // read after a detach could happen.
+                slices.push(unsafe { core::slice::from_raw_parts(slice.as_ptr(), slice.len()) });
+            }
+            // Acquire `&mut sink` only after all accessor JS has run.
+            let this = Self::get_this(global, frame)?;
+            if let Some(err) = this.sink.get_pending_error() {
+                return Err(global.throw_value(err));
+            }
+            Ok(this.sink.writev_bytes(&slices).to_js(global))
+        })
     }
 
     /// `${abi_name}__flush` host-fn body.

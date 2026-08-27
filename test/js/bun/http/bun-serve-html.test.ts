@@ -1096,7 +1096,10 @@ test.concurrent("server.reload() while an html route's first bundle is still in 
 });
 
 // process.chdir() leaves the cached top-level directory with a trailing slash,
-// which the dev server then used as its root when reporting a bundle failure.
+// which the dev server then used as its root. Reporting a bundle failure
+// relativizes the failing file against that root and hit a debug assertion
+// (abort, exit code 134). Release builds compile the assertion out and produce
+// the same relative path either way, so this only fails on a debug build.
 test.concurrent("dev server started after process.chdir() reports bundle failures", async () => {
   using dir = tempDir("bun-serve-html-chdir", {
     "app/index.html": `<!DOCTYPE html><html><head></head><body><script type="module" src="./app.ts"></script></body></html>`,

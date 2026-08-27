@@ -12,7 +12,9 @@
 #include <JavaScriptCore/Identifier.h>
 #include <wtf/text/WTFString.h>
 #include <wtf/text/CString.h>
+#include <limits>
 #include <mutex>
+#include "NodeValidator.h"
 #include "ObjectBindings.h"
 
 namespace Bun {
@@ -64,6 +66,11 @@ JSValue Error::toJS(VM& vm, JSGlobalObject* globalObject) const
 
 }
 
+// How long a call may wait on the credential store before it rejects, unless
+// the caller passes `timeout`. A D-Bus method call times out after 25 s by
+// default, so a keyring that has not answered by now is not going to.
+static constexpr uint64_t kDefaultTimeoutMs = 30'000;
+
 // Options struct that will be passed through the threadpool
 struct SecretsJobOptions {
     WTF_MAKE_STRUCT_TZONE_ALLOCATED(SecretsJobOptions);
@@ -79,6 +86,8 @@ struct SecretsJobOptions {
     CString name; // UTF-8 encoded, thread-safe
     CString password; // UTF-8 encoded, thread-safe (only for SET)
     bool allowUnrestrictedAccess = false; // Controls security vs headless access (only for SET)
+    uint64_t timeoutMs = kDefaultTimeoutMs; // 0: wait as long as the platform call takes
+    Secrets::Cancellation cancellation;
 
     // Results (filled in by threadpool)
     Secrets::Error error;
@@ -122,6 +131,7 @@ struct SecretsJobOptions {
         String name;
         String password;
         bool allowUnrestrictedAccess = false;
+        uint64_t timeoutMs = kDefaultTimeoutMs;
 
         const auto fromOptionsObject = [&]() -> bool {
             if (args.size() < 1) {
@@ -175,6 +185,20 @@ struct SecretsJobOptions {
             RETURN_IF_EXCEPTION(scope, false);
             name = nameValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, false);
+
+            // `timeout`: milliseconds to wait for the credential store.
+            // undefined keeps the default; null, 0 and +Infinity wait forever
+            // (0 and +Infinity as `Bun.spawn` reads them).
+            JSValue timeoutValue = getIfPropertyExistsPrototypePollutionMitigation(globalObject, options, Identifier::fromString(vm, "timeout"_s));
+            RETURN_IF_EXCEPTION(scope, false);
+            if (timeoutValue.isNull() || (timeoutValue.isNumber() && timeoutValue.asNumber() == std::numeric_limits<double>::infinity())) {
+                timeoutMs = 0;
+            } else if (!timeoutValue.isUndefined()) {
+                size_t timeoutInt = 0;
+                Bun::V::validateInteger(scope, globalObject, timeoutValue, "options.timeout"_s, jsNumber(0), jsUndefined(), &timeoutInt);
+                RETURN_IF_EXCEPTION(scope, false);
+                timeoutMs = timeoutInt;
+            }
 
             return true;
         };
@@ -235,7 +259,9 @@ struct SecretsJobOptions {
             RELEASE_AND_RETURN(scope, nullptr);
         }
 
-        RELEASE_AND_RETURN(scope, new SecretsJobOptions(operation, service.utf8(), name.utf8(), password.utf8(), allowUnrestrictedAccess));
+        auto* result = new SecretsJobOptions(operation, service.utf8(), name.utf8(), password.utf8(), allowUnrestrictedAccess);
+        result->timeoutMs = timeoutMs;
+        RELEASE_AND_RETURN(scope, result);
     }
 };
 
@@ -248,7 +274,7 @@ void Bun__SecretsJobOptions__runTask(SecretsJobOptions* opts)
     // Already have CString fields, pass them directly to platform APIs
     switch (opts->op) {
     case SecretsJobOptions::GET: {
-        auto result = Secrets::getPassword(opts->service, opts->name, opts->error);
+        auto result = Secrets::getPassword(opts->service, opts->name, opts->error, opts->cancellation);
         if (result.has_value()) {
             // Store as String for main thread (String is thread-safe to construct from CString)
             opts->resultPassword = WTF::move(result.value());
@@ -257,13 +283,49 @@ void Bun__SecretsJobOptions__runTask(SecretsJobOptions* opts)
     }
 
     case SecretsJobOptions::SET:
-        opts->error = Secrets::setPassword(opts->service, opts->name, WTF::move(opts->password), opts->allowUnrestrictedAccess);
+        opts->error = Secrets::setPassword(opts->service, opts->name, WTF::move(opts->password), opts->allowUnrestrictedAccess, opts->cancellation);
         break;
 
     case SecretsJobOptions::DELETE_OP:
-        opts->deleted = Secrets::deletePassword(opts->service, opts->name, opts->error);
+        opts->deleted = Secrets::deletePassword(opts->service, opts->name, opts->error, opts->cancellation);
         break;
     }
+}
+
+// JS thread, while the pool thread may be inside the platform call: ask it to
+// return early. Its result is dropped either way (the promise was already
+// rejected, or the VM is being torn down).
+void Bun__SecretsJobOptions__cancel(SecretsJobOptions* opts)
+{
+    opts->cancellation.cancel();
+}
+
+// JS thread, the deadline passed: reject the promise. Reads only fields the
+// pool thread never writes.
+void Bun__SecretsJobOptions__rejectTimedOut(SecretsJobOptions* opts, JSGlobalObject* global, EncodedJSValue promiseValue)
+{
+    auto& vm = global->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSPromise* promise = uncheckedDowncast<JSPromise>(JSValue::decode(promiseValue));
+
+    ASCIILiteral name;
+    switch (opts->op) {
+    case SecretsJobOptions::GET:
+        name = "secrets.get"_s;
+        break;
+    case SecretsJobOptions::SET:
+        name = "secrets.set"_s;
+        break;
+    case SecretsJobOptions::DELETE_OP:
+        name = "secrets.delete"_s;
+        break;
+    }
+
+    auto message = makeString(name, " timed out after "_s, String::number(opts->timeoutMs), "ms waiting for the system credential store"_s);
+    JSValue error = createError(global, ErrorCode::ERR_SECRETS_TIMEOUT, message);
+    RETURN_IF_EXCEPTION(scope, );
+    RELEASE_AND_RETURN(scope, promise->reject(vm, error));
 }
 
 // Runs on the main thread after threadpool completes - resolves the promise
@@ -318,8 +380,8 @@ void Bun__SecretsJobOptions__deinit(SecretsJobOptions* opts)
     delete opts;
 }
 
-// Native binding exports
-void Bun__Secrets__scheduleJob(JSGlobalObject* global, SecretsJobOptions* opts, EncodedJSValue promise);
+// Native binding exports. `timeoutMs` 0 means no deadline.
+void Bun__Secrets__scheduleJob(JSGlobalObject* global, SecretsJobOptions* opts, EncodedJSValue promise, uint64_t timeoutMs);
 
 } // extern "C"
 
@@ -338,7 +400,7 @@ JSC_DEFINE_HOST_FUNCTION(secretsGet, (JSGlobalObject * globalObject, CallFrame* 
     ASSERT(options);
 
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    Bun__Secrets__scheduleJob(globalObject, options, JSValue::encode(promise));
+    Bun__Secrets__scheduleJob(globalObject, options, JSValue::encode(promise), options->timeoutMs);
 
     return JSValue::encode(promise);
 }
@@ -353,7 +415,7 @@ JSC_DEFINE_HOST_FUNCTION(secretsSet, (JSGlobalObject * globalObject, CallFrame* 
     ASSERT(options);
 
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    Bun__Secrets__scheduleJob(globalObject, options, JSValue::encode(promise));
+    Bun__Secrets__scheduleJob(globalObject, options, JSValue::encode(promise), options->timeoutMs);
 
     return JSValue::encode(promise);
 }
@@ -373,7 +435,7 @@ JSC_DEFINE_HOST_FUNCTION(secretsDelete, (JSGlobalObject * globalObject, CallFram
     ASSERT(options);
 
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    Bun__Secrets__scheduleJob(globalObject, options, JSValue::encode(promise));
+    Bun__Secrets__scheduleJob(globalObject, options, JSValue::encode(promise), options->timeoutMs);
 
     return JSValue::encode(promise);
 }

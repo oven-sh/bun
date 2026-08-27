@@ -143,7 +143,7 @@ static void updateError(Error& err, DWORD errorCode)
     }
 }
 
-Error setPassword(const CString& service, const CString& name, CString&& password, bool allowUnrestrictedAccess)
+Error setPassword(const CString& service, const CString& name, CString&& password, bool allowUnrestrictedAccess, Cancellation& cancellation)
 {
     Error err;
 
@@ -156,7 +156,7 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
 
     // Empty string means delete - call deletePassword instead
     if (password.length() == 0) {
-        deletePassword(service, name, err);
+        deletePassword(service, name, err, cancellation);
         // Convert delete result to setPassword semantics
         // Delete errors (like NotFound) should not be propagated for empty string sets
         if (err.type == ErrorType::NotFound) {
@@ -190,7 +190,7 @@ Error setPassword(const CString& service, const CString& name, CString&& passwor
     return err;
 }
 
-std::optional<WTF::Vector<uint8_t>> getPassword(const CString& service, const CString& name, Error& err)
+std::optional<WTF::Vector<uint8_t>> getPassword(const CString& service, const CString& name, Error& err, Cancellation&)
 {
     err = Error {};
 
@@ -227,7 +227,7 @@ std::optional<WTF::Vector<uint8_t>> getPassword(const CString& service, const CS
     return result;
 }
 
-bool deletePassword(const CString& service, const CString& name, Error& err)
+bool deletePassword(const CString& service, const CString& name, Error& err, Cancellation&)
 {
     err = Error {};
 

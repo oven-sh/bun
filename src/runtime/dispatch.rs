@@ -139,6 +139,7 @@ use crate::test_runner::bun_test::{BunTest, BunTestPtr};
 use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
 use bun_jsc::abort_signal::Timeout as AbortSignalTimeout;
 use bun_jsc::garbage_collection_controller::GarbageCollectionController;
+use bun_jsc::js_secrets::Pending as SecretsPending;
 
 #[cfg(not(windows))]
 use bun_io::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for FileSinkPoll/StaticPipeWriterPoll/etc.
@@ -1137,6 +1138,13 @@ pub(crate) unsafe fn __bun_fire_timer(
                 owner!(crate::node::quic::QuicEndpoint, event_loop_timer);
             crate::node::quic::QuicEndpoint::on_timer_fire(c);
             Ok(())
+        }
+        EventLoopTimerTag::SecretsTimeout => {
+            // SAFETY: §Dispatch — `t` is the `event_loop_timer` of a live
+            // `SecretsPending` (its job unlinks the node before freeing it).
+            let c = unsafe { SecretsPending::from_timer_ptr(t) };
+            // SAFETY: per fn contract.
+            unsafe { SecretsPending::on_timeout(c, vm) }
         }
     };
     fired

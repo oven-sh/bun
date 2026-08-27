@@ -185,6 +185,12 @@ pub trait JobContext: Sized + 'static {
     /// can wait on something external. Only such jobs are tracked by the VM.
     const CANCELLABLE: bool = false;
 
+    /// Whether the job holds the event loop open until its completion runs
+    /// (Node: a queued `uv_work_t`). A job whose promise can settle before
+    /// the pool body returns (a deadline) keeps its own [`KeepAlive`] on the
+    /// `Js` side instead, and releases it there.
+    const KEEPS_LOOP_ALIVE: bool = true;
+
     /// Pool thread, VM not yet in its final wait when the pool reached the job
     /// (a job reached later is handed back unrun, as Node's environment
     /// cleanup `uv_cancel`s queued work). Return `done` to complete now; keep
@@ -298,11 +304,14 @@ impl<C: JobContext> bun_event_loop::Taskable for Job<C> {
 }
 
 impl<C: JobContext> Job<C> {
-    /// JS thread: build the job, keep the loop alive for it, hand it to the pool.
+    /// JS thread: build the job, keep the loop alive for it (unless `C`
+    /// does), hand it to the pool.
     #[track_caller]
     pub fn schedule(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
         let mut keep_alive = KeepAlive::default();
-        keep_alive.ref_(bun_io::js_vm_ctx());
+        if C::KEEPS_LOOP_ALIVE {
+            keep_alive.ref_(bun_io::js_vm_ctx());
+        }
         let job = bun_core::heap::into_raw(Box::new(Self {
             header: JobHeader {
                 // SAFETY: (this and the entry below) the erased dispatchers are

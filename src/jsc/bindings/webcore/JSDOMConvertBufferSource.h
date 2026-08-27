@@ -74,8 +74,7 @@ inline RefPtr<JSC::ArrayBufferView> toPossiblySharedArrayBufferView(JSC::VM&, JS
 
 namespace Detail {
 
-enum class BufferSourceConverterAllowSharedMode { Disallow };
-template<typename BufferSourceType, BufferSourceConverterAllowSharedMode mode>
+template<typename BufferSourceType>
 struct BufferSourceConverter {
     using WrapperType = typename Converter<BufferSourceType>::WrapperType;
     using ReturnType = typename Converter<BufferSourceType>::ReturnType;
@@ -101,7 +100,7 @@ template<> struct Converter<IDLArrayBuffer> : DefaultConverter<IDLArrayBuffer> {
     template<typename ExceptionThrower = DefaultExceptionThrower>
     static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower = ExceptionThrower())
     {
-        return Detail::BufferSourceConverter<IDLArrayBuffer, Detail::BufferSourceConverterAllowSharedMode::Disallow>::convert(lexicalGlobalObject, value, std::forward<ExceptionThrower>(exceptionThrower));
+        return Detail::BufferSourceConverter<IDLArrayBuffer>::convert(lexicalGlobalObject, value, std::forward<ExceptionThrower>(exceptionThrower));
     }
 };
 
@@ -123,7 +122,7 @@ template<> struct Converter<IDLUint8Array> : DefaultConverter<IDLUint8Array> {
     template<typename ExceptionThrower = DefaultExceptionThrower>
     static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower = ExceptionThrower())
     {
-        return Detail::BufferSourceConverter<IDLUint8Array, Detail::BufferSourceConverterAllowSharedMode::Disallow>::convert(lexicalGlobalObject, value, std::forward<ExceptionThrower>(exceptionThrower));
+        return Detail::BufferSourceConverter<IDLUint8Array>::convert(lexicalGlobalObject, value, std::forward<ExceptionThrower>(exceptionThrower));
     }
 };
 
@@ -151,7 +150,7 @@ template<> struct Converter<IDLArrayBufferView> : DefaultConverter<IDLArrayBuffe
     template<typename ExceptionThrower = DefaultExceptionThrower>
     static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower = ExceptionThrower())
     {
-        return Detail::BufferSourceConverter<IDLArrayBufferView, Detail::BufferSourceConverterAllowSharedMode::Disallow>::convert(lexicalGlobalObject, value, std::forward<ExceptionThrower>(exceptionThrower));
+        return Detail::BufferSourceConverter<IDLArrayBufferView>::convert(lexicalGlobalObject, value, std::forward<ExceptionThrower>(exceptionThrower));
     }
 };
 

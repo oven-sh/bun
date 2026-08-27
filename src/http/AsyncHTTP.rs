@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use bun_ast::{Loc, Log};
 use bun_core::FeatureFlags;
-use bun_core::{MutableString, ZigStringSlice};
+use bun_core::MutableString;
 use bun_threading::thread_pool::{self, Batch, Task};
 use bun_url::{PercentEncoding, URL};
 
@@ -30,7 +30,7 @@ bun_core::declare_scope!(AsyncHTTP, visible);
 ///
 /// Lifetime `'a` covers every borrowed input the caller hands in: `url`,
 /// `http_proxy`, `request_header_buf`, the borrowed `HTTPRequestBody::Bytes`
-/// payload, and `client.{header_buf,hostname,if_modified_since}`.
+/// payload, and `client.{header_buf,unix_socket_path,if_modified_since}`.
 pub struct AsyncHTTP<'a> {
     pub request_headers: headers::EntryList,
     pub(crate) request_body: crate::Body,
@@ -117,7 +117,6 @@ fn make_client(
     url: RequestUrl,
     header_entries: headers::EntryList,
     header_buf: &[u8],
-    hostname: Option<&[u8]>,
     signals: Signals,
     async_http_id: u32,
     http_proxy: Option<RequestUrl>,
@@ -156,8 +155,7 @@ fn make_client(
         pending_h2: None,
         signals,
         async_http_id,
-        hostname: hostname.map(bun_ptr::RawSlice::new),
-        unix_socket_path: ZigStringSlice::EMPTY,
+        unix_socket_path: bun_ptr::RawSlice::EMPTY,
         compress: None,
         compressed_request_body: Vec::new(),
         compressed_body_len: 0,
@@ -211,9 +209,8 @@ pub struct Options<'a> {
     pub http_proxy: Option<URL<'a>>,
     pub proxy_settings: Option<Arc<crate::ProxySettings>>,
     pub proxy_headers: Option<Headers>,
-    pub hostname: Option<&'a [u8]>,
     pub signals: Option<Signals>,
-    pub unix_socket_path: Option<ZigStringSlice>,
+    pub unix_socket_path: Option<&'a [u8]>,
     pub disable_timeout: Option<bool>,
     /// Per-request idle timeout override in seconds; see
     /// `HTTPClient::idle_timeout_seconds`.
@@ -269,12 +266,6 @@ impl<'a> AsyncHTTP<'a> {
             .as_mut()
             .expect("request is in flight")
             .client_mut()
-    }
-
-    pub fn clear_data(&mut self) {
-        if let Some(cell) = self.cell.get_mut() {
-            cell.clear_data();
-        }
     }
 
     /// This request with the caller's `'a` erased. The borrowed inputs it was
@@ -420,7 +411,6 @@ impl<'a> AsyncHTTP<'a> {
             // and `client.header_entries`; `MultiArrayList` owns its allocation, so clone here.
             headers.clone().expect("OOM"),
             headers_buf,
-            options.hostname,
             signals,
             async_http_id,
             http_proxy,
@@ -428,8 +418,7 @@ impl<'a> AsyncHTTP<'a> {
             redirect_type,
         );
         if let Some(val) = options.unix_socket_path {
-            debug_assert!(client.unix_socket_path.slice().is_empty());
-            client.unix_socket_path = val;
+            client.unix_socket_path = bun_ptr::RawSlice::new(val);
         }
         if let Some(val) = options.disable_timeout {
             client.flags.disable_timeout = val;
@@ -482,11 +471,10 @@ impl<'a> AsyncHTTP<'a> {
     /// Construct an `AsyncHTTP` for a synchronous request driven via
     /// [`send_sync`].
     ///
-    /// Borrowed inputs (`url`, `headers_buf`, `request_body`, `http_proxy`,
-    /// `hostname`) are tied to lifetime `'a` and must outlive the returned
-    /// value — in practice they live on the calling stack frame and the
-    /// request is driven to completion via `send_sync` before that frame
-    /// returns.
+    /// Borrowed inputs (`url`, `headers_buf`, `request_body`, `http_proxy`)
+    /// are tied to lifetime `'a` and must outlive the returned value — in
+    /// practice they live on the calling stack frame and the request is driven
+    /// to completion via `send_sync` before that frame returns.
     pub fn init_sync(
         method: Method,
         url: URL<'a>,
@@ -494,7 +482,6 @@ impl<'a> AsyncHTTP<'a> {
         headers_buf: &'a [u8],
         request_body: &'a [u8],
         http_proxy: Option<URL<'a>>,
-        hostname: Option<&'a [u8]>,
         redirect_type: FetchRedirect,
     ) -> AsyncHTTP<'a> {
         Self::init(
@@ -507,7 +494,6 @@ impl<'a> AsyncHTTP<'a> {
             redirect_type,
             Options {
                 http_proxy,
-                hostname,
                 ..Options::default()
             },
         )

@@ -18,7 +18,7 @@ use bun_ptr::{RefPtr, SelfRoot};
 use super::stream::{State as StreamState, Stream};
 use super::{dispatch, encode};
 use crate::h2_frame_parser as wire;
-use crate::http_context::HTTPSocket;
+use crate::http_context::{HTTPSocket, PeerVerification};
 use crate::http_request_body::Body;
 use crate::internal_state::HTTPStage;
 use crate::lshpack;
@@ -71,11 +71,10 @@ pub struct ClientSession {
     pub(crate) port: u16,
     pub(crate) ssl_config: Option<ssl_config::SharedPtr>,
     pub(crate) did_have_handshaking_error: bool,
-    /// True if the TLS handshake ran with `rejectUnauthorized=true`. Carried
-    /// into the keepalive pool so a strict caller never reuses a session whose
-    /// hostname was never validated.
-    pub(crate) established_with_reject_unauthorized: bool,
-    pub(crate) host_header_hash: u64,
+    /// How the TLS peer was authenticated; carried into the keepalive pool and
+    /// checked by the coalescing path so a caller only multiplexes onto a
+    /// session verified the way it would verify a fresh one.
+    pub(crate) verification: PeerVerification,
 
     /// Queued bytes for the socket; whole frames are written here and
     /// `flush()` drains as much as the socket accepts.
@@ -160,8 +159,8 @@ pub struct ClientSession {
 /// per-request wakeups from `HTTPThread`) takes one of these and goes through
 /// [`ClientSession::enter`], so the releases happen through the holder's
 /// pointer after the body's borrow has ended. Callers that need the session
-/// alive across two entry points hold a [`bun_ptr::ThisPtr::ref_guard`] of
-/// their own across both.
+/// alive across two entry points hold a `ref_guard()` of their own across
+/// both.
 pub(crate) type SessionPtr = bun_ptr::ThisPtr<ClientSession>;
 
 impl ClientSession {
@@ -181,11 +180,9 @@ impl ClientSession {
     /// `this`. When the body tore the session down that second release frees
     /// it, with no reference to it live anywhere.
     fn enter(this: SessionPtr, body: impl FnOnce(&ClientSession)) {
-        let _keep_alive = this.ref_guard();
+        let _keep_alive = RefPtr::from_this(this);
         body(&this);
-        if let Some(released) = this.released_ref.take() {
-            released.deref();
-        }
+        drop(this.released_ref.take());
     }
 
     /// Socket onData entry point; see [`Self::handle_data`].
@@ -299,8 +296,7 @@ impl ClientSession {
             port: client.connected_port,
             ssl_config: client.tls_props.clone(),
             did_have_handshaking_error: client.flags.did_have_handshaking_error,
-            established_with_reject_unauthorized: client.flags.reject_unauthorized,
-            host_header_hash: client.proxy_auth_hash(),
+            verification: client.socket_verification(),
             write_buffer: RefCell::new(bun_io::StreamBuffer::default()),
             read_buffer: RefCell::new(Vec::new()),
             streams: RefCell::new(ArrayHashMap::default()),
@@ -348,16 +344,12 @@ impl ClientSession {
         hostname: &[u8],
         port: u16,
         ssl_config: Option<*const ssl_config::SSLConfig>,
-        host_header_hash: u64,
     ) -> bool {
         let mine: Option<*const ssl_config::SSLConfig> = self
             .ssl_config
             .as_ref()
             .map(|p| std::ptr::from_ref(p.get()));
-        self.port == port
-            && mine == ssl_config
-            && self.host_header_hash == host_header_hash
-            && strings::eql_long(&self.hostname, hostname, true)
+        self.port == port && mine == ssl_config && strings::eql_long(&self.hostname, hostname, true)
     }
 
     fn adopt_client(&self, client: &mut HTTPClient) {
@@ -1044,14 +1036,14 @@ impl ClientSession {
             self.ctx.release_socket(
                 socket,
                 self.did_have_handshaking_error,
-                self.established_with_reject_unauthorized,
+                self.verification,
                 &self.hostname,
                 self.port,
                 self.ssl_config.as_ref(),
                 None,
                 b"",
                 0,
-                self.host_header_hash,
+                0,
                 pool_ref,
             );
         } else {

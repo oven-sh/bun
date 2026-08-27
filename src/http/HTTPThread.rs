@@ -33,13 +33,6 @@ struct SslContextCacheEntry {
     _config_ref: ssl_config::SharedPtr,
 }
 
-impl SslContextCacheEntry {
-    /// Release the cache's reference on `ctx`; `_config_ref` releases the
-    /// config's on drop.
-    fn release(self) {
-        self.ctx.deref();
-    }
-}
 const SSL_CONTEXT_CACHE_MAX_SIZE: usize = 60;
 const SSL_CONTEXT_CACHE_TTL_NS: u64 = 30 * (60 * 1_000_000_000); // 30 minutes
 
@@ -435,7 +428,7 @@ impl ThreadState {
             // funnels through here before touching `https_context.{group,secure}`.
             self.ensure_https_context_init();
         }
-        if !client.unix_socket_path.slice().is_empty() {
+        if !client.unix_socket_path.is_empty() {
             return self.context::<IS_SSL>().connect_socket(client);
         }
 
@@ -466,7 +459,6 @@ impl ThreadState {
                         // Cache miss - create new SSL context
                         let ctx = NewHttpContext::<true>::create(self);
                         if let Err(err) = ctx.init_with_client_config(client) {
-                            ctx.deref();
                             return Err(match err {
                                 InitError::InvalidCRL => crate::Error::InvalidCRL,
                                 InitError::FailedToOpenSocket
@@ -496,7 +488,7 @@ impl ThreadState {
                 // the guard's keeps the context alive across the connect call
                 // even if the client lets go of it inside.
                 let this = ctx.this_ptr();
-                let _guard = this.ref_guard();
+                let _guard = RefPtr::from_this(this);
                 client.set_custom_ssl_ctx(ctx);
                 let ctx = this;
                 // Keepalive is now supported for custom SSL contexts
@@ -565,9 +557,7 @@ impl ThreadState {
                 }
             }
         }
-        for entry in evicted {
-            entry.release();
-        }
+        drop(evicted);
     }
 
     /// Evict the least-recently-used SSL context cache entry.
@@ -587,7 +577,7 @@ impl ThreadState {
             }
             map.swap_remove_at(oldest_idx).1
         };
-        entry.release();
+        drop(entry);
     }
 
     fn abort_pending_h2_waiter(&self, async_http_id: u32) -> bool {
@@ -601,14 +591,9 @@ impl ThreadState {
             .iter()
             .map(|e| e.ctx.clone())
             .collect();
-        let mut found = false;
-        for ctx in contexts {
-            if !found && ctx.abort_pending_h2_waiter(async_http_id) {
-                found = true;
-            }
-            ctx.deref();
-        }
-        found
+        contexts
+            .iter()
+            .any(|ctx| ctx.abort_pending_h2_waiter(async_http_id))
     }
 
     /// The socket registered for `async_http_id`, if any.
@@ -817,7 +802,7 @@ impl ThreadState {
                                 // The resume may tear the session down and
                                 // release the socket's ref; hold one across
                                 // the second call.
-                                let _keep_alive = session.ref_guard();
+                                let _keep_alive = RefPtr::from_this(session);
                                 h2::ClientSession::resume_receive_by_http_id(session, id);
                                 h2::ClientSession::drain_response_body_by_http_id(session, id);
                             }
@@ -832,7 +817,7 @@ impl ThreadState {
                             }
                             if let Some(session) = tagged.session() {
                                 // See the Tls arm.
-                                let _keep_alive = session.ref_guard();
+                                let _keep_alive = RefPtr::from_this(session);
                                 h2::ClientSession::resume_receive_by_http_id(session, id);
                                 h2::ClientSession::drain_response_body_by_http_id(session, id);
                             }
@@ -872,8 +857,7 @@ impl ThreadState {
             .iter()
             .position(|r| core::ptr::eq(&raw const **r, ptr))
         {
-            let mut request = owned.swap_remove(i);
-            request.clear_data();
+            drop(owned.swap_remove(i));
         }
     }
 
@@ -894,10 +878,7 @@ impl ThreadState {
         self.flush_completions();
         self.drain_queued_preconnects();
 
-        let derefs = core::mem::take(&mut *self.queued_proxy_derefs.borrow_mut());
-        for tunnel in derefs {
-            tunnel.deref();
-        }
+        drop(core::mem::take(&mut *self.queued_proxy_derefs.borrow_mut()));
 
         let mut count: usize = 0;
         let mut active = ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed);

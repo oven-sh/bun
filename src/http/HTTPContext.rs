@@ -842,9 +842,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
         // URL.hostname is a borrowed slice — assigning a local would not
         // satisfy the field's lifetime, so this uses raw lifetime erasure.
         client.connected_url.hostname =
-            // SAFETY: hostname borrows either a static literal or `client.url`/
-            // `client.http_proxy` which outlive `connected_url` for the
-            // duration of the connect attempt.
+            // SAFETY: hostname borrows `client.url` or `client.http_proxy`,
+            // which outlive `connected_url` for the duration of the connect
+            // attempt.
             unsafe { bun_ptr::detach_lifetime(hostname) };
 
         if SSL {

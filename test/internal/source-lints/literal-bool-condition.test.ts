@@ -52,14 +52,15 @@ function withoutTestItems(lines: string[]): string[] {
       i++;
       continue;
     }
-    // Skip the attribute lines, then the item header. A one-line item
-    // (`#[cfg(test)] use ..;`, `mod tests;`) ends at the first `;` with no `{`.
-    while (i < lines.length && /^\s*#\[/.test(lines[i])) out[i++] = "";
+    // Blank the attribute lines and the item they annotate. The item may share
+    // the attribute's line (`#[cfg(test)] use ..;`); a braced item ends when its
+    // braces balance, a one-line item (`use ..;`, `mod tests;`) at its `;`.
     let depth = 0;
     let sawBrace = false;
     while (i < lines.length) {
-      const line = lines[i];
+      const line = lines[i].replace(/^\s*(?:#\[[^\]]*\]\s*)+/, "");
       out[i++] = "";
+      if (line.trim() === "") continue;
       for (const ch of line) {
         if (ch === "{") {
           depth++;
@@ -118,6 +119,10 @@ test("withoutTestItems keeps production code and blanks #[cfg(test)] items", () 
     "#[cfg(test)]",
     "use std::fmt;",
     "fn also_live() {}",
+    "#[cfg(test)] mod tests;",
+    "fn live_too() {}",
+    "#[cfg(test)] #[allow(unused)] fn compile_only() { if false {} }",
+    "fn last() {}",
   ]);
   expect(kept).toEqual([
     "fn live() {",
@@ -135,6 +140,10 @@ test("withoutTestItems keeps production code and blanks #[cfg(test)] items", () 
     "",
     "",
     "fn also_live() {}",
+    "",
+    "fn live_too() {}",
+    "",
+    "fn last() {}",
   ]);
 });
 

@@ -777,8 +777,6 @@ pub(crate) fn upload_stream(
         _ => {}
     }
 
-    // `credentials` is owned-by-value and explicitly `.deref()`ed on each early
-    // return above; the ref is adopted by value — moved into the MultiPartUpload below.
     let part_size = options.part_size;
     let upload = new_upload(
         credentials,

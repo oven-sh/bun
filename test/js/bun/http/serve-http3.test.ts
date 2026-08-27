@@ -1451,6 +1451,99 @@ describe("Bun.serve HTTP/3 request validation", () => {
   });
 });
 
+// A Response body stream that fails after the status and some bytes went out
+// cannot be replaced by error(). The transport has to tell the client that the
+// message is incomplete: HTTP/1 closes the socket without the last chunk. In
+// HTTP/3 a FIN is a complete message, so the stream has to end with
+// RESET_STREAM(H3_INTERNAL_ERROR) instead.
+describe("Bun.serve HTTP/3 response body error after the first chunk", () => {
+  const script = `
+    const tls = ${JSON.stringify(tls)};
+    const server = Bun.serve({
+      port: 0, tls, http3: true, http1: false,
+      routes: {
+        "/ok": () => new Response("ok"),
+        "/mid-body-error": () => {
+          let pulls = 0;
+          return new Response(new ReadableStream({
+            async pull(c) {
+              // Yield to the event loop so the previous chunk is on the wire
+              // before the next one (or the error) is produced.
+              await Bun.sleep(10);
+              if (pulls++ < 2) c.enqueue(new Uint8Array(1024).fill(65));
+              else c.error(new Error("boom"));
+            },
+          }));
+        },
+      },
+    });
+    console.error("PORT=" + server.port);
+    process.stdin.on("data", () => {});
+    ${STOP_ON_STDIN_END}
+  `;
+
+  // Raw HTTP/3 client: reports how the response stream ended on the wire.
+  async function h3ReadBody(port: number, path: string) {
+    await using endpoint = new QuicEndpoint();
+    const client = await connect(`127.0.0.1:${port}`, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 5 },
+      onerror() {},
+    });
+    await client.opened;
+    let status = "";
+    const stream = await client.createBidirectionalStream({
+      headers: requestHeaders(path),
+      onheaders(received: Record<string, string>) {
+        status = received[":status"];
+      },
+    });
+    stream.closed.catch(() => {});
+    // A reset discards body bytes the reader has not consumed yet (RFC 9000
+    // section 3.2), so only how the stream ended is deterministic.
+    let end = "fin";
+    try {
+      for await (const _ of stream as AsyncIterable<Uint8Array[]>) {
+      }
+    } catch (e) {
+      end = `${(e as Error & { code?: string }).code}: ${(e as Error).message}`;
+    }
+    client.close().catch(() => {});
+    return { status, end };
+  }
+
+  test("fetch() sees the status, then the body read rejects", async () => {
+    await withCustomServer(script, async (port, _send, waitForStderr) => {
+      const res = await fetchH3(port, "/mid-body-error");
+      const body = await res.text().then(
+        text => ({ resolved: text.length }),
+        (e: Error & { code?: string }) => ({ rejected: e.code }),
+      );
+      // The handler's error still reaches the server's error reporting.
+      await waitForStderr(/boom/);
+      // Only the one stream was reset; the connection stays usable.
+      const after = await fetchH3(port, "/ok");
+      expect({ status: res.status, body, after: await after.text() }).toEqual({
+        status: 200,
+        body: { rejected: "HTTP3StreamReset" },
+        after: "ok",
+      });
+    });
+  });
+
+  test("the stream ends with RESET_STREAM(H3_INTERNAL_ERROR), not FIN", async () => {
+    await withCustomServer(script, async port => {
+      const result = await h3ReadBody(port, "/mid-body-error");
+      expect(result).toEqual({
+        status: "200",
+        end: "ERR_QUIC_STREAM_RESET: The QUIC stream was reset by the peer with error code 258",
+      });
+    });
+  });
+});
+
 // The HTTP/3 twin of the HTTP/1 cases in websocket-server.test.ts: ws.close()
 // runs close() before it returns, and a request handler that calls it must still
 // run to completion before the nextTick and promise callbacks it queued. The

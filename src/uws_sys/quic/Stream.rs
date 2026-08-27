@@ -11,6 +11,17 @@ bun_opaque::opaque_ffi! {
     pub struct Stream;
 }
 
+/// HTTP/3 error codes (RFC 9114 §8.1) carried by `RESET_STREAM`. Mirrors the
+/// `US_H3_*` constants in `quic.h`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u64)]
+pub enum H3ErrorCode {
+    /// The HTTP stack failed while producing the message.
+    InternalError = 0x102,
+    /// The request or its response is cancelled by the sender.
+    RequestCancelled = 0x10C,
+}
+
 // `Stream` is an `opaque_ffi!` ZST (`UnsafeCell<[u8; 0]>`), so `&mut Stream` is
 // ABI-identical to a non-null `*mut Stream` with no `noalias`/`readonly`
 // attribute. Shims taking only the handle + value types are `safe fn`; the
@@ -19,7 +30,8 @@ unsafe extern "C" {
     safe fn us_quic_stream_socket(s: &mut Stream) -> *mut Socket;
     safe fn us_quic_stream_shutdown(s: &mut Stream);
     safe fn us_quic_stream_close(s: &mut Stream);
-    safe fn us_quic_stream_reset(s: &mut Stream);
+    safe fn us_quic_stream_reset(s: &mut Stream, error_code: u64);
+    safe fn us_quic_stream_peer_reset(s: &mut Stream) -> c_int;
     safe fn us_quic_stream_header_count(s: &mut Stream) -> c_uint;
     safe fn us_quic_stream_header(s: &mut Stream, i: c_uint) -> *const Header;
     safe fn us_quic_stream_ext(s: &mut Stream) -> *mut c_void;
@@ -52,8 +64,18 @@ impl Stream {
         us_quic_stream_close(self)
     }
 
-    pub fn reset(&mut self) {
-        us_quic_stream_reset(self)
+    /// Abort the send half with `RESET_STREAM(error_code)` and close the
+    /// stream. Unlike [`Stream::close`], the peer does not see a FIN, which in
+    /// HTTP/3 would mark the bytes sent so far as a complete message.
+    pub fn reset(&mut self, error_code: H3ErrorCode) {
+        us_quic_stream_reset(self, error_code as u64)
+    }
+
+    /// True once the peer has sent `RESET_STREAM` for the half we read from.
+    /// `on_stream_close` then follows without `on_stream_data` ever reporting
+    /// `fin`.
+    pub fn peer_reset(&mut self) -> bool {
+        us_quic_stream_peer_reset(self) != 0
     }
 
     pub fn header_count(&mut self) -> c_uint {

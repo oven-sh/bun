@@ -1,6 +1,10 @@
 import { gunzipSync, gzipSync, type Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
+import { createPrivateKey } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { listen, QuicError } from "node:quic";
 
 // In-process server with `http1: false` so the build under test binds UDP only.
 // A fetch that silently fell back to HTTP/1.1 would get ECONNREFUSED, which
@@ -669,6 +673,57 @@ test("retries on a fresh session when a pooled session is stale (port reuse)", a
   } finally {
     void b.stop(true);
   }
+});
+
+// In HTTP/3 only a FIN completes a message. A response stream that goes away
+// after the headers without one (the server sent RESET_STREAM, or the
+// connection closed) carries a truncated body, and the body read must fail
+// the way HTTP2StreamReset does for h2 instead of resolving with the bytes
+// received so far.
+describe("response stream ends without FIN", () => {
+  const keysDir = join(import.meta.dir, "..", "..", "node", "test", "fixtures", "keys");
+  const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
+  const cert = readFileSync(join(keysDir, "agent1-cert.pem"));
+
+  // A node:quic HTTP/3 server whose response is "200", the body "partial",
+  // then `end(stream)`. The body is flushed before `end` runs: the server
+  // yields to the event loop, which is where lsquic packetizes writes.
+  async function fetchFromServerThat(end: (stream: any, session: any) => void) {
+    await using server = await listen(
+      async session => {
+        session.onstream = (stream: any) => stream.closed.catch(() => {});
+        await session.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        async onheaders(this: any) {
+          this.sendHeaders({ ":status": "200" });
+          this.writer.writeSync(new TextEncoder().encode("partial"));
+          await Bun.sleep(10);
+          end(this, this.session);
+        },
+      },
+    );
+    const res = await fetch(`https://127.0.0.1:${server.address.port}/`, h3);
+    const body = await res.text().then(
+      text => ({ resolved: text }),
+      (e: Error & { code?: string }) => ({ rejected: e.code }),
+    );
+    return { status: res.status, body };
+  }
+
+  test("RESET_STREAM mid-body rejects the body read with HTTP3StreamReset", async () => {
+    const result = await fetchFromServerThat(stream =>
+      stream.destroy(new QuicError("body failed", { errorCode: 0x102 })),
+    );
+    expect(result).toEqual({ status: 200, body: { rejected: "HTTP3StreamReset" } });
+  });
+
+  test("CONNECTION_CLOSE mid-body rejects the body read with ECONNRESET", async () => {
+    const result = await fetchFromServerThat((_stream, session) => session.close({ code: 0x100, type: "application" }));
+    expect(result).toEqual({ status: 200, body: { rejected: "ECONNRESET" } });
+  });
 });
 
 // Subprocess so the experimental flag is process-scoped and the in-process

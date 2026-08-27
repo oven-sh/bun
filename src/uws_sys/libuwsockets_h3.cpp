@@ -116,10 +116,14 @@ void uws_h3_res_end_stream(uws_h3_res_t* res, bool close_connection)
     r->sendTerminatingChunk(close_connection);
 }
 
+/* Server-side failure after the response started (a body stream errored,
+ * a file read failed). HTTP/1 closes the socket without the terminating
+ * chunk; the HTTP/3 equivalent is RESET_STREAM, since a FIN would hand the
+ * client the truncated body as a complete message. */
 void uws_h3_res_force_close(uws_h3_res_t* res)
 {
     ((Http3Response*)res)->clearOnWritableAndAborted();
-    us_quic_stream_close((us_quic_stream_t*)res);
+    us_quic_stream_reset((us_quic_stream_t*)res, US_H3_INTERNAL_ERROR);
 }
 
 bool uws_h3_res_try_end(uws_h3_res_t* res, const char* bytes, size_t len, size_t total_len, bool close)

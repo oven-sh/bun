@@ -1157,6 +1157,41 @@ describe("spyOn", () => {
       expect(fn).not.toHaveBeenCalled();
     });
 
+    test("spyOn works with indexed properties that hold a non-function value", () => {
+      const arr = [1, 2, 3];
+      const fn = spyOn(arr, 0);
+      expect(arr[0]).toBe(fn);
+      expect(Object.getOwnPropertyDescriptor(arr, 0)).toEqual({
+        value: fn,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+      expect(arr[0]()).toBe(1);
+      expect(fn).toHaveBeenCalledTimes(1);
+
+      arr[0] = 42;
+      expect(arr[0]).toBe(42);
+
+      fn.mockRestore();
+      expect(arr[0]).toBe(1);
+    });
+
+    test("spyOn works with a missing indexed property", () => {
+      const obj = {};
+      const fn = spyOn(obj, 169);
+      expect(obj[169]).toBe(fn);
+      expect(spyOn(obj, 169)).toBe(fn);
+      expect(obj[169]()).toBeUndefined();
+      expect(fn).toHaveBeenCalledTimes(1);
+
+      obj[169] = "x";
+      expect(obj[169]).toBe("x");
+
+      fn.mockRestore();
+      expect(obj[169]).toBeUndefined();
+    });
+
     // The engine serves a function's `prototype` property specially, so it cannot be
     // replaced with a getter/setter spy; historically this crashed the process.
     test("spyOn on a function's prototype property throws instead of crashing", () => {

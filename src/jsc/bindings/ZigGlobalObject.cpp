@@ -3380,6 +3380,8 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
     globalObject->vm().queueMicrotask(WTF::move(task));
 }
 
+extern "C" bool Bun__hasStandaloneModuleGraph();
+
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
     JSModuleLoader* loader, JSValue key,
     JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool)
@@ -3443,6 +3445,20 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         }
     }
 
+    // The bundler prints every import of an embedded chunk as an absolute graph path,
+    // which resolves the same way every time unless a Bun.plugin onResolve hook could
+    // intercept it (only the file namespace can match a path without a `ns:` prefix).
+    // Without a graph such a path went through the filesystem and may change.
+    static const bool hasStandaloneModuleGraph = Bun__hasStandaloneModuleGraph();
+    const bool memoize = hasStandaloneModuleGraph
+        && Bun::isStandaloneModuleGraphPath(keyString)
+        && globalObject->onResolvePlugins.fileNamespace.callbacks.isEmpty();
+    if (memoize) {
+        auto cached = globalObject->standaloneResolveCache.find(keyString.impl());
+        if (cached != globalObject->standaloneResolveCache.end())
+            return cached->value;
+    }
+
     ErrorableString res;
     BunString keyZ = Bun::toString(keyString);
     BunString referrerZ = Bun::toString(referrerString);
@@ -3456,10 +3472,14 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     auto resolved = res.result.value.transferToWTFString();
     auto query = queryZ.transferToWTFString();
 
-    if (!query.isEmpty()) {
-        return Identifier::fromString(vm, makeString(resolved, query));
+    auto identifier = query.isEmpty()
+        ? Identifier::fromString(vm, resolved)
+        : Identifier::fromString(vm, makeString(resolved, query));
+    if (memoize) {
+        ASSERT(Bun::isStandaloneModuleGraphPath(resolved));
+        globalObject->standaloneResolveCache.set(keyString.impl(), identifier);
     }
-    return Identifier::fromString(vm, resolved);
+    return identifier;
 }
 
 JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,

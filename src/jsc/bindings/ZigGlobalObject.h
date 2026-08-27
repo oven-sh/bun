@@ -729,6 +729,10 @@ public:
     WTF::UncheckedKeyHashMap<uintptr_t, Ref<JSC::SourceProvider>> sourceProviderMap;
     size_t reloadCount = 0;
 
+    // With --splitting thousands of import edges name the same few hundred embedded
+    // chunks; moduleLoaderResolve memoizes those specifiers (bench/standalone-resolve).
+    WTF::UncheckedKeyHashMap<RefPtr<WTF::StringImpl>, JSC::Identifier> standaloneResolveCache;
+
     void reload();
     void clearModuleRegistry();
 

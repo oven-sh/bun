@@ -347,6 +347,18 @@ BunString toStringRef(WTF::StringImpl* wtfString);
 // This creates a detached string view, which cannot be ref/unref.
 // Be very careful using this, and ensure the memory owner does not get destroyed.
 BunString toStringView(WTF::StringView view);
+
+// Whether `path` is inside the module graph embedded in a `bun build --compile`
+// executable, in the form the bundler prints (`standalone_path::BASE_PUBLIC_PATH`
+// in src/options_types/lib.rs).
+inline bool isStandaloneModuleGraphPath(const WTF::String& path)
+{
+#if OS(WINDOWS)
+    return path.startsWith("B:/~BUN/"_s);
+#else
+    return path.startsWith("/$bunfs/"_s);
+#endif
+}
 }
 
 typedef struct {

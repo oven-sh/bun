@@ -411,5 +411,77 @@ describe("bundler", () => {
         },
       });
     }
+
+    // Every chunk that imports the shared chunk names it by the same embedded
+    // path, and the runtime memoizes that resolution after the first chunk.
+    // The memo must hand back the one module instance, step aside as soon as
+    // a Bun.plugin onResolve hook is registered, even for a specifier it
+    // already answered, and answer again once the hook is cleared. The hook
+    // only redirects chunk-to-chunk imports (lazy3 -> shared) to a module that
+    // re-exports the shared chunk, so the entry's import() of lazy3 itself
+    // still reaches the graph.
+    itBundled("compile/splitting/SharedChunkResolutionIsMemoized", {
+      compile: true,
+      splitting: true,
+      format: "esm",
+      files: {
+        "/entry.ts": /* js */ `
+          import { plugin } from "bun";
+          const a = await import("./lazy1.ts");
+          const b = await import("./lazy2.ts");
+          console.log(a.bump(), b.bump(), a.bump());
+          plugin({
+            name: "redirect-shared",
+            setup(build) {
+              const chunk = /[\\\\/]root[\\\\/]chunk-[0-9a-z]+\\.js$/;
+              let shared;
+              build.onResolve({ filter: chunk }, args => {
+                if (!chunk.test(args.importer)) return undefined;
+                shared = args.path;
+                return { path: "redirected", namespace: "memo-test" };
+              });
+              build.onLoad({ filter: /.*/, namespace: "memo-test" }, () => ({
+                contents: \`console.log("redirected"); export * from \${JSON.stringify(shared)};\`,
+                loader: "js",
+              }));
+            },
+          });
+          const c = await import("./lazy3.ts");
+          console.log(c.bump(), a.bump());
+          plugin.clearAll();
+          const d = await import("./lazy4.ts");
+          console.log(d.bump(), c.bump());
+        `,
+        "/lazy1.ts": /* js */ `
+          import { bump } from "./shared.ts";
+          export { bump };
+        `,
+        "/lazy2.ts": /* js */ `
+          import { bump } from "./shared.ts";
+          export { bump };
+        `,
+        "/lazy3.ts": /* js */ `
+          import { bump } from "./shared.ts";
+          export { bump };
+        `,
+        "/lazy4.ts": /* js */ `
+          import { bump } from "./shared.ts";
+          export { bump };
+        `,
+        "/shared.ts": /* js */ `
+          let n = 0;
+          export function bump() { return ++n; }
+        `,
+      },
+      run: {
+        stdout: "1 2 3\nredirected\n4 5\n6 7",
+      },
+      onAfterBundle(api) {
+        const payload = readFileSync(api.outfile).toString("latin1");
+        const imports = payload.match(/from "(\/\$bunfs|B:\/~BUN)\/root\/chunk-[0-9a-z]+\.js"/g) ?? [];
+        expect(imports).toHaveLength(4);
+        expect(new Set(imports).size).toBe(1);
+      },
+    });
   });
 });

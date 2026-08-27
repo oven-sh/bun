@@ -470,14 +470,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     CString utf8;
 
     // Support embedded .node files
-    // See src/standalone_graph/StandaloneModuleGraph.rs for what this "$bunfs" thing is
-#if OS(WINDOWS)
-#define StandaloneModuleGraph__base_path "B:/~BUN/"_s
-#else
-#define StandaloneModuleGraph__base_path "/$bunfs/"_s
-#endif
     [[maybe_unused]] bool fromEmbedded = false;
-    if (filename.startsWith(StandaloneModuleGraph__base_path)) {
+    if (Bun::isStandaloneModuleGraphPath(filename)) {
         BunString bunStr = Bun::toString(filename);
         BunString resolved = Bun__resolveEmbeddedNodeFile(&bunStr);
         if (resolved.tag != BunStringTag::Dead) {

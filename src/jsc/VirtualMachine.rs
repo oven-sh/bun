@@ -420,6 +420,12 @@ pub fn standalone_module_graph() -> Option<&'static dyn bun_resolver::Standalone
     STANDALONE_MODULE_GRAPH.get().copied()
 }
 
+/// GlobalObject::moduleLoaderResolve: whether this process is a `bun build --compile` executable.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__hasStandaloneModuleGraph() -> bool {
+    standalone_module_graph().is_some()
+}
+
 /// InternalModuleRegistry::generateModule: ahead-of-time bytecode for internal module `id` from a `bun build --compile`
 /// executable (process-lifetime bytes JSC may alias), if this process is one and it carries it.
 #[unsafe(no_mangle)]

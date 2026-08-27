@@ -682,19 +682,19 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
       expect(frame.height).toBeGreaterThan(300);
       expect(frame.events).toEqual(["appended", "resize", "nested:true", "read"]);
       // A Group is as tall as its two stacked buttons plus padding (and title), no more, and spans the stack.
-      // A button's frame exceeds its alignment rect by the bezel's insets, by an amount that differs per
-      // macOS release, so the bound is one button's frame, not the sum of two.
+      // The buttons are reported by their alignment rectangles (what the layout places), in the box's
+      // content view: their frames overhang those by the bezel's insets, differently per macOS release.
       const group = step(r, "group");
       expect(group.a.height).toBeGreaterThan(0);
-      expect(group.bare.height).toBeGreaterThan(Math.max(group.a.height, group.b.height));
+      expect(group.bare.height).toBeGreaterThan(group.a.height + group.b.height);
       expect(group.bare.height).toBeLessThan(120);
       // Whether a title makes the box taller or only moves its content down differs per macOS
-      // release; on every one the box contains both buttons with room above them.
-      expect(group.titled.height).toBeGreaterThan(Math.max(group.a.height, group.b.height));
+      // release; on every one the box holds both buttons, stacked, above its bottom edge.
+      expect(group.titled.height).toBeGreaterThan(group.a.height + group.b.height);
       expect(group.titled.height).toBeLessThan(150);
       expect(group.a.y + group.a.height).toBeLessThanOrEqual(group.titled.height);
       expect(group.b.y).toBeGreaterThanOrEqual(0);
-      expect(Math.abs(group.a.y - group.b.y)).toBeGreaterThanOrEqual(group.b.height);
+      expect(group.a.y).toBeGreaterThanOrEqual(group.b.y + group.b.height);
       expect(group.titled.width).toBe(group.stack.width);
       // Long titles truncate; the 300pt window stays 300pt.
       expect(step(r, "long labels")).toEqual({
@@ -817,13 +817,18 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
       expect(busy.batches.length).toBeGreaterThanOrEqual(3);
       const idle = step(r, "idle");
       expect(idle, r.stderr).toBeDefined();
+      // Every posted event went out, 16 per wait at most, and the queued
+      // events ended the first wait at once: at least one full batch was
+      // sent before the 30 ms timer, however slow the machine.
       expect(idle.dispatched).toBeGreaterThanOrEqual(40);
+      expect(idle.byTimer.dispatched).toBeGreaterThanOrEqual(16);
+      expect(idle.byTimer.dispatched).toBeLessThanOrEqual(16 * idle.byTimer.waits);
       expect(idle.staleWakes).toBeGreaterThanOrEqual(1);
-      // Three waits ended by queued events, then the one(s) the timer ends;
-      // the sleep until the timer hands the heaps to the scavenger when the
-      // environment runs one. The timer fires no earlier than asked; how
-      // late it fires is the machine's load, not the pump's.
-      expect(idle.waits).toBeGreaterThanOrEqual(4);
+      // 40 events take three waits at least; the sleep until the timer hands
+      // the heaps to the scavenger when the environment runs one. The timer
+      // fires no earlier than asked; how late it fires is the machine's
+      // load, not the pump's.
+      expect(idle.waits).toBeGreaterThanOrEqual(3);
       if (idle.scavenger) expect(idle.handOffs).toBeGreaterThanOrEqual(1);
       expect(idle.timerMs).toBeGreaterThanOrEqual(29);
       expect(r.signal).toBeNull();
@@ -1279,7 +1284,13 @@ describe.skipIf(!isMacOS)("bun:objc and bun:appkit", () => {
         verdict: true,
         threw: false,
       });
-      expect(step(r, "collected")).toEqual({ step: "collected", made: 20, collected: 20, nativesLeft: 0, windows: 0 });
+      expect(step(r, "collected"), JSON.stringify(step(r, "survivors"))).toEqual({
+        step: "collected",
+        made: 20,
+        collected: 20,
+        nativesLeft: 0,
+        windows: 0,
+      });
       expect(r.exitCode).toBe(0);
     },
   );

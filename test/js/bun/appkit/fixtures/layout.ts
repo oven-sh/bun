@@ -67,13 +67,21 @@ await run(async () => {
     const titled = new Group({ title: "Titled", children: [a, b] });
     const bare = new Group({ children: [new Button({ title: "A" }), new Button({ title: "B" })] });
     const stack = new VStack({ children: [titled, bare] });
+    // A button's frame overhangs its alignment rectangle by the bezel's
+    // insets, which differ per macOS release; the alignment rectangle is what
+    // the box's layout places, so that is what is reported for the buttons.
+    const aligned = (view: View) => {
+      const native = view.native;
+      const { origin, size } = native.alignmentRectForFrame_(native.frame());
+      return { x: origin.x, y: origin.y, width: size.width, height: size.height };
+    };
     inWindow(stack, { width: 300, height: 300 }, () => {
       emit({
         step: "group",
         titled: titled.frame,
         bare: bare.frame,
-        a: a.frame,
-        b: b.frame,
+        a: aligned(a),
+        b: aligned(b),
         stack: stack.frame,
       });
     });

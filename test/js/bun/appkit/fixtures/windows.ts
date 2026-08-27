@@ -280,15 +280,36 @@ await run(async () => {
     }
   })();
   const made = weak.allObjects().count();
+  const NSApp = objc.classes.NSApplication.sharedApplication();
   await waitFor(
     async () => {
       Bun.gc(true);
-      // AppKit lets go of a closed window on a later pass of its run loop.
+      // AppKit lets go of a closed window on a later pass of its run loop,
+      // after the windows update that follows an event.
       await tick();
+      NSApp.updateWindows();
       return collected === 20 && weak.allObjects().count() === 0;
     },
     "closed windows to be collected",
     5000,
   ).catch(() => {});
+  // What still holds a window that should be gone: its counts and state, for the test's message.
+  const retainCount = objc.fn("CFGetRetainCount", { returns: "l", args: ["@"] });
+  const survivors = objc.js(weak.allObjects()) as H[];
+  if (survivors.length > 0) {
+    using listed = NSApp.windows();
+    emit({
+      step: "survivors",
+      windows: survivors.map(w => ({
+        title: w.title(),
+        retainCount: retainCount(w),
+        visible: w.isVisible(),
+        number: w.windowNumber(),
+        listed: listed.containsObject_(w),
+        releasedWhenClosed: w.isReleasedWhenClosed(),
+        contentView: w.contentView() !== null,
+      })),
+    });
+  }
   emit({ step: "collected", made, collected, nativesLeft: weak.allObjects().count(), windows: app.windows.length });
 });

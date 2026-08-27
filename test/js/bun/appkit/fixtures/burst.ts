@@ -59,12 +59,15 @@ await run(async () => {
   }
 
   // Idle loop: only a 30 ms timer is pending, so each tick waits in AppKit.
-  // The queued events end each wait at once and are all dispatched well
-  // before the timer, which fires on time; a stale wake event in the queue
-  // (one of the pump's own, left from an earlier park) is dropped without a
-  // dispatch; the sleeps hand this thread's heaps to the allocator's
-  // scavenger, as the plain kqueue wait does, when the environment has not
-  // turned the scavenger off (MIMALLOC_SCAVENGER=0 or a purge delay of 0).
+  // The queued events end each wait at once and go out 16 per wait; the
+  // timer fires on time whether or not the queue is empty by then (16 sends
+  // plus updateWindows may cost more than 30 ms on a slow machine), and what
+  // is still queued goes out on the next waits; a stale wake event in the
+  // queue (one of the pump's own, left from an earlier park) is dropped
+  // without a dispatch; the sleeps hand this thread's heaps to the
+  // allocator's scavenger, as the plain kqueue wait does, when the
+  // environment has not turned the scavenger off (MIMALLOC_SCAVENGER=0 or a
+  // purge delay of 0).
   {
     const off = (value: string | undefined) => /^(0|off|no|false)$/i.test(value ?? "");
     const scavenger = !off(process.env.MIMALLOC_SCAVENGER) && Number(process.env.MIMALLOC_PURGE_DELAY ?? 100) > 0;
@@ -73,12 +76,21 @@ await run(async () => {
     post(0x4275, 0);
     const armed = performance.now();
     await new Promise<void>(resolve => setTimeout(resolve, 30));
-    const after = stats();
+    const timerMs = performance.now() - armed;
+    const atTimer = stats();
+    // Whatever the timer beat is dispatched by the waits that follow it.
+    let after = atTimer;
+    const deadline = performance.now() + 2000;
+    while (after.dispatched - before.dispatched < 40 && performance.now() < deadline) {
+      await new Promise<void>(resolve => setTimeout(resolve, 1));
+      after = stats();
+    }
     emit({
       step: "idle",
-      timerMs: performance.now() - armed,
+      timerMs,
       waits: after.waits - before.waits,
       dispatched: after.dispatched - before.dispatched,
+      byTimer: { waits: atTimer.waits - before.waits, dispatched: atTimer.dispatched - before.dispatched },
       staleWakes: after.staleWakes - before.staleWakes,
       handOffs: after.handOffs - before.handOffs,
       scavenger,

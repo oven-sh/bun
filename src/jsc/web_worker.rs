@@ -1290,30 +1290,13 @@ unsafe fn resolve_entry_point_specifier<'s>(
 ) -> Option<&'s [u8]> {
     // In a `bun build --compile` executable, a relative specifier names an embedded entry point (relative to the
     // embedded root) before it names a file on disk, and an absolute one may be an embedded path in either syntax
-    // (`new URL("./w.ts", import.meta.url)`); the resolver maps both to the embedded module's name.
+    // (`new URL("./w.ts", import.meta.url)`).
     // SAFETY: per fn contract; `standalone_module_graph` is a read-only field.
     if let Some(graph) = unsafe { (*parent).standalone_module_graph }
-        && (str.starts_with(b"./")
-            || str.starts_with(b"../")
-            || bun_options_types::standalone_path::is_bun_standalone_file_path(str))
+        && let Some(name) =
+            bun_resolver::resolve_embedded(graph, graph.base_public_path_with_default_suffix(), str)
     {
-        // SAFETY: the resolver is only used on `parent`'s owning thread (see below).
-        if let Ok(result) = unsafe {
-            (*parent).transpiler.resolver.resolve(
-                graph.base_public_path_with_default_suffix(),
-                str,
-                bun_ast::ImportKind::EntryPointRun,
-            )
-        } {
-            if result.flags.is_standalone_module() {
-                return Some(
-                    result
-                        .path_const()
-                        .expect("standalone results have a path")
-                        .text,
-                );
-            }
-        }
+        return Some(name);
     }
 
     // A `data:` URL is the module itself (the loader decodes it); it never names

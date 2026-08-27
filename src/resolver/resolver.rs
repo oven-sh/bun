@@ -369,7 +369,6 @@ pub struct Bufs {
     pub(crate) remap_path_trailing_slash: PathBuffer,
     pub(crate) path_in_global_disk_cache: PathBuffer,
     pub(crate) abs_to_rel: PathBuffer,
-    pub(crate) import_path_for_standalone_module_graph: PathBuffer,
 
     #[cfg(windows)]
     pub(crate) win32_normalized_dir_info_cache: [u8; MAX_PATH_BYTES * 2],
@@ -1296,41 +1295,27 @@ impl<'a> Resolver<'a> {
         let mut source_dir_resolver = bun_paths::PosixToWinNormalizer::default();
         let source_dir_normalized: &[u8] = 'brk: {
             if let Some(graph) = self.standalone_module_graph {
-                let standalone = |file_name: &'static [u8]| {
-                    ResultUnion::Success(Result {
-                        import_kind: kind,
-                        path_pair: PathPair {
-                            primary: Path::init(file_name),
-                            secondary: None,
-                        },
-                        module_type: options::ModuleType::Esm,
-                        flags: ResultFlags::IS_STANDALONE_MODULE,
-                        ..Default::default()
-                    })
-                };
-                if ::bun_options_types::standalone_path::is_bun_standalone_file_path(import_path) {
-                    self.extension_order = original_order;
-                    return match find_in_standalone_graph(graph, import_path) {
-                        Some(file_name) => standalone(file_name),
-                        None => ResultUnion::NotFound,
-                    };
-                } else if ::bun_options_types::standalone_path::is_bun_standalone_file_path(
-                    source_dir,
-                ) {
-                    if import_path.len() > 2 && is_dot_slash(&import_path[0..2]) {
-                        let buf = bufs!(import_path_for_standalone_module_graph);
-                        let joined = bun_paths::join_abs_string_buf(
-                            source_dir,
-                            buf,
-                            &[import_path],
-                            bun_paths::Platform::Loose,
-                        );
-
-                        // Support relative paths in the graph
-                        if let Some(file_name) = find_in_standalone_graph(graph, joined) {
-                            self.extension_order = original_order;
-                            return standalone(file_name);
-                        }
+                let specifier_is_embedded_path =
+                    ::bun_options_types::standalone_path::is_bun_standalone_file_path(import_path);
+                if specifier_is_embedded_path
+                    || ::bun_options_types::standalone_path::is_bun_standalone_file_path(source_dir)
+                {
+                    if let Some(file_name) = resolve_embedded(graph, source_dir, import_path) {
+                        self.extension_order = original_order;
+                        return ResultUnion::Success(Result {
+                            import_kind: kind,
+                            path_pair: PathPair {
+                                primary: Path::init(file_name),
+                                secondary: None,
+                            },
+                            module_type: options::ModuleType::Esm,
+                            flags: ResultFlags::IS_STANDALONE_MODULE,
+                            ..Default::default()
+                        });
+                    }
+                    if specifier_is_embedded_path {
+                        self.extension_order = original_order;
+                        return ResultUnion::NotFound;
                     }
                     break 'brk Fs::FileSystem::instance().top_level_dir;
                 }
@@ -6742,32 +6727,44 @@ fn primary_side_effects(
     }
 }
 
-/// `path` (under the standalone virtual root, in either path syntax) as the name of a module embedded in a
-/// `bun build --compile` executable: the file itself, or -- since every entry point is embedded under a `.js` name --
-/// the `.js` name for a source extension or no extension (`/$bunfs/root/w.ts` -> `/$bunfs/root/w.js`). Returns the
-/// graph's own name for it, which is what the module loader keys on.
-fn find_in_standalone_graph(
+/// The module embedded in a `bun build --compile` executable that `specifier` names, imported from `source_dir`:
+/// an absolute embedded path (in either path syntax) or a `./` / `../` specifier joined onto `source_dir`, looked up
+/// as spelled and then -- since every entry point is embedded under a `.js` name -- under the `.js` name for a source
+/// extension or no extension (`./w.ts` -> `/$bunfs/root/w.js`). Returns the graph's own name for the module, which is
+/// what the module loader keys on; `None` for anything else (bare specifiers, other absolute paths, misses).
+pub fn resolve_embedded(
     graph: &dyn StandaloneModuleGraph,
-    path: &[u8],
+    source_dir: &[u8],
+    specifier: &[u8],
 ) -> Option<&'static [u8]> {
-    if let Some(name) = graph.find_assume_standalone_path(path) {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let path_len = if ::bun_options_types::standalone_path::is_bun_standalone_file_path(specifier) {
+        if specifier.len() > buf.len() {
+            return None;
+        }
+        buf[..specifier.len()].copy_from_slice(specifier);
+        specifier.len()
+    } else if specifier.starts_with(b"./") || specifier.starts_with(b"../") {
+        bun_paths::join_abs_string_buf(source_dir, &mut buf[..], &[specifier], bun_paths::Platform::Loose).len()
+    } else {
+        return None;
+    };
+    if let Some(name) = graph.find_assume_standalone_path(&buf[..path_len]) {
         return Some(name);
     }
-    let extension = bun_paths::extension(path);
+    let extension_len = bun_paths::extension(&buf[..path_len]).len();
     if !matches!(
-        extension,
+        &buf[path_len - extension_len..path_len],
         b"" | b".ts" | b".tsx" | b".jsx" | b".mjs" | b".mts" | b".cjs" | b".cts"
     ) {
         return None;
     }
-    let stem = &path[..path.len() - extension.len()];
-    let mut buf = bun_paths::path_buffer_pool::get();
-    if stem.len() + 3 > buf.len() {
+    let stem_len = path_len - extension_len;
+    if stem_len + 3 > buf.len() {
         return None;
     }
-    buf[..stem.len()].copy_from_slice(stem);
-    buf[stem.len()..stem.len() + 3].copy_from_slice(b".js");
-    graph.find_assume_standalone_path(&buf[..stem.len() + 3])
+    buf[stem_len..stem_len + 3].copy_from_slice(b".js");
+    graph.find_assume_standalone_path(&buf[..stem_len + 3])
 }
 
 #[inline]

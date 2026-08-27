@@ -2556,7 +2556,10 @@ describe("server.requestIP", () => {
       hostname: "::1",
     });
 
-    const response = await fetch(`http://localhost:${server.port}`).then(x => x.json());
+    // Use the IPv6 literal directly: the server binds ::1 only, and on
+    // OHOS 'localhost' may resolve to 127.0.0.1 (or time out in the
+    // sandbox resolver), so a hostname-based fetch cannot reach it.
+    const response = await fetch(`http://[::1]:${server.port}`).then(x => x.json());
     expect(response).toMatchObject({
       address: "::1",
       family: "IPv6",

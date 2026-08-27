@@ -1359,12 +1359,8 @@ impl MySQLConnection {
                 // `on_error_packet` below.
                 self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                 statement.status = mysql_statement::Status::Failed;
-                // err.error_message is a temporary slice into the socket read buffer that
-                // the next packet overwrites, and queries that attached to this statement
-                // before the failure read stmt.error_response later, so own a copy of it.
-                // ErrorPacket lacks Clone in bun_sql (Data is not Clone), so rebuild it
-                // field-by-field with an owned dupe of the message; the scalar fields
-                // (header / error_code / sql_state) are all Copy.
+                // err.error_message borrows the socket read buffer, which the next packet
+                // overwrites; queries attached to this statement read error_response later.
                 statement.error_response = ErrorPacket {
                     header: err.header,
                     error_code: err.error_code,
@@ -1373,9 +1369,6 @@ impl MySQLConnection {
                     error_message: Data::create(err.error_message.slice())
                         .map_err(|_| AnyMySQLError::OutOfMemory)?,
                 };
-                // Evict the failed prepare from the statement cache so the next query with
-                // this text re-prepares instead of rethrowing the stale server error forever
-                // (mirrors PostgresSQLConnection's ErrorResponse handler).
                 // The request still holds its own ref, so dropping the map's RefPtr
                 // cannot free the statement.
                 let stmt_ptr: *const MySQLStatement = core::ptr::from_ref(&*statement);

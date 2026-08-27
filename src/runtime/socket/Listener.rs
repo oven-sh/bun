@@ -251,7 +251,7 @@ impl Listener {
                     }
                     Err(e) => {
                         // Drops connection, protos, and the handlers `Rc`.
-                        this.deref();
+                        drop(this);
                         // Surface coded syscall failures the way node:net
                         // does (EADDRINUSE vs EACCES need different caller
                         // handling) rather than an invalid-arguments TypeError.
@@ -334,10 +334,8 @@ impl Listener {
             this_value: JsCell::new(JsRef::empty()),
         });
         Self::init_group(&this);
-        // Releases the half-built listener on any early return below (its
-        // `Drop` unlinks the group); disarmed via `into_inner` once the JS
-        // wrapper adopts it.
-        let cleanup = scopeguard::guard((), |()| this.deref());
+        // An early return below drops `this`, releasing the half-built
+        // listener (its `Drop` unlinks the group).
         let this_ref: &Listener = &this;
 
         if let Some(ssl_cfg) = ssl_cfg_taken.as_ref() {
@@ -517,7 +515,6 @@ impl Listener {
             }
         }
 
-        scopeguard::ScopeGuard::into_inner(cleanup); // ownership transfers to JS wrapper
         Ok(Self::into_js(this, global))
     }
 

@@ -302,9 +302,7 @@ impl WindowsNamedPipeContext {
     /// `fail_and_release`, or an accept that failed before the pipe started;
     /// may schedule deinit.
     pub(crate) fn release_conn_ref(this: ThisPtr<Self>) {
-        if let Some(conn) = this.conn_ref.take() {
-            conn.deref();
-        }
+        drop(this.conn_ref.take());
     }
 
     /// Owns the freshly-`create()`d context until `disarm()`: on any early

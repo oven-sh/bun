@@ -1010,7 +1010,6 @@ pub fn record_exception(
                 });
             }
             s.set_attribute(b"error.type", &Value::Str(ty), lim);
-            s.http.flags |= bun_telemetry::http_record::FLAG_HAS_ERROR_TYPE;
             s.set_status(StatusCode::Error, msg);
         });
     }

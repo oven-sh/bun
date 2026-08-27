@@ -406,18 +406,6 @@ pub fn with_exception_attrs<R>(
     f(&attrs[..if stack.is_empty() { 2 } else { 3 }])
 }
 
-/// Number of top-level entries with `field` in a concatenated buffer.
-pub fn count_fields(buf: &[u8], field: u32) -> usize {
-    let mut n = 0;
-    let mut r = proto::Reader::new(buf);
-    while let Ok(Some((fl, _))) = r.next() {
-        if fl == field {
-            n += 1;
-        }
-    }
-    n
-}
-
 /// Locate the encoded `KeyValue` for `key` in a buffer of concatenated
 /// `Span.attributes` entries: `(offset, total_len)` of the whole entry.
 pub fn find_attribute(attrs: &[u8], key: &[u8]) -> Option<(usize, usize)> {

@@ -1288,7 +1288,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     method,
                     &uws::AnyRequest::H1(std::ptr::from_mut::<uws_sys::Request>(req)),
                     any_response_from::<SSL>(std::ptr::from_mut(resp)),
-                    SSL,
                 ) {
                     Some((span, entered)) => (span, Some(entered)),
                     None => (bun_telemetry::NativeSpan::NONE, None),

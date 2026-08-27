@@ -1403,7 +1403,6 @@ where
             Method::find(any_req.method()),
             &any_req,
             resp,
-            SSL_ENABLED,
         )?;
         self.otel_span.set(span);
         Some(entered)

@@ -32,9 +32,6 @@ pub struct StaticRoute {
     // not ensure it is alive while sending a large blob.
     pub(crate) server: Cell<Option<AnyServer>>,
     pub(crate) status_code: u16,
-    /// What `do_write_status` last sent (304/412/405 differ from `status_code`);
-    /// read synchronously by `traced` for the request span.
-    last_written_status: Cell<u16>,
     pub(crate) blob: AnyBlob,
     pub(crate) cached_blob_size: u64,
     pub(crate) has_date: bool,
@@ -77,7 +74,6 @@ impl StaticRoute {
             headers,
             server: Cell::new(server),
             status_code,
-            last_written_status: Cell::new(0),
         }
     }
 
@@ -123,7 +119,12 @@ impl StaticRoute {
         StaticRoute::on(temp_route.this_ptr(), resp);
     }
 
-    pub(crate) fn clone(&mut self, global_this: &JSGlobalObject) -> RefPtr<StaticRoute> {
+    /// Promotes the receiver's bytes to a refcounted `Blob` so both routes
+    /// share storage, then returns a second route over it.
+    pub(crate) fn dupe_sharing_blob(
+        &mut self,
+        global_this: &JSGlobalObject,
+    ) -> RefPtr<StaticRoute> {
         let blob = self.blob.to_blob(global_this);
         let duped = blob.dupe();
         self.blob = AnyBlob::Blob(blob);
@@ -138,7 +139,6 @@ impl StaticRoute {
             headers: self.headers.clone(),
             server: Cell::new(self.server.get()),
             status_code: self.status_code,
-            last_written_status: Cell::new(0),
         })
     }
 
@@ -256,17 +256,19 @@ impl StaticRoute {
         Self::traced(this, req, resp, |req| Self::head(this, req, resp));
     }
 
-    fn head(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse) {
+    /// Returns the status line it wrote.
+    fn head(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse) -> u16 {
         // Evaluate conditional request preconditions for HEAD with 200 status
         if this.status_code == 200 {
-            if Self::render_precondition(this, &mut req, resp) {
-                return;
+            if let Some(status) = Self::render_precondition(this, &mut req, resp) {
+                return status;
             }
         }
 
         // Continue with normal HEAD request handling
         req.set_yield(false);
         Self::on_head(this, resp);
+        this.status_code
     }
 
     pub(crate) fn on_head(this: ThisPtr<Self>, resp: AnyResponse) {
@@ -297,11 +299,16 @@ impl StaticRoute {
         resp.end_without_body(resp.should_close_connection());
     }
 
-    /// Run `f` (which writes the response) inside a SERVER span, like a
-    /// handler-served request. A static response is written synchronously
-    /// (or handed to the socket's backpressure machinery), so the span ends
-    /// when `f` returns, with the route's status.
-    fn traced(this: ThisPtr<Self>, req: AnyRequest, resp: AnyResponse, f: impl FnOnce(AnyRequest)) {
+    /// Run `f` (which writes the response and returns the status line it
+    /// wrote) inside a SERVER span, like a handler-served request. A static
+    /// response is written synchronously (or handed to the socket's
+    /// backpressure machinery), so the span ends when `f` returns.
+    fn traced(
+        this: ThisPtr<Self>,
+        req: AnyRequest,
+        resp: AnyResponse,
+        f: impl FnOnce(AnyRequest) -> u16,
+    ) {
         let server = this.server.get();
         let span = match (
             &server,
@@ -309,33 +316,14 @@ impl StaticRoute {
         ) {
             (Some(server), true) => {
                 let global = server.global_this();
-                crate::telemetry::server::begin(
-                    global,
-                    Method::find(req.method()),
-                    &req,
-                    resp,
-                    matches!(resp, AnyResponse::SSL(_)),
-                )
-                .map(|(span, entered)| {
-                    // Static routes match exactly, so the path (query stripped) is the route.
-                    let url = req.url();
-                    let path = bun_core::strings::index_of_char_usize(url, b'?')
-                        .map_or(url, |q| &url[..q]);
-                    crate::telemetry::server::set_route(global, span, path);
-                    (span, entered, global)
-                })
+                crate::telemetry::server::begin_static(global, &req, resp)
+                    .map(|(span, entered)| (span, entered, global))
             }
             _ => None,
         };
-        this.last_written_status.set(0);
-        f(req);
+        let status = f(req);
         if let Some((span, entered, global)) = span {
             drop(entered);
-            // The status actually written (304/412 from a precondition, 405), else the route's.
-            let status = match this.last_written_status.get() {
-                0 => this.status_code,
-                s => s,
-            };
             crate::telemetry::server::end(global, span, status, false);
         }
     }
@@ -347,27 +335,30 @@ impl StaticRoute {
         }
         Self::traced(this, req, resp, |req| {
             if method == Method::GET {
-                Self::on_get(this, req, resp);
+                Self::on_get(this, req, resp)
             } else {
                 // For other methods, use the original behavior
                 let mut req = req;
                 req.set_yield(false);
                 Self::on(this, resp);
+                this.status_code
             }
         });
     }
 
-    pub(crate) fn on_get(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse) {
+    /// Returns the status line it wrote.
+    pub(crate) fn on_get(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse) -> u16 {
         // Evaluate conditional request preconditions for GET with 200 status
         if this.status_code == 200 {
-            if Self::render_precondition(this, &mut req, resp) {
-                return;
+            if let Some(status) = Self::render_precondition(this, &mut req, resp) {
+                return status;
             }
         }
 
         // Continue with normal GET request handling
         req.set_yield(false);
         Self::on(this, resp);
+        this.status_code
     }
 
     pub(crate) fn on(this: ThisPtr<Self>, resp: AnyResponse) {
@@ -478,7 +469,6 @@ impl StaticRoute {
     }
 
     fn do_write_status(&self, status: u16, resp: AnyResponse) {
-        self.last_written_status.set(status);
         match resp {
             AnyResponse::SSL(r) => write_status::<true>(r, status),
             AnyResponse::TCP(r) => write_status::<false>(r, status),
@@ -541,9 +531,14 @@ impl StaticRoute {
         }
     }
 
-    /// RFC 9110 §13.2.2 precondition evaluation. Writes a 412 or 304 response
-    /// and returns `true` when a precondition short-circuits the request.
-    fn render_precondition(this: ThisPtr<Self>, req: &mut AnyRequest, resp: AnyResponse) -> bool {
+    /// RFC 9110 §13.2.2 precondition evaluation. When a precondition
+    /// short-circuits the request, writes the 412 or 304 response and returns
+    /// that status; `None` otherwise (nothing written).
+    fn render_precondition(
+        this: ThisPtr<Self>,
+        req: &mut AnyRequest,
+        resp: AnyResponse,
+    ) -> Option<u16> {
         let etag = this.headers.get(b"etag").filter(|v| !v.is_empty());
         // Deferred: `parse_http_date` allocates + calls into WTF; only run it
         // when the client actually sent a date-based conditional header.
@@ -567,7 +562,8 @@ impl StaticRoute {
                 false
             };
         if precondition_failed {
-            return Self::render_bodiless(this, req, resp, 412);
+            Self::render_bodiless(this, req, resp, 412);
+            return Some(412);
         }
 
         // Step 3: If-None-Match (weak comparison). Presence suppresses step 4.
@@ -592,19 +588,15 @@ impl StaticRoute {
         };
 
         if !not_modified {
-            return false;
+            return None;
         }
 
-        Self::render_bodiless(this, req, resp, 304)
+        Self::render_bodiless(this, req, resp, 304);
+        Some(304)
     }
 
     /// May free `this`.
-    fn render_bodiless(
-        this: ThisPtr<Self>,
-        req: &mut AnyRequest,
-        resp: AnyResponse,
-        status: u16,
-    ) -> bool {
+    fn render_bodiless(this: ThisPtr<Self>, req: &mut AnyRequest, resp: AnyResponse, status: u16) {
         req.set_yield(false);
         Self::retain_for_response(this);
         if let Some(mut server) = this.server.get() {
@@ -618,7 +610,6 @@ impl StaticRoute {
         }
         resp.end_without_body(resp.should_close_connection());
         Self::on_response_complete(this, resp);
-        true
     }
 }
 

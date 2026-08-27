@@ -185,6 +185,9 @@ impl Slot {
         }
         self.n_attrs += 1;
         self.attr_keys |= key_bit(key);
+        if key == b"error.type" {
+            self.http.flags |= crate::http_record::FLAG_HAS_ERROR_TYPE;
+        }
         otlp::write_key_value_limited(
             &mut self.attrs,
             field::ATTRIBUTES,
@@ -200,6 +203,9 @@ impl Slot {
             if let Some((off, len)) = otlp::find_attribute(&self.attrs, key) {
                 self.attrs.drain(off..off + len);
                 self.n_attrs -= 1;
+                if key == b"error.type" {
+                    self.http.flags &= !crate::http_record::FLAG_HAS_ERROR_TYPE;
+                }
             }
         }
         self.push_attribute(key, v, limits);
@@ -265,6 +271,7 @@ impl Slot {
                     name_override: &self.name,
                     trace_state: &self.trace_state,
                     attrs: &self.attrs,
+                    n_attrs: self.n_attrs,
                     dropped_attrs: self.dropped_attrs,
                     dropped_events: self.dropped_events,
                     dropped_links: self.dropped_links,

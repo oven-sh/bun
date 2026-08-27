@@ -6,20 +6,17 @@
 
 use bun_http_types::Method::Method;
 
-use crate::{Limits, StatusCode};
 use crate::otlp::{self, SPAN_LEN_RESERVE, SpanWriter, Value, field as f};
 use crate::proto::Nested;
 use crate::span::{SpanKind, SpanStub};
+use crate::{Limits, StatusCode};
 
 pub const FLAG_HTTPS: u8 = 1;
 pub const FLAG_ABORTED: u8 = 2;
 pub const FLAG_HANDLER_ERROR: u8 = 4;
-pub const FLAG_HAS_QUERY: u8 = 8;
-/// An exception was recorded on the span (it carries `error.type` already).
+/// Set by `pool::Slot::push_attribute` when an `error.type` attribute is
+/// written; never by callers.
 pub const FLAG_HAS_ERROR_TYPE: u8 = 16;
-/// The request method is not one `Method` can name: `http.request.method`
-/// is `_OTHER` and the span already carries `http.request.method_original`.
-pub const FLAG_METHOD_OTHER: u8 = 32;
 
 /// `http.request.method`: the canonical token for known methods, `_OTHER`
 /// otherwise (semconv requires a bounded set).
@@ -37,6 +34,16 @@ pub const fn method_name(m: Method) -> &'static str {
         | Method::PATCH
         | Method::QUERY => m.as_str(),
         _ => "_OTHER",
+    }
+}
+
+/// `None`: the request's method token is not one `Method` can name at all;
+/// the original went out as `http.request.method_original` at begin.
+#[inline]
+fn method_token(m: Option<Method>) -> &'static str {
+    match m {
+        Some(m) => method_name(m),
+        None => "_OTHER",
     }
 }
 
@@ -101,20 +108,43 @@ impl PeerIp {
     }
 }
 
+/// Byte lengths of the strings packed back to back in `Facts::raw` after the
+/// peer attributes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Lens {
+    url: u32,
+    client: u32,
+    host: u32,
+    user_agent: u32,
+    route: u32,
+}
+
+impl Lens {
+    const ZERO: Lens = Lens {
+        url: 0,
+        client: 0,
+        host: 0,
+        user_agent: 0,
+        route: 0,
+    };
+}
+
 /// Request facts captured at begin; lives in the pool slot.
 pub struct Facts {
-    /// url | client | host | user-agent | route, back to back (see `lens`).
-    /// url and client (the forwarded-for address) vary per request; the
-    /// rest key the template.
+    /// The encoded peer attributes, then url | client | host | user-agent |
+    /// route back to back (see [`Lens`]). url and client (the forwarded-for
+    /// address) vary per request; the rest key the template.
     raw: Vec<u8>,
-    lens: [u32; 5],
-    /// Length of the path part of the url (`url.len()` if no query).
+    lens: Lens,
+    /// Length of the path part of the url (`lens.url` if no query).
     path_len: u32,
-    pub method: Method,
+    /// `None`: the request's method token is not one `Method` can name; the
+    /// original went out as `http.request.method_original` at begin.
+    pub method: Option<Method>,
     /// Length of the encoded `network.peer.*` bytes at the front of `raw`
     /// ([`encode_peer_attrs`], written by [`Facts::set_request`]).
     peer_encoded_len: u8,
-    /// How many attributes those bytes hold (address, or address + port).
+    /// How many attributes those bytes hold ([`encode_peer_attrs`]'s count).
     peer_encoded_attrs: u8,
     pub version: HttpVersion,
     pub flags: u8,
@@ -161,9 +191,9 @@ impl Facts {
     pub const fn new() -> Facts {
         Facts {
             raw: Vec::new(),
-            lens: [0; 5],
+            lens: Lens::ZERO,
             path_len: 0,
-            method: Method::GET,
+            method: None,
             peer_encoded_len: 0,
             peer_encoded_attrs: 0,
             version: HttpVersion::Unknown,
@@ -176,7 +206,9 @@ impl Facts {
     #[inline]
     pub fn reset(&mut self) {
         self.raw.clear();
-        self.lens = [0; 5];
+        self.lens = Lens::ZERO;
+        self.path_len = 0;
+        self.method = None;
         self.active = false;
         self.flags = 0;
         self.status = 0;
@@ -213,33 +245,30 @@ impl Facts {
         self.raw.clear();
         self.raw
             .reserve(PEER_ATTRS_MAX + url.len() + client.len() + host.len() + ua.len());
-        encode_peer_attrs(peer, peer_port, &mut self.raw);
-        let peer_encoded_len = self.raw.len();
-        debug_assert!(peer_encoded_len <= u8::MAX as usize);
-        self.peer_encoded_len = peer_encoded_len as u8;
-        self.peer_encoded_attrs = match peer_encoded_len {
-            0 => 0,
-            n => 1 + u8::from(n > PEER_TEXT_OFF + self.raw[PEER_TEXT_OFF - 1] as usize),
-        };
+        self.peer_encoded_attrs = encode_peer_attrs(peer, peer_port, &mut self.raw);
+        debug_assert!(self.raw.len() <= u8::MAX as usize);
+        self.peer_encoded_len = self.raw.len() as u8;
         // Wire bytes may not be UTF-8 (obs-text); proto3 strings must be.
         // The url goes in as path then query so `path_len` is measured on the
         // sanitized bytes (a replacement is longer than the byte it replaces).
-        let mut lens = [0u32; 5];
         let path_len = path_len.min(url.len());
         let at = self.raw.len();
         otlp::extend_utf8_lossy(&mut self.raw, &url[..path_len]);
         self.path_len = (self.raw.len() - at) as u32;
         otlp::extend_utf8_lossy(&mut self.raw, &url[path_len..]);
-        lens[0] = (self.raw.len() - at) as u32;
-        for (i, s) in [client, host, ua].into_iter().enumerate() {
+        let url = (self.raw.len() - at) as u32;
+        let mut put = |s: &[u8]| {
             let at = self.raw.len();
             otlp::extend_utf8_lossy(&mut self.raw, s);
-            lens[i + 1] = (self.raw.len() - at) as u32;
-        }
-        self.lens = lens;
-        if (self.path_len as usize) + 1 < lens[0] as usize {
-            self.flags |= FLAG_HAS_QUERY;
-        }
+            (self.raw.len() - at) as u32
+        };
+        self.lens = Lens {
+            url,
+            client: put(client),
+            host: put(host),
+            user_agent: put(ua),
+            route: 0,
+        };
     }
 
     /// The span name as it would be exported now (see [`span_name`]).
@@ -249,18 +278,45 @@ impl Facts {
     }
 
     #[inline]
+    fn has_query(&self) -> bool {
+        self.path_len + 1 < self.lens.url
+    }
+
+    /// Where the route starts in `raw` (everything before it is kept).
+    #[inline]
+    fn route_at(&self) -> usize {
+        let l = &self.lens;
+        self.peer_encoded_len as usize + (l.url + l.client + l.host + l.user_agent) as usize
+    }
+
+    #[inline]
     pub fn set_route(&mut self, route: &[u8]) {
         let route = otlp::truncate_utf8(route, u16::MAX as usize);
-        let end = self.peer_encoded_len as usize
-            + (self.lens[0] + self.lens[1] + self.lens[2] + self.lens[3]) as usize;
-        self.raw.truncate(end);
+        self.raw.truncate(self.route_at());
         self.raw.extend_from_slice(route);
-        self.lens[4] = route.len() as u32;
+        self.lens.route = route.len() as u32;
+    }
+
+    /// Routes matched by their literal path: the recorded request path is the
+    /// route.
+    pub fn set_route_from_path(&mut self) {
+        let start = self.peer_encoded_len as usize;
+        let end = start + self.path_len as usize;
+        self.raw.truncate(self.route_at());
+        self.raw.extend_from_within(start..end);
+        self.lens.route = self.path_len;
     }
 
     #[inline]
     fn strings(&self) -> Strings<'_> {
-        let [a, cl, b, c, d] = self.lens.map(|x| x as usize);
+        let Lens {
+            url: a,
+            client: cl,
+            host: b,
+            user_agent: c,
+            route: d,
+        } = self.lens;
+        let [a, cl, b, c, d] = [a, cl, b, c, d].map(|x| x as usize);
         let pe = (self.peer_encoded_len as usize).min(self.raw.len());
         let (peer_encoded, r) = self.raw.split_at(pe);
         if r.len() < a + cl + b + c + d {
@@ -294,6 +350,8 @@ pub struct SpanParts<'a> {
     pub name_override: &'a [u8],
     pub trace_state: &'a [u8],
     pub attrs: &'a [u8],
+    /// Attributes already encoded in `attrs`.
+    pub n_attrs: u16,
     pub dropped_attrs: u16,
     pub dropped_events: u16,
     pub dropped_links: u16,
@@ -309,7 +367,7 @@ struct TemplateKey {
     status: u16,
     status_code: StatusCode,
     has_parent: bool,
-    method: Method,
+    method: Option<Method>,
     version: HttpVersion,
     /// Per-request (tail) attribute count; shapes droppedAttributesCount.
     tail_n: u8,
@@ -333,7 +391,7 @@ impl TemplateKey {
             dropped: p.dropped_attrs,
             dropped_events: p.dropped_events,
             dropped_links: p.dropped_links,
-            lens: [facts.lens[2], facts.lens[3], facts.lens[4]],
+            lens: [facts.lens.host, facts.lens.user_agent, facts.lens.route],
         }
     }
 }
@@ -532,30 +590,34 @@ const PEER_PORT_KEY: &str = "network.peer.port";
 const PEER_TEXT_OFF: usize = 4 + PEER_ADDRESS_KEY.len() + 4;
 /// Upper bound of [`encode_peer_attrs`] output: the address KV with the
 /// longest text plus the port KV (4 + key + 3 value header + 3-byte varint).
-pub const PEER_ATTRS_MAX: usize =
+pub(crate) const PEER_ATTRS_MAX: usize =
     PEER_TEXT_OFF + PeerIp::MAX_TEXT + 4 + PEER_PORT_KEY.len() + 3 + 3;
 
-/// `network.peer.address` + `network.peer.port` encoded for `Facts`.
-pub fn encode_peer_attrs(peer: &PeerIp, port: u16, out: &mut Vec<u8>) {
+/// `network.peer.address` + `network.peer.port` encoded for `Facts`. Returns
+/// how many attributes it wrote: 0 (no address text), 1 (address) or 2
+/// (address and port).
+pub(crate) fn encode_peer_attrs(peer: &PeerIp, port: u16, out: &mut Vec<u8>) -> u8 {
     let mut ip_buf = [0u8; 64];
     let text = peer.text(&mut ip_buf);
     if text.is_empty() {
-        return;
+        return 0;
     }
     otlp::write_str_kv_small(out, f::ATTRIBUTES, PEER_ADDRESS_KEY, text);
     debug_assert_eq!(&out[PEER_TEXT_OFF..PEER_TEXT_OFF + text.len()], text);
-    if port != 0 {
-        otlp::write_key_value(
-            out,
-            f::ATTRIBUTES,
-            PEER_PORT_KEY.as_bytes(),
-            &Value::Int(port as i64),
-        );
+    if port == 0 {
+        return 1;
     }
+    otlp::write_key_value(
+        out,
+        f::ATTRIBUTES,
+        PEER_PORT_KEY.as_bytes(),
+        &Value::Int(port as i64),
+    );
+    2
 }
 
 /// The address text inside [`encode_peer_attrs`] output.
-fn peer_text_of(encoded: &[u8]) -> &[u8] {
+pub(crate) fn peer_text_of(encoded: &[u8]) -> &[u8] {
     let n = encoded.get(PEER_TEXT_OFF - 1).copied().unwrap_or(0) as usize;
     encoded.get(PEER_TEXT_OFF..PEER_TEXT_OFF + n).unwrap_or(b"")
 }
@@ -564,20 +626,9 @@ fn peer_text_of(encoded: &[u8]) -> &[u8] {
 fn tail_attr_count(facts: &Facts) -> u32 {
     // url.path [+ url.query] [+ client.address] [+ network.peer.address [+ .port]]
     let peer_attrs = facts.peer_encoded_attrs as u32;
-    // client.address: the forwarded hop (lens[1]) or else the peer.
-    let has_client = facts.lens[1] != 0 || peer_attrs != 0;
-    1 + u32::from(facts.flags & FLAG_HAS_QUERY != 0) + u32::from(has_client) + peer_attrs
-}
-
-/// Attributes the span already carries from the request path (captured
-/// headers, JS-set): they count first against `attributeCountLimit`.
-#[inline]
-fn user_attr_count(p: &SpanParts<'_>) -> u32 {
-    if p.attrs.is_empty() {
-        0
-    } else {
-        otlp::count_fields(p.attrs, f::ATTRIBUTES) as u32
-    }
+    // client.address: the forwarded hop or else the peer.
+    let has_client = facts.lens.client != 0 || peer_attrs != 0;
+    1 + u32::from(facts.has_query()) + u32::from(has_client) + peer_attrs
 }
 
 /// Per-request attributes after the templated part (as many as still fit
@@ -595,8 +646,9 @@ fn append_tail(
     let url = s.url;
     let pl = (facts.path_len as usize).min(url.len());
     let (path, query) = (&url[..pl], url.get(pl + 1..).unwrap_or(b""));
-    // `room`: how many more attributes fit under attributeCountLimit.
-    let mut room = (limits.attributes as u32).saturating_sub(user_attr_count(p));
+    // `room`: how many more attributes fit under attributeCountLimit after the
+    // ones the span already carries (captured headers, JS-set).
+    let mut room = (limits.attributes as u32).saturating_sub(u32::from(p.n_attrs));
     let (encoded, n) = (s.peer_encoded, facts.peer_encoded_attrs as u32);
     // semconv: client.address is the client behind any proxies (X-Forwarded-For
     // / Forwarded) — also the only identity on a unix-socket listener — and
@@ -654,8 +706,7 @@ const NAME_MAX: usize = 8 + 256;
 /// `{METHOD} {route}`; the method alone when there is no route (or one over
 /// 256 bytes), `HTTP` for methods outside the known set (semconv).
 fn span_name<'b>(facts: &Facts, route: &[u8], buf: &'b mut [u8; NAME_MAX]) -> &'b [u8] {
-    let m: &[u8] = match method_name(facts.method) {
-        _ if facts.flags & FLAG_METHOD_OTHER != 0 => b"HTTP",
+    let m: &[u8] = match method_token(facts.method) {
         "_OTHER" => b"HTTP",
         m => m.as_bytes(),
     };
@@ -678,11 +729,7 @@ fn encode_head(
     limits: &Limits,
 ) {
     let start = out.len();
-    let method: &[u8] = if facts.flags & FLAG_METHOD_OTHER != 0 {
-        b"_OTHER"
-    } else {
-        method_name(facts.method).as_bytes()
-    };
+    let method = method_token(facts.method).as_bytes();
     let (host, ua, route) = (s.host, s.user_agent, s.route);
     let flags = facts.flags;
     let status = facts.status;
@@ -713,20 +760,20 @@ fn encode_head(
     }
     // Attributes already on the span (captured headers, JS-set) and the
     // per-request tail come first; the semconv set below fills what is left.
-    let user = user_attr_count(p);
     let mut a = Attrs {
         w: &mut w,
         // (unclamped: tail attributes that did not fit count as dropped)
-        n: user + tail_attr_count(facts),
+        n: u32::from(p.n_attrs) + tail_attr_count(facts),
         budget,
     };
     a.put("http.request.method", Value::Str(method));
-    // (with FLAG_METHOD_OTHER the original was captured as a span attribute at begin)
-    if method == b"_OTHER" && facts.flags & FLAG_METHOD_OTHER == 0 {
-        a.put(
-            "http.request.method_original",
-            Value::Str(facts.method.as_str().as_bytes()),
-        );
+    if let Some(m) = facts.method {
+        if method == b"_OTHER" {
+            a.put(
+                "http.request.method_original",
+                Value::Str(m.as_str().as_bytes()),
+            );
+        }
     }
     a.put(
         "url.scheme",
@@ -757,7 +804,7 @@ fn encode_head(
     if !route.is_empty() {
         a.put("http.route", Value::Str(lim(route)));
     }
-    // Attributes encoded on the request path (counted in `user` above).
+    // Attributes encoded on the request path (counted in `p.n_attrs` above).
     a.w.raw(p.attrs);
     let mut span_status = p.status;
     let mut msg: &[u8] = p.status_message;

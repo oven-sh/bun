@@ -19,7 +19,6 @@ pub fn begin(
     method: Option<Method>,
     req: &bun_uws::AnyRequest,
     resp: bun_uws::AnyResponse,
-    is_https: bool,
 ) -> Option<(NativeSpan, Entered)> {
     if !bun_telemetry::enabled(Instrument::HttpServer) {
         return None;
@@ -27,23 +26,19 @@ pub fn begin(
     let st = state();
     let h = req.telemetry_headers();
     let mut parent = None;
-    let mut joined_trace_state: Option<Vec<u8>> = None;
-    let mut trace_state: &[u8] = b"";
+    let mut raw_ts = None;
     if st.propagate_trace_context {
         if let Some(tp) = h.traceparent() {
             parent = propagation::parse_traceparent(tp);
             if parent.is_some() {
-                if h.tracestate_repeated != 0 && h.tracestate().is_some() {
-                    // W3C: several tracestate fields are one list, in order.
-                    joined_trace_state = req.header_joined(b"tracestate");
-                }
-                let raw = joined_trace_state.as_deref().or_else(|| h.tracestate());
-                if let Some(ts) = raw.and_then(propagation::tracestate_bounded) {
-                    trace_state = ts;
-                }
+                raw_ts = list_header(req, b"tracestate", h.tracestate(), h.tracestate_repeated);
             }
         }
     }
+    let trace_state: &[u8] = raw_ts
+        .as_deref()
+        .and_then(propagation::tracestate_bounded)
+        .unwrap_or(b"");
     // `http: "nested"`: a server span's only possible parent is the caller's
     // traceparent, so record only requests that are part of a trace.
     if parent.is_none() && !bun_telemetry::allows_root(Instrument::HttpServer) {
@@ -52,20 +47,15 @@ pub fn begin(
     let now = clock::now_unix_nanos();
     let mut l = local(global)?;
     let stub = SpanStub::start(&mut l.rng, parent.as_ref(), &st.sampler, now);
-    let joined_baggage: Option<Vec<u8>> =
-        if st.propagate_baggage && h.baggage_repeated != 0 && h.baggage().is_some() {
-            req.header_joined(b"baggage")
-        } else {
-            None
-        };
-    let baggage = if st.propagate_baggage {
-        joined_baggage
-            .as_deref()
-            .or_else(|| h.baggage())
-            .filter(|b| propagation::baggage_is_reasonable(b))
+    let raw_bg = if st.propagate_baggage {
+        list_header(req, b"baggage", h.baggage(), h.baggage_repeated)
     } else {
         None
     };
+    let baggage: Option<&[u8]> = raw_bg
+        .as_deref()
+        .filter(|b| propagation::baggage_is_reasonable(b));
+    let https = !matches!(resp, bun_uws::AnyResponse::TCP(_));
     // Facts only; attributes are encoded when the batch is exported
     // (bun_telemetry::http_record).
     let span = pool::begin_with(
@@ -81,10 +71,14 @@ pub fn begin(
             if let Some(b) = baggage {
                 s.baggage.extend_from_slice(b);
             }
-            let mut flags = if is_https { R::FLAG_HTTPS } else { 0 };
-            // A method `Method` cannot name (custom extension): `_OTHER` plus the original.
-            if method.is_none() && stub.ctx.flags.sampled() {
-                flags |= R::FLAG_METHOD_OTHER;
+            s.http.active = true;
+            s.http.method = method;
+            s.http.flags = if https { R::FLAG_HTTPS } else { 0 };
+            if !stub.is_recording() {
+                return;
+            }
+            if method.is_none() {
+                // semconv: `_OTHER` plus the original text.
                 s.push_attribute(
                     b"http.request.method_original",
                     &Value::Str(req.method()),
@@ -92,12 +86,6 @@ pub fn begin(
                 );
             }
             let f = &mut s.http;
-            f.active = true;
-            f.method = method.unwrap_or(Method::GET);
-            if !stub.ctx.flags.sampled() {
-                return;
-            }
-            f.flags = flags;
             // network.peer.*: the raw address is cached per connection by the
             // transport (one getpeername); it is formatted into the facts per
             // request (no per-connection encoded cache: that costs every
@@ -163,6 +151,40 @@ pub fn begin(
     ))
 }
 
+/// A list-valued header: the single field, or every field joined with ", "
+/// when it repeats (W3C: several fields are one list, in order).
+fn list_header<'a>(
+    req: &bun_uws::AnyRequest,
+    name: &[u8],
+    single: Option<&'a [u8]>,
+    repeated: u8,
+) -> Option<std::borrow::Cow<'a, [u8]>> {
+    let single = single?;
+    if repeated != 0 {
+        req.header_joined(name).map(std::borrow::Cow::Owned)
+    } else {
+        Some(std::borrow::Cow::Borrowed(single))
+    }
+}
+
+/// [`begin`] for a route matched by its literal path (static and HTML-bundle
+/// routes): the query-stripped path `begin` recorded is the route.
+pub fn begin_static(
+    global: &JSGlobalObject,
+    req: &bun_uws::AnyRequest,
+    resp: bun_uws::AnyResponse,
+) -> Option<(NativeSpan, Entered)> {
+    let (span, entered) = begin(global, Method::find(req.method()), req, resp)?;
+    if let Some(mut l) = local(global) {
+        pool::with(&mut l.pool, span, |s| {
+            if s.is_recording() {
+                s.http.set_route_from_path();
+            }
+        });
+    }
+    Some((span, entered))
+}
+
 /// Refine the span name to `METHOD /route` once the matched route is known.
 pub fn set_route(global: &JSGlobalObject, span: NativeSpan, route: &[u8]) {
     if route.is_empty() {
@@ -170,7 +192,7 @@ pub fn set_route(global: &JSGlobalObject, span: NativeSpan, route: &[u8]) {
     }
     if let Some(mut l) = local(global) {
         pool::with(&mut l.pool, span, |s| {
-            if s.stub.ctx.flags.sampled() {
+            if s.is_recording() {
                 s.http.set_route(route);
             }
         });

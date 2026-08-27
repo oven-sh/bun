@@ -206,8 +206,8 @@ function serveFixture(dir: string, { http1 = true } = {}) {
 // The request/response cases share one standard fixture for the whole file.
 // stop(true) closes the client's still-pooled session with CONNECTION_CLOSE
 // instead of leaving it to lsquic's idle timeout.
-let fixtureDir: ReturnType<typeof tempDir>;
-let fixture: ReturnType<typeof serveFixture>;
+let fixtureDir: ReturnType<typeof tempDir> | undefined;
+let fixture: ReturnType<typeof serveFixture> | undefined;
 beforeAll(() => {
   fixtureDir = tempDir("serve-http3", {
     "big.bin": BIG_FILE_BYTES,
@@ -215,13 +215,18 @@ beforeAll(() => {
   });
   fixture = serveFixture(String(fixtureDir));
 });
+// Optional chaining: if beforeAll threw, the error it reported must stay the
+// only one, and the temp dir must still be removed.
 afterAll(async () => {
-  await fixture.stop(true);
-  fixtureDir[Symbol.dispose]();
+  try {
+    await fixture?.stop(true);
+  } finally {
+    fixtureDir?.[Symbol.dispose]();
+  }
 });
 
 async function withServer(fn: (port: number, dir: string) => Promise<void>): Promise<void> {
-  await fn(fixture.port, String(fixtureDir));
+  await fn(fixture!.port, String(fixtureDir!));
 }
 
 // Concurrent: these cases send requests to the shared fixture (multiplexed over
@@ -307,7 +312,7 @@ describe.concurrent("Bun.serve HTTP/3", () => {
   });
 
   test("http1: false rejects HTTP/1.1 but accepts HTTP/3", async () => {
-    await using server = serveFixture(String(fixtureDir), { http1: false });
+    await using server = serveFixture(String(fixtureDir!), { http1: false });
     const port = server.port;
     const h3 = await fetchH3(port, "/hello");
     expect(h3.status).toBe(200);

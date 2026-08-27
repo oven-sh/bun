@@ -1893,8 +1893,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                         let mut i: usize = 1;
                         if text.len() > 1 && num == b'0' && text[1] == b'x' {
                             i += 1;
-                            while i < text.len()
-                                && (text[i].is_ascii_hexdigit() || text[i] == b'_')
+                            while i < text.len() && (text[i].is_ascii_hexdigit() || text[i] == b'_')
                             {
                                 i += 1;
                             }

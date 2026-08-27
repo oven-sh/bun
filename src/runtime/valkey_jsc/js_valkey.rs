@@ -761,6 +761,7 @@ impl JSValkeyClient {
                 read_buffer: Default::default(),
                 reply_scanner: Default::default(),
                 retry_attempts: 0,
+                failure: None,
                 auto_flusher: Default::default(),
             }),
             global_object,
@@ -873,6 +874,7 @@ impl JSValkeyClient {
                 read_buffer: Default::default(),
                 reply_scanner: Default::default(),
                 retry_attempts: 0,
+                failure: None,
                 auto_flusher: Default::default(),
             }),
             global_object,
@@ -974,13 +976,17 @@ impl JSValkeyClient {
         let promise = promise_ptr.to_js();
         Js::connection_promise_set_cached(this_value, global_object, promise);
 
-        // If was manually closed, reset that flag
+        // If was manually closed, reset that flag. A close() that interrupted
+        // a dial in this same tick is taken back with it: the deferred close
+        // of that dial now settles this connect(), and reports the dial's own
+        // outcome rather than the close.
         self.client_mut().flags.is_manually_closed = false;
-        // Explicit connect() should also clear the sticky `failed` flag so the
+        self.client_mut().flags.close_aborted_dial = false;
+        // Explicit connect() should also clear the sticky failure so the
         // client can recover after prior connection attempts exhausted retries.
         // Without this, every subsequent command rejects with "Connection has
         // failed" forever — see https://github.com/oven-sh/bun/issues/29925.
-        self.client_mut().flags.failed = false;
+        self.client_mut().failure = None;
         let self_br = BackRef::new(self);
         let _update = scopeguard::guard(self_br, |p| p.update_poll_ref());
 
@@ -988,13 +994,10 @@ impl JSValkeyClient {
             self.poll_ref.with_mut(|r| r.ref_(vm_event_loop_ctx()));
 
             if let Err(err) = self.connect() {
-                debug!(
-                    "first dial failed before a socket was opened: {}",
-                    err.name()
-                );
+                debug!("first dial failed before a socket was opened: {:?}", err);
                 // Settled by the deferred close like a refused dial: the
                 // promise, onclose and the retry policy all go through on_close().
-                self.close_without_socket_next_tick();
+                self.close_without_socket_next_tick(self.dial_error_message(&err), false);
                 return Ok(promise);
             }
 
@@ -1053,7 +1056,8 @@ impl JSValkeyClient {
         // `on_valkey_close` adopts none. The caller's scoped ref covers the
         // call.
         self.reconnect_timer.disarm(self);
-        self.client_mut().on_close()
+        self.client_mut()
+            .on_close(valkey::CloseReason::SocketClosed)
     }
 
     // `onconnect`/`onclose` are declared with `this: true` in
@@ -1078,7 +1082,7 @@ impl JSValkeyClient {
 
         let _guard = self.ref_guard();
         let _timer_ref = self.timer.take_fire_ref(self);
-        if self.client.get().flags.failed {
+        if self.client.get().failure.is_some() {
             return Ok(());
         }
 
@@ -1135,10 +1139,43 @@ impl JSValkeyClient {
     /// commands queued for the retry or the rejection, and a disconnect()
     /// marks the close as manual for the task to honour. `update_poll_ref`
     /// keeps the wrapper and the event loop alive for it like a dial would.
-    fn close_without_socket_next_tick(&self) {
+    fn close_without_socket_next_tick(&self, reason: Box<[u8]>, terminal: bool) {
         self.client_mut().status = valkey::Status::Connecting;
         self.update_poll_ref();
-        self.enqueue_deferred_close(DeferredClose::WithoutSocket);
+        self.enqueue_deferred_close(DeferredClose::WithoutSocket { reason, terminal });
+    }
+
+    /// The `CloseReason::DialFailed` text for a dial uSockets turned down
+    /// before it had a socket, in the shape of `node:net`'s: `connect ENOENT
+    /// /run/redis.sock`.
+    fn dial_error_message(&self, err: &uws::ConnectError) -> Box<[u8]> {
+        let &uws::ConnectError::FailedToOpenSocket { mut errno } = err;
+        let address = &self.client.get().address;
+        if let valkey::Address::Unix(path) = address {
+            errno = bun_errno::from_errno(bun_sys::unix_connect_errno(errno as i32, path));
+        }
+        Self::connect_error_message(address, errno)
+    }
+
+    fn connect_error_message(
+        address: &valkey::Address,
+        errno: bun_errno::SystemErrno,
+    ) -> Box<[u8]> {
+        use std::io::Write;
+        let mut message = Vec::new();
+        let _ = write!(message, "connect {} ", errno);
+        match address {
+            valkey::Address::Unix(path) => message.extend_from_slice(path),
+            valkey::Address::Host { host, port } => {
+                // `URL.host()` keeps an IPv6 literal's brackets; node prints `::1:6379`.
+                let host = host
+                    .strip_prefix(b"[")
+                    .and_then(|h| h.strip_suffix(b"]"))
+                    .unwrap_or(host);
+                let _ = write!(message, "{}:{}", bstr::BStr::new(host), port);
+            }
+        }
+        message.into_boxed_slice()
     }
 
     fn enqueue_deferred_close(&self, what: DeferredClose) {
@@ -1197,13 +1234,10 @@ impl JSValkeyClient {
         });
 
         if let Err(err) = self.connect() {
-            debug!(
-                "reconnect failed before a socket was opened: {}",
-                err.name()
-            );
+            debug!("reconnect failed before a socket was opened: {:?}", err);
             // Same outcome as a dial that fails asynchronously: another retry,
             // or fail() and a settled connect() promise once retries are used up.
-            self.close_without_socket_next_tick();
+            self.close_without_socket_next_tick(self.dial_error_message(&err), false);
             return Ok(());
         }
 
@@ -1397,12 +1431,17 @@ impl JSValkeyClient {
             return Err(bun_jsc::JsError::Thrown);
         }
 
-        // Create an error value
-        let error_value = protocol_jsc::valkey_error_to_js(
-            &global_object,
-            b"Connection closed",
-            protocol::RedisError::ConnectionClosed,
-        );
+        // The error the commands were rejected with. Every arm of `on_close()`
+        // calls `fail()` first, and the one `fail()` that cannot record (a
+        // finalized client) never gets past the `this_value` guard above.
+        let Some(failure) = &self.client.get().failure else {
+            debug_assert!(
+                false,
+                "on_close() records a failure before on_valkey_close()"
+            );
+            return Ok(());
+        };
+        let error_value = failure.get();
 
         let _exit = self.vm().enter_event_loop_scope();
 
@@ -1462,7 +1501,7 @@ impl JSValkeyClient {
         self.reconnect_timer.disarm(self);
     }
 
-    fn connect(&self) -> Result<(), crate::Error> {
+    fn connect(&self) -> Result<(), uws::ConnectError> {
         // Overwriting a live socket below would leave its callbacks driving
         // this client alongside the new one's.
         debug_assert!(self.client.get().socket.is_closed());
@@ -1503,12 +1542,11 @@ impl JSValkeyClient {
             false
         };
         if tls_ctx_failed {
-            self.client_mut().flags.enable_auto_reconnect = false;
-            self.client_fail(
-                b"Failed to create TLS context",
-                protocol::RedisError::ConnectionClosed,
-            )?;
-            self.close_without_socket_next_tick();
+            // Terminal: no retry could build the context either.
+            self.close_without_socket_next_tick(
+                Box::from(&b"Failed to create TLS context"[..]),
+                true,
+            );
             return Ok(());
         }
         let ssl_ctx: Option<*mut uws::SslCtx> = match &self.client.get().tls {
@@ -1586,11 +1624,8 @@ impl JSValkeyClient {
             // The command is queued as for a dial in flight; the deferred
             // close then rejects it or a retry sends it, like a refused dial.
             Err(err) => {
-                debug!(
-                    "first dial failed before a socket was opened: {}",
-                    err.name()
-                );
-                self.close_without_socket_next_tick();
+                debug!("first dial failed before a socket was opened: {:?}", err);
+                self.close_without_socket_next_tick(self.dial_error_message(&err), false);
             }
             Ok(()) => self.reset_connection_timeout(),
         }
@@ -1878,7 +1913,8 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.client_mut().status = valkey::Status::Disconnected;
         let _defer = scopeguard::guard(BackRef::new(this), |p| p.update_poll_ref());
 
-        this.client_mut().on_close()
+        this.client_mut()
+            .on_close(valkey::CloseReason::SocketClosed)
     }
 
     pub(crate) fn on_end(this: &JSValkeyClient, socket: SocketType<SSL>) {
@@ -1890,11 +1926,17 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // anything here
     }
 
+    /// `errno` is the connect's error in `SystemErrno` numbering (the uSockets
+    /// trampoline maps the OS code), or, when `dns_error` is set, the
+    /// `getaddrinfo(3)` code of the lookup that failed instead.
     pub(crate) fn on_connect_error(
         this: &JSValkeyClient,
-        _socket: SocketType<SSL>,
-        _code: i32,
+        socket: SocketType<SSL>,
+        errno: i32,
     ) -> JsResult<()> {
+        // Read before the socket is detached: uSockets keeps the connecting
+        // socket alive for the whole dispatch.
+        let dns_error = socket.dns_error();
         // Ensure the socket pointer is updated.
         this.client_mut().socket = Socket::SocketTcp(uws::SocketTCP::detached());
         let _guard = this.ref_guard();
@@ -1903,7 +1945,29 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.client_mut().status = valkey::Status::Disconnected;
         let _defer = scopeguard::guard(BackRef::new(this), |p| p.update_poll_ref());
 
-        this.client_mut().on_close()
+        let address = &this.client.get().address;
+        let message = match bun_cares_sys::c_ares::Error::init_eai(dns_error)
+            .filter(|_| dns_error != 0)
+        {
+            Some(dns_err) => {
+                use std::io::Write;
+                let mut message = Vec::new();
+                // `code()` is `DNS_ENOTFOUND`; `node:dns` and `Bun.connect`
+                // report it as `getaddrinfo ENOTFOUND host`.
+                let _ = write!(
+                    message,
+                    "getaddrinfo {} {}",
+                    &dns_err.code()[4..],
+                    bstr::BStr::new(address.hostname())
+                );
+                message.into_boxed_slice()
+            }
+            None => JSValkeyClient::connect_error_message(address, bun_errno::from_errno(errno)),
+        };
+        this.client_mut().on_close(valkey::CloseReason::DialFailed {
+            message: &message,
+            terminal: false,
+        })
     }
 
     pub(crate) fn on_timeout(this: &JSValkeyClient, socket: SocketType<SSL>) {
@@ -2020,13 +2084,13 @@ impl Options {
     }
 }
 
-#[derive(Clone, Copy)]
 enum DeferredClose {
     /// Close the socket the finalized wrapper left behind.
     Socket,
     /// Run the close path for a dial that never produced a socket
-    /// (`close_without_socket_next_tick`).
-    WithoutSocket,
+    /// (`close_without_socket_next_tick`); `reason` and `terminal` are the
+    /// `CloseReason::DialFailed` it runs with.
+    WithoutSocket { reason: Box<[u8]>, terminal: bool },
 }
 
 pub(crate) struct ValkeyDeferredClose {
@@ -2042,18 +2106,21 @@ impl ValkeyDeferredClose {
         let _enqueue_ref = unsafe { RefPtr::from_raw(self.ctx) };
         // SAFETY: live per the ref above; tasks run on the JS thread.
         let this = unsafe { &*self.ctx };
-        match self.what {
+        match &self.what {
             DeferredClose::Socket => {
                 crate::dispatch::fold(this.client_mut().close(uws::CloseCode::FastShutdown))
             }
-            DeferredClose::WithoutSocket => {
+            DeferredClose::WithoutSocket { reason, terminal } => {
                 // Holding Connecting (see `close_without_socket_next_tick`)
                 // and the gate in `reconnect()` keep every dial entry out.
                 debug_assert!(this.client.get().socket.is_closed());
                 // No socket ref to give back: `connect()` forgets it only once
                 // it has a socket, and this task exists because it never did.
                 this.client_mut().status = valkey::Status::Disconnected;
-                let closed = this.client_mut().on_close();
+                let closed = this.client_mut().on_close(valkey::CloseReason::DialFailed {
+                    message: reason,
+                    terminal: *terminal,
+                });
                 this.update_poll_ref();
                 crate::dispatch::fold(closed);
             }
@@ -2071,7 +2138,7 @@ impl bun_event_loop::Taskable for ValkeyDeferredClose {
             DeferredClose::Socket => task.run(),
             // The VM is going away: `on_close()` would run `onclose`, so only
             // give back what `close_without_socket_next_tick` took.
-            DeferredClose::WithoutSocket => {
+            DeferredClose::WithoutSocket { .. } => {
                 // SAFETY: as in `run`.
                 let _enqueue_ref = unsafe { RefPtr::from_raw(task.ctx) };
                 // SAFETY: live per the ref above.

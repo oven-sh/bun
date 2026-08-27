@@ -3,7 +3,7 @@ import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, mock, test } from "bun:test";
 import { once } from "events";
 import { existsSync, readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, nodeExe, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isIPv6, isWindows, nodeExe, tempDir, tls as tlsCert } from "harness";
 import net from "net";
 import path from "path";
 import tls from "tls";
@@ -34,7 +34,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         expect(false).toBe(true); // Should not reach here
       } catch (error) {
         // Expect an error with connection closed message
-        expect(error.message).toMatch(/connection closed|socket closed|failed to connect/i);
+        expect(error.message).toMatch(/connection closed|socket closed|failed to connect|connect E[A-Z]+/i);
       } finally {
         // Cleanup
         await client.close();
@@ -58,7 +58,9 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         expect(false).toBe(true); // Should not reach here
       } catch (error) {
         // Should fail with connection error
-        expect(error.message).toMatch(/connection closed|socket closed|failed to connect|offline queue is disabled/i);
+        expect(error.message).toMatch(
+          /connection closed|socket closed|failed to connect|connect E[A-Z]+|offline queue is disabled/i,
+        );
       }
 
       try {
@@ -66,7 +68,9 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         expect(false).toBe(true); // Should not reach here
       } catch (error) {
         // Should fail with connection error
-        expect(error.message).toMatch(/connection closed|socket closed|failed to connect|offline queue is disabled/i);
+        expect(error.message).toMatch(
+          /connection closed|socket closed|failed to connect|connect E[A-Z]+|offline queue is disabled/i,
+        );
       }
 
       try {
@@ -74,7 +78,9 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         expect(false).toBe(true); // Should not reach here
       } catch (error) {
         // Should fail with connection error
-        expect(error.message).toMatch(/connection closed|socket closed|failed to connect|offline queue is disabled/i);
+        expect(error.message).toMatch(
+          /connection closed|socket closed|failed to connect|connect E[A-Z]+|offline queue is disabled/i,
+        );
       }
 
       try {
@@ -82,7 +88,9 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         expect(false).toBe(true); // Should not reach here
       } catch (error) {
         // Should fail with connection error
-        expect(error.message).toMatch(/connection closed|socket closed|failed to connect|offline queue is disabled/i);
+        expect(error.message).toMatch(
+          /connection closed|socket closed|failed to connect|connect E[A-Z]+|offline queue is disabled/i,
+        );
       }
     });
 
@@ -140,7 +148,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         expect(false).toBe(true); // Should not reach here
       } catch (error) {
         // Should fail with a connection error
-        expect(error.message).toMatch(/connection closed|socket closed|failed to connect/i);
+        expect(error.message).toMatch(/connection closed|socket closed|failed to connect|connect E[A-Z]+/i);
       }
 
       await client.close();
@@ -283,9 +291,11 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
       await client.close();
 
       expect(client.connected).toBe(false);
+      // close() on a client that never dialed is a no-op; the command dials
+      // once and gets that dial's errno.
       expect(async () => {
         await client.get("any-key");
-      }).toThrowErrorMatchingInlineSnapshot(`"Connection closed"`);
+      }).toThrow("connect ECONNREFUSED localhost:12345");
       // Multiple disconnects should not cause issues
       await client.close();
       await client.close();
@@ -328,7 +338,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
       const promises = clients.map(client =>
         client.get("key").catch(err => {
           // We expect errors, but want to make sure they're the right kind
-          expect(err.message).toMatch(/connection closed|socket closed|failed to connect/i);
+          expect(err.message).toMatch(/connection closed|socket closed|failed to connect|connect E[A-Z]+/i);
         }),
       );
 
@@ -340,6 +350,325 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         await client.close();
       }
     });
+  });
+});
+
+describe("Valkey: connect() error identity", () => {
+  // One failure, one error object: the commands queued behind the dial, the
+  // connect() promise and onclose all get it. Before, connect() and onclose
+  // got ERR_REDIS_CONNECTION_CLOSED "Connection closed" whatever the cause.
+  const CRLF = "\r\n";
+
+  async function stubServer(helloReply: string | null) {
+    const server = net.createServer(sock => {
+      let received = "";
+      let replied = false;
+      sock.on("error", () => {});
+      sock.on("data", d => {
+        if (replied || helloReply === null) return;
+        received += d.toString().toUpperCase();
+        if (received.includes("HELLO") && received.endsWith(CRLF)) {
+          replied = true;
+          sock.write(helloReply);
+        }
+      });
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as net.AddressInfo;
+    return { port, close: () => server.close() };
+  }
+
+  async function closedPort() {
+    const listener = net.createServer();
+    await new Promise<void>(resolve => listener.listen(0, "127.0.0.1", resolve));
+    const { port } = listener.address() as net.AddressInfo;
+    await new Promise<void>(resolve => listener.close(() => resolve()));
+    return port;
+  }
+
+  // `redis+unix://` takes the path from the URL's pathname. A Windows path
+  // cannot be spelled that way: `redis+unix:///C:/dir/r.sock` reaches
+  // connect(2) as `/C:/dir/r.sock`, which Winsock rejects with EINVAL.
+  function missingUnixSocket(dir: string) {
+    const socketPath = path.join(dir, "missing.sock");
+    return { url: `redis+unix://${socketPath}`, seen: socketPath };
+  }
+
+  // Dials with a GET queued behind connect() and returns the error connect()
+  // rejected with, after checking the GET and onclose got the same object.
+  async function failure(url: string, options: any) {
+    const client = new RedisClient(url, options);
+    const closed = Promise.withResolvers<unknown>();
+    let closes = 0;
+    client.onclose = err => {
+      closes++;
+      closed.resolve(err);
+    };
+    try {
+      const get = client.get("k").then(
+        () => "<resolved>",
+        e => e,
+      );
+      const err = await client.connect().then(
+        () => "<connected>",
+        e => e,
+      );
+      expect(err).toBeInstanceOf(Error);
+      expect(await get).toBe(err);
+      expect(await closed.promise).toBe(err);
+      expect(closes).toBe(1);
+      if (!("cause" in err)) return { code: err.code, message: err.message };
+      // The same shape as `new Error(message, { cause })`.
+      expect(Object.getOwnPropertyDescriptor(err, "cause")!.enumerable).toBe(false);
+      return { code: err.code, message: err.message, cause: err.cause.message };
+    } finally {
+      client.close();
+    }
+  }
+
+  test("-WRONGPASS reply to HELLO rejects connect() with the server's error text", async () => {
+    const srv = await stubServer(`-WRONGPASS invalid username-password pair or user is disabled.${CRLF}`);
+    try {
+      expect(await failure(`redis://:bad@127.0.0.1:${srv.port}`, { autoReconnect: false })).toEqual({
+        code: "ERR_REDIS_AUTHENTICATION_FAILED",
+        message: "WRONGPASS invalid username-password pair or user is disabled.",
+      });
+    } finally {
+      srv.close();
+    }
+  });
+
+  test("-NOAUTH reply to HELLO rejects connect() with the server's error text", async () => {
+    const srv = await stubServer(`-NOAUTH HELLO must be called with the client already authenticated${CRLF}`);
+    try {
+      expect(await failure(`redis://127.0.0.1:${srv.port}`, { autoReconnect: false })).toEqual({
+        code: "ERR_REDIS_AUTHENTICATION_FAILED",
+        message: "NOAUTH HELLO must be called with the client already authenticated",
+      });
+    } finally {
+      srv.close();
+    }
+  });
+
+  test("connectionTimeout expiry rejects connect() with ERR_REDIS_CONNECTION_TIMEOUT", async () => {
+    const srv = await stubServer(null);
+    try {
+      expect(await failure(`redis://127.0.0.1:${srv.port}`, { autoReconnect: false, connectionTimeout: 200 })).toEqual({
+        code: "ERR_REDIS_CONNECTION_TIMEOUT",
+        message: "Connection timeout reached after 200ms",
+      });
+    } finally {
+      srv.close();
+    }
+  });
+
+  test("a refused TCP connect rejects connect() with the errno", async () => {
+    const port = await closedPort();
+    expect(await failure(`redis://127.0.0.1:${port}`, { autoReconnect: false, connectionTimeout: 2000 })).toEqual({
+      code: "ERR_REDIS_CONNECTION_CLOSED",
+      message: `connect ECONNREFUSED 127.0.0.1:${port}`,
+    });
+  });
+
+  test.skipIf(isWindows)("a unix socket path that does not exist rejects connect() with ENOENT", async () => {
+    using dir = tempDir("valkey-unix", {});
+    const { url, seen } = missingUnixSocket(String(dir));
+    // Fails inside the dial itself, before uSockets has a socket to report on.
+    expect(await failure(url, { autoReconnect: false })).toEqual({
+      code: "ERR_REDIS_CONNECTION_CLOSED",
+      message: `connect ENOENT ${seen}`,
+    });
+  });
+
+  test("a hostname that does not resolve rejects connect() with the resolver error", async () => {
+    // A 64 byte DNS label is illegal (RFC 1035 section 2.3.4), so the lookup
+    // fails locally without a query leaving the machine.
+    const host = Buffer.alloc(64, "a").toString() + ".com";
+    expect(await failure(`redis://${host}:6379`, { autoReconnect: false })).toEqual({
+      code: "ERR_REDIS_CONNECTION_CLOSED",
+      message: `getaddrinfo ENOTFOUND ${host}`,
+    });
+  });
+
+  test("a certificate the client does not trust rejects connect() with the verify error", async () => {
+    const server = tls.createServer({ key: tlsCert.key, cert: tlsCert.cert }, socket => {
+      socket.on("error", () => {});
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as net.AddressInfo;
+    try {
+      // No `ca`, so the harness cert is self-signed as far as the client knows.
+      const err = await failure(`rediss://localhost:${port}`, {
+        autoReconnect: false,
+        tls: { rejectUnauthorized: true },
+      });
+      expect(err.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+      expect(err.message).toContain("self signed certificate");
+    } finally {
+      server.close();
+    }
+  });
+
+  // Giving up is the outcome, so the terminal message replaces the last
+  // attempt's own reason, whether that attempt failed inside the dial (a
+  // missing unix socket path) or from the event loop (a refused port); that
+  // reason is kept as the error's cause.
+  test("exhausted retries report the terminal reason with the last refused dial's as cause", async () => {
+    const port = await closedPort();
+    expect(await failure(`redis://127.0.0.1:${port}`, { autoReconnect: true, maxRetries: 1 })).toEqual({
+      code: "ERR_REDIS_CONNECTION_CLOSED",
+      message: "Max reconnection attempts reached",
+      cause: `connect ECONNREFUSED 127.0.0.1:${port}`,
+    });
+  });
+
+  test.skipIf(isWindows)(
+    "exhausted retries report the terminal reason with the last failed dial's as cause",
+    async () => {
+      using dir = tempDir("valkey-unix", {});
+      const { url, seen } = missingUnixSocket(String(dir));
+      expect(await failure(url, { autoReconnect: true, maxRetries: 1 })).toEqual({
+        code: "ERR_REDIS_CONNECTION_CLOSED",
+        message: "Max reconnection attempts reached",
+        cause: `connect ENOENT ${seen}`,
+      });
+    },
+  );
+
+  test.skipIf(isWindows)(
+    "a connect() that follows a close() in the tick of a failed first dial reports the dial's errno",
+    async () => {
+      using dir = tempDir("valkey-unix", {});
+      const { url, seen } = missingUnixSocket(String(dir));
+      const client = new RedisClient(url, { autoReconnect: false });
+      const closed = Promise.withResolvers<unknown>();
+      let closes = 0;
+      client.onclose = err => {
+        closes++;
+        closed.resolve(err);
+      };
+      try {
+        // The command's dial fails inside connect() and its close is deferred.
+        // close() marks that dial as aborted by the user; the connect() in the
+        // same tick takes the close back, so the dial's own outcome is what
+        // the deferred close reports.
+        const get = client.get("k").then(
+          () => "<resolved>",
+          e => e,
+        );
+        client.close();
+        const err = await client.connect().then(
+          () => "<connected>",
+          e => e,
+        );
+        expect(err).toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED", message: `connect ENOENT ${seen}` });
+        expect(await get).toBe(err);
+        expect(await closed.promise).toBe(err);
+        expect(closes).toBe(1);
+      } finally {
+        client.close();
+      }
+    },
+  );
+
+  test("a connect() after an authentication failure gets its own outcome", async () => {
+    let helloReply = `-WRONGPASS invalid username-password pair or user is disabled.${CRLF}`;
+    const server = net.createServer(sock => {
+      sock.on("error", () => {});
+      sock.on("data", () => sock.write(helloReply));
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as net.AddressInfo;
+    const client = new RedisClient(`redis://:bad@127.0.0.1:${port}`, { autoReconnect: false });
+    try {
+      const rejection = (p: Promise<unknown>) =>
+        p.then(
+          () => "<connected>",
+          e => e,
+        );
+      const first = await rejection(client.connect());
+      const second = await rejection(client.connect());
+      expect(second).toMatchObject({ code: "ERR_REDIS_AUTHENTICATION_FAILED" });
+      // The recorded failure is cleared by the dial; the second attempt's
+      // rejection is its own, not the first one's replayed.
+      expect(second).not.toBe(first);
+      helloReply = `+OK${CRLF}`;
+      await client.connect();
+      expect(client.connected).toBe(true);
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+
+  test.skipIf(!isIPv6())("a refused IPv6 literal is reported without its URL brackets", async () => {
+    const listener = net.createServer();
+    await new Promise<void>(resolve => listener.listen(0, "::1", resolve));
+    const { port } = listener.address() as net.AddressInfo;
+    await new Promise<void>(resolve => listener.close(() => resolve()));
+    expect(await failure(`redis://[::1]:${port}`, { autoReconnect: false })).toEqual({
+      code: "ERR_REDIS_CONNECTION_CLOSED",
+      message: `connect ECONNREFUSED ::1:${port}`,
+    });
+  });
+
+  test("a TLS context that cannot be built is terminal even with autoReconnect on", async () => {
+    // Neither key nor cert parses, so no attempt gets as far as a socket, and
+    // no retry could do better: one onclose, whatever autoReconnect says.
+    expect(await failure("rediss://127.0.0.1:1", { tls: { key: "not a key", cert: "not a cert" } })).toEqual({
+      code: "ERR_REDIS_CONNECTION_CLOSED",
+      message: "Failed to create TLS context",
+    });
+  });
+
+  // close() while the dial is pending. A hostname in a fresh process is
+  // resolved from the event loop, so its dial is a connecting socket that
+  // uSockets aborts with a connect error (ECONNABORTED); a literal IP is a
+  // half-open socket the client closes by hand. Both are the user's close.
+  test.each([
+    ["a hostname", "localhost"],
+    ["a literal IP", "127.0.0.1"],
+  ])("close() during a dial to %s reports the close, not a connect error", async (_kind, host) => {
+    const srv = await stubServer(`+OK${CRLF}`);
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const client = new Bun.RedisClient("redis://${host}:${srv.port}", { autoReconnect: false });
+          let closes = 0;
+          const closed = Promise.withResolvers();
+          client.onclose = err => { closes++; closed.resolve(err); };
+          const get = client.get("k").then(() => "<resolved>", e => e);
+          const connect = client.connect().then(() => "<connected>", e => e);
+          client.close();
+          const err = await connect;
+          console.log(JSON.stringify({
+            code: err.code, message: err.message, closes,
+            sameForGet: (await get) === err, sameForOnclose: (await closed.promise) === err,
+          }));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({
+          code: "ERR_REDIS_CONNECTION_CLOSED",
+          message: "Connection closed",
+          closes: 1,
+          sameForGet: true,
+          sameForOnclose: true,
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+    } finally {
+      srv.close();
+    }
   });
 });
 
@@ -642,7 +971,7 @@ describe("Valkey: Recovering After fail()", () => {
         inFlight: await inFlight,
         connections: fake.connections,
       }).toEqual({
-        onclose: "ERR_REDIS_CONNECTION_CLOSED",
+        onclose: "ERR_REDIS_IDLE_TIMEOUT",
         connectedInsideOnclose: false,
         connectedAfter: false,
         inFlight: "ERR_REDIS_IDLE_TIMEOUT",
@@ -676,7 +1005,7 @@ describe("Valkey: Recovering After fail()", () => {
         client.onclose = err => closed.resolve(err);
         await client.connect();
         expect(client.connected).toBe(true);
-        expect(await closed.promise).toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
+        expect(await closed.promise).toMatchObject({ code: "ERR_REDIS_IDLE_TIMEOUT" });
         expect(client.connected).toBe(false);
         expect(fake.connections).toBe(connection);
       }
@@ -711,6 +1040,105 @@ describe("Valkey: Recovering After fail()", () => {
       await expect(client.ping()).rejects.toMatchObject({ code: "ERR_REDIS_IDLE_TIMEOUT" });
       expect(pushes).toBe(30);
       expect(client.connected).toBe(false);
+    } finally {
+      client.close();
+      fake.server.close();
+    }
+  });
+
+  test("the peer dropping an established connection reports the close to onclose and the in-flight command", async () => {
+    // PING is left unanswered and the socket is dropped instead.
+    const fake = helloServer({
+      PING: (_, socket) => {
+        socket.destroy();
+        return null;
+      },
+    });
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: false });
+    try {
+      const closed = Promise.withResolvers<unknown>();
+      client.onclose = err => closed.resolve(err);
+      await client.connect();
+      const err = await client.ping().then(
+        () => "<resolved>",
+        e => e,
+      );
+      expect(err).toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED", message: "Connection closed" });
+      expect(await closed.promise).toBe(err);
+    } finally {
+      client.close();
+      fake.server.close();
+    }
+  });
+
+  test("close() on a connected client reports the close to onclose and the in-flight command", async () => {
+    const fake = helloServer({ PING: () => null });
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`);
+    try {
+      const closed = Promise.withResolvers<unknown>();
+      client.onclose = err => closed.resolve(err);
+      await client.connect();
+      const ping = client.ping().then(
+        () => "<resolved>",
+        e => e,
+      );
+      client.close();
+      const err = await ping;
+      expect(err).toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED", message: "Connection closed" });
+      expect(await closed.promise).toBe(err);
+    } finally {
+      client.close();
+      fake.server.close();
+    }
+  });
+
+  test("a TLS context that could not be built does not turn off autoReconnect for later connections", async () => {
+    // Connection 1 is dropped by the server right after it answers PING.
+    const fake = helloServer(
+      {
+        PING: (connection, socket) => {
+          if (connection === 1) {
+            socket.end("+PONG\r\n");
+            return null;
+          }
+          return "+PONG\r\n";
+        },
+      },
+      { secure: true },
+    );
+    const port = await fake.listen();
+    // The files exist, so the constructor accepts them; their content is read
+    // when a connection is dialed, and neither parses.
+    using dir = tempDir("valkey-tls", { "key.pem": "not a key", "cert.pem": "not a cert" });
+    const client = new RedisClient(`rediss://127.0.0.1:${port}`, {
+      tls: {
+        ca: tlsCert.cert,
+        keyFile: path.join(String(dir), "key.pem"),
+        certFile: path.join(String(dir), "cert.pem"),
+      },
+      autoReconnect: true,
+    });
+    try {
+      let closes = 0;
+      client.onclose = () => closes++;
+      await expect(client.connect()).rejects.toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
+      expect({ closes, connections: fake.connections }).toEqual({ closes: 1, connections: 0 });
+
+      await Bun.write(path.join(String(dir), "key.pem"), tlsCert.key);
+      await Bun.write(path.join(String(dir), "cert.pem"), tlsCert.cert);
+      const reconnected = Promise.withResolvers<void>();
+      let connects = 0;
+      client.onconnect = () => {
+        if (++connects === 2) reconnected.resolve();
+      };
+      client.onclose = err => reconnected.reject(err);
+      await client.connect();
+      expect(await client.ping()).toBe("PONG");
+      await reconnected.promise;
+      expect(await client.ping()).toBe("PONG");
+      expect(fake.connections).toBe(2);
     } finally {
       client.close();
       fake.server.close();
@@ -810,8 +1238,11 @@ describe("Valkey: Recovering After fail()", () => {
     const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: false });
     try {
       const secondConnect = connectFromOnclose(client);
-      await expect(client.connect()).rejects.toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
-      expect(await secondConnect).toBe("rejected: Connection closed");
+      await expect(client.connect()).rejects.toMatchObject({
+        code: "ERR_REDIS_CONNECTION_CLOSED",
+        message: `connect ECONNREFUSED 127.0.0.1:${port}`,
+      });
+      expect(await secondConnect).toBe(`rejected: connect ECONNREFUSED 127.0.0.1:${port}`);
     } finally {
       client.close();
     }
@@ -869,7 +1300,10 @@ describe("Valkey: Recovering After fail()", () => {
     const client = new RedisClient(`redis://127.0.0.1:${port}/1`, { autoReconnect: false });
     try {
       const secondConnect = connectFromOnclose(client);
-      await expect(client.connect()).rejects.toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
+      await expect(client.connect()).rejects.toMatchObject({
+        code: "ERR_REDIS_AUTHENTICATION_FAILED",
+        message: "WRONGPASS invalid password",
+      });
       expect(await secondConnect).toBe("connected");
       expect(await client.ping()).toBe("PONG");
       expect(fake.connections).toBe(2);
@@ -909,7 +1343,7 @@ describe("Valkey: Recovering After fail()", () => {
       // The rejection is a failure the client detected, so there is no retry
       // even with autoReconnect on: onclose fires once and the only second
       // connection is the one dialed from it.
-      expect(closes).toEqual([{ message: "Connection closed", connected: false, connections: 1 }]);
+      expect(closes).toEqual([{ message: "ERR DB index is out of range", connected: false, connections: 1 }]);
       expect(await secondConnect).toBe("connected");
       expect(await client.ping()).toBe("PONG");
       expect(fake.connections).toBe(2);
@@ -1061,9 +1495,12 @@ describe("Valkey: Recovering After fail()", () => {
     const client = new RedisClient(`rediss://127.0.0.1:${port}`, { autoReconnect: false });
     try {
       const secondConnect = connectFromOnclose(client);
-      await expect(client.connect()).rejects.toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
+      // The handshake failure is the TLS error the queued commands are
+      // rejected with, not the generic close.
+      const disconnected = "Client network socket disconnected before secure TLS connection was established";
+      await expect(client.connect()).rejects.toMatchObject({ code: "ECONNRESET", message: disconnected });
       expect({ secondConnect: await secondConnect, handshakes }).toEqual({
-        secondConnect: "rejected: Connection closed",
+        secondConnect: `rejected: ${disconnected}`,
         handshakes: 2,
       });
     } finally {
@@ -1114,19 +1551,31 @@ describe("Valkey: Recovering After fail()", () => {
         client.close();
         await first.close();
         let closes = 0;
-        client.onclose = () => closes++;
+        const closed = Promise.withResolvers<unknown>();
+        client.onclose = err => {
+          closes++;
+          closed.resolve(err);
+        };
         const outcome = client.connect().then(
           () => "connected",
-          (err: Error & { code: string }) => err.code,
+          (err: Error) => err,
+        );
+        const get = client.get("k").then(
+          () => "resolved",
+          (err: Error) => err,
         );
         client.close();
         await second.listenUnix(socketPath);
-        expect({ outcome: await outcome, closes, connected: client.connected, redialled: second.connections }).toEqual({
-          outcome: "ERR_REDIS_CONNECTION_CLOSED",
+        const err = await outcome;
+        // The close is what is reported, not the ENOENT the dial hit.
+        expect(err).toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED", message: "Connection closed" });
+        expect({ closes, connected: client.connected, redialled: second.connections }).toEqual({
           closes: 1,
           connected: false,
           redialled: 0,
         });
+        expect(await get).toBe(err);
+        expect(await closed.promise).toBe(err);
       } finally {
         client.close();
         await first.close();

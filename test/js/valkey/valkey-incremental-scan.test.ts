@@ -193,13 +193,17 @@ describe.concurrent("Valkey reply decoding", () => {
     client.onconnect = client.onclose = () => {};
     try {
       // Queued before the handshake finishes, so the rejection carries the
-      // HELLO error. connect() itself rejects with a generic "Connection closed".
+      // HELLO error; connect() rejects with the same error object.
       const queued = client.get("k").then(
         () => null,
         e => e,
       );
-      await client.connect().catch(() => {});
+      const connected = await client.connect().then(
+        () => null,
+        e => e,
+      );
       const err = await queued;
+      expect(connected).toBe(err);
       expect(err).toBeInstanceOf(Error);
       expect(err.code).toBe("ERR_REDIS_AUTHENTICATION_FAILED");
       expect(err.message).toBe("NOAUTH nope!");

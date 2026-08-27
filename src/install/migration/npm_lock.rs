@@ -768,10 +768,8 @@ impl<'a> Migrator<'a> {
                 }
 
                 let version_tag = version.tag;
-                // A `file:` spec in a root-declared `file:` package's own package.json is
-                // trusted like a root dependency (`is_trusted_folder_dependency`). A folder
-                // a registry package ships, or a bare folder npm found for a registry spec,
-                // is not.
+                // Trust a `file:` spec only in a `file:` package the root or a workspace
+                // declares, not in a folder a registry package ships (`is_trusted_folder_dependency`).
                 let declares_folder = res_tag == resolution::Tag::Folder
                     && version_tag == DepTag::Folder
                     && self.local_declared.is_set(j as usize);

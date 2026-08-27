@@ -877,10 +877,8 @@ impl Lockfile {
     }
 
     /// Is dependency `id` declared by the root, a workspace, or a `file:` package
-    /// that one of them depends on directly? Bun's resolver only parses the
-    /// package.json of such `file:` packages, but a migrated lockfile may carry
-    /// dependencies for a folder that a registry package shipped, so the anchor
-    /// is checked rather than assumed.
+    /// one of them depends on directly? Checked, not assumed: a migrated lockfile
+    /// can carry dependencies for a folder that a registry package shipped.
     pub(crate) fn is_dependency_of_local_package(&self, id: DependencyID) -> bool {
         let Some(parent_id) = self.get_parent_pkg_of_dependency(id) else {
             return false;

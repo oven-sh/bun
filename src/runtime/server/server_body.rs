@@ -1185,9 +1185,7 @@ impl ServePlugins {
     }
 
     fn release_promise_ref(&self) {
-        if let Some(r) = self.promise_ref.take() {
-            r.deref();
-        }
+        drop(self.promise_ref.take());
     }
 
     /// `server` (whose DevServer may be waiting on a pending load) is going away.
@@ -1381,7 +1379,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         };
         let global = self.global();
         // Keep `*p` alive across re-entrant JS in `load_and_resolve_plugins`.
-        let _keep_alive = p.ref_guard();
+        let _keep_alive = RefPtr::from_this(p);
         match ServePlugins::get_or_start_load(p, &global, callback, self.as_any_server()) {
             Ok(r) => r,
             Err(JsError::Thrown | JsError::Terminated) => {
@@ -2574,10 +2572,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 && this.has_flags(ServerFlags::TERMINATED)
                 && this.vm().is_shutting_down()
             {
-                if let Some(r) = this.teardown() {
-                    // Not the last ref: `finalize_js_box` still holds the wrapper's.
-                    r.deref();
-                }
+                // Not the last ref: `finalize_js_box` still holds the wrapper's.
+                drop(this.teardown());
             }
         });
     }
@@ -2900,8 +2896,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             );
         }
 
-        let is_te =
-            request_body_length.is_some() && ReqLike::has_transfer_encoding(req);
+        let is_te = request_body_length.is_some() && ReqLike::has_transfer_encoding(req);
         // HTTP/2 and HTTP/3 frame the body by END_STREAM or QUIC FIN, not Content-Length.
         let expects_body = matches!(request_body_length, Some(req_len)
             if req_len > 0 || is_te || (Ctx::IS_MUX && !RespLike::request_body_ended(resp)));

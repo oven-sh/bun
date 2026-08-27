@@ -1451,12 +1451,12 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
         ($ServerType:ty, $tag:ident) => {{
             let server = <$ServerType>::init(&mut config, global_object)?;
             if global_object.has_exception() {
-                server.deref();
+                drop(server);
                 return Ok(JSValue::ZERO);
             }
             let route_list_object = <$ServerType>::listen(server.this_ptr());
             if global_object.has_exception() {
-                server.deref();
+                drop(server);
                 return Ok(JSValue::ZERO);
             }
             let any = AnyServer::from(&*server);

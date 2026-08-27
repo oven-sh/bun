@@ -319,14 +319,17 @@ it("process.hrtime()", async () => {
   const end = process.hrtime(start);
   expect(end[0]).toBe(0);
 
-  await Bun.sleep(16);
+  const sleepMs = 16;
+  await Bun.sleep(sleepMs);
   const end2 = process.hrtime(start);
   // Compare whole durations: the nanoseconds field alone wraps to zero at
   // every second boundary, so it is not ordered across the sleep.
   const elapsed = end2[0] * 1e9 + end2[1];
   expect(elapsed).toBeGreaterThan(end[0] * 1e9 + end[1]);
-  // A 16 ms sleep measures at least 1 ms, with room for a timer that fires early.
-  expect(elapsed).toBeGreaterThanOrEqual(1e6);
+  // A timer fires once CLOCK_MONOTONIC reaches its deadline, and hrtime reads
+  // the same clock, except on macOS (CLOCK_UPTIME_RAW) where the two drift by
+  // microseconds. The 1 ms of slack covers that drift.
+  expect(elapsed).toBeGreaterThanOrEqual((sleepMs - 1) * 1e6);
 });
 
 it("process.hrtime.bigint()", () => {

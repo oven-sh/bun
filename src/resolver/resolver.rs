@@ -2445,12 +2445,9 @@ impl<'a> Resolver<'a> {
     /// See `assertValidCacheKey` for requirements on the input
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
         Self::assert_valid_cache_key(path);
-        // A directory reached through a symlink is cached under two keys: the
-        // path as given and its real path (`DirInfo.abs_real_path`). Resolving
-        // a file in it returns the realpath'd result, which a follow-up
-        // resolve looks up under the real-path key. Bust that alias too, or it
-        // keeps serving a stale listing after this bust. Read the alias before
-        // `remove` drops the `DirInfo`.
+        // A symlinked directory is also cached under its real path
+        // (`DirInfo.abs_real_path`), and resolve results are realpath'd, so a
+        // follow-up resolve reads the real-path key. Bust that alias too.
         let real_path: Option<&'static [u8]> = self
             .dir_cache_mut()
             .get(path)

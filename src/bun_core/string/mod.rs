@@ -58,7 +58,8 @@ pub use wtf::{WTFStringImpl, WTFStringImplExt, WTFStringImplStruct};
 // - `StringView<'a>` is the by-value carrier for a borrow C++ returns
 //   (`Bun::borrowStringView`) or for caller bytes (`from_bytes`/`utf8`/
 //   `utf16`/`latin1`); only it carries the `EncodedSlice` tag with
-//   non-`'static` bytes. No read methods of its own.
+//   non-`'static` bytes. Only constructors and an `'a`-precise `to_utf8`
+//   of its own.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Discriminant for [`String`]'s representation.
@@ -128,6 +129,7 @@ unsafe extern "C" {
     // so `safe fn` discharges the link-time proof here.
     safe fn BunString__threadIsolatedCopy(this: &String) -> String;
     safe fn BunString__makeThreadShareable(this: &mut String);
+    safe fn BunString__substring(base: &String, start: usize, len: usize) -> String;
     fn BunString__createAtom(bytes: *const u8, len: usize) -> String;
     fn BunString__tryCreateAtom(bytes: *const u8, len: usize) -> String;
     fn BunString__createStaticExternalLatin1(bytes: *const u8, len: usize) -> String;
@@ -250,7 +252,7 @@ impl Str {
         debug_assert_eq!(self.tag, Tag::WTFStringImpl);
         // SAFETY: `tag == WTFStringImpl` ⇒ `wtf_string_impl` is the active
         // union field and a non-null `*mut WTFStringImplStruct` kept alive
-        // (refcount ≥ 1) by the owner this view borrows for `'a`.
+        // (refcount ≥ 1) for at least as long as `&self`.
         unsafe { &*self.value.wtf_string_impl }
     }
     /// `static_` stores an ASCII `'static` literal with no encoding tag.
@@ -983,6 +985,13 @@ impl String {
         } else {
             core::ptr::null_mut()
         }
+    }
+    /// Zero-copy `[start, start + len)` of a WTF-backed string: a +1 impl that
+    /// shares `self`'s buffer and keeps it alive.
+    pub fn substring_shared(&self, start: usize, len: usize) -> String {
+        debug_assert!(self.tag == Tag::WTFStringImpl);
+        debug_assert!(start.checked_add(len).is_some_and(|end| end <= self.len()));
+        BunString__substring(self, start, len)
     }
     /// An isolated copy of a WTF-backed impl (+1, `clone()` for other tags),
     /// for handing the value to one other thread; not for sharing one impl

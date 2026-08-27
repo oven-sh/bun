@@ -847,10 +847,7 @@ impl JSValue {
         crate::call_null_is_throw(global, || {
             JSC__JSValue__toJSStringView(self, global, &mut view)
         })
-        .map(|p| JSStringView {
-            cell: JSString::opaque_ref(p.as_ptr()),
-            view,
-        })
+        .map(|p| JSStringView::new(JSString::opaque_ref(p.as_ptr()), view))
     }
     pub fn to_bun_string(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
         bun_core::String::from_js(self, global)

@@ -3197,7 +3197,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
     }
 
     fn handle_js_string_ref(&mut self, bunstr: &Str) -> Result<(), LexerError> {
-        if bunstr.len() == 0 {
+        if bunstr.is_empty() {
             // Empty JS string ref: emit a zero-length DoubleQuotedText token directly.
             // The parser converts this to a quoted_empty atom, preserving the empty arg.
             // This works regardless of the lexer's current quote state (Normal/Single/Double)

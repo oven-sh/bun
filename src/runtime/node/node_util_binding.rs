@@ -208,7 +208,7 @@ pub(crate) fn normalize_encoding(global: &JSGlobalObject, frame: &CallFrame) -> 
     let input = frame.argument(0);
     let str = BunString::from_js(input, global)?;
     debug_assert!(str.tag() != bstr::Tag::Dead);
-    if str.len() == 0 {
+    if str.is_empty() {
         return Ok(Encoding::Utf8.to_js(global));
     }
     if let Some(enc) = Encoding::from_bun_string(&str) {

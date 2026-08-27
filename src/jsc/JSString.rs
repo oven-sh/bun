@@ -33,7 +33,7 @@ impl JSString {
     #[track_caller]
     pub fn view<'a>(&'a self, global: &JSGlobalObject) -> JsResult<JSStringView<'a>> {
         let view = crate::call_check_slow(global, || JSC__JSString__view(self, global))?;
-        Ok(JSStringView { cell: self, view })
+        Ok(JSStringView::new(self, view))
     }
 
     pub fn iterator(&self, global_object: &JSGlobalObject, iter: &mut Iterator) {
@@ -62,8 +62,15 @@ impl JSString {
 /// collected while its characters are in use. Derefs to `Str`, so nothing it
 /// hands out can outlive the guard.
 pub struct JSStringView<'a> {
-    pub(crate) cell: &'a JSString,
-    pub(crate) view: StringView<'static>,
+    cell: &'a JSString,
+    view: StringView<'static>,
+}
+
+impl<'a> JSStringView<'a> {
+    #[inline]
+    pub(crate) fn new(cell: &'a JSString, view: StringView<'static>) -> Self {
+        Self { cell, view }
+    }
 }
 
 impl core::ops::Deref for JSStringView<'_> {

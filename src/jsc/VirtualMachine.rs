@@ -5758,6 +5758,19 @@ impl VirtualMachine {
                 *must_reset_parser_arena_later = true;
                 original_source.source_code.into_utf8()
             };
+            // WTF-backed when possible so each source line below shares its buffer.
+            let code = match code {
+                bun_core::Utf8Bytes::Owned(bytes)
+                    if !bytes.is_empty()
+                        && bytes.len() <= bun_core::String::max_length()
+                        && bun_core::is_all_ascii(&bytes) =>
+                {
+                    bun_core::Utf8Bytes::Shared(
+                        bun_core::String::create_external_globally_allocated_latin1(bytes),
+                    )
+                }
+                code => code,
+            };
 
             if enable_source_code_preview.get() && code.slice().is_empty() {
                 exception.collect_source_lines(error_instance, global);
@@ -5789,8 +5802,15 @@ impl VirtualMachine {
 
                 let take = lines.len().min(N);
                 let mut current_line_number = last_line;
+                let base = code.slice().as_ptr() as usize;
                 for (i, line) in lines[..take].iter().enumerate() {
-                    source_lines[i] = bun_core::String::clone_utf8(line);
+                    source_lines[i] = match &code {
+                        bun_core::Utf8Bytes::Shared(shared) => {
+                            shared.substring_shared(line.as_ptr() as usize - base, line.len())
+                        }
+                        // Non-ASCII UTF-8 (or static bytes): a Latin-1 view would mis-decode.
+                        _ => bun_core::String::clone_utf8(line),
+                    };
                     source_line_numbers[i] = current_line_number;
                     current_line_number -= 1;
                 }
@@ -6820,7 +6840,7 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
 
     let file_path = path_value.to_bun_string(global)?;
 
-    if file_path.len() == 0 {
+    if file_path.is_empty() {
         return Ok(Some(Err(global.create_error_instance(format_args!(
             "Expected \"path\" to be a non-empty string in onResolve plugin"
         )))));
@@ -6842,7 +6862,7 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
             }
 
             let namespace_str = namespace_value.to_bun_string(global)?;
-            if namespace_str.len() == 0 {
+            if namespace_str.is_empty() {
                 break 'brk bun_core::String::static_("file");
             }
             if namespace_str.eq_ascii(b"file") {

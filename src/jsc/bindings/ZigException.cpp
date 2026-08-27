@@ -37,6 +37,7 @@
 
 #include "wtf/Assertions.h"
 #include "wtf/text/OrdinalNumber.h"
+#include "wtf/text/ExternalStringImpl.h"
 #include "wtf/text/StringView.h"
 #include "wtf/text/WTFString.h"
 #include "wtf/text/StringToIntegerConversion.h"
@@ -127,6 +128,20 @@ static void populateStackFrameMetadata(JSC::VM& vm, JSC::JSGlobalObject* globalO
     frame.is_async = stackFrame.isAsyncFrame();
 }
 
+// Zero-copy view of the provider's 8-bit source; the impl holds a ref on the provider.
+static BunString sourceLine(JSC::SourceProvider* provider, std::span<const Latin1Character> source, unsigned start, unsigned len)
+{
+    if (start >= source.size())
+        return Zig::BunStringEmpty;
+    auto line = source.subspan(start, std::min<size_t>(len, source.size() - start));
+    if (line.empty())
+        return Zig::BunStringEmpty;
+    provider->ref();
+    return { BunStringTag::WTFStringImpl, { .wtf = &WTF::ExternalStringImpl::create(line, provider, [](void* ctx, void*, unsigned) {
+        static_cast<JSC::SourceProvider*>(ctx)->deref();
+    }).leakRef() } };
+}
+
 static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunString* source_lines,
     OrdinalNumber* source_line_numbers, uint8_t source_lines_count,
     ZigStackFramePosition& position, PopulateStackTraceFlags flags)
@@ -174,12 +189,13 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
             lineEnd++;
         }
 
-        const unsigned char* bytes = sourceString.span8().data();
+        auto source = sourceString.span8();
+        const Latin1Character* bytes = source.data();
 
         // Most of the time, when you look at a stack trace, you want a couple lines above.
 
         source_lines[0].deref();
-        source_lines[0] = Bun::toStringRef(sourceString.substring(lineStart, lineEnd - lineStart).toString());
+        source_lines[0] = sourceLine(provider, source, lineStart, lineEnd - lineStart);
         source_line_numbers[0] = location.line();
 
         if (lineStart > 0) {
@@ -206,7 +222,7 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
 
                 // We are at the beginning of the line
                 source_lines[source_line_i].deref();
-                source_lines[source_line_i] = Bun::toStringRef(sourceString.substring(byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1).toString());
+                source_lines[source_line_i] = sourceLine(provider, source, byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1);
 
                 source_line_numbers[source_line_i] = location.line().fromZeroBasedInt(location.line().zeroBasedInt() - source_line_i);
                 source_line_i++;

@@ -924,7 +924,7 @@ impl Value {
 
         if js_type.is_string_like() {
             let str = value.to_bun_string(global_this)?;
-            if str.len() == 0 {
+            if str.is_empty() {
                 return Ok(Value::Empty);
             }
 

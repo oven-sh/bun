@@ -4870,8 +4870,8 @@ BunString JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobal
         return BunStringEmpty;
     }
 
-    const char* ptr = cell->className();
-    auto view = WTF::StringView(std::span { ptr, strlen(ptr) });
+    ASCIILiteral className = cell->className();
+    auto view = WTF::StringView(className);
 
     // Fallback to .name if className is empty
     if (view.length() == 0 || StringView("Function"_s) == view) {
@@ -4885,8 +4885,7 @@ BunString JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobal
         return toStringAdopt(WTF::move(calculated));
     }
 
-    // `className()` is a static C string.
-    return Bun::staticString(view.span8());
+    return Bun::staticString(className);
 }
 
 bool JSC__JSValue__getClassInfoName(JSValue value, const uint8_t** outPtr, size_t* outLen)

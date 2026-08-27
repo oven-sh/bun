@@ -205,12 +205,12 @@ static constexpr EncodedSlice latin1Slice(std::span<const Latin1Character> span)
     return { span.data(), span.size() };
 }
 
-static constexpr EncodedSlice utf8Slice(std::span<const uint8_t> span)
+static EncodedSlice utf8Slice(std::span<const uint8_t> span)
 {
     return { taggedUTF8Ptr(span.data()), span.size() };
 }
 
-static constexpr EncodedSlice utf16Slice(std::span<const char16_t> span)
+static EncodedSlice utf16Slice(std::span<const char16_t> span)
 {
     return { taggedUTF16Ptr(span.data()), span.size() };
 }

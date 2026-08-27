@@ -43,7 +43,7 @@ extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
 pub(crate) fn worker_option_string(wtf: bun_core::WTFStringImpl) -> bun_core::String {
     // SAFETY: non-null impl borrowed from the live `WorkerOptions`.
     let imp = unsafe { &*wtf };
-    if imp.len() == 0 {
+    if imp.is_empty() {
         bun_core::String::EMPTY
     } else if imp.is_8bit() {
         bun_core::String::clone_latin1(imp.latin1_slice())

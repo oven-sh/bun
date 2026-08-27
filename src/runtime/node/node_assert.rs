@@ -26,7 +26,7 @@ pub(crate) fn myers_diff(
     // branch will be hit since dead strings have a length of 0. This should be
     // moot since BunStrings with non-zero reference counds should never be
     // dead.
-    if actual.len() == 0 && expected.len() == 0 {
+    if actual.is_empty() && expected.is_empty() {
         return emit::<u8, u8>(global, &Vec::new(), output);
     }
 

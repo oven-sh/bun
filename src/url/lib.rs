@@ -55,7 +55,7 @@ pub mod whatwg {
     }
 
     // Getters take `&URL` (C++ never mutates on read). String inputs are
-    // `const BunString*` (`&StringView`); string returns are +1
+    // `const BunString*` (`&Str`); string returns are +1
     // (`Bun::toStringRef`), declared as owning `String`. `URL__deinit` frees the allocation, so it stays
     // `unsafe fn`. `URL__fromJS` / `URL__getHrefFromJS` live in
     // `bun_jsc::URLJsc`.

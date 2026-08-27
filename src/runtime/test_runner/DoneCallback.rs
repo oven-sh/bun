@@ -1,5 +1,5 @@
 
-use bun_core::StringView;
+use bun_core::String as BunString;
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsClass as _, JsResult};
 use bun_ptr::RefPtr;
 
@@ -36,7 +36,7 @@ impl DoneCallback {
             1,
             Default::default(),
         );
-        call_fn.bind(global, value, &StringView::static_("done"), 1.0, &[])
+        call_fn.bind(global, value, &BunString::static_("done"), 1.0, &[])
     }
 }
 

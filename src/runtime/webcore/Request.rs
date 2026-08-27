@@ -767,7 +767,7 @@ impl Request {
 
     pub(crate) fn size_of_url(&self) -> usize {
         let url = self.url.get();
-        if url.len() > 0 {
+        if !url.is_empty() {
             return url.byte_slice().len();
         }
 
@@ -899,11 +899,7 @@ impl Request {
                         let href =
                             bun_url::href_from_string(&bun_core::StringView::from_bytes(url));
                         if !href.is_empty() {
-                            if core::ptr::eq(href.byte_slice().as_ptr(), url.as_ptr()) {
-                                self.url.set(BunString::clone_latin1(&url[..href.len()]));
-                            } else {
-                                self.url.set(href);
-                            }
+                            self.url.set(href);
                         } else {
                             // TODO: what is the right thing to do for invalid URLS?
                             self.url.set(BunString::clone_utf8(url));

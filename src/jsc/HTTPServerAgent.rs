@@ -102,7 +102,7 @@ impl InspectorHTTPServerAgent {
         // opaque token, so passing the raw pointer through is sound.
         let agent = Self::opaque_mut(agent);
         // SAFETY: `[[ZIG_EXPORT(nothrow)]]` C++ shim; `agent` proven non-null
-        // above; remaining args are by-value scalars / `&StringView`.
+        // above; remaining args are by-value scalars / `&Str`.
         unsafe {
             crate::cpp::raw::Bun__HTTPServerAgent__notifyServerStarted(
                 core::ptr::from_mut(agent).cast(),

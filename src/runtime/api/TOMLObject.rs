@@ -624,7 +624,7 @@ fn temporal_name(t: TemporalType) -> &'static str {
 }
 
 fn is_bare_key(name: &Str) -> bool {
-    if name.len() == 0 {
+    if name.is_empty() {
         return false;
     }
     for i in 0..name.len() {

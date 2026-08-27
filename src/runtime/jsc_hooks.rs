@@ -3687,6 +3687,7 @@ fn get_hardcoded_module(
             // `Runtime.Runtime.sourceCode()` — the bundler's CJS-interop
             // shim, embedded as a static string in `bun_ast::runtime`.
             let source_code = bun_ast::runtime::Runtime::source_code();
+            debug_assert!(bun_core::is_all_ascii(source_code));
             return Some(ResolvedSource {
                 source_code: bun_core::String::create_static_external_latin1(source_code),
                 source_url: specifier.to_owned(),
@@ -4165,7 +4166,7 @@ pub unsafe extern "C" fn Bun__transpileFile(
     global: &JSGlobalObject,
     specifier: &bun_core::Str,
     referrer: &bun_core::Str,
-    type_attribute: Option<&bun_core::StringView<'_>>,
+    type_attribute: Option<&bun_core::Str>,
     ret: &mut ErrorableResolvedSource,
     allow_promise: bool,
     is_commonjs_require: bool,

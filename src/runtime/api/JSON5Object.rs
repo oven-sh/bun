@@ -126,7 +126,7 @@ impl Space {
         }
         if space.is_string() {
             let str = space.to_bun_string(global)?;
-            if str.len() == 0 {
+            if str.is_empty() {
                 return Ok(Space::Minified);
             }
             return Ok(Space::Str(str));
@@ -340,7 +340,7 @@ impl Stringifier {
 
     fn append_key(&mut self, name: &Str) {
         let is_identifier = 'is_identifier: {
-            if name.len() == 0 {
+            if name.is_empty() {
                 break 'is_identifier false;
             }
             if !lexer::is_identifier_start(i32::from(name.char_at(0))) {

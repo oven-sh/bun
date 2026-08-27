@@ -744,7 +744,7 @@ impl JSGlobalObject {
     /// anything else is formatted/copied once.
     fn error_instance(&self, kind: ErrorKind, args: Arguments<'_>) -> JSValue {
         match args.as_str() {
-            Some(_) => error_instance(&BunString::create_format(args).as_view(), self, kind),
+            Some(_) => error_instance(&BunString::create_format(args), self, kind),
             None => error_instance(&StringView::utf8(&self.error_message(args)), self, kind),
         }
     }
@@ -911,12 +911,7 @@ impl JSGlobalObject {
         // SAFETY: FFI — &self is a valid JSGlobalObject*; `errors.as_ptr()`/`len()` describe
         // a valid stack-rooted slice; `message` borrow outlives the call.
         crate::from_js_host_call(self, || unsafe {
-            JSC__JSGlobalObject__createAggregateError(
-                self,
-                errors.as_ptr(),
-                errors.len(),
-                &message.as_view(),
-            )
+            JSC__JSGlobalObject__createAggregateError(self, errors.as_ptr(), errors.len(), &message)
         })
     }
 
@@ -931,7 +926,7 @@ impl JSGlobalObject {
             JSC__JSGlobalObject__createAggregateErrorWithArray(
                 self,
                 error_array,
-                &message.as_view(),
+                &message,
                 JSValue::UNDEFINED,
             )
         })
@@ -1479,8 +1474,8 @@ unsafe extern "C" {
     ) -> BunString;
 
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to non-null `*const`); `&BunString` is a non-null
-    // `*const BunString` borrow.
+    // ABI-identical to non-null `*const`); `&Str` is a non-null
+    // `const BunString*` borrow.
     safe fn Bun__runOnLoadPlugins(
         global: &JSGlobalObject,
         namespace_: &Str,

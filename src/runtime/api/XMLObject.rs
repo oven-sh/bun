@@ -182,7 +182,7 @@ fn is_node(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
         // still marks the shape.
         if value.get(global, key)?.is_some()
             || value
-                .get_own(global, &StringView::static_(key.as_bytes()))?
+                .get_own(global, &BunString::static_(key.as_bytes()))?
                 .is_some()
         {
             return Ok(true);
@@ -224,7 +224,7 @@ impl Space {
         }
         if space.is_string() {
             let str = space.to_bun_string(global)?;
-            if str.len() == 0 {
+            if str.is_empty() {
                 return Ok(Space::Minified);
             }
             return Ok(Space::Str(str));
@@ -677,7 +677,7 @@ impl Stringifier {
         match self.scalar(global, value, "element content")? {
             Scalar::Skip => {}
             Scalar::Empty => self.append_empty_element(name),
-            Scalar::Text(text) if text.len() == 0 => self.append_empty_element(name),
+            Scalar::Text(text) if text.is_empty() => self.append_empty_element(name),
             Scalar::Text(text) => {
                 self.builder.append_lchar(b'<');
                 self.builder.append_string(name);
@@ -718,7 +718,7 @@ impl Stringifier {
                 }
             } else if key.eq_ascii(b"#text") {
                 match self.scalar(global, child, "#text")? {
-                    Scalar::Text(text) if text.len() > 0 => has_text = true,
+                    Scalar::Text(text) if !text.is_empty() => has_text = true,
                     _ => {}
                 }
             } else if key.starts_with_ascii(b"#") {

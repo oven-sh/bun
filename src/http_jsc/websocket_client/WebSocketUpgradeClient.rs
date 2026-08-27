@@ -180,9 +180,9 @@ where
         header_names: &[StringView<'_>],
         header_values: &[StringView<'_>],
         // Proxy parameters
-        proxy_host: Option<&StringView<'_>>,
+        proxy_host: Option<&bun_core::Str>,
         proxy_port: u16,
-        proxy_authorization: Option<&StringView<'_>>,
+        proxy_authorization: Option<&bun_core::Str>,
         proxy_header_names: &[StringView<'_>],
         proxy_header_values: &[StringView<'_>],
         // TLS options (full SSLConfig for complete TLS customization)
@@ -190,9 +190,9 @@ where
         // Whether the target URL is wss:// (separate from ssl template parameter)
         target_is_secure: bool,
         // Target URL authorization (Basic auth from ws://user:pass@host)
-        target_authorization: Option<&StringView<'_>>,
+        target_authorization: Option<&bun_core::Str>,
         // Unix domain socket path for ws+unix:// / wss+unix:// (None for TCP)
-        unix_socket_path: Option<&StringView<'_>>,
+        unix_socket_path: Option<&bun_core::Str>,
         // Whether to advertise `permessage-deflate` in the upgrade request
         // (ws.WebSocket's `perMessageDeflate` option; true by default).
         offer_permessage_deflate: bool,
@@ -1831,10 +1831,10 @@ fn compute_accept_value(key: &[u8]) -> [u8; 28] {
 //
 // C-ABI mapping (verified against the declarations in
 // src/jsc/bindings/headers.h and the call sites in WebSocket.cpp):
-//   - non-null `const BunString*` params (host/path/protocols) → `StringView` (thunk takes `&StringView`);
+//   - non-null `const BunString*` params (host/path/protocols) → `&Str`;
 //   - nullable `const BunString*` params (proxyHost/proxyAuthorization/
 //     targetAuthorization/unixSocketPath, passed as `nullptr` or `&local`)
-//     → `Option<&StringView<'_>>` (guaranteed null-pointer niche);
+//     → `Option<&Str>` (guaranteed null-pointer niche);
 //   - `const BunString*` array + `size_t` count → `&[StringView]`
 //     (count may be 0 with a dangling/null begin());
 //   - `void* sslConfig` (ownership transferred, boxed by
@@ -1854,15 +1854,15 @@ pub fn bun__websockethttpclient__connect(
     client_protocol: &bun_core::Str,
     header_names: &[StringView<'_>],
     header_values: &[StringView<'_>],
-    proxy_host: Option<&StringView<'_>>,
+    proxy_host: Option<&bun_core::Str>,
     proxy_port: u16,
-    proxy_authorization: Option<&StringView<'_>>,
+    proxy_authorization: Option<&bun_core::Str>,
     proxy_header_names: &[StringView<'_>],
     proxy_header_values: &[StringView<'_>],
     ssl_config: Option<Box<bun_http::ssl_config::SSLConfig>>,
     target_is_secure: bool,
-    target_authorization: Option<&StringView<'_>>,
-    unix_socket_path: Option<&StringView<'_>>,
+    target_authorization: Option<&bun_core::Str>,
+    unix_socket_path: Option<&bun_core::Str>,
     offer_permessage_deflate: bool,
 ) -> *mut crate::websocket_client::websocket_upgrade_client::HttpUpgradeClient {
     HttpUpgradeClient::connect(
@@ -1913,15 +1913,15 @@ pub fn bun__websockethttpsclient__connect(
     client_protocol: &bun_core::Str,
     header_names: &[StringView<'_>],
     header_values: &[StringView<'_>],
-    proxy_host: Option<&StringView<'_>>,
+    proxy_host: Option<&bun_core::Str>,
     proxy_port: u16,
-    proxy_authorization: Option<&StringView<'_>>,
+    proxy_authorization: Option<&bun_core::Str>,
     proxy_header_names: &[StringView<'_>],
     proxy_header_values: &[StringView<'_>],
     ssl_config: Option<Box<bun_http::ssl_config::SSLConfig>>,
     target_is_secure: bool,
-    target_authorization: Option<&StringView<'_>>,
-    unix_socket_path: Option<&StringView<'_>>,
+    target_authorization: Option<&bun_core::Str>,
+    unix_socket_path: Option<&bun_core::Str>,
     offer_permessage_deflate: bool,
 ) -> *mut crate::websocket_client::websocket_upgrade_client::HttpsUpgradeClient {
     HttpsUpgradeClient::connect(

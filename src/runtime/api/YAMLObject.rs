@@ -84,7 +84,7 @@ impl Space {
 
         if space.is_string() {
             let str = space.to_bun_string(global)?;
-            if str.len() == 0 {
+            if str.is_empty() {
                 return Ok(Space::Minified);
             }
             return Ok(Space::Str(str));

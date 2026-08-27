@@ -6429,7 +6429,7 @@ impl Any {
                 let str =
                     BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
                 *self = Any::Blob(Blob::default());
-                if str.len() == 0 {
+                if str.is_empty() {
                     return Ok(JSValue::NULL);
                 }
                 str.to_js_by_parse_json(global)
@@ -6558,7 +6558,7 @@ impl Any {
         match self {
             Any::Blob(blob) => blob.is_detached(),
             Any::InternalBlob(ib) => ib.bytes.is_empty(),
-            Any::WTFStringImpl(s) => super::body::wtf_impl(s).len() == 0,
+            Any::WTFStringImpl(s) => super::body::wtf_impl(s).is_empty(),
         }
     }
 }

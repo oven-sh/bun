@@ -1,5 +1,5 @@
 
-use bun_core::StringView;
+use bun_core::{String as BunString, StringView};
 use core::fmt;
 use crate::test_runner::expect::JSValueTestExt;
 
@@ -206,7 +206,7 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 };
 
                 let bound = if let Some(cb) = args.callback {
-                    Some(JSValueTestExt::bind(cb, global, item, &StringView::static_("cb"), 0.0, args_list.as_slice())?)
+                    Some(JSValueTestExt::bind(cb, global, item, &BunString::static_("cb"), 0.0, args_list.as_slice())?)
                 } else {
                     None
                 };
@@ -327,7 +327,7 @@ impl ScopeFunctions {
             if debugger.test_reporter_agent.is_enabled() {
                 debugger.test_reporter_agent.next_test_id += 1;
                 let id = debugger.test_reporter_agent.next_test_id;
-                let name = bun_core::StringView::from_bytes(description.unwrap_or(b"(unnamed)"));
+                let name = StringView::from_bytes(description.unwrap_or(b"(unnamed)"));
                 let parent: &DescribeScope = bun_test.collection.active_scope();
                 let parent_id = if parent.base.test_id_for_debugger != 0 {
                     parent.base.test_id_for_debugger
@@ -394,7 +394,7 @@ impl ScopeFunctions {
                         filter_names(&mut rem, description, Some(active_scope));
                         debug_assert!(rem.buf.is_empty());
 
-                        let str = bun_core::StringView::from_bytes(bun_test.collection.filter_buffer.as_slice());
+                        let str = StringView::from_bytes(bun_test.collection.filter_buffer.as_slice());
                         group_log::log(format_args!(
                             "matches_filter \"{}\"",
                             bstr::BStr::new(bun_test.collection.filter_buffer.as_slice())
@@ -544,7 +544,7 @@ fn get_description(
 
     if description.is_function() {
         let func_name = description.get_name(global)?;
-        if func_name.len() > 0 {
+        if !func_name.is_empty() {
             return Ok(func_name.to_owned_slice());
         }
     }
@@ -775,7 +775,7 @@ fn bind(value: JSValue, global: &JSGlobalObject, name: &'static str) -> JsResult
     // `__jsc_host_call_as_function`; `JSFunction::create` wants the raw
     // `JSHostFn` shape, not the safe Rust signature.
     let call_fn = bun_jsc::JSFunction::create(global, name, __jsc_host_call_as_function, 1, Default::default());
-    let bound = JSValueTestExt::bind(call_fn, global, value, &StringView::static_(name), 1.0, &[])?;
+    let bound = JSValueTestExt::bind(call_fn, global, value, &BunString::static_(name), 1.0, &[])?;
     set_prototype_direct(bound, value.get_prototype(global)?, global)?;
     Ok(bound)
 }

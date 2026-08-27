@@ -95,7 +95,7 @@ typedef struct BunString {
     // it. Leaves *this Empty.
     WTF::String transferToWTFString();
 
-    // Consumes this BunString and returns a JS string value. Leaves *this Empty.
+    // Returns a JS string value; a non-empty *this is consumed and left Empty.
     JSC::JSValue transferToJS(JSC::JSGlobalObject* globalObject);
 
     bool isEmpty() const;
@@ -349,7 +349,7 @@ BunString toStringRef(WTF::StringImpl* wtfString);
 // Be very careful using this, and ensure the memory owner does not get destroyed.
 BunString borrowStringView(WTF::StringView view);
 // A `'static` ASCII literal (`String::static_` on the Rust side): never copied or freed.
-BunString staticString(std::span<const Latin1Character> literal);
+BunString staticString(WTF::ASCIILiteral literal);
 }
 
 typedef struct {

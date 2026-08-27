@@ -87,7 +87,7 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
 
         if (keyView.startsWith("bake:/"_s)) {
             WTF::String keyWithoutScheme = keyView.substringSharingImpl("bake:"_s.length());
-            BunString bakePrefixBunString = Bun::staticString("bake:/"_span8);
+            BunString bakePrefixBunString = Bun::staticString("bake:/"_s);
             BunString keyBunString = Bun::toString(keyWithoutScheme);
             BunString result = BakeProdResolve(global, &bakePrefixBunString, &keyBunString);
             RETURN_IF_EXCEPTION(scope, {});

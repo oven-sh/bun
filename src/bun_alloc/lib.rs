@@ -818,6 +818,10 @@ impl WTFStringImplStruct {
         self.m_length as usize
     }
     #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.m_length == 0
+    }
+    #[inline]
     pub fn is_8bit(&self) -> bool {
         (self.m_hash_and_flags.get() & Self::S_HASH_FLAG_8BIT_BUFFER) != 0
     }

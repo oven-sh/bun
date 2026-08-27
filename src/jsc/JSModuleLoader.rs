@@ -8,7 +8,7 @@ bun_opaque::opaque_ffi! {
 
 unsafe extern "C" {
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to non-null `*const`); `&StringView` is `const BunString*`.
+    // ABI-identical to non-null `*const`); `&Str` is `const BunString*`.
     // The returned `*mut JSInternalPromise` is nullable; callers check before deref.
     safe fn JSC__JSModuleLoader__loadAndEvaluateModule(
         arg0: &JSGlobalObject,

@@ -153,6 +153,8 @@ JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, const BunString& bunStrin
     auto& vm = JSC::getVM(globalObject);
     if (bunString.tag != BunStringTag::Dead && bunString.isEmpty())
         return JSC::jsEmptyString(vm);
+    // A GLOBAL-tagged slice would be adopted by toWTFString(); a borrow must not own a buffer.
+    ASSERT(bunString.tag != BunStringTag::EncodedSlice || !Zig::isTaggedExternalPtr(bunString.impl.encoded.ptr));
     auto str = bunString.toWTFString();
     if (str.isNull()) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -183,6 +185,16 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__threadIsolatedCopy(const
     if (str->tag == BunStringTag::WTFStringImpl)
         return { BunStringTag::WTFStringImpl, { .wtf = &str->impl.wtf->isolatedCopy().leakRef() } };
     return *str;
+}
+
+// A +1 impl over `base`'s buffer that keeps `base`'s impl alive (`isSubString()`).
+extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__substring(const BunString* base, size_t start, size_t len)
+{
+    ASSERT(base->tag == BunStringTag::WTFStringImpl);
+    ASSERT(start + len <= base->impl.wtf->length());
+    if (!len)
+        return Zig::BunStringEmpty;
+    return { BunStringTag::WTFStringImpl, { .wtf = &WTF::StringImpl::createSubstringSharingImpl(*base->impl.wtf, start, len).leakRef() } };
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] void BunString__makeThreadShareable(BunString* str)
@@ -266,11 +278,11 @@ BunString borrowStringView(StringView view)
     };
 }
 
-BunString staticString(std::span<const Latin1Character> literal)
+BunString staticString(WTF::ASCIILiteral literal)
 {
     return {
         BunStringTag::StaticEncodedSlice,
-        { .encoded = Zig::latin1Slice(literal) }
+        { .encoded = Zig::latin1Slice(literal.span8()) }
     };
 }
 
@@ -673,6 +685,7 @@ WTF::String BunString::toWTFString() const
         ASSERT(this->impl.wtf->hasAtLeastOneRef());
         return WTF::String(this->impl.wtf);
     case BunStringTag::StaticEncodedSlice:
+        // Atomizes into the current thread's atom table: JS thread only.
         return Zig::toStringStatic(this->impl.encoded);
     case BunStringTag::EncodedSlice:
         if (Zig::isTaggedExternalPtr(this->impl.encoded.ptr))

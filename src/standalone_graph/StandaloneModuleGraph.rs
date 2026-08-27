@@ -2837,14 +2837,11 @@ fn append_bytecode_aligned(
     writable[0..padding].fill(0);
     string_builder.len += padding;
     let aligned_offset = string_builder.len;
-    let writable_after_padding = string_builder.writable();
-    writable_after_padding[0..bytecode.len()].copy_from_slice(bytecode);
-    let unaligned_space = &writable_after_padding[bytecode.len()..];
-    let len = bytecode.len() + unaligned_space.len().min(128);
-    string_builder.len += len;
+    string_builder.writable()[0..bytecode.len()].copy_from_slice(bytecode);
+    string_builder.len += bytecode.len();
     StringPointer {
         offset: aligned_offset as u32,
-        length: len as u32,
+        length: bytecode.len() as u32,
     }
 }
 

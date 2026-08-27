@@ -1,6 +1,6 @@
 import { internalModuleBytecode } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import vm from "node:vm";
 import { basename, join } from "path";
@@ -325,7 +325,10 @@ const bundlerBuilds = [...corpusBuilds, ...libraryBuilds];
 // Same bytes every run; only written when missing or stale so a concurrent run never sees a half-written file.
 function writeCorpusFile(name: string, contents: string) {
   const path = join(corpusDir, name);
-  if (!existsSync(path) || readFileSync(path, "utf8") !== contents) writeFileSync(path, contents);
+  if (existsSync(path) && readFileSync(path, "utf8") === contents) return;
+  const temp = `${path}.${process.pid}.tmp`;
+  writeFileSync(temp, contents);
+  renameSync(temp, path);
 }
 const bigPath = join(corpusDir, "big.js");
 writeCorpusFile("big.js", bigSource());

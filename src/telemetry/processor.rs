@@ -133,7 +133,6 @@ pub struct Processor {
     resource: RwLock<Arc<[u8]>>,
     /// Encoded `InstrumentationScope` bodies, indexed by `ScopeId`.
     scopes: RwLock<Vec<Box<[u8]>>>,
-    scope_names: RwLock<Vec<Box<[u8]>>>,
     pub config: RwLock<BatchConfig>,
     inflight: AtomicUsize,
     /// Non-zero while `export()` is dispatching: a synchronous exporter
@@ -178,13 +177,11 @@ impl Processor {
     fn new() -> Processor {
         let version = bun_core::Environment::VERSION_STRING;
         let mut scopes: Vec<Box<[u8]>> = Vec::with_capacity(Instrument::COUNT);
-        let mut names: Vec<Box<[u8]>> = Vec::with_capacity(Instrument::COUNT);
         for i in Instrument::ALL {
             scopes.push(
                 otlp::encode_scope(i.scope_name().as_bytes(), version.as_bytes())
                     .into_boxed_slice(),
             );
-            names.push(i.scope_name().as_bytes().into());
         }
         Processor {
             pending: Guarded::new(Pending {
@@ -198,7 +195,6 @@ impl Processor {
             parked_spans: core::sync::atomic::AtomicU32::new(0),
             resource: RwLock::new(Arc::from(Vec::new())),
             scopes: RwLock::new(scopes),
-            scope_names: RwLock::new(names),
             config: RwLock::new(BatchConfig::default()),
             inflight: AtomicUsize::new(0),
             dispatching: AtomicUsize::new(0),
@@ -221,18 +217,18 @@ impl Processor {
         self.resource.read().clone()
     }
 
-    pub fn add_exporter(&self, e: Arc<dyn Exporter>) {
-        self.exporters.write().push(e);
-    }
-
     pub fn remove_exporter(&self, e: &Arc<dyn Exporter>) {
         self.exporters.write().retain(|x| !Arc::ptr_eq(x, e));
-        let mut retries = self.retries.lock();
-        let (dropped, kept): (Vec<_>, Vec<_>) = core::mem::take(&mut *retries)
-            .into_iter()
-            .partition(|r| Arc::ptr_eq(&r.exporter, e));
-        *retries = kept;
-        drop(retries);
+        self.fail_retries_where(|x| Arc::ptr_eq(x, e));
+    }
+
+    /// Parked retries of exporters that are going away count as failed.
+    fn fail_retries_where(&self, gone: impl Fn(&Arc<dyn Exporter>) -> bool) {
+        let dropped: Vec<ParkedRetry> = self
+            .retries
+            .lock()
+            .extract_if(.., |r| gone(&r.exporter))
+            .collect();
         for r in dropped {
             self.unpark(&r.payload);
             self.record_result(&r.payload, ExportResult::Failure);
@@ -253,16 +249,7 @@ impl Processor {
             list.retain(keep);
             list.extend(new);
         }
-        let mut retries = self.retries.lock();
-        let (kept, dropped): (Vec<_>, Vec<_>) = core::mem::take(&mut *retries)
-            .into_iter()
-            .partition(|r| keep(&r.exporter));
-        *retries = kept;
-        drop(retries);
-        for r in dropped {
-            self.unpark(&r.payload);
-            self.record_result(&r.payload, ExportResult::Failure);
-        }
+        self.fail_retries_where(|e| !keep(e));
     }
 
     pub fn exporter_count(&self) -> usize {
@@ -356,28 +343,18 @@ impl Processor {
     /// Instrumentation scope for a user tracer (`Bun.otel.tracer(name, version)`).
     pub fn register_scope(&self, name: &[u8], version: &[u8]) -> ScopeId {
         let encoded = otlp::encode_scope(name, version);
-        let mut names = self.scope_names.write();
         let mut scopes = self.scopes.write();
         // Linear scan: a process has a handful of tracers.
-        for (i, n) in names.iter().enumerate().skip(Instrument::COUNT) {
-            if &**n == name && *scopes[i] == *encoded {
+        for (i, s) in scopes.iter().enumerate().skip(Instrument::COUNT) {
+            if **s == *encoded {
                 return ScopeId(i as u16);
             }
         }
         if scopes.len() >= u16::MAX as usize {
             return ScopeId::from(Instrument::User);
         }
-        names.push(name.into());
         scopes.push(encoded.into_boxed_slice());
         ScopeId((scopes.len() - 1) as u16)
-    }
-
-    pub fn scope_name(&self, id: ScopeId) -> Box<[u8]> {
-        self.scope_names
-            .read()
-            .get(id.0 as usize)
-            .cloned()
-            .unwrap_or_default()
     }
 
     /// Copy a thread's batch into the pending buffers. Returns true when the
@@ -701,6 +678,24 @@ impl Processor {
     pub fn flush_for_owner(&'static self, owner: usize) {
         let deadline =
             clock::mono_now() + (self.config.read().export_timeout_ms as u64) * 1_000_000;
+        self.drain_pending(None, |e, payload| {
+            if e.owner() == Some(owner) {
+                return Some(e.export_blocking(payload, deadline));
+            }
+            self.inflight.fetch_add(1, Ordering::AcqRel);
+            e.export(self, Arc::clone(payload), 0);
+            None
+        });
+    }
+
+    /// Hand each pending payload to every exporter through `deliver` (a
+    /// verdict is recorded; `None` means dispatched asynchronously) until
+    /// nothing is pending or `stop_after` has passed.
+    fn drain_pending(
+        &self,
+        stop_after: Option<u64>,
+        mut deliver: impl FnMut(Arc<dyn Exporter>, &Arc<ExportPayload>) -> Option<ExportResult>,
+    ) {
         while let Some(payload) = self.take_payload() {
             let exporters = self.exporters.read().clone();
             if exporters.is_empty() {
@@ -709,13 +704,12 @@ impl Processor {
             }
             payload.expect(exporters.len());
             for e in exporters {
-                if e.owner() == Some(owner) {
-                    let result = e.export_blocking(&payload, deadline);
+                if let Some(result) = deliver(e, &payload) {
                     self.record_result(&payload, result);
-                } else {
-                    self.inflight.fetch_add(1, Ordering::AcqRel);
-                    e.export(self, Arc::clone(&payload), 0);
                 }
+            }
+            if stop_after.is_some_and(|d| clock::mono_now() >= d) {
+                break;
             }
         }
     }
@@ -736,21 +730,7 @@ impl Processor {
             let result = r.exporter.export_blocking(&r.payload, deadline);
             self.record_result(&r.payload, result);
         }
-        while let Some(payload) = self.take_payload() {
-            let exporters = self.exporters.read().clone();
-            if exporters.is_empty() {
-                self.drop_unexported(&payload);
-                continue;
-            }
-            payload.expect(exporters.len());
-            for e in exporters {
-                let result = e.export_blocking(&payload, deadline);
-                self.record_result(&payload, result);
-            }
-            if clock::mono_now() >= deadline {
-                break;
-            }
-        }
+        self.drain_pending(Some(deadline), |e, p| Some(e.export_blocking(p, deadline)));
         // Anything already handed to async exporters gets the same budget.
         let remaining = deadline.saturating_sub(clock::mono_now());
         if self.inflight() > 0 && remaining > 0 {

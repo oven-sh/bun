@@ -781,11 +781,11 @@ test("HTTPS proxy tunnel keep-alive does not share tunnel across different targe
   expect(connects.sort()).toEqual([`CONNECT localhost:${serverA.port}`, `CONNECT localhost:${serverB.port}`].sort());
 });
 
-// The TLS handshake inside a CONNECT tunnel is keyed to the URL host like a
-// direct connection: the ClientHello SNI and the certificate verification use
-// the URL host, and a caller-supplied Host header only travels as an HTTP
-// field on the tunneled request.
-test("HTTPS proxy tunnel keeps a caller-supplied Host header out of SNI and certificate verification", async () => {
+// The TLS handshake inside a CONNECT tunnel is keyed like a direct connection:
+// the ClientHello SNI and the certificate verification use tls.servername when
+// set, otherwise the URL host. A caller-supplied Host header only travels as an
+// HTTP field on the tunneled request.
+test("HTTPS proxy tunnel derives the inner SNI from tls.servername or the URL host, never from the Host header", async () => {
   const seen: { sni: string | null; host: string | undefined }[] = [];
   const target = tls.createServer(
     {
@@ -807,14 +807,28 @@ test("HTTPS proxy tunnel keeps a caller-supplied Host header out of SNI and cert
   await once(target, "listening");
   try {
     const port = (target.address() as net.AddressInfo).port;
-    const res = await fetch(`https://localhost:${port}/`, {
-      proxy: httpProxyServer.url,
-      keepalive: false,
-      headers: { Host: "other.example" },
-      tls: { ca: tlsCert.cert },
-    });
-    expect(`${res.status} ${await res.text()}`).toBe("200 ok");
-    expect(seen).toEqual([{ sni: "localhost", host: "other.example" }]);
+    const get = async (url: string, init: { headers?: Record<string, string>; tls?: Record<string, string> }) => {
+      const res = await fetch(url, {
+        proxy: httpProxyServer.url,
+        keepalive: false,
+        headers: init.headers,
+        tls: { ca: tlsCert.cert, ...init.tls },
+      });
+      return `${res.status} ${await res.text()}`;
+    };
+    // DNS URL host with a foreign Host header: SNI is the URL host.
+    expect(await get(`https://localhost:${port}/`, { headers: { Host: "other.example" } })).toBe("200 ok");
+    // IP URL host with tls.servername: SNI is the servername (the documented
+    // "dial an IP, verify a name" opt-in), with or without a Host header.
+    expect(await get(`https://127.0.0.1:${port}/`, { tls: { servername: "localhost" } })).toBe("200 ok");
+    expect(
+      await get(`https://127.0.0.1:${port}/`, { headers: { Host: "other.example" }, tls: { servername: "localhost" } }),
+    ).toBe("200 ok");
+    expect(seen).toEqual([
+      { sni: "localhost", host: "other.example" },
+      { sni: "localhost", host: `127.0.0.1:${port}` },
+      { sni: "localhost", host: "other.example" },
+    ]);
   } finally {
     target.close();
   }

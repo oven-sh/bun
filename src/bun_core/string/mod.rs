@@ -108,7 +108,11 @@ unsafe extern "C" {
     fn BunString__createAtom(bytes: *const u8, len: usize) -> String;
     fn BunString__tryCreateAtom(bytes: *const u8, len: usize) -> String;
     fn BunString__createStaticExternal(bytes: *const u8, len: usize, isLatin1: bool) -> String;
-    fn BunString__createStaticExternalLatin1WithHash(bytes: *const u8, len: usize, hash: u32) -> String;
+    fn BunString__createStaticExternalLatin1WithHash(
+        bytes: *const u8,
+        len: usize,
+        hash: u32,
+    ) -> String;
     fn BunString__createExternal(
         bytes: *const u8,
         len: usize,

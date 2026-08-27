@@ -306,7 +306,8 @@ unsafe impl Sync for StandaloneModuleGraph {}
 /// blob/sourcemap caching path.
 impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     fn has_module_info(&self, name: &[u8]) -> bool {
-        self.find_ref(name).is_some_and(|file| !file.module_info.is_empty())
+        self.find_ref(name)
+            .is_some_and(|file| !file.module_info.is_empty())
     }
     fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&[u8]> {
         self.lookup_file(name).map(|f| f.name)

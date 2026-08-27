@@ -813,7 +813,10 @@ pub use self::resolved_source::ResolvedSource;
 /// exhaustive Rust enum.
 /// Index into the codegen'd `BuiltinModuleKeys.h` table for a canonical builtin key (`node:fs`, `bun:sqlite`, `bun`...).
 pub mod builtin_module_key_index {
-    include!(concat!(env!("BUN_CODEGEN_DIR"), "/generated_builtin_module_key_index.rs"));
+    include!(concat!(
+        env!("BUN_CODEGEN_DIR"),
+        "/generated_builtin_module_key_index.rs"
+    ));
     pub fn get(name: &[u8]) -> Option<u16> {
         BUILTIN_MODULE_KEY_INDEX.get(name).copied()
     }

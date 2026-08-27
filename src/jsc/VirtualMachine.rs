@@ -462,7 +462,8 @@ pub unsafe extern "C" fn Bun__isStandaloneModuleKey(name: *const u8, len: usize)
     // SAFETY: `name[..len]` is the caller's live 8-bit string buffer.
     let name = unsafe { core::slice::from_raw_parts(name, len) };
     bun_options_types::standalone_path::is_bun_standalone_file_path(name)
-        && standalone_module_graph().is_some_and(|graph| graph.find_assume_standalone_path(name).is_some())
+        && standalone_module_graph()
+            .is_some_and(|graph| graph.find_assume_standalone_path(name).is_some())
 }
 
 /// `StandaloneGlobalObject::moduleLoaderFetch`: an embedded key whose file carries a serialized ES module record, i.e.

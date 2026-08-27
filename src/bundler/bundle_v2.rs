@@ -4697,13 +4697,10 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
-        /// A plugin `onResolve` result lands after the importer's parse
-        /// completed, so the `schedule_barrel_deferred_imports` pass that ran
-        /// at parse completion saw this import record without a `source_index`
-        /// and skipped it when seeding `requested_exports`. A barrel parsed
-        /// after that point then defers re-exports this importer needs and
-        /// nothing un-defers them (#40606). Re-run the pass now that the
-        /// record points at its target; it is idempotent.
+        /// The barrel pass seeds `requested_exports` at parse completion and
+        /// skips import records with no `source_index`. A plugin `onResolve`
+        /// result patches the record later, so re-run the idempotent pass for
+        /// the importer (#40606).
         fn schedule_barrel_imports_after_plugin_resolve(
             &mut self,
             importer_source_index: IndexInt,
@@ -4722,9 +4719,8 @@ pub mod bv2_impl {
                 ast_target,
             )
             .expect("oom");
-            // The barrel BFS schedules parse tasks through
-            // `process_resolve_queue`, which does not touch the scan counter;
-            // account for them here like `on_parse_task_complete` does.
+            // The barrel BFS does not touch the scan counter; same accounting
+            // as `on_parse_task_complete`.
             self.graph.pending_items += u32::try_from(scheduled).expect("int cast");
         }
 

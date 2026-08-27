@@ -4,7 +4,7 @@
 import Dep, { count, tally } from "./dep.js";
 export const fromMain = await Promise.resolve("main");
 tally(3);
-const worker = new Worker("./worker.js");
+const worker = new Worker("./worker");
 const fromWorker = await new Promise((resolve, reject) => {
   worker.onmessage = event => resolve(event.data);
   worker.onerror = event => reject(event);

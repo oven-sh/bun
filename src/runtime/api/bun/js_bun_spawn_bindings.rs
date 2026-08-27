@@ -833,8 +833,6 @@ fn spawn_maybe_sync(
                                     TerminalInitError::DupFailed => global_this.throw(
                                         format_args!("Failed to duplicate PTY file descriptor"),
                                     ),
-                                    TerminalInitError::NotSupported => global_this
-                                        .throw(format_args!("PTY not supported on this platform")),
                                     TerminalInitError::WriterStartFailed => global_this
                                         .throw(format_args!("Failed to start terminal writer")),
                                     TerminalInitError::ReaderStartFailed => global_this

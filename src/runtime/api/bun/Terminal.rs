@@ -10,7 +10,7 @@
 //! - Callbacks are stored via `values` in classes.ts, accessed via js.gc
 
 use core::cell::Cell;
-use core::ffi::{c_int, c_void};
+use core::ffi::c_void;
 #[cfg(windows)]
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -307,8 +307,6 @@ pub enum InitError {
     OpenPtyFailed,
     #[error("DupFailed")]
     DupFailed,
-    #[error("NotSupported")]
-    NotSupported,
     #[error("WriterStartFailed")]
     WriterStartFailed,
     #[error("ReaderStartFailed")]
@@ -320,7 +318,6 @@ impl From<CreatePtyError> for InitError {
         match e {
             CreatePtyError::OpenPtyFailed => InitError::OpenPtyFailed,
             CreatePtyError::DupFailed => InitError::DupFailed,
-            CreatePtyError::NotSupported => InitError::NotSupported,
         }
     }
 }
@@ -575,9 +572,6 @@ impl Terminal {
                 InitError::DupFailed => {
                     global_object.throw(format_args!("Failed to duplicate PTY file descriptor"))
                 }
-                InitError::NotSupported => {
-                    global_object.throw(format_args!("PTY not supported on this platform"))
-                }
                 InitError::WriterStartFailed => {
                     global_object.throw(format_args!("Failed to start terminal writer"))
                 }
@@ -783,158 +777,60 @@ pub enum CreatePtyError {
     OpenPtyFailed,
     #[error("DupFailed")]
     DupFailed,
-    #[error("NotSupported")]
-    NotSupported,
 }
 
 fn create_pty(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
     #[cfg(unix)]
-    {
-        return create_pty_posix(cols, rows);
-    }
+    return create_pty_posix(cols, rows);
     #[cfg(windows)]
-    {
-        return create_pty_windows(cols, rows);
-    }
-    #[cfg(not(any(unix, windows)))]
-    Err(CreatePtyError::NotSupported)
-}
-
-// OpenPtyTermios is required for the openpty() extern signature even though we pass null.
-// Kept for type correctness of the C function declaration.
-#[repr(C)]
-pub struct OpenPtyTermios {
-    pub c_iflag: u32,
-    pub c_oflag: u32,
-    pub c_cflag: u32,
-    pub c_lflag: u32,
-    pub c_cc: [u8; 20],
-    pub c_ispeed: u32,
-    pub c_ospeed: u32,
+    return create_pty_windows(cols, rows);
 }
 
 pub use bun_core::Winsize;
 
-pub type OpenPtyFn = unsafe extern "C" fn(
-    amaster: *mut c_int,
-    aslave: *mut c_int,
-    name: *mut u8,
-    termp: *const OpenPtyTermios,
-    winp: *const Winsize,
-) -> c_int;
-
-/// Dynamic loading of openpty on Linux (it's in libutil which may not be linked)
-#[cfg(any(target_os = "linux", target_os = "android"))]
-mod lib_util {
-    use super::*;
-    use bun_core::ZStr;
-
-    // Per PORTING.md §Global mutable state: the flag is an AtomicBool and the
-    // handle slot an AtomicPtr (null ⇔ None — dlopen never yields a null Some).
-    // JS-thread-only.
-    static HANDLE: core::sync::atomic::AtomicPtr<c_void> =
-        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
-    static LOADED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-
-    fn get_handle() -> Option<*mut c_void> {
-        use core::sync::atomic::Ordering::Relaxed;
-        if LOADED.load(Relaxed) {
-            let h = HANDLE.load(Relaxed);
-            return if h.is_null() { None } else { Some(h) };
-        }
-        LOADED.store(true, Relaxed);
-
-        // Try libutil.so first (most common), then libutil.so.1
-        const LIB_NAMES: [&ZStr; 3] = [
-            bun_core::zstr!("libutil.so"),
-            bun_core::zstr!("libutil.so.1"),
-            bun_core::zstr!("libc.so.6"),
-        ];
-        for lib_name in LIB_NAMES {
-            if let Some(h) = sys::dlopen(lib_name, sys::RTLD::LAZY) {
-                HANDLE.store(h, Relaxed);
-                return Some(h);
-            }
-        }
-        None
-    }
-
-    pub(super) fn get_open_pty() -> Option<OpenPtyFn> {
-        sys::dlsym_with_handle!(OpenPtyFn, "openpty", get_handle())
-    }
-}
-
+/// `openpty(3)` over plain libc, so no libutil is needed on Linux or FreeBSD.
 #[cfg(unix)]
-fn get_open_pty_fn() -> Option<OpenPtyFn> {
-    // openpty is linked directly on macOS (libc) and FreeBSD (libutil, see
-    // scripts/build/bun.ts).
-    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    {
-        // Declared locally (not via the `libc` crate) so the `OpenPtyFn`
-        // type unifies with the Linux dlsym path.
-        unsafe extern "C" {
-            // SAFETY precondition: out-param fd pointers must be writable and
-            // termp/winp must be null or valid — raw-pointer contract. Kept
-            // `unsafe` so the fn item coerces to `OpenPtyFn` (unsafe fn ptr).
-            pub(crate) fn openpty(
-                amaster: *mut c_int,
-                aslave: *mut c_int,
-                name: *mut u8,
-                termp: *const OpenPtyTermios,
-                winp: *const Winsize,
-            ) -> c_int;
+fn open_pty(winsize: &Winsize) -> Result<(Fd, Fd), CreatePtyError> {
+    // The `libc` crate does not bind this on macOS.
+    unsafe extern "C" {
+        fn ptsname_r(fd: libc::c_int, buf: *mut libc::c_char, buflen: usize) -> libc::c_int;
+    }
+    // SAFETY: plain libc calls on an fd we own; `name` is a writable buffer of
+    // the length passed.
+    unsafe {
+        let master = libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY);
+        if master < 0 {
+            return Err(CreatePtyError::OpenPtyFailed);
         }
-        return Some(openpty);
+        let master = Fd::from_native(master);
+        let mut name = [0u8; 128];
+        if libc::grantpt(master.native()) != 0
+            || libc::unlockpt(master.native()) != 0
+            || ptsname_r(master.native(), name.as_mut_ptr().cast(), name.len()) != 0
+        {
+            master.close();
+            return Err(CreatePtyError::OpenPtyFailed);
+        }
+        let slave = libc::open(name.as_ptr().cast(), libc::O_RDWR | libc::O_NOCTTY);
+        if slave < 0 {
+            master.close();
+            return Err(CreatePtyError::OpenPtyFailed);
+        }
+        libc::ioctl(slave, libc::TIOCSWINSZ as _, winsize as *const Winsize);
+        Ok((master, Fd::from_native(slave)))
     }
-
-    // On Linux, openpty is in libutil, which may not be linked
-    // Load it dynamically via dlopen
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    {
-        return lib_util::get_open_pty();
-    }
-
-    #[cfg(not(any(
-        target_os = "macos",
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd"
-    )))]
-    None
 }
 
 #[cfg(unix)]
 fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
-    let Some(openpty_fn) = get_open_pty_fn() else {
-        return Err(CreatePtyError::NotSupported);
-    };
-
-    let mut master_fd: c_int = -1;
-    let mut slave_fd: c_int = -1;
-
     let winsize = Winsize {
         row: rows,
         col: cols,
         xpixel: 0,
         ypixel: 0,
     };
-
-    // SAFETY: openpty writes to master_fd/slave_fd; name/termp are null (allowed).
-    let result = unsafe {
-        openpty_fn(
-            &raw mut master_fd,
-            &raw mut slave_fd,
-            core::ptr::null_mut(),
-            core::ptr::null(),
-            &raw const winsize,
-        )
-    };
-    if result != 0 {
-        return Err(CreatePtyError::OpenPtyFailed);
-    }
-
-    let master_fd_desc = Fd::from_native(master_fd);
-    let slave_fd_desc = Fd::from_native(slave_fd);
+    let (master_fd_desc, slave_fd_desc) = open_pty(&winsize)?;
+    let slave_fd = slave_fd_desc.native();
 
     // Configure sensible terminal defaults matching node-pty behavior.
     // These are "cooked mode" defaults that most terminal applications expect.

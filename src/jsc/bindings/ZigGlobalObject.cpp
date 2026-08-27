@@ -3860,18 +3860,7 @@ static void registerStandaloneClosure(Zig::GlobalObject* globalObject, JSModuleL
         auto* entry = loader->ensureRegistered(globalObject, m.key, ScriptFetchParameters::Type::JavaScript);
         RETURN_IF_EXCEPTION(scope, void());
         RELEASE_ASSERT(!entry->record()); // nothing between collect and register can register one of these keys
-        bool isNew = entry->status() == ModuleRegistryEntry::Status::New;
-        if (isNew)
-            entry->setStatus(ModuleRegistryEntry::Status::Fetching);
-        JSPromise* fetchPromise = entry->ensureFetchPromise(globalObject);
-        JSPromise* modulePromise = entry->ensureModulePromise(globalObject); // its FetchSettled reaction sees modulePromise settled and bails
-        RETURN_IF_EXCEPTION(scope, void());
-        if (isNew)
-            fetchPromise->fulfill(vm, m.source);
-        entry->setRecord(vm, m.record);
-        entry->setStatus(ModuleRegistryEntry::Status::Fetched);
-        if (modulePromise->status() == JSPromise::Status::Pending)
-            modulePromise->fulfill(vm, m.record);
+        entry->provideModule(globalObject, m.source, m.record);
         releaseModuleInfo(globalObject, m.source);
     }
     if (!closure.complete)

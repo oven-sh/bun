@@ -300,8 +300,8 @@ impl FSEventsLoop {
         };
         if !stream.start() {
             //clean in case of failure
-            drop(paths);
             drop(stream);
+            drop(paths);
             return;
         }
         state.stream = Some((stream, paths));

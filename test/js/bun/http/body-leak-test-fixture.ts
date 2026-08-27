@@ -1,39 +1,44 @@
-// RSS on darwin keeps freed-but-mapped (MADV_FREE_REUSABLE) pages, so it only reports
-// the high-water mark; memoryFootprint() is what the process actually retains.
-const rss =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+import { rss, tls } from "harness";
 
-async function memoryUsage() {
-  Bun.gc(true);
-  await Bun.sleep(50);
-  return rss();
+// RSS only drops once the allocators hand freed pages back to the OS. Bun.gc(true) sweeps
+// the JS heap but leaves that to background scavengers that run tens to hundreds of ms
+// later, so a sample taken right after it still counts the previous batch's garbage.
+// Bun.shrink() queues a full GC plus a synchronous scavenge for the moment the VM goes
+// idle; yielding to the event loop runs it. Repeat until the reading stops falling.
+// Bun.shrink() also deletes all compiled code, so this belongs in a measurement fixture
+// like this one and not in the test runner's own VM.
+async function settledMemoryUsage(): Promise<number> {
+  let previous = Infinity;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    Bun.gc(true);
+    Bun.shrink();
+    await new Promise(resolve => setImmediate(resolve));
+    const current = rss();
+    if (current > previous - 1024 * 1024) {
+      return Math.min(current, previous);
+    }
+    previous = current;
+  }
+  return previous;
 }
+
+// Positive control for the test's leak detection: /retain keeps every body alive.
+const retainedBodies: Uint8Array[] = [];
 
 const http2 = process.argv.includes("--http2");
 const server = Bun.serve({
   port: 0,
   idleTimeout: 0,
-  ...(http2 ? { tls: require("harness").tls, http2: true } : {}),
+  ...(http2 ? { tls, http2: true } : {}),
   async fetch(req: Request) {
     const url = req.url;
     if (url.endsWith("/report")) {
-      return new Response(JSON.stringify(await memoryUsage()), {
-        headers: {
-          "Content-Type": "application/json",
-        },
-      });
+      return Response.json(await settledMemoryUsage());
     } else if (url.endsWith("/heap-snapshot")) {
-      Bun.gc(true);
-      await Bun.sleep(10);
+      await settledMemoryUsage();
       require("v8").writeHeapSnapshot("/tmp/heap.heapsnapshot");
       console.log("Wrote heap snapshot to /tmp/heap.heapsnapshot");
-      return new Response(JSON.stringify(await memoryUsage()), {
-        headers: {
-          "Content-Type": "application/json",
-        },
-      });
+      return Response.json(await settledMemoryUsage());
     }
     if (url.endsWith("/json-buffering")) {
       await req.json();
@@ -43,33 +48,34 @@ const server = Bun.serve({
       req.body;
       await req.text();
     } else if (url.endsWith("/streaming")) {
-      const reader = req.body.getReader();
-      while (reader) {
-        const { done, value } = await reader?.read();
+      const reader = req.body!.getReader();
+      while (true) {
+        const { done } = await reader.read();
         if (done) {
           break;
         }
       }
     } else if (url.endsWith("/incomplete-streaming")) {
-      const reader = req.body?.getReader();
-      await reader?.read();
+      await req.body!.getReader().read();
     } else if (url.endsWith("/streaming-echo")) {
       return new Response(req.body, {
         headers: {
           "Content-Type": "application/octet-stream",
         },
       });
+    } else if (url.endsWith("/retain")) {
+      retainedBodies.push(await req.bytes());
     }
     return new Response("Ok");
   },
 });
 console.log(server.url.href);
-process?.send?.(server.url.href);
+process.send?.(server.url.href);
 
+// Run directly (no IPC channel) to watch the server while driving it by hand.
 if (!process.send) {
-  setInterval(() => {
-    Bun.gc(true);
-    const rssMB = (rss() / 1024 / 1024) | 0;
+  setInterval(async () => {
+    const rssMB = ((await settledMemoryUsage()) / 1024 / 1024) | 0;
     console.log("RSS", rssMB, "MB");
     console.log("Active requests", server.pendingRequests);
 

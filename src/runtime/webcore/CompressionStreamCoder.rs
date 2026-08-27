@@ -21,7 +21,7 @@ use core::ffi::c_int;
 use bun_core::EncodedSlice;
 use bun_core::ffi::FfiSlice;
 use bun_jsc::EncodedSliceJsc as _;
-use bun_jsc::{ErrorCode, JSGlobalObject, JSUint8Array, JSValue, PinnedArrayBuffer, Strong};
+use bun_jsc::{ErrorCode, JSGlobalObject, JSUint8Array, JSValue, JobPinnedArrayBuffer, Strong};
 
 use bun_brotli::c as brotli;
 use bun_zlib as zlib;
@@ -537,14 +537,14 @@ impl CompressionStreamCoder {
 /// A chunk's bytes for the pool thread: the pinned ArrayBuffer they live in
 /// (fed to the codec in place), or a copy made up front.
 pub(crate) enum AsyncInput {
-    Pinned(PinnedArrayBuffer),
+    Pinned(JobPinnedArrayBuffer),
     Owned(Vec<u8>),
 }
 
 impl AsyncInput {
     /// JS thread: pin `chunk` if it is a pinnable ArrayBuffer/view, else copy `fallback`.
     pub(crate) fn new(global: &JSGlobalObject, chunk: JSValue, fallback: &[u8]) -> Self {
-        match PinnedArrayBuffer::pin(global, chunk) {
+        match JobPinnedArrayBuffer::root(global, chunk) {
             Some(pinned) => Self::Pinned(pinned),
             None => Self::Owned(fallback.to_vec()),
         }

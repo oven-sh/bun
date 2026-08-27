@@ -137,11 +137,15 @@ pub use bun_core::base64::encode;
 
 /// [`encode`] appended to `out` (reserving the room itself); returns the number of bytes appended.
 pub fn encode_append(out: &mut Vec<u8>, source: &[u8]) -> usize {
-    let len = simdutf::base64::encode_len(source.len(), false);
+    encode_append_impl(out, source, false)
+}
+
+fn encode_append_impl(out: &mut Vec<u8>, source: &[u8], is_urlsafe: bool) -> usize {
+    let len = simdutf::base64::encode_len(source.len(), is_urlsafe);
     // SAFETY: `encode_raw` writes exactly `len` bytes into the `len` spare bytes reserved here.
     unsafe {
         bun_core::vec::fill_spare(out, len, |spare| {
-            let written = simdutf::base64::encode_raw(source, spare.as_mut_ptr(), false);
+            let written = simdutf::base64::encode_raw(source, spare.as_mut_ptr(), is_urlsafe);
             debug_assert_eq!(written, len);
             (written, written)
         })

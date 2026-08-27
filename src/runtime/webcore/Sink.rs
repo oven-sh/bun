@@ -732,8 +732,7 @@ pub(crate) unsafe fn sink_handle_from_id(
     const HTTP_RESPONSE_SINK: u8 = 4;
     const HTTPS_RESPONSE_SINK: u8 = 5;
     const NETWORK_SINK: u8 = 6;
-    const H3_RESPONSE_SINK: u8 = 7;
-    const FETCH_REQUEST_BODY_SINK: u8 = 8;
+    const FETCH_REQUEST_BODY_SINK: u8 = 7;
 
     let raw = ptr.as_ptr();
     match id {
@@ -760,10 +759,6 @@ pub(crate) unsafe fn sink_handle_from_id(
         // SAFETY: caller contract — `raw` is a live `*mut NetworkSink`.
         NETWORK_SINK => SinkHandle::S3Upload(unsafe {
             bun_ptr::BackRef::from_raw_mut(raw.cast::<streams::NetworkSink>())
-        }),
-        // SAFETY: caller contract — `raw` is a live `*mut H3ResponseSink`.
-        H3_RESPONSE_SINK => SinkHandle::H3Response(unsafe {
-            bun_ptr::BackRef::from_raw_mut(raw.cast::<streams::H3ResponseSink>())
         }),
         // SAFETY: caller contract — `raw` is a live `*mut FetchRequestBodySink`.
         FETCH_REQUEST_BODY_SINK => SinkHandle::FetchRequestBody(unsafe {

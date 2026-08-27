@@ -16,7 +16,7 @@ use crate::webcore::blob::Any as AnyBlob;
 use crate::webcore::{AutoFlusher, ByteListPool};
 
 // scope statics renamed with `Log` suffix so they don't collide with
-// the `HTTPServerWritable<SSL,H3>` / `NetworkSink` *types* defined below
+// the `HTTPServerWritable<SSL>` / `NetworkSink` *types* defined below
 // (RequestContext was blocked on this name clash).
 bun_core::declare_scope!(HTTPServerWritableLog, visible);
 bun_core::declare_scope!(NetworkSinkLog, visible);
@@ -83,7 +83,6 @@ pub enum StartTag {
     FileSink,
     HTTPSResponseSink,
     HTTPResponseSink,
-    H3ResponseSink,
     NetworkSink,
     FetchRequestBodySink,
     HTMLRewriterSink,
@@ -145,9 +144,6 @@ impl Start {
             }
             StartTag::HTTPResponseSink => {
                 Self::from_js_with_tag::<{ StartTag::HTTPResponseSink }>(global_this, value)
-            }
-            StartTag::H3ResponseSink => {
-                Self::from_js_with_tag::<{ StartTag::H3ResponseSink }>(global_this, value)
             }
             StartTag::FetchRequestBodySink => {
                 Self::from_js_with_tag::<{ StartTag::FetchRequestBodySink }>(global_this, value)
@@ -254,7 +250,6 @@ impl Start {
             StartTag::NetworkSink
             | StartTag::HTTPSResponseSink
             | StartTag::HTTPResponseSink
-            | StartTag::H3ResponseSink
             | StartTag::FetchRequestBodySink
             | StartTag::HTMLRewriterSink => {
                 let mut empty = true;
@@ -987,11 +982,6 @@ impl SourceHandle {
 // HTTPServerWritable
 // ──────────────────────────────────────────────────────────────────────────
 
-// Selecting the response type from the const generics would require an
-// associated-type trait keyed on them. The pointer is kept opaque at the
-// type level; all dispatch happens at runtime through `any_res()` / `uws::AnyResponse`.
-type UwsResponse<const SSL: bool, const HTTP3: bool> = c_void;
-
 /// `Done` and `Aborted` are both "done" (no further sends); `Aborted`
 /// additionally records that the peer went away. `start()` (reachable again
 /// through a `type: "direct"` stream's controller) moves `Done` back to
@@ -1003,8 +993,12 @@ pub(crate) enum HTTPServerWritableState {
     Aborted,
 }
 
-pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
-    pub(crate) res: Option<*mut UwsResponse<SSL, HTTP3>>,
+/// `SSL` only selects which JS sink class (`HTTPResponseSink` /
+/// `HTTPSResponseSink`) wraps this; the response itself is dispatched at
+/// runtime through `uws::AnyResponse`, so one instantiation serves HTTP/1.1,
+/// HTTP/2 and HTTP/3 alike.
+pub struct HTTPServerWritable<const SSL: bool> {
+    pub(crate) res: Option<uws::AnyResponse>,
     pub(crate) buffer: Vec<u8>,
     pub(crate) pooled_buffer: Option<NonNull<ByteListPoolNode>>,
     pub offset: BlobSizeType,
@@ -1053,7 +1047,7 @@ pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
     pub(crate) auto_flusher: AutoFlusher,
 }
 
-impl<const SSL: bool, const HTTP3: bool> Default for HTTPServerWritable<SSL, HTTP3> {
+impl<const SSL: bool> Default for HTTPServerWritable<SSL> {
     fn default() -> Self {
         Self {
             res: None,
@@ -1080,7 +1074,7 @@ impl<const SSL: bool, const HTTP3: bool> Default for HTTPServerWritable<SSL, HTT
     }
 }
 
-impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
+impl<const SSL: bool> HTTPServerWritable<SSL> {
     /// Borrow the JS global stored at construction.
     ///
     /// Invariant: `global_this` is set before first use (any auto-flusher
@@ -1102,9 +1096,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         self.buffer.capacity() as usize
     }
 
-    pub(crate) const NAME: &'static str = if HTTP3 {
-        "H3ResponseSink"
-    } else if SSL {
+    pub(crate) const NAME: &'static str = if SSL {
         "HTTPSResponseSink"
     } else {
         "HTTPResponseSink"
@@ -1114,25 +1106,22 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
 /// Per-monomorphization JSSink wrapper alias. Mirrors
 /// `pub const JSSink = Sink.JSSink(@This(), name)`.
-pub type HTTPServerWritableJSSink<const SSL: bool, const HTTP3: bool> =
-    crate::webcore::sink::JSSink<HTTPServerWritable<SSL, HTTP3>>;
+pub type HTTPServerWritableJSSink<const SSL: bool> =
+    crate::webcore::sink::JSSink<HTTPServerWritable<SSL>>;
 
 // `HTTPServerWritable` is exposed to JS via `Sink.JSSink(@This(), name)` where
-// `name` ∈ {HTTPResponseSink, HTTPSResponseSink, H3ResponseSink}. Const-generics
-// can't drive `#[link_name]`, so declare all three extern sets in a private mod
-// and dispatch at call time on `(SSL, HTTP3)`. The branch is on const generics;
+// `name` ∈ {HTTPResponseSink, HTTPSResponseSink}. Const-generics
+// can't drive `#[link_name]`, so declare both extern sets in a private mod
+// and dispatch at call time on `SSL`. The branch is on a const generic;
 // the optimizer folds it to a direct call per monomorphization.
 mod http_sink_abi {
     crate::decl_js_sink_externs!("HTTPResponseSink" as http);
     crate::decl_js_sink_externs!("HTTPSResponseSink" as https);
-    crate::decl_js_sink_externs!("H3ResponseSink" as h3);
 }
 
 macro_rules! http_sink_dispatch {
     ($f:ident($($arg:expr),*)) => {
-        if HTTP3 {
-            http_sink_abi::h3::$f($($arg),*)
-        } else if SSL {
+        if SSL {
             http_sink_abi::https::$f($($arg),*)
         } else {
             http_sink_abi::http::$f($($arg),*)
@@ -1140,9 +1129,7 @@ macro_rules! http_sink_dispatch {
     };
 }
 
-impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkAbi
-    for HTTPServerWritable<SSL, HTTP3>
-{
+impl<const SSL: bool> crate::webcore::sink::JsSinkAbi for HTTPServerWritable<SSL> {
     fn from_js_extern(value: JSValue) -> usize {
         http_sink_dispatch!(from_js(value))
     }
@@ -1161,18 +1148,10 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkAbi
     }
 }
 
-impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
-    /// Const-generic → runtime dispatch for the type-erased `res` field.
+impl<const SSL: bool> HTTPServerWritable<SSL> {
     #[inline]
     fn any_res(&self) -> Option<uws::AnyResponse> {
-        let res = self.res?;
-        Some(if HTTP3 {
-            uws::AnyResponse::H3(res.cast::<uws::H3::Response>())
-        } else if SSL {
-            uws::AnyResponse::SSL(res.cast::<uws::Response<true>>())
-        } else {
-            uws::AnyResponse::TCP(res.cast::<uws::Response<false>>())
-        })
+        self.res
     }
 
     fn handle_wrote(&mut self, amount1: usize) {
@@ -1387,11 +1366,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         &self.buffer[self.offset as usize..]
     }
 
-    pub(crate) fn on_writable(
-        &mut self,
-        write_offset: u64,
-        _res: *mut UwsResponse<SSL, HTTP3>,
-    ) -> bool {
+    pub(crate) fn on_writable(&mut self, write_offset: u64, _res: uws::AnyResponse) -> bool {
         // write_offset is the amount of data that was written not how much we need to write
         bun_core::scoped_log!(HTTPServerWritableLog, "onWritable ({})", write_offset);
         // onWritable reset backpressure state to allow flushing
@@ -2077,14 +2052,10 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 // `JsSinkType` impl: routes the codegen `${name}__{construct,write,end,flush,
 // start,getInternalFd,memoryCost}` thunks (via `JSSink::<Self>::js_*`) into
 // the inherent streaming methods above. Mirrors `Sink.JSSink(@This(), name)`.
-impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkType
-    for HTTPServerWritable<SSL, HTTP3>
-{
+impl<const SSL: bool> crate::webcore::sink::JsSinkType for HTTPServerWritable<SSL> {
     const NAME: &'static str = Self::NAME;
     const HAS_FLUSH_FROM_JS: bool = true;
-    const START_TAG: Option<StartTag> = Some(if HTTP3 {
-        StartTag::H3ResponseSink
-    } else if SSL {
+    const START_TAG: Option<StartTag> = Some(if SSL {
         StartTag::HTTPSResponseSink
     } else {
         StartTag::HTTPResponseSink
@@ -2106,9 +2077,8 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkType
     }
 }
 
-pub type HTTPSResponseSink = HTTPServerWritable<true, false>;
-pub type HTTPResponseSink = HTTPServerWritable<false, false>;
-pub type H3ResponseSink = HTTPServerWritable<true, true>;
+pub type HTTPSResponseSink = HTTPServerWritable<true>;
+pub type HTTPResponseSink = HTTPServerWritable<false>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // NetworkSink

@@ -1539,27 +1539,9 @@ impl SourceData for webcore::AnyBlob {
         webcore::AnyBlob::memory_cost(self)
     }
 }
-/// Local newtype so the [`SourceData`] impl satisfies coherence —
-/// `ArrayBufferStrong` lives in `bun_jsc` and the trait in `bun_spawn`, so
-/// implementing it directly would be an orphan.
-struct ArrayBufferSource(jsc::array_buffer::ArrayBufferStrong);
-impl SourceData for ArrayBufferSource {
-    fn slice(&self) -> &[u8] {
-        self.0.slice()
-    }
-    fn detach(&mut self) { /* GC-owned; Drop releases the Strong handle */
-    }
-    fn memory_cost(&self) -> usize {
-        0
-    }
-}
 #[inline]
 pub(crate) fn source_from_blob(b: webcore::AnyBlob) -> Source {
     Source::Any(Box::new(b))
-}
-#[inline]
-pub(crate) fn source_from_array_buffer(ab: jsc::array_buffer::ArrayBufferStrong) -> Source {
-    Source::Any(Box::new(ArrayBufferSource(ab)))
 }
 
 /// Windows: the extra stdio pipes (`stdio_pipes`) are uv handles this

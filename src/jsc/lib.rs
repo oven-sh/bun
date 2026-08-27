@@ -188,7 +188,7 @@ pub use self::js_value::{
 // and is wired into `event_loop::tick` directly at link time. No fn-pointer
 // hook is re-exported from the crate root.
 pub use self::array_buffer::{
-    ArrayBuffer, BinaryType, JSCArrayBuffer, MarkedArrayBuffer, TypedArrayType,
+    ArrayBuffer, BinaryType, JSCArrayBuffer, MarkedArrayBuffer, PinnedArrayBuffer, TypedArrayType,
 };
 pub use self::console_object as ConsoleObject;
 pub use self::console_object::Formatter;
@@ -1251,9 +1251,6 @@ pub use self::array_buffer::JSTypedArrayBytesDeallocator;
 pub mod node_path;
 #[path = "webcore_types.rs"]
 pub mod webcore_types;
-// RAII pair for `make_thread_isolated()`/`unprotect()` — re-exported at crate root
-// so `bun_runtime` callers don't reach through `node_path`.
-pub use self::node_path::{ThreadIsolated, Unprotect};
 
 /// `jsc.WebCore` (deprecated alias) — only the data-shape subset
 /// that was hoisted to this tier. Reach for `bun_runtime::webcore` for the

@@ -392,9 +392,14 @@ impl WebWorker {
                 (hooks.parse_worker_exec_argv)(bun_core::ffi::slice(exec_argv_ptr, exec_argv_len))
             }
         };
+        // A Worker cannot re-enable what its parent disabled.
         if let Some(allow_addons) = exec_argv.allow_addons {
             let parent_allows = transform_options.allow_addons.unwrap_or(true);
             transform_options.allow_addons = Some(parent_allows && allow_addons);
+        }
+        if let Some(allow_ffi_cc) = exec_argv.allow_ffi_cc {
+            let parent_allows = transform_options.allow_ffi_cc.unwrap_or(true);
+            transform_options.allow_ffi_cc = Some(parent_allows && allow_ffi_cc);
         }
         // node_worker.cc: a Worker starts from the parent's resolved option, a custom `env`
         // re-derives it from that env, and then the flags (its own execArgv's, else the parent's)

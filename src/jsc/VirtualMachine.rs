@@ -2161,7 +2161,10 @@ impl VirtualMachine {
 /// The subset of a Worker's `execArgv` that bun acts on (node's per-Environment options).
 #[derive(Default)]
 pub struct WorkerExecArgv {
+    /// `Some(false)` for `--no-addons`.
     pub allow_addons: Option<bool>,
+    /// `Some(false)` for `--no-ffi-cc`.
+    pub allow_ffi_cc: Option<bool>,
     pub use_system_ca: Option<bool>,
     /// `--cpu-prof` (JSON) / `--cpu-prof-md`; either enables profiling of the worker thread.
     pub cpu_prof: bool,
@@ -2292,7 +2295,8 @@ pub struct RuntimeHooks {
         graph: &'static dyn bun_resolver::StandaloneModuleGraph,
     ),
     /// Parse `execArgv` against the `RunCommand` param table (lives in `bun_runtime::cli`, forward-dep).
-    /// Caller writes `allow_addons` back into `transform_options` and applies `cpu_prof` to the worker VM.
+    /// Caller writes `allow_addons` / `allow_ffi_cc` back into `transform_options` and applies
+    /// `cpu_prof` to the worker VM.
     pub parse_worker_exec_argv: unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> WorkerExecArgv,
     /// `CronJob.clearAllForVM(vm, .teardown)`. `CronJob` lives in
     /// `bun_runtime::api::cron`.
@@ -3100,6 +3104,15 @@ pub fn process_fetch_log(
     // we must convert to UTF-8 here.
     let referrer_utf8 = referrer.to_utf8();
 
+    let msg_to_js = |msg: bun_ast::Msg| -> JSValue {
+        take(match msg.metadata {
+            bun_ast::Metadata::Build => BuildMessage::create(global_this, msg),
+            bun_ast::Metadata::Resolve(_) => {
+                ResolveMessage::create(global_this, &msg, referrer_utf8.slice())
+            }
+        })
+    };
+
     match log.msgs.len() {
         0 => {
             let msg = if err == crate::CrateError::UnexpectedPendingResolution {
@@ -3137,14 +3150,7 @@ pub fn process_fetch_log(
             // Note: `Msg` is not `Copy`, so move it out — the caller deinits
             // the log immediately after, so consuming the vec is sound.
             let msg = log.msgs.swap_remove(0);
-            match msg.metadata {
-                bun_ast::Metadata::Build => take(BuildMessage::create(global_this, msg)),
-                bun_ast::Metadata::Resolve(_) => take(ResolveMessage::create(
-                    global_this,
-                    &msg,
-                    referrer_utf8.slice(),
-                )),
-            }
+            msg_to_js(msg)
         }
 
         _ => {
@@ -3157,14 +3163,7 @@ pub fn process_fetch_log(
             let mut errors_stack: [JSValue; 256] = [JSValue::default(); 256];
             let len = log.msgs.len().min(errors_stack.len());
             for (i, msg) in log.msgs.drain(..len).enumerate() {
-                errors_stack[i] = match msg.metadata {
-                    bun_ast::Metadata::Build => take(BuildMessage::create(global_this, msg)),
-                    bun_ast::Metadata::Resolve(_) => take(ResolveMessage::create(
-                        global_this,
-                        &msg,
-                        referrer_utf8.slice(),
-                    )),
-                };
+                errors_stack[i] = msg_to_js(msg);
             }
 
             take(global_this.create_aggregate_error(
@@ -3639,6 +3638,12 @@ impl VirtualMachine {
             .transform_options
             .allow_addons
             .unwrap_or(true)
+    }
+
+    /// Whether `bun:ffi` `cc()` is allowed (`--no-ffi-cc` and `--no-addons` disable it).
+    pub fn allow_ffi_cc(&self) -> bool {
+        let opts = &self.transpiler.options.transform_options;
+        opts.allow_ffi_cc.unwrap_or(true) && opts.allow_addons.unwrap_or(true)
     }
 
     /// Whether to warn when a previously-unhandled rejection later gains a handler.

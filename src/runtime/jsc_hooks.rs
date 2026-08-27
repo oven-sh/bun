@@ -1586,6 +1586,7 @@ unsafe fn parse_worker_exec_argv(
     }
     let mut out = bun_jsc::virtual_machine::WorkerExecArgv::default();
     let mut no_addons = false;
+    let mut no_ffi_cc = false;
     let mut pending = Pending::None;
     let parse_interval = |v: &[u8]| std::str::from_utf8(v).ok().and_then(|s| s.parse().ok());
     for &arg in exec_argv {
@@ -1620,6 +1621,8 @@ unsafe fn parse_worker_exec_argv(
         }
         if bytes == b"--no-addons" {
             no_addons = true;
+        } else if bytes == b"--no-ffi-cc" {
+            no_ffi_cc = true;
         } else if bytes == b"--use-system-ca" {
             out.use_system_ca = Some(true);
         } else if bytes == b"--no-use-system-ca" {
@@ -1642,8 +1645,9 @@ unsafe fn parse_worker_exec_argv(
             out.cpu_prof_dir = Some(v.into());
         }
     }
-    // Override `allow_addons` unconditionally.
+    // Override both unconditionally: the caller ANDs them with the parent's values.
     out.allow_addons = Some(!no_addons);
+    out.allow_ffi_cc = Some(!no_ffi_cc);
     out
 }
 

@@ -18,12 +18,51 @@
 #ifndef UWS_UTILITIES_H
 #define UWS_UTILITIES_H
 
+#include <string_view>
+
 /* Various common utilities */
 
+#include <cstddef>
 #include <cstdint>
+#include <limits>
 
 namespace uWS {
+
+/* RFC 9113 §8.2.2 / RFC 9114 §4.2: connection-specific fields are not
+ * allowed in HTTP/2 or HTTP/3 responses. */
+static inline bool asciiIEquals(std::string_view a, const char *lower) {
+    for (size_t i = 0; i < a.size(); i++) if ((a[i] | 0x20) != lower[i]) return false;
+    return true;
+}
+/* RFC 9113 §8.3.1 / RFC 9114 §4.3.1 request-target rules shared by the h2
+ * and h3 request validators: :path is origin-form (or "*" for OPTIONS);
+ * CONNECT carries no :path; there is an authority, Host doesn't contradict
+ * :authority, and :authority has no userinfo. */
+static inline bool validPseudoHeaderTarget(std::string_view method, std::string_view path, std::string_view authority, std::string_view host) {
+    bool isConnect = method == "CONNECT";
+    if (!isConnect && !(path.size() && path[0] == '/') && !(path == "*" && method == "OPTIONS")) return false;
+    if (authority.empty() && host.empty()) return false;
+    if (!authority.empty() && !host.empty() && authority != host) return false;
+    if (authority.find('@') != std::string_view::npos) return false;
+    return true;
+}
+
+static inline bool isConnectionSpecificResponseField(std::string_view name, std::string_view value) {
+    switch (name.size()) {
+    case 2: return asciiIEquals(name, "te") && !(value.size() == 8 && asciiIEquals(value, "trailers"));
+    case 7: return asciiIEquals(name, "upgrade");
+    case 10: return asciiIEquals(name, "connection") || asciiIEquals(name, "keep-alive");
+    case 16: return asciiIEquals(name, "proxy-connection");
+    case 17: return asciiIEquals(name, "transfer-encoding");
+    }
+    return false;
+}
+
 namespace utils {
+
+/* Decimal digits in the largest uint64_t (18446744073709551615). Sizes the
+ * buffers u64toa and std::to_chars write into; neither appends a terminator. */
+static constexpr size_t U64_MAX_DIGITS = std::numeric_limits<uint64_t>::digits10 + 1;
 
 inline int u32toaHex(uint32_t value, char *dst) {
     char palette[] = "0123456789abcdef";
@@ -44,7 +83,7 @@ inline int u32toaHex(uint32_t value, char *dst) {
 }
 
 inline int u64toa(uint64_t value, char *dst) {
-    char temp[20];
+    char temp[U64_MAX_DIGITS];
     char *p = temp;
     do {
         *p++ = (char) ((value % 10) + '0');

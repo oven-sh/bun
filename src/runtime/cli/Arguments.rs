@@ -280,7 +280,10 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--redis-preconnect                Preconnect to $REDIS_URL at startup"),
     parse_param!("--sql-preconnect                  Preconnect to PostgreSQL at startup"),
     parse_param!(
-        "--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\""
+        "--no-addons                       Throw an error if process.dlopen or bun:ffi cc() is called, and disable export condition \"node-addons\""
+    ),
+    parse_param!(
+        "--no-ffi-cc                       Throw an error if bun:ffi cc() is called (disables the C compiler)"
     ),
     parse_param!(
         "--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\""
@@ -466,6 +469,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--root <STR>                     Root directory used for multiple entry points"
         ),
         parse_param!("--splitting                      Enable code splitting"),
+        parse_param!(
+            "--no-split-require               With --splitting and --target bun: keep a require()'d ESM file in the calling chunk instead of emitting a chunk loaded at the call"
+        ),
         parse_param!(
             "--min-chunk-size <INT>           With --splitting, also fold side-effect-free chunks smaller than this many source bytes into a chunk more entry points load"
         ),
@@ -1117,9 +1123,13 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
 
         if args.flag(b"--no-addons") {
-            // used for disabling process.dlopen and
+            // used for disabling process.dlopen and bun:ffi cc(), and
             // for disabling export condition "node-addons"
             opts.allow_addons = Some(false);
+        }
+
+        if args.flag(b"--no-ffi-cc") {
+            opts.allow_ffi_cc = Some(false);
         }
 
         if let Some(unhandled_rejections) = args.option(b"--unhandled-rejections") {
@@ -2577,6 +2587,9 @@ fn parse_build_command_options(
 
     if args.flag(b"--splitting") {
         ctx.bundler_options.code_splitting = true;
+    }
+    if args.flag(b"--no-split-require") {
+        ctx.bundler_options.split_require = false;
     }
 
     if let Some(size_str) = args.option(b"--min-chunk-size") {

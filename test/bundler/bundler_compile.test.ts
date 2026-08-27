@@ -579,7 +579,7 @@ describe("bundler", () => {
         console.log(await outcome(s("./mod.css")));         // not a source extension: no mapping
         console.log(await outcome(s("./mod.js/")));         // trailing slash
         console.log(await outcome(s("../mod.ts")));         // escapes the embedded root
-        console.log(await outcome(s("./" + "a".repeat(70000) + ".ts"))); // longer than any path buffer
+        console.log(await outcome(s("./" + Buffer.alloc(70000, "a").toString() + ".ts"))); // longer than any path buffer
         console.log(await outcome(s(".\\\\mod.ts")));      // a relative specifier on Windows only
       `,
       "/mod.ts": `export default "mod" as string;`,

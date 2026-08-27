@@ -1453,8 +1453,8 @@ fn append_internal_module_bytecode(
                 Some(alias) if alias.path.as_bytes() == b"@vercel/fetch" => b"vercel_fetch",
                 Some(alias) => alias.path.as_bytes(),
                 None if record.tag == bun_ast::ImportRecordTag::Builtin
-                    || text.starts_with(b"node:")
-                    || text.starts_with(b"bun:") =>
+                    || strings::has_prefix(text, b"node:")
+                    || strings::has_prefix(text, b"bun:") =>
                 {
                     text
                 }

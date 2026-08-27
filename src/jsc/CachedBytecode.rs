@@ -96,8 +96,8 @@ unsafe extern "C" {
         external_strings: Option<NonNull<EncoderStringTable>>,
     ) -> bool;
 
-    /// InternalModuleRegistryConstants.S: this executable's builtins section (`bun_exe_format::builtins` layout).
-    static bun_internal_modules_header: [u8; 48];
+    /// InternalModuleRegistry.cpp: this executable's builtins section (`bun_exe_format::builtins` layout).
+    fn Bun__builtinsSection(length: *mut usize) -> *const u8;
 }
 
 impl CachedBytecode {
@@ -208,12 +208,11 @@ pub(crate) fn __bun_jsc_encoder_string_table_new() -> NonNull<EncoderStringTable
 /// (`bun_exe_format::builtins::Builtins::parse` reads it).
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_jsc_host_builtins() -> &'static [u8] {
-    // SAFETY: the section is `[header][index][data]`, contiguous and immutable for the life of the process; the header's
-    // dataOffset (u32 at byte 32) + dataLength (u32 at byte 36) is its total length.
+    let mut length: usize = 0;
+    // SAFETY: returns a pointer to immutable section data that lives for the whole process, and its length.
     unsafe {
-        let header = &*core::ptr::addr_of!(bun_internal_modules_header);
-        let field = |at: usize| u32::from_le_bytes(header[at..at + 4].try_into().unwrap()) as usize;
-        core::slice::from_raw_parts(header.as_ptr(), field(32) + field(36))
+        let ptr = Bun__builtinsSection(&raw mut length);
+        core::slice::from_raw_parts(ptr, length)
     }
 }
 

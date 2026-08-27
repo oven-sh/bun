@@ -134,6 +134,7 @@ server.close();`,
       }
       expect(exitCode).toBe(0);
     },
+    // A --compile build plus (for "cross") bytecode for ~45 internal modules: ~10s under debug+ASAN.
     60_000,
   );
 

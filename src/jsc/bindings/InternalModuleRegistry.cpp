@@ -291,3 +291,11 @@ extern "C" bool Bun__generateInternalModuleBytecodeFromSource(const Latin1Charac
     using namespace Bun;
     return encodeInternalModule(String({ text, textLength }), String({ name, nameLength }), String({ url, urlLength }), sourceStamp, depth, bytes, size, handle, externalStrings);
 }
+
+// This executable's whole builtins section (header, index, sources), for the bundler's section reader.
+extern "C" const uint8_t* Bun__builtinsSection(size_t* length)
+{
+    const auto& h = bun_internal_modules_header;
+    *length = h.dataOffset + h.dataLength;
+    return reinterpret_cast<const uint8_t*>(&h);
+}

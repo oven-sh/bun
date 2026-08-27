@@ -489,6 +489,8 @@ let blobDataOffset: number;
   }
   const data = Buffer.concat(chunks);
 
+  if (internalModuleDependencyTable.flat.length > 0xffff || nativeStartIndex > 0xffff)
+    throw new Error("builtins section: dependency table no longer fits its u16 entries; widen depOffsets/deps");
   const align = (n: number, to: number) => (n + to - 1) & ~(to - 1);
   const modulesOffset = BUILTINS_HEADER_SIZE;
   const depOffsetsOffset = modulesOffset + records.length * 4;

@@ -2405,9 +2405,13 @@ pub fn target_builtins(
     };
     match find_section(&file).and_then(|section| Builtins::parse(section).map(|_| section)) {
         Ok(section) => Ok(Some(std::sync::Arc::from(section))),
-        // No section: a bun from before there was one. A newer layout than this bun reads: same outcome, its internal
-        // modules load from source.
-        Err(BuiltinsError::MissingSection | BuiltinsError::UnsupportedVersion) => Ok(None),
+        // No section (a bun from before there was one), a newer layout than this bun reads, or a container this reader
+        // doesn't handle: its internal modules load from source. A section that is there but malformed is an error.
+        Err(
+            BuiltinsError::MissingSection
+            | BuiltinsError::UnsupportedVersion
+            | BuiltinsError::UnrecognizedExecutable,
+        ) => Ok(None),
         Err(e) => Err(CompileError::fmt(format_args!(
             "failed to read the builtin modules of the executable for '{}': {}",
             target, e

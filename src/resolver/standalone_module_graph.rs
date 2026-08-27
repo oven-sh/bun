@@ -19,8 +19,7 @@ pub trait StandaloneModuleGraph: Send + Sync {
     /// (`./w.ts` -> `/$bunfs/root/w.js`). Returns the graph's own name for the module, which is what the module
     /// loader keys on; `None` for anything else (bare specifiers, other absolute paths, misses).
     fn resolve(&self, source_dir: &[u8], specifier: &[u8]) -> Option<&'static [u8]> {
-        let is_relative =
-            matches!(specifier, [b'.', s, ..] | [b'.', b'.', s, ..] if bun_paths::is_sep_native(*s));
+        let is_relative = matches!(specifier, [b'.', s, ..] | [b'.', b'.', s, ..] if bun_paths::is_sep_native(*s));
         let is_embedded_path =
             bun_options_types::standalone_path::is_bun_standalone_file_path(specifier);
         if !is_relative && !is_embedded_path {

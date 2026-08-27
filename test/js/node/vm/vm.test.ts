@@ -928,7 +928,9 @@ test("SourceTextModule accepts the cachedData it produced", () => {
   const cachedData = new SourceTextModule(source, { identifier: "m" }).createCachedData();
   expect(cachedData.length).toBeGreaterThan(0);
   expect(() => new SourceTextModule(source, { identifier: "m", cachedData })).not.toThrow(); // ERR_VM_MODULE_CACHED_DATA_REJECTED otherwise
-  expect(() => new SourceTextModule("export default 2;", { identifier: "m", cachedData })).toThrow(expect.objectContaining({ code: "ERR_VM_MODULE_CACHED_DATA_REJECTED" }));
+  expect(() => new SourceTextModule("export default 2;", { identifier: "m", cachedData })).toThrow(
+    expect.objectContaining({ code: "ERR_VM_MODULE_CACHED_DATA_REJECTED" }),
+  );
 });
 
 describe("Script compiles its source once and links that in every context it runs in", () => {

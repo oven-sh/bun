@@ -2611,6 +2611,7 @@ pub mod parse_worker {
         };
         opts.code_splitting = topts.code_splitting;
         opts.module_type = task.module_type;
+        opts.is_entry_point = task.is_entry_point;
 
         task.jsx.parse = loader.is_jsx();
 

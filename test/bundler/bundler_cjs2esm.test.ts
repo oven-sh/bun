@@ -141,6 +141,25 @@ describe("bundler", () => {
       stdout: "bar",
     },
   });
+  // The same file as an entry point is a module in its own right, not only a redirect for its importers.
+  itBundled("cjs2esm/ModuleExportsEqualsRequireEntryPoint", {
+    files: {
+      "/entry.cjs": /* js */ `
+        /*! banner */
+        "use strict";
+        module.exports = require('./library.js')
+      `,
+      "/library.js": /* js */ `
+        module.exports = { foo: 'bar' };
+      `,
+      "/user.mjs": /* js */ `
+        import lib from './out.js';
+        console.log(lib.foo, require('./out.js').default.foo);
+      `,
+    },
+    outfile: "/out.js",
+    run: { file: "/user.mjs", stdout: "bar bar" },
+  });
   itBundled("cjs2esm/ModuleExportsBasedOnNodeEnvProduction", {
     files: {
       "/entry.js": /* js */ `

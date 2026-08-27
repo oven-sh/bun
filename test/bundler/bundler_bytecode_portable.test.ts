@@ -1,3 +1,4 @@
+import { internalModuleBytecode } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -37,6 +38,7 @@ import { gzipSync } from "zlib";
 const corpusDir = join(import.meta.dir, "bytecode-portability");
 const featuresSource = readFileSync(join(corpusDir, "features.js"), "utf8");
 const recordsSource = readFileSync(join(corpusDir, "records.js"), "utf8");
+const builtinSource = readFileSync(join(corpusDir, "builtin.js"), "utf8");
 const moduleSource = readFileSync(join(corpusDir, "module.js"), "utf8");
 
 const featuresOutput = [
@@ -215,6 +217,10 @@ describe("bytecode cache portability", () => {
       "vm.Script records.js",
       new vm.Script(recordsSource, { filename: "records.js", produceCachedData: true }).cachedData!,
     );
+    // A builtin (what `bun build --compile --bytecode` embeds for node:* / bun:* modules): @-intrinsics and the
+    // builtin-executable entry, which user source never produces. Bun's own internal modules are not hashed here because
+    // their source is per-OS (process.platform is inlined); the next test covers them.
+    outputs["builtin corpus"] = fingerprint("builtin corpus", internalModuleBytecode(builtinSource, "corpus:builtin").bytecode);
     outputs["vm.SourceTextModule module.js"] = fingerprint(
       "vm.SourceTextModule module.js",
       new vm.SourceTextModule(moduleSource, { identifier: "module.js" }).createCachedData(),
@@ -250,6 +256,10 @@ describe("bytecode cache portability", () => {
       "serialized bytecode differs from the snapshot — read the comment at the top of this file before updating it",
     ).toMatchInlineSnapshot(`
       {
+        "builtin corpus": {
+          "bytes": 6144,
+          "sha256": "0b549d456059c9a9fcda414a3c3ea691eeb9f53cfee59df5e4a1b83fe00fdff0",
+        },
         "bun build --bytecode --minify features.js": {
           "js": "9f5f15dbd326293b6805304febe9fb19f9d26531d2bb8c10e80d80e126f19a2d",
           "jsc": {
@@ -395,6 +405,11 @@ describe("bytecode cache portability", () => {
         require("fs").writeFileSync(outdir + "/vm.cached", script.createCachedData()); // produced after running it
         const result = await Bun.build({ entrypoints: [entry], outdir, target: "bun", format: "cjs", bytecode: true });
         if (!result.success) throw new AggregateError(result.logs);
+        const { internalModuleBytecode } = require("bun:internal-for-testing");
+        const mask = b => { b = new Uint8Array(b); b.fill(0, 0, 4); b.fill(0, 8, 12); return b; }; // as fingerprint() does
+        const internalModules = {};
+        for (let i = 0, m; (m = internalModuleBytecode(i)); i++) internalModules[m.name] = new Bun.CryptoHasher("sha256").update(mask(m.bytecode)).digest("hex");
+        require("fs").writeFileSync(outdir + "/internal-modules.json", JSON.stringify(internalModules));
       `,
     });
     const { entry, args } = bundlerBuilds[0];
@@ -421,6 +436,12 @@ describe("bytecode cache portability", () => {
     expect(exitCode).toBe(0);
     results["Bun.build() after running other JS"] = hash(readFileSync(join(String(dir), "api", "features.js.jsc")));
     expect(results).toEqual(Object.fromEntries(Object.keys(results).map(k => [k, expected])));
+
+    // Every one of Bun's internal modules as builtin bytecode, in this process and in the busy one: same bytes.
+    const internalModules: Record<string, string> = {};
+    for (let i = 0, m; (m = internalModuleBytecode(i)); i++) internalModules[m.name] = hash(m.bytecode);
+    expect(Object.keys(internalModules).length).toBeGreaterThan(100);
+    expect(JSON.parse(readFileSync(join(String(dir), "api", "internal-modules.json"), "utf8"))).toEqual(internalModules);
 
     const vmExpected = hash(
       new vm.Script(featuresSource, { filename: "features.js", produceCachedData: true }).cachedData!,

@@ -15,6 +15,8 @@
 
 #include "NativeModuleImpl.h"
 #include "BunBuiltinNames.h"
+#include "JSBuffer.h"
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/CachedBytecode.h>
 #include <JavaScriptCore/CachedTypes.h>
 #include <JavaScriptCore/CodeCache.h>
@@ -64,6 +66,17 @@ static UnlinkedFunctionExecutable* createInternalModuleExecutable(JSC::VM& vm, c
 {
     return createBuiltinExecutable(vm, source, Identifier::fromString(vm, moduleName), ImplementationVisibility::Public, ConstructorKind::None, ConstructAbility::CannotConstruct, InlineAttribute::None);
 }
+
+static RefPtr<JSC::CachedBytecode> encodeInternalModule(JSC::VM& vm, const SourceCode& source, const String& moduleName, unsigned sourceStamp)
+{
+    UnlinkedFunctionExecutable* executable = createInternalModuleExecutable(vm, source, moduleName);
+    ParserError error;
+    JSC::recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, executable, source, error, std::numeric_limits<unsigned>::max());
+    if (error.isValid())
+        return nullptr;
+    return JSC::encodeBuiltinFunction(vm, executable, source.length(), sourceStamp, nullptr, JSC::BytecodeCacheChecksums::No, JSC::BytecodeCacheUpdatable::No);
+}
+
 
 JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, const String& SOURCE, const String& moduleName, const String& urlString, uint32_t id)
 {
@@ -283,6 +296,43 @@ extern "C" size_t Bun__internalModuleDependencies(uint32_t id, const uint16_t** 
         return 0;
     *out = dependencies + dependencyOffsets[id];
     return dependencyOffsets[id + 1] - dependencyOffsets[id];
+}
+
+// bun:internal-for-testing: the bytecode `bun build --compile --bytecode` would embed for a builtin module -- either for
+// internal module number `index` (null past the last one), or for `source` written in builtin syntax under `name`.
+JSC_DEFINE_HOST_FUNCTION(jsInternalModuleBytecode, (JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame))
+{
+    using namespace Bun;
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String text, name, url;
+    unsigned stamp = 0;
+    if (callFrame->argument(0).isString()) {
+        text = callFrame->argument(0).toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+        name = callFrame->argument(1).toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+        url = makeString("builtin://"_s, name);
+    } else {
+        uint32_t index = callFrame->argument(0).toUInt32(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (index >= std::size(internalJSModules))
+            return JSValue::encode(jsNull());
+        const InternalJSModule& m = internalJSModules[index];
+        text = INTERNAL_MODULE_SOURCE(m);
+        name = m.moduleId;
+        url = m.url;
+        stamp = InternalModuleRegistryConstants::sourceStamp;
+    }
+    RefPtr<JSC::CachedBytecode> bytecode = encodeInternalModule(vm, makeInternalModuleSource(text, name, url), name, stamp);
+    if (!bytecode)
+        return throwVMError(globalObject, scope, makeString("could not generate bytecode for "_s, name));
+    JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, bytecode->span());
+    RETURN_IF_EXCEPTION(scope, { });
+    JSObject* result = constructEmptyObject(globalObject);
+    result->putDirect(vm, Identifier::fromString(vm, "name"_s), jsString(vm, name));
+    result->putDirect(vm, Identifier::fromString(vm, "bytecode"_s), buffer);
+    return JSValue::encode(result);
 }
 
 #undef INTERNAL_MODULE_REGISTRY_GENERATE

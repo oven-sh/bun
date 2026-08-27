@@ -561,11 +561,6 @@ export function windowsEnv(
       return delete internalEnv[k];
     },
     defineProperty(_, p, attributes) {
-      // String(symbol) does not throw (it returns the descriptive string), so
-      // reject symbol keys explicitly like the set trap does.
-      if (typeof p === "symbol") {
-        throw new TypeError("Cannot convert a Symbol value to a string");
-      }
       // Same validation as JSEnvironmentVariableMap::defineOwnProperty on
       // POSIX: only plain, fully-permissive data descriptors are accepted.
       if ("get" in attributes || "set" in attributes) {
@@ -584,6 +579,12 @@ export function windowsEnv(
         throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(
           "'process.env' only accepts a configurable, writable, and enumerable data descriptor",
         );
+      }
+      // Node coerces the key only after the descriptor validates; String(symbol)
+      // does not throw (it returns the descriptive string), so reject symbol
+      // keys explicitly like the set trap does.
+      if (typeof p === "symbol") {
+        throw new TypeError("Cannot convert a Symbol value to a string");
       }
       if (typeof attributes.value === "symbol") {
         throw new TypeError("Cannot convert a Symbol value to a string");
@@ -609,6 +610,9 @@ export function windowsEnv(
     ownKeys() {
       // .slice() because paranoia that there is a way to call this without the engine cloning it for us
       return envMapList.slice();
+    },
+    preventExtensions() {
+      return false;
     },
   });
 }

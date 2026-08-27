@@ -44,7 +44,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 
-use bun_core::{EncodedSlice, String as BunString, WTFStringImpl};
+use bun_core::{EncodedSlice, String as BunString, WTFStringImpl, WTFStringImplExt as _};
 use bun_io::KeepAlive;
 
 use crate::virtual_machine::{self, VirtualMachine, runtime_hooks};
@@ -84,6 +84,12 @@ pub struct WebWorker {
     inherit_exec_argv: bool,
     unresolved_specifier: Box<[u8]>,
     preloads: Vec<Box<[u8]>>,
+    /// `--expose-gc` for this worker; inheriting children read it at their `create()`.
+    expose_gc: bool,
+    /// What an inheriting worker reports as `process.execArgv`: the nearest ancestor worker's
+    /// explicit list (node reports the parent Environment's exec_argv), copied at `create()`.
+    /// `None` means the process argv, as for a main-thread parent.
+    inherited_exec_argv: Option<Box<[Box<[u8]>]>>,
     name: bun_core::ZBox,
     /// `--cpu-prof` on the parent applies to workers that inherit its execArgv (as in node, where
     /// the flag is per-process); a worker with its own execArgv profiles only if that says so.
@@ -291,6 +297,12 @@ impl WebWorker {
         Some(unsafe { bun_core::ffi::slice(self.exec_argv_ptr, self.exec_argv_len) })
     }
 
+    /// The execArgv an inheriting worker reports, when an ancestor worker set one explicitly;
+    /// `None` when `exec_argv()` is `Some` or the list falls through to the process argv.
+    pub fn inherited_exec_argv(&self) -> Option<&[Box<[u8]>]> {
+        self.inherited_exec_argv.as_deref()
+    }
+
     fn set_requested_terminate(&self) -> bool {
         self.requested_terminate.swap(true, Ordering::Release)
     }
@@ -380,18 +392,55 @@ impl WebWorker {
         let parent_ref = unsafe { &*parent };
         let store_fd = parent_ref.transpiler.resolver.store_fd;
         let mut transform_options = (*parent_ref.transpiler.options.transform_options).clone();
-        // A worker's own `execArgv` carries node's per-Environment options (parsed with the
-        // RunCommand param table, hence the hook); without one it inherits the parent's.
-        let exec_argv: virtual_machine::WorkerExecArgv = if inherit_exec_argv {
-            Default::default()
-        } else {
-            let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-            // SAFETY: caller passed valid (ptr,len) borrowed from the C++ WorkerOptions, alive
-            // for the proxy's lifetime; the hook only reads the slice.
-            unsafe {
-                (hooks.parse_worker_exec_argv)(bun_core::ffi::slice(exec_argv_ptr, exec_argv_len))
-            }
-        };
+        // A worker's own `execArgv` carries node's per-Environment options (validated and
+        // honoured by `cli::worker_exec_argv`, hence the hook); without one it inherits the
+        // parent's. `--expose-gc` chains through inheriting workers, so an inheriting worker takes
+        // it from its parent worker, or from the process argv when the parent is the main thread.
+        let hooks = runtime_hooks().expect("RuntimeHooks not installed");
+        // The list an inheriting worker reports as `process.execArgv`: the parent worker's
+        // explicit list, else what the parent itself inherited; a main-thread parent means the
+        // process argv (resolved on read). Read here, on the parent's own thread.
+        let mut inherited_exec_argv: Option<Box<[Box<[u8]>]>> = None;
+        let (mut exec_argv, expose_gc): (virtual_machine::WorkerExecArgv, bool) =
+            if inherit_exec_argv {
+                let expose_gc = match parent_ref.worker_ref() {
+                    Some(parent_worker) => {
+                        inherited_exec_argv = match parent_worker.exec_argv() {
+                            Some(explicit) => Some(
+                                explicit
+                                    .iter()
+                                    .filter(|s| !s.is_null())
+                                    .map(|&s| {
+                                        // SAFETY: each entry is a live `WTFStringImpl*` owned by
+                                        // the parent's C++ `WorkerOptions` for its lifetime.
+                                        let s = unsafe { &*s };
+                                        s.to_owned_slice_z().as_bytes().into()
+                                    })
+                                    .collect(),
+                            ),
+                            None => parent_worker.inherited_exec_argv.clone(),
+                        };
+                        parent_worker.expose_gc
+                    }
+                    // SAFETY: `None` reads only process-constant state.
+                    None => unsafe { (hooks.parse_worker_exec_argv)(None) }.expose_gc,
+                };
+                (Default::default(), expose_gc)
+            } else {
+                // SAFETY: caller passed valid (ptr,len) borrowed from the C++ WorkerOptions, alive
+                // for the proxy's lifetime; the hook only reads the slice.
+                let parsed = unsafe {
+                    (hooks.parse_worker_exec_argv)(Some(bun_core::ffi::slice(
+                        exec_argv_ptr,
+                        exec_argv_len,
+                    )))
+                };
+                let expose_gc = parsed.expose_gc;
+                (parsed, expose_gc)
+            };
+        // `--require`/`--import` specifiers join the worker's preload list; `load_preloads`
+        // resolves them on the worker thread, so a bad path fails at runtime as in node.
+        preloads.extend(core::mem::take(&mut exec_argv.preloads));
         // A Worker cannot re-enable what its parent disabled.
         if let Some(allow_addons) = exec_argv.allow_addons {
             let parent_allows = transform_options.allow_addons.unwrap_or(true);
@@ -460,6 +509,8 @@ impl WebWorker {
             inherit_exec_argv,
             unresolved_specifier: spec_slice.slice().to_vec().into_boxed_slice(),
             preloads,
+            expose_gc,
+            inherited_exec_argv,
             name: if name_str.is_empty() {
                 bun_core::ZBox::default()
             } else {
@@ -850,6 +901,10 @@ impl WebWorker {
                 crate::bun_cpu_profiler::set_sampling_interval(config.interval);
                 vm_ref.cpu_profiler_config = Some(config);
                 crate::bun_cpu_profiler::start_cpu_profiler(vm_ref.jsc_vm_mut());
+            }
+
+            if self.expose_gc {
+                crate::cpp::JSC__JSGlobalObject__addGc(vm_ref.global());
             }
         }
 

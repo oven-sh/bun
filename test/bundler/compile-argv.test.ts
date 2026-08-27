@@ -54,6 +54,31 @@ describe("bundler", () => {
     },
   });
 
+  // An inheriting worker honours --compile-exec-argv through the same token stream
+  // process.execArgv exposes (the explicit round-trip must agree with it).
+  itBundled("compile/CompileExecArgvWorkerInherit", {
+    compile: {
+      execArgv: ["--expose-gc", "--smol"],
+    },
+    backend: "cli",
+    files: {
+      "/entry.ts": /* js */ `
+        const { Worker } = require("node:worker_threads");
+        const probe = "require('worker_threads').parentPort.postMessage(typeof globalThis.gc)";
+        const report = (label, worker) =>
+          new Promise(resolve => worker.once("message", value => resolve(label + ":" + value)));
+        const inherit = new Worker(probe, { eval: true });
+        const explicit = new Worker(probe, { eval: true, execArgv: process.execArgv });
+        const results = await Promise.all([report("inherit", inherit), report("explicit", explicit)]);
+        console.log("execArgv:", JSON.stringify(process.execArgv));
+        console.log(results.join(" "));
+      `,
+    },
+    run: {
+      stdout: /execArgv: \["--expose-gc","--smol"\]\ninherit:function explicit:function/,
+    },
+  });
+
   // Test that exec argv options don't leak into process.argv when no user arguments are provided
   itBundled("compile/CompileExecArgvNoLeak", {
     compile: {

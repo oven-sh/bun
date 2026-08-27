@@ -137,7 +137,7 @@ bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, P
 
     auto* uid = propertyName.uid();
     if (uid && uid->isSymbol()) {
-        throwTypeError(globalObject, scope, "Cannot convert a symbol to a string"_s);
+        throwTypeError(globalObject, scope, "Cannot convert a Symbol value to a string"_s);
         return false;
     }
 
@@ -636,6 +636,10 @@ public:
     static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned);
     static void getOwnPropertyNames(JSObject*, JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);
     static bool defineOwnProperty(JSObject*, JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);
+    static bool preventExtensions(JSC::JSObject*, JSC::JSGlobalObject*)
+    {
+        return false;
+    }
 
 private:
     JSSharedEnvMap(JSC::VM& vm, JSC::Structure* structure)
@@ -756,7 +760,11 @@ bool JSSharedEnvMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNam
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* uid = propertyName.uid();
-    if (propertyName.isSymbol() || !uid) {
+    if (propertyName.isSymbol()) {
+        throwTypeError(globalObject, scope, "Cannot convert a Symbol value to a string"_s);
+        return false;
+    }
+    if (!uid) {
         RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
     }
 
@@ -838,22 +846,21 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
         return false;
     }
 
-    if (propertyName.isSymbol() || !uid || !descriptor.isDataDescriptor() || !descriptor.value()) {
-        // getOwnPropertySlot reads the store first; move the entry onto Base so a partial
-        // descriptor keeps enumerability. Node's EnvDefiner also rejects partials (the regular
-        // map does); tightening SHARE_ENV is a separate behavior change with its own tests.
-        if (!propertyName.isSymbol() && uid) {
-            if (auto* store = sharedEnvStoreFor(object)) {
-                String existing = store->get(String(uid));
-                if (!existing.isNull()) {
-                    syncWindowsEnv(store, String(uid), nullptr);
-                    store->remove(String(uid));
-                    object->putDirect(vm, propertyName, jsString(vm, existing), 0);
-                }
-            }
-        }
-        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
+    if (!descriptor.value()
+        || !descriptor.writablePresent() || !descriptor.writable()
+        || !descriptor.enumerablePresent() || !descriptor.enumerable()
+        || !descriptor.configurablePresent() || !descriptor.configurable()) {
+        throwError(globalObject, scope, ErrorCode::ERR_INVALID_OBJECT_DEFINE_PROPERTY, "'process.env' only accepts a configurable, writable, and enumerable data descriptor"_s);
+        return false;
     }
+
+    if (propertyName.isSymbol()) {
+        throwTypeError(globalObject, scope, "Cannot convert a Symbol value to a string"_s);
+        return false;
+    }
+
+    if (!uid) [[unlikely]]
+        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
 
     maybeEmitEnvNonstringDeprecation(globalObject, scope, descriptor.value());
     RETURN_IF_EXCEPTION(scope, false);
@@ -1135,7 +1142,23 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     }
 
 #if OS(WINDOWS)
-    auto editWindowsEnvVar = JSC::JSFunction::create(vm, globalObject, 0, String("editWindowsEnvVar"_s), jsEditWindowsEnvVar, ImplementationVisibility::Public);
+    RELEASE_AND_RETURN(scope, wrapInWindowsEnvProxy(globalObject, object, keyArray, /* syncOSEnv */ true));
+#else
+    return object;
+#endif
+}
+
+#if OS(WINDOWS)
+JSC_DEFINE_HOST_FUNCTION(jsNoopEditWindowsEnvVar, (JSGlobalObject*, JSC::CallFrame*))
+{
+    return JSValue::encode(jsUndefined());
+}
+
+JSValue wrapInWindowsEnvProxy(Zig::GlobalObject* globalObject, JSC::JSObject* object, JSC::JSArray* keyArray, bool syncOSEnv)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto editWindowsEnvVar = JSC::JSFunction::create(vm, globalObject, 0, String("editWindowsEnvVar"_s), syncOSEnv ? jsEditWindowsEnvVar : jsNoopEditWindowsEnvVar, ImplementationVisibility::Public);
 
     JSC::JSFunction* getSourceEvent = JSC::JSFunction::create(vm, globalObject, processObjectInternalsWindowsEnvCodeGenerator(vm), globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1157,8 +1180,6 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     }
 
     RELEASE_AND_RETURN(scope, result);
-#else
-    return object;
-#endif
 }
+#endif
 }

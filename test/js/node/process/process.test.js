@@ -6,6 +6,62 @@ import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
 
+it.skipIf(!isWindows)("a rejected process.env defineProperty leaves no phantom key", () => {
+  const key = "BUN_TEST_PHANTOM_DEFINE";
+  expect(key in process.env).toBe(false);
+  expect(() => Object.defineProperty(process.env, key, { value: "42" })).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_OBJECT_DEFINE_PROPERTY" }),
+  );
+  expect(Reflect.ownKeys(process.env)).not.toContain(key);
+  expect(Bun.inspect(process.env)).not.toContain(key);
+  try {
+    Object.defineProperty(process.env, key, {
+      value: "42",
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    expect(process.env[key]).toBe("42");
+    expect(Reflect.ownKeys(process.env)).toContain(key);
+  } finally {
+    delete process.env[key];
+  }
+});
+
+it.skipIf(!isWindows)(
+  "process.env defineProperty enumerates special-accessor keys and rejects accessor descriptors",
+  async () => {
+    const env = { ...bunEnv };
+    for (const k of Object.keys(env)) if (/^(https?|no)_proxy$/i.test(k)) delete env[k];
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const key = "HTTP_PROXY";
+       Object.defineProperty(process.env, key, { value: "http://x", writable: true, enumerable: true, configurable: true });
+       const inKeys = Reflect.ownKeys(process.env).includes(key);
+       const spread = { ...process.env }[key];
+       // Accessor descriptors are rejected like node's EnvDefiner.
+       let accessor;
+       try {
+         Object.defineProperty(process.env, key, { get: () => 42, configurable: true });
+       } catch (e) {
+         accessor = e.code;
+       }
+       console.log(JSON.stringify({ inKeys, spread, accessor }));`,
+      ],
+      env,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+      out: { inKeys: true, spread: "http://x", accessor: "ERR_INVALID_OBJECT_DEFINE_PROPERTY" },
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
 /**
  * Helper function to run inline fixture code and return stdout and exit code
  */
@@ -146,6 +202,12 @@ it("process.env defineProperty matches assignment semantics", () => {
     }),
   ).toThrow(TypeError);
 
+  expect(() => Object.defineProperty(process.env, Symbol("env"), {})).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_OBJECT_DEFINE_PROPERTY",
+    }),
+  );
+
   // ...a data descriptor without a [[Value]] is rejected...
   expect(() =>
     Object.defineProperty(process.env, "NO_VALUE_DESCRIPTOR", {
@@ -169,6 +231,27 @@ it("process.env defineProperty matches assignment semantics", () => {
     enumerable: true,
   });
   expect(process.env[""]).toBeUndefined();
+});
+
+it("process.env refuses [[PreventExtensions]] like node", () => {
+  for (const op of ["preventExtensions", "freeze", "seal"]) {
+    let err;
+    try {
+      Object[op](process.env);
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.name).toBe("TypeError");
+    expect(err?.code).toBeUndefined();
+  }
+  expect(Object.isExtensible(process.env)).toBe(true);
+  const key = "BUN_TEST_STILL_EXTENSIBLE";
+  try {
+    process.env[key] = "yes";
+    expect(process.env[key]).toBe("yes");
+  } finally {
+    delete process.env[key];
+  }
 });
 
 it("process.env.TZ writes inside a worker do not change the main thread's timezone", async () => {
@@ -1673,6 +1756,7 @@ it("process.execArgv", async () => {
     ["index.ts --bun -a -b -c", [], ["--bun", "-a", "-b", "-c"]],
     ["--bun index.ts index.ts", ["--bun"], ["index.ts"]],
     ["run -e bruh -b index.ts foo -a -b -c", ["-e", "bruh", "-b"], ["foo", "-a", "-b", "-c"]],
+    ["--define -d:1 index.ts", ["--define", "-d:1"], []],
   ];
 
   for (const [cmd, execArgv, argv] of fixtures) {

@@ -400,6 +400,378 @@ describe("execArgv option", async () => {
     await run('["--no-warnings"]', '["--no-warnings"]\n');
   });
   // TODO(@190n) get our handling of non-string array elements in line with Node's
+
+  it("throws ERR_WORKER_INVALID_EXEC_ARGV for unknown flags", () => {
+    let err: any;
+    try {
+      new Worker("1", { eval: true, execArgv: ["--foo"] });
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("ERR_WORKER_INVALID_EXEC_ARGV");
+    expect(err?.message).toBe("Initiated Worker with invalid execArgv flags: --foo");
+  });
+
+  it("lists every invalid flag in order", () => {
+    let err: any;
+    try {
+      new Worker("1", { eval: true, execArgv: ["--foo", "--bar", "--title=blah"] });
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("ERR_WORKER_INVALID_EXEC_ARGV");
+    expect(err?.message).toBe("Initiated Worker with invalid execArgv flags: --foo, --bar, --title=blah");
+  });
+
+  it("a rejected flag consumes its value token, so later flags are still reported", () => {
+    let err: any;
+    try {
+      new Worker("1", { eval: true, execArgv: ["--max-old-space-size", "4096", "--foo"] });
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("ERR_WORKER_INVALID_EXEC_ARGV");
+    expect(err?.message).toBe("Initiated Worker with invalid execArgv flags: --max-old-space-size, --foo");
+  });
+
+  it("reports a missing required value", () => {
+    let err: any;
+    try {
+      new Worker("1", { eval: true, execArgv: ["--redirect-warnings"] });
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("ERR_WORKER_INVALID_EXEC_ARGV");
+    expect(err?.message).toBe("Initiated Worker with invalid execArgv flags: --redirect-warnings requires an argument");
+  });
+
+  it("lists a missing required value and unknown flags together", () => {
+    let err: any;
+    try {
+      new Worker("1", { eval: true, execArgv: ["--foo", "--redirect-warnings"] });
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("ERR_WORKER_INVALID_EXEC_ARGV");
+    expect(err?.message).toBe(
+      "Initiated Worker with invalid execArgv flags: --redirect-warnings requires an argument, --foo",
+    );
+  });
+
+  it("a required value consumes the next token even when it starts with a dash", async () => {
+    // node pops the next token unconditionally, so the dash-prefixed token is
+    // the value, not a new flag; both validators must agree.
+    const w1 = new Worker("1", { eval: true, execArgv: ["--redirect-warnings", "--no-warnings"] });
+    const w2 = new Worker("1", { eval: true, env: { NODE_OPTIONS: "--redirect-warnings --no-warnings" } });
+    await Promise.all([once(w1, "exit"), once(w2, "exit")]);
+  });
+
+  it("stops validating at the first positional, like node", async () => {
+    // node accepts these: parsing stops at `--`/the first non-flag token.
+    const w1 = new Worker("1", { eval: true, execArgv: ["foo.js"] });
+    const w2 = new Worker("1", { eval: true, execArgv: ["--", "--not-a-flag"] });
+    await Promise.all([once(w1, "exit"), once(w2, "exit")]);
+  });
+
+  it("throws for invalid NODE_OPTIONS in an explicit env", () => {
+    let err: any;
+    try {
+      new Worker("1", { eval: true, env: { NODE_OPTIONS: "--nonexistent-options" } });
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("ERR_WORKER_INVALID_EXEC_ARGV");
+    expect(err?.message).toBe(
+      "Initiated Worker with invalid NODE_OPTIONS env variable: --nonexistent-options is not allowed in NODE_OPTIONS",
+    );
+  });
+
+  it("accepts Bun run-surface flags in execArgv and NODE_OPTIONS", async () => {
+    const workers = [
+      new Worker("1", { eval: true, execArgv: ["--bun"] }),
+      new Worker("1", { eval: true, env: { NODE_OPTIONS: "--bun" } }),
+      new Worker("1", { eval: true, execArgv: ["--silent"] }),
+      new Worker("1", { eval: true, execArgv: ["--cwd", process.cwd()] }),
+    ];
+    await Promise.all(workers.map(w => once(w, "exit")));
+    // A Bun flag does not disable validation of the rest of the value.
+    let err: any;
+    try {
+      new Worker("1", { eval: true, env: { NODE_OPTIONS: "--bun --nonexistent-options" } });
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("ERR_WORKER_INVALID_EXEC_ARGV");
+    expect(err?.message).toBe(
+      "Initiated Worker with invalid NODE_OPTIONS env variable: --nonexistent-options is not allowed in NODE_OPTIONS",
+    );
+  });
+
+  it("SHARE_ENV process.env validates descriptors like node", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker, SHARE_ENV } = require("worker_threads");
+         new Worker(
+           'const out = {};' +
+           'try { Object.defineProperty(process.env, "BUN_TEST_SHARE_DEFINE", { writable: false }); out.partial = null; }' +
+           'catch (e) { out.partial = e.code; }' +
+           'try { Object.defineProperty(process.env, Symbol("s"), { value: "v", writable: true, enumerable: true, configurable: true }); out.symbol = null; }' +
+           'catch (e) { out.symbol = e.name; }' +
+           'try { process.env[Symbol("s")] = "v"; out.symbolSet = null; }' +
+           'catch (e) { out.symbolSet = e.name; }' +
+           'try { Object.defineProperty(process.env, "BUN_TEST_SHARE_NUM", { value: 7, writable: true, enumerable: true, configurable: true }); out.numeric = typeof process.env.BUN_TEST_SHARE_NUM; }' +
+           'catch (e) { out.numeric = e.code; }' +
+           'try { Object.freeze(process.env); out.freeze = null; } catch (e) { out.freeze = e.name; }' +
+           'out.extensibleAfterFreeze = Object.isExtensible(process.env);' +
+           'require("worker_threads").parentPort.postMessage(out);',
+           { eval: true, env: SHARE_ENV },
+         ).on("message", out => { console.log(JSON.stringify(out)); process.exit(0); });`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+      out: {
+        partial: "ERR_INVALID_OBJECT_DEFINE_PROPERTY",
+        symbol: "TypeError",
+        symbolSet: "TypeError",
+        numeric: "string",
+        freeze: "TypeError",
+        extensibleAfterFreeze: true,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("a bare optional-value flag does not swallow the next flag", async () => {
+    using dir = tempDir("worker-execargv-optval", {
+      "preload-o.js": "globalThis.__o = 'O';",
+      "main.js": `console.log(JSON.stringify(process.execArgv));
+        new (require("worker_threads").Worker)(
+          "require('worker_threads').parentPort.postMessage(globalThis.__o)",
+          { eval: true, execArgv: process.execArgv },
+        ).on("message", t => { console.log(t); process.exit(0); });`,
+    });
+    const p = join(String(dir), "preload-o.js");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--config", "-r", p, "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ lines: stdout.trim().split(/\r?\n/), stderr, exitCode }).toEqual({
+      lines: [JSON.stringify(["--config", "-r", p]), "O"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("bun's own glued short flags round-trip through process.execArgv", async () => {
+    using dir = tempDir("worker-execargv-roundtrip", {
+      "preload-rt.js": "globalThis.__rt = 'R';",
+      "main.js": `console.log(JSON.stringify(process.execArgv));
+        new (require("worker_threads").Worker)(
+          "require('worker_threads').parentPort.postMessage(globalThis.__rt)",
+          { eval: true, execArgv: process.execArgv },
+        ).on("message", t => { console.log(t); process.exit(0); });`,
+    });
+    const p = join(String(dir), "preload-rt.js");
+    const cases: [string[], string[]][] = [
+      [[`-r${p}`], ["-r", p]],
+      [[`-r=${p}`], ["-r", p]],
+      [[`-br${p}`], ["-b", "-r", p]],
+      [
+        ["-br", p],
+        ["-b", "-r", p],
+      ],
+      [
+        ["run", `-r${p}`],
+        ["-r", p],
+      ],
+    ];
+    for (const [launch, normalized] of cases) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...launch, "main.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ launch, lines: stdout.trim().split(/\r?\n/), stderr, exitCode }).toEqual({
+        launch,
+        lines: [JSON.stringify(normalized), "R"],
+        stderr: "",
+        exitCode: 0,
+      });
+    }
+  });
+
+  it("rejects a glued short-flag value like node", async () => {
+    using dir = tempDir("worker-execargv-glued", { "preload-g.js": "globalThis.__glued = 'G';" });
+    const p = join(String(dir), "preload-g.js");
+    for (const form of [`-r${p}`, `-r=${p}`]) {
+      let err: any;
+      try {
+        new Worker("1", { eval: true, execArgv: [form] });
+      } catch (e) {
+        err = e;
+      }
+      expect(err?.code).toBe("ERR_WORKER_INVALID_EXEC_ARGV");
+      expect(err?.message).toBe(`Initiated Worker with invalid execArgv flags: ${form}`);
+    }
+    const w = new Worker("require('worker_threads').parentPort.postMessage(globalThis.__glued);", {
+      eval: true,
+      execArgv: ["-r", p],
+    });
+    const [got] = await once(w, "message");
+    expect(got).toBe("G");
+  });
+
+  it("accepts node's whole-token short aliases", async () => {
+    const w = new Worker("require('worker_threads').parentPort.postMessage(process.execArgv);", {
+      eval: true,
+      execArgv: ["-pe", "1"],
+    });
+    const [got] = await once(w, "message");
+    expect(got).toEqual(["-pe", "1"]);
+  });
+
+  it("rejects glued short flags in NODE_OPTIONS like node", async () => {
+    for (const form of ["-r./nope.js", "-r=./nope.js", "-e1+1"]) {
+      let err: any;
+      try {
+        new Worker("1", { eval: true, env: { NODE_OPTIONS: form } });
+      } catch (e) {
+        err = e;
+      }
+      expect(err?.code).toBe("ERR_WORKER_INVALID_EXEC_ARGV");
+      expect(err?.message).toBe(
+        `Initiated Worker with invalid NODE_OPTIONS env variable: ${form} is not allowed in NODE_OPTIONS`,
+      );
+    }
+    using dir = tempDir("worker-nodeopts-glued", { "preload-n.js": "globalThis.__nopts = 'N';" });
+    const p = join(String(dir), "preload-n.js").replaceAll("\\", "/");
+    const w = new Worker("1", { eval: true, env: { ...process.env, NODE_OPTIONS: `-r ${p}` } });
+    await once(w, "exit");
+  });
+
+  it("rejects chained or glued boolean short flags like node", () => {
+    for (const bad of ["-br./nope.js", "-bz", "-b=x"]) {
+      let err: any;
+      try {
+        new Worker("1", { eval: true, execArgv: [bad] });
+      } catch (e) {
+        err = e;
+      }
+      expect(err?.code).toBe("ERR_WORKER_INVALID_EXEC_ARGV");
+      expect(err?.message).toBe(`Initiated Worker with invalid execArgv flags: ${bad}`);
+    }
+  });
+
+  it("--require in execArgv runs before the worker entry", async () => {
+    using dir = tempDir("worker-execargv-require", { "preload-a.js": "console.log('A');" });
+    const w = new Worker("console.log('B');", {
+      eval: true,
+      execArgv: ["--require", join(String(dir), "preload-a.js")],
+      stdout: true,
+    });
+    let out = "";
+    w.stdout.on("data", c => (out += c));
+    const ended = once(w.stdout, "end"); // attach before exit so a fast end is not missed
+    await once(w, "exit");
+    await ended;
+    expect(out).toBe("A\nB\n");
+  });
+
+  it("--expose-gc in execArgv exposes gc() in that worker only", async () => {
+    const w = new Worker("require('worker_threads').parentPort.postMessage(typeof globalThis.gc);", {
+      eval: true,
+      execArgv: ["--expose-gc"],
+    });
+    const [type] = await once(w, "message");
+    expect(type).toBe("function");
+    // A sibling worker with a fresh execArgv does not get gc().
+    const w2 = new Worker("require('worker_threads').parentPort.postMessage(typeof globalThis.gc);", {
+      eval: true,
+      execArgv: [],
+    });
+    const [type2] = await once(w2, "message");
+    expect(type2).toBe("undefined");
+  });
+
+  it("inheriting workers take --expose-gc from the process", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--expose-gc",
+        "-e",
+        "new (require('worker_threads').Worker)(\"require('worker_threads').parentPort.postMessage(typeof globalThis.gc)\", { eval: true }).on('message', t => { console.log(t); process.exit(0); })",
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "function", stderr: "", exitCode: 0 });
+  });
+
+  it("inheriting workers take --expose-gc behind a value-taking Bun flag", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--cwd",
+        process.cwd(),
+        "--expose-gc",
+        "-e",
+        "new (require('worker_threads').Worker)(\"require('worker_threads').parentPort.postMessage(typeof globalThis.gc)\", { eval: true }).on('message', t => { console.log(t); process.exit(0); })",
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "function", stderr: "", exitCode: 0 });
+  });
+
+  it("inheriting workers take --expose-gc behind a chained short whose value is the next token", async () => {
+    using dir = tempDir("worker-inherit-chained-short", { "noop.js": "" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-br",
+        join(String(dir), "noop.js"),
+        "--expose-gc",
+        "-e",
+        "new (require('worker_threads').Worker)(\"require('worker_threads').parentPort.postMessage(typeof globalThis.gc)\", { eval: true }).on('message', t => { console.log(t); process.exit(0); })",
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "function", stderr: "", exitCode: 0 });
+  });
+
+  it("an inheriting worker reports its parent worker's execArgv, and that list round-trips", async () => {
+    // main -> A (explicit --expose-gc) -> B (inherits). As in node, B's process.execArgv is A's
+    // list, so from B `new Worker(url)` and `new Worker(url, { execArgv: process.execArgv })` agree.
+    const probe = "require('worker_threads').parentPort.postMessage(typeof globalThis.gc)";
+    const b = `
+      const { Worker, parentPort } = require('worker_threads');
+      const ask = opts => new Promise(resolve => new Worker(${JSON.stringify(probe)}, { eval: true, ...opts }).once('message', resolve));
+      Promise.all([ask({}), ask({ execArgv: process.execArgv })]).then(([inherit, explicit]) =>
+        parentPort.postMessage({ execArgv: process.execArgv, inherit, explicit }));
+    `;
+    const a = `
+      const { Worker, parentPort } = require('worker_threads');
+      new Worker(${JSON.stringify(b)}, { eval: true }).once('message', m => parentPort.postMessage(m));
+    `;
+    const w = new Worker(a, { eval: true, execArgv: ["--expose-gc"] });
+    const [result] = await once(w, "message");
+    expect(result).toEqual({ execArgv: ["--expose-gc"], inherit: "function", explicit: "function" });
+  });
 });
 
 test("eval does not leak source code", async () => {

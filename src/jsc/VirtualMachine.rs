@@ -2159,7 +2159,8 @@ impl VirtualMachine {
 }
 
 /// The subset of a Worker's `execArgv` that bun acts on (node's per-Environment options).
-#[derive(Default)]
+/// `Clone` because the inheriting-worker defaults are computed once per process and handed out.
+#[derive(Default, Clone)]
 pub struct WorkerExecArgv {
     /// `Some(false)` for `--no-addons`.
     pub allow_addons: Option<bool>,
@@ -2172,6 +2173,9 @@ pub struct WorkerExecArgv {
     pub cpu_prof_interval: Option<u32>,
     pub cpu_prof_name: Option<Box<[u8]>>,
     pub cpu_prof_dir: Option<Box<[u8]>>,
+    pub expose_gc: bool,
+    /// `--require`/`-r`/`--preload`/`--import` specifiers, in order.
+    pub preloads: Vec<Box<[u8]>>,
 }
 
 pub struct RuntimeHooks {
@@ -2294,10 +2298,16 @@ pub struct RuntimeHooks {
         transpiler: *mut Transpiler<'static>,
         graph: &'static dyn bun_resolver::StandaloneModuleGraph,
     ),
-    /// Parse `execArgv` against the `RunCommand` param table (lives in `bun_runtime::cli`, forward-dep).
-    /// Caller writes `allow_addons` / `allow_ffi_cc` back into `transform_options` and applies
-    /// `cpu_prof` to the worker VM.
-    pub parse_worker_exec_argv: unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> WorkerExecArgv,
+    /// Parse a worker's `execArgv` (`bun_runtime::cli::worker_exec_argv`,
+    /// forward-dep); `None` derives an inheriting worker's defaults from the
+    /// process argv. The caller writes `allow_addons` / `allow_ffi_cc` back into
+    /// `transform_options` and applies `cpu_prof` to the worker VM. cpu-prof is
+    /// excluded from the inherit case (the parent VM carries it via
+    /// `parent_cpu_profiler_config`); preloads are excluded too, so an
+    /// inheriting worker does not re-run CLI `-r` (only an explicit execArgv
+    /// does; node re-runs in both, widening is a behavior decision).
+    pub parse_worker_exec_argv:
+        unsafe fn(exec_argv: Option<&[bun_core::WTFStringImpl]>) -> WorkerExecArgv,
     /// `CronJob.clearAllForVM(vm, .teardown)`. `CronJob` lives in
     /// `bun_runtime::api::cron`.
     pub stop_cron_for_vm_teardown: fn(vm: &mut VirtualMachine),
@@ -2972,6 +2982,14 @@ impl VirtualMachine {
                         self.pending_internal_promise = Some(p);
                         self.pending_internal_promise_is_protected = true;
                         return Ok(p);
+                    }
+                    // `load_preloads` returns null when the stop gate closed while
+                    // a preload was evaluating (worker terminate()); there is
+                    // nothing left to run, so do not load the entry. Same outcome
+                    // `load_entry_point_for_web_worker` reports for a stop that
+                    // lands after evaluation.
+                    if !self.script_allowed() {
+                        return Err(crate::CrateError::WorkerTerminated);
                     }
                 }
 

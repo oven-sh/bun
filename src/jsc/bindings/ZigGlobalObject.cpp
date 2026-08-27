@@ -589,13 +589,35 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 
 #if OS(WINDOWS)
                 JSC::JSObject* env = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), size >= JSFinalObject::maxInlineCapacity ? JSFinalObject::maxInlineCapacity : size);
+                JSC::JSArray* keyArray = JSC::constructEmptyArray(globalObject, nullptr, size);
+                JSValue wrapped;
+                if (!scope.exception()) [[likely]] {
+                    unsigned keyIndex = 0;
+                    size_t i = 0;
+                    for (auto k : map) {
+                        keyArray->putByIndexInline(globalObject, keyIndex++, jsString(vm, k.key), false);
+                        if (scope.exception()) [[unlikely]]
+                            break;
+                        // Numeric env keys hit putDirectIndex → defineOwnProperty (declares a
+                        // ThrowScope). Seeded values are JSStrings, so this throws only on OOM
+                        // or under a termination already requested for this starting worker.
+                        env->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, k.key.convertToASCIIUppercase()), strings.at(i++));
+                        if (scope.exception()) [[unlikely]]
+                            break;
+                    }
+                    if (!scope.exception()) [[likely]]
+                        wrapped = Bun::wrapInWindowsEnvProxy(globalObject, env, keyArray, /* syncOSEnv */ false);
+                }
+                // Same contract as the POSIX arm: the exception stays pending for the caller, and
+                // whatever was built is installed so nothing downstream reads a null env.
+                JSC::JSObject* installed = scope.exception() ? nullptr : wrapped.getObject();
+                globalObject->m_processEnvObject.set(vm, globalObject, installed ? installed : env);
 #else
                 // Same exotic object as the main thread so writes inside the
                 // worker coerce to string, reject symbol keys, and validate
                 // defineProperty like Node's EnvSetter/EnvDefiner.
                 auto* envStructure = Bun::JSEnvironmentVariableMap::createStructure(vm, globalObject, globalObject->objectPrototype());
                 JSC::JSObject* env = Bun::JSEnvironmentVariableMap::create(vm, envStructure);
-#endif
                 size_t i = 0;
                 for (auto k : map) {
                     // Numeric env keys hit putDirectIndex → defineOwnProperty (declares a
@@ -606,6 +628,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                         break;
                 }
                 globalObject->m_processEnvObject.set(vm, globalObject, env);
+#endif
             } else if (options.sharedEnvStore) {
                 // worker_threads SHARE_ENV: join the env tree the spawning thread
                 // resolved. Consumed like options.env, and published on the context
@@ -2962,6 +2985,10 @@ JSC_DEFINE_HOST_FUNCTION(functionJsGc,
 extern "C" [[ZIG_EXPORT(nothrow)]] void JSC__JSGlobalObject__addGc(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
+    // Also reached from web_worker.rs start_vm before the worker thread takes
+    // the API lock; putDirectNativeFunction allocates and asserts the lock.
+    // JSLock is recursive, so this is a no-op on the main path.
+    JSC::JSLockHolder locker(vm);
     globalObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "gc"_s), 0, functionJsGc, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
 }
 

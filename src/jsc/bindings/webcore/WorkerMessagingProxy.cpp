@@ -519,6 +519,10 @@ bool WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& 
     // through getters even in NonThrowing mode) nor the `code` read may leave an exception behind.
     auto& vm = JSC::getVM(&workerGlobalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    // A pending TerminationException survives CLEAR_IF_EXCEPTION, and the clone enters JS, which
+    // asserts !exception() on entry; the caller falls back to the message-only report.
+    if (scope.exception())
+        return false;
 
     auto serialized = SerializedScriptValue::create(workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
     CLEAR_IF_EXCEPTION(scope);

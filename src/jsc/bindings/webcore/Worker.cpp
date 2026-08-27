@@ -210,12 +210,17 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
 {
     JSC::JSValue error = JSC::JSValue::decode(errorValue);
     String messageStr = message.transferToWTFString();
-    ErrorEvent::Init init;
-    init.message = messageStr;
-    init.error = error;
-    init.cancelable = false;
-    init.bubbles = false;
-    globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
+    // terminate() can land mid-entry (the rejected entry promise routes here); the pending
+    // TerminationException is non-clearable and dispatchEvent enters JS, which asserts
+    // !exception() on entry. postErrorToWorkerObject takes its message-only path in that state.
+    if (!JSC::getVM(globalObject).hasPendingTerminationException()) {
+        ErrorEvent::Init init;
+        init.message = messageStr;
+        init.error = error;
+        init.cancelable = false;
+        init.bubbles = false;
+        globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
+    }
     proxy->postErrorToWorkerObject(*globalObject, messageStr, error);
 }
 

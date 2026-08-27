@@ -75,6 +75,9 @@
 #include "JSEnvironmentVariableMap.h"
 #include <JavaScriptCore/JSMap.h>
 
+extern "C" bool Bun__Worker__validateExecArgv(WTF::StringImpl* const* argv, size_t len, BunString* outMessage);
+extern "C" bool Bun__Worker__validateWorkerNodeOptions(WTF::StringImpl* nodeOptions, BunString* outMessage);
+
 namespace WebCore {
 using namespace JSC;
 
@@ -295,6 +298,20 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
                     env.add(key.impl()->isolatedCopy(), str);
                 }
 
+                // Only an explicit env's NODE_OPTIONS is validated (Rust skips when
+                // byte-identical to the parent's): https://github.com/nodejs/node/blob/main/src/node_worker.cc
+                if (envValue && envValue.isCell()) {
+                    auto nodeOptions = env.find("NODE_OPTIONS"_s);
+                    if (nodeOptions != env.end()) {
+                        BunString invalidNodeOptions = BunStringEmpty;
+                        if (!Bun__Worker__validateWorkerNodeOptions(nodeOptions->value.impl(), &invalidNodeOptions)) {
+                            auto message = makeString("Initiated Worker with invalid NODE_OPTIONS env variable: "_s, invalidNodeOptions.transferToWTFString());
+                            throwScope.throwException(lexicalGlobalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_INVALID_EXEC_ARGV, message));
+                            return {};
+                        }
+                    }
+                }
+
                 options.env.emplace(WTF::move(env));
             }
         }
@@ -334,6 +351,13 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
                 execArgv.append(str);
             });
             RETURN_IF_EXCEPTION(throwScope, {});
+            BunString invalidExecArgv = BunStringEmpty;
+            static_assert(sizeof(WTF::String) == sizeof(WTF::StringImpl*));
+            if (!Bun__Worker__validateExecArgv(reinterpret_cast<WTF::StringImpl* const*>(execArgv.begin()), execArgv.size(), &invalidExecArgv)) {
+                auto message = makeString("Initiated Worker with invalid execArgv flags: "_s, invalidExecArgv.transferToWTFString());
+                throwScope.throwException(lexicalGlobalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_INVALID_EXEC_ARGV, message));
+                return {};
+            }
             options.execArgv.emplace(WTF::move(execArgv));
         }
     }

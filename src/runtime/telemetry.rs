@@ -611,13 +611,14 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             while let Some(item) = it.next()? {
                 if item.is_string() {
                     let s = arg_string(global, item)?.unwrap_or_default();
-                    cfg.exporters.push(if s == "console" {
-                        ExporterConfig::Console
+                    if s == "console" {
+                        cfg.add_console();
                     } else {
-                        ExporterConfig::Otlp(OtlpExporterConfig::new(config::normalize_traces_url(
-                            &s,
-                        )))
-                    });
+                        cfg.exporters
+                            .push(ExporterConfig::Otlp(OtlpExporterConfig::new(
+                                config::normalize_traces_url(&s),
+                            )));
+                    }
                     continue;
                 }
                 if !item.is_object() {

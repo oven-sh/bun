@@ -558,6 +558,22 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("console listed twice installs one console exporter", async () => {
+    const script = (start: string) => `
+      ${start}
+      Bun.otel.tracer("t").startSpan("once").end();
+      await Bun.otel.forceFlush();
+    `;
+    const [env, api] = await Promise.all([
+      run(script(""), { BUN_OTEL: "1", OTEL_TRACES_EXPORTER: "console, console" }),
+      run(script(`Bun.otel.start({ exporters: ["console", "console"] });`), { BUN_OTEL: "1" }),
+    ]);
+    expect(env.stderr.match(/"name":"once"/g)?.length).toBe(1);
+    expect(api.stderr.match(/"name":"once"/g)?.length).toBe(1);
+    expect(env.exitCode).toBe(0);
+    expect(api.exitCode).toBe(0);
+  });
+
   test("worker spans are exported through the shared processor", async () => {
     using c = collector();
     using dir = tempDir("otel-worker", {

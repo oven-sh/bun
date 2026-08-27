@@ -147,6 +147,17 @@ impl Config {
         }
     }
 
+    /// At most one console exporter, however many times `console` is listed.
+    pub fn add_console(&mut self) {
+        if !self
+            .exporters
+            .iter()
+            .any(|e| matches!(e, ExporterConfig::Console))
+        {
+            self.exporters.push(ExporterConfig::Console);
+        }
+    }
+
     pub fn otlp_exporters(&self) -> impl Iterator<Item = &OtlpExporterConfig> {
         self.exporters.iter().filter_map(|e| match e {
             ExporterConfig::Otlp(x) => Some(x),
@@ -422,7 +433,7 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
         for e in bun_core::strings::split(&v, b",") {
             match e.trim_ascii() {
                 b"otlp" => want_otlp = true,
-                b"console" => c.exporters.push(ExporterConfig::Console),
+                b"console" => c.add_console(),
                 b"" => {}
                 b"none" => {
                     c.exporters.clear();
@@ -598,6 +609,22 @@ mod tests {
         let otlp: Vec<_> = r.config.otlp_exporters().collect();
         assert_eq!(otlp.len(), 1);
         assert_eq!(otlp[0].url, "http://localhost:4318/v1/traces");
+    }
+
+    #[test]
+    fn repeated_console_exporter_is_one() {
+        let e = env(&[
+            ("BUN_OTEL", "1"),
+            ("OTEL_TRACES_EXPORTER", "console, console,otlp,otlp"),
+        ]);
+        let c = from_env(&e).config;
+        let consoles = c
+            .exporters
+            .iter()
+            .filter(|e| matches!(e, ExporterConfig::Console))
+            .count();
+        assert_eq!(consoles, 1);
+        assert_eq!(c.otlp_exporters().count(), 1);
     }
 
     #[test]

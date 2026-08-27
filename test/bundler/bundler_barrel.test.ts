@@ -88,6 +88,96 @@ describe("bundler", () => {
     },
   });
 
+  // A "sideEffects" array must not enable barrel deferral: a deferred
+  // re-export target may itself be listed in the array. See #40650.
+  itBundled("barrel/SideEffectsArrayKeepsListedReExport", {
+    files: {
+      "/entry.js": /* js */ `
+        import { plain } from 'effectful';
+        console.log(plain('x'));
+      `,
+      "/node_modules/effectful/package.json": JSON.stringify({
+        name: "effectful",
+        main: "./src/index.js",
+        sideEffects: ["./src/effect.js"],
+      }),
+      "/node_modules/effectful/src/index.js": /* js */ `
+        export { plain } from './plain.js';
+        export { TABLE } from './effect.js';
+      `,
+      "/node_modules/effectful/src/plain.js": /* js */ `
+        export const plain = s => s + "!";
+      `,
+      "/node_modules/effectful/src/effect.js": /* js */ `
+        export const TABLE = {};
+        TABLE.marker = "THE_SIDE_EFFECT_RAN";
+      `,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("THE_SIDE_EFFECT_RAN");
+    },
+  });
+
+  itBundled("barrel/SideEffectsArrayGlobKeepsListedReExport", {
+    files: {
+      "/entry.js": /* js */ `
+        import { plain } from 'effectful';
+        console.log(plain('x'));
+      `,
+      "/node_modules/effectful/package.json": JSON.stringify({
+        name: "effectful",
+        main: "./src/index.js",
+        sideEffects: ["**/effect.js"],
+      }),
+      "/node_modules/effectful/src/index.js": /* js */ `
+        export { plain } from './plain.js';
+        export { TABLE } from './effect.js';
+      `,
+      "/node_modules/effectful/src/plain.js": /* js */ `
+        export const plain = s => s + "!";
+      `,
+      "/node_modules/effectful/src/effect.js": /* js */ `
+        export const TABLE = {};
+        TABLE.marker = "THE_SIDE_EFFECT_RAN";
+      `,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("THE_SIDE_EFFECT_RAN");
+    },
+  });
+
+  // A module the array does not list is still tree-shaken away.
+  itBundled("barrel/SideEffectsArrayDropsUnlistedReExport", {
+    files: {
+      "/entry.js": /* js */ `
+        import { plain } from 'effectful';
+        console.log(plain('x'));
+      `,
+      "/node_modules/effectful/package.json": JSON.stringify({
+        name: "effectful",
+        main: "./src/index.js",
+        sideEffects: ["./src/plain.js"],
+      }),
+      "/node_modules/effectful/src/index.js": /* js */ `
+        export { plain } from './plain.js';
+        export { TABLE } from './effect.js';
+      `,
+      "/node_modules/effectful/src/plain.js": /* js */ `
+        export const plain = s => s + "!";
+      `,
+      "/node_modules/effectful/src/effect.js": /* js */ `
+        export const TABLE = {};
+        TABLE.marker = "THE_SIDE_EFFECT_RAN";
+      `,
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").not.toContain("THE_SIDE_EFFECT_RAN");
+    },
+  });
+
   itBundled("barrel/NoOptimizationWithoutSideEffects", {
     files: {
       "/entry.js": /* js */ `

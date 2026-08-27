@@ -242,7 +242,7 @@ impl LinkerContext<'_> {
 
         let our_imports_to_bind: &RefImportData = &imports_to_bind[id as usize];
         // SAFETY: see above.
-        'outer: for (part_index, part) in unsafe { (*parts_slice).iter_mut().enumerate() } {
+        for (part_index, part) in unsafe { (*parts_slice).iter_mut().enumerate() } {
             // Now that all files have been parsed, determine which property
             // accesses off of imported symbols are inlined enum values and
             // which ones aren't
@@ -305,9 +305,6 @@ impl LinkerContext<'_> {
             // TODO: inline function calls here
 
             // TODO: Inline cross-module constants
-            if false {
-                break 'outer;
-            } // this `if` preserves the otherwise-unused block label.
 
             // Now that we know this, we can determine cross-part dependencies
             // PERF: iterate the keys slice directly (the index-based

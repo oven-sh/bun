@@ -465,7 +465,7 @@ impl Package<u64> {
         // `cloner` already owns `&mut` to `pm`, `old`, `new`, and
         // `package_id_mapping`; route everything through its disjoint fields.
         // `old`/`new`/`mapping` are reborrowed for the whole body (disjoint
-        // from `cloner.clone_queue` / `.trees_count` / `.old_preinstall_state`);
+        // from `cloner.clone_queue` / `.old_preinstall_state`);
         // `manager` is accessed via `cloner.manager` at each use so the borrow
         // doesn't span the `cloner.*` accesses below.
         let old = &mut *cloner.old;
@@ -594,8 +594,6 @@ impl Package<u64> {
             cloner.manager.preinstall_state[new_package.meta.id as usize] =
                 cloner.old_preinstall_state[self.meta.id as usize];
         }
-
-        cloner.trees_count += (old_resolutions.len() > 0) as u32;
 
         let resolutions: &mut [PackageID] =
             &mut new.buffers.resolutions[prev_len as usize..end as usize];

@@ -5,12 +5,6 @@
 //! `StoreSlice<T>` / `StoreStr` here. A future refactor could thread a
 //! crate-wide `'bump` and rewrite these to `&'bump [T]` / `&'bump mut [T]`.
 
-// `lexer::NewLexer<J: JsonOptionsT>` projects trait associated consts into
-// eight `const bool` slots; assoc-const projection on a *type*
-// param works under `generic_const_exprs`.
-#![feature(adt_const_params, generic_const_exprs)]
-#![allow(incomplete_features)]
-
 pub mod error;
 pub use error::Error;
 pub use error::Result as CrateResult;

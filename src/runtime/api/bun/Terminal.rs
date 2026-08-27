@@ -2022,7 +2022,6 @@ impl BufferedReaderParent for Terminal {
 #[cfg(unix)]
 impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
     const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::TERMINAL_POLL;
-    const HAS_ON_READY: bool = true;
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
         Self::from_parent_ptr(this).on_write(amount, status);
     }

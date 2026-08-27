@@ -1151,35 +1151,25 @@ pub mod fs {
             dir: &[u8],
             err: crate::Error,
         ) -> crate::CrateResult<&'static mut EntriesOption> {
-            if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
-                let mut get_or_put_result = self.entries.get_or_put(dir)?;
-                if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
-                    self.entries.mark_not_found(get_or_put_result);
-                    return Ok(temp_entries_option_write(EntriesOption::Err(
-                        dir_entry::Err {
-                            original_err: err,
-                            canonical_error: err,
-                        },
-                    )));
-                } else {
-                    let opt = self.entries.put(
-                        &mut get_or_put_result,
-                        EntriesOption::Err(dir_entry::Err {
-                            original_err: err,
-                            canonical_error: err,
-                        }),
-                    )?;
-                    // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
-                    return Ok(unsafe { &mut *opt });
-                }
+            let mut get_or_put_result = self.entries.get_or_put(dir)?;
+            if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                self.entries.mark_not_found(get_or_put_result);
+                return Ok(temp_entries_option_write(EntriesOption::Err(
+                    dir_entry::Err {
+                        original_err: err,
+                        canonical_error: err,
+                    },
+                )));
             }
-
-            Ok(temp_entries_option_write(EntriesOption::Err(
-                dir_entry::Err {
+            let opt = self.entries.put(
+                &mut get_or_put_result,
+                EntriesOption::Err(dir_entry::Err {
                     original_err: err,
                     canonical_error: err,
-                },
-            )))
+                }),
+            )?;
+            // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
+            Ok(unsafe { &mut *opt })
         }
 
         pub fn read_directory(
@@ -1200,8 +1190,6 @@ pub mod fs {
         // https://twitter.com/jarredsumner/status/1655787337027309568
         // https://twitter.com/jarredsumner/status/1655714084569120770
         // https://twitter.com/jarredsumner/status/1655464485245845506
-        /// Caller borrows the returned `EntriesOption`. When `FeatureFlags::ENABLE_ENTRY_CACHE`
-        /// is `false`, it is not safe to store this pointer past the current function call.
         pub fn read_directory_with_iterator<I: DirEntryIterator>(
             &mut self,
             dir_maybe_trail_slash: &[u8],
@@ -1213,42 +1201,34 @@ pub mod fs {
             let dir = strings::paths::without_trailing_slash_windows_path(dir_maybe_trail_slash);
 
             crate::Resolver::assert_valid_cache_key(dir);
-            let mut cache_result: Option<bun_alloc::Result> = None;
-            let _unlock_guard = if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
-                Some(self.entries_mutex.lock_guard())
-            } else {
-                None
-            };
+            let _unlock_guard = self.entries_mutex.lock_guard();
 
             let mut in_place: Option<*mut DirEntry> = None;
 
-            if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
-                cache_result = Some(self.entries.get_or_put(dir)?);
-
-                let cr = cache_result.as_ref().unwrap();
-                if cr.has_checked_if_exists() {
-                    if let Some(cached_result) = self.entries.at_index(cr.index) {
-                        // erase to raw immediately so the early-return reborrow
-                        // doesn't conflict with the `&mut self.entries` borrow above.
-                        let cached_ptr = std::ptr::from_mut::<EntriesOption>(cached_result);
-                        // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
-                        // Single `&mut` reborrow — the catch-all arm binds and returns the
-                        // scrutinee directly so no second `&mut *cached_ptr` is materialized
-                        // while the first is on the borrow stack (Stacked Borrows hygiene).
-                        match unsafe { &mut *cached_ptr } {
-                            EntriesOption::Entries(e) if e.generation < generation => {
-                                in_place = Some(std::ptr::from_mut::<DirEntry>(*e));
-                            }
-                            cached => return Ok(cached),
+            let mut cache_result = self.entries.get_or_put(dir)?;
+            if cache_result.has_checked_if_exists() {
+                if let Some(cached_result) = self.entries.at_index(cache_result.index) {
+                    // erase to raw immediately so the early-return reborrow
+                    // doesn't conflict with the `&mut self.entries` borrow above.
+                    let cached_ptr = std::ptr::from_mut::<EntriesOption>(cached_result);
+                    // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
+                    // Single `&mut` reborrow — the catch-all arm binds and returns the
+                    // scrutinee directly so no second `&mut *cached_ptr` is materialized
+                    // while the first is on the borrow stack (Stacked Borrows hygiene).
+                    match unsafe { &mut *cached_ptr } {
+                        EntriesOption::Entries(e) if e.generation < generation => {
+                            in_place = Some(std::ptr::from_mut::<DirEntry>(*e));
                         }
-                    } else if cr.status == bun_alloc::ItemStatus::NotFound && generation == 0 {
-                        return Ok(temp_entries_option_write(EntriesOption::Err(
-                            dir_entry::Err {
-                                original_err: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
-                                canonical_error: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
-                            },
-                        )));
+                        cached => return Ok(cached),
                     }
+                } else if cache_result.status == bun_alloc::ItemStatus::NotFound && generation == 0
+                {
+                    return Ok(temp_entries_option_write(EntriesOption::Err(
+                        dir_entry::Err {
+                            original_err: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
+                            canonical_error: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
+                        },
+                    )));
                 }
             }
 
@@ -1303,43 +1283,32 @@ pub mod fs {
                 }
             };
 
-            if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
-                // `EntriesOption::Entries` here holds an unbounded `&mut DirEntry` (raw, BSSMap-stored
-                // pointer), so a fresh slot is a leaked `Box<DirEntry>` whose lifetime is the
-                // `entries_option_map()` singleton (process-static).
-                let entries_ptr: *mut DirEntry = match in_place {
-                    Some(p) => p,
-                    None => bun_core::heap::into_raw(Box::new(DirEntry::init(dir, generation))),
-                };
-                if let Some(original) = in_place {
-                    // SAFETY: BSSMap-owned; entries_mutex held.
-                    unsafe { (*original).data.clear() };
-                }
-                if store_fd && !entries.fd.is_valid() {
-                    entries.fd = handle;
-                }
-
-                // SAFETY: `entries_ptr` is either a live BSSMap slot (`in_place`) or a fresh
-                // leaked Box; exclusively owned here under `entries_mutex`.
-                unsafe { *entries_ptr = entries };
-                let result = EntriesOption::Entries(
-                    // SAFETY: see above — re-borrow as 'static for the BSSMap slot.
-                    unsafe { &mut *entries_ptr },
-                );
-
-                let out = self.entries.put(cache_result.as_mut().unwrap(), result)?;
-                // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
-                return Ok(unsafe { &mut *out });
+            // `EntriesOption::Entries` here holds an unbounded `&mut DirEntry` (raw, BSSMap-stored
+            // pointer), so a fresh slot is a leaked `Box<DirEntry>` whose lifetime is the
+            // `entries_option_map()` singleton (process-static).
+            let entries_ptr: *mut DirEntry = match in_place {
+                Some(p) => p,
+                None => bun_core::heap::into_raw(Box::new(DirEntry::init(dir, generation))),
+            };
+            if let Some(original) = in_place {
+                // SAFETY: BSSMap-owned; entries_mutex held.
+                unsafe { (*original).data.clear() };
+            }
+            if store_fd && !entries.fd.is_valid() {
+                entries.fd = handle;
             }
 
-            // ENABLE_ENTRY_CACHE = false: stash in the threadlocal and hand back its
-            // address. The leaked Box lives until the next `read_directory` call on
-            // this thread.
-            let entries_ptr = bun_core::heap::into_raw(Box::new(entries));
-            // SAFETY: freshly-leaked Box; re-borrow as 'static for the threadlocal slot.
-            Ok(temp_entries_option_write(EntriesOption::Entries(unsafe {
-                &mut *entries_ptr
-            })))
+            // SAFETY: `entries_ptr` is either a live BSSMap slot (`in_place`) or a fresh
+            // leaked Box; exclusively owned here under `entries_mutex`.
+            unsafe { *entries_ptr = entries };
+            let result = EntriesOption::Entries(
+                // SAFETY: see above — re-borrow as 'static for the BSSMap slot.
+                unsafe { &mut *entries_ptr },
+            );
+
+            let out = self.entries.put(&mut cache_result, result)?;
+            // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
+            Ok(unsafe { &mut *out })
         }
 
         /// Evicts `file_path` from the directory-entry cache; returns whether

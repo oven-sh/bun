@@ -2130,10 +2130,6 @@ impl Function {
             }
         }
 
-        // try writer.writeAll(
-        //     "(JSContext ctx, void* function, void* thisObject, size_t argumentCount, const EncodedJSValue arguments[], void* exception);\n\n",
-        // );
-
         let mut arg_buf = [0u8; 512];
 
         writer.write_all(b"    ")?;

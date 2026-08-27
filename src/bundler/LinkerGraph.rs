@@ -127,7 +127,6 @@ pub mod js_meta {
         pub top_level_symbol_to_parts_overlay: TopLevelSymbolToParts,
         pub cjs_export_copies: CjsExportCopies,
         pub wrapper_part_index: Index,
-        pub entry_point_part_index: Index,
         pub flags: Flags,
     }
 
@@ -142,7 +141,6 @@ pub mod js_meta {
                 top_level_symbol_to_parts_overlay: TopLevelSymbolToParts::default(),
                 cjs_export_copies: AstAlloc::vec(),
                 wrapper_part_index: Index::default(),
-                entry_point_part_index: Index::default(),
                 flags: Flags::default(),
             }
         }
@@ -158,7 +156,6 @@ pub mod js_meta {
             top_level_symbol_to_parts_overlay: TopLevelSymbolToParts,
             cjs_export_copies: CjsExportCopies,
             wrapper_part_index: Index,
-            entry_point_part_index: Index,
             flags: Flags,
         }
     }

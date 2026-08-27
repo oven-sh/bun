@@ -125,7 +125,6 @@ pub(crate) fn scan_imports_and_exports(
     let sorted_aliases: *mut [js_meta::SortedAndFilteredExportAliases] =
         meta.sorted_and_filtered_export_aliases;
     let cjs_export_copies: *mut [js_meta::CjsExportCopies] = meta.cjs_export_copies;
-    let entry_point_part_indices: *mut [Index] = meta.entry_point_part_index;
 
     {
         // Step 1: Figure out what modules must be CommonJS
@@ -824,7 +823,6 @@ pub(crate) fn scan_imports_and_exports(
                         ..Default::default()
                     },
                 )?;
-                col!(entry_point_part_indices)[id] = Index::part(entry_point_part_index);
 
                 // Pull in the "__toCommonJS" symbol if we need it due to being an entry point
                 if force_include_exports && output_format != Format::InternalBakeDev {

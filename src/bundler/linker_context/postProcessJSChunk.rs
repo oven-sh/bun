@@ -661,11 +661,6 @@ pub(crate) fn post_process_js_chunk(
                 line_offset.advance(&quoted);
                 j.push_owned(quoted.into_boxed_slice());
             }
-            // {
-            //     let str = b"\n  react_refresh: ";
-            //     j.push_static(str);
-            //     line_offset.advance(str);
-            // }
             {
                 let str = b"\n});";
                 j.push_static(str);

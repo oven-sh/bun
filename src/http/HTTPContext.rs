@@ -13,7 +13,6 @@ use bun_boringssl::ssl_ctx_setup;
 use bun_boringssl_sys::SSL_CTX;
 use bun_collections::{HiveArray, TaggedPtrUnion};
 use bun_core::strings;
-use bun_core::{self, FeatureFlags};
 use bun_ptr::RefPtr;
 use bun_uws as uws;
 
@@ -833,16 +832,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
     pub(crate) fn connect(
         &mut self,
         client: &mut HTTPClient,
-        hostname_: &[u8],
+        hostname: &[u8],
         port: u16,
     ) -> Result<Option<HTTPSocket<SSL>>, Error> {
-        let hostname: &[u8] =
-            if FeatureFlags::HARDCODE_LOCALHOST_TO_127_0_0_1 && hostname_ == b"localhost" {
-                b"127.0.0.1"
-            } else {
-                hostname_
-            };
-
         client.connected_url = client
             .http_proxy
             .clone()

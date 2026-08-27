@@ -366,7 +366,6 @@ struct ZstdReaderArrayList<'a> {
     // `list_allocator` / `allocator` params deleted — global mimalloc.
     pub(crate) zstd: *mut c::ZSTD_DStream,
     pub(crate) state: State,
-    pub(crate) total_out: usize,
     pub(crate) total_in: usize,
     /// Decompression-bomb guard: `read_all` errors instead of growing the
     /// output past this many bytes. Defaults to unbounded.
@@ -400,7 +399,6 @@ impl<'a> ZstdReaderArrayList<'a> {
             list_ptr: list,
             zstd,
             state: State::Uninitialized,
-            total_out: 0,
             total_in: 0,
             max_output_size: usize::MAX,
         }))
@@ -479,7 +477,6 @@ impl<'a> ZstdReaderArrayList<'a> {
             // into the spare capacity starting at the previous len.
             unsafe { bun_core::vec::commit_spare(self.list_ptr, bytes_written) };
             self.total_in += bytes_read;
-            self.total_out += bytes_written;
 
             if rc == 0 {
                 // Frame is complete

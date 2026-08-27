@@ -1293,10 +1293,6 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
     if (m_state != OPEN)
         return;
 
-    // if (InspectorInstrumentation::hasFrontends()) [[unlikely]] {
-    //     if (auto* inspector = m_channel->channelInspector())
-    //         inspector->didReceiveWebSocketFrame(WebSocketChannelInspector::createFrame(binaryData.data(), binaryData.size(), WebSocketFrame::OpCode::OpCodeBinary));
-    // }
     switch (m_binaryType) {
     case BinaryType::Blob:
         if (this->hasEventListeners(eventName)) {

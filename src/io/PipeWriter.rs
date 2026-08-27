@@ -571,7 +571,6 @@ pub trait PosixStreamingWriterParent {
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_error(this: *mut Self, err: sys::Error);
-    const HAS_ON_READY: bool;
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_ready(_this: *mut Self) {}
@@ -2617,7 +2616,6 @@ macro_rules! impl_streaming_writer_parent {
         #[cfg(unix)]
         impl $($gen)* $crate::pipe_writer::PosixStreamingWriterParent for $Ty {
             const POLL_OWNER_TAG: $crate::PollTag = $poll_tag;
-            const HAS_ON_READY: bool = true;
             #[inline]
             unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
                 // SAFETY: `this` is the BACKREF set via `set_parent`; the

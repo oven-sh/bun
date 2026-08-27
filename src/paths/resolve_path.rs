@@ -1933,11 +1933,6 @@ fn join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
         out += part_without_vol.len();
     }
 
-    // if (out > 0 and temp_buf[out - 1] != '\\') {
-    //     temp_buf[out] = '\\';
-    //     out += 1;
-    // }
-
     let result = normalize_string_buf::<false, platform::Windows, true>(&temp_buf[0..out], buf);
     let result_len = result.len();
 

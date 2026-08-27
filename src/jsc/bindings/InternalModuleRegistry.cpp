@@ -250,6 +250,7 @@ namespace Zig {
 JSC::VM& vmForBytecodeCache();
 void ensureBuiltinNamesForBytecodeCache(JSC::VM&);
 }
+extern "C" void Bun__destroyBytecodeCacheVM();
 
 static bool encodeInternalModule(const String& text, const String& moduleName, const String& url, uint32_t sourceStamp, uint32_t depth, const uint8_t** bytes, size_t* size, JSC::CachedBytecode** handle, JSC::EncoderStringTable* externalStrings)
 {
@@ -330,7 +331,10 @@ JSC_DEFINE_HOST_FUNCTION(jsInternalModuleBytecode, (JSC::JSGlobalObject * global
     const uint8_t* bytes = nullptr;
     size_t size = 0;
     JSC::CachedBytecode* handle = nullptr;
-    if (!encodeInternalModule(text, name, url, stamp, std::numeric_limits<uint32_t>::max(), &bytes, &size, &handle, &externalStrings))
+    bool encoded = encodeInternalModule(text, name, url, stamp, std::numeric_limits<uint32_t>::max(), &bytes, &size, &handle, &externalStrings);
+    // The encoder runs in this thread's bytecode-cache VM; `bun build` tears it down after a build, and so does this.
+    Bun__destroyBytecodeCacheVM();
+    if (!encoded)
         return throwVMError(globalObject, scope, makeString("could not generate bytecode for "_s, name));
     RefPtr<JSC::CachedBytecode> bytecode = adoptRef(handle);
     JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, bytecode->span());

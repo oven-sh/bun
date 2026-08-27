@@ -1,6 +1,42 @@
 import { describe, expect } from "bun:test";
-import { readFileSync } from "node:fs";
 import { itBundled } from "./expectBundled";
+import { EmbeddedModule, Flags, ModuleGraph, readModuleGraph, Span } from "./standalone-graph";
+
+// Every compile below rewrites a copy of the whole bun executable in memory
+// (hundreds of MB in a debug build, about two seconds each), so the number of
+// compiles is what this file costs on the test side. Cases that share a build
+// configuration share one executable, and the module graph embedded in it is
+// checked next to the run. Compiles stay serial on purpose: several at once
+// exhaust CI memory (see bundler_compile.test.ts).
+
+const entryName = /^(\/\$bunfs|B:\/~BUN)\/root\/out$/;
+const chunkName = /^(\/\$bunfs|B:\/~BUN)\/root\/chunk-[0-9a-z]+\.js$/;
+
+/** The embedded paths a printed chunk loads: static imports, `import()`, and `import.meta.require()`. */
+function importedPaths(source: string): string[] {
+  return [
+    ...source.matchAll(/\b(?:import\.meta\.require|import|from)\s*\(?\s*"((?:\/\$bunfs|B:\/~BUN)\/root\/[^"]+)"/g),
+  ].map(m => m[1]);
+}
+
+function moduleContaining(graph: ModuleGraph, text: string): EmbeddedModule {
+  const found = graph.modules.filter(m => m.source.includes(text));
+  expect(
+    found.map(m => m.name),
+    `exactly one embedded module contains ${JSON.stringify(text)}`,
+  ).toHaveLength(1);
+  return found[0];
+}
+
+/** Every embedded path a chunk loads names a module of the graph. */
+function expectImportsResolve(graph: ModuleGraph) {
+  const names = graph.modules.map(m => m.name);
+  for (const module of graph.modules) {
+    for (const path of importedPaths(module.source)) {
+      expect(names, `${module.name} loads ${path}`).toContain(path);
+    }
+  }
+}
 
 describe("bundler", () => {
   describe("compile with splitting", () => {
@@ -116,19 +152,29 @@ describe("bundler", () => {
       },
     });
 
-    // The embedded module graph is laid out in load order: the entry point's
-    // static imports (dependencies first), then each dynamic import's closure,
-    // breadth-first. Chunk index order would be entry, lazy1, lazy2, shared,
-    // shared2.
-    itBundled("compile/splitting/ModulesLaidOutInLoadOrder", {
+    // One executable pins the layout of the embedded module graph:
+    //
+    // - Modules are laid out in load order: the entry point's static imports
+    //   (dependencies first), then each dynamic import's closure, breadth-first.
+    //   So the table reads shared, entry, shared2, lazy1, lazy2, and every
+    //   per-module region (bytecode, source text) follows the table order.
+    // - The payload records how many leading modules make up the entry point's
+    //   static import closure, and writes the internal-module bytecode (here
+    //   node:fs and what it requires) and the string tables right after them,
+    //   so a cold start prefetches one run. Lazily imported chunks come after
+    //   that run.
+    // - Chunks keep their hashed `chunk-<hash>.js` names inside the executable,
+    //   and the entry point is keyed by the outfile name.
+    itBundled("compile/splitting/ModuleGraphLayout", {
       compile: true,
       splitting: true,
       bytecode: true,
       format: "esm",
       files: {
         "/entry.ts": /* js */ `
+          import { readFileSync } from "node:fs";
           import "./shared";
-          console.log("mark:entry");
+          console.log("mark:entry", typeof readFileSync);
           await import("./lazy1");
         `,
         "/lazy1.ts": /* js */ `
@@ -149,138 +195,60 @@ describe("bundler", () => {
         `,
       },
       run: {
-        stdout: "mark:shared\nmark:entry\nmark:shared2\nmark:lazy1\nmark:lazy2",
+        stdout: "mark:shared\nmark:entry function\nmark:shared2\nmark:lazy1\nmark:lazy2",
       },
       onAfterBundle(api) {
-        const payload = readFileSync(api.outfile).toString("latin1");
-        const order = ["entry", "lazy1", "lazy2", "shared", "shared2"]
-          .map(name => {
-            const offset = payload.lastIndexOf(`mark:${name}"`);
-            expect(offset, `marker mark:${name} not found in the payload`).toBeGreaterThanOrEqual(0);
-            return { name, offset };
-          })
-          .sort((a, b) => a.offset - b.offset)
-          .map(m => m.name);
-        expect(order).toEqual(["shared", "entry", "shared2", "lazy1", "lazy2"]);
-      },
-    });
+        const graph = readModuleGraph(api.outfile);
+        const end = (span: Span) => span.offset + span.length;
 
-    // The payload records how many leading modules make up the entry point's
-    // static import closure, and writes the internal-module bytecode and string
-    // table right after them, so a cold start prefetches one run. Lazily
-    // imported chunks come after that run.
-    itBundled("compile/splitting/StartupModulesPrecedeLazyChunks", {
-      compile: true,
-      splitting: true,
-      bytecode: true,
-      format: "esm",
-      files: {
-        "/entry.ts": /* js */ `
-          import "./shared";
-          console.log("mark:entry");
-          await import("./lazy1");
-        `,
-        "/lazy1.ts": /* js */ `
-          import "./shared";
-          console.log("mark:lazy1");
-        `,
-        "/shared.ts": /* js */ `
-          console.log("mark:shared");
-        `,
-      },
-      run: {
-        stdout: "mark:shared\nmark:entry\nmark:lazy1",
-      },
-      onAfterBundle(api) {
-        const file = readFileSync(api.outfile);
-        const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined, "latin1");
-        expect(trailer).toBeGreaterThan(0);
-        // `Offsets { byte_count: usize, modules_ptr: StringPointer, entry_point_id: u32, compile_exec_argv_ptr: StringPointer, flags: u32 }`
-        const offsets = trailer - 32;
-        const base = offsets - Number(file.readBigUInt64LE(offsets));
-        const modules = { offset: file.readUInt32LE(offsets + 8), length: file.readUInt32LE(offsets + 12) };
-        const flags = file.readUInt32LE(offsets + 28);
-        const u32 = (at: number) => file.readUInt32LE(base + at);
-        // Three chunks of 52 bytes each; anything else means the layout above is stale.
-        expect(modules.length).toBe(3 * 52);
-
-        // Records chained after the module table, in `Flags` bit order.
-        let at = modules.offset + modules.length;
-        const count = modules.length / 52;
-        if (flags & (1 << 5)) at += count * 4; // source hashes
-        expect(flags & (1 << 6), "Flags::HAS_BUILTIN_BYTECODE").not.toBe(0);
-        const builtinCount = u32(at);
-        at += 4 + builtinCount * 12;
-        expect(flags & (1 << 7), "Flags::HAS_BYTECODE_STRING_TABLE").not.toBe(0);
-        const stringTable = { offset: u32(at), length: u32(at + 4) };
-        at += 8;
-        expect(flags & (1 << 8), "Flags::HAS_STARTUP_MODULE_COUNT").not.toBe(0);
-        const startupCount = u32(at);
-
-        // `CompiledModuleGraphFile`: name, contents, sourcemap, bytecode, module_info, bytecode_origin_path
-        // (StringPointer each), then 4 bytes. Chunk names are hashed, so identify them by their source text.
-        const index: Record<string, number> = {};
-        const bytecodeEnd: number[] = [];
-        for (let i = 0; i < count; i++) {
-          const record = base + modules.offset + i * 52;
-          const contents = { offset: file.readUInt32LE(record + 8), length: file.readUInt32LE(record + 12) };
-          const bytecode = { offset: file.readUInt32LE(record + 24), length: file.readUInt32LE(record + 28) };
-          expect(bytecode.length, `module ${i} has bytecode`).toBeGreaterThan(0);
-          bytecodeEnd.push(bytecode.offset + bytecode.length);
-          const source = file.toString("latin1", base + contents.offset, base + contents.offset + contents.length);
-          for (const name of ["entry", "lazy1", "shared"]) {
-            if (source.includes(`mark:${name}"`)) index[name] = i;
-          }
+        // Load order. Chunk names are hashed, so identify modules by their source text.
+        expect(graph.modules.map(m => /mark:(\w+)"/.exec(m.source)?.[1])).toEqual([
+          "shared",
+          "entry",
+          "shared2",
+          "lazy1",
+          "lazy2",
+        ]);
+        expect(graph.entryPointId).toBe(1);
+        for (const region of ["bytecode", "contents"] as const) {
+          const offsets = graph.modules.map(m => m[region].offset);
+          expect(offsets, `${region} regions follow the table order`).toEqual([...offsets].sort((a, b) => a - b));
         }
-        expect(startupCount).toBe(2);
-        expect([index.shared, index.entry].sort()).toEqual([0, 1]);
-        expect(index.lazy1).toBe(2);
-        // The string table sits between the startup modules' bytecode and the lazy chunk's.
-        expect(stringTable.offset).toBeGreaterThanOrEqual(Math.max(bytecodeEnd[0], bytecodeEnd[1]));
-        expect(stringTable.offset + stringTable.length).toBeLessThanOrEqual(bytecodeEnd[2]);
-      },
-    });
+        for (const module of graph.modules) {
+          expect(module.bytecode.length, `${module.name} has bytecode`).toBeGreaterThan(0);
+          expect(module.moduleInfo.length, `${module.name} has a module record`).toBeGreaterThan(0);
+        }
 
-    itBundled("compile/splitting/ChunkNamesAreHashed", {
-      compile: true,
-      splitting: true,
-      files: {
-        "/entry.ts": /* js */ `
-          import "./shared";
-          console.log("mark:entry");
-          await import("./lazy");
-        `,
-        "/lazy.ts": /* js */ `
-          import "./shared";
-          console.log("mark:lazy");
-        `,
-        "/shared.ts": /* js */ `
-          console.log("mark:shared");
-        `,
-      },
-      run: {
-        stdout: "mark:shared\nmark:entry\nmark:lazy",
-      },
-      onAfterBundle(api) {
-        const file = readFileSync(api.outfile);
-        const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined, "latin1");
-        expect(trailer).toBeGreaterThan(0);
-        const offsets = trailer - 32;
-        const base = offsets - Number(file.readBigUInt64LE(offsets));
-        const modules = { offset: file.readUInt32LE(offsets + 8), length: file.readUInt32LE(offsets + 12) };
-        const count = modules.length / 52;
-        expect(count).toBe(3);
-        const names: string[] = [];
-        for (let i = 0; i < count; i++) {
-          const record = base + modules.offset + i * 52;
-          const name = { offset: file.readUInt32LE(record), length: file.readUInt32LE(record + 4) };
-          names.push(file.toString("latin1", base + name.offset, base + name.offset + name.length));
+        // Startup run: shared and entry, then the internal-module bytecode, then
+        // the two string tables, then the lazy chunks.
+        const required =
+          Flags.HAS_BUILTIN_BYTECODE |
+          Flags.HAS_BYTECODE_STRING_TABLE |
+          Flags.HAS_STARTUP_MODULE_COUNT |
+          Flags.HAS_MODULE_INFO_STRING_TABLE;
+        expect(graph.flags & required).toBe(required);
+        expect(graph.startupCount).toBe(2);
+        const startup = graph.modules.slice(0, graph.startupCount);
+        const lazy = graph.modules.slice(graph.startupCount);
+        const startupEnd = Math.max(...startup.flatMap(m => [end(m.bytecode), end(m.moduleInfo)]));
+        const lazyStart = Math.min(...lazy.map(m => m.bytecode.offset));
+        expect(graph.builtinBytecode.length, "node:fs ships as internal-module bytecode").toBeGreaterThan(0);
+        for (const region of [...graph.builtinBytecode, graph.bytecodeStringTable!, graph.moduleInfoStringTable!]) {
+          expect(region.length).toBeGreaterThan(0);
+          expect(region.offset).toBeGreaterThanOrEqual(startupEnd);
+          expect(end(region)).toBeLessThanOrEqual(lazyStart);
         }
-        const chunks = names.filter(name => !name.endsWith("/root/out"));
-        expect(chunks).toHaveLength(2);
-        for (const name of chunks) {
-          expect(name).toMatch(/^(\/\$bunfs|B:\/~BUN)\/root\/chunk-[0-9a-z]+\.js$/);
-        }
+        expect(graph.bytecodeStringTable!.offset).toBeGreaterThanOrEqual(Math.max(...graph.builtinBytecode.map(end)));
+        expect(graph.moduleInfoStringTable!.offset).toBeGreaterThanOrEqual(end(graph.bytecodeStringTable!));
+
+        // Names.
+        const entry = graph.modules[graph.entryPointId];
+        expect(entry.name).toMatch(entryName);
+        const chunks = graph.modules.filter(m => m !== entry).map(m => m.name);
+        expect(chunks).toHaveLength(4);
+        for (const name of chunks) expect(name).toMatch(chunkName);
+        expect(new Set(chunks).size).toBe(4);
+        expectImportsResolve(graph);
       },
     });
 
@@ -316,7 +284,37 @@ describe("bundler", () => {
       run: {
         stdout: "app entry\nheader rendering\nmenu showing\nitems: home,about,contact",
       },
+      onAfterBundle(api) {
+        // One chunk per import() target, in load order; each import() names the
+        // embedded chunk, whatever directory the source file lived in.
+        const graph = readModuleGraph(api.outfile);
+        expect(graph.modules).toHaveLength(4);
+        const [entry, header, menu, items] = graph.modules;
+        expect(graph.entryPointId).toBe(0);
+        expect(entry.name).toMatch(entryName);
+        expect(importedPaths(entry.source)).toEqual([header.name]);
+        expect(importedPaths(header.source)).toEqual([menu.name]);
+        expect(importedPaths(menu.source)).toEqual([items.name]);
+        expect(importedPaths(items.source)).toEqual([]);
+        for (const module of graph.modules) expect(module.bytecode.length, `${module.name} has no bytecode`).toBe(0);
+      },
     });
+
+    // A split chunk with --bytecode gets its own bytecode and module record;
+    // `expectSplitChunkRecords` checks that the entry and its one chunk both
+    // have them and that the entry's import() names the embedded chunk.
+    const expectSplitChunkRecords = (graph: ModuleGraph) => {
+      expect(graph.modules).toHaveLength(2);
+      const entry = graph.modules[graph.entryPointId];
+      expect(entry.name).toMatch(entryName);
+      const chunk = graph.modules.find(m => m !== entry)!;
+      expect(chunk.name).toMatch(chunkName);
+      expect(importedPaths(entry.source)).toEqual([chunk.name]);
+      for (const module of graph.modules) {
+        expect(module.bytecode.length, `${module.name} has bytecode`).toBeGreaterThan(0);
+        expect(module.moduleInfo.length, `${module.name} has a module record`).toBeGreaterThan(0);
+      }
+    };
 
     for (const minify of [false, true]) {
       itBundled(`compile/splitting/ImportMetaInSplitChunk${minify ? "+minify" : ""}`, {
@@ -339,6 +337,9 @@ describe("bundler", () => {
         },
         run: {
           stdout: "ok\nok",
+        },
+        onAfterBundle(api) {
+          expectSplitChunkRecords(readModuleGraph(api.outfile));
         },
       });
     }
@@ -397,6 +398,29 @@ describe("bundler", () => {
             run: {
               stdout: "entry: local rm 42\npage: local rm 42",
             },
+            onAfterBundle(api) {
+              const graph = readModuleGraph(api.outfile);
+              // The dead import is in no printed chunk and, with --bytecode, in
+              // no module record (every record's strings live in one table).
+              for (const module of graph.modules) expect(module.source).not.toContain("fs/promises");
+              if (bytecode) {
+                expect(graph.moduleInfoStringTable).not.toBeNull();
+                expect(graph.moduleInfoStringTable!.text).not.toContain("fs/promises");
+              }
+              for (const module of graph.modules) {
+                expect(module.bytecode.length > 0, `${module.name} bytecode`).toBe(bytecode);
+              }
+              if (splitting) {
+                // The entry and the page chunk both import rm from shared.js's chunk.
+                const shared = moduleContaining(graph, '"local rm "');
+                expect(shared.name).toMatch(chunkName);
+                for (const importer of [graph.modules[graph.entryPointId], moduleContaining(graph, '"page:"')]) {
+                  expect(importedPaths(importer.source), `${importer.name} imports rm`).toContain(shared.name);
+                }
+              } else {
+                expect(graph.modules.map(m => m.name)).toEqual([expect.stringMatching(entryName)]);
+              }
+            },
           });
         }
       }
@@ -428,12 +452,20 @@ describe("bundler", () => {
         run: {
           stdout: "function function function",
         },
+        onAfterBundle(api) {
+          expectSplitChunkRecords(readModuleGraph(api.outfile));
+        },
       });
     }
 
     // The executable keys the entry point's module at `/$bunfs/root/<outfile>`,
-    // so nothing may fold into the entry's own chunk; chunks shared between
-    // `import()` targets still fold into the first target's chunk.
+    // so nothing may fold into the entry's own chunk. `shared` is loaded
+    // whenever the entry is, and the same graph without --compile folds it into
+    // the entry (see splitting/FoldsSharedIntoEntry). The entry must not use
+    // top-level await: an awaiting entry guarantees nothing to its `import()`
+    // targets, no fold is possible, and the pin has nothing to block.
+    // `helper` stays in a chunk of its own because a.ts has exports, so its
+    // chunk absorbs nothing either.
     itBundled("compile/splitting/MinChunkSizeKeepsEntryChunkImportable", {
       compile: true,
       splitting: true,
@@ -444,8 +476,7 @@ describe("bundler", () => {
         "/entry.ts": /* js */ `
           import { shared } from "./shared";
           console.log("entry", shared());
-          const a = await import("./a");
-          console.log("a", a.a());
+          import("./a").then(a => console.log("a", a.a()));
         `,
         "/a.ts": /* js */ `
           import { shared } from "./shared";
@@ -463,6 +494,21 @@ describe("bundler", () => {
         "/helper.ts": /* js */ `
           export function helper() { return 1 }
         `,
+      },
+      onAfterBundle(api) {
+        // `shared` stays out of the entry's chunk, in a chunk the entry and a's chunk import.
+        const graph = readModuleGraph(api.outfile);
+        const entry = graph.modules[graph.entryPointId];
+        expect(entry.name).toMatch(entryName);
+        expect(entry.source).not.toContain("function shared");
+        const shared = moduleContaining(graph, "function shared");
+        expect(shared.name).toMatch(chunkName);
+        expect(importedPaths(entry.source)).toContain(shared.name);
+        expect(importedPaths(moduleContaining(graph, "function a()").source)).toContain(shared.name);
+        const helper = moduleContaining(graph, "function helper");
+        expect(helper.name).toMatch(chunkName);
+        expect(importedPaths(moduleContaining(graph, "function b()").source)).toEqual([helper.name]);
+        expectImportsResolve(graph);
       },
       run: {
         stdout: "entry 40\na 41",
@@ -518,8 +564,17 @@ describe("bundler", () => {
             : undefined,
         },
         onAfterBundle(api) {
-          const payload = readFileSync(api.outfile).toString("latin1");
-          expect(payload).toMatch(/import\.meta\.require\("(\/\$bunfs|B:\/~BUN)\/root\/[^"]+\.js"\)/);
+          // The require() calls are printed as import.meta.require() of embedded chunks.
+          const graph = readModuleGraph(api.outfile);
+          const required = graph.modules.flatMap(m =>
+            [...m.source.matchAll(/import\.meta\.require\("([^"]+)"\)/g)].map(match => match[1]),
+          );
+          expect(required.length).toBeGreaterThan(0);
+          for (const path of required) expect(path).toMatch(/^(\/\$bunfs|B:\/~BUN)\/root\/[^/]+\.js$/);
+          expectImportsResolve(graph);
+          for (const module of graph.modules) {
+            expect(module.bytecode.length > 0, `${module.name} bytecode`).toBe(bytecode);
+          }
         },
       });
     }

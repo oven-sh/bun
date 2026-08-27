@@ -302,8 +302,9 @@ function constants(ch) {
   return [short.join("|"), wide.join("|").length, long.length, wideLong.length, ünïcödeIdentifier, holes.length, 1 in holes, nested.flat().length, bigs.map(String).join(","), res.map(r => r.flags).join(","), which, templ, Symbol.iterator in fnForms, `${long}${wideLong}`.length];
 }
 // Shapes whose register / scope-slot assignment once followed process state rather than the source: sloppy-mode
-// block-level functions (Annex B.3.3 hoisting), a class scope with more than nine computed-key fields, `**` folded at
-// parse time, an expression-bodied arrow whose last token spans lines.
+// block-level functions (Annex B.3.3 hoisting), a class scope with more than nine computed-key fields, an
+// expression-bodied arrow whose last token spans lines. (No `number ** non-integer` literals anywhere in the corpus: the
+// parser folds those through the host's pow(), so the constant may differ by the OS that built it.)
 function orderSensitive(flag) {
   if (flag) { function first() { return 1; } function second() { return 2; } }
   else { function third() { return 3; } }
@@ -317,7 +318,7 @@ function orderSensitive(flag) {
   const spansLines = x => `a${x}
 b`;
   function after() { return spansLines.toString().split("\n").length; }
-  return [typeof second, fourth(), new ManyComputed().total(), 2 ** 10, 2 ** -2, 9 ** 0.5, (-8) ** (1 / 3), 0.1 ** 3, spansLines(1).length, after()];
+  return [typeof second, fourth(), new ManyComputed().total(), 2 ** 10, 2 ** 16, spansLines(1).length, after()];
 }
 // A sloppy script's top-level block functions resolve their var scope with an opcode nothing else emits; `arguments`
 // used only for its length has its own; a postfix increment whose value is used converts through op_to_numeric; two

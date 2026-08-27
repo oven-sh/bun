@@ -53,7 +53,7 @@ const featuresOutput = [
   `1 "aliased" "b2" 2 "function" "object" "p2" 2 "p2" 2 3 "function"`,
   `6 "sent" "gen" "asyncFn" "asyncArrow" 2 2 9 true 3 4 5 6 -1`,
   `"a|ab|abc||abcd" 20 72 50 1 3 false 11 "0,1,-1,18446744073709551616,18446744073709551615" ",dgimsuy,v,v" 3 [3,"x",2] true 122`,
-  `"function" "function/undefined" 17 1024 0.25 3 null 0.0010000000000000002 4 2`,
+  `"function" "function/undefined" 17 1024 65536 4 2`,
   `"hoisted" 3 [5,6,5] "twomany" "1,argumentCount,postfix,2"`,
   `["p1","p2",0,2,8,"p","q","r","s2","00","10","11","20","21","22",7,1,3,2,"undefined"]`,
 ].join("\n");
@@ -269,10 +269,10 @@ describe("bytecode cache portability", () => {
           "sha256": "e4821b3ff0c554e5ca10612c06adf999f5f4f8c639122f1284163b0c6ce87e11",
         },
         "bun build --bytecode --minify features.js": {
-          "js": "9f5f15dbd326293b6805304febe9fb19f9d26531d2bb8c10e80d80e126f19a2d",
+          "js": "d49da0aa39824bf9eba2af5d3a010525ad14ca5c1cedc0d8adcfdd5f4984a0d0",
           "jsc": {
-            "bytes": 46280,
-            "sha256": "a8a9d6ba88e31eaaacee53b6a721cf7aeb02bca5ac2dd6e0be9b0d2586c79648",
+            "bytes": 46208,
+            "sha256": "6ba8bc035342db9d171e1a00d5e753eb803bfb8f42414feab9f0a733f37841ec",
           },
         },
         "bun build --bytecode --minify records.js": {
@@ -297,10 +297,10 @@ describe("bytecode cache portability", () => {
           },
         },
         "bun build --bytecode features.js": {
-          "js": "119167da75fb91bb0c0cd490210afaa26cf138c3509333f335a7134eb1b6cfde",
+          "js": "2ee211924620db96d6e99e9490bfe0ee60a3bc6b003f37940c5631e6eabc2c73",
           "jsc": {
-            "bytes": 48184,
-            "sha256": "4033793fb658444392f16cb7e910be4656aae7876fc28334e7fbf3c2aaeeff6a",
+            "bytes": 48104,
+            "sha256": "bbcbe1ba6be927c9ae85fffe7d853e582ef1e91156c2d445936c735b5cca09e1",
           },
         },
         "bun build --bytecode happy-dom/lib/index.js": {
@@ -364,8 +364,8 @@ describe("bytecode cache portability", () => {
           "sha256": "5666dd9957cb8fb428d8fb690ef722eee980a7dc9dd8657c227af498f511441e",
         },
         "vm.Script features.js": {
-          "bytes": 48232,
-          "sha256": "aaf19b57794b38aebded10c25cde40810c5e0ba96148400070ee1131649f4ae4",
+          "bytes": 48160,
+          "sha256": "8c8ee3311d595d79ab2c190e452e135fffa9bdcaf92318d1c1671fe034fd9aa2",
         },
         "vm.Script lodash.js": {
           "bytes": 354672,

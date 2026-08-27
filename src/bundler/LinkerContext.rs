@@ -568,14 +568,13 @@ impl<'a> LinkerContext<'a> {
             self.check_for_memory_corruption();
         }
 
-        let mut chunks =
-            compute_chunks(
-                self,
-                pg,
-                pool,
-                &pg.html_imports.html_source_indices,
-                unique_key,
-            )?;
+        let mut chunks = compute_chunks(
+            self,
+            pg,
+            pool,
+            &pg.html_imports.html_source_indices,
+            unique_key,
+        )?;
 
         if self.log.has_errors() || transpiler.log().has_errors() {
             return Err(LinkError::BuildFailed);
@@ -1971,10 +1970,10 @@ impl<'a> LinkerContext<'a> {
                             if from_chunk_dir == b"." {
                                 from_chunk_dir = b"";
                             }
-                            let additional_files: &[AdditionalFile] = pg
-                                .input_files
-                                .items_additional_files()[piece.query.index() as usize]
-                                .slice();
+                            let additional_files: &[AdditionalFile] =
+                                pg.input_files.items_additional_files()
+                                    [piece.query.index() as usize]
+                                    .slice();
                             debug_assert!(!additional_files.is_empty());
                             if let AdditionalFile::OutputFile(output_file_id) = &additional_files[0]
                             {

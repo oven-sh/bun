@@ -221,7 +221,10 @@ pub(crate) fn assign_minified(
         }
         for items in js.imports_from_other_chunks.values() {
             for item in items.iter() {
-                r.pin(item.r#ref, c.cross_chunk_names.get(&item.r#ref).unwrap().slice())?;
+                r.pin(
+                    item.r#ref,
+                    c.cross_chunk_names.get(&item.r#ref).unwrap().slice(),
+                )?;
             }
         }
     }

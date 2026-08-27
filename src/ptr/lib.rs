@@ -56,8 +56,8 @@ pub mod stable_vec;
 pub use lent::{Lent, LentMut};
 pub use owner_cell::{OwnerCell, RefFamily};
 pub use parent_ref::ParentRef;
-pub use stable_vec::StableVec;
 pub use raw_ref_count::RawRefCount;
+pub use stable_vec::StableVec;
 pub use weak_ptr::WeakPtr;
 
 // Intrusive parent-from-field recovery — canonical helpers live in `bun_core`

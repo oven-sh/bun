@@ -1,5 +1,5 @@
-use crate::mal_prelude::*;
 use crate::Graph::Graph;
+use crate::mal_prelude::*;
 use bun_alloc::ArenaVecExt as _;
 use bun_collections::{ArrayHashMap, AutoBitSet, VecExt, index_sort};
 

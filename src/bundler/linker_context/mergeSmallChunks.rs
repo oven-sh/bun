@@ -3,9 +3,9 @@ use bun_alloc::Arena;
 use bun_ast::{ImportKind, ImportRecordFlags};
 use bun_collections::{ArrayHashMap, AutoBitSet, MapEntry};
 
+use crate::Graph::Graph;
 use crate::linker_context_mod::debug;
 use crate::options::Target;
-use crate::Graph::Graph;
 use crate::{EntryPoint, Index, LinkerContext, WrapKind};
 
 bun_core::define_scoped_log!(debug_merge, MergeChunks, hidden);

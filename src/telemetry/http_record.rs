@@ -14,9 +14,6 @@ use crate::{Limits, StatusCode};
 pub const FLAG_HTTPS: u8 = 1;
 pub const FLAG_ABORTED: u8 = 2;
 pub const FLAG_HANDLER_ERROR: u8 = 4;
-/// Set by `pool::Slot::push_attribute` when an `error.type` attribute is
-/// written; never by callers.
-pub const FLAG_HAS_ERROR_TYPE: u8 = 16;
 
 /// `http.request.method`: the canonical token for known methods, `_OTHER`
 /// otherwise (semconv requires a bounded set).
@@ -352,6 +349,8 @@ pub struct SpanParts<'a> {
     pub attrs: &'a [u8],
     /// Attributes already encoded in `attrs`.
     pub n_attrs: u16,
+    /// An `error.type` attribute is already among `attrs`.
+    pub has_error_type: bool,
     pub dropped_attrs: u16,
     pub dropped_events: u16,
     pub dropped_links: u16,
@@ -364,6 +363,7 @@ pub struct SpanParts<'a> {
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct TemplateKey {
     flags: u8,
+    has_error_type: bool,
     status: u16,
     status_code: StatusCode,
     has_parent: bool,
@@ -382,6 +382,7 @@ impl TemplateKey {
     fn of(facts: &Facts, p: &SpanParts<'_>) -> TemplateKey {
         TemplateKey {
             flags: facts.flags,
+            has_error_type: p.has_error_type,
             status: facts.status,
             status_code: p.status,
             has_parent: p.stub.parent.is_valid(),
@@ -739,10 +740,15 @@ fn encode_head(
     } else {
         p.name_override
     };
-    let mut w = SpanWriter::begin(out, p.stub, name, SpanKind::Server, p.end_ns);
+    let mut w = SpanWriter::begin(
+        out,
+        p.stub,
+        name,
+        SpanKind::Server,
+        p.end_ns,
+        limits.attribute_value_length,
+    );
     w.trace_state(p.trace_state);
-    let max = limits.attribute_value_length as usize;
-    let lim = |s| otlp::truncate_utf8(s, max);
     let budget = limits.attributes as u32;
     struct Attrs<'w, 'a> {
         w: &'w mut SpanWriter<'a>,
@@ -790,7 +796,7 @@ fn encode_head(
             .strip_prefix(b"[")
             .and_then(|h| h.strip_suffix(b"]"))
             .unwrap_or(hname);
-        a.put("server.address", Value::Str(lim(hname)));
+        a.put("server.address", Value::Str(hname));
         // semconv: required when server.address is set; the scheme default when Host has none.
         let port = port.unwrap_or(if flags & FLAG_HTTPS != 0 { 443 } else { 80 });
         a.put("server.port", Value::Int(port as i64));
@@ -799,16 +805,16 @@ fn encode_head(
         a.put("network.protocol.version", Value::Str(facts.version.text()));
     }
     if !ua.is_empty() {
-        a.put("user_agent.original", Value::Str(lim(ua)));
+        a.put("user_agent.original", Value::Str(ua));
     }
     if !route.is_empty() {
-        a.put("http.route", Value::Str(lim(route)));
+        a.put("http.route", Value::Str(route));
     }
     // Attributes encoded on the request path (counted in `p.n_attrs` above).
     a.w.raw(p.attrs);
     let mut span_status = p.status;
     let mut msg: &[u8] = p.status_message;
-    let has_error_type = flags & FLAG_HAS_ERROR_TYPE != 0;
+    let has_error_type = p.has_error_type;
     if status != 0 {
         a.put("http.response.status_code", Value::Int(status as i64));
         if status >= 500 {

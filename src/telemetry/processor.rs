@@ -566,12 +566,15 @@ impl Processor {
                     if buf.is_empty() {
                         continue;
                     }
-                    let mut at = 0usize;
-                    while at < buf.len() && taken < max {
-                        let (len, hdr) = crate::proto::read_len_prefixed(&buf[at + 1..]);
-                        at += 1 + hdr + len;
-                        taken += 1;
+                    // Each `next()` consumes one `ScopeSpans.spans` entry.
+                    let mut r = crate::proto::Reader::new(buf);
+                    while r.pos < buf.len() && taken < max {
+                        match r.next() {
+                            Ok(Some(_)) => taken += 1,
+                            _ => break,
+                        }
                     }
+                    let at = r.pos;
                     if at < buf.len() {
                         rest[i].extend_from_slice(&buf[at..]);
                         buf.truncate(at);

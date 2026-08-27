@@ -565,7 +565,7 @@ mod tests {
         };
         let mut spans = Vec::new();
         let list = [V::Int(1), V::Int(2)];
-        let mut w = SpanWriter::begin(&mut spans, &stub, b"s", SpanKind::Server, 22);
+        let mut w = SpanWriter::begin(&mut spans, &stub, b"s", SpanKind::Server, 22, u32::MAX);
         w.attr("k", "v").attr("list", V::Array(&list));
         w.begin_event(b"e", 33).attrs(&[(b"x", V::Bool(false))]);
         w.status(StatusCode::Error, b"bad");

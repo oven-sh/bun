@@ -44,18 +44,25 @@ pub fn write_tag(out: &mut Vec<u8>, field: u32, wt: WireType) {
     write_varint(out, ((field as u64) << 3) | wt as u64);
 }
 
+// Naming: the bare `write_*` always writes the field; `write_*_opt` omits it
+// when the value is the proto3 default (zero / empty).
+
 #[inline]
 pub fn write_uint(out: &mut Vec<u8>, field: u32, v: u64) {
-    if v == 0 {
-        return;
-    }
     write_tag(out, field, WireType::Varint);
     write_varint(out, v);
 }
 
-/// Always writes, even when false (needed inside AnyValue oneof).
+/// Unsigned varint field, omitted when zero (proto3 default).
 #[inline]
-pub fn write_bool_always(out: &mut Vec<u8>, field: u32, v: bool) {
+pub fn write_uint_opt(out: &mut Vec<u8>, field: u32, v: u64) {
+    if v != 0 {
+        write_uint(out, field, v);
+    }
+}
+
+#[inline]
+pub fn write_bool(out: &mut Vec<u8>, field: u32, v: bool) {
     write_tag(out, field, WireType::Varint);
     out.push(v as u8);
 }
@@ -63,6 +70,12 @@ pub fn write_bool_always(out: &mut Vec<u8>, field: u32, v: bool) {
 #[inline]
 pub fn write_fixed64(out: &mut Vec<u8>, field: u32, v: u64) {
     write_tag(out, field, WireType::Fixed64);
+    out.extend_from_slice(&v.to_le_bytes());
+}
+
+#[inline]
+pub fn write_fixed32(out: &mut Vec<u8>, field: u32, v: u32) {
+    write_tag(out, field, WireType::Fixed32);
     out.extend_from_slice(&v.to_le_bytes());
 }
 
@@ -305,20 +318,4 @@ mod tests {
             nested_case::<5>(body);
         }
     }
-}
-
-/// `(body_len, varint_bytes)` of a length-delimited field body starting at
-/// `buf[0]` (the varint right after the tag). For walking our own encoding.
-#[inline]
-pub fn read_len_prefixed(buf: &[u8]) -> (usize, usize) {
-    let mut len = 0usize;
-    let mut shift = 0;
-    for (i, &b) in buf.iter().enumerate() {
-        len |= ((b & 0x7f) as usize) << shift;
-        if b & 0x80 == 0 {
-            return (len, i + 1);
-        }
-        shift += 7;
-    }
-    (len, buf.len())
 }

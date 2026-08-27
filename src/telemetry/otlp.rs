@@ -90,7 +90,6 @@ pub enum Value<'a> {
     Bool(bool),
     Double(f64),
     Array(&'a [Value<'a>]),
-    Bytes(&'a [u8]),
 }
 
 impl<'a> From<&'a [u8]> for Value<'a> {
@@ -123,7 +122,6 @@ impl From<u16> for Value<'_> {
 fn any_value_body_len(v: &Value<'_>) -> usize {
     match *v {
         Value::Str(s) => len_field_len(f::AV_STRING, s.len()),
-        Value::Bytes(s) => len_field_len(f::AV_BYTES, s.len()),
         Value::Bool(_) => tag_len(f::AV_BOOL) + 1,
         Value::Int(i) => tag_len(f::AV_INT) + varint_len(i as u64),
         Value::Double(_) => tag_len(f::AV_DOUBLE) + 8,
@@ -144,8 +142,7 @@ fn array_body_len(items: &[Value<'_>]) -> usize {
 fn write_any_value_body(out: &mut Vec<u8>, v: &Value<'_>) {
     match *v {
         Value::Str(s) => proto::write_bytes(out, f::AV_STRING, s),
-        Value::Bytes(s) => proto::write_bytes(out, f::AV_BYTES, s),
-        Value::Bool(b) => proto::write_bool_always(out, f::AV_BOOL, b),
+        Value::Bool(b) => proto::write_bool(out, f::AV_BOOL, b),
         Value::Int(i) => {
             write_tag(out, f::AV_INT, WireType::Varint);
             write_varint(out, i as u64);
@@ -422,13 +419,13 @@ pub fn find_attribute(attrs: &[u8], key: &[u8]) -> Option<(usize, usize)> {
     }
 }
 
-/// Streams one `Span` as a `ScopeSpans.spans` entry into `out`.
+/// Streams one `Span` as a `ScopeSpans.spans` entry into `out`. The span's
+/// length prefix is patched when the writer is finished or dropped.
 pub struct SpanWriter<'a> {
     out: &'a mut Vec<u8>,
     nested: Nested<SPAN_LEN_RESERVE>,
-    /// `attributeValueLengthLimit` for string values written through
-    /// `attr*`/`fail` (leaf spans); `usize::MAX` when the caller already
-    /// truncated (pooled, JS-owned and HTTP-server spans).
+    /// `attributeValueLengthLimit`, applied to every string value written
+    /// through this writer and the event/link writers it opens.
     value_limit: usize,
 }
 
@@ -441,6 +438,7 @@ impl<'a> SpanWriter<'a> {
         name: &[u8],
         kind: SpanKind,
         end_ns: u64,
+        value_limit: u32,
     ) -> SpanWriter<'a> {
         out.reserve(128 + name.len());
         let nested = Nested::begin(out, f::SS_SPANS);
@@ -486,20 +484,13 @@ impl<'a> SpanWriter<'a> {
         SpanWriter {
             out,
             nested,
-            value_limit: usize::MAX,
+            value_limit: value_limit as usize,
         }
     }
 
     #[inline]
     pub fn trace_state(&mut self, ts: &[u8]) -> &mut Self {
         proto::write_bytes_opt(self.out, f::TRACE_STATE, ts);
-        self
-    }
-
-    /// Apply `attributeValueLengthLimit` to string values written from here on.
-    #[inline]
-    pub fn limit_values(&mut self, max: u32) -> &mut Self {
-        self.value_limit = max as usize;
         self
     }
 
@@ -555,21 +546,21 @@ impl<'a> SpanWriter<'a> {
     }
 
     pub fn dropped_attributes(&mut self, n: u32) -> &mut Self {
-        proto::write_uint(self.out, f::DROPPED_ATTRIBUTES, n as u64);
+        proto::write_uint_opt(self.out, f::DROPPED_ATTRIBUTES, n as u64);
         self
     }
     pub fn dropped_events(&mut self, n: u32) -> &mut Self {
-        proto::write_uint(self.out, f::DROPPED_EVENTS, n as u64);
+        proto::write_uint_opt(self.out, f::DROPPED_EVENTS, n as u64);
         self
     }
     pub fn dropped_links(&mut self, n: u32) -> &mut Self {
-        proto::write_uint(self.out, f::DROPPED_LINKS, n as u64);
+        proto::write_uint_opt(self.out, f::DROPPED_LINKS, n as u64);
         self
     }
 
     #[inline]
     pub fn begin_event(&mut self, name: &[u8], time_ns: u64) -> EntryWriter<'_> {
-        EntryWriter::event(self.out, name, time_ns)
+        EntryWriter::event(self.out, name, time_ns, self.value_limit)
     }
 
     /// `exception` event per semconv: exception.type / exception.message /
@@ -604,15 +595,16 @@ impl<'a> SpanWriter<'a> {
 
     #[inline]
     pub fn begin_link(&mut self, ctx: &SpanContext, trace_state: &[u8]) -> EntryWriter<'_> {
-        EntryWriter::link(self.out, ctx, trace_state)
+        EntryWriter::link(self.out, ctx, trace_state, self.value_limit)
     }
 
+    /// `Status{code, message}`; nothing for `Unset`. The description is only
+    /// meaningful for `Error` (spec) and is dropped otherwise.
     #[inline]
     pub fn status(&mut self, code: StatusCode, message: &[u8]) -> &mut Self {
-        if code == StatusCode::Unset && message.is_empty() {
+        if code == StatusCode::Unset {
             return self;
         }
-        // Spec: description is only meaningful for Error.
         let message = if code == StatusCode::Error {
             message
         } else {
@@ -622,11 +614,8 @@ impl<'a> SpanWriter<'a> {
             0
         } else {
             len_field_len(f::STATUS_MESSAGE, message.len())
-        } + if code == StatusCode::Unset {
-            0
-        } else {
-            tag_len(f::STATUS_CODE) + 1
-        };
+        } + tag_len(f::STATUS_CODE)
+            + 1;
         write_len_prefix(self.out, f::STATUS, body);
         proto::write_bytes_opt(self.out, f::STATUS_MESSAGE, message);
         proto::write_uint(self.out, f::STATUS_CODE, code as u64);
@@ -649,16 +638,23 @@ impl<'a> SpanWriter<'a> {
         self.error(code, message)
     }
 
+    /// Close the span (also happens on drop).
     #[inline]
-    pub fn finish(self) {
-        self.nested.finish(self.out);
-    }
+    pub fn finish(self) {}
 
     /// End without patching the span length: the caller appends more `Span`
     /// fields and then runs `Nested::<SPAN_LEN_RESERVE>::at(len_at).finish()`
     /// with the returned `len_at`.
     pub fn finish_unpatched(self) -> usize {
-        self.nested.len_at()
+        let me = core::mem::ManuallyDrop::new(self);
+        me.nested.len_at()
+    }
+}
+
+impl Drop for SpanWriter<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        Nested::<SPAN_LEN_RESERVE>::at(self.nested.len_at()).finish(self.out);
     }
 }
 
@@ -679,11 +675,18 @@ pub struct EntryWriter<'a> {
     out: &'a mut Vec<u8>,
     nested: Nested<2>,
     field: u32,
+    /// `attributeValueLengthLimit` for string values written through `attr`.
+    value_limit: usize,
 }
 
 impl<'a> EntryWriter<'a> {
     #[inline]
-    pub fn event(out: &'a mut Vec<u8>, name: &[u8], time_ns: u64) -> EntryWriter<'a> {
+    pub fn event(
+        out: &'a mut Vec<u8>,
+        name: &[u8],
+        time_ns: u64,
+        value_limit: usize,
+    ) -> EntryWriter<'a> {
         let nested = Nested::begin(out, f::EVENTS);
         proto::write_fixed64(out, f::EV_TIME, time_ns);
         proto::write_bytes(out, f::EV_NAME, name);
@@ -691,25 +694,35 @@ impl<'a> EntryWriter<'a> {
             out,
             nested,
             field: f::EV_ATTRIBUTES,
+            value_limit,
         }
     }
     #[inline]
-    pub fn link(out: &'a mut Vec<u8>, ctx: &SpanContext, trace_state: &[u8]) -> EntryWriter<'a> {
+    pub fn link(
+        out: &'a mut Vec<u8>,
+        ctx: &SpanContext,
+        trace_state: &[u8],
+        value_limit: usize,
+    ) -> EntryWriter<'a> {
         let nested = Nested::begin(out, f::LINKS);
         proto::write_bytes(out, f::LINK_TRACE_ID, &ctx.trace_id.0);
         proto::write_bytes(out, f::LINK_SPAN_ID, &ctx.span_id.0);
         proto::write_bytes_opt(out, f::LINK_TRACE_STATE, trace_state);
-        write_tag(out, f::LINK_FLAGS, WireType::Fixed32);
-        out.extend_from_slice(&ctx.flags.otlp_with_remote(ctx.flags.remote()).to_le_bytes());
+        proto::write_fixed32(
+            out,
+            f::LINK_FLAGS,
+            ctx.flags.otlp_with_remote(ctx.flags.remote()),
+        );
         EntryWriter {
             out,
             nested,
             field: f::LINK_ATTRIBUTES,
+            value_limit,
         }
     }
     #[inline]
     pub fn attr(&mut self, key: &[u8], v: &Value<'_>) {
-        write_key_value(self.out, self.field, key, v);
+        write_key_value_limited(self.out, self.field, key, v, self.value_limit);
     }
     #[inline]
     pub fn attrs(&mut self, attrs: &[(&[u8], Value<'_>)]) -> &mut Self {
@@ -825,5 +838,115 @@ mod utf8_tests {
             super::utf8_lossy(b"plain"),
             std::borrow::Cow::Borrowed(_)
         ));
+    }
+}
+
+#[cfg(test)]
+mod span_writer_tests {
+    use super::{SpanWriter, field as f};
+    use crate::proto::Reader;
+    use crate::span::{Flags, SpanContext, SpanId, SpanKind, SpanStub, StatusCode, TraceId};
+
+    /// A dropped (never `finish`ed) writer still leaves a well-formed span, and
+    /// the value limit given at `begin` reaches event attributes.
+    #[test]
+    fn dropped_writer_patches_length_and_limits_event_values() {
+        let stub = SpanStub {
+            ctx: SpanContext {
+                trace_id: TraceId([1; 16]),
+                span_id: SpanId([2; 8]),
+                flags: Flags(Flags::SAMPLED),
+            },
+            parent: SpanId([0; 8]),
+            start_ns: 5,
+        };
+        let mut out = Vec::new();
+        {
+            let mut w = SpanWriter::begin(&mut out, &stub, b"op", SpanKind::Client, 9, 4);
+            w.fail(b"CODE", b"a-long-message");
+        }
+        let mut r = Reader::new(&out);
+        let (field, span) = r.next().unwrap().unwrap();
+        assert_eq!(field, f::SS_SPANS);
+        assert!(r.next().unwrap().is_none(), "exactly one span");
+
+        let mut exception_message = None;
+        let mut error_type = None;
+        let mut status = None;
+        let mut span = Reader::new(span.as_bytes());
+        while let Some((field, v)) = span.next().unwrap() {
+            let string_attr = |kv: &[u8]| {
+                let mut kv = Reader::new(kv);
+                let (_, k) = kv.next().unwrap().unwrap();
+                let (_, av) = kv.next().unwrap().unwrap();
+                let (_, s) = Reader::new(av.as_bytes()).next().unwrap().unwrap();
+                (k.as_bytes().to_vec(), s.as_bytes().to_vec())
+            };
+            match field {
+                f::ATTRIBUTES => {
+                    let (k, v) = string_attr(v.as_bytes());
+                    if k == b"error.type" {
+                        error_type = Some(v);
+                    }
+                }
+                f::EVENTS => {
+                    let mut ev = Reader::new(v.as_bytes());
+                    while let Some((field, v)) = ev.next().unwrap() {
+                        if field == f::EV_ATTRIBUTES {
+                            let (k, v) = string_attr(v.as_bytes());
+                            if k == b"exception.message" {
+                                exception_message = Some(v);
+                            }
+                        }
+                    }
+                }
+                f::STATUS => {
+                    let mut st = Reader::new(v.as_bytes());
+                    let mut code = 0;
+                    let mut message = Vec::new();
+                    while let Some((field, v)) = st.next().unwrap() {
+                        match field {
+                            f::STATUS_CODE => code = v.as_u64(),
+                            f::STATUS_MESSAGE => message = v.as_bytes().to_vec(),
+                            _ => {}
+                        }
+                    }
+                    status = Some((code, message));
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(exception_message.as_deref(), Some(&b"a-lo"[..]));
+        assert_eq!(error_type.as_deref(), Some(&b"CODE"[..]));
+        // The status description is not an attribute: the limit does not apply.
+        assert_eq!(
+            status,
+            Some((StatusCode::Error as u64, b"a-long-message".to_vec()))
+        );
+    }
+
+    /// `Unset` writes no `Status` at all; a non-Error description is dropped.
+    #[test]
+    fn status_unset_and_ok() {
+        let mut out = Vec::new();
+        let prefix = {
+            let mut w =
+                SpanWriter::begin(&mut out, &SpanStub::NONE, b"op", SpanKind::Internal, 0, 9);
+            let prefix = w.out.len();
+            w.status(StatusCode::Unset, b"ignored")
+                .status(StatusCode::Ok, b"dropped");
+            prefix
+        };
+        let mut tail = Reader::new(&out[prefix..]);
+        let (field, st) = tail.next().unwrap().unwrap();
+        assert_eq!(field, f::STATUS);
+        assert!(tail.next().unwrap().is_none(), "one Status message");
+        let mut st = Reader::new(st.as_bytes());
+        let (field, code) = st.next().unwrap().unwrap();
+        assert_eq!(
+            (field, code.as_u64()),
+            (f::STATUS_CODE, StatusCode::Ok as u64)
+        );
+        assert!(st.next().unwrap().is_none(), "no message");
     }
 }

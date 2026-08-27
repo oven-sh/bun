@@ -27,7 +27,7 @@ impl LocalBatch {
     }
 
     #[inline]
-    pub fn buffer(&mut self, scope: ScopeId) -> &mut Vec<u8> {
+    fn buffer(&mut self, scope: ScopeId) -> &mut Vec<u8> {
         let i = scope.0 as usize;
         if i >= self.scopes.len() {
             self.scopes.resize_with(i + 1, Vec::new);
@@ -37,7 +37,7 @@ impl LocalBatch {
 
     /// Call after writing one span into `buffer(scope)`.
     #[inline]
-    pub fn committed(&mut self, scope: ScopeId, start_len: usize) -> bool {
+    fn committed(&mut self, scope: ScopeId, start_len: usize) -> bool {
         let added = self.scopes[scope.0 as usize].len() - start_len;
         self.count += 1;
         self.bytes += added;
@@ -61,8 +61,8 @@ impl LocalBatch {
 }
 
 /// Write one span for `scope` via `write` and hand the batch to the
-/// processor if it crossed the threshold. This is the function every
-/// integration's end path funnels through.
+/// processor if it crossed the threshold. The only way a span enters the
+/// batch.
 #[inline]
 pub fn record(l: &mut LocalBatch, scope: ScopeId, write: &mut dyn FnMut(&mut Vec<u8>)) {
     let buf = l.buffer(scope);

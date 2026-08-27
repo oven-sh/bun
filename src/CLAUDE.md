@@ -125,7 +125,7 @@ synchronous call, `PathLike::owned(vec)` when the value must own them),
 `Buffer` (`PathLike`: a `PinnedArrayBuffer`, GC-rooted too when parsed for an
 async call; `StringOrBuffer`: borrowed for a sync call) and
 `StringOrBuffer::PinnedBuffer` (pinned and GC-rooted, parsed for an async
-call). Anything parsed from JS, stored, or sent to another thread (the
+call). Values parsed from JS for an async call, stored, or sent to another thread (the
 `from_js_async` parsers, which return `ThreadIsolated<T>`;
 `PathLike::thread_isolated_copy` for a `Blob` store) is `'static`.
 

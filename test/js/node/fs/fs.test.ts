@@ -3328,7 +3328,6 @@ describe("stat", () => {
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     const live = Number(stdout);
     expect(Number.isFinite(live)).toBe(true);
-    // 200 iterations × 4 path Buffers stay rooted without the fix.
     expect(live).toBeLessThan(200);
     expect(exitCode).toBe(0);
   });

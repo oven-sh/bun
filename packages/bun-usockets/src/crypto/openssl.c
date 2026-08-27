@@ -632,6 +632,8 @@ static long BIO_s_custom_ctrl(BIO *bio, int cmd, long num, void *user) {
  * flag is saved-and-zeroed so a write or close_notify for a different socket
  * inside the callback goes to that socket's fd via the per-record BIO path
  * instead of appending to the interrupted handshake's batch. */
+int us_internal_ssl_loop_state_slots(void) { return US_SSL_LOOP_STATE_SLOTS; }
+
 void us_internal_ssl_loop_state_save(void *ssl_ptr, void **out) {
   SSL *ssl = (SSL *)ssl_ptr;
   struct loop_ssl_data *d = (struct loop_ssl_data *)BIO_get_data(SSL_get_wbio(ssl));
@@ -3035,7 +3037,7 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
   struct loop_ssl_data *cb_lsd = (struct loop_ssl_data *)BIO_get_data(SSL_get_wbio(ssl));
   struct us_socket_t *cb_socket = cb_lsd ? cb_lsd->ssl_socket : NULL;
 
-  void *saved_loop_state[6];
+  void *saved_loop_state[US_SSL_LOOP_STATE_SLOTS];
   us_internal_ssl_loop_state_save(ssl, saved_loop_state);
   int abort_handshake = 0;
   SSL_CTX *dyn =

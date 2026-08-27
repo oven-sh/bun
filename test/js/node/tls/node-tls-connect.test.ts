@@ -1755,12 +1755,115 @@ it("TLS 1.3 client coalesces its final handshake flight with the first write fro
     // ClientHello, then ONE segment carrying change_cipher_spec + Finished +
     // the "HELLO" application record. On the unfixed client the flight and
     // the application record are two sends, so the server's data arrives in
-    // a third chunk.
+    // a third chunk. Note: the two unfixed sends can coalesce in the kernel
+    // when this process is descheduled between them (a heavily loaded
+    // machine), so a PASS discriminates reliably only on an unloaded one. A
+    // split of the single fixed send cannot happen: 1.3KB is far below the
+    // loopback MTU and the receive buffer.
     expect(await chunksWhenServerGotData).toBe(2);
   } finally {
     proxy.close();
     server.close();
   }
+});
+
+// Hard path of the batching fix: a write to a SECOND TLS socket on the same
+// loop, issued from inside 'secureConnect' while the first socket's final
+// flight is still held in the shared batch. The BIO must deliver the held
+// flight to its owner before it takes the slot for the second socket, or one
+// socket's ciphertext lands on the other's fd and both connections die.
+it("a write to a second TLS socket from inside secureConnect keeps both streams intact (#40653)", async () => {
+  const tlsOptions = {
+    key: COMMON_CERT_.key,
+    cert: COMMON_CERT_.cert,
+    minVersion: "TLSv1.3" as const,
+    maxVersion: "TLSv1.3" as const,
+  };
+  const first = Promise.withResolvers<string>();
+  const second = Promise.withResolvers<string>();
+  function makeServer(got: (data: string) => void) {
+    const server = tls.createServer(tlsOptions, socket => {
+      socket.on("data", data => {
+        got(data.toString());
+        socket.end();
+      });
+      socket.on("error", () => {});
+    });
+    return server;
+  }
+  const server1 = makeServer(first.resolve);
+  const server2 = makeServer(second.resolve);
+  await once(server1.listen(0, "127.0.0.1"), "listening");
+  await once(server2.listen(0, "127.0.0.1"), "listening");
+
+  try {
+    const connectOptions = {
+      host: "127.0.0.1",
+      rejectUnauthorized: false,
+      minVersion: "TLSv1.3" as const,
+      maxVersion: "TLSv1.3" as const,
+    };
+    // Establish the second socket fully first.
+    const client2 = tlsConnect({ ...connectOptions, port: (server2.address() as AddressInfo).port });
+    await once(client2, "secureConnect");
+    client2.on("error", () => {});
+
+    const client1 = tlsConnect({ ...connectOptions, port: (server1.address() as AddressInfo).port });
+    client1.on("error", () => {});
+    client1.on("secureConnect", () => {
+      // Foreign-owner write while client1's flight is held in the batch.
+      client2.write("to-second");
+      client1.write("to-first");
+    });
+
+    expect(await first.promise).toBe("to-first");
+    expect(await second.promise).toBe("to-second");
+    await Promise.all([once(client1, "close"), once(client2, "close")]);
+  } finally {
+    server1.close();
+    server2.close();
+  }
+});
+
+// Hard path of the batching fix: end() called synchronously from the
+// handshake callback, with the final flight still held in the batch. The
+// shutdown path must flush the held flight before it sends close_notify and
+// FIN; in the wrong order the server never completes the handshake. The Bun
+// socket API is used because its end() reaches the TLS shutdown inside the
+// same dispatch.
+it("ending a TLS 1.3 socket from its handshake callback still completes the server's handshake (#40653)", async () => {
+  const serverSaw = Promise.withResolvers<string>();
+  const clientClosed = Promise.withResolvers<void>();
+  await using listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls: { key: COMMON_CERT_.key, cert: COMMON_CERT_.cert },
+    socket: {
+      handshake(_socket, success, authorizationError) {
+        serverSaw.resolve(success ? "handshake" : `fail:${authorizationError}`);
+      },
+      data() {},
+      error() {},
+      close() {},
+    },
+  });
+  await Bun.connect({
+    hostname: "127.0.0.1",
+    port: listener.port,
+    tls: { rejectUnauthorized: false },
+    socket: {
+      handshake(socket) {
+        socket.end();
+      },
+      data() {},
+      error() {},
+      close() {
+        clientClosed.resolve();
+      },
+    },
+  });
+  expect(await serverSaw.promise).toBe("handshake");
+  await clientClosed.promise;
 });
 
 // End-to-end shape of the issue: a Node TLS 1.3 server that rejects the

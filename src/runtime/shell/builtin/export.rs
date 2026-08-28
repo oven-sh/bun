@@ -26,8 +26,6 @@ impl Export {
             // No args: print all exported vars.
             return Self::print_all(interp, cmd);
         }
-        // Like bash: every invalid word is reported, the valid ones are still
-        // exported, and the exit code is 1 if any word was rejected.
         let mut errors = Vec::new();
         for i in 0..argc {
             let s = Builtin::of(interp, cmd).arg_bytes(i);

@@ -1334,7 +1334,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let notes = p.why_es_module();
             p.log().add_range_error_fmt_with_notes(
                 Some(p.source),
-                p.source.range_of_legacy_octal_escape(p.lexer.legacy_octal_loc),
+                p.source
+                    .range_of_legacy_octal_escape(p.lexer.legacy_octal_loc),
                 notes,
                 format_args!(
                     "Legacy octal escape sequences cannot be used in an ECMAScript module"

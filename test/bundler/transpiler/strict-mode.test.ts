@@ -360,7 +360,10 @@ describe("strict mode early errors", () => {
       ["import protected from 'x'", '"protected" is a reserved word and cannot be used in an ECMAScript module'],
       ["import * as protected from 'x'", '"protected" is a reserved word and cannot be used in an ECMAScript module'],
       ["import { protected } from 'x'", '"protected" is a reserved word and cannot be used in an ECMAScript module'],
-      ["import { x as protected } from 'x'", '"protected" is a reserved word and cannot be used in an ECMAScript module'],
+      [
+        "import { x as protected } from 'x'",
+        '"protected" is a reserved word and cannot be used in an ECMAScript module',
+      ],
       ["import 'x\\1'", "Legacy octal escape sequences cannot be used in an ECMAScript module"],
       ["export * from 'x\\1'", "Legacy octal escape sequences cannot be used in an ECMAScript module"],
       ["export { x } from 'x\\1'", "Legacy octal escape sequences cannot be used in an ECMAScript module"],

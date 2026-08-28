@@ -129,7 +129,7 @@ impl MacroContext {
                 break 'brk replacement.path.as_bytes();
             }
 
-            let resolve_result = match resolver.resolve(
+            let resolve_result = match resolver.resolve_for_macro(
                 source_dir,
                 import_record_path_without_macro_prefix,
                 bun_ast::ImportKind::Stmt,
@@ -457,17 +457,28 @@ impl Macro {
             (*vm).load_macro_entry_point(input_specifier, function_name, specifier, hash)
         }?;
 
-        // SAFETY: `loaded_result` is a live heap-allocated `JSInternalPromise`
-        // returned by `loadAndEvaluateModule`; `jsc_vm` is the live JSC VM.
-        let unwrapped = unsafe {
-            (*loaded_result).unwrap(&*(*vm).jsc_vm, jsc::PromiseUnwrapMode::LeaveUnhandled)
-        };
-        if let jsc::PromiseResult::Rejected(result) = unwrapped {
-            // SAFETY: `vm.global` is the live per-thread global; `loaded_result`
-            // is a live promise cell.
-            unsafe {
-                (*vm).unhandled_rejection(&*(*vm).global, result, (*loaded_result).to_js());
+        // The unwrap reads JSC heap state and the rejection handler runs JS
+        // (it allocates `JSC::Weak`s), so both need the API lock; `call()`
+        // only takes it for the macro invocation itself, after init.
+        // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
+        let rejected = unsafe { &*vm }.run_with_api_lock(|| {
+            // SAFETY: `loaded_result` is a live heap-allocated
+            // `JSInternalPromise` returned by `loadAndEvaluateModule`;
+            // `jsc_vm` is the live JSC VM.
+            let unwrapped = unsafe {
+                (*loaded_result).unwrap(&*(*vm).jsc_vm, jsc::PromiseUnwrapMode::LeaveUnhandled)
+            };
+            if let jsc::PromiseResult::Rejected(result) = unwrapped {
+                // SAFETY: `vm.global` is the live per-thread global;
+                // `loaded_result` is a live promise cell.
+                unsafe {
+                    (*vm).unhandled_rejection(&*(*vm).global, result, (*loaded_result).to_js());
+                }
+                return true;
             }
+            false
+        });
+        if rejected {
             return Err(crate::Error::MacroLoadError);
         }
 

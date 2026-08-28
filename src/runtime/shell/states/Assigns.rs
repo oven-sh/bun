@@ -111,8 +111,7 @@ impl Assigns {
         let label = node.slice()[*idx as usize].label;
         *idx += 1;
 
-        // Join multi-word expansions with a single space. Zero words and one
-        // word are both `buf` as-is (empty for zero).
+        // Join multi-word expansions with a single space.
         let value: Vec<u8> = if out.word_count() <= 1 {
             out.buf
         } else {

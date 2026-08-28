@@ -364,8 +364,6 @@ impl Cmd {
                             interp.as_cmd_mut(this).exit_code = Some(out.out_exit_code);
                         }
                     }
-                    // Every word becomes an argv entry, empty words included.
-                    // `$unset` produced no word, so it adds nothing.
                     let me = interp.as_cmd_mut(this);
                     if out.word_count() == 1 {
                         me.args.push(out.buf);

@@ -40,11 +40,8 @@ pub struct Expansion {
     /// Whether the in-flight command substitution was `"$(...)"` (no IFS
     /// splitting on its result). Only meaningful while `state == CmdSubst`.
     pub(crate) cmd_subst_quoted: bool,
-    /// Set when a `""`/`''` literal
-    /// was seen so an *empty* expansion is still pushed as an argv word.
-    /// Without this, `$unset` and `""` both leave `current_out` empty and the
-    /// final flush could not tell "no word" from "one empty word". Pushing
-    /// an empty arg for unset vars would diverge from POSIX field-splitting.
+    /// Set when a `""`/`''` literal was seen. The final flush pushes an empty
+    /// `current_out` as a word only then: `""` is one empty arg, `$unset` is none.
     pub(crate) has_quoted_empty: bool,
     /// Exit code of a sole-command-substitution arg — propagated to `Cmd`
     /// so `$(false)` as argv0 fails.
@@ -69,10 +66,8 @@ pub enum ExpansionState {
 #[derive(Default)]
 pub struct ExpansionOut {
     pub(crate) buf: Vec<u8>,
-    /// End offset in `buf` of each word, one entry per word. Words are
-    /// delimited by their end offsets rather than by non-empty spans so an
-    /// empty word is representable in any position: `{,b}` is `["", "b"]`,
-    /// `{,}` is `["", ""]`, and `$unset` (no word at all) is an empty list.
+    /// End offset in `buf` of each word, one entry per word, so an empty word
+    /// is representable in any position (`{,b}` is `["", "b"]`).
     pub(crate) word_ends: Vec<u32>,
     /// Set when the atom is a sole `$(…)`
     /// that exited non-zero, so [`Cmd::child_done`] can propagate it as the
@@ -277,8 +272,6 @@ impl Expansion {
             if atom.has_glob_expansion() {
                 return Self::transition_to_glob_state(interp, this);
             }
-            // `$unset` expands to no word at all; only an explicit `""`
-            // yields an empty one.
             if !me.current_out.is_empty() || me.has_quoted_empty {
                 Self::push_current_out(me);
             }
@@ -488,12 +481,7 @@ impl Expansion {
         use crate::shell::env_str::EnvStr;
         match atom {
             ast::SimpleAtom::Text(txt) => out.extend_from_slice(txt),
-            ast::SimpleAtom::QuotedEmpty => {
-                // The final flush in `next` pushes an empty `current_out` as a
-                // word only when this flag is set: `""` is one empty arg,
-                // `$unset` is no arg, and both leave `current_out` empty.
-                *has_quoted_empty = true;
-            }
+            ast::SimpleAtom::QuotedEmpty => *has_quoted_empty = true,
             ast::SimpleAtom::Var(label) => {
                 // Spec `expandVar`: shell_env first, then export_env, else "".
                 let key = EnvStr::init_slice(label);

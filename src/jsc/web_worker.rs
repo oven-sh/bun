@@ -392,7 +392,8 @@ impl WebWorker {
             proxy_env_slots,
         };
 
-        let worker = bun_core::heap::into_raw(Box::new(WebWorker {
+        // The construction ref: handed to C++ on success, dropped on failure.
+        let worker = bun_ptr::RefPtr::new(WebWorker {
             messaging_proxy: proxy,
             parent,
             hot_reload: parent_ref.hot_reload,
@@ -428,12 +429,8 @@ impl WebWorker {
             worker_env_loader: Cell::new(core::ptr::null_mut()),
             exit_called: AtomicBool::new(false),
             terminated_by_parent: AtomicBool::new(false),
-        }));
-        // `worker` is non-null (just heap-allocated). Wrap once for the safe
-        // shared reborrows below; the raw `worker` is still used for
-        // `register`/`destroy`/the FFI return value.
-        let worker_ref =
-            bun_ptr::ParentRef::from(NonNull::new(worker).expect("heap::into_raw is non-null"));
+        });
+        let worker_ref = bun_ptr::ParentRef::from(worker.as_non_null());
 
         // Keep the parent's event loop alive until the parent releases this
         // thread, unless the user opted out with `{ ref: false }`.
@@ -443,8 +440,7 @@ impl WebWorker {
         }
 
         // The thread's own ref, taken before it exists so it can never observe zero.
-        // SAFETY: `worker` is live.
-        let thread_ref = unsafe { bun_ptr::RefPtr::init_ref(worker) };
+        let thread_ref = worker.clone();
         // The thread is something of this VM's on another thread for as long as
         // it runs: the parent joins it before its own teardown's wait, which
         // this ticket would otherwise hold.
@@ -478,15 +474,14 @@ impl WebWorker {
         match spawn {
             Ok(handle) => {
                 worker_ref.join_handle.set(Some(handle));
+                let worker = worker.into_raw();
                 // SAFETY: `parent` is the calling thread's VM; parent-thread-only list.
                 unsafe { (*parent).child_workers.push(worker) };
                 worker
             }
             Err(_) => {
+                // The thread's ref went down with the closure; ours drops on return.
                 worker_ref.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
-                // The thread's ref went down with the closure; drop the caller's.
-                // SAFETY: never shared.
-                unsafe { WebWorker::deref(worker) };
                 *error_message = BunString::static_("Failed to spawn worker thread");
                 core::ptr::null_mut()
             }

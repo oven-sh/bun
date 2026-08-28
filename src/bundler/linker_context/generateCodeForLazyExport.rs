@@ -436,8 +436,7 @@ pub(crate) fn generate_code_for_lazy_export(
                         unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(this.arena()) };
                     let alias: &[u8] = bun_core::handle_oom(key_str.flattened(alloc).string(alloc));
 
-                    // Any string is a valid export name (`export { a_b as "a b" }`),
-                    // but the variable that holds the value needs an identifier.
+                    // The export alias can be any string, but the variable needs an identifier.
                     let name: &[u8] = if js_lexer::is_identifier(alias) {
                         alias
                     } else {

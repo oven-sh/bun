@@ -4108,8 +4108,7 @@ impl<'a> LinkerContext<'a> {
             },
         )?;
 
-        // `export * from "./data.json"` resolves against the AST's named exports,
-        // and the file's importers are processed after it, so record it there too.
+        // Export-star resolution reads the AST's named exports, so record the alias there too.
         self.graph.ast.items_named_exports_mut()[source_index as usize].put(
             alias,
             bun_ast::NamedExport {

@@ -511,6 +511,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             && p.lexer.token == T::TOpenBrace
                             && name == b"static"
                         {
+                            if !opts.declare_range.is_empty() {
+                                p.log().add_range_error(
+                                    Some(p.source),
+                                    opts.declare_range,
+                                    b"\"declare\" cannot be used with a static block",
+                                );
+                            }
+
                             let loc = p.lexer.loc();
                             p.lexer.next()?;
 

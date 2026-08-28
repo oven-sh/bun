@@ -1675,11 +1675,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if Self::IS_TYPESCRIPT_ENABLED
                         && (!p.is_jsx_enabled() || p.is_ts_arrow_fn_jsx()?)
                     {
+                        // ".mts" and ".cts" files reject a "<" that a JSX file would read as an element
+                        let less_than_range = p.lexer.range();
+                        let is_ambiguous_less_than =
+                            p.options.ts_no_ambiguous_less_than && !p.is_ts_arrow_fn_jsx()?;
                         match p
                             .try_skip_type_script_type_parameters_then_open_paren_with_backtracking(
                             ) {
                             SkipTypeParameterResult::DidNotSkipAnything => {}
                             result => {
+                                if is_ambiguous_less_than {
+                                    p.log().add_range_error(
+                                        Some(p.source),
+                                        less_than_range,
+                                        b"This syntax is not allowed in files with the \".mts\" or \".cts\" extension",
+                                    );
+                                }
                                 p.lexer.next()?;
                                 return p.parse_paren_expr(
                                     async_range.loc,

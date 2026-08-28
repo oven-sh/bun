@@ -1499,6 +1499,12 @@ function foo() {}
       },
     );
 
+    it("declare is not valid on a static block", () => {
+      const err = ts.expectParseError;
+      err('class Foo { declare static { console.log("ran") } }', '"declare" cannot be used with a static block');
+      err('class Foo { static declare { console.log("ran") } }', 'Expected ";" but found "{"');
+    });
+
     it("declare on a plain class field is erased", () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;
@@ -1635,11 +1641,13 @@ function foo() {}
         const f2 = <T extends string>(x: T) => x;
         const f3 = <T, U>(x: T, y: U) => [x, y];
         const f4 = <const T,>(x: T) => x;
+        const f5 = async <T,>(x: T) => x;
+        const f6 = async <T extends string>(x: T) => x;
         const a = 1, b = 2, c = 3;
         const g = a < b;
         const h = (a < b) > c;
         const arr = new Array<number>(1);
-        console.log(JSON.stringify([f1(1), f2("s"), f3(1, 2), f4(3), g, h, arr.length, (1 as any) + 1]));
+        console.log(JSON.stringify([f1(1), f2("s"), f3(1, 2), f4(3), g, h, arr.length, (1 as any) + 1, typeof f5, typeof f6]));
       `;
       // [file, source, stdout when run (null when the file is rejected)]
       const cases = [
@@ -1649,8 +1657,12 @@ function foo() {}
         ["arrow.cts", "let f = <T>() => {};", null],
         ["arrow-args.mts", "let f = <T>(x: T) => x;", null],
         ["arrow-args.cts", "let f = <T>(x: T) => x;", null],
-        ["allowed.mts", allowedSource, '[1,"s",[1,2],3,true,false,1,2]'],
-        ["allowed.cts", allowedSource, '[1,"s",[1,2],3,true,false,1,2]'],
+        ["async-arrow.mts", "let f = async <T>() => {};", null],
+        ["async-arrow.cts", "let f = async <T>() => {};", null],
+        ["async-arrow-args.mts", "let f = async <T>(x: T) => x;", null],
+        ["async-arrow-args.cts", "let f = async <T>(x: T) => x;", null],
+        ["allowed.mts", allowedSource, '[1,"s",[1,2],3,true,false,1,2,"function","function"]'],
+        ["allowed.cts", allowedSource, '[1,"s",[1,2],3,true,false,1,2,"function","function"]'],
         [
           "allowed.ts",
           "let y = 1; let a = <any>y; let f = <T>() => a; console.log(JSON.stringify([a, f()]));",

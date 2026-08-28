@@ -358,6 +358,7 @@ use super::GetErrno;
 macro_rules! impl_win_get_errno {
     ($($t:ty),*) => {$(
         impl GetErrno for $t {
+            #[inline] fn raw_errno(self) -> u16 { get_errno(self) as u16 }
             #[inline] fn get_errno(self) -> E { get_errno(self) }
         }
     )*};

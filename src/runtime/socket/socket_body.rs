@@ -4891,7 +4891,7 @@ pub fn js_create_socket_pair(global: &JSGlobalObject, _frame: &CallFrame) -> JsR
         let rc =
             unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds_.as_mut_ptr()) };
         if rc != 0 {
-            let err = sys::Error::from_code(sys::get_errno(rc), sys::Tag::socketpair);
+            let err = sys::Error::new(sys::GetErrno::raw_errno(rc), sys::Tag::socketpair);
             return Err(global.throw_value(err.to_js(global)));
         }
 
@@ -4938,8 +4938,8 @@ pub fn js_set_socket_options(global: &JSGlobalObject, callframe: &CallFrame) -> 
                 )
             };
             if rc != 0 {
-                Some(sys::Error::from_code(
-                    sys::get_errno(rc),
+                Some(sys::Error::new(
+                    sys::GetErrno::raw_errno(rc),
                     sys::Tag::setsockopt,
                 ))
             } else {

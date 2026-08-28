@@ -65,12 +65,13 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
             ..Default::default()
         })
     }
+    // The four below store the kernel's number (`raw_errno`), as the `check!` wrappers in `bun_sys` do.
     #[inline]
     fn errno_sys<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag) -> Option<Self> {
-        match sys::get_errno(rc) {
-            E::SUCCESS => None,
-            e => Some(Err(sys::Error {
-                errno: (e as u16),
+        match rc.raw_errno() {
+            0 => None,
+            errno => Some(Err(sys::Error {
+                errno,
                 syscall,
                 ..Default::default()
             })),
@@ -78,10 +79,10 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
     }
     #[inline]
     fn errno_sys_fd<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag, fd: FD) -> Option<Self> {
-        match sys::get_errno(rc) {
-            E::SUCCESS => None,
-            e => Some(Err(sys::Error {
-                errno: (e as u16),
+        match rc.raw_errno() {
+            0 => None,
+            errno => Some(Err(sys::Error {
+                errno,
                 syscall,
                 fd,
                 ..Default::default()
@@ -94,10 +95,10 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
         syscall: sys::Tag,
         path: impl AsRef<[u8]>,
     ) -> Option<Self> {
-        match sys::get_errno(rc) {
-            E::SUCCESS => None,
-            e => Some(Err(sys::Error {
-                errno: (e as u16),
+        match rc.raw_errno() {
+            0 => None,
+            errno => Some(Err(sys::Error {
+                errno,
                 syscall,
                 path: path.as_ref().into(),
                 ..Default::default()
@@ -111,10 +112,10 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
         path: impl AsRef<[u8]>,
         dest: impl AsRef<[u8]>,
     ) -> Option<Self> {
-        match sys::get_errno(rc) {
-            E::SUCCESS => None,
-            e => Some(Err(sys::Error {
-                errno: (e as u16),
+        match rc.raw_errno() {
+            0 => None,
+            errno => Some(Err(sys::Error {
+                errno,
                 syscall,
                 path: path.as_ref().into(),
                 dest: dest.as_ref().into(),
@@ -4889,7 +4890,8 @@ impl NodeFS {
                         0,
                     )
                 } as isize;
-                match sys::get_errno(rc) {
+                let errno = sys::GetErrno::raw_errno(rc);
+                match E::from_raw(errno) {
                     E::SUCCESS => {
                         if rc == 0 {
                             let _ = Syscall::fchmod(dest_fd, stat_.st_mode as Mode);
@@ -4898,10 +4900,10 @@ impl NodeFS {
                     }
                     E::EINTR => continue,
                     E::EXDEV | E::EINVAL | E::EOPNOTSUPP | E::EBADF => break 'cfr,
-                    e => {
+                    _ => {
                         let _ = sys::unlink(dest);
                         return Err(sys::Error {
-                            errno: e as _,
+                            errno,
                             syscall: sys::Tag::copyfile,
                             ..Default::default()
                         });
@@ -8725,7 +8727,8 @@ impl NodeFS {
                         0,
                     )
                 } as isize;
-                match sys::get_errno(rc) {
+                let errno = sys::GetErrno::raw_errno(rc);
+                match E::from_raw(errno) {
                     E::SUCCESS => {
                         if rc == 0 {
                             return Ok(());
@@ -8737,10 +8740,10 @@ impl NodeFS {
                     }
                     E::EINTR => continue,
                     E::EXDEV | E::EINVAL | E::EOPNOTSUPP | E::ENOSYS | E::EBADF => break 'cfr,
-                    e => {
+                    _ => {
                         self.sync_error_buf[..dest.len()].copy_from_slice(dest.as_bytes());
                         return Err(sys::Error {
-                            errno: e as _,
+                            errno,
                             syscall: sys::Tag::copyfile,
                             path: self.sync_error_buf[..dest.len()].into(),
                             ..Default::default()

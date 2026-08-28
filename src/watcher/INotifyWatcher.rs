@@ -217,7 +217,7 @@ impl INotifyWatcher {
         // 7) MOVED_TO http.ts
         // We still don't correctly handle MOVED_FROM && MOVED_TO it seems.
         use bun_sys::linux as system;
-        use bun_sys::{E, get_errno};
+        use bun_sys::{E, GetErrno as _};
         let mut i: u32 = 0;
         // reshaped for borrowck — track length instead of borrowing a sub-slice
         // of self.eventlist_bytes across the whole function.
@@ -237,8 +237,8 @@ impl INotifyWatcher {
                         self.eventlist_bytes.0.len(),
                     )
                 };
-                let errno = get_errno(rc);
-                match errno {
+                let errno = rc.raw_errno();
+                match E::from_raw(errno) {
                     E::SUCCESS => {
                         let mut read_len = usize::try_from(rc).expect("int cast");
                         bun_core::scoped_log!(watcher, "{} read {} bytes", self.fd, read_len);
@@ -280,8 +280,8 @@ impl INotifyWatcher {
                                             rest.len(),
                                         )
                                     };
-                                    let e = get_errno(new_rc);
-                                    match e {
+                                    let errno = new_rc.raw_errno();
+                                    match E::from_raw(errno) {
                                         E::SUCCESS => {
                                             read_len += usize::try_from(new_rc).expect("int cast");
                                             break 'outer read_len;
@@ -291,7 +291,7 @@ impl INotifyWatcher {
                                         }
                                         _ => {
                                             return Err(bun_sys::Error {
-                                                errno: e as u32 as _,
+                                                errno,
                                                 syscall: bun_sys::Tag::read,
                                                 ..Default::default()
                                             });
@@ -313,14 +313,14 @@ impl INotifyWatcher {
                             );
                         }
                         return Err(bun_sys::Error {
-                            errno: errno as u32 as _,
+                            errno,
                             syscall: bun_sys::Tag::read,
                             ..Default::default()
                         });
                     }
                     _ => {
                         return Err(bun_sys::Error {
-                            errno: errno as u32 as _,
+                            errno,
                             syscall: bun_sys::Tag::read,
                             ..Default::default()
                         });

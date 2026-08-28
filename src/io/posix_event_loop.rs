@@ -6,7 +6,7 @@ use core::fmt;
 use core::ptr;
 
 #[cfg(not(windows))]
-use bun_sys::{self as sys, Fd};
+use bun_sys::{self as sys, Fd, GetErrno as _};
 use bun_uws_sys::Loop as UwsLoop;
 
 pub type Loop = UwsLoop;
@@ -37,15 +37,15 @@ use bun_sys::syslog;
 /// Decodes the -1-sentinel *return-code* convention (the thread-local errno is
 /// only read when `rc` is the all-ones failure value). Do NOT feed it a value
 /// that already is an errno — use [`kevent_change_error`] for those.
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+#[cfg(not(windows))]
 #[inline]
 fn errno_sys<R>(rc: R, syscall: sys::Tag) -> Option<sys::Result<()>>
 where
     R: sys::GetErrno,
 {
-    match sys::get_errno(rc) {
-        sys::E::SUCCESS => None,
-        e => Some(sys::Result::Err(sys::Error::from_code(e, syscall))),
+    match rc.raw_errno() {
+        0 => None,
+        errno => Some(sys::Result::Err(sys::Error::new(errno, syscall))),
     }
 }
 
@@ -762,10 +762,9 @@ impl FilePoll {
                 // indicate the error condition.
             }
 
-            let errno = sys::get_errno(rc);
-            if errno != sys::E::SUCCESS {
+            if let Some(err) = errno_sys(rc, sys::Tag::kqueue) {
                 self.deactivate(loop_);
-                return sys::Result::Err(sys::Error::from_code(errno, sys::Tag::kqueue));
+                return err;
             }
         }
         #[cfg(target_os = "freebsd")]
@@ -968,10 +967,11 @@ impl FilePoll {
                 linux::epoll_ctl(watcher_fd, EPOLL::CTL_DEL, fd.native(), ptr::null_mut())
             };
 
-            match sys::get_errno(ctl) {
+            let errno = ctl.raw_errno();
+            match sys::E::from_raw(errno) {
                 sys::E::SUCCESS => {}
                 e if deregistration_already_gone(e) => {}
-                e => return sys::Result::Err(sys::Error::from_code(e, sys::Tag::epoll_ctl)),
+                _ => return sys::Result::Err(sys::Error::new(errno, sys::Tag::epoll_ctl)),
             }
         }
         #[cfg(target_os = "macos")]
@@ -1064,12 +1064,11 @@ impl FilePoll {
                 )
             };
 
-            let errno = sys::get_errno(rc);
             // Global failure (e.g. EBADF on the kqueue fd): the eventlist
             // was not written, so per-entry checks below would read our
             // own input. Report errno and stop.
             if rc < 0 {
-                return sys::Result::Err(sys::Error::from_code(errno, sys::Tag::kevent));
+                return sys::Result::Err(sys::Error::new(rc.raw_errno(), sys::Tag::kevent));
             }
 
             // If an error occurs while processing an element of the changelist
@@ -1131,10 +1130,11 @@ impl FilePoll {
                     ptr::null(),
                 )
             };
-            match sys::get_errno(rc) {
+            let errno = rc.raw_errno();
+            match sys::E::from_raw(errno) {
                 sys::E::SUCCESS => {}
                 e if deregistration_already_gone(e) => {}
-                e => return sys::Result::Err(sys::Error::from_code(e, sys::Tag::kevent)),
+                _ => return sys::Result::Err(sys::Error::new(errno, sys::Tag::kevent)),
             }
         }
 

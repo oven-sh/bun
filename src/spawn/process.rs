@@ -715,10 +715,10 @@ impl Process {
                     }
                     let err = libc_kill(self.pid, signal as c_int);
                     if err != 0 {
-                        let errno_ = bun_sys::get_errno(err as isize);
+                        let errno = bun_sys::GetErrno::raw_errno(err as isize);
                         // if the process was already killed don't throw
-                        if errno_ != bun_sys::E::ESRCH {
-                            return Err(bun_sys::Error::from_code(errno_, bun_sys::Tag::kill));
+                        if bun_sys::E::from_raw(errno) != bun_sys::E::ESRCH {
+                            return Err(bun_sys::Error::new(errno, bun_sys::Tag::kill));
                         }
                     }
                 }
@@ -3385,12 +3385,13 @@ mod spawn_process_body {
 
                     // SAFETY: valid pollfd array
                     let rc = unsafe { libc::poll(poll_fds_buf.as_mut_ptr(), poll_len as _, -1) };
-                    match bun_sys::get_errno(rc as isize) {
+                    let errno = bun_sys::GetErrno::raw_errno(rc as isize);
+                    match bun_sys::E::from_raw(errno) {
                         bun_sys::E::SUCCESS => {}
                         bun_sys::E::EAGAIN | bun_sys::E::EINTR => continue,
-                        err => {
+                        _ => {
                             cleanup_spawn_posix(&mut out, out_fds, &process, success);
-                            return Ok(Err(bun_sys::Error::from_code(err, bun_sys::Tag::poll)));
+                            return Ok(Err(bun_sys::Error::new(errno, bun_sys::Tag::poll)));
                         }
                     }
                 }
@@ -3905,10 +3906,11 @@ mod spawn_process_body {
 
                 // SAFETY: valid pollfd array
                 let rc = unsafe { libc::poll(buf.as_mut_ptr(), pfds_len as _, timeout_ms) };
-                match bun_sys::get_errno(rc as isize) {
+                let errno = bun_sys::GetErrno::raw_errno(rc as isize);
+                match bun_sys::E::from_raw(errno) {
                     bun_sys::E::SUCCESS => {}
                     bun_sys::E::EAGAIN | bun_sys::E::EINTR => {}
-                    err => return Some(Err(bun_sys::Error::from_code(err, bun_sys::Tag::poll))),
+                    _ => return Some(Err(bun_sys::Error::new(errno, bun_sys::Tag::poll))),
                 }
 
                 if (ppid_fd.fd() != Fd::INVALID && buf[ppid_idx].revents != 0)

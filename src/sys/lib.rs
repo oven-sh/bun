@@ -7411,10 +7411,11 @@ pub fn kevent(
                 timeout.map_or(core::ptr::null(), std::ptr::from_ref),
             )
         };
-        match get_errno(rc) {
+        let errno = GetErrno::raw_errno(rc);
+        match E::from_raw(errno) {
             E::SUCCESS => return Ok(rc as usize),
             E::EINTR => continue,
-            e => return Err(Error::from_code(e, Tag::kevent).with_fd(fd)),
+            _ => return Err(Error::new(errno, Tag::kevent).with_fd(fd)),
         }
     }
 }

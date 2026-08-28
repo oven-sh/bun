@@ -196,7 +196,7 @@ impl LinuxMemFdAllocator {
         // Using huge pages was slower.
         let fd = match sys::memfd_create(label, sys::MemfdFlags::NonExecutable) {
             Err(err) => {
-                return Err(sys::Error::from_code(err.get_errno(), sys::Tag::open));
+                return Err(sys::Error::new(err.errno, sys::Tag::open));
             }
             Ok(fd) => fd,
         };

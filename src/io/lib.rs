@@ -1741,9 +1741,9 @@ impl Poll {
             )
         };
 
-        let errno = sys::get_errno(ctl);
-        if errno != E::SUCCESS {
-            return Err(sys::Error::from_code(errno, sys::Tag::epoll_ctl));
+        match sys::GetErrno::raw_errno(ctl) {
+            0 => {}
+            errno => return Err(sys::Error::new(errno, sys::Tag::epoll_ctl)),
         }
         // Only mark if it successfully registered.
         // If it failed to register, we don't want to unregister it later if

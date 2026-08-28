@@ -190,15 +190,14 @@ use super::GetErrno;
 // the errno is stored in this value
 impl GetErrno for usize {
     #[inline]
-    fn get_errno(self) -> E {
+    fn raw_errno(self) -> u16 {
         // `as` between same-width usize/isize is a bit-reinterpretation
         let signed = self as isize;
-        let int = if signed > -4096 && signed < 0 {
-            -signed
+        if signed > -4096 && signed < 0 {
+            (-signed) as u16
         } else {
             0
-        };
-        E::from_raw(int as u16)
+        }
     }
 }
 

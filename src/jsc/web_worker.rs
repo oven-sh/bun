@@ -929,7 +929,9 @@ impl WebWorker {
         self.set_status(Status::Running);
 
         // don't run the GC if we don't actually need to
-        if vm.is_event_loop_alive() || vm.event_loop_mut().tick_concurrent_with_count() > 0 {
+        if vm.standalone_module_graph.is_none()
+            && (vm.is_event_loop_alive() || vm.event_loop_mut().tick_concurrent_with_count() > 0)
+        {
             vm.global().vm().release_weak_refs();
             // `Arena = bumpalo::Bump` has no collect; global mimalloc
             // handles reclamation.

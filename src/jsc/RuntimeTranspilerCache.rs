@@ -684,48 +684,76 @@ impl RuntimeTranspilerCache {
     ///
     /// A cache entry is executed as code, and every local user can write to
     /// the temp directory, so a shared `<tmpdir>/bun/@t@` would let another
-    /// user plant entries. The root is per-user instead: created `0700`, then
+    /// user plant entries. The root is per-user instead: created `0700` and
     /// checked through an `O_NOFOLLOW` directory fd before anything is read
     /// from it. It has to be a directory owned by the effective uid with no
-    /// group/other write bits. Anything else returns 0 ("cache disabled").
+    /// group/other write bits. Later opens go by path, so the temp directory
+    /// itself must not let another user rename or unlink that root (see
+    /// `entries_replaceable_by_others`). Anything else returns 0, which
+    /// means "cache disabled".
     #[cfg(unix)]
     fn tmpdir_cache_dir(top: &[u8], buf: &mut PathBuffer) -> usize {
         let euid = sys::c::geteuid();
-        let mut name_buf = [0u8; 16];
-        let name = bun_core::fmt::buf_print_infallible(&mut name_buf, format_args!("bun-{}", euid));
-        let parts: &[&[u8]] = &[bun_resolver::fs::RealFS::tmpdir_path(), name];
-        let root = path_handler::join_abs_string_buf_z::<platform::Loose>(top, &mut buf[..], parts);
-        let root_len = root.len();
-        const SUFFIX: &[u8] = b"/@t@";
-        if root_len + SUFFIX.len() >= MAX_PATH_BYTES {
+        let tmpdir = bun_resolver::fs::RealFS::tmpdir_path();
+
+        let parent =
+            path_handler::join_abs_string_buf_z::<platform::Loose>(top, &mut buf[..], &[tmpdir]);
+        let Ok(parent_fd) = sys::open(
+            parent,
+            sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC,
+            0,
+        ) else {
+            return 0;
+        };
+        let _close_parent = sys::CloseOnDrop::new(parent_fd);
+        let Ok(parent_st) = sys::fstat(parent_fd) else {
+            return 0;
+        };
+        if Self::entries_replaceable_by_others(&parent_st, euid) {
             return 0;
         }
 
-        match sys::mkdir(root, 0o700) {
+        let mut name_buf = [0u8; 16];
+        let name =
+            bun_core::fmt::buf_print_z_infallible(&mut name_buf, format_args!("bun-{}", euid));
+        match sys::mkdirat(parent_fd, name, 0o700) {
             Ok(()) => {}
             Err(err) if err.get_errno() == sys::E::EEXIST => {}
             Err(_) => return 0,
         }
-        let Ok(fd) = sys::open(
-            root,
+        let Ok(root_fd) = sys::openat(
+            parent_fd,
+            name,
             sys::O::RDONLY | sys::O::DIRECTORY | sys::O::NOFOLLOW | sys::O::CLOEXEC,
             0,
         ) else {
             return 0;
         };
-        let _close = sys::CloseOnDrop::new(fd);
-        let Ok(st) = sys::fstat(fd) else {
+        let _close_root = sys::CloseOnDrop::new(root_fd);
+        let Ok(root_st) = sys::fstat(root_fd) else {
             return 0;
         };
-        let mode = st.st_mode as sys::Mode;
-        if !sys::S::ISDIR(mode) || st.st_uid != euid || mode & (sys::S::IWGRP | sys::S::IWOTH) != 0
-        {
+        let root_mode = root_st.st_mode as sys::Mode;
+        if root_st.st_uid != euid || root_mode & (sys::S::IWGRP | sys::S::IWOTH) != 0 {
             return 0;
         }
 
-        buf[root_len..root_len + SUFFIX.len()].copy_from_slice(SUFFIX);
-        buf[root_len + SUFFIX.len()] = 0;
-        root_len + SUFFIX.len()
+        let parts: &[&[u8]] = &[tmpdir, name.as_bytes(), b"@t@"];
+        path_handler::join_abs_string_buf_z::<platform::Loose>(top, &mut buf[..], parts).len()
+    }
+
+    /// Can another user rename or unlink an entry of this directory? Write
+    /// permission on the directory is enough, unless the sticky bit limits
+    /// that to the entry owner, the directory owner and root, and the
+    /// directory owner is us or root. A standard `1777 /tmp` passes.
+    #[cfg(unix)]
+    fn entries_replaceable_by_others(st: &sys::Stat, euid: libc::uid_t) -> bool {
+        let mode = st.st_mode as sys::Mode;
+        if mode & (sys::S::IWGRP | sys::S::IWOTH) == 0 {
+            return false;
+        }
+        let sticky = mode & sys::S::ISVTX != 0;
+        !(sticky && (st.st_uid == euid || st.st_uid == 0))
     }
 
     // Only do this at most once per-thread.

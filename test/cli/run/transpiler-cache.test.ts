@@ -216,8 +216,10 @@ describe("transpiler cache", () => {
     "falls back to a private per-user directory in the temp dir when there is no home",
     async () => {
       writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "tmpdir-cache"));
+      // Shaped like a standard /tmp: world-writable with the sticky bit.
       const shared_tmp = join(temp_dir, "shared-tmp");
       mkdirSync(shared_tmp, { recursive: true });
+      chmodSync(shared_tmp, 0o1777);
 
       const user_root = join(shared_tmp, `bun-${process.geteuid!()}`);
       const user_cache = join(user_root, "@t@");
@@ -230,6 +232,13 @@ describe("transpiler cache", () => {
       // The second run is served from the cache and writes no new entry.
       expect(await bunRun(join(temp_dir, "a.js"), noHomeEnv(shared_tmp))).toSpawn("tmpdir-cache");
       expect(readdirSync(user_cache)).toHaveLength(1);
+
+      // A private temp dir (no write bits for others) works as well.
+      const private_tmp = join(temp_dir, "private-tmp");
+      mkdirSync(private_tmp, { recursive: true });
+      chmodSync(private_tmp, 0o755);
+      expect(await bunRun(join(temp_dir, "a.js"), noHomeEnv(private_tmp))).toSpawn("tmpdir-cache");
+      expect(readdirSync(join(private_tmp, `bun-${process.geteuid!()}`, "@t@"))).toHaveLength(1);
     },
   );
 
@@ -237,6 +246,14 @@ describe("transpiler cache", () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "untrusted-root"));
     const shared_tmp = join(temp_dir, "shared-tmp");
     const user_root = join(shared_tmp, `bun-${process.geteuid!()}`);
+
+    // The temp dir is world-writable without the sticky bit: another user
+    // could rename our root away after the check, so nothing is created.
+    mkdirSync(shared_tmp, { recursive: true });
+    chmodSync(shared_tmp, 0o777);
+    expect(await bunRun(join(temp_dir, "a.js"), noHomeEnv(shared_tmp))).toSpawn("untrusted-root");
+    expect(readdirSync(shared_tmp)).toEqual([]);
+    chmodSync(shared_tmp, 0o1777);
 
     // Another local user pre-created the root as a world-writable directory.
     mkdirSync(user_root, { recursive: true });

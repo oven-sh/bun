@@ -200,9 +200,7 @@ pub(crate) fn write_bind<Context: WriterContext>(
                 l.write_excluding_self()?;
             }
             types::Tag::int4 | types::Tag::int4_array => {
-                // coerce::<i32> saturates on overflow (and maps NaN to 0), which
-                // silently stores the wrong value. Range-check via i64 so an
-                // out-of-range or non-finite value surfaces as an error instead.
+                // coerce::<i32> saturates and maps NaN to 0; reject instead.
                 if value.get_number().is_some_and(|n| n.is_nan()) {
                     return Err(AnyPostgresError::Overflow);
                 }

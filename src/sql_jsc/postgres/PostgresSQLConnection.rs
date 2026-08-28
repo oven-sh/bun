@@ -1531,9 +1531,7 @@ impl PostgresSQLConnection {
             || self.current().is_some()
     }
 
-    /// Absolute byte position to pass to `rollback_write_buffer` when a
-    /// `PostgresRequest::*` serializer errors mid-write, so partial frontend
-    /// messages are not flushed to the socket.
+    /// Snapshot for `rollback_write_buffer` when a serializer fails mid-message.
     #[inline]
     pub fn write_buffer_mark(&self) -> usize {
         self.write_buffer.get().byte_list.len()

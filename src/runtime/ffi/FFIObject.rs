@@ -561,14 +561,10 @@ fn get_ptr_slice(
                 );
             }
 
-            if value_length.as_number() == 0.0 {
-                return Err(global_this.throw_invalid_arguments(format_args!(
-                    "length must be > 0. This usually means a bug in your code."
-                )));
-            }
-
+            // `to_int64` maps NaN and every value in (-1, 1) to 0, so this also
+            // rejects a length that would truncate to an empty view.
             let length_i = value_length.to_int64();
-            if length_i < 0 {
+            if length_i <= 0 {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "length must be > 0. This usually means a bug in your code."
                 )));

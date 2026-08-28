@@ -34,6 +34,12 @@ describe.each([
     ["a string byteLength", () => view(address, 0, "x" as any), "length must be a number."],
     ["a zero byteLength", () => view(address, 0, 0), "length must be > 0. This usually means a bug in your code."],
     ["a negative byteLength", () => view(address, 0, -1), "length must be > 0. This usually means a bug in your code."],
+    ["a NaN byteLength", () => view(address, 0, NaN), "length must be > 0. This usually means a bug in your code."],
+    [
+      "a byteLength that truncates to zero",
+      () => view(address, 0, 0.5),
+      "length must be > 0. This usually means a bug in your code.",
+    ],
     [
       "a string finalization callback",
       () => (view as any)(address, 0, 8, "x"),

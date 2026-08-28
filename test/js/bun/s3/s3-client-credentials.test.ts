@@ -81,8 +81,7 @@ describe("S3Client credentials", () => {
   });
 
   test("requests sign with the shared or the overridden credentials", async () => {
-    // The fake S3 endpoint is a server in the child process. The child runs
-    // without the proxy variables of this environment so the requests reach it.
+    // Run without the proxy variables of this environment so the requests reach the fake endpoint.
     const env = { ...bunEnv };
     for (const name of ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]) delete env[name];
     await using proc = Bun.spawn({

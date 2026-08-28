@@ -1718,8 +1718,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 // lifetime is managed by the resolve callback itself).
                 let _ = S3StreamWrapper::resolve(result, ctx.cast::<S3StreamWrapper<'static>>());
             }
-            // `upload_stream` adopts the ref by value and the MultiPartUpload
-            // derefs on completion.
             let _ = s3::upload_stream(
                 credentials_with_options.credentials.clone(),
                 s3_path,

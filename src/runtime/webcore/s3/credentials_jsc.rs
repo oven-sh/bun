@@ -55,9 +55,7 @@ const ACL_ONE_OF: &str = "\"private\", \"public-read\", \"public-read-write\", \
 const STORAGE_CLASS_ONE_OF: &str = "\"STANDARD\", \"STANDARD_IA\", \"INTELLIGENT_TIERING\", \"EXPRESS_ONEZONE\", \
 \"ONEZONE_IA\", \"GLACIER\", \"GLACIER_IR\", \"REDUCED_REDUNDANCY\", \"OUTPOSTS\", \"DEEP_ARCHIVE\", \"SNOW\"";
 
-/// The credential overrides from the options object apply to a copy of `base`.
-/// The copy is made on the first override only, so a call with no credential
-/// override never copies.
+/// Copies `base` on the first override. Later overrides write to that copy.
 fn copy_on_override<'a>(
     copy: &'a mut Option<S3Credentials>,
     base: &S3Credentials,

@@ -255,8 +255,6 @@ fn construct_s3_file_internal_store(
     construct_s3_file_with_s3_credentials(global, path, options, &existing_credentials)
 }
 
-/// The store shares `default_credentials` unless `options` overrides a
-/// credential field. Then it gets its own copy with the overrides applied.
 pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
     global: &JSGlobalObject,
     path: PathLike<'static>,

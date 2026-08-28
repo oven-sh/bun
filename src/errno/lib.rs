@@ -241,10 +241,7 @@ pub mod posix {
 /// `-errno` from `usize`, Darwin/FreeBSD read thread-local errno on `-1`,
 /// Windows ignores `rc` and reads `GetLastError()`/`WSAGetLastError()`).
 pub trait GetErrno: Copy {
-    /// The OS error number behind this return value, `0` when it is a success.
-    /// On POSIX this is the kernel's errno, which is not bound to the `E` table
-    /// (FUSE pass-through, `ENOTSUPP` 524). Store this one in `bun_sys::Error`
-    /// so the user sees the real number.
+    /// The OS error number behind this return value (`0` = success); on POSIX it can lie outside the `E` table.
     fn raw_errno(self) -> u16;
 
     /// [`raw_errno`](Self::raw_errno) decoded into the table; an undeclared code is `E::EUNKNOWN`.
@@ -512,8 +509,7 @@ mod errno_name_tests {
         assert_eq!(e_from_negated(-524), E::EUNKNOWN);
         assert_eq!(e_from_negated(-(E::EUNKNOWN as i32)), E::EUNKNOWN);
 
-        // Linux raw syscalls hand back `-errno` in the return register. The
-        // enum collapses an undeclared code; `raw_errno` keeps it.
+        // Linux raw syscalls hand back `-errno` in the return register.
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             assert_eq!((-524isize as usize).get_errno(), E::EUNKNOWN);
@@ -526,8 +522,7 @@ mod errno_name_tests {
         }
     }
 
-    /// The libc convention: `-1` means failure and the thread-local errno holds
-    /// the code, which can be one the table does not declare.
+    /// libc convention: `-1` means failure and the thread-local errno holds the code.
     #[cfg(not(windows))]
     #[test]
     fn libc_raw_errno_is_the_thread_local_value() {

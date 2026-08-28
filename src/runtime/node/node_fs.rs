@@ -65,9 +65,7 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
             ..Default::default()
         })
     }
-    // The four below store `rc.raw_errno()`, the kernel's number, like the
-    // `check!` wrappers in `bun_sys` do: a code outside the `E` table keeps
-    // its value in `err.errno` instead of collapsing to `EUNKNOWN`'s.
+    // The four below store the kernel's number (`raw_errno`), as the `check!` wrappers in `bun_sys` do.
     #[inline]
     fn errno_sys<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag) -> Option<Self> {
         match rc.raw_errno() {

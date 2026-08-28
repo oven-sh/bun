@@ -355,8 +355,6 @@ use super::GetErrno;
 // Windows errno comes from `GetLastError()` regardless of `rc`, so every impl
 // ignores `self`. Kept to the same concrete-type set as POSIX — a blanket impl
 // would shadow `bun_sys::Error::get_errno` (inherent method) via autoref.
-// There is no host errno number here: the Win32 code is mapped to an `E`
-// discriminant, and that discriminant is what `bun_sys::Error` stores.
 macro_rules! impl_win_get_errno {
     ($($t:ty),*) => {$(
         impl GetErrno for $t {

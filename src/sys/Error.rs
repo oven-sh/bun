@@ -287,10 +287,7 @@ impl Error {
         }
     }
 
-    /// Decode `self.errno` (+ `from_libuv` on Windows) into a `SystemErrno`.
-    /// Shared by `name()` / `get_error_code_tag_name()`. `None` only for errno `0`
-    /// on POSIX; a non-zero errno the table does not declare is `EUNKNOWN`, and
-    /// `self.errno` keeps the real number for `to_system_error`.
+    /// Decode `self.errno` (+ `from_libuv` on Windows) into a `SystemErrno`; `None` only for errno `0` on POSIX, an undeclared errno is `EUNKNOWN`.
     #[inline]
     fn resolve_system_errno(&self) -> Option<SystemErrno> {
         #[cfg(windows)]

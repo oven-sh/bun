@@ -595,8 +595,7 @@ impl Loader {
         }
     }
 
-    /// A `Worker`'s loader: the map plus the explicit entries already marked
-    /// loaded, so a pipe is not read twice.
+    /// A `Worker`'s loader: the map, with the explicit entries marked loaded so a pipe is not read twice.
     pub fn clone_for_worker(&self) -> Result<Loader, AllocError> {
         Ok(Loader {
             map: self.map.clone_with_allocator()?,

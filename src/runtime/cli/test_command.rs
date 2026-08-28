@@ -1906,8 +1906,7 @@ impl TestCommand {
             reporter.reporters.only_failures = true; // only-failures defaults to true for ai agents
         }
 
-        // A worker's environment is the coordinator's env map, env files included.
-        // A pipe can be read once, and `BUN_OPTIONS` in that map can carry `--env-file`.
+        // The worker's environment already holds the coordinator's env file values, and `BUN_OPTIONS` in it can carry `--env-file`.
         if ctx.test_options.test_worker {
             ctx.args.env_files.clear();
             ctx.args.disable_default_env_files = true;

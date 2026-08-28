@@ -273,6 +273,13 @@ pub struct Call {
 
     /// Used when printing to generate the source prop on the fly
     pub was_jsx_element: bool,
+
+    /// True if the call target was a property access (`a.b()` or `a[b]()`) in
+    /// the source, so the call binds `this` to `a`. When a later rewrite turns
+    /// some other target into a property access (`(0, a.b)()` folded to
+    /// `a.b()`, or `fn()` bound to `import_ns.fn()`), this stays false and the
+    /// printer emits `(0, a.b)()` to keep `this` undefined.
+    pub target_was_originally_property_access: bool,
 }
 impl Default for Call {
     fn default() -> Self {
@@ -284,6 +291,7 @@ impl Default for Call {
             close_paren_loc: crate::Loc::EMPTY,
             can_be_unwrapped_if_unused: CallUnwrap::Never,
             was_jsx_element: false,
+            target_was_originally_property_access: false,
         }
     }
 }
@@ -2118,6 +2126,11 @@ pub struct Template {
     /// `parts()` / `parts_mut()` for ergonomic access; never null.
     pub parts: crate::StoreSlice<TemplatePart>,
     pub head: TemplateContents,
+    /// True if the tag was a property access (`a.b\`\`` or `a[b]\`\``) in the
+    /// source. Same role as `Call::target_was_originally_property_access`: a
+    /// tag that became a property access through a rewrite prints as
+    /// `(0, a.b)\`\`` so `this` stays undefined.
+    pub tag_was_originally_property_access: bool,
 }
 
 impl Template {
@@ -2340,6 +2353,7 @@ impl Template {
                         .expect("infallible: variant checked")
                         .shallow_clone(),
                 ),
+                tag_was_originally_property_access: false,
             },
             loc,
         )

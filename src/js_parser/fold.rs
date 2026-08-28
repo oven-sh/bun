@@ -467,10 +467,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // To avoid thinking too much about edgecases, only do this for:
                             //   1) Objects with a single property
                             //   2) Not a method, not a computed property
+                            //   3) Not a call target or template tag ("this" would change)
                             if obj.properties.len_u32() == 1
                                 && !identifier_opts.is_delete_target()
                                 && identifier_opts.assign_target() == js_ast::AssignTarget::None
                                 && !identifier_opts.is_call_target()
+                                && !identifier_opts.is_template_tag()
                             {
                                 let prop: &G::Property = &obj.properties.slice()[0];
                                 if let (Some(value), Some(key)) = (prop.value, prop.key) {

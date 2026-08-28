@@ -1093,6 +1093,7 @@ pub mod parse_worker {
                         target: require_property,
                         // SAFETY: bump-owned slice; never grown via this Vec.
                         args: unsafe { bun_ast::ExprNodeList::from_bump_slice(require_args) },
+                        target_was_originally_property_access: true,
                         ..Default::default()
                     },
                     Loc { start: 0 },

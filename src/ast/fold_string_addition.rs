@@ -200,6 +200,7 @@ pub fn fold_string_addition(
                                         right.head.cooked(),
                                         matches!(l.data, Data::EInlinedEnum(_)),
                                     )),
+                                    tag_was_originally_property_access: false,
                                 },
                                 l.loc,
                             ));

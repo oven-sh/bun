@@ -61,13 +61,13 @@ describe("bundler", () => {
           ["react.development.js:2495:'actScopeDepth'", "23:4082:or++"],
           ["react.development.js:696:''Component'", '1:7685:\'Component "%s"'],
           ["entry.tsx:6:'\"Content-Type\"'", '100:18806:"Content-Type"'],
-          ["entry.tsx:11:'<html>'", "100:19060:void"],
-          ["entry.tsx:23:'await'", "100:19159:await"],
+          ["entry.tsx:11:'<html>'", "100:19076:void"],
+          ["entry.tsx:23:'await'", "100:19175:await"],
         ],
       },
     },
     expectExactFilesize: {
-      "out/entry.js": 221984,
+      "out/entry.js": 222004,
     },
     run: {
       stdout: "<!DOCTYPE html><html><body><h1>Hello World</h1><p>This is an example.</p></body></html>",

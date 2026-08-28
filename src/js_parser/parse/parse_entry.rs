@@ -721,6 +721,7 @@ fn lower_one_date_time_literal<'a>(
                     target: from_dot,
                     args: Vec::from_arena_slice(args_slice),
                     can_be_unwrapped_if_unused: E::CallUnwrap::IfUnused,
+                    target_was_originally_property_access: true,
                     ..Default::default()
                 },
                 loc,

@@ -292,6 +292,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 tag: None,
                 head: E::TemplateContents::Cooked(head),
                 parts,
+                tag_was_originally_property_access: false,
             },
             loc,
         ))

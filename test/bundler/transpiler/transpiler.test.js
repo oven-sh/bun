@@ -269,6 +269,157 @@ describe("Bun.Transpiler", () => {
     });
   });
 
+  // A call target or template tag that is a property access binds `this` to the
+  // object. When a rewrite turns some other expression into a property access in
+  // that position, the printer must emit `(0, a.b)` so `this` stays undefined.
+  describe("this preservation for call targets and template tags", () => {
+    // Both the plain and the minify-syntax transpiler must agree on these.
+    const both = (code, out) => {
+      ts.expectPrinted_(code, out);
+      ts.expectPrintedMin_(code, out);
+    };
+
+    it("keeps `this` of a property access that was written as one", () => {
+      both("x.y();\n", "x.y();\n");
+      both("x[y]();\n", "x[y]();\n");
+      both("(x.y)();\n", "x.y();\n");
+      both("(x[y])();\n", "x[y]();\n");
+      both("x.y``;\n", "x.y``;\n");
+      both("x[y]``;\n", "x[y]``;\n");
+      both("(x.y)``;\n", "x.y``;\n");
+      both("x?.y();\n", "x?.y();\n");
+      both("x.y?.();\n", "x.y?.();\n");
+      both("(x?.y)();\n", "(x?.y)();\n");
+      both("(x?.[y])();\n", "(x?.[y])();\n");
+      both("new x.y();\n", "new x.y;\n");
+      both(
+        "class A extends B { m() { super.x(); super[y](); (super.x)(); } }",
+        "class A extends B {\n  m() {\n    super.x();\n    super[y]();\n    super.x();\n  }\n}",
+      );
+    });
+
+    it("call target folds", () => {
+      // Comma folding only happens with minify-syntax.
+      ts.expectPrinted_("let x = (2, y.z)();\n", "let x = (2, y.z)();\n");
+      ts.expectPrintedMin_("let x = (2, y.z)();\n", "let x = (0, y.z)();\n");
+      ts.expectPrinted_("let x = (2, y[z])();\n", "let x = (2, y[z])();\n");
+      ts.expectPrintedMin_("let x = (2, y[z])();\n", "let x = (0, y[z])();\n");
+      ts.expectPrinted_("let x = (2, y)();\n", "let x = (2, y)();\n");
+      ts.expectPrintedMin_("let x = (2, y)();\n", "let x = y();\n");
+      both("let x = (0, y.z)();\n", "let x = (0, y.z)();\n");
+      both("let x = (sideEffect(), y.z)();\n", "let x = (sideEffect(), y.z)();\n");
+
+      // Logical and conditional folds on constants run in both modes.
+      both("let x = (true && y.z)();\n", "let x = (0, y.z)();\n");
+      both("let x = (false || y.z)();\n", "let x = (0, y.z)();\n");
+      both("let x = (null ?? y.z)();\n", "let x = (0, y.z)();\n");
+      both("let x = (1 ? y.z : 2)();\n", "let x = (0, y.z)();\n");
+      both("let x = (0 ? 1 : y.z)();\n", "let x = (0, y.z)();\n");
+      both("let x = (true && y[z])();\n", "let x = (0, y[z])();\n");
+      both("let x = (false || y[z])();\n", "let x = (0, y[z])();\n");
+      both("let x = (null ?? y[z])();\n", "let x = (0, y[z])();\n");
+      both("let x = (1 ? y[z] : 2)();\n", "let x = (0, y[z])();\n");
+      both("let x = (0 ? 1 : y[z])();\n", "let x = (0, y[z])();\n");
+      both("let x = (true && y)();\n", "let x = y();\n");
+      both("let x = (1 ? y : 2)();\n", "let x = y();\n");
+
+      // Object and array literal inlining
+      ts.expectPrintedMin_("({ f: y }).f();\n", "({ f: y }).f();\n");
+      ts.expectPrintedMin_("({ f: y.z }).f();\n", "({ f: y.z }).f();\n");
+      ts.expectPrintedMin_("[y.z][0]();\n", "(0, y.z)();\n");
+      ts.expectPrintedMin_("[y][0]();\n", "y();\n");
+
+      // Single-use substitution does not move a property access into a call target
+      ts.expectPrintedMin_(
+        "function f(a) { const t = a.b; return t() }",
+        "function f(a) {\n  const t = a.b;\n  return t();\n}",
+      );
+      ts.expectPrintedMin_(
+        "function f(a) { const t = a?.b; return t() }",
+        "function f(a) {\n  const t = a?.b;\n  return t();\n}",
+      );
+      ts.expectPrintedMin_("function f(a) { const t = a.b; return t.c() }\n", "function f(a) {\n  return a.b.c();\n}");
+      ts.expectPrintedMin_(
+        "function f(a) { const t = a.b; return new t() }\n",
+        "function f(a) {\n  return new a.b;\n}",
+      );
+    });
+
+    it("template tag folds", () => {
+      ts.expectPrinted_("(2, y.z)``;\n", "(2, y.z)``;\n");
+      ts.expectPrintedMin_("(2, y.z)``;\n", "(0, y.z)``;\n");
+      ts.expectPrinted_("(2, y[z])``;\n", "(2, y[z])``;\n");
+      ts.expectPrintedMin_("(2, y[z])``;\n", "(0, y[z])``;\n");
+      ts.expectPrinted_("(2, y)``;\n", "(2, y)``;\n");
+      ts.expectPrintedMin_("(2, y)``;\n", "y``;\n");
+      both("(0, y.z)``;\n", "(0, y.z)``;\n");
+      both("(0, y.z)`a${b}c`;\n", "(0, y.z)`a${b}c`;\n");
+      both("(sideEffect(), y.z)``;\n", "(sideEffect(), y.z)``;\n");
+
+      both("(true && y.z)``;\n", "(0, y.z)``;\n");
+      both("(false || y.z)``;\n", "(0, y.z)``;\n");
+      both("(null ?? y.z)``;\n", "(0, y.z)``;\n");
+      both("(1 ? y.z : 2)``;\n", "(0, y.z)``;\n");
+      both("(0 ? 1 : y.z)``;\n", "(0, y.z)``;\n");
+      both("(true && y[z])``;\n", "(0, y[z])``;\n");
+      both("(false || y[z])``;\n", "(0, y[z])``;\n");
+      both("(null ?? y[z])``;\n", "(0, y[z])``;\n");
+      both("(1 ? y[z] : 2)``;\n", "(0, y[z])``;\n");
+      both("(true && y)``;\n", "y``;\n");
+      both("(1 ? y : 2)``;\n", "y``;\n");
+
+      // Object and array literal inlining
+      ts.expectPrintedMin_("({ f: y }).f``;\n", "({ f: y }).f``;\n");
+      ts.expectPrintedMin_("({ f: y.z }).f``;\n", "({ f: y.z }).f``;\n");
+      ts.expectPrintedMin_("[y.z][0]``;\n", "(0, y.z)``;\n");
+      ts.expectPrintedMin_("[y][0]``;\n", "y``;\n");
+
+      // Single-use substitution relies on the printer for the wrap
+      ts.expectPrintedMin_("function f(a) { const t = a.b; return t`x` }", "function f(a) {\n  return (0, a.b)`x`;\n}");
+      ts.expectPrintedMin_(
+        "function f(a) { const t = a.b; return t`${x}` }",
+        "function f(a) {\n  return (0, a.b)`${x}`;\n}",
+      );
+      ts.expectPrintedMin_(
+        "function f(a) { const t = a[b]; return t`x` }",
+        "function f(a) {\n  return (0, a[b])`x`;\n}",
+      );
+      ts.expectPrintedMin_("function f(a) { const t = a; return t`x` }\n", "function f(a) {\n  return a`x`;\n}");
+    });
+
+    it("optional chains as template tags stay parenthesized", () => {
+      both("(a?.b)``;\n", "(a?.b)``;\n");
+      both("(a?.[b])``;\n", "(a?.[b])``;\n");
+      both("(a?.b.c)``;\n", "(a?.b.c)``;\n");
+      both("(a?.b())``;\n", "(a?.b())``;\n");
+      both("(a?.b).c``;\n", "(a?.b).c``;\n");
+      both("(a?.b)`x${y}z`;\n", "(a?.b)`x${y}z`;\n");
+      ts.expectPrintedMin_(
+        "function f(a) { const t = a?.b; return t`x` }",
+        "function f(a) {\n  return (0, a?.b)`x`;\n}",
+      );
+      ts.expectPrintedMin_(
+        "function f(a) { const t = a?.[b]; return t`x` }",
+        "function f(a) {\n  return (0, a?.[b])`x`;\n}",
+      );
+      both("(true && a?.b)``;\n", "(0, a?.b)``;\n");
+      ts.expectParseError("a?.b``", "Template literals cannot have an optional chain as a tag");
+    });
+
+    it("defines", () => {
+      // user_nested is defined as "location.origin" (see the transpiler options above)
+      both("user_nested();\n", "(0, location.origin)();\n");
+      both("user_nested``;\n", "(0, location.origin)``;\n");
+      both("user_nested(1)(2);\n", "(0, location.origin)(1)(2);\n");
+      both("user_nested.x();\n", "location.origin.x();\n");
+      both("new user_nested();\n", "new location.origin;\n");
+      // A property access replaced by another property access keeps `this`
+      both("hello.earth();\n", "hello.mars();\n");
+      both("hello.earth``;\n", "hello.mars``;\n");
+      both("Math.log(1);\n", "console.error(1);\n");
+    });
+  });
+
   describe("TypeScript", () => {
     it("import Foo = Baz.Bar", () => {
       ts.expectPrinted_("import Foo = Baz.Bar;\nexport default Foo;", "const Foo = Baz.Bar;\nexport default Foo");

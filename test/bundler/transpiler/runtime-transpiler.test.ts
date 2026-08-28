@@ -252,3 +252,130 @@ describe("unterminated string literals in large files", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// The runtime transpiler folds constant expressions, inlines single-use
+// constants and substitutes defines. A fold that turns a call target or a
+// template tag into a property access must not change `this`, and an optional
+// chain that lands in tag position must stay parenthesized. Node prints the
+// same values for every fixture here.
+describe("this binding for call targets and template tags", () => {
+  async function run(files: Record<string, string>, entry: string, bunArgs: string[] = []) {
+    using dir = tempDir("transpiler-this-binding", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...bunArgs, entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return stdout.trim().split("\n");
+  }
+
+  // `this` is undefined for an unbound call in a module and the object for a
+  // method call.
+  const describeThis = `
+    const o = { f() { return this === o ? "o" : this === undefined ? "undefined" : typeof this } };
+    function f() { return this === undefined ? "undefined" : typeof this }
+  `;
+
+  test.concurrent("template tag folds", async () => {
+    const lines = await run(
+      {
+        "entry.mjs": `
+          ${describeThis}
+          function single() { const t = o.f; return t\`x\`; }
+          function singleIndex() { const t = o["f"]; return t\`x\`; }
+          console.log(o.f\`x\`, (o.f)\`x\`, o["f"]\`x\`, { foo: f }.foo\`\`, ({ foo: f }).foo\`\`);
+          console.log((0, o.f)\`x\`, (true && o.f)\`x\`, (false || o.f)\`x\`, (null ?? o.f)\`x\`, (1 ? o.f : 0)\`x\`, (0 ? 1 : o.f)\`x\`);
+          console.log(single(), singleIndex(), (0, f)\`\`, (true && f)\`\`);
+        `,
+      },
+      "entry.mjs",
+    );
+    expect(lines).toEqual([
+      "o o o object object",
+      "undefined undefined undefined undefined undefined undefined",
+      "undefined undefined undefined undefined",
+    ]);
+  });
+
+  test.concurrent("call target folds", async () => {
+    const lines = await run(
+      {
+        "entry.mjs": `
+          ${describeThis}
+          function single() { const t = o.f; return t(); }
+          function singleIndex() { const t = o["f"]; return t(); }
+          console.log(o.f(), (o.f)(), o["f"](), o.f?.(), o?.f(), { foo: f }.foo(), ({ foo: f }).foo());
+          console.log((0, o.f)(), (true && o.f)(), (false || o.f)(), (null ?? o.f)(), (1 ? o.f : 0)(), (0 ? 1 : o.f)());
+          console.log(single(), singleIndex(), (0, f)(), (true && f)());
+        `,
+      },
+      "entry.mjs",
+    );
+    expect(lines).toEqual([
+      "o o o o o object object",
+      "undefined undefined undefined undefined undefined undefined",
+      "undefined undefined undefined undefined",
+    ]);
+  });
+
+  test.concurrent("optional chains in tag position", async () => {
+    const lines = await run(
+      {
+        "entry.mjs": `
+          function tag(a) { const t = a?.b; return t\`x\`; }
+          function tagIndex(a) { const t = a?.["b"]; return t\`x\`; }
+          function tagDeep(a) { const t = a?.b.c; return t\`x\`; }
+          const y = { z() { return "y.z" } };
+          const w = { v: { z() { return this === w.v ? "w.v" : String(this) } } };
+          console.log(tag({ b: () => "ok" }), tagIndex({ b: () => "ok" }), tagDeep({ b: { c: () => "ok" } }));
+          console.log((y?.z)\`\`, (y?.["z"])\`\`, (w?.v).z\`\`, (true && y?.z)\`\`);
+        `,
+      },
+      "entry.mjs",
+    );
+    expect(lines).toEqual(["ok ok ok", "y.z y.z w.v y.z"]);
+  });
+
+  test.concurrent("defines", async () => {
+    const lines = await run(
+      {
+        "entry.mjs": `
+          ${describeThis}
+          o.C = class { kind = "ctor" };
+          console.log(callee(), callee\`x\`, plain(), plain\`x\`, new ctor().kind, callee.name);
+        `,
+      },
+      "entry.mjs",
+      ["--define", "callee=o.f", "--define", "plain=f", "--define", "ctor=o.C"],
+    );
+    expect(lines).toEqual(["undefined undefined undefined undefined ctor f"]);
+  });
+
+  test.concurrent("CommonJS imports", async () => {
+    const lines = await run(
+      {
+        "entry.mjs": `
+          import def from "./default.cjs";
+          import { who } from "./lib.cjs";
+          import * as ns from "./lib.cjs";
+          console.log(def(), def\`\`, who(), who\`\`, ns.who(), ns.who\`\`, (0, ns.who)(), (0, ns.who)\`\`);
+        `,
+        "default.cjs": `
+          "use strict";
+          module.exports = function () { return this === undefined ? "undefined" : typeof this; };
+        `,
+        "lib.cjs": `
+          "use strict";
+          exports.who = function () { return this === undefined ? "undefined" : this === exports ? "exports" : typeof this; };
+        `,
+      },
+      "entry.mjs",
+    );
+    expect(lines).toEqual(["undefined undefined undefined undefined object object undefined undefined"]);
+  });
+});

@@ -711,6 +711,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                                 bun_ast::Loc::EMPTY,
                             ),
                             args: bun_alloc::AstAlloc::vec(),
+                            target_was_originally_property_access: true,
                             ..Default::default()
                         },
                         bun_ast::Loc::EMPTY,

@@ -801,6 +801,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 new_args.push(*arg);
                             }
                             e.target = call_target;
+                            e.target_was_originally_property_access = true;
                             e.args = ExprNodeList::from_bump_vec(new_args);
                             return;
                         }

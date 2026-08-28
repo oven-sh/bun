@@ -385,6 +385,19 @@ function fingerprint(bytecode: Uint8Array, isPayload = true) {
   return { sha256: Bun.CryptoHasher.hash("sha256", copy, "hex"), bytes: copy.byteLength };
 }
 
+// node:vm cachedData wraps the JSC payload in a 24-byte integrity header (CachedDataHeader in
+// src/jsc/bindings/NodeVM.cpp) whose version and checksum fields also move on every WebKit upgrade. Strip it so the
+// vm entries pin the serialized bytecode alone, like the bundler outputs.
+function vmPayload(cachedData: Uint8Array) {
+  const headerSize = 24;
+  const payloadLength = new DataView(cachedData.buffer, cachedData.byteOffset, cachedData.byteLength).getUint32(
+    4,
+    true,
+  );
+  expect(cachedData.byteLength).toBe(headerSize + payloadLength);
+  return cachedData.subarray(headerSize);
+}
+
 describe("bytecode cache portability", () => {
   test("encoder output is identical on every platform", async () => {
     // The bundler builds are separate processes: start them all, then encode the in-process cases while they run.
@@ -392,13 +405,13 @@ describe("bytecode cache portability", () => {
     const outputs: Record<string, unknown> = {};
     // Program and module code blocks straight from the encoder, without the bundler in between.
     outputs["vm.Script features.js"] = fingerprint(
-      new vm.Script(featuresSource, { filename: "features.js", produceCachedData: true }).cachedData!,
+      vmPayload(new vm.Script(featuresSource, { filename: "features.js", produceCachedData: true }).cachedData!),
     );
     outputs["vm.Script shapes.js"] = fingerprint(
-      new vm.Script(shapesSource(), { filename: "shapes.js", produceCachedData: true }).cachedData!,
+      vmPayload(new vm.Script(shapesSource(), { filename: "shapes.js", produceCachedData: true }).cachedData!),
     );
     outputs["vm.Script records.js"] = fingerprint(
-      new vm.Script(recordsSource, { filename: "records.js", produceCachedData: true }).cachedData!,
+      vmPayload(new vm.Script(recordsSource, { filename: "records.js", produceCachedData: true }).cachedData!),
     );
     // A builtin (what `bun build --compile --bytecode` embeds for node:* / bun:* modules): @-intrinsics and the
     // builtin-executable entry, which user source never produces. Bun's own internal modules are not hashed here because
@@ -407,26 +420,35 @@ describe("bytecode cache portability", () => {
     outputs["builtin corpus"] = fingerprint(builtin.bytecode);
     outputs["builtin corpus strings"] = fingerprint(builtin.strings, false); // the external string table --compile embeds beside it
     outputs["vm.SourceTextModule module.js"] = fingerprint(
-      new vm.SourceTextModule(moduleSource, { identifier: "module.js" }).createCachedData(),
+      vmPayload(new vm.SourceTextModule(moduleSource, { identifier: "module.js" }).createCachedData()),
     );
     outputs["vm.Script big.js"] = fingerprint(
-      new vm.Script(bigSource(), { filename: "big.js", produceCachedData: true }).cachedData!,
+      vmPayload(new vm.Script(bigSource(), { filename: "big.js", produceCachedData: true }).cachedData!),
     );
     outputs["vm.Script source-forms.js"] = fingerprint(
-      new vm.Script(sourceFormsSource(), { filename: "source-forms.js", produceCachedData: true }).cachedData!,
+      vmPayload(
+        new vm.Script(sourceFormsSource(), { filename: "source-forms.js", produceCachedData: true }).cachedData!,
+      ),
     );
     const librarySource = (lib: string) => readFileSync(join(corpusDir, "../../node_modules", lib), "utf8");
     outputs["vm.Script lodash.js"] = fingerprint(
-      new vm.Script(librarySource("lodash/lodash.js"), { filename: "lodash.js", produceCachedData: true }).cachedData!,
+      vmPayload(
+        new vm.Script(librarySource("lodash/lodash.js"), { filename: "lodash.js", produceCachedData: true })
+          .cachedData!,
+      ),
     );
     outputs["vm.Script typescript.js"] = fingerprint(
-      new vm.Script(librarySource("typescript/lib/typescript.js"), {
-        filename: "typescript.js",
-        produceCachedData: true,
-      }).cachedData!,
+      vmPayload(
+        new vm.Script(librarySource("typescript/lib/typescript.js"), {
+          filename: "typescript.js",
+          produceCachedData: true,
+        }).cachedData!,
+      ),
     );
     outputs["vm.SourceTextModule acorn.mjs"] = fingerprint(
-      new vm.SourceTextModule(librarySource("acorn/dist/acorn.mjs"), { identifier: "acorn.mjs" }).createCachedData(),
+      vmPayload(
+        new vm.SourceTextModule(librarySource("acorn/dist/acorn.mjs"), { identifier: "acorn.mjs" }).createCachedData(),
+      ),
     );
     for (const [i, { name }] of bundlerBuilds.entries()) {
       const { js, jsc } = (await bundled)[i];

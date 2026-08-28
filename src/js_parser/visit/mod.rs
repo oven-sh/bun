@@ -1760,9 +1760,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 StmtData::SEmpty(_) => continue,
 
                 StmtData::SDirective(_) => {
-                    // Only a function body has a directive prologue. In other
-                    // block bodies the string is a side-effect-free expression
-                    // statement, so minify drops it.
                     if kind == StmtsKind::FnBody {
                         output.push(stmt);
                     }

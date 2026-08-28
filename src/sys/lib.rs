@@ -1276,28 +1276,28 @@ impl Tag {
     pub const access: Tag = Tag(2);
     pub const connect: Tag = Tag(3);
     pub const chmod: Tag = Tag(4);
-    pub(crate) const chown: Tag = Tag(5);
+    pub const chown: Tag = Tag(5);
     pub const clonefile: Tag = Tag(6);
     #[cfg(not(target_os = "macos"))]
     pub(crate) const clonefileat: Tag = Tag(7);
     pub const close: Tag = Tag(8);
     pub const copy_file_range: Tag = Tag(9);
     pub const copyfile: Tag = Tag(10);
-    pub(crate) const fchmod: Tag = Tag(11);
+    pub const fchmod: Tag = Tag(11);
     pub const fchmodat: Tag = Tag(12);
-    pub(crate) const fchown: Tag = Tag(13);
+    pub const fchown: Tag = Tag(13);
     pub(crate) const fcntl: Tag = Tag(14);
     pub const fdatasync: Tag = Tag(15);
     pub const fstat: Tag = Tag(16);
     pub const fstatat: Tag = Tag(17);
     pub const fsync: Tag = Tag(18);
-    pub(crate) const ftruncate: Tag = Tag(19);
+    pub const ftruncate: Tag = Tag(19);
     #[cfg(not(windows))]
     pub(crate) const futimens: Tag = Tag(20);
     pub const getdents64: Tag = Tag(21);
     pub const getdirentries64: Tag = Tag(22);
     pub const lchmod: Tag = Tag(23);
-    pub(crate) const lchown: Tag = Tag(24);
+    pub const lchown: Tag = Tag(24);
     pub const link: Tag = Tag(25);
     pub(crate) const lseek: Tag = Tag(26);
     pub const lstat: Tag = Tag(27);
@@ -1314,8 +1314,8 @@ impl Tag {
     pub const read: Tag = Tag(38);
     pub const readlink: Tag = Tag(39);
     pub const rename: Tag = Tag(40);
-    pub(crate) const stat: Tag = Tag(41);
-    pub(crate) const statfs: Tag = Tag(42);
+    pub const stat: Tag = Tag(41);
+    pub const statfs: Tag = Tag(42);
     pub const symlink: Tag = Tag(43);
     #[cfg(not(windows))]
     pub(crate) const symlinkat: Tag = Tag(44);

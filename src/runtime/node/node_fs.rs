@@ -9951,6 +9951,49 @@ pub enum NodeFSFunctionEnum {
 }
 
 impl NodeFSFunctionEnum {
+    /// The syscall this op names in its errors (`err.syscall` and the message).
+    /// An error the argument parser raises before any syscall runs names it too.
+    pub const fn syscall(self) -> sys::Tag {
+        use sys::Tag;
+        match self {
+            Self::Access | Self::Exists => Tag::access,
+            Self::AppendFile | Self::Open | Self::ReadFile | Self::WriteFile => Tag::open,
+            Self::Chmod => Tag::chmod,
+            Self::Chown => Tag::chown,
+            Self::Close => Tag::close,
+            Self::CopyFile => Tag::copyfile,
+            Self::Fchmod => Tag::fchmod,
+            Self::Fchown => Tag::fchown,
+            Self::Fdatasync => Tag::fdatasync,
+            Self::Fstat => Tag::fstat,
+            Self::Fsync => Tag::fsync,
+            Self::Ftruncate => Tag::ftruncate,
+            Self::Futimes => Tag::futime,
+            Self::Lchmod => Tag::lchmod,
+            Self::Lchown => Tag::lchown,
+            Self::Link => Tag::link,
+            Self::Lstat | Self::RealpathNonNative | Self::Rm => Tag::lstat,
+            Self::Lutimes => Tag::lutime,
+            Self::Mkdir => Tag::mkdir,
+            Self::Mkdtemp => Tag::mkdtemp,
+            Self::Read => Tag::read,
+            Self::Readdir => Tag::scandir,
+            Self::Readlink => Tag::readlink,
+            Self::Readv => Tag::readv,
+            Self::Realpath => Tag::realpath,
+            Self::Rename => Tag::rename,
+            Self::Rmdir => Tag::rmdir,
+            Self::Stat => Tag::stat,
+            Self::Statfs => Tag::statfs,
+            Self::Symlink => Tag::symlink,
+            Self::Truncate => Tag::truncate,
+            Self::Unlink => Tag::unlink,
+            Self::Utimes => Tag::utime,
+            Self::Write => Tag::write,
+            Self::Writev => Tag::writev,
+        }
+    }
+
     /// The event-loop [`TaskTag`] of the ops that are libuv requests on
     /// Windows (`UVFSRequest`) and so re-enter through the task queue; every
     /// other async op is a `bun_jsc::Job` and needs none.

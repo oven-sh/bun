@@ -36,6 +36,7 @@ where
     // for the duration of argument parsing on the JS thread.
     let vm: &VirtualMachine = global.bun_vm();
     let mut slice = ArgumentsSlice::init(vm, frame.arguments());
+    slice.syscall = F.syscall();
     let args = <A as FsArgument>::from_js(global, &mut slice)?;
 
     // R-2: `JsCell::with_mut` scopes the `&mut NodeFS` to the blocking
@@ -57,13 +58,13 @@ where
 /// Windows path picks `UVFSRequest` for a handful of fds-only ops while
 /// everything else uses `AsyncFSTask`, and that choice is encoded in the
 /// `async_::*` type aliases rather than derivable from `F` alone.
-fn run_async<A: FsArgument>(
+fn run_async<A: FsArgument, const F: NodeFSFunctionEnum>(
     this: &Binding,
     global: &JSGlobalObject,
     frame: &CallFrame,
     create_task: fn(&JSGlobalObject, &Binding, ThreadIsolated<A>, &mut VirtualMachine) -> JSValue,
 ) -> JsResult<JSValue> {
-    let args = match parse_async_args::<A>(global, frame) {
+    let args = match parse_async_args::<A>(global, frame, F.syscall()) {
         Ok(args) => args,
         Err(result) => return result,
     };
@@ -72,12 +73,15 @@ fn run_async<A: FsArgument>(
 }
 
 /// Parses a promise-returning binding's arguments; `Err` is what the binding returns instead.
+/// An errno the parser raises for a path names `syscall`.
 fn parse_async_args<A: FsArgument>(
     global: &JSGlobalObject,
     frame: &CallFrame,
+    syscall: bun_sys::Tag,
 ) -> Result<ThreadIsolated<A>, JsResult<JSValue>> {
     let vm: &VirtualMachine = global.bun_vm();
     let mut slice = ArgumentsSlice::init(vm, frame.arguments());
+    slice.syscall = syscall;
     let args = A::from_js_async(global, &mut slice).map_err(Err)?;
 
     let rejection = 'rejection: {
@@ -155,9 +159,12 @@ impl Binding {
 
     // ── Hand-written bindings for ops outside `NodeFSFunctionEnum` ────────
 
+    /// `cp` begins with an `lstat` of `src` (in node too), so its errors name that syscall.
+    const CP_SYSCALL: bun_sys::Tag = bun_sys::Tag::lstat;
+
     /// `callAsync(.cp)`.
     pub(crate) fn cp(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let cp_args = match parse_async_args::<args::Cp<'static>>(global, frame) {
+        let cp_args = match parse_async_args::<args::Cp<'static>>(global, frame, Self::CP_SYSCALL) {
             Ok(args) => args,
             Err(result) => return result,
         };
@@ -174,6 +181,7 @@ impl Binding {
         // SAFETY: JS-thread borrow of the per-thread VM.
         let vm: &VirtualMachine = global.bun_vm();
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
+        slice.syscall = Self::CP_SYSCALL;
 
         // `defer args.deinit()` → `Drop` on `cp_args` (its `PathLike` fields).
         let cp_args = args::Cp::from_js(global, &mut slice)?;
@@ -192,7 +200,11 @@ impl Binding {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let rd_args = match parse_async_args::<args::Readdir<'static>>(global, frame) {
+        let rd_args = match parse_async_args::<args::Readdir<'static>>(
+            global,
+            frame,
+            NodeFSFunctionEnum::Readdir.syscall(),
+        ) {
             Ok(args) => args,
             Err(result) => return result,
         };
@@ -216,6 +228,7 @@ impl Binding {
         // SAFETY: JS-thread borrow of the per-thread VM.
         let vm: &VirtualMachine = global.bun_vm();
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
+        slice.syscall = bun_sys::Tag::watch;
 
         let watch_args = fs::Watcher::Arguments::from_js(global, &mut slice)?;
 
@@ -239,6 +252,7 @@ impl Binding {
         // SAFETY: JS-thread borrow of the per-thread VM.
         let vm: &VirtualMachine = global.bun_vm();
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
+        slice.syscall = bun_sys::Tag::stat;
 
         let wf_args = fs::StatWatcher::Arguments::from_js(global, &mut slice)?;
 
@@ -265,7 +279,7 @@ macro_rules! node_fs_bindings {
                     global: &JSGlobalObject,
                     frame: &CallFrame,
                 ) -> JsResult<JSValue> {
-                    run_async::<$Args>(this, global, frame, async_::$F::create)
+                    run_async::<$Args, { NodeFSFunctionEnum::$F }>(this, global, frame, async_::$F::create)
                 }
             )*
         }

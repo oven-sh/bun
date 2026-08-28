@@ -234,6 +234,9 @@ pub struct ArgumentsSlice<'a> {
     remaining_start: usize,
     pub vm: &'a VirtualMachine,
     pub will_be_async: bool,
+    /// The syscall that an errno from a path converter names (`err.syscall` and
+    /// the message). A binding sets it to the syscall it is about to issue.
+    pub syscall: bun_sys::Tag,
     /// An errno a converter met under `will_be_async`; the binding rejects its promise with it.
     pub deferred_error: Option<Box<bun_sys::SystemError>>,
 }
@@ -251,6 +254,7 @@ impl<'a> ArgumentsSlice<'a> {
             remaining_start: 0,
             vm,
             will_be_async: false,
+            syscall: bun_sys::Tag::open,
             deferred_error: None,
         }
     }

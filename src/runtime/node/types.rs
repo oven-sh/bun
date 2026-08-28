@@ -1181,7 +1181,7 @@ impl PathLikeExt for PathLike<'_> {
         will_be_async: bool,
     ) -> JsResult<PathLike<'static>> {
         let path = path_like_from_string(global, str, will_be_async)?;
-        match Valid::path_too_long(path.slice()) {
+        match Valid::path_too_long(path.slice(), bun_sys::Tag::open) {
             Some(err) => Err(global.throw_value(err.to_error_instance(global))),
             None => Ok(path),
         }
@@ -1234,17 +1234,19 @@ fn shared_or_utf8<T>(
 pub struct Valid;
 
 impl Valid {
-    /// The ENAMETOOLONG the syscall would return: no `PathBuffer` fits this path plus its NUL.
-    pub(crate) fn path_too_long(path: &[u8]) -> Option<bun_sys::SystemError> {
+    /// The ENAMETOOLONG `syscall` would return: no `PathBuffer` fits this path plus its NUL.
+    pub(crate) fn path_too_long(
+        path: &[u8],
+        syscall: bun_sys::Tag,
+    ) -> Option<bun_sys::SystemError> {
         if path.len() < MAX_PATH_BYTES {
             return None;
         }
-        let mut system_error =
-            bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
+        Some(
+            bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, syscall)
                 .with_path(path)
-                .to_system_error();
-        system_error.syscall = bun_core::String::DEAD;
-        Some(system_error)
+                .to_system_error(),
+        )
     }
 
     /// Sync bindings throw; async ones get it as `arguments.deferred_error` and a placeholder path.
@@ -1253,7 +1255,7 @@ impl Valid {
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
     ) -> JsResult<PathLike<'static>> {
-        let Some(err) = Self::path_too_long(path.slice()) else {
+        let Some(err) = Self::path_too_long(path.slice(), arguments.syscall) else {
             return Ok(path);
         };
         drop(path);

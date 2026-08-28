@@ -1531,20 +1531,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         // Forbid top-level return inside modules with ECMAScript-style exports
         if p.fn_or_arrow_data_visit.is_outside_fn_or_arrow {
-            let where_ = if p.esm_export_keyword.len > 0 {
-                p.esm_export_keyword
-            } else if p.top_level_await_keyword.len > 0 {
-                p.top_level_await_keyword
-            } else {
-                bun_ast::Range::NONE
-            };
-
-            if where_.len > 0 {
-                p.log().add_range_error(
+            if p.has_esm_exports_syntax {
+                let (why_range, why_text) = p.why_esm_note();
+                p.log().add_range_error_fmt_with_note(
                     Some(p.source),
-                    where_,
-                    b"Top-level return cannot be used inside an ECMAScript module",
+                    js_lexer::range_of_identifier(p.source, stmt.loc),
+                    format_args!("Top-level return cannot be used inside an ECMAScript module"),
+                    format_args!("{}", why_text),
+                    why_range,
                 );
+            } else {
+                p.has_top_level_return = true;
+                // Only the CommonJS wrapper can contain this `return`, so
+                // `exports.foo = ...` must stay as-is instead of being
+                // unwrapped to an ESM export.
+                p.deoptimize_common_js_named_exports();
             }
         }
 

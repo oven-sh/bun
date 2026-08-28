@@ -72,6 +72,11 @@ describe("Bun.Transpiler replMode", () => {
       expect(result).toContain("console.log(this)");
       expect(result).not.toContain("console.log(exports)");
     });
+
+    test("top-level return is still wrapped in the IIFE", () => {
+      const result = transpiler.transformSync("return 42");
+      expect(result.trim()).toBe("(() => {\n  return 42;\n})();");
+    });
   });
 
   describe("REPL session with node:vm", () => {

@@ -116,6 +116,10 @@ bitflags::bitflags! {
         /// Renaming can also break any identifier used inside a "with" statement.
         const MUST_NOT_BE_RENAMED = 1 << 2;
 
+        /// The parser already warned that this unbound `module`/`exports` is
+        /// assigned to inside an ECMAScript module. One warning per variable.
+        const DID_WARN_ABOUT_COMMONJS_IN_ESM = 1 << 3;
+
         const REMOVE_OVERWRITTEN_FUNCTION_DECLARATION = 1 << 4;
 
         /// Used in HMR to decide when live binding code is needed.
@@ -143,6 +147,7 @@ macro_rules! symbol_flag_accessors {
 symbol_flag_accessors! {
     must_start_with_capital_letter_for_jsx, set_must_start_with_capital_letter_for_jsx => MUST_START_WITH_CAPITAL_LETTER_FOR_JSX;
     must_not_be_renamed, set_must_not_be_renamed => MUST_NOT_BE_RENAMED;
+    did_warn_about_commonjs_in_esm, set_did_warn_about_commonjs_in_esm => DID_WARN_ABOUT_COMMONJS_IN_ESM;
     remove_overwritten_function_declaration, set_remove_overwritten_function_declaration => REMOVE_OVERWRITTEN_FUNCTION_DECLARATION;
     has_been_assigned_to, set_has_been_assigned_to => HAS_BEEN_ASSIGNED_TO;
 }

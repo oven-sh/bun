@@ -247,9 +247,17 @@ impl<'a, const IS_TS: bool, const SCAN: bool> bun_ast::expr::EqlParser
     fn arena(&self) -> &bun_alloc::Arena {
         self.arena
     }
-    #[inline]
-    fn module_ref(&self) -> Ref {
-        self.module_ref
+    fn is_commonjs_module_ref(&self, ref_: Ref) -> bool {
+        if ref_.eql(self.module_ref) {
+            return true;
+        }
+        if !ref_.is_symbol() {
+            return false;
+        }
+        // In a file with ESM exports `module` is an unbound global. Bun still
+        // rewrites `require.main === module` to `import.meta.main` there.
+        let symbol = &self.symbols[ref_.inner_index() as usize];
+        symbol.kind == bun_ast::symbol::Kind::Unbound && symbol.original_name.slice() == b"module"
     }
 }
 

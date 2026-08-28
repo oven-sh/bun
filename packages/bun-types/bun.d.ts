@@ -2579,6 +2579,153 @@ declare module "bun" {
     ): Promise<DNSLookup[]>;
 
     /**
+     * An address record returned by {@link dns.resolve} with the `"A"` or
+     * `"AAAA"` record type.
+     */
+    interface AddressRecord {
+      /**
+       * The IP address as a string in IPv4 or IPv6 format.
+       *
+       * @example "127.0.0.1"
+       * @example "2001:4860:4860::8888"
+       */
+      address: string;
+
+      /**
+       * Time to live in seconds, or `undefined` when the resolver does not
+       * report one.
+       */
+      ttl: number | undefined;
+    }
+
+    /**
+     * Resolve records for a hostname with the DNS protocol.
+     *
+     * `rrtype` selects the record type and defaults to `"A"`. Lowercase
+     * record type names are also accepted. NAPTR records are only available
+     * through {@link dns.resolveNaptr}.
+     *
+     * @param hostname The hostname to resolve
+     * @param rrtype The DNS record type
+     *
+     * @example
+     * ```js
+     * const [{ address }] = await Bun.dns.resolve('example.com', 'A');
+     * const [{ exchange, priority }] = await Bun.dns.resolve('example.com', 'MX');
+     * ```
+     */
+    function resolve(hostname: string, rrtype?: "A" | "a" | "AAAA" | "aaaa"): Promise<AddressRecord[]>;
+    function resolve(hostname: string, rrtype: "CNAME" | "cname" | "NS" | "ns" | "PTR" | "ptr"): Promise<string[]>;
+    function resolve(hostname: string, rrtype: "TXT" | "txt"): Promise<string[][]>;
+    function resolve(hostname: string, rrtype: "MX" | "mx"): Promise<import("node:dns").MxRecord[]>;
+    function resolve(hostname: string, rrtype: "SRV" | "srv"): Promise<import("node:dns").SrvRecord[]>;
+    function resolve(hostname: string, rrtype: "SOA" | "soa"): Promise<import("node:dns").SoaRecord>;
+    function resolve(hostname: string, rrtype: "CAA" | "caa"): Promise<import("node:dns").CaaRecord[]>;
+    function resolve(hostname: string, rrtype: "ANY" | "any"): Promise<import("node:dns").AnyRecord[]>;
+
+    /**
+     * Resolve SRV records for a hostname.
+     */
+    function resolveSrv(hostname: string): Promise<import("node:dns").SrvRecord[]>;
+
+    /**
+     * Resolve TXT records for a hostname.
+     *
+     * Each record is an array of text chunks.
+     */
+    function resolveTxt(hostname: string): Promise<string[][]>;
+
+    /**
+     * Resolve the SOA record for a hostname.
+     */
+    function resolveSoa(hostname: string): Promise<import("node:dns").SoaRecord>;
+
+    /**
+     * Resolve NAPTR records for a hostname.
+     */
+    function resolveNaptr(hostname: string): Promise<import("node:dns").NaptrRecord[]>;
+
+    /**
+     * Resolve MX records for a hostname.
+     *
+     * @example
+     * ```js
+     * const [{ exchange, priority }] = await Bun.dns.resolveMx('example.com');
+     * ```
+     */
+    function resolveMx(hostname: string): Promise<import("node:dns").MxRecord[]>;
+
+    /**
+     * Resolve CAA records for a hostname.
+     */
+    function resolveCaa(hostname: string): Promise<import("node:dns").CaaRecord[]>;
+
+    /**
+     * Resolve NS records for a hostname.
+     */
+    function resolveNs(hostname: string): Promise<string[]>;
+
+    /**
+     * Resolve PTR records for a hostname.
+     */
+    function resolvePtr(hostname: string): Promise<string[]>;
+
+    /**
+     * Resolve the CNAME record for a hostname.
+     *
+     * The result is an array with the canonical name.
+     */
+    function resolveCname(hostname: string): Promise<string[]>;
+
+    /**
+     * Resolve all record types for a hostname in one query.
+     *
+     * Each record has a `type` property that names its record type.
+     */
+    function resolveAny(hostname: string): Promise<import("node:dns").AnyRecord[]>;
+
+    /**
+     * Get the DNS servers the resolver uses.
+     */
+    function getServers(): string[];
+
+    /**
+     * Set the DNS servers the resolver uses.
+     *
+     * Each server is a `[family, address, port]` triple. An empty array
+     * clears all configured servers, and later queries reject with
+     * `ENOSERVER`. `node:dns`'s `setServers` wraps this function and
+     * accepts `"address:port"` strings instead.
+     *
+     * @param servers The servers to use
+     *
+     * @example
+     * ```js
+     * Bun.dns.setServers([[4, '8.8.8.8', 53]]);
+     * ```
+     */
+    function setServers(servers: ReadonlyArray<[family: 4 | 6, address: string, port: number]>): void;
+
+    /**
+     * Resolve the hostnames for an IP address with a reverse DNS query.
+     *
+     * @param ip The IP address to resolve
+     */
+    function reverse(ip: string): Promise<string[]>;
+
+    /**
+     * Resolve the hostname and service for an address and port.
+     *
+     * The result is a `[hostname, service]` pair.
+     *
+     * @example
+     * ```js
+     * const [hostname, service] = await Bun.dns.lookupService('127.0.0.1', 22);
+     * ```
+     */
+    function lookupService(address: string, port: number): Promise<[hostname: string, service: string]>;
+
+    /**
      * **Experimental API**
      *
      * Prefetch a hostname so that later `fetch()` and `Bun.connect()` calls

@@ -474,6 +474,19 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  describe("Bun.dns", () => {
+    // The fixture asserts the declared type of every Bun.dns member, so a runtime
+    // key with no fixture reference means bun-types lags the runtime again (#40265).
+    test("the dns fixture covers the runtime surface", () => {
+      const fixture = readFileSync(join(FIXTURE_SOURCE_DIR, "dns.ts"), "utf8");
+      // \b keeps a prefix key like `resolve` from being satisfied by `resolveSrv`.
+      const uncovered = Object.keys(Bun.dns).filter(
+        key => !new RegExp(String.raw`\b(Bun\.dns|bun_dns)\.${key}\b`).test(fixture),
+      );
+      expect(uncovered).toEqual([]);
+    });
+  });
+
   describe("Test Globals", () => {
     const code = `
       const test_shouldBeAFunction: Function = test;

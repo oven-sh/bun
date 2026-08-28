@@ -551,7 +551,10 @@ pub enum SystemErrno {
     ENOTRECOVERABLE = 131,
     ERFKILL = 132,
     EHWPOISON = 133,
-    // made up erropr
+    /// `UV_UNKNOWN`, and the fallback for Win32/uv codes the tables do not map.
+    /// The strum name becomes the JS-visible `err.code`; libuv and node spell
+    /// this one `UNKNOWN` (`uv_err_name(UV_UNKNOWN)`), as does `uv_e::ENTRIES`.
+    #[strum(serialize = "UNKNOWN")]
     EUNKNOWN = 134,
     ECHARSET = 135,
     EOF = 136,

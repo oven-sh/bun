@@ -1202,6 +1202,34 @@ console.log(JSON.stringify({ uid: process.getuid(), threwCode: thrown?.code, thr
   });
 });
 
+// A file that is not a PE image makes CreateProcess fail with a Win32 error libuv
+// has no errno for, so the spawn fails with UV_UNKNOWN. The expected values are
+// what node v26 reports for the same file.
+it.if(isWindows)("spawn errors libuv cannot map report code UNKNOWN like node", () => {
+  using dir = tempDir("spawn-unknown-error", { "bad.exe": "\x00\x01\x02garbage\n" });
+  const exe = path.join(String(dir), "bad.exe");
+
+  // Node throws codes outside its deferred set (ENOENT, EACCES, ...) synchronously.
+  let thrown: any;
+  try {
+    spawn(exe);
+  } catch (e) {
+    thrown = e;
+  }
+  expect({ code: thrown?.code, errno: thrown?.errno, syscall: thrown?.syscall }).toEqual({
+    code: "UNKNOWN",
+    errno: -4094,
+    syscall: "spawn",
+  });
+
+  const { error } = spawnSync(exe);
+  expect({ code: error?.code, errno: error?.errno, syscall: error?.syscall }).toEqual({
+    code: "UNKNOWN",
+    errno: -4094,
+    syscall: `spawnSync ${exe}`,
+  });
+});
+
 // Regression: Bun registered the stdout/stderr poll immediately, so the native
 // reader drained the child's output into an unbounded in-memory buffer before
 // any JS consumer attached. The child never blocked on a full pipe, and once

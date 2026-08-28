@@ -277,9 +277,10 @@ impl Listener {
                         // does (EADDRINUSE vs EACCES need different caller
                         // handling) rather than an invalid-arguments TypeError.
                         if let ListenPipeError::Sys(sys_err, uv_errno) = &e {
-                            // get_error_code_tag_name does not reject EUNKNOWN /
-                            // UV_EAI_* (>=3000); neither is a node-style code, so
-                            // route those through the generic error below.
+                            // get_error_code_tag_name does not reject EUNKNOWN (the
+                            // fallback for every unmapped code, so it does not identify
+                            // the failure) or UV_EAI_* (>=3000, whose tag names are not
+                            // node's codes); route both through the generic error below.
                             if let Some((name, se)) = sys_err.get_error_code_tag_name() {
                                 if se != bun_sys::SystemErrno::EUNKNOWN && (se as u16) < 3000 {
                                     let err = jsc::SystemError {
@@ -305,7 +306,7 @@ impl Listener {
                         }
                         let detail = match &e {
                             ListenPipeError::Other(err) => err.name(),
-                            // Sys whose errno has no node-style code (EUNKNOWN / UV_EAI_*).
+                            // Sys skipped above: the EUNKNOWN fallback or UV_EAI_*.
                             ListenPipeError::Sys(..) => "UNKNOWN",
                         };
                         return Err(global.throw_invalid_arguments(format_args!(

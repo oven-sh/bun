@@ -196,6 +196,11 @@ describe.concurrent("spawnSync isolated event loop", () => {
   // BUN_JSC_slowPathAllocsBetweenGCs runs a full synchronous GC every few
   // slow-path allocations. A warmed-up spawnSync allocates nothing before it
   // installs the isolated loop, so the GC that frees the writers runs inside it.
+  // The fixture also reports how many writers were collected by the time that
+  // call returned, so a change that keeps them alive past the call, or stops
+  // the GC from running there, fails this test instead of passing it.
+  // (bun:internal-for-testing would give exact counts, but loading it under
+  // this GC setting takes a debug build 15s.)
   test.skipIf(isWindows)("finalizers that run inside spawnSync do not stall the next spawnSync", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -205,12 +210,17 @@ describe.concurrent("spawnSync isolated event loop", () => {
         // Three writers on stderr (a pipe here), each with a poll registered
         // on the main loop.
         let writers = [];
+        const refs = [];
         for (let i = 0; i < 3; i++) {
           const writer = Bun.stderr.writer();
           writer.write("");
           writer.flush();
           writers.push(writer);
+          refs.push(new WeakRef(writer));
         }
+        // A WeakRef keeps its target alive until the end of the job that
+        // created it. Cross a job boundary so only \`writers\` holds them.
+        await Bun.sleep(0);
         const first = { cmd: ["echo", "first"], stdout: "pipe", stderr: "ignore", timeout: 2000 };
         // pidfd + stdout + stderr: three polls, the same count the three
         // writers release. The child outlives the parent's poll registration,
@@ -223,12 +233,14 @@ describe.concurrent("spawnSync isolated event loop", () => {
         writers = null;
         // The first allocations after the drop are this call's result, built
         // while the isolated loop is installed: the GC they trigger frees the
-        // writers there.
+        // writers there. Nothing may run between the drop and the call.
         Bun.spawnSync(first);
+        const collectedDuringCall = refs.filter(ref => ref.deref() === undefined).length;
 
         const result = Bun.spawnSync(second);
         console.log(
           JSON.stringify({
+            collectedDuringCall,
             stdout: result.stdout.toString(),
             exitedDueToTimeout: result.exitedDueToTimeout,
             exitCode: result.exitCode,
@@ -244,7 +256,9 @@ describe.concurrent("spawnSync isolated event loop", () => {
     // stderr is drained, not asserted: the child's JSON and exit code carry the signal.
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout.trim()).toBe(JSON.stringify({ stdout: "second\n", exitedDueToTimeout: false, exitCode: 0 }));
+    expect(stdout.trim()).toBe(
+      JSON.stringify({ collectedDuringCall: 3, stdout: "second\n", exitedDueToTimeout: false, exitCode: 0 }),
+    );
     expect(exitCode).toBe(0);
   });
 });

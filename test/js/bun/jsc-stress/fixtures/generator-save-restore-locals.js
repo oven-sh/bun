@@ -1,9 +1,8 @@
 //@ runDefault
+//@ runDefault("--useGeneratorBulkSaveRestore=0")
 //@ runDefault("--useJIT=0")
 //@ runDefault("--useDFGJIT=0")
 //@ runDefault("--useConcurrentJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForOptimizeAfterWarmUp=20", "--thresholdForFTLOptimizeAfterWarmUp=50")
-//@ runDefault("--useGeneratorBulkSaveRestoreLocals=0")
-//@ runDefault("--useGeneratorBulkSaveRestoreLocals=0", "--useConcurrentJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForOptimizeAfterWarmUp=20", "--thresholdForFTLOptimizeAfterWarmUp=50")
 
 function shouldBe(actual, expected) {
     if (actual !== expected)

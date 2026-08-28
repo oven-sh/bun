@@ -318,7 +318,7 @@ describe.concurrent("JSC JIT Stress Tests", () => {
 
   // `bun build --bytecode` stores the bytecode of every generator and async
   // function in the cache, so the shape of their save/restore code is fixed at
-  // build time by useGeneratorBulkSaveRestoreLocals (on: one bulk op per
+  // build time by useGeneratorBulkSaveRestore (on: one bulk op per
   // suspension point, off: one op per live local). A cache built under either
   // value of the option must load and run under the other.
   describe("bytecode cache (generator locals)", () => {
@@ -338,7 +338,7 @@ describe.concurrent("JSC JIT Stress Tests", () => {
         wideGeneratorSource(300),
       ].join("\n"),
     };
-    const option = "BUN_JSC_useGeneratorBulkSaveRestoreLocals";
+    const option = "BUN_JSC_useGeneratorBulkSaveRestore";
     for (const buildValue of ["1", "0"]) {
       for (const runValue of ["1", "0"]) {
         test(

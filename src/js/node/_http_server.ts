@@ -578,14 +578,14 @@ Server.prototype.listen = function () {
     }
   }
 
+  if (this[serverSymbol]) {
+    throw $ERR_SERVER_ALREADY_LISTEN();
+  }
+
   const lastArg = arguments[argc - 1];
   if ($isCallable(lastArg)) {
     // Before the bind, as in node, so a listen() retried from the 'error' handler still calls it.
     this.once("listening", lastArg);
-  }
-
-  if (this[serverSymbol]) {
-    throw $ERR_SERVER_ALREADY_LISTEN();
   }
 
   try {

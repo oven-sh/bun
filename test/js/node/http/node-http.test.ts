@@ -4380,6 +4380,11 @@ test("listen() while already listening throws ERR_SERVER_ALREADY_LISTEN", async 
     await once(server, "listening");
     expect(() => server.listen(0, "127.0.0.1")).toThrow(alreadyListening);
     expect(() => server.listen()).toThrow(alreadyListening);
+    // Node checks the handle before it registers the callback, so a rejected
+    // listen() leaves no 'listening' listener behind.
+    const rejectedCallback = mock(() => {});
+    expect(() => server.listen(0, "127.0.0.1", rejectedCallback)).toThrow(alreadyListening);
+    expect(server.listenerCount("listening")).toBe(1); // the server's own setupConnectionsTracking
 
     const { port } = server.address() as AddressInfo;
     const res = await fetch(`http://127.0.0.1:${port}/`);
@@ -4391,6 +4396,7 @@ test("listen() while already listening throws ERR_SERVER_ALREADY_LISTEN", async 
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     expect(server.address()).not.toBeNull();
+    expect(rejectedCallback).not.toHaveBeenCalled();
     expect(() => server.listen(0, "127.0.0.1")).toThrow(alreadyListening);
   } finally {
     server.close();

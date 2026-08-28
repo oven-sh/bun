@@ -521,7 +521,7 @@ impl bun_core::output::ErrName for Error {
     }
     fn as_sys_err_info(&self) -> Option<bun_core::output::SysErrInfo> {
         Some(bun_core::output::SysErrInfo {
-            tag_name: Error::name(self),
+            tag_name: self.get_error_code_tag_name().map(|(name, _)| name),
             errno: i32::from(self.errno),
             syscall: <&'static str>::from(self.syscall),
         })

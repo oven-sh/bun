@@ -346,6 +346,50 @@ describe("bundler", () => {
       stdout: '["inf","neg","inf","method","static"]',
     },
   });
+  // https://github.com/oven-sh/bun/issues/40688: the same-target destructuring
+  // transform must apply to every eligible run of declarations, not only the
+  // run at the head of the list.
+  itBundled("minify/SameTargetDestructuringAfterOtherDecl", {
+    files: {
+      "/entry.js": /* js */ `
+        var Math_random = Math.random;
+        var Math_random2 = Math.random;
+        var x = Math_random2() + Math_random();
+        var Math_cos = Math.cos;
+        var Math_sin = Math.sin;
+        console.log(typeof Math_cos(x), typeof Math_sin(x));
+      `,
+    },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("{ random: Math_random, random: Math_random2 } = Math");
+      api.expectFile("/out.js").toContain("{ cos: Math_cos, sin: Math_sin } = Math");
+    },
+    run: { stdout: "number number" },
+  });
+  itBundled("minify/SameTargetDestructuringMultipleRuns", {
+    files: {
+      "/entry.js": /* js */ `
+        var o = { a: 1, b: 2 };
+        var p = { a: 3, b: 4 };
+        var w = o.a;
+        var x = o.b;
+        var y = p.a;
+        var z = p.b;
+        var mid = w + x;
+        var q = p.a;
+        var r = p.b;
+        console.log(w, x, y, z, mid, q, r);
+      `,
+    },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("{ a: w, b: x } = o");
+      api.expectFile("/out.js").toContain("{ a: y, b: z } = p");
+      api.expectFile("/out.js").toContain("{ a: q, b: r } = p");
+    },
+    run: { stdout: "1 2 3 4 3 3 4" },
+  });
   itBundled("minify/InlineArraySpread", {
     files: {
       "/entry.js": /* js */ `

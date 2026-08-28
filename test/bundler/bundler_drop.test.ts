@@ -29,6 +29,24 @@ describe("bundler", () => {
       api.expectFile("out.js").toIncludeRepeated("debugger", 4);
     },
   });
+  itBundled("drop/IndexAccess", {
+    files: {
+      "/a.js": `
+        console["log"]("hello");
+        console[method]("hello");
+        console[pick()]("hello");
+        console["log"].call(console, "hello");
+        var method = "log";
+        function pick() { return "log"; }
+      `,
+    },
+    run: { stdout: "" },
+    drop: ["console"],
+    backend: "api",
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toInclude("console");
+    },
+  });
   itBundled("drop/RemovesSideEffects", {
     files: {
       "/a.js": `console.log(alert());`,

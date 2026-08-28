@@ -4443,7 +4443,6 @@ describe.concurrent("bundler", () => {
   //   },
   // });
   itBundled("default/DefineThis", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         ok(
@@ -4521,7 +4520,6 @@ describe.concurrent("bundler", () => {
     },
   });
   itBundled("default/DefineOptionalChain", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         log([

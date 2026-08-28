@@ -5137,43 +5137,66 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub(crate) fn value_for_this(&mut self, loc: bun_ast::Loc) -> Option<Expr> {
-        if !self.fn_only_data_visit.is_this_nested {
-            // In the REPL, top-level `this` must evaluate to the global object
-            // (matching Node's `> this` and `deno repl > this`). The REPL wraps
-            // user input in an arrow IIFE that has no `exports` binding, so the
-            // CommonJS substitution below would emit a reference to an
-            // undefined `exports`. Leaving `E::This` in place lets the arrow
-            // inherit `this` from the enclosing (global) scope at runtime.
-            if self.options.repl_mode {
-                return None;
-            }
-            if self.has_es_module_syntax && self.commonjs_named_exports.count() == 0 {
-                // In an ES6 module, "this" is supposed to be undefined. Instead of
-                // doing this at runtime using "fn.call(undefined)", we do it at
-                // compile time using expression substitution here.
-                return Some(Expr {
-                    loc,
-                    data: null_value_expr(),
-                });
-            } else {
-                // In a CommonJS module, "this" is supposed to be the same as "exports".
-                // Instead of doing this at runtime using "fn.call(module.exports)", we
-                // do it at compile time using expression substitution here.
-                let exports_ref = self.exports_ref;
-                self.record_usage(exports_ref);
-                self.deoptimize_common_js_named_exports();
-                return Some(self.new_expr(
-                    E::Identifier {
-                        ref_: exports_ref,
-                        ..Default::default()
-                    },
-                    loc,
-                ));
+    pub(crate) fn value_for_this(
+        &mut self,
+        loc: bun_ast::Loc,
+        assign_target: js_ast::AssignTarget,
+        is_delete_target: bool,
+    ) -> Option<Expr> {
+        if self.fn_only_data_visit.is_this_nested {
+            return None;
+        }
+
+        // Substitute a user-specified `--define this=...`
+        let defines = self.define;
+        if let Some(data) = defines.identifiers.get(b"this".as_slice()) {
+            if !data.valueless() {
+                return Some(self.value_for_define(loc, assign_target, is_delete_target, data));
             }
         }
 
-        None
+        self.value_for_top_level_this(loc)
+    }
+
+    /// The compile-time value of a top-level `this`: `exports` in CommonJS,
+    /// `null` in ESM. `None` keeps `this` as written (nested in a function, or
+    /// in the REPL). User defines are not consulted here.
+    fn value_for_top_level_this(&mut self, loc: bun_ast::Loc) -> Option<Expr> {
+        if self.fn_only_data_visit.is_this_nested {
+            return None;
+        }
+        // In the REPL, top-level `this` must evaluate to the global object
+        // (matching Node's `> this` and `deno repl > this`). The REPL wraps
+        // user input in an arrow IIFE that has no `exports` binding, so the
+        // CommonJS substitution below would emit a reference to an
+        // undefined `exports`. Leaving `E::This` in place lets the arrow
+        // inherit `this` from the enclosing (global) scope at runtime.
+        if self.options.repl_mode {
+            return None;
+        }
+        if self.has_es_module_syntax && self.commonjs_named_exports.count() == 0 {
+            // In an ES6 module, "this" is supposed to be undefined. Instead of
+            // doing this at runtime using "fn.call(undefined)", we do it at
+            // compile time using expression substitution here.
+            Some(Expr {
+                loc,
+                data: null_value_expr(),
+            })
+        } else {
+            // In a CommonJS module, "this" is supposed to be the same as "exports".
+            // Instead of doing this at runtime using "fn.call(module.exports)", we
+            // do it at compile time using expression substitution here.
+            let exports_ref = self.exports_ref;
+            self.record_usage(exports_ref);
+            self.deoptimize_common_js_named_exports();
+            Some(self.new_expr(
+                E::Identifier {
+                    ref_: exports_ref,
+                    ..Default::default()
+                },
+                loc,
+            ))
+        }
     }
 
     // PERF: takes `&Expr` — `Expr` inlines `ExprData`, so a by-value pass copies
@@ -6213,24 +6236,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // real Expr.Data by contract.
         let value = define_data.value;
         match value {
-            js_ast::ExprData::EIdentifier(id) => {
-                // Identifier defines always carry a name. Match the
-                // contract so `handle_identifier`'s trailing `find_symbol`
-                // rebind runs against the *resolved* scope ref, not the
-                // define-time ref silently passed through with `None`.
+            js_ast::ExprData::EIdentifier(_) => {
+                // An identifier define stores its member chain
+                // (`a.b.c`, `this.x`, `import.meta.env`) as `original_name`.
                 let original_name: &[u8] = define_data
                     .original_name()
                     .expect("identifier define must have original_name");
                 // SAFETY: `define_data` borrows `p.define: &'a Define`; the
                 // backing `original_name` bytes live for `'a`. Erase the local
-                // borrow lifetime to satisfy `handle_identifier`'s
-                // `Option<&'a [u8]>` param.
+                // borrow lifetime so the parts can be stored in the AST.
                 let original_name: &'a [u8] =
                     unsafe { bun_collections::detach_lifetime(original_name) };
-                return self.handle_identifier(
+                return self.instantiate_define_member_chain(
                     loc,
-                    id,
-                    Some(original_name),
+                    original_name,
                     IdentifierOpts::new()
                         .with_assign_target(assign_target)
                         .with_is_delete_target(is_delete_target)
@@ -6245,17 +6264,82 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Expr { data: value, loc }
     }
 
+    /// Builds the expression for a define value written as a member chain,
+    /// for example `--define A=globalThis.foo` or `--define B=import.meta.url`.
+    /// This is the port of esbuild's `instantiateDefineExpr`: the first part
+    /// resolves to a symbol (or `this` / `import.meta` / `null` / `undefined`),
+    /// and every later part becomes a property access on it.
+    fn instantiate_define_member_chain(
+        &mut self,
+        loc: bun_ast::Loc,
+        name: &'a [u8],
+        opts: IdentifierOpts,
+    ) -> Expr {
+        let mut splitter = strings::split(name, b".");
+        let first: &'a [u8] = splitter.next().unwrap_or(name);
+        let mut rest: Vec<&'a [u8]> = Vec::new();
+        while let Some(part) = splitter.next() {
+            rest.push(part);
+        }
+
+        let value: Expr = match first {
+            b"null" => Expr {
+                loc,
+                data: js_ast::ExprData::ENull(E::Null),
+            },
+            b"undefined" => Expr {
+                loc,
+                data: js_ast::ExprData::EUndefined(E::Undefined),
+            },
+            b"this" => {
+                // The define value is not matched against the `this` define
+                // again, so `--define this=this.x` cannot recurse.
+                match self.value_for_top_level_this(loc) {
+                    Some(value) => value,
+                    None => Expr {
+                        loc,
+                        data: js_ast::ExprData::EThis(E::This),
+                    },
+                }
+            }
+            b"import" if rest.first().is_some_and(|part| *part == b"meta") => {
+                rest.remove(0);
+                // The CommonJS wrapper passes `import.meta` in as a parameter
+                // when the module uses it, so count this use like a parsed one.
+                self.has_import_meta = true;
+                Expr {
+                    loc,
+                    data: js_ast::ExprData::EImportMeta(E::ImportMeta),
+                }
+            }
+            _ => {
+                let result = self.find_symbol(loc, first).expect("unreachable");
+                self.handle_identifier(
+                    loc,
+                    E::Identifier::init(result.r#ref)
+                        .with_must_keep_due_to_with_stmt(result.is_inside_with_scope)
+                        .with_can_be_removed_if_unused(true),
+                    None,
+                    opts,
+                )
+            }
+        };
+
+        if rest.is_empty() {
+            return value;
+        }
+        self.member_expression(loc, value, &rest)
+    }
+
     // `parts` is `&[Box<[u8]>]` to match the active `DotDefine.parts:
     // Vec<Box<[u8]>>` shape (auto-derefs at call sites). The full draft uses
     // `StoreSlice<StoreStr>`; both index to a `[u8]` so the body is unchanged.
     pub(crate) fn is_dot_define_match(&mut self, expr: Expr, parts: &[Box<[u8]>]) -> bool {
+        // An optional chain link (`a?.b`) matches like a plain `.`: the define
+        // for `a.b` replaces both spellings, as in esbuild.
         match expr.data {
             js_ast::ExprData::EDot(ex) => {
                 if parts.len() > 1 {
-                    if ex.optional_chain.is_some() {
-                        return false;
-                    }
-                    // Intermediates must be dot expressions
                     let last = parts.len() - 1;
                     let is_tail_match = strings::eql(&parts[last], &ex.name);
                     return is_tail_match && self.is_dot_define_match(ex.target, &parts[..last]);
@@ -6264,22 +6348,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             js_ast::ExprData::EImportMeta(_) => {
                 return parts.len() == 2 && &*parts[0] == b"import" && &*parts[1] == b"meta";
             }
-            // Note: this behavior differs from esbuild
-            // esbuild does not try to match index accessors
-            // we do, but only if it's a UTF8 string
-            // the intent is to handle people using this form instead of E.Dot. So we really only want to do this if the accessor can also be an identifier
+            js_ast::ExprData::EThis(_) => {
+                // Only a top-level "this" can match a define
+                if !self.fn_only_data_visit.is_this_nested {
+                    return parts.len() == 1 && &*parts[0] == b"this";
+                }
+            }
+            // `a["b"]` matches the same define as `a.b`
             js_ast::ExprData::EIndex(index) => {
                 if parts.len() > 1 {
                     if let js_ast::ExprData::EString(mut s) = index.index.data {
-                        if s.is_utf8() {
-                            if index.optional_chain.is_some() {
-                                return false;
-                            }
-                            let last = parts.len() - 1;
-                            let is_tail_match = strings::eql(&parts[last], s.slice(self.arena));
-                            return is_tail_match
-                                && self.is_dot_define_match(index.target, &parts[..last]);
-                        }
+                        let last = parts.len() - 1;
+                        let is_tail_match = strings::eql(&parts[last], s.slice(self.arena));
+                        return is_tail_match
+                            && self.is_dot_define_match(index.target, &parts[..last]);
                     }
                 }
             }

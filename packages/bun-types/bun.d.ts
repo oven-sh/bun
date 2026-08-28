@@ -2933,7 +2933,10 @@ declare module "bun" {
 
   interface TranspilerOptions {
     /**
-     * Replace key with value. Value must be a JSON string.
+     * Replace key with value. The key is an identifier or a property path
+     * such as `process.env.NODE_ENV` or `process.env["MY-VAR"]`. The value
+     * is a JSON literal, a BigInt literal, an identifier, or a property path
+     * such as `globalThis.foo`.
      * @example
      *  ```
      *  { "process.env.NODE_ENV": "\"production\"" }

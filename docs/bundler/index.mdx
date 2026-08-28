@@ -1152,7 +1152,9 @@ var logo = "https://cdn.example.com/logo-a7305bdef.svg";
 
 ### define
 
-A map of global identifiers to be replaced at build time. Keys of this object are identifiers or dotted property paths such as `process.env.NODE_ENV`, and values are JSON strings, identifiers, or property paths that are inlined.
+A map of global identifiers that Bun replaces at build time. A key is an identifier or a property path such as `process.env.NODE_ENV`. A path part can be a quoted string in brackets, as in `process.env["MY-VAR"]`. A key can also start with `this` or `import.meta`. A value is a JSON literal, a BigInt literal, an identifier, or a property path such as `globalThis.foo` or `import.meta.env`.
+
+A define matches every spelling of its key. `process.env.NODE_ENV`, `process.env["NODE_ENV"]`, and `process?.env?.NODE_ENV` are all replaced.
 
 <Tabs>
   <Tab title="JavaScript">

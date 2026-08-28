@@ -518,36 +518,141 @@ pub mod defines {
             key: &[u8],
             value: DefineData,
         ) -> Result<(), bun_alloc::AllocError> {
-            // If it has a dot, then it's a DotDefine. e.g. process.env.NODE_ENV
-            if let Some(last_dot) = strings::last_index_of_char(key, b'.') {
-                let tail = &key[last_dot + 1..key.len()];
-                let remainder = &key[0..last_dot];
-                let count = strings::count_char(remainder, b'.') + 1;
-                let mut parts: Vec<Box<[u8]>> = Vec::with_capacity(count + 1);
-                for split in strings::split(remainder, b".") {
-                    parts.push(Box::from(split));
-                }
-                parts.push(Box::from(tail));
-
-                if let Some(existing) = self.dots.get_mut(tail) {
-                    for part in existing.iter_mut() {
-                        if are_parts_equal(&part.parts, &parts) {
-                            part.data = DefineData::merge(&part.data, value);
-                            return Ok(());
-                        }
+            // User keys were validated by `parse_define_key` already. Keys that
+            // fail it here come from the environment (`process.env.MY-VAR`), so
+            // fall back to a plain split on `.` for those.
+            let parts: Vec<Box<[u8]>> = match parse_define_key(key) {
+                Ok(parts) => parts,
+                Err(_) => {
+                    let mut parts = Vec::with_capacity(strings::count_char(key, b'.') + 1);
+                    for split in strings::split(key, b".") {
+                        parts.push(Box::from(split));
                     }
-                    existing.push(DotDefine { data: value, parts });
-                    return Ok(());
+                    parts
                 }
+            };
 
-                self.dots
-                    .put_assume_capacity(tail, vec![DotDefine { data: value, parts }]);
-            } else {
-                // e.g. IS_BROWSER
-                self.identifiers.put_assume_capacity(key, value);
+            // e.g. IS_BROWSER
+            if parts.len() == 1 {
+                self.identifiers.put_assume_capacity(&parts[0], value);
+                return Ok(());
             }
+
+            // e.g. process.env.NODE_ENV
+            let tail: Box<[u8]> = parts[parts.len() - 1].clone();
+            if let Some(existing) = self.dots.get_mut(&*tail) {
+                for part in existing.iter_mut() {
+                    if are_parts_equal(&part.parts, &parts) {
+                        part.data = DefineData::merge(&part.data, value);
+                        return Ok(());
+                    }
+                }
+                existing.push(DotDefine { data: value, parts });
+                return Ok(());
+            }
+
+            self.dots
+                .put_assume_capacity(&tail, vec![DotDefine { data: value, parts }]);
             Ok(())
         }
+    }
+
+    /// Why [`parse_define_key`] rejected a key.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum DefineKeyError<'a> {
+        /// This `.`-separated part is not an identifier. For the first part
+        /// this also covers keywords other than `this` and `import.meta`.
+        InvalidIdentifier(&'a [u8]),
+        /// A `[` is not followed by a quoted string and a `]`, or a `]` is not
+        /// followed by `.`, `[`, or the end of the key.
+        InvalidIndex,
+    }
+
+    /// Splits a define key into its property path, the same grammar esbuild
+    /// accepts for a define name: an identifier, `this`, or `import.meta`,
+    /// followed by any number of `.name` or `["quoted"]` parts. So
+    /// `process.env["NODE-ENV"]` becomes `["process", "env", "NODE-ENV"]`.
+    pub fn parse_define_key(key: &[u8]) -> Result<Vec<Box<[u8]>>, DefineKeyError<'_>> {
+        use crate::lexer::{is_identifier, keyword};
+
+        fn part_end(key: &[u8], start: usize) -> usize {
+            start + strings::index_of_any(&key[start..], b".[").unwrap_or(key.len() - start)
+        }
+
+        let mut parts: Vec<Box<[u8]>> = Vec::new();
+        let mut i = part_end(key, 0);
+        let first = &key[..i];
+        if !is_identifier(first) {
+            return Err(DefineKeyError::InvalidIdentifier(first));
+        }
+        match first {
+            b"this" => parts.push(Box::from(first)),
+            b"import" => {
+                // Only `import.meta` can start a key
+                if key.get(i) != Some(&b'.') {
+                    return Err(DefineKeyError::InvalidIdentifier(first));
+                }
+                let meta_end = part_end(key, i + 1);
+                if &key[i + 1..meta_end] != b"meta" {
+                    return Err(DefineKeyError::InvalidIdentifier(first));
+                }
+                parts.push(Box::from(first));
+                parts.push(Box::from(b"meta".as_slice()));
+                i = meta_end;
+            }
+            _ if keyword(first).is_some() => {
+                return Err(DefineKeyError::InvalidIdentifier(first));
+            }
+            _ => parts.push(Box::from(first)),
+        }
+
+        while i < key.len() {
+            match key[i] {
+                b'.' => {
+                    let end = part_end(key, i + 1);
+                    let part = &key[i + 1..end];
+                    // A keyword is a valid property name here (`a.if`)
+                    if !is_identifier(part) {
+                        return Err(DefineKeyError::InvalidIdentifier(part));
+                    }
+                    parts.push(Box::from(part));
+                    i = end;
+                }
+                b'[' => {
+                    let quote = match key.get(i + 1) {
+                        Some(&quote @ (b'"' | b'\'')) => quote,
+                        _ => return Err(DefineKeyError::InvalidIndex),
+                    };
+                    let mut part: Vec<u8> = Vec::new();
+                    let mut j = i + 2;
+                    loop {
+                        match key.get(j) {
+                            None => return Err(DefineKeyError::InvalidIndex),
+                            Some(&c) if c == quote => break,
+                            Some(b'\\') => match key.get(j + 1) {
+                                Some(&escaped @ (b'\\' | b'"' | b'\'')) => {
+                                    part.push(escaped);
+                                    j += 2;
+                                }
+                                _ => return Err(DefineKeyError::InvalidIndex),
+                            },
+                            Some(&c) => {
+                                part.push(c);
+                                j += 1;
+                            }
+                        }
+                    }
+                    if key.get(j + 1) != Some(&b']') {
+                        return Err(DefineKeyError::InvalidIndex);
+                    }
+                    parts.push(part.into_boxed_slice());
+                    i = j + 2;
+                }
+                _ => return Err(DefineKeyError::InvalidIndex),
+            }
+        }
+
+        Ok(parts)
     }
 
     pub fn are_parts_equal(a: &[Box<[u8]>], b: &[Box<[u8]>]) -> bool {

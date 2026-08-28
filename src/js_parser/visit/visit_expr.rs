@@ -101,10 +101,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // idc about legacy octal loc
     }
 
-    fn e_this(p: &mut Self, e: &mut Expr, _: ExprIn) {
-        if let Some(exp) = p.value_for_this(e.loc) {
+    fn e_this(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+        let is_delete_target = matches!(p.delete_target, Data::EThis(..));
+        if let Some(exp) = p.value_for_this(e.loc, in_.assign_target, is_delete_target) {
             *e = exp;
-            return;
         }
     }
 
@@ -147,8 +147,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     continue;
                 }
                 // Substitute user-specified defines
-                *e =
-                    p.value_for_define(expr.loc, in_.assign_target, is_delete_target, &define.data);
+                if !define.data.valueless() {
+                    *e = p.value_for_define(
+                        expr.loc,
+                        in_.assign_target,
+                        is_delete_target,
+                        &define.data,
+                    );
+                }
                 return;
             }
         }
@@ -249,8 +255,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.symbols[result.r#ref.inner_index() as usize].set_has_been_assigned_to(true);
         }
 
-        let mut original_name: Option<&[u8]> = None;
-
         // Substitute user-specified defines for unbound symbols
         if p.symbols[e_.ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound
             && !result.is_inside_with_scope
@@ -265,17 +269,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let newvalue: Expr =
                         p.value_for_define(expr.loc, in_.assign_target, is_delete_target, def);
 
-                    // Don't substitute an identifier for a non-identifier if this is an
-                    // assignment target, since it'll cause a syntax error
-                    if matches!(newvalue.data.tag(), Tag::EIdentifier)
-                        || in_.assign_target == js_ast::AssignTarget::None
+                    // Don't substitute a constant if this is an assignment
+                    // target, since "0 = 1" is a syntax error. An identifier or
+                    // a property access is still a valid target.
+                    if in_.assign_target == js_ast::AssignTarget::None
+                        || matches!(newvalue.data.tag(), Tag::EIdentifier | Tag::EDot)
                     {
                         p.ignore_usage(e_.ref_);
                         *e = newvalue;
                         return;
                     }
-
-                    original_name = def.original_name();
                 }
 
                 // Copy the side effect flags over in case this expression is unused
@@ -320,7 +323,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         *e = p.handle_identifier(
             expr.loc,
             e_,
-            original_name,
+            None,
             IdentifierOpts::default()
                 .with_assign_target(in_.assign_target)
                 .with_is_delete_target(is_delete_target)
@@ -881,6 +884,38 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let is_call_target = matches!(p.call_target, Data::EIndex(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
         let is_delete_target = matches!(p.delete_target, Data::EIndex(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
 
+        // Check user-specified defines and known globals: `a["b"]` matches the
+        // same define as `a.b`.
+        if let Some(mut s) = e_.index.data.e_string() {
+            let defines = p.define;
+            if let Some(dot_defines) = defines.dots.get(s.slice(p.arena)) {
+                for define in dot_defines.as_slice() {
+                    if p.is_dot_define_match(expr, &define.parts) {
+                        if in_.assign_target == js_ast::AssignTarget::None {
+                            // Substitute user-specified defines
+                            if !define.data.valueless() {
+                                *e = p.value_for_define(
+                                    expr.loc,
+                                    in_.assign_target,
+                                    is_delete_target,
+                                    &define.data,
+                                );
+                                return;
+                            }
+
+                            if define.data.method_call_must_be_replaced_with_undefined()
+                                && in_
+                                    .property_access_for_method_call_maybe_should_replace_with_undefined
+                            {
+                                p.method_call_must_be_replaced_with_undefined = true;
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
         // "a['b']" => "a.b"
         if p.options.features.minify_syntax {
             if let Some(mut s) = e_.index.data.e_string() {
@@ -910,7 +945,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        p.visit_expr_in_out(&mut e_.target, ExprIn::default());
+        p.visit_expr_in_out(
+            &mut e_.target,
+            ExprIn {
+                property_access_for_method_call_maybe_should_replace_with_undefined: in_
+                    .property_access_for_method_call_maybe_should_replace_with_undefined,
+                ..Default::default()
+            },
+        );
 
         match e_.index.data {
             Data::EPrivateIdentifier(mut private) => {
@@ -992,7 +1034,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
             }
             _ => {
+                // The target visit sets this flag when the target is a `--drop`
+                // name. A call inside the index (`console[foo()]()`) must not
+                // consume it, so hide it while the index is visited.
+                let target_is_dropped_method_call =
+                    core::mem::replace(&mut p.method_call_must_be_replaced_with_undefined, false);
                 p.visit_expr(&mut e_.index);
+                if target_is_dropped_method_call {
+                    p.method_call_must_be_replaced_with_undefined = true;
+                }
 
                 let unwrapped = e_.index.unwrap_inlined();
                 if let Some(mut s) = unwrapped.data.e_string() {

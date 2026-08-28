@@ -362,7 +362,8 @@ describe("Bun.Transpiler", () => {
         'x = a ? (b) => {\n  import("d");\n  return import.meta.url;\n} : e;\n',
       );
       const enumBody = "enum E { A = 1, B = A * 2 } return E.B";
-      const enumOut = '  let E;\n  ((E) => {\n    E[E["A"] = 1] = "A";\n    E[E["B"] = 2] = "B";\n  })(E ||= {});\n  return 2 /* B */;\n';
+      const enumOut =
+        '  let E;\n  ((E) => {\n    E[E["A"] = 1] = "A";\n    E[E["B"] = 2] = "B";\n  })(E ||= {});\n  return 2 /* B */;\n';
       exp(`x = a ? (b) : c => { ${enumBody} }`, `x = a ? b : (c) => {\n${enumOut}};\n`);
       exp(`x = a ? (b) : c => { ${enumBody} } : e`, `x = a ? (b) => {\n${enumOut}} : e;\n`);
       exp(

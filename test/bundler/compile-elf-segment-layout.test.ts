@@ -16,55 +16,15 @@
 // https://github.com/oven-sh/bun/issues/40752
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
-import { closeSync, openSync, readSync } from "node:fs";
+import { bunEnv, bunExe, isFreeBSD, isLinux, readElf64ProgramHeaders, tempDir } from "harness";
+import type { Elf64ProgramHeader } from "harness";
 import { join } from "node:path";
 
-/** Read `len` bytes from `fd` at absolute `offset`. */
-function preadExact(fd: number, offset: number, len: number): Buffer {
-  const buf = Buffer.alloc(len);
-  let got = 0;
-  while (got < len) {
-    const n = readSync(fd, buf, got, len - got, offset + got);
-    if (n === 0) throw new Error(`short read at ${offset}`);
-    got += n;
-  }
-  return buf;
-}
+type LoadSegment = Pick<Elf64ProgramHeader, "vaddr" | "memsz" | "align">;
 
-interface LoadSegment {
-  vaddr: bigint;
-  memsz: bigint;
-  align: bigint;
-}
-
-/** PT_LOAD program headers of an ELF64 little-endian file. */
+/** PT_LOAD program headers of an ELF64 file. */
 function readLoadSegments(path: string): LoadSegment[] {
-  const fd = openSync(path, "r");
-  try {
-    const ehdr = preadExact(fd, 0, 64);
-    if (ehdr.readUInt32BE(0) !== 0x7f454c46) throw new Error("not ELF");
-    if (ehdr[4] !== 2) throw new Error("only ELF64 supported"); // EI_CLASS
-    if (ehdr[5] !== 1) throw new Error("only little-endian supported"); // EI_DATA
-
-    const e_phoff = Number(ehdr.readBigUInt64LE(32));
-    const e_phentsize = ehdr.readUInt16LE(54);
-    const e_phnum = ehdr.readUInt16LE(56);
-
-    const loads: LoadSegment[] = [];
-    for (let i = 0; i < e_phnum; i++) {
-      const ph = preadExact(fd, e_phoff + i * e_phentsize, e_phentsize);
-      if (ph.readUInt32LE(0) !== 1 /* PT_LOAD */) continue;
-      loads.push({
-        vaddr: ph.readBigUInt64LE(16),
-        memsz: ph.readBigUInt64LE(40),
-        align: ph.readBigUInt64LE(48),
-      });
-    }
-    return loads;
-  } finally {
-    closeSync(fd);
-  }
+  return readElf64ProgramHeaders(path).filter(ph => ph.type === 1 /* PT_LOAD */);
 }
 
 /**
@@ -95,11 +55,11 @@ function expectNoOverlap(path: string) {
   }
 }
 
-test.skipIf(!isLinux)("bun binary has no PT_LOAD overlap under strict p_align", () => {
+test.skipIf(!(isLinux || isFreeBSD))("bun binary has no PT_LOAD overlap under strict p_align", () => {
   expectNoOverlap(bunExe());
 });
 
-test.skipIf(!isLinux)(
+test.skipIf(!(isLinux || isFreeBSD))(
   "compiled executable has no PT_LOAD overlap under strict p_align",
   async () => {
     using dir = tempDir("elf-segment-layout", {

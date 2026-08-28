@@ -215,7 +215,7 @@ impl Symbol {
         }
 
         match kind {
-            // Kind::MangledProp => SlotNamespace::MangledProp,
+            Kind::MangledProp => SlotNamespace::MangledProp,
             Kind::Label => SlotNamespace::Label,
             _ => SlotNamespace::Default,
         }
@@ -310,6 +310,13 @@ pub enum Kind {
 
     // CSS identifiers that are renamed to be unique to the file they are in
     LocalCss,
+
+    /// A property name selected by `--mangle-props`. One symbol per distinct
+    /// name per file, referenced from `E::NameOfSymbol`. The linker merges the
+    /// symbols of the same name across files and assigns the short name; the
+    /// symbol is never declared in a scope and is never renamed by the
+    /// identifier renamers.
+    MangledProp,
 
     /// This annotates all other symbols that don't have special behavior.
     Other,

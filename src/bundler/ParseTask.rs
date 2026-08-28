@@ -2481,6 +2481,16 @@ pub mod parse_worker {
         opts.features.minify_identifiers = topts.minify_identifiers;
         opts.features.minify_keep_names = topts.keep_names;
         opts.features.minify_whitespace = topts.minify_whitespace;
+        // The runtime's own property names are never mangled (the linker skips
+        // the runtime too, as esbuild does).
+        if !task.source_index.is_runtime() {
+            // SAFETY: ARENA — the `Arc` in `topts` outlives `opts` (worker-owned
+            // for the bundle pass), same as `allow_unresolved` above.
+            opts.mangle_props = topts
+                .mangle_props
+                .as_deref()
+                .map(|m| unsafe { bun_collections::detach_ref(m) });
+        }
         opts.use_define_for_class_fields = task.use_define_for_class_fields;
         opts.features.emit_decorator_metadata = task.emit_decorator_metadata;
         // emitDecoratorMetadata implies legacy/experimental decorators, as it only

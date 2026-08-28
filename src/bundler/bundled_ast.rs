@@ -43,7 +43,7 @@ pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 // `BundledAstColumns` (`items_named_imports()`,
 // `items_named_exports()`, …) at `crate::bundled_ast::*`.
 //
-// 26 fields ≤ `multi_array_list::MAX_FIELDS` (32).
+// 28 fields ≤ `multi_array_list::MAX_FIELDS` (32).
 
 pub struct BundledAst<'arena> {
     pub(crate) approximate_newline_count: u32,
@@ -95,6 +95,10 @@ pub struct BundledAst<'arena> {
     // const_values: ConstValuesMap,
     pub(crate) ts_enums: bun_ast::ast_result::TsEnumsMap,
 
+    /// `--mangle-props`: see `Ast::mangled_props` / `Ast::reserved_props`.
+    pub(crate) mangled_props: bun_ast::ast_result::MangledPropsMap,
+    pub(crate) reserved_props: bun_ast::ast_result::ReservedPropsSet,
+
     pub(crate) flags: Flags,
 }
 
@@ -125,6 +129,8 @@ bun_collections::multi_array_columns! {
         redirect_import_record_index: u32,
         target: bun_ast::Target,
         ts_enums: bun_ast::ast_result::TsEnumsMap,
+        mangled_props: bun_ast::ast_result::MangledPropsMap,
+        reserved_props: bun_ast::ast_result::ReservedPropsSet,
         flags: Flags,
     }
 }
@@ -180,6 +186,8 @@ impl<'arena> BundledAst<'arena> {
             redirect_import_record_index: u32::MAX,
             target: bun_ast::Target::Browser,
             ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
+            mangled_props: Default::default(),
+            reserved_props: Default::default(),
             flags: Flags::empty(),
         }
     }
@@ -233,6 +241,9 @@ impl<'arena> BundledAst<'arena> {
 
             // const_values: self.const_values,
             ts_enums: self.ts_enums,
+
+            mangled_props: self.mangled_props,
+            reserved_props: self.reserved_props,
 
             uses_exports_ref: self.flags.contains(Flags::USES_EXPORTS_REF),
             uses_module_ref: self.flags.contains(Flags::USES_MODULE_REF),
@@ -323,6 +334,9 @@ impl<'arena> BundledAst<'arena> {
 
             // const_values: ast.const_values,
             ts_enums: ast.ts_enums,
+
+            mangled_props: ast.mangled_props,
+            reserved_props: ast.reserved_props,
 
             flags,
         }

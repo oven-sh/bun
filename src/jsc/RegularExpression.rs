@@ -47,7 +47,17 @@ impl RegularExpression {
         pattern: &BunString,
         flags: Flags,
     ) -> Result<*mut RegularExpression, RegularExpressionError> {
-        let regex = Yarr__RegularExpression__init(pattern, flags as u16);
+        Self::init_with_flag_bits(pattern, flags as u16)
+    }
+
+    /// `flags` is a bitwise OR of [`Flags`] values (the `JSC::Yarr::Flags`
+    /// layout), e.g. `Flags::IgnoreCase as u16 | Flags::Unicode as u16`.
+    #[inline]
+    pub fn init_with_flag_bits(
+        pattern: &BunString,
+        flags: u16,
+    ) -> Result<*mut RegularExpression, RegularExpressionError> {
+        let regex = Yarr__RegularExpression__init(pattern, flags);
         // `RegularExpression` is an `opaque_ffi!` ZST handle; `opaque_mut` is
         // the centralised non-null-ZST deref proof (panics on null, which
         // `Yarr__RegularExpression__init` never returns).
@@ -99,6 +109,23 @@ fn __bun_regex_compile(pattern: &BunString) -> Option<core::ptr::NonNull<()>> {
     // first runs (see `bun_install_types::NodeLinker::RegularExpression`).
     crate::initialize(crate::InitializeOptions::default());
     match RegularExpression::init(pattern, Flags::None) {
+        Ok(r) => core::ptr::NonNull::new(r.cast()),
+        Err(_) => None,
+    }
+}
+
+/// `bun_options_types::mangle_props::RegExpPattern` compiles the
+/// `--mangle-props` patterns through this on each bundler worker thread. Yarr
+/// does not need `JSCInitialize` to compile or interpret a pattern (the
+/// `--test-name-pattern` regex is compiled before `bun test` initializes
+/// JSC), and `bun build` never initializes JSC, so this must not call
+/// `crate::initialize`.
+#[unsafe(no_mangle)]
+fn __bun_regex_compile_with_flags(
+    pattern: &BunString,
+    flags: u16,
+) -> Option<core::ptr::NonNull<()>> {
+    match RegularExpression::init_with_flag_bits(pattern, flags) {
         Ok(r) => core::ptr::NonNull::new(r.cast()),
         Err(_) => None,
     }

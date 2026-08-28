@@ -8382,6 +8382,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_lazy_export: false,
             redirect_import_record_index: None,
             target: js_ast::Target::Browser,
+            mangled_props: Default::default(),
+            reserved_props: Default::default(),
         }))
     }
 

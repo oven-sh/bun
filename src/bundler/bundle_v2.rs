@@ -3019,6 +3019,7 @@ pub mod bv2_impl {
             this.linker.options.minify_syntax = this.transpiler.options.minify_syntax;
             this.linker.options.minify_identifiers = this.transpiler.options.minify_identifiers;
             this.linker.options.minify_whitespace = this.transpiler.options.minify_whitespace;
+            this.linker.options.mangle_props = this.transpiler.options.mangle_props.clone();
             this.linker.options.emit_dce_annotations = this.transpiler.options.emit_dce_annotations;
             this.linker.options.ignore_dce_annotations =
                 this.transpiler.options.ignore_dce_annotations;
@@ -4090,6 +4091,7 @@ pub mod bv2_impl {
                         output_files: Vec::new(),
                         metafile: None,
                         metafile_markdown: None,
+                        mangle_cache: None,
                     });
                 }
 
@@ -4120,6 +4122,7 @@ pub mod bv2_impl {
                     output_files,
                     metafile,
                     metafile_markdown: None,
+                    mangle_cache: this.linker.mangle_cache.take(),
                 })
             })();
 
@@ -5300,6 +5303,7 @@ pub mod bv2_impl {
                 output_files,
                 metafile,
                 metafile_markdown,
+                mangle_cache: self.linker.mangle_cache.take(),
             })
         }
     }

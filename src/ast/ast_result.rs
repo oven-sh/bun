@@ -88,7 +88,21 @@ pub struct Ast<'a> {
     pub has_commonjs_export_names: bool,
     pub has_import_meta: bool,
     pub import_meta_ref: Ref,
+
+    /// `--mangle-props`: property name → the file's `Kind::MangledProp` symbol
+    /// for that name. Empty unless property mangling is enabled.
+    pub mangled_props: MangledPropsMap,
+    /// `--mangle-props`: property names seen in this file that are *not*
+    /// mangled (they did not match, were reserved, or were quoted without
+    /// `--mangle-quoted`). The linker never generates one of these as a
+    /// mangled name, so a mangled property cannot collide with a real one.
+    pub reserved_props: ReservedPropsSet,
 }
+
+/// `--mangle-props`: original property name → `Kind::MangledProp` symbol.
+pub type MangledPropsMap = StringHashMap<Ref, AstAlloc>;
+/// `--mangle-props`: property names that must not be used as mangled names.
+pub type ReservedPropsSet = StringHashMap<(), AstAlloc>;
 
 // `parts`/`symbols`/`import_records` are now `ArenaVec`s and need an allocator,
 // so `Default` no longer applies; use `Ast::empty_in(arena)`.
@@ -129,6 +143,8 @@ impl<'a> Ast<'a> {
             has_commonjs_export_names: false,
             has_import_meta: false,
             import_meta_ref: Ref::NONE,
+            mangled_props: MangledPropsMap::default(),
+            reserved_props: ReservedPropsSet::default(),
         }
     }
 }

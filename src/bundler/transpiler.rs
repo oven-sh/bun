@@ -1589,6 +1589,7 @@ impl<'a> Transpiler<'a> {
                     repl_mode: self.options.repl_mode,
                     lower_toml_datetimes: false,
                     is_entry_point: false,
+                    mangle_props: None,
                 };
 
                 opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;

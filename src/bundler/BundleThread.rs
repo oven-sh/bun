@@ -24,6 +24,9 @@ pub struct BuildResult {
     pub output_files: Vec<crate::options::OutputFile>,
     pub metafile: Option<Box<[u8]>>,
     pub metafile_markdown: Option<Box<[u8]>>,
+    /// `Some` when `--mangle-props` was on: the input cache entries plus every
+    /// property name mangled in this build (`BuildOutput.mangleCache`).
+    pub mangle_cache: Option<bun_options_types::MangleCache>,
 }
 
 pub enum BundleV2Result {

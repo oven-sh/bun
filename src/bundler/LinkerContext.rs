@@ -121,7 +121,14 @@ pub struct LinkerContext<'a> {
     pub dev_server: Option<crate::dispatch::DevServerHandle>,
     pub(crate) framework: Option<bun_ptr::BackRef<bake::Framework>>,
 
+    /// Final names for `Kind::MangledProp` symbols (`--mangle-props`) and for
+    /// CSS module local names. Read by the printers through
+    /// `Options::mangled_props`.
     pub(crate) mangled_props: MangledProps,
+
+    /// `--mangle-props`: filled by `mangle_props()`, handed to the caller in
+    /// `BuildResult::mangle_cache`.
+    pub(crate) mangle_cache: Option<bun_options_types::MangleCache>,
 
     /// One name per binding that crosses a chunk boundary, shared by the
     /// chunk that exports it and every chunk that imports it
@@ -160,6 +167,7 @@ impl<'a> Default for LinkerContext<'a> {
             dev_server: None,
             framework: None,
             mangled_props: Default::default(),
+            mangle_cache: None,
             cross_chunk_names: Default::default(),
         }
     }
@@ -1295,6 +1303,8 @@ pub struct LinkerOptions {
     pub(crate) minify_whitespace: bool,
     pub(crate) minify_syntax: bool,
     pub(crate) minify_identifiers: bool,
+    /// `--mangle-props`. `Some` turns on `LinkerContext::mangle_props`.
+    pub(crate) mangle_props: Option<std::sync::Arc<bun_options_types::MangleProps>>,
     pub(crate) banner: &'static [u8],
     pub(crate) footer: &'static [u8],
     pub(crate) css_chunking: bool,
@@ -1341,6 +1351,7 @@ impl Default for LinkerOptions {
             minify_whitespace: false,
             minify_syntax: false,
             minify_identifiers: false,
+            mangle_props: None,
             banner: b"",
             footer: b"",
             css_chunking: false,

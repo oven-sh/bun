@@ -1963,22 +1963,29 @@ impl<'a> Parser<'a> {
             );
 
             if i > 0 {
-                // snapshot to break the `&mut self` ↔ `&self.runtime_imports`
-                // borrow overlap in `generate_import_stmt(symbols: &Sym)`; the callee
-                // never touches `self.runtime_imports`, so the clone is purely a
-                // borrow-checker workaround.
-                let symbols = p.runtime_imports.clone();
-                p.generate_import_stmt(
-                    RuntimeImports::NAME,
-                    &runtime_imports[0..i],
-                    &mut before,
-                    &symbols,
-                    None,
-                    b"import_",
-                    true,
-                    js_ast::PartTag::Runtime,
-                )
-                .expect("unreachable");
+                if wrap_mode == WrapMode::BunCommonjs {
+                    // The body becomes a CommonJS function at runtime; an
+                    // `import` statement inside it is a syntax error.
+                    p.generate_runtime_require_stmt(&runtime_imports[0..i], &mut before)
+                        .expect("unreachable");
+                } else {
+                    // snapshot to break the `&mut self` ↔ `&self.runtime_imports`
+                    // borrow overlap in `generate_import_stmt(symbols: &Sym)`; the callee
+                    // never touches `self.runtime_imports`, so the clone is purely a
+                    // borrow-checker workaround.
+                    let symbols = p.runtime_imports.clone();
+                    p.generate_import_stmt(
+                        RuntimeImports::NAME,
+                        &runtime_imports[0..i],
+                        &mut before,
+                        &symbols,
+                        None,
+                        b"import_",
+                        true,
+                        js_ast::PartTag::Runtime,
+                    )
+                    .expect("unreachable");
+                }
             }
         }
 

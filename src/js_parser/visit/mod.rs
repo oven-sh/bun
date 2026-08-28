@@ -997,9 +997,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             if Self::IS_TYPESCRIPT_ENABLED {
-                // `lower_standard_decorators_stmt` owns field placement for such classes.
-                let use_define = self.options.use_define_for_class_fields
-                    || class.should_lower_standard_decorators;
+                let use_define = self.options.use_define_for_class_fields;
 
                 let (func_args, param_props): (bun_ast::StoreSlice<G::Arg>, usize) =
                     match constructor_function {
@@ -1026,7 +1024,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && p.key.is_some()
                 };
                 // A `[K]` / `[K] = init` field can't be lowered without hoisting the key.
+                // Standard decorator lowering places the fields itself.
                 let lower_fields = !use_define
+                    && !class.should_lower_standard_decorators
                     && !class.properties.slice().iter().any(|p| {
                         is_instance_field(p)
                             && p.flags.contains(flags::Property::IsComputed)

@@ -228,8 +228,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let mut ts_decorators = bun_alloc::AstAlloc::vec();
             if opts.allow_ts_decorators {
+                let decorator_range = p.lexer.range();
                 ts_decorators = p.parse_type_script_decorators()?;
                 if ts_decorators.len_u32() > 0 {
+                    // Only TypeScript's experimental decorators have parameter
+                    // decorators. The standard grammar has no such position.
+                    if p.options.features.standard_decorators {
+                        if Self::IS_TYPESCRIPT_ENABLED {
+                            p.log().add_range_error_fmt_with_note(
+                                Some(p.source),
+                                decorator_range,
+                                format_args!(
+                                    "Parameter decorators only work when experimental decorators are enabled"
+                                ),
+                                format_args!(
+                                    "You can enable experimental decorators by adding \"experimentalDecorators\": true to your \"tsconfig.json\" file."
+                                ),
+                                decorator_range,
+                            );
+                        } else {
+                            p.log().add_range_error(
+                                Some(p.source),
+                                decorator_range,
+                                b"Parameter decorators are not allowed in JavaScript",
+                            );
+                        }
+                    }
                     arg_has_decorators = true;
                 }
             }

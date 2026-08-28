@@ -136,6 +136,36 @@ export function write(this: Console, input) {
   return wrote;
 }
 
+// Returns the `console.createTask` function. Called lazily from a custom
+// getter in ZigGlobalObject.cpp so the WeakSet and the shared `run` method are
+// created once per global object. Node implements this in the V8 inspector
+// (v8-console.cc); `run` brackets the callback with async-stack tagging for an
+// attached inspector frontend. Bun has no equivalent inspector hook, so the
+// task only validates its arguments and invokes the callback, which is the
+// observable behavior when no frontend is attached.
+export function createCreateTask() {
+  const tasks = new WeakSet();
+
+  function run(f) {
+    if (!$isCallable(f)) {
+      throw new Error("First argument must be a function.");
+    }
+    if (!tasks.has(this)) {
+      throw new Error("'run' called with illegal receiver.");
+    }
+    return f.$call(undefined);
+  }
+
+  return function createTask(name) {
+    if (typeof name !== "string" || name.length === 0) {
+      throw new Error("First argument must be a non-empty string.");
+    }
+    const task = { run };
+    tasks.add(task);
+    return task;
+  };
+}
+
 // This is the `console.Console` constructor. It is mostly copied from Node.
 // https://github.com/nodejs/node/blob/d2c7c367741bdcb6f7f77f55ce95a745f0b29fef/lib/internal/console/constructor.js
 // Some parts are copied from imported files and inlined here. Not too much of a performance issue

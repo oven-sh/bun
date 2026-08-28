@@ -407,9 +407,7 @@ fn load_ca_store(ctx: *mut ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str>
 }
 
 unsafe extern "C" {
-    /// usockets' peer chain verifier (`crypto/openssl.c`): `X509_verify_cert`
-    /// plus the checks bun applies to trust-store certificates. Installed here
-    /// so node:quic verifies chains the way the TCP TLS contexts do.
+    /// The chain verifier every usockets TLS context installs; see `crypto/openssl.c`.
     fn us_internal_ssl_ctx_set_chain_verifier(ctx: *mut ssl::SSL_CTX);
 }
 

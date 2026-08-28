@@ -29,9 +29,6 @@ impl Export {
         let mut errors: Vec<u8> = Vec::new();
         for i in 0..argc {
             let s = Builtin::of(interp, cmd).arg_bytes(i);
-            if s.is_empty() {
-                continue;
-            }
             let eq = bun_core::strings::index_of_char_usize(s, b'=');
             if eq.is_none() && !is_valid_var_name(s) {
                 use std::io::Write as _;
@@ -61,15 +58,8 @@ impl Export {
         if errors.is_empty() {
             return Builtin::done(interp, cmd, 0);
         }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-            Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
-            let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stderr
-                .enqueue(child, &errors, safeguard);
-        }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &errors);
-        Builtin::done(interp, cmd, 1)
+        Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
+        Builtin::write_failing_error(interp, cmd, &errors, 1)
     }
 
     fn print_all(interp: &Interpreter, cmd: NodeId) -> Yield {

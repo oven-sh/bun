@@ -1409,6 +1409,11 @@ describe("deno_task", () => {
       .stderr("export: `2B`: not a valid identifier\nexport: `3D`: not a valid identifier\n")
       .runAsTest("export reports every invalid identifier and still exports the valid ones");
 
+    TestBuilder.command`export ""`
+      .stderr("export: ``: not a valid identifier\n")
+      .exitCode(1)
+      .runAsTest("export rejects empty identifier");
+
     TestBuilder.command`export FOO`.stderr("").exitCode(0).runAsTest("export accepts bare valid identifier");
   });
 

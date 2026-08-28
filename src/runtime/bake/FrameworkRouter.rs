@@ -1449,6 +1449,22 @@ pub trait InsertionHandler {
     ) -> Result<(), AllocError>;
 }
 
+/// Where a route file or directory name sorts in the scan, from the Next.js
+/// bracket syntax: a static name first, then `[param]`, `[...catchAll]`, and
+/// `[[...optionalCatchAll]]`. `match_slow` takes the first dynamic pattern
+/// that matches, so a more specific name has to be scanned first.
+fn scan_precedence(name: &[u8]) -> u8 {
+    if name.starts_with(b"[[") {
+        3
+    } else if name.starts_with(b"[...") {
+        2
+    } else if name.starts_with(b"[") {
+        1
+    } else {
+        0
+    }
+}
+
 impl FrameworkRouter {
     pub(crate) fn scan(
         &mut self,
@@ -1496,11 +1512,15 @@ impl FrameworkRouter {
             };
             // The scan order is the insertion order, which `insert` turns into
             // the sibling order of the route tree and the precedence of
-            // `dynamic_routes` in `match_slow`. Sort by basename so neither
-            // depends on the hash table layout or on the readdir order.
+            // `dynamic_routes` in `match_slow`. Sort by precedence class, then
+            // by basename, so neither depends on the hash table layout or on
+            // the readdir order.
             bun_collections::index_sort::sort_slice_unstable_by(&mut entry_ptrs, |&a, &b| {
                 // SAFETY: EntryStore-owned pointers, valid for the process lifetime.
-                unsafe { (*a).base().cmp((*b).base()) }
+                let (a, b) = unsafe { ((*a).base(), (*b).base()) };
+                scan_precedence(a)
+                    .cmp(&scan_precedence(b))
+                    .then_with(|| a.cmp(b))
             });
             'outer: for file_ptr in entry_ptrs {
                 // SAFETY: EntryMap stores `*mut Entry` into the EntryStore singleton

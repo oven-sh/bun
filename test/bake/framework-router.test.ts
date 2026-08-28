@@ -92,12 +92,6 @@ test("discovers from filesystem paths", () => {
     layout: null,
     children: [
       {
-        part: "/:world",
-        page: path.join(dir, "[world].tsx"),
-        layout: null,
-        children: [],
-      },
-      {
         part: "/hello",
         page: path.join(dir, "hello.tsx"),
         layout: null,
@@ -130,11 +124,17 @@ test("discovers from filesystem paths", () => {
           },
         ],
       },
+      {
+        part: "/:world",
+        page: path.join(dir, "[world].tsx"),
+        layout: null,
+        children: [],
+      },
     ],
   });
 });
 
-test("route children are ordered by file name", () => {
+test("route children are ordered static first, then param, then catch-all, then by file name", () => {
   // The files are listed in an order that is neither sorted nor the order a
   // hash table walk produces, so the result only matches when the scan sorts.
   using dir = tempDir("fsr-order", {
@@ -152,6 +152,28 @@ test("route children are ordered by file name", () => {
   const router = new FrameworkRouter({ root: dir, style: "nextjs-pages" });
   const parts = (route: { children: { part: string }[] }) => route.children.map(child => child.part);
   const root = router.toJSON();
-  expect(parts(root)).toEqual(["/Beta", "/:*rest", "/:id", "/alpha", "/delta", "/epsilon", "/gamma", "/zeta"]);
-  expect(parts(root.children.find(child => child.part === "/delta"))).toEqual(["/Zed", "/:slug", "/about"]);
+  expect(parts(root)).toEqual(["/Beta", "/alpha", "/delta", "/epsilon", "/gamma", "/zeta", "/:id", "/:*rest"]);
+  expect(parts(root.children.find(child => child.part === "/delta"))).toEqual(["/Zed", "/about", "/:slug"]);
+});
+
+test("a more specific dynamic route matches before a less specific one", () => {
+  using dir = tempDir("fsr-precedence", {
+    "[...rest].tsx": "1",
+    "[id].tsx": "1",
+    "docs/[section]/[slug].tsx": "1",
+    "docs/blog/[slug].tsx": "1",
+  });
+  const router = new FrameworkRouter({ root: dir, style: "nextjs-pages" });
+  // [id] before [...rest]
+  expect(router.match("/foo")).toMatchObject({ params: { id: "foo" }, route: { part: "/:id" } });
+  // docs/blog before docs/[section]
+  expect(router.match("/docs/blog/post")).toMatchObject({
+    params: { slug: "post" },
+    route: { part: "/:slug", parent: { part: "/blog" } },
+  });
+  expect(router.match("/docs/news/post")).toMatchObject({
+    params: { section: "news", slug: "post" },
+    route: { part: "/:slug", parent: { part: "/:section" } },
+  });
+  expect(router.match("/a/b/c")).toMatchObject({ route: { part: "/:*rest" } });
 });
